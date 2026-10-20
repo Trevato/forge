@@ -58,6 +58,9 @@ function encode(bytes: Uint8Array<ArrayBuffer>, encoding: Encoding, best: boolea
   });
 }
 
+/** Speed-first encoding of a body built per response. */
+export const compressBytes = (bytes: Uint8Array<ArrayBuffer>, encoding: Encoding) => encode(bytes, encoding, false);
+
 const kept = new Map<string, Uint8Array>();
 const KEPT_MAX = 64;
 

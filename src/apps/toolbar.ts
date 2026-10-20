@@ -227,7 +227,7 @@ export function withToolbar(
   bytes: Uint8Array,
   forgeUrl: string,
   where?: PillWhere,
-): Uint8Array {
+): Uint8Array<ArrayBuffer> {
   const tag = Buffer.from(toolbarTag(forgeUrl, where));
   const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   // latin1 is one character per byte, so an index in it is a byte offset.

@@ -14,6 +14,7 @@
  * directory — so guessing a hostname yields the forge's own "not found".
  */
 
+import { compressBytes, MIN_BYTES, negotiate } from "../http/compress.ts";
 import type { Database } from "bun:sqlite";
 import { getIssue, type Issue } from "../core/issues.ts";
 import { mayView } from "../core/sealed.ts";
@@ -649,7 +650,8 @@ export async function proxyApp(
     headers.set(name, value);
 
   // A page the pill may be written into is asked for plain: the rewrite
-  // cannot read a compressed body, and the app compresses what it is allowed.
+  // cannot read a compressed body, and the proxy compresses what it wrote.
+  const encoding = negotiate(request.headers.get("accept-encoding"));
   if (
     request.method === "GET" &&
     !target.nested &&
@@ -718,7 +720,7 @@ export async function proxyApp(
     response.body !== null &&
     rewritable(out, response.status)
   ) {
-    let page: Uint8Array | undefined;
+    let page: Uint8Array<ArrayBuffer> | undefined;
     try {
       page = withToolbar(
         new Uint8Array(await response.arrayBuffer()),
@@ -728,10 +730,22 @@ export async function proxyApp(
     } catch {
       return unavailable(runtime, target, status, "the app stopped answering");
     }
-    out.set("content-length", String(page.length));
+    let sent = page;
+    // Whether it is gzipped depends on the client, so every copy says so.
+    out.append("vary", "accept-encoding");
+    if (
+      encoding !== null &&
+      page.length >= MIN_BYTES &&
+      !out.has("content-encoding") &&
+      !/\bno-transform\b/i.test(out.get("cache-control") ?? "")
+    ) {
+      sent = compressBytes(page, encoding) as Uint8Array<ArrayBuffer>;
+      out.set("content-encoding", encoding);
+    }
+    out.set("content-length", String(sent.length));
     out.delete("etag");
     out.delete("content-md5");
-    return new Response(page, {
+    return new Response(sent, {
       status: response.status,
       statusText: response.statusText,
       headers: out,

@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { gzipSync } from "node:zlib";
+import { brotliDecompressSync, gzipSync } from "node:zlib";
 import { createApp, type App } from "../src/app.ts";
 import { newApp } from "../src/actions/apps.ts";
 import { commitToBranch } from "../src/actions/repos.ts";
@@ -27,6 +27,7 @@ quietLogs();
 const DOMAIN = "apps.test";
 const PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 1, 2, 3]);
 const HTML = "<html><body><h1>hi</h1></body></html>";
+const BIG = `<html><body>${"<p>hello hello hello</p>".repeat(200)}</body></html>`;
 
 describe("the forge pill", () => {
   let dataDir: string;
@@ -34,6 +35,7 @@ describe("the forge pill", () => {
   let servers: Servers;
   let runtime: AppsRuntime;
   let backend: ReturnType<typeof Bun.serve>;
+  let seen: string | null = null;
   let toolbar: boolean | undefined = undefined;
   let status: ReturnType<typeof spyOn>;
 
@@ -56,10 +58,12 @@ describe("the forge pill", () => {
         if (path === "/json") return Response.json({ a: 1 });
         if (path === "/img") return new Response(PNG, { headers: { "content-type": "image/png" } });
         if (path === "/bare") return new Response("<p>no body tag</p>", { headers: html });
-        if (path === "/gz")
+        if (path === "/gz") {
+          seen = request.headers.get("accept-encoding");
           return new Response(gzipSync(HTML), {
             headers: { ...html, "content-encoding": "gzip" },
           });
+        }
         if (path === "/stream")
           return new Response(
             new ReadableStream({
@@ -83,6 +87,10 @@ describe("the forge pill", () => {
           return new Response(HTML, {
             headers: { "content-type": "text/html; charset=shift_jis" },
           });
+        if (path === "/long") {
+          seen = request.headers.get("accept-encoding");
+          return new Response(BIG, { headers: html });
+        }
         return new Response(HTML, { headers: html });
       },
     });
@@ -181,6 +189,78 @@ describe("the forge pill", () => {
     expect(head.headers.get("content-length")).toBe(String(HTML.length));
     expect((await (await at("/big")).text()).length).toBe(REWRITE_MAX + 1);
     expect(await (await at("/sjis")).text()).toBe(HTML);
+  });
+
+  test("a rewritten page is gzipped by the proxy for a client that accepts gzip", async () => {
+    const res = await fetch(`${servers.url}/long`, {
+      headers: { host: `notes.${DOMAIN}`, accept: "text/html", "accept-encoding": "gzip" },
+      redirect: "manual",
+      decompress: false,
+    } as RequestInit);
+    expect(seen).toBe("identity");
+    expect(res.headers.get("content-encoding")).toBe("gzip");
+    expect(res.headers.get("vary")).toContain("accept-encoding");
+    const raw = new Uint8Array(await res.arrayBuffer());
+    expect(res.headers.get("content-length")).toBe(String(raw.length));
+    expect(new TextDecoder().decode(Bun.gunzipSync(raw))).toBe(
+      BIG.replace("</body>", `${tag()}</body>`),
+    );
+    const plain = await fetch(`${servers.url}/long`, {
+      headers: { host: `notes.${DOMAIN}`, accept: "text/html", "accept-encoding": "identity" },
+      redirect: "manual",
+    });
+    expect(plain.headers.get("content-encoding")).toBeNull();
+    expect(plain.headers.get("vary")).toContain("accept-encoding");
+    expect(await plain.text()).toContain(TOOLBAR_PATH);
+  });
+
+  test("a client that refuses gzip with q=0 gets the page plain", async () => {
+    const res = await fetch(`${servers.url}/long`, {
+      headers: { host: `notes.${DOMAIN}`, accept: "text/html", "accept-encoding": "gzip;q=0" },
+      redirect: "manual",
+      decompress: false,
+    } as RequestInit);
+    expect(res.headers.get("content-encoding")).toBeNull();
+    expect(res.headers.get("vary")).toContain("accept-encoding");
+    expect(await res.text()).toContain(TOOLBAR_PATH);
+  });
+
+  test("a client that accepts br is sent brotli", async () => {
+    const res = await fetch(`${servers.url}/long`, {
+      headers: { host: `notes.${DOMAIN}`, accept: "text/html", "accept-encoding": "gzip, br" },
+      redirect: "manual",
+      decompress: false,
+    } as RequestInit);
+    expect(res.headers.get("content-encoding")).toBe("br");
+    const raw = new Uint8Array(await res.arrayBuffer());
+    expect(res.headers.get("content-length")).toBe(String(raw.length));
+    expect(new TextDecoder().decode(brotliDecompressSync(raw))).toBe(
+      BIG.replace("</body>", `${tag()}</body>`),
+    );
+  });
+
+  test("a page under the threshold stays plain for a gzip client, and still varies", async () => {
+    const res = await fetch(`${servers.url}/`, {
+      headers: { host: `notes.${DOMAIN}`, accept: "text/html", "accept-encoding": "gzip" },
+      redirect: "manual",
+      decompress: false,
+    } as RequestInit);
+    expect(res.headers.get("content-encoding")).toBeNull();
+    expect(res.headers.get("vary")).toContain("accept-encoding");
+    expect(await res.text()).toContain(TOOLBAR_PATH);
+  });
+
+  test("an app with the pill off is sent the client's encoding and its gzip passes through", async () => {
+    toolbar = false;
+    const res = await fetch(`${servers.url}/gz`, {
+      headers: { host: `notes.${DOMAIN}`, accept: "text/html", "accept-encoding": "gzip" },
+      redirect: "manual",
+      decompress: false,
+    } as RequestInit);
+    toolbar = undefined;
+    expect(seen).toBe("gzip");
+    expect(res.headers.get("content-encoding")).toBe("gzip");
+    expect(new TextDecoder().decode(Bun.gunzipSync(new Uint8Array(await res.arrayBuffer())))).toBe(HTML);
   });
 
   test("toolbar: false turns it off", async () => {
