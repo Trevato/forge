@@ -12,6 +12,7 @@ import { chipsOf, KIND_CHIPS, type KindChip } from "../../core/feed_chips.ts";
 import { marksByName, type Mark } from "../../core/marks.ts";
 import { getUsersByIds, type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { placementsOf, type Placement } from "../../core/placements.ts";
 import { recentThoughts, type Thought } from "../../core/thoughts.ts";
 import { readFeed } from "../../feed/feed.ts";
@@ -230,8 +231,8 @@ function chipsBar(user: User, ctx: Ctx, items: readonly FeedItem[]): Html {
   </div>`;
 }
 
-/** The region: cards, or one line saying there is nothing to do. */
-export function feedRegion(user: User, ctx: Ctx): Html {
+/** What the region shows, read: the posts, the thoughts, where they sit, who posted. */
+function readRegion(user: User, ctx: Ctx) {
   // What needs you is pinned above the timeline (`needsYouSection`), so an
   // ask is never a second time a post below it; the feed API keeps them.
   const items = readFeed(ctx.app.db, user, { limit: FEED_FIRST_PAGE, withoutAsks: true }).items;
@@ -242,6 +243,16 @@ export function feedRegion(user: User, ctx: Ctx): Html {
     ctx.app.db,
     items.map((item) => item.actor ?? ""),
   );
+  return { items, thoughts, placed, marks };
+}
+
+/** The region: cards, or one line saying there is nothing to do. */
+export function feedRegion(user: User, ctx: Ctx): Html {
+  return drawRegion(user, ctx, readRegion(user, ctx));
+}
+
+function drawRegion(user: User, ctx: Ctx, read: ReturnType<typeof readRegion>): Html {
+  const { items, thoughts, placed, marks } = read;
   return html`<section
     id="live-feed"
     class="feed"
@@ -264,8 +275,13 @@ export function feedRegion(user: User, ctx: Ctx): Html {
 // GET /live/feed — the feed alone, for the region that shows it.
 export function liveFeedFragment(ctx: Ctx): Response {
   const user = ctx.auth.user;
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   if (!user) return fragment(html``, { status: 404 });
-  return fragment(feedRegion(user, ctx), { request: ctx.request });
+  const read = timePhase(ctx.request, "feed", () => readRegion(user, ctx));
+  const rendering = performance.now();
+  const response = fragment(drawRegion(user, ctx, read), { request: ctx.request });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 /**
