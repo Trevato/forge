@@ -45,6 +45,29 @@ export function spendFull(s: Kpis["spend"]): string {
   return s.ceilingUsd === null ? cents(s.todayUsd) : `${cents(s.todayUsd)} of ${cents(s.ceilingUsd)}`;
 }
 
+const DAY_MS = 24 * 3_600_000;
+
+/** Past a day, or with no backup at all, the last off-box backup is overdue. */
+export function backupOverdue(at: string | null, now: Date): boolean {
+  return at === null || !(now.getTime() - Date.parse(at) <= DAY_MS);
+}
+
+/** The backup's age as a person reads it: `3 h ago`, `2 d ago`, or `never`. */
+export function backupAge(at: string | null, now: Date): string {
+  const t = at === null ? NaN : Date.parse(at);
+  if (Number.isNaN(t)) return "never";
+  const min = Math.max(0, Math.floor((now.getTime() - t) / 60_000));
+  if (min < 1) return "just now";
+  if (min < 60) return `${min} min ago`;
+  if (min < 2880) return `${Math.floor(min / 60)} h ago`;
+  return `${Math.floor(min / 1440)} d ago`;
+}
+
+/** The exact time, for the title. */
+export function backupFull(at: string | null): string {
+  return at === null || Number.isNaN(Date.parse(at)) ? "No off-box backup yet" : at;
+}
+
 /**
  * The terminal's row: the same five figures in the same words, as plain
  * lines. Forge-wide like the web's, so the caller shows them to an admin only.

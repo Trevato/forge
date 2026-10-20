@@ -15,6 +15,7 @@
 
 import type { Database } from "bun:sqlite";
 import { spentTodayEverywhere } from "../crew/autonomy.ts";
+import { lastMirror } from "../snapshot/mirror.ts";
 import { HOURS, median } from "./throughput.ts";
 
 const HOUR_MS = 3_600_000;
@@ -32,9 +33,15 @@ export interface Kpis {
   readonly builders: { readonly running: number; readonly slots: number };
   /** What the crew's runs cost since UTC midnight, and the forge's daily ceiling (null: none set). */
   readonly spend: { readonly todayUsd: number; readonly ceilingUsd: number | null };
+  /** When the off-box mirror last finished holding a snapshot; null when it never has. */
+  readonly backupAt: string | null;
 }
 
-export function readKpis(db: Database, now: Date, forge: { readonly ceilingUsd: number | null } = { ceilingUsd: null }): Kpis {
+export function readKpis(
+  db: Database,
+  now: Date,
+  forge: { readonly ceilingUsd: number | null; readonly dataDir?: string } = { ceilingUsd: null },
+): Kpis {
   const end = now.getTime();
   const to = now.toISOString();
   const since = new Date(end - HOURS * HOUR_MS).toISOString();
@@ -84,7 +91,10 @@ export function readKpis(db: Database, now: Date, forge: { readonly ceilingUsd: 
 
   const todayUsd = spentTodayEverywhere(db, now);
 
+  const backupAt = forge.dataDir === undefined ? null : (lastMirror(forge.dataDir)?.newestAt ?? null);
+
   return {
+    backupAt,
     builders,
     spend: { todayUsd, ceilingUsd: forge.ceilingUsd },
     landedHours,

@@ -1,14 +1,14 @@
 /**
- * Home's row of five figures (#2871), from `flow/kpis.ts`: shipped per hour
+ * Home's row of six figures (#2871), from `flow/kpis.ts`: shipped per hour
  * with a day's sparkline, the live version and since when, the median check
  * time, the crew builders running of their slots, and the crew's spend today
- * of the daily ceiling. Server-rendered, one fixed-height card each, so
+ * of the daily ceiling, and the age of the last off-box backup. Server-rendered, one fixed-height card each, so
  * nothing moves when it paints. Only the studio's words: shipped, change,
  * check time.
  */
 
 import type { Database } from "bun:sqlite";
-import { buildersValue, checkTime, spendFull, spendValue } from "../../flow/kpi_words.ts";
+import { backupAge, backupFull, backupOverdue, buildersValue, checkTime, spendFull, spendValue } from "../../flow/kpi_words.ts";
 import { readKpis, type Kpis } from "../../flow/kpis.ts";
 import { html, raw, type Html } from "../html.ts";
 import { BOOTED } from "../../release/gate.ts";
@@ -31,8 +31,8 @@ export function sparkline(hours: readonly number[]): Html {
   );
 }
 
-function tile(label: string, href: string, value: Html | string, full: string, note: string | Html, title: string, extra: Html | null = null): Html {
-  return html`<a class="card kpi" href="${href}" aria-label="${label}: ${full}, ${title}">
+function tile(label: string, href: string, value: Html | string, full: string, note: string | Html, title: string, extra: Html | null = null, tone: "attn" | null = null): Html {
+  return html`<a class="card kpi" href="${href}"${tone === null ? "" : raw(` data-tone="${tone}"`)} aria-label="${label}: ${full}, ${title}">
     <span class="small muted">${label}</span>
     <span class="kpi-value num" title="${full}">${value}</span>
     <span class="kpi-note small muted" title="${title}">${note}</span>
@@ -46,7 +46,8 @@ export function liveNow(): { sha: string; at: string } | null {
   return commit === null ? null : { sha: commit, at: BOOTED };
 }
 
-export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null): Html {
+export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null, now: Date = new Date()): Html {
+  const overdue = backupOverdue(k.backupAt, now);
   const rate = k.landed / k.landedHours.length;
   return html`<section class="kpis" aria-label="The last 24 hours, as of this page load">
     ${tile(
@@ -90,10 +91,22 @@ export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null): Ht
       k.spend.ceilingUsd === null ? "no ceiling" : "of the daily ceiling",
       k.spend.ceilingUsd === null ? "No daily ceiling is set" : "Crew spend today (UTC), of the daily ceiling",
     )}
+    ${tile(
+      "Last off-box backup",
+      "/settings/backups",
+      backupAge(k.backupAt, now),
+      backupFull(k.backupAt),
+      k.backupAt === null ? "no backup off the machine yet" : overdue ? "overdue, more than 24 h" : "off the machine",
+      overdue ? "Overdue: the last off-box backup is more than 24 h old" : "Age of the last off-box backup",
+      null,
+      overdue ? "attn" : null,
+    )}
   </section>`;
 }
 
 /** The figures count every repository, so the caller shows this to an admin only. */
-export function kpiRow(db: Database, opts: { ceilingUsd?: number; now?: Date } = {}): Html {
-  return kpiRowFor(readKpis(db, opts.now ?? new Date(), { ceilingUsd: opts.ceilingUsd ?? null }), liveNow());
+export function kpiRow(db: Database, opts: { ceilingUsd?: number; dataDir?: string; now?: Date } = {}): Html {
+  const now = opts.now ?? new Date();
+  const forge = { ceilingUsd: opts.ceilingUsd ?? null, ...(opts.dataDir === undefined ? {} : { dataDir: opts.dataDir }) };
+  return kpiRowFor(readKpis(db, now, forge), liveNow(), now);
 }

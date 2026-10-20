@@ -254,15 +254,19 @@ settings until asked. `/?all=1` is the whole home, and its "Just my apps" link
 comes back. The terminal's first screen opens with the same lines, from the
 same query (`src/core/client-apps.ts`).
 
-Home shows five figures first, from `src/flow/kpis.ts`: shipped per hour (with
+Home shows six figures first, from `src/flow/kpis.ts`: shipped per hour (with
 a 24 h sparkline), the live version and since when, the median check time, the crew builders
 running of their slots, and the crew's spend today of the forge's daily
 ceiling (`FORGE_CREW_CEILING_USD`; without one, the spend alone and
-`no ceiling`). The spend tile links to `/settings/crew`, where the meter is.
+`no ceiling`), and the age of the last off-box backup (the mirror's newest
+snapshot, `mirror/state.json`; `3 h ago`, the exact time in its title), linking to
+`/settings/backups`. The spend tile links to `/settings/crew`, where the meter is.
+The backup tile past 24 hours, or with none (`never`), takes the card's existing
+`data-tone="attn"` and says overdue in its label.
 They count every repository, so only a site admin sees them, on both doors;
 nobody else does, and neither does the lean client home. On the web each is a
 card linking to `/board`, `/releases` or `/boards`. The terminal's first screen
-shows the same five as lines above the forge strip (`kpiLines` in
+shows the first five as lines above the forge strip (`kpiLines` in
 `src/flow/kpi_words.ts`). They are read when the page or screen loads and
 do not refresh on their own.
 
