@@ -37,7 +37,17 @@ import { loadRepo, notFoundPage, signInFirst } from "../chrome.ts";
 import { readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { badge, btn, card, empty, icon, sha, time } from "../ui.ts";
+import {
+  badge,
+  btn,
+  card,
+  empty,
+  icon,
+  listCard,
+  row,
+  sha,
+  time,
+} from "../ui.ts";
 
 const AUDIT_LIMIT = 200;
 
@@ -110,17 +120,15 @@ export async function auditPage(ctx: Ctx): Promise<Response> {
             title: "No apps to audit",
             note: "An app's policy shows here once it has a contract.",
           })
-        : html`<p class="audit-sum">
+        : html`<h2 class="mb">
               ${summary(sound.length, open, unsound.length, unread.length)}
-              ${when(
-                disobeying.length > 0,
-                () =>
-                  html` <span class="audit-alarm"
-                    >${count(disobeying.length, "app disobeys", "apps disobey")}
-                    its table.</span
-                  >`,
+              ${when(disobeying.length > 0, () =>
+                badge(
+                  `${count(disobeying.length, "app disobeys", "apps disobey")} its table.`,
+                  { tone: "danger", icon: "alert" },
+                ),
               )}
-            </p>
+            </h2>
             ${unsound.map(unsoundCard)}
             ${sound.map((a) =>
               policyCard(
@@ -177,7 +185,7 @@ function policyCard(
     );
   return card(
     html`<div class="table-scroll">
-      <table class="table audit" data-dense>
+      <table class="table" data-dense>
         <caption class="sr-only">
           ${name(a.repo)}: what each identity may do to each resource
         </caption>
@@ -195,7 +203,7 @@ function policyCard(
                 html`<tr>
                   ${i === 0
                     ? html`<th scope="rowgroup" rowspan="${verbs.length}">
-                        ${resource}
+                        <code>${resource}</code>
                       </th>`
                     : null}
                   <th scope="row">${verb}</th>
@@ -210,26 +218,21 @@ function policyCard(
           )}
         </tbody>
       </table>
-    </div>`,
+    </div>
+    ${when(last?.verdict === "mismatch", () => sentences(last!.said))}`,
     {
       pad: false,
       id: `${a.repo.ownerName}-${a.repo.name}`,
       ...(last?.verdict === "mismatch" ? { tone: "danger" as const } : {}),
       foot: probeFoot(a, last, writer),
-      head: html`<a href="/${a.repo.ownerName}/${a.repo.name}" class="audit-app"
-          >${icon("repo")} ${name(a.repo)}</a
-        >
-        <span class="audit-trail">
-          ${a.standing.open.length === 0
-            ? badge("closed to strangers", { tone: "success" })
-            : badge(
-                `${count(a.standing.open.length, "door", "doors")} open to anyone`,
-                { tone: "attn" },
-              )}
-          ${a.oid === undefined
-            ? null
-            : html`<code class="muted">${a.oid.slice(0, 7)}</code>`}
-        </span>`,
+      head: html`${appHead(a.repo, "repo")}
+        ${a.standing.open.length === 0
+          ? badge("closed to strangers", { tone: "success" })
+          : badge(
+              `${count(a.standing.open.length, "door", "doors")} open to anyone`,
+              { tone: "attn" },
+            )}
+        ${a.oid === undefined ? null : sha(a.oid)}`,
     },
   );
 }
@@ -272,21 +275,11 @@ function probeFoot(
         : last.verdict === "down"
           ? html`${badge("was not running", { tone: "attn" })}`
           : html`${badge("no door to knock on")}`;
-  return html`<span class="audit-said"
-      >${said}
-      <span class="muted small">
-        asked ${time(last.createdAt)} at
-        <code>${last.commitOid.slice(0, 7)}</code></span
-      ></span
+  return html`${said}
+    <span class="muted small">
+      asked ${time(last.createdAt)} at ${sha(last.commitOid)}</span
     >
-    ${knock}
-    ${when(
-      last.verdict === "mismatch",
-      () =>
-        html`<ul class="audit-problems audit-wide">
-          ${last.said.map((s) => html`<li>${s}</li>`)}
-        </ul>`,
-    )}`;
+    ${knock}`;
 }
 
 /**
@@ -397,44 +390,59 @@ export async function auditProbeSubmit(ctx: Ctx): Promise<Response> {
   });
 }
 
+/** A cell's answer as a §5 badge: `yes` lets anyone through, so it is the loud one. */
 function answer(a: Cell["answer"]): Html {
-  return html`<span class="audit-answer" data-answer="${a}">${a}</span>`;
+  return badge(a, {
+    ...(a === "yes" ? { tone: "attn" as const } : {}),
+    variant: a === "own" ? "secondary" : "outline",
+  });
+}
+
+/** A card's head names the app it is about, linked, as a §5 card head. */
+function appHead(repo: Repo, mark: "repo" | "alert"): Html {
+  return html`${icon(mark)}
+    <h3><a href="/${repo.ownerName}/${repo.name}">${name(repo)}</a></h3>
+    <span class="spacer"></span>`;
+}
+
+/** Whole sentences — what is wrong, what a door said — as §5 prose. */
+function sentences(lines: readonly string[]): Html {
+  return html`<div class="prose">
+    <ul>
+      ${lines.map((s) => html`<li>${s}</li>`)}
+    </ul>
+  </div>`;
 }
 
 function unsoundCard(a: Audited): Html {
   if (a.standing.kind !== "unsound") return html``;
-  return card(
-    html`<ul class="audit-problems">
-      ${a.standing.problems.map((p) => html`<li>${p}</li>`)}
-    </ul>`,
-    {
-      tone: "danger",
-      id: `${a.repo.ownerName}-${a.repo.name}`,
-      head: html`<a href="/${a.repo.ownerName}/${a.repo.name}" class="audit-app"
-          >${icon("alert")} ${name(a.repo)}</a
-        >
-        <span class="audit-trail"
-          >${badge("contract unsound", { tone: "danger" })}</span
-        >`,
-    },
-  );
+  return card(sentences(a.standing.problems), {
+    pad: false,
+    tone: "danger",
+    id: `${a.repo.ownerName}-${a.repo.name}`,
+    head: html`${appHead(a.repo, "alert")}
+    ${badge("contract unsound", { tone: "danger" })}`,
+  });
 }
 
 function unreadCard(unread: readonly Audited[]): Html {
-  return card(
-    html`<p class="muted small">
+  return listCard(
+    unread.map((a) =>
+      row({
+        href: `/${a.repo.ownerName}/${a.repo.name}`,
+        title: name(a.repo),
+        lead: icon("repo"),
+        nav: true,
+      }),
+    ),
+    {
+      head: html`${icon("eye")}
+        <h3>Unread</h3>`,
+      foot: html`<span class="muted small">
         These apps have no <code>contract.json</code>: their doors are written
         by hand, and this page cannot say what they allow.
-      </p>
-      <ul class="audit-unread">
-        ${unread.map(
-          (a) =>
-            html`<li>
-              <a href="/${a.repo.ownerName}/${a.repo.name}">${name(a.repo)}</a>
-            </li>`,
-        )}
-      </ul>`,
-    { head: html`<h3 class="audit-app">${icon("eye")} Unread</h3>` },
+      </span>`,
+    },
   );
 }
 
@@ -447,7 +455,7 @@ function changesSection(
 ): Html {
   if (crossings.length === 0 && changes.length === 0 && verdicts.length === 0)
     return html``;
-  return html`<h2 class="audit-h2">What changed</h2>
+  return html`<h2 class="mt mb">What changed</h2>
     ${when(crossings.length > 0, () => crossingsCard(crossings))}
     ${when(changes.length > 0, () => changesCard(changes))}
     ${when(verdicts.length > 0, () => verdictsCard(verdicts))}`;
@@ -488,10 +496,10 @@ function crossingsCard(crossings: readonly Crossing[]): Html {
     {
       pad: false,
       tone: "attn",
-      head: html`<h3 class="audit-app">
-        ${icon("shield")} ${count(crossings.length, "pull waits", "pulls wait")}
-        at the wall
-      </h3>`,
+      head: html`${icon("shield")}
+        <h3>
+          ${count(crossings.length, "pull waits", "pulls wait")} at the wall
+        </h3>`,
     },
   );
 }
@@ -526,7 +534,7 @@ function changesCard(changes: readonly ContractChange[]): Html {
                 ? "success"
                 : "default";
         return html`<li>
-          <div class="row audit-change">
+          <div class="row">
             <span class="row-lead">${icon("commit")}</span>
             <span class="row-main">
               <span class="row-title">${name(c.repo)}: ${c.subject}</span>
@@ -537,21 +545,12 @@ function changesCard(changes: readonly ContractChange[]): Html {
                 )}
                 · ${c.author} · ${time(c.date)}</span
               >
-              ${when(
-                c.loosened.length + c.tightened.length > 0,
-                () =>
-                  html`<ul class="audit-problems audit-cells">
-                    ${c.loosened.map(
-                      (l) => html`<li data-way="wider">${wallSentence(l)}</li>`,
-                    )}
-                    ${c.tightened.map(
-                      (l) =>
-                        html`<li data-way="narrower">
-                          ${l.resource}.${l.verb} as ${l.as}: was ${l.to}, now
-                          ${l.from === "absent" ? "gone" : l.from}
-                        </li>`,
-                    )}
-                  </ul>`,
+              ${c.loosened.map((l) => cellLine("wider", wallSentence(l)))}
+              ${c.tightened.map((l) =>
+                cellLine(
+                  "narrower",
+                  `${l.resource}.${l.verb} as ${l.as}: was ${l.to}, now ${l.from === "absent" ? "gone" : l.from}`,
+                ),
               )}
             </span>
             <span class="row-trail">${badge(what, { tone })}</span>
@@ -561,10 +560,10 @@ function changesCard(changes: readonly ContractChange[]): Html {
     </ul>`,
     {
       pad: false,
-      head: html`<h3 class="audit-app">
-        ${icon("history")}
-        ${count(changes.length, "contract change", "contract changes")}
-      </h3>`,
+      head: html`${icon("history")}
+        <h3>
+          ${count(changes.length, "contract change", "contract changes")}
+        </h3>`,
     },
   );
 }
@@ -603,13 +602,7 @@ function verdictsCard(verdicts: readonly VerdictChange[]): Html {
                   · ${time(v.at)} at
                   <code>${v.commitOid.slice(0, 7)}</code></span
                 >
-                ${when(
-                  v.said.length > 0,
-                  () =>
-                    html`<ul class="audit-problems audit-cells">
-                      ${v.said.map((s) => html`<li>${s}</li>`)}
-                    </ul>`,
-                )}
+                ${v.said.map((s) => cellLine(undefined, s))}
               </span>
             </div>
           </li>`,
@@ -617,9 +610,22 @@ function verdictsCard(verdicts: readonly VerdictChange[]): Html {
     </ul>`,
     {
       pad: false,
-      head: html`<h3 class="audit-app">
-        ${icon("activity")} Doors, over time
-      </h3>`,
+      head: html`${icon("activity")}
+        <h3>Doors, over time</h3>`,
     },
   );
+}
+
+/**
+ * One cell a change touched, as one more §5 row-meta line under the row's
+ * title: which way it moved, then the cell. The whole sentence is its title,
+ * so a line the row ellipsizes is still there to read.
+ */
+function cellLine(way: "wider" | "narrower" | undefined, text: string): Html {
+  return html`<span
+    class="row-meta"
+    title="${text}"
+    ${way === undefined ? null : html`data-way="${way}"`}
+    >${way === undefined ? null : html`${way} · `}<code>${text}</code></span
+  >`;
 }
