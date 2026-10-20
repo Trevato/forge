@@ -33,6 +33,7 @@ import { LIST_LIMIT_MAX } from "../../core/issues.ts";
 import { listReposByOwner, type Repo } from "../../core/repos.ts";
 import { getUserByName, hiddenFrom, type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { notFoundPage, pageHead, signInFirst } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
@@ -511,12 +512,18 @@ export async function teamCreate(ctx: Ctx): Promise<Response> {
 
 // GET /:owner/-/teams/:team
 export function teamPage(ctx: Ctx): Response {
-  const org = requireOrgAdmin(ctx);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const org = timePhase(ctx.request, "org", () => requireOrgAdmin(ctx));
   if (!org) return notFoundPage(ctx);
-  const team = getTeam(ctx.app.db, ctx.params.team ?? "");
+  const team = timePhase(ctx.request, "team", () =>
+    getTeam(ctx.app.db, ctx.params.team ?? ""),
+  );
   if (!team || team.orgId !== org.id) return notFoundPage(ctx);
 
-  const members = listTeamMembers(ctx.app.db, team.id);
+  const members = timePhase(ctx.request, "members", () =>
+    listTeamMembers(ctx.app.db, team.id),
+  );
+  const rendering = performance.now();
   const teamBase = `/${org.username}/-/teams/${team.id}`;
   // The last owner may not be removed: an org must keep an admin.
   const protectedTeam = team.name === OWNERS_TEAM;
@@ -575,7 +582,7 @@ export function teamPage(ctx: Ctx): Response {
     ),
   )}`;
 
-  return page({
+  const response = page({
     ctx,
     title: `${team.name} · ${org.username}`,
     crumbs: [
@@ -584,6 +591,8 @@ export function teamPage(ctx: Ctx): Response {
     ],
     body,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 /** The three team POSTs share a resolution: org, team, and a checked form. */
