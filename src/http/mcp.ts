@@ -3278,6 +3278,9 @@ function reportCall(ctx: Ctx, message: unknown): unknown | undefined {
 const NOT_HERE = (allow: string): Response =>
   new Response(null, { status: 405, headers: { allow } });
 
+/** Every tool name the forge lists, admin-only ones included. */
+export const toolNames = (): string[] => [...TOOLS.map((t) => t.name), REPORT_TOOL.name];
+
 export function mcpRoutes(router: Router<Handler>): void {
   router.add("POST", "/mcp", async (ctx) => {
     const user = ctx.auth.user;
