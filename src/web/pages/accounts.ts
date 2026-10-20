@@ -28,6 +28,7 @@ import {
 } from "../../core/orgs.ts";
 import { getUserByName } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
@@ -130,18 +131,23 @@ function row(a: AccountRow, sole: readonly string[]): Html {
 
 // GET /settings/accounts
 export function accountsPage(ctx: Ctx): Response {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   return accountsView(ctx);
 }
 
 /** The page, with what an act needs said first (`notice`) when it did not finish. */
 function accountsView(ctx: Ctx, notice?: Html, status = 200): Response {
   if (!ctx.auth.user) return signInFirst(ctx);
-  const listed = listAccounts(ctx.app, ctx.auth.user);
+  const user = ctx.auth.user;
+  const listed = timePhase(ctx.request, "accounts", () =>
+    listAccounts(ctx.app, user),
+  );
   if (!listed.ok) return notFoundPage(ctx);
   const people = listed.value;
   // Without mail a newcomer cannot prove an address; the owner's word is
   // the only way in, and the page says so where it is given.
-  const noMail = mailConfigured(ctx.app)
+  const mail = timePhase(ctx.request, "mail", () => mailConfigured(ctx.app));
+  const noMail = mail
     ? null
     : card(
         html`<p>
@@ -153,7 +159,9 @@ function accountsView(ctx: Ctx, notice?: Html, status = 200): Response {
       );
   // An organization every owner of which is suspended or removed stays as
   // it is for its members; only the forge's owner can mend it.
-  const orphans = ownerlessOrgs(ctx.app.db);
+  const orphans = timePhase(ctx.request, "orphans", () =>
+    ownerlessOrgs(ctx.app.db),
+  );
   const ownerless =
     orphans.length === 0
       ? null
@@ -173,21 +181,22 @@ function accountsView(ctx: Ctx, notice?: Html, status = 200): Response {
           </p>`,
           { tone: "attn" },
         );
-  return shell(
+  const sole = timePhase(ctx.request, "owned", () =>
+    people.map((a) => {
+      const u = getUserByName(ctx.app.db, a.username);
+      return u === undefined
+        ? []
+        : soleOwnedOrgs(ctx.app.db, u.id).map((o) => o.username);
+    }),
+  );
+  const rendering = performance.now();
+  const response = shell(
     ctx,
     html`${notice ?? null}${ownerless}${noMail}${card(
       people.length === 0
         ? empty({ icon: "users", title: "Nobody has joined yet." })
         : html`<ul class="rows">
-            ${people.map((a) => {
-              const user = getUserByName(ctx.app.db, a.username);
-              return row(
-                a,
-                user === undefined
-                  ? []
-                  : soleOwnedOrgs(ctx.app.db, user.id).map((o) => o.username),
-              );
-            })}
+            ${people.map((a, i) => row(a, sole[i] ?? []))}
           </ul>`,
       {
         head: html`<h2>Who is on this forge</h2>
@@ -200,6 +209,8 @@ function accountsView(ctx: Ctx, notice?: Html, status = 200): Response {
     )}`,
     status,
   );
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 /** Where an organization's owners are added. */
