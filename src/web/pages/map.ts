@@ -1144,6 +1144,13 @@ export const mapCss = /* css */ `
   .map-lane-head { gap: 6px 10px; }
   .map-lane-head .map-counts { margin-left: 0; flex-basis: 100%; }
 }
+@media (prefers-reduced-motion: reduce) {
+  .map-card, .map-title, .map-lane-caret { transition: none; }
+}
+@media (forced-colors: active) {
+  .map-tool:focus-visible, .map-lane-head:focus-visible { outline: 2px solid Highlight; }
+  .map-node:focus-visible .map-card { stroke: Highlight; stroke-width: 3; }
+}
 `;
 
 /**

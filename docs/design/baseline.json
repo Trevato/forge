@@ -9,15 +9,6 @@
       "input": 0,
       "target": 0
     },
-    "src/web/pages/map.ts": {
-      "colour": 0,
-      "size": 0,
-      "motion": 3,
-      "forced": 1,
-      "focus": 0,
-      "input": 0,
-      "target": 0
-    },
     "src/web/standards.ts": {
       "colour": 2,
       "size": 0,
