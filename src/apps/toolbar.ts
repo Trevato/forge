@@ -40,15 +40,6 @@ export const toolbarJs = `(function () {
   panel.setAttribute("aria-label", "Where you are");
   panel.tabIndex = -1;
   panel.style.cssText = "outline:none;background:#1f2328;color:#fff;padding:8px 12px;border-radius:14px;box-shadow:0 1px 4px rgba(0,0,0,.4);max-width:min(280px,calc(100vw - 64px));flex-direction:column;gap:2px;display:none";
-  var x = document.createElement("button");
-  x.type = "button";
-  x.textContent = "\\u00d7";
-  x.setAttribute("aria-label", "Close");
-  x.style.cssText = "all:unset;box-sizing:border-box;cursor:pointer;align-self:flex-end;min-width:44px;min-height:44px;text-align:center;line-height:44px;font-size:20px;margin:-8px -12px -8px 0";
-  x.addEventListener("focus", function () { x.style.outline = "3px solid #58a6ff"; });
-  x.addEventListener("blur", function () { x.style.outline = "none"; });
-  x.addEventListener("click", function () { set(false); pill.focus(); });
-  panel.appendChild(x);
   function line(text, bold) {
     var el = document.createElement("div");
     el.textContent = text;
@@ -128,21 +119,28 @@ export const toolbarJs = `(function () {
       .catch(function () {});
   } catch (e) {}
   // An inline display beats the UA [hidden] rule, so display carries the state.
-  var key = "forge-pill:" + (d.app || "");
-  function remember(open) {
-    try { window.localStorage.setItem(key, open ? "open" : "closed"); } catch (e) {}
+  function ring(b) {
+    b.addEventListener("focus", function () { b.style.outline = "3px solid #58a6ff"; b.style.outlineOffset = "2px"; });
+    b.addEventListener("blur", function () { b.style.outline = "none"; });
   }
-  function set(open, quiet) {
+  var x = document.createElement("button");
+  x.type = "button";
+  x.textContent = "\\u00d7";
+  x.setAttribute("aria-label", "Close");
+  x.style.cssText = "all:unset;box-sizing:border-box;cursor:pointer;align-self:flex-end;min-width:44px;min-height:44px;text-align:center;line-height:44px;font-size:20px;margin:-8px -12px -8px 0";
+  ring(x);
+  x.addEventListener("click", function () { set(false); pill.focus(); });
+  panel.appendChild(x);
+  panel.style.display = "none";
+  function set(open) {
     panel.hidden = !open;
     panel.style.display = open ? "flex" : "none";
     pill.setAttribute("aria-expanded", open ? "true" : "false");
     pill.style.opacity = open ? "1" : ".85";
-    if (!quiet) remember(open);
-    if (open && !quiet) panel.focus();
+    if (open) panel.focus();
   }
   pill.addEventListener("click", function () { set(panel.hidden); });
-  pill.addEventListener("focus", function () { pill.style.outline = "3px solid #58a6ff"; pill.style.outlineOffset = "2px"; });
-  pill.addEventListener("blur", function () { pill.style.outline = "none"; });
+  ring(pill);
   document.addEventListener("keydown", function (e) {
     if (e.key !== "Escape" || panel.hidden) return;
     set(false);
@@ -157,8 +155,6 @@ export const toolbarJs = `(function () {
   box.appendChild(panel);
   root.appendChild(box);
   (document.body || document.documentElement).appendChild(host);
-  set(false, true);
-  try { if (window.localStorage.getItem(key) === "open") set(true, true); } catch (e) {}
 })();
 `;
 

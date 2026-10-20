@@ -304,7 +304,7 @@ describe("the forge pill", () => {
     expect(res.headers.get("content-type")).toContain("javascript");
     const code = await res.text();
     expect(code).toBe(toolbarJs);
-    expect(code.length).toBeLessThan(8 * 1024);
+    expect(code.length).toBeLessThan(7 * 1024);
     expect(code).not.toMatch(/\beval\b|new Function|\son[a-z]+\s*=/);
     expect(code).toContain("attachShadow");
   });
@@ -364,7 +364,7 @@ describe("the pill's keyboard and touch behaviour", () => {
     });
     const all = (el: El): El[] => [el, ...el.children.flatMap(all)];
     // The script keeps its tree in the shadow root; capture it.
-    function tree(data: Record<string, string>, store?: Record<string, string>) {
+    function tree(data: Record<string, string>) {
       let root!: El;
       const orig = make;
       const patched = (tag: string): El => {
@@ -379,11 +379,7 @@ describe("the pill's keyboard and touch behaviour", () => {
         listeners: {} as Record<string, ((e: unknown) => void)[]>,
         addEventListener(t: string, f: (e: unknown) => void) { (this.listeners[t] ??= []).push(f); },
       };
-      const localStorage = store && {
-        getItem: (k: string) => store[k] ?? null,
-        setItem: (k: string, v: string) => { store[k] = v; },
-      };
-      new Function("window", "document", "URL", toolbarJs)({ localStorage }, doc, URL);
+      new Function("window", "document", "URL", toolbarJs)({}, doc, URL);
       const els = all(root);
       const pill = els.find((e) => e.tag === "button")!;
       const panel = els.find((e) => e.attrs.role === "region")!;
@@ -429,20 +425,6 @@ describe("the pill's keyboard and touch behaviour", () => {
       expect(panel.style.display).toBe("none");
       expect(panel.hidden).toBe(true);
       expect(pill.focused).toBe(true);
-    });
-
-    test("open or closed is remembered per app, and storage failing is harmless", () => {
-      const store: Record<string, string> = {};
-      const first = tree({ app: "notes" }, store);
-      first.pill.listeners.click![0]!();
-      expect(store["forge-pill:notes"]).toBe("open");
-      const again = tree({ app: "notes" }, store);
-      expect(again.panel.style.display).toBe("flex");
-      expect(again.pill.attrs["aria-expanded"]).toBe("true");
-      expect(tree({ app: "other" }, store).panel.style.display).toBe("none");
-      again.pill.listeners.click![0]!();
-      expect(store["forge-pill:notes"]).toBe("closed");
-      expect(tree({ app: "notes" }, store).panel.style.display).toBe("none");
     });
 
     test("the pill has a visible focus ring and a thumb-sized, legible target", () => {
