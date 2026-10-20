@@ -24,8 +24,8 @@ import { readGrant } from "../src/apps/proxy.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import { getAppByRepo, type AppRecord } from "../src/core/apps.ts";
 import { listEvents } from "../src/core/events.ts";
-import { looksForEnv, recordLook, type Look } from "../src/core/looks.ts";
-import { encodePng } from "../src/design/image/png.ts";
+import { lookSlot, lookUrl, looksForEnv, recordLook, type Look } from "../src/core/looks.ts";
+import { decodePng, encodePng } from "../src/design/image/png.ts";
 import { setAppMembers } from "../src/core/app_members.ts";
 import { listPulls, type Pull } from "../src/core/pulls.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
@@ -83,8 +83,10 @@ describe("the look", () => {
   // The stand-in browser: writes a picture, or falls over, as told.
   let mode: "ok" | "fail" | "nobrowser" = "ok";
   const calls: LookInput[] = [];
+  // The dark pictures, kept apart so what counts the light ones stays true.
+  const darkCalls: LookInput[] = [];
   const fake: Capture = async (input) => {
-    calls.push(input);
+    (input.dark === true ? darkCalls : calls).push(input);
     if (mode === "fail") return err("the browser fell over");
     if (mode === "nobrowser") return err(NO_BROWSER);
     writeFileSync(input.out, input.width === 1280 ? DESKTOP_PNG : PNG);
@@ -474,6 +476,31 @@ describe("the look", () => {
     mode = "ok";
   }, 120_000);
 
+  test("a look recorded with no theme reads as light, and light and dark never share a slot", () => {
+    const base = {
+      appId: record.id,
+      env: "production",
+      commitOid: "a".repeat(40),
+      kind: "phone" as const,
+      path: "looks/x.png",
+    };
+    const old = recordLook(app.db, base);
+    expect(old.theme).toBe("light");
+    const dark = recordLook(app.db, { ...base, theme: "dark", path: "looks/x-dark.png" });
+    expect(dark.id).not.toBe(old.id);
+    expect(dark.theme).toBe("dark");
+    expect(lookSlot("/", "phone")).toBe("phone");
+    expect(lookSlot("/", "phone", "dark")).toBe("phone-dark");
+    expect(lookSlot("/board", "phone", "dark")).toBe("board-phone-dark");
+    const mine = (theme: "light" | "dark" | "any") =>
+      looksForEnv(app.db, record.id, "production", theme).filter(
+        (l) => l.commitOid === base.commitOid,
+      );
+    expect(mine("light").map((l) => l.path)).toEqual(["looks/x.png"]);
+    expect(mine("dark").map((l) => l.path)).toEqual(["looks/x-dark.png"]);
+    expect(mine("any")).toHaveLength(2);
+  });
+
   test("what a page recorded is kept as plain numbers, a missing type as an empty list", () => {
     expect(
       parseRecorded({
@@ -746,6 +773,65 @@ describe("the look", () => {
       `alt="hello /board #${opened.value.number} on a phone"`,
     );
     expect(page).toContain(`alt="hello #${opened.value.number} on a phone"`);
+
+    // Each page is also pictured in the dark, at phone and desktop, in a
+    // slot of its own: the same page and kind, a different file.
+    const dark = await until(() => {
+      const found = looksForEnv(app.db, record.id, env, "dark").filter(
+        (l) => l.commitOid === commitOid,
+      );
+      return found.length === 4 ? found : undefined;
+    }, 30_000);
+    expect(dark.every((l) => l.theme === "dark")).toBe(true);
+    expect(dark.map((l) => l.kind).sort()).toEqual(["desktop", "desktop", "phone", "phone"]);
+    expect(darkCalls.every((c) => c.dark === true)).toBe(true);
+    const darkPhone = dark.find((l) => l.page === "/" && l.kind === "phone")!;
+    expect(darkPhone.path).toBe(
+      `looks/${record.id}/${env}/${commitOid}-phone-dark.png`,
+    );
+    expect(darkPhone.path).not.toBe(homePhone.path);
+    expect(existsSync(join(dataDir, darkPhone.path))).toBe(true);
+    expect(existsSync(join(dataDir, homePhone.path))).toBe(true);
+    // The light listing is what every page has always shown: no dark row in it.
+    expect(rows.some((l) => l.theme === "dark")).toBe(false);
+    const served = await web(
+      `/alice/hello/looks/${env}/${commitOid}/phone-dark.png`,
+      aliceCookie,
+    );
+    expect(served.status).toBe(200);
+    expect(lookUrl("/alice/hello", darkPhone)).toContain("/phone-dark.png?v=");
+    // And it is on the pull page, as a link that works without script.
+    const darkPage = await (
+      await web(`/alice/hello/pulls/${opened.value.number}`, aliceCookie)
+    ).text();
+    expect(darkPage).toContain(
+      `<a class="look look-phone" href="/alice/hello/looks/${env}/${commitOid}/phone-dark.png?v=`,
+    );
+    expect(darkPage).toContain(
+      `src="/alice/hello/looks/${env}/${commitOid}/board-desktop-dark.png?v=`,
+    );
+    expect(darkPage).toContain(
+      `alt="hello /board #${opened.value.number} on a desktop in the dark"`,
+    );
+    // The dark pair is named, and folded away until asked for.
+    expect(darkPage).toMatch(
+      /<details class="quiet-details">\s*<summary class="muted small">In the dark<\/summary>/,
+    );
+    // An older head's dark picture never sits under the shown commit's caption.
+    const stale = "b".repeat(40);
+    recordLook(app.db, {
+      appId: record.id,
+      env,
+      commitOid: stale,
+      kind: "phone",
+      theme: "dark",
+      path: `looks/${record.id}/${env}/${stale}-phone-dark.png`,
+    });
+    const after = await (
+      await web(`/alice/hello/pulls/${opened.value.number}`, aliceCookie)
+    ).text();
+    expect(after).not.toContain(stale);
+    expect(after).toContain(`${commitOid}/phone-dark.png?v=`);
   }, 120_000);
 
   test("the sweep pictures a running production missing one: a thumb from before thumbs were the page is retaken as a stranger; one that failed is not retried each sweep", async () => {
@@ -1102,6 +1188,43 @@ describe("the look", () => {
         "utf8",
       );
       expect(seen).toContain(`${alice.id}|alice|admin|`);
+    },
+    120_000,
+  );
+  test.skipIf(chromium === undefined)(
+    "a dark capture is truly dark: the same page, light and dark, differs in its pixels",
+    async () => {
+      const page = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: () =>
+          new Response(
+            "<!doctype html><style>body{margin:0;background:#fff}@media (prefers-color-scheme: dark){body{background:#000}}</style><p>hi</p>",
+            { headers: { "content-type": "text/html" } },
+          ),
+      });
+      try {
+        const corner = async (dark: boolean): Promise<number> => {
+          const out = join(dataDir, `scheme-${dark ? "dark" : "light"}.png`);
+          const taken = await takeLook({
+            url: `http://127.0.0.1:${page.port}/`,
+            out,
+            width: 390,
+            height: 844,
+            dark,
+            timeoutMs: 30_000,
+          });
+          expect(taken.ok).toBe(true);
+          const image = decodePng(readFileSync(out));
+          if (!image.ok) throw new Error(image.error);
+          const last = image.value.rgba.length - 4;
+          return image.value.rgba[last]!;
+        };
+        expect(await corner(false)).toBe(255);
+        expect(await corner(true)).toBe(0);
+      } finally {
+        page.stop(true);
+      }
     },
     120_000,
   );

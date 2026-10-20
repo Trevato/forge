@@ -48,6 +48,18 @@ export const LOOK_WINDOWS: Readonly<
  */
 export const LEGACY_THUMB_WIDTH = 200;
 
+/**
+ * Which colour scheme a picture was taken in. Every look from before dark
+ * pictures existed is light; a dark one is taken with the page's
+ * `prefers-color-scheme` forced to dark.
+ */
+export type LookTheme = "light" | "dark";
+export const LOOK_THEMES: readonly LookTheme[] = ["light", "dark"];
+export const DEFAULT_THEME: LookTheme = "light";
+
+/** The kinds also pictured in the dark: a thumb is the desktop page reduced, and stays light. */
+export const DARK_KINDS: readonly LookKind[] = ["phone", "desktop"];
+
 /** A look with no page recorded — every row before `app.looks` existed. */
 export const DEFAULT_PAGE = "/";
 
@@ -66,9 +78,14 @@ const pageSlug = (page: string): string =>
  * before `app.looks` existed, so two pages of one commit never collide
  * and old names keep meaning what they always meant.
  */
-export const lookSlot = (page: string, kind: LookKind): string => {
+export const lookSlot = (
+  page: string,
+  kind: LookKind,
+  theme: LookTheme = DEFAULT_THEME,
+): string => {
   const slug = pageSlug(page);
-  return slug === "" ? kind : `${slug}-${kind}`;
+  const base = slug === "" ? kind : `${slug}-${kind}`;
+  return theme === "dark" ? `${base}-dark` : base;
 };
 
 export interface Look {
@@ -79,6 +96,8 @@ export interface Look {
   /** The page pictured — `forge.json`'s `app.looks`, `/` when unset. */
   readonly page: string;
   readonly kind: LookKind;
+  /** The colour scheme it was taken in; light for every look before dark ones. */
+  readonly theme: LookTheme;
   /** Where the picture is, relative to the data directory; empty on an error. */
   readonly path: string;
   readonly createdAt: string;
@@ -99,6 +118,7 @@ interface Row {
   commit_oid: string;
   page: string;
   kind: LookKind;
+  theme: LookTheme;
   path: string;
   created_at: string;
   error: string | null;
@@ -107,13 +127,27 @@ interface Row {
   note: string | null;
 }
 
+/**
+ * The `page` column of a dark look. The table's unique key is (app, env,
+ * commit, page, kind) and a roll never rebuilds it (migrations are
+ * additive while an older process still serves), so a dark look is filed
+ * under a page no light one can have — pages start with `/` — and this
+ * module is the only place that knows.
+ */
+const DARK_PREFIX = "dark:";
+const stored = (page: string, theme: LookTheme): string =>
+  theme === "dark" ? `${DARK_PREFIX}${page}` : page;
+const unstored = (page: string): string =>
+  page.startsWith(DARK_PREFIX) ? page.slice(DARK_PREFIX.length) : page;
+
 const toLook = (r: Row): Look => ({
   id: r.id,
   appId: r.app_id,
   env: r.env,
   commitOid: r.commit_oid,
-  page: r.page,
+  page: unstored(r.page),
   kind: r.kind,
+  theme: r.theme,
   path: r.path,
   createdAt: r.created_at,
   error: r.error,
@@ -128,6 +162,7 @@ export interface RecordLookInput {
   readonly commitOid: string;
   readonly page?: string | undefined;
   readonly kind: LookKind;
+  readonly theme?: LookTheme | undefined;
   readonly path: string;
   readonly error?: string | undefined;
   /** Who it was taken as; the owner unless said. */
@@ -140,9 +175,10 @@ export interface RecordLookInput {
 /** Record a picture, or the reason there is none. A retake replaces. */
 export function recordLook(db: Database, input: RecordLookInput): Look {
   const page = input.page ?? DEFAULT_PAGE;
+  const theme = input.theme ?? DEFAULT_THEME;
   db.query(
-    `INSERT INTO look (id, app_id, env, commit_oid, page, kind, path, error, taken_as, attached_by, note)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+    `INSERT INTO look (id, app_id, env, commit_oid, page, kind, path, error, taken_as, attached_by, note, theme)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
      ON CONFLICT (app_id, env, commit_oid, page, kind) DO UPDATE SET
        path = excluded.path, error = excluded.error, taken_as = excluded.taken_as,
        created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
@@ -151,15 +187,16 @@ export function recordLook(db: Database, input: RecordLookInput): Look {
     input.appId,
     input.env,
     input.commitOid,
-    page,
+    stored(page, theme),
     input.kind,
     input.path,
     input.error ?? null,
     input.takenAs ?? "owner",
     input.attachedBy ?? null,
     input.note ?? null,
+    theme,
   );
-  return getLook(db, input.appId, input.env, input.commitOid, page, input.kind)!;
+  return getLook(db, input.appId, input.env, input.commitOid, page, input.kind, theme)!;
 }
 
 export function getLook(
@@ -169,28 +206,38 @@ export function getLook(
   commitOid: string,
   page: string,
   kind: LookKind,
+  theme: LookTheme = DEFAULT_THEME,
 ): Look | undefined {
   const row = db
     .query<
       Row,
       [string, string, string, string, string]
     >(`SELECT * FROM look WHERE app_id = ?1 AND env = ?2 AND commit_oid = ?3 AND page = ?4 AND kind = ?5`)
-    .get(appId, env, commitOid, page, kind);
+    .get(appId, env, commitOid, stored(page, theme), kind);
   return row ? toLook(row) : undefined;
 }
 
-/** Every look of one environment, newest first. */
-export function looksForEnv(db: Database, appId: string, env: string): Look[] {
+/**
+ * Every look of one environment, newest first. The light ones unless
+ * `theme` says otherwise (`"any"` for both): what shows a page's picture
+ * has always meant the light one.
+ */
+export function looksForEnv(
+  db: Database,
+  appId: string,
+  env: string,
+  theme: LookTheme | "any" = DEFAULT_THEME,
+): Look[] {
   return db
     .query<
       Row,
-      [string, string]
-    >(`SELECT * FROM look WHERE app_id = ?1 AND env = ?2 ORDER BY created_at DESC, kind`)
-    .all(appId, env)
+      [string, string, string]
+    >(`SELECT * FROM look WHERE app_id = ?1 AND env = ?2 AND (?3 = 'any' OR theme = ?3) ORDER BY created_at DESC, kind, theme`)
+    .all(appId, env, theme)
     .map(toLook);
 }
 
-/** Every look of several apps in one read, newest first. */
+/** Every light look of several apps in one read, newest first. */
 export function looksForApps(db: Database, appIds: readonly string[]): Look[] {
   const out: Look[] = [];
   const unique = [...new Set(appIds)];
@@ -199,7 +246,7 @@ export function looksForApps(db: Database, appIds: readonly string[]): Look[] {
     const batch = unique.slice(i, i + CHUNK);
     const rows = db
       .query<Row, string[]>(
-        `SELECT * FROM look WHERE app_id IN (${batch.map((_, n) => `?${n + 1}`).join(",")})
+        `SELECT * FROM look WHERE theme = 'light' AND app_id IN (${batch.map((_, n) => `?${n + 1}`).join(",")})
          ORDER BY created_at DESC, kind`,
       )
       .all(...batch);
@@ -250,7 +297,7 @@ export const lookVersion = (look: Look): string =>
  * `app.looks` existed — and by which taking of it, so a browser that kept
  * the last one for a year asks for the new one. */
 export const lookUrl = (base: string, look: Look): string =>
-  `${base}/looks/${look.env}/${look.commitOid}/${lookSlot(look.page, look.kind)}.png?v=${lookVersion(look)}`;
+  `${base}/looks/${look.env}/${look.commitOid}/${lookSlot(look.page, look.kind, look.theme)}.png?v=${lookVersion(look)}`;
 
 /** Whether a look was attached by a person, not taken by the forge. */
 export const isAttached = (look: Look): boolean => look.attachedBy !== null;

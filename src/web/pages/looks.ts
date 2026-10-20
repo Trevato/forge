@@ -73,8 +73,8 @@ export function lookImage(ctx: Ctx): Response {
     return notFound();
   const record = getAppByRepo(ctx.app.db, repo.id);
   if (!record) return notFound();
-  const look = looksForEnv(ctx.app.db, record.id, env).find(
-    (l) => l.commitOid === commit && lookSlot(l.page, l.kind) === slot,
+  const look = looksForEnv(ctx.app.db, record.id, env, "any").find(
+    (l) => l.commitOid === commit && lookSlot(l.page, l.kind, l.theme) === slot,
   );
   if (look === undefined || look.error !== null) return notFound();
   if (!mayFetchLook(ctx, repo, record, look)) return notFound();
@@ -142,11 +142,14 @@ export function lookCard(
   // phone or desktop picture taken as nobody (a public app's), and no card
   // without one.
   const writer = canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user);
-  const looks = looksForEnv(ctx.app.db, record.id, env).filter(
+  const every = looksForEnv(ctx.app.db, record.id, env, "any").filter(
     (l) =>
       writer ||
       (l.kind !== "thumb" && l.error === null && mayFetchLook(ctx, repo, record, l)),
   );
+  // The dark pictures sit beside the light ones, never in place of them.
+  const dark = every.filter((l) => l.theme === "dark");
+  const looks = every.filter((l) => l.theme === "light");
   if (!writer && looks.length === 0) return html``;
   const attached = looks.filter(isAttached).reverse();
   const taken = looks.filter((l) => !isAttached(l));
@@ -169,6 +172,7 @@ export function lookCard(
   const labelled = pages.length > 1;
   const picture = (look: Look, kind: LookKind, page: string): Html => {
     const url = lookUrl(base, look);
+    const scheme = look.theme === "dark" ? " in the dark" : "";
     return html`<a class="look look-${kind}" href="${url}">
       <img
         src="${url}"
@@ -176,7 +180,7 @@ export function lookCard(
         height="${LOOK_SIZES[kind].height}"
         alt="${repo.name}${page === DEFAULT_PAGE
           ? ""
-          : ` ${page}`} #${pull.number} on a ${kind}"
+          : ` ${page}`} #${pull.number} on a ${kind}${scheme}"
         loading="lazy"
       />
     </a>`;
@@ -202,12 +206,29 @@ export function lookCard(
         </p>
       </div>`;
     const moved = shown.commitOid !== headOid;
+    // Only the dark pictures of the commit the caption names: after a push
+    // the light pair is retaken first, and an old head's dark pair must not
+    // sit under the new head's words.
+    const darkOfPage = dark.filter(
+      (l) => l.page === page && l.commitOid === shown.commitOid,
+    );
+    const darkPhone = pictured(darkOfPage, "phone");
+    const darkDesktop = pictured(darkOfPage, "desktop");
     return html`<div class="look-group">
       ${label}
       <div class="look-pair">
         ${when(phone, (l) => picture(l, "phone", page))}
         ${when(desktop, (l) => picture(l, "desktop", page))}
       </div>
+      ${when(darkPhone ?? darkDesktop, () =>
+        html`<details class="quiet-details">
+          <summary class="muted small">In the dark</summary>
+          <div class="look-pair">
+            ${when(darkPhone, (l) => picture(l, "phone", page))}
+            ${when(darkDesktop, (l) => picture(l, "desktop", page))}
+          </div>
+        </details>`,
+      )}
       <span class="muted small look-of"
         >at ${sha(shown.commitOid, `${base}/commit/${shown.commitOid}`)} ·
         ${time(shown.createdAt)}${when(

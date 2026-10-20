@@ -135,6 +135,7 @@ export function attachLook(
       commitOid: pull.headOid,
       page,
       kind,
+      theme: "light",
       path,
       createdAt: new Date().toISOString(),
       error: null,

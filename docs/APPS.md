@@ -806,6 +806,17 @@ slot used to load, so nothing goes blank. Pictures are served at
 `/:owner/:name/looks/<env>/<commit>/<page>-<kind>.png` for another, with the
 repository's own read access, cached by commit.
 
+Each page is also pictured in the dark (#2736): phone and desktop again, with
+the browser's `prefers-color-scheme` forced to dark, kept in a slot of its own
+(`phone-dark.png`, `board-desktop-dark.png`) with `theme` = `dark` on its row.
+A look recorded before this has no theme and reads as light; the thumb stays
+light, and every listing of looks means the light ones.
+On the pull page the dark pair sits in a collapsed "In the dark" fold under the
+light one (no script needed, and four tall pictures never stack open on a
+phone), and only the dark pictures of the commit the caption names are shown.
+The terminal pull screen shows no looks, light or dark: looks are a web page
+thing.
+
 The phone and desktop pictures are what the repository's owner would see:
 headless Chromium is pointed at the forge's own listener with the app's
 hostname resolved to loopback, through the grant door, so the app renders for

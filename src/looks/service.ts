@@ -44,7 +44,11 @@ import {
   deleteLooks,
   DEFAULT_PAGE,
   LEGACY_THUMB_WIDTH,
+  DARK_KINDS,
+  DEFAULT_THEME,
   LOOK_KINDS,
+  LOOK_THEMES,
+  type LookTheme,
   LOOK_SIZES,
   LOOK_WINDOWS,
   lookSlot,
@@ -154,8 +158,9 @@ export const lookPath = (
   commitOid: string,
   page: string,
   kind: LookKind,
+  theme: LookTheme = DEFAULT_THEME,
 ): string =>
-  join("looks", appId, env, `${commitOid}-${lookSlot(page, kind)}.png`);
+  join("looks", appId, env, `${commitOid}-${lookSlot(page, kind, theme)}.png`);
 
 /**
  * Whether a picture on record is one to keep. Every one is, except a
@@ -374,7 +379,7 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
     let allOk = true;
     // What each look's page recorded, for the check summary's vitals table.
     const vitals: LookVitals[] = [];
-    for (const { page, kind } of wanted) {
+    for (const { page, kind, theme } of wanted) {
       if (stopped) return;
       const token = signGrant(
         dataDir,
@@ -384,7 +389,7 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         asNobody(kind) ? undefined : asOwner,
       );
       const url = `http://${host}:${port}/__forge/grant?t=${encodeURIComponent(token)}&to=${encodeURIComponent(page)}`;
-      const path = lookPath(item.appId, item.env, item.commitOid, page, kind);
+      const path = lookPath(item.appId, item.env, item.commitOid, page, kind, theme);
       const out = join(dataDir, path);
       // Taken to one side and moved in whole. A pull that closes while its
       // picture is being taken sweeps its environment's folder away, and a
@@ -392,17 +397,18 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
       // give; this way the sweep and the picture never meet.
       const staged = join(
         stagingRoot(dataDir),
-        `${item.appId}-${item.env}-${item.commitOid}-${lookSlot(page, kind)}.png`,
+        `${item.appId}-${item.env}-${item.commitOid}-${lookSlot(page, kind, theme)}.png`,
       );
       mkdirSync(dirname(staged), { recursive: true });
       const shot = await capture({
         url,
         out: staged,
         ...LOOK_WINDOWS[kind],
+        ...(theme === "dark" ? { dark: true } : {}),
         timeoutMs: CAPTURE_TIMEOUT_MS,
       });
       // The thumb is the desktop page again, as a stranger: it adds no row.
-      if (kind !== "thumb") {
+      if (kind !== "thumb" && theme === "light") {
         const look = page === "/" ? kind : `${kind} ${page}`;
         if (shot.ok) vitals.push({ look, entries: shot.value.entries });
         else if (isNoBrowser(shot.error))
@@ -415,6 +421,7 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         env: item.env,
         commitOid: item.commitOid,
         page,
+        theme,
       };
       if (taken.ok) {
         // The environment moved on while the picture was taken: it shows
@@ -444,6 +451,7 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
           env: item.env,
           page,
           kind,
+          theme,
           error: taken.error,
         });
         recordLook(app.db, { ...row, kind, path: "", error: taken.error });
@@ -480,19 +488,23 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
     commitOid: string,
     pages: readonly string[] | undefined,
     failedCounts = false,
-  ): { page: string; kind: LookKind }[] {
+  ): { page: string; kind: LookKind; theme: LookTheme }[] {
     const have = new Set(
-      looksForEnv(app.db, appId, env)
+      looksForEnv(app.db, appId, env, "any")
         .filter(
           (l) =>
             l.commitOid === commitOid &&
             (keepLook(dataDir, l) || (failedCounts && l.error !== null)),
         )
-        .map((l) => lookSlot(l.page, l.kind)),
+        .map((l) => lookSlot(l.page, l.kind, l.theme)),
     );
     return (pages ?? [DEFAULT_PAGE]).flatMap((page) =>
-      LOOK_KINDS.filter((kind) => !have.has(lookSlot(page, kind))).map(
-        (kind) => ({ page, kind }),
+      LOOK_THEMES.flatMap((theme) =>
+        LOOK_KINDS.filter(
+          (kind) =>
+            (theme === "light" || DARK_KINDS.includes(kind)) &&
+            !have.has(lookSlot(page, kind, theme)),
+        ).map((kind) => ({ page, kind, theme })),
       ),
     );
   }

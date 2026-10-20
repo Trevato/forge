@@ -49,6 +49,8 @@ export interface LookInput {
   readonly out: string;
   readonly width: number;
   readonly height: number;
+  /** Force the page's `prefers-color-scheme` to dark; light (the browser's own) when unset. */
+  readonly dark?: boolean | undefined;
   /** A browser that has no picture by then is killed; the look fails. */
   readonly timeoutMs: number;
 }
@@ -406,6 +408,12 @@ async function shoot(
         },
         sessionId,
       );
+      if (input.dark === true)
+        await dt.send(
+          "Emulation.setEmulatedMedia",
+          { features: [{ name: "prefers-color-scheme", value: "dark" }] },
+          sessionId,
+        );
       // Before navigation: the observer is in place before the page's first script.
       await dt.send(
         "Page.addScriptToEvaluateOnNewDocument",
