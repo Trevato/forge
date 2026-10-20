@@ -9,6 +9,7 @@
 import { checkInput, flagRegistry, usesLine, winnerOffer, mayManageFlags, useFlagRegistry, type FlagDecl, type FlagValue } from "../../core/flags.ts";
 import { makeWinnerDefault } from "../../actions/flag_winner.ts";
 import type { Ctx } from "../../http/context.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html } from "../html.ts";
@@ -59,16 +60,26 @@ function summary(v: FlagValue | undefined) {
 
 // GET /settings/flags
 export function flagsPage(ctx: Ctx): Response {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const no = denied(ctx);
   if (no) return no;
-  const registry = flagRegistry();
+  const registry = timePhase(ctx.request, "registry", flagRegistry);
   const repo = ctx.app.config.forgeRepo;
   const names = Object.keys(registry.decls);
+  // The per-flag reads are interleaved with building each row: sum each.
+  let valuesMs = 0;
+  let usesMs = 0;
+  const rendering = performance.now();
   const rows = names.map((name) => {
     const decl = (registry.decls as Record<string, FlagDecl>)[name]!;
+    const t0 = performance.now();
     const v = registry.value(name as never);
+    const t1 = performance.now();
     const week = registry.uses(ctx.app.db, name, 7);
     const month = registry.uses(ctx.app.db, name, 30);
+    const t2 = performance.now();
+    valuesMs += t1 - t0;
+    usesMs += t2 - t1;
     const lead = winnerOffer(month, v);
     return row({
       lead: icon("activity"),
@@ -109,12 +120,16 @@ export function flagsPage(ctx: Ctx): Response {
       pad: false,
     },
   );
-  return page({
+  const response = page({
     ctx,
     title: "Flags",
     body: html`<div class="page-head"><h1>Flags</h1></div>
       ${settingsLayout(accountSections("flags", { admin: true }), body, "Account settings")}`,
   });
+  notePhase(ctx.request, "values", valuesMs);
+  notePhase(ctx.request, "uses", usesMs);
+  notePhase(ctx.request, "render", Math.max(performance.now() - rendering - valuesMs - usesMs, 0));
+  return response;
 }
 
 // POST /settings/flags
