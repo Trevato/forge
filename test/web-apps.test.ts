@@ -663,7 +663,7 @@ describe("apps, runs and the crew on the web", () => {
     const page = await bodyOf(alice, "/settings/crew");
     expect(page).toContain("No agents yet");
     expect(page).toContain("No crew runner is up");
-    expect(page).toContain("<h3>New agent</h3>");
+    expect(page).toContain("<h2>New agent</h2>");
     expect(await bodyOf(alice, "/settings")).toContain('href="/settings/crew"');
 
     const bad = await web(alice, "/settings/crew", {

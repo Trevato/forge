@@ -498,7 +498,7 @@ function crewView(ctx: Ctx, values: AgentValues, error?: string): Html {
     </form>`,
     {
       head: html`${icon("bot")}
-        <h3>New agent</h3>`,
+        <h2>New agent</h2>`,
     },
   )}`;
 }
@@ -538,7 +538,7 @@ function splitsCard(
         </tbody>
       </table>
     </div>`,
-    { pad: false, head: html`<h3>${title}</h3>` },
+    { pad: false, head: html`<h2>${title}</h2>` },
   );
 }
 
@@ -618,7 +618,7 @@ function agentView(agent: Agent, values: AgentValues, error?: string): Html {
     </form>`,
     {
       head: html`${icon("bot")}
-        <h3>${agent.user.username}</h3>
+        <h2>${agent.user.username}</h2>
         <span class="muted small">added ${time(agent.createdAt)}</span>`,
     },
   )}
@@ -633,7 +633,7 @@ function agentView(agent: Agent, values: AgentValues, error?: string): Html {
     {
       tone: "danger",
       head: html`${icon("alert")}
-        <h3>Retire</h3>`,
+        <h2>Retire</h2>`,
     },
   )}`;
 }

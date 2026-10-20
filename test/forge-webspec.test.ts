@@ -10,7 +10,9 @@ import { join } from "node:path";
 import { brotliDecompressSync } from "node:zlib";
 import { createApp, type App } from "../src/app.ts";
 import { openIssue } from "../src/actions/issues.ts";
+import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { createSession } from "../src/core/sessions.ts";
 import { createUser } from "../src/core/users.ts";
 import { compress } from "../src/http/compress.ts";
 import { securityFloor } from "../src/http/respond.ts";
@@ -24,6 +26,22 @@ const PATHS = ["/", "/signin", "/signup", "/explore", "/alice/notes", "/alice/no
 
 /** `check path` -> [section, why it stands]. Every one is expected on every page it names; one fixed fails the test, one new fails it too. */
 const KNOWN: Record<string, [string, string]> = {};
+
+/** The owner's pages: signed in, so no-store by design; webspec's caching findings on them are not asserted away, they are named. */
+const SIGNED_IN = ["/map", "/system", "/boards", "/settings/crew", "/alice/notes/pulls/2", "/settings"];
+const CACHING = "https://specification.website/#caching";
+const NO_ETAG = "signed-in HTML is no-store by design: it is per-person, so there is no validator to revalidate against";
+const KNOWN_SIGNED_IN: Record<string, [string, string]> = {
+  "etag /system": [CACHING, NO_ETAG],
+  "etag /boards": [CACHING, NO_ETAG],
+  "etag /map": [CACHING, NO_ETAG],
+  "etag /alice/notes/pulls/2": [CACHING, NO_ETAG],
+  "etag /settings": [CACHING, NO_ETAG],
+  "etag /settings/crew": [CACHING, NO_ETAG],
+  "title /map": ["https://specification.website/#title", "each map node is an inline SVG element whose <title> is its tooltip and accessible name, beside the page's own"],
+};
+
+let cookie = "";
 
 let dir = "";
 let app: App;
@@ -47,6 +65,11 @@ beforeAll(async () => {
   await commitToBranch(app, made.value, repo.value, { message: "seed", files: [{ path: "a.txt", content: "a" }] });
   const issue = openIssue(app, made.value, repo.value, { title: "First", body: "hello" });
   if (!issue.ok) throw new Error("issue");
+  const branched = await commitToBranch(app, made.value, repo.value, { branch: "feature", message: "feature", files: [{ path: "b.txt", content: "b" }] });
+  if (!branched.ok) throw new Error("branch");
+  const pull = await openPull(app, made.value, repo.value, { title: "Feature", baseBranch: "main", headBranch: "feature" });
+  if (!pull.ok) throw new Error("pull");
+  cookie = `forge_session=${createSession(app.db, made.value.id).token}`;
 });
 
 afterAll(async () => {
@@ -55,26 +78,36 @@ afterAll(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
+// The seam production uses (server.ts): compress, then the security floor.
+// Like fetch, the body arrives decoded while Content-Encoding stays for webspec to read.
+const through = (signedIn: boolean) => async (input: string, init?: RequestInit) => {
+  const request = new Request(input, init);
+  if (signedIn) request.headers.set("cookie", cookie);
+  if (!request.headers.has("accept-encoding")) request.headers.set("accept-encoding", "br, gzip");
+  const response = await compress(request, await http.handle(request)).then(securityFloor);
+  const encoding = response.headers.get("content-encoding");
+  if (encoding !== "br" && encoding !== "gzip") return response;
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const plain = encoding === "br" ? brotliDecompressSync(bytes) : Bun.gunzipSync(bytes);
+  return new Response(plain, response);
+};
+
 test("the forge's signed-out pages raise exactly the findings named in KNOWN", async () => {
-  // The seam production uses (server.ts): compress, then the security floor.
-  // Like fetch, the body arrives decoded while Content-Encoding stays for webspec to read.
-  const fetcher = async (input: string, init?: RequestInit) => {
-    const request = new Request(input, init);
-    if (!request.headers.has("accept-encoding")) request.headers.set("accept-encoding", "br, gzip");
-    const response = await compress(request, await http.handle(request)).then(securityFloor);
-    const encoding = response.headers.get("content-encoding");
-    if (encoding !== "br" && encoding !== "gzip") return response;
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    const plain = encoding === "br" ? brotliDecompressSync(bytes) : Bun.gunzipSync(bytes);
-    return new Response(plain, response);
-  };
-  const found = await webspec("http://forge.test", PATHS, fetcher, { site: true });
+  const found = await webspec("http://forge.test", PATHS, through(false), { site: true });
   const keyOf = (f: { check: string; path: string }) => `${f.check} ${f.path}`;
   // New: not named, or citing another section than the one named.
   expect(found.filter((f) => KNOWN[keyOf(f)]?.[0] !== f.section).map((f) => `${keyOf(f)}: ${f.message}`)).toEqual([]);
   // Fixed: named but no longer found, so the entry must go.
   const seen = new Set(found.map(keyOf));
   expect(Object.keys(KNOWN).filter((k) => !seen.has(k))).toEqual([]);
+});
+
+test("the owner's signed-in pages raise exactly the findings named in KNOWN_SIGNED_IN", async () => {
+  const found = await webspec("http://forge.test", SIGNED_IN, through(true));
+  const keyOf = (f: { check: string; path: string }) => `${f.check} ${f.path}`;
+  expect(found.filter((f) => KNOWN_SIGNED_IN[keyOf(f)]?.[0] !== f.section).map((f) => `${keyOf(f)} [${f.section}]: ${f.message}`)).toEqual([]);
+  const seen = new Set(found.map(keyOf));
+  expect(Object.keys(KNOWN_SIGNED_IN).filter((k) => !seen.has(k))).toEqual([]);
 });
 
 test("a page that answers 200 names its canonical address, equal to og:url; a 404 names none", async () => {
@@ -93,6 +126,12 @@ test("a page that answers 200 names its canonical address, equal to og:url; a 40
   const missing = await head("/no-such-page-here");
   expect(missing.status).toBe(404);
   expect(missing.html).not.toContain('rel="canonical"');
+});
+
+test("the walked signed-in pages answer 200 for the owner", async () => {
+  for (const path of SIGNED_IN) {
+    expect((await http.handle(new Request(`http://forge.test${path}`, { headers: { cookie } }))).status).toBe(200);
+  }
 });
 
 test("the walked repository pages exist", async () => {
