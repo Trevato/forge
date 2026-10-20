@@ -49,11 +49,59 @@ export function recentWindow(now: number = Date.now()): ScorecardWindow {
   return { since: new Date(now - RECENT_DAYS * 86_400_000) };
 }
 
+/** A scorecard for the pulls an agent opened on one model and prompt version. */
+export interface SplitScorecard extends Scorecard {
+  /** The model its latest run on the pull ran on; empty when unrecorded. */
+  readonly model: string;
+  /** The prompt version of that run; empty when unrecorded. */
+  readonly promptVersion: string;
+}
+
+/** "model · prompt version"; a half the runs never recorded reads "unrecorded". */
+export function splitLabel(p: SplitScorecard): string {
+  const half = (v: string) => (v === "" ? "unrecorded" : v);
+  return `${half(p.model)} · ${half(p.promptVersion)}`;
+}
+
 /** Each agent's scorecard, keyed by its user id: one grouped query. */
 export function crewScorecards(
   db: Database,
   window: ScorecardWindow = {},
 ): Map<string, Scorecard> {
+  return new Map(scorecardRows(db, window, false).map((r) => [r.authorId, r.card]));
+}
+
+/**
+ * Each agent's scorecard cut by (model, prompt version), keyed by user id.
+ * A pull belongs to the pairing of the agent's latest run on it; a pull with
+ * no recorded run (opened before the migration) is the pairing ('', ''),
+ * never dropped. Largest pairing first.
+ */
+export function crewScorecardSplits(
+  db: Database,
+  window: ScorecardWindow = {},
+): Map<string, SplitScorecard[]> {
+  const out = new Map<string, SplitScorecard[]>();
+  for (const r of scorecardRows(db, window, true)) {
+    const list = out.get(r.authorId) ?? [];
+    list.push({ ...r.card, model: r.model, promptVersion: r.promptVersion });
+    out.set(r.authorId, list);
+  }
+  for (const list of out.values())
+    list.sort(
+      (a, b) =>
+        b.opened - a.opened ||
+        a.model.localeCompare(b.model) ||
+        a.promptVersion.localeCompare(b.promptVersion),
+    );
+  return out;
+}
+
+function scorecardRows(
+  db: Database,
+  window: ScorecardWindow,
+  split: boolean,
+): { authorId: string; model: string; promptVersion: string; card: Scorecard }[] {
   // created_at is stored as ISO-8601 UTC, so the string compare is the time compare.
   // An invalid Date throws here rather than widen the window to all time.
   const since = window.since === undefined ? null : window.since.toISOString();
@@ -61,6 +109,8 @@ export function crewScorecards(
     .query<
       {
         author_id: string;
+        model: string;
+        prompt_version: string;
         opened: number;
         landed: number;
         rounds: number;
@@ -72,6 +122,8 @@ export function crewScorecards(
       [string | null]
     >(
       `SELECT issue.author_id AS author_id,
+              ${split ? latest("model") : "''"} AS model,
+              ${split ? latest("prompt_version") : "''"} AS prompt_version,
               COUNT(*) AS opened,
               SUM(pull.merged_at IS NOT NULL) AS landed,
               COALESCE(SUM(CASE WHEN pull.merged_at IS NOT NULL THEN
@@ -95,15 +147,16 @@ export function crewScorecards(
          JOIN pull ON pull.issue_id = issue.id
          JOIN user ON user.id = issue.author_id AND user.is_agent = 1
         WHERE ?1 IS NULL OR issue.created_at >= ?1
-        GROUP BY issue.author_id`,
+        GROUP BY issue.author_id${split ? ", model, prompt_version" : ""}`,
     )
     .all(since);
-  return new Map(
-    rows.map((r) => {
+  return rows.map((r) => {
       const checks = r.checks_ok + r.checks_failed;
-      return [
-        r.author_id,
-        {
+      return {
+        authorId: r.author_id,
+        model: r.model,
+        promptVersion: r.prompt_version,
+        card: {
           opened: r.opened,
           landed: r.landed,
           reviewRounds: r.landed === 0 ? null : r.rounds / r.landed,
@@ -114,9 +167,16 @@ export function crewScorecards(
               ? null
               : Math.max(0, Math.round(r.mean_land_days * 86_400_000)),
         },
-      ];
-    }),
-  );
+      };
+  });
+}
+
+/** The column of the agent's latest run on the pull; '' when it has none. `column` is a literal. */
+function latest(column: "model" | "prompt_version"): string {
+  return `COALESCE((SELECT run.${column} FROM run
+                     WHERE run.issue_id = issue.id AND run.kind = 'agent'
+                       AND run.actor_id = issue.author_id
+                     ORDER BY run.id DESC LIMIT 1), '')`;
 }
 
 /** A time to land in the largest unit that keeps it readable: both doors say it the same way. */

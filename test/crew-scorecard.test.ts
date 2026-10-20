@@ -10,7 +10,11 @@ import {
   createRun,
   finishRun,
 } from "../src/core/runs.ts";
-import { crewScorecards, recentWindow } from "../src/core/scorecard.ts";
+import {
+  crewScorecards,
+  crewScorecardSplits,
+  recentWindow,
+} from "../src/core/scorecard.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
@@ -276,6 +280,53 @@ describe("a scorecard per crew member", () => {
     expect(t.text()).not.toContain("review rounds, red checks");
     await t.enter();
     expect(t.text()).not.toContain("all 2 of 3");
+    t.stop();
+  });
+
+  test("one member on two models gets a row each, with their own landed counts", async () => {
+    await fetch(`${base}/api/v1/agents`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ username: "lee", model: "opus" }),
+    });
+    const lee = getUserByName(app.db, "lee")!.id;
+    const ran = (issueId: string, model: string, promptVersion: string) => {
+      const run = createRun(app.db, { repoId, kind: "agent", issueId, actorId: lee });
+      claimRun(app.db, run.id);
+      app.db
+        .query(`UPDATE run SET model = ?2, prompt_version = ?3 WHERE id = ?1`)
+        .run(run.id, model, promptVersion);
+    };
+    const merged = "2026-10-05T00:00:00.000Z";
+    ran(pull(lee, "A", { mergedAt: merged }), "opus", "p1");
+    ran(pull(lee, "B", { mergedAt: merged }), "opus", "p1");
+    ran(pull(lee, "C", { mergedAt: merged }), "haiku", "p1");
+    ran(pull(lee, "D"), "haiku", "p1");
+    pull(lee, "Before the migration", { mergedAt: merged });
+
+    const rows = crewScorecardSplits(app.db).get(lee)!;
+    const by = (m: string) => rows.find((r) => r.model === m)!;
+    expect([by("opus").opened, by("opus").landed]).toEqual([2, 2]);
+    expect([by("haiku").opened, by("haiku").landed]).toEqual([2, 1]);
+    // A pull with no recorded run is shown as unrecorded, not dropped.
+    expect([by("").opened, by("").landed, by("").promptVersion]).toEqual([1, 1, ""]);
+    expect(rows.reduce((n, r) => n + r.opened, 0)).toBe(5);
+
+    const page = await fetch(`${base}/settings/crew`, { headers: { cookie } }).then((r) => r.text());
+    const table = page.slice(page.indexOf(`id="crew-scorecard"`));
+    expect(table).toContain("opus");
+    expect(table).toContain("haiku");
+    expect(table).toContain("unrecorded");
+
+    // The terminal shows the same sub-rows under the member.
+    const t = terminal("ada");
+    await t.palette("Crew scorecard per agent");
+    await t.enter();
+    const text = t.text();
+    expect(text).toContain("↳ opus · p1");
+    expect(text).toContain("↳ haiku · p1");
+    expect(text).toContain("↳ unrecorded · unrecorded");
+    expect(text).toContain("↳ opus · p1 landed 30d 2 of 2 · all 2 of 2");
     t.stop();
   });
 });

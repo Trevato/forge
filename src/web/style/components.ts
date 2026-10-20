@@ -401,6 +401,14 @@ a.row:hover .row-title { color: var(--accent); }
   position: sticky; left: 0; z-index: 1; background: var(--card);
 }
 
+/* A sub-row (data-sub) is a split of the row above: indented under it, its
+   label cut with an ellipsis so a long "model · prompt" cannot widen the
+   sticky lead cell past a phone's width. */
+.table tr[data-sub] td:first-child {
+  padding-left: 24px; max-width: 14rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
 /* ---- tabs (navigation links, never role=tab) ---- */
 .tabs {
   display: flex; gap: 2px; align-items: stretch;

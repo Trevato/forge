@@ -26,10 +26,13 @@ import {
 } from "../../core/runs.ts";
 import {
   crewScorecards,
+  crewScorecardSplits,
+  splitLabel,
   RECENT_DAYS,
   recentWindow,
   spanText,
   type Scorecard,
+  type SplitScorecard,
 } from "../../core/scorecard.ts";
 import { crewFor } from "../../crew/dispatch.ts";
 import { MODELS } from "../../crew/models.ts";
@@ -229,19 +232,25 @@ function totalsCells(t: AgentTotals | undefined): Html {
     </td>`;
 }
 
+const pairKey = (p: SplitScorecard) => `${p.model}\0${p.promptVersion}`;
+
 /**
  * The scorecard: how each agent's pulls fare once opened — so the owner
  * can tune who does what. Landed, review rounds and red checks stand as the
  * last 30 days beside all time, so a change to an agent shows as movement.
  * What they cost is the table above's ("Per landed"), not repeated here. An
  * agent with no pull yet is a row of dashes, never a row of misleading
- * zeros. The agent's name stays in view while a phone scrolls the figures
+ * zeros. Under each agent, one sub-row per model and prompt version its pulls
+ * ran on, with the same figures; pulls from before runs recorded either read
+ * "unrecorded". The agent's name stays in view while a phone scrolls the figures
  * sideways.
  */
 function scorecardCard(
   agents: readonly Agent[],
   cards: ReadonlyMap<string, Scorecard>,
   recent: ReadonlyMap<string, Scorecard>,
+  splits: ReadonlyMap<string, readonly SplitScorecard[]>,
+  recentSplits: ReadonlyMap<string, readonly SplitScorecard[]>,
 ): Html {
   const dash = html`<td class="num muted">—</td>`;
   const lately = `${RECENT_DAYS} days`;
@@ -262,6 +271,14 @@ function scorecardCard(
     s?.redCheckRate == null
       ? dash
       : html`<td class="num">${Math.round(100 * s.redCheckRate)}%</td>`;
+  const figures = (r: Scorecard | undefined, s: Scorecard | undefined) =>
+    html`${landed(r)}${landed(s)}${rounds(r)}${rounds(s)}${red(r)}${red(s)}
+    ${s === undefined
+      ? html`${dash}${dash}`
+      : html`<td class="num">${s.reverts}</td>
+          ${s.meanLandMs === null
+            ? dash
+            : html`<td class="num">${spanText(s.meanLandMs)}</td>`}`}`;
   return card(
     html`<div class="table-scroll">
       <table class="table" id="crew-scorecard" data-sticky-lead>
@@ -282,21 +299,26 @@ function scorecardCard(
           ${agents.map((agent) => {
             const s = cards.get(agent.user.id);
             const r = recent.get(agent.user.id);
+            const pairs = splits.get(agent.user.id) ?? [];
+            const lately = new Map(
+              (recentSplits.get(agent.user.id) ?? []).map((p) => [pairKey(p), p]),
+            );
             return html`<tr>
-              <td>
-                ${userLink(agent.user.username, {
-                  avatar: false,
-                  mark: markOf(agent.user),
-                })}
-              </td>
-              ${landed(r)}${landed(s)}${rounds(r)}${rounds(s)}${red(r)}${red(s)}
-              ${s === undefined
-                ? html`${dash}${dash}`
-                : html`<td class="num">${s.reverts}</td>
-                    ${s.meanLandMs === null
-                      ? dash
-                      : html`<td class="num">${spanText(s.meanLandMs)}</td>`}`}
-            </tr>`;
+                <td>
+                  ${userLink(agent.user.username, {
+                    avatar: false,
+                    mark: markOf(agent.user),
+                  })}
+                </td>
+                ${figures(r, s)}
+              </tr>
+              ${pairs.map((p) => {
+                const label = splitLabel(p);
+                return html`<tr data-sub>
+                  <td class="muted small mono" title="${label}">${label}</td>
+                  ${figures(lately.get(pairKey(p)), p)}
+                </tr>`;
+              })}`;
           })}
         </tbody>
       </table>
@@ -381,6 +403,8 @@ function crewView(ctx: Ctx, values: AgentValues, error?: string): Html {
   const totals = agentTotals(ctx.app.db);
   const scorecards = crewScorecards(ctx.app.db);
   const recentScorecards = crewScorecards(ctx.app.db, recentWindow());
+  const splitScorecards = crewScorecardSplits(ctx.app.db);
+  const recentSplitScorecards = crewScorecardSplits(ctx.app.db, recentWindow());
   // Where the money goes today: every app running on its own, its spend
   // against its ceiling. The ceilings are the one control on the drain, and
   // this is the page where the crew is wielded, so they are read here.
@@ -479,7 +503,13 @@ function crewView(ctx: Ctx, values: AgentValues, error?: string): Html {
         { pad: false },
       )}
   ${when(agents.length > 0, () =>
-    scorecardCard(agents, scorecards, recentScorecards),
+    scorecardCard(
+      agents,
+      scorecards,
+      recentScorecards,
+      splitScorecards,
+      recentSplitScorecards,
+    ),
   )}
   ${splitsCard(
     "Per model",

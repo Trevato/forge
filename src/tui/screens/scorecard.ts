@@ -2,17 +2,21 @@
  * The crew's scorecard in the terminal, a forge admin's (#2677): each
  * agent's pulls landed of opened, review rounds and red checks over the
  * last `RECENT_DAYS` days beside all time, then reverts and time to land
- * over all time, as Settings → Crew shows them (`crewScorecards`). The gate
+ * over all time, as Settings → Crew shows them (`crewScorecards`), with a sub-row per
+ * model · prompt version (`crewScorecardSplits`). The gate
  * is the page's: a forge admin; anyone else sees nothing.
  */
 
 import { listAllAgents } from "../../actions/crew.ts";
 import {
   crewScorecards,
+  crewScorecardSplits,
   RECENT_DAYS,
   recentWindow,
   spanText,
+  splitLabel,
   type Scorecard,
+  type SplitScorecard,
 } from "../../core/scorecard.ts";
 import type { Agent } from "../../core/agents.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -30,31 +34,52 @@ const rounds = (s: Scorecard | undefined) =>
 const red = (s: Scorecard | undefined) =>
   s?.redCheckRate == null ? "—" : `${Math.round(100 * s.redCheckRate)}%`;
 
+/** The figures of one scorecard, as a list row's second and third lines. */
+function figures(
+  title: string,
+  r: Scorecard | undefined,
+  s: Scorecard,
+): ListRow {
+  const d = `${RECENT_DAYS}d`;
+  return {
+    title,
+    secondary: `landed ${d} ${landed(r)} · all ${landed(s)}`,
+    meta: [
+      `review rounds ${d} ${rounds(r)} · all ${rounds(s)}`,
+      `red checks ${d} ${red(r)} · all ${red(s)}`,
+      `reverts ${s.reverts}`,
+      `time to land ${s.meanLandMs === null ? "—" : spanText(s.meanLandMs)}`,
+    ].join("  "),
+  };
+}
+
 /**
  * One row per agent; one with no pull yet says so rather than a row of
  * zeros. Each windowed figure reads "<recent>d … · all …", the page's order.
+ * Under an agent, one indented row per model · prompt version its pulls ran
+ * on, with the same figures ("unrecorded" for pulls from before runs
+ * recorded them).
  */
 export function scorecardRows(
   agents: readonly Agent[],
   cards: ReadonlyMap<string, Scorecard>,
   recent: ReadonlyMap<string, Scorecard>,
+  splits: ReadonlyMap<string, readonly SplitScorecard[]> = new Map(),
+  recentSplits: ReadonlyMap<string, readonly SplitScorecard[]> = new Map(),
 ): ListRow[] {
-  const d = `${RECENT_DAYS}d`;
-  return agents.map((agent) => {
+  return agents.flatMap((agent) => {
     const s = cards.get(agent.user.id);
     if (s === undefined)
-      return { title: agent.user.username, secondary: "no pull yet" };
-    const r = recent.get(agent.user.id);
-    return {
-      title: agent.user.username,
-      secondary: `landed ${d} ${landed(r)} · all ${landed(s)}`,
-      meta: [
-        `review rounds ${d} ${rounds(r)} · all ${rounds(s)}`,
-        `red checks ${d} ${red(r)} · all ${red(s)}`,
-        `reverts ${s.reverts}`,
-        `time to land ${s.meanLandMs === null ? "—" : spanText(s.meanLandMs)}`,
-      ].join("  "),
-    };
+      return [{ title: agent.user.username, secondary: "no pull yet" }];
+    const lately = new Map(
+      (recentSplits.get(agent.user.id) ?? []).map((p) => [splitLabel(p), p]),
+    );
+    return [
+      figures(agent.user.username, recent.get(agent.user.id), s),
+      ...(splits.get(agent.user.id) ?? []).map((p) =>
+        figures(`  ↳ ${splitLabel(p)}`, lately.get(splitLabel(p)), p),
+      ),
+    ];
   });
 }
 
@@ -69,6 +94,8 @@ export function scorecardScreen(f: Session, ctx: Ctx): Screen {
           listed.value,
           crewScorecards(f.db),
           crewScorecards(f.db, recentWindow()),
+          crewScorecardSplits(f.db),
+          crewScorecardSplits(f.db, recentWindow()),
         )
       : [];
   return {

@@ -29,7 +29,13 @@ reverts, time to land — is on Settings → Crew (`/settings/crew`) and in the
 terminal's palette as "Crew scorecard per agent"; both are a forge admin's only.
 Landed, review rounds and red checks stand as the last 30 days (pulls opened
 since then) beside all time, so tuning an agent shows as movement; reverts and
-time to land are all time.
+time to land are all time. Under each agent, a sub-row per model and prompt
+version its pulls ran on (the agent's latest run on the pull decides) carries
+the same figures, so a change of model or brief shows against the one it
+replaced; pulls opened before runs recorded either read "unrecorded", and are
+counted, never dropped. The sub-rows list every pairing ever used; a pairing
+unused in the last 30 days shows dashes there. The terminal shows them as
+indented `↳` rows.
 
 Git hosting, code browsing, and a JSON API in one fast Bun process, with
 **zero runtime dependencies** — the `package.json` dependency list is empty and
@@ -931,7 +937,8 @@ standing system-prompt text (not the issue or branch, so two runs on one brief
 share a version and editing the brief starts a new one). Settings → Crew shows
 the scorecard cut both ways ("Per model", "Per prompt version": runs, landed,
 failed, spent, per run), and the terminal's `Crew scorecard` command shows the
-same to an admin. Runs from before this was recorded show as *default* /
+same to an admin. The scorecard of pulls landed, review rounds and red checks
+is cut the same way as sub-rows under each agent (see above). Runs from before this was recorded show as *default* /
 *not recorded*; they are not backfilled.
 
 **Tell the crew from any page.** In a repository you may direct, the web palette
