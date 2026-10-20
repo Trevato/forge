@@ -11,13 +11,8 @@ import { dirname, join } from "node:path";
 import { scaffoldFiles } from "../src/apps/scaffold.ts";
 import { webspec, type Finding } from "../src/release/webspec.ts";
 
-/** Today's gaps, each with its specification.website section. */
-const KNOWN: string[] = [
-  "change-password", // https://specification.website/#change-password
-  "etag", // https://specification.website/#caching
-  "robots", // https://specification.website/#robots
-  "security-txt", // https://specification.website/#security-txt
-];
+/** Today's gaps, each with its specification.website section. None: the scaffold meets it. */
+const KNOWN: string[] = [];
 
 let dir: string;
 let child: ReturnType<typeof Bun.spawn> | undefined;

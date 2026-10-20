@@ -207,8 +207,10 @@ decide nothing themselves. \`AGENTS.md\` says how to add to it.
   (\`/icon.svg\`), a 180px home-screen icon and a manifest; \`/sitemap.xml\`
   and \`/llms.txt\` describe the site; \`/robots.txt\` keeps crawlers to the
   page (and names the sitemap), and out of previews entirely;
-  \`/.well-known/security.txt\` sends a reporter to the forge that runs the
-  app. A missing page and a failure are the app's own page, with the right
+  \`/.well-known/security.txt\` names the forge that runs the app as the
+  place to report; \`/.well-known/change-password\` sends people to it too.
+  A page carries an \`ETag\` and answers \`If-None-Match\` with 304. A
+  missing page and a failure are the app's own page, with the right
   status. HSTS covers subdomains and is never a preload promise.
 - **Reachable.** A skip link and \`<main id="main">\`, forced-colours
   styles, and one \`<h1>\` with no skipped level (\`src/site.test.ts\` holds
@@ -1416,6 +1418,37 @@ export const text = (body: string, status = 200): Response =>
     headers: { "content-type": "text/plain; charset=utf-8", ...SECURITY },
   });
 
+/**
+ * A page that has not changed costs a header, not a body: the HTML is given
+ * an ETag from its own bytes, and a request that already holds it is
+ * answered 304 (specification.website/#caching). Only a plain 200 page is
+ * tagged; one that sets a cookie is never answered from a stranger's copy.
+ */
+export async function revalidate(
+  request: Request,
+  response: Response,
+): Promise<Response> {
+  if (
+    (request.method !== "GET" && request.method !== "HEAD") ||
+    response.status !== 200 ||
+    response.body === null ||
+    response.headers.has("etag") ||
+    response.headers.has("set-cookie") ||
+    !(response.headers.get("content-type") ?? "").startsWith("text/html")
+  )
+    return response;
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const headers = new Headers(response.headers);
+  const etag = \`W/"\${Bun.hash(bytes).toString(36)}"\`;
+  headers.set("etag", etag);
+  const held = request.headers.get("if-none-match") ?? "";
+  if (held === "*" || held.split(",").some((t) => t.trim() === etag)) {
+    headers.delete("content-length");
+    return new Response(null, { status: 304, headers });
+  }
+  return new Response(bytes, { status: 200, headers });
+}
+
 /** Back to the page, with a word for it to show once (\`readNotice\`). */
 export const back = (notice?: string): Response =>
   new Response(null, {
@@ -1896,7 +1929,7 @@ import {
 import { events } from "./live.ts";
 import { rpc } from "./mcp.ts";
 import { home } from "./page.ts";
-import { appleTouch, card, iconSvg, llmsTxt, manifest, sitemap } from "./site.ts";
+import { appleTouch, card, iconSvg, llmsTxt, manifest, securityTxt, sitemap } from "./site.ts";
 import {
   begin,
   endSession,
@@ -2328,9 +2361,9 @@ export const routes: readonly Route[] = [
       }),
   },
 
-  // What the web expects of a site. Crawlers read the page, not the API;
-  // a preview is a draft and is read by nobody. Where to report a
-  // vulnerability is the forge's to say: it runs this app.
+  // What the web expects of a site (specification.website). Crawlers read
+  // the page, not the API; a preview is a draft and is read by nobody.
+  // Where to report a vulnerability is the forge's to say: it runs this app.
   {
     method: "GET",
     path: "/robots.txt",
@@ -2338,7 +2371,7 @@ export const routes: readonly Route[] = [
       text(
         env === "production"
           ? \`User-agent: *\\nDisallow: /api/\\nDisallow: /mcp\\nDisallow: /events\\nDisallow: /__forge/\\n\\nSitemap: \${publicOrigin}/sitemap.xml\\n\`
-          : "User-agent: *\\nDisallow: /\\n",
+          : \`User-agent: *\\nDisallow: /\\n\\nSitemap: \${publicOrigin}/sitemap.xml\\n\`,
       ),
   },
   {
@@ -2374,22 +2407,21 @@ export const routes: readonly Route[] = [
     path: "/manifest.webmanifest",
     handle: () => file(manifest(), "application/manifest+json", DAY),
   },
+  // There is no password here: accounts are the forge's, so that is where
+  // a person goes to change one (specification.website/#change-password).
+  {
+    method: "GET",
+    path: "/.well-known/change-password",
+    handle: () =>
+      new Response(null, {
+        status: 302,
+        headers: { location: forgeUrl ?? "/", ...SECURITY },
+      }),
+  },
   {
     method: "GET",
     path: "/.well-known/security.txt",
-    handle: () =>
-      forgeUrl === undefined
-        ? text("not found", 404)
-        : new Response(null, {
-            status: 302,
-            headers: {
-              location: new URL(
-                "/.well-known/security.txt",
-                forgeUrl,
-              ).toString(),
-              ...SECURITY,
-            },
-          }),
+    handle: () => text(securityTxt()),
   },
 
   // Files under ./static, cached for a year when linked by content (\`asset\`).
@@ -2446,7 +2478,7 @@ const SITE_TS = `/**
  */
 
 import { deflateSync } from "node:zlib";
-import { description, publicOrigin, title } from "./env.ts";
+import { description, forgeUrl, publicOrigin, title } from "./env.ts";
 import { token } from "./tokens.ts";
 
 /** The size a link card is drawn at, and what \`og:image:width\`/\`height\` say. */
@@ -2485,6 +2517,13 @@ export const manifest = (): string =>
 
 export const sitemap = (): string =>
   \`<?xml version="1.0" encoding="UTF-8"?>\\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\\n  <url><loc>\${xml(publicOrigin)}/</loc></url>\\n</urlset>\\n\`;
+
+/**
+ * Where to report a vulnerability: the forge that runs the app, or this
+ * site when there is none. Expires a year out, so it is never stale.
+ */
+export const securityTxt = (): string =>
+  \`Contact: \${forgeUrl ?? publicOrigin}/\\nExpires: \${new Date(Date.now() + 365 * 864e5).toISOString()}\\nPreferred-Languages: en\\nCanonical: \${publicOrigin}/.well-known/security.txt\\n\`;
 
 /** \`/llms.txt\`: what the site is and where its machine-readable parts are, in the format llmstxt.org describes. */
 export const llmsTxt = (): string =>
@@ -2726,7 +2765,7 @@ test("sitemap.xml lists the page, robots.txt points at it where crawlers are wel
   expect((await get("/sitemap.xml")).headers.get("content-type")).toContain("xml");
   const robots = await (await get("/robots.txt")).text();
   if (env === "production") expect(robots).toContain(\`Sitemap: \${publicOrigin}/sitemap.xml\\n\`);
-  else expect(robots).not.toContain("Sitemap:");
+  else expect(robots).toBe(\`User-agent: *\\nDisallow: /\\n\\nSitemap: \${publicOrigin}/sitemap.xml\\n\`);
   const llms = await get("/llms.txt");
   expect(llms.headers.get("content-type")).toContain("text/plain");
   const body = await llms.text();
@@ -2832,7 +2871,7 @@ import {
   where,
 } from "./env.ts";
 import { compress } from "./compress.ts";
-import { html, text } from "./http.ts";
+import { html, revalidate, text } from "./http.ts";
 import { problem } from "./page.ts";
 import { match } from "./routes.ts";
 import { door } from "./security.ts";
@@ -2899,7 +2938,7 @@ export function serve(options: ServeOptions) {
         params: found.params,
         signin: options.signin,
       });
-      return head(request, await compress(request, response));
+      return head(request, await compress(request, await revalidate(request, response)));
     },
     // A bug answers with the floor and nothing else: never the runtime's
     // own error page, which carries source and paths, and never without
@@ -3803,7 +3842,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb } from "./db.ts";
-import { env } from "./env.ts";
+import { env, publicOrigin } from "./env.ts";
 import { serve } from "./server.ts";
 import { sign } from "./who.ts";
 
@@ -4137,6 +4176,16 @@ test("the look is the tokens: /tokens.css is linked by content and cached for a 
   );
 });
 
+test("a page carries an ETag and answers 304 to a copy already held", async () => {
+  const first = await fetch(base + "/");
+  const etag = first.headers.get("etag");
+  expect(etag).toMatch(/^W\\/"/);
+  const again = await fetch(base + "/", { headers: { "if-none-match": etag! } });
+  expect(again.status).toBe(304);
+  expect(again.headers.get("etag")).toBe(etag);
+  expect((await fetch(base + "/", { headers: { "if-none-match": 'W/"x"' } })).status).toBe(200);
+});
+
 test("what the web expects: robots.txt, and security.txt from the forge that runs us", async () => {
   // Production is read by crawlers, the API is not; anything else is a
   // draft and asks not to be indexed at all.
@@ -4146,19 +4195,20 @@ test("what the web expects: robots.txt, and security.txt from the forge that run
     expect(robots).toContain("Disallow: /api/\\n");
     expect(noindex).toBeNull();
   } else {
-    expect(robots).toBe("User-agent: *\\nDisallow: /\\n");
+    expect(robots).toContain("User-agent: *\\nDisallow: /\\n");
     expect(noindex).toBe("noindex");
   }
-  const security = await fetch(base + "/.well-known/security.txt", {
+  const security = await fetch(base + "/.well-known/security.txt");
+  expect(security.status).toBe(200);
+  const body = await security.text();
+  expect(body).toContain(\`Contact: \${process.env.FORGE_URL ?? publicOrigin}/\`);
+  const expires = /^Expires: (\\S+)$/m.exec(body)?.[1] ?? "";
+  expect(Date.parse(expires)).toBeGreaterThan(Date.now());
+  const password = await fetch(base + "/.well-known/change-password", {
     redirect: "manual",
   });
-  if (process.env.FORGE_URL === undefined) expect(security.status).toBe(404);
-  else {
-    expect(security.status).toBe(302);
-    expect(security.headers.get("location")).toBe(
-      new URL("/.well-known/security.txt", process.env.FORGE_URL).toString(),
-    );
-  }
+  expect(password.status).toBe(302);
+  expect(password.headers.get("location")).toBe(process.env.FORGE_URL ?? "/");
 });
 `;
 

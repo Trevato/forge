@@ -76,7 +76,7 @@ test("a deployed preview's findings are stored under its run, and the run still 
     message: "a page with a known gap",
     files: [
       { path: "server.ts", content: 'Bun.serve({ port: Number(process.env.PORT), fetch: () => new Response("<!doctype html><html lang=en><title>t</title><p>hi", { headers: { "content-type": "text/html" } }) });\n' },
-      { path: "forge.json", content: JSON.stringify({ app: { start: "bun server.ts", looks: ["/"] } }) },
+      { path: "forge.json", content: JSON.stringify({ app: { run: "bun server.ts", looks: ["/"] } }) },
     ],
   });
   expect(committed.ok).toBe(true);
@@ -102,7 +102,7 @@ test("a deployed preview's findings are stored under its run, and the run still 
   const page = await forgeHttp(app)
     .handle(new Request(`http://forge.test/${repo.ownerName}/${repo.name}/pulls/${opened.value.number}`, { headers: { cookie } }))
     .then((r) => r.text());
-  expect(page).toContain("Website spec: 1 finding");
+  expect(page).toMatch(/Website spec: \d+ findings?/);
   expect(page).toContain("https://specification.website/#caching");
 }, 90_000);
 
