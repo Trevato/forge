@@ -10,7 +10,8 @@
 
 import type { Database } from "bun:sqlite";
 import { backupAge, backupFull, backupOverdue, buildersValue, checkTime, reactNote, speedWords, spendFull, spendValue, usersValue, visitorsNote, visitorsValue } from "../../flow/kpi_words.ts";
-import { readKpis, type Kpis } from "../../flow/kpis.ts";
+import type { Kpis } from "../../flow/kpis.ts";
+import { cachedKpis } from "./home_cache.ts";
 import { html, raw, type Html } from "../html.ts";
 import { BOOTED } from "../../release/gate.ts";
 import { running } from "../../kernel/version.ts";
@@ -119,5 +120,5 @@ export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null, now
 export function kpiRow(db: Database, opts: { ceilingUsd?: number; dataDir?: string; now?: Date } = {}): Html {
   const now = opts.now ?? new Date();
   const forge = { ceilingUsd: opts.ceilingUsd ?? null, ...(opts.dataDir === undefined ? {} : { dataDir: opts.dataDir }) };
-  return kpiRowFor(readKpis(db, now, forge), liveNow(), now);
+  return kpiRowFor(cachedKpis(db, now, forge), liveNow(), now);
 }

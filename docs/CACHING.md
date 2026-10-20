@@ -383,3 +383,17 @@ cold (a write before each request). It also checks:
   whichever order warmed the cache;
 - there is no stamp inside a transaction, and another connection's write
   moves it.
+
+**Caches 4 and 5, the KPI row and pinned panels** (#2717) are
+`web/studio/home_cache.ts`, read only after `viewer.isAdmin` (home calls
+them for no one else, and `test/home-cache.test.ts` warms them as the owner
+and reads home as a member and as a stranger). Like the feed they are
+stamped with `writeStamp`, not the forge-wide `MAX(event.seq)`: the KPI
+figures read `run`, `pull`, `usage` and `page_vital` rows, some of which
+append no event, and a clock that moves on every row catches all of them.
+The KPI entry is keyed by UTC hour, ceiling and data directory; a panel by
+its board's slug and its own definition (an edited board is a new key, as
+the blob id would make it). Max age 30 s for both. Measured on
+`bench/snappy.ts` (`--n 50`), `/` owner: 105.7 → 90.1 statements, p50
+16.0 → 15.5 ms, p95 22.5 → 20.7 ms; the fixture pins no panel, and a pin
+adds one query per panel on a miss and none on a hit.

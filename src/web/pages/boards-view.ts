@@ -35,8 +35,14 @@ function ranged(query: Record<string, unknown>, range: Board["range"]): Record<s
   return { ...query, from: new Date(Date.now() - RANGE_MS[range]).toISOString() };
 }
 
-export function drawPanel(app: App, board: Board, panel: Panel, aside: Html | null = null): Html {
-  const answer = runFor(app.db, panel.chart, ranged(panel.query, board.range));
+export function drawPanel(
+  app: App,
+  board: Board,
+  panel: Panel,
+  aside: Html | null = null,
+  run: typeof runFor = runFor,
+): Html {
+  const answer = run(app.db, panel.chart, ranged(panel.query, board.range));
   const q = paramsOf(panel.query, panel.chart);
   const body = !answer.ok
     ? html`<p class="muted small">${answer.error}</p>`
