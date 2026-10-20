@@ -225,8 +225,7 @@ describe("the forge over MCP", () => {
       "spend",
       "usage",
       "labels",
-      "link",
-      "unlink",
+      "wait_for",
       "attach_look",
       "hold",
       "plan",
@@ -641,7 +640,7 @@ describe("the forge over MCP", () => {
     expect(stale.error).toContain("already ended");
   });
 
-  test("map, link and unlink are the plan's own actions", async () => {
+  test("map and wait_for are the plan's own actions", async () => {
     const a = (await tool(rw, "tell", { repo: "alice/game", text: "first" }))
       .value.issue;
     const b = (await tool(rw, "tell", { repo: "alice/game", text: "second" }))
@@ -653,12 +652,12 @@ describe("the forge over MCP", () => {
         t.annotations.readOnlyHint,
       ]),
     );
-    expect([hints.map, hints.link, hints.unlink]).toEqual([true, false, false]);
+    expect([hints.map, hints.wait_for]).toEqual([true, false]);
 
     expect(
-      (await tool(rw, "link", { app: "alice/game", issue: b, blockedBy: a }))
-        .value.blockedBy,
-    ).toBe(a);
+      (await tool(rw, "wait_for", { app: "alice/game", issue: b, blockedBy: a }))
+        .value.says,
+    ).toBe(`#${b} waits for #${a}.`);
     const map = (await tool(ro, "map", { app: "alice/game" })).value;
     expect(map.ready.map((i: any) => i.number)).toContain(a);
     expect(map.blockedOn.map((i: any) => i.number)).toContain(a);
@@ -667,15 +666,15 @@ describe("the forge over MCP", () => {
 
     // The API's words, for a loop, a stranger issue, and a read token.
     expect(
-      (await tool(rw, "link", { app: "alice/game", issue: a, blockedBy: b }))
+      (await tool(rw, "wait_for", { app: "alice/game", issue: a, blockedBy: b }))
         .error,
     ).toBe("cycle: that would make a loop");
     expect(
-      (await tool(rw, "link", { app: "alice/game", issue: a, blockedBy: 999 }))
+      (await tool(rw, "wait_for", { app: "alice/game", issue: a, blockedBy: 999 }))
         .error,
     ).toBe("no_such_issue: no issue #999");
     expect(
-      (await tool(ro, "link", { app: "alice/game", issue: a, blockedBy: b }))
+      (await tool(ro, "wait_for", { app: "alice/game", issue: a, blockedBy: b }))
         .error,
     ).toContain("forbidden");
     // A private app is no such app to someone who cannot read it.
@@ -683,11 +682,11 @@ describe("the forge over MCP", () => {
       "not_found",
     );
     expect(
-      (await tool(bobRw, "link", { app: "alice/game", issue: b, blockedBy: a }))
+      (await tool(bobRw, "wait_for", { app: "alice/game", issue: b, blockedBy: a }))
         .error,
     ).toContain("not_found");
 
-    await tool(rw, "unlink", { app: "alice/game", issue: b, blockedBy: a });
+    await tool(rw, "wait_for", { app: "alice/game", issue: b, blockedBy: a, stop: true });
     const after = (await tool(ro, "map", { app: "alice/game" })).value;
     expect(after.edges).not.toContainEqual({ issue: b, blockedBy: a });
     expect(after.ready.map((i: any) => i.number)).toContain(b);

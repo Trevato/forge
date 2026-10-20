@@ -2523,66 +2523,42 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
-    name: "link",
-    description:
-      "Say that an issue waits for another in the same app. Refused when it would make a loop, crosses repositories, or names an issue that does not exist.",
+    name: "wait_for",
+    description: "Make an issue wait for another in the same app, or stop waiting with `stop: true`.",
     inputSchema: {
       type: "object",
       properties: {
         app: APP_ARG,
         issue: { type: "integer", minimum: 1 },
         blockedBy: { type: "integer", minimum: 1 },
+        stop: { type: "boolean" },
       },
       required: ["app", "issue", "blockedBy"],
     },
     writes: true,
     run(ctx, user, args) {
+      if (args["stop"] !== undefined && typeof args["stop"] !== "boolean")
+        return bad("invalid_stop", "stop is true or false");
       const repo = planRepo(ctx, user, args);
       if (isAnswer(repo)) return repo;
       const issue = issueArg(ctx, repo, args, "issue");
       if ("ok" in issue) return issue;
       const blocker = issueArg(ctx, repo, args, "blockedBy");
       if ("ok" in blocker) return blocker;
-      const linked = linkIssue(ctx.app, user, repo, issue, blocker);
-      return linked.ok
-        ? good({
-            says: `#${issue.number} now waits for #${blocker.number}.`,
-            issue: issue.number,
-            blockedBy: blocker.number,
-          })
-        : bad(
-            linked.error,
-            dependencyWords[linked.error] ??
-              "you need write access to plan here",
-          );
-    },
-  },
-  {
-    name: "unlink",
-    description: "Say that an issue no longer waits for another.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        app: APP_ARG,
-        issue: { type: "integer", minimum: 1 },
-        blockedBy: { type: "integer", minimum: 1 },
-      },
-      required: ["app", "issue", "blockedBy"],
-    },
-    writes: true,
-    run(ctx, user, args) {
-      const repo = planRepo(ctx, user, args);
-      if (isAnswer(repo)) return repo;
-      const issue = issueArg(ctx, repo, args, "issue");
-      if ("ok" in issue) return issue;
-      const blocker = issueArg(ctx, repo, args, "blockedBy");
-      if ("ok" in blocker) return blocker;
-      const unlinked = unlinkIssue(ctx.app, user, repo, issue, blocker);
-      return unlinked.ok
-        ? good({
-            says: `#${issue.number} no longer waits for #${blocker.number}.`,
-          })
-        : bad(unlinked.error, "you need write access to plan here");
+      const stop = args["stop"] === true;
+      const done = stop
+        ? unlinkIssue(ctx.app, user, repo, issue, blocker)
+        : linkIssue(ctx.app, user, repo, issue, blocker);
+      if (!done.ok)
+        return bad(
+          done.error,
+          dependencyWords[done.error] ??
+            "You need write access, or a place on the crew, to plan here.",
+        );
+      return good({
+        says: `#${issue.number} ${stop ? "no longer waits" : "waits"} for #${blocker.number}.`,
+        url: `${ctx.url.origin}/${repo.ownerName}/${repo.name}/issues/${issue.number}`,
+      });
     },
   },
   {
