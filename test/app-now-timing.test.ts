@@ -1,0 +1,65 @@
+/** `/:owner/:name/app/now` names session, each read and render in Server-Timing (#3514). */
+import { afterAll, beforeAll, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { enableApp } from "../src/actions/apps.ts";
+import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { createApp, type App } from "../src/app.ts";
+import { createUser } from "../src/core/users.ts";
+import { serve, type Servers } from "../src/http/server.ts";
+import { proveAll } from "./helpers/verified.ts";
+import { quietLogs } from "./helpers/globals.ts";
+
+quietLogs();
+
+let root = "";
+let app: App;
+let servers: Servers;
+
+beforeAll(async () => {
+  root = mkdtempSync(join(tmpdir(), "forge-now-timing-"));
+  app = createApp({ dataDir: root, port: 0, forgeRepo: "alice/forge" });
+  const u = await createUser(app.db, {
+    origin: "seed",
+    trusted: true,
+    username: "alice",
+    email: "alice@forge.local",
+    password: "a-good-passphrase",
+    adminIfFirst: true,
+  });
+  if (!u.ok) throw new Error(u.error);
+  proveAll(app);
+  const made = await createRepo(app, { id: u.value.id, username: "alice" } as never, { name: "vault" });
+  if (!made.ok) throw new Error(String(made.error));
+  const seeded = await commitToBranch(app, u.value, made.value, {
+    message: "Start",
+    files: [{ path: "README.md", content: "v\n" }],
+  });
+  if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+  const enabled = await enableApp(app, u.value, made.value, { slug: "vault" });
+  if (!enabled.ok) throw new Error(String(enabled.error));
+  servers = await serve(app);
+});
+afterAll(() => {
+  servers.stop();
+  app.close();
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("GET /:owner/:name/app/now names its phases", async () => {
+  const signin = await fetch(`${servers.url}/signin`, {
+    method: "POST",
+    headers: { origin: servers.url },
+    body: new URLSearchParams({ username: "alice", password: "a-good-passphrase" }),
+    redirect: "manual",
+  });
+  const cookie = (signin.headers.get("set-cookie") ?? "").split(";")[0]!;
+  const res = await fetch(`${servers.url}/alice/vault/app/now`, { headers: { cookie } });
+  const body = await res.text();
+  expect(res.status).toBe(200);
+  expect(body).toContain('id="live-now"');
+  const parts = (res.headers.get("server-timing") ?? "").split(", ");
+  for (const name of ["app", "session", "repo", "record", "pulls", "crew", "owner", "panels", "render"])
+    expect(parts.find((p) => p.startsWith(`${name};`))).toMatch(/^[a-z]+;dur=\d+\.\d/);
+});

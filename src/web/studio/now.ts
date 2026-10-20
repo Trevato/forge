@@ -10,6 +10,7 @@
 import { mayViewId, sealedScope } from "../../core/sealed.ts";
 import { envPull } from "../../apps/data.ts";
 import { appsRuntime, envsFor } from "../../apps/runtime.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { listCrewRoles } from "../../core/agents.ts";
 import { getAppByRepo, type AppRecord } from "../../core/apps.ts";
 import { getIssueById, listIssues, type Issue } from "../../core/issues.ts";
@@ -332,21 +333,40 @@ export async function nowCard(
 
 // GET /:owner/:name/app/now — the card alone, for the region that shows it.
 export async function appNowFragment(ctx: Ctx): Promise<Response> {
-  const repo = loadRepo(ctx);
+  const req = ctx.request;
+  notePhase(req, "session", takeSessionTime(req));
+  const repo = timePhase(req, "repo", () => loadRepo(ctx));
   if (!repo) return fragment(html``, { status: 404 });
   const db = ctx.app.db;
-  const record = getAppByRepo(db, repo.id);
+  const record = timePhase(req, "record", () => getAppByRepo(db, repo.id));
   if (!record) return fragment(html``, { status: 404 });
-  const openPulls = listPulls(db, repo.id, {
-    state: "open",
-    limit: 10,
-    ...sealedScope(db, repo, ctx.auth.user),
-  });
+  const openPulls = timePhase(req, "pulls", () =>
+    listPulls(db, repo.id, {
+      state: "open",
+      limit: 10,
+      ...sealedScope(db, repo, ctx.auth.user),
+    }),
+  );
+  const builderCount = timePhase(
+    req,
+    "crew",
+    () => listCrewRoles(db, repo.id).filter((c) => c.role === "builder").length,
+  );
+  const ownerFacts = timePhase(req, "owner", () =>
+    canSeeOwnerFacts(db, repo, ctx.auth.user),
+  );
+  // The one fact Now borrows from the head card, decided where the head
+  // card decides it, so the two never disagree about what is tailing.
+  const deployTailing = timePhase(
+    req,
+    "panels",
+    () => appPanels(ctx, repo, record, openPulls).deployTailing,
+  );
+  const rendering = performance.now();
   const { card } = await nowCard(ctx, repo, record, {
     openPulls,
-    builderCount: listCrewRoles(db, repo.id).filter((c) => c.role === "builder")
-      .length,
-    ownerFacts: canSeeOwnerFacts(db, repo, ctx.auth.user),
+    builderCount,
+    ownerFacts,
     wordCtx: {
       db,
       dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
@@ -355,9 +375,9 @@ export async function appNowFragment(ctx: Ctx): Promise<Response> {
       history: servingHistory(),
       viewer: ctx.auth.user,
     },
-    // The one fact Now borrows from the head card, decided where the head
-    // card decides it, so the two never disagree about what is tailing.
-    deployTailing: appPanels(ctx, repo, record, openPulls).deployTailing,
+    deployTailing,
   });
-  return fragment(nowRegion(repo, card), { request: ctx.request });
+  const response = fragment(nowRegion(repo, card), { request: req });
+  notePhase(req, "render", performance.now() - rendering);
+  return response;
 }
