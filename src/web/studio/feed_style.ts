@@ -1,23 +1,18 @@
 /** The feed cards' slice of the served stylesheet (no imports: `style.ts` reads this). */
 
 export const feedCss = /* css */ `
-/* A timeline of rows, divided, not a stack of boxes. */
-.feed { display: grid; gap: 0; border-top: 1px solid var(--border); }
-.fcard { border-bottom: 1px solid var(--border); padding: 12px 4px; }
-.fcard:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.fcard[hidden] { display: none; }
-.fcard-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.fcard-reason { margin: 8px 0 4px; font-size: 1.05em; overflow-wrap: anywhere; }
+/* A timeline of the design system's cards; the card's own margin spaces them. */
+.feed { display: grid; gap: 0; }
+.feed > .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.feed > .card[hidden] { display: none; }
+.feed .card-foot > details { flex: 1 1 100%; }
+.fcard-reason { margin: 0 0 4px; font-size: 1.05em; overflow-wrap: anywhere; }
 .fcard-text { white-space: pre-wrap; }
 /* The planner's reply sits under the thought, indented, one or two lines. */
 .fcard-reply { margin: 4px 0 0 12px; padding-left: 10px; border-left: 2px solid var(--border); overflow-wrap: anywhere; }
 .fcard-unblock { display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; margin: 0; }
 .fcard-unblock span { flex: 1 1 16ch; min-width: 0; overflow-wrap: anywhere; }
 .fcard-who { font-weight: 600; }
-/* One quiet control under the post: say something, dismiss, mute. */
-.fcard-more summary { cursor: pointer; list-style: none; padding: 2px 0; }
-.fcard-more summary::-webkit-details-marker { display: none; }
-.fcard-acts { display: flex; gap: 4px; margin-top: 6px; }
 .fcard-why { margin: 0 0 4px; }
 /* The composer: the home's one primary action, on top of the timeline. */
 .composer { display: grid; gap: 8px; border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; background: var(--card, var(--bg)); }
@@ -48,8 +43,7 @@ export const feedCss = /* css */ `
 .fcard-form { display: grid; gap: 8px; margin-top: 6px; }
 .fcard-form textarea { width: 100%; min-height: 56px; resize: vertical; }
 @media (max-width: 600px) {
-  .fcard { padding: 12px 2px; }
-  .fcard-acts .btn { padding: 8px 10px; }
-  .fcard-more summary { padding: 10px 0; }
+  .feed .bar .btn { padding: 8px 10px; }
+  .feed .quiet-details > summary { min-height: 44px; display: flex; align-items: center; }
 }
 `;

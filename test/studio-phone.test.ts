@@ -6,7 +6,7 @@ describe("the studio at 360px", () => {
   const phone = studioCss.slice(studioCss.indexOf("@media (max-width: 600px) {\n  .studio-head"));
 
   test("every component the issue names has a phone rule", () => {
-    for (const sel of [".studio-head", ".studio-tell", ".fcard-head", ".studio-ask-actions", ".studio-word"]) {
+    for (const sel of [".studio-head", ".studio-tell", ".feed .card-head", ".studio-ask-actions", ".studio-word"]) {
       expect(phone).toContain(sel);
     }
   });

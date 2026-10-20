@@ -62,14 +62,14 @@ const rowActions = part(/* css */ `
 const phone = part(/* css */ `
 @media (max-width: 600px) {
   .studio-head { flex-wrap: wrap; }
-  .fcard-head { flex-wrap: wrap; row-gap: 2px; }
-  .fcard-head .fcard-app { flex: 1 1 100%; }
+  .feed .card-head { row-gap: 2px; }
+  .feed .card-head .fcard-app { flex: 1 1 100%; }
   .studio-head h1 { flex: 1 1 100%; flex-wrap: wrap; overflow-wrap: anywhere; }
   .studio-head .env-facts { flex: 1 1 100%; min-width: 0; overflow-wrap: anywhere; }
   .studio-head form, .studio-head form .btn { flex: 1 1 auto; }
   .studio-tell .bar { flex-wrap: wrap; }
   .studio-tell .bar .btn, .studio-ask-actions .btn { min-height: 44px; }
-  .fcard-acts .btn, .fcard-form .btn { min-height: 44px; }
+  .feed .bar .btn, .fcard-form .btn { min-height: 44px; }
   .studio-ask-actions { display: flex; flex-direction: column; align-items: stretch; white-space: normal; width: 100%; }
   .studio-word { white-space: normal; }
   .shelf-meta { flex-wrap: wrap; }

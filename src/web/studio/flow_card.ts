@@ -12,24 +12,21 @@ import { readStalled, type StalledStep } from "../../flow/stalled.ts";
 import type { User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { html, type Html } from "../html.ts";
-import { btn, timeAgo } from "../ui.ts";
+import { btn, card, timeAgo } from "../ui.ts";
 
 const BUTTON: Record<StalledStep["action"], string> = { run: "Run check", rerun: "Re-run" };
 
 function stalledCard(s: StalledStep): Html {
   const base = `/${s.ownerName}/${s.repoName}/pulls/${s.pull}`;
-  return html`<article class="fcard" data-flow-card="${s.repo}#${String(s.pull)}">
-    <div class="fcard-head">
-      <strong class="fcard-who">${s.stage}</strong>
-      <span class="fcard-app muted small">${s.ownerName}/${s.repoName} · stuck since ${timeAgo(s.since)}</span>
-    </div>
-    <p class="fcard-reason"><a href="${base}">${s.title}</a>${s.issue === null ? null : html` <span class="muted small">for #${String(s.issue)}</span>`}</p>
+  const head = html`<strong class="fcard-who">${s.stage}</strong>
+      <span class="fcard-app muted small">${s.ownerName}/${s.repoName} · stuck since ${timeAgo(s.since)}</span>`;
+  const body = html`<p class="fcard-reason"><a href="${base}">${s.title}</a>${s.issue === null ? null : html` <span class="muted small">for #${String(s.issue)}</span>`}</p>
     <form method="post" action="${base}/checks" class="fcard-unblock">
       <input type="hidden" name="next" value="/">
       ${btn(BUTTON[s.action], { size: "sm", icon: "play" })}
       <span class="muted small">${s.unblock}</span>
-    </form>
-  </article>`;
+    </form>`;
+  return card(body, { head, attrs: html`data-flow-card="${s.repo}#${String(s.pull)}"` });
 }
 
 /** The cards, oldest stall first; nothing at all when nothing is stalled. Every one is shown: the

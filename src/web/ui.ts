@@ -772,12 +772,15 @@ export interface CardOptions {
   pad?: boolean;
   id?: string;
   extra?: string;
+  /** Further attributes for the card itself (data hooks, tabindex), already escaped. */
+  attrs?: Html;
 }
 
 export function card(body: Html, o: CardOptions = {}): Html {
   return html`<div
     class="card${o.extra ? ` ${o.extra}` : ""}"
     ${o.id ? html`id="${o.id}"` : null}
+    ${o.attrs ?? null}
     ${o.tone && o.tone !== "default" ? html`data-tone="${o.tone}"` : null}
   >
     ${o.head ? html`<div class="card-head">${o.head}</div>` : null}

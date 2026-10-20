@@ -86,7 +86,7 @@ describe("the feed on the home page", () => {
     expect(text).toContain("alice/open");
     expect(text).not.toContain("<script>alert(1)</script>");
     expect(text).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
-    const order = [...text.matchAll(/class="fcard"[^>]*data-item="([^"]+)"/g)].map((m) => m[1]);
+    const order = [...text.matchAll(/class="card"\s+data-nav[^>]*data-item="([^"]+)"/g)].map((m) => m[1]);
     expect(order).toEqual(readFeed(app.db, alice).items.map((i) => i.id));
   });
 

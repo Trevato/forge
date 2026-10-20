@@ -19,7 +19,7 @@ import type { FeedItem } from "../../feed/rank.ts";
 import { html, type Html } from "../html.ts";
 import { fragment } from "../layout.ts";
 import { outboxJs } from "../outbox.ts";
-import { avatar, btn, empty, nameMark, timeAgo } from "../ui.ts";
+import { avatar, btn, card, empty, nameMark, timeAgo } from "../ui.ts";
 import { writableAppsOf } from "./asks.ts";
 
 /** Events that can change what the feed says. */
@@ -65,36 +65,30 @@ export function feedCard(
 ): Html {
   const steer = item.kind === "run" || item.kind === "cost";
   const target = steer && RUN_LINK.test(item.link) ? `${item.link}/steer` : null;
-  return html`<article
-    class="fcard"
-    data-nav
-    tabindex="0"
-    data-item="${item.id}"
-    data-app="${item.app}"
-    data-kind="${item.kind}"
-  >
-    <div class="fcard-head">
-      ${avatar(item.actor ?? item.app)}
+  const head = html`${avatar(item.actor ?? item.app)}
       <strong class="fcard-who">${item.actor ?? item.app}</strong
       >${nameMark(item.actor === null ? undefined : marks.get(item.actor))}
       <span class="fcard-app muted small">${item.app} · ${timeAgo(item.at)}</span>
       <span class="spacer"></span>
-      <span class="badge">${KIND_LABEL[item.kind]}</span>
-    </div>
-    <p class="fcard-reason"><a href="${item.link}" data-feed-open>${item.what}</a></p>
-    ${saysMore(item) ? html`<p class="fcard-why small muted">${item.reason}</p>` : null}
-    <details class="fcard-more">
+      <span class="badge">${KIND_LABEL[item.kind]}</span>`;
+  const body = html`<p class="fcard-reason"><a href="${item.link}" data-feed-open>${item.what}</a></p>
+    ${saysMore(item) ? html`<p class="fcard-why small muted">${item.reason}</p>` : null}`;
+  const foot = html`<details class="quiet-details">
       <summary class="small muted" aria-label="${target ? "Steer, dismiss or mute" : "Tell the crew, dismiss or mute"}">${target ? "Steer" : "Tell"} · more</summary>
       <form method="post" action="${target ?? `/${item.app}/tell`}" class="fcard-form">
         <textarea class="input" name="text" rows="2" maxlength="2000" required aria-label="${target ? "Steer this run" : "Tell the crew"}"></textarea>
         ${btn(target ? "Steer" : "Tell", { size: "sm", variant: "primary" })}
       </form>
-      <span class="fcard-acts">
+      <span class="bar">
         <button type="button" class="btn btn-sm btn-ghost" data-feed="dismissed" title="Dismiss (x)">Dismiss</button>
         ${item.kind === "ask" || item.kind === "milestone" || item.kind === "choose" ? null : html`<button type="button" class="btn btn-sm btn-ghost" data-feed="muted" title="Mute ${item.app}">Mute app</button>`}
       </span>
-    </details>
-  </article>`;
+    </details>`;
+  return card(body, {
+    head,
+    foot,
+    attrs: html`data-nav tabindex="0" data-item="${item.id}" data-app="${item.app}" data-kind="${item.kind}"`,
+  });
 }
 
 /** The composer's app value for "the forge": no app, so no slash to collide with one. */
@@ -111,17 +105,16 @@ const THOUGHT_AGE_MS = 24 * 60 * 60 * 1000;
  * once; line breaks kept by CSS), marked "received". It has no controls.
  */
 export function thoughtCard(thought: Thought, who: string, placement?: Placement): Html {
-  return html`<article class="fcard fcard-thought" data-kind="thought" data-thought="${thought.id}">
-    <div class="fcard-head">
-      ${avatar(who)}
+  const head = html`${avatar(who)}
       <strong class="fcard-who">${who}</strong>
       <span class="fcard-app muted small">${timeAgo(thought.receivedAt)}</span>
       <span class="spacer"></span>
-      <span class="badge">Received</span>
-    </div>
-    <p class="fcard-reason fcard-text">${thought.text}</p>
-    ${placement ? replyUnder(placement) : ""}
-  </article>`;
+      <span class="badge">Received</span>`;
+  return card(
+    html`<p class="fcard-reason fcard-text">${thought.text}</p>
+    ${placement ? replyUnder(placement) : ""}`,
+    { head, attrs: html`data-kind="thought" data-thought="${thought.id}"` },
+  );
 }
 
 /** The planner's answer under a thought: one or two lines, `#N` linking to the issue it names. */
@@ -322,7 +315,7 @@ ${outboxJs}
     return queue('/api/v1/feed/interactions', { item: card.getAttribute('data-item'), kind: kind, app: card.getAttribute('data-app') });
   }
   function gone(card) {
-    var cards = Array.prototype.slice.call(feed.querySelectorAll('.fcard'));
+    var cards = Array.prototype.slice.call(feed.querySelectorAll('[data-item]'));
     var next = cards[cards.indexOf(card) + 1] || cards[cards.indexOf(card) - 1];
     card.hidden = true;
     if (next) next.focus();
@@ -377,7 +370,7 @@ ${outboxJs}
     var c = e.target && e.target.closest ? e.target.closest('[data-chip]') : null;
     if (c) { chip(c); return; }
     var t = e.target && e.target.closest ? e.target.closest('[data-feed],[data-feed-open]') : null;
-    var card = t && t.closest('.fcard');
+    var card = t && t.closest('[data-item]');
     if (!card) return;
     if (t.hasAttribute('data-feed-open')) { send(card, 'opened'); return; }
     act(card, t.getAttribute('data-feed'));
@@ -386,7 +379,7 @@ ${outboxJs}
   // stays an ordinary post and waits for the network.
   feed.addEventListener('submit', function (e) {
     var form = e.target;
-    var card = form.closest && form.closest('.fcard');
+    var card = form.closest && form.closest('[data-item]');
     var box = form.elements && form.elements.text;
     if (!card || !box || !/\\/tell$/.test(form.getAttribute('action') || '')) return;
     var text = box.value.trim();
@@ -413,7 +406,7 @@ ${outboxJs}
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'x' || e.metaKey || e.ctrlKey || e.altKey) return;
     var a = document.activeElement;
-    if (!a || !a.matches || !a.matches('.fcard') || !feed.contains(a)) return;
+    if (!a || !a.matches || !a.matches('[data-item]') || !feed.contains(a)) return;
     e.preventDefault();
     act(a, 'dismissed');
   });
