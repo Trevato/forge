@@ -139,11 +139,13 @@ export interface ChecksHandle {
    * queued and no run is written; the answer is the verdict. `interrupted`
    * is a gate that did not finish for a reason that is not the code — this
    * forge stopping, or the cluster losing its Job — and is no verdict (#3155).
+   * `signal` aborting (the queue's deadline, #3430) cuts it off the same way.
    */
   gate(
     repo: Repo,
     pull: Pull,
     commitOid: string,
+    signal?: AbortSignal,
   ): Promise<{ ok: boolean; error: string; lines: string[]; interrupted?: boolean }>;
   /**
    * Stop checking. Checks under way get `drainMs` to finish unless `drain`
@@ -1120,13 +1122,15 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
 
   const handle: ChecksHandle = {
     request,
-    gate: async (repo, pull, commitOid) => {
+    gate: async (repo, pull, commitOid, signal) => {
       const lines: string[] = [];
       // A gate asked of a forge already stopping is not started: the forge
       // that carries on asks it again.
       if (stopped) return { ok: false, error: INTERRUPTED, lines, interrupted: true };
       const controller = new AbortController();
       gates.add(controller);
+      const abandon = (): void => controller.abort();
+      signal?.addEventListener("abort", abandon, { once: true });
       try {
         const bare = await pullDir(app.db, app.reposRoot, repo, pull);
         const done = await runTier({
@@ -1146,6 +1150,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           return { ok: false, error: done.error, lines, interrupted: true };
         return { ok: false, error: done.error, lines };
       } finally {
+        signal?.removeEventListener("abort", abandon);
         gates.delete(controller);
       }
     },

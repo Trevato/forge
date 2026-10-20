@@ -10,7 +10,10 @@
  * search in the first half while the rest waits for the next candidate. A
  * single red step is the culprit and is handed back. A gate cut off by the
  * forge stopping is no verdict: nothing is handed back, and the forge that
- * carries on admits the line again (#3155).
+ * carries on admits the line again (#3155). A gate that has not answered
+ * by `GATE_DEADLINE_MS` is abandoned the same way: cut off, logged, and the
+ * line re-formed by the next sweep, so one gate that never returns cannot
+ * hold the queue for good (#3430).
  *
  * What is queued is not stored: it is the pulls `landIfGreen` admitted, and
  * every sweep admits them again. The queue only orders them and remembers
@@ -67,8 +70,38 @@ export interface Candidate {
   readonly treeOid: string;
 }
 
-/** Gate a candidate: the full tier on its tip. */
-export type GateCandidate = (candidate: Candidate) => Promise<LandVerdict>;
+/**
+ * Gate a candidate: the full tier on its tip. `signal` aborts when the
+ * queue abandons the gate at its deadline: what it started should stop.
+ */
+export type GateCandidate = (candidate: Candidate, signal: AbortSignal) => Promise<LandVerdict>;
+
+/**
+ * How long a candidate's gate may run before the queue abandons it (#3430):
+ * twice the forge's full tier. Past it the gate is no verdict, as a gate the
+ * forge stopping cut off is not (#3155).
+ */
+export const GATE_DEADLINE_MS = 15 * 60_000;
+
+let deadlineMs = GATE_DEADLINE_MS;
+
+/**
+ * The most pulls one candidate carries (#3430): eight keep a gate near one
+ * full tier and a red's bisection three gates deep. The rest of the line
+ * waits for the next candidate, in order.
+ */
+export const MAX_CANDIDATE = 8;
+
+/** Tests shorten the deadline; the answer puts it back. */
+export function gateDeadlineForTest(ms: number): () => void {
+  deadlineMs = ms;
+  return () => {
+    deadlineMs = GATE_DEADLINE_MS;
+  };
+}
+
+/** The gate as a round asks it: the deadline is the line's own. */
+type Gated = (candidate: Candidate) => Promise<LandVerdict>;
 
 interface Waiting {
   readonly entry: Queued;
@@ -76,11 +109,14 @@ interface Waiting {
 }
 
 interface Line {
+  readonly repoId: string;
   waiting: Waiting[];
   /** Pull ids in the queue or its candidate: a pull is in the line once. */
   readonly holds: Set<string>;
   /** How many pulls the candidate at the gate now carries. */
   gating: number;
+  /** When the candidate at the gate started, epoch ms; 0 when none is. */
+  since: number;
   /** The gate runs this line has made, for a test and the log. */
   gates: number;
   draining: boolean;
@@ -100,7 +136,7 @@ const IDENTITY = {
 function lineOf(repoId: string): Line {
   let line = lines.get(repoId);
   if (line === undefined) {
-    line = { waiting: [], holds: new Set(), gating: 0, gates: 0, draining: false };
+    line = { repoId, waiting: [], holds: new Set(), gating: 0, since: 0, gates: 0, draining: false };
     lines.set(repoId, line);
   }
   return line;
@@ -139,6 +175,8 @@ export interface QueueStatus {
   readonly repoId: string;
   readonly queued: number;
   readonly gating: number;
+  /** When the candidate at the gate started, epoch ms; 0 when none is. */
+  readonly since: number;
 }
 
 export function queueStatus(): QueueStatus[] {
@@ -147,8 +185,37 @@ export function queueStatus(): QueueStatus[] {
       repoId,
       queued: line.waiting.length,
       gating: line.gating,
+      since: line.since,
     }))
     .filter((s) => s.queued > 0 || s.gating > 0);
+}
+
+/**
+ * The repository's line in a few words, for the tick line (#3430):
+ * `gating 4 pulls since 18:54` (UTC), `2 waiting`, both, or `idle`.
+ */
+export function queueWords(repoId: string): string {
+  const line = lines.get(repoId);
+  if (line === undefined) return "idle";
+  const waiting = line.waiting.length === 0 ? "" : `${line.waiting.length} waiting`;
+  if (line.gating === 0) return waiting === "" ? "idle" : waiting;
+  return `gating ${pullsWord(line.gating)} since ${hhmm(line.since)}${waiting === "" ? "" : `, ${waiting}`}`;
+}
+
+/** `1 pull`, `8 pulls`. */
+function pullsWord(n: number): string {
+  return n === 1 ? "1 pull" : `${n} pulls`;
+}
+
+/** An epoch-ms instant as `HH:MM`, UTC as the log is. */
+function hhmm(ms: number): string {
+  return new Date(ms).toISOString().slice(11, 16);
+}
+
+/** A gate's verdict in a word, for the log. */
+function outcome(verdict: LandVerdict): string {
+  if (verdict.lands) return "green";
+  return "interrupted" in verdict ? "cut off" : "red";
 }
 
 /** Gate runs a repository's line has made since boot. */
@@ -159,24 +226,57 @@ export function gateRuns(repoId: string): number {
 /**
  * One candidate at a time, until the line is empty. A batch is the front
  * of the line that shares one place and one base branch; a sealed pull
- * whose objects live elsewhere is a batch of its own.
+ * whose objects live elsewhere is a batch of its own. A batch carries at
+ * most `MAX_CANDIDATE` pulls.
  */
 async function drain(line: Line, gate: GateCandidate): Promise<void> {
   line.draining = true;
   try {
     while (line.waiting.length > 0) {
       const first = line.waiting[0]!.entry;
-      const batch = line.waiting.filter(
-        (w) => w.entry.dir === first.dir && w.entry.pull.baseBranch === first.pull.baseBranch,
-      );
+      const batch = line.waiting
+        .filter((w) => w.entry.dir === first.dir && w.entry.pull.baseBranch === first.pull.baseBranch)
+        .slice(0, MAX_CANDIDATE);
       line.waiting = line.waiting.filter((w) => !batch.includes(w));
-      const counted: GateCandidate = async (candidate) => {
+      const counted: Gated = async (candidate) => {
         line.gates++;
         line.gating = candidate.steps.length;
+        line.since = Date.now();
+        const pulls = candidate.steps.map((s) => `#${s.entry.pull.number}`).join(",");
+        // Said as it starts and as it ends: a gate takes minutes (#3430).
+        log.info(`gating ${pullsWord(line.gating)} since ${hhmm(line.since)}`, {
+          repo: line.repoId,
+          pulls,
+          waiting: line.waiting.length,
+        });
+        const abandon = new AbortController();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        // A gate that never answers is abandoned at the deadline: no
+        // verdict, and the next sweep forms the line again (#3430).
+        const deadline = new Promise<LandVerdict>((resolve) => {
+          timer = setTimeout(() => {
+            log.warn("candidate abandoned", {
+              repo: line.repoId,
+              pulls,
+              since: new Date(line.since).toISOString(),
+              deadline: `${Math.round(deadlineMs / 1000)}s`,
+            });
+            abandon.abort();
+            resolve({ lands: false, interrupted: true });
+          }, deadlineMs);
+        });
         try {
-          return await gate(candidate);
+          const verdict = await Promise.race([gate(candidate, abandon.signal), deadline]);
+          log.info(`gated ${pullsWord(line.gating)}: ${outcome(verdict)}`, {
+            repo: line.repoId,
+            pulls,
+            took: `${Math.round((Date.now() - line.since) / 1000)}s`,
+          });
+          return verdict;
         } finally {
+          clearTimeout(timer);
           line.gating = 0;
+          line.since = 0;
         }
       };
       let left: Waiting[];
@@ -202,7 +302,7 @@ async function drain(line: Line, gate: GateCandidate): Promise<void> {
  */
 async function round(
   batch: readonly Waiting[],
-  gate: GateCandidate,
+  gate: Gated,
   known?: { treeOid: string; red: Red },
 ): Promise<Waiting[]> {
   const candidate = await build(batch);

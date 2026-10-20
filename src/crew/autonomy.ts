@@ -23,7 +23,7 @@ import {
 import type { AccessError } from "../actions/access.ts";
 import { gateCandidate, releaseOnLand } from "../checks/landing.ts";
 import { addLearned } from "../checks/learned.ts";
-import { enqueue, type GateCandidate, type Queued } from "../checks/queue.ts";
+import { enqueue, type GateCandidate, type Queued, queueWords } from "../checks/queue.ts";
 import { mergeable, resolveOid, treeOf } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { CLOSED_NOTE } from "../core/done_on_main.ts";
@@ -1192,6 +1192,8 @@ export async function autonomyTick(
             }),
         // The approved pulls the last green sweep saw, and why each waits (#3055).
         ...(approved === undefined ? {} : { approved }),
+        // What the merge queue is doing now, not what the sweep admitted (#3430).
+        queue: queueWords(current.id),
         spent: `${status.spentTodayUsd.toFixed(2)}/${status.ceilingUsd}`,
         ...(status.paused === null ? {} : { paused: status.paused }),
       });
@@ -1841,8 +1843,8 @@ export function regateDue(red: Decision, now: number): boolean {
 
 /** The queue's gate: the full tier on the candidate's tip, asked as its first pull. */
 function gateFor(app: App, repo: Repo): GateCandidate {
-  return (candidate) =>
-    gateCandidate(app, repo, candidate.steps[0]!.entry.pull, candidate.dir, candidate.tipOid);
+  return (candidate, signal) =>
+    gateCandidate(app, repo, candidate.steps[0]!.entry.pull, candidate.dir, candidate.tipOid, signal);
 }
 
 /**

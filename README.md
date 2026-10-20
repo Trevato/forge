@@ -1132,6 +1132,10 @@ word) and `issue.parked = 1` carries it, so raw SQL never reads it as done.
 its repository's queue (`src/checks/queue.ts`). The queue builds one
 candidate: main, then each queued pull's squash on top of the one before, in
 queue order, leaving out any pull that conflicts or has nothing left to land.
+A candidate carries at most eight pulls (`MAX_CANDIDATE`), so a gate stays
+near one full tier and a red bisects in three; the rest wait their turn.
+The log says `[queue] gating N pulls since HH:MM` as a gate starts and
+`[queue] gated N pulls: green|red|cut off` as it ends.
 The full gate runs once on that candidate. Green lands every pull in order,
 and each landing is refused unless main is still where the candidate was
 built and the squash writes the tree that was gated, so main ends at the
@@ -1141,7 +1145,9 @@ waits for a push or a new main, except once: after 30 minutes with neither
 side moved it is gated again, and lands if green; a red that reproduces
 stays red and is not told twice. A gate cut off by the forge stopping (a
 roll, a drain) or by the cluster losing its Job is no red at all: the next
-sweep gates it again. Pulls
+sweep gates it again. So is a gate that has not answered in 15 minutes
+(`GATE_DEADLINE_MS`): it is abandoned and its check aborted, the log says
+`[queue] candidate abandoned`, and the next sweep forms the line again. Pulls
 that turn green while a candidate is gating wait for the next one. Each
 queue's numbers — how many pulls are queued, how many are gating, and how
 many landed in the last hour — show in three places: the flow panel on `/boards`, the
@@ -1155,7 +1161,9 @@ own first; the batch lands in one gate. A pull's own check runs again only
 when its head changes. A person's merge, which no candidate gated, still
 refuses a stale green. The autonomy tick line counts the approved pulls the
 last sweep saw and why each waits (`approved="3 approved: queued=2 review=1"`,
-from `src/crew/waits.ts`).
+from `src/crew/waits.ts`), and what the queue is doing now
+(`queue="gating 2 pulls since 18:54"`, `queue="1 waiting"` or `queue=idle`,
+in UTC).
 
 An autonomous app's planner is **held** while nothing is landing or the plate
 is full: no pull has merged in 48 h while one was closed unmerged, or more than

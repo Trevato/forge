@@ -35,6 +35,7 @@ import { ownProbeHeaders } from "../kernel/probe.ts";
  * pull with its base, or the merge queue's candidate of several (#2036).
  * `pull` is the one the gate is asked for: where the objects are and which
  * base branch's check is run. The manifest is the candidate's own.
+ * `signal` is the queue abandoning the gate at its deadline (#3430).
  */
 export async function gateCandidate(
   app: App,
@@ -42,6 +43,7 @@ export async function gateCandidate(
   pull: Pull,
   dir: string,
   commitOid: string,
+  signal?: AbortSignal,
 ): Promise<LandVerdict> {
   const checks = checksFor(app);
   if (checks === undefined) return { lands: true };
@@ -52,7 +54,7 @@ export async function gateCandidate(
   const declared = parseCheck(forgeJson, packageJson);
   if (!declared.ok || declared.value === undefined || declared.value.fast === null)
     return { lands: true };
-  const done = await checks.gate(repo, pull, commitOid);
+  const done = await checks.gate(repo, pull, commitOid, signal);
   // Cut off, not judged: no verdict, and not the gate log a red reads (#3155).
   if (done.interrupted === true) return { lands: false, interrupted: true };
   keepForgeGate(app.config.dataDir, app.config.forgeRepo, `${repo.ownerName}/${repo.name}`, done.lines);
