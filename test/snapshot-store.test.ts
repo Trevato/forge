@@ -190,19 +190,40 @@ describe("the snapshot store, inside a budget", () => {
     };
   };
 
-  test("a stalled get with 300 ms left fails within them, not after 5 × 10 s", async () => {
-    const s = stalled();
-    const store = withRetries(s.store, { attempts: 5, baseMs: 10, deadlineMs: 10_000 });
-    const start = performance.now();
-    const until = start + 300;
-    await expect(store.bounded!(() => until - performance.now()).get("snapshots/x/forge.db")).rejects.toThrow(
-      /get snapshots\/x\/forge\.db failed after 5 attempts: no answer in \d+ ms/,
+  test("a stalled get with 300 ms left makes 5 attempts, each within an even share", async () => {
+    // A fake clock the waits advance: nothing here depends on the scheduler.
+    let now = 0;
+    const left: number[] = [];
+    const inner: Store = {
+      ...stalled().store,
+      get: () => {
+        left.push(300 - now);
+        return new Promise<never>(() => {});
+      },
+    };
+    const store = withRetries(inner, {
+      attempts: 5,
+      baseMs: 10,
+      deadlineMs: 10_000,
+      sleep: async (ms) => {
+        now += ms;
+      },
+    });
+    const error = await store
+      .bounded!(() => 300 - now)
+      .get("snapshots/x/forge.db")
+      .catch((e: Error) => e);
+    expect((error as Error).message).toMatch(
+      /^get snapshots\/x\/forge\.db failed after 5 attempts: no answer in \d+ ms$/,
     );
-    const took = performance.now() - start;
-    expect(took).toBeLessThan(300 + 40);
-    // Each attempt had an even share: (300 − 150 ms of waits) / 5 ≈ 30 ms.
-    expect(took).toBeGreaterThan(150);
-    expect(s.began.length).toBe(5);
+    expect(left.length).toBe(5);
+    // Waits are 10, 20, 40, 80 ms; attempt n's share is (left − waits to come) / (5 − n).
+    expect(left).toEqual([300, 290, 270, 230, 150]);
+    const waitsAfter = [150, 140, 120, 80, 0];
+    const shares = left.map((l, n) => Math.floor((l - waitsAfter[n]!) / (5 - n)));
+    expect(shares).toEqual([30, 37, 50, 75, 150]);
+    // The last attempt's deadline is the one the error names.
+    expect((error as Error).message).toContain("no answer in 150 ms");
   });
 
   test("with nothing left no attempt is made", async () => {
