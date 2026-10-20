@@ -12,6 +12,7 @@ import {
   forkParentFor,
   type Repo,
 } from "../../core/repos.ts";
+import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -148,11 +149,15 @@ async function composeContext(ctx: Ctx, repo: Repo, forceSelf: boolean) {
 
 // GET /:owner/:name/pulls/new
 export async function newPullPage(ctx: Ctx): Promise<Response> {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
   if (!ctx.auth.user) return signInFirst(ctx);
   const forceSelf = ctx.url.searchParams.get("self") !== null;
+  const comparing = performance.now();
   const c = await composeContext(ctx, repo, forceSelf);
+  notePhase(ctx.request, "compare", performance.now() - comparing);
+  const rendering = performance.now();
   // The branches page proposes a branch by linking here with it named, so
   // "New pull" from a row arrives with that row already chosen.
   const wantedHead = ctx.url.searchParams.get("head") ?? "";
@@ -197,13 +202,15 @@ export async function newPullPage(ctx: Ctx): Promise<Response> {
             action: btn("Back to code", { href: repoBase(repo) }),
           })}
     </div>`;
-  return page({
+  const response = page({
     ctx,
     title: `New pull request · ${repo.name}`,
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 const COMPOSE_ERRORS: Record<string, string> = {
