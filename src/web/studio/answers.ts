@@ -13,6 +13,7 @@ import { getAppByRepo } from "../../core/apps.ts";
 import { listComments, listIssues, type Issue } from "../../core/issues.ts";
 import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
 import { listRuns } from "../../core/runs.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { getUsersByIds, type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { loadRepo, repoBase } from "../chrome.ts";
@@ -75,9 +76,14 @@ export function canSeeAnswers(db: Database, repo: Repo, user: User | undefined):
 }
 
 /** The region itself; empty (but present, so it can fill) with no tells yet. */
-export function answersRegion(ctx: Ctx, repo: Repo, user: User): Html {
+export function answersRegion(
+  ctx: Ctx,
+  repo: Repo,
+  user: User,
+  answers: readonly Answer[] = answersFor(ctx.app.db, repo, user),
+): Html {
   const base = repoBase(repo);
-  const rows = answersFor(ctx.app.db, repo, user).map(({ issue, said, working }) => {
+  const rows = answers.map(({ issue, said, working }) => {
     const text =
       said === undefined
         ? null
@@ -106,9 +112,14 @@ export function answersRegion(ctx: Ctx, repo: Repo, user: User): Html {
 
 // GET /:owner/:name/app/answers — the region alone, for the page that shows it.
 export function appAnswersFragment(ctx: Ctx): Response {
-  const repo = loadRepo(ctx);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const repo = timePhase(ctx.request, "repo", () => loadRepo(ctx));
   const user = ctx.auth.user;
-  if (!repo || !canSeeAnswers(ctx.app.db, repo, user))
+  if (!repo || !timePhase(ctx.request, "access", () => canSeeAnswers(ctx.app.db, repo, user)))
     return fragment(html``, { status: 404 });
-  return fragment(answersRegion(ctx, repo, user), { request: ctx.request });
+  const answers = timePhase(ctx.request, "answers", () => answersFor(ctx.app.db, repo, user!));
+  const rendering = performance.now();
+  const region = answersRegion(ctx, repo, user!, answers);
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return fragment(region, { request: ctx.request });
 }
