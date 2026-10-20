@@ -631,7 +631,7 @@ describe("checks", () => {
     const slow = await commitToBranch(app, alice, repo, {
       message: "A slow check",
       files: [
-        { path: "forge.json", content: checkJson("sleep 2 && test -f OK.md") },
+        { path: "forge.json", content: checkJson("sleep 0.5 && test -f OK.md") },
       ],
     });
     if (!slow.ok) throw new Error(JSON.stringify(slow.error));
@@ -717,7 +717,7 @@ describe("checks", () => {
         files: [
           {
             path: "forge.json",
-            content: checkJson(`sleep 2 && test -f OK.md # ${ending}`),
+            content: checkJson(`sleep 0.5 && test -f OK.md # ${ending}`),
           },
         ],
       });
@@ -820,7 +820,7 @@ describe("checks", () => {
       branch: "order-hold",
       message: "Hold the slot",
       files: [
-        { path: "forge.json", content: checkJson("sleep 2 && test -f OK.md") },
+        { path: "forge.json", content: checkJson("sleep 0.5 && test -f OK.md") },
       ],
     });
     if (!held.ok) throw new Error(JSON.stringify(held.error));
@@ -870,7 +870,13 @@ describe("checks", () => {
     const slow = await commitToBranch(app, alice, repo, {
       message: "A slower check",
       files: [
-        { path: "forge.json", content: checkJson("sleep 3 && test -f OK.md") },
+        {
+          path: "forge.json",
+          // Hangs the first time it runs, passes the second: no wait to tune.
+          content: checkJson(
+            `if [ -f '${dataDir}/ran-once' ]; then test -f OK.md; else touch '${dataDir}/ran-once'; sleep 60; fi`,
+          ),
+        },
       ],
     });
     if (!slow.ok) throw new Error(JSON.stringify(slow.error));
@@ -926,7 +932,7 @@ describe("checks", () => {
       concurrency: 1,
       drainMs: 30_000,
     });
-    const id = await slowCheck("sleep 2 && test -f OK.md # drained", "A drained check");
+    const id = await slowCheck("sleep 0.5 && test -f OK.md # drained", "A drained check");
     await checks.stop();
     const run = getRun(app.db, id);
     expect(run?.state).toBe("ok");
@@ -945,7 +951,7 @@ describe("checks", () => {
       concurrency: 1,
       drainMs: 30_000,
     });
-    const id = await slowCheck("sleep 3 && test -f OK.md # cut off", "A cut-off check");
+    const id = await slowCheck("sleep 0.5 && test -f OK.md # cut off", "A cut-off check");
     await checks.stop({ drain: false });
     const run = getRun(app.db, id);
     expect(run?.state).toBe("cancelled");
@@ -960,7 +966,7 @@ describe("checks", () => {
   }, 60_000);
 
   test("a check whose pull lands while it runs ends as superseded, not failed", async () => {
-    const id = await slowCheck("sleep 2 && false", "A check overtaken");
+    const id = await slowCheck("sleep 0.5 && false", "A check overtaken");
     cancelRun(app.db, id, "pull landed");
     const deadline = Date.now() + 20_000;
     let lines = "";
