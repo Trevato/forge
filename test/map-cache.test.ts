@@ -67,31 +67,44 @@ describe("/map on the forge-sized fixture, warm", () => {
   afterAll(() => servers.stop());
 
   for (const who of ["owner", "stranger"] as const) {
-    test(`${who}: p95 within the wall-clock floor, statements within a fixed cost + 2 per lane`, async () => {
+    test(`${who}: warm hits far cheaper than a cold build, statements within a fixed cost + 2 per lane`, async () => {
       const cookie = who === "owner" ? f.ownerCookie : f.strangerCookie;
+      // Both viewers share one cache, so drop it here: the first request is a
+      // real cold build for this viewer, whichever test ran before.
+      clearMapCache();
+      const coldStarted = performance.now();
       const warm = await get(servers, "/map", cookie);
+      const cold = performance.now() - coldStarted;
       const lanes = lanesIn(warm);
       expect(lanes).toBeGreaterThan(5);
       const counter = countStatements(f.app.db);
       const times: number[] = [];
-      let statements = 0;
+      const counts: number[] = [];
       try {
         for (let n = 0; n < 20; n++) {
           counter.reset();
           const started = performance.now();
           await get(servers, "/map", cookie);
           times.push(performance.now() - started);
-          statements = Math.max(statements, counter.count);
+          counts.push(counter.count);
         }
       } finally {
         counter.stop();
       }
       times.sort((a, b) => a - b);
       const p95 = times[Math.ceil(times.length * 0.95) - 1]!;
+      const median = times[times.length >> 1]!;
+      // The steady state: a lane's minute or the UTC day turning over mid-loop
+      // rebuilds one request, and that is the cache working, not failing.
+      counts.sort((a, b) => a - b);
+      const statements = counts[counts.length >> 1]!;
       console.log(`${who}: ${lanes} lanes, p95 ${p95.toFixed(1)} ms, ${statements} statements`);
-      // 200 ms is the floor test/flake.test.ts allows a request; the budget
-      // in the doc (50 ms) is read off bench/map-home.ts, not asserted here.
-      expect(p95).toBeLessThan(200);
+      // Wall-clock is the check machine's, so it is only ever a ratio between
+      // two timings taken here, a real cold build and the warm median: a
+      // missing cache puts them level. The doc's 50 ms budget is read off
+      // bench/map-home.ts. p95 below is a hang guard, nothing more.
+      expect(median * 3).toBeLessThan(cold);
+      expect(p95).toBeLessThan(5_000);
       // The page's own chrome costs a fixed ~25 statements (session, settings,
       // the repository lists); a lane costs at most two. Cold, it was ~2,700.
       expect(statements).toBeLessThanOrEqual(CHROME + 2 * lanes);
