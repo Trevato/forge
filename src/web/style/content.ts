@@ -1054,8 +1054,8 @@ form.inline { display: inline; margin-left: auto; }
   background: var(--card); border: 1px solid var(--border);
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
 }
-.editor-head .editor-path { flex: 1 1 16rem; min-width: 0; }
-.editor-tab[aria-selected="true"] { background: var(--muted); color: var(--fg); font-weight: 550; }
+.editor-head input[name="path"] { flex: 1 1 16rem; min-width: 0; }
+.editor-head .btn[aria-selected="true"] { color: var(--fg); font-weight: 550; }
 
 .editor-wrap {
   display: flex; align-items: stretch;
@@ -1083,10 +1083,10 @@ form.inline { display: inline; margin-left: auto; }
    line height or tab size would put the caret in the wrong place. Neither
    wraps: the editor scrolls horizontally instead of reflowing, which is what
    a code editor does. */
-.editor-stack {
+.editor-wrap > div:last-child {
   position: relative; display: grid; flex: 1; min-width: 0; min-height: 0;
 }
-.editor-mirror,
+#editor-mirror,
 textarea.editor {
   grid-area: 1 / 1;
   margin: 0; border: none; background: none;
@@ -1095,29 +1095,29 @@ textarea.editor {
   tab-size: 2; white-space: pre;
   overflow: auto;
 }
-.editor-wrap.mirrored .editor-mirror,
-.editor-wrap.mirrored textarea.editor { min-height: 0; }
+.editor-wrap[data-mirrored] #editor-mirror,
+.editor-wrap[data-mirrored] textarea.editor { min-height: 0; }
 textarea.editor { resize: vertical; field-sizing: content; }
 textarea.editor:focus-visible { outline: none; }
-.editor-mirror {
+#editor-mirror {
   overflow: hidden; pointer-events: none; user-select: none;
   color: var(--fg);
 }
 /* Only when the mirror is live does the textarea's own text step aside — with
    no script (or no bundle) the plain textarea is what you see. */
-.editor-wrap:not(.mirrored) .editor-mirror { display: none; }
-.editor-wrap.mirrored textarea.editor {
+.editor-wrap:not([data-mirrored]) #editor-mirror { display: none; }
+.editor-wrap[data-mirrored] textarea.editor {
   color: transparent;
   caret-color: var(--fg);
   -webkit-text-fill-color: transparent;
 }
-.editor-wrap.mirrored textarea.editor::selection {
+.editor-wrap[data-mirrored] textarea.editor::selection {
   background: color-mix(in srgb, var(--accent) 30%, transparent);
 }
-.editor-mirror .ml {
+#editor-mirror > div {
   display: block; min-height: 1.55em; min-width: 100%; width: max-content;
 }
-.editor-mirror .ml.cur {
+#editor-mirror > [aria-current] {
   background: color-mix(in srgb, var(--muted) 75%, transparent);
 }
 .editor-wrap { --editor-fs: 12.5px; }
@@ -1126,7 +1126,7 @@ textarea.editor:focus-visible { outline: none; }
 @media (pointer: coarse) { .editor-wrap { --editor-fs: 16px; } }
 /* The ring above is a shadow, which forced colours drop; the textarea's own outline is off, so draw one. */
 @media (forced-colors: active) { .editor-wrap:focus-within { outline: 2px solid Highlight; outline-offset: 2px; } }
-.editor-preview {
+#editor-preview {
   border: 1px solid var(--border); border-top: none;
   border-radius: 0 0 var(--radius) var(--radius);
   background: var(--card); min-height: 12rem;

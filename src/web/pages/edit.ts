@@ -177,7 +177,7 @@ function editorForm(
         draft.creating,
         () =>
           html`<input
-            class="input mono editor-path"
+            class="input mono"
             name="path"
             value="${draft.path}"
             placeholder="path/to/file.ts"
@@ -208,9 +208,9 @@ function editorForm(
         isMarkdownPath(draft.path) || draft.creating,
         () =>
           html`<button
-              class="btn editor-tab"
+              class="btn"
               data-size="sm"
-              data-variant="ghost"
+              data-variant="secondary"
               type="button"
               data-editor-tab="write"
               aria-selected="true"
@@ -219,7 +219,7 @@ function editorForm(
               Write
             </button>
             <button
-              class="btn editor-tab"
+              class="btn"
               data-size="sm"
               data-variant="ghost"
               type="button"
@@ -239,10 +239,10 @@ function editorForm(
       ${mirror ? raw('data-mirror="1"') : null}
     >
       <div class="editor-gutter" id="editor-gutter" aria-hidden="true"></div>
-      <div class="editor-stack">
+      <div>
         ${when(mirror, () =>
           raw(
-            `<pre class="editor-mirror mono" id="editor-mirror" aria-hidden="true">${mirrorHtml(
+            `<pre class="mono" id="editor-mirror" aria-hidden="true">${mirrorHtml(
               draft.content,
               lang,
             )}</pre>`,
@@ -261,7 +261,7 @@ ${draft.content}</textarea
       </div>
     </div>
     <div
-      class="prose editor-preview"
+      class="prose"
       id="editor-preview"
       data-preview="${base}/preview"
       data-path="${draft.path}"
@@ -511,7 +511,7 @@ export async function editorPage(
 function mirrorHtml(content: string, lang: string): string {
   return highlightToHtml(content, lang as Parameters<typeof highlightToHtml>[1])
     .split("\n")
-    .map((line) => `<div class="ml">${line}</div>`)
+    .map((line) => `<div>${line}</div>`)
     .join("");
 }
 

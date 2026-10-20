@@ -184,6 +184,15 @@ describe("editing files on the web", () => {
     expect(theirs).not.toContain("/alice/beacon/edit/main/src/lamp.ts");
   });
 
+  test("the editor wears no class of its own beyond the design system's", async () => {
+    for (const path of ["src/lamp.ts", "README.md"]) {
+      const html = await text(`/alice/beacon/edit/main/${path}`, alice);
+      for (const name of ["editor-mirror", "editor-path", "editor-preview", "editor-stack", "editor-tab", "mirrored"])
+        expect(html).not.toMatch(new RegExp(`class="[^"]*\\b${name}\\b`));
+      expect(html).not.toContain('class="ml"');
+    }
+  });
+
   test("a stranger cannot even open the editor", async () => {
     const res = await get("/alice/beacon/edit/main/src/lamp.ts", kim);
     expect(res.status).toBe(404);
@@ -617,13 +626,13 @@ describe("editing files on the web", () => {
       files: [{ path: "src/mirror.ts", content: "export const lit = true\n" }],
     });
     const html = await text("/alice/beacon/edit/main/src/mirror.ts", alice);
-    expect(html).toContain('class="editor-mirror mono"');
+    expect(html).toContain('id="editor-mirror"');
     expect(html).toContain('data-mirror="1"');
     expect(html).toContain('data-lang="ts"');
     expect(html).toContain("<textarea");
     // The first paint is already highlighted: no flash of unstyled code.
     expect(html).toContain(
-      '<div class="ml"><span class="tok-keyword">export</span>',
+      '<div><span class="tok-keyword">export</span>',
     );
     // …and the text is still in the textarea, which is what actually posts.
     expect(html).toContain("export const lit = true");
@@ -759,7 +768,7 @@ describe("editing files on the web", () => {
     const html = await text("/alice/beacon/edit/main/src/generated.ts", alice);
     expect(html).toContain("<textarea");
     // No mirror element, no bundle, and the strict script policy back.
-    expect(html).not.toContain('class="editor-mirror');
+    expect(html).not.toContain('id="editor-mirror"');
     expect(html).not.toContain('data-mirror="1"');
     expect(html).not.toContain('<script type="module"');
     const res = await get("/alice/beacon/edit/main/src/generated.ts", alice);

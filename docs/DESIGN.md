@@ -391,7 +391,6 @@ gone, so this list only shrinks.
 - **`style/content.ts`, diff viewer** — the diff table: its gutters, line kinds, file head and inline review comments: `.add` `.del` `.dh` `.diff` `.diff-body` `.diff-head` `.diff-note` `.diff-path` `.diff-stat` `.diff-stub` `.diff-summary` `.diff-table` `.dl` `.dl-review` `.dn` `.dn-comment` `.nonl` `.rc-body` `.rc-form` `.rc-head` `.rc-outdated` `.rc-resolved-line` `.wd`
 - **`style/content.ts`, apps, runs, and the crew** — run pages, their logs and checks (a pull's look is §5's **look**): `.app-url` `.check-progress` `.check-steps` `.ln-forge` `.ln-pulse` `.ln-say` `.ln-tool` `.ln-you` `.log-tail-row` `.pinned-failures` `.pinned-slot` `.run-actions` `.run-jump` `.run-live` `.run-steer` `.run-summary` `.step-state` `.tests-bar` `.tests-words` `.txt` `.who`
 - **`style/content.ts`, the code browser: explorer beside content** — the explorer column's own parts: `.code-main` `.code-split` `.ex-empty` `.ex-find` `.ex-head` `.ex-list` `.ex-name` `.ex-ref` `.ex-twist` `.explorer-toggle`
-- **`style/content.ts`, the editor** — the editor's parts beyond the §5 row: `.editor-mirror` `.editor-path` `.editor-preview` `.editor-stack` `.editor-tab` `.mirrored` `.ml`
 - **`style/content.ts`, search results** — search results, the inbox's ask cards, the client list and the claim link: `.ask-acts` `.ask-card` `.ask-group` `.ask-kind` `.ask-meta` `.ask-more-acts` `.ask-pick` `.ask-pick-hit` `.ask-short` `.ask-waiting` `.claim-link-box` `.forges-sent` `.live-toggle` `.needs-you` `.no-hits`
 - **`pages/board.ts`** — the spend tables `spend.ts` draws, first on the board (the board itself is §5's **board**): `.spend-table` `.spend-totals`
 - **`pages/flow-panel.ts`** — the pipeline's outflow sparklines, on /flow and /boards: `.flow-bar` `.flow-out`
@@ -528,7 +527,7 @@ all — a protected default, or a ref that is not a branch — the page says so 
 the disabled radio rather than letting somebody find out after typing.
 
 **The highlighted mirror.** Under the textarea sits a
-`<pre class="editor-mirror">` holding the same text, syntax-coloured; the
+`<pre id="editor-mirror">` holding the same text, syntax-coloured; the
 textarea on top of it has transparent text and a visible caret. They share one grid cell and one set
 of metrics — font, size, line height, padding, tab size — because a single
 divergence puts the caret in the wrong place, and the _height ceiling lives on

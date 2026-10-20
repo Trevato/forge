@@ -950,7 +950,7 @@ export const codeJs = /* js */ `
  * commits, and the Preview tab asks the server to render the Markdown with
  * the same renderer that will render it once it lands.
  *
- * The highlighting is the classic overlay: a `<pre class="editor-mirror">`
+ * The highlighting is the classic overlay: a `<pre id="editor-mirror">`
  * holding the syntax-coloured text, and the real textarea on top of it with
  * transparent text and a visible caret. The two must agree on every metric —
  * font, size, line height, padding, tab size — which is why they share a
@@ -970,7 +970,7 @@ export const editorJs = /* js */ `
   var gutter = doc.getElementById('editor-gutter');
   var wrap = doc.getElementById('editor-write');
   var mirror = doc.getElementById('editor-mirror');
-  var pathInput = doc.querySelector('.editor-path');
+  var pathInput = doc.querySelector('.editor-head input[name=path]');
   var form = area.form;
   var MAX_MIRROR = 200000;
   var MAX_LINES = 10000;
@@ -1003,7 +1003,7 @@ export const editorJs = /* js */ `
 
   function build(html, from, to) {
     var out = '';
-    for (var i = from; i < to; i++) out += '<div class="ml">' + html[i] + '</div>';
+    for (var i = from; i < to; i++) out += '<div>' + html[i] + '</div>';
     return out;
   }
 
@@ -1061,9 +1061,9 @@ export const editorJs = /* js */ `
     var at = area.value.slice(0, area.selectionStart).split('\\n').length - 1;
     if (at === current) return;
     var was = mirror.children[current];
-    if (was) was.classList.remove('cur');
+    if (was) was.removeAttribute('aria-current');
     var now = mirror.children[at];
-    if (now) now.classList.add('cur');
+    if (now) now.setAttribute('aria-current', 'true');
     current = at;
   }
 
@@ -1077,7 +1077,7 @@ export const editorJs = /* js */ `
 
   function stopMirror() {
     model = null;
-    if (wrap) wrap.classList.remove('mirrored');
+    if (wrap) wrap.removeAttribute('data-mirrored');
     if (mirror) mirror.innerHTML = '';
   }
 
@@ -1088,7 +1088,7 @@ export const editorJs = /* js */ `
     if (area.value.length > MAX_MIRROR || lineCount() > MAX_LINES) return;
     lang = wrap.getAttribute('data-lang') || 'plain';
     model = new hl.Mirror(lang);
-    wrap.classList.add('mirrored');
+    wrap.setAttribute('data-mirrored', '1');
     paint(true);
     syncScroll();
   }
@@ -1217,7 +1217,9 @@ export const editorJs = /* js */ `
   }
   function show(which) {
     tabs.forEach(function (t) {
-      t.setAttribute('aria-selected', t.getAttribute('data-editor-tab') === which ? 'true' : 'false');
+      var on = t.getAttribute('data-editor-tab') === which;
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      t.setAttribute('data-variant', on ? 'secondary' : 'ghost');
     });
     if (wrap) wrap.hidden = which !== 'write';
     if (pane) pane.hidden = which !== 'preview';
