@@ -228,6 +228,25 @@ and rounds to 0.0):
   the table below (a push to the boards repository is one of them).
 - **Max age:** 30 seconds.
 
+### Where home's time goes (#3160)
+
+`/`'s `Server-Timing` names `feed`, `kpis` and `panels` for a signed-in
+viewer, and `shelf` on the anonymous door. A phase is written only for a
+region the viewer is shown: a non-admin gets `feed` and no `kpis` or
+`panels`. A phase whose cache answered carries `desc="hit"`
+(`kpis;dur=0.2;desc="hit"`); the hit is read off the cache's counters, so
+under concurrent requests it can be credited to the neighbour. `feed` is
+the whole region, ranking and rendering, with the candidate cache inside it.
+One `bun run bench/home-phases.ts` run (owner, `--n 30` warm, the snappy
+fixture; all three caches hit):
+
+| `GET /` phase | owner p50 | owner p95 |
+| ------------- | --------: | --------: |
+| total (`app`) |      15.3 |      19.7 |
+| `kpis`        |       0.2 |       0.3 |
+| `panels`      |       0.1 |       0.1 |
+| `feed`        |       7.1 |      10.0 |
+
 ### Not cached on home
 
 The anonymous door (1.5 ms, 10 statements), the app shelf, and the

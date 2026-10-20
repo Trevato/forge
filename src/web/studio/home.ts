@@ -49,6 +49,9 @@ import { needsYouSection } from "./asks_page.ts";
 import { flowCards } from "./flow_card.ts";
 import { composer, feedJs, feedNote, feedRegion } from "./feed.ts";
 import { kpiRow } from "./kpi_row.ts";
+import { feedCandidateCache } from "../../feed/feed.ts";
+import { timePhase, timePhaseAsync } from "../../core/route_timing.ts";
+import { kpiCache, panelCache } from "./home_cache.ts";
 import { pinnedPanels } from "./pinned.ts";
 import { homeTabs } from "./home_tabs.ts";
 import { crewKeyNote } from "./crew.ts";
@@ -249,8 +252,12 @@ export async function studioHome(
   const ceilingUsd = ctx.app.config.crewCeilingUsd;
   const kpiOpts = { dataDir: ctx.app.config.dataDir, ...(ceilingUsd === undefined ? {} : { ceilingUsd }) };
   const body = html`<h1 class="sr-only">Home</h1>
-    ${ask} ${address} ${figures ? kpiRow(ctx.app.db, kpiOpts) : liveLine(ctx)}
-    ${figures ? await pinnedPanels(ctx.app, user) : null}
+    ${ask} ${address} ${figures
+      ? timePhase(ctx.request, "kpis", () => kpiRow(ctx.app.db, kpiOpts), () => kpiCache(ctx.app.db))
+      : liveLine(ctx)}
+    ${figures
+      ? await timePhaseAsync(ctx.request, "panels", () => pinnedPanels(ctx.app, user), () => panelCache(ctx.app.db))
+      : null}
     ${when(
       steps,
       () => html`<p class="small muted" id="lean-home">
@@ -267,7 +274,7 @@ export async function studioHome(
         </div>
         ${flowCards(ctx, user)}
         ${feedNote()}
-        ${feedRegion(user, ctx)}
+        ${timePhase(ctx.request, "feed", () => feedRegion(user, ctx), () => feedCandidateCache(ctx.app.db))}
       </div>
       <aside class="dash-rail stack home-rail">
         ${
@@ -479,13 +486,17 @@ function frontControls(ctx: Ctx, front: FrontPage): Html {
  * controls that decide it.
  */
 export function studioDoor(ctx: Ctx): Response {
-  const front = frontPage(ctx.app);
+  let tiles: Html[] = [];
+  const front = timePhase(ctx.request, "shelf", () => {
+    const found = frontPage(ctx.app);
+    tiles = found.shelf.map(tile);
+    return found;
+  });
   const admin = ctx.auth.user?.isAdmin === true && ctx.url.pathname === "/front";
   // A share sheet lands here with the shared words in the query; signing in
   // comes back to them rather than to a bare home, so they are not lost.
   const back = ctx.url.pathname === "/" ? "/" + ctx.url.search : "/";
   const nextQuery = back === "/" ? "" : `?next=${encodeURIComponent(back)}`;
-  const tiles = front.shelf.map(tile);
   const body = html`<section class="hero">
       <h1>Apps, live.</h1>
       <p>A software forge that builds and serves its own apps.</p>

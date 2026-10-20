@@ -159,13 +159,18 @@ export function serverTiming(
     dbMs === undefined
       ? `app;dur=${f(appMs)}`
       : `db;dur=${f(dbMs)}, app;dur=${f(appMs)}`;
-  return [head, ...phases.map((p) => `${p.name};dur=${f(p.ms)}`)].join(", ");
+  return [
+    head,
+    ...phases.map((p) => `${p.name};dur=${f(p.ms)}${p.hit ? ';desc="hit"' : ""}`),
+  ].join(", ");
 }
 
 /** One named stretch of a request, in milliseconds. */
 export interface Phase {
   readonly name: string;
   readonly ms: number;
+  /** The phase was answered from a cache: written as `desc="hit"`. */
+  readonly hit?: boolean;
 }
 
 /** A phase name is a header token: lowercase letters, nothing a viewer chose. */
@@ -174,13 +179,45 @@ const PHASE_NAME = /^[a-z][a-z0-9-]{0,15}$/;
 const phaseLists = new WeakMap<Request, Phase[]>();
 
 /** A page names a phase it spent `ms` in; `serverTiming` writes it after `app`. */
-export function notePhase(request: Request, name: string, ms: number): void {
+export function notePhase(request: Request, name: string, ms: number, hit = false): void {
   if (!PHASE_NAME.test(name))
     throw new RangeError("phase refused: the name must be a lowercase token");
   if (!Number.isFinite(ms) || ms < 0) return;
   const list = phaseLists.get(request) ?? [];
-  list.push({ name, ms });
+  list.push(hit ? { name, ms, hit } : { name, ms });
   phaseLists.set(request, list);
+}
+
+/** What a cache has counted so far; `timePhase` reads it before and after. */
+type Counts = () => { readonly hits: number; readonly misses: number };
+
+/** Name the time `work` took; a hit when `counts` rose in hits and not in misses. */
+function noteSince(request: Request, name: string, started: number, before: [number, number] | undefined, counts?: Counts): void {
+  const ms = performance.now() - started;
+  const after = counts?.();
+  notePhase(request, name, ms, before !== undefined && after !== undefined && after.hits > before[0] && after.misses === before[1]);
+}
+
+const snap = (counts?: Counts): [number, number] | undefined => {
+  const c = counts?.();
+  return c === undefined ? undefined : [c.hits, c.misses];
+};
+
+/** Run `work`, name the time it took, and return what it returned. */
+export function timePhase<T>(request: Request, name: string, work: () => T, counts?: Counts): T {
+  const before = snap(counts);
+  const started = performance.now();
+  const value = work();
+  noteSince(request, name, started, before, counts);
+  return value;
+}
+
+export async function timePhaseAsync<T>(request: Request, name: string, work: () => Promise<T>, counts?: Counts): Promise<T> {
+  const before = snap(counts);
+  const started = performance.now();
+  const value = await work();
+  noteSince(request, name, started, before, counts);
+  return value;
 }
 
 export function takePhases(request: Request): Phase[] {
