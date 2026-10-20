@@ -8,6 +8,7 @@
  * typed still in it. A dead end that loses input is a bug, not a message.
  */
 
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { PASSWORD_TOO_LONG } from "../../core/hash-gate.ts";
 import { NOT_A_MEMBER } from "../../core/roles.ts";
 import { storageLimitMessage } from "../../core/storage.ts";
@@ -731,13 +732,16 @@ interface RepoValues {
   visibility: string;
 }
 
-function newRepoForm(ctx: Ctx, values: RepoValues, error?: string): Html {
-  const user = ctx.auth.user!;
-  // Owners the user may create under: themselves, plus orgs they can write to.
-  const writeOrgs = listOrgsForUser(ctx.app.db, user.id).filter((org) =>
-    accessAllows(orgAccess(ctx.app.db, org.id, user), "write"),
+/** Owners the user may create under: themselves, plus orgs they can write to. */
+function ownersFor(ctx: Ctx, user: User): string[] {
+  const orgs = timePhase(ctx.request, "orgs", () => listOrgsForUser(ctx.app.db, user.id));
+  const writeOrgs = timePhase(ctx.request, "access", () =>
+    orgs.filter((org) => accessAllows(orgAccess(ctx.app.db, org.id, user), "write")),
   );
-  const owners = [user.username, ...writeOrgs.map((o) => o.username)];
+  return [user.username, ...writeOrgs.map((o) => o.username)];
+}
+
+function newRepoForm(ctx: Ctx, values: RepoValues, owners: string[], error?: string): Html {
 
   return html`<div class="narrow-wide">
     ${pageHead("New repository", {
@@ -798,16 +802,25 @@ function newRepoForm(ctx: Ctx, values: RepoValues, error?: string): Html {
 
 export function newRepoPage(ctx: Ctx): Response {
   if (!ctx.auth.user) return signInFirst(ctx);
-  return page({
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const owners = ownersFor(ctx, ctx.auth.user);
+  const rendering = performance.now();
+  const response = page({
     ctx,
     title: "New repository",
-    body: newRepoForm(ctx, {
-      owner: ctx.url.searchParams.get("owner") ?? ctx.auth.user.username,
-      name: "",
-      description: "",
-      visibility: "private",
-    }),
+    body: newRepoForm(
+      ctx,
+      {
+        owner: ctx.url.searchParams.get("owner") ?? ctx.auth.user.username,
+        name: "",
+        description: "",
+        visibility: "private",
+      },
+      owners,
+    ),
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 export async function newRepoSubmit(ctx: Ctx): Promise<Response> {
@@ -844,6 +857,7 @@ export async function newRepoSubmit(ctx: Ctx): Promise<Response> {
         body: newRepoForm(
           ctx,
           values,
+          ownersFor(ctx, ctx.auth.user),
           messages[created.error] ?? "That name won't work.",
         ),
       },
