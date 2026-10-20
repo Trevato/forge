@@ -1,4 +1,6 @@
 /** Home's figures row (#2871): the five tiles, their links, studio words only, a sparkline of 24 points. */
+import { reachTables } from "./helpers/reach-tables.ts";
+import { NO_REACH, readReach } from "../src/flow/reach.ts";
 import { describe, expect, test } from "bun:test";
 import { checkTime, kpiLines, sparkText } from "../src/flow/kpi_words.ts";
 import { running } from "../src/kernel/version.ts";
@@ -10,7 +12,7 @@ const hours = (n: number) => Array.from({ length: 24 }, (_, i) => (i === 3 ? n :
 describe("home kpi row", () => {
   test("five tiles with their links and figures", () => {
     const out = kpiRowFor(
-      { landedHours: hours(6), landed: 6, live: null, builders: { running: 2, slots: 4 }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: 185_000, backupAt: null },
+      { landedHours: hours(6), landed: 6, live: null, builders: { running: 2, slots: 4 }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: 185_000, backupAt: null, reach: NO_REACH },
       { sha: "abcdef0123456", at: "2026-10-19T11:00:00.000Z" },
     ).toString();
     expect(out).toContain('<span class="sha">abcdef0</span>');
@@ -25,7 +27,7 @@ describe("home kpi row", () => {
 
   test("the whole figure is in the title and the link's label, rounded and in studio words", () => {
     const out = kpiRowFor(
-      { landedHours: hours(7), landed: 7, live: null, builders: { running: 2, slots: 4 }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: 185_000, backupAt: null },
+      { landedHours: hours(7), landed: 7, live: null, builders: { running: 2, slots: 4 }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: 185_000, backupAt: null, reach: NO_REACH },
       { sha: "abcdef0123456", at: "2026-10-19T11:00:00.000Z" },
     ).toString();
     expect(out).toContain('title="0.29"');
@@ -37,13 +39,13 @@ describe("home kpi row", () => {
   });
 
   test("empty figures say so", () => {
-    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, builders: { running: 2, slots: 4 }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: null, backupAt: null }, null).toString();
+    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, builders: { running: 2, slots: 4 }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: null, backupAt: null, reach: NO_REACH }, null).toString();
     expect(out).toContain("Nothing live yet");
     expect(out).toContain("No check finished in 24 h");
   });
 
   test("no git words render, not even in a title or label", () => {
-    const out = kpiRowFor({ landedHours: hours(1), landed: 1, live: null, builders: { running: 2, slots: 4 }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: 1000, backupAt: null }, null).toString();
+    const out = kpiRowFor({ landedHours: hours(1), landed: 1, live: null, builders: { running: 2, slots: 4 }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: 1000, backupAt: null, reach: NO_REACH }, null).toString();
     expect(out).not.toMatch(/commit|merge|branch|repositor|pull request|checks (passed|failed)/i);
   });
 
@@ -67,7 +69,7 @@ describe("home kpi row", () => {
   });
 
   test("a truncated note carries its whole text as a title", () => {
-    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, builders: { running: 2, slots: 4 }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: null, backupAt: null }, null).toString();
+    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, builders: { running: 2, slots: 4 }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: null, backupAt: null, reach: NO_REACH }, null).toString();
     expect(out).toContain('title="No check finished in 24 h"');
   });
 
@@ -80,7 +82,7 @@ describe("home kpi row", () => {
   });
 
   test("the builders tile says running of slots, titles it, and links to the crew", () => {
-    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, medianCheckMs: null, builders: { running: 2, slots: 4 }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
+    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: NO_REACH, medianCheckMs: null, builders: { running: 2, slots: 4 }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
     expect(out).toContain('href="/settings/crew"');
     expect(out).toContain('class="kpi-value num" title="2 of 4">2 of 4<');
     expect(out).toContain('title="Crew builders running now, of 4 slots"');
@@ -88,14 +90,15 @@ describe("home kpi row", () => {
   });
 
   test("with no slots set the builders tile shows a dash and says so", () => {
-    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, medianCheckMs: null, builders: { running: 0, slots: 0 }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
+    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: NO_REACH, medianCheckMs: null, builders: { running: 0, slots: 0 }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
     expect(out).toContain('class="kpi-value num" title="—">—<');
     expect(out).toContain('title="No slots set">No slots set<');
-    expect(out).not.toContain("0 of 0");
+    expect(out).toContain(`aria-label="Builders running: —, No slots set"`);
+    expect(out).not.toContain("Builders running: 0 of 0");
   });
 
   test("the builders note does not repeat the value", () => {
-    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, medianCheckMs: null, builders: { running: 2, slots: 4 }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
+    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: NO_REACH, medianCheckMs: null, builders: { running: 2, slots: 4 }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
     expect(out).toContain(">running now<");
   });
 
@@ -114,6 +117,7 @@ describe("the builders figure from the database", () => {
     db.run("CREATE TABLE run (id TEXT, kind TEXT, state TEXT, started_at TEXT, finished_at TEXT, serving_at TEXT, env TEXT, commit_oid TEXT, cost_usd REAL, created_at TEXT)");
     db.run("CREATE TABLE pull (merged_at TEXT, merged_oid TEXT, base_oid TEXT, base_branch TEXT, issue_id TEXT)");
     db.run("CREATE TABLE issue (id TEXT, repo_id TEXT)");
+    reachTables(db);
     db.run("INSERT INTO repo VALUES ('autonomous', 3, 'main', 'a'), ('autonomous', 1, 'main', 'b'), ('off', 8, 'main', 'c')");
     db.run("INSERT INTO run (id, kind, state) VALUES ('1','agent','running'), ('2','agent','running'), ('3','agent','queued'), ('4','check','running')");
     const { readKpis } = await import("../src/flow/kpis.ts");
@@ -122,10 +126,11 @@ describe("the builders figure from the database", () => {
 });
 
 describe("the terminal's figures", () => {
-  const k = { landedHours: hours(6), landed: 6, live: { sha: "abcdef0123456", at: new Date().toISOString() }, builders: { running: 2, slots: 4 }, spend: { todayUsd: 12, ceilingUsd: 40 }, medianCheckMs: 185_000, backupAt: null };
-  test("the same five figures in the same words", () => {
+  const k = { landedHours: hours(6), landed: 6, live: { sha: "abcdef0123456", at: new Date().toISOString() }, builders: { running: 2, slots: 4 }, spend: { todayUsd: 12, ceilingUsd: 40 }, medianCheckMs: 185_000, backupAt: null, reach: NO_REACH };
+  test("the same nine figures in the same words", () => {
     const lines = kpiLines(k, { sha: "abcdef0123456", since: "5m ago" });
-    expect(lines).toHaveLength(5);
+    expect(lines).toHaveLength(9);
+    expect(lines).toContain("Last off-box backup never, overdue");
     expect(lines[4]).toBe("Crew spend today $12 of $40");
     expect(kpiLines({ ...k, spend: { todayUsd: 0.4, ceilingUsd: null } }, null)[4]).toBe("Crew spend today $0.40, no ceiling");
     expect(lines[3]).toBe("Builders running 2 of 4");
@@ -145,7 +150,7 @@ describe("the terminal's figures", () => {
 
 describe("the spend tile", () => {
   const row = (spend: { todayUsd: number; ceilingUsd: number | null }) =>
-    kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, medianCheckMs: null, builders: { running: 0, slots: 0 }, spend }, null).toString();
+    kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: NO_REACH, medianCheckMs: null, builders: { running: 0, slots: 0 }, spend }, null).toString();
 
   test("shows today's spend of the ceiling, the cents in the title, linking to the crew page", () => {
     const out = row({ todayUsd: 12.34, ceilingUsd: 40 });
@@ -176,6 +181,7 @@ describe("the spend figure from the database", () => {
     db.run("CREATE TABLE run (id TEXT, kind TEXT, state TEXT, started_at TEXT, finished_at TEXT, serving_at TEXT, env TEXT, commit_oid TEXT, cost_usd REAL, created_at TEXT)");
     db.run("CREATE TABLE pull (merged_at TEXT, merged_oid TEXT, base_oid TEXT, base_branch TEXT, issue_id TEXT)");
     db.run("CREATE TABLE issue (id TEXT, repo_id TEXT)");
+    reachTables(db);
     db.run(
       `INSERT INTO run (id, kind, cost_usd, created_at) VALUES
         ('1','agent',5,'2026-10-19T00:00:00.000Z'), ('2','agent',7.5,'2026-10-19T14:00:00.000Z'),
@@ -190,7 +196,7 @@ describe("home kpi row: the last off-box backup", () => {
   const NOW = new Date("2026-10-20T12:00:00.000Z");
   const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3_600_000).toISOString();
   const row = (backupAt: string | null) =>
-    kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt, builders: { running: 0, slots: 0 }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: null }, null, NOW).toString();
+    kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt, reach: NO_REACH, builders: { running: 0, slots: 0 }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: null }, null, NOW).toString();
   const tile = (out: string) => /<a class="card kpi"[^>]*href="\/settings\/backups"[^>]*>/.exec(out)![0];
 
   test("a backup 2 h old reads its age, with the exact time, and is not flagged", () => {
@@ -227,8 +233,77 @@ describe("home kpi row: the last off-box backup", () => {
     db.run("CREATE TABLE run (id TEXT, kind TEXT, state TEXT, started_at TEXT, finished_at TEXT, serving_at TEXT, env TEXT, commit_oid TEXT, cost_usd REAL, created_at TEXT)");
     db.run("CREATE TABLE pull (merged_at TEXT, merged_oid TEXT, base_oid TEXT, base_branch TEXT, issue_id TEXT)");
     db.run("CREATE TABLE issue (id TEXT, repo_id TEXT)");
+    reachTables(db);
     expect(readKpis(db, NOW, { ceilingUsd: null, dataDir: dir }).backupAt).toBeNull();
     recordMirror(dir, { where: "b2", attemptAt: hoursAgo(1), reachable: true, newest: "s1", newestAt: hoursAgo(3) });
     expect(readKpis(db, NOW, { ceilingUsd: null, dataDir: dir }).backupAt).toBe(hoursAgo(3));
+  });
+});
+
+describe("the reach tiles", () => {
+  test("say what they count in words, each linking to the reach board", () => {
+    const reach = { usersToday: 3, usersTotal: 12, visitorsToday: 5, visitors7d: 31, loadP75: 1250, inpP75: 180 };
+    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach, medianCheckMs: null, builders: { running: 0, slots: 0 }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
+    for (const v of ["5 today", "31 in 7 days", "3 of 12", "signed in today", "1.3 s", "reacts in 180 ms"]) expect(out).toContain(`>${v}<`);
+    expect((out.match(/class="card kpi" href="\/boards\/reach"/g) ?? []).length).toBe(3);
+    expect(out).not.toContain("INP");
+    expect(out).not.toContain("p75");
+  });
+
+  test("the terminal says the same", () => {
+    const lines = kpiLines({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: { usersToday: 3, usersTotal: 12, visitorsToday: 5, visitors7d: 31, loadP75: 1250, inpP75: 180 }, medianCheckMs: null, builders: { running: 0, slots: 0 }, spend: { todayUsd: 0, ceilingUsd: null } }, null);
+    expect(lines).toContain("Visitors 5 today, 31 in 7 days");
+    expect(lines).toContain("Accounts 3 of 12 signed in today");
+    expect(lines).toContain("Page speed loads in 1.3 s, reacts in 180 ms");
+  });
+});
+
+describe("readReach", () => {
+  const NOW = new Date("2026-10-19T15:00:00.000Z");
+  const make = async () => {
+    const { Database } = await import("bun:sqlite");
+    const db = new Database(":memory:");
+    reachTables(db);
+    return db;
+  };
+  const view = (db: import("bun:sqlite").Database, day: string, visitor: string, load: number | null, inp: number | null) =>
+    db.run("INSERT INTO page_vital VALUES (?, ?, ?, ?)", [day, visitor, load, inp]);
+
+  test("nothing seeded: zeros and no speed", async () => {
+    expect(readReach(await make(), NOW)).toEqual(NO_REACH);
+  });
+
+  test("the 7-day window starts six days back; today is the UTC day", async () => {
+    const db = await make();
+    view(db, "2026-10-19", "a", 100, 10);
+    view(db, "2026-10-13", "a", 100, 10); // first day inside
+    view(db, "2026-10-12", "b", 9999, 9999); // one day outside
+    const r = readReach(db, NOW);
+    expect(r.visitorsToday).toBe(1);
+    expect(r.visitors7d).toBe(2);
+    expect(r.loadP75).toBe(100);
+    // Just after midnight the same rows are a day older.
+    expect(readReach(db, new Date("2026-10-20T00:00:01.000Z")).visitorsToday).toBe(0);
+    expect(readReach(db, new Date("2026-10-20T00:00:01.000Z")).visitors7d).toBe(1);
+  });
+
+  test("p75 is nearest rank and skips nulls", async () => {
+    const db = await make();
+    for (const [i, v] of [10, 20, 30, 40, 50].entries()) view(db, "2026-10-19", `v${i}`, v, null);
+    view(db, "2026-10-19", "n", null, 70);
+    const r = readReach(db, NOW);
+    expect(r.loadP75).toBe(40); // rank ceil(5 * .75) = 4
+    expect(r.inpP75).toBe(70); // one value: itself
+  });
+
+  test("a visitor seen twice in a day counts once; accounts count distinct users since UTC midnight", async () => {
+    const db = await make();
+    view(db, "2026-10-19", "a", 1, 1);
+    view(db, "2026-10-19", "a", 2, 2);
+    db.run("INSERT INTO user VALUES ('u1'), ('u2'), ('u3')");
+    db.run("INSERT INTO session VALUES ('u1', '2026-10-19T00:00:00Z'), ('u1', '2026-10-19T09:00:00Z'), ('u2', '2026-10-18T23:59:59Z')");
+    const r = readReach(db, NOW);
+    expect(r.visitorsToday).toBe(1);
+    expect([r.usersToday, r.usersTotal]).toEqual([1, 3]);
   });
 });

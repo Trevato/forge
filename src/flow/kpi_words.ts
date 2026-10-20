@@ -4,6 +4,7 @@
  */
 
 import type { Kpis } from "./kpis.ts";
+import type { Reach } from "./reach.ts";
 
 /** A duration the way a person reads a check: `45s`, `3m 05s`, `1h 02m`. */
 export function checkTime(ms: number | null): string {
@@ -68,16 +69,46 @@ export function backupFull(at: string | null): string {
   return at === null || Number.isNaN(Date.parse(at)) ? "No off-box backup yet" : at;
 }
 
+/** A page speed the way a person reads it: `850 ms`, `1.2 s`, or an em dash for none. */
+export function speedWords(ms: number | null): string {
+  if (ms === null) return "—";
+  return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
+}
+
+/** Accounts signed in today of all accounts: `3 of 12`. */
+export function usersValue(r: Reach): string {
+  return `${r.usersToday} of ${r.usersTotal}`;
+}
+
+/** Visitors today, in words: `5 today`. */
+export function visitorsValue(r: Reach): string {
+  return `${r.visitorsToday} today`;
+}
+
+/** The week behind it: `31 in 7 days`. */
+export function visitorsNote(r: Reach): string {
+  return `${r.visitors7d} in 7 days`;
+}
+
+/** How quick the pages feel, over 7 days: `reacts in 180 ms`, or why there is no figure. */
+export function reactNote(r: Reach): string {
+  return r.inpP75 === null ? "no taps measured yet" : `reacts in ${speedWords(r.inpP75)}`;
+}
+
 /**
- * The terminal's row: the same five figures in the same words, as plain
+ * The terminal's row: the same figures in the same words, as plain
  * lines. Forge-wide like the web's, so the caller shows them to an admin only.
  */
-export function kpiLines(k: Kpis, live: { sha: string; since: string } | null): string[] {
+export function kpiLines(k: Kpis, live: { sha: string; since: string } | null, now: Date = new Date()): string[] {
   return [
     `Shipped per hour ${(k.landed / k.landedHours.length).toFixed(1)}  ${sparkText(k.landedHours)}  ${k.landed} ${k.landed === 1 ? "change" : "changes"} in 24 h`,
     `Live version ${live === null ? "— nothing live yet" : `${live.sha.slice(0, 7)}, live ${live.since}`}`,
     `Median check time ${checkTime(k.medianCheckMs)}`,
     `Builders running ${buildersValue(k.builders)}${k.builders.slots === 0 ? ", no slots set" : ""}`,
     `Crew spend today ${spendValue(k.spend)}${k.spend.ceilingUsd === null ? ", no ceiling" : ""}`,
+    `Last off-box backup ${backupAge(k.backupAt, now)}${backupOverdue(k.backupAt, now) ? ", overdue" : ""}`,
+    `Visitors ${visitorsValue(k.reach)}, ${visitorsNote(k.reach)}`,
+    `Accounts ${usersValue(k.reach)} signed in today`,
+    `Page speed ${k.reach.loadP75 === null ? "no page views measured yet" : `loads in ${speedWords(k.reach.loadP75)}`}, ${reactNote(k.reach)}`,
   ];
 }

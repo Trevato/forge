@@ -230,6 +230,7 @@ export const SOURCES: Readonly<Record<string, Source>> = {
     owner: "admin",
     select: [
       `SELECT 'visitors' AS metric, '' AS route, ${DAY_AT} AS at, COUNT(DISTINCT visitor) AS value FROM page_vital GROUP BY day`,
+      percentile("load_p75", "load", 75),
       percentile("lcp_p75", "lcp", 75),
       percentile("inp_p75", "inp", 75),
       percentile("server_p50", "ttfb", 50),
@@ -242,7 +243,7 @@ export const SOURCES: Readonly<Record<string, Source>> = {
     columns: { metric: "text", route: "text", at: "time", value: "number" },
     docs: {
       metric:
-        "visitors (distinct browsers that day), lcp_p75 and inp_p75 (ms), server_p50 and server_p95 " +
+        "visitors (distinct browsers that day), load_p75 (page load), lcp_p75 and inp_p75 (ms), server_p50 and server_p95 " +
         "(ms, time to first byte), accounts_active_1d (signed in today), accounts_active_7d, accounts_total",
       route: "the route pattern, never the path; empty for visitors and accounts",
       at: "the day (UTC) for visitors and the percentiles; now for the account counts, which are not kept per day",

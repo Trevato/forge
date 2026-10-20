@@ -4,6 +4,7 @@
  * counted, and an empty forge gives zeros and a null median.
  */
 
+import { NO_REACH } from "../src/flow/reach.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -131,7 +132,7 @@ describe("home kpis", () => {
 
 describe("home kpi row titles", () => {
   const full = kpiRowFor(
-    { landedHours: Array.from({ length: 24 }, (_, i) => (i === 0 ? 6 : 0)), landed: 6, live: null, builders: { running: 2, slots: 4 }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: 185_000, backupAt: null },
+    { landedHours: Array.from({ length: 24 }, (_, i) => (i === 0 ? 6 : 0)), landed: 6, live: null, builders: { running: 2, slots: 4 }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: 185_000, backupAt: null, reach: NO_REACH },
     { sha: "abcdef0123456789", at: "2026-10-19T11:00:00.000Z" },
   ).toString();
 
@@ -144,8 +145,8 @@ describe("home kpi row titles", () => {
   });
 
   test("no value or note lacks a title, and none brings back a git word", () => {
-    expect(full.match(/class="kpi-(value num|note small muted)"/g)).toHaveLength(12);
-    expect(full.match(/class="kpi-(value num|note small muted)" title=/g)).toHaveLength(12);
+    expect(full.match(/class="kpi-(value num|note small muted)"/g)).toHaveLength(18);
+    expect(full.match(/class="kpi-(value num|note small muted)" title=/g)).toHaveLength(18);
     expect(full).not.toMatch(/commit|merge|branch|repositor|pull request/i);
   });
 });

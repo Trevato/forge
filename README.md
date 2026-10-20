@@ -254,7 +254,7 @@ settings until asked. `/?all=1` is the whole home, and its "Just my apps" link
 comes back. The terminal's first screen opens with the same lines, from the
 same query (`src/core/client-apps.ts`).
 
-Home shows six figures first, from `src/flow/kpis.ts`: shipped per hour (with
+Home shows nine figures first, from `src/flow/kpis.ts`: shipped per hour (with
 a 24 h sparkline), the live version and since when, the median check time, the crew builders
 running of their slots, and the crew's spend today of the forge's daily
 ceiling (`FORGE_CREW_CEILING_USD`; without one, the spend alone and
@@ -263,10 +263,16 @@ snapshot, `mirror/state.json`; `3 h ago`, the exact time in its title), linking 
 `/settings/backups`. The spend tile links to `/settings/crew`, where the meter is.
 The backup tile past 24 hours, or with none (`never`), takes the card's existing
 `data-tone="attn"` and says overdue in its label.
+The last three (`src/flow/reach.ts`, the `reach` board source's rows) are
+visitors (`5 today`, `31 in 7 days`), accounts (`1 of 2`, signed in today) and
+page speed (the slowest quarter's page load over 7 days, and `reacts in 180 ms`,
+the same for the delay after a tap), from the page-view beacon. Each links to
+the Reach starting board (`/boards/reach`). The visitor hash rotates daily, so
+the 7-day visitors is each day's distinct count summed.
 They count every repository, so only a site admin sees them, on both doors;
 nobody else does, and neither does the lean client home. On the web each is a
-card linking to `/board`, `/releases` or `/boards`. The terminal's first screen
-shows the first five as lines above the forge strip (`kpiLines` in
+card linking to `/board`, `/releases`, `/boards` or `/boards/reach`. The terminal's first screen
+shows the same nine as lines above the forge strip (`kpiLines` in
 `src/flow/kpi_words.ts`). They are read when the page or screen loads and
 do not refresh on their own.
 

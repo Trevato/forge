@@ -25,7 +25,7 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-test("home renders the six tiles; only an admin sees them", async () => {
+test("home renders the nine tiles; only an admin sees them", async () => {
   const mk = async (username: string, first = false): Promise<User> => {
     const r = await createUser(app.db, {
       origin: "seed",
@@ -48,10 +48,29 @@ test("home renders the six tiles; only an admin sees them", async () => {
       })
     ).text();
 
+  // Seeded reach: 4 page views by 3 visitors today, 1 yesterday; sessions seen today.
+  const day = new Date().toISOString().slice(0, 10);
+  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+  const view = (d: string, visitor: string, load: number | null, inp: number | null) =>
+    app.db.run("INSERT INTO page_vital (day, at, route, visitor, ttfb, load, lcp, inp, cls) VALUES (?, ?, '/', ?, 10, ?, 100, ?, 0)", [d, Date.now(), visitor, load, inp]);
+  view(day, "a", 100, 40);
+  view(day, "b", 200, 80);
+  view(day, "c", 300, 120);
+  view(day, "a", 1900, null);
+  view(yesterday, "z", 400, 160);
   const a = await home(admin);
   expect(a).toContain('class="kpis"');
-  expect((a.match(/class="card kpi"/g) ?? []).length).toBe(6);
+  expect((a.match(/class="card kpi"/g) ?? []).length).toBe(9);
   for (const href of ["/board", "/releases", "/boards", "/settings/crew"]) expect(a).toContain(`class="card kpi" href="${href}"`);
+
+  // 2 accounts, the admin alone with a session today; visitors 3 today and 4 over 7 days;
+  // load p75 of [100,200,300,400,1900] is 400 ms, INP p75 of [40,80,120,160] is 120 ms.
+  expect(a).toContain(">1 of 2<");
+  expect(a).toContain(">3 today<");
+  expect(a).toContain(">4 in 7 days<");
+  expect(a).toContain(">400 ms<");
+  expect(a).toContain(">reacts in 120 ms<");
+  expect((a.match(/class="card kpi" href="\/boards\/reach"/g) ?? []).length).toBe(3);
 
   // The figures count every repository, so a non-admin sees none.
   expect(a).toContain("no ceiling");

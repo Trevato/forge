@@ -87,4 +87,5 @@ test("the admin's figures carry the configured daily ceiling, and say so when th
   const capped = { ...forge, config: { ...forge.config, crewCeilingUsd: 40 } };
   expect(await firstScreen(alice, capped)).toContain("Crew spend today $0.00 of $40");
   expect(await firstScreen(alice)).toContain("Crew spend today $0.00, no ceiling");
+  expect(await firstScreen(alice)).toContain("Visitors 0 today, 0 in 7 days");
 });

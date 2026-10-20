@@ -1,5 +1,5 @@
 /**
- * The boards the forge offers a new install: Usage, Crew, Releases, Apps, Security, Throughput and Forges. They are plain
+ * The boards the forge offers a new install: Usage, Crew, Releases, Apps, Security, Throughput, Forges and Reach. They are plain
  * boards in `forge/boards` once written, so a person edits or deletes them
  * like any other; `.offered` (a JSON list of slugs, committed with the
  * boards) records what was offered so a deletion sticks and an edit is
@@ -34,6 +34,11 @@ const failed = {
   source: "usage", aggregate: "sum", column: "n",
   filter: [{ column: "pattern", op: "eq", value: "/signin" }, { column: "method", op: "eq", value: "POST" }, { column: "status", op: "eq", value: "4xx" }],
 };
+
+const reach = (metric: string, aggregate: string, groupBy?: Record<string, unknown>) => ({
+  source: "reach", aggregate, column: "value", ...(groupBy === undefined ? {} : { groupBy }),
+  filter: [{ column: "metric", op: "eq", value: metric }],
+});
 
 export const STARTING_BOARDS: Readonly<Record<string, Board>> = {
   usage: {
@@ -110,6 +115,18 @@ export const STARTING_BOARDS: Readonly<Record<string, Board>> = {
       panel("Items entering each stage per hour", "bar", { ...STAGES, groupBy: HOUR, series: "stage" }, 3),
       panel("Entered each stage", "bar", { ...STAGES, groupBy: "stage" }),
       panel("Stages by hour", "heat", { ...STAGES, groupBy: HOUR, series: "stage" }, 2),
+    ],
+  },
+  reach: {
+    title: "Reach",
+    range: "30d",
+    refresh: "1m",
+    panels: [
+      panel("Visitors per day", "bar", reach("visitors", "max", DAY), 2),
+      panel("Accounts signed in today", "number", reach("accounts_active_1d", "max")),
+      panel("All accounts", "number", reach("accounts_total", "max")),
+      panel("Page load per day (ms, slowest quarter)", "line", reach("load_p75", "max", DAY), 2),
+      panel("Slow to react per day (ms, slowest quarter)", "line", reach("inp_p75", "max", DAY), 2),
     ],
   },
   forges: {

@@ -1,14 +1,15 @@
 /**
- * Home's row of six figures (#2871), from `flow/kpis.ts`: shipped per hour
- * with a day's sparkline, the live version and since when, the median check
- * time, the crew builders running of their slots, and the crew's spend today
- * of the daily ceiling, and the age of the last off-box backup. Server-rendered, one fixed-height card each, so
- * nothing moves when it paints. Only the studio's words: shipped, change,
- * check time.
+ * Home's row of nine figures (#2871, #2713), from `flow/kpis.ts`: shipped per
+ * hour with a day's sparkline, the live version and since when, the median
+ * check time, the crew builders running of their slots, the crew's spend
+ * today of the daily ceiling, the age of the last off-box backup, visitors,
+ * accounts signed in, and page speed. Server-rendered, one fixed-height card
+ * each, so nothing moves when it paints. Only the studio's words: shipped,
+ * change, check time.
  */
 
 import type { Database } from "bun:sqlite";
-import { backupAge, backupFull, backupOverdue, buildersValue, checkTime, spendFull, spendValue } from "../../flow/kpi_words.ts";
+import { backupAge, backupFull, backupOverdue, buildersValue, checkTime, reactNote, speedWords, spendFull, spendValue, usersValue, visitorsNote, visitorsValue } from "../../flow/kpi_words.ts";
 import { readKpis, type Kpis } from "../../flow/kpis.ts";
 import { html, raw, type Html } from "../html.ts";
 import { BOOTED } from "../../release/gate.ts";
@@ -100,6 +101,16 @@ export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null, now
       overdue ? "Overdue: the last off-box backup is more than 24 h old" : "Age of the last off-box backup",
       null,
       overdue ? "attn" : null,
+    )}
+    ${tile("Visitors", "/boards/reach", visitorsValue(k.reach), `${visitorsValue(k.reach)}, ${visitorsNote(k.reach)}`, visitorsNote(k.reach), "Distinct browsers per day, summed over 7 days")}
+    ${tile("Accounts", "/boards/reach", usersValue(k.reach), usersValue(k.reach), "signed in today", "Accounts signed in today (UTC), of all accounts")}
+    ${tile(
+      "Page speed",
+      "/boards/reach",
+      speedWords(k.reach.loadP75),
+      speedWords(k.reach.loadP75),
+      reactNote(k.reach),
+      "Page load, and delay after a tap, for the slowest quarter of views over 7 days",
     )}
   </section>`;
 }

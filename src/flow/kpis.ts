@@ -16,6 +16,7 @@
 import type { Database } from "bun:sqlite";
 import { spentTodayEverywhere } from "../crew/autonomy.ts";
 import { lastMirror } from "../snapshot/mirror.ts";
+import { readReach, type Reach } from "./reach.ts";
 import { HOURS, median } from "./throughput.ts";
 
 const HOUR_MS = 3_600_000;
@@ -35,6 +36,8 @@ export interface Kpis {
   readonly spend: { readonly todayUsd: number; readonly ceilingUsd: number | null };
   /** When the off-box mirror last finished holding a snapshot; null when it never has. */
   readonly backupAt: string | null;
+  /** Accounts, visitors and page speed (`reach.ts`). */
+  readonly reach: Reach;
 }
 
 export function readKpis(
@@ -96,6 +99,7 @@ export function readKpis(
   return {
     backupAt,
     builders,
+    reach: readReach(db, now),
     spend: { todayUsd, ceilingUsd: forge.ceilingUsd },
     landedHours,
     landed: landedHours.reduce((a, b) => a + b, 0),
