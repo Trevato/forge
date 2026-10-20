@@ -15,6 +15,7 @@ import { listPeople, NOT_A_MEMBER } from "../core/roles.ts";
 import { setAccountCeilings, setAccountGrant } from "../actions/model_grant.ts";
 import { storageLimitMessage } from "../core/storage.ts";
 import { voteVariant } from "../actions/variants.ts";
+import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../core/route_timing.ts";
 import { parentForgeFor } from "../core/parent_releases.ts";
 import { readFlow } from "../flow/read.ts";
 import { listPinned as listPinnedPanels, movePinned, pinPanel, unpinPanel, type PinError } from "../actions/board-pins.ts";
@@ -3672,41 +3673,49 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/pulls/:number", async (ctx) => {
-    const found = loadPull(ctx);
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const found = timePhase(ctx.request, "pull", () => loadPull(ctx));
     if ("error" in found) return found.error;
     // A fork may have pushed since the pull opened; review what is being
     // proposed now, not the snapshot taken when it was.
-    await refreshPullHead(ctx.app, found.repo, found.pull);
+    await timePhaseAsync(ctx.request, "head", () =>
+      refreshPullHead(ctx.app, found.repo, found.pull),
+    );
     // Include the diff so a reviewer (human or agent) reads the change without
     // a second round trip, and the review gate beside it so a client knows
     // whether merging is even on offer.
-    const { status, diff } = await pullDiff(
-      await pullDirOf(ctx, found.repo, found.pull),
-      found.pull,
-      { db: ctx.app.db, requireReview: found.repo.requireReview },
+    const { status, diff } = await timePhaseAsync(ctx.request, "diff", async () =>
+      pullDiff(await pullDirOf(ctx, found.repo, found.pull), found.pull, {
+        db: ctx.app.db,
+        requireReview: found.repo.requireReview,
+      }),
     );
-    const hold = getHold(ctx.app.db, found.pull.id);
     const live = found.pull.state === "open" && found.pull.mergedAt === null;
-    const checkStaleNow =
-      live &&
-      checkStale(
-        checkSummary(ctx.app.db, found.pull.id, status.headOid).run,
-        await resolveOid(
-          await pullDirOf(ctx, found.repo, found.pull),
-          `refs/heads/${found.pull.baseBranch}`,
+    const checkStaleNow = await timePhaseAsync(
+      ctx.request,
+      "checks",
+      async () =>
+        live &&
+        checkStale(
+          checkSummary(ctx.app.db, found.pull.id, status.headOid).run,
+          await resolveOid(
+            await pullDirOf(ctx, found.repo, found.pull),
+            `refs/heads/${found.pull.baseBranch}`,
+          ),
         ),
-      );
-    return json({
-      ...withLabels(ctx, found.pull),
-      checkStale: checkStaleNow,
-      variantSiblings: variantSiblings(ctx.app.db, [found.pull])[0] ?? [],
-      ...(found.pull.state === "open" && found.pull.mergedAt === null
-        ? { mergeable: status.mergeable, conflicts: status.conflicts }
-        : {}),
-      proposal: pullProposalOf(ctx.app.db, found.pull.id) ?? null,
-      status,
-      diff,
-      hold: hold === undefined ? null : holdJson(hold),
+    );
+    return timePhase(ctx.request, "render", () => {
+      const hold = getHold(ctx.app.db, found.pull.id);
+      return json({
+        ...withLabels(ctx, found.pull),
+        checkStale: checkStaleNow,
+        variantSiblings: variantSiblings(ctx.app.db, [found.pull])[0] ?? [],
+        ...(live ? { mergeable: status.mergeable, conflicts: status.conflicts } : {}),
+        proposal: pullProposalOf(ctx.app.db, found.pull.id) ?? null,
+        status,
+        diff,
+        hold: hold === undefined ? null : holdJson(hold),
+      });
     });
   });
 
