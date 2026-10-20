@@ -35,6 +35,7 @@ import {
   type Scorecard,
   type SplitScorecard,
 } from "../../core/scorecard.ts";
+import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { listTeams, type Team } from "../../core/teams.ts";
 import { crewFor } from "../../crew/dispatch.ts";
 import { MODELS } from "../../crew/models.ts";
@@ -409,24 +410,58 @@ function spendingCard(
   );
 }
 
-function crewView(ctx: Ctx, values: AgentValues, error?: string): Html {
-  const listed = listAllAgents(ctx.app, ctx.auth.user);
-  const agents = listed.ok ? listed.value : [];
-  const totals = agentTotals(ctx.app.db);
-  const teams = listTeams(ctx.app.db);
-  const teamCards = teamScorecards(ctx.app.db);
-  const recentTeamCards = teamScorecards(ctx.app.db, recentWindow());
-  const scorecards = crewScorecards(ctx.app.db);
-  const recentScorecards = crewScorecards(ctx.app.db, recentWindow());
-  const splitScorecards = crewScorecardSplits(ctx.app.db);
-  const recentSplitScorecards = crewScorecardSplits(ctx.app.db, recentWindow());
-  // Where the money goes today: every app running on its own, its spend
-  // against its ceiling. The ceilings are the one control on the drain, and
-  // this is the page where the crew is wielded, so they are read here.
-  const spending = listAutonomousRepos(ctx.app.db).map((repo) => ({
+/** What the scorecard and split cards read. */
+function loadScorecards(ctx: Ctx) {
+  return {
+    totals: agentTotals(ctx.app.db),
+    teams: listTeams(ctx.app.db),
+    teamCards: teamScorecards(ctx.app.db),
+    recentTeamCards: teamScorecards(ctx.app.db, recentWindow()),
+    scorecards: crewScorecards(ctx.app.db),
+    recentScorecards: crewScorecards(ctx.app.db, recentWindow()),
+    splitScorecards: crewScorecardSplits(ctx.app.db),
+    recentSplitScorecards: crewScorecardSplits(ctx.app.db, recentWindow()),
+    byModel: agentSplits(ctx.app.db, "model"),
+    byPrompt: agentSplits(ctx.app.db, "prompt_version"),
+  };
+}
+
+/**
+ * Where the money goes today: every app running on its own, its spend
+ * against its ceiling. The ceilings are the one control on the drain, and
+ * this is the page where the crew is wielded, so they are read here.
+ */
+function loadSpending(ctx: Ctx) {
+  return listAutonomousRepos(ctx.app.db).map((repo) => ({
     repo,
     status: autonomyStatus(ctx.app, repo),
   }));
+}
+
+interface CrewData {
+  scorecards: ReturnType<typeof loadScorecards>;
+  spending: ReturnType<typeof loadSpending>;
+}
+
+function crewView(
+  ctx: Ctx,
+  values: AgentValues,
+  error?: string,
+  data: CrewData = { scorecards: loadScorecards(ctx), spending: loadSpending(ctx) },
+): Html {
+  const listed = listAllAgents(ctx.app, ctx.auth.user);
+  const agents = listed.ok ? listed.value : [];
+  const {
+    totals,
+    teams,
+    teamCards,
+    recentTeamCards,
+    recentScorecards,
+    splitScorecards,
+    recentSplitScorecards,
+  } = data.scorecards;
+  const { scorecards, byModel, byPrompt } = data.scorecards;
+  const { spending } = data;
   const usernameError =
     error !== undefined && /username/i.test(error) ? error : undefined;
   return html`${crewReadiness(ctx)}
@@ -532,13 +567,13 @@ function crewView(ctx: Ctx, values: AgentValues, error?: string): Html {
   ${splitsCard(
     "Per model",
     "Model",
-    agentSplits(ctx.app.db, "model"),
+    byModel,
     () => html`<span class="muted">default</span>`,
   )}
   ${splitsCard(
     "Per prompt version",
     "Prompt version",
-    agentSplits(ctx.app.db, "prompt_version"),
+    byPrompt,
     () => html`<span class="muted">not recorded</span>`,
   )}
   ${card(
@@ -622,7 +657,21 @@ const EMPTY: AgentValues = {
 export function crewPage(ctx: Ctx): Response {
   const denied = requireAdmin(ctx);
   if (denied) return denied;
-  return shell(ctx, "Crew", crewView(ctx, EMPTY));
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  let at = performance.now();
+  const scorecards = loadScorecards(ctx);
+  notePhase(ctx.request, "scorecards", performance.now() - at);
+  at = performance.now();
+  const spending = loadSpending(ctx);
+  notePhase(ctx.request, "spending", performance.now() - at);
+  at = performance.now();
+  const res = shell(
+    ctx,
+    "Crew",
+    crewView(ctx, EMPTY, undefined, { scorecards, spending }),
+  );
+  notePhase(ctx.request, "render", performance.now() - at);
+  return res;
 }
 
 // POST /settings/crew
