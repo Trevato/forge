@@ -3,7 +3,9 @@
  * runtime: what a failing install and a closed pull's test step leave
  * behind. Split from apps-adversarial.test.ts so no one file sets the
  * gate's floor (#2038); each file of the split boots its own forge and
- * runtime.
+ * runtime. Here one app serves both tests, each through a pull of its own,
+ * and every wait is on the forge's event bus — nothing polls or sleeps
+ * (#3567).
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -17,6 +19,8 @@ import { newApp } from "../src/actions/apps.ts";
 import { mergePull, openPull } from "../src/actions/pulls.ts";
 import { commitToBranch } from "../src/actions/repos.ts";
 import { getPull } from "../src/core/pulls.ts";
+import type { ForgeEvent } from "../src/core/events.ts";
+import type { Repo } from "../src/core/repos.ts";
 import { listRuns, type Run } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -30,6 +34,7 @@ describe("apps adversarial: the install and test steps", () => {
   let servers: Servers;
   let runtime: AppsRuntime;
   let alice: User;
+  let repo: Repo;
 
   const viaHost = (host: string, path = "/", init: RequestInit = {}) =>
     fetch(`${servers.url}${path}`, {
@@ -38,26 +43,75 @@ describe("apps adversarial: the install and test steps", () => {
       redirect: "manual",
     });
 
-  async function settled(
-    repoId: string,
-    where: (run: Run) => boolean,
-    timeoutMs = 60_000,
-  ): Promise<Run> {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      const run = listRuns(app.db, repoId, { kind: "deploy", limit: 50 }).find(
-        where,
-      );
-      if (
-        run &&
-        (run.state === "ok" ||
-          run.state === "failed" ||
-          run.state === "cancelled")
-      )
-        return run;
-      await Bun.sleep(50);
-    }
-    throw new Error("run did not settle in time");
+  /**
+   * The first value `look` gives, asked now and again after every event
+   * the forge appends — a run's progress and an app's serving are both
+   * announced on the bus, so nothing here polls on a timer.
+   */
+  function when<T>(
+    look: (event?: ForgeEvent) => T | undefined,
+    what: string,
+    timeoutMs = 20_000,
+  ): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const done = (value: T): void => {
+        unsubscribe();
+        clearTimeout(timer);
+        resolve(value);
+      };
+      const unsubscribe = app.bus.subscribe((event) => {
+        const value = look(event);
+        if (value !== undefined) done(value);
+      });
+      const timer = setTimeout(() => {
+        unsubscribe();
+        reject(new Error(`${what} did not happen in time`));
+      }, timeoutMs);
+      const now = look();
+      if (now !== undefined) done(now);
+    });
+  }
+
+  const settled = (where: (run: Run) => boolean): Promise<Run> =>
+    when(
+      () =>
+        listRuns(app.db, repo.id, { kind: "deploy", limit: 50 }).find(
+          (run) =>
+            where(run) &&
+            (run.state === "ok" ||
+              run.state === "failed" ||
+              run.state === "cancelled"),
+        ),
+      "the deploy settling",
+    );
+
+  /** The pull branch carrying only this forge.json, opened against the default branch. */
+  async function pullWith(
+    branch: string,
+    manifest: Record<string, string>,
+  ): Promise<{ number: number; commitOid: string }> {
+    const committed = await commitToBranch(app, alice, repo, {
+      branch,
+      base: repo.defaultBranch,
+      message: branch,
+      files: [
+        {
+          path: "forge.json",
+          content: `${JSON.stringify({ app: manifest }, null, 2)}\n`,
+        },
+      ],
+    });
+    if (!committed.ok) throw new Error(JSON.stringify(committed.error));
+    const opened = await openPull(app, alice, repo, {
+      title: branch,
+      baseBranch: repo.defaultBranch,
+      headBranch: branch,
+    });
+    if (!opened.ok) throw new Error(JSON.stringify(opened.error));
+    return {
+      number: opened.value.number,
+      commitOid: committed.value.commitOid,
+    };
   }
 
   beforeAll(async () => {
@@ -81,6 +135,15 @@ describe("apps adversarial: the install and test steps", () => {
     });
     if (!created.ok) throw new Error(created.error);
     alice = created.value;
+    const made = await newApp(app, alice, {
+      name: "steps",
+      visibility: "public",
+    });
+    if (!made.ok) throw new Error(made.error);
+    repo = made.value.repo;
+    const production = await settled((r) => r.env === "production");
+    if (production.state !== "ok")
+      throw new Error(`production did not deploy: ${production.summary}`);
   }, 30_000);
 
   afterAll(async () => {
@@ -92,139 +155,79 @@ describe("apps adversarial: the install and test steps", () => {
   });
 
   test("install failing fails before test or start ever run — nothing from a half-installed tree", async () => {
-    const made = await newApp(app, alice, {
-      name: "badinstall",
-      visibility: "public",
+    const testMarker = join(work, "install-test-marker");
+    const runMarker = join(work, "install-run-marker");
+    const pull = await pullWith("bad-install", {
+      install: "exit 1",
+      run: `touch ${runMarker} && bun run src/server.ts`,
+      test: `touch ${testMarker} && bun test`,
     });
-    expect(made.ok).toBe(true);
-    if (!made.ok) return;
-    const repo = made.value.repo;
-    await settled(repo.id, (r) => r.env === "production");
-
-    const testMarker = join(work, `install-test-marker-${Date.now()}`);
-    const runMarker = join(work, `install-run-marker-${Date.now()}`);
-    const committed = await commitToBranch(app, alice, repo, {
-      branch: "bad-install",
-      base: repo.defaultBranch,
-      message: "install fails",
-      files: [
-        {
-          path: "forge.json",
-          content: `${JSON.stringify(
-            {
-              app: {
-                install: "exit 1",
-                run: `touch ${runMarker} && bun run src/server.ts`,
-                test: `touch ${testMarker} && bun test`,
-              },
-            },
-            null,
-            2,
-          )}\n`,
-        },
-      ],
-    });
-    expect(committed.ok).toBe(true);
-    if (!committed.ok) return;
-    const opened = await openPull(app, alice, repo, {
-      title: "Bad install",
-      baseBranch: repo.defaultBranch,
-      headBranch: "bad-install",
-    });
-    expect(opened.ok).toBe(true);
-    if (!opened.ok) return;
 
     const failed = await settled(
-      repo.id,
-      (r) =>
-        r.env === `pull-${opened.value.number}` &&
-        r.commitOid === committed.value.commitOid,
+      (r) => r.env === `pull-${pull.number}` && r.commitOid === pull.commitOid,
     );
     expect(failed.state).toBe("failed");
     expect(failed.summary).toContain("install");
     // Neither `test` nor `run` ever executed.
     expect(existsSync(testMarker)).toBe(false);
     expect(existsSync(runMarker)).toBe(false);
-    expect(
-      (await viaHost(`badinstall--${opened.value.number}.${DOMAIN}`)).status,
-    ).toBe(502);
-  }, 60_000);
+    expect((await viaHost(`steps--${pull.number}.${DOMAIN}`)).status).toBe(
+      502,
+    );
+  }, 20_000);
 
   test("closing a pull whose deploy already answered kills its still-running test step — no orphan `bun test`", async () => {
-    const made = await newApp(app, alice, {
-      name: "slowtest",
-      visibility: "public",
-    });
-    expect(made.ok).toBe(true);
-    if (!made.ok) return;
-    const repo = made.value.repo;
-    await settled(repo.id, (r) => r.env === "production");
-
     // A merge lands this same forge.json on the default branch and
-    // production redeploys it too, running this same test step to
-    // completion (nothing aborts a deploy that was never in flight when the
-    // pull closed) — a marker keyed by $FORGE_APP_ENV keeps that legitimate
-    // production run from being mistaken for the preview's orphan.
-    const marker = join(work, `slowtest-marker-${Date.now()}`);
-    const committed = await commitToBranch(app, alice, repo, {
-      branch: "slow-test",
-      base: repo.defaultBranch,
-      message: "slow test",
-      files: [
-        {
-          path: "forge.json",
-          content: `${JSON.stringify(
-            {
-              app: {
-                run: "bun run src/server.ts",
-                test: `sleep 5 && touch ${marker}-$FORGE_APP_ENV`,
-              },
-            },
-            null,
-            2,
-          )}\n`,
-        },
-      ],
+    // production redeploys it too; only the preview's test step sleeps, so
+    // production's legitimate run of it finishes at once and can never be
+    // mistaken for the preview's orphan. The sleep is far longer than this
+    // test may take: the preview's run can only settle in time if the close
+    // killed the step.
+    const marker = join(work, "slowtest-marker");
+    const serving = when(
+      (event) =>
+        event?.kind === "app.serving" &&
+        event.repoId === repo.id &&
+        event.payload.env !== "production"
+          ? String(event.payload.env)
+          : undefined,
+      "the preview serving",
+    );
+    const pull = await pullWith("slow-test", {
+      run: "bun run src/server.ts",
+      test: `if [ "$FORGE_APP_ENV" = preview ]; then sleep 30 && touch ${marker}; fi`,
     });
-    expect(committed.ok).toBe(true);
-    if (!committed.ok) return;
-    const opened = await openPull(app, alice, repo, {
-      title: "Slow test",
-      baseBranch: repo.defaultBranch,
-      headBranch: "slow-test",
-    });
-    expect(opened.ok).toBe(true);
-    if (!opened.ok) return;
+    const env = `pull-${pull.number}`;
+    expect(await serving).toBe(env);
+    expect((await viaHost(`steps--${pull.number}.${DOMAIN}`)).status).toBe(
+      200,
+    );
 
-    // Wait for the app to answer — well before the test step's sleep ends.
-    const upDeadline = Date.now() + 10_000;
-    let up = false;
-    while (Date.now() < upDeadline) {
-      if (
-        (await viaHost(`slowtest--${opened.value.number}.${DOMAIN}`))
-          .status === 200
-      ) {
-        up = true;
-        break;
-      }
-      await Bun.sleep(50);
-    }
-    expect(up).toBe(true);
+    // The app answers while its test step is still sleeping.
+    const preview = (): Run | undefined =>
+      listRuns(app.db, repo.id, { kind: "deploy", limit: 50 }).find(
+        (r) => r.env === env && r.commitOid === pull.commitOid,
+      );
+    expect(preview()?.state).toBe("running");
 
     // Close it while the test step is still sleeping.
     const closed = await mergePull(
       app,
       alice,
       repo,
-      getPull(app.db, repo.id, opened.value.number)!,
+      getPull(app.db, repo.id, pull.number)!,
       "merge",
     );
     expect(closed.ok).toBe(true);
 
-    // Wait well past the sleep the test step was doing, and confirm it
-    // never finished: the preview's own marker is not there (production's,
-    // from its own unrelated redeploy of the same merged commit, may be).
-    await Bun.sleep(6_500);
-    expect(existsSync(`${marker}-preview`)).toBe(false);
-  }, 60_000);
+    // The step's outcome is only reported once its process has exited, so
+    // a run settled as cancelled is a step that is gone — the shell that
+    // would have touched the marker with it.
+    const ended = await settled(
+      (r) => r.env === env && r.commitOid === pull.commitOid,
+    );
+    expect(ended.state).toBe("failed");
+    expect(ended.summary).toBe("test: test cancelled");
+    expect(existsSync(marker)).toBe(false);
+  }, 20_000);
 });
