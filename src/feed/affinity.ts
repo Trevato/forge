@@ -124,7 +124,10 @@ export function affinityFor(
   now: number,
 ): Affinity {
   const aff = new Affinity();
-  const mine = listReposWritableTo(db, viewer, { limit: 200 });
+  const mine = listReposWritableTo(db, viewer, {
+    limit: 200,
+    withoutArchived: true,
+  });
   for (const repo of mine)
     aff.add(
       `app:${repo.id}`,
