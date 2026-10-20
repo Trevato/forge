@@ -39,6 +39,7 @@ import { ADMIN_TOKEN_WORDS, listTokens, type TokenScope } from "../../core/token
 import type { CommitEmail, User } from "../../core/users.ts";
 import { isStandInEmail } from "../../core/users.ts";
 import { cookieValue, type Ctx } from "../../http/context.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { sshCommand } from "../../ssh/command.ts";
 import {
   settingsLayout,
@@ -338,16 +339,26 @@ function profileView(ctx: Ctx, values: ProfileForm): Html {
 // GET /settings
 export function accountPage(ctx: Ctx): Response {
   if (!ctx.auth.user) return signInFirst(ctx);
-  const pair = everydayLine(ctx, ctx.auth.user);
-  return accountShell(
+  const user = ctx.auth.user;
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  // Read in the order the page lays them out; each phase is named for what it reads.
+  const pair = timePhase(ctx.request, "everyday", () => everydayLine(ctx, user));
+  const profile = timePhase(ctx.request, "profile", () => profileView(ctx, currentProfile(user)));
+  const edge = timePhase(ctx.request, "edge", () => edgeLinkView(ctx));
+  const parent = timePhase(ctx.request, "parent", () => parentLinkView(ctx));
+  const notify = timePhase(ctx.request, "notify", () => notifyView(ctx));
+  const rendering = performance.now();
+  const response = accountShell(
     ctx,
     "profile",
     "Settings",
-    html`${pair}${profileView(ctx, currentProfile(ctx.auth.user))}${edgeLinkView(ctx)}${parentLinkView(ctx)}${notifyView(ctx)}`,
+    html`${pair}${profile}${edge}${parent}${notify}`,
     200,
     // The everyday form makes its account with a passkey (#1890).
     pair ? passkeyJs : undefined,
   );
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 // POST /settings/notify
