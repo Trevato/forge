@@ -4,6 +4,7 @@
  * (#1789). The same words as the MCP `contribute` tool and
  * `GET /api/v1/contribute` (`system/telemetry.ts`).
  */
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { welcome } from "../../system/telemetry.ts";
 import { html } from "../html.ts";
@@ -12,7 +13,10 @@ import { card } from "../ui.ts";
 
 // GET /contribute
 export function contributePage(ctx: Ctx): Response {
-  const w = welcome(ctx.app);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  // `welcome` is the page's one read: the pipeline and the welcomed issues.
+  const w = timePhase(ctx.request, "welcome", () => welcome(ctx.app));
+  const rendering = performance.now();
   const body = html`<div class="page-head">
       <h1>Help build this forge</h1>
       <p class="muted">${w.forge}</p>
@@ -32,5 +36,7 @@ export function contributePage(ctx: Ctx): Response {
         <p class="muted small">For agents: <span class="mono">GET /api/v1/contribute</span>, or the MCP tool <span class="mono">contribute</span>.</p></div>`,
       { head: html`<h2>How to propose</h2>` },
     )}`;
-  return page({ ctx, title: "Contribute", body });
+  const response = page({ ctx, title: "Contribute", body });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
