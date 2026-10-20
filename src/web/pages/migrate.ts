@@ -392,38 +392,37 @@ function stageRows(job: MirrorJob): Html {
 }
 
 /**
- * GET /migrate/jobs/:job — the clone, while it happens. It refreshes itself
- * every two seconds until the job stops; done, it lands on the repository
- * with what happened as the flash. A failure stays, with the reason and the
- * way back to the form.
- */
-/**
- * The job's page keeps itself current without reloading: every two seconds
- * it asks for itself and swaps the stages in place; when the job is done
- * the answer is the repository's page, and the browser goes there. Without
- * a script the meta refresh does the same, a whole page at a time.
+ * The job's page follows its stages over the job's own event stream
+ * (`/api/v1/migrate/:job/stream`, the same owner check as the page) and
+ * patches the rows in place. A terminal stage reloads the page, which is
+ * then the repository (done, with the flash) or the failure that stands
+ * with its reason. Without a script, a plain Reload link.
  */
 const migrateJobJs = /* js */ `
 (function () {
   var box = document.getElementById('migrate-job');
-  if (!box || !window.fetch) return;
-  function tick() {
-    fetch(location.href, { headers: { accept: 'text/html' }, credentials: 'same-origin', redirect: 'follow' })
-      .then(function (r) {
-        if (r.redirected) { location.href = r.url; return null; }
-        return r.ok ? r.text() : null;
-      })
-      .then(function (text) {
-        if (text === null) return;
-        var fresh = new DOMParser().parseFromString(text.replace(/<(style)[^>]*>[\\s\\S]*?<\\/\\1>/gi, ''), 'text/html');
-        var theirs = fresh.getElementById('migrate-job');
-        if (theirs && theirs.innerHTML !== box.innerHTML) box.innerHTML = theirs.innerHTML;
-        if (!fresh.querySelector('meta[http-equiv="refresh"]')) return; // failed, or over: the page stopped asking
-        setTimeout(tick, 2000);
-      })
-      .catch(function () { setTimeout(tick, 4000); });
+  var job = box && box.getAttribute('data-job');
+  if (!job || typeof EventSource === 'undefined') return;
+  var order = ['creating', 'fetching', 'crew', 'done'];
+  var source = new EventSource('/api/v1/migrate/' + encodeURIComponent(job) + '/stream');
+  function patch(e) {
+    var data;
+    try { data = JSON.parse(e.data); } catch (_) { return; }
+    var at = order.indexOf(data.stage);
+    var rows = box.querySelectorAll('[data-stage-name]');
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      var idx = order.indexOf(row.getAttribute('data-stage-name'));
+      var state = data.stage === 'failed' ? 'todo'
+        : data.stage === 'done' || idx < at ? 'done' : idx === at ? 'now' : 'todo';
+      row.setAttribute('data-state', state);
+      row.querySelector('.stage-dot').textContent = state === 'done' ? '\\u25cf' : state === 'now' ? '\\u25d0' : '\\u25cb';
+      row.querySelector('.stage-detail').textContent = state === 'now' && data.detail ? data.detail : '';
+    }
+    if (data.stage === 'done' || data.stage === 'failed') { source.close(); location.reload(); }
   }
-  setTimeout(tick, 2000);
+  ['creating', 'fetching', 'labels', 'issues', 'pulls', 'comments', 'crew', 'done', 'failed']
+    .forEach(function (stage) { source.addEventListener('migrate.' + stage, patch); });
 })();
 `;
 
@@ -440,10 +439,9 @@ export function migrationJobPage(ctx: Ctx): Response {
   return page({
     ctx,
     title: `Migrating ${job.fullName}`,
-    ...(failed ? {} : { refresh: { seconds: 2 } }),
-    scriptJs: migrateJobJs,
+    ...(failed ? {} : { scriptJs: migrateJobJs }),
     body: html`${pageHead(`Migrating ${job.fullName}`)}
-      <div class="narrow-wide" id="migrate-job">
+      <div class="narrow-wide" id="migrate-job" data-job="${job.id}">
         ${card(stageRows(job), {
           head: html`${icon("download")}
             <h2>${job.fullName}</h2>`,
@@ -466,6 +464,7 @@ export function migrationJobPage(ctx: Ctx): Response {
           : html`<p class="muted small mt">
               This keeps going if you close the page — come back to this link
               and it will say where it got to.
+              <noscript><a href="">Reload</a> to see the latest.</noscript>
             </p>`}
       </div>`,
   });

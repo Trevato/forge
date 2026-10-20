@@ -11,7 +11,6 @@ import { Glob } from "bun";
 const ALLOWED: Record<string, { allow: string[]; why: string }> = {
   "src/web/sw.ts": { allow: ['http-equiv="refresh"'], why: "the restart page: the forge is down, so there is no /events to hear" },
   "src/web/layout.ts": { allow: ['http-equiv="refresh"'], why: "defines the refresh option and its meta tag; callers are listed here" },
-  "src/web/pages/migrate.ts": { allow: ["refresh: {", 'http-equiv="refresh"'], why: "migrate progress runs in a process that emits no events" },
   "src/web/pages/browse.ts": { allow: ["refresh: {"], why: "mirror progress runs in a process that emits no events" },
   "src/web/client.ts": { allow: ["data-live-every", "setInterval"], why: "the data-live-every mechanism itself, and clocks that only redraw text" },
 };

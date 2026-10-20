@@ -37,7 +37,7 @@ import { repoDir } from "../src/git/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createSession } from "../src/core/sessions.ts";
-import { settled } from "../src/origins/jobs.ts";
+import { advance, createJob, settled } from "../src/origins/jobs.ts";
 import { forgetProviders } from "../src/origins/providers/index.ts";
 import { newFakeState, serveFakeForge, type FakeForge } from "./fake-origin.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
@@ -572,6 +572,49 @@ describe("migrate", () => {
     ).text();
     expect(repoPage).toContain("Migrated as alice/copy");
     expect(getRepo(app.db, "alice", "copy")?.autonomy).toBe("autonomous");
+  });
+
+  test("the job page follows its stages over the stream, with no meta refresh", async () => {
+    const follow = async (end: Partial<Parameters<typeof advance>[1]>) => {
+      const job = createJob("", "octo/streamed", {
+        kind: "migrate",
+        actorId: alice.id,
+      });
+      const page = await (
+        await browser(aliceCookie, `/migrate/jobs/${job.id}`)
+      ).text();
+      expect(page).not.toContain('http-equiv="refresh"');
+      expect(page).toContain(`data-job="${job.id}"`);
+      expect(page).toContain("<noscript>");
+      expect(page).toContain("Reload");
+      const streamPath = `/api/v1/migrate/${job.id}/stream`;
+      // Another person's stream is not found, as their page is.
+      expect((await browser(bobCookie, streamPath)).status).toBe(404);
+      const res = await browser(aliceCookie, streamPath);
+      expect(res.status).toBe(200);
+      advance(job.id, { stage: "fetching", detail: "receiving 61%" });
+      advance(job.id, end);
+      // The stream ends itself on a terminal stage.
+      const text = await new Response(res.body).text();
+      return { job, text };
+    };
+
+    const ok = await follow({ stage: "done", detail: "migrated" });
+    expect(ok.text).toContain("event: migrate.creating");
+    expect(ok.text).toContain("event: migrate.fetching");
+    expect(ok.text).toContain("event: migrate.done");
+
+    const bad = await follow({ stage: "failed", error: "clone went wrong" });
+    expect(bad.text).toContain("event: migrate.fetching");
+    expect(bad.text).toContain("event: migrate.failed");
+    expect(bad.text).toContain("clone went wrong");
+    // Failed is a page that stands, with the reason, and no stream of its own.
+    const stands = await (
+      await browser(aliceCookie, `/migrate/jobs/${bad.job.id}`)
+    ).text();
+    expect(stands).toContain("clone went wrong");
+    expect(stands).not.toContain("EventSource");
+    expect(stands).not.toContain('http-equiv="refresh"');
   });
 
   test("a link prefills the form and starts nothing", async () => {
