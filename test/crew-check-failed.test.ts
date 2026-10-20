@@ -32,7 +32,7 @@ describe("the crew, with a stand-in Claude Code: a failing check", () => {
     agentRunSettled(app, repo, where, timeoutMs);
 
   beforeAll(async () => {
-    standIn = await startStandInCrew();
+    standIn = await startStandInCrew({ tickMs: 50 });
     ({ app, alice, bot, repo, promptFile } = standIn);
   }, 30_000);
 
@@ -68,13 +68,13 @@ describe("the crew, with a stand-in Claude Code: a failing check", () => {
       listRuns(app.db, orchard.id, { kind, limit: 50 });
     const until = async <T>(
       find: () => T | undefined,
-      timeoutMs = 60_000,
+      timeoutMs = 20_000,
     ): Promise<T> => {
       const deadline = Date.now() + timeoutMs;
       while (Date.now() < deadline) {
         const found = find();
         if (found !== undefined) return found;
-        await Bun.sleep(100);
+        await Bun.sleep(20);
       }
       throw new Error("did not happen in time");
     };
@@ -113,5 +113,5 @@ describe("the crew, with a stand-in Claude Code: a failing check", () => {
       pullChecks().find((r) => r.state === "ok"),
     );
     expect(passed.summary).toMatch(/^check passed/);
-  }, 120_000);
+  }, 15_000);
 });
