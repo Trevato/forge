@@ -14,6 +14,7 @@ import {
   tokenName,
   type AuthRequest,
 } from "../../core/oauth.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { pageHead } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
@@ -180,13 +181,19 @@ export function authorizePage(ctx: Ctx): Response {
         `/signin?next=${encodeURIComponent(ctx.url.pathname + ctx.url.search)}`,
       ),
     );
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const values = fromQuery(ctx);
-  const request = parseAuthRequest(ctx.app.db, (n) => values[n as keyof Params] ?? "");
+  const request = timePhase(ctx.request, "request", () =>
+    parseAuthRequest(ctx.app.db, (n) => values[n as keyof Params] ?? ""),
+  );
   if (!request.ok) return refused(ctx, request.error);
-  return allowReturnTo(
+  const rendering = performance.now();
+  const response = allowReturnTo(
     guard(page({ ctx, title: "Connect", body: consent(ctx, request.value, values) })),
     request.value.redirectUri,
   );
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 export async function authorizeSubmit(ctx: Ctx): Promise<Response> {
