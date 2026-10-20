@@ -46,3 +46,16 @@ test("the map, plan and dependency routes are described", () => {
   const del = doc.paths[`${R}/issues/{number}/dependencies/{blocker}`].delete;
   expect(del.parameters.find((p: any) => p.name === "blocker").schema.type).toBe("integer");
 });
+
+test("reading and closing one issue and reading one pull are described", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const R = "/api/v1/repos/{owner}/{name}";
+  const issue = doc.paths[`${R}/issues/{number}`];
+  expect(issue.get.security).toBeUndefined();
+  expect(issue.patch.security).toBeDefined();
+  const props = issue.patch.requestBody.content["application/json"].schema.properties;
+  expect(Object.keys(props).sort()).toEqual(["into", "reason", "state"]);
+  expect(props.into.type).toBe("integer");
+  expect(issue.patch.parameters.find((p: any) => p.name === "number").in).toBe("path");
+  expect(doc.paths[`${R}/pulls/{number}`].get.security).toBeUndefined();
+});

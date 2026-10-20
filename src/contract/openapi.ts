@@ -36,6 +36,15 @@ export const ROUTES: readonly Route[] = [
     auth: true,
     body: { title: "string", body: "string" },
   },
+  { method: "get", path: `${REPO}/issues/{number}`, summary: "Read one issue with its comments", auth: false },
+  {
+    method: "patch",
+    path: `${REPO}/issues/{number}`,
+    summary: "Close or reopen an issue (state, with a reason and the issue it went into)",
+    auth: true,
+    body: { state: "string", reason: "string", into: "integer" },
+  },
+  { method: "get", path: `${REPO}/pulls/{number}`, summary: "Read one pull with its diff and review gate", auth: false },
   {
     method: "post",
     path: `${REPO}/issues/{number}/comments`,
