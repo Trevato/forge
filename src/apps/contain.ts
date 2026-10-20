@@ -63,13 +63,16 @@ export const DEFAULT_LIMITS: Record<"app" | "step", Limits> = {
 };
 
 /** The most any declaration gets on this machine. */
-export function maxLimits(): Limits {
+export function maxLimits(podFile = POD_MEMORY_FILE): Limits {
   return {
-    memoryMiB: memoryCeiling(process.env["FORGE_CELL_MEMORY_MAX_MIB"]),
+    memoryMiB: memoryCeiling(process.env["FORGE_CELL_MEMORY_MAX_MIB"], podFile),
     cpus: availableParallelism(),
     diskMiB: positive(process.env["FORGE_CELL_DISK_MAX_MIB"]) ?? 16384,
   };
 }
+
+/** The pod's own memory limit, where cgroup v2 states it. */
+export const POD_MEMORY_FILE = "/sys/fs/cgroup/memory.max";
 
 /** The share of the pod's memory a single cell may be given. */
 export const POD_MEMORY_SHARE = 0.75;
@@ -81,18 +84,33 @@ export const POD_MEMORY_SHARE = 0.75;
  */
 export function memoryCeiling(
   env: string | undefined,
-  podFile = "/sys/fs/cgroup/memory.max",
+  podFile = POD_MEMORY_FILE,
 ): number {
+  return ceiling(env, podFile).mib;
+}
+
+/** Where the ceiling comes from: the variable, the pod's `memory.max`, or the fixed default. */
+export function memoryCeilingSource(
+  env: string | undefined,
+  podFile = POD_MEMORY_FILE,
+): "env" | "pod" | "default" {
+  return ceiling(env, podFile).from;
+}
+
+function ceiling(
+  env: string | undefined,
+  podFile: string,
+): { mib: number; from: "env" | "pod" | "default" } {
   const set = positive(env);
-  if (set !== undefined) return set;
+  if (set !== undefined) return { mib: set, from: "env" };
   try {
     const bytes = Number(readFileSync(podFile, "utf8").trim());
     if (Number.isFinite(bytes) && bytes > 0)
-      return Math.max(1, Math.floor((bytes * POD_MEMORY_SHARE) / 1048576));
+      return { mib: Math.max(1, Math.floor((bytes * POD_MEMORY_SHARE) / 1048576)), from: "pod" };
   } catch {
     // no cgroup v2 here, or "max" (unlimited): the fixed default below
   }
-  return 4096;
+  return { mib: 4096, from: "default" };
 }
 
 /** The line saying a declared memory limit is cut to the machine's ceiling; none when it is not. */
@@ -122,9 +140,10 @@ function positive(raw: string | undefined): number | undefined {
 export function resolveLimits(
   kind: "app" | "step",
   declared: DeclaredLimits | undefined,
+  podFile = POD_MEMORY_FILE,
 ): Limits {
   const base = DEFAULT_LIMITS[kind];
-  const max = maxLimits();
+  const max = maxLimits(podFile);
   const want = declared?.memoryMiB;
   return {
     memoryMiB: Math.min(want ?? base.memoryMiB, max.memoryMiB),

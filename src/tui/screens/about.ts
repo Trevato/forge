@@ -19,13 +19,16 @@ import { audienceFor } from "../../core/audience.ts";
 import { isPinned } from "../../core/pins.ts";
 import { parentReleases, releasesSentence } from "../../core/parent_releases.ts";
 import { running } from "../../kernel/version.ts";
+import { checkMemoryAt } from "../../apps/check-memory.ts";
+import { repoDir } from "../../git/repos.ts";
+import { listRefs } from "../../git/read.ts";
 import { updateRepoSettings } from "../../actions/repos.ts";
 import { canAdmin, getRepoById, type Repo } from "../../core/repos.ts";
 import type { RepoFacts, RepoSource } from "../../view/source.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { style } from "../term/style.ts";
-import { truncate } from "../term/width.ts";
+import { truncate, wrap } from "../term/width.ts";
 import { badge, card } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
 import { PIN_MARK, ago, drawFacts, plural } from "./common.ts";
@@ -49,11 +52,34 @@ export function aboutScreen(
   let repo = localRepo(src);
   const may = (): boolean =>
     repo !== undefined && f.user !== undefined && canAdmin(f.db, repo, f.user);
+  let cell: [string, string][] = [];
   const factRows = (): [string, string][] => [
     ...archivedRow(repo),
     ...aboutFacts(f, src, facts, ref),
+    ...cell,
   ];
   let rows = factRows();
+  // An admin also sees the check cell's memory, read once from forge.json.
+  if (may() && repo !== undefined) {
+    const at = repo;
+    void (async () => {
+      const refs = await listRefs(repoDir(f.app.reposRoot, at.ownerName, at.name), "refs/heads/");
+      const tip = refs.ok
+        ? refs.value.find((r) => r.name === `refs/heads/${at.defaultBranch}`)?.oid
+        : undefined;
+      const words = await checkMemoryAt(repoDir(f.app.reposRoot, at.ownerName, at.name), tip);
+      if (words === undefined) return;
+      cell = wrap(words ?? "forge.json's check could not be read", 50).map(
+        (line, i): [string, string] => [i === 0 ? "check cell" : "", line],
+      );
+      rows = factRows();
+      ctx.invalidate();
+    })().catch(() => {
+      cell = [["check cell", "forge.json's check could not be read"]];
+      rows = factRows();
+      ctx.invalidate();
+    });
+  }
   const cloneUrl = rows.find(([label]) => label.startsWith("clone"))?.[1] ?? "";
   return {
     title: "About",

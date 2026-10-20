@@ -221,6 +221,8 @@ The repository's settings page is one more door: a writer sees their proposal
 tokens one to a line (child, origin, expires, last used) with Revoke, and a
 form that mints one and shows its secret once; others see no section.
 
+The check cell's memory is on the same page under **Check cell**, and in the terminal on a repository's About card (`I`, for an admin): the limit the machine enforces, read from `forge.json` on the default branch. When `check.limits.memory` asks for more than the machine's ceiling it shows both numbers and where the cut comes from (`FORGE_CELL_MEMORY_MAX_MIB`, else a share of the pod's memory); otherwise one number. The ceiling is read once and kept (`src/apps/check-memory.ts`).
+
 - **MCP**: the `proposal_tokens` tool with `repo` and a `verb`: `mint`
   (`child`, `origin`, optionally `childRepo`), `list` (the ones you minted for
   the repository) or `revoke` (`id`).

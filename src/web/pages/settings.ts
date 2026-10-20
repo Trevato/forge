@@ -105,6 +105,7 @@ import {
 import { cutWaveFor } from "../../actions/cut_wave.ts";
 import { proposalTokensSection } from "./proposal-tokens.ts";
 import { secretsSection } from "./secrets.ts";
+import { checkMemoryAt } from "../../apps/check-memory.ts";
 import { saveGrants } from "./subscriptions.ts";
 
 type Section =
@@ -231,6 +232,10 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
   const branches = refs.ok
     ? refs.value.map((r) => r.name.replace("refs/heads/", "")).sort()
     : [];
+  const tip = refs.ok
+    ? refs.value.find((r) => r.name === `refs/heads/${repo.defaultBranch}`)?.oid
+    : undefined;
+  const cellMemory = await checkMemoryAt(dir, tip);
   if (!branches.includes(repo.defaultBranch))
     branches.unshift(repo.defaultBranch);
 
@@ -308,6 +313,13 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
           >
         </label>
       </div>
+      ${cellMemory === undefined
+        ? null
+        : html`<div class="field"><p class="hint" data-check-memory>${
+            cellMemory === null
+              ? "forge.json's check could not be read, so no limit is shown."
+              : cellMemory
+          }</p></div>`}
       <div class="form-actions">
         ${btn("Save changes", { variant: "primary" })}
       </div>
