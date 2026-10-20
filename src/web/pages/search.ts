@@ -525,6 +525,15 @@ const DESTRUCTIVE: {
     }),
   },
   {
+    pattern: /^\/([^/]+)\/([^/]+)\/settings\/app\/egress\/([^/]+)\/revoke$/,
+    describe: (m) => ({
+      verb: "Revoke",
+      title: `Revoke the app's grant on ${decodeURIComponent(m[3] ?? "")}?`,
+      detail: `${m[1]}/${m[2]}'s cells can no longer reach that destination, from their next start. A site admin can grant it again while forge.json still asks for it.`,
+      phrase: "",
+    }),
+  },
+  {
     pattern: /^\/([^/]+)\/([^/]+)\/settings\/proposal-tokens\/([^/]+)\/delete$/,
     describe: (m) => ({
       verb: "Revoke",

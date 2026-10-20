@@ -24,6 +24,12 @@ import {
   type AppDomainView,
 } from "../../actions/domains.ts";
 import {
+  egressView,
+  grantAppEgress,
+  revokeAppEgress,
+  type EgressView,
+} from "../../actions/egress_grants.ts";
+import {
   addPromptSource,
   listPromptSources,
   removePromptSource,
@@ -103,6 +109,7 @@ import {
   selectField,
   time,
   timeAgo,
+  tlEvent,
 } from "../ui.ts";
 import { cutWaveFor } from "../../actions/cut_wave.ts";
 import { proposalTokensSection } from "./proposal-tokens.ts";
@@ -491,6 +498,7 @@ function appSettingsView(
   record: AppRecord | undefined,
   values: AppValues,
   error?: string,
+  egress?: EgressView,
 ): Html {
   const base = repoBase(repo);
   const runtime = appsRuntime(ctx.app);
@@ -598,6 +606,7 @@ function appSettingsView(
     <div class="mt">
       ${appDomainsView(base, domains.ok ? domains.value : undefined)}
     </div>
+    ${when(egress !== undefined && egress.rows.length > 0, () => html`<div class="mt">${appEgressView(base, egress!)}</div>`)}
     <div class="mt">
       ${card(
         html`<p>
@@ -893,12 +902,23 @@ const appValues = (repo: Repo, record: AppRecord | undefined): AppValues => ({
 });
 
 // GET /:owner/:name/settings/app
-export function appSettingsPage(ctx: Ctx): Response {
+export async function appSettingsPage(ctx: Ctx): Promise<Response> {
   const repo = loadAdminRepo(ctx);
   if (!repo) return repoNotFound(ctx);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const record = getAppByRepo(ctx.app.db, repo.id);
-  const view = appSettingsView(ctx, repo, record, appValues(repo, record));
+  const egress =
+    record === undefined
+      ? undefined
+      : await egressView(ctx.app, ctx.auth.user, repo);
+  const view = appSettingsView(
+    ctx,
+    repo,
+    record,
+    appValues(repo, record),
+    undefined,
+    egress?.ok ? egress.value : undefined,
+  );
   const rendering = performance.now();
   const response = settingsPageResponse(ctx, repo, "app", "App", view);
   notePhase(ctx.request, "render", performance.now() - rendering);
@@ -1154,6 +1174,136 @@ export async function appDomainDelete(ctx: Ctx): Promise<Response> {
     removed.ok
       ? { message: `${host} is removed. The forge no longer answers there.` }
       : { tone: "danger", message: "No domain by that name." },
+  );
+}
+
+/**
+ * The private destinations forge.json asks for (#3433), each with who
+ * granted it; Grant and Revoke only for a site admin. The last few changes
+ * follow, so a revoke is still on the page after the grant is gone.
+ */
+function appEgressView(base: string, egress: EgressView): Html {
+  const at = (destination: string) =>
+    `${base}/settings/app/egress/${encodeURIComponent(destination)}`;
+  const rows = egress.rows.map(
+    (r) =>
+      html`<li>
+        <div class="row">
+          <span class="row-lead">${icon("globe")}</span>
+          <span class="row-main">
+            <span class="row-title"
+              ><span class="mono">${r.destination}</span> ${r.granted
+                ? badge("granted", { tone: "success" })
+                : badge("not granted", { tone: "attn" })}
+              ${r.asked ? null : badge("no longer asked")}</span
+            >
+            <span class="row-meta"
+              >${r.granted && r.grantedAt !== null
+                ? html`Granted by ${r.grantedBy ?? "someone"}
+                    ${time(r.grantedAt)}`
+                : "Nothing reaches it until a site admin grants it."}</span
+            >
+          </span>
+          ${when(
+            egress.canChange,
+            () =>
+              html`<span class="row-trail">
+                ${r.granted
+                  ? confirmAction({
+                      action: `${at(r.destination)}/revoke`,
+                      verb: "Revoke",
+                      size: "sm",
+                    })
+                  : html`<form method="post" action="${at(r.destination)}/grant">
+                      ${btn("Grant", { size: "sm" })}
+                    </form>`}
+              </span>`,
+          )}
+        </div>
+      </li>`,
+  );
+  const changes = egress.changes.map(
+    (c) =>
+      tlEvent({
+        icon: "globe",
+        body: html`<span class="muted small"
+          >${c.by} ${c.kind} <span class="mono">${c.destination}</span>
+          ${time(c.at)}</span
+        >`,
+      }),
+  );
+  return card(
+    html`<div class="card-body">
+        <p class="muted small">
+          Each is an exact address and port forge.json asks for. A grant opens
+          that one destination for the app's cells and nothing else.${egress.canChange
+            ? null
+            : " Only a site admin grants or revokes."}
+        </p>
+      </div>
+      <ul class="list">
+        ${rows}
+      </ul>
+      ${when(
+        changes.length > 0,
+        () =>
+          html`<div class="card-body">
+            <div class="timeline">${changes}</div>
+          </div>`,
+      )}`,
+    {
+      head: html`${icon("globe")}
+        <h2>Private destinations asked for</h2>`,
+    },
+  );
+}
+
+const EGRESS_ERRORS: Record<string, string> = {
+  forbidden: "Only a site admin grants or revokes a private destination.",
+  invalid_destination: "That is not an address and port.",
+  not_asked: "forge.json does not ask for that destination.",
+  never_grantable:
+    "That address can never be granted: it is this machine, link-local or the forge's own cluster.",
+  no_such_grant: "There was no grant for that destination.",
+};
+
+// POST /:owner/:name/settings/app/egress/:destination/grant
+export async function appEgressGrant(ctx: Ctx): Promise<Response> {
+  const gate = await adminForm(ctx);
+  if (gate instanceof Response) return gate;
+  const { repo } = gate;
+  const destination = ctx.params.destination ?? "";
+  const granted = await grantAppEgress(ctx.app, ctx.auth.user, repo, destination);
+  if (!granted.ok && granted.error === "not_found") return repoNotFound(ctx);
+  return flashTo(
+    ctx,
+    `${repoBase(repo)}/settings/app`,
+    granted.ok
+      ? { message: `${granted.value.destination} is granted.` }
+      : {
+          tone: "danger",
+          message: EGRESS_ERRORS[granted.error] ?? "That could not be granted.",
+        },
+  );
+}
+
+// POST /:owner/:name/settings/app/egress/:destination/revoke
+export async function appEgressRevoke(ctx: Ctx): Promise<Response> {
+  const gate = await adminForm(ctx);
+  if (gate instanceof Response) return gate;
+  const { repo } = gate;
+  const destination = ctx.params.destination ?? "";
+  const revoked = revokeAppEgress(ctx.app, ctx.auth.user, repo, destination);
+  if (!revoked.ok && revoked.error === "not_found") return repoNotFound(ctx);
+  return flashTo(
+    ctx,
+    `${repoBase(repo)}/settings/app`,
+    revoked.ok
+      ? { message: `${revoked.value} is revoked.` }
+      : {
+          tone: "danger",
+          message: EGRESS_ERRORS[revoked.error] ?? "That could not be revoked.",
+        },
   );
 }
 

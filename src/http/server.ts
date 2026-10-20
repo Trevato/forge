@@ -354,6 +354,8 @@ import {
   appDomainDelete,
   appEnvDelete,
   appEnvSet,
+  appEgressGrant,
+  appEgressRevoke,
   appSettingsPage,
   appSettingsUpdate,
   autonomySettingsPage,
@@ -1358,6 +1360,16 @@ export function buildRouter(): Router<Handler> {
     "POST",
     "/:owner/:name/settings/app/domains/:host/delete",
     appDomainDelete,
+  );
+  router.add(
+    "POST",
+    "/:owner/:name/settings/app/egress/:destination/grant",
+    appEgressGrant,
+  );
+  router.add(
+    "POST",
+    "/:owner/:name/settings/app/egress/:destination/revoke",
+    appEgressRevoke,
   );
   router.add("GET", "/:owner/:name/settings/prompts", promptsSettingsPage);
   router.add("POST", "/:owner/:name/settings/prompts", promptSourceAdd);

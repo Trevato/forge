@@ -291,9 +291,15 @@ own pod and service ranges (`FORGE_NEVER_GRANT_CIDRS` adds more) are never
 grantable. Until granted, the refusal says to add it and ask a site admin.
 A grant needs the exact `host:port` in `egress`: a wildcard entry such as
 `*.example.com:80` never opens a granted name. Grants are stored in the
-`egress_grant` table and read at every app start. There is not yet a page or
-terminal command to make one (#3469), so for now they are written through
-`grantEgress`.
+`egress_grant` table and read at every app start. A site admin grants
+and revokes on the app's settings page ("Private destinations asked for",
+which lists the exact `host:port` entries forge.json names and who granted
+each) or with `POST`/`DELETE /api/v1/repos/:owner/:name/egress-grants`
+and a `{ "destination": "100.89.95.68:8101" }` body; `GET` lists them. Anyone
+else who administers the repository sees the list with no buttons. A
+destination forge.json does not name is refused, and each change is an
+`app.egress.granted` or `app.egress.revoked` event with who and when. There is
+not yet a terminal command (#3469).
 
 A release that turns egress on must not break an app whose writers have
 not declared what it uses yet, so the operator can start it reported:

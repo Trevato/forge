@@ -58,6 +58,13 @@ export function eventVerb(event: ForgeEvent): string {
       ? `set ${which} in the app's environment`
       : `removed ${which} from the app's environment`;
   }
+  if (kind === "app.egress.granted" || kind === "app.egress.revoked") {
+    const destination = payload["destination"];
+    const which = typeof destination === "string" ? destination : "a destination";
+    return kind === "app.egress.granted"
+      ? `granted the app ${which}`
+      : `revoked the app's grant on ${which}`;
+  }
   if (kind.startsWith("app.domain.")) {
     const host = payload["host"];
     const which = typeof host === "string" ? host : "a domain";
