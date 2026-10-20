@@ -113,7 +113,7 @@ describe("who an event is for", () => {
     expect(eventAudience("prompt.source_added")).toBe("admins");
     expect(eventAudience("repo.pinned")).toBe("actor");
     expect(eventAudience("push")).toBe("readers");
-    expect(eventAudience("a.kind.nobody.classified")).toBe("readers");
+    expect(eventAudience("a.kind.nobody.classified")).toBe("admins");
   });
 
   test("the filter: admins see configuration, an actor their own choice, a stranger neither", () => {
