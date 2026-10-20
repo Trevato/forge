@@ -26,7 +26,7 @@ function stalledCard(s: StalledStep): Html {
     <p class="fcard-reason"><a href="${base}">${s.title}</a>${s.issue === null ? null : html` <span class="muted small">for #${String(s.issue)}</span>`}</p>
     <form method="post" action="${base}/checks" class="fcard-unblock">
       <input type="hidden" name="next" value="/">
-      ${btn(BUTTON[s.action], { size: "sm", icon: "loader" })}
+      ${btn(BUTTON[s.action], { size: "sm", icon: "play" })}
       <span class="muted small">${s.unblock}</span>
     </form>
   </article>`;

@@ -358,7 +358,7 @@ function pullChecksLine(
     tier,
     pull.state === "open" && canWrite(ctx.app.db, repo, ctx.auth.user)
       ? html`<form method="post" action="${thread}/checks" class="inline-form">
-          ${btn("Check again", { size: "sm", icon: "loader" })}
+          ${btn("Check again", { size: "sm", icon: "play" })}
         </form>`
       : "",
     status.conflicts.length,
