@@ -44,6 +44,7 @@ import { watchMilestone } from "../actions/watches.ts";
 import {
   addCommentThrough,
   editIssue,
+  setIssueLabelsThrough,
   setIssueSealed,
   TAKEN_UP,
 } from "../actions/issues.ts";
@@ -52,6 +53,7 @@ import {
   linkIssue,
   unlinkIssue,
 } from "../actions/dependencies.ts";
+import { originError } from "../web/pages/thread.ts";
 import { holdPull, releasePull } from "../actions/holds.ts";
 import { openPlan, parsePlan, PLAN_MAX, proposePlan } from "../actions/plan.ts";
 import { cancelRepoRun } from "../actions/runs.ts";
@@ -2404,6 +2406,63 @@ const TOOLS: readonly Tool[] = [
       return report.ok
         ? good(report.value)
         : bad("forbidden", "spend is for those who can write this app");
+    },
+  },
+  {
+    name: "labels",
+    description:
+      "Set the labels of an issue or a pull to exactly these (none clears them): only labels the repository has, by a person or agent who can write it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        number: { type: "integer", minimum: 1 },
+        labels: {
+          type: "array",
+          items: { type: "string", maxLength: 64 },
+          maxItems: 50,
+        },
+      },
+      required: ["repo", "number", "labels"],
+    },
+    writes: true,
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const chosen = args["labels"];
+      if (
+        !Array.isArray(chosen) ||
+        chosen.length > 50 ||
+        !chosen.every((l) => typeof l === "string" && l.length <= 64)
+      )
+        return bad("invalid_labels", "labels is a list of up to 50 label names");
+      const issue = issueArg(ctx, repo, args, "number");
+      if ("ok" in issue) return issue;
+      // The permission is the action's to check, as on the page.
+      const applied = await setIssueLabelsThrough(
+        ctx.app,
+        user,
+        repo,
+        issue,
+        chosen,
+      );
+      if (!applied.ok)
+        return bad(
+          applied.error,
+          originError(applied.error) ??
+            (applied.error === "unknown_label"
+              ? "One of those labels no longer exists."
+              : "You need write access to change labels."),
+        );
+      const names = applied.value.map((l) => l.name);
+      return good({
+        says:
+          names.length === 0
+            ? `Cleared the labels of #${issue.number}.`
+            : `Labels of #${issue.number} set to ${names.join(", ")}.`,
+        labels: names,
+        url: `${ctx.url.origin}/${repo.ownerName}/${repo.name}/${issue.kind === "pull" ? "pulls" : "issues"}/${issue.number}`,
+      });
     },
   },
   {

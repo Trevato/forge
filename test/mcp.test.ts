@@ -223,6 +223,7 @@ describe("the forge over MCP", () => {
       "returns",
       "spend",
       "usage",
+      "labels",
       "link",
       "unlink",
       "attach_look",
