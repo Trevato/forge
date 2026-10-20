@@ -252,6 +252,33 @@ export const SOURCES: Readonly<Record<string, Source>> = {
       value: "the count, or the percentile (nearest rank) of that route that day",
     },
   },
+  // What each app's visitors report (`apps/vitals.ts`): one row per app per
+  // day, filed under the app's repo, so a scope of the repos someone
+  // administers (as the app's settings card decides) is the only gate. The
+  // visitor hash and the slug are not listed.
+  app_vital: {
+    table: "app_vital_day",
+    owner: "repo_id",
+    select:
+      "SELECT a.repo_id AS repo_id, v.app_id AS app, v.day || 'T00:00:00.000Z' AS day, " +
+      "MAX(CASE WHEN v.load IS NOT NULL AND v.rl = (v.nl * 75 + 99) / 100 THEN v.load END) AS load_p75, " +
+      "MAX(CASE WHEN v.inp IS NOT NULL AND v.ri = (v.ni * 75 + 99) / 100 THEN v.inp END) AS inp_p75, " +
+      "COUNT(*) AS reports FROM (SELECT app_id, day, load, inp, " +
+      "ROW_NUMBER() OVER (PARTITION BY app_id, day ORDER BY load IS NULL, load) AS rl, " +
+      "COUNT(load) OVER (PARTITION BY app_id, day) AS nl, " +
+      "ROW_NUMBER() OVER (PARTITION BY app_id, day ORDER BY inp IS NULL, inp) AS ri, " +
+      "COUNT(inp) OVER (PARTITION BY app_id, day) AS ni FROM app_vital) v " +
+      "JOIN app a ON a.id = v.app_id GROUP BY v.app_id, v.day",
+    time: "day",
+    columns: { repo_id: "text", app: "text", day: "time", load_p75: "number", inp_p75: "number", reports: "number" },
+    docs: {
+      app: "the app's id",
+      day: "the day (UTC)",
+      load_p75: "page load, ms, nearest-rank 75th percentile of that day's reports; null with none",
+      inp_p75: "interaction to next paint, ms, same rank; null with none",
+      reports: "reports kept that day (production only)",
+    },
+  },
   // Forges made by the one-click path (#2914): one row per spawn event
   // (`actions/spawn.ts`, `spawn/live.ts`). The forge's name and the failure's
   // words are not listed; the step is one of a fixed few.
