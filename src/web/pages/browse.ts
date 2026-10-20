@@ -28,6 +28,7 @@
 import { mirrorJobFor, startMirrorJob } from "../../actions/origins.ts";
 import { forkOrigin } from "../../actions/contribute.ts";
 import { getOriginFor } from "../../core/origins.ts";
+import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { isSafeOid, isSafeRef, isSafeTreePath } from "../../git/guard.ts";
 import type { Ctx } from "../../http/context.ts";
 import type { MirrorJob, MirrorStage } from "../../origins/jobs.ts";
@@ -325,6 +326,7 @@ function sourceQuery(
  * able to spend somebody's GitHub credential just because it can read a repo.
  */
 async function browseScope(ctx: Ctx): Promise<RepoScope | Response> {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const denied = accountOnly(ctx);
   if (denied) return denied;
   const originId = ctx.params.id ?? "";
@@ -333,7 +335,9 @@ async function browseScope(ctx: Ctx): Promise<RepoScope | Response> {
   if (origin === undefined) return notFoundPage(ctx);
   const source = sourceFor(ctx.app, ctx.auth.user, { originId, fullName });
   if (!source.ok) return notFoundPage(ctx);
+  const reading = performance.now();
   const scope = await originScope(origin, source.value);
+  notePhase(ctx.request, "repo", performance.now() - reading);
   if (scope === undefined) return unreachablePage(ctx, origin.webUrl);
   return scope;
 }
@@ -400,10 +404,18 @@ export async function browseHome(ctx: Ctx): Promise<Response> {
   const scope = await browseScope(ctx);
   if (scope instanceof Response) return scope;
   const ref = refOf(ctx, scope);
+  const reading = performance.now();
   const [refs, entries] = await Promise.all([
-    refSetFrom(scope.source),
-    scope.source.tree(ref, ""),
+    refSetFrom(scope.source).then((r) => {
+      notePhase(ctx.request, "refs", performance.now() - reading);
+      return r;
+    }),
+    scope.source.tree(ref, "").then((r) => {
+      notePhase(ctx.request, "tree", performance.now() - reading);
+      return r;
+    }),
   ]);
+  const rendering = performance.now();
   const body = await renderCode(scope, {
     refs,
     ref,
@@ -411,7 +423,7 @@ export async function browseHome(ctx: Ctx): Promise<Response> {
     entries: entries.ok ? entries.value : [],
     rail: aboutRail(scope),
   });
-  return browsePage(ctx, scope, {
+  const response = browsePage(ctx, scope, {
     title: titleFor(scope),
     header: scopeHeader(ctx, scope, "code", {
       branchCount: refs.branches.length,
@@ -419,6 +431,8 @@ export async function browseHome(ctx: Ctx): Promise<Response> {
     body: html`${body}${codeMount(scope, ref)}${finderDialog()}`,
     scriptJs: codeJs,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 // GET /origins/:id/r/:owner/:name/paths/:ref
@@ -426,13 +440,18 @@ export async function browsePaths(ctx: Ctx): Promise<Response> {
   const scope = await browseScope(ctx);
   if (scope instanceof Response) return notFound();
   const ref = refOf(ctx, scope);
+  const reading = performance.now();
   const listed = await scope.source.paths(ref);
+  notePhase(ctx.request, "paths", performance.now() - reading);
   if (!listed.ok) return notFound();
-  return json(
+  const rendering = performance.now();
+  const response = json(
     { ref, paths: listed.value.paths, truncated: listed.value.truncated },
     200,
     { "cache-control": "private, max-age=30" },
   );
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 // GET /origins/:id/r/:owner/:name/branches
