@@ -13,6 +13,7 @@ import { listAgents } from "../../core/agents.ts";
 import { listReposVisibleTo } from "../../core/repos.ts";
 import type { User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { childHost, childUrlOf, noRoom, spawnDoor, type Door } from "../../spawn/door.ts";
 import {
   LEFT_BEHIND,
@@ -94,14 +95,37 @@ function checks(
   )}`;
 }
 
+/** What the form reads before it draws: room, then (when there is room) the repositories and the crew. */
+interface Reads {
+  readonly full: string | undefined;
+  readonly repos: ReturnType<typeof listReposVisibleTo>;
+  readonly crew: ReturnType<typeof listAgents>;
+}
+
+function readsFor(ctx: Ctx, user: User | undefined): Reads {
+  const full = timePhase(ctx.request, "room", () => noRoom(ctx.app));
+  if (full) return { full, repos: [], crew: [] };
+  // A stranger sees only public repositories, and no crew: nothing private
+  // travels to a child they have not claimed.
+  const repos = timePhase(ctx.request, "repos", () =>
+    listReposVisibleTo(ctx.app.db, user, { limit: 200 }),
+  );
+  const crew =
+    user === undefined
+      ? []
+      : timePhase(ctx.request, "crew", () => listAgents(ctx.app.db));
+  return { full, repos, crew };
+}
+
 function formView(
   ctx: Ctx,
   user: User | undefined,
   values: Values,
   errors: Errors,
   plan: Html | null,
+  reads: Reads,
 ): Html {
-  const full = noRoom(ctx.app);
+  const { full, repos, crew } = reads;
   if (full)
     return html`<div class="narrow-wide">
       ${pageHead("New forge")}
@@ -112,11 +136,7 @@ function formView(
             : null}`,
       )}
     </div>`;
-  // A stranger sees only public repositories, and no crew: nothing private
-  // travels to a child they have not claimed.
   const anon = user === undefined;
-  const repos = listReposVisibleTo(ctx.app.db, user, { limit: 200 });
-  const crew = anon ? [] : listAgents(ctx.app.db);
   return html`<div class="narrow-wide">
     ${pageHead("New forge", {
       sub: anon
@@ -369,11 +389,16 @@ const asBool = (form: Form, name: string): boolean =>
 export function newForgePage(ctx: Ctx): Response {
   const user = ctx.auth.user;
   if (user && user.kind !== "user") return notFoundPage(ctx);
-  return page({
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const reads = readsFor(ctx, user);
+  const rendering = performance.now();
+  const response = page({
     ctx,
     title: "New forge",
-    body: formView(ctx, user, EMPTY, {}, null),
+    body: formView(ctx, user, EMPTY, {}, null, reads),
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 // POST /forges/new — `do=plan` shows the plan; anything else spawns.
@@ -417,7 +442,7 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
       {
         ctx,
         title: "New forge",
-        body: formView(ctx, user, values, errorsOf(door), null),
+        body: formView(ctx, user, values, errorsOf(door), null, readsFor(ctx, user)),
       },
       door.status === 422 ? 422 : door.status,
     );
@@ -425,7 +450,7 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
     return page({
       ctx,
       title: "New forge",
-      body: formView(ctx, user, values, {}, planView(ctx, user, values, door.body)),
+      body: formView(ctx, user, values, {}, planView(ctx, user, values, door.body), readsFor(ctx, user)),
     });
   const response = page(
     { ctx, title: "New forge", body: madeView(door.body) },
