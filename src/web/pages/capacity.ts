@@ -9,6 +9,7 @@
 import { changeCapacity, listCapacity, type CapacityRow } from "../../actions/capacity.ts";
 import { CAPACITY, type CapacityKey } from "../../core/capacity.ts";
 import type { Ctx } from "../../http/context.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when } from "../html.ts";
@@ -66,12 +67,22 @@ function input(key: CapacityKey, value: string) {
 
 // GET /settings/capacity
 export function capacityPage(ctx: Ctx): Response {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const denied = requireAdmin(ctx);
   if (denied) return denied;
-  const listed = listCapacity(ctx.app, ctx.auth.user);
+  const listed = timePhase(ctx.request, "capacity", () =>
+    listCapacity(ctx.app, ctx.auth.user),
+  );
   if (!listed.ok) return notFoundPage(ctx);
   const { settings, changes } = listed.value;
+  const errs = timePhase(ctx.request, "errors", () =>
+    ctx.app.signals.errors.recent(10),
+  );
+  const refused = timePhase(ctx.request, "refused", () =>
+    ctx.app.signals.refused.recent(),
+  );
   const now = Date.now();
+  const rendering = performance.now();
   const rows = settings.map((s) =>
     row({
       lead: icon("activity"),
@@ -119,8 +130,6 @@ export function capacityPage(ctx: Ctx): Response {
   const reported = settings.some(
     (s) => s.key === "cells.egress" && s.value === "report",
   );
-  const errs = ctx.app.signals.errors.recent(10);
-  const refused = ctx.app.signals.refused.recent();
   const happened = card(
     html`<div class="card-body">
       <p class="muted small" id="errors">
@@ -187,7 +196,9 @@ export function capacityPage(ctx: Ctx): Response {
       pad: false,
     },
   )}`;
-  return usageShell(ctx, "capacity", body);
+  const response = usageShell(ctx, "capacity", body);
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 const ERRORS: Record<string, string> = {
