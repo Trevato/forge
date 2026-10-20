@@ -131,7 +131,7 @@ describe("home kpis", () => {
 
 describe("home kpi row titles", () => {
   const full = kpiRowFor(
-    { landedHours: Array.from({ length: 24 }, (_, i) => (i === 0 ? 6 : 0)), landed: 6, live: null, builders: { running: 2, slots: 4 }, medianCheckMs: 185_000 },
+    { landedHours: Array.from({ length: 24 }, (_, i) => (i === 0 ? 6 : 0)), landed: 6, live: null, builders: { running: 2, slots: 4 }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: 185_000 },
     { sha: "abcdef0123456789", at: "2026-10-19T11:00:00.000Z" },
   ).toString();
 
@@ -144,8 +144,8 @@ describe("home kpi row titles", () => {
   });
 
   test("no value or note lacks a title, and none brings back a git word", () => {
-    expect(full.match(/class="kpi-(value num|note small muted)"/g)).toHaveLength(8);
-    expect(full.match(/class="kpi-(value num|note small muted)" title=/g)).toHaveLength(8);
+    expect(full.match(/class="kpi-(value num|note small muted)"/g)).toHaveLength(10);
+    expect(full.match(/class="kpi-(value num|note small muted)" title=/g)).toHaveLength(10);
     expect(full).not.toMatch(/commit|merge|branch|repositor|pull request/i);
   });
 });

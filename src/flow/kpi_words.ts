@@ -31,8 +31,22 @@ export function buildersValue(b: Kpis["builders"]): string {
   return b.slots === 0 ? "—" : `${b.running} of ${b.slots}`;
 }
 
+/** Cents below ten dollars, so a small spend never reads `$0`; whole dollars above. */
+const whole = (n: number): string => (n < 10 ? `$${n.toFixed(2)}` : `$${Math.round(n)}`);
+const cents = (n: number): string => `$${n.toFixed(2)}`;
+
+/** Today's spend of the daily ceiling: `$12 of $40`, or the spend alone with no ceiling. */
+export function spendValue(s: Kpis["spend"]): string {
+  return s.ceilingUsd === null ? whole(s.todayUsd) : `${whole(s.todayUsd)} of ${whole(s.ceilingUsd)}`;
+}
+
+/** The same figure to the cent, for the title. */
+export function spendFull(s: Kpis["spend"]): string {
+  return s.ceilingUsd === null ? cents(s.todayUsd) : `${cents(s.todayUsd)} of ${cents(s.ceilingUsd)}`;
+}
+
 /**
- * The terminal's row: the same four figures in the same words, as plain
+ * The terminal's row: the same five figures in the same words, as plain
  * lines. Forge-wide like the web's, so the caller shows them to an admin only.
  */
 export function kpiLines(k: Kpis, live: { sha: string; since: string } | null): string[] {
@@ -41,5 +55,6 @@ export function kpiLines(k: Kpis, live: { sha: string; since: string } | null): 
     `Live version ${live === null ? "— nothing live yet" : `${live.sha.slice(0, 7)}, live ${live.since}`}`,
     `Median check time ${checkTime(k.medianCheckMs)}`,
     `Builders running ${buildersValue(k.builders)}${k.builders.slots === 0 ? ", no slots set" : ""}`,
+    `Crew spend today ${spendValue(k.spend)}${k.spend.ceilingUsd === null ? ", no ceiling" : ""}`,
   ];
 }

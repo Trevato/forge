@@ -254,12 +254,15 @@ settings until asked. `/?all=1` is the whole home, and its "Just my apps" link
 comes back. The terminal's first screen opens with the same lines, from the
 same query (`src/core/client-apps.ts`).
 
-Home shows three figures first, from `src/flow/kpis.ts`: shipped per hour (with
-a 24 h sparkline), the live version and since when, and the median check time.
+Home shows five figures first, from `src/flow/kpis.ts`: shipped per hour (with
+a 24 h sparkline), the live version and since when, the median check time, the crew builders
+running of their slots, and the crew's spend today of the forge's daily
+ceiling (`FORGE_CREW_CEILING_USD`; without one, the spend alone and
+`no ceiling`). The spend tile links to `/settings/crew`, where the meter is.
 They count every repository, so only a site admin sees them, on both doors;
 nobody else does, and neither does the lean client home. On the web each is a
 card linking to `/board`, `/releases` or `/boards`. The terminal's first screen
-shows the same three as lines above the forge strip (`kpiLines` in
+shows the same five as lines above the forge strip (`kpiLines` in
 `src/flow/kpi_words.ts`). They are read when the page or screen loads and
 do not refresh on their own.
 

@@ -14,6 +14,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { spentTodayEverywhere } from "../crew/autonomy.ts";
 import { HOURS, median } from "./throughput.ts";
 
 const HOUR_MS = 3_600_000;
@@ -29,9 +30,11 @@ export interface Kpis {
   readonly medianCheckMs: number | null;
   /** Crew builders running now, of the slots the autonomous repositories are set to. */
   readonly builders: { readonly running: number; readonly slots: number };
+  /** What the crew's runs cost since UTC midnight, and the forge's daily ceiling (null: none set). */
+  readonly spend: { readonly todayUsd: number; readonly ceilingUsd: number | null };
 }
 
-export function readKpis(db: Database, now: Date): Kpis {
+export function readKpis(db: Database, now: Date, forge: { readonly ceilingUsd: number | null } = { ceilingUsd: null }): Kpis {
   const end = now.getTime();
   const to = now.toISOString();
   const since = new Date(end - HOURS * HOUR_MS).toISOString();
@@ -79,8 +82,11 @@ export function readKpis(db: Database, now: Date): Kpis {
     )
     .get() ?? { running: 0, slots: 0 };
 
+  const todayUsd = spentTodayEverywhere(db, now);
+
   return {
     builders,
+    spend: { todayUsd, ceilingUsd: forge.ceilingUsd },
     landedHours,
     landed: landedHours.reduce((a, b) => a + b, 0),
     live: live ?? null,

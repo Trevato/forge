@@ -1,13 +1,14 @@
 /**
- * Home's row of four figures (#2871), from `flow/kpis.ts`: shipped per hour
+ * Home's row of five figures (#2871), from `flow/kpis.ts`: shipped per hour
  * with a day's sparkline, the live version and since when, the median check
- * time, and the crew builders running of their slots. Server-rendered, one
- * fixed-height card each, so nothing moves when it paints. Only the studio's
- * words: shipped, change, check time.
+ * time, the crew builders running of their slots, and the crew's spend today
+ * of the daily ceiling. Server-rendered, one fixed-height card each, so
+ * nothing moves when it paints. Only the studio's words: shipped, change,
+ * check time.
  */
 
 import type { Database } from "bun:sqlite";
-import { buildersValue, checkTime } from "../../flow/kpi_words.ts";
+import { buildersValue, checkTime, spendFull, spendValue } from "../../flow/kpi_words.ts";
 import { readKpis, type Kpis } from "../../flow/kpis.ts";
 import { html, raw, type Html } from "../html.ts";
 import { BOOTED } from "../../release/gate.ts";
@@ -81,10 +82,18 @@ export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null): Ht
       k.builders.slots === 0 ? "No slots set" : "running now",
       k.builders.slots === 0 ? "No slots set" : `Crew builders running now, of ${k.builders.slots} ${k.builders.slots === 1 ? "slot" : "slots"}`,
     )}
+    ${tile(
+      "Crew spend today",
+      "/settings/crew",
+      spendValue(k.spend),
+      spendFull(k.spend),
+      k.spend.ceilingUsd === null ? "no ceiling" : "of the daily ceiling",
+      k.spend.ceilingUsd === null ? "No daily ceiling is set" : "Crew spend today (UTC), of the daily ceiling",
+    )}
   </section>`;
 }
 
 /** The figures count every repository, so the caller shows this to an admin only. */
-export function kpiRow(db: Database, now = new Date()): Html {
-  return kpiRowFor(readKpis(db, now), liveNow());
+export function kpiRow(db: Database, opts: { ceilingUsd?: number; now?: Date } = {}): Html {
+  return kpiRowFor(readKpis(db, opts.now ?? new Date(), { ceilingUsd: opts.ceilingUsd ?? null }), liveNow());
 }

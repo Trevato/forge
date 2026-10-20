@@ -25,7 +25,7 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-test("home renders the four tiles; only an admin sees them", async () => {
+test("home renders the five tiles; only an admin sees them", async () => {
   const mk = async (username: string, first = false): Promise<User> => {
     const r = await createUser(app.db, {
       origin: "seed",
@@ -50,10 +50,40 @@ test("home renders the four tiles; only an admin sees them", async () => {
 
   const a = await home(admin);
   expect(a).toContain('class="kpis"');
-  expect((a.match(/class="card kpi"/g) ?? []).length).toBe(4);
+  expect((a.match(/class="card kpi"/g) ?? []).length).toBe(5);
   for (const href of ["/board", "/releases", "/boards", "/settings/crew"]) expect(a).toContain(`class="card kpi" href="${href}"`);
 
   // The figures count every repository, so a non-admin sees none.
+  expect(a).toContain("no ceiling");
   expect(await home(bob)).not.toContain('class="kpis"');
   expect(await home()).not.toContain('class="kpis"');
+});
+
+test("home passes the forge's daily ceiling to the spend tile", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "forge-home-kpi-cap-"));
+  const capped = createApp({ dataDir: dir, port: 0, crewCeilingUsd: 40 });
+  const s = await serve(capped);
+  try {
+    const r = await createUser(capped.db, {
+      origin: "seed",
+      trusted: true,
+      username: "keeper",
+      email: "keeper@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!r.ok) throw new Error(r.error);
+    promote(capped.db, r.value);
+    const res = await fetch(`${s.url}/`, {
+      headers: { cookie: `forge_session=${createSession(capped.db, r.value.id).token}; forge_mode=studio` },
+    });
+    const body = await res.text();
+    expect(body).toContain("of $40");
+    expect(body).toContain("of the daily ceiling");
+    expect(body).not.toContain("no ceiling");
+  } finally {
+    s.stop();
+    capped.close();
+    await rm(dir, { recursive: true, force: true });
+  }
 });

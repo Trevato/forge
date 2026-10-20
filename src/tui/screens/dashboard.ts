@@ -96,6 +96,12 @@ import { repoScreen } from "./repo.ts";
 import { local } from "./where.ts";
 import { signInScreen } from "./signin.ts";
 
+/** Rows the list keeps under the figures strip; below it the strip shows fewer figures. */
+const FIGURES_ROOM = 6;
+
+/** The forge-wide daily ceiling, from config, for the spend figure. */
+const kpiForge = (app: { config: { crewCeilingUsd?: number } }) => ({ ceilingUsd: app.config.crewCeilingUsd ?? null });
+
 /**
  * The three things the launcher is about. Order is the `tab` order: the
  * repositories, then what is waiting on you, then what is on your machine.
@@ -216,7 +222,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     figures =
       f.user?.isAdmin !== true
         ? []
-        : kpiLines(readKpis(f.db, now), commit === null ? null : { sha: commit, since: ago(BOOTED) });
+        : kpiLines(readKpis(f.db, now, kpiForge(f.app)), commit === null ? null : { sha: commit, since: ago(BOOTED) });
     // "Yours" is ownership plus the orgs you are on a team of; typing in the
     // filter reaches every repository you can see.
     const orgs = f.user
@@ -777,9 +783,11 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         );
         body = rest!;
       }
-      if (figures.length > 0) {
-        const [strip, rest] = split(body, "v", [len(figures.length), fill(1)]);
-        figures.forEach((line, i) =>
+      // A short terminal drops the last figures before it drops the list.
+      const shown = figures.slice(0, Math.max(0, body.h - FIGURES_ROOM));
+      if (shown.length > 0) {
+        const [strip, rest] = split(body, "v", [len(shown.length), fill(1)]);
+        shown.forEach((line, i) =>
           s.text(strip!.x, strip!.y + i, truncate(line, strip!.w), style(c.mutedFg, c.bg), strip!.x + strip!.w),
         );
         body = rest!;

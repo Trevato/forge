@@ -245,8 +245,10 @@ export async function studioHome(
   }
   const ask = firstSteps ?? everydayCard(ctx, user);
   const figures = user.isAdmin && steps === undefined;
+  const ceilingUsd = ctx.app.config.crewCeilingUsd;
+  const kpiOpts = ceilingUsd === undefined ? {} : { ceilingUsd };
   const body = html`<h1 class="sr-only">Home</h1>
-    ${ask} ${address} ${figures ? kpiRow(ctx.app.db) : liveLine(ctx)}
+    ${ask} ${address} ${figures ? kpiRow(ctx.app.db, kpiOpts) : liveLine(ctx)}
     ${when(
       steps,
       () => html`<p class="small muted" id="lean-home">

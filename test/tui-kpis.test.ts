@@ -40,10 +40,10 @@ afterAll(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-async function firstScreen(user?: User): Promise<string> {
+async function firstScreen(user?: User, host: Forge = forge): Promise<string> {
   const terminal = headlessTerminal(200, 32);
   const { app } = createForgeApp(
-    forge,
+    host,
     { sshUsername: user?.username ?? "guest", remoteAddress: "127.0.0.1", fingerprint: "SHA256:t", ...(user ? { user } : {}) },
     { terminal, exitHooks: false },
   );
@@ -81,4 +81,10 @@ test("the terminal's first screen shows the three figures; a non-admin and a gue
 test("the live figure is the running commit, as /releases shows it", async () => {
   const text = await withCommit("1234567abcdef", () => firstScreen(alice));
   expect(text).toContain("Live version 1234567, live");
+});
+
+test("the admin's figures carry the configured daily ceiling, and say so when there is none", async () => {
+  const capped = { ...forge, config: { ...forge.config, crewCeilingUsd: 40 } };
+  expect(await firstScreen(alice, capped)).toContain("Crew spend today $0.00 of $40");
+  expect(await firstScreen(alice)).toContain("Crew spend today $0.00, no ceiling");
 });
