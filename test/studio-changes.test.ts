@@ -1,7 +1,9 @@
 /**
  * The studio: one signed-in owner's lists and change pages, tells and
  * doors. One of the files the studio's suite was split into so no one file
- * sets the gate's floor (#2038); the rest are test/studio*.test.ts.
+ * sets the gate's floor (#2038); the rest are test/studio*.test.ts. One forge
+ * and one git fixture are built once for the file and nothing waits on a
+ * clock, so the file runs in about 2 s (#3575).
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
