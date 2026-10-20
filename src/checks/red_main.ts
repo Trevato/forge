@@ -29,6 +29,8 @@ export interface RedMain {
   /** The failing tests' names the check recorded, else its summary. */
   readonly failing: readonly string[];
   readonly summary: string;
+  /** The check was stopped by its cell's limit or its budget, not by a test: no pull shares it. */
+  readonly limit: boolean;
   readonly since: string;
 }
 
@@ -78,6 +80,9 @@ const lastMain = (from: string): string => `
          AND r.state IN ('ok', 'failed')
        ORDER BY r.id DESC LIMIT 1)`;
 
+/** A summary of a cell stop (`apps/contain.ts`) or a budget kill (`kernel/budgets.ts`). */
+const LIMIT = /^(?:check failed: )?(?:stopped: |budget:)/;
+
 function toRed(row: Row): RedMain | undefined {
   if (row.state !== "failed") return undefined;
   let failing: string[] = [];
@@ -95,6 +100,7 @@ function toRed(row: Row): RedMain | undefined {
     commitOid: row.commit_oid,
     failing,
     summary: row.summary,
+    limit: LIMIT.test(row.summary),
     since: row.finished_at ?? row.created_at,
   };
 }
@@ -108,6 +114,7 @@ export function heldByRed(
 ): boolean {
   return (
     red !== undefined &&
+    !red.limit &&
     run.kind === "check" &&
     run.issueId !== null &&
     run.reason !== ASKED &&
@@ -144,7 +151,8 @@ const HELD = `
 
 /**
  * Each red main with pull checks waiting on it, and how many wait: one
- * query. A check waiting past the hold is still counted until it runs.
+ * query. A check waiting past the hold is still counted until it runs. A main
+ * stopped by a limit holds nothing, so it has no card.
  */
 export function heldChecks(db: Database): { red: RedMain; held: number }[] {
   const rows = db
@@ -157,7 +165,7 @@ export function heldChecks(db: Database): { red: RedMain; held: number }[] {
   const out: { red: RedMain; held: number }[] = [];
   for (const row of rows) {
     const red = toRed(row);
-    if (red !== undefined) out.push({ red, held: row.n });
+    if (red !== undefined && !red.limit) out.push({ red, held: row.n });
   }
   return out;
 }

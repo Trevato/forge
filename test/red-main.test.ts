@@ -65,6 +65,24 @@ describe("red main", () => {
     expect(unheld(queued(), red, HOLD).map((x) => x.id)).not.toContain(held.id);
   });
 
+  test("a main stopped by its cell's limit or budget holds nothing, and a failed test still does", () => {
+    const stop = (summary: string) => {
+      const run = createRun(db, { repoId: "r1", kind: "check", env: "main", commitOid: OID("b"), reason: "push" });
+      claimRun(db, run.id);
+      finishRun(db, run.id, { state: "failed", summary });
+    };
+    const waiting = pullCheck("a");
+    stop("check failed: stopped: used 4105 MiB of memory, over its 4096 MiB limit");
+    expect(redMain(db, "r1")).toMatchObject({ limit: true, commitOid: OID("b") });
+    expect(unheld(queued(), red, HOLD).map((x) => x.id)).toContain(waiting.id);
+    expect(heldChecks(db)).toEqual([]);
+    stop("budget: check took 31 min, limit 30");
+    expect(unheld(queued(), red, HOLD).map((x) => x.id)).toContain(waiting.id);
+    main("c", "failed", ["x"]);
+    expect(redMain(db, "r1")!.limit).toBe(false);
+    expect(unheld(queued(), red, HOLD).map((x) => x.id)).not.toContain(waiting.id);
+  });
+
   test("a person's ask runs while main is red", () => {
     main("b", "failed", ["x"]);
     const asked = pullCheck("a", "asked");
