@@ -261,11 +261,13 @@ describe("the owner's screen with snapshots", () => {
       const rows = ownerRows(v);
       expect(rows.find((r) => r.title === "Snapshots")!.meta).toContain(`mirrored to ${mirror.where}`);
       const act = rows.filter((r) => r.title === "Needs" && r.secondary === "act");
-      expect(act.map((r) => r.meta).join("\n")).not.toMatch(/snapshot/i);
+      // Only this need: other rows (a mirror pass, a failed run) read the machine's state, not this test's.
+      expect(act.map((r) => r.meta).join("\n")).not.toContain("Snapshots are kept on the forge's own volume");
     } finally {
       await mirrored.stop();
     }
-  });
+    // A snapshot copies the database and fsyncs: on a loaded check machine it outlasts the 5 s default.
+  }, 30_000);
 
   test("a store whose list() throws gives last=null and no crash; an empty store reads none yet", async () => {
     const broken: Store = { ...dirStore(join(dir, "broken")), list: () => Promise.reject(new Error("bucket gone")) };
