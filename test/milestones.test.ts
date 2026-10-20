@@ -350,9 +350,12 @@ describe("milestones", () => {
     const limbs = await (await get("alice", "/alice/engine/milestones")).text();
     expect(limbs).toContain('id="ms-limbs"');
     expect(limbs).toContain(
-      `<a class="ms-name" href="/alice/engine/milestones/${trust.number}"`,
+      `<a href="/alice/engine/milestones/${trust.number}"`,
     );
-    expect(limbs).toMatch(/<b>1<\/b> of 5 done/);
+    expect(limbs).toMatch(/<progress[^>]*aria-label="[^"]*: 1 of 5 done"/);
+    expect(limbs).toMatch(/class="pill"[^>]*>\s*1 of 5 done/);
+    expect(limbs).toContain("list setting-list");
+    expect(limbs).toMatch(/class="badge"[^>]*>\s*trim/);
     expect(limbs).toContain("4 open");
     expect(limbs).toContain("1 building");
     expect(limbs).toContain("$1.50");
@@ -365,6 +368,8 @@ describe("milestones", () => {
     ).text();
     expect(one).toContain("<h1>Ship the sandbox</h1>");
     expect(one).toMatch(/<b>1<\/b> of 3 done/);
+    expect(one).toContain('aria-label="1 of 3 done"');
+    expect(one).toMatch(/class="badge"[^>]*>\s*done/);
     expect(one).toContain(
       "About 14 days at this week&#39;s pace: 1 closed in 7 days, 2 open.",
     );

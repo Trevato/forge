@@ -210,6 +210,11 @@ a.label:hover { color: color-mix(in srgb, var(--label) 90%, var(--fg)); }
 .pill[data-tone="accent"] { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
 .pill[data-tone="danger"] { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
 
+progress:not(.tests-bar) { display: block; width: 100%; height: 4px; margin: 6px 0; appearance: none; border: 0; border-radius: var(--radius-sm); background: var(--border); overflow: hidden; }
+progress:not(.tests-bar)::-webkit-progress-bar { background: var(--border); }
+progress:not(.tests-bar)::-webkit-progress-value { background: var(--success); }
+progress:not(.tests-bar)::-moz-progress-bar { background: var(--success); }
+
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 999px; background: var(--faint); flex: none; }
 .dot[data-tone="success"] { background: var(--success); }
 .dot[data-tone="danger"] { background: var(--danger); }

@@ -22,8 +22,9 @@ import {
 import { html } from "../html.ts";
 import { page, redirect } from "../layout.ts";
 import { plural } from "../../kernel/plural.ts";
-import { btn } from "../ui.ts";
-import { milestoneHref, milestonesCss } from "./milestones.ts";
+import { btn, card } from "../ui.ts";
+import { issueRow } from "./limb_view.ts";
+import { milestoneHref } from "./milestones.ts";
 
 /** GET /:owner/:name/milestones/:number/limb?action=replan — what the planner will be given. */
 export function replanPreviewPage(ctx: Ctx, repo: Repo, number: number): Response {
@@ -37,9 +38,8 @@ export function replanPreviewPage(ctx: Ctx, repo: Repo, number: number): Respons
     title: `Re-plan ${p.limb.title} · ${repo.name}`,
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
-    styleCss: milestonesCss,
     body: html`${repoHeader(ctx, repo, "map")}
-      <div class="ms-top mt">
+      <div class="stack mt">
         <p class="small muted"><a href="${back}">${p.limb.title}</a></p>
         <h1>Re-plan “${p.limb.title}”?</h1>
         <p>
@@ -50,17 +50,14 @@ export function replanPreviewPage(ctx: Ctx, repo: Repo, number: number): Respons
           before it starts.
         </p>
       </div>
-      <section class="ms-section" id="replan-issues">
+      <section class="mt" id="replan-issues">
         <h2>${plural(p.issues.length, "issue")} the planner will be given</h2>
-        <ul class="ms-rows">
-          ${p.issues.map(
-            (i) =>
-              html`<li>
-                <a href="${base}/issues/${i.number}">${i.title}</a>
-                <span class="muted small">#${i.number}</span>
-              </li>`,
-          )}
-        </ul>
+        ${card(
+          html`<ul class="list">
+            ${p.issues.map((i) => issueRow(base, i))}
+          </ul>`,
+          { pad: false },
+        )}
       </section>
       ${p.blocked !== undefined
         ? html`<p class="mt" id="replan-refused">
@@ -95,9 +92,8 @@ export function replanSubmit(
     title: `Not done · ${repo.name}`,
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
-    styleCss: milestonesCss,
     body: html`${repoHeader(ctx, repo, "map")}
-      <div class="ms-top mt">
+      <div class="stack mt">
         <h1>${action === "replan" ? "Not handed over" : "Not taken back"}</h1>
         <p id="replan-refused">Nothing changed: ${done.error.message}.</p>
         <p><a href="${back}">Back</a></p>

@@ -32,16 +32,10 @@ import {
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { page, redirect } from "../layout.ts";
-import {
-  badge,
-  btn,
-  field as formField,
-  listCard,
-  row,
-  selectField,
-} from "../ui.ts";
+import { badge, btn, card, field as formField, listCard, row, selectField } from "../ui.ts";
 import { replanPreviewPage, replanSubmit } from "./limb_replan.ts";
-import { milestoneHref, milestonesCss } from "./milestones.ts";
+import { folded, issueRow } from "./limb_view.ts";
+import { milestoneHref } from "./milestones.ts";
 
 const WORDS: Record<LimbAction, { ask: string; does: string; go: string }> = {
   defer: {
@@ -90,24 +84,11 @@ const shown = (value: FleetValue): string =>
 const SHOWN = 10;
 
 function issueList(base: string, issues: readonly LimbIssue[]): Html {
-  const row = (i: LimbIssue): Html =>
-    html`<li>
-      <a href="${base}/issues/${i.number}">${i.title}</a>
-      <span class="muted small">#${i.number}</span>
-    </li>`;
-  return html`<ul class="ms-rows">
-      ${issues.slice(0, SHOWN).map(row)}
-    </ul>
-    ${when(
-      issues.length > SHOWN,
-      () =>
-        html`<details class="ms-more">
-          <summary class="small">${issues.length - SHOWN} more</summary>
-          <ul class="ms-rows">
-            ${issues.slice(SHOWN).map(row)}
-          </ul>
-        </details>`,
-    )}`;
+  return folded(
+    issues.map((i) => issueRow(base, i)),
+    "more",
+    SHOWN,
+  );
 }
 
 /**
@@ -194,12 +175,11 @@ export function limbPreviewPage(ctx: Ctx): Response {
       crumbs: crumbsFor(repo),
       palette: repoPalette(ctx, repo),
       body: html`${repoHeader(ctx, repo, "map")}
-        <div class="ms-top mt">
+        <div class="stack mt">
           <h1>${words.ask} this limb?</h1>
           <p id="limb-refused">Not as one action: ${plan.error.message}.</p>
           <p><a href="${milestoneHref(base, number)}">Back</a></p>
         </div>`,
-      styleCss: milestonesCss,
     });
   }
   const p = plan.value;
@@ -208,7 +188,7 @@ export function limbPreviewPage(ctx: Ctx): Response {
   const pillars =
     action === "resume" ? pillarsOf(ctx.app.db, repo).pillars : [];
   const body = html`${repoHeader(ctx, repo, "map")}
-    <div class="ms-top mt">
+    <div class="stack mt">
       <p class="small muted">
         <a href="${milestoneHref(base, number)}">${p.limb.title}</a>
       </p>
@@ -218,19 +198,21 @@ export function limbPreviewPage(ctx: Ctx): Response {
     ${when(
       p.order !== undefined,
       () =>
-        html`<section class="ms-section" id="limb-order">
+        html`<section class="mt" id="limb-order">
           <h2>The order of the limbs</h2>
-          <ol class="ms-rows">
-            ${(p.order ?? []).map(
-              (i) =>
-                html`<li ${i.number === p.limb.number ? html`aria-current="true"` : null}>
-                  ${i.number === p.limb.number
-                    ? html`<b>${i.title}</b>`
-                    : html`<a href="${base}/issues/${i.number}">${i.title}</a>`}
-                  <span class="muted small">#${i.number}</span>
-                </li>`,
-            )}
-          </ol>
+          ${card(
+            html`<ol class="list">
+              ${(p.order ?? []).map((i) =>
+                i.number === p.limb.number
+                  ? row({
+                      title: html`<b>${i.title}</b>
+                        <span class="muted small">#${i.number}</span>`,
+                    })
+                  : issueRow(base, i),
+              )}
+            </ol>`,
+            { pad: false },
+          )}
         </section>`,
     )}
     ${when(
@@ -238,7 +220,7 @@ export function limbPreviewPage(ctx: Ctx): Response {
       () => {
         const before = (p.ready?.before ?? []).map((i) => i.number);
         const after = p.ready?.after ?? [];
-        return html`<section class="ms-section" id="limb-ready">
+        return html`<section class="mt" id="limb-ready">
           <h2>The top of the ready list</h2>
           ${after.length === 0
             ? html`<p class="muted small">Nothing is ready.</p>`
@@ -253,7 +235,7 @@ export function limbPreviewPage(ctx: Ctx): Response {
     ${when(
       p.taken.length > 0,
       () =>
-        html`<section class="ms-section" id="limb-taken">
+        html`<section class="mt" id="limb-taken">
           <h2>
             ${action === "resume"
               ? `${p.taken.length} can be picked again`
@@ -265,7 +247,7 @@ export function limbPreviewPage(ctx: Ctx): Response {
     ${when(
       p.kept.length > 0,
       () =>
-        html`<section class="ms-section" id="limb-kept">
+        html`<section class="mt" id="limb-kept">
           <h2>
             ${p.kept.length} stay${p.kept.length === 1 ? "s" : ""}: something
             outside this limb still waits for
@@ -276,7 +258,7 @@ export function limbPreviewPage(ctx: Ctx): Response {
     )}
     ${moving
       ? null
-      : html`<section class="ms-section" id="limb-rows">
+      : html`<section class="mt" id="limb-rows">
           <h2>What is written</h2>
           ${p.rows.length === 0
             ? html`<p class="muted small">Nothing: no open issue is the limb's alone.</p>`
@@ -348,7 +330,6 @@ export function limbPreviewPage(ctx: Ctx): Response {
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,
-    styleCss: milestonesCss,
   });
 }
 
@@ -404,7 +385,7 @@ export function limbReceiptPage(ctx: Ctx): Response {
     op.rows.filter((r) => r.outcome === outcome).length;
   const others = op.rows.length - count("ok");
   const body = html`${repoHeader(ctx, repo, "map")}
-    <div class="ms-top mt">
+    <div class="stack mt">
       <p class="small muted">
         <a href="${milestoneHref(base, number)}">Back to the milestone</a>
       </p>
@@ -413,7 +394,7 @@ export function limbReceiptPage(ctx: Ctx): Response {
         ${count("ok")} written${others === 0 ? "" : `, ${others} left as they were`}.
       </p>
     </div>
-    <section class="ms-section">
+    <section class="mt">
       <h2>The receipt</h2>
       ${rowList(ctx, base, op.rows)}
     </section>
@@ -439,7 +420,6 @@ export function limbReceiptPage(ctx: Ctx): Response {
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,
-    styleCss: milestonesCss,
   });
 }
 

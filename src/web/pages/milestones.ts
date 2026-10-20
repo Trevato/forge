@@ -51,7 +51,8 @@ import { html, when, type Html } from "../html.ts";
 import { field, readForm } from "../form.ts";
 import { page, redirect } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
-import { btn, time } from "../ui.ts";
+import { badge, btn, card, listCard, pill, row, time } from "../ui.ts";
+import { folded, issueRow, list, wrappedCard } from "./limb_view.ts";
 
 /** Where a milestone is: its own page. */
 export const milestoneHref = (base: string, number: number): string =>
@@ -93,15 +94,19 @@ function moverFor(
     if (seat === undefined || seats.size(group) < 2) return null;
     const up = seat.place > 1;
     const down = seat.place < seats.size(group);
-    return html`<span class="ms-move small"
+    return html`<span class="bar"
       >${up
-        ? html`<a href="${limbHref(base, limb.number, "raise", group)}"
-            >Raise</a
-          >`
+        ? btn("Raise", {
+            href: limbHref(base, limb.number, "raise", group),
+            size: "sm",
+            variant: "ghost",
+          })
         : null}${down
-        ? html`<a href="${limbHref(base, limb.number, "lower", group)}"
-            >Lower</a
-          >`
+        ? btn("Lower", {
+            href: limbHref(base, limb.number, "lower", group),
+            size: "sm",
+            variant: "ghost",
+          })
         : null}</span
     >`;
   };
@@ -125,7 +130,7 @@ function limbActions(
   replan: Html | null,
 ): Html {
   const number = m.issue.number;
-  return html`<p class="bar ms-actions" id="limb-actions">
+  return html`<p class="bar mt" id="limb-actions">
     ${lead}
     ${move}
     ${replan}
@@ -165,28 +170,28 @@ function weightWords(limb: Limb): Html {
   return html`${parts.map((p, n) => html`${n > 0 ? " · " : null}${p}`)}`;
 }
 
-/** One limb as one line: a link to it, how far it is, and its weight. */
+/** How far a limb is, as a bar: the native element, named for a reader who cannot see it. */
+const progress = (done: number, total: number, label: string): Html =>
+  html`<progress
+    max="${Math.max(total, 1)}"
+    value="${done}"
+    aria-label="${label}"
+  ></progress>`;
+
+/** One limb as one row: a link to it, how far it is, and its weight. */
 function limbLine(base: string, limb: Limb, move: Html | null = null): Html {
   const w = limb.weight;
-  return html`<li class="ms-limb" data-trim="${limb.trim === undefined ? "no" : "yes"}">
-    <a class="ms-name" href="${milestoneHref(base, limb.issue.number)}"
+  return row({
+    title: html`<a href="${milestoneHref(base, limb.issue.number)}"
       >${limb.name}</a
-    >
-    <span class="ms-count"><b>${w.done}</b> of ${w.total} done</span>
-    <progress
-      class="ms-bar"
-      max="${Math.max(w.total, 1)}"
-      value="${w.done}"
-      aria-label="${limb.name}: ${w.done} of ${w.total} done"
-    ></progress>
-    <span class="ms-weight muted small">${weightWords(limb)}</span>
-    ${when(
-      limb.trim,
-      (why) =>
-        html`<span class="ms-trim small">A candidate to trim: ${why}.</span>`,
-    )}
-    ${move}
-  </li>`;
+    >`,
+    meta: html`${progress(w.done, w.total, `${limb.name}: ${w.done} of ${w.total} done`)}
+      ${weightWords(limb)}${when(
+        limb.trim,
+        (why) => html` ${badge("trim", { tone: "attn" })} A candidate to trim: ${why}.`,
+      )}`,
+    trail: html`${pill(`${w.done} of ${w.total} done`)}${move}`,
+  });
 }
 
 /** GET /:owner/:name/milestones — the plan, collapsed to its limbs. */
@@ -211,9 +216,13 @@ export function milestonesPage(ctx: Ctx): Response {
           Nothing here waits for anything yet, so there is no milestone to
           show. <a href="${base}/map">See the map</a>.
         </p>`
-      : html`<ul class="ms-limbs" id="ms-limbs">
-          ${plan.limbs.map((limb) => limbLine(base, limb, move?.(limb.issue, "top") ?? null))}
-        </ul>`}
+      : html`<div id="ms-limbs">
+          ${wrappedCard(
+            plan.limbs.map((limb) =>
+              limbLine(base, limb, move?.(limb.issue, "top") ?? null),
+            ),
+          )}
+        </div>`}
     ${liveMount({ repo: base })}`;
   return page({
     ctx,
@@ -221,10 +230,19 @@ export function milestonesPage(ctx: Ctx): Response {
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,
-    styleCss: milestonesCss,
     scriptJs: liveClientJs,
   });
 }
+
+const STATE_TONE: Record<LeafState, "success" | "attn" | undefined> = {
+  building: "success",
+  blocked: "attn",
+  proposed: undefined,
+  ready: undefined,
+  deferred: undefined,
+  done: undefined,
+  gone: undefined,
+};
 
 const STATE_WORDS: Record<LeafState, string> = {
   building: "building",
@@ -235,16 +253,6 @@ const STATE_WORDS: Record<LeafState, string> = {
   done: "done",
   gone: "not doing",
 };
-
-/** A list that shows its first `shown` rows and folds the rest. */
-function folded(rows: Html[], what: string, shown: number): Html {
-  if (rows.length <= shown) return html`<ul class="ms-rows">${rows}</ul>`;
-  return html`<ul class="ms-rows">${rows.slice(0, shown)}</ul>
-    <details class="ms-more">
-      <summary class="small">${rows.length - shown} more ${what}</summary>
-      <ul class="ms-rows">${rows.slice(shown)}</ul>
-    </details>`;
-}
 
 /**
  * Where a limb stands with the planner (#761): "with the planner" while it
@@ -267,7 +275,7 @@ function replanControl(
           title: "Hand this limb to the planner to re-plan as fewer, larger pieces",
         })
       : null;
-  return html`<span class="ms-planner" id="ms-with-planner"
+  return html`<span class="bar" id="ms-with-planner"
       ><b>With the planner</b>
       <span class="muted small">Nothing beneath it is picked until it answers.</span></span
     >${admin && !given(ctx.app.db, repo, pending.at)
@@ -286,15 +294,17 @@ function replanChanged(ctx: Ctx, repo: Repo, m: Milestone): Html | null {
   const link = (n: { number: number; title: string }): Html =>
     html`<a href="${base}/issues/${n.number}">${n.title}</a>
       <span class="muted small">#${n.number}</span>`;
-  return html`<section class="ms-section" id="ms-replanned">
-    <h2>Re-planned ${time(result.at)}</h2>
-    <ul class="ms-rows">
-      ${result.splits.map(
-        (s) =>
-          html`<li>${link(s)} <span class="muted small">closed as split into</span>
-            ${s.into.map((p, n) => html`${n === 0 ? "" : ", "}${link(p)}`)}</li>`,
-      )}
-    </ul>
+  return html`<section class="mt" id="ms-replanned">
+    <h2 class="mb">Re-planned ${time(result.at)}</h2>
+    ${listCard(
+      result.splits.map((s) =>
+        row({
+          title: link(s),
+          meta: html`closed as split into
+            ${s.into.map((p, n) => html`${n === 0 ? "" : ", "}${link(p)}`)}`,
+        }),
+      ),
+    )}
   </section>`;
 }
 
@@ -332,9 +342,6 @@ function milestoneBody(
   move?: Mover,
 ): Html {
   const base = repoBase(repo);
-  const issue = (number: number, title: string): Html =>
-    html`<a href="${base}/issues/${number}">${title}</a>
-      <span class="muted small">#${number}</span>`;
   const w = m.weight;
   // Each issue once: what is under Building now or Blocked is not listed
   // again under Issues.
@@ -345,26 +352,34 @@ function milestoneBody(
   const stillOpen = m.leaves.filter((l) => l.issue.state === "open");
   const open = stillOpen.filter((l) => !above.has(l.issue.id));
   const closed = m.leaves.filter((l) => l.issue.state !== "open");
-  return html`<div class="ms-top mt">
+  const leafRow = (leaf: Milestone["leaves"][number], why: boolean): Html => {
+    const tone = STATE_TONE[leaf.state];
+    return issueRow(
+      base,
+      leaf.issue,
+      why && leaf.why !== undefined && !m.deferred
+        ? html`${leaf.why}`
+        : undefined,
+      badge(STATE_WORDS[leaf.state], tone === undefined ? {} : { tone }),
+    );
+  };
+  return html`<div class="stack mt">
       <p class="small muted">
         <a href="${base}/milestones">Milestones</a>
       </p>
       <h1>${m.name}</h1>
-      <p class="ms-head" data-trim="${m.trim === undefined ? "no" : "yes"}">
-        <span class="ms-count"><b>${w.done}</b> of ${w.total} done</span>
-        <progress
-          class="ms-bar"
-          max="${Math.max(w.total, 1)}"
-          value="${w.done}"
-          aria-label="${w.done} of ${w.total} done"
-        ></progress>
-        <span class="ms-weight muted small">${weightWords(m)}</span>
-      </p>
+      ${card(
+        html`<div class="stack stack-tight">
+          <span><b>${w.done}</b> of ${w.total} done</span>
+          ${progress(w.done, w.total, `${w.done} of ${w.total} done`)}
+          <span class="muted small">${weightWords(m)}</span>
+        </div>`,
+        m.trim === undefined ? {} : { tone: "attn" },
+      )}
       <p id="ms-estimate">${m.estimate}</p>
       ${when(
         m.trim,
-        (why) =>
-          html`<p class="ms-trim small">A candidate to trim: ${why}.</p>`,
+        (why) => html`<p class="small">A candidate to trim: ${why}.</p>`,
       )}
       <p class="small muted">
         <a href="${base}/issues/${m.issue.number}"
@@ -376,56 +391,52 @@ function milestoneBody(
     ${when(
       m.limbs.length > 0,
       () =>
-        html`<section class="ms-section" id="ms-limbs">
-          <h2>Limbs</h2>
-          <ul class="ms-limbs">
-            ${m.limbs.map((limb) =>
+        html`<section class="mt" id="ms-limbs">
+          <h2 class="mb">Limbs</h2>
+          ${wrappedCard(
+            m.limbs.map((limb) =>
               limbLine(base, limb, move?.(limb.issue, String(m.issue.number)) ?? null),
-            )}
-          </ul>
+            ),
+          )}
         </section>`,
     )}
     ${when(
       m.building.length > 0,
       () =>
-        html`<section class="ms-section" id="ms-building">
-          <h2>Building now</h2>
-          <ul class="ms-rows">
-            ${m.building.map(
-              (b) =>
-                html`<li>
-                  ${issue(b.issue.number, b.issue.title)}
-                  <span class="muted small"
-                    >${names ? (b.who ?? "the crew") : "the crew"} · since
-                    ${time(b.since)}</span
-                  >
-                </li>`,
-            )}
-          </ul>
+        html`<section class="mt" id="ms-building">
+          <h2 class="mb">Building now</h2>
+          ${listCard(
+            m.building.map((b) =>
+              issueRow(
+                base,
+                b.issue,
+                html`${names ? (b.who ?? "the crew") : "the crew"} · since
+                ${time(b.since)}`,
+              ),
+            ),
+          )}
         </section>`,
     )}
     ${when(
       m.blocked.length > 0,
       () =>
-        html`<section class="ms-section" id="ms-blocked">
-          <h2>Blocked</h2>
+        html`<section class="mt" id="ms-blocked">
+          <h2 class="mb">Blocked</h2>
           ${folded(
-            m.blocked.map(
-              (b) =>
-                html`<li>
-                  ${issue(b.issue.number, b.issue.title)}
-                  <span class="muted small"
-                    >waits for
-                    ${b.on.map(
-                      (o, n) =>
-                        html`${n > 0 ? ", " : null}<a
-                            href="${base}/issues/${o.number}"
-                            title="${o.title}"
-                            >#${o.number}</a
-                          >`,
-                    )}</span
-                  >
-                </li>`,
+            m.blocked.map((b) =>
+              issueRow(
+                base,
+                b.issue,
+                html`waits for
+                ${b.on.map(
+                  (o, n) =>
+                    html`${n > 0 ? ", " : null}<a
+                        href="${base}/issues/${o.number}"
+                        title="${o.title}"
+                        >#${o.number}</a
+                      >`,
+                )}`,
+              ),
             ),
             "blocked",
             5,
@@ -435,9 +446,9 @@ function milestoneBody(
     ${when(
       m.spend,
       (spend) =>
-        html`<section class="ms-section" id="ms-spend">
-          <h2>Cost and landed</h2>
-          <p class="ms-figures">
+        html`<section class="mt" id="ms-spend">
+          <h2 class="mb">Cost and landed</h2>
+          <p class="bar mb">
             <span><b>${dollars(spend.usd)}</b> spent</span>
             <span
               ><b>${spend.landed}</b> change${spend.landed === 1 ? "" : "s"}
@@ -446,28 +457,24 @@ function milestoneBody(
           </p>
           ${spend.costliest.length === 0
             ? html`<p class="muted small">Nothing has cost anything yet.</p>`
-            : html`<ol class="ms-rows">
-                ${spend.costliest.map(
-                  (c) =>
-                    html`<li>
-                      ${issue(c.issue.number, c.issue.title)}
-                      <span class="ms-state small">${dollars(c.usd)}</span>
-                    </li>`,
-                )}
-              </ol>`}
+            : listCard(
+                spend.costliest.map((c) =>
+                  issueRow(base, c.issue, undefined, pill(dollars(c.usd))),
+                ),
+              )}
         </section>`,
     )}
-    <section class="ms-section" id="ms-merged">
-      <h2>Merged in ${PILLAR_DAYS} days</h2>
+    <section class="mt" id="ms-merged">
+      <h2 class="mb">Merged in ${PILLAR_DAYS} days</h2>
       ${m.merged.length === 0
         ? html`<p class="muted small">Nothing.</p>`
         : folded(
-            m.merged.map(
-              (pull) =>
-                html`<li>
-                  <a href="${base}/pulls/${pull.number}">${pull.title}</a>
-                  <span class="muted small">${time(pull.at)}</span>
-                </li>`,
+            m.merged.map((pull) =>
+              row({
+                href: `${base}/pulls/${pull.number}`,
+                title: pull.title,
+                meta: time(pull.at),
+              }),
             ),
             "merged",
             3,
@@ -476,46 +483,28 @@ function milestoneBody(
     ${when(
       open.length > 0 || closed.length > 0 || stillOpen.length === 0,
       () =>
-        html`<section class="ms-section" id="ms-leaves">
-          <h2>Issues</h2>
+        html`<section class="mt" id="ms-leaves">
+          <h2 class="mb">Issues</h2>
           ${open.length === 0
             ? when(
                 stillOpen.length === 0 && m.leaves.length > 0,
                 () => html`<p class="muted small">None open.</p>`,
               )
             : folded(
-                open.map(
-                  (leaf) =>
-                    html`<li data-state="${leaf.state}">
-                      ${issue(leaf.issue.number, leaf.issue.title)}
-                      <span class="ms-state small"
-                        >${STATE_WORDS[leaf.state]}${leaf.why !== undefined &&
-                        !m.deferred
-                          ? ` · ${leaf.why}`
-                          : ""}</span
-                      >
-                    </li>`,
-                ),
+                open.map((leaf) => leafRow(leaf, true)),
                 "open",
                 8,
               )}
           ${when(
             closed.length > 0,
             () =>
-              html`<details class="ms-more">
-                <summary class="small">${closed.length} closed</summary>
-                <ul class="ms-rows">
-                  ${closed.map(
-                    (leaf) =>
-                      html`<li data-state="${leaf.state}">
-                        ${issue(leaf.issue.number, leaf.issue.title)}
-                        <span class="ms-state small"
-                          >${STATE_WORDS[leaf.state]}</span
-                        >
-                      </li>`,
-                  )}
-                </ul>
-              </details>`,
+              card(
+                html`<details>
+                  <summary class="small">${closed.length} closed</summary>
+                  ${list(closed.map((leaf) => leafRow(leaf, false)))}
+                </details>`,
+                { pad: false },
+              ),
           )}
         </section>`,
     )}`;
@@ -559,7 +548,7 @@ export function milestonePage(ctx: Ctx): Response {
       )
     : watch === null && replan === null
       ? null
-      : html`<p class="bar ms-actions">${watch}${replan}</p>`;
+      : html`<p class="bar mt">${watch}${replan}</p>`;
   return page({
     ctx,
     title: `${milestone.name} · ${repo.name}`,
@@ -569,7 +558,6 @@ export function milestonePage(ctx: Ctx): Response {
     ${milestoneBody(repo, milestone, owner, actions, move)}
     ${replanChanged(ctx, repo, milestone)}
     ${liveMount({ repo: repoBase(repo) })}`,
-    styleCss: milestonesCss,
     scriptJs: liveClientJs,
   });
 }
@@ -663,35 +651,3 @@ export async function milestoneData(
           : {}),
       };
 }
-
-export const milestonesCss = /* css */ `
-.ms-limbs { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
-.ms-limb { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1px 12px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--border); }
-.ms-limb:last-child { border-bottom: 0; }
-.ms-name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ms-count { font-variant-numeric: tabular-nums; color: var(--muted-fg); white-space: nowrap; }
-.ms-count b { color: var(--fg); }
-.ms-bar { grid-column: 1 / -1; width: 100%; height: 4px; appearance: none; border: 0; border-radius: 2px; background: var(--border); overflow: hidden; }
-.ms-bar::-webkit-progress-bar { background: var(--border); }
-.ms-bar::-webkit-progress-value { background: var(--success); }
-.ms-bar::-moz-progress-bar { background: var(--success); }
-.ms-weight, .ms-trim { grid-column: 1 / -1; }
-.ms-trim { color: var(--attn); margin: 0; }
-.ms-top { display: grid; gap: 8px; max-width: 640px; }
-.ms-top h1, .ms-top p { margin: 0; }
-.ms-head { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
-.ms-actions { margin-top: 4px; }
-.ms-planner { display: inline-flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
-.ms-move { grid-column: 1 / -1; display: flex; gap: 14px; }
-.ms-section { margin-top: 22px; }
-.ms-section h2 { font-size: 13px; margin: 0 0 6px; }
-.ms-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 14px; }
-.ms-rows li > span { margin-left: 6px; }
-.ms-figures { display: flex; flex-wrap: wrap; gap: 4px 20px; margin: 0 0 8px; font-variant-numeric: tabular-nums; }
-.ms-state { color: var(--muted-fg); }
-.ms-rows li[data-state="building"] .ms-state { color: var(--accent); }
-.ms-rows li[data-state="blocked"] .ms-state { color: var(--attn); }
-.ms-more { margin-top: 8px; }
-.ms-more summary { cursor: pointer; color: var(--muted-fg); }
-.ms-more .ms-rows { margin-top: 6px; }
-`;
