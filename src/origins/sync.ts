@@ -23,6 +23,7 @@
  */
 
 import { existsSync } from "node:fs";
+import { forgetListings } from "../core/listings.ts";
 import type { App } from "../app.ts";
 import {
   cacheOriginRepos,
@@ -310,6 +311,7 @@ async function syncMirrorUnguarded(
       app.db
         .query("UPDATE repo SET visibility = ?1 WHERE id = ?2")
         .run(wanted, repo.id);
+      forgetListings(app.db);
       app.bus.append({
         kind: "repo.settings_updated",
         repoId: repo.id,

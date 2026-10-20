@@ -12,6 +12,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { forgetListings } from "./listings.ts";
 
 export interface AccountRow {
   readonly username: string;
@@ -138,6 +139,7 @@ export function setSuspended(
   at: string | null,
 ): void {
   db.query("UPDATE user SET suspended_at = ?1 WHERE id = ?2").run(at, userId);
+  forgetListings(db);
 }
 
 /** Every way the account could prove it is itself, gone. */
@@ -175,4 +177,5 @@ export function scrubAccount(db: Database, userId: string, at: string): void {
             suspended_at = COALESCE(suspended_at, ?1), removed_at = ?1
      WHERE id = ?2`,
   ).run(at, userId);
+  forgetListings(db);
 }

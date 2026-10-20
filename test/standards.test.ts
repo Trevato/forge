@@ -11,10 +11,15 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { createRepo } from "../src/actions/repos.ts";
+import { promote } from "./helpers/members.ts";
+import { suspendAccount, unsuspendAccount } from "../src/actions/accounts.ts";
+import { createRepo, updateRepoSettings } from "../src/actions/repos.ts";
 import { decodePng, pngHeader } from "../src/design/image/png.ts";
 import { markPng } from "../src/design/mark.ts";
 import { createUser, type User } from "../src/core/users.ts";
+import { forgetListings, listingBuilds } from "../src/core/listings.ts";
+import { createOrg, retireOrg } from "../src/core/orgs.ts";
+import { getRepo } from "../src/core/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
 describe("what the open web expects", () => {
@@ -115,6 +120,85 @@ describe("what the open web expects", () => {
     expect(body).toContain(`<loc>${base}/</loc>`);
     expect(body).toContain(`<loc>${base}/alice/open</loc>`);
     expect(body).not.toContain("alice/closed");
+  });
+
+  test("sitemap and llms.txt are each built once for 50 requests, and a repository made private drops out at once", async () => {
+    const mid = await createRepo(app, alice, {
+      name: "midway",
+      visibility: "public",
+    });
+    if (!mid.ok) throw new Error(String(mid.error));
+    for (const path of ["/sitemap.xml", "/llms.txt"]) {
+      const key = path === "/llms.txt" ? "llms" : "sitemap";
+      await fetch(`${base}${path}`).then((r) => r.text());
+      const before = listingBuilds[key];
+      for (let i = 0; i < 50; i++)
+        await fetch(`${base}${path}`).then((r) => r.text());
+      expect(listingBuilds[key]).toBe(before);
+    }
+    const repo = getRepo(app.db, "alice", "midway")!;
+    const done = await updateRepoSettings(app, alice, repo, {
+      visibility: "private",
+    });
+    expect(done.ok).toBe(true);
+    for (const path of ["/sitemap.xml", "/llms.txt"]) {
+      const body = await fetch(`${base}${path}`).then((r) => r.text());
+      expect(body).not.toContain("alice/midway");
+      expect(body).toContain("alice/open");
+    }
+  });
+
+  test("a suspended account's repositories leave the cached listings at once", async () => {
+    const bob = await createUser(app.db, {
+      origin: "seed",
+      trusted: true,
+      username: "bobby",
+      email: "bobby@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!bob.ok) throw new Error(bob.error);
+    promote(app.db, bob.value);
+    const r = await createRepo(app, bob.value, {
+      name: "shown",
+      visibility: "public",
+    });
+    if (!r.ok) throw new Error(String(r.error));
+    const lists = async () =>
+      (
+        await Promise.all(
+          ["/sitemap.xml", "/llms.txt"].map((p) =>
+            fetch(`${base}${p}`).then((x) => x.text()),
+          ),
+        )
+      ).join("\n");
+    await lists();
+    await suspendAccount(app, alice, "bobby", { confirmed: true });
+    expect(await lists()).not.toContain("bobby/shown");
+    unsuspendAccount(app, alice, "bobby");
+    expect(await lists()).toContain("bobby/shown");
+  });
+
+  test("a retired organization's repositories leave the cached listings at once", async () => {
+    const org = createOrg(app.db, "gone-co", alice.id);
+    if (!org.ok) throw new Error(org.error);
+    const made = await createRepo(app, org.value, {
+      name: "ledger",
+      visibility: "public",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    const lists = async () =>
+      (
+        await Promise.all(
+          ["/sitemap.xml", "/llms.txt"].map((p) =>
+            fetch(`${base}${p}`).then((x) => x.text()),
+          ),
+        )
+      ).join("\n");
+    // A new repository joins the listings when they are next read.
+    forgetListings(app.db);
+    expect(await lists()).toContain("gone-co/ledger");
+    retireOrg(app.db, org.value.id, new Date().toISOString());
+    expect(await lists()).not.toContain("gone-co/ledger");
   });
 
   test("the manifest is installable and its icons are real PNGs", async () => {

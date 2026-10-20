@@ -10,6 +10,7 @@ import type { Database } from "bun:sqlite";
 import { isSafeName } from "../git/guard.ts";
 import { id } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { forgetListings } from "./listings.ts";
 import { reservedName } from "./reserved.ts";
 import { getUserById, getUserByName, type User } from "./users.ts";
 
@@ -243,6 +244,7 @@ export function retireOrg(db: Database, orgId: string, at: string): void {
       "UPDATE user SET removed_at = ?1 WHERE id = ?2 AND kind = 'org'",
     ).run(at, orgId);
   })();
+  forgetListings(db);
 }
 
 /** The organizations `userId` is the last active person owning: removing them would orphan these. */

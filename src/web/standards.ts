@@ -23,9 +23,9 @@
 import releases from "../core/releases.json" with { type: "json" };
 import { markPng, type MarkShape } from "../design/mark.ts";
 import { BODY_MAX, TITLE_MAX } from "../core/reports.ts";
-import { canRead, getRepo, listReposVisibleTo } from "../core/repos.ts";
+import { llmsRepos, sitemapRepos } from "../core/listings.ts";
+import { canRead, getRepo } from "../core/repos.ts";
 import type { App } from "../app.ts";
-import { Fresh } from "../kernel/fresh.ts";
 import type { Ctx } from "../http/context.ts";
 import { notFound } from "../http/respond.ts";
 
@@ -140,24 +140,11 @@ function xml(s: string): string {
   );
 }
 
-/**
- * A sitemap is up to five thousand rows, asked for by anyone: its rows are
- * read once a minute, however many ask. They are kept without an origin,
- * under one key, and the origin is put on per answer — so a caller who
- * varies `Host` (where `FORGE_URL` does not fix the origin) gets their own
- * origin on the same rows and cannot make the forge read them again.
- */
-const SITEMAP_MS = 60_000;
-const sitemaps = new WeakMap<App, Fresh<readonly string[]>>();
-
 /** GET /sitemap.xml — the front page and every public repository. */
 export function sitemapXml(ctx: Ctx): Response {
-  let kept = sitemaps.get(ctx.app);
-  if (kept === undefined) {
-    kept = new Fresh(SITEMAP_MS, 1);
-    sitemaps.set(ctx.app, kept);
-  }
-  const paths = kept.get("", () => sitemapPaths(ctx.app));
+  // Kept without an origin, and the origin is put on per answer, so a
+  // caller who varies `Host` cannot make the forge read the rows again.
+  const paths = sitemapRepos(ctx.app.db).map((r) => xml(`/${r}`));
   // Escaping is per character, so the escaped origin and the escaped path
   // join into the escaped URL.
   const origin = xml(ctx.url.origin);
@@ -168,13 +155,6 @@ export function sitemapXml(ctx: Ctx): Response {
   return text(
     `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join("\n")}\n</urlset>\n`,
     "application/xml; charset=utf-8",
-  );
-}
-
-/** Every public repository's path, escaped for XML, newest first. */
-function sitemapPaths(app: App): readonly string[] {
-  return listReposVisibleTo(app.db, undefined, { limit: 5000 }).map((r) =>
-    xml(`/${r.ownerName}/${r.name}`),
   );
 }
 
@@ -245,9 +225,6 @@ export function iconPng(ctx: Ctx): Response {
   });
 }
 
-/** Public repositories `/llms.txt` lists by name; the sitemap has them all. */
-const LLMS_REPOS = 200;
-
 /**
  * GET /llms.txt — the forge as an agent should meet it (llmstxt.org): what
  * this is, how to report a problem with no account, how to offer a change,
@@ -256,9 +233,7 @@ const LLMS_REPOS = 200;
  */
 export function llmsTxt(ctx: Ctx): Response {
   const o = ctx.url.origin;
-  const repos = listReposVisibleTo(ctx.app.db, undefined, {
-    limit: LLMS_REPOS,
-  });
+  const repos = llmsRepos(ctx.app.db);
   return text(
     [
       `# forge at ${ctx.url.host}`,
@@ -290,9 +265,7 @@ export function llmsTxt(ctx: Ctx): Response {
       // Names and addresses only: a description is whatever its owner
       // wrote, and an agent reading this file must not meet anyone's words
       // as the forge's own.
-      ...repos.map(
-        (r) => `- [${r.ownerName}/${r.name}](${o}/${r.ownerName}/${r.name})`,
-      ),
+      ...repos.map((r) => `- [${r}](${o}/${r})`),
       "",
     ].join("\n"),
     "text/markdown; charset=utf-8",

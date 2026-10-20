@@ -21,6 +21,7 @@ import { id } from "../kernel/id.ts";
 import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { appsNaming, isAppMember } from "./app_members.ts";
+import { forgetListings } from "./listings.ts";
 import { likeEscape, pageLimit } from "./issues.ts";
 import {
   OWNER_STANDING,
@@ -787,6 +788,7 @@ export async function deleteRepo(
   }
 
   db.query("DELETE FROM repo WHERE id = ?1").run(repo.id);
+  forgetListings(db);
   const dir = repoDir(reposRoot, repo.ownerName, repo.name);
   // A pooled `cat-file` holds this directory open. Closing it first is what
   // keeps the space actually free after the unlink instead of pinned to a
@@ -1093,6 +1095,7 @@ export function updateRepoSettings(
     settings.decisionsBy ?? repo.decisionsBy,
     (settings.plansNeedNod ?? repo.plansNeedNod) ? 1 : 0,
   );
+  forgetListings(db);
   return getRepoById(db, repo.id)!;
 }
 
