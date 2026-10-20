@@ -12,7 +12,7 @@ import { createRepo } from "../src/actions/repos.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { recordInteraction } from "../src/core/interactions.ts";
-import type { Repo } from "../src/core/repos.ts";
+import { moveArchived, type Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { Affinity, affinityFor } from "../src/feed/affinity.ts";
@@ -183,6 +183,20 @@ describe("the feed of a forge", () => {
     expect(theirs.every((i) => i.app === "alice/open")).toBe(true);
     expect(JSON.stringify(theirs)).not.toContain("s3cret");
     expect(theirs.map((i) => i.kind).sort()).toEqual(["map", "run"]);
+  });
+
+  test("an archived repository's news leaves the feed, and returns when woken", async () => {
+    const apps = (v: User) => new Set(readFeed(app.db, v).items.map((i) => i.app));
+    expect(apps(bob).has("alice/open")).toBe(true);
+    expect(apps(alice).has("alice/secret")).toBe(true);
+    expect(moveArchived(app.db, openRepo.id, true)).toBe(true);
+    expect(apps(bob).has("alice/open")).toBe(false);
+    expect(apps(alice).has("alice/open")).toBe(false);
+    expect(apps(alice).has("alice/secret")).toBe(true);
+    // Hidden, not gone: its page still answers.
+    expect((await api(bobToken, "/alice/open")).status).toBe(200);
+    expect(moveArchived(app.db, openRepo.id, false)).toBe(true);
+    expect(apps(bob).has("alice/open")).toBe(true);
   });
 
   test("items are plain data with a reason and a link", () => {

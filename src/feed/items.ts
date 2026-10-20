@@ -304,7 +304,21 @@ export function candidatesFor(
       urgency: 0,
     });
   }
-  return out;
+  return awake(db, out, repos);
+}
+
+/**
+ * Archived things are hidden, not gone (#1838): whatever a sleeping
+ * repository did stays out of the feed until it is woken, with no other step.
+ */
+function awake(
+  db: Database,
+  candidates: Candidate[],
+  known: ReadonlyMap<string, Repo>,
+): Candidate[] {
+  const unknown = candidates.map((c) => c.repoId).filter((id) => !known.has(id));
+  const all = new Map([...known, ...getReposByIds(db, unknown)]);
+  return candidates.filter((c) => all.get(c.repoId)?.archivedAt == null);
 }
 
 type Partial = Omit<Candidate, "actor">;
