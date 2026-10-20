@@ -7,6 +7,7 @@
  * deploy event refreshes (`appStateFragment`) share.
  */
 
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { audienceFacts, audienceOf } from "../../core/audience.ts";
 import { sealedScope } from "../../core/sealed.ts";
 import { terminalFor } from "../../actions/apps.ts";
@@ -357,16 +358,25 @@ export function appPanels(
  * the studio page: a viewer who cannot see the app gets the same 404.
  */
 export function appStateFragment(ctx: Ctx): Response {
-  const repo = loadRepo(ctx);
+  const req = ctx.request;
+  notePhase(req, "session", takeSessionTime(req));
+  const repo = timePhase(req, "repo", () => loadRepo(ctx));
   if (!repo) return fragment(html``, { status: 404 });
-  const record = getAppByRepo(ctx.app.db, repo.id);
+  const record = timePhase(req, "record", () => getAppByRepo(ctx.app.db, repo.id));
   if (!record) return fragment(html``, { status: 404 });
-  const openPulls = listPulls(ctx.app.db, repo.id, {
-    state: "open",
-    limit: 10,
-    ...sealedScope(ctx.app.db, repo, ctx.auth.user),
-  });
-  const { head, previews } = appPanels(ctx, repo, record, openPulls);
-  return fragment(html`<div id="app-head">${head}</div>
-    <div id="app-previews">${previews}</div>`, { request: ctx.request });
+  const openPulls = timePhase(req, "pulls", () =>
+    listPulls(ctx.app.db, repo.id, {
+      state: "open",
+      limit: 10,
+      ...sealedScope(ctx.app.db, repo, ctx.auth.user),
+    }),
+  );
+  const { head, previews } = timePhase(req, "panels", () =>
+    appPanels(ctx, repo, record, openPulls),
+  );
+  const rendering = performance.now();
+  const res = fragment(html`<div id="app-head">${head}</div>
+    <div id="app-previews">${previews}</div>`, { request: req });
+  notePhase(req, "render", performance.now() - rendering);
+  return res;
 }
