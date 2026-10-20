@@ -8,6 +8,7 @@
 
 import type { Ctx } from "../../http/context.ts";
 import { CLAIM_WORDS, claimState, clientRows, runningWords, type ClientRow } from "../../spawn/clients.ts";
+import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { notFoundPage, pageHead } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
@@ -66,14 +67,16 @@ function forgeRow(r: ClientRow): Html {
 export async function forgesPage(ctx: Ctx): Promise<Response> {
   const user = ctx.auth.user;
   if (!user?.isAdmin) return notFoundPage(ctx);
-  const rows = await clientRows(ctx.app);
-  const full = noRoom(ctx.app);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const rows = await timePhaseAsync(ctx.request, "clients", () => clientRows(ctx.app));
+  const full = timePhase(ctx.request, "room", () => noRoom(ctx.app));
+  const rendering = performance.now();
   const action =
     full === undefined
       ? btn("New forge", { href: "/forges/new", variant: "primary", size: "sm" })
       : html`<button type="button" class="btn" data-variant="primary" data-size="sm" disabled title="${full}">New forge</button>
           <p class="muted small" role="status">${full}</p>`;
-  return page({
+  const response = page({
     ctx,
     title: "Forges you sent",
     body: html`<div class="narrow-wide">
@@ -96,6 +99,8 @@ export async function forgesPage(ctx: Ctx): Promise<Response> {
           )}
     </div>`,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 // POST /forges/:name/claim-link — a fresh link for an unclaimed child; the
