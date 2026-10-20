@@ -6,6 +6,7 @@
  */
 
 import { applyFleetIds, getFleetOp, undoFleetOp } from "../../actions/fleet.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { signInFirst } from "../chrome.ts";
 import { readForm } from "../form.ts";
@@ -54,7 +55,11 @@ export async function homeArchive(ctx: Ctx): Promise<Response> {
 // GET /home/archived/:op — what was archived, and the undo.
 export function homeArchived(ctx: Ctx): Response {
   if (!ctx.auth.user) return signInFirst(ctx);
-  const found = getFleetOp(ctx.app, ctx.auth.user, ctx.params.op ?? "");
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const user = ctx.auth.user;
+  const found = timePhase(ctx.request, "op", () =>
+    getFleetOp(ctx.app, user, ctx.params.op ?? ""),
+  );
   if (!found.ok || found.value.verb !== "archive")
     return new Response("not found", { status: 404 });
   const op = found.value;
@@ -63,7 +68,8 @@ export function homeArchived(ctx: Ctx): Response {
   const left = op.rows.filter((r) => r.outcome !== "ok");
   // Only the person who ran it may undo it (`undoFleetOp`), whoever may read it.
   const canUndo =
-    op.reversible && op.undoneBy === null && !wasUndo && op.actorId === ctx.auth.user.id;
+    op.reversible && op.undoneBy === null && !wasUndo && op.actorId === user.id;
+  const rendering = performance.now();
   const body = html`<h1>${wasUndo ? "Brought back" : "Archived"}</h1>
     <p id="home-archived" role="status">
       ${rows.length} app${rows.length === 1 ? "" : "s"}
@@ -88,7 +94,9 @@ export function homeArchived(ctx: Ctx): Response {
       ${btn("Home", { href: "/" })}
     </div>
     ${canUndo ? html`<p class="small muted">Undo is kept for a day.</p>` : null}`;
-  return page({ ctx, title: wasUndo ? "Brought back" : "Archived", body });
+  const response = page({ ctx, title: wasUndo ? "Brought back" : "Archived", body });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 // POST /home/archived/:op/undo — the operation's own undo.
