@@ -188,9 +188,11 @@ export async function signUpWithPasskey(
       return err("human_check");
   }
   if (findPasskey(app.db, input.passkey.id)) return err("passkey_taken");
+  const email = input.email.trim();
+  if (email !== "" && !givenEmail(email)) return err("invalid_email");
   const created = await createUser(app.db, {
     username: input.username,
-    email: input.email,
+    email: email === "" ? noEmail(input.username) : email,
     origin: "passkey",
     slot: from.slot,
     invite: from.invite,
@@ -210,7 +212,8 @@ export async function signUpWithPasskey(
     },
   });
   auditInvite(app, created.value.id);
-  await welcome(app, created.value);
+  // As on the password path: no address given, no link to send.
+  if (email !== "") await welcome(app, created.value);
   return created;
 }
 

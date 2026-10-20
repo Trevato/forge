@@ -10,7 +10,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { signUp } from "../src/actions/users.ts";
-import { createUser } from "../src/core/users.ts";
+import { requireVerified } from "../src/actions/verify.ts";
+import { createUser, getUserByName } from "../src/core/users.ts";
 import { setLimit } from "../src/settings/limits.ts";
 import { errorText } from "../src/tui/screens/common.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -49,6 +50,19 @@ describe("passkey sign-up", () => {
     servers.stop();
     app.close();
     await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("a passkey with no email makes the account, as a password does, and signs in", async () => {
+    const d = await device(origin(), rp());
+    const res = await signUpWith(d, "wren", "");
+    expect(res.status).toBe(201);
+    const set = res.headers.get("set-cookie")!;
+    expect(set).toContain("forge_session=");
+    const user = getUserByName(app.db, "wren")!;
+    expect(user.email).toBe("wren@no-email.invalid");
+    expect(requireVerified(app, user)).toEqual({ ok: false, error: "unverified" });
+    const mine = await fetch(`${base}/settings/passkeys`, { headers: { cookie: set.split(";")[0]! } });
+    expect(mine.status).toBe(200);
   });
 
   test("a passkey and an email make the account, its key and a session", async () => {

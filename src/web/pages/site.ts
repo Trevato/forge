@@ -369,7 +369,7 @@ function authForm(
         () => html`<div class="passkey-on">
           <p class="muted small mb">
             Or skip the password: a passkey signs you in with a fingerprint,
-            face or device PIN. It needs an email address above.
+            face or device PIN. An email address above is optional.
           </p>
           <p class="error-note mb" id="passkey-signup-note" role="alert"></p>
           <button type="button" id="passkey-signup" class="btn" data-variant="outline">Create account with a passkey</button>

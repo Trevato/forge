@@ -7,7 +7,7 @@
  */
 
 import { newChallenge, verifyRegistration } from "../../auth/webauthn.ts";
-import { plausibleEmail, signUpWithPasskey, signupClosed, HUMAN_CHECK_MESSAGE, SIGNUP_CLOSED_MESSAGE } from "../../actions/users.ts";
+import { givenEmail, signUpWithPasskey, signupClosed, HUMAN_CHECK_MESSAGE, SIGNUP_CLOSED_MESSAGE } from "../../actions/users.ts";
 import { createSession } from "../../core/sessions.ts";
 import { getUserByName } from "../../core/users.ts";
 import { isSafeName } from "../../git/guard.ts";
@@ -39,7 +39,7 @@ const WORDS: Record<string, string> = {
 function problem(ctx: Ctx, username: string, email: string): string | undefined {
   if (!isSafeName(username)) return WORDS.invalid_username;
   if (!pinnedTo(ctx, username, inviteOf(ctx))) return WORDS.edge_name;
-  if (!plausibleEmail(email)) return WORDS.invalid_email;
+  if (email !== "" && !givenEmail(email)) return WORDS.invalid_email;
   if (getUserByName(ctx.app.db, username)) return WORDS.username_taken;
   return undefined;
 }
