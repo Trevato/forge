@@ -233,6 +233,8 @@ export const SOURCES: Readonly<Record<string, Source>> = {
       percentile("load_p75", "load", 75),
       percentile("lcp_p75", "lcp", 75),
       percentile("inp_p75", "inp", 75),
+      percentile("cls_p75", "cls", 75),
+      percentile("ttfb_p75", "ttfb", 75),
       percentile("server_p50", "ttfb", 50),
       percentile("server_p95", "ttfb", 95),
       `SELECT 'accounts_active_1d', '', ${NOW}, COUNT(DISTINCT user_id) FROM session WHERE last_seen_at >= strftime('%Y-%m-%dT00:00:00Z', 'now')`,
@@ -243,8 +245,8 @@ export const SOURCES: Readonly<Record<string, Source>> = {
     columns: { metric: "text", route: "text", at: "time", value: "number" },
     docs: {
       metric:
-        "visitors (distinct browsers that day), load_p75 (page load), lcp_p75 and inp_p75 (ms), server_p50 and server_p95 " +
-        "(ms, time to first byte), accounts_active_1d (signed in today), accounts_active_7d, accounts_total",
+        "visitors (distinct browsers that day), load_p75 (page load), lcp_p75 and inp_p75 (ms), cls_p75 (layout shift, unitless score, not ms), " +
+        "ttfb_p75, server_p50 and server_p95 (ms, time to first byte), accounts_active_1d (signed in today), accounts_active_7d, accounts_total",
       route: "the route pattern, never the path; empty for visitors and accounts",
       at: "the day (UTC) for visitors and the percentiles; now for the account counts, which are not kept per day",
       value: "the count, or the percentile (nearest rank) of that route that day",

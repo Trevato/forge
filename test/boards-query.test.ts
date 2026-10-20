@@ -329,6 +329,26 @@ describe("boards API", () => {
     }
   });
 
+  test("reach: cls_p75 and ttfb_p75 are read back by route, to an admin only", async () => {
+    const ins = app.db.prepare(
+      "INSERT INTO page_vital (day, at, route, visitor, ttfb, lcp, inp, cls) VALUES ('2026-10-01', 0, ?, 'v', ?, 1, 1, ?)",
+    );
+    [0, 0.05, 0.1, 0.4].forEach((c, i) => ins.run("/x", (i + 1) * 10, c));
+    ins.run("/y", 5, 0.02);
+    const ask = async (metric: string) => {
+      const res = await q("admin", {
+        source: "reach", aggregate: "max", column: "value", groupBy: "route",
+        filter: [{ column: "metric", op: "eq", value: metric }],
+      });
+      expect(res.status).toBe(200);
+      return ((await res.json()) as { rows: { group: string; value: number }[] }).rows;
+    };
+    expect(await ask("cls_p75")).toEqual([{ group: "/x", value: 0.1 }, { group: "/y", value: 0.02 }]);
+    expect(await ask("ttfb_p75")).toEqual([{ group: "/x", value: 30 }, { group: "/y", value: 5 }]);
+    expect((await q("bob", { source: "reach", aggregate: "count" })).status).toBe(403);
+    app.db.run("DELETE FROM page_vital");
+  });
+
   test("reach: seeded vitals and sessions give the expected p75, p95 and counts, to an admin only", async () => {
     const ins = app.db.prepare(
       "INSERT INTO page_vital (day, at, route, visitor, ttfb, lcp, inp, cls) VALUES (?, 0, ?, ?, ?, ?, ?, 0)",
