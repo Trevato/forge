@@ -17,14 +17,38 @@ interface Route {
   readonly body?: Readonly<Record<string, string>>;
   /** The query parameters its handler reads, by name and type. */
   readonly query?: Readonly<Record<string, string>>;
+  /** The success status, when it is not 200. */
+  readonly status?: number;
+  /** The refusals it answers, by stable `error` code. */
+  readonly refusals?: Readonly<Record<string, string>>;
 }
 
 /** What `listQuery` in `http/api.ts` reads from a list of issues or pulls. */
 const LIST_QUERY = { state: "string", limit: "integer", cursor: "integer", label: "string", author: "string" };
 
+/** What `POST /api/v1/apps` reads from its body, and the refusals it answers. */
+const APP_BODY = { name: "string", owner: "string", description: "string", visibility: "string", agent: "string" };
+const APP_REFUSALS = {
+  unverified: "the account has not verified its email",
+  app_limit: "the owner is at the app limit",
+  no_such_agent: "`agent` names no one on the crew",
+  slug_taken: "another app already has this name's slug",
+  name_taken: "the owner already has a repository of this name",
+};
+
 const REPO = "/api/v1/repos/{owner}/{name}";
 
 export const ROUTES: readonly Route[] = [
+  { method: "get", path: "/api/v1/apps", summary: "List the apps whose repositories you can read; answers { items, next_cursor }", auth: false },
+  {
+    method: "post",
+    path: "/api/v1/apps",
+    summary: "Make an app: a repository, its app and a first issue; answers 201 with { repo, app, issue }",
+    auth: true,
+    status: 201,
+    body: APP_BODY,
+    refusals: APP_REFUSALS,
+  },
   { method: "get", path: "/api/v1/repos", summary: "List public repositories", auth: false },
   { method: "get", path: REPO, summary: "Read one repository", auth: false },
   {
@@ -148,9 +172,13 @@ export function openapi(origin: string, version: string): Record<string, unknown
           }),
       ...(r.auth ? { security: [{ token: [] }] } : {}),
       responses: {
-        "200": { description: "Done" },
+        [String(r.status ?? 200)]: { description: "Done" },
         default: {
-          description: "An error: { error, message }; `error` is a stable code",
+          description:
+            "An error: { error, message }; `error` is a stable code" +
+            (r.refusals === undefined
+              ? ""
+              : `. Refusals: ${Object.entries(r.refusals).map(([c, w]) => `\`${c}\` (${w})`).join("; ")}`),
         },
       },
     };

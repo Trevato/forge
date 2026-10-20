@@ -73,3 +73,23 @@ test("reading and closing one issue and reading one pull are described", () => {
   expect(issue.patch.parameters.find((p: any) => p.name === "number").in).toBe("path");
   expect(doc.paths[`${R}/pulls/{number}`].get.security).toBeUndefined();
 });
+
+test("making and listing apps is described with every field the route reads", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  expect(doc.paths["/api/v1/apps"].get.security).toBeUndefined();
+  const post = doc.paths["/api/v1/apps"].post;
+  expect(post.security).toBeDefined();
+  expect(post.responses["201"]).toBeDefined();
+  expect(post.responses["200"]).toBeUndefined();
+  expect(doc.paths["/api/v1/apps"].get.responses["200"]).toBeDefined();
+  const src = readFileSync("src/http/api.ts", "utf8");
+  const start = src.indexOf('router.add("POST", "/api/v1/apps"');
+  const handler = src.slice(start, src.indexOf("\n  });", start));
+  const read = new Set([...handler.matchAll(/\binput\.(\w+)/g)].map((m) => m[1]!));
+  expect(read.size).toBeGreaterThan(3);
+  const described = Object.keys(post.requestBody.content["application/json"].schema.properties);
+  for (const field of read) expect(described, `field ${field}`).toContain(field!);
+  for (const field of described) expect([...read], `described ${field}`).toContain(field);
+  for (const code of ["unverified", "app_limit", "no_such_agent", "name_taken"])
+    expect(post.responses.default.description).toContain(`\`${code}\``);
+});
