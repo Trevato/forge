@@ -3,14 +3,17 @@
  * runtime: environment names, preview data, and rules 1 and 4. Split from
  * apps-adversarial.test.ts so no one file sets the gate's floor (#2038);
  * each file of the split boots its own forge and runtime.
+ *
+ * Fixtures are built once (#3577): one forge, one app deployed to
+ * production, one seeded repository with its agent. The preview the
+ * preview_data test reads is opened in `beforeAll` and asserted last, so
+ * its deploy runs while the git tests do. Nothing polls: a deploy is
+ * awaited on the bus's `run.finished`.
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createApp, type App } from "../src/app.ts";
-import { AppsRuntime } from "../src/apps/runtime.ts";
+import type { App } from "../src/app.ts";
 import { newApp, updateAppSettings } from "../src/actions/apps.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { mergePull, openPull } from "../src/actions/pulls.ts";
@@ -20,8 +23,9 @@ import {
   forkRepo,
   updateRepoSettings,
 } from "../src/actions/repos.ts";
-import { getPull } from "../src/core/pulls.ts";
-import { getRepoById } from "../src/core/repos.ts";
+import type { AppRecord } from "../src/core/apps.ts";
+import { getPull, type Pull } from "../src/core/pulls.ts";
+import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { resolveOid } from "../src/git/merge.ts";
 import { repoDir } from "../src/git/repos.ts";
 import {
@@ -29,16 +33,21 @@ import {
   claimRun,
   createRun,
   finishRun,
+  isTerminal,
   listRuns,
   type Run,
 } from "../src/core/runs.ts";
 import { createToken } from "../src/core/tokens.ts";
-import { createUser, type User } from "../src/core/users.ts";
-import { serve, type Servers } from "../src/http/server.ts";
+import type { User } from "../src/core/users.ts";
 import { grantedCookie } from "./helpers/identity.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
-
-const DOMAIN = "apps.test";
+import {
+  APPS_DOMAIN as DOMAIN,
+  fetchAsHost,
+  startAppsForge,
+  stopAppsForge,
+  type AppsForge,
+} from "./helpers/apps-forge.ts";
 
 const clientEnv = gitClientEnv({
   GIT_AUTHOR_NAME: "Agent",
@@ -62,82 +71,121 @@ async function sh(args: string[], cwd: string) {
   return { code, out: out.trim(), err: err.trim() };
 }
 
+/**
+ * The newest deploy on `repoId` matching `where`, once it has finished:
+ * read now, and again on every `run.finished` the bus carries for the
+ * repository — every deploy the runtime finishes is announced there.
+ */
+function settled(
+  app: App,
+  repoId: string,
+  where: (run: Run) => boolean,
+  timeoutMs = 60_000,
+): Promise<Run> {
+  const done = () =>
+    listRuns(app.db, repoId, { kind: "deploy", limit: 50 }).find(
+      (run) => where(run) && isTerminal(run.state),
+    );
+  return new Promise((resolve, reject) => {
+    const finish = (run: Run) => {
+      unsubscribe();
+      clearTimeout(timer);
+      resolve(run);
+    };
+    const unsubscribe = app.bus.subscribe((event) => {
+      if (event.kind !== "run.finished" || event.repoId !== repoId) return;
+      const run = done();
+      if (run) finish(run);
+    });
+    const timer = setTimeout(() => {
+      unsubscribe();
+      reject(new Error("run did not settle in time"));
+    }, timeoutMs);
+    const run = done();
+    if (run) finish(run);
+  });
+}
+
 describe("apps adversarial: env names, preview data, and rules 1/4", () => {
-  let dataDir: string;
-  let work: string;
+  let forge: AppsForge;
   let app: App;
-  let servers: Servers;
-  let runtime: AppsRuntime;
   let alice: User;
+  /** `adversarial`: public, serving in production, preview_data "empty". */
+  let deployed: { repo: Repo; record: AppRecord };
+  /** The pull whose preview must start without production's data. */
+  let previewPull: Pull;
+  /** A seeded repository with `rule1bot` on its crew. */
+  let seeded: Repo;
+  let bot: User;
 
   const viaHost = (host: string, path = "/", init: RequestInit = {}) =>
-    fetch(`${servers.url}${path}`, {
-      ...init,
-      headers: { ...(init.headers as Record<string, string>), host },
-      redirect: "manual",
-    });
-
-  async function settled(
-    repoId: string,
-    where: (run: Run) => boolean,
-    timeoutMs = 60_000,
-  ): Promise<Run> {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      const run = listRuns(app.db, repoId, { kind: "deploy", limit: 50 }).find(
-        where,
-      );
-      if (
-        run &&
-        (run.state === "ok" ||
-          run.state === "failed" ||
-          run.state === "cancelled")
-      )
-        return run;
-      await Bun.sleep(50);
-    }
-    throw new Error("run did not settle in time");
-  }
+    fetchAsHost(forge.servers, host, path, init);
 
   beforeAll(async () => {
-    dataDir = await mkdtemp(join(tmpdir(), "forge-adv-"));
-    work = await mkdtemp(join(tmpdir(), "forge-adv-work-"));
-    app = createApp({ dataDir, port: 0 });
-    servers = await serve(app);
-    runtime = new AppsRuntime(app, {
-      domain: DOMAIN,
-      scheme: "http",
-      publicPort: servers.port,
-      forgeUrl: servers.url,
-      concurrency: 2,
+    forge = await startAppsForge();
+    ({ app, alice } = forge);
+
+    const made = await newApp(app, alice, {
+      name: "adversarial",
+      visibility: "public",
     });
-    await runtime.start();
-    const created = await createUser(app.db, { origin: "seed", trusted: true,
-      username: "alice",
-      email: "alice@forge.local",
-      password: "a-good-passphrase",
-      adminIfFirst: true,
+    if (!made.ok) throw new Error(String(made.error));
+    const { repo, app: record } = made.value;
+    const production = await settled(app, repo.id, (r) => r.env === "production");
+    if (production.state !== "ok")
+      throw new Error(`production did not deploy: ${production.summary}`);
+    deployed = { repo, record };
+
+    // Production holds a note before the preview is opened; the preview's
+    // deploy then runs in the background while the tests below do.
+    updateAppSettings(app, alice, repo, { previewData: "empty" });
+    const form = new FormData();
+    form.set("body", "production-only note");
+    await viaHost(`adversarial.${DOMAIN}`, "/notes", {
+      method: "POST",
+      body: form,
+      headers: {
+        cookie: await grantedCookie(app, forge.servers.url, alice, record),
+      },
     });
-    if (!created.ok) throw new Error(created.error);
-    alice = created.value;
-  }, 30_000);
+    const committed = await commitToBranch(app, alice, repo, {
+      branch: "empty-preview",
+      base: repo.defaultBranch,
+      message: "trigger a preview",
+      files: [{ path: "EMPTY.md", content: "hi\n" }],
+    });
+    if (!committed.ok) throw new Error(String(committed.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Empty preview",
+      baseBranch: repo.defaultBranch,
+      headBranch: "empty-preview",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    previewPull = opened.value;
+
+    const madeRepo = await createRepo(app, alice, { name: "rule1-repo" });
+    if (!madeRepo.ok) throw new Error(String(madeRepo.error));
+    seeded = madeRepo.value;
+    await commitToBranch(app, alice, seeded, {
+      message: "seed",
+      files: [{ path: "README.md", content: "hi\n" }],
+    });
+    const madeAgent = await createAgent(app, alice, {
+      username: "rule1bot",
+      model: "",
+      brief: "",
+    });
+    if (!madeAgent.ok) throw new Error(String(madeAgent.error));
+    bot = madeAgent.value.user;
+    addToCrew(app, alice, seeded, "rule1bot");
+  }, 60_000);
 
   afterAll(async () => {
-    await runtime.stop();
-    servers.stop();
-    app.close();
-    await rm(dataDir, { recursive: true, force: true });
-    await rm(work, { recursive: true, force: true });
+    await forge.runtime.stop();
+    await stopAppsForge(forge);
   });
 
   test("the API never lets an env parameter shaped like a path reach the filesystem", async () => {
-    const made = await newApp(app, alice, {
-      name: "envtraversal",
-      visibility: "public",
-    });
-    expect(made.ok).toBe(true);
-    if (!made.ok) return;
-    await settled(made.value.repo.id, (r) => r.env === "production");
     const adminToken = createToken(
       app.db,
       alice.id,
@@ -145,12 +193,12 @@ describe("apps adversarial: env names, preview data, and rules 1/4", () => {
       "admin",
     ).token;
     const api = (path: string, init: RequestInit = {}) =>
-      fetch(`${servers.url}${path}`, {
+      fetch(`${forge.servers.url}${path}`, {
         ...init,
         headers: { authorization: `Bearer ${adminToken}` },
       });
-    const owner = made.value.repo.ownerName;
-    const name = made.value.repo.name;
+    const owner = deployed.repo.ownerName;
+    const name = deployed.repo.name;
     // A bare ".." segment is collapsed by `URL`/`fetch` before the request
     // ever leaves the client (RFC 3986 dot-segment removal), so it can only
     // be used to probe the *server's* handling when percent-encoded — a raw
@@ -190,74 +238,13 @@ describe("apps adversarial: env names, preview data, and rules 1/4", () => {
     }
   }, 60_000);
 
-  test('preview_data: "empty" starts a preview with no copy of production\'s data', async () => {
-    const made = await newApp(app, alice, {
-      name: "emptypolicy",
-      visibility: "public",
-    });
-    expect(made.ok).toBe(true);
-    if (!made.ok) return;
-    const repo = made.value.repo;
-    await settled(repo.id, (r) => r.env === "production");
-    updateAppSettings(app, alice, repo, { previewData: "empty" });
-
-    const form = new FormData();
-    form.set("body", "production-only note");
-    await viaHost(`emptypolicy.${DOMAIN}`, "/notes", {
-      method: "POST",
-      body: form,
-      headers: {
-        cookie: await grantedCookie(app, servers.url, alice, made.value.app),
-      },
-    });
-    expect(await (await viaHost(`emptypolicy.${DOMAIN}`)).text()).toContain(
-      "production-only note",
-    );
-
-    const committed = await commitToBranch(app, alice, repo, {
-      branch: "empty-preview",
-      base: repo.defaultBranch,
-      message: "trigger a preview",
-      files: [{ path: "EMPTY.md", content: "hi\n" }],
-    });
-    expect(committed.ok).toBe(true);
-    const opened = await openPull(app, alice, repo, {
-      title: "Empty preview",
-      baseBranch: repo.defaultBranch,
-      headBranch: "empty-preview",
-    });
-    expect(opened.ok).toBe(true);
-    if (!opened.ok) return;
-    await settled(repo.id, (r) => r.env === `pull-${opened.value.number}`);
-    const previewHtml = await (
-      await viaHost(`emptypolicy--${opened.value.number}.${DOMAIN}`)
-    ).text();
-    expect(previewHtml).not.toContain("production-only note");
-  }, 60_000);
-
   test("rule 1: the repository takes no push from the crew; the agent's fork takes branches but never its default branch, protected or not, renamed or not", async () => {
-    const madeRepo = await createRepo(app, alice, { name: "rule1-repo" });
-    expect(madeRepo.ok).toBe(true);
-    if (!madeRepo.ok) return;
-    const repo = madeRepo.value;
-    await commitToBranch(app, alice, repo, {
-      message: "seed",
-      files: [{ path: "README.md", content: "hi\n" }],
-    });
-    const madeAgent = await createAgent(app, alice, {
-      username: "rule1bot",
-      model: "",
-      brief: "",
-    });
-    expect(madeAgent.ok).toBe(true);
-    if (!madeAgent.ok) return;
-    const bot = madeAgent.value.user;
-    addToCrew(app, alice, repo, "rule1bot");
+    const repo = seeded;
     const token = createToken(app.db, bot.id, "t", "rw");
-    const remote = `${servers.url.replace("://", `://rule1bot:${token.token}@`)}/${repo.ownerName}/${repo.name}.git`;
-    const clone = join(work, "rule1-clone");
+    const remote = `${forge.servers.url.replace("://", `://rule1bot:${token.token}@`)}/${repo.ownerName}/${repo.name}.git`;
+    const clone = join(forge.work, "rule1-clone");
     expect(
-      (await sh(["git", "clone", "--quiet", remote, clone], work)).code,
+      (await sh(["git", "clone", "--quiet", remote, clone], forge.work)).code,
     ).toBe(0);
     await Bun.write(join(clone, "A.md"), "a\n");
     await sh(["git", "add", "A.md"], clone);
@@ -288,7 +275,7 @@ describe("apps adversarial: env names, preview data, and rules 1/4", () => {
     expect(forked.ok).toBe(true);
     if (!forked.ok) return;
     let fork = forked.value;
-    const forkRemote = `${servers.url.replace("://", `://rule1bot:${token.token}@`)}/${fork.ownerName}/${fork.name}.git`;
+    const forkRemote = `${forge.servers.url.replace("://", `://rule1bot:${token.token}@`)}/${fork.ownerName}/${fork.name}.git`;
     const otherOk = await sh(
       ["git", "push", "-q", forkRemote, "HEAD:refs/heads/some-branch"],
       clone,
@@ -334,26 +321,10 @@ describe("apps adversarial: env names, preview data, and rules 1/4", () => {
   }, 60_000);
 
   test("rule 1: an agent's rw token cannot reach settings, app enable, crew, tokens, or agent creation over the API", async () => {
-    const madeRepo = await createRepo(app, alice, { name: "rule1-api-repo" });
-    expect(madeRepo.ok).toBe(true);
-    if (!madeRepo.ok) return;
-    const repo = madeRepo.value;
-    await commitToBranch(app, alice, repo, {
-      message: "seed",
-      files: [{ path: "README.md", content: "hi\n" }],
-    });
-    const madeAgent = await createAgent(app, alice, {
-      username: "rule1apibot",
-      model: "",
-      brief: "",
-    });
-    expect(madeAgent.ok).toBe(true);
-    if (!madeAgent.ok) return;
-    addToCrew(app, alice, repo, "rule1apibot");
-    const bot = madeAgent.value.user;
+    const repo = seeded;
     const token = createToken(app.db, bot.id, "t", "rw").token;
     const api = (path: string, init: RequestInit = {}) =>
-      fetch(`${servers.url}${path}`, {
+      fetch(`${forge.servers.url}${path}`, {
         ...init,
         headers: {
           ...(init.headers as Record<string, string>),
@@ -375,7 +346,7 @@ describe("apps adversarial: env names, preview data, and rules 1/4", () => {
     expect(enableResp.status).toBe(403);
 
     const crewResp = await api(
-      `/api/v1/repos/${repo.ownerName}/${repo.name}/crew/rule1apibot`,
+      `/api/v1/repos/${repo.ownerName}/${repo.name}/crew/rule1bot`,
       { method: "PUT" },
     );
     expect(crewResp.status).toBe(403);
@@ -554,4 +525,16 @@ describe("apps adversarial: env names, preview data, and rules 1/4", () => {
       ).ok,
     ).toBe(true);
   }, 30_000);
+
+  test('preview_data: "empty" starts a preview with no copy of production\'s data', async () => {
+    const { repo } = deployed;
+    expect(await (await viaHost(`adversarial.${DOMAIN}`)).text()).toContain(
+      "production-only note",
+    );
+    await settled(app, repo.id, (r) => r.env === `pull-${previewPull.number}`);
+    const previewHtml = await (
+      await viaHost(`adversarial--${previewPull.number}.${DOMAIN}`)
+    ).text();
+    expect(previewHtml).not.toContain("production-only note");
+  }, 60_000);
 });
