@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createUser } from "../src/core/users.ts";
+import { securityFloor } from "../src/http/respond.ts";
 import { forgeHttp, type ForgeHttp } from "../src/http/server.ts";
 import { webspec } from "../src/release/webspec.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -26,7 +27,6 @@ const PATHS = ["/", "/signin", "/signup", "/explore"];
 const KNOWN: Record<string, [string, string]> = {};
 const WHY: Record<string, [string, string]> = {
   compression: ["https://specification.website/", "bodies leave the forge uncompressed: compression is set at the edge (edge: true)"],
-  "permissions-policy": ["https://specification.website/#permissions-policy", "the security floor sets CSP, nosniff and Referrer-Policy but no Permissions-Policy"],
 };
 for (const [check, why] of Object.entries(WHY)) for (const path of PATHS) KNOWN[`${check} ${path}`] = why;
 
@@ -47,7 +47,7 @@ afterAll(async () => {
 });
 
 test("the forge's signed-out pages raise exactly the findings named in KNOWN", async () => {
-  const fetcher = (input: string, init?: RequestInit) => http.handle(new Request(input, init));
+  const fetcher = (input: string, init?: RequestInit) => http.handle(new Request(input, init)).then(securityFloor);
   const found = await webspec("http://forge.test", PATHS, fetcher, { site: true });
   const keyOf = (f: { check: string; path: string }) => `${f.check} ${f.path}`;
   // New: not named, or citing another section than the one named.

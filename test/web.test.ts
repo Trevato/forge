@@ -808,9 +808,9 @@ function expectFloor(what: string, response: Response): void {
     label + "same-origin",
   );
   // No powers a page does not use, and https once https (#2917).
-  expect(label + response.headers.get("permissions-policy")).toContain(
-    label + "camera=(), microphone=(), geolocation=()",
-  );
+  const powers = response.headers.get("permissions-policy") ?? "";
+  for (const power of ["camera", "microphone", "geolocation", "payment", "usb", "interest-cohort"])
+    expect(label + powers).toContain(`${power}=()`);
   expect(label + response.headers.get("strict-transport-security")).toBe(
     label + "max-age=31536000",
   );
