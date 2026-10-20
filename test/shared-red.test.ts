@@ -6,6 +6,8 @@
  */
 import { beforeEach, describe, expect, test } from "bun:test";
 import type { Database } from "bun:sqlite";
+import { Glob } from "bun";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { migrations } from "../src/core/schema.ts";
 import { openDb } from "../src/kernel/db.ts";
@@ -13,6 +15,7 @@ import { claimRun, createRun, finishRun, type Run } from "../src/core/runs.ts";
 import {
   SHARED_PULLS,
   SHARED_WINDOW_MS,
+  TREE_GATES,
   flakeHref,
   flakeKey,
   sharedCause,
@@ -60,6 +63,21 @@ describe("a red many pulls share", () => {
     for (const i of ["i1", "i2", "i3"]) red(i, ["(unnamed)"]);
     expect(shared(red("i4", ["(unnamed)"]))).toBe(false);
     expect(sharedTests(db)).toEqual([]);
+  });
+
+  test("a gate on the tree is each pull's own red, however many trip it (#2868)", () => {
+    const gate = "design check: nothing added outside the system (#2678) > the tree is no worse than its baseline";
+    for (const i of ["i1", "i2", "i3"]) red(i, [gate]);
+    expect(shared(red("i4", [gate]))).toBe(false);
+    expect(shared(red("i5", [gate, "X"]))).toBe(false);
+    expect(sharedTests(db)).toEqual([]);
+  });
+
+  test("every tree gate names a suite that exists", () => {
+    const suites = new Set<string>();
+    for (const f of new Glob("test/*.test.ts").scanSync("."))
+      for (const m of readFileSync(f, "utf8").matchAll(/describe\("((?:[^"\\]|\\.)*)"/g)) suites.add(`${m[1]} > `);
+    for (const g of TREE_GATES) expect(suites.has(g)).toBe(true);
   });
 
   test("one pull red three times is its own red, not the lane's", () => {

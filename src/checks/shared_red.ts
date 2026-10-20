@@ -38,6 +38,21 @@ const QUEUED_SLACK_MS = 6 * 3_600_000;
  */
 export const NO_TEST_NAME = "(unnamed)";
 
+/**
+ * Suites that are gates on the tree itself (#2868): each reads the source and
+ * fails the pull that added the thing it forbids, the same way on any
+ * machine. Many pulls tripping one in an hour is many pulls each adding
+ * what it forbids (a class DESIGN.md does not name), not a lane's red, so they never make one.
+ * A name here is a suite's `describe` prefix, and a test keeps it existing.
+ */
+export const TREE_GATES: readonly string[] = [
+  "design check: nothing added outside the system (#2678) > ",
+  "no polling in src/web > ",
+];
+
+/** Whether a failing test's name is one of {@link TREE_GATES}'. */
+export const isTreeGate = (test: string): boolean => TREE_GATES.some((g) => test.startsWith(g));
+
 export interface SharedTest {
   readonly repoId: string;
   /** `owner/name`, for the card. */
@@ -84,7 +99,8 @@ function pullsPerTest(db: Database, now: number, repoId: string | null): Row[] {
       new Date(now - SHARED_WINDOW_MS).toISOString(),
       repoId,
       NO_TEST_NAME,
-    );
+    )
+    .filter((r) => !isTreeGate(r.test));
 }
 
 /**
