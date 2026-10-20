@@ -20,12 +20,18 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import type { Socket } from "bun";
+import { neverGrantable } from "../core/egress_grants.ts";
 
 export interface EgressPolicy {
   /** Host names from `forge.json` `egress`: exact, or `*.example.com`. */
   readonly hosts: readonly string[];
   /** Origins always reachable, at exactly this host and port (the forge). */
   readonly origins: readonly { host: string; port: number }[];
+  /**
+   * Private destinations a site admin granted this repository, `host:port`
+   * (`core/egress_grants.ts`). One only opens when `hosts` also declares it.
+   */
+  readonly granted?: readonly string[] | undefined;
   /**
    * Set while egress is only reported (`FORGE_CELLS_EGRESS=report`): an
    * undeclared public host is let through and handed here instead of
@@ -92,11 +98,11 @@ export function isPublicAddress(address: string): boolean {
   return false;
 }
 
-type Verdict =
+export type Verdict =
   | { ok: true; address: string; undeclared: boolean }
   | { ok: false; why: string };
 
-async function decide(
+export async function decide(
   policy: EgressPolicy,
   host: string,
   port: number,
@@ -106,9 +112,13 @@ async function decide(
     (o) => o.host.toLowerCase() === name && o.port === port,
   );
   const declared = origin || hostAllowed(policy.hosts, name, port);
+  const literalPrivate = isIP(name) !== 0 && !isPublicAddress(name);
+  const askAdmin = `${name}:${port} is a private destination: add it to forge.json egress and ask a site admin to grant it`;
+  const granted = declared && (policy.granted ?? []).includes(`${name}:${port}`);
   // Reporting lets an undeclared host through (and says so) on the web
   // ports alone; any other port, and any private address (below), is
   // refused in both modes.
+  if (!declared && literalPrivate) return { ok: false, why: askAdmin };
   if (!declared && (policy.report === undefined || !WEB_PORTS.includes(port)))
     return {
       ok: false,
@@ -123,8 +133,17 @@ async function decide(
   const first = addresses[0];
   if (first === undefined)
     return { ok: false, why: `${name} does not resolve` };
-  if (!origin && !addresses.every(isPublicAddress))
-    return { ok: false, why: `${name} resolves to a private address` };
+  if (!origin && !addresses.every(isPublicAddress)) {
+    if (!granted)
+      return {
+        ok: false,
+        why: literalPrivate ? askAdmin : `${name} resolves to a private address; add ${name}:${port} to forge.json egress and ask a site admin to grant it`,
+      };
+    // A grant opens one destination, never the metadata service or the
+    // forge's own cluster, whatever a name resolves to.
+    if (addresses.some((a) => !isPublicAddress(a) && neverGrantable(a)))
+      return { ok: false, why: `${name} resolves to an address that can never be granted` };
+  }
   return { ok: true, address: first, undeclared: !declared };
 }
 
