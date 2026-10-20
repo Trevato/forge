@@ -9,6 +9,7 @@ import { DEFAULT_REASON, REASON_MAX, voteVariant } from "../../actions/variants.
 import { getAppByRepo } from "../../core/apps.ts";
 import { variantMembers, type Pull } from "../../core/pulls.ts";
 import { canWrite, type Repo } from "../../core/repos.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { mayView } from "../../core/sealed.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -85,14 +86,18 @@ function deckCard(
 
 // GET /:owner/:name/variants/:group
 export function variantsPage(ctx: Ctx): Response {
-  const repo = loadRepo(ctx);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const repo = timePhase(ctx.request, "repo", () => loadRepo(ctx));
   if (!repo) return notFoundPage(ctx);
   const group = ctx.params.group ?? "";
-  const pulls = deck(ctx, repo, group);
+  const pulls = timePhase(ctx.request, "pulls", () => deck(ctx, repo, group));
   if (pulls.length === 0) return notFoundPage(ctx);
   const open = pulls.filter((p) => p.state === "open" && p.mergedAt === null);
-  const writer = canWrite(ctx.app.db, repo, ctx.auth.user);
-  return page({
+  const writer = timePhase(ctx.request, "access", () =>
+    canWrite(ctx.app.db, repo, ctx.auth.user),
+  );
+  const rendering = performance.now();
+  const response = page({
     ctx,
     title: `Variants in ${repo.name}`,
     crumbs: crumbsFor(repo),
@@ -104,6 +109,8 @@ export function variantsPage(ctx: Ctx): Response {
             deckCard(ctx, repo, p, group, writer, open.length === 1),
           )}`,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 // POST /:owner/:name/variants/:group/:number/(like|dislike)
