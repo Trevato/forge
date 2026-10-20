@@ -34,7 +34,7 @@ describe("the crew resumes on feedback", () => {
     agentRunSettled(app, repo, where, timeoutMs);
 
   beforeAll(async () => {
-    standIn = await startStandInCrew();
+    standIn = await startStandInCrew({ tickMs: 50 });
     ({ app, alice, bot, repo, argsFile, promptFile } = standIn);
   }, 30_000);
 

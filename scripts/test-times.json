@@ -27,7 +27,7 @@
   "test/crew-sandbox.test.ts": 5.3,
   "test/crew-wrapup.test.ts": 23.6,
   "test/crew-closed.test.ts": 10,
-  "test/crew-feedback.test.ts": 11,
+  "test/crew-feedback.test.ts": 2.1,
   "test/crew-paths.test.ts": 0.1,
   "test/crew.test.ts": 7,
   "test/cross-repo-pull.test.ts": 13,
