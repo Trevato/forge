@@ -17,6 +17,8 @@ export interface SnapshotOutcome {
   /** The newest snapshot that landed, and when; absent until one has. */
   readonly landed?: string;
   readonly landedAt?: string;
+  /** Whether the store it landed in is off the machine (a bucket, not a directory); absent when not known. */
+  readonly offBox?: boolean;
   /** Set while attempts are failing: since when, and the last one's reason. */
   readonly failingSince?: string;
   readonly error?: string;
@@ -38,23 +40,39 @@ export function lastSnapshotOutcome(dataDir: string): SnapshotOutcome | undefine
 /** Keep an attempt's end: a name that landed, or the error it failed with. Returns what was kept. */
 export function recordSnapshotOutcome(
   dataDir: string,
-  result: { readonly landed: string } | { readonly error: string },
+  result: { readonly landed: string; readonly offBox?: boolean } | { readonly error: string },
   at: string = new Date().toISOString(),
 ): SnapshotOutcome {
   const prev = lastSnapshotOutcome(dataDir);
   const kept = {
     ...(prev?.landed === undefined ? {} : { landed: prev.landed }),
     ...(prev?.landedAt === undefined ? {} : { landedAt: prev.landedAt }),
+    ...(prev?.offBox === undefined ? {} : { offBox: prev.offBox }),
   };
   const next: SnapshotOutcome =
     "landed" in result
-      ? { at, landed: result.landed, landedAt: at }
+      ? { at, landed: result.landed, landedAt: at, ...(result.offBox === undefined ? {} : { offBox: result.offBox }) }
       : { at, ...kept, failingSince: prev?.failingSince ?? at, error: result.error };
+  write(dataDir, next);
+  return next;
+}
+
+/**
+ * Say where an outcome kept before the store was recorded landed: the store
+ * in effect now, since it is the one it most likely went to. Writes nothing
+ * when the outcome already says, or none has landed.
+ */
+export function noteOffBox(dataDir: string, offBox: boolean): void {
+  const prev = lastSnapshotOutcome(dataDir);
+  if (prev?.landedAt === undefined || prev.offBox !== undefined) return;
+  write(dataDir, { ...prev, offBox });
+}
+
+function write(dataDir: string, next: SnapshotOutcome): void {
   mkdirSync(join(dataDir, "snapshot"), { recursive: true });
   const tmp = `${stateFile(dataDir)}.tmp`;
   writeFileSync(tmp, JSON.stringify(next));
   renameSync(tmp, stateFile(dataDir));
-  return next;
 }
 
 /** The card a failing snapshot is, or undefined while the last one landed. */

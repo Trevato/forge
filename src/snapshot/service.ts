@@ -25,7 +25,8 @@ import { describeTimes, runDrill, type DrillDeps, type DrillResult } from "./dri
 import { BOOT_RED_FLOOR_MS, drillDue, RED_RETRY_MS } from "./due.ts";
 import { lastDrill, recordDrill } from "./drills.ts";
 import { lastMirror, mirrorPass, MIRROR_EVERY_MS, recordMirror, type MirrorState } from "./mirror.ts";
-import { recordSnapshotOutcome } from "./outcome.ts";
+import { isOffBox } from "./off_box.ts";
+import { noteOffBox, recordSnapshotOutcome } from "./outcome.ts";
 import type { Store } from "./store.ts";
 
 const log = createLog("snapshots");
@@ -148,6 +149,8 @@ export function startSnapshots(
   let last: { manifest?: Manifest; error?: string; at?: string } = {};
 
   const take = (): Promise<Manifest> => {
+    // Whether this run's store is off the machine, for home's backup age (#3701).
+    let offBox: boolean | undefined;
     // After the one before it, however that ended: chained on a failure as it
     // was, every later run failed at once with the old error until a restart.
     const run = (inFlight ?? Promise.resolve()).catch(() => {}).then(async () => {
@@ -155,6 +158,7 @@ export function startSnapshots(
       // very next snapshot's.
       const store = current();
       if (store === undefined) throw new Nowhere();
+      offBox = isOffBox(store);
       running = { objects: 0, bytes: 0, elapsedMs: 0 };
       // Admin-only, no repository, nothing /backups does not already show.
       app.bus.append({ kind: "backup.started" });
@@ -186,7 +190,7 @@ export function startSnapshots(
     inFlight = run.then(
       (m) => {
         last = { manifest: m, at: m.finishedAt };
-        keep({ landed: m.name });
+        keep({ landed: m.name, ...(offBox === undefined ? {} : { offBox }) });
         app.bus.append({ kind: "backup.finished", payload: { ok: true } });
         arm(untilNightly());
         return m;
@@ -214,6 +218,14 @@ export function startSnapshots(
       await (inFlight ?? Promise.resolve()).catch(() => {});
       const dst = currentMirror();
       const src = current();
+      // An outcome kept before stores were recorded learns where it landed.
+      if (src !== undefined) {
+        try {
+          noteOffBox(app.config.dataDir, isOffBox(src));
+        } catch (error) {
+          log.warn("snapshot outcome not annotated", { error: String(error) });
+        }
+      }
       if (dst === undefined || src === undefined) {
         try {
           recordMirror(app.config.dataDir, undefined);

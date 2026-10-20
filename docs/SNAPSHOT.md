@@ -83,6 +83,19 @@ Delete the old ones from the bucket if the bucket is not trusted.
 - Given neither, no snapshots are taken, and the Backups page says so
   instead of showing an empty list that looks like a clean bill.
 
+## Off the machine
+
+Home's **Last off-box backup** is the newest time a snapshot was known to be
+off the machine (`src/snapshot/off_box.ts`): the newest the mirror holds, or
+the newest that landed in a destination that is a bucket, whichever is later.
+Each landing records whether its store was one (`offBox` in
+`snapshot/state.json`): a directory never is, whatever volume it is on, nor
+is a bucket served from loopback. Before #3701 the tile read the mirror
+alone, so a forge whose nightly landed in the platform's bucket every morning,
+with no second bucket, read "never". An outcome kept before stores were
+recorded is annotated from the store in effect at the first mirror pass after
+boot.
+
 ## The off-box mirror
 
 A second S3-compatible bucket (Backblaze B2, say) that every snapshot is

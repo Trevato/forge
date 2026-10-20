@@ -15,7 +15,7 @@
 
 import type { Database } from "bun:sqlite";
 import { spentTodayEverywhere } from "../crew/autonomy.ts";
-import { lastMirror } from "../snapshot/mirror.ts";
+import { lastOffBox } from "../snapshot/off_box.ts";
 import { readReach, type Reach } from "./reach.ts";
 import { HOURS, median } from "./throughput.ts";
 
@@ -34,7 +34,7 @@ export interface Kpis {
   readonly builders: { readonly running: number; readonly slots: number };
   /** What the crew's runs cost since UTC midnight, and the forge's daily ceiling (null: none set). */
   readonly spend: { readonly todayUsd: number; readonly ceilingUsd: number | null };
-  /** When the off-box mirror last finished holding a snapshot; null when it never has. */
+  /** When a snapshot was last known off the machine (a bucket destination or the mirror, `off_box.ts`); null when never. */
   readonly backupAt: string | null;
   /** Accounts, visitors and page speed (`reach.ts`). */
   readonly reach: Reach;
@@ -94,7 +94,7 @@ export function readKpis(
 
   const todayUsd = spentTodayEverywhere(db, now);
 
-  const backupAt = forge.dataDir === undefined ? null : (lastMirror(forge.dataDir)?.newestAt ?? null);
+  const backupAt = forge.dataDir === undefined ? null : lastOffBox(forge.dataDir);
 
   return {
     backupAt,

@@ -101,8 +101,11 @@ import { signInScreen } from "./signin.ts";
 /** Rows the list keeps under the figures strip; below it the strip shows fewer figures. */
 const FIGURES_ROOM = 6;
 
-/** The forge-wide daily ceiling, from config, for the spend figure. */
-const kpiForge = (app: { config: { crewCeilingUsd?: number } }) => ({ ceilingUsd: app.config.crewCeilingUsd ?? null });
+/** The forge-wide daily ceiling, from config, for the spend figure; the data directory, for the backup's age. */
+export const kpiForge = (app: { config: { crewCeilingUsd?: number; dataDir: string } }) => ({
+  ceilingUsd: app.config.crewCeilingUsd ?? null,
+  dataDir: app.config.dataDir,
+});
 
 /**
  * The three things the launcher is about. Order is the `tab` order: the

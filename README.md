@@ -298,8 +298,9 @@ Home shows nine figures first, from `src/flow/kpis.ts`: shipped per hour (with
 a 24 h sparkline), the live version and since when, the median check time, the crew builders
 running of their slots, and the crew's spend today of the forge's daily
 ceiling (`FORGE_CREW_CEILING_USD`; without one, the spend alone and
-`no ceiling`), and the age of the last off-box backup (the mirror's newest
-snapshot, `mirror/state.json`; `3 h ago`, the exact time in its title), linking to
+`no ceiling`), and the age of the last off-box backup (the newer of the
+mirror's newest snapshot, `mirror/state.json`, and the newest that landed in
+a destination that is a bucket, `snapshot/state.json`; `src/snapshot/off_box.ts`; `3 h ago`, the exact time in its title), linking to
 `/settings/backups`. The spend tile links to `/settings/crew`, where the meter is.
 The backup tile past 24 hours, or with none (`never`), takes the card's existing
 `data-tone="attn"` and says overdue in its label.
