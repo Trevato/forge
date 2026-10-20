@@ -8,7 +8,9 @@
  * exactly the tree that was gated. Red bisects: the first half is gated on
  * its own; green lands it and the culprit is in the rest, red keeps the
  * search in the first half while the rest waits for the next candidate. A
- * single red step is the culprit and is handed back.
+ * single red step is the culprit and is handed back. A gate cut off by the
+ * forge stopping is no verdict: nothing is handed back, and the forge that
+ * carries on admits the line again (#3155).
  *
  * What is queued is not stored: it is the pulls `landIfGreen` admitted, and
  * every sweep admits them again. The queue only orders them and remembers
@@ -28,7 +30,7 @@ export interface Expect {
 }
 
 /** A red verdict: what the culprit is told. */
-export type Red = Extract<LandVerdict, { lands: false }>;
+export type Red = Extract<LandVerdict, { reopen: true }>;
 
 /** One pull in the line, and what landing or handing it back does. */
 export interface Queued {
@@ -222,6 +224,12 @@ async function round(
     await land(candidate, steps);
     return [];
   }
+  // The gate was cut off (the forge stopping, the Job lost): nothing is
+  // decided and no one is handed back; the next sweep admits them again (#3155).
+  if ("interrupted" in verdict) {
+    for (const w of steps) w.settle(false);
+    return [];
+  }
   if (steps.length === 1) {
     steps[0]!.entry.handBack(verdict, candidate.baseOid);
     steps[0]!.settle(false);
@@ -244,6 +252,10 @@ async function round(
     // The front was green, the whole red: the culprit is in the rest, and
     // the rest on the new base is the red tree again.
     return round(rest, gate, red);
+  }
+  if ("interrupted" in frontVerdict) {
+    for (const w of steps) w.settle(false);
+    return [];
   }
   const left = await round(front, gate, { treeOid: part.treeOid, red: frontVerdict });
   return [...left, ...rest];

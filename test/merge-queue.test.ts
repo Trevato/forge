@@ -20,7 +20,8 @@ import { getPull, type Pull } from "../src/core/pulls.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
-import { landIfGreen, sweepGreen } from "../src/crew/autonomy.ts";
+import { landIfGreen, REGATE_RED_MS, regateDue, sweepGreen } from "../src/crew/autonomy.ts";
+import { listComments } from "../src/core/issues.ts";
 import { readQueues } from "../src/flow/queue.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -36,6 +37,10 @@ describe("the merge queue", () => {
   let held: Promise<void> | undefined;
   /** Every candidate the gate was asked about, with its verdict. */
   const gated: { repo: string; commit: string; ok: boolean }[] = [];
+  /** How many gates from now are cut off, as by the forge stopping under them. */
+  let cutOff = 0;
+  /** How many gates from now go red whatever the tree, as a machine's red would. */
+  let flaky = 0;
 
   const git = (repo: Repo, ...args: string[]) =>
     Bun.spawnSync(["git", ...args], {
@@ -60,8 +65,12 @@ describe("the merge queue", () => {
     provideChecksForTest(app, {
       gate: async (repo: Repo, _pull: Pull, commitOid: string) => {
         if (held !== undefined) await held;
+        if (cutOff > 0) {
+          cutOff--;
+          return { ok: false, error: "aborted", lines: ["(fail) killed [1.00ms]"], interrupted: true };
+        }
         const files = git(repo, "ls-tree", "-r", "--name-only", commitOid).split("\n");
-        const ok = !files.some((f) => f.startsWith("red-"));
+        const ok = flaky > 0 ? (flaky--, false) : !files.some((f) => f.startsWith("red-"));
         gated.push({ repo: repo.id, commit: commitOid, ok });
         return ok
           ? { ok, error: "", lines: [] }
@@ -327,5 +336,101 @@ describe("the merge queue", () => {
     });
     expect(terminalLine(repo)?.split(/\s+/)).toEqual([`alice/${repo.name}`, "0", "0", "3"]);
     expect(await mcpQueue()).toContainEqual({ repo: `alice/${repo.name}`, queued: 0, gating: 0, landedHour: 3 });
+  });
+
+  /** Ages the pull's newest land decision past the re-gate wait. */
+  const age = (pull: Pull) =>
+    app.db
+      .query(
+        "UPDATE decision SET created_at = ?2 WHERE id = (SELECT id FROM decision WHERE issue_id = ?1 AND kind = 'land' ORDER BY created_at DESC, id DESC LIMIT 1)",
+      )
+      .run(pull.id, new Date(Date.now() - REGATE_RED_MS - 1000).toISOString());
+
+  test("a gate cut off by the forge stopping is no red: the next sweep gates it again and it lands, no push (#3155)", async () => {
+    const repo = await autonomousRepo("cut-off");
+    const pull = await greenPull(repo, "a.ts");
+    const base = git(repo, "rev-parse", "refs/heads/main");
+    cutOff = 1;
+    expect(await sweepGreen(app, repo)).toBe(0);
+    expect(cutOff).toBe(0);
+    // Nothing told: no red on the ledger, no comment, nothing learned.
+    expect(latestDecision(app.db, pull.id, "land")?.answer).not.toBe("red");
+    expect(listComments(app.db, pull.id)).toHaveLength(0);
+    expect(readLearned(dataDir, pull.id)).toEqual([]);
+    // The forge that carries on, on the same head and base, lands it.
+    expect(git(repo, "rev-parse", "refs/heads/main")).toBe(base);
+    expect(await sweepGreen(app, repo)).toBe(1);
+    expect(merged(repo, pull)).toBe(true);
+  });
+
+  test("a red cut off mid-bisection hands no one back; the line lands on the next sweep", async () => {
+    const repo = await autonomousRepo("cut-off-bisect");
+    const pulls = [];
+    for (const name of ["a.ts", "b.ts", "red-c.ts", "d.ts"]) pulls.push(await greenPull(repo, name));
+    const red = pulls[2]!;
+    // The whole candidate is red; the gate of its front half is cut off.
+    let calls = 0;
+    const stopping = async () => {
+      calls++;
+      return calls === 1
+        ? ({ lands: false, reopen: true, comment: "red", learn: [] } as const)
+        : ({ lands: false, interrupted: true } as const);
+    };
+    const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    const told: number[] = [];
+    const answers = await enqueue(
+      repo.id,
+      pulls.map((pull) => ({
+        pull,
+        dir,
+        land: async () => undefined,
+        release: () => {},
+        handBack: () => told.push(pull.number),
+      })),
+      stopping,
+    );
+    expect(calls).toBe(2);
+    expect(answers).toEqual([false, false, false, false]);
+    expect(told).toEqual([]);
+    expect(await sweepGreen(app, repo)).toBe(3);
+    expect(merged(repo, red)).toBe(false);
+    expect(latestDecision(app.db, red.id, "land")?.answer).toBe("red");
+  });
+
+  test("a red neither side moved off is gated once more after 30 minutes, and lands if it was not the code's (#3155)", async () => {
+    const repo = await autonomousRepo("regate-green");
+    const pull = await greenPull(repo, "a.ts");
+    flaky = 1;
+    expect(await sweepGreen(app, repo)).toBe(0);
+    expect(latestDecision(app.db, pull.id, "land")?.answer).toBe("red");
+    // Fresh: the red stands, and is not gated again.
+    const before = gatesOf(repo).length;
+    expect(await sweepGreen(app, repo)).toBe(0);
+    expect(gatesOf(repo)).toHaveLength(before);
+    // Past the wait, with nothing moved: gated once more, green, landed.
+    age(pull);
+    expect(await sweepGreen(app, repo)).toBe(1);
+    expect(gatesOf(repo)).toHaveLength(before + 1);
+    expect(merged(repo, pull)).toBe(true);
+  });
+
+  test("a red that reproduces on the re-gate stays red, told once", async () => {
+    const repo = await autonomousRepo("regate-red");
+    const pull = await greenPull(repo, "red-a.ts");
+    expect(await sweepGreen(app, repo)).toBe(0);
+    const comments = listComments(app.db, pull.id).length;
+    expect(comments).toBe(1);
+    age(pull);
+    expect(await sweepGreen(app, repo)).toBe(0);
+    const again = latestDecision(app.db, pull.id, "land");
+    expect(again?.answer).toBe("red");
+    expect((again?.state as { again?: boolean }).again).toBe(true);
+    expect(regateDue(again!, Date.now() + 10 * REGATE_RED_MS)).toBe(false);
+    expect(listComments(app.db, pull.id)).toHaveLength(comments);
+    // However long it waits now, it is not gated again until a side moves.
+    age(pull);
+    const before = gatesOf(repo).length;
+    expect(await sweepGreen(app, repo)).toBe(0);
+    expect(gatesOf(repo)).toHaveLength(before);
   });
 });

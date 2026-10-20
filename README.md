@@ -1028,7 +1028,12 @@ The full gate runs once on that candidate. Green lands every pull in order,
 and each landing is refused unless main is still where the candidate was
 built and the squash writes the tree that was gated, so main ends at the
 gated tree. Red bisects: the front half is gated by itself, a green half
-lands, and the red pull is handed back with the failing tests named. Pulls
+lands, and the red pull is handed back with the failing tests named. A red
+waits for a push or a new main, except once: after 30 minutes with neither
+side moved it is gated again, and lands if green; a red that reproduces
+stays red and is not told twice. A gate cut off by the forge stopping (a
+roll, a drain) or by the cluster losing its Job is no red at all: the next
+sweep gates it again. Pulls
 that turn green while a candidate is gating wait for the next one. Each
 queue's numbers — how many pulls are queued, how many are gating, and how
 many landed in the last hour — show in three places: the flow panel on `/boards`, the

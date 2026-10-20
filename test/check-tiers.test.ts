@@ -613,7 +613,7 @@ describe("the tiers in the forge's own checks service", () => {
       },
     ).stdout.toString().trim();
     const verdict = await gateCandidate(app, repo, pull, dir, commit);
-    if (verdict.lands) throw new Error("expected the full gate to be red");
+    if (verdict.lands || "interrupted" in verdict) throw new Error("expected the full gate to be red");
     expect(verdict.comment).toContain("- lands red");
     expect(verdict.learn).toContain("test/y.test.ts");
   });

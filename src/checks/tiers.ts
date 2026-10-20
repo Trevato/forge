@@ -239,7 +239,8 @@ export function tierLine(state: TierState, seconds?: number): string {
   }
 }
 
-export type LandVerdict =
+/** What a gate that ran to its end found. */
+export type Judged =
   | { readonly lands: true }
   | {
       readonly lands: false;
@@ -252,6 +253,14 @@ export type LandVerdict =
     };
 
 /**
+ * What the gate on land answers: judged, or interrupted — the gate did not
+ * finish for a reason that is not the code (the forge stopped under it, the
+ * cluster lost its Job). Interrupted is no verdict; the queue gates it
+ * again (#3155).
+ */
+export type LandVerdict = Judged | { readonly lands: false; readonly interrupted: true };
+
+/**
  * What the full gate on the merge with its base decides. Green lands the
  * pull. Red reopens it, names the red tests, and teaches the fast tier
  * those that are test files; a red with no test named (a type error, a
@@ -261,7 +270,7 @@ export function landVerdict(
   green: boolean,
   failedTests: readonly string[],
   failedFiles: readonly string[] = [],
-): LandVerdict {
+): Judged {
   if (green) return { lands: true };
   const names = failedTests.map((name) => `- ${name}`).join("\n");
   return {

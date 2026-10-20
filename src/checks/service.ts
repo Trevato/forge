@@ -89,6 +89,9 @@ import type { CheckDetail } from "../core/runs.ts";
 
 const log = createLog("checks");
 
+/** A gate this forge would not start, for it is stopping. */
+const INTERRUPTED = "this forge is stopping";
+
 export interface ChecksOptions {
   /** How many checks may run at once. @default 1 */
   readonly concurrency?: number | undefined;
@@ -133,13 +136,15 @@ export interface ChecksHandle {
   /**
    * The full tier on a merge, before it is made (#1198): `commitOid` is the
    * merge of the pull with its base, run in a clone of its own. Nothing is
-   * queued and no run is written; the answer is the verdict.
+   * queued and no run is written; the answer is the verdict. `interrupted`
+   * is a gate that did not finish for a reason that is not the code — this
+   * forge stopping, or the cluster losing its Job — and is no verdict (#3155).
    */
   gate(
     repo: Repo,
     pull: Pull,
     commitOid: string,
-  ): Promise<{ ok: boolean; error: string; lines: string[] }>;
+  ): Promise<{ ok: boolean; error: string; lines: string[]; interrupted?: boolean }>;
   /**
    * Stop checking. Checks under way get `drainMs` to finish unless `drain`
    * is false (a person's Ctrl-C): then they are cut off and queued again now.
@@ -1111,6 +1116,9 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     request,
     gate: async (repo, pull, commitOid) => {
       const lines: string[] = [];
+      // A gate asked of a forge already stopping is not started: the forge
+      // that carries on asks it again.
+      if (stopped) return { ok: false, error: INTERRUPTED, lines, interrupted: true };
       const controller = new AbortController();
       gates.add(controller);
       try {
@@ -1125,7 +1133,12 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           write: (line) => lines.push(line),
           signal: controller.signal,
         });
-        return { ok: done.ok, error: done.ok ? "" : done.error, lines };
+        if (done.ok) return { ok: true, error: "", lines };
+        // Cut off by this forge stopping, or the Job lost under it: the
+        // code was not judged, so this is no red.
+        if (stopped || controller.signal.aborted || done.error === JOB_VANISHED)
+          return { ok: false, error: done.error, lines, interrupted: true };
+        return { ok: false, error: done.error, lines };
       } finally {
         gates.delete(controller);
       }

@@ -53,6 +53,8 @@ export async function gateCandidate(
   if (!declared.ok || declared.value === undefined || declared.value.fast === null)
     return { lands: true };
   const done = await checks.gate(repo, pull, commitOid);
+  // Cut off, not judged: no verdict, and not the gate log a red reads (#3155).
+  if (done.interrupted === true) return { lands: false, interrupted: true };
   keepForgeGate(app.config.dataDir, app.config.forgeRepo, `${repo.ownerName}/${repo.name}`, done.lines);
   const failed = failuresOf(done.lines);
   return landVerdict(done.ok, failed.tests, failed.files);

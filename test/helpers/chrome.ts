@@ -172,6 +172,18 @@ async function evaluateLoaded(
     const loaded = cdp.once("Page.loadEventFired");
     await cdp.send("Page.navigate", { url });
     await loaded;
+    // The load event can be the blank start page's, fired late on a busy
+    // machine: the page measured is the navigated one, loaded, or none.
+    const deadline = Date.now() + 10_000;
+    for (;;) {
+      const { result: at } = await cdp.send("Runtime.evaluate", {
+        expression: `/^https?:/.test(location.href) && document.readyState === "complete"`,
+        returnByValue: true,
+      });
+      if (at.value === true) break;
+      if (Date.now() > deadline) throw new Error(`chromium never finished loading ${url}`);
+      await Bun.sleep(25);
+    }
     const { result } = await cdp.send("Runtime.evaluate", {
       expression,
       returnByValue: true,

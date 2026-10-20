@@ -39,6 +39,7 @@ import {
 import { pickBuilder, routeIssue } from "./route.ts";
 import { readyNow, repoGraph, type Ranked } from "../core/dependencies.ts";
 import {
+  type Decision,
   latestDecision,
   recordDecision,
   resolveOpen,
@@ -1745,16 +1746,13 @@ async function admit(
   const review = await reviewed(app, repo, pull);
   if (review === "hold") return err("review");
   // The full tier, once, on the queue's candidate (#1198, #2036). Red is
-  // told to the pull once per head and base, and the pull waits for a push.
+  // told to the pull once per head and base, and the pull waits for a push
+  // — but a red neither side has moved off is gated once more after
+  // REGATE_RED_MS, so a red that was the machine's and not the code's does
+  // not hold the queue for good; a red that reproduces stays red (#3155).
   const told = latestDecision(app.db, pull.id, "land");
   const gatedAt = `${pull.headOid}:${baseTip}`;
-  if (
-    told?.answer === "red" &&
-    typeof told.state === "object" &&
-    told.state !== null &&
-    (told.state as { at?: unknown }).at === gatedAt
-  )
-    return err("red");
+  if (redAt(told, gatedAt) && !regateDue(told!, Date.now())) return err("red");
   // Green only against a base that has moved since: the merge would hold
   // it (`checksHold`), so the queue asks for the check again on the base
   // as it is now rather than wait for a person to (#3055). The fresh green
@@ -1794,21 +1792,60 @@ async function admit(
         }),
       ),
     handBack: (red, baseOid) => {
-      // Told on the base it was found red on: a new base is a new try.
+      // Told on the base it was found red on: a new base is a new try. Red
+      // again on the same head and base is the re-gate reproducing it: it
+      // stays red for good, and the pull is not told twice.
+      const at = `${pull.headOid}:${baseOid}`;
+      const again = redAt(latestDecision(app.db, pull.id, "land"), at);
+      const state: RedState = again ? { head: pull.headOid, at, again } : { head: pull.headOid, at };
       recordDecision(app.db, {
         kind: "land",
         repoId: repo.id,
         issueId: pull.id,
-        state: { head: pull.headOid, at: `${pull.headOid}:${baseOid}` },
+        state,
         answer: "red",
         p: 1,
         by: "rule",
         ms: 0,
       });
       addLearned(app.config.dataDir, pull.id, red.learn);
-      addComment(app, by, repo, getIssueById(app.db, pull.id) ?? pull, red.comment);
+      if (!again) addComment(app, by, repo, getIssueById(app.db, pull.id) ?? pull, red.comment);
     },
   });
+}
+
+/** How long a red neither side has moved off waits before it is gated once more (#3155). */
+export const REGATE_RED_MS = 30 * 60_000;
+
+/**
+ * What a `red` land decision holds: the head it was red on, `head:base`
+ * as `at`, and `again` when it is the re-gate that reproduced it.
+ */
+interface RedState {
+  readonly head: string;
+  readonly at: string;
+  readonly again?: true;
+}
+
+/** The red a land decision tells, read off the ledger's untyped state; undefined for any other. */
+function redOf(told: Decision | undefined): RedState | undefined {
+  if (told?.answer !== "red") return undefined;
+  const state = told.state;
+  if (typeof state !== "object" || state === null) return undefined;
+  const { head, at, again } = state as Record<string, unknown>;
+  if (typeof head !== "string" || typeof at !== "string") return undefined;
+  return again === true ? { head, at, again } : { head, at };
+}
+
+/** `told` is a red on this `head:base`. */
+function redAt(told: Decision | undefined, at: string): boolean {
+  return redOf(told)?.at === at;
+}
+
+/** A red that is old enough, and not itself a re-gate, is gated once more. */
+export function regateDue(red: Decision, now: number): boolean {
+  if (redOf(red)?.again === true) return false;
+  return now - Date.parse(red.createdAt) >= REGATE_RED_MS;
 }
 
 /** The queue's gate: the full tier on the candidate's tip, asked as its first pull. */
