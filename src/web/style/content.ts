@@ -1044,7 +1044,6 @@ form.inline { display: inline; margin-left: auto; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 45%;
 }
 .finder .palette-item .grow { font-family: var(--mono); font-size: 12.5px; }
-.finder-note { color: var(--faint); font-variant-numeric: tabular-nums; }
 
 /* ---- the editor ---- */
 .editor-head {

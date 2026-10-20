@@ -307,6 +307,9 @@ describe("the code browser on the web", () => {
     // The fallback is a real, populated tree of links in the same page.
     expect(html).toContain('class="ex-file"');
     expect(html).toContain(`data-paths="/alice/beacon/paths/main"`);
+    // The footnote is drawn with §5 text utilities, not a one-off class.
+    expect(html).not.toContain("finder-note");
+    expect(html).toContain('<span class="muted small num"></span>');
   });
 
   // ---- branches ----

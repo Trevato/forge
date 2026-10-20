@@ -878,7 +878,7 @@ export const codeJs = /* js */ `
     if (!dlg || !dlg.showModal) { location.href = repoBase + '/tree/' + encodeURIComponent(repoRef); return; }
     var input = dlg.querySelector('.palette-input');
     var list = dlg.querySelector('.palette-list');
-    var note = dlg.querySelector('.finder-note');
+    var note = dlg.querySelector('.palette-foot > span');
     var at = 0;
 
     function render(rows) {

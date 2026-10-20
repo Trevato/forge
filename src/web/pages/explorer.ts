@@ -274,7 +274,7 @@ export function finderDialog(): Html {
     />
     <div class="palette-list" role="listbox" aria-label="Files"></div>
     <div class="palette-foot">
-      <span class="finder-note"></span><span class="spacer"></span> <kbd>↑</kbd
+      <span class="muted small num"></span><span class="spacer"></span> <kbd>↑</kbd
       ><kbd>↓</kbd> navigate <kbd>↵</kbd> open <kbd>esc</kbd> close
     </div>
   </dialog>`;
