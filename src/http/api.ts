@@ -358,6 +358,8 @@ import { readRunLog, subscribeRunLog } from "../runs/log.ts";
 import { blobForRender, commitLog, listRefs, listTree } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
 import type { Result } from "../kernel/result.ts";
+import { sizesView } from "../spawn/sizes.ts";
+import { holds, weakEtag } from "./etag.ts";
 import { inviteLink, list as listInviteLinks, mint as mintInviteLink, revoke as revokeInviteLink } from "../actions/invites.ts";
 import { originForRepo, type OriginRepoRow } from "../core/origins.ts";
 import { subscribe as subscribeJob, type MirrorJob } from "../origins/jobs.ts";
@@ -4883,6 +4885,15 @@ export function apiRoutes(router: Router<Handler>): void {
     const denied = ctx.auth.user === undefined ? undefined : requireScope(ctx, "ro");
     if (denied) return denied;
     return json(await familyView(ctx.app, ctx.auth.user?.isAdmin === true));
+  });
+
+  // What small, medium and large mean: public, and cacheable by ETag.
+  router.add("GET", "/api/v1/forges/sizes", (ctx) => {
+    const text = JSON.stringify(sizesView());
+    const etag = weakEtag(text);
+    const headers = { etag, "cache-control": "public, max-age=300" };
+    if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+    return new Response(text, { headers: { "content-type": "application/json", ...headers } });
   });
 
   // A forge's children (docs/SPAWN.md): an admin's, planned before made.

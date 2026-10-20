@@ -516,7 +516,7 @@ forge can be a parent. The terminal shows the count, not the release names.
 
 A spawned forge's own code is a fork of its parent's (`<org>/forge`, chosen
 `followMode` `tell-me` or `take-updates`; in `take-updates` the hourly check puts what the parent gained in a pull.
-A spawn may also name a `size`: `small`, `medium` or `large` (`src/spawn/sizes.ts` maps each to CPU, memory and disk). It is recorded in the plan only when given, so a plan without one hashes as it always did, and an unknown size is a 422 on `size`. Nothing enforces the limits yet, and the table's numbers are provisional.
+A spawn may also name a `size`: `small`, `medium` or `large` (`src/spawn/sizes.ts` maps each to CPU, memory and disk). It is recorded in the plan only when given, so a plan without one hashes as it always did, and an unknown size is a 422 on `size`. Nothing enforces the limits yet, and the table's numbers are provisional. `GET /api/v1/forges/sizes` (no sign-in, ETag, cached for 5 minutes) and the MCP tool `sizes` give the same answer — each size's CPU, memory and disk, read from that table, and one sentence on what it is for — so a page or an agent offering a size reads it there.
  Once an hour, and
 on demand, a forge that follows and has not severed fetches its parent's code into
 `refs/upstream/*` of its own `<org>/forge` (no branch of the fork moves) and keeps

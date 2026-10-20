@@ -28,3 +28,18 @@ export function parseSize(v: unknown): Result<Size, string> {
 export const DEFAULT_SIZE: Size = "small";
 
 export const isSize = (v: unknown): v is Size => typeof v === "string" && Object.hasOwn(SIZES, v);
+
+// What each size is for, never how big: the figures live only in SIZES.
+const SAYS: Readonly<Record<Size, string>> = {
+  small: "For a notes app, a small tool, a place to try things.",
+  medium: "For a busy app, or a few apps side by side.",
+  large: "For a crew's working forge, with room to build.",
+};
+
+/** What each size means, for a page or an agent to offer; read from SIZES. */
+export function sizesView(): { sizes: { size: Size; cpu: number; memoryMiB: number; diskMiB: number; says: string }[]; default: Size } {
+  return {
+    sizes: (Object.keys(SIZES) as Size[]).map((size) => ({ size, ...SIZES[size], says: SAYS[size] })),
+    default: DEFAULT_SIZE,
+  };
+}

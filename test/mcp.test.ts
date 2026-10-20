@@ -164,6 +164,7 @@ describe("the forge over MCP", () => {
     const listed = await call(rw, "tools/list");
     const names = listed.body.result.tools.map((t: { name: string }) => t.name);
     expect(names).toEqual([
+      "sizes",
       "apps",
       "repo",
       "here",

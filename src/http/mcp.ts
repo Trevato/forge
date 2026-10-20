@@ -182,6 +182,7 @@ import { parentForgeFor } from "../core/parent_releases.ts";
 import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
 import { resourceMetadataUrl } from "./oauth.ts";
 import { body, boundedBody, json } from "./respond.ts";
+import { sizesView } from "../spawn/sizes.ts";
 import type { Router } from "./router.ts";
 import { mayReadRuns, runForReader } from "../actions/runs.ts";
 import { manifestFor } from "../actions/here.ts";
@@ -385,6 +386,14 @@ function boardFailed(e: BoardError): Answer {
 }
 
 const TOOLS: readonly Tool[] = [
+  {
+    name: "sizes",
+    description:
+      "What a child forge's sizes mean: small, medium and large, each with its CPU, memory and disk, and one sentence about it.",
+    inputSchema: { type: "object", properties: {} },
+    writes: false,
+    run: () => good(sizesView()),
+  },
   {
     name: "apps",
     description:
