@@ -275,7 +275,7 @@ export async function spawnDoor(
   }
   // A stranger may start only a few children a day; the plan above is free.
   if (anon) {
-    const limit = checkAnonSpawn(ctx.request);
+    const limit = checkAnonSpawn(ctx.app.db, ctx.request);
     if (!limit.allowed)
       return {
         status: 429,
@@ -294,7 +294,7 @@ export async function spawnDoor(
     ...(modelEndpoint === undefined ? {} : { modelEndpoint }),
   });
   if (!made.ok) return spawnWords(made.error);
-  if (anon && !made.value.existed) noteAnonSpawn(ctx.request);
+  if (anon && !made.value.existed) noteAnonSpawn(ctx.app.db, ctx.request);
   // Its apps come up now, so the first visit after a claim finds them awake.
   if (!made.value.existed) {
     void bootHostedChild(ctx.app, made.value.name);

@@ -11,7 +11,8 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { usePlacement, useProbe } from "../src/spawn/door.ts";
-import { resetAnonSpawns } from "../src/spawn/rate.ts";
+import { Database } from "bun:sqlite";
+import { ANON_SPAWNS_GLOBAL_PER_DAY, ANON_SPAWNS_PER_DAY, checkAnonSpawn, noteAnonSpawn, resetAnonSpawns } from "../src/spawn/rate.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -39,8 +40,8 @@ describe("anonymous spawn", () => {
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-spawn-anon-"));
-    resetAnonSpawns();
     app = createApp({ dataDir, port: 0, forgeRepo: "alice/forge-code" });
+    resetAnonSpawns(app.db);
     servers = await serve(app);
     base = servers.url;
     const a = await createUser(app.db, {
@@ -164,7 +165,24 @@ describe("anonymous spawn", () => {
     // A dry run is free: the plan still comes back.
     const dry = await post({ name: "kid5" });
     expect(dry.status).toBe(200);
-    resetAnonSpawns();
+    resetAnonSpawns(app.db);
+  });
+
+  test("the counts survive a restart and a global cap holds", async () => {
+    const req = new Request("http://x/", { headers: { "x-forwarded-for": "203.0.113.9" } });
+    for (let i = 0; i < ANON_SPAWNS_PER_DAY; i++) noteAnonSpawn(app.db, req);
+    expect(checkAnonSpawn(app.db, req).allowed).toBe(false);
+    // A new connection to the same file still sees the counted spawns.
+    const again = new Database(join(dataDir, "forge.db"));
+    expect(checkAnonSpawn(again, req).allowed).toBe(false);
+    again.close();
+    // They age out after a day.
+    expect(checkAnonSpawn(app.db, req, Date.now() + 86_400_001).allowed).toBe(true);
+    resetAnonSpawns(app.db);
+    for (let i = 0; i < ANON_SPAWNS_GLOBAL_PER_DAY; i++)
+      noteAnonSpawn(app.db, new Request(`http://x/${i}`, { headers: { "x-forwarded-for": `198.51.100.${i}` } }));
+    expect(checkAnonSpawn(app.db, req).allowed).toBe(false);
+    resetAnonSpawns(app.db);
   });
 
   test("a signed-in spawn still works (regression)", async () => {
