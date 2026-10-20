@@ -24,6 +24,7 @@
  * told-but-stuck when nobody on the crew can take it.
  */
 
+import { spanWords } from "../../apps/golden_path.ts";
 import { appsRuntime, type EnvStatus, envsFor } from "../../apps/runtime.ts";
 import { appsForRepos } from "../../core/apps.ts";
 import { reposWithBuilder } from "../../core/agents.ts";
@@ -60,6 +61,9 @@ export interface ShelfReads {
   /** The page's memo of production's history, when the page words more
    * than the shelf — the home's own rows ask the same question. */
   readonly history?: ServingHistory | undefined;
+  /** Milliseconds from New app to the first preview, by repo id; a row
+   * wears it beside its name only when it has one. */
+  readonly firstPreview?: ReadonlyMap<string, number> | undefined;
 }
 
 /**
@@ -291,6 +295,7 @@ export async function shelfRows(
       const title = mine
         ? repo.name
         : html`<span class="muted">${repo.ownerName}/</span>${repo.name}`;
+      const first = reads.firstPreview?.get(repo.id);
       return row({
         href: repoBase(repo),
         nav: true,
@@ -299,7 +304,9 @@ export async function shelfRows(
         titleAttr: repo.description || repo.name,
         // The word leads and the description follows, so the meta line's one
         // ellipsis falls on the description (whole in the title), never the word.
-        meta: html`${happening}${repo.description
+        meta: html`${happening}${first === undefined
+          ? null
+          : html` · first preview ${spanWords(first)}`}${repo.description
           ? html` · ${repo.description}`
           : null}`,
         trail: raw(

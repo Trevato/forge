@@ -29,7 +29,7 @@ import { planningAvailable } from "../../crew/plan.ts";
 import { appNameJs, deriveAppName } from "./apps-name.ts";
 import { envPull, previewEnv, type EnvName } from "../../apps/data.ts";
 import { appsRuntime, type EnvStatus, envsFor } from "../../apps/runtime.ts";
-import { goldenPath, goldenPathLine } from "../../apps/golden_path.ts";
+import { firstPreviews, goldenPath, goldenPathLine } from "../../apps/golden_path.ts";
 import { appHostSuffix } from "../../apps/host.ts";
 import { appsForRepos, type AppRecord } from "../../core/apps.ts";
 import { accessAllows, listOrgsForUser, orgAccess } from "../../core/orgs.ts";
@@ -205,6 +205,7 @@ export async function appsList(ctx: Ctx): Promise<Response> {
     shelfRows(
       ctx,
       shown.map((e) => e.repo),
+      { firstPreview: firstPreviews(ctx.app.db, shown.map((e) => e.record)) },
     ),
   );
   const cost = timePhase(ctx.request, "cost", () =>

@@ -23,6 +23,7 @@ import { commitToBranch } from "../src/actions/repos.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import { getAgentByName, listCrew } from "../src/core/agents.ts";
 import { listAppEnvNames } from "../src/core/app_env.ts";
+import { spanWords } from "../src/apps/golden_path.ts";
 import { getAppByRepo } from "../src/core/apps.ts";
 import { getIssue } from "../src/core/issues.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
@@ -900,6 +901,24 @@ describe("apps, runs and the crew on the web", () => {
       .run(hello.id, new Date(Date.now() + 60_000).toISOString());
     expect(await bodyOf(alice, "/alice/hello/files")).toMatch(/first preview [^<]* after New app/);
     app.db.query("DELETE FROM run WHERE id = 'gp-strip'").run();
+  });
+
+  test("/apps says the first preview's time beside the name, and nothing without one", async () => {
+    app.db.query("UPDATE run SET serving_at = NULL WHERE env LIKE 'pull-%'").run();
+    expect(await bodyOf(alice, "/apps")).not.toContain("first preview");
+    app.db
+      .query(
+        `INSERT INTO run (id, repo_id, kind, env, state, created_at, serving_at)
+         VALUES ('gp-list', ?1, 'deploy', 'pull-78', 'ok', ?2, ?2)`,
+      )
+      .run(hello.id, new Date(Date.now() + 60_000).toISOString());
+    const listed = words(await bodyOf(alice, "/apps"));
+    const secs = Math.round((Date.now() + 60_000 - Date.parse(getAppByRepo(app.db, hello.id)!.createdAt)) / 1000);
+    // Created a minute before "now", give or take the seconds the test took.
+    const figures = [secs - 2, secs - 1, secs, secs + 1, secs + 2].map((n) => spanWords(n * 1000));
+    expect(figures.some((f) => listed.includes(`· first preview ${f}`))).toBe(true);
+    expect(listed).toMatch(/class="row-meta"[^]*first preview/);
+    app.db.query("DELETE FROM run WHERE id = 'gp-list'").run();
   });
 
   // ---- CSRF ----

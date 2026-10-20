@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { createRepo } from "../src/actions/repos.ts";
-import { goldenPath, goldenPathLine, spanWords } from "../src/apps/golden_path.ts";
+import { firstPreviews, goldenPath, goldenPathLine, spanWords } from "../src/apps/golden_path.ts";
 import { appPace } from "../src/actions/apps.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { createApp as insertApp, type AppRecord } from "../src/core/apps.ts";
@@ -118,5 +118,24 @@ describe("the golden path's figures", () => {
     expect(spanWords(3 * 86_400_000 + 5 * 3_600_000)).toBe("3d 5h");
     expect(spanWords(3_900_000)).toBe("1h 5m");
     expect(spanWords(3 * 86_400_000)).toBe("3d");
+  });
+
+  test("firstPreviews reads many apps in one query and matches goldenPath", async () => {
+    const apps = [await fresh(), await fresh(), await fresh()];
+    deploy(apps[0]!.repoId, "pull-1", 0, 9_000);
+    deploy(apps[0]!.repoId, "pull-2", 0, 30_000);
+    deploy(apps[1]!.repoId, "pull-1", 0, null);
+    let queries = 0;
+    const counted = new Proxy(app.db, {
+      get(target, key) {
+        if (key === "query" || key === "prepare") queries += 1;
+        const value = Reflect.get(target, key, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const found = firstPreviews(counted, apps);
+    expect(queries).toBe(1);
+    expect([...found]).toEqual([[apps[0]!.repoId, 9_000]]);
+    expect(goldenPath(app.db, apps[0]!).firstPreviewMs).toBe(9_000);
   });
 });

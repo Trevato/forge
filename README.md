@@ -258,7 +258,7 @@ Every page links one static, immutable script (`src/web/beacon.ts`, under 2 KB, 
 
 ### How long the golden path took
 
-An app's repository home wears the pace on its app strip, the terminal's **Deploys** screen shows it under the title, and `GET /api/v1/repos/:owner/:name/app` returns it as `firstPreviewMs` and `firstProductionChangeMs`. It measures milliseconds from New app to the first preview that served, and from New app to the first production deploy that began after the first merged pull; a figure is left out until it exists. Anyone who can read the repository sees it (`goldenPath` in `src/apps/golden_path.ts`, `appPace` for the terminal).
+An app's repository home wears the pace on its app strip, the terminal's **Deploys** screen shows it under the title, `/apps` (and any shelf of apps) says `first preview 14s` in each row's meta line once one has served (one grouped query, `firstPreviews`; the terminal has no apps list of its own to carry it), and `GET /api/v1/repos/:owner/:name/app` returns it as `firstPreviewMs` and `firstProductionChangeMs`. It measures milliseconds from New app to the first preview that served, and from New app to the first production deploy that began after the first merged pull; a figure is left out until it exists. Anyone who can read the repository sees it (`goldenPath` in `src/apps/golden_path.ts`, `appPace` for the terminal).
 
 ### Every app's visitors
 

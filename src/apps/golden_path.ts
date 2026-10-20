@@ -49,6 +49,32 @@ export function goldenPath(db: Database, app: Pick<AppRecord, "repoId" | "create
   };
 }
 
+/**
+ * The first-preview figure for many apps in one query, keyed by repo id; an
+ * app with none (or an unreadable birth date) has no entry.
+ */
+export function firstPreviews(
+  db: Database,
+  apps: readonly Pick<AppRecord, "repoId" | "createdAt">[],
+): Map<string, number> {
+  const out = new Map<string, number>();
+  if (apps.length === 0) return out;
+  const marks = apps.map(() => "?").join(",");
+  const rows = db
+    .query<{ repo_id: string; at: string | null }, string[]>(
+      `SELECT repo_id, MIN(serving_at) AS at FROM run
+        WHERE repo_id IN (${marks}) AND kind = 'deploy' AND env LIKE 'pull-%' AND serving_at IS NOT NULL
+        GROUP BY repo_id`,
+    )
+    .all(...apps.map((a) => a.repoId));
+  const born = new Map(apps.map((a) => [a.repoId, Date.parse(a.createdAt)]));
+  for (const r of rows) {
+    const ms = Date.parse(r.at ?? "") - (born.get(r.repo_id) ?? NaN);
+    if (!Number.isNaN(ms)) out.set(r.repo_id, Math.max(0, ms));
+  }
+  return out;
+}
+
 /** `14s`, `2m 14s`, `9m`, `1h 5m`, `3d`: two units at most. */
 export function spanWords(ms: number): string {
   const s = Math.round(Math.max(0, ms) / 1000);
