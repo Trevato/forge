@@ -101,3 +101,8 @@ test("every not-a-page entry is a real route with a reason", () => {
 test("every listed path answers 200 to an admin", async () => {
   for (const p of declared()) expect([p, (await get(p)).status]).toEqual([p, 200]);
 });
+
+test("app.looks stays within 24 paths, each once", () => {
+  expect(declared().length).toBeLessThanOrEqual(24);
+  expect(new Set(declared()).size).toBe(declared().length);
+});
