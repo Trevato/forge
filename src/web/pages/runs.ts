@@ -29,6 +29,7 @@ import {
 import { getRun, type Run, type RunKind } from "../../core/runs.ts";
 import { getUsage, issueUsage } from "../../core/usage.ts";
 import { getUsersByIds, type User } from "../../core/users.ts";
+import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
@@ -302,11 +303,19 @@ export async function runsList(ctx: Ctx): Promise<Response> {
 export async function runPage(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const reading = performance.now();
   const found = runLog(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "");
+  notePhase(ctx.request, "log", performance.now() - reading);
   if (!found.ok) return notFoundPage(ctx);
   const { run, lines, truncated, logHidden } = found.value;
+  const looking = performance.now();
   const looks = logHidden ? [] : readLooks(ctx.app.config.dataDir, run);
-  return await runView(ctx, repo, run, lines, truncated, logHidden, looks);
+  notePhase(ctx.request, "looks", performance.now() - looking);
+  const rendering = performance.now();
+  const view = await runView(ctx, repo, run, lines, truncated, logHidden, looks);
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return view;
 }
 
 // POST /:owner/:name/runs/:id/steer  { text }
