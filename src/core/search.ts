@@ -12,8 +12,10 @@
  *
  * **No index of its own.** Repos and issues are already indexed rows; code
  * is answered by `git grep` against the object store, which is the only copy
- * of the truth. Nothing here caches, so nothing here can go stale — and
- * there is no derived table to rebuild when git and the index disagree.
+ * of the truth. The one memory is a bounded cache of a repo's grep answer
+ * keyed by (repo id, commit oid, query): a commit never changes, so the
+ * entry cannot go stale, and a new commit is a new key. It sits below
+ * visibility — it is asked only for repos the viewer already may see.
  *
  * **Visibility is the same visibility.** Local rows come through the same
  * `VISIBLE` predicate a repo listing uses, and code is grepped only in repos
@@ -22,6 +24,8 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { runGitCapture } from "../git/env.ts";
 import { isSafeRef } from "../git/guard.ts";
 import { repoDir } from "../git/repos.ts";
@@ -339,6 +343,18 @@ export async function grepRepo(
   query: string,
   maxCount = MAX_HITS_PER_REPO,
 ): Promise<{ path: string; line: number; text: string }[]> {
+  return (await grepRun(dir, ref, query, maxCount)) ?? [];
+}
+
+type RawHit = { path: string; line: number; text: string };
+
+/** Hits, or null when the grep did not complete (so it is not worth keeping). */
+async function grepRun(
+  dir: string,
+  ref: string,
+  query: string,
+  maxCount: number,
+): Promise<RawHit[] | null> {
   const pattern = cleanQuery(query);
   if (pattern === "" || !isSafeRef(ref)) return [];
 
@@ -362,7 +378,7 @@ export async function grepRepo(
   );
   // Exit 1 is "no match" — data, not failure. Anything else (a repo with no
   // commits, a killed process) is simply no results from this repo.
-  if (run.code !== 0 && run.code !== 1) return [];
+  if (run.code !== 0 && run.code !== 1) return null;
 
   // `-z` makes each record `ref:path NUL line NUL text`, so a path with a
   // colon in it (`a:1:b.txt`) cannot be split at the wrong colon.
@@ -381,6 +397,74 @@ export async function grepRepo(
       text: (match[3] ?? "").slice(0, MAX_LINE_CHARS),
     });
     if (hits.length >= maxCount) break;
+  }
+  return hits;
+}
+
+const CACHE_MAX = 4_000;
+const grepCache = new Map<string, RawHit[]>();
+
+/**
+ * The commit a branch points at, read from the ref files rather than a
+ * subprocess. Null when it cannot be told for certain (a tag of the same
+ * name, a missing ref): the caller then greps uncached.
+ */
+async function branchOid(dir: string, branch: string): Promise<string | null> {
+  if (!isSafeRef(branch) || branch.includes("..")) return null;
+  const oid = /^[0-9a-f]{40,64}$/;
+  const slurp = (path: string) =>
+    readFile(path, "utf8").then((t) => t, () => null);
+  const packed = (await slurp(join(dir, "packed-refs"))) ?? "";
+  const inPacked = (ref: string) => {
+    for (const line of packed.split("\n")) {
+      if (line.endsWith(` ${ref}`) && oid.test(line.slice(0, line.indexOf(" "))))
+        return line.slice(0, line.indexOf(" "));
+    }
+    return null;
+  };
+  if (inPacked(`refs/tags/${branch}`) !== null) return null;
+  if ((await slurp(join(dir, "refs", "tags", branch))) !== null) return null;
+  const loose = (await slurp(join(dir, "refs", "heads", branch)))?.trim();
+  if (loose !== undefined) return loose !== null && oid.test(loose) ? loose : null;
+  return inPacked(`refs/heads/${branch}`);
+}
+
+/** Greps actually run — a test reads it to prove a repeat ran none. */
+let grepsRun = 0;
+export const grepCount = (): number => grepsRun;
+
+/**
+ * Cached by the commit the branch points at, and grepped at that commit, so
+ * the key and the content cannot disagree if a push lands in between. The
+ * branch's oid comes from the ref files, not from asking git, so a search of
+ * fifty repos spawns nothing when it is answered from memory. Whenever the
+ * name could mean something else to git (a tag of the same name) `branchOid`
+ * gives up and the repo is grepped by name, which is git's own resolution.
+ */
+async function grepCached(
+  repo: Repo,
+  dir: string,
+  query: string,
+): Promise<RawHit[]> {
+  const ref = repo.defaultBranch;
+  const oid = await branchOid(dir, ref);
+  if (oid === null) {
+    grepsRun++;
+    return (await grepRun(dir, ref, query, MAX_HITS_PER_REPO)) ?? [];
+  }
+  const key = `${repo.id}\0${oid}\0${cleanQuery(query)}`;
+  const kept = grepCache.get(key);
+  if (kept !== undefined) {
+    grepCache.delete(key);
+    grepCache.set(key, kept);
+    return kept.map((h) => ({ ...h }));
+  }
+  grepsRun++;
+  const hits = await grepRun(dir, oid, query, MAX_HITS_PER_REPO);
+  if (hits === null) return [];
+  grepCache.set(key, hits.map((h) => ({ ...h })));
+  if (grepCache.size > CACHE_MAX) {
+    grepCache.delete(grepCache.keys().next().value as string);
   }
   return hits;
 }
@@ -404,9 +488,9 @@ export async function grepRepos(
     const slice = considered.slice(i, i + batch);
     const found = await Promise.all(
       slice.map((repo) =>
-        grepRepo(
+        grepCached(
+          repo,
           repoDir(reposRoot, repo.ownerName, repo.name),
-          repo.defaultBranch,
           query,
         ),
       ),
