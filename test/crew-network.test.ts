@@ -46,6 +46,13 @@ describe("isNetworkError", () => {
       ),
     ).toBe(true);
     expect(isNetworkError(outcome({ result: "read ECONNRESET" }))).toBe(true);
+    // A typographic apostrophe, and the other ways a dead network is worded.
+    for (const result of [
+      "API Error: Can\u2019t reach the API server",
+      "Unable to connect to API (FailedToOpenSocket)",
+      "getaddrinfo ENETUNREACH api.anthropic.com",
+    ])
+      expect(isNetworkError(outcome({ result }))).toBe(true);
     expect(
       isNetworkError(outcome({ result: "You hit your session limit" })),
     ).toBe(false);
@@ -215,6 +222,18 @@ describe("a network outage is not a provider limit", () => {
     expect(interruptionOf("no changes pushed: Can't reach the API server")).toBe(
       "network error",
     );
+  });
+
+  test("summaries in the other wordings of a dead network read as one", () => {
+    for (const said of [
+      "API Error: Can\u2019t reach the API server",
+      "Unable to connect to API (FailedToOpenSocket)",
+      "getaddrinfo ENETUNREACH api.anthropic.com",
+      "write EPIPE",
+    ])
+      expect(interruptionOf(`no changes pushed: ${said} (api_error)`)).toBe(
+        "network error",
+      );
   });
 
   test("its summary reads as a network error", () => {

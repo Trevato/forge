@@ -8,6 +8,7 @@
 
 import type { Database } from "bun:sqlite";
 import { whenText } from "./limits.ts";
+import { NETWORK as NETWORK_ERROR } from "./network.ts";
 
 export type Interruption = "provider limit" | "network error" | "restart";
 
@@ -16,8 +17,8 @@ export const INTERRUPTED = "interrupted: ";
 
 const PROVIDER =
   /rate[ _-]?limit|session limit|usage limit|weekly limit|hit your \w+ limit|overloaded|too many requests|\b(?:429|529)\b|\(api_error\)|may use is resting|resting —/i;
-const NETWORK =
-  /ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|fetch failed|unable to connect|connection error|could not reach|can'?t reach the API server|unreachable|socket hang up/i;
+// A summary also says it in words an outcome never carries.
+const NETWORK = new RegExp(`${NETWORK_ERROR.source}|could not reach|unreachable`, "i");
 const RESTART =
   /^cancelled$|interrupted by a restart|stopped for a restart|the forge stopped/i;
 
