@@ -42,7 +42,9 @@ export interface StandInCrew {
 }
 
 /** A forge with checks and a crew whose Claude Code is the stand-in. */
-export async function startStandInCrew(): Promise<StandInCrew> {
+export async function startStandInCrew(
+  options: { readonly tickMs?: number } = {},
+): Promise<StandInCrew> {
   const dataDir = await mkdtemp(join(tmpdir(), "forge-crew-"));
   const app = createApp({ dataDir, port: 0 });
   const servers = await serve(app);
@@ -176,6 +178,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     runTimeoutMs: 60_000,
     networkRetryScale: 0,
     reviewBudgetMs: 4_000,
+    tickMs: options.tickMs,
   });
   const a = await createUser(app.db, {
     origin: "seed",
@@ -233,6 +236,7 @@ export async function agentRunSettled(
   repo: Repo,
   where: (run: Run) => boolean,
   timeoutMs = 30_000,
+  pollMs = 100,
 ): Promise<Run> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -244,7 +248,7 @@ export async function agentRunSettled(
         run.state === "cancelled")
     )
       return run;
-    await Bun.sleep(100);
+    await Bun.sleep(pollMs);
   }
   throw new Error("agent run did not settle");
 }

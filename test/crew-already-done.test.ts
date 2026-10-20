@@ -26,39 +26,48 @@ describe("the crew, with a stand-in Claude Code: already done", () => {
   let bot: User;
   let repo: Repo;
 
-  const settled = (where: (run: Run) => boolean, timeoutMs?: number) =>
-    agentRunSettled(app, repo, where, timeoutMs);
+  const settled = (where: (run: Run) => boolean) =>
+    agentRunSettled(app, repo, where, 10_000, 5);
 
   beforeAll(async () => {
-    standIn = await startStandInCrew();
+    // A quick tick: the crew picks an assignment up at once, nothing waits
+    // out the five-second default.
+    standIn = await startStandInCrew({ tickMs: 20 });
     ({ app, alice, bot, repo } = standIn);
   }, 30_000);
 
   afterAll(() => stopStandInCrew(standIn));
 
-  test("a decline naming a commit on main is an already-done run; without one that is on the base it is a decline", async () => {
+  const ask = async (title: string, marker: string) => {
+    const issue = openIssue(app, alice, repo, {
+      title,
+      body: `DONE-ON-MAIN ${marker}`,
+    });
+    if (!issue.ok) throw new Error("issue");
+    expect(assignIssue(app, alice, repo, issue.value, bot).ok).toBe(true);
+    return settled((r) => r.issueId === issue.value.id);
+  };
+
+  test("a decline naming a commit on main is an already-done run", async () => {
     const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
     const main = await resolveOid(dir, `refs/heads/${repo.defaultBranch}`);
-    const ask = async (title: string, marker: string) => {
-      const issue = openIssue(app, alice, repo, {
-        title,
-        body: `DONE-ON-MAIN ${marker}`,
-      });
-      if (!issue.ok) throw new Error("issue");
-      expect(assignIssue(app, alice, repo, issue.value, bot).ok).toBe(true);
-      return settled((r) => r.issueId === issue.value.id);
-    };
     const named = await ask("Already built", "NAMED");
     expect(named.state).toBe("ok");
     expect(named.summary).toBe(`already done: ${main}`);
     expect(named.summary).toMatch(/^already done: [0-9a-f]{40}$/);
+  }, 5_000);
+
+  test("a decline naming no commit is a decline", async () => {
     const none = await ask("Built, says who", "NONE");
     expect(none.state).toBe("failed");
     expect(none.summary).toBe("declined: already done on main");
+  }, 5_000);
+
+  test("a decline naming a commit not on the base is a decline", async () => {
     const absent = await ask("Built somewhere", "ABSENT");
     expect(absent.state).toBe("failed");
     expect(absent.summary).toBe(
       "declined: already done on main in deadbeefdeadbeef",
     );
-  }, 90_000);
+  }, 5_000);
 });

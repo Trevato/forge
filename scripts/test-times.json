@@ -16,7 +16,7 @@
   "test/board-windows.test.ts": 6,
   "test/checks.test.ts": 26.3,
   "test/cloud.test.ts": 7.1,
-  "test/crew-already-done.test.ts": 16.8,
+  "test/crew-already-done.test.ts": 1.2,
   "test/crew-check-failed.test.ts": 12.7,
   "test/crew-continues.test.ts": 12.5,
   "test/crew-declines.test.ts": 11.3,
