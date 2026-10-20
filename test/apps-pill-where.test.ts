@@ -149,9 +149,11 @@ describe("the pill's script", () => {
       let name = "";
       const pill = { type: "", textContent: "", style: {}, setAttribute: (k: string, v: string) => { if (k === "aria-label") name = v; }, addEventListener() {} };
       const el = () => ({ style: {}, appendChild() {}, setAttribute() {}, addEventListener() {}, set hidden(_v: boolean) {} });
+      let buttons = 0;
       const doc = {
         currentScript: { src: "https://forge.test/assets/x.js", dataset: data },
-        createElement: (t: string) => (t === "button" ? pill : { ...el(), attachShadow: () => ({ appendChild() {} }) }),
+        // The first button is the pill; the panel's close button is another.
+        createElement: (t: string) => (t === "button" && buttons++ === 0 ? pill : { ...el(), attachShadow: () => ({ appendChild() {} }) }),
         addEventListener() {},
         body: { appendChild() {} },
       };
