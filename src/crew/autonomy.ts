@@ -108,6 +108,7 @@ import {
   parkReason,
   parkReasons,
 } from "./parks.ts";
+import { reserveOf, reserveWords, short } from "./reserve.ts";
 import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import {
@@ -123,12 +124,11 @@ import { lastWaits, noteWaits, tallyWaits, type Wait, waitWords } from "./waits.
 const log = createLog("autonomy");
 
 export const AUTONOMY_TICK_MS = 60_000;
-/** A planner is not asked again sooner than this unless the map changed. */
 /**
- * How soon a dry map is planned again. A repository on its own is never
- * finished: when nothing is ready and nothing is in flight, the planner
- * is asked for the next increment, with only a short floor so a planner
- * that produced nothing is not asked every minute.
+ * How soon a planner whose last pass did not end well — a decline a person
+ * answered, a failure — is asked again. A pass that ended well has no
+ * floor: while the reserve is short the planner is asked again as soon as
+ * the map moves, and a pass that moved nothing is held by `skipsReplan`.
  */
 const REPLAN_AFTER_MS = 20 * 60_000;
 
@@ -368,8 +368,8 @@ export async function driveRepo(
   const ready = held.startable;
   if (slotted.length >= paced.slots) {
     // The builders are busy; the planner can still refill the map, when
-    // it is thin — counted, never assumed: a full crew with a full map is
-    // not a reason to plan (#1097).
+    // the reserve is short — counted, never assumed: a full crew with a
+    // full reserve is not a reason to plan (#1097, #3237).
     if (await planIfThin(app, repo, by, crew, active, ready.length, now))
       return "planned";
     return "full";
@@ -407,17 +407,16 @@ export async function driveRepo(
       size: routed.size,
       by: routed.by,
     });
-    // Planning runs alongside building: when the ready list is thin, the
+    // Planning runs alongside building: when the reserve is short, the
     // planner is asked now, not when the builders have run it dry.
     await planIfThin(app, repo, by, crew, active, ready.length - 1, now);
     return "picked";
   }
 
-  // Nothing is startable with slots free: the planner is asked, thin or
-  // dry, at most every REPLAN_AFTER_MS. When ready issues are held by what
-  // re-planning lifts — stalled, capped, parked twice — it is asked with
-  // that breakdown, and neither a full plate nor its own unanswered
-  // decline holds it: nothing else will move them (#2244).
+  // Nothing is startable with slots free: the planner is asked. When
+  // ready issues are held by what re-planning lifts — stalled, capped,
+  // parked twice — it is asked with that breakdown, and neither a full
+  // plate nor its own unanswered decline holds it: nothing else will move them (#2244).
   const stuck = replannable(held).length > 0 ? held : null;
   if (await planIfThin(app, repo, by, crew, active, 0, now, stuck)) return "planned";
   return "idle";
@@ -462,12 +461,9 @@ export function startable(
   return heldBy(app, repo, ready, crew, active).startable;
 }
 
-/** The map is thin below this many ready issues; the planner refills it. */
-const THIN_MAP = 3;
-
 /**
- * Give the planner the direction when the map is thin — fewer than a few
- * ready issues — or when the crew has handed it an issue it parked twice,
+ * Give the planner the direction when the reserve is short — fewer
+ * startable issues than two per builder slot (`reserve.ts`) — or when the crew has handed it an issue it parked twice,
  * and no planning run is in flight, and the last one is old enough.
  * Returns whether a planning run was set up. Planning runs alongside
  * building: the builders are never waited for.
@@ -596,7 +592,8 @@ async function planIfThin(
 ): Promise<boolean> {
   const handed = [...parkedTwice(app.db, [repo]), ...handedOverPulls(app.db, repo)];
   const limbs = pendingReplans(app.db, repo);
-  if (ready >= THIN_MAP && handed.length === 0 && limbs.length === 0) return false;
+  const reserve = reserveOf(ready, repo.autonomySlots);
+  if (!short(reserve) && handed.length === 0 && limbs.length === 0) return false;
   const planner = crew.find((c) => c.role === "planner")?.agent;
   if (planner === undefined) return notPlanned(repo, "no planner on the crew");
   if (repo.autonomyDirection.trim() === "")
@@ -619,7 +616,7 @@ async function planIfThin(
   // A limb a person handed over is owed one pass, whatever the map and
   // whatever the planner said of the direction before (#761).
   const limbsOwed = limbs.filter((r) => !given(app.db, repo, r.at));
-  if (ready >= THIN_MAP && owed.length === 0 && limbsOwed.length === 0) return false;
+  if (!short(reserve) && owed.length === 0 && limbsOwed.length === 0) return false;
   // Nothing startable for issues held since its last pass that re-planning
   // lifts: owed one pass like a hand-over, once (#2244).
   const unstuck = stuck === null ? [] : replannable(stuck).filter((issue) => heldSince(app, issue, seen));
@@ -643,9 +640,11 @@ async function planIfThin(
       return notPlanned(repo, "the planner declined; waiting for a person");
     if (lastPlan.state === "queued" || lastPlan.state === "running")
       return notPlanned(repo, "a planning run is in flight");
-    // A person's hand-over is not made to wait for the last pass's hour.
+    // Only a pass that did not end well waits out the floor; a person's
+    // hand-over never does.
     if (
       limbsOwed.length === 0 &&
+      lastPlan.state !== "ok" &&
       now.getTime() - new Date(lastPlan.created_at).getTime() <
         REPLAN_AFTER_MS
     )
@@ -678,11 +677,12 @@ async function planIfThin(
         ? "nothing startable; planner asked"
         : ready === 0
           ? "map ran dry; planner asked"
-          : "map is thin; planner asked",
+          : "reserve is short; planner asked",
     {
       repo: `${repo.ownerName}/${repo.name}`,
       planner: planner.user.username,
       ready,
+      reserve: reserveWords(reserve),
       ...(owed.length > 0
         ? { parkedTwice: owed.map((issue) => `#${issue.number}`).join(" ") }
         : {}),
@@ -1173,6 +1173,8 @@ export async function autonomyTick(
         // What the builders could start after the filters (#2143), and
         // what holds the rest, per filter (#2244).
         startable: held.startable.length,
+        // The standing reserve the planner keeps: startable/target (#3237).
+        reserve: reserveWords(reserveOf(held.startable.length, status.slots)),
         held: heldWords(held),
         active: status.active,
         slots: status.slots,

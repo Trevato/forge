@@ -15,6 +15,7 @@ import { OUTSIDE_LABEL, OUTSIDE_TITLE, saysOutside } from "../core/reports.ts";
 import type { Repo } from "../core/repos.ts";
 import { READER } from "./direct.ts";
 import { newsSince } from "./news.ts";
+import type { Reserve } from "./reserve.ts";
 import {
   REVIEW_ROUNDS,
   type Review,
@@ -124,7 +125,7 @@ export function systemPrompt(input: BriefInput): string {
       "- A worked example:",
       `  curl -sS -X POST -H "authorization: Bearer $FORGE_TOKEN" -H "content-type: application/json" "$FORGE_URL/api/v1/repos/${repo.ownerName}/${repo.name}/plan" -d '{"issues":[{"key":"a","title":"Refuse an unsigned upload","body":"Done: an unsigned upload is a 422.","pillar":"P0"},{"key":"b","title":"Show the upload in the feed","body":"Done: it is listed.","blockedBy":["a"],"pillar":"P1"},{"key":"c","title":"Offer a dark theme","later":true,"why":"No pillar needs it until the feed lands."}]}'`,
       "  It answers with what it opened (key and number), the numbers now ready, and those deferred.",
-      "- The direction is never finished. When what it names is built, propose its next increment in the same spirit: what a demanding user would want next, what is fragile, slow, ugly, untested or undocumented, what the pictures and the previews show is off. Leave the map with at least three ready issues, every time.",
+      "- The direction is never finished. When what it names is built, propose its next increment in the same spirit: what a demanding user would want next, what is fragile, slow, ugly, untested or undocumented, what the pictures and the previews show is off. Leave the map with the reserve your task names startable, every time.",
       '- An issue with a comment that starts "Parked by the crew" was tried and could not be finished as written. Split it into smaller issues, or rewrite what done looks like, or close it with a word if the direction no longer needs it — never leave it as it was. One the crew parked twice is yours: your task lists it, with what you may do with it.',
       "- Closing what you re-plan: PATCH …/issues/N with {\"state\":\"closed\",\"reason\":\"split\",\"into\":[A,B]} (open issues made since it was handed to you, or since the issue itself when it was never handed over), {\"state\":\"closed\",\"reason\":\"dropped\"} for an issue the crew wrote, or {\"state\":\"closed\",\"reason\":\"done\"} only when an \"already done on main\" note on it names commits on main. A person's ask is never yours to drop; nothing else is yours to close, and nothing to reopen.",
       "- Assign nobody and push nothing: the map is the result. The direction issue stays open.",
@@ -213,6 +214,8 @@ export interface TaskInput extends BriefInput {
   readonly stuck?: Stuck | undefined;
   /** For a planner: each team with a dial above zero and the work it holds (`team_share.ts`). */
   readonly owed?: readonly Owed[] | undefined;
+  /** For a planner: the startable issues against the standing reserve (`reserve.ts`). */
+  readonly reserve?: Reserve | undefined;
 }
 
 /** The reviewer's latest verdict, and the final answer of the run that did not push for it. */
@@ -271,7 +274,7 @@ function taskBody(input: TaskInput): string {
   const { issue } = input;
   const out: string[] = [];
   const isAgent = (name: string): boolean => name === input.agent.user.username;
-  const handed = [parkedTwiceLines(input), limbLines(input), stuckLines(input), teamLines(input)]
+  const handed = [reserveLines(input), parkedTwiceLines(input), limbLines(input), stuckLines(input), teamLines(input)]
     .filter((lines) => lines.length > 0)
     .flatMap((lines, n) => (n === 0 ? lines : ["", ...lines]));
   const readers = input.readers ?? new Set<string>();
@@ -628,6 +631,22 @@ function teamLines(input: TaskInput): string[] {
         `- ${team.slug} (${team.dial}% of builder starts): ${oneLine(team.charter) || "no charter"} — ${open} open, ${today} opened in the last day${open === 0 ? " — NONE READY, plan some now" : ""}`,
     ),
     `Label each issue you plan for a team with the team's slug: create the label if it is missing (POST ${api}/labels with {"name":"design","color":"7c3aed"}), then POST ${api}/issues/N/labels with {"labels":["design"]}. Keep a team's open issues enough to fill its share; an issue no team owns takes the share the dials leave.`,
+  ];
+}
+
+/**
+ * What a planner is told of the standing reserve (#3237): how many issues a
+ * builder could start now, how many the crew keeps, and that a pass which
+ * leaves it short says why on the direction — the word that keeps the
+ * forge from asking again before the map moves.
+ */
+function reserveLines(input: TaskInput): string[] {
+  const reserve = input.role === "planner" ? input.reserve : undefined;
+  if (reserve === undefined) return [];
+  const gap = Math.max(0, reserve.target - reserve.startable);
+  return [
+    `The crew keeps a standing reserve of ${reserve.target} startable issues, two per builder slot, so builders never wait for a plan. ${reserve.startable} can start now${gap > 0 ? `: plan at least ${gap} more a builder can start at once — ready, with nothing open in front of it` : ""}.`,
+    `If you finish with fewer than ${reserve.target} startable, say why in a comment on #${input.issue.number} before you finish: what the direction has left, or what holds the rest.`,
   ];
 }
 

@@ -114,6 +114,7 @@ import { laterGate } from "./later.ts";
 import { handedLimbs } from "./handed_limbs.ts";
 import { parkedTwice } from "./parks.ts";
 import { heldNow, stuckOf } from "./held.ts";
+import { reserveOf } from "./reserve.ts";
 import { owed } from "./team_share.ts";
 import { noteLimit } from "../core/standing.ts";
 import { pauseReason } from "./pacing.ts";
@@ -1005,13 +1006,20 @@ async function work(
           }
         : {}),
       // A planning run is given what the crew handed over (`parks.ts`),
-      // and what holds the ready list when nothing on it can start (`held.ts`).
+      // what holds the ready list when nothing on it can start (`held.ts`),
+      // and the standing reserve it keeps (`reserve.ts`).
       ...(brief.role === "planner" && issue.id === repo.directionIssueId
         ? {
             parkedTwice: [...parkedTwice(app.db, [repo]), ...handedOverPulls(app.db, repo)],
             limbs: handedLimbs(app, repo),
             laterGate: laterGate(app.db, repo.id),
-            stuck: stuckOf(heldNow(app, repo)),
+            ...(() => {
+              const held = heldNow(app, repo);
+              return {
+                stuck: stuckOf(held),
+                reserve: reserveOf(held.startable.length, repo.autonomySlots),
+              };
+            })(),
             owed: owed(app.db, repo.id),
           }
         : {}),

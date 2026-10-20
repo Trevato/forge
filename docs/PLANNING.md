@@ -421,10 +421,12 @@ asked, under **Settings → Autonomy**:
   could not be brought up to date, is _parked_ — closed with the reason,
   its issue put back on the map unassigned with the same note — and the
   crew moves on; the planner's next pass splits or rewrites a parked
-  issue, and one parked twice is handed to the planner (below). A dry map is
-  planned again within twenty minutes, and the planner is told the
-  direction is never finished: when what it names is built, it proposes
-  the next increment and leaves at least three ready issues. The reviewer
+  issue, and one parked twice is handed to the planner (below). The planner
+  keeps a standing reserve of startable work — two issues per builder
+  slot, never fewer than three — and is asked whenever fewer than that can
+  start, not only when the map runs dry. It is told the direction is never
+  finished: when what it names is built, it proposes the next increment,
+  and a pass that leaves the reserve short says why on the direction. The reviewer
   gets two rounds of changes on a pull; the third hands the pull to a
   person. The only pause is the day's ceiling. A person
   steers by editing the direction and the map; the crew does the rest. When nothing is
@@ -447,12 +449,15 @@ map runs dry the forge opens an issue titled _Direction: …_ that carries
 it, assigns the planner, and the planner's brief says the rest: open
 issues each small enough for one run, link what waits for what, assign
 nobody, push nothing. The direction issue stays open, is never picked as
-work, and the planner is not asked again for twenty minutes unless its run
-ended. Nor is it asked again with nothing new: when nobody but the planner
+work. A pass that did not end well — a decline a person answered, a
+failure — is not followed by another for twenty minutes; one that ended
+well has no floor. Nor is it asked again with nothing new: when nobody but the planner
 has spoken on the direction since its last pass began, and no issue has
 been opened by anyone else or closed since that pass ended, the clock
 skips it and records one `guard` decision by rule. A busy crew counts the
-ready issues before it plans; full slots alone are not a thin map.
+startable issues before it plans; full slots alone are not a short
+reserve. Every tick line says `reserve=startable/target`
+(`src/crew/reserve.ts`).
 
 **What counts as done and as taken.** A pull that says _Closes #12_
 closes #12 when it lands, as the person who landed it; that is what frees
