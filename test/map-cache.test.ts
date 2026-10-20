@@ -87,7 +87,7 @@ describe("/map on a many-lane fixture, warm", () => {
   afterAll(() => servers.stop(), 60_000);
 
   for (const who of ["owner", "stranger"] as const) {
-    test(`${who}: warm hits far cheaper than a cold build, statements within a fixed cost + 2 per lane`, async () => {
+    test(`${who}: a warm hit does a fraction of a cold build's work, statements within a fixed cost + 2 per lane`, async () => {
       const cookie = who === "owner" ? f.ownerCookie : f.strangerCookie;
       // Both viewers share one cache, so drop it here: the first request is a
       // real cold build for this viewer, whichever test ran before.
@@ -131,7 +131,7 @@ describe("/map on a many-lane fixture, warm", () => {
       expect(statements * 3).toBeLessThan(cold);
       expect(p95).toBeLessThan(5_000);
       // The page's own chrome costs a fixed ~25 statements (session, settings,
-      // the repository lists); a lane costs at most two. Cold, it was ~2,700.
+      // the repository lists); a lane costs at most two. Cold, it was about 350 statements on this fixture.
       expect(statements).toBeLessThanOrEqual(CHROME + 2 * lanes);
     }, 60_000);
   }
