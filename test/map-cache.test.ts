@@ -15,7 +15,7 @@ import { getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { clearMapCache, layoutKey } from "../src/web/map_cache.ts";
 import { layout } from "../src/web/pages/map.ts";
-import { repoGraph } from "../src/core/dependencies.ts";
+import type { Graph } from "../src/core/dependencies.ts";
 import { FORGE_SIZE, seedFixture, type Fixture, type Shape } from "../bench/map-home.ts";
 import { countStatements } from "../bench/run.ts";
 
@@ -185,21 +185,28 @@ describe("/map after a write", () => {
 });
 
 describe("the layout key", () => {
-  test("is the graph's own ids and edges, never its titles", async () => {
-    const { f, servers } = await boot(SMALL);
-    try {
-      const repo = getRepo(f.app.db, "keeper", "forge")!;
-      const graph = repoGraph(f.app.db, repo.id, { sealed: true });
-      const key = layoutKey(graph);
-      const retitled = {
-        ...graph,
-        issues: graph.issues.map((i) => ({ ...i, title: `${i.title}!` })),
-      };
-      expect(layoutKey(retitled)).toBe(key);
-      expect(layoutKey({ ...graph, edges: graph.edges.slice(1) })).not.toBe(key);
-      expect(layout(graph).nodes.length).toBe(graph.issues.length);
-    } finally {
-      servers.stop();
-    }
-  }, 60_000);
+  test("is the graph's own ids and edges, never its titles", () => {
+    // A literal graph: the verdict is the code's alone, with no database,
+    // server or seeded fixture for the check machine's load to slow down.
+    const issue = (n: number) => ({ id: `id-${n}`, number: n, title: `Step ${n}` });
+    const graph = {
+      issues: [issue(1), issue(2), issue(3)],
+      edges: [
+        { issueId: "id-2", blockedById: "id-1" },
+        { issueId: "id-3", blockedById: "id-2" },
+      ],
+      held: [],
+      unadopted: new Set<string>(),
+      structural: new Set<string>(),
+      deferred: new Map<string, string>(),
+    } as unknown as Graph;
+    const key = layoutKey(graph);
+    const retitled = {
+      ...graph,
+      issues: graph.issues.map((i) => ({ ...i, title: `${i.title}!` })),
+    };
+    expect(layoutKey(retitled)).toBe(key);
+    expect(layoutKey({ ...graph, edges: graph.edges.slice(1) })).not.toBe(key);
+    expect(layout(graph).nodes.length).toBe(graph.issues.length);
+  });
 });
