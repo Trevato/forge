@@ -43,3 +43,16 @@ test("the client list names session, clients, room and render once each", async 
     expect(Number(/dur=([\d.]+)/.exec(part)?.[1])).not.toBeNaN();
   }
 });
+
+test("the client list links the fleet graph for an admin and shows no link to anyone else", async () => {
+  const admin = await fetch(servers.url + "/forges", { headers: { authorization: `Bearer ${bearer}` } });
+  expect(await admin.text()).toContain('<a href="/fleet/graph">Fleet graph</a>');
+  const made = await createUser(app.db, {
+    origin: "seed", trusted: true, username: "bob", email: "bob@forge.local",
+    password: "a-good-passphrase",
+  });
+  if (!made.ok) throw new Error(made.error);
+  const other = createToken(app.db, made.value.id, "t", "admin").token;
+  const res = await fetch(servers.url + "/forges", { headers: { authorization: `Bearer ${other}` } });
+  expect(await res.text()).not.toContain("/fleet/graph");
+});

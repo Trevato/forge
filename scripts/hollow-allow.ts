@@ -19,10 +19,4 @@ export type Allowed = {
 };
 
 export const ALLOWED: readonly Allowed[] = [
-  {
-    orphan: "GET /fleet/graph",
-    reason:
-      "the fleet graph shipped ahead of the fleet page that is to link to it",
-    issue: 448,
-  },
 ];

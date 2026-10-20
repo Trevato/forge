@@ -97,6 +97,7 @@ export async function forgesPage(ctx: Ctx): Promise<Response> {
             </ul>`,
             { pad: false },
           )}
+      <p class="mt"><a href="/fleet/graph">Fleet graph</a></p>
     </div>`,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
