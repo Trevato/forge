@@ -8,6 +8,7 @@
 
 import { readReturns, returnsRepos } from "../../actions/returns.ts";
 import type { Money } from "../../core/returns.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { getReposByIds } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
@@ -27,6 +28,7 @@ const line = (title: string, m: Money, note?: string): Html =>
 
 /** GET /board/returns */
 export function returnsPage(ctx: Ctx): Response {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const user = ctx.auth.user;
   if (!user) return signInFirst(ctx);
   const q = ctx.url.searchParams;
@@ -36,7 +38,7 @@ export function returnsPage(ctx: Ctx): Response {
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
-  const mine = returnsRepos(ctx.app, user);
+  const mine = timePhase(ctx.request, "repos", () => returnsRepos(ctx.app, user));
   const named =
     apps.length === 1
       ? (mine.find(
@@ -47,19 +49,24 @@ export function returnsPage(ctx: Ctx): Response {
         ) ?? null)
       : undefined;
   if (named === null) return notFoundPage(ctx);
-  const read = readReturns(ctx.app, user, {
-    ...(days === undefined ? {} : { days }),
-    ...(named === undefined
-      ? {}
-      : { repo: `${named.ownerName}/${named.name}` }),
-  });
+  const read = timePhase(ctx.request, "returns", () =>
+    readReturns(ctx.app, user, {
+      ...(days === undefined ? {} : { days }),
+      ...(named === undefined
+        ? {}
+        : { repo: `${named.ownerName}/${named.name}` }),
+    }),
+  );
   if (!read.ok) return notFoundPage(ctx);
   const r = read.value;
   const span = days ?? 7;
-  const repos = getReposByIds(
-    ctx.app.db,
-    r.costliest.map((c) => c.repoId),
+  const repos = timePhase(ctx.request, "names", () =>
+    getReposByIds(
+      ctx.app.db,
+      r.costliest.map((c) => c.repoId),
+    ),
   );
+  const rendering = performance.now();
   const nothing = r.landedNothing;
   const body = html`<h1 id="returns-title">
       What the tokens bought, ${span} days
@@ -153,5 +160,7 @@ export function returnsPage(ctx: Ctx): Response {
         { head: html`<h2>A run</h2>` },
       )}
     </div>`;
-  return page({ ctx, title: "What the tokens bought", body });
+  const response = page({ ctx, title: "What the tokens bought", body });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
