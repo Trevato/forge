@@ -48,6 +48,7 @@ import {
 } from "../../core/origins.ts";
 import { pinnedRepoIds } from "../../core/pins.ts";
 import { getRepo, getReposByIds } from "../../core/repos.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { forgeBaseUrl, oauthCallbackUri } from "../../http/api.ts";
 import { qrEncode, qrSvg } from "../../design/qr.ts";
@@ -672,11 +673,20 @@ function trustedHostsCard(text: string, error?: string): Html {
 
 // ---- the page ----
 
-function originsView(ctx: Ctx, values: ConnectValues): Html {
+function originsView(
+  ctx: Ctx,
+  values: ConnectValues,
+  timing?: { rendering: number },
+): Html {
   const user = ctx.auth.user!;
-  const origins = listUserOrigins(ctx.app, user);
-  const mirrors = mirrorsByOrigin(ctx.app.db, user.id);
-  const apps = listOriginApps(ctx.app, user);
+  // Only the page itself names its reads; the error re-renders do not.
+  const read = <T>(name: string, work: () => T): T =>
+    timing === undefined ? work() : timePhase(ctx.request, name, work);
+  const origins = read("origins", () => listUserOrigins(ctx.app, user));
+  const mirrors = read("mirrors", () => mirrorsByOrigin(ctx.app.db, user.id));
+  const apps = read("apps", () => listOriginApps(ctx.app, user));
+  const frozen = read("frozen", () => readFrozen(ctx));
+  if (timing !== undefined) timing.rendering = performance.now();
   const githubConfigured = githubConnectable(ctx);
   const matched =
     values.host === ""
@@ -697,7 +707,7 @@ function originsView(ctx: Ctx, values: ConnectValues): Html {
       : html`<div class="stack">
           ${origins.map((o) => originCard(o, mirrors.get(o.id)?.count ?? 0))}
         </div>`}
-    ${frozenCard(ctx)}
+    ${frozenCard(frozen)}
     ${mayEditTrustedHosts(user)
       ? trustedHostsCard(
           values.trustedText ?? editableHosts().join("\n"),
@@ -743,15 +753,22 @@ function originsView(ctx: Ctx, values: ConnectValues): Html {
  * connecting an account on that host brings them back by itself, so this
  * card's only verb is the connect form beneath it.
  */
-function frozenCard(ctx: Ctx): Html | null {
+function readFrozen(ctx: Ctx) {
   const frozen = listDetachedMirrors(ctx.app.db, {
     ownerId: ctx.auth.user!.id,
   });
+  const repos =
+    frozen.length === 0
+      ? (new Map() as ReturnType<typeof getReposByIds>)
+      : getReposByIds(
+          ctx.app.db,
+          frozen.map((m) => m.repoId),
+        );
+  return { frozen, repos };
+}
+
+function frozenCard({ frozen, repos }: ReturnType<typeof readFrozen>): Html | null {
   if (frozen.length === 0) return null;
-  const repos = getReposByIds(
-    ctx.app.db,
-    frozen.map((m) => m.repoId),
-  );
   return listCard(
     frozen.flatMap((m) => {
       const repo = repos.get(m.repoId);
@@ -800,6 +817,7 @@ function shell(ctx: Ctx, body: Html, status = 200): Response {
 
 // GET /settings/origins
 export function originsPage(ctx: Ctx): Response {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const denied = accountOnly(ctx);
   if (denied) return denied;
   const params = ctx.url.searchParams;
@@ -832,7 +850,11 @@ export function originsPage(ctx: Ctx): Response {
         </div>`
       : null;
 
-  return shell(ctx, html`${banner}${originsView(ctx, values)}`);
+  const timing = { rendering: performance.now() };
+  const view = originsView(ctx, values, timing);
+  const response = shell(ctx, html`${banner}${view}`);
+  notePhase(ctx.request, "render", performance.now() - timing.rendering);
+  return response;
 }
 
 // POST /settings/origins/token
