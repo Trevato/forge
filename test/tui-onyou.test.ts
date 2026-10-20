@@ -14,7 +14,7 @@ import { createRepo } from "../src/actions/repos.ts";
 import { signUp } from "../src/actions/users.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
 import { chipsOf, setChip } from "../src/core/feed_chips.ts";
-import { getIssue } from "../src/core/issues.ts";
+import { createIssue, getIssue } from "../src/core/issues.ts";
 import { mutedRepos, recordInteraction } from "../src/core/interactions.ts";
 import { setCapacity, storedCapacity } from "../src/core/capacity.ts";
 import { UNCLOSABLE_WORDS } from "../src/actions/setting_ask.ts";
@@ -231,12 +231,26 @@ describe("terminal On you: mutes and many in one move", () => {
     h.stop();
   });
 
+  // The sentinel files no setting now (#3269); one it filed before still waits for an answer.
+  const legacySetting = (key: string): void => {
+    const made = createIssue(forge.db, {
+      repoId: lamp.id,
+      authorId: alice.id,
+      title: `Sentinel: Setting ${key} has been away from its default for 10 days`,
+      body: `${key} is away`,
+    });
+    if (!made.ok) throw new Error(made.error);
+    forge.db
+      .query("INSERT INTO sentinel_finding (key, issue_id, evidence, first_seen, last_seen) VALUES (?1, ?2, '', 'a', 'a')")
+      .run(`setting:${key}`, made.value.id);
+  };
+
   test("a setting away from its default is Kept or Put back from the terminal", async () => {
     setCapacity(forge.db, "cells.egress", "report", alice.id);
     forge.db
       .query("UPDATE forge_setting SET updated_at = ?1 WHERE key = 'cells.egress'")
       .run(new Date(Date.now() - 10 * 86_400_000).toISOString());
-    hunt(forge, "alice/lamp");
+    legacySetting("cells.egress");
     const h = await boot();
     for (let i = 0; i < 20; i++) await h.press("j"); // the setting row is last, and the cursor stops there
     expect(h.text()).toContain("setting cells.egress");
@@ -247,7 +261,7 @@ describe("terminal On you: mutes and many in one move", () => {
     forge.db
       .query("UPDATE forge_setting SET updated_at = ?1 WHERE key = 'cells.egress'")
       .run(new Date(Date.now() - 10 * 86_400_000).toISOString());
-    hunt(forge, "alice/lamp", Date.now() + 3 * 3_600_000);
+    legacySetting("cells.egress");
     await h.press("r");
     for (let i = 0; i < 20; i++) await h.press("j"); // the setting row is last, and the cursor stops there
     await h.press("K");
@@ -263,7 +277,7 @@ describe("terminal On you: mutes and many in one move", () => {
       .run(new Date(Date.now() - 9 * 86_400_000).toISOString());
     forge.db.query("DELETE FROM sentinel_kept").run();
     forge.db.query("DELETE FROM sentinel_finding").run();
-    hunt(forge, "alice/lamp", Date.now() + 6 * 3_600_000);
+    legacySetting("cells.egress");
     const made = createOrigin(forge.db, dir, {
       userId: alice.id,
       kind: "github",

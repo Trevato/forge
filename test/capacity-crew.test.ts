@@ -19,7 +19,7 @@ import {
   memoryLimitBytes,
   setCapacity,
 } from "../src/core/capacity.ts";
-import { settingsAway } from "../src/crew/sentinel.ts";
+import { changedOf } from "../src/actions/capacity.ts";
 
 const GiB = 1024 ** 3;
 
@@ -77,13 +77,13 @@ describe("the crew's default, and what overrides it", () => {
     expect(capacityValue(app.db, "crew.concurrency")).toBe(capacityDefault("crew.concurrency"));
   });
 
-  test("the sentinel flags a value away from the memory default, not one at it", () => {
+  test("the capacity page marks a value away from the memory default, not one at it", () => {
     const now = Date.now();
     const age = () =>
       app.db
         .query("UPDATE forge_setting SET updated_at = ?1 WHERE key = 'crew.concurrency'")
         .run(new Date(now - 3 * 86_400_000).toISOString());
-    const crew = () => settingsAway(app.db, now).filter((f) => f.key === "setting:crew.concurrency");
+    const crew = () => (changedOf(app.db, "crew.concurrency").changed === undefined ? [] : ["changed"]);
     const fallback = capacityDefault("crew.concurrency");
     setCapacity(app.db, "crew.concurrency", fallback, "system");
     age();
@@ -91,8 +91,6 @@ describe("the crew's default, and what overrides it", () => {
     const other = fallback === "5" ? "6" : "5";
     setCapacity(app.db, "crew.concurrency", other, "system");
     age();
-    const found = crew();
-    expect(found).toHaveLength(1);
-    expect(found[0]!.evidence[0]).toBe(`crew.concurrency = "${other}", default "${fallback}"`);
+    expect(crew()).toEqual(["changed"]);
   });
 });

@@ -1259,35 +1259,31 @@ given up.
 ### The sentinel
 
 The forge hunts its own faults (`docs/CREW.md`): a hunt an hour on the
-autonomy clock, sooner when a held slot or a setting left away from its
-default is new. Each finding is one issue with its evidence, filed in
-`FORGE_SENTINEL_REPO` (default `trevato/forge`) as the `sentinel` agent, else
-the first admin. Evidence is scrubbed of anything credential-shaped before it
-is filed.
+autonomy clock, sooner when a held slot is new. Each finding is one issue with
+its evidence, filed in `FORGE_SENTINEL_REPO` (default `trevato/forge`) as the
+`sentinel` agent, else the first admin. Evidence is scrubbed of anything
+credential-shaped before it is filed. Other findings (`held`, `ledger`, `red`)
+are filed anew when they return.
 
-A setting kept on purpose is a decision, not drift. Closing a `setting:<key>`
-finding's issue, or commenting on it (a person, not the filer and not an agent), records the value
-and its `updated_at` in `sentinel_kept`; while both match, the sentinel files
-nothing and comments nothing for that key. Changing the value on the capacity
-page ends the keeping, and the setting is reported again under the usual
-one-day rule. The rule is mechanical: any close counts, with or without a
-reason, so a bare close silences the setting until its value changes. Other
-findings (`held`, `ledger`, `red`) are filed anew when they return.
+A capacity setting away from its default is not a finding: the sentinel files
+nothing for it (#3269). On `/settings/capacity` the row of each such setting
+carries one muted line, "changed from X N days ago by who", and its **Put back**
+button (in the row's own form, beside Save) restores the default through
+`changeCapacity` (same validation, record, event and reversal). The line stays
+until the value is back at the default; nothing else reminds anyone. The
+JSON API and MCP carry the same fact: a setting away from its default has a
+`changed` field (`at`, `by`) in the capacity listing (`listCapacity`).
 
-A setting finding is the site admin's ask, never a crew run: it is not
-assigned, and the autonomy clock leaves it out of the crew's ready list (`crew/setting_finding.ts`). It shows on the home (kind `setting`,
-one card per key: the value, its default, who set it and when) and in the
-terminal's On you card, with two answers — **Keep** and **Put back**. On the
-web they are `POST /asks/setting` (`key`, `answer=keep|put`, same-origin only);
-in the terminal, `K` keeps and `B` puts back the row under the cursor. Only a
-signed-in site admin can answer, whatever they can write: anyone else, and any
-agent, gets `not_found`/`unauthorized` and nothing changes. Keep closes the
-finding and records the value in `sentinel_kept`; Put back goes through the
-capacity page's own door (`changeCapacity`: same validation, record, event and
-reversal). The close is the gate: Put back changes the setting, and Keep records
-the value, only after a finding has closed. If none can (every one is on a
-mirrored repository, or the close is refused), nothing changes and the page and
-the terminal say so (`unclosable`). Only a person's close keeps a setting.
+A `setting:<key>` finding filed before that is closed on the next pass with a
+comment pointing at the capacity page (`closeSettingFindings` in
+`crew/setting_finding.ts`). Until it closes, it is the site admin's ask, never a
+crew run: not assigned, left out of the crew's ready list, and shown on the home
+(kind `setting`) and in the terminal's On you card with **Keep** and **Put
+back** (`POST /asks/setting`, `key`, `answer=keep|put`, same-origin; `K` and `B`
+in the terminal). Only a signed-in site admin can answer. Keep and Put back act
+only after the finding has closed; if none can (a mirrored repository, or the
+close is refused) nothing changes and the page says so (`unclosable`). This is
+the legacy path, kept until no open setting finding is left.
 
 - **Board:** a site admin's forge strip shows the open findings and the last
   hunt; a guest or member sees nothing.

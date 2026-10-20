@@ -6,7 +6,7 @@
  * and each one is listed below the settings: who, when, from what to what.
  */
 
-import { changeCapacity, listCapacity } from "../../actions/capacity.ts";
+import { changeCapacity, listCapacity, type CapacityRow } from "../../actions/capacity.ts";
 import { CAPACITY, type CapacityKey } from "../../core/capacity.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
@@ -20,6 +20,22 @@ function requireAdmin(ctx: Ctx): Response | undefined {
   if (!ctx.auth.user) return signInFirst(ctx);
   if (!ctx.auth.user.isAdmin) return notFoundPage(ctx);
   return undefined;
+}
+
+const DAY_MS = 86_400_000;
+
+/** "today", "1 day ago", "9 days ago". */
+export function daysAgo(at: string, now: number): string {
+  const days = Math.max(0, Math.floor((now - Date.parse(at)) / DAY_MS));
+  return days === 0 ? "today" : `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
+/** One muted line beside a setting away from its default; Put back is in the row's trail form. */
+function awayLine(s: CapacityRow, now: number) {
+  if (s.changed === undefined) return null;
+  return html`<span class="muted small">changed from
+    <span class="mono">${s.default === "" ? "auto" : s.default}</span>
+    ${daysAgo(s.changed.at, now)} by ${s.changed.by}</span>`;
 }
 
 function input(key: CapacityKey, value: string) {
@@ -55,6 +71,7 @@ export function capacityPage(ctx: Ctx): Response {
   const listed = listCapacity(ctx.app, ctx.auth.user);
   if (!listed.ok) return notFoundPage(ctx);
   const { settings, changes } = listed.value;
+  const now = Date.now();
   const rows = settings.map((s) =>
     row({
       lead: icon("activity"),
@@ -63,7 +80,8 @@ export function capacityPage(ctx: Ctx): Response {
           ? html`Set here; the boot default is
               <span class="mono">${s.default === "" ? "auto" : s.default}</span>
               (<span class="mono">${s.env}</span>).`
-          : html`The boot default, from <span class="mono">${s.env}</span>.`}`,
+          : html`The boot default, from <span class="mono">${s.env}</span>.`}
+        ${awayLine(s, now)}`,
       trail: html`<form
         class="row-fields"
         method="post"
@@ -79,11 +97,11 @@ export function capacityPage(ctx: Ctx): Response {
         ${when(
           s.source === "setting",
           () =>
-            html`${btn("Default", {
+            html`${btn(s.changed === undefined ? "Default" : "Put back", {
               size: "sm",
               name: "reset",
               value: "1",
-              label: `Back to the default for ${s.label}`,
+              label: s.changed === undefined ? `Back to the default for ${s.label}` : `Put ${s.label} back to the default`,
             })}`,
         )}
       </form>`,

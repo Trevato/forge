@@ -14,7 +14,8 @@ import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { TESTS_PASSED_TAIL } from "../src/apps/runtime.ts";
 import { recordDecision, resolveOpen } from "../src/core/decisions.ts";
-import type { Repo } from "../src/core/repos.ts";
+import { createIssue } from "../src/core/issues.ts";
+import { getRepo, type Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { getUserByName } from "../src/core/users.ts";
 import { markVerified } from "../src/core/verify.ts";
@@ -283,6 +284,26 @@ describe("the asks page", () => {
         .query("UPDATE forge_setting SET updated_at = ?2 WHERE key = ?1")
         .run(key, new Date(Date.now() - 10 * 86_400_000).toISOString());
     };
+    // The sentinel no longer files a setting (#3269); an issue it filed
+    // before still waits for an answer, so these tests plant one.
+    const fileLegacy = (path: string): void => {
+      const [owner = "", name = ""] = path.split("/");
+      const target = getRepo(app.db, owner, name)!;
+      const author = getUserByName(app.db, "alice")!;
+      const rows = app.db.query<{ key: string }, []>("SELECT key FROM forge_setting").all();
+      for (const { key } of rows) {
+        const made = createIssue(app.db, {
+          repoId: target.id,
+          authorId: author.id,
+          title: `Sentinel: Setting ${key} has been away from its default for 10 days`,
+          body: `${key} is away`,
+        });
+        if (!made.ok) throw new Error(made.error);
+        app.db
+          .query("INSERT INTO sentinel_finding (key, issue_id, evidence, first_seen, last_seen) VALUES (?1, ?2, '', 'a', 'a')")
+          .run(`setting:${key}`, made.value.id);
+      }
+    };
     const post = (cookie: string, fields: Record<string, string>, origin = servers.url) =>
       fetch(`${servers.url}/asks/setting`, {
         method: "POST",
@@ -305,8 +326,8 @@ describe("the asks page", () => {
       reset();
       away("checks.concurrency", "4");
       away("cells.egress", "report");
-      hunt(app, "alice/garden");
-      hunt(app, "alice/garden", Date.now() + 3 * 3_600_000);
+      fileLegacy("alice/garden");
+      fileLegacy("alice/garden");
       expect(settingCards().sort()).toEqual(["setting:cells.egress", "setting:checks.concurrency"]);
       const card = decisionsFor({ app, auth: { user: getUserByName(app.db, "alice")! } } as unknown as Ctx, [repo]).find(
         (d) => d.id === "setting:checks.concurrency",
@@ -323,12 +344,11 @@ describe("the asks page", () => {
       expect(listEvents(app.db, { kind: "issue.assigned" }).length).toBe(0);
     });
 
-    test("Keep closes the finding as kept, and it stays quiet", async () => {
+    test("Keep closes the finding as kept", async () => {
       const res = await post(alice, { key: "checks.concurrency", answer: "keep" });
       expect(res.status).toBe(303);
       expect(settingCards()).toEqual(["setting:cells.egress"]);
       expect(app.db.query("SELECT value FROM sentinel_kept WHERE key = 'setting:checks.concurrency'").get()).toEqual({ value: "4" });
-      expect(hunt(app, "alice/garden", Date.now() + 5 * 3_600_000).filed).toBe(0);
       expect(storedCapacity(app.db, "checks.concurrency")).toBe("4");
       const closed = app.db
         .query<{ close_reason: string }, []>("SELECT close_reason FROM issue WHERE title LIKE 'Sentinel: Setting checks.concurrency %'")
@@ -348,7 +368,7 @@ describe("the asks page", () => {
     test("a stranger, a bad answer and a foreign origin change nothing", async () => {
       reset();
       away("cells.egress", "report");
-      hunt(app, "alice/garden");
+      fileLegacy("alice/garden");
       await post(bob, { key: "cells.egress", answer: "put" });
       await post(alice, { key: "cells.egress", answer: "burn" });
       await post(alice, { key: "nope", answer: "put" });
@@ -361,7 +381,7 @@ describe("the asks page", () => {
     test("Put back changes nothing when no finding can be closed, and says why", async () => {
       reset();
       away("cells.egress", "report");
-      hunt(app, "alice/garden");
+      fileLegacy("alice/garden");
       const alice0 = getUserByName(app.db, "alice")!;
       const made = createOrigin(app.db, dataDir, {
         userId: alice0.id,
@@ -392,7 +412,7 @@ describe("the asks page", () => {
     test("Put back changes nothing when the close is refused for a reason other than a mirror", () => {
       reset();
       away("cells.egress", "report");
-      hunt(app, "alice/garden");
+      fileLegacy("alice/garden");
       // a pull cannot be closed with an issue's reason, so setIssueState refuses
       app.db.query("UPDATE issue SET kind = 'pull' WHERE title LIKE 'Sentinel: Setting cells.egress %'").run();
       const alice0 = getUserByName(app.db, "alice")!;
@@ -413,7 +433,7 @@ describe("the asks page", () => {
       const plot = await createRepo(app, carolUser, { name: "plot", visibility: "public" });
       if (!plot.ok) throw new Error(String(plot.error));
       away("cells.egress", "report");
-      hunt(app, "carol/plot");
+      fileLegacy("carol/plot");
       expect(app.db.query("SELECT COUNT(*) AS n FROM sentinel_finding WHERE key = 'setting:cells.egress'").get()).toEqual({ n: 1 });
       await post(carol, { key: "cells.egress", answer: "keep" });
       await post(carol, { key: "cells.egress", answer: "put" });

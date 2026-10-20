@@ -39,10 +39,9 @@ the `denyRead` list) and not the boundary itself.
 The forge hunts its own faults. `src/crew/sentinel.ts` runs on the autonomy
 clock (a hunt an hour; a signal may bring one sooner, never within ten
 minutes). It reads what the forge already holds — the run table, the decision
-ledger (`retry stop` streaks, `guard` parks, a direction at its cap), capacity
-settings away from their defaults for more than a day, `sqlite_master` for
-triggers the schema does not create, and the error ring — and names each fault
-with the evidence quoted (secret-shaped text scrubbed).
+ledger (`retry stop` streaks, `guard` parks, a direction at its cap),
+`sqlite_master` for triggers the schema does not create, and the error ring —
+and names each fault with the evidence quoted (secret-shaped text scrubbed).
 
 Each finding is exactly one open issue, keyed so it is never filed twice; a
 finding still there is a comment, and only when the evidence changed. The board

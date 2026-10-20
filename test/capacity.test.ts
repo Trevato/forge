@@ -21,6 +21,7 @@ import { enableApp } from "../src/actions/apps.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
 import {
+  CAPACITY,
   capacityChanges,
   capacityCount,
   capacityDefault,
@@ -391,6 +392,26 @@ describe("report mode is loud to admins, and to nobody else", () => {
     expect(JSON.stringify(readHealth(app, undefined))).not.toContain("gress");
     const api = await (await fetch(`${servers.url}/api/v1/health`)).text();
     expect(api).not.toContain("gress");
+  });
+
+  test("away from its default: one muted line with Put back, escaped; none for a default (#3269)", async () => {
+    for (const k of ["checks.shards", "cells.egress", "checks.concurrency"]) changeCapacity(app, alice, k, null);
+    changeCapacity(app, alice, "crew.concurrency", null);
+    const other = capacityDefault("crew.concurrency") === "5" ? "6" : "5";
+    expect(changeCapacity(app, alice, "crew.concurrency", other).ok).toBe(true);
+    app.db.query("UPDATE forge_setting SET updated_at = ?1 WHERE key = 'crew.concurrency'").run(new Date(Date.now() - 3 * 86_400_000).toISOString());
+    app.db.query("UPDATE forge_setting SET updated_by = ?1 WHERE key = 'crew.concurrency'").run(bob.id);
+    app.db.query("UPDATE user SET username = ?2 WHERE id = ?1").run(bob.id, "bo<b>b");
+    const shown = (await page()).replace(/\s+/g, " ");
+    expect(shown).toContain(`changed from <span class="mono">${capacityDefault("crew.concurrency")}</span> 3 days ago by bo&lt;b&gt;b`);
+    expect(shown).not.toContain("bo<b>b");
+    expect(shown.match(/changed from/g)).toHaveLength(1);
+    expect(shown).toContain('<span class="muted small">changed from');
+    expect(shown).not.toContain('class="away"');
+    expect(shown).toContain(`Put ${CAPACITY["crew.concurrency"].label} back to the default`);
+    app.db.query("UPDATE user SET username = 'bob' WHERE id = ?1").run(bob.id);
+    expect(changeCapacity(app, alice, "crew.concurrency", null).ok).toBe(true);
+    expect(await page()).not.toContain("changed from");
   });
 
   test("enforced: no warning anywhere", async () => {

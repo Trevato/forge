@@ -13,6 +13,8 @@ import { join } from "node:path";
 import { createApp } from "../src/app.ts";
 import {
   CAPACITY,
+  CAPACITY_KEYS,
+  bootDefault,
   capacityDefault,
   capacityEnv,
   capacityValue,
@@ -22,7 +24,7 @@ import {
   setCapacity,
   shardsForCpus,
 } from "../src/core/capacity.ts";
-import { settingsAway } from "../src/crew/sentinel.ts";
+import { changedOf } from "../src/actions/capacity.ts";
 import { createUser } from "../src/core/users.ts";
 
 const ENV = ["FORGE_CHECK_SHARDS", "FORGE_CHECKS_CONCURRENCY"] as const;
@@ -70,7 +72,7 @@ describe("the defaults follow the CPUs", () => {
   });
 });
 
-describe("a stored value overrides the default; the sentinel compares with it", () => {
+describe("a stored value overrides the default; the capacity page compares with it", () => {
   test("80 CPUs: 4 shards and 6 checks are the defaults, 8 shards is away", async () => {
     delete process.env.FORGE_CHECK_SHARDS;
     delete process.env.FORGE_CHECKS_CONCURRENCY;
@@ -98,15 +100,15 @@ describe("a stored value overrides the default; the sentinel compares with it", 
       setCapacity(app.db, "crew.concurrency", "5", a.value.id);
       const old = new Date(Date.now() - 3 * 24 * 3600_000).toISOString();
       app.db.query("UPDATE forge_setting SET updated_at = ?1").run(old);
-      expect(settingsAway(app.db, Date.now()).map((f) => f.key)).toEqual(["setting:crew.concurrency"]);
+      expect(CAPACITY_KEYS.filter((k) => changedOf(app.db, k).changed !== undefined)).toEqual(["crew.concurrency"]);
 
       // A stored value overrides the default, even a cell's smaller one.
       setCapacity(app.db, "checks.shards", "8", a.value.id);
       app.db.query("UPDATE forge_setting SET updated_at = ?1").run(old);
       expect(capacityValue(app.db, "checks.shards")).toBe("8");
       expect(capacityEnv(app.db, 2)).toEqual({ FORGE_CHECK_SHARDS: "8" });
-      const away = settingsAway(app.db, Date.now()).find((f) => f.key === "setting:checks.shards");
-      expect(away?.evidence[0]).toBe('checks.shards = "8", default "4"');
+      expect(changedOf(app.db, "checks.shards").changed?.by).toBe("alice");
+      expect(bootDefault(app.db, "checks.shards")).toBe("4");
     } finally {
       app.close();
       await rm(dataDir, { recursive: true, force: true });

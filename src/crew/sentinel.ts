@@ -16,11 +16,6 @@
 import { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import { addComment, openIssue, setIssueState } from "../actions/issues.ts";
-import {
-  CAPACITY_KEYS,
-  capacityDefault,
-  storedCapacity,
-} from "../core/capacity.ts";
 import { decisionsSince } from "../core/decisions.ts";
 import { getAgentByName } from "../core/agents.ts";
 import { getIssueById, getLabel, setIssueLabels as writeLabels, type Issue } from "../core/issues.ts";
@@ -34,6 +29,7 @@ import { spans } from "../kernel/degraded_history.ts";
 import { QUEUE_WAIT_MAX_MS } from "../kernel/vitals.ts";
 import { STALE_AFTER_MS } from "../runs/lease.ts";
 import { isOutageSummary } from "./network.ts";
+import { closeSettingFindings } from "./setting_finding.ts";
 
 const log = createLog("sentinel");
 
@@ -42,8 +38,6 @@ const DAY_MS = 24 * HOUR_MS;
 /** A hunt an hour; a signal may bring one sooner, but never within this. */
 export const HUNT_EVERY_MS = HOUR_MS;
 export const SIGNAL_GAP_MS = 10 * 60_000;
-/** A setting away from its default this long is a finding. */
-export const SETTING_AWAY_MS = DAY_MS;
 /** A cause degraded longer than this in its day is a finding. */
 export const DEGRADED_DAY_MS = 10 * 60_000;
 /** How many alike make a streak. */
@@ -63,8 +57,6 @@ export interface Finding {
   readonly urgent?: true;
   /** What a person or a run would do, when it is mechanical and reversible. */
   readonly fix?: string;
-  /** A setting finding: the value and `updated_at` a person may have kept (#2001). */
-  readonly kept?: { readonly value: string; readonly updatedAt: string };
   /** A degraded finding: when its cause first opened. Same cause and time, same incident (#2553). */
   readonly incident?: string;
 }
@@ -163,37 +155,6 @@ export function heldSlots(db: Database, now: number): Finding[] {
       pillar: "Reliability: the gate always has a slot",
       lookFor: `No ${w.kind} run queued for ${QUEUE_WAIT_MAX_MS / 60_000} minutes while the slots are free; a cancelled run's process is gone with it.`,
       fix: "End the process of a cancelled run on the cancel path, and free its slot.",
-    });
-  }
-  return out;
-}
-
-/** A capacity setting that is not its default, for more than a day. */
-export function settingsAway(db: Database, now: number): Finding[] {
-  const out: Finding[] = [];
-  for (const key of CAPACITY_KEYS) {
-    const value = storedCapacity(db, key);
-    if (value === undefined || value === capacityDefault(key)) continue;
-    const row = db
-      .query<
-        { updated_at: string; username: string | null },
-        [string]
-      >("SELECT s.updated_at, u.username FROM forge_setting s LEFT JOIN user u ON u.id = s.updated_by WHERE s.key = ?1")
-      .get(key);
-    if (row === null || now - new Date(row.updated_at).getTime() < SETTING_AWAY_MS)
-      continue;
-    const days = Math.floor((now - new Date(row.updated_at).getTime()) / DAY_MS);
-    out.push({
-      key: `setting:${key}`,
-      title: `Setting ${key} has been away from its default for ${days} days`,
-      evidence: [
-        `${key} = "${value}", default "${capacityDefault(key)}"`,
-        `set by ${row.username ?? "unknown"} at ${row.updated_at}`,
-      ],
-      pillar: "Trust: a setting is a decision, not a leftover",
-      lookFor: `${key} is back at "${capacityDefault(key)}", or a person says why it stays: the owner is asked in the inbox, Keep or Put back, and a person's close or comment keeps it, reported again only if its value changes. No agent is assigned; a run cannot change a setting.`,
-      kept: { value, updatedAt: row.updated_at },
-      fix: `Put it back: clear ${key} on the capacity page (it is recorded and reversible).`,
     });
   }
   return out;
@@ -486,7 +447,6 @@ export function findFaults(db: Database, now = Date.now()): Finding[] {
   const found = [
     ...budgetBreaches(db, now),
     ...heldSlots(db, now),
-    ...settingsAway(db, now),
     ...strayTriggers(db),
     ...ledgerStreaks(db, now),
     ...runStreaks(db),
@@ -581,43 +541,6 @@ function labelBreach(app: App, repo: Repo, actor: User, issue: Issue): void {
   } catch (error) {
     log.error("sentinel could not label", { issue: issue.number, error: String(error) });
   }
-}
-
-/** The finding is a setting whose kept value and `updated_at` are on record. */
-function keptRecorded(db: Database, f: Finding): boolean {
-  if (f.kept === undefined) return false;
-  const kept = db
-    .query<{ value: string; updated_at: string }, [string]>("SELECT value, updated_at FROM sentinel_kept WHERE key = ?1")
-    .get(f.key);
-  return kept !== null && kept.value === f.kept.value && kept.updated_at === f.kept.updatedAt;
-}
-
-/**
- * Whether a person decided to keep this setting as it now stands: its
- * finding was closed, or explained in a comment by a person (not the sentinel, not an agent),
- * after the value was last set. A decision is recorded with the value and
- * `updated_at` it was made at; the same pair is kept, any other is drift.
- */
-function settingKept(db: Database, f: Finding, actorId: string, at: string): boolean {
-  if (f.kept === undefined) return false;
-  if (keptRecorded(db, f)) return true;
-  const { value, updatedAt } = f.kept;
-  const decided = db
-    .query<{ n: number }, [string, string, string]>(
-      `SELECT COUNT(*) AS n FROM sentinel_finding t JOIN issue i ON i.id = t.issue_id
-        WHERE t.key = ?1 AND ((i.state = 'closed' AND i.closed_at >= ?2
-            AND (SELECT e.actor_id FROM event e
-                  WHERE e.kind = 'issue.closed' AND e.repo_id = i.repo_id
-                    AND json_extract(e.payload, '$.number') = i.number
-                  ORDER BY e.id DESC LIMIT 1)
-                IN (SELECT id FROM user WHERE is_agent = 0 AND kind = 'user'))
-          OR EXISTS (SELECT 1 FROM comment c WHERE c.issue_id = i.id AND c.author_id <> ?3 AND c.created_at >= ?2
-            AND EXISTS (SELECT 1 FROM user u WHERE u.id = c.author_id AND u.is_agent = 0 AND u.kind = 'user')))`,
-    )
-    .get(f.key, updatedAt, actorId);
-  if (decided === null || decided.n === 0) return false;
-  recordKept(db, f.key, value, updatedAt, at);
-  return true;
 }
 
 /** Remember that a person kept `key` as it stands: this value, set at `updatedAt`. */
@@ -720,8 +643,8 @@ function closeHeld(app: App, repo: Repo, actor: User, active: ReadonlySet<string
 /**
  * Read, file, record. One open issue per finding: a tracked finding whose
  * issue is open is commented on only when its evidence changed; one whose
- * issue is closed and returns is a new issue — except a setting a person
- * kept (`settingKept`), which stays quiet until its value changes.
+ * issue is closed and returns is a new issue. A setting away from its default
+ * is no finding: the capacity page says so beside it (#3269).
  */
 export function hunt(
   app: App,
@@ -738,7 +661,6 @@ export function hunt(
   if (repo !== undefined && actor !== undefined) {
     for (const f of findings) {
       try {
-        if (settingKept(app.db, f, actor.id, at)) continue;
         const evidence = f.evidence.join("\n");
         const tracked = app.db
           .query<
@@ -787,7 +709,7 @@ export function hunt(
           }
           issueId = made.value.id;
           filed++;
-          if (f.urgent && f.kept === undefined) labelBreach(app, repo, actor, made.value);
+          if (f.urgent) labelBreach(app, repo, actor, made.value);
         }
         app.db
           .query("INSERT INTO sentinel_finding (key, issue_id, evidence, first_seen, last_seen, incident) VALUES (?1, ?2, ?3, ?4, ?4, ?5)")
@@ -797,8 +719,10 @@ export function hunt(
       }
     }
   }
-  if (repo !== undefined && actor !== undefined)
+  if (repo !== undefined && actor !== undefined) {
     closeHeld(app, repo, actor, new Set(findings.map((f) => f.key)), now);
+    closeSettingFindings(app, repo, actor);
+  }
   // A hunt with nowhere to file is recorded as such, never as a quiet one.
   const unfiled = repo === undefined || actor === undefined;
   app.db
@@ -856,8 +780,7 @@ export function sentinelSummary(db: Database): string | null {
 }
 
 /**
- * Hunt when it is time: an hour since the last, or a signal (a slot held, a
- * setting away) not yet tracked, and not within ten minutes of the last.
+ * Hunt when it is time: an hour since the last, or a signal (a slot held) not yet tracked, and not within ten minutes of the last.
  */
 export function sentinelTick(app: App, now = Date.now()): HuntResult | null {
   const repoPath = sentinelRepoPath();
@@ -869,7 +792,7 @@ export function sentinelTick(app: App, now = Date.now()): HuntResult | null {
     // A breach is not held back by the gap: the crew hears within a tick.
     const signals = [
       ...breaches,
-      ...(since < SIGNAL_GAP_MS ? [] : [...heldSlots(app.db, now), ...settingsAway(app.db, now)]),
+      ...(since < SIGNAL_GAP_MS ? [] : heldSlots(app.db, now)),
     ];
     const tracked = new Set(
       app.db
@@ -879,7 +802,7 @@ export function sentinelTick(app: App, now = Date.now()): HuntResult | null {
         .all()
         .map((r) => r.key),
     );
-    if (!signals.some((s) => !tracked.has(s.key) && !keptRecorded(app.db, s))) return null;
+    if (!signals.some((s) => !tracked.has(s.key))) return null;
   }
   return hunt(app, repoPath, now);
 }

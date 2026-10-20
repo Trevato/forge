@@ -7,6 +7,7 @@
  * an event: the key, from what to what, and who.
  */
 
+import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import {
   CAPACITY,
@@ -34,12 +35,26 @@ export interface CapacityRow {
   readonly source: "setting" | "default";
   readonly default: string;
   readonly env: string;
+  /** For a setting away from its default: when and by whom it was set. */
+  readonly changed?: { readonly at: string; readonly by: string };
 }
 
 function admin(actor: User | undefined): Result<User, "not_found"> {
   return actor?.isAdmin === true && actor.kind !== "agent"
     ? ok(actor)
     : err("not_found");
+}
+
+/** Who set `key` and when, only while its stored value is not the default. */
+export function changedOf(db: Database, key: CapacityKey): { changed?: { at: string; by: string } } {
+  const value = storedCapacity(db, key);
+  if (value === undefined || value === bootDefault(db, key)) return {};
+  const row = db
+    .query<{ updated_at: string; username: string | null }, [string]>(
+      "SELECT s.updated_at, u.username FROM forge_setting s LEFT JOIN user u ON u.id = s.updated_by WHERE s.key = ?1",
+    )
+    .get(key);
+  return row === null ? {} : { changed: { at: row.updated_at, by: row.username ?? "someone" } };
 }
 
 export function listCapacity(
@@ -57,6 +72,7 @@ export function listCapacity(
       source: storedCapacity(app.db, key) === undefined ? "default" : "setting",
       default: bootDefault(app.db, key),
       env: CAPACITY[key].env,
+      ...changedOf(app.db, key),
     })),
     changes: capacityChanges(app.db),
   });

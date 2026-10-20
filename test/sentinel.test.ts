@@ -20,6 +20,7 @@ import { listEvents } from "../src/core/events.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { createRun } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
+import { isSettingFinding } from "../src/crew/setting_finding.ts";
 import { recordCap } from "../src/crew/guard.ts";
 import {
   budgetBreaches,
@@ -194,7 +195,7 @@ describe("the faults of the day", () => {
     // 3. pushes that can only succeed by leaving the sandbox.
     for (let n = 0; n < 3; n++)
       plantRun("agent", "failed", "git push: operation not permitted", ago((20 + n) * HOUR));
-    // 4. a setting away from its default for a week.
+    // 4. a setting away from its default for a week: a line on the capacity page, no finding (#3269).
     setCapacity(app.db, "checks.concurrency", "4", alice.id);
     app.db
       .query("UPDATE forge_setting SET updated_at = ?1 WHERE key = 'checks.concurrency'")
@@ -212,7 +213,6 @@ describe("the faults of the day", () => {
       [
         `gate:${repo.id}`,
         `push:${repo.id}`,
-        "setting:checks.concurrency",
         "slot:check",
         "trigger:steward_guard_repo",
       ].sort(),
@@ -222,7 +222,7 @@ describe("the faults of the day", () => {
     expect(byKey.get(`gate:${repo.id}`)!.evidence.join("\n")).toContain(
       "nested cell: no network namespace",
     );
-    expect(byKey.get("setting:checks.concurrency")!.evidence[0]).toContain('"4", default "1"');
+    expect(byKey.has("setting:checks.concurrency")).toBe(false);
     expect(byKey.get("trigger:steward_guard_repo")!.evidence.join("\n")).toContain(
       "paused for new accounts",
     );
@@ -230,19 +230,19 @@ describe("the faults of the day", () => {
 
   test("a hunt files each once, and a second hunt files nothing", () => {
     const first = hunt(app, "alice/forge", NOW);
-    expect(first.filed).toBe(5);
+    expect(first.filed).toBe(4);
     const open = () => listIssues(app.db, repo.id, { state: "open", limit: 200 });
-    expect(open().length).toBe(5);
+    expect(open().length).toBe(4);
     const slot = open().find((i) => i.title.includes("wait with no slot"))!;
     expect(slot.body).toContain("**Evidence**");
     expect(slot.body).toContain("**What to look for when fixed:**");
     expect(slot.body).toContain("**Pillar:**");
 
     const second = hunt(app, "alice/forge", NOW + 30 * 60_000);
-    expect(second).toMatchObject({ found: 5, filed: 0, commented: 0 });
-    expect(open().length).toBe(5);
-    expect(sentinelStanding(app.db).openFindings).toBe(5);
-    expect(sentinelLine(app.db)).toBe("The sentinel has 5 open findings");
+    expect(second).toMatchObject({ found: 4, filed: 0, commented: 0 });
+    expect(open().length).toBe(4);
+    expect(sentinelStanding(app.db).openFindings).toBe(4);
+    expect(sentinelLine(app.db)).toBe("The sentinel has 4 open findings");
   });
 
   test("a finding whose evidence changed is a comment, not a new issue", () => {
@@ -477,137 +477,29 @@ describe("the signals inside the hour", () => {
     }
   };
 
-  test("a new setting away hunts after ten minutes; tracked, it does not", () => {
+  test("a setting away from its default brings no hunt and files nothing (#3269)", () => {
     setCapacity(app.db, "cells.egress", "report", alice.id);
     app.db
       .query("UPDATE forge_setting SET updated_at = ?1 WHERE key = 'cells.egress'")
       .run(ago(10 * 24 * HOUR));
     const l = lastHunt();
-    expect(withRepo(() => sentinelTick(app, l + 5 * 60_000))).toBeNull();
-    const r = withRepo(() => sentinelTick(app, l + 20 * 60_000));
-    expect(r?.filed).toBe(1);
-    expect(withRepo(() => sentinelTick(app, lastHunt() + 20 * 60_000))).toBeNull();
-  });
-
-  /** Close an issue the way the close path does: the state, and the event naming who. */
-  const closeBy = (issueId: string, actorId: string, at: string): void => {
-    app.db.query("UPDATE issue SET state = 'closed', closed_at = ?2 WHERE id = ?1").run(issueId, at);
-    const i = app.db.query<{ number: number; repo_id: string }, [string]>("SELECT number, repo_id FROM issue WHERE id = ?1").get(issueId)!;
-    app.bus.append({ kind: "issue.closed", repoId: i.repo_id, actorId, payload: { number: i.number } });
-  };
-  const planter = async (name: string): Promise<User> => {
-    const made = await createUser(app.db, { origin: "seed", trusted: true, username: name, email: `${name}@forge.local`, password: "a-good-passphrase" });
-    if (!made.ok) throw new Error(made.error);
-    app.db.query("UPDATE user SET is_agent = 1 WHERE id = ?1").run(made.value.id);
-    return made.value;
-  };
-
-  test("an agent's close does not keep a setting, and the migration takes back one it did (#2029)", async () => {
-    const bot = await planter("plannerbot");
-    app.db.query("DELETE FROM issue WHERE title LIKE 'Sentinel: Setting %'").run();
-    app.db.query("DELETE FROM sentinel_kept").run();
-    const base = Date.now();
-    setCapacity(app.db, "checks.concurrency", "4", alice.id);
-    const setAt = new Date(base - 10 * 24 * HOUR).toISOString();
-    app.db.query("UPDATE forge_setting SET updated_at = ?1 WHERE key = 'checks.concurrency'").run(setAt);
-    hunt(app, "alice/forge", base);
-    const issue = app.db.query<{ id: string }, []>("SELECT id FROM issue WHERE state = 'open' AND title LIKE 'Sentinel: Setting checks.concurrency %'").get()!;
-    closeBy(issue.id, bot.id, new Date(base + 1000).toISOString());
-    expect(hunt(app, "alice/forge", base + 2 * HOUR).filed).toBe(1);
-    expect(app.db.query("SELECT COUNT(*) AS n FROM sentinel_kept").get()).toEqual({ n: 0 });
-    // a row an agent's close made before this rule, beside one a person's close made
-    const plant = (key: string): void => {
-      app.db.query("INSERT INTO sentinel_kept (key, value, updated_at, kept_at) VALUES (?1, '4', ?2, ?2)").run(key, setAt);
-    };
-    plant("setting:checks.concurrency");
-    plant("setting:cells.egress");
-    const mine = app.db.query<{ id: string }, []>("SELECT id FROM issue WHERE state = 'open' AND title LIKE 'Sentinel: Setting checks.concurrency %'").get()!;
-    closeBy(mine.id, bot.id, new Date(base + 3000).toISOString());
-    setCapacity(app.db, "cells.egress", "report", alice.id);
-    app.db.query("UPDATE forge_setting SET updated_at = ?1 WHERE key = 'cells.egress'").run(setAt);
-    hunt(app, "alice/forge", base + 4 * HOUR);
-    const egress = app.db.query<{ id: string }, []>("SELECT id FROM issue WHERE state = 'open' AND title LIKE 'Sentinel: Setting cells.egress %'").get()!;
-    closeBy(egress.id, alice.id, new Date(base + 5000).toISOString());
-    app.db.exec(keptIsAPersons);
-    const left = app.db.query<{ key: string }, []>("SELECT key FROM sentinel_kept").all().map((r) => r.key);
-    expect(left).toEqual(["setting:cells.egress"]);
-    setCapacity(app.db, "checks.concurrency", "1", alice.id);
+    expect(withRepo(() => sentinelTick(app, l + 20 * 60_000))).toBeNull();
+    hunt(app, "alice/forge", l + 2 * HOUR);
+    expect(app.db.query("SELECT COUNT(*) AS n FROM sentinel_finding WHERE key LIKE 'setting:%'").get()).toEqual({ n: 0 });
+    expect(app.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM issue WHERE title LIKE 'Sentinel: Setting %'").get()!.n).toBe(0);
     setCapacity(app.db, "cells.egress", "enforce", alice.id);
   });
 
-  test("a setting kept on purpose is not refiled until its value changes (#2001)", () => {
-    const setAt = (value: string, at: string): void => {
-      setCapacity(app.db, "checks.concurrency", value, alice.id);
-      app.db.query("UPDATE forge_setting SET updated_at = ?1 WHERE key = 'checks.concurrency'").run(at);
-    };
-    const issuesFor = (): number =>
-      app.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM issue WHERE title LIKE 'Sentinel: Setting checks.concurrency %'").get()!.n;
-    app.db.query("DELETE FROM issue WHERE title LIKE 'Sentinel: Setting %'").run();
-    app.db.query("DELETE FROM sentinel_kept").run();
-    app.db.query("DELETE FROM forge_setting WHERE key IN ('cells.egress', 'checks.concurrency')").run();
-    const base = Date.now();
-    setAt("4", new Date(base - 10 * 24 * HOUR).toISOString());
-    expect(hunt(app, "alice/forge", base).filed).toBe(1);
-    const first = app.db.query<{ id: string; body: string }, []>("SELECT id, body FROM issue WHERE state = 'open' AND title LIKE 'Sentinel: Setting checks.concurrency %'").get()!;
-    expect(first.body).toContain("Keep or Put back");
-    // closed with a reason: kept
-    closeBy(first.id, alice.id, new Date(base).toISOString());
-    const comments = listComments(app.db, first.id).length;
-    expect(hunt(app, "alice/forge", base + 2 * HOUR).filed).toBe(0);
-    expect(hunt(app, "alice/forge", base + 4 * HOUR).filed).toBe(0);
-    expect(issuesFor()).toBe(1);
-    expect(listComments(app.db, first.id).length).toBe(comments);
-    // the value changes, and later is away a day: reported again
-    setAt("6", new Date(base + 3 * HOUR).toISOString());
-    expect(hunt(app, "alice/forge", base + 6 * HOUR).filed).toBe(0); // not yet a day away
-    expect(hunt(app, "alice/forge", base + 30 * HOUR).filed).toBe(1);
-    expect(issuesFor()).toBe(2);
-    expect(app.db.query("SELECT value FROM forge_setting WHERE key = 'checks.concurrency'").get()).toEqual({ value: "6" });
-    app.db.query("DELETE FROM forge_setting WHERE key = 'checks.concurrency'").run();
-  });
-
-  test("a comment saying why a setting stays keeps it too (#2001)", async () => {
-    const owner = await createUser(app.db, {
-      origin: "seed",
-      trusted: true,
-      username: "carol",
-      email: "carol@forge.local",
-      password: "a-good-passphrase",
-    });
-    if (!owner.ok) throw new Error(owner.error);
-    app.db.query("DELETE FROM issue WHERE title LIKE 'Sentinel: Setting %'").run();
-    app.db.query("DELETE FROM sentinel_kept").run();
-    const base = Date.now();
-    setCapacity(app.db, "checks.concurrency", "4", alice.id);
-    app.db.query("UPDATE forge_setting SET updated_at = ?1 WHERE key = 'checks.concurrency'").run(new Date(base - 10 * 24 * HOUR).toISOString());
-    hunt(app, "alice/forge", base);
-    const issue = app.db.query<{ id: string; body: string }, []>("SELECT id, body FROM issue WHERE state = 'open' AND title LIKE 'Sentinel: Setting checks.concurrency %'").get()!;
-    const said = addComment(app.db, { issueId: issue.id, authorId: owner.value.id, body: "Kept on purpose: P0 wants it." });
-    expect(said.ok).toBe(true);
-    app.db.query("UPDATE comment SET created_at = ?2 WHERE issue_id = ?1").run(issue.id, new Date(base + 1000).toISOString());
-    const before = listComments(app.db, issue.id).length;
-    expect(hunt(app, "alice/forge", base + 2 * HOUR).filed).toBe(0);
-    expect(listComments(app.db, issue.id).length).toBe(before);
-    expect(app.db.query("SELECT value FROM sentinel_kept WHERE key = 'setting:checks.concurrency'").get()).toEqual({ value: "4" });
-    setCapacity(app.db, "checks.concurrency", "1", alice.id);
-  });
-
-  test("a comment from an agent does not keep a setting (#2001)", async () => {
-    app.db.query("DELETE FROM issue WHERE title LIKE 'Sentinel: Setting %'").run();
-    app.db.query("DELETE FROM sentinel_kept").run();
-    const base = Date.now();
-    setCapacity(app.db, "checks.concurrency", "4", alice.id);
-    app.db.query("UPDATE forge_setting SET updated_at = ?1 WHERE key = 'checks.concurrency'").run(new Date(base - 10 * 24 * HOUR).toISOString());
-    hunt(app, "alice/forge", base);
-    const issue = app.db.query<{ id: string }, []>("SELECT id FROM issue WHERE state = 'open' AND title LIKE 'Sentinel: Setting checks.concurrency %'").get()!;
-    const bot = await createUser(app.db, { origin: "seed", trusted: true, username: "reviewbot", email: "reviewbot@forge.local", password: "a-good-passphrase" });
-    if (!bot.ok) throw new Error(bot.error);
-    app.db.query("UPDATE user SET is_agent = 1 WHERE id = ?1").run(bot.value.id);
-    addComment(app.db, { issueId: issue.id, authorId: bot.value.id, body: "Looks fine to me." });
-    app.db.query("UPDATE comment SET created_at = ?2 WHERE issue_id = ?1").run(issue.id, new Date(base + 1000).toISOString());
-    hunt(app, "alice/forge", base + 2 * HOUR);
-    expect(app.db.query("SELECT COUNT(*) AS n FROM sentinel_kept").get()).toEqual({ n: 0 });
-    setCapacity(app.db, "checks.concurrency", "1", alice.id);
+  test("an open setting finding from before closes on the next pass, with a pointer to the capacity page (#3269)", () => {
+    const old = createIssue(app.db, { repoId: repo.id, authorId: alice.id, title: "Sentinel: Setting checks.concurrency has been away from its default for 9 days" });
+    if (!old.ok) throw new Error(String(old.error));
+    app.db.query("INSERT INTO sentinel_finding (key, issue_id, evidence, first_seen, last_seen) VALUES ('setting:checks.concurrency', ?1, '', 'a', 'a')").run(old.value.id);
+    hunt(app, "alice/forge", Date.now());
+    const row = app.db.query<{ state: string; close_reason: string }, [string]>("SELECT state, close_reason FROM issue WHERE id = ?1").get(old.value.id)!;
+    expect(row).toEqual({ state: "closed", close_reason: "done" });
+    expect(listComments(app.db, old.value.id).some((c) => c.body.includes("/settings/capacity"))).toBe(true);
+    // closed ones are still known as setting findings
+    expect(isSettingFinding(app.db, old.value.id)).toBe(true);
   });
 
   test("a newly held slot hunts too", () => {
@@ -890,7 +782,7 @@ describe("a degraded finding whose cause has stayed closed", () => {
     await rm(hdir, { recursive: true, force: true });
   });
 
-  test("23 hours closed stays open; a person's comment and a setting keep theirs at 25", () => {
+  test("23 hours closed stays open; a person's comment keeps theirs at 25, and a setting finding closes", () => {
     // A setting finding, tracked as the sentinel would.
     const s = createIssue(happ.db, { repoId: hrepo.id, authorId: halice.id, title: "Sentinel: Setting x" });
     if (!s.ok) throw new Error(String(s.error));
@@ -909,7 +801,7 @@ describe("a degraded finding whose cause has stayed closed", () => {
     expect(said.length).toBe(1);
     expect(said[0]!.body).toContain(new Date(T0).toISOString());
     expect(state("disk")).toBe("open");
-    expect(state("Setting x")).toBe("open");
+    expect(state("Setting x")).toBe("closed");
   });
 
   test("a finding that comes back is a new issue", () => {

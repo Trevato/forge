@@ -5,7 +5,8 @@ the forge already holds and files what is wrong, with the evidence quoted.
 
 **When.** On the autonomy clock: a hunt an hour, and one sooner (never within
 ten minutes of the last) when a signal is new — queued checks waiting while no
-run uses a slot, or a capacity setting away from its default for over a day.
+run uses a slot. A capacity setting away from its default is no signal and
+no finding: it is a line on `/settings/capacity` (#3269).
 
 **What it reads.**
 
@@ -14,7 +15,6 @@ run uses a slot, or a capacity setting away from its default for over a day.
 | a slot held by a finished run | `run`: queued work older than 30 min, nothing running or every lease lapsed |
 | a check never green; pushes that cannot land | the last 20 `check` / `agent` run summaries per repository |
 | `retry` stops, guard parks | the decision ledger (`decisionsSince`) |
-| a setting left away from default | `forge_setting` against `capacityDefault` |
 | a hand-installed trigger | `sqlite_master` against a scratch database migrated from the schema |
 | the same ERROR line again and again | the error ring (`kernel/log.ts`) |
 

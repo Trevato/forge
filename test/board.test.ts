@@ -20,11 +20,10 @@ import { mergePull, openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { getAppByRepo } from "../src/core/apps.ts";
 import { hunt } from "../src/crew/sentinel.ts";
-import { setCapacity } from "../src/core/capacity.ts";
 import { recordDecision } from "../src/core/decisions.ts";
 import { recordLook } from "../src/core/looks.ts";
 import { getPull } from "../src/core/pulls.ts";
-import { updateRepoSettings, type Repo } from "../src/core/repos.ts";
+import { getRepo, updateRepoSettings, type Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { submitReview } from "../src/core/reviews.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
@@ -570,10 +569,12 @@ describe("the board's forge strip", () => {
   test("the sentinel's line is the admin's alone, and absent before the first hunt", async () => {
     expect(await board("root")).not.toContain("sentinel");
 
-    setCapacity(app.db, "checks.concurrency", "4", admin.id);
+    // A check queued two hours with nothing running: a held slot, a finding.
+    const stuck = getRepo(app.db, "root", "stuck")!;
+    const queued = createRun(app.db, { repoId: stuck.id, kind: "check" });
     app.db
-      .query("UPDATE forge_setting SET updated_at = ?1 WHERE key = 'checks.concurrency'")
-      .run("2020-01-01T00:00:00.000Z");
+      .query("UPDATE run SET created_at = ?2 WHERE id = ?1")
+      .run(queued.id, new Date(Date.now() - 2 * 3_600_000).toISOString());
     process.env["FORGE_SENTINEL_REPO"] = "root/stuck";
     try {
       expect(hunt(app, "root/stuck").filed).toBeGreaterThan(0);
@@ -586,7 +587,7 @@ describe("the board's forge strip", () => {
       expect(guest).not.toMatch(/sentinel/i);
     } finally {
       delete process.env["FORGE_SENTINEL_REPO"];
-      setCapacity(app.db, "checks.concurrency", "1", admin.id);
+      app.db.query("DELETE FROM run WHERE id = ?1").run(queued.id);
     }
   });
 });
