@@ -4,8 +4,9 @@
  * immutable, so the page needs no inline script and an app's CSP that
  * allows no foreign scripts simply leaves the pill out.
  *
- * The pill lives in a shadow root, sits in the bottom-right corner, and is
- * collapsed to a dot until pressed. It styles itself through the CSSOM
+ * The pill lives in a shadow root and is collapsed to a dot until pressed.
+ * It sits bottom-right until dragged or arrow-keyed to another corner; the
+ * corner is kept per app host in localStorage. It styles itself through the CSSOM
  * (never a `style` attribute or a `<style>` element), which a strict
  * `style-src` does not block.
  */
@@ -22,10 +23,10 @@ export const toolbarJs = `(function () {
   try { home = new URL(me.src).origin + "/"; } catch (e) {}
   var host = document.createElement("div");
   host.id = "forge-toolbar";
-  host.style.cssText = "all:initial;position:fixed;right:12px;bottom:12px;z-index:2147483647";
+  host.style.cssText = "all:initial;position:fixed;z-index:2147483647";
   var root = host.attachShadow({ mode: "closed" });
   var box = document.createElement("div");
-  box.style.cssText = "font:13px/1.3 system-ui,sans-serif;color:#fff;display:flex;align-items:center;gap:8px;flex-direction:row-reverse";
+  box.style.cssText = "font:13px/1.3 system-ui,sans-serif;color:#fff;display:flex;align-items:flex-end;gap:8px;flex-direction:row-reverse";
   var pill = document.createElement("button");
   pill.type = "button";
   var d = me.dataset || {};
@@ -33,13 +34,13 @@ export const toolbarJs = `(function () {
   pill.setAttribute("aria-label", [d.app, where].filter(Boolean).join(", ") || "Forge");
   pill.setAttribute("aria-expanded", "false");
   pill.textContent = "\\u2692";
-  pill.style.cssText = "all:unset;box-sizing:border-box;cursor:pointer;width:44px;height:44px;border-radius:22px;background:#1f2328;color:#fff;text-align:center;line-height:44px;font-size:20px;opacity:.85;box-shadow:0 1px 4px rgba(0,0,0,.4)";
+  pill.style.cssText = "all:unset;box-sizing:border-box;cursor:pointer;width:44px;height:44px;border-radius:22px;background:#1f2328;color:#fff;text-align:center;line-height:44px;font-size:20px;opacity:.85;box-shadow:0 1px 4px rgba(0,0,0,.4);touch-action:none";
   var panel = document.createElement("div");
   panel.hidden = true;
   panel.setAttribute("role", "region");
   panel.setAttribute("aria-label", "Where you are");
   panel.tabIndex = -1;
-  panel.style.cssText = "outline:none;background:#1f2328;color:#fff;padding:8px 12px;border-radius:14px;box-shadow:0 1px 4px rgba(0,0,0,.4);max-width:min(280px,calc(100vw - 64px));flex-direction:column;gap:2px;display:none";
+  panel.style.cssText = "outline:none;background:#1f2328;color:#fff;padding:8px 12px;border-radius:14px;box-shadow:0 1px 4px rgba(0,0,0,.4);max-width:min(280px,calc(100vw - 64px));max-height:calc(100vh - 88px);overflow:auto;flex-direction:column;gap:2px;display:none";
   function line(text, bold) {
     var el = document.createElement("div");
     el.textContent = text;
@@ -118,6 +119,70 @@ export const toolbarJs = `(function () {
       })
       .catch(function () {});
   } catch (e) {}
+  // Where the pill sits: one of four corners, kept per app host (localStorage
+  // is per origin), so a page's own controls can be left uncovered.
+  var KEY = "forge-pill-corner";
+  var CORNERS = ["tl", "tr", "bl", "br"];
+  var corner = "br";
+  function store(k, v) { try { window.localStorage.setItem(k, v); } catch (e) {} }
+  try {
+    var saved = window.localStorage.getItem(KEY);
+    if (CORNERS.indexOf(saved) >= 0) corner = saved;
+  } catch (e) {}
+  function place(c) {
+    corner = c;
+    var top = c.charAt(0) === "t", left = c.charAt(1) === "l";
+    host.style.top = top ? "12px" : "auto";
+    host.style.bottom = top ? "auto" : "12px";
+    host.style.left = left ? "12px" : "auto";
+    host.style.right = left ? "auto" : "12px";
+    // The panel opens toward the inside of the screen.
+    box.style.flexDirection = left ? "row" : "row-reverse";
+    box.style.alignItems = top ? "flex-start" : "flex-end";
+  }
+  place(corner);
+  var drag = null, moved = false, until = 0;
+  pill.addEventListener("pointerdown", function (e) {
+    drag = { x: e.clientX, y: e.clientY, dx: 0, dy: 0 };
+    moved = false;
+    try { pill.setPointerCapture(e.pointerId); } catch (x) {}
+  });
+  pill.addEventListener("pointermove", function (e) {
+    if (!drag) return;
+    drag.dx = e.clientX - drag.x;
+    drag.dy = e.clientY - drag.y;
+    if (!moved && Math.abs(drag.dx) + Math.abs(drag.dy) < 8) return;
+    if (!moved) { moved = true; set(false); }
+    host.style.right = "auto";
+    host.style.bottom = "auto";
+    host.style.left = Math.max(0, Math.min(window.innerWidth - 44, e.clientX - 22)) + "px";
+    host.style.top = Math.max(0, Math.min(window.innerHeight - 44, e.clientY - 22)) + "px";
+  });
+  function drop(e) {
+    if (!drag) return;
+    drag = null;
+    if (!moved) return;
+    moved = false;
+    // A release is followed at once by a click on the pill; that is not a
+    // request to open. A cancel is not, and a later keyboard click must work.
+    if (e.type === "pointerup") until = Date.now() + 50;
+    var c = (e.clientY < window.innerHeight / 2 ? "t" : "b") + (e.clientX < window.innerWidth / 2 ? "l" : "r");
+    place(c);
+    store(KEY, c);
+  }
+  pill.addEventListener("pointerup", drop);
+  pill.addEventListener("pointercancel", drop);
+  pill.addEventListener("keydown", function (e) {
+    var t = corner.charAt(0), l = corner.charAt(1);
+    if (e.key === "ArrowLeft") l = "l";
+    else if (e.key === "ArrowRight") l = "r";
+    else if (e.key === "ArrowUp") t = "t";
+    else if (e.key === "ArrowDown") t = "b";
+    else return;
+    e.preventDefault();
+    place(t + l);
+    store(KEY, corner);
+  });
   // An inline display beats the UA [hidden] rule, so display carries the state.
   function ring(b) {
     b.addEventListener("focus", function () { b.style.outline = "3px solid #58a6ff"; b.style.outlineOffset = "2px"; });
@@ -139,7 +204,10 @@ export const toolbarJs = `(function () {
     pill.style.opacity = open ? "1" : ".85";
     if (open) panel.focus();
   }
-  pill.addEventListener("click", function () { set(panel.hidden); });
+  pill.addEventListener("click", function () {
+    if (Date.now() < until) return;
+    set(panel.hidden);
+  });
   ring(pill);
   document.addEventListener("keydown", function (e) {
     if (e.key !== "Escape" || panel.hidden) return;

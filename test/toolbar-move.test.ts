@@ -1,0 +1,163 @@
+/**
+ * The pill can be moved (#3448): dragged to a corner, or walked there with
+ * the arrow keys; the corner is kept per app host and the panel opens
+ * toward the inside of the screen.
+ */
+
+import { describe, expect, test } from "bun:test";
+import { toolbarJs } from "../src/apps/toolbar.ts";
+
+type L = Record<string, ((e?: any) => void)[]>;
+interface El {
+  tag: string;
+  style: Record<string, string>;
+  children: El[];
+  listeners: L;
+  hidden: boolean;
+  textContent: string;
+  [k: string]: any;
+}
+const make = (tag: string): El => ({
+  tag,
+  style: {},
+  children: [],
+  listeners: {},
+  hidden: false,
+  textContent: "",
+  attrs: {} as Record<string, string>,
+  setAttribute(k: string, v: string) { this.attrs[k] = v; },
+  appendChild(c: El) { this.children.push(c); return c; },
+  addEventListener(t: string, f: (e?: any) => void) { (this.listeners[t] ??= []).push(f); },
+  focus() {},
+  attachShadow() { return make("shadow"); },
+});
+const all = (el: El): El[] => [el, ...el.children.flatMap(all)];
+
+function boot(store: Record<string, string> | null, width = 400, height = 800) {
+  let root!: El;
+  const host = { el: null as El | null };
+  const doc = {
+    currentScript: { src: "https://forge.test/assets/t.js", dataset: { app: "notes", env: "production" } },
+    createElement: (tag: string) => {
+      const el = make(tag);
+      if (tag === "div" && !host.el) {
+        host.el = el;
+        el.attachShadow = () => (root = make("shadow"));
+      }
+      return el;
+    },
+    addEventListener() {},
+    body: { appendChild() {} },
+  };
+  const win: Record<string, any> = { innerWidth: width, innerHeight: height };
+  if (store)
+    win.localStorage = {
+      getItem: (k: string) => store[k] ?? null,
+      setItem: (k: string, v: string) => { store[k] = v; },
+    };
+  new Function("window", "document", "URL", toolbarJs)(win, doc, URL);
+  const els = all(root);
+  const pill = els.find((e) => e.tag === "button")!;
+  const box = root.children[0]!;
+  const panel = els.find((e) => e.attrs.role === "region")!;
+  const fire = (el: El, t: string, e: object = {}) => el.listeners[t]!.forEach((f) => f({ preventDefault() {}, type: t, ...e }));
+  return { host: host.el!, pill, box, panel, fire };
+}
+
+describe("moving the pill", () => {
+  test("starts bottom-right and the panel opens to its left", () => {
+    const { host, box } = boot({});
+    expect(host.style.right).toBe("12px");
+    expect(host.style.bottom).toBe("12px");
+    expect(host.style.top).toBe("auto");
+    expect(box.style.flexDirection).toBe("row-reverse");
+  });
+
+  test("a drag snaps to the nearest corner and is remembered", () => {
+    const store: Record<string, string> = {};
+    const { host, box, pill, fire } = boot(store);
+    fire(pill, "pointerdown", { clientX: 380, clientY: 780 });
+    fire(pill, "pointermove", { clientX: 100, clientY: 60 });
+    expect(host.style.left).toBe("78px"); // follows the pointer while dragging
+    fire(pill, "pointerup", { clientX: 100, clientY: 60 });
+    expect(host.style.top).toBe("12px");
+    expect(host.style.left).toBe("12px");
+    expect(host.style.right).toBe("auto");
+    expect(box.style.flexDirection).toBe("row");
+    expect(box.style.alignItems).toBe("flex-start");
+    expect(store["forge-pill-corner"]).toBe("tl");
+    // The next page load puts it there again.
+    expect(boot(store).host.style.left).toBe("12px");
+    expect(boot(store).host.style.top).toBe("12px");
+  });
+
+  test("a press that barely moves is a tap, not a drag", () => {
+    const store: Record<string, string> = {};
+    const { pill, fire, panel } = boot(store);
+    fire(pill, "pointerdown", { clientX: 380, clientY: 780 });
+    fire(pill, "pointermove", { clientX: 382, clientY: 781 });
+    fire(pill, "pointerup", { clientX: 382, clientY: 781 });
+    fire(pill, "click");
+    expect(store["forge-pill-corner"]).toBeUndefined();
+    expect(panel.hidden).toBe(false);
+  });
+
+  test("the click that ends a drag does not open the panel", () => {
+    const { pill, fire, panel } = boot({});
+    fire(pill, "pointerdown", { clientX: 380, clientY: 780 });
+    fire(pill, "pointermove", { clientX: 20, clientY: 780 });
+    fire(pill, "pointerup", { clientX: 20, clientY: 780 });
+    fire(pill, "click");
+    expect(panel.hidden).toBe(true);
+  });
+
+  test("arrow keys walk it from corner to corner", () => {
+    const store: Record<string, string> = {};
+    const { host, pill, fire } = boot(store);
+    fire(pill, "keydown", { key: "ArrowLeft" });
+    expect(store["forge-pill-corner"]).toBe("bl");
+    expect(host.style.left).toBe("12px");
+    fire(pill, "keydown", { key: "ArrowUp" });
+    expect(store["forge-pill-corner"]).toBe("tl");
+    fire(pill, "keydown", { key: "ArrowRight" });
+    fire(pill, "keydown", { key: "ArrowDown" });
+    expect(store["forge-pill-corner"]).toBe("br");
+    fire(pill, "keydown", { key: "a" });
+    expect(store["forge-pill-corner"]).toBe("br");
+  });
+
+  test("a garbage stored corner is ignored; no storage at all still works", () => {
+    expect(boot({ "forge-pill-corner": "<x>" }).host.style.right).toBe("12px");
+    const { host, pill, fire } = boot(null);
+    fire(pill, "keydown", { key: "ArrowLeft" });
+    expect(host.style.left).toBe("12px");
+  });
+
+  test("a cancelled drag leaves the pill answering a later keyboard click", () => {
+    const { pill, fire, panel } = boot({});
+    fire(pill, "pointerdown", { clientX: 380, clientY: 780 });
+    fire(pill, "pointermove", { clientX: 20, clientY: 780 });
+    fire(pill, "pointercancel", { clientX: 20, clientY: 780 });
+    fire(pill, "click");
+    expect(panel.hidden).toBe(false);
+  });
+
+  test("after a released drag, the next click a moment later opens the panel", async () => {
+    const { pill, fire, panel } = boot({});
+    fire(pill, "pointerdown", { clientX: 380, clientY: 780 });
+    fire(pill, "pointermove", { clientX: 20, clientY: 780 });
+    fire(pill, "pointerup", { clientX: 20, clientY: 780 });
+    await Bun.sleep(80);
+    fire(pill, "click");
+    expect(panel.hidden).toBe(false);
+  });
+
+  test("the pill has no hide item and no hint: it only moves", () => {
+    expect(toolbarJs).not.toMatch(/Hide for this page|Move: drag/);
+  });
+
+  test("the panel is bounded to the screen", () => {
+    expect(toolbarJs).toContain("max-width:min(280px,calc(100vw - 64px))");
+    expect(toolbarJs).toContain("max-height:calc(100vh - 88px)");
+  });
+});

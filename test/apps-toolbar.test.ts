@@ -366,7 +366,7 @@ describe("the forge pill", () => {
     expect(res.headers.get("content-type")).toContain("javascript");
     const code = await res.text();
     expect(code).toBe(toolbarJs);
-    expect(code.length).toBeLessThan(7 * 1024);
+    expect(code.length).toBeLessThan(10 * 1024);
     expect(code).not.toMatch(/\beval\b|new Function|\son[a-z]+\s*=/);
     expect(code).toContain("attachShadow");
   });
