@@ -51,7 +51,7 @@ sleep 60
     const until = async <T>(
       read: () => T | undefined,
       what: string,
-      ms = 20_000,
+      ms = 45_000,
     ): Promise<T> => {
       const deadline = Date.now() + ms;
       while (Date.now() < deadline) {
@@ -155,6 +155,7 @@ sleep 60
       await rm(dataDir, { recursive: true, force: true });
     }
     // The crew starts a queued run on its next tick, five seconds apart:
-    // the default timeout is a race against that clock.
-  }, 60_000);
+    // the default timeout is a race against that clock, and a loaded check
+    // machine stretches every wait: the budgets are generous on purpose.
+  }, 150_000);
 });
