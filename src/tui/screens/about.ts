@@ -32,6 +32,7 @@ import { truncate, wrap } from "../term/width.ts";
 import { badge, card } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
 import { PIN_MARK, ago, drawFacts, plural } from "./common.ts";
+import { egressScreen } from "./egress.ts";
 import { forkOf, hostOf, liveOrigin, localRepo, sourceName } from "./where.ts";
 
 /**
@@ -94,6 +95,10 @@ export function aboutScreen(
                 repo?.archivedAt === null ? "archive" : "wake",
               ),
             ]
+          : []),
+        // A site admin also reaches the repository's private egress grants.
+        ...(f.user?.isAdmin === true && repo !== undefined
+          ? [binding(["e"], "egress")]
           : []),
         binding(["esc"], "close"),
       ];
@@ -198,6 +203,10 @@ export function aboutScreen(
           } else ctx.toast("that could not be changed", "danger");
           ctx.invalidate();
         });
+        return true;
+      }
+      if (e.key === "e" && repo !== undefined && f.user?.isAdmin === true) {
+        ctx.push(egressScreen(f, ctx, repo));
         return true;
       }
       if (e.key === "esc" || e.key === "q" || e.key === "I") {

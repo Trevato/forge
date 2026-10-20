@@ -828,6 +828,11 @@ a sentence about what it should do. Seconds later it is serving at
 `http://<name>.<your forge's host>` from a small, real app (notes in a SQLite
 file), and if you named an agent, the sentence became issue #1, assigned.
 
+- **Private egress is a site admin's yes.** An app reaches a private
+  destination (a tailnet or LAN `host:port`) only when `forge.json` `egress`
+  names it exactly and a site admin has granted it: on the
+  app's settings page, or in the terminal (About `I`, then `e`, `g`
+  to grant, `x` to revoke). See `docs/APPS.md`.
 - **Production is the default branch.** The only way code reaches it is that
   branch moving, and an agent cannot move it: the crew proposes through
   pulls, a person merges.

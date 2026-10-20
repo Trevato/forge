@@ -298,8 +298,9 @@ each) or with `POST`/`DELETE /api/v1/repos/:owner/:name/egress-grants`
 and a `{ "destination": "100.89.95.68:8101" }` body; `GET` lists them. Anyone
 else who administers the repository sees the list with no buttons. A
 destination forge.json does not name is refused, and each change is an
-`app.egress.granted` or `app.egress.revoked` event with who and when. There is
-not yet a terminal command (#3469).
+`app.egress.granted` or `app.egress.revoked` event with who and when. In the terminal a site admin
+opens the repository's About (`I`), then `e`: `g` grants and `x` revokes the
+destination under the cursor.
 
 A release that turns egress on must not break an app whose writers have
 not declared what it uses yet, so the operator can start it reported:
