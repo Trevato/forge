@@ -361,17 +361,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 }
 .backups-now { margin-top: 12px; }
 .backups-drill { overflow-wrap: anywhere; }
-/* The fleet graph: a selection's spend and runs, hour by hour and day by day.
-   Series colours are Okabe–Ito (told apart with common colour-vision
-   deficiencies); the eighth, the folded "others", is grey. */
-.fleet-pick { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 16px; }
-.fleet-pick input { flex: 1 1 24em; min-width: 0; font-family: var(--mono); font-size: 13px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); }
-.fleet-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0 0 12px; padding: 0; list-style: none; font-size: 13px; }
-.fleet-legend li { display: inline-flex; align-items: center; gap: 6px; }
-.fleet-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: currentColor; vertical-align: middle; flex: none; }
-.fleet-windows { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 16px; margin: 0 0 16px; }
-.fleet-window { margin: 0; }
-.fleet-window figcaption { font-size: 13px; font-weight: 600; margin: 0 0 4px; display: flex; gap: 8px; align-items: baseline; }
 .chart-box { color: var(--accent); aspect-ratio: 720 / 260; max-width: 720px; }
 .chart-box .chart { display: block; width: 100%; height: auto; }
 .chart-box text { fill: var(--muted-fg); font-family: var(--mono); }
@@ -413,14 +402,9 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .bgrid h2 { font-size: 14px; }
 .bmanage { display: grid; gap: 8px; }
 @media (max-width: 720px) { .bgrid { grid-template-columns: minmax(0, 1fr); } .bp-w2, .bp-w3 { grid-column: auto; } }
-.fleet-svg { display: block; width: 100%; height: auto; aspect-ratio: 600 / 230; }
-.fleet-grid line { stroke: var(--border); stroke-width: 1; }
-.fleet-ticks text { fill: var(--muted-fg); text-anchor: end; font-family: var(--mono); }
-.fleet-axis text { fill: var(--muted-fg); text-anchor: middle; font-family: var(--mono); }
-.fleet-panel-name text { fill: var(--faint); }
-.fleet-table .num { text-align: right; font-variant-numeric: tabular-nums; }
-.fleet-table th[scope="row"] { font-weight: 500; white-space: nowrap; text-align: left; }
-.fleet-assume { margin-top: 8px; }
+/* The stacked bar chart's series colours, for its bars (fleet-graph.ts).
+   Okabe–Ito, told apart with common colour-vision deficiencies; the eighth,
+   the folded "others", is grey. */
 .fg-s0 { fill: var(--series-0); color: var(--series-0); }
 .fg-s1 { fill: var(--series-1); color: var(--series-1); }
 .fg-s2 { fill: var(--series-2); color: var(--series-2); }
@@ -429,7 +413,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .fg-s5 { fill: var(--series-5); color: var(--series-5); }
 .fg-s6 { fill: var(--series-6); color: var(--series-6); }
 .fg-s7 { fill: var(--series-7); color: var(--series-7); }
-@media print { .fleet-pick { display: none; } }
 .backups-error { display: flex; align-items: center; gap: 8px; color: var(--danger); }
 .backups-restore { margin: 8px 0 0; padding: 8px 10px; font-size: 12.5px; white-space: pre-wrap; word-break: break-all; background: var(--muted); border-radius: var(--radius); }
 /* The records a domain waits on: type, name, value — as a zone file reads. */

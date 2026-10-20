@@ -301,6 +301,16 @@ describe("the graph", () => {
       expect(body).toContain("Last 24 hours");
       expect(body).toContain("in the UTC hour or day it ended");
       expect(body).toContain('href="/fleet/graph.csv?repo=alice%2Ftwo"');
+      // Built from DESIGN.md §5: the field row, the stacked bar chart, the
+      // series dot and the table — no page-local fleet-* class (#3197).
+      expect(body).toContain('<form method="get" action="/fleet/graph" class="field-row mb">');
+      expect(body).toMatch(/<input\s+class="input mono" id="fleet-repos"[^>]*spellcheck="false"/);
+      expect(body).toContain('<div class="plots">');
+      expect(body).toMatch(/<svg\s+class="plot"[^>]*width="600"\s+height="230"/);
+      expect(body).toContain('<ul class="plot-legend">');
+      expect(body).toContain('<span class="dot" data-series="0" aria-hidden="true"></span>');
+      expect(body).toContain('<table class="table" data-dense>');
+      expect(body).not.toMatch(/class="[^"]*\bfleet-/);
 
       const live = await fetch(`${servers.url}/fleet/graph/live?repo=alice/two`, {
         headers: { cookie },

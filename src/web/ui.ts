@@ -667,6 +667,11 @@ export function dot(tone: Tone = "default"): Html {
   ></span>`;
 }
 
+/** A chart series' swatch: the dot in the `--series-N` colour its bars wear. */
+export function seriesDot(series: number): Html {
+  return html`<span class="dot" data-series="${series}" aria-hidden="true"></span>`;
+}
+
 /**
  * A share as a bar: a whole percentage, 0–100, and what it is a share of in
  * words for a screen reader. `attn` when the share is a limit reached.
@@ -1028,6 +1033,8 @@ export interface FieldOptions {
   maxlength?: number;
   rows?: number;
   mono?: boolean;
+  /** `false` for names and paths, which a spelling checker only underlines. */
+  spellcheck?: boolean;
   id?: string;
 }
 
@@ -1044,7 +1051,8 @@ export function field(o: FieldOptions): Html {
   ${o.required ? raw("required") : null}
   ${o.autofocus ? raw("autofocus") : null}
   ${o.readonly ? raw("readonly") : null}
-  ${o.placeholder ? html`placeholder="${o.placeholder}"` : null}`;
+  ${o.placeholder ? html`placeholder="${o.placeholder}"` : null}
+  ${o.spellcheck === false ? raw('spellcheck="false"') : null}`;
   const control =
     o.type === "textarea"
       ? html`<textarea ${shared} rows="${o.rows ?? 6}" data-grow>

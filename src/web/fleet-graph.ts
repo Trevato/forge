@@ -25,6 +25,7 @@ import type {
   FleetWindow,
 } from "../actions/fleet-graph.ts";
 import { html, type Html } from "./html.ts";
+import { seriesDot } from "./ui.ts";
 
 export const SVG_W = 600;
 const LEFT = 48;
@@ -119,8 +120,10 @@ export function windowSvg(graph: FleetGraph, w: FleetWindow): Html {
     });
 
   return html`<svg
-    class="fleet-svg"
+    class="plot"
     viewBox="0 0 ${SVG_W} ${SVG_H}"
+    width="${SVG_W}"
+    height="${SVG_H}"
     preserveAspectRatio="xMinYMin meet"
     font-size="10"
     role="img"
@@ -129,29 +132,29 @@ export function windowSvg(graph: FleetGraph, w: FleetWindow): Html {
     data-spend-top="${spendTop}"
     data-runs-top="${runsTopWhole}"
   >
-    <g class="fleet-grid">
+    <g>
       <line x1="${LEFT}" y1="${TOP}" x2="${SVG_W - RIGHT}" y2="${TOP}" />
       <line x1="${LEFT}" y1="${TOP + SPEND_H / 2}" x2="${SVG_W - RIGHT}" y2="${TOP + SPEND_H / 2}" />
       <line x1="${LEFT}" y1="${spendY0}" x2="${SVG_W - RIGHT}" y2="${spendY0}" />
       <line x1="${LEFT}" y1="${runsY0 - RUNS_H}" x2="${SVG_W - RIGHT}" y2="${runsY0 - RUNS_H}" />
       <line x1="${LEFT}" y1="${runsY0}" x2="${SVG_W - RIGHT}" y2="${runsY0}" />
     </g>
-    <g class="fleet-ticks">
+    <g text-anchor="end">
       <text x="${LEFT - 6}" y="${TOP + 4}">${moneyTick(spendTop)}</text>
       <text x="${LEFT - 6}" y="${TOP + SPEND_H / 2 + 4}">${moneyTick(spendTop / 2)}</text>
       <text x="${LEFT - 6}" y="${spendY0 + 4}">$0</text>
       <text x="${LEFT - 6}" y="${runsY0 - RUNS_H + 4}">${runsTopWhole}</text>
       <text x="${LEFT - 6}" y="${runsY0 + 4}">0</text>
     </g>
-    <g class="fleet-panel-name">
+    <g class="plot-name">
       <text x="${LEFT + 4}" y="${TOP + 12}">spend, USD</text>
       <text x="${LEFT + 4}" y="${runsY0 - RUNS_H + 12}">runs ended</text>
     </g>
-    <g class="fleet-bars">
+    <g>
       ${segments("costUsd", spendTop, SPEND_H, spendY0)}
       ${segments("runs", runsTopWhole, RUNS_H, runsY0)}
     </g>
-    <g class="fleet-axis">
+    <g text-anchor="middle">
       ${w.buckets.map((b, i) =>
         (n - 1 - i) % every === 0
           ? html`<text x="${r2(LEFT + i * slot + slot / 2)}" y="${runsY0 + 14}">${bucketWords(w, b.start)}</text>`
@@ -164,11 +167,11 @@ export function windowSvg(graph: FleetGraph, w: FleetWindow): Html {
 /** The legend: one swatch per series, with its 14-day spend. */
 function legend(graph: FleetGraph): Html {
   const fortnight = graph.windows[1];
-  return html`<ul class="fleet-legend">
+  return html`<ul class="plot-legend">
     ${graph.series.map(
       (s, i) =>
         html`<li title="${s.repos.join(", ")}">
-          <span class="fleet-swatch fg-s${i}" aria-hidden="true"></span>
+          ${seriesDot(i)}
           ${s.repos.length === 1
             ? html`<a href="/${s.label}">${s.label}</a>`
             : s.label}
@@ -181,7 +184,7 @@ function legend(graph: FleetGraph): Html {
 /** Every repository's own figures, the chart's numbers as text. */
 function table(graph: FleetGraph): Html {
   return html`<div class="table-scroll">
-    <table class="table fleet-table" data-dense>
+    <table class="table" data-dense>
       <caption class="sr-only">
         Spend and runs per repository, last 24 hours and last 14 days
       </caption>
@@ -199,7 +202,7 @@ function table(graph: FleetGraph): Html {
         ${graph.repos.map(
           (r) => html`<tr data-repo="${r.repo}">
             <th scope="row">
-              <span class="fleet-swatch fg-s${r.series}" aria-hidden="true"></span>
+              ${seriesDot(r.series)}
               <a href="/${r.repo}">${r.repo}</a>
             </th>
             <td class="num">${money(r.day.costUsd)}</td>
@@ -232,7 +235,6 @@ export function selectionQuery(graph: FleetGraph): string {
 export function fleetGraphSection(graph: FleetGraph): Html {
   const q = selectionQuery(graph);
   return html`<section
-    class="fleet-graph"
     id="fleet-graph"
     data-src="/fleet/graph/live${q === "" ? "" : `?${q}`}"
     data-at="${graph.at}"
@@ -244,9 +246,9 @@ export function fleetGraphSection(graph: FleetGraph): Html {
             : "None of these repositories is yours to see spend for."}
         </p>`
       : html`${legend(graph)}
-          <div class="fleet-windows">
+          <div class="plots">
             ${graph.windows.map(
-              (w) => html`<figure class="fleet-window">
+              (w) => html`<figure>
                 <figcaption>
                   ${w.name === "24h" ? "Last 24 hours" : "Last 14 days"}
                   <span class="muted"
@@ -262,7 +264,7 @@ export function fleetGraphSection(graph: FleetGraph): Html {
     ${graph.hidden > 0
       ? html`<p class="muted small">${hiddenWords(graph.hidden)}</p>`
       : null}
-    <p class="muted small fleet-assume">
+    <p class="muted small mt">
       Read from the usage ledger at
       <time datetime="${graph.at}">${graph.at.slice(11, 16)} UTC</time>. A
       run counts in the UTC hour or day it ended; spend is the provider's

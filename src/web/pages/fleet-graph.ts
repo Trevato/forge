@@ -23,7 +23,7 @@ import {
 } from "../fleet-graph.ts";
 import { html } from "../html.ts";
 import { fragment, page } from "../layout.ts";
-import { btn } from "../ui.ts";
+import { btn, field } from "../ui.ts";
 
 /** The selection from the URL, or the refusal's words. */
 function selection(ctx: Ctx) {
@@ -65,16 +65,18 @@ export function fleetGraphPage(ctx: Ctx): Response {
             hour by hour and day by day.
           </p>
         </div>
-        <form method="get" action="/fleet/graph" class="fleet-pick">
-          <label for="fleet-repos">Repositories</label>
-          <input
-            id="fleet-repos"
-            name="repo"
-            value="${names}"
-            placeholder="owner/name owner/name — empty is everything you can write that spent"
-            autocomplete="off"
-            spellcheck="false"
-          />
+        <form method="get" action="/fleet/graph" class="field-row mb">
+          ${field({
+            label: "Repositories",
+            name: "repo",
+            id: "fleet-repos",
+            value: names,
+            placeholder:
+              "owner/name owner/name — empty is everything you can write that spent",
+            autocomplete: "off",
+            mono: true,
+            spellcheck: false,
+          })}
           ${btn("Draw", { type: "submit", variant: "secondary" })}
         </form>
         ${graph === undefined

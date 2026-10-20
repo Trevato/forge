@@ -220,6 +220,24 @@ progress:not(.tests-bar)::-moz-progress-bar { background: var(--success); }
 .dot[data-tone="danger"] { background: var(--danger); }
 .dot[data-tone="attn"] { background: var(--attn); }
 .dot[data-tone="merged"] { background: var(--merged); }
+.dot[data-series="0"] { background: var(--series-0); }
+.dot[data-series="1"] { background: var(--series-1); }
+.dot[data-series="2"] { background: var(--series-2); }
+.dot[data-series="3"] { background: var(--series-3); }
+.dot[data-series="4"] { background: var(--series-4); }
+.dot[data-series="5"] { background: var(--series-5); }
+.dot[data-series="6"] { background: var(--series-6); }
+.dot[data-series="7"] { background: var(--series-7); }
+
+/* ---- stacked bar chart: series stacked per bucket, drawn as SVG on the server ---- */
+.plots { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 16px; margin: 0 0 16px; }
+.plots figcaption { font-size: 13px; font-weight: 600; margin: 0 0 4px; display: flex; gap: 8px; align-items: baseline; }
+.plot { display: block; width: 100%; height: auto; }
+.plot line { stroke: var(--border); stroke-width: 1; }
+.plot text { fill: var(--muted-fg); font-family: var(--mono); }
+.plot .plot-name text { fill: var(--faint); font-family: inherit; }
+.plot-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0 0 12px; font-size: 13px; }
+.plot-legend li { display: inline-flex; align-items: center; gap: 6px; }
 
 /* ---- meter: a share as a bar — spend against a ceiling, a window used, how sure ---- */
 meter {
@@ -421,6 +439,7 @@ a.row:hover .row-title { color: var(--accent); }
 }
 .table tbody tr:first-child td { border-top: none; }
 .table[data-dense] td, .table[data-dense] th { padding: 5px 10px; }
+.table .num { text-align: right; }
 .table-scroll { overflow-x: auto; scrollbar-width: thin; }
 /* The row's name stays in view while a narrow screen scrolls the figures. */
 .table[data-sticky-lead] th:first-child,
