@@ -32,6 +32,12 @@ import {
   OWNERS_TEAM,
   type Team,
 } from "../../core/orgs.ts";
+import {
+  notePhase,
+  takeSessionTime,
+  timePhase,
+  timePhaseAsync,
+} from "../../core/route_timing.ts";
 import { createSession } from "../../core/sessions.ts";
 import { createUser, discardFreshUser, getUserByName, type User } from "../../core/users.ts";
 import {
@@ -222,14 +228,19 @@ const fragmentJs = /* js */ `
 // GET /claim — the form for a fragment link: the code arrives in the
 // browser only, so nothing is known or spent here until the form posts it.
 export async function claimFragmentPage(ctx: Ctx): Promise<Response> {
-  const spawned = await spawnedOrg(ctx.app);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const spawned = await timePhaseAsync(ctx.request, "spawned", () => spawnedOrg(ctx.app));
   if (spawned === undefined) return dead(ctx, "unknown");
-  return page({
+  const { spawner } = timePhase(ctx.request, "owners", () => owners(ctx, spawned));
+  const rendering = performance.now();
+  const response = page({
     ctx,
     title: "This forge is yours",
-    body: claimForm(ctx, spawned, owners(ctx, spawned).spawner, {}, {}),
+    body: claimForm(ctx, spawned, spawner, {}, {}),
     scriptJs: fragmentJs + passkeyJs,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 /**
