@@ -216,7 +216,7 @@ export async function startCrew(
       );
     }
     pump(app, ready, inFlight);
-  }, TICK_MS);
+  }, options.tickMs ?? TICK_MS);
   requeueInterrupted(app);
   sweepAssigned(app);
   pump(app, ready, inFlight);

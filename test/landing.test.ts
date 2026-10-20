@@ -47,19 +47,39 @@ sleep 60
       concurrency: 1,
       budgetUsd: 1,
       runTimeoutMs: 60_000,
+      tickMs: 50,
     });
+    // Where the run stands, for a failure to name: its state and summary,
+    // whether the clone exists, the tail of its log.
+    const seen = (repoId: string, clone?: string): string => {
+      const runs = listRuns(app.db, repoId, { kind: "agent" });
+      const last = runs[0];
+      let tail = "(no run log)";
+      if (last) {
+        try {
+          tail = readFileSync(join(dataDir, "runs", `${last.id}.log`), "utf8")
+            .split("\n")
+            .slice(-20)
+            .join("\n");
+        } catch {
+          // no log yet
+        }
+      }
+      return `runs=${JSON.stringify(runs.map((r) => [r.reason, r.state, r.summary]))} clone=${clone === undefined ? "n/a" : existsSync(clone)}\nlog tail:\n${tail}`;
+    };
     const until = async <T>(
       read: () => T | undefined,
       what: string,
-      ms = 45_000,
+      state: () => string,
+      ms = 20_000,
     ): Promise<T> => {
       const deadline = Date.now() + ms;
       while (Date.now() < deadline) {
         const value = read();
         if (value !== undefined) return value;
-        await Bun.sleep(50);
+        await Bun.sleep(10);
       }
-      throw new Error(`${what}: did not happen in time`);
+      throw new Error(`${what}: did not happen in ${ms} ms; saw ${state()}`);
     };
     try {
       const a = await createUser(app.db, { origin: "seed", trusted: true,
@@ -118,11 +138,14 @@ sleep 60
           listRuns(app.db, repo.id, { kind: "agent" }).find(
             (r) => r.state === "running",
           ),
-        `the run (${JSON.stringify(listRuns(app.db, repo.id, { kind: "agent" }).map((r) => [r.reason, r.state, r.summary]))})`,
+        "the run starting",
+        () => seen(repo.id),
       );
       expect(run.reason).toBe("feedback");
       const clone = workdirFor(dataDir, bot, repo, 1);
-      await until(() => (existsSync(clone) ? true : undefined), "the clone");
+      await until(() => (existsSync(clone) ? true : undefined), "the clone appearing", () =>
+        seen(repo.id, clone),
+      );
 
       // The pull closes under it.
       expect(setIssueState(app, alice, repo, asIssue, "closed").ok).toBe(true);
@@ -131,13 +154,14 @@ sleep 60
           (x) => x.id === run.id,
         );
         return r && r.state !== "running" ? r : undefined;
-      }, "the run's end");
+      }, "the run's end", () => seen(repo.id, clone));
       expect(ended.state).toBe("cancelled");
       expect(ended.summary).toBe("the pull closed");
       // The clone went with the run, once the run was over.
       await until(
         () => (existsSync(clone) ? undefined : true),
-        "the clone's end",
+        "the clone's removal",
+        () => seen(repo.id, clone),
       );
       const log = readFileSync(join(dataDir, "runs", `${run.id}.log`), "utf8");
       expect(log).not.toContain("the run failed");
@@ -154,8 +178,7 @@ sleep 60
       app.close();
       await rm(dataDir, { recursive: true, force: true });
     }
-    // The crew starts a queued run on its next tick, five seconds apart:
-    // the default timeout is a race against that clock, and a loaded check
-    // machine stretches every wait: the budgets are generous on purpose.
-  }, 150_000);
+    // The crew ticks every 50 ms here (`tickMs`), not every five seconds, so
+    // nothing waits on the default clock.
+  }, 30_000);
 });

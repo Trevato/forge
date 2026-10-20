@@ -168,6 +168,8 @@ export interface CrewOptions {
   readonly sandboxEnforced?: boolean | undefined;
   /** Why it cannot, when it cannot — said once in every run's log. */
   readonly sandboxNote?: string | undefined;
+  /** Milliseconds between the crew's ticks; tests pass a small one. @default 5000 */
+  readonly tickMs?: number | undefined;
 }
 
 export { crewRoot, workdirFor } from "./workdir.ts";
