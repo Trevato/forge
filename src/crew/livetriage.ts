@@ -16,6 +16,13 @@
  * open. A second pass over the same state changes nothing, because a closed
  * issue is no longer a candidate.
  *
+ * Second rule (#3268): a question is not a task. An open issue a person who
+ * can write here opened, whose title starts `Question:`, `Wish:` or `Idea:`
+ * or ends in `?`, becomes one `Folded: #N <title>` line on the direction
+ * issue and closes as dropped, with a comment that says how to reopen it as
+ * a task. Anyone else's issue, and an imported one, is never folded. A
+ * folded issue that a person reopens stays open: the comment is the mark.
+ *
  * The close is `setIssueState`, whose state change is committed before the
  * event is published; the counters here move only after it returns, so a
  * change that rolled back is neither counted nor announced.
@@ -27,7 +34,7 @@ import { addComment, setIssueState } from "../actions/issues.ts";
 import { alreadyDone, CLOSED_NOTE, DONE_LIKE } from "../core/done_on_main.ts";
 import { getIssueById, getIssuesByIds, type Issue } from "../core/issues.ts";
 import { isStructural, pillarsOf, servedBy, type Pillar, type Pillars } from "../core/pillars.ts";
-import type { Repo } from "../core/repos.ts";
+import { canWrite, type Repo } from "../core/repos.ts";
 import { getUserById, type User } from "../core/users.ts";
 import { repoDir } from "../git/repos.ts";
 import { isMirror } from "../origins/write-through.ts";
@@ -42,13 +49,14 @@ export const MOST_CHANGES = 25;
 /** What a pass did. */
 export interface Triaged {
   closed: number;
+  folded: number;
   /** Issues given a pillar or put behind the Later gate. */
   labelled: number;
   /** Open issues over an hour old that serve no pillar and that triage has yet to file. */
   missed: number;
 }
 
-export const none = (): Triaged => ({ closed: 0, labelled: 0, missed: 0 });
+export const none = (): Triaged => ({ closed: 0, folded: 0, labelled: 0, missed: 0 });
 
 /** How old an issue is before triage files it. */
 export const FILE_AFTER_MS = 60 * 60 * 1000;
@@ -157,9 +165,91 @@ function file(app: App, repo: Repo, by: User, now: Date): [number, number] {
 export function tickFields(did: Triaged): Record<string, number> {
   return {
     triaged: did.closed,
+    folded: did.folded,
     labelled: did.labelled,
     ...(did.missed === 0 ? {} : { triageMiss: did.missed }),
   };
+}
+
+/** What the comment on a folded issue starts with. */
+export const FOLDED_NOTE = "Folded into the direction issue";
+
+/** A title that asks or wishes rather than names work. */
+export const isQuestion = (title: string): boolean =>
+  /^\s*(question|wish|idea):/i.test(title) || /\?\s*$/.test(title);
+
+/**
+ * Open questions by people who can write here, oldest first. One carrying
+ * the triage user's own folded note was folded once and reopened by a
+ * person: that reopen stands. Matched on author and exact prefix, so no
+ * one else's comment can block a fold and `_` or `%` are not wildcards.
+ */
+function questions(app: App, repo: Repo, by: User, directionId: string): Issue[] {
+  const rows = app.db
+    .query<{ id: string }, [string, string, string, string]>(
+      `SELECT i.id AS id FROM issue i
+        WHERE i.repo_id = ?1 AND i.kind = 'issue' AND i.state = 'open' AND i.id != ?2
+          AND i.origin_author IS NULL
+          AND NOT EXISTS (SELECT 1 FROM comment c WHERE c.issue_id = i.id
+                           AND c.author_id = ?3
+                           AND substr(c.body, 1, length(?4)) = ?4)
+        ORDER BY i.number`,
+    )
+    .all(repo.id, directionId, by.id, FOLDED_NOTE);
+  const out: Issue[] = [];
+  for (const { id } of rows) {
+    const issue = getIssueById(app.db, id);
+    if (!issue || !isQuestion(issue.title)) continue;
+    const author = getUserById(app.db, issue.authorId);
+    if (author?.kind === "user" && canWrite(app.db, repo, author)) out.push(issue);
+  }
+  return out;
+}
+
+/**
+ * Fold the questions into the direction issue. Each write commits and
+ * announces on its own, in an order a partial failure leaves true: the line
+ * (written once, found again by its exact text), then the close, then the
+ * note that marks the fold done. A close that fails leaves a line that is
+ * true and an issue the next tick folds without a second line.
+ */
+function fold(app: App, repo: Repo, by: User, did: Triaged): void {
+  if (repo.directionIssueId === null) return;
+  const direction = getIssueById(app.db, repo.directionIssueId);
+  if (!direction || direction.state !== "open") return;
+  for (const issue of questions(app, repo, by, direction.id)) {
+    if (did.closed + did.folded >= MOST_CHANGES) break;
+    try {
+      const line = `Folded: #${issue.number} ${issue.title}`;
+      const there = app.db
+        .query<{ n: number }, [string, string, string]>(
+          `SELECT COUNT(*) AS n FROM comment WHERE issue_id = ?1 AND author_id = ?2 AND body = ?3`,
+        )
+        .get(direction.id, by.id, line)!.n;
+      if (there === 0) {
+        const added = addComment(app, by, repo, direction, line);
+        if (!added.ok) throw new Error(String(added.error));
+      }
+      const closed = setIssueState(app, by, repo, issue, "closed", { reason: "dropped", triage: true });
+      if (!closed.ok || closed.value.state !== "closed") throw new Error("not closed");
+      did.folded++;
+      const note = addComment(
+        app,
+        by,
+        repo,
+        issue,
+        `${FOLDED_NOTE} (#${direction.number}) as a question, not a task. ` +
+          "To work it, reopen this issue and retitle it as the task it asks for.",
+      );
+      if (!note.ok) throw new Error(String(note.error));
+    } catch (error) {
+      log.error("fold failed", {
+        repo: `${repo.ownerName}/${repo.name}`,
+        issue: issue.number,
+        error: String(error),
+      });
+    }
+  }
 }
 
 /**
@@ -200,7 +290,10 @@ export async function liveTriage(
   }
   const ids = candidates(app, repo);
   const noted = alreadyDone(app.db, ids);
-  if (noted.size === 0) return did;
+  if (noted.size === 0) {
+    fold(app, repo, by, did);
+    return did;
+  }
   const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
   for (const id of ids) {
     const oids = noted.get(id);
@@ -225,5 +318,6 @@ export async function liveTriage(
       });
     }
   }
+  fold(app, repo, by, did);
   return did;
 }

@@ -11,9 +11,10 @@ import { addComment, openIssue, setIssueState } from "../src/actions/issues.ts";
 import { commitToBranch, createRepo, updateRepoSettings } from "../src/actions/repos.ts";
 import { getIssueById, labelsFor, listComments, type Issue } from "../src/core/issues.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
-import { createUser, type User } from "../src/core/users.ts";
+import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { ALREADY_NOTE } from "../src/crew/already.ts";
-import { liveTriage, MOST_CHANGES, FILE_AFTER_MS, tickFields } from "../src/crew/livetriage.ts";
+import { ensureDirectionIssue } from "../src/crew/autonomy.ts";
+import { FILE_AFTER_MS, FOLDED_NOTE, liveTriage, MOST_CHANGES, tickFields } from "../src/crew/livetriage.ts";
 
 describe("live triage", () => {
   let dir: string;
@@ -78,6 +79,7 @@ describe("live triage", () => {
 
     const first = await liveTriage(app, fresh());
     expect(first.closed).toBe(1);
+    expect(first.folded).toBe(0);
     expect(state(done).state).toBe("closed");
     expect(state(done).closeReason).toBe("done");
     expect(listComments(app.db, done.id).some((c) => c.body.includes(oid.slice(0, 7)))).toBe(true);
@@ -146,6 +148,113 @@ describe("live triage", () => {
     for (const m of many) note(m, oid);
     expect((await liveTriage(app, fresh())).closed).toBe(MOST_CHANGES);
     expect((await liveTriage(app, fresh())).closed).toBe(3);
+  });
+
+  describe("questions", () => {
+    beforeAll(() => {
+      ensureDirectionIssue(app, alice, fresh());
+    });
+    const direction = () => getIssueById(app.db, fresh().directionIssueId!)!;
+    const lines = () => listComments(app.db, direction().id).map((c) => c.body);
+    const outsider = async () => {
+      const made = await createUser(app.db, {
+        origin: "seed",
+        trusted: true,
+        username: "carol",
+        email: "carol@forge.local",
+        password: "a-good-passphrase",
+      });
+      if (!made.ok) throw new Error(made.error);
+      return made.value;
+    };
+
+    test("a writer's question folds into the direction issue as one line and closes as dropped", async () => {
+      for (const title of ["Question: why sqlite", "Wish: dark mode", "idea: a tui", "Should it sync?"]) {
+        const q = issue(title);
+        const before = lines().length;
+        const did = await liveTriage(app, fresh());
+        expect(did.folded).toBe(1);
+        expect(lines().slice(before)).toEqual([`Folded: #${q.number} ${title}`]);
+        expect(state(q).state).toBe("closed");
+        expect(state(q).closeReason).toBe("dropped");
+        expect(listComments(app.db, q.id).some((c) => c.body.includes("reopen"))).toBe(true);
+      }
+    });
+
+    test("an outsider's question is never folded", async () => {
+      const carol = await outsider();
+      const theirs = issue("Question: placeholder");
+      app.db.query(`UPDATE issue SET author_id = ?1 WHERE id = ?2`).run(carol.id, theirs.id);
+      const before = lines().length;
+      expect((await liveTriage(app, fresh())).folded).toBe(0);
+      expect(state(theirs).state).toBe("open");
+      expect(lines().length).toBe(before);
+    });
+
+    test("a task title stays open, and a reopened fold stays open", async () => {
+      const task = issue("Add a dark mode");
+      const asked = issue("Wish: export");
+      expect((await liveTriage(app, fresh())).folded).toBe(1);
+      expect(state(task).state).toBe("open");
+      expect(setIssueState(app, alice, fresh(), state(asked), "open").ok).toBe(true);
+      const before = lines().length;
+      expect((await liveTriage(app, fresh())).folded).toBe(0);
+      expect(state(asked).state).toBe("open");
+      expect(lines().length).toBe(before);
+    });
+
+    test("a close that fails announces no second line and the next tick finishes it", async () => {
+      const stuck = issue("Wish: rollback");
+      app.db.run(
+        `CREATE TRIGGER no_fold_close BEFORE UPDATE ON issue
+           WHEN NEW.state = 'closed' AND NEW.title = 'Wish: rollback'
+           BEGIN SELECT RAISE(ABORT, 'rolled back'); END`,
+      );
+      const line = `Folded: #${stuck.number} Wish: rollback`;
+      const before = closedEvents();
+      try {
+        expect((await liveTriage(app, fresh())).folded).toBe(0);
+        expect(state(stuck).state).toBe("open");
+        expect(closedEvents()).toBe(before);
+      } finally {
+        app.db.run(`DROP TRIGGER no_fold_close`);
+      }
+      expect((await liveTriage(app, fresh())).folded).toBe(1);
+      expect(state(stuck).state).toBe("closed");
+      expect(lines().filter((l) => l === line).length).toBe(1);
+    });
+
+    test("a stranger's comment cannot block a fold", async () => {
+      const carol = await outsider().catch(() => getUserByName(app.db, "carol")!);
+      const q = issue("Idea: wildcard");
+      app.db
+        .query(`INSERT INTO comment (id, issue_id, author_id, body, created_at) VALUES (?1, ?2, ?3, ?4, ?5)`)
+        .run("c-spoof", q.id, carol.id, `${FOLDED_NOTE} nope`, new Date().toISOString());
+      expect((await liveTriage(app, fresh())).folded).toBe(1);
+      expect(state(q).state).toBe("closed");
+    });
+
+    test("an agent's or an imported question is never folded", async () => {
+      const agent = issue("Question: by an agent");
+      const imported = issue("Question: imported");
+      app.db.query(`UPDATE issue SET origin_author = 'stranger' WHERE id = ?1`).run(imported.id);
+      app.db.query(`UPDATE user SET is_agent = 1 WHERE id = ?1`).run(alice.id);
+      try {
+        expect((await liveTriage(app, fresh())).folded).toBe(0);
+      } finally {
+        app.db.query(`UPDATE user SET is_agent = 0 WHERE id = ?1`).run(alice.id);
+      }
+      expect(state(agent).state).toBe("open");
+      expect(state(imported).state).toBe("open");
+      app.db.query(`UPDATE issue SET state = 'closed' WHERE id IN (?1, ?2)`).run(agent.id, imported.id);
+    });
+
+    test("folds count toward the cap", async () => {
+      const many = Array.from({ length: MOST_CHANGES + 2 }, (_, n) => issue(`Idea: cap ${n}`));
+      expect((await liveTriage(app, fresh())).folded).toBe(MOST_CHANGES);
+      expect((await liveTriage(app, fresh())).folded).toBe(2);
+      expect(many.every((m) => state(m).state === "closed")).toBe(true);
+    });
   });
 });
 
@@ -342,7 +451,7 @@ describe("live triage where there is little to file under", () => {
 
   test("neither pillars nor gate: nothing is filed, counted or written", async () => {
     const w = await world("plain", [], 2);
-    expect(await liveTriage(app, w.repo())).toEqual({ closed: 0, labelled: 0, missed: 0 });
+    expect(await liveTriage(app, w.repo())).toEqual({ closed: 0, folded: 0, labelled: 0, missed: 0 });
     for (const issue of w.work) expect(comments(issue)).toBe(0);
   });
 
@@ -357,9 +466,10 @@ describe("live triage where there is little to file under", () => {
   });
 
   test("the tick line carries labelled always and triageMiss only when something was missed", () => {
-    expect(tickFields({ closed: 2, labelled: 3, missed: 0 })).toEqual({ triaged: 2, labelled: 3 });
-    expect(tickFields({ closed: 0, labelled: 0, missed: 4 })).toEqual({
+    expect(tickFields({ closed: 2, folded: 1, labelled: 3, missed: 0 })).toEqual({ triaged: 2, folded: 1, labelled: 3 });
+    expect(tickFields({ closed: 0, folded: 0, labelled: 0, missed: 4 })).toEqual({
       triaged: 0,
+      folded: 0,
       labelled: 0,
       triageMiss: 4,
     });

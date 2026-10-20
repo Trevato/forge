@@ -1084,6 +1084,16 @@ its umbrella to wait for the issue) or unlink the gate; the comment stays, so
 triage does not file that issue again. The tick line counts `labelled=N`, and
 shows `triageMiss=N` for old issues it could not file (no gate to defer to).
 
+Live triage also folds questions. An open issue opened by a person who can
+write here, whose title starts `Question:`, `Wish:` or `Idea:` or ends in `?`,
+becomes one `Folded: #N <title>` comment on the direction issue and closes as
+*dropped*, with a comment saying how to get it back: reopen it and retitle it
+as the task it asks for; the reopen stands. Issues from outsiders, agents and
+imported ones are never folded, and nothing is folded before the repository
+has a direction issue. Note that a writer's real task titled `Can we add X?`
+is folded too, since a title ending in `?` is the rule; phrase tasks as
+statements. The tick line counts folds as `folded=N`.
+
 **A red pull.** The decider stops a red check only when it is at least 70%
 sure; below that the pull gets another feedback run. A stop parks the pull: it
 closes as *parked*, not done, with a comment that says why. The pull page's
