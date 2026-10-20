@@ -457,7 +457,11 @@ export function setIssueState(
         authorId: user.value.id,
         body: `${CLOSED_NOTE}${doneBy
           .map((o) => `[\`${o.slice(0, 7)}\`](/${repo.ownerName}/${repo.name}/commit/${o})`)
-          .join(", ")}.`,
+          .join(", ")}.${
+          closing.triage
+            ? " Closed by the crew's live triage; reopen it to undo, and it stays open."
+            : ""
+        }`,
       });
     return written;
   })();
@@ -568,6 +572,8 @@ export interface Closing {
   readonly reason?: CloseReason;
   /** Issue numbers a split issue became. */
   readonly into?: readonly number[];
+  /** The crew's live triage closed it, not the person whose name it carries. */
+  readonly triage?: boolean;
 }
 
 /**

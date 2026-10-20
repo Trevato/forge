@@ -1046,6 +1046,15 @@ or `x` on the issue in the terminal); the close writes "Closed: already done
 on main in …" on the thread. A claim with no commit, or with one that is not
 on the base, is an ordinary decline and is parked as one.
 
+**Live triage.** On each autonomy tick, an open issue carrying the crew's own
+"already done" note (a person's note counts for nothing) is closed as *done*
+when every commit the note names is on the base branch; one missing commit
+leaves it open. At most 25 per repository per tick, rules only, no run and no
+spend. The close is made in the name of the person who set the app autonomous,
+so its comment says "Closed by the crew's live triage". Reopening the issue
+undoes it and the reopen stands: an issue that already has a close note is
+never closed by triage again. The tick line counts them as `triaged=N`.
+
 **A red pull.** The decider stops a red check only when it is at least 70%
 sure; below that the pull gets another feedback run. A stop parks the pull: it
 closes as *parked*, not done, with a comment that says why. The pull page's
