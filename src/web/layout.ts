@@ -106,20 +106,6 @@ export interface PageOptions {
   /** Extra palette rows for this page's context (a repo's own tabs). */
   palette?: PaletteItem[];
   /**
-   * The JavaScript-free half of a page that changes on its own: a
-   * `<meta http-equiv="refresh">`, optionally to somewhere else. Only a page
-   * whose content is genuinely still moving should set it — a refresh a
-   * reader did not ask for steals their scroll position and their selection.
-   *
-   * A plain refresh (no `url`) is written inside `<noscript>`: a browser
-   * running the page's script never parses it, so the script's stream is
-   * the only thing moving the page. Removing the element afterwards would
-   * not do — a refresh is scheduled the moment the parser meets the tag,
-   * and the timer outlives the element. A refresh that leads somewhere
-   * (`url`) is a redirect and stays in force either way.
-   */
-  refresh?: { seconds: number; url?: string };
-  /**
    * No topbar, no footer, no page width: a page that is the whole window
    * (the board). The overlays stay, so the palette is still one chord away.
    */
@@ -528,22 +514,6 @@ function pageDescription(options: PageOptions): string {
   return line.length <= 200 ? line : `${line.slice(0, 197).trimEnd()}…`;
 }
 
-/**
- * The `<meta http-equiv="refresh">` for `PageOptions.refresh`. A redirect
- * (`url`) is a bare tag; a reload is wrapped in `<noscript>`, so only a
- * browser with no script ever schedules it.
- */
-export function refreshMeta(r: { seconds: number; url?: string }): Html {
-  if (r.url !== undefined)
-    return html`<meta
-      http-equiv="refresh"
-      content="${r.seconds}; url=${r.url}"
-    />`;
-  return html`<noscript
-    ><meta http-equiv="refresh" content="${String(r.seconds)}"
-  /></noscript>`;
-}
-
 export function page(options: PageOptions, status = 200): Response {
   // A nonce lets exactly this page's <style> and <script> run while
   // everything else stays forbidden; it is random, or bound to the body when
@@ -635,7 +605,6 @@ export function page(options: PageOptions, status = 200): Response {
               href="${f.href}"
             />`,
         )}
-        ${when(options.refresh, refreshMeta)}
         <meta name="color-scheme" content="light dark" />
         ${theme
           ? html`<meta name="theme-color" content="${metaThemeColor(theme)}" />`

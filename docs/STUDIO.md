@@ -408,10 +408,10 @@ so a card that is answered goes and a new one arrives without a reload.
 
 ### Live regions
 
-A page with a script never reloads itself: the `meta refresh` some pages
-carry is the no-script fallback, written inside `<noscript>` so a browser
-running the script never even schedules it (removing the tag afterwards
-would not cancel a refresh the parser had already set). Every live region
+A page never reloads itself: no page carries a `meta refresh`
+(`test/refresh-meta.test.ts` renders every page in `app.looks` to hold
+it), since a refresh is scheduled the moment the parser meets the tag and
+removing the tag afterwards would not cancel it. Every live region
 listens to one `EventSource` (`/events`,
 everything the viewer may see) and works like this. (The stream also carries
 `run.log` frames, `{ run, lines, truncated }`, a run's new log lines to those

@@ -1,27 +1,53 @@
 /**
- * A page that changes on its own carries a `meta refresh` for browsers with
- * no script. A browser running the page's script must never schedule it: a
- * refresh is set the moment the parser meets the tag, and removing the tag
- * afterwards does not cancel it — which is how a live run page threw away
- * the reader's scroll every five seconds. So the reload is written inside
- * `<noscript>`, and only a redirect (`url`) stands on its own.
+ * No forge page carries a `meta refresh`. A refresh is set the moment the
+ * parser meets the tag, and removing the tag afterwards does not cancel it
+ * — which is how a live run page threw away the reader's scroll every five
+ * seconds. Every page now follows the event stream instead (#3175, #3179),
+ * and the layout no longer offers the option (#3195).
  */
-import { describe, expect, test } from "bun:test";
-import { refreshMeta } from "../src/web/layout.ts";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createApp, type App } from "../src/app.ts";
+import { serve, type Servers } from "../src/http/server.ts";
+import { adminCookie } from "./helpers/admin.ts";
 
-describe("the refresh meta", () => {
-  test("a reload is for browsers without a script only", () => {
-    const tag = String(refreshMeta({ seconds: 5 })).replace(/\s+/g, " ");
-    expect(tag).toMatch(
-      /^<noscript ?><meta http-equiv="refresh" content="5" ?\/><\/noscript>$/,
-    );
+const looks: string[] = (await Bun.file(new URL("../forge.json", import.meta.url)).json()).app.looks;
+
+describe("no page refreshes itself", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let cookie = "";
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-refresh-meta-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    cookie = await adminCookie(app, { username: "ada", email: "ada@f.dev", password: "refresh-password" });
   });
 
-  test("a redirect stays in force with or without a script", () => {
-    const tag = String(refreshMeta({ seconds: 1, url: "/trevato/forge" }));
-    expect(tag).toContain('content="1; url=/trevato/forge"');
-    expect(tag).not.toContain("noscript");
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
   });
+
+  test("forge.json names pages to look at", () => {
+    expect(looks.length).toBeGreaterThan(0);
+  });
+
+  for (const path of looks) {
+    test(`${path}, signed in or not, has no http-equiv="refresh"`, async () => {
+      for (const headers of [{ cookie }, {}]) {
+        const res = await fetch(`${servers.url}${path}`, { headers, redirect: "manual" });
+        const body = await res.text();
+        expect(res.status).toBeLessThan(500);
+        expect(body).not.toMatch(/http-equiv=["']?refresh/i);
+      }
+    });
+  }
 
   test("the page's script no longer reaches for the tag it cannot cancel", async () => {
     const client = await Bun.file(

@@ -10,7 +10,6 @@ import { Glob } from "bun";
 /** file -> the patterns it may carry, and why */
 const ALLOWED: Record<string, { allow: string[]; why: string }> = {
   "src/web/sw.ts": { allow: ['http-equiv="refresh"'], why: "the restart page: the forge is down, so there is no /events to hear" },
-  "src/web/layout.ts": { allow: ['http-equiv="refresh"'], why: "defines the refresh option and its meta tag; callers are listed here" },
   "src/web/client.ts": { allow: ["data-live-every", "setInterval"], why: "the data-live-every mechanism itself, and clocks that only redraw text" },
 };
 
