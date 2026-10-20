@@ -18,6 +18,7 @@ import { getPull } from "../../core/pulls.ts";
 import { canWrite, enterableApps, getRepo } from "../../core/repos.ts";
 import {
   cleanQuery,
+  CODE_BUDGET_MS,
   searchKind,
   type CodeHit,
   type IssueHit,
@@ -57,6 +58,8 @@ interface Asked {
   readonly query: string;
   readonly kind: SearchKind;
   readonly live: boolean;
+  /** `?code=all`: grep every repository, not just what fits the budget. */
+  readonly codeAll: boolean;
 }
 
 /** The apps among what the viewer can see, by id and by `owner/name`. One
@@ -258,12 +261,13 @@ const WORDS: readonly Words[] = [
 
 function searchHref(
   a: Asked,
-  over: { kind?: SearchKind; live?: boolean } = {},
+  over: { kind?: SearchKind; live?: boolean; codeAll?: boolean } = {},
 ): string {
   const kind = over.kind ?? a.kind;
   const params = new URLSearchParams({ q: a.query });
   if (kind !== "all") params.set("kind", kind);
   if (over.live ?? a.live) params.set("live", "1");
+  if (over.codeAll ?? a.codeAll) params.set("code", "all");
   return `/search?${params.toString()}`;
 }
 
@@ -272,6 +276,7 @@ function section(
   [kind, , title, emptyText]: Words,
   rows: Html[],
   truncated: boolean,
+  after: Html | null = null,
 ): Html {
   const emptyIcon =
     kind === "repos" ? "repo" : kind === "issues" ? "issue" : "code";
@@ -287,6 +292,7 @@ function section(
           ${icon(emptyIcon)}<span>${emptyText}</span>
         </p>`
       : listCard(rows)}
+    ${after}
     ${when(
       truncated,
       () =>
@@ -320,6 +326,9 @@ async function find(
       kind: a.kind,
       live: a.live,
       withCode,
+      ...(a.codeAll
+        ? {}
+        : { codeBudgetMs: ctx.app.config.codeBudgetMs ?? CODE_BUDGET_MS }),
     });
     return held !== undefined && !held.allowed
       ? { found, busy: held.retryAfter }
@@ -346,6 +355,7 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
     query: cleanQuery(params.get("q") ?? ""),
     kind: searchKind(params.get("kind")),
     live: params.get("live") === "1",
+    codeAll: params.get("code") === "all",
   };
 
   const form = html`<form
@@ -455,6 +465,15 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
     ],
   };
 
+  const moreCode = when(
+    found.moreCode,
+    () =>
+      html`<p class="muted small mt" data-more-code>
+        Code was searched in the first repositories only.
+        <a href="${searchHref(a, { codeAll: true })}#code">More code results</a>
+      </p>`,
+  );
+
   const body = html`${pageHead(html`Results for “${a.query}”`)} ${form}
   <div class="filters">${chips}</div>
   ${liveToggle}
@@ -471,7 +490,9 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
     .filter(
       ([kind]) => kind !== "all" && (a.kind === "all" || a.kind === kind),
     )
-    .map((w) => section(a, w, ...rows[w[0]]()))}`;
+    .map((w) =>
+      section(a, w, ...rows[w[0]](), w[0] === "code" ? moreCode : null),
+    )}`;
   const response = page({ ctx, title: `Search · ${a.query}`, body });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;

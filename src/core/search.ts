@@ -43,6 +43,9 @@ export const MAX_CODE_HITS = 200;
 export const MAX_HITS_PER_REPO = 20;
 /** A grep that has not answered in this long is abandoned, not waited on. */
 export const GREP_TIMEOUT_MS = 3_000;
+/** A first code search starts no new grep after this long; `?code=all` runs the rest. */
+export const CODE_BUDGET_MS = 30;
+
 /** Longest line of code echoed back; the rest is off-screen anyway. */
 const MAX_LINE_CHARS = 400;
 
@@ -120,6 +123,8 @@ export interface SearchResults {
     readonly issues: boolean;
     readonly code: boolean;
   };
+  /** True when the code budget ran out with repositories still ungrepped. */
+  readonly moreCode: boolean;
 }
 
 /**
@@ -480,11 +485,17 @@ export async function grepRepos(
   repos: readonly Repo[],
   query: string,
   limit = MAX_CODE_HITS,
-): Promise<{ hits: CodeHit[]; truncated: boolean }> {
+  /** No new batch starts after this many ms; the rest is reported as `more`. */
+  budgetMs = Infinity,
+): Promise<{ hits: CodeHit[]; truncated: boolean; more: boolean }> {
   const hits: CodeHit[] = [];
   const considered = repos.slice(0, MAX_SEARCH_REPOS);
   const batch = 4;
+  const started = performance.now();
   for (let i = 0; i < considered.length; i += batch) {
+    if (i > 0 && performance.now() - started >= budgetMs) {
+      return { hits, truncated: repos.length > MAX_SEARCH_REPOS, more: true };
+    }
     const slice = considered.slice(i, i + batch);
     const found = await Promise.all(
       slice.map((repo) =>
@@ -497,7 +508,7 @@ export async function grepRepos(
     );
     for (const [j, repo] of slice.entries()) {
       for (const hit of found[j] ?? []) {
-        if (hits.length >= limit) return { hits, truncated: true };
+        if (hits.length >= limit) return { hits, truncated: true, more: false };
         hits.push({
           repo: { owner: repo.ownerName, name: repo.name },
           ...hit,
@@ -505,5 +516,5 @@ export async function grepRepos(
       }
     }
   }
-  return { hits, truncated: repos.length > MAX_SEARCH_REPOS };
+  return { hits, truncated: repos.length > MAX_SEARCH_REPOS, more: false };
 }

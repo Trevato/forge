@@ -57,6 +57,8 @@ export interface SearchInput {
    * @default true
    */
   withCode?: boolean;
+  /** Start no new grep after this many ms and report `moreCode`. @default unset: grep every repository */
+  codeBudgetMs?: number;
 }
 
 /**
@@ -80,6 +82,7 @@ export async function search(
     issues: [],
     code: [],
     truncated: { repos: false, issues: false, code: false },
+    moreCode: false,
   };
   if (q === "") return empty;
 
@@ -125,8 +128,9 @@ export async function search(
         visible,
         q,
         Math.min(limit * 5, MAX_CODE_HITS),
+        input.codeBudgetMs ?? Infinity,
       )
-    : { hits: [], truncated: false };
+    : { hits: [], truncated: false, more: false };
 
   return {
     repos,
@@ -137,6 +141,7 @@ export async function search(
       issues: localIssueCount >= limit,
       code: code.truncated,
     },
+    moreCode: code.more,
   };
 }
 

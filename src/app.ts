@@ -40,6 +40,8 @@ export interface ForgeConfig {
   seedSignup?: boolean;
   /** The disk probe vitals reads; the volume under `dataDir` when unset. Tests give it a reading. */
   disk?: (dir: string) => { freeBytes: number; totalBytes: number };
+  /** How long the search page's first code search may keep starting greps, in ms. @default 30 (CODE_BUDGET_MS) */
+  codeBudgetMs?: number;
   /** @default 3000 */
   port?: number;
   /** The hostname clone URLs are built from. @default "localhost" */

@@ -616,6 +616,10 @@ fleet's receipt: the page that answers lists what was archived and an **Undo**
 button for the person who ran it (kept for a day), after which the apps are back
 on the home. The terminal's dashboard archives and undoes the same way (below), and so does the MCP `archive` tool given `repos` (at most 50; it answers the `operation` id, which `limb` with `action: "undo"` reverts for a day); each door refreshes an open web home (the `fleet.operated` event).
 
+## Search
+
+`/search` answers repositories and issues in full, and greps code repository by repository. A first search starts no new `git grep` after 30 ms (`codeBudgetMs` in the forge config; a soft stop, since the grep in flight still finishes, one batch of four) and shows what it has with one link, **More code results** (`?code=all`), that greps the rest. The API and the terminal palette always grep everything.
+
 ## Health
 
 `GET /api/v1/health` (and the MCP `health` tool) answer a site admin with

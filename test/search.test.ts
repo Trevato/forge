@@ -29,6 +29,7 @@ const read = async <T>(response: Response): Promise<T> =>
   (await response.json()) as T;
 
 interface Results {
+  moreCode?: boolean;
   repos: (
     | {
         source: "local";
@@ -392,6 +393,7 @@ describe("search: one query, four sources", () => {
         repos: [],
         issues: [],
         code: [],
+        moreCode: false,
         truncated: { repos: false, issues: false, code: false },
       });
     }
