@@ -52,8 +52,8 @@ Wants: to run its code on the forge or in an app through something the forge
 trusts: a package, a model provider, a hosting provider, an origin it syncs from.
 
 - The forge has no runtime dependencies, so there is no package to poison in the
-  forge itself. Nothing checks that this stays true.
-  Test: none yet
+  forge itself.
+  Test: `test/deps.test.ts`
 - An app's code runs in a cell: read-only machine, empty data directory and
   home, own pid and network namespaces, memory, CPU and disk watched. A
   dependency an app pulls in gets no more than the app does.
