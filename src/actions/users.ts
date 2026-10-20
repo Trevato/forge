@@ -90,10 +90,10 @@ export const MIN_SIGNUP_PASSWORD = 12;
  * unique and never empty, and `.invalid` is a name no mail can reach
  * (the same device the crew's addresses use).
  */
-const noEmail = (username: string): string => `${username.toLowerCase()}@no-email.invalid`;
+export const noEmail = (username: string): string => `${username.toLowerCase()}@no-email.invalid`;
 
 /** Whether an address is one a person could have given: plausible and not a stand-in. */
-const givenEmail = (email: string): boolean => plausibleEmail(email) && !isStandInEmail(email);
+export const givenEmail = (email: string): boolean => plausibleEmail(email) && !isStandInEmail(email);
 
 /** What a person is told when the check fails. */
 export const HUMAN_CHECK_MESSAGE =

@@ -296,10 +296,10 @@ describe("a spawned child's first boot", () => {
     expect(unspent(token)).toBe(true);
   });
 
-  test("a password and no passkey is refused, and the link is not spent on it", async () => {
-    const res = await claim(token, { ...maria, password: "a-long-bakery-passphrase" });
+  test("a password too short is refused, and the link is not spent on it", async () => {
+    const res = await claim(token, { ...maria, password: "short" });
     expect(res.status).toBe(422);
-    expect(await res.text()).toContain("Passwords are not taken here.");
+    expect(await res.text()).toContain("Passwords need at least 12 characters.");
     expect(getUserByName(child.db, "maria")).toBeUndefined();
     expect(unspent(token)).toBe(true);
   });
@@ -453,14 +453,18 @@ describe("claims are bound to a spawned forge, and the link is shown once", () =
     try {
       const page = (await (await fetch(`${kidServers.url}/claim`)).text()).replace(/\s+/g, " ");
       expect(page).toContain("alice keeps owner access to this forge; you can remove it in your organisation");
-      const who = { token, username: "kai-owner", email: "kai@x.test" };
+      // A username and a password, no email: the first admin, signed in.
       const res = await fetch(`${kidServers.url}/claim`, {
         method: "POST",
         headers: { origin: kidServers.url },
-        body: new URLSearchParams({ ...who, ...(await passkeyFields(kidServers.url, "/claim/options", who)) }),
+        body: new URLSearchParams({ token, username: "kai-owner", password: "a-long-kai-passphrase" }),
         redirect: "manual",
       });
       expect(res.status).toBe(303);
+      expect(res.headers.get("set-cookie") ?? "").toContain("forge_session=");
+      const admin = getUserByName(kid.db, "kai-owner")!;
+      expect(admin.isAdmin).toBe(true);
+      expect(admin.email).toBe("kai-owner@no-email.invalid");
       const org = getOrg(kid.db, "kai")!;
       const owners = listTeams(kid.db, org.id).find((t) => t.name === "Owners")!;
       expect(listTeamMembers(kid.db, owners.id).map((u) => u.username).sort()).toEqual(["alice", "kai-owner"]);

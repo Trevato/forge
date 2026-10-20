@@ -127,6 +127,14 @@ export const passkeyJs = /* js */ `
   wire('passkey-make', function () {
     var el = doc.getElementById('passkey-make'), form = el.form;
     function val(n) { var f = form.elements[n]; return f ? f.value : ''; }
+    var note = doc.getElementById('passkey-make-note');
+    // A passkey needs an address where the password does not: say so here, not after a round trip.
+    if (el.hasAttribute('data-needs-email') && !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(val('email').trim())) {
+      if (note) note.textContent = 'A passkey needs an email address above.';
+      if (form.elements.email) form.elements.email.focus();
+      el.disabled = false;
+      return Promise.resolve();
+    }
     if (form.reportValidity && !form.reportValidity()) { el.disabled = false; return Promise.resolve(); }
     var who = { token: val('token'), username: val('username'), email: val('email') };
     return post(el.getAttribute('data-options'), who).then(function (o) {

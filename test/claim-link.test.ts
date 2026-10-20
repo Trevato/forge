@@ -5,8 +5,7 @@
  * the browser and posts it in the body. Any site admin of the parent can
  * re-issue a link for a child nobody has claimed; the old one dies at once.
  * Through MCP the link stays out of the agent's conversation unless asked
- * for there on purpose (#839). The account a link makes has a passkey and
- * no password (#1890).
+ * for there on purpose (#839). The account a link makes has a password or a passkey (#2924).
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -42,6 +41,7 @@ describe("the claim link in the fragment, and its re-issue", () => {
   let bobRw = "";
   let first = "";
   let second = "";
+  let kaiBody = "";
 
   const reissue = (token: string, name = "maria", origin?: string) =>
     fetch(`${parentServers.url}/api/v1/forges/${name}/claim-link`, {
@@ -224,15 +224,28 @@ describe("the claim link in the fragment, and its re-issue", () => {
     expect(live.status).toBe(200);
     // A claim challenge, kept to try at the everyday form once signed in.
     const claimOnly = await passkeyFields(childServers.url, "/claim/options", takenForm);
-    // A password and no passkey is refused, and spends nothing.
-    const password = await claim({
-      token: tokenOf(second),
-      username: "maria-owner",
-      email: "m@x.test",
-      password: PASSWORD,
+    // A password too short is refused, and spends nothing.
+    const weak = await claim({ token: tokenOf(second), username: "maria-owner", password: "short" });
+    expect(weak.status).toBe(422);
+    expect(await weak.text()).toContain("Passwords need at least 12 characters.");
+    expect(getUserByName(child.db, "maria-owner")).toBeUndefined();
+    // A malformed address is refused on the password door, and so is a stand-in typed by hand.
+    for (const email of ["not-an-address", "me@no-email.invalid"]) {
+      const bad = await claim({ token: tokenOf(second), username: "maria-owner", email, password: PASSWORD });
+      expect(bad.status).toBe(422);
+      expect(await bad.text()).toContain("That does not look like an email address.");
+    }
+    // The passkey door needs an address: no challenge without one, and a filled form that lost it is refused.
+    const noMail = await fetch(`${childServers.url}/claim/options`, {
+      method: "POST",
+      headers: { origin: childServers.url, "content-type": "application/json" },
+      body: JSON.stringify({ token: tokenOf(second), username: "maria-owner" }),
     });
-    expect(password.status).toBe(422);
-    expect(await password.text()).toContain("Passwords are not taken here.");
+    expect(noMail.status).toBe(422);
+    const keyed = { token: tokenOf(second), username: "maria-owner", email: "m@x.test" };
+    const lost = await claim({ ...(await passkeyFields(childServers.url, "/claim/options", keyed)), token: keyed.token, username: keyed.username });
+    expect(lost.status).toBe(422);
+    expect(await lost.text()).toContain("That does not look like an email address.");
     expect(getUserByName(child.db, "maria-owner")).toBeUndefined();
     const ok = await claimWithKey({
       token: tokenOf(second),
@@ -308,6 +321,7 @@ describe("the claim link in the fragment, and its re-issue", () => {
       }),
     });
     expect(made.status).toBe(201);
+    kaiBody = ((await made.json()) as { bodyId: string }).bodyId;
     const send = () =>
       fetch(`${parentServers.url}/api/v1/forges/kai/claim-link`, {
         method: "POST",
@@ -355,5 +369,38 @@ describe("the claim link in the fragment, and its re-issue", () => {
     const ro = await call(adminRo, { name: "kai", reveal: true });
     expect(ro.error).toBe(true);
     expect(ro.text).not.toContain("/claim#");
+  });
+
+  test("a username, an email and a password make the first admin, who can sign in with it", async () => {
+    const kid = createApp({ dataDir: childDirOf(parent, kaiBody), port: 0 });
+    await firstBoot(kid);
+    const kidServers = await serve(kid);
+    try {
+      const reissued = await fetch(`${parentServers.url}/api/v1/forges/kai/claim-link`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${adminRw}` },
+      });
+      const token = tokenOf(((await reissued.json()) as { claimUrl: string }).claimUrl);
+      const res = await fetch(`${kidServers.url}/claim`, {
+        method: "POST",
+        headers: { origin: kidServers.url },
+        body: new URLSearchParams({ token, username: "kai-owner", email: "kai@x.test", password: PASSWORD }),
+        redirect: "manual",
+      });
+      expect(res.status).toBe(303);
+      expect(res.headers.get("set-cookie") ?? "").toContain("forge_session=");
+      const owner = getUserByName(kid.db, "kai-owner")!;
+      expect(owner.isAdmin).toBe(true);
+      expect(owner.email).toBe("kai@x.test");
+      expect(await Bun.password.verify(PASSWORD, (kid.db.query("SELECT password_hash AS h FROM user WHERE id = ?1").get(owner.id) as { h: string }).h)).toBe(true);
+    } finally {
+      kidServers.stop();
+      kid.close();
+    }
+  });
+
+  test("the passkey button asks for the email in the browser, before any round trip", async () => {
+    const { passkeyJs } = await import("../src/web/passkey-client.ts");
+    expect(passkeyJs).toContain("data-needs-email");
   });
 });

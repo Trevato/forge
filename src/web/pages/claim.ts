@@ -1,14 +1,16 @@
 /**
  * `/claim`: the page a spawned child's link opens (`spawn/claim.ts`).
  * The link is `/claim#<token>`, so the secret never leaves the browser in a
- * request line. The path: the person a forge was made for opens the link they were sent,
- * reads who will be able to see it, makes their account with a passkey
- * (`passkey-ceremony.ts`; there is no password), and lands in their forge
- * as its admin. The GET only shows the form — a link unfurled
- * in a chat app must not spend itself — and the POST, same-origin, makes
- * the account and burns the link in one step. A link that is used, expired
- * or made up says which, plainly; a forge that was not spawned has no
- * claim page at all.
+ * request line. The person a forge was made for opens it, reads who will be
+ * able to see the forge, and makes their account with a username and a
+ * password (email optional, the checks signup's own) or with a passkey
+ * (`passkey-ceremony.ts`; that one needs an email). They land in their
+ * forge as its admin.
+ *
+ * The GET only shows the form — a link unfurled in a chat app must not
+ * spend itself — and the POST, same-origin, makes the account and burns the
+ * link in one step. A link that is used, expired or made up says which,
+ * plainly; a forge that was not spawned has no claim page at all.
  *
  * Who keeps access is never silent. By default the spawner's account leaves
  * the organisation's Owners when the forge is claimed (the new owner can
@@ -16,6 +18,8 @@
  * so before anyone submits, and where to remove it.
  */
 
+import { givenEmail, MIN_SIGNUP_PASSWORD, noEmail } from "../../actions/users.ts";
+import type { Credential } from "../../auth/webauthn.ts";
 import { crossOrigin, type Ctx } from "../../http/context.ts";
 import { STRANGER_MAX } from "../../http/limits.ts";
 import { clientAddress } from "../../http/peer.ts";
@@ -55,7 +59,7 @@ interface Values {
   /** The claim code, from the form's body. */
   readonly token?: string;
 }
-type Errors = Partial<Record<"username" | "email" | "passkey", string>>;
+type Errors = Partial<Record<"username" | "email" | "password" | "passkey", string>>;
 
 function dead(ctx: Ctx, state: Exclude<ClaimState["state"], "ok">): Response {
   const says = {
@@ -166,18 +170,29 @@ function claimForm(
             type: "email",
             value: values.email ?? "",
             autocomplete: "email",
-            required: true,
+            hint: "Optional. A passkey needs one.",
             ...(errors.email ? { error: errors.email } : {}),
           })}
+          ${formField({
+            label: "Password",
+            name: "password",
+            type: "password",
+            autocomplete: "new-password",
+            minlength: MIN_SIGNUP_PASSWORD,
+            hint: `At least ${MIN_SIGNUP_PASSWORD} characters.`,
+            ...(errors.password ? { error: errors.password } : {}),
+          })}
           ${passkeyFields()}
-          <p class="muted small mb">
-            You sign in with a passkey: a fingerprint, face or device PIN.
-            There is no password to remember.
-          </p>
-          <p class="passkey-note mb" id="passkey-make-note" role="alert">${errors.passkey ?? ""}</p>
-          <noscript><p class="muted small">Making the passkey needs JavaScript.</p></noscript>
           <div class="form-actions">
-            <button type="submit" id="passkey-make" class="btn" data-variant="primary" data-options="/claim/options">Claim this forge with a passkey</button>
+            <button type="submit" class="btn" data-variant="primary">Claim this forge</button>
+          </div>
+          <div class="passkey-on">
+            <p class="muted small mb">
+              Or skip the password: a passkey signs you in with a fingerprint,
+              face or device PIN. It needs an email address above.
+            </p>
+            <p class="passkey-note mb" id="passkey-make-note" role="alert">${errors.passkey ?? ""}</p>
+            <button type="button" id="passkey-make" class="btn" data-variant="outline" data-options="/claim/options" data-needs-email>Claim with a passkey instead</button>
           </div>
         </form>`,
     )}
@@ -216,14 +231,18 @@ export async function claimFragmentPage(ctx: Ctx): Promise<Response> {
   });
 }
 
-/** Whether a name and address are fit for the first admin; else the words. */
-function problems(ctx: Ctx, username: string, email: string): Errors {
+/**
+ * Whether a name and address are fit for the first admin; else the words.
+ * The address is optional unless a passkey is being made.
+ */
+function problems(ctx: Ctx, username: string, email: string, needEmail: boolean): Errors {
   const errors: Errors = {};
   if (!USERNAME.test(username))
     errors.username = "Usernames are letters, digits, dots, dashes.";
   else if (getUserByName(ctx.app.db, username))
     errors.username = "That username is taken.";
-  if (!email.includes("@")) errors.email = "An email address, please.";
+  if (email !== "" ? !givenEmail(email) : needEmail)
+    errors.email = "That does not look like an email address.";
   return errors;
 }
 
@@ -244,7 +263,7 @@ export async function claimOptions(ctx: Ctx): Promise<Response> {
   if (state !== "ok")
     return refuse(state === "unknown" ? 404 : 410, state === "unknown" ? "This is not a claim link." : `This link is ${state === "owned" ? "already claimed" : state}.`);
   const username = str(data.username).trim();
-  const bad = problems(ctx, username, str(data.email).trim());
+  const bad = problems(ctx, username, str(data.email).trim(), true);
   const first = bad.username ?? bad.email;
   if (first !== undefined) return refuse(422, first);
   return json(makeOptions(ctx, "claim", username));
@@ -279,18 +298,27 @@ export async function claimSubmit(ctx: Ctx): Promise<Response> {
       },
       422,
     );
-  const errors = problems(ctx, values.username, values.email);
+  const password = typeof form.get("password") === "string" ? (form.get("password") as string) : "";
+  const withKey = field(form, "attestationObject") !== "";
+  const errors = problems(ctx, values.username, values.email.trim(), withKey);
+  if (!withKey && password.length < MIN_SIGNUP_PASSWORD)
+    errors.password = `Passwords need at least ${MIN_SIGNUP_PASSWORD} characters.`;
   if (Object.keys(errors).length > 0) return again(errors);
-  // The key, or nothing: a password in the form is not read at all.
-  const key = await readPasskey(ctx, "claim", form);
-  if (!key.ok) return again({ passkey: PASSKEY_WORDS[key.error] });
+  // A key in the form is the passkey door; none is the password door.
+  let credential: Credential | undefined;
+  if (withKey) {
+    const key = await readPasskey(ctx, "claim", form);
+    if (!key.ok) return again({ passkey: PASSKEY_WORDS[key.error] });
+    credential = key.value;
+  }
 
   // Spent first, in one statement: of two people on one link, one wins.
   const spent = burnClaim(ctx.app.db, orgId, token);
   if (spent.state !== "ok") return dead(ctx, spent.state);
   const made = await createUser(ctx.app.db, {
     username: values.username,
-    email: values.email,
+    email: values.email.trim() === "" ? noEmail(values.username) : values.email.trim(),
+    ...(credential === undefined ? { password } : {}),
     isAdmin: true,
     // The one-time claim link the owner handed out is the proof.
     trusted: true,
@@ -306,7 +334,7 @@ export async function claimSubmit(ctx: Ctx): Promise<Response> {
           : { username: "That username is taken." },
     );
   }
-  if (!addPasskey(ctx.app.db, made.value.id, "Passkey", key.value).ok) {
+  if (credential !== undefined && !addPasskey(ctx.app.db, made.value.id, "Passkey", credential).ok) {
     discardFreshUser(ctx.app.db, made.value.id);
     unburnClaim(ctx.app.db, orgId, token);
     return again({ passkey: PASSKEY_WORDS.taken });
