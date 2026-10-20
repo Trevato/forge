@@ -21,8 +21,10 @@ import { auditToday } from "../../core/cloud_audit.ts";
 import {
   listCloudAccounts,
   recentCloudReads,
+  type CloudAccount,
   type CloudRead,
 } from "../../core/cloud_account.ts";
+import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
@@ -47,8 +49,7 @@ const hidden = (provider: string, name: string): Html =>
   html`<input type="hidden" name="provider" value="${provider}" />
     <input type="hidden" name="name" value="${name}" />`;
 
-function accountsCard(reads: CloudRead[], uses: Map<string, VendorUse[]>, ctx: Ctx): Html {
-  const accounts = listCloudAccounts(ctx.app.db);
+function accountsCard(accounts: CloudAccount[], reads: CloudRead[], uses: Map<string, VendorUse[]>): Html {
   const rows = accounts.map((a) => {
     const last = reads.find((r) => r.provider === a.provider && r.name === a.name);
     return row({
@@ -142,21 +143,28 @@ function readsCard(reads: CloudRead[]): Html {
 
 // GET /settings/cloud
 export async function cloudPage(ctx: Ctx): Promise<Response> {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const denied = requireAdmin(ctx);
   if (denied) return denied;
-  const reads = recentCloudReads(ctx.app.db);
-  const uses = await usesByVendor(ctx.app.db, ctx.app.reposRoot, ctx.auth.user!);
-  return page({
+  const reads = timePhase(ctx.request, "reads", () => recentCloudReads(ctx.app.db));
+  const uses = await timePhaseAsync(ctx.request, "uses", () =>
+    usesByVendor(ctx.app.db, ctx.app.reposRoot, ctx.auth.user!),
+  );
+  const accounts = timePhase(ctx.request, "accounts", () => listCloudAccounts(ctx.app.db));
+  const rendering = performance.now();
+  const response = page({
     ctx,
     title: "Cloud accounts",
     body: html`<div class="page-head"><h1>Cloud accounts</h1></div>
       ${settingsLayout(
         accountSections("cloud", { admin: true }),
-        html`${accountsCard(reads, uses, ctx)}<div class="mt">${readsCard(reads)}</div>
+        html`${accountsCard(accounts, reads, uses)}<div class="mt">${readsCard(reads)}</div>
           <p class="muted small mt"><a href="/settings/cloud/audit">Every vendor call today</a></p>`,
         "Account settings",
       )}`,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 const said = (ctx: Ctx, r: { ok: boolean }, good: string, bad: string | undefined) =>
