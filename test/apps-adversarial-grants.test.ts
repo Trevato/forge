@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import { parseAppHost, signGrant, verifyGrant } from "../src/apps/proxy.ts";
-import { newApp, updateAppSettings } from "../src/actions/apps.ts";
+import { newApp, updateAppSettings, type NewAppResult } from "../src/actions/apps.ts";
 import { listRuns, type Run } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -26,6 +26,9 @@ describe("apps adversarial: grants and the proxy", () => {
   let servers: Servers;
   let runtime: AppsRuntime;
   let alice: User;
+  let grants: NewAppResult;
+  let override: NewAppResult;
+  let proxy: NewAppResult;
 
   const viaHost = (host: string, path = "/", init: RequestInit = {}) =>
     fetch(`${servers.url}${path}`, {
@@ -77,6 +80,20 @@ describe("apps adversarial: grants and the proxy", () => {
     });
     if (!created.ok) throw new Error(created.error);
     alice = created.value;
+
+    // The four apps deploy side by side, once for the file.
+    const make = async (name: string, visibility: "public" | "private") => {
+      const made = await newApp(app, alice, { name, visibility });
+      if (!made.ok) throw new Error(made.error);
+      await settled(made.value.repo.id, (r) => r.env === "production");
+      return made.value;
+    };
+    [grants, , override, proxy] = await Promise.all([
+      make("grants", "private"),
+      make("grantpublic", "public"),
+      make("publicwithprivateapp", "public"),
+      make("proxytest", "public"),
+    ]);
   }, 30_000);
 
   afterAll(async () => {
@@ -88,15 +105,8 @@ describe("apps adversarial: grants and the proxy", () => {
   });
 
   test("private grant: forged, tampered, expired, wrong-env, and open-redirect are all refused; cookie is HttpOnly/SameSite", async () => {
-    const made = await newApp(app, alice, {
-      name: "grants",
-      visibility: "private",
-    });
-    expect(made.ok).toBe(true);
-    if (!made.ok) return;
-    const repo = made.value.repo;
-    const record = made.value.app;
-    await settled(repo.id, (r) => r.env === "production");
+    const repo = grants.repo;
+    const record = grants.app;
 
     const target = { app: record, env: "production" as const };
     const good = signGrant(dataDir, target, 60_000);
@@ -132,21 +142,14 @@ describe("apps adversarial: grants and the proxy", () => {
     // Hitting the grant endpoint on a *public* app: it still answers (it
     // is not access-gated by itself), but the token must still verify
     // correctly against that public app's own target.
-    const publicMade = await newApp(app, alice, {
-      name: "grantpublic",
-      visibility: "public",
-    });
-    expect(publicMade.ok).toBe(true);
-    if (publicMade.ok) {
-      await settled(publicMade.value.repo.id, (r) => r.env === "production");
-      const pubGrantUrl = `http://grantpublic.${DOMAIN}/__forge/grant?t=${encodeURIComponent(good)}&to=/`;
-      // A production-app grant token does not verify for a different app's
-      // target, so this must be refused (404) even though the destination
-      // app is public.
-      const url = new URL(pubGrantUrl);
-      const crossApp = await viaHost(url.host, `${url.pathname}${url.search}`);
-      expect(crossApp.status).toBe(404);
-    }
+    // (`grantpublic` is deployed in beforeAll.) A production-app grant
+    // token does not verify for a different app's target, so this must be
+    // refused (404) even though the destination app is public.
+    const crossApp = await viaHost(
+      `grantpublic.${DOMAIN}`,
+      `/__forge/grant?t=${encodeURIComponent(good)}&to=/`,
+    );
+    expect(crossApp.status).toBe(404);
 
     // Open redirect: `to=//evil` and `to=http://evil` must both collapse to `/`.
     const okToken = signGrant(dataDir, target, 60_000);
@@ -204,20 +207,13 @@ describe("apps adversarial: grants and the proxy", () => {
     // anonymous visitor has nothing to be vouched with, and a signed-in
     // stranger who can read the public code is still not let in: a private
     // app answers to its writers and crew only (#620).
-    const overrideMade = await newApp(app, alice, {
-      name: "publicwithprivateapp",
-      visibility: "public",
-    });
-    expect(overrideMade.ok).toBe(true);
-    if (!overrideMade.ok) return;
-    await settled(overrideMade.value.repo.id, (r) => r.env === "production");
-    updateAppSettings(app, alice, overrideMade.value.repo, {
+    updateAppSettings(app, alice, override.repo, {
       access: "private",
     });
     const anonOnPublicRepo = openEnvUrl(
       app,
       undefined,
-      overrideMade.value.repo,
+      override.repo,
       "production",
     );
     expect(anonOnPublicRepo.ok).toBe(false);
@@ -226,7 +222,7 @@ describe("apps adversarial: grants and the proxy", () => {
     const strangerOnPublicRepo = openEnvUrl(
       app,
       strangerCreated.value,
-      overrideMade.value.repo,
+      override.repo,
       "production",
     );
     expect(strangerOnPublicRepo.ok).toBe(false);
@@ -235,14 +231,7 @@ describe("apps adversarial: grants and the proxy", () => {
   }, 60_000);
 
   test("the proxy: hop-by-hop headers are stripped, an upstream that dies mid-request yields a clean error, a claimed upgrade is a request", async () => {
-    const made = await newApp(app, alice, {
-      name: "proxytest",
-      visibility: "public",
-    });
-    expect(made.ok).toBe(true);
-    if (!made.ok) return;
-    const repo = made.value.repo;
-    await settled(repo.id, (r) => r.env === "production");
+    const repo = proxy.repo;
 
     const page = await viaHost(`proxytest.${DOMAIN}`);
     expect(page.status).toBe(200);
