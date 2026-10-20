@@ -100,7 +100,8 @@ export async function seedFixture(
     const user = await createUser(db, {
       username,
       email: `${username}@forge.test`,
-      password: "bench-passphrase-0",
+      // No password: sessions are minted directly, and argon2 across a dozen
+      // accounts is the seed's whole cost, which the check machine's load scales.
       origin: "seed",
       trusted: true,
       ...extra,
