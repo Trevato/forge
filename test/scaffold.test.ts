@@ -25,6 +25,9 @@ import { createUser } from "../src/core/users.ts";
 import { serve } from "../src/http/server.ts";
 import { scaffoldFiles } from "../src/apps/scaffold.ts";
 
+/** How long the written-out app's `bun test` may take, wall clock. */
+const SUITE_BUDGET_MS = 3_000;
+
 /** A child that inherits nothing it was not handed. */
 const run = async (
   cwd: string,
@@ -68,9 +71,15 @@ describe("a scaffolded app, written out and run on its own", () => {
   });
   afterAll(() => rm(dir, { recursive: true, force: true }));
 
-  test("its own suite is green", async () => {
+  test("its own suite is green, inside its 3 s budget", async () => {
+    // Every deploy and every pull on the app waits on this suite, so it is
+    // held to a budget (docs/APPS.md, "What a new app starts as").
+    const started = performance.now();
     const { code, out } = await run(dir, [process.execPath, "test"]);
+    const ms = Math.round(performance.now() - started);
+    console.log(`the scaffold's own suite ran in ${ms} ms (budget ${SUITE_BUDGET_MS} ms)`);
     expect([code, out.includes(" 0 fail")]).toEqual([0, true]);
+    expect(ms).toBeLessThanOrEqual(SUITE_BUDGET_MS);
     // Each guarantee has its own file of tests in the suite.
     for (const name of [
       "design.test.ts",

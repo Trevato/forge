@@ -539,9 +539,11 @@ returns through `audited`, every API route carries its description, no
 colour is spelled out, and the door is never routed around.
 `test/scaffold.test.ts` writes the scaffold out and runs its suite and its
 two scripts, so a change to the scaffold that breaks one of these does
-not land. The table the door reads knows two signed identities, `user`
-and `admin`; a role such as a team's (`manage`) waits on the forge
-signing one (see [CONTRACT.md](CONTRACT.md)).
+not land.
+The app's own `bun test` has a budget of 3 s, because every deploy and every pull on the app waits for it; `test/scaffold.test.ts` times it and fails above that.
+The table the door reads knows two signed identities, `user` and
+`admin`; a role such as a team's (`manage`) waits on the forge signing
+one (see [CONTRACT.md](CONTRACT.md)).
 
 ## Who is there: identity from the forge
 
