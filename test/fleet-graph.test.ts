@@ -23,7 +23,12 @@ import { createToken } from "../src/core/tokens.ts";
 import { recordUsage, usageBuckets, type UsageOutcome } from "../src/core/usage.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { niceCeiling, windowSvg } from "../src/web/fleet-graph.ts";
+import {
+  FLEET_GRAPH_EVENTS,
+  fleetGraphClientJs,
+  niceCeiling,
+  windowSvg,
+} from "../src/web/fleet-graph.ts";
 import { fleetGraphCsvText } from "../src/web/pages/fleet-graph.ts";
 import { promote } from "./helpers/members.ts";
 
@@ -361,5 +366,75 @@ describe("the graph", () => {
         ["14d", 14],
       ]);
     });
+  });
+});
+
+describe("the redraw", () => {
+  test("the client script has no timer loop and names its events in one list", () => {
+    expect(fleetGraphClientJs).not.toContain("setInterval");
+    expect(FLEET_GRAPH_EVENTS).toEqual(["run.started", "usage.delta", "run.finished"]);
+    expect(fleetGraphClientJs).toContain(JSON.stringify(FLEET_GRAPH_EVENTS));
+    expect(fleetGraphClientJs).toContain("forge:event");
+    expect(fleetGraphClientJs).toContain("visibilitychange");
+  });
+
+  test("the source file carries no setInterval or refresh constant", async () => {
+    const src = await Bun.file("src/web/fleet-graph.ts").text();
+    expect(src).not.toMatch(/setInterval\s*\(/);
+    expect(src).not.toContain("FLEET_GRAPH_REFRESH_MS");
+  });
+});
+
+describe("the redraw, run against a stub page", () => {
+  function page() {
+    const listeners: Record<string, ((e: unknown) => void)[]> = {};
+    const fetched: string[] = [];
+    const timers: { fn: () => void; ms: number }[] = [];
+    let now = 10_000;
+    const section = { getAttribute: () => "/fleet/graph/live", replaceWith() {} };
+    const document = {
+      visibilityState: "visible",
+      getElementById: () => section,
+      addEventListener: (n: string, f: (e: unknown) => void) => (listeners[n] ??= []).push(f),
+      importNode: (x: unknown) => x,
+    };
+    const fetch = (src: string) => {
+      fetched.push(src);
+      return Promise.resolve({ ok: false });
+    };
+    new Function("document", "fetch", "DOMParser", "setTimeout", "Date", fleetGraphClientJs)(
+      document, fetch, class {}, (fn: () => void, ms: number) => timers.push({ fn, ms }),
+      { now: () => now },
+    );
+    const emit = (kind: string) => listeners["forge:event"]?.forEach((f) => f({ detail: { kind } }));
+    const flush = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
+    return { emit, fetched, timers, flush, advance: (ms: number) => { now += ms; } };
+  }
+
+  test("a matching kind draws once, a non-matching kind never", async () => {
+    const p = page();
+    p.emit("issue.opened");
+    expect(p.timers).toHaveLength(0);
+    for (const kind of FLEET_GRAPH_EVENTS) {
+      const q = page();
+      q.emit(kind);
+      expect(q.timers).toHaveLength(1);
+      q.timers[0]!.fn();
+      expect(q.fetched).toEqual(["/fleet/graph/live"]);
+    }
+  });
+
+  test("a burst inside the gap coalesces to one trailing redraw", async () => {
+    const p = page();
+    p.emit("usage.delta");
+    p.timers[0]!.fn();
+    await p.flush();
+    p.advance(200);
+    p.emit("usage.delta");
+    p.emit("run.finished");
+    expect(p.timers).toHaveLength(2);
+    expect(p.timers[1]!.ms).toBe(800);
+    p.timers[1]!.fn();
+    expect(p.fetched).toHaveLength(2);
   });
 });

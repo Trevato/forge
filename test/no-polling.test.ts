@@ -14,7 +14,6 @@ const ALLOWED: Record<string, { allow: string[]; why: string }> = {
   "src/web/pages/migrate.ts": { allow: ["refresh: {", 'http-equiv="refresh"'], why: "migrate progress runs in a process that emits no events" },
   "src/web/pages/browse.ts": { allow: ["refresh: {"], why: "mirror progress runs in a process that emits no events" },
   "src/web/client.ts": { allow: ["data-live-every", "setInterval"], why: "the data-live-every mechanism itself, and clocks that only redraw text" },
-  "src/web/fleet-graph.ts": { allow: ["setInterval"], why: "no fleet event yet; remove once it has one" },
 };
 
 const PATTERNS: [string, RegExp][] = [

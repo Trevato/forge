@@ -14,9 +14,10 @@
  * viewBox units, beside the geometry it has to fit, not in the stylesheet.
  *
  * `fleetGraphSection` carries `data-src`: the client script below fetches
- * it every 30 s while the tab is visible, and at once on a
- * `forge:fleet-op` event, so an operation's effect is drawn within a minute
- * without a reload. The fragment route returns this same section.
+ * it when the page's one `/events` stream (`forge:event`) carries a kind in
+ * `FLEET_GRAPH_EVENTS`, at most once a second, and when the tab becomes
+ * visible. There is no timer: a quiet forge never redraws, which is correct
+ * because nothing moved. The fragment route returns this same section.
  */
 
 import type {
@@ -36,8 +37,20 @@ const AXIS = 18;
 const SVG_H = TOP + SPEND_H + GAP + RUNS_H + AXIS;
 const PLOT_W = SVG_W - LEFT - RIGHT;
 
-/** How often the open page redraws on its own, in ms. */
-export const FLEET_GRAPH_REFRESH_MS = 30_000;
+/**
+ * The event kinds that move spend or runs: a run starting, a spend tick
+ * mid-run (the runner records a `running` usage row and appends
+ * `usage.delta`), and a run ending. The one-second coalescing below is what
+ * keeps the tick rate cheap.
+ */
+export const FLEET_GRAPH_EVENTS: readonly string[] = [
+  "run.started",
+  "usage.delta",
+  "run.finished",
+];
+
+/** Redraws are coalesced to at most one in this many ms. */
+export const FLEET_GRAPH_MIN_GAP_MS = 1000;
 
 /** The smallest 1, 2, 2.5 or 5 × 10ⁿ at or above `v`; `floor` when v is 0. */
 export function niceCeiling(v: number, floor: number): number {
@@ -254,7 +267,7 @@ export function fleetGraphSection(graph: FleetGraph): Html {
       <time datetime="${graph.at}">${graph.at.slice(11, 16)} UTC</time>. A
       run counts in the UTC hour or day it ended; spend is the provider's
       reported cost in US dollars. The newest bar is still filling. Redrawn
-      every ${FLEET_GRAPH_REFRESH_MS / 1000} s while open.
+      when spend or runs move while open.
     </p>
   </section>`;
 }
@@ -281,12 +294,24 @@ export const fleetGraphClientJs = /* js */ `
       .catch(function () {})
       .then(function () { busy = false; });
   }
-  setInterval(function () {
-    if (document.visibilityState === 'visible') redraw();
-  }, ${FLEET_GRAPH_REFRESH_MS});
+  var kinds = ${JSON.stringify(FLEET_GRAPH_EVENTS)};
+  var last = 0;
+  var timer = null;
+  // At most one redraw a second: a burst of events draws once, trailing.
+  function soon() {
+    if (timer !== null) return;
+    timer = setTimeout(function () {
+      timer = null;
+      last = Date.now();
+      redraw();
+    }, Math.max(0, last + ${FLEET_GRAPH_MIN_GAP_MS} - Date.now()));
+  }
+  document.addEventListener('forge:event', function (e) {
+    var kind = e.detail && e.detail.kind;
+    if (kinds.indexOf(kind) !== -1) soon();
+  });
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState === 'visible') redraw();
   });
-  document.addEventListener('forge:fleet-op', redraw);
 })();
 `;
