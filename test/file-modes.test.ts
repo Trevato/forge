@@ -1,12 +1,13 @@
 /** Host keys and database files are 0600; too-open ones are refused or named (#3025). */
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/app.ts";
 import { forgeVitals } from "../src/actions/health.ts";
 import { loadOrCreateHostKey } from "../src/ssh/keys.ts";
+import { openDbFiles, tightenDbFiles } from "../src/kernel/file_modes.ts";
 
 const dirs: string[] = [];
 const tmp = () => {
@@ -57,4 +58,21 @@ test("a 0644 forge.db is tightened to 0600 at boot, with its side files", () => 
   } finally {
     app.db.close();
   }
+});
+
+test("a 0644 -wal and -shm are tightened too", () => {
+  const dir = tmp();
+  for (const s of ["", "-wal", "-shm"]) writeFileSync(join(dir, "forge.db" + s), "x", { mode: 0o644 });
+  tightenDbFiles(dir);
+  for (const s of ["", "-wal", "-shm"]) expect(mode(join(dir, "forge.db" + s))).toBe(0o600);
+});
+
+test("a refused chmod does not stop boot and the file is still named", () => {
+  const dir = tmp();
+  writeFileSync(join(dir, "forge.db"), "x", { mode: 0o644 });
+  tightenDbFiles(dir, () => {
+    throw new Error("EPERM");
+  });
+  expect(mode(join(dir, "forge.db"))).toBe(0o644);
+  expect(openDbFiles(dir).map((f) => f.name)).toEqual(["forge.db"]);
 });

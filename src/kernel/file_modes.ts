@@ -40,11 +40,11 @@ export function openDbFiles(dataDir: string): { name: string; sentence: string }
  * Narrow every too-open database file to 0600 and say each one. A file that
  * cannot be changed (not ours) stays, and vitals keeps naming it.
  */
-export function tightenDbFiles(dataDir: string): void {
+export function tightenDbFiles(dataDir: string, chmod: (path: string, mode: number) => void = chmodSync): void {
   for (const { name } of openDbFiles(dataDir)) {
     const path = join(dataDir, name);
     try {
-      chmodSync(path, 0o600);
+      chmod(path, 0o600);
       log.warn("database file was too open; set to 0600", { path });
     } catch {
       // Not ours to change: vitals still says it.
