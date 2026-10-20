@@ -1025,6 +1025,12 @@ that turn green while a candidate is gating wait for the next one. Each
 queue's numbers — how many pulls are queued, how many are gating, and how
 many landed in the last hour — show in three places: the flow panel on `/boards`, the
 terminal's Flow command, and the MCP `flow` tool's `queue` field.
+When a repository requires checks and an approved pull is green only against
+an older main, the merge would refuse that green. The sweep therefore queues
+the pull's check again (reason `stale`) on main as it is now, and the fresh
+green lands the pull on a later sweep, with no person re-queuing it. The
+autonomy tick line counts the approved pulls the last sweep saw and why each
+waits (`approved="3 approved: queued=2 stale=1"`, from `src/crew/waits.ts`).
 
 An autonomous app's planner is **held** while nothing is landing or the plate
 is full: no pull has merged in 48 h while one was closed unmerged, or more than

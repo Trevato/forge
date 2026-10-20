@@ -23,6 +23,8 @@ import {
 import type { AccessError } from "../actions/access.ts";
 import { gateCandidate, releaseOnLand } from "../checks/landing.ts";
 import { addLearned } from "../checks/learned.ts";
+import { checksFor } from "../checks/service.ts";
+import { checkStale } from "../checks/stale.ts";
 import { enqueue, type GateCandidate, type Queued } from "../checks/queue.ts";
 import { mergeable, resolveOid, treeOf } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
@@ -74,6 +76,7 @@ import {
   activeRunFor,
   automaticRunsSince,
   listActive,
+  checkSummary,
   type Run,
   verdictForHead,
 } from "../core/runs.ts";
@@ -105,6 +108,7 @@ import {
   parkReasons,
 } from "./parks.ts";
 import { createLog } from "../kernel/log.ts";
+import { err, ok, type Result } from "../kernel/result.ts";
 import {
   directorsAmong,
   landsOnItsOwn,
@@ -113,6 +117,7 @@ import {
 import { crewOffInPreview } from "./preview.ts";
 import { moveRequested, tallyRequested, tallyWords } from "./requested.ts";
 import { reviewersOf, sendToReview, sweepReviews } from "./review.ts";
+import { lastWaits, noteWaits, tallyWaits, type Wait, waitWords } from "./waits.ts";
 
 const log = createLog("autonomy");
 
@@ -1035,10 +1040,16 @@ export async function sweepGreen(app: App, repo: Repo): Promise<number> {
   // one sweep are one candidate and one gate (#2036).
   const open = listPulls(app.db, repo.id, { sealed: true, state: "open", limit: 50 });
   const entries: Queued[] = [];
+  // Why each approved pull waits, for the tick line (#3055).
+  const waits: Wait[] = [];
   for (const pull of open.sort((a, b) => a.number - b.number)) {
-    const entry = await admit(app, repo, pull);
-    if (entry !== undefined) entries.push(entry);
+    const admitted = await admit(app, repo, pull);
+    if (admitted.ok) entries.push(admitted.value);
+    const seen = reviewSummary(app.db, pull.id, pull.headOid);
+    if (seen.approvals > 0 && seen.changesRequested === 0)
+      waits.push(admitted.ok ? "queued" : admitted.error);
   }
+  noteWaits(repo.id, tallyWaits(waits));
   if (entries.length === 0) return 0;
   const landed = await enqueue(repo.id, entries, gateFor(app, repo));
   return landed.filter(Boolean).length;
@@ -1145,6 +1156,7 @@ export async function autonomyTick(
       // Every tick says what it did and why, so an app that sits still is
       // never a mystery: the numbers behind "idle" are on the line.
       const status = autonomyStatus(app, current, now);
+      const approved = waitWords(lastWaits(current.id));
       const ready = readyNow(repoGraph(app.db, current.id, { sealed: true }));
       const held = heldBy(
         app,
@@ -1168,6 +1180,8 @@ export async function autonomyTick(
           : {
               requested: tallyWords(tallyRequested(requested)),
             }),
+        // The approved pulls the last green sweep saw, and why each waits (#3055).
+        ...(approved === undefined ? {} : { approved }),
         spent: `${status.spentTodayUsd.toFixed(2)}/${status.ceilingUsd}`,
         ...(status.paused === null ? {} : { paused: status.paused }),
       });
@@ -1601,9 +1615,9 @@ export async function landIfGreen(
   repo: Repo,
   pull: Pull,
 ): Promise<boolean> {
-  const entry = await admit(app, repo, pull);
-  if (entry === undefined) return false;
-  const [landed] = await enqueue(repo.id, [entry], gateFor(app, repo));
+  const admitted = await admit(app, repo, pull);
+  if (!admitted.ok) return false;
+  const [landed] = await enqueue(repo.id, [admitted.value], gateFor(app, repo));
   return landed === true;
 }
 
@@ -1618,36 +1632,36 @@ async function admit(
   app: App,
   repo: Repo,
   pull: Pull,
-): Promise<Queued | undefined> {
-  if (repo.autonomy !== "autonomous" || repo.autonomyBy === null) return undefined;
-  if (pull.state !== "open" || pull.mergedAt !== null) return undefined;
+): Promise<Result<Queued, Wait>> {
+  if (repo.autonomy !== "autonomous" || repo.autonomyBy === null) return err("off");
+  if (pull.state !== "open" || pull.mergedAt !== null) return err("closed");
   // The caller's copy may predate a landing: the row says whether it is
   // still open (#2017).
   const row = getPull(app.db, repo.id, pull.number);
   if (row === undefined || row.state !== "open" || row.mergedAt !== null)
-    return undefined;
+    return err("closed");
   // A person said "not this one yet": nothing below happens until it is
   // released — no landing, no review sent, no run to bring the branch up
   // to date (`core/holds.ts`).
-  if (getHold(app.db, pull.id) !== undefined) return undefined;
+  if (getHold(app.db, pull.id) !== undefined) return err("held");
   // Only work the crew wrote, or a writer's, lands on green by itself: a
   // reader's pull — from a fork, say — waits for a person, outsiders
   // switch or not, and is never sent to the crew's reviewer (#619).
-  if (!landsOnItsOwn(app.db, repo, pull)) return undefined;
+  if (!landsOnItsOwn(app.db, repo, pull)) return err("outsider");
   const by = getUserById(app.db, repo.autonomyBy);
-  if (!by) return undefined;
+  if (!by) return err("off");
   // The newest run of each kind is what the head says: a red that a re-run
   // on the same commit has since turned green is history.
   const checks = verdictForHead(app.db, pull.id, pull.headOid);
-  if (checks.length === 0) return undefined;
-  if (checks.some((c) => c.state !== "ok")) return undefined;
+  if (checks.length === 0) return err("unchecked");
+  if (checks.some((c) => c.state !== "ok")) return err("not-green");
   // A stop the crew took on a red check ends with the green after it; a
   // person's stop waits for a person.
   const greenAt = checks
     .map((c) => c.finishedAt ?? "")
     .reduce((a, b) => (a > b ? a : b), "");
   if (stopStands(latestDecision(app.db, pull.id, "retry"), greenAt))
-    return undefined;
+    return err("stopped");
   // Conflicts first: a pull that no longer merges is the crew's to bring
   // up to date, before anyone is asked whether it should land. A conflict
   // is remembered by the two tips it was between: until one of them moves
@@ -1657,7 +1671,7 @@ async function admit(
   const baseTip =
     (await resolveOid(dir, `refs/heads/${pull.baseBranch}`)) ?? "";
   const between = `${pull.headOid}:${baseTip}`;
-  if (conflicted.get(pull.id) === between) return undefined;
+  if (conflicted.get(pull.id) === between) return err("conflict");
   if (baseTip !== "") {
     const clean = await mergeable(dir, baseTip, pull.headOid);
     if (!clean.ok) {
@@ -1665,7 +1679,7 @@ async function admit(
         conflicted.set(pull.id, between);
         bringUpToDate(app, repo, pull, clean.error.files);
       }
-      return undefined;
+      return err("conflict");
     }
     // Nothing the base does not already hold: no gate and no review, for
     // there is nothing to land. The merge closes the pull as merged into
@@ -1677,7 +1691,7 @@ async function admit(
         pull: pull.number,
         closed: closed.ok,
       });
-      return undefined;
+      return err("carried");
     }
   }
   // A pull that loosens the contract is a change of policy, which is a
@@ -1719,7 +1733,7 @@ async function admit(
         cells: cells.join("; "),
       });
     }
-    return undefined;
+    return err("wall");
   }
   // One gate for every pull, whoever wrote it: when the crew has a
   // reviewer, a green head is queued for review and waits for an approval
@@ -1729,7 +1743,7 @@ async function admit(
   // (#597). Only a person's own pull lands without a reviewer, or after a
   // review lapsed.
   const review = await reviewed(app, repo, pull);
-  if (review === "hold") return undefined;
+  if (review === "hold") return err("review");
   // The full tier, once, on the queue's candidate (#1198, #2036). Red is
   // told to the pull once per head and base, and the pull waits for a push.
   const told = latestDecision(app.db, pull.id, "land");
@@ -1740,8 +1754,31 @@ async function admit(
     told.state !== null &&
     (told.state as { at?: unknown }).at === gatedAt
   )
-    return undefined;
-  return {
+    return err("red");
+  // Green only against a base that has moved since: the merge would hold
+  // it (`checksHold`), so the queue asks for the check again on the base
+  // as it is now rather than wait for a person to (#3055). The fresh green
+  // admits it on a later sweep; one already queued is not asked twice.
+  if (
+    repo.requireChecks &&
+    checkStale(checkSummary(app.db, pull.id, pull.headOid).run, baseTip)
+  ) {
+    const again = await checksFor(app)?.request(
+      repo,
+      `pull-${pull.number}`,
+      pull.headOid,
+      "stale",
+      pull.id,
+    );
+    log.info("green on an older base, checked again", {
+      repo: `${repo.ownerName}/${repo.name}`,
+      pull: pull.number,
+      base: baseTip.slice(0, 7),
+      queued: again !== undefined,
+    });
+    return err("stale");
+  }
+  return ok({
     pull,
     dir,
     land: (expect) => landGated(app, repo, by, pull, review, expect),
@@ -1771,7 +1808,7 @@ async function admit(
       addLearned(app.config.dataDir, pull.id, red.learn);
       addComment(app, by, repo, getIssueById(app.db, pull.id) ?? pull, red.comment);
     },
-  };
+  });
 }
 
 /** The queue's gate: the full tier on the candidate's tip, asked as its first pull. */
