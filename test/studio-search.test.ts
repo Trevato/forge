@@ -2,7 +2,8 @@
  * The studio: search, today's cost, the outline, Stop and Redeploy, names,
  * empty lists, the app's own words, and a run's transcript. One of the
  * files the studio's suite was split into so no one file sets the gate's
- * floor (#2038); the rest are test/studio*.test.ts.
+ * floor (#2038); the rest are test/studio*.test.ts. It runs in about 2.3 s,
+ * every test under 1 s, one fixture per describe, nothing sleeps (#3576).
  */
 
 import { logBox } from "../src/web/studio/log.ts";
