@@ -398,14 +398,16 @@ describe("the tick says why each ready issue cannot start", () => {
     expect(res.status).toBe(200);
     const page = await res.text();
     expect(page).toContain('id="held"');
-    const row = page.slice(page.indexOf('data-held-repo="alice/open-door"'));
-    expect(row).toContain('class="held-bar"');
+    const at = page.indexOf('data-held-repo="alice/open-door"');
+    const row = page.slice(at, page.indexOf("</tr>", at));
+    expect(row).toContain('<meter');
+    expect(row).toContain('aria-label="0 of 3 ready can start"');
+    expect(row).toContain('data-tone="attn"');
     expect(row).toContain('<span class="mono">startable=0</span>');
     expect(row).toContain('<span class="mono">stalled=1</span>');
     expect(row).toContain('<span class="mono">done_on_main=1</span>');
     expect(row).toContain('data-held="done_on_main"');
-    expect(row).toContain('<rect class="held-done_on_main"');
-    expect(page).toContain(".held-done_on_main { fill:");
+    expect(page).not.toContain("held-done_on_main");
     expect(row).toContain('<span class="mono">run_cap=1</span>');
     expect(page).toContain('data-held-repo="alice/shut-door"');
 

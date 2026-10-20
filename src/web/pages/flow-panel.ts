@@ -34,10 +34,10 @@ import type { QueueRow } from "../../flow/queue.ts";
 import { readHeld } from "../../flow/held.ts";
 import type { App } from "../../app.ts";
 import { html, type Html } from "../html.ts";
-import { heldCard, heldCss } from "./boards-held.ts";
+import { heldCard } from "./boards-held.ts";
 import { badge, card } from "../ui.ts";
 
-export const flowPanelCss = heldCss + /* css */ `
+export const flowPanelCss = /* css */ `
 .flow-out { display: inline-flex; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; }
 .flow-out svg { width: 72px; height: 16px; }
 .flow-bar { fill: var(--muted-fg); }
