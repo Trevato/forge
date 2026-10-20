@@ -3517,14 +3517,19 @@ export function apiRoutes(router: Router<Handler>): void {
     async (ctx) => {
       const denied = requireScope(ctx, "rw");
       if (denied) return denied;
-      const found = loadIssue(ctx);
+      // A pull's number answers here too, as the OpenAPI document says.
+      const issueFound = loadIssue(ctx);
+      const found =
+        "error" in issueFound
+          ? loadPull(ctx)
+          : { repo: issueFound.repo, thread: issueFound.issue };
       if ("error" in found) return found.error;
       const input = await body(ctx.request);
       const added = await addCommentThrough(
         ctx.app,
         ctx.auth.user,
         found.repo,
-        found.issue,
+        "thread" in found ? found.thread : found.pull,
         str(input.body),
       );
       if (!added.ok) return originAware(added.error);
