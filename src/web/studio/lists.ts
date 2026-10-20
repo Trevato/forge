@@ -24,6 +24,7 @@ import { canRead, type Repo } from "../../core/repos.ts";
 import { waitingCount } from "../../actions/reports.ts";
 
 import { listRepoRuns } from "../../actions/runs.ts";
+import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -604,9 +605,11 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
   const filter = readWordFilter(ctx);
   const kind = readRunsKind(ctx);
   const cursor = ctx.url.searchParams.get("cursor") ?? undefined;
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
 
   // A private app's runs are for those who may enter it, and a sealed
   // report's for those who may see it (`listRepoRuns`).
+  const reading = performance.now();
   const listed = listRepoRuns(ctx.app, ctx.auth.user, repo, {
     kind,
     limit: LIST_PAGE,
@@ -635,6 +638,9 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
         inWordFilter(r.info.word, filter),
     );
 
+  notePhase(ctx.request, "runs", performance.now() - reading);
+
+  const rendering = performance.now();
   const list =
     rows.length === 0
       ? empty({
@@ -703,7 +709,7 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
     </p>
     ${liveMount({ repo: base })}`;
 
-  return page({
+  const res = page({
     ctx,
     title: pageTitle("runs", repo, true),
     crumbs: crumbsFor(repo),
@@ -711,4 +717,6 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
     body,
     scriptJs: liveClientJs,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return res;
 }
