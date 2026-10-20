@@ -5,13 +5,13 @@
  * (#2038); each file of the split boots its own forge and runtime.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { AppsRuntime } from "../src/apps/runtime.ts";
+import { AppsRuntime, RESTART_BACKOFF_MS } from "../src/apps/runtime.ts";
 import { envDir } from "../src/apps/data.ts";
 import { newApp } from "../src/actions/apps.ts";
 import { mergePull, openPull } from "../src/actions/pulls.ts";
@@ -55,9 +55,30 @@ describe("apps adversarial: teardown races", () => {
           run.state === "cancelled")
       )
         return run;
-      await Bun.sleep(50);
+      await Bun.sleep(10);
     }
     throw new Error("run did not settle in time");
+  }
+
+  /** Every deploy run of one environment exists and is in a final state. */
+  async function quiet(repoId: string, env: string, timeoutMs = 60_000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const runs = listRuns(app.db, repoId, { env, kind: "deploy", limit: 50 });
+      if (
+        runs.length > 0 &&
+        runs.every((r) => ["ok", "failed", "cancelled"].includes(r.state))
+      )
+        return;
+      await Bun.sleep(10);
+    }
+    throw new Error(`deploys of ${env} did not settle in time`);
+  }
+
+  async function gone(path: string, timeoutMs = 10_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (existsSync(path) && Date.now() < deadline) await Bun.sleep(10);
+    expect(existsSync(path)).toBe(false);
   }
 
   beforeAll(async () => {
@@ -120,35 +141,48 @@ describe("apps adversarial: teardown races", () => {
 
     // Wait for the preview to actually come up (live, not just queued).
     await settled(repo.id, (r) => r.env === `pull-${pull.number}`);
-    expect((await viaHost(`resurrect--${pull.number}.${DOMAIN}`)).status).toBe(
-      200,
-    );
+    // Arm a watch on the first restart backoff (RESTART_BACKOFF_MS[0], the
+    // delay of a fresh environment's first crash): a timer of that length set
+    // after the close is a restart being scheduled.
+    const armed: unknown[] = [];
+    const realSetTimeout = globalThis.setTimeout;
+    const spy = spyOn(globalThis, "setTimeout").mockImplementation(((
+      fn: () => void,
+      ms?: number,
+      ...rest: unknown[]
+    ) => {
+      if (ms === RESTART_BACKOFF_MS[0]) armed.push(fn);
+      return (realSetTimeout as (...a: unknown[]) => unknown)(fn, ms, ...rest);
+    }) as unknown as typeof setTimeout);
+    try {
+      expect(
+        (await viaHost(`resurrect--${pull.number}.${DOMAIN}`)).status,
+      ).toBe(200);
 
-    const closed = await mergePull(
-      app,
-      alice,
-      repo,
-      getPull(app.db, repo.id, pull.number)!,
-      "merge",
-    );
-    expect(closed.ok).toBe(true);
+      const closed = await mergePull(
+        app,
+        alice,
+        repo,
+        getPull(app.db, repo.id, pull.number)!,
+        "merge",
+      );
+      expect(closed.ok).toBe(true);
 
-    // The teardown itself must remove the directory promptly.
-    const goneDeadline = Date.now() + 10_000;
-    while (
-      existsSync(envDir(dataDir, record.id, `pull-${pull.number}`)) &&
-      Date.now() < goneDeadline
-    )
-      await Bun.sleep(50);
-    expect(existsSync(envDir(dataDir, record.id, `pull-${pull.number}`))).toBe(
-      false,
-    );
+      // The teardown removes the directory last, after the process has been
+      // stopped, so the directory going is the stop having settled.
+      await gone(envDir(dataDir, record.id, `pull-${pull.number}`));
 
-    // The bug: `watch()`'s exit handler mistook the deliberate stop for a
-    // crash and scheduled a restart ~2s later (RESTART_BACKOFF_MS[0]). Wait
-    // well past that window and confirm nothing came back — no directory,
-    // no live process answering the preview's host, no new "restart" run.
-    await Bun.sleep(3_500);
+      // The bug: `watch()`'s exit handler mistook the deliberate stop for a
+      // crash and scheduled a restart ~2s later. The handler runs as a
+      // continuation of the exit, so one turn of the loop lets it run; the
+      // restart timer is then observed being armed (or not), no clock waited.
+      await new Promise((r) => setImmediate(r));
+      expect(armed).toEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
+    // And nothing came back — no directory, no live process answering the
+    // preview's host, no new "restart" run.
     expect(existsSync(envDir(dataDir, record.id, `pull-${pull.number}`))).toBe(
       false,
     );
@@ -199,16 +233,11 @@ describe("apps adversarial: teardown races", () => {
     );
     expect(closedQuickly.ok).toBe(true);
 
-    const deadline = Date.now() + 15_000;
-    while (
-      existsSync(envDir(dataDir, record.id, `pull-${pull.number}`)) &&
-      Date.now() < deadline
-    )
-      await Bun.sleep(50);
-    expect(existsSync(envDir(dataDir, record.id, `pull-${pull.number}`))).toBe(
-      false,
-    );
-    await Bun.sleep(3_500);
+    await gone(envDir(dataDir, record.id, `pull-${pull.number}`));
+    // The in-flight deploy must not put anything back as it winds down: wait
+    // for every deploy run of this pull to reach a final state (and for one
+    // to exist), rather than for the clock.
+    await quiet(repo.id, `pull-${pull.number}`);
     expect(existsSync(envDir(dataDir, record.id, `pull-${pull.number}`))).toBe(
       false,
     );

@@ -360,7 +360,7 @@ const TOUCH_REASONS: readonly string[] = [
 
 const RESTART_WINDOW_MS = 10 * 60_000;
 const RESTART_MAX = 3;
-const RESTART_BACKOFF_MS = [2_000, 10_000, 30_000];
+export const RESTART_BACKOFF_MS = [2_000, 10_000, 30_000];
 
 const runtimes = new WeakMap<App, AppsRuntime>();
 

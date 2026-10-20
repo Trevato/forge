@@ -1,7 +1,7 @@
 {
   "test/apps-adversarial-grants.test.ts": 28.3,
   "test/apps-adversarial-rules.test.ts": 29.7,
-  "test/apps-adversarial-teardown.test.ts": 36.4,
+  "test/apps-adversarial-teardown.test.ts": 3,
   "test/apps-adversarial-test-step.test.ts": 33.5,
   "test/apps-adversarial.test.ts": 18,
   "test/apps-busy.test.ts": 26.4,
