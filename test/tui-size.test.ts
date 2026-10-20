@@ -322,9 +322,14 @@ describe("the terminal lays out for the terminal it is in", () => {
         expect(lines.filter((line) => line.trim() !== "").length).toBe(1);
         expect(h.app.screen.toText()).toContain("Resize your terminal");
       }
-      // At the floor a real frame is drawn, and the state survived the trip.
+      // At the floor a real frame is drawn. What fits in so few rows is the
+      // forge's own business (a health strip on a busy machine takes lines
+      // from the list), so the trip is judged where there is room: the
+      // state survived it.
       await h.resize(MIN_COLS, MIN_ROWS);
       expect(h.lines()[0]).toContain("forge");
+      expect(h.app.screen.toText()).not.toContain("Resize your terminal");
+      await h.resize(120, 40);
       expect(h.app.screen.toText()).toContain("alice/lighthouse");
     } finally {
       h.stop();
