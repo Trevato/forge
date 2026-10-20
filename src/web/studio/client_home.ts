@@ -6,6 +6,7 @@
  * stay off it; `test/client-home.test.ts` holds the list.
  */
 
+import { notePhase, takeSessionTime, timePhaseAsync } from "../../core/route_timing.ts";
 import { clientAppRows } from "../../core/client-apps.ts";
 import type { User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -25,7 +26,9 @@ export function agentsLine(working: number, queued: number): string {
 
 /** The card of apps; an empty one says they will appear. The caller decides who is a client. */
 export async function clientApps(ctx: Ctx, user: User): Promise<Html> {
-  const apps = await clientAppRows(ctx.app, user);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const apps = await timePhaseAsync(ctx.request, "apps", () => clientAppRows(ctx.app, user));
+  const rendering = performance.now();
   const rows = apps.map(({ repo, working, queued }) => {
     const about = repo.description !== "" ? repo.description : "An app of yours.";
     return html`<li class="client-app">
@@ -36,7 +39,7 @@ export async function clientApps(ctx: Ctx, user: User): Promise<Html> {
       >
     </li>`;
   });
-  return card(
+  const shown = card(
     rows.length === 0
       ? html`<p class="muted">Your apps will appear here.</p>`
       : html`<ul class="list client-apps">
@@ -44,4 +47,6 @@ export async function clientApps(ctx: Ctx, user: User): Promise<Html> {
         </ul>`,
     { id: "client-apps", head: html`<h2>Your apps</h2>` },
   );
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return shown;
 }
