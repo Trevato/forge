@@ -11,7 +11,7 @@ import type { Database } from "bun:sqlite";
 import { backupAge, backupFull, backupOverdue, buildersValue, checkTime, reactNote, speedWords, spendFull, spendValue, usersValue, visitorsNote, visitorsValue } from "../../flow/kpi_words.ts";
 import type { Kpis } from "../../flow/kpis.ts";
 import { cachedKpis } from "./home_cache.ts";
-import { html, raw, type Html } from "../html.ts";
+import { escapeHtml, html, raw, type Html } from "../html.ts";
 import { BOOTED } from "../../release/gate.ts";
 import { running } from "../../kernel/version.ts";
 import { sha, time } from "../ui.ts";
@@ -19,16 +19,50 @@ import { sha, time } from "../ui.ts";
 const W = 96;
 const H = 24;
 
+/** Day `i` of `n` at value `v` on a scale whose top is `top`: x spreads the days across W, y keeps 2 px clear at each edge. */
+function at(i: number, n: number, v: number, top: number): [string, string] {
+  const step = W / Math.max(1, n - 1);
+  return [(i * step).toFixed(1), (H - 2 - (v / top) * (H - 4)).toFixed(1)];
+}
+
+function svg(label: string, body: string): Html {
+  return raw(`<svg class="kpi-spark" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${label}">${body}</svg>`);
+}
+
 /** A series oldest first as a fixed-size SVG polyline; the numbers are the only input. */
 function spark(series: readonly number[], label: string): Html {
   const top = Math.max(1, ...series);
-  const step = W / Math.max(1, series.length - 1);
-  const points = series
-    .map((v, i) => `${(i * step).toFixed(1)},${(H - 2 - (v / top) * (H - 4)).toFixed(1)}`)
-    .join(" ");
-  return raw(
-    `<svg class="kpi-spark" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${label}"><polyline points="${points}" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>`,
-  );
+  const points = series.map((v, i) => at(i, series.length, v, top).join(",")).join(" ");
+  return svg(label, `<polyline points="${points}" fill="none" stroke="currentColor" stroke-width="1.5"/>`);
+}
+
+/**
+ * Days oldest first where `null` is a day with no data: the line breaks there
+ * rather than dropping to zero. Each run of numbers is its own polyline on
+ * the one shared scale, a run of one day is a dot, and no number at all is no
+ * sparkline. Non-finite values count as missing.
+ */
+export function daySpark(days: readonly (number | null)[], label: string): Html | null {
+  const known = days.filter((v): v is number => v !== null && Number.isFinite(v));
+  if (known.length === 0) return null;
+  const top = Math.max(1, ...known);
+  const runs: [string, string][][] = [];
+  let run: [string, string][] = [];
+  days.forEach((v, i) => {
+    if (v === null || !Number.isFinite(v)) {
+      if (run.length > 0) runs.push(run);
+      run = [];
+    } else run.push(at(i, days.length, v, top));
+  });
+  if (run.length > 0) runs.push(run);
+  const body = runs
+    .map((r) =>
+      r.length === 1
+        ? `<circle cx="${r[0]![0]}" cy="${r[0]![1]}" r="1.5" fill="currentColor"/>`
+        : `<polyline points="${r.map((p) => p.join(",")).join(" ")}" fill="none" stroke="currentColor" stroke-width="1.5"/>`,
+    )
+    .join("");
+  return svg(escapeHtml(label), body);
 }
 
 /** The last 24 hours, newest first in, oldest on the left out. */
