@@ -303,7 +303,7 @@ describe("no retry in the gate", () => {
       ...gateFiles().filter((file) => file !== "test/flake.test.ts"),
     ];
     expect(named.flatMap((path) => retries(path, read(path)))).toEqual([]);
-  });
+  }, 120_000); // reads every gate file: past the 5 s default on a loaded machine
 });
 
 describe("no tight wall-clock bound in a test", () => {
@@ -347,7 +347,7 @@ describe("no tight wall-clock bound in a test", () => {
       .filter((name) => name !== "flake.test.ts")
       .map((name) => `test/${name}`);
     expect(files.flatMap((path) => tightBounds(path, read(path)))).toEqual([]);
-  });
+  }, 120_000); // reads every test file: past the 5 s default on a loaded machine
 });
 
 describe("the scheduled run of the files outside the gate", () => {
