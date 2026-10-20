@@ -80,6 +80,7 @@ import {
   repoPalette,
   settingsLayout,
 } from "../chrome.ts";
+import { daySpark } from "../studio/kpi_row.ts";
 import { settingsLead } from "../studio/crew.ts";
 import { pageTitle } from "../studio/nouns.ts";
 import { appHref } from "./apps.ts";
@@ -630,7 +631,15 @@ const SCOPE_WORDS: Record<AppEnvScope, string> = {
 };
 
 /** Production's visitors and the speed they saw, from the app's own beacon. */
-function appVisitorsView(v: AppVitals): Html {
+export function appVisitorsView(v: AppVitals): Html {
+  const known = v.loadDays.filter((n): n is number => n !== null);
+  const latest = v.loadDays.findLast((n) => n !== null) ?? null;
+  const spark = daySpark(
+    v.loadDays,
+    known.length === 0
+      ? "p75 load each day over the last 30 days"
+      : `p75 load each day over the last 30 days, latest ${ms(latest ?? undefined)}, range ${ms(Math.min(...known))} to ${ms(Math.max(...known))}`,
+  );
   return card(
     html`<p class="muted small mb">
         Counted by the beacon the template ships, through the forge: no
@@ -645,7 +654,8 @@ function appVisitorsView(v: AppVitals): Html {
         <div><dt>p75 LCP</dt><dd>${ms(v.lcpP75)}</dd></div>
         <div><dt>p75 INP</dt><dd>${ms(v.inpP75)}</dd></div>
         <div><dt>p75 CLS</dt><dd>${shiftText(v.clsP75)}</dd></div>
-      </dl>`,
+      </dl>
+      ${spark ?? html`<p class="muted small mt">No load reports in the last 30 days</p>`}`,
     { head: html`${icon("rocket")}<h2>Visitors and speed</h2>` },
   );
 }

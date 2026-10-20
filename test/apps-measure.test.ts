@@ -149,6 +149,7 @@ describe("a report through the proxy", () => {
     if (!bob.ok) throw new Error(bob.error);
     expect(appVisitors(app, bob.value, repo)).toBeUndefined();
     expect(appVisitors(app, owner, repo)).toMatchObject({ today: 1 });
+    expect(appVisitors(app, owner, repo)?.loadDays).toHaveLength(30);
     const get = (token?: string) =>
       fetch(`${servers.url}/api/v1/repos/alice/notes/app`, {
         headers: token ? { authorization: `Bearer ${token}` } : {},
@@ -160,6 +161,7 @@ describe("a report through the proxy", () => {
     expect(await asBob.json()).not.toHaveProperty("vitals");
     const asAlice = await get(createToken(app.db, owner.id, "r", "ro").token);
     expect(await asAlice.json()).toMatchObject({ vitals: { today: 1 } });
+    expect(((await (await get(createToken(app.db, owner.id, "r2", "ro").token)).json()) as { vitals: { loadDays: unknown[] } }).vitals.loadDays).toHaveLength(30);
   });
 
   test("a sealed pull's preview refuses an anonymous report and stores nothing", async () => {

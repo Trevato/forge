@@ -8,7 +8,7 @@
  */
 
 import { appVisitors } from "../../actions/apps.ts";
-import { visitorsLine } from "../../apps/vitals.ts";
+import { trendLine, visitorsLine } from "../../apps/vitals.ts";
 import { listRepoRuns } from "../../actions/runs.ts";
 import { carriedByRuns, carriesText } from "../../core/carried.ts";
 import type { Repo } from "../../core/repos.ts";
@@ -40,6 +40,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   let carries = new Map<string, number[]>();
   let loaded = false;
   let visitors = "";
+  let trend = "";
 
   const read = (): void => {
     const runs = readDeploys(f, repo);
@@ -50,6 +51,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     );
     const seen = appVisitors(f.app, f.user, repo);
     visitors = seen === undefined ? "" : visitorsLine(seen);
+    trend = seen === undefined ? "" : trendLine(seen.loadDays);
     loaded = true;
     ctx.invalidate();
   };
@@ -66,7 +68,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     load: async () => read(),
     render(area, s) {
       const c = ctx.theme.c;
-      const [head, body] = split(area, "v", [len(visitors === "" ? 1 : 2), fill(1)]);
+      const [head, body] = split(area, "v", [len(visitors === "" ? 1 : trend === "" ? 2 : 3), fill(1)]);
       s.text(
         head!.x,
         head!.y,
@@ -76,6 +78,8 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       );
       if (visitors !== "")
         s.text(head!.x, head!.y + 1, truncate(visitors, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
+      if (trend !== "")
+        s.text(head!.x, head!.y + 2, truncate(trend, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
       if (list.runs.length === 0) {
         emptyState(s, body!, c, {
           title: loaded ? "No deploys" : "Reading…",
