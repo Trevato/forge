@@ -20,6 +20,7 @@
 import { editFiles, MAX_FILE_BYTES } from "../../actions/contents.ts";
 import { contribute } from "../../actions/contribute.ts";
 import { canAdmin, getRepoById } from "../../core/repos.ts";
+import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { isSafeRef, isSafeTreePath } from "../../git/guard.ts";
 import type { Ctx } from "../../http/context.ts";
 import { highlightAsset } from "../asset.ts";
@@ -557,13 +558,16 @@ async function mustBranchFrom(
 
 // GET /:owner/:name/edit/:ref/*path
 export async function editPage(ctx: Ctx): Promise<Response> {
-  const found = editContext(ctx);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const found = timePhase(ctx.request, "repo", () => editContext(ctx));
   if (found instanceof Response) return found;
   const { scope, ref } = found;
   const path = ctx.params.path ?? "";
   if (!isSafeTreePath(path)) return notFoundPage(ctx);
 
-  const blob = await scope.source.blob(ref, path);
+  const blob = await timePhaseAsync(ctx.request, "blob", () =>
+    scope.source.blob(ref, path),
+  );
   if (!blob.ok) return notFoundPage(ctx);
   if (blob.value.kind !== "text") {
     return flashTo(
@@ -578,14 +582,16 @@ export async function editPage(ctx: Ctx): Promise<Response> {
       },
     );
   }
-  return await editorPage(
-    ctx,
-    scope,
-    await blankDraft(ctx, scope, ref, {
+  const content = new TextDecoder().decode(blob.value.body);
+  const draft = await timePhaseAsync(ctx.request, "refs", () =>
+    blankDraft(ctx, scope, ref, {
       path,
-      content: new TextDecoder().decode(blob.value.body),
+      content,
       creating: false,
     }),
+  );
+  return await timePhaseAsync(ctx.request, "render", () =>
+    editorPage(ctx, scope, draft),
   );
 }
 
