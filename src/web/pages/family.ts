@@ -7,6 +7,7 @@
  * reads "quiet": a fact about the clock, not a fault.
  */
 
+import { notePhase, takeSessionTime, timePhaseAsync } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import type { ChildAppsSummary } from "../../spawn/child-apps.ts";
 import { familyView, followLine, type FamilyChild } from "../../spawn/family.ts";
@@ -93,7 +94,10 @@ export async function familyPage(
 ): Promise<Response> {
   const app = ctx.app;
   const owns = ctx.auth.user?.isAdmin === true;
-  const view = await familyView(app, owns, appsOf);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  // One read: the parent, and for an admin the children's standings.
+  const view = await timePhaseAsync(ctx.request, "family", () => familyView(app, owns, appsOf));
+  const rendering = performance.now();
   const parent = view.parent;
   const kids = { items: view.children, more: view.more };
 
@@ -120,7 +124,7 @@ export async function familyPage(
         };
 
   const alone = parent === null && kids.items.length === 0;
-  return page({
+  const response = page({
     ctx,
     title: "Family",
     body: html`<div class="narrow-wide">
@@ -145,4 +149,6 @@ export async function familyPage(
       )}
     </div>`,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
