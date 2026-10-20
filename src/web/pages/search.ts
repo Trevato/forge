@@ -26,6 +26,7 @@ import {
   type SearchResults,
 } from "../../core/search.ts";
 import type { Ctx } from "../../http/context.ts";
+import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { notFoundPage, pageHead } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
@@ -339,6 +340,7 @@ async function find(
  * connected origin, which is not a thing to do on every keystroke.
  */
 export async function searchPage(ctx: Ctx): Promise<Response> {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const params = ctx.url.searchParams;
   const a: Asked = {
     query: cleanQuery(params.get("q") ?? ""),
@@ -373,7 +375,8 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
   </form>`;
 
   if (a.query === "") {
-    return page({
+    const rendering = performance.now();
+    const blank = page({
       ctx,
       title: "Search",
       body: html`${pageHead("Search")} ${form}
@@ -383,11 +386,14 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
         note: "An app or repository by name or description, a word from what was told or changed, or a line of the code itself — across everything you can see, here and on every origin you have connected.",
       })}`,
     });
+    notePhase(ctx.request, "render", performance.now() - rendering);
+    return blank;
   }
 
-  const { found, busy } = await find(ctx, a);
-  const seen = appsOf(ctx, ctx.auth.user);
-  const apps: Apps = {
+  const { found, busy } = await timePhaseAsync(ctx.request, "search", () => find(ctx, a));
+  const apps: Apps = timePhase(ctx.request, "apps", () => {
+    const seen = appsOf(ctx, ctx.auth.user);
+    return {
     byId: seen.records,
     names: new Set(seen.repos.map((r) => `${r.ownerName}/${r.name}`)),
     enterable: enterableApps(
@@ -399,7 +405,9 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
       ctx.auth.user,
       { named: false },
     ),
-  };
+    };
+  });
+  const rendering = performance.now();
 
   const chips = seg(
     WORDS.map(([kind, label]) => ({
@@ -464,7 +472,9 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
       ([kind]) => kind !== "all" && (a.kind === "all" || a.kind === kind),
     )
     .map((w) => section(a, w, ...rows[w[0]]()))}`;
-  return page({ ctx, title: `Search · ${a.query}`, body });
+  const response = page({ ctx, title: `Search · ${a.query}`, body });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 // ---- confirmation ----
