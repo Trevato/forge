@@ -42,6 +42,7 @@ import { AppsRuntime } from "../src/apps/runtime.ts";
 import { runAppTty } from "../src/apps/tty.ts";
 import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
 import { listRuns, type Run } from "../src/core/runs.ts";
+import { setMember } from "../src/core/roles.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import type { AppRecord } from "../src/core/apps.ts";
 import type { Repo } from "../src/core/repos.ts";
@@ -588,6 +589,8 @@ describe.skipIf(noCells)(
       });
       if (!m.ok) throw new Error(m.error);
       mallory = m.value;
+      // A guest cannot own a repository (docs/ROLES.md): the probe needs one.
+      setMember(app.db, mallory.id, true, alice.id, new Date());
 
       // Another tenant's app, running, with data of its own.
       const theirs = await createRepo(app, alice, {
@@ -977,6 +980,8 @@ describe.skipIf(noCells)(
       };
       const alice = await user("alice", true);
       const mallory = await user("mallory");
+      // A guest cannot fork (docs/ROLES.md): the outsider is a member elsewhere.
+      setMember(app.db, mallory.id, true, alice.id, new Date());
       const made = await createRepo(app, alice, {
         name: "lib",
         visibility: "public",
@@ -985,7 +990,7 @@ describe.skipIf(noCells)(
       const repo = made.value;
 
       // Something of another tenant's to steal, where an app's data lives.
-      const stolen = envDir(dataDir, "someone-elses-app", "production");
+      const stolen = envDir(dataDir, "someoneelsesapp", "production");
       mkdirSync(join(stolen, "data"), { recursive: true });
       writeFileSync(join(stolen, "data", "books.txt"), "private");
 

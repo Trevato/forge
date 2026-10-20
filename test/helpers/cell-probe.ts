@@ -63,6 +63,9 @@ if (process.argv[2] === "check") {
   // A terminal is the app's own client: its app answers it on its port.
   if (process.env.FORGE_APP_TTY === "1")
     console.log("OWNAPP " + (await attempt(() => answered("http://127.0.0.1:" + process.env.PORT + "/"))));
+  // The sampler sees a cell only at a tick (200 ms here); a check that ends
+  // sooner is never seen. Stay up for several ticks.
+  if (process.env.FORGE_CHECK) await Bun.sleep(1000);
 } else {
   Bun.serve({
     port: Number(process.env.PORT),
