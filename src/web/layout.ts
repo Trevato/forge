@@ -7,6 +7,7 @@
  * `/search`), and every dialog (a link to a real page).
  */
 
+import { OPENSEARCH_PATH, OPENSEARCH_TITLE, OPENSEARCH_TYPE } from "./opensearch.ts";
 import { protectionNotice } from "../kernel/protection.ts";
 import { appsForRepos } from "../core/apps.ts";
 import { listReposVisibleTo } from "../core/repos.ts";
@@ -585,6 +586,12 @@ export function page(options: PageOptions, status = 200): Response {
         <meta property="og:image:height" content="630" />
         <meta name="twitter:card" content="summary_large_image" />
         <link rel="manifest" href="/manifest.webmanifest" />
+        <link
+          rel="search"
+          type="${OPENSEARCH_TYPE}"
+          href="${OPENSEARCH_PATH}"
+          title="${OPENSEARCH_TITLE}"
+        />
         ${links.map(
           (l) =>
             html`<link

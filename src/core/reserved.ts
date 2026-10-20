@@ -78,6 +78,7 @@ export const SYSTEM_NAMES: readonly string[] = [
   "login",
   "logout",
   "manifest.webmanifest",
+  "opensearch.xml",
   "map",
   "mcp",
   "contract",

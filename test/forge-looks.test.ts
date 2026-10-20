@@ -25,6 +25,7 @@ const NOT_A_PAGE: Record<string, string> = {
   "/releases.json": "JSON feed of /releases",
   "/sitemap.xml": "XML for crawlers",
   "/manifest.webmanifest": "the install manifest, JSON",
+  "/opensearch.xml": "the browser search description, XML",
   "/sw.js": "the service worker script",
   "/audit.csv": "a CSV download of /audit",
   "/claim": "answers 404 to an admin: it exists only for a link-holder",
