@@ -582,7 +582,7 @@ describe("the front page", () => {
       localUrl: servers.url,
       capture: async (input) => {
         writeFileSync(input.out, Buffer.from(encodePng(4, 4, new Uint8Array(64).fill(255))));
-        return { ok: true, value: undefined };
+        return { ok: true, value: { entries: {} } };
       },
     });
     try {

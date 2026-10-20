@@ -29,13 +29,17 @@ import { encodePng } from "../src/design/image/png.ts";
 import { setAppMembers } from "../src/core/app_members.ts";
 import { listPulls, type Pull } from "../src/core/pulls.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
-import { listRuns, type Run } from "../src/core/runs.ts";
+import { createRun, listRuns, type Run } from "../src/core/runs.ts";
+import { readLooks } from "../src/checks/looks.ts";
+import { vitalsRows } from "../src/checks/summary.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { err, ok } from "../src/kernel/result.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import {
   findChromium,
+  NO_BROWSER,
+  parseRecorded,
   takeLook,
   type Capture,
   type LookInput,
@@ -77,13 +81,20 @@ describe("the look", () => {
   let bobCookie: string;
 
   // The stand-in browser: writes a picture, or falls over, as told.
-  let mode: "ok" | "fail" = "ok";
+  let mode: "ok" | "fail" | "nobrowser" = "ok";
   const calls: LookInput[] = [];
   const fake: Capture = async (input) => {
     calls.push(input);
     if (mode === "fail") return err("the browser fell over");
+    if (mode === "nobrowser") return err(NO_BROWSER);
     writeFileSync(input.out, input.width === 1280 ? DESKTOP_PNG : PNG);
-    return ok();
+    // What the page recorded: a slow paint for the phone, a shift for the desktop.
+    return ok({
+      entries:
+        input.width === 390
+          ? { lcp: [{ startTime: 3100, size: 10 }] }
+          : { layoutShift: [{ startTime: 100, value: 0.3 }] },
+    });
   };
 
   const web = (path: string, cookie = "") =>
@@ -264,6 +275,32 @@ describe("the look", () => {
     expect((await settled((r) => r.env === env)).state).toBe("ok");
     expect(await pictured(env, first)).toHaveLength(3);
     expect(calls).toHaveLength(6);
+    // The entries the browser recorded reach the check's summary: the
+    // phone's LCP and the desktop's CLS, graded; the thumb adds no row.
+    // The look finished before any check run of this commit existed; the
+    // check made afterwards still shows them.
+    await looks.idle();
+    expect(listRuns(app.db, repo.id, { kind: "check" })).toEqual([]);
+    const check = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      commitOid: first,
+      reason: "push",
+    });
+    const recorded = readLooks(dataDir, check);
+    expect(recorded).toHaveLength(2);
+    expect(recorded.map((l) => l.look).sort()).toEqual(["desktop", "phone"]);
+    const graded = vitalsRows(recorded);
+    expect(graded.find((g) => g.look === "phone")!.rows[0]).toMatchObject({
+      vital: "LCP",
+      value: "3100 ms",
+      grade: "needs-improvement",
+    });
+    expect(graded.find((g) => g.look === "desktop")!.rows[1]).toMatchObject({
+      vital: "CLS",
+      value: "0.3",
+      grade: "poor",
+    });
     expect(new URL(calls[3]!.url).hostname).toBe(
       `hello--${pull.number}.${DOMAIN}`,
     );
@@ -403,6 +440,56 @@ describe("the look", () => {
     expect(none).not.toContain(`/looks/${env2}/`);
     mode = "ok";
   }, 120_000);
+
+  test("with no browser the check's summary says so and stays green", async () => {
+    mode = "nobrowser";
+    const env = `pull-${unpictured.number}`;
+    const moved = await commitToBranch(app, alice, repo, {
+      branch: "second",
+      message: "No browser",
+      files: [{ path: "SECOND.md", content: "no browser\n" }],
+    });
+    if (!moved.ok) throw new Error(JSON.stringify(moved.error));
+    const check = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      commitOid: moved.value.commitOid,
+      reason: "push",
+    });
+    expect(
+      (await settled((r) => r.env === env && r.commitOid === moved.value.commitOid)).state,
+    ).toBe("ok");
+    await pictured(env, moved.value.commitOid);
+    const got = await until(() => {
+      const read = readLooks(dataDir, check);
+      return read.length === 2 ? read : undefined;
+    });
+    expect(got).toEqual([
+      { look: "phone", skipped: "no browser" },
+      { look: "desktop", skipped: "no browser" },
+    ]);
+    // Words only: the table has no verdict to turn a check red.
+    expect(vitalsRows(got).map((g) => g.skipped)).toEqual(["no browser", "no browser"]);
+    expect(listRuns(app.db, repo.id, { kind: "check" }).find((r) => r.id === check.id)!.state).toBe("queued");
+    mode = "ok";
+  }, 120_000);
+
+  test("what a page recorded is kept as plain numbers, a missing type as an empty list", () => {
+    expect(
+      parseRecorded({
+        lcp: [{ startTime: 3100, size: 5, url: "http://x" }, "junk", { startTime: -1 }],
+        layoutShift: [{ startTime: 1, value: 0.2, hadRecentInput: true }],
+      }),
+    ).toEqual({
+      entries: {
+        lcp: [{ startTime: 3100, size: 5 }],
+        layoutShift: [{ startTime: 1, value: 0.2, hadRecentInput: true }],
+        longtask: [],
+      },
+    });
+    expect(parseRecorded(null).entries).toEqual({ lcp: [], layoutShift: [], longtask: [] });
+    expect(parseRecorded("x").entries.lcp).toEqual([]);
+  });
 
   test("a closed pull's pictures go with its preview", async () => {
     const env = `pull-${unpictured.number}`;
@@ -1002,7 +1089,12 @@ describe("the look", () => {
         height: 844,
         timeoutMs: 30_000,
       });
-      expect(taken).toEqual({ ok: true, value: undefined });
+      expect(taken.ok).toBe(true);
+      // The observer ran before the page: every type is a list, as far as this browser has it.
+      const entries = taken.ok ? taken.value.entries : undefined;
+      expect(Array.isArray(entries?.lcp)).toBe(true);
+      expect(Array.isArray(entries?.layoutShift)).toBe(true);
+      expect(Array.isArray(entries?.longtask)).toBe(true);
       expect(pngSize(out)).toEqual([390, 844]);
       // The browser arrived through the grant: the app was told who it was.
       const seen = readFileSync(

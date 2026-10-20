@@ -61,7 +61,9 @@ import { thumbnail } from "../design/image/image.ts";
 import { decodePng, encodePng, pngHeader } from "../design/image/png.ts";
 import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { findChromium, takeLook, type Capture } from "./capture.ts";
+import { writeCommitLooks } from "../checks/looks.ts";
+import type { LookVitals } from "../checks/summary.ts";
+import { findChromium, isNoBrowser, takeLook, type Capture } from "./capture.ts";
 
 const log = createLog("looks");
 
@@ -370,6 +372,8 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         : { id: owner.id, name: owner.username, role: "admin" };
     const host = runtime.hostFor(record.slug, item.env);
     let allOk = true;
+    // What each look's page recorded, for the check summary's vitals table.
+    const vitals: LookVitals[] = [];
     for (const { page, kind } of wanted) {
       if (stopped) return;
       const token = signGrant(
@@ -397,6 +401,13 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         ...LOOK_WINDOWS[kind],
         timeoutMs: CAPTURE_TIMEOUT_MS,
       });
+      // The thumb is the desktop page again, as a stranger: it adds no row.
+      if (kind !== "thumb") {
+        const look = page === "/" ? kind : `${kind} ${page}`;
+        if (shot.ok) vitals.push({ look, entries: shot.value.entries });
+        else if (isNoBrowser(shot.error))
+          vitals.push({ look, skipped: "no browser" });
+      }
       const taken =
         shot.ok && kind === "thumb" ? reduceToThumb(staged) : shot;
       const row = {
@@ -436,6 +447,14 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
           error: taken.error,
         });
         recordLook(app.db, { ...row, kind, path: "", error: taken.error });
+      }
+    }
+    // Filed under the commit: the check of it shows them whenever it exists.
+    if (vitals.length > 0) {
+      try {
+        writeCommitLooks(dataDir, record.repoId, item.commitOid, vitals);
+      } catch (error) {
+        log.warn("vitals not recorded", { commit: item.commitOid, error: String(error) });
       }
     }
     // A full set at this head is the environment's look now; the pictures

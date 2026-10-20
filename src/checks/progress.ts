@@ -110,7 +110,7 @@ export function stepsLine(
   const { lines, truncated } = readRunLog(dataDir, run.id);
   const steps = stepsWords(checkSteps({ ...run, state: check.state === "none" ? run.state : check.state }, lines, truncated));
   const tests = testsRowLine(parseTestsRow(lines));
-  return [steps, tests, vitalsLine(readLooks(dataDir, run.id))].filter((w) => w !== "").join(" · ");
+  return [steps, tests, vitalsLine(readLooks(dataDir, run))].filter((w) => w !== "").join(" · ");
 }
 
 /** `vitals home: LCP 3100 ms needs-improvement, CLS 0.3 poor, TBT 100 ms good; mobile: skipped: no browser` */

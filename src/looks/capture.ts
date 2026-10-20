@@ -1,43 +1,46 @@
 /**
- * Taking a picture of a page. Headless Chromium is spawned with the one
- * flag that writes a screenshot, pointed at a URL on the forge's own
- * listener with the app's hostname resolved to loopback, so the page is
- * served the way a person would be served it — through the proxy, the
- * grant, and the identity headers — without an edge in the way.
+ * Taking a picture of a page. Headless Chromium is spawned pointed at a
+ * URL on the forge's own listener with the app's hostname resolved to
+ * loopback, so the page is served the way a person would be served it —
+ * through the proxy, the grant, and the identity headers — without an edge
+ * in the way.
  *
- * Chromium's `--screenshot` sets no headers and no cookies. So the URL is
- * not the page but the app's grant door (`/__forge/grant?t=…&to=/`): that
- * one navigation sets the grant cookie and lands on the page as the person
- * the grant names. Chromium follows the redirect and pictures where it
- * lands.
+ * The URL is not the page but the app's grant door
+ * (`/__forge/grant?t=…&to=/`): that one navigation sets the grant cookie and
+ * lands on the page as the person the grant names. The browser starts on
+ * `about:blank` with its DevTools port open on loopback (no new process:
+ * the one it already launches), a script that observes `largest-contentful-
+ * paint`, `layout-shift` and `longtask` is installed to run before any
+ * page script, and only then is the grant door opened. After load the
+ * entries are read back and the picture is taken, both over that one socket.
+ * An entry type the browser lacks is an empty list, never a failure.
  *
- * The picture is taken as the page loads, bounded by `--timeout` for a
- * page that never finishes — not after a virtual-time budget: a page that
- * holds an event stream open (the scaffold's live script does) never goes
- * idle, and a budget waits forever for it. What an app draws after load is
- * not in the picture; what it serves is. And the picture, not the
- * browser's exit, is what is waited for: a PNG whose IEND chunk is on disk
- * is complete, and a browser that has written it is killed rather than
- * asked to leave — Chrome 144 on macOS writes the file and then sits.
+ * The DevTools port is open on loopback while this browser holds the grant
+ * cookie, so a local process could drive that page. That is accepted: the
+ * browser lives for one look (seconds, killed in `finally`), its profile is
+ * its own and deleted after, the port is random and written only into that
+ * profile, `--remote-allow-origins` admits no web origin, and a local
+ * process able to reach loopback can already reach the app through the
+ * forge's own listener.
+ *
+ * The picture is taken once the page has loaded and settled a moment,
+ * bounded for a page that never finishes — not after a virtual-time budget:
+ * a page that holds an event stream open (the scaffold's live script does)
+ * never goes idle, and a budget waits forever for it. What an app draws long
+ * after load is not in the picture; what it serves is. The browser is killed
+ * when it has given the picture, not asked to leave.
  *
  * One picture at a time, forge-wide: a browser is the heaviest thing this
  * process starts, and a pod that holds two agent runs has room for one.
  */
 
-import {
-  closeSync,
-  existsSync,
-  mkdtempSync,
-  openSync,
-  readSync,
-  rmSync,
-  statSync,
-} from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { childEnv } from "../apps/process.ts";
 import { Gate } from "../git/env.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import type { Entries } from "../release/webvitals.ts";
 
 export interface LookInput {
   /** The URL to open — the grant door of the app's hostname, on the forge's own port. */
@@ -50,8 +53,23 @@ export interface LookInput {
   readonly timeoutMs: number;
 }
 
-/** What takes the picture: the real browser, or a test's stand-in. */
-export type Capture = (input: LookInput) => Promise<Result<void, string>>;
+/** What the page recorded while it loaded; a type the browser lacks is an empty list. */
+export interface Recorded {
+  readonly entries: Entries;
+}
+
+/**
+ * What takes the picture: the real browser, or a test's stand-in. One that
+ * recorded nothing returns empty entries.
+ */
+export type Capture = (input: LookInput) => Promise<Result<Recorded, string>>;
+
+/** Why there is no picture and no entries when no browser is found. */
+export const NO_BROWSER =
+  "no chromium on this forge: install one, or set FORGE_CHROMIUM";
+
+/** Whether a capture's error is the want of a browser, not a browser's failure. */
+export const isNoBrowser = (error: string): boolean => error === NO_BROWSER;
 
 /** How long a page gets to load before it is pictured as it stands. */
 const LOAD_MS = 3_000;
@@ -82,10 +100,10 @@ const gate = new Gate(1);
 /** Take one picture. Serialised: the second caller waits for the first. */
 export async function takeLook(
   input: LookInput,
-): Promise<Result<void, string>> {
+): Promise<Result<Recorded, string>> {
   const binary = findChromium();
   if (binary === undefined)
-    return err("no chromium on this forge: install one, or set FORGE_CHROMIUM");
+    return err(NO_BROWSER);
   const release = await gate.acquire();
   try {
     return await shoot(binary, input);
@@ -94,28 +112,197 @@ export async function takeLook(
   }
 }
 
-/** The last eight bytes of every PNG: the IEND chunk and its CRC. */
-const PNG_END = Buffer.from([0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82]);
+/** Entries kept per type: a page that shifts a thousand times has said enough. */
+const MAX_ENTRIES = 500;
 
-/** Whether a complete picture is on disk at `path`. */
-function pictureDone(path: string): boolean {
-  if (!existsSync(path)) return false;
-  const size = statSync(path).size;
-  if (size < 64) return false;
-  const fd = openSync(path, "r");
-  try {
-    const tail = Buffer.alloc(8);
-    readSync(fd, tail, 0, 8, size - 8);
-    return tail.equals(PNG_END);
-  } finally {
-    closeSync(fd);
+/** How long after load the page gets to settle (the last paint, the last shift). */
+const SETTLE_MS = 400;
+
+/** Runs before any page script: collects the entries the summary grades. */
+const OBSERVER = `(() => {
+  if (window.top !== window) return;
+  const v = { lcp: [], layoutShift: [], longtask: [] };
+  window.__forgeVitals = v;
+  const watch = (type, key, pick) => {
+    try {
+      new PerformanceObserver((list) => {
+        for (const e of list.getEntries()) v[key].push(pick(e));
+      }).observe({ type, buffered: true });
+    } catch (_) {}
+  };
+  watch("largest-contentful-paint", "lcp", (e) => ({ startTime: e.startTime, size: e.size }));
+  watch("layout-shift", "layoutShift", (e) => ({ startTime: e.startTime, value: e.value, hadRecentInput: e.hadRecentInput }));
+  watch("longtask", "longtask", (e) => ({ startTime: e.startTime, duration: e.duration }));
+})()`;
+
+const finite = (v: unknown): v is number =>
+  typeof v === "number" && Number.isFinite(v) && v >= 0;
+
+/**
+ * What the page said, narrowed to what is safe to keep: plain data in, only
+ * finite numbers (and the one boolean) out, each list bounded. Whatever the
+ * page wrote is untrusted; a missing or malformed type is an empty list.
+ */
+export function parseRecorded(raw: unknown): Recorded {
+  const rec =
+    raw !== null && typeof raw === "object"
+      ? (raw as Record<string, unknown>)
+      : {};
+  const list = (
+    key: string,
+    fields: readonly string[],
+    required: string,
+  ): object[] => {
+    const items = rec[key];
+    if (!Array.isArray(items)) return [];
+    const out: object[] = [];
+    for (const item of items.slice(0, MAX_ENTRIES)) {
+      if (item === null || typeof item !== "object") continue;
+      const from = item as Record<string, unknown>;
+      const entry: Record<string, number | boolean> = {};
+      for (const f of fields) {
+        const v = from[f];
+        if (finite(v)) entry[f] = v;
+        else if (f === "hadRecentInput" && typeof v === "boolean") entry[f] = v;
+      }
+      // An entry without its defining number is not an entry.
+      if (required in entry) out.push(entry);
+    }
+    return out;
+  };
+  return {
+    entries: {
+      lcp: list("lcp", ["startTime", "size"], "startTime"),
+      layoutShift: list("layoutShift", ["startTime", "value", "hadRecentInput"], "value"),
+      longtask: list("longtask", ["startTime", "duration"], "startTime"),
+    },
+  };
+}
+
+/** The DevTools endpoint Chromium writes into its profile once it listens. */
+async function endpoint(
+  profile: string,
+  stillRunning: () => boolean,
+  deadline: number,
+): Promise<string | undefined> {
+  const file = join(profile, "DevToolsActivePort");
+  while (stillRunning() && Date.now() < deadline) {
+    try {
+      const [port, path] = readFileSync(file, "utf8").split("\n");
+      if (/^\d{1,5}$/.test(port ?? "") && (path ?? "").startsWith("/devtools/"))
+        return `ws://127.0.0.1:${port}${path}`;
+    } catch {
+      // Not written yet.
+    }
+    await Bun.sleep(50);
   }
+  return undefined;
+}
+
+/** One DevTools message: a reply (`id`) or an event (`method`). */
+interface Message {
+  readonly id?: number;
+  readonly method?: string;
+  readonly sessionId?: string;
+  readonly result?: Record<string, unknown>;
+  readonly error?: { readonly message?: string };
+}
+
+/** A DevTools connection: commands answered by id, events heard by method. */
+class Devtools {
+  private next = 1;
+  private readonly waiting = new Map<
+    number,
+    { resolve: (v: Record<string, unknown>) => void; reject: (e: Error) => void }
+  >();
+  private readonly listeners = new Set<(method: string, sessionId: string) => void>();
+
+  private constructor(private readonly socket: WebSocket) {
+    socket.onmessage = (event) => {
+      let msg: Message;
+      try {
+        msg = JSON.parse(String(event.data)) as Message;
+      } catch {
+        return;
+      }
+      if (typeof msg.id === "number") {
+        const w = this.waiting.get(msg.id);
+        this.waiting.delete(msg.id);
+        if (msg.error) w?.reject(new Error(String(msg.error.message ?? "failed")));
+        else w?.resolve(msg.result ?? {});
+      } else if (typeof msg.method === "string")
+        for (const l of this.listeners) l(msg.method, msg.sessionId ?? "");
+    };
+    socket.onclose = () => this.fail(new Error("the browser closed the connection"));
+    socket.onerror = () => this.fail(new Error("the browser connection failed"));
+  }
+
+  static connect(url: string): Promise<Devtools> {
+    return new Promise((resolve, reject) => {
+      const socket = new WebSocket(url);
+      const dt = new Devtools(socket);
+      socket.onopen = () => resolve(dt);
+      const early = () => reject(new Error("could not reach the browser's DevTools"));
+      socket.addEventListener("error", early, { once: true });
+    });
+  }
+
+  private fail(error: Error): void {
+    for (const w of this.waiting.values()) w.reject(error);
+    this.waiting.clear();
+  }
+
+  send(
+    method: string,
+    params: object = {},
+    sessionId?: string,
+  ): Promise<Record<string, unknown>> {
+    const id = this.next++;
+    return new Promise((resolve, reject) => {
+      this.waiting.set(id, { resolve, reject });
+      this.socket.send(
+        JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }),
+      );
+    });
+  }
+
+  /** Resolves when `method` is next heard on `sessionId`. */
+  heard(method: string, sessionId: string): Promise<void> {
+    return new Promise((resolve) => {
+      const l = (m: string, s: string) => {
+        if (m !== method || s !== sessionId) return;
+        this.listeners.delete(l);
+        resolve();
+      };
+      this.listeners.add(l);
+    });
+  }
+
+  close(): void {
+    try {
+      this.socket.close();
+    } catch {
+      // Already gone.
+    }
+  }
+}
+
+/** Rejects with `what` when the deadline passes before `work` settles. */
+function within<T>(work: Promise<T>, deadline: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(what)),
+      Math.max(0, deadline - Date.now()),
+    );
+  });
+  return Promise.race([work, late]).finally(() => clearTimeout(timer));
 }
 
 async function shoot(
   binary: string,
   input: LookInput,
-): Promise<Result<void, string>> {
+): Promise<Result<Recorded, string>> {
   const host = new URL(input.url).hostname;
   // A profile of its own, gone afterwards: no cookie outlives its picture,
   // and two forges in one process never share a browser's state.
@@ -143,9 +330,10 @@ async function shoot(
       `--window-size=${input.width},${input.height}`,
       "--force-device-scale-factor=1",
       "--js-flags=--max-old-space-size=256",
-      `--timeout=${LOAD_MS}`,
-      `--screenshot=${input.out}`,
-      input.url,
+      // Loopback only, on a port the browser picks and writes down.
+      "--remote-debugging-port=0",
+      "--remote-allow-origins=http://127.0.0.1",
+      "about:blank",
     ],
     {
       env: childEnv({}),
@@ -169,32 +357,98 @@ async function shoot(
     }
   })().catch(() => {});
   const deadline = Date.now() + input.timeoutMs;
+  const seconds = Math.round(input.timeoutMs / 1000);
+  let devtools: Devtools | undefined;
   try {
-    for (;;) {
-      if (pictureDone(input.out)) return ok();
-      if (exited !== undefined) {
-        // The browser's last words reach the pipe a beat after it exits.
-        await Bun.sleep(150);
-        break;
-      }
-      if (Date.now() >= deadline)
-        return err(
-          `the picture took longer than ${Math.round(input.timeoutMs / 1000)}s`,
-        );
-      await Bun.sleep(100);
+    const url = await endpoint(profile, () => exited === undefined, deadline);
+    if (url === undefined) {
+      if (exited === undefined)
+        return err(`the picture took longer than ${seconds}s`);
+      // The browser's last words reach the pipe a beat after it exits.
+      await Bun.sleep(150);
+      // Chromium narrates its own housekeeping on stderr; the last line is
+      // the one that says what went wrong, when anything did.
+      const last = said
+        .join("")
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l !== "" && !/crashpad|ProcessSingleton/i.test(l))
+        .at(-1);
+      return err(
+        `chromium exited ${exited} without a picture${last === undefined ? "" : `: ${last.slice(0, 300)}`}`,
+      );
     }
-    // Chromium narrates its own housekeeping on stderr; the last line is
-    // the one that says what went wrong, when anything did.
-    const last = said
-      .join("")
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l !== "" && !/crashpad|ProcessSingleton/i.test(l))
-      .at(-1);
-    return err(
-      `chromium exited ${exited} without a picture${last === undefined ? "" : `: ${last.slice(0, 300)}`}`,
+    const dt = (devtools = await within(
+      Devtools.connect(url),
+      deadline,
+      `the picture took longer than ${seconds}s`,
+    ));
+    const work = (async (): Promise<Recorded> => {
+      const { targetInfos } = (await dt.send("Target.getTargets")) as {
+        targetInfos: { type: string; targetId: string }[];
+      };
+      const page = targetInfos.find(
+        (t) => t.type === "page",
+      );
+      if (page === undefined) throw new Error("the browser opened no page");
+      const { sessionId } = (await dt.send("Target.attachToTarget", {
+        targetId: page.targetId,
+        flatten: true,
+      })) as { sessionId: string };
+      await dt.send("Page.enable", {}, sessionId);
+      await dt.send(
+        "Emulation.setDeviceMetricsOverride",
+        {
+          width: input.width,
+          height: input.height,
+          deviceScaleFactor: 1,
+          mobile: false,
+        },
+        sessionId,
+      );
+      // Before navigation: the observer is in place before the page's first script.
+      await dt.send(
+        "Page.addScriptToEvaluateOnNewDocument",
+        { source: OBSERVER },
+        sessionId,
+      );
+      const loaded = dt.heard("Page.loadEventFired", sessionId);
+      await dt.send("Page.navigate", { url: input.url }, sessionId);
+      // A page that never finishes loading is pictured as it stands.
+      await Promise.race([loaded, Bun.sleep(LOAD_MS)]);
+      await Bun.sleep(SETTLE_MS);
+      let recorded = parseRecorded(undefined);
+      try {
+        const read = await dt.send(
+          "Runtime.evaluate",
+          {
+            expression: "JSON.stringify(window.__forgeVitals ?? null)",
+            returnByValue: true,
+          },
+          sessionId,
+        );
+        const value = (read["result"] as { value?: unknown } | undefined)?.value;
+        recorded = parseRecorded(JSON.parse(String(value ?? "null")));
+      } catch {
+        // No entries is not a failed look: the picture is still wanted.
+      }
+      const shot = await dt.send(
+        "Page.captureScreenshot",
+        { format: "png" },
+        sessionId,
+      );
+      writeFileSync(input.out, Buffer.from(String(shot.data), "base64"));
+      return recorded;
+    })();
+    work.catch(() => {});
+    return ok(
+      await within(work, deadline, `the picture took longer than ${seconds}s`),
     );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return err(message.startsWith("the picture took") ? message : `no picture: ${message}`);
   } finally {
+    devtools?.close();
     if (exited === undefined) proc.kill("SIGKILL");
     await proc.exited.catch(() => {});
     reader.cancel().catch(() => {});

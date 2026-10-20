@@ -305,7 +305,7 @@ export async function runPage(ctx: Ctx): Promise<Response> {
   const found = runLog(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "");
   if (!found.ok) return notFoundPage(ctx);
   const { run, lines, truncated, logHidden } = found.value;
-  const looks = logHidden ? [] : readLooks(ctx.app.config.dataDir, run.id);
+  const looks = logHidden ? [] : readLooks(ctx.app.config.dataDir, run);
   return await runView(ctx, repo, run, lines, truncated, logHidden, looks);
 }
 
