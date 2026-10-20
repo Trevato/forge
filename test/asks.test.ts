@@ -276,8 +276,8 @@ describe("the asks page", () => {
     expect(card?.short).toContain("its tests passed");
   });
   describe("a legacy setting finding (#3314)", () => {
-    // The sentinel files no setting now (#3269) and closes the ones it filed
-    // before; until it does, an open one asks nobody and is answered nowhere.
+    // The sentinel files no setting now (#3269); one filed before asks
+    // nobody and is answered nowhere.
     test("raises no ask, and /asks/setting is gone", async () => {
       const alice0 = getUserByName(app.db, "alice")!;
       setCapacity(app.db, "checks.concurrency", "4", alice0.id);

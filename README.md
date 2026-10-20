@@ -1357,12 +1357,10 @@ until the value is back at the default; nothing else reminds anyone. The
 JSON API and MCP carry the same fact: a setting away from its default has a
 `changed` field (`at`, `by`) in the capacity listing (`listCapacity`).
 
-A `setting:<key>` finding filed before that is closed on the next pass with a
-comment pointing at the capacity page (`closeSettingFindings` in
-`crew/setting_finding.ts`). Until it closes it is never a crew run: not
-assigned, and left out of the crew's ready list (`isSettingFinding`). It raises
-no ask; the capacity page's Put back is the one answer. Both helpers go once no
-open setting finding is left, with the unused `sentinel_kept` table.
+The `setting:<key>` findings filed before that are all closed; none raises an
+ask, and the capacity page's Put back is the one answer. The `sentinel_kept`
+table they once used is unread; a migration drops it once the additive rule
+(`src/core/releases.json`) allows a drop.
 
 - **Board:** a site admin's forge strip shows the open findings and the last
   hunt; a guest or member sees nothing.

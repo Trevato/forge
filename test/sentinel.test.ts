@@ -20,7 +20,6 @@ import { listEvents } from "../src/core/events.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { createRun } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
-import { isSettingFinding } from "../src/crew/setting_finding.ts";
 import { recordCap } from "../src/crew/guard.ts";
 import {
   budgetBreaches,
@@ -490,18 +489,6 @@ describe("the signals inside the hour", () => {
     setCapacity(app.db, "cells.egress", "enforce", alice.id);
   });
 
-  test("an open setting finding from before closes on the next pass, with a pointer to the capacity page (#3269)", () => {
-    const old = createIssue(app.db, { repoId: repo.id, authorId: alice.id, title: "Sentinel: Setting checks.concurrency has been away from its default for 9 days" });
-    if (!old.ok) throw new Error(String(old.error));
-    app.db.query("INSERT INTO sentinel_finding (key, issue_id, evidence, first_seen, last_seen) VALUES ('setting:checks.concurrency', ?1, '', 'a', 'a')").run(old.value.id);
-    hunt(app, "alice/forge", Date.now());
-    const row = app.db.query<{ state: string; close_reason: string }, [string]>("SELECT state, close_reason FROM issue WHERE id = ?1").get(old.value.id)!;
-    expect(row).toEqual({ state: "closed", close_reason: "done" });
-    expect(listComments(app.db, old.value.id).some((c) => c.body.includes("/settings/capacity"))).toBe(true);
-    // closed ones are still known as setting findings
-    expect(isSettingFinding(app.db, old.value.id)).toBe(true);
-  });
-
   test("a newly held slot hunts too", () => {
     const run = createRun(app.db, { repoId: repo.id, kind: "deploy" });
     const l = lastHunt();
@@ -782,11 +769,7 @@ describe("a degraded finding whose cause has stayed closed", () => {
     await rm(hdir, { recursive: true, force: true });
   });
 
-  test("23 hours closed stays open; a person's comment keeps theirs at 25, and a setting finding closes", () => {
-    // A setting finding, tracked as the sentinel would.
-    const s = createIssue(happ.db, { repoId: hrepo.id, authorId: halice.id, title: "Sentinel: Setting x" });
-    if (!s.ok) throw new Error(String(s.error));
-    happ.db.query("INSERT INTO sentinel_finding (key, issue_id, evidence, first_seen, last_seen) VALUES ('setting:x', ?1, '', 'a', 'a')").run(s.value.id);
+  test("23 hours closed stays open; a person's comment keeps theirs at 25", () => {
     const disk = happ.db.query<{ id: string }, []>("SELECT id FROM issue WHERE title LIKE '%disk%'").get()!;
     addComment(happ.db, { issueId: disk.id, authorId: halice.id, body: "looking" });
 
@@ -801,7 +784,6 @@ describe("a degraded finding whose cause has stayed closed", () => {
     expect(said.length).toBe(1);
     expect(said[0]!.body).toContain(new Date(T0).toISOString());
     expect(state("disk")).toBe("open");
-    expect(state("Setting x")).toBe("closed");
   });
 
   test("a finding that comes back is a new issue", () => {

@@ -179,11 +179,6 @@ describe("the tick says why each ready issue cannot start", () => {
       .query("INSERT INTO sentinel_finding (key, issue_id, evidence, first_seen, last_seen) VALUES (?1, ?2, '', 'x', 'x')")
       .run(`degraded:${keyPart(`red:${repo.id}`)}`, fix.id);
 
-    const finding = issue(repo, "A setting's finding");
-    app.db
-      .query("INSERT INTO sentinel_finding (key, issue_id, evidence, first_seen, last_seen) VALUES ('setting:x', ?1, '', 'x', 'x')")
-      .run(finding.id);
-
     const held = heldNow(app, getRepoById(app.db, repo.id)!);
     const named = (h: keyof typeof held.by) => held.by[h].map((i) => i.number);
     expect(held.startable.map((r) => r.issue.number).sort()).toEqual([free.number, fix.number].sort());
@@ -195,10 +190,9 @@ describe("the tick says why each ready issue cannot start", () => {
     expect(named("run_cap")).toEqual([capped.number]);
     expect(named("parked_twice")).toEqual([parked.number]);
     expect(named("red_fix")).toEqual([quoting.number]);
-    expect(named("setting")).toEqual([finding.number]);
     expect(heldCounts(held).open_pull).toBe(1);
     expect(heldWords(held)).toBe(
-      "running=1 open_pull=1 planner=1 done_on_main=1 stalled=1 run_cap=1 parked_twice=1 red_fix=1 setting=1",
+      "running=1 open_pull=1 planner=1 done_on_main=1 stalled=1 run_cap=1 parked_twice=1 red_fix=1",
     );
     // Something can start: the planner is not told the crew is stuck.
     expect(stuckOf(held)).toBeUndefined();

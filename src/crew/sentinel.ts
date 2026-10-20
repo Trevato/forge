@@ -29,7 +29,6 @@ import { spans } from "../kernel/degraded_history.ts";
 import { QUEUE_WAIT_MAX_MS } from "../kernel/vitals.ts";
 import { STALE_AFTER_MS } from "../runs/lease.ts";
 import { isOutageSummary } from "./network.ts";
-import { closeSettingFindings } from "./setting_finding.ts";
 
 const log = createLog("sentinel");
 
@@ -712,10 +711,8 @@ export function hunt(
       }
     }
   }
-  if (repo !== undefined && actor !== undefined) {
+  if (repo !== undefined && actor !== undefined)
     closeHeld(app, repo, actor, new Set(findings.map((f) => f.key)), now);
-    closeSettingFindings(app, repo, actor);
-  }
   // A hunt with nowhere to file is recorded as such, never as a quiet one.
   const unfiled = repo === undefined || actor === undefined;
   app.db

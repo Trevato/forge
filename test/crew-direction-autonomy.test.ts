@@ -169,25 +169,6 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-describe("a setting finding on an autonomous repository (#2029)", () => {
-  test("is the owner's ask: the autonomy clock never assigns it and no run starts", async () => {
-    const repo = await autonomous();
-    const finding = ok(openIssue(app, alice, repo, { title: "Sentinel: Setting cells.egress is away from its default" }));
-    app.db
-      .query("INSERT INTO sentinel_finding (key, issue_id, evidence, first_seen, last_seen) VALUES ('setting:cells.egress', ?1, '', ?2, ?2)")
-      .run(finding.id, new Date().toISOString());
-    const other = ok(openIssue(app, alice, repo, { title: "Round the corners" }));
-    const before = listEvents(app.db, { kind: "issue.assigned" }).filter((e) => e.payload["issue"] === finding.id).length;
-    for (let tick = 0; tick < 3; tick++) await driveRepo(app, fresh(repo));
-    const after = getIssue(app.db, repo.id, finding.number)!;
-    expect(after.assigneeId).toBeNull();
-    expect(runsOn(repo, after)).toEqual([]);
-    expect(listEvents(app.db, { kind: "issue.assigned" }).filter((e) => e.payload["issue"] === finding.id).length).toBe(before);
-    // the crew still works what is not an ask
-    expect(getIssue(app.db, repo.id, other.number)!.assigneeId).not.toBeNull();
-  });
-});
-
 describe("a reader's issue on an autonomous public repository", () => {
   test("is never assigned, queued or ready, and the map says why", async () => {
     const repo = await autonomous();

@@ -32,7 +32,7 @@ export function heldCard(rows: readonly HeldRow[]): Html {
       <p class="muted small">
         Each ready issue a builder could start, or the first filter that holds
         it: a run on it, an open pull, the planner, stalled, its run cap,
-        parked twice, a red-main fix, a setting's finding. When nothing can
+        parked twice, a red-main fix. When nothing can
         start and builders are free, the planner is asked to re-plan what is
         stalled or capped.
       </p>

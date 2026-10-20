@@ -19,7 +19,6 @@
  * - `run_cap`: it has used its runs for the day (`guard.ts`).
  * - `parked_twice`: the crew parked it twice; it is the planner's (`parks.ts`).
  * - `red_fix`: a fix for a red main already covers it (`red_fix.ts`).
- * - `setting`: a setting's finding, a person's to answer (`setting_finding.ts`).
  *
  * The direction issue is the planner's standing issue and never a
  * builder's; it is left out, not counted.
@@ -40,7 +39,6 @@ import { capReached, runCapOf } from "./guard.ts";
 import { interruptionOf } from "./interrupted.ts";
 import { PARK_STRIKES, parkedCount } from "./parks.ts";
 import { coveredByRedFix } from "./red_fix.ts";
-import { isSettingFinding } from "./setting_finding.ts";
 
 export const HOLDS = [
   "running",
@@ -52,7 +50,6 @@ export const HOLDS = [
   "run_cap",
   "parked_twice",
   "red_fix",
-  "setting",
 ] as const;
 
 export type HoldName = (typeof HOLDS)[number];
@@ -131,7 +128,6 @@ export function heldBy(
     if (atRunCap(app, repo, issue)) return "run_cap";
     if (parkedCount(app.db, repo, issue.id) >= PARK_STRIKES) return "parked_twice";
     if (coveredByRedFix(app.db, repo.id, issue)) return "red_fix";
-    if (isSettingFinding(app.db, issue.id)) return "setting";
     return null;
   };
   const by = Object.fromEntries(HOLDS.map((h) => [h, [] as Issue[]])) as Record<
