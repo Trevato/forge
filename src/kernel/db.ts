@@ -6,7 +6,7 @@
  */
 
 import { Database } from "bun:sqlite";
-import { existsSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, writeFileSync } from "node:fs";
 import { createLog } from "./log.ts";
 import { type Migration, migrate } from "./migrate.ts";
 
@@ -45,10 +45,20 @@ export function openDb(path: string, migrations: readonly Migration[]): Database
   if (image !== undefined && memory) {
     db = Database.deserialize(rollbackJournal(image), { strict: true });
   } else {
-    if (image !== undefined) writeFileSync(path, image, { flag: "wx" });
+    if (image !== undefined) writeFileSync(path, image, { flag: "wx", mode: 0o600 });
     db = new Database(path, { create: true, strict: true });
   }
   applyPragmas(db);
+  // Only files this call made: one that already exists is left as found, and
+  // vitals says when it is too open (`file_modes.ts`). The umask can widen
+  // the mode at creation, so it is set again.
+  if (fresh && !memory)
+    for (const suffix of ["", "-wal", "-shm"])
+      try {
+        chmodSync(path + suffix, 0o600);
+      } catch {
+        // No such file (a journal mode without one): nothing to tighten.
+      }
   // On a copy every migration is already recorded, so this is a no-op —
   // and a list that grew since the copy was taken still runs what is new;
   // one behind the copy boots and says what it does not know (#783).

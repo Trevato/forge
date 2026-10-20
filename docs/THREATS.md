@@ -42,6 +42,10 @@ Wants: to act as the person or agent it was issued to, for as long as it works.
 - Stored provider tokens (origins) are sealed under a key in `secret.key`, never
   returned by any route.
   Test: `test/origins-security-auth.test.ts`
+- The SSH host key and the database files are created 0600; a host key group-
+  or world-readable is refused, and a database file found too open is a
+  degraded finding naming the chmod, never a silent change and never a stop.
+  Test: `test/file-modes.test.ts`
 - Revoking every token of one account at once, and telling its owner a token was
   used from somewhere new.
   Test: none yet

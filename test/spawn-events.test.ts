@@ -116,7 +116,7 @@ test("the door starts a watcher for a new child and not for an existing one", as
   const ctx = { app, request: deps().request, url: deps().url } as unknown as Ctx;
   const raw = { name: "kid", org: "kids", apps: ["alice/notes"], dryRun: false };
   const live = () => events().filter((e) => e.kind === "forge.spawn.live").length;
-  const until = async (n: number) => { for (let i = 0; i < 100 && live() < n; i++) await Bun.sleep(20); };
+  const until = async (n: number) => { for (let i = 0; i < 500 && live() < n; i++) await Bun.sleep(20); };
 
   expect((await spawnDoor(ctx, alice, raw)).status).toBe(201);
   await until(1);

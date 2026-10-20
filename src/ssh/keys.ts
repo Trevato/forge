@@ -17,9 +17,16 @@ import {
   verify as cryptoVerify,
   type KeyObject,
 } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
-import { defect } from "../kernel/error.ts";
+import { defect, ForgeError } from "../kernel/error.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { Reader, Writer } from "./wire.ts";
 
@@ -278,8 +285,18 @@ export function loadOrCreateHostKey(dir: string): HostKey {
   const path = join(dir, "host_ed25519");
   let privateKey: KeyObject;
   try {
-    privateKey = createPrivateKey(readFileSync(path, "utf8"));
+    const pem = readFileSync(path, "utf8");
+    // Same refusal as secret.key: fail closed, never chmod it quietly.
+    const mode = statSync(path).mode & 0o777;
+    if ((mode & 0o077) !== 0) {
+      defect(
+        "ssh.host_key_too_open",
+        `${path} is mode ${mode.toString(8)}; it must be 0600 — fix the permissions and restart`,
+      );
+    }
+    privateKey = createPrivateKey(pem);
   } catch (cause) {
+    if (ForgeError.isInstance(cause)) throw cause;
     if ((cause as NodeJS.ErrnoException).code !== "ENOENT") {
       defect("ssh.host_key", `cannot read host key at ${path}`, cause);
     }
@@ -287,6 +304,7 @@ export function loadOrCreateHostKey(dir: string): HostKey {
     const pem = pair.privateKey.export({ type: "pkcs8", format: "pem" });
     // Write-then-rename so a crash mid-write cannot leave a truncated key.
     writeFileSync(`${path}.tmp`, pem, { mode: 0o600 });
+    chmodSync(`${path}.tmp`, 0o600);
     renameSync(`${path}.tmp`, path);
     privateKey = pair.privateKey;
   }

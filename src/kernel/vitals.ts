@@ -22,6 +22,7 @@ import {
 } from "../core/runs.ts";
 import { STALE_AFTER_MS } from "../runs/lease.ts";
 import { BUDGETS } from "./budgets.ts";
+import { openDbFiles } from "./file_modes.ts";
 import { lastMirror, mirrorNeed } from "../snapshot/mirror.ts";
 import { lastSnapshotOutcome, snapshotNeed } from "../snapshot/outcome.ts";
 import { drillNeed, firstSeen as drillFirstSeen, lastVerdict } from "../snapshot/verdict.ts";
@@ -290,6 +291,9 @@ export function vitals(input: VitalsInput): Vitals {
       undefined,
       "/settings/capacity",
     );
+
+  for (const file of openDbFiles(input.dataDir))
+    need(`file:${file.name}`, file.sentence, undefined, "/settings/capacity");
 
   // Snapshots on the volume they copy, and no mirror, share its one point of failure.
   const snaps = input.snapshots;
