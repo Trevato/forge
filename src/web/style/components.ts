@@ -181,6 +181,9 @@ fieldset.field > .check + .check { margin-top: 8px; }
 .badge .ico { width: 12px; height: 12px; }
 /* A loader that turns: the one icon that means "still going". */
 .ico-loader { animation: spin 1.1s linear infinite; }
+/* A button never spins at rest: only its own busy state turns the loader. */
+.btn .ico-loader { animation-play-state: paused; }
+.btn[aria-busy="true"] .ico-loader { animation-play-state: running; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* One stored hex, derived three ways, so a chip reads correctly in all six
