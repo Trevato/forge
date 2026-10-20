@@ -176,8 +176,10 @@ function reviewEntry(
       )}${when(
         review.body !== "",
         () =>
-          html`<div class="prose review-body">
-            ${renderMarkdown(review.body)}
+          html`<div class="card">
+            <div class="prose comment-body">
+              ${renderMarkdown(review.body)}
+            </div>
           </div>`,
       )}`,
     }),

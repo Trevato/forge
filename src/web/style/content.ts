@@ -777,13 +777,6 @@ form.inline { display: inline; margin-left: auto; }
    keeps its words and loses its colour. */
 .verdict-stale { color: var(--muted-fg); background: none; }
 .verdict-stale .ico { width: 12px; height: 12px; }
-.review-body {
-  flex-basis: 100%; margin-top: 4px; padding: 8px 12px;
-  background: var(--card); border: 1px solid var(--border);
-  border-radius: var(--radius); font-size: 14px; color: var(--fg);
-}
-.review-body p:first-child { margin-top: 0; }
-.review-body p:last-child { margin-bottom: 0; }
 .review-card .review-verdicts { border: 0; padding: 0; margin: 0; display: grid; gap: 10px; }
 .review-verdicts .check .hint {
   display: block; font-size: 12.5px; color: var(--muted-fg); margin-top: 1px;

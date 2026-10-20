@@ -747,6 +747,8 @@ a.row:hover .row-title { color: var(--accent); }
   min-height: 32px;
 }
 .tl-item[data-kind="comment"] .card { margin: 0; }
+.tl-item[data-kind="event"] > .card { flex-basis: 100%; margin: 4px 0 0; color: var(--fg); font-size: 14px; }
+.tl-item[data-kind="event"] > .card .comment-body { padding: 8px 12px; }
 
 /* ---- comment card ---- */
 .comment .card-head { background: var(--muted); font-size: 13px; }
