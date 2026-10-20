@@ -49,10 +49,10 @@
       "colour": 0,
       "size": 0,
       "motion": 0,
-      "forced": 1,
-      "focus": 1,
-      "input": 1,
-      "target": 2
+      "forced": 0,
+      "focus": 0,
+      "input": 0,
+      "target": 0
     }
   }
 }

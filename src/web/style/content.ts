@@ -329,7 +329,9 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .grants thead th { border-top: 0; font-weight: 600; }
 .grants th[scope="col"], .grants td { text-align: center; }
 .grants th[scope="row"] { text-align: left; font-weight: 500; white-space: nowrap; }
-.grants input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); }
+.grants { --grant-box: 16px; }
+.grants input[type="checkbox"] { width: var(--grant-box); height: var(--grant-box); accent-color: var(--accent); }
+@media (pointer: coarse) { .grants { --grant-box: 24px; } }
 .grants-foot { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-top: 1px solid var(--border); }
 /* A subscription's headroom for people: a small number beside its windows. */
 .headroom { display: flex; align-items: center; gap: 6px; }
@@ -1067,7 +1069,7 @@ form.inline { display: inline; margin-left: auto; }
 .editor-gutter {
   flex: none; width: 3.5rem; padding: 10px 8px 10px 0;
   text-align: right; user-select: none;
-  font-family: var(--mono); font-size: 12.5px; line-height: 1.55;
+  font-family: var(--mono); font-size: var(--editor-fs); line-height: 1.55;
   color: var(--faint); background: var(--muted);
   border-right: 1px solid var(--border);
   overflow: hidden;
@@ -1088,14 +1090,14 @@ textarea.editor {
   grid-area: 1 / 1;
   margin: 0; border: none; background: none;
   padding: 10px 12px; min-height: 14rem;
-  font-family: var(--mono); font-size: 12.5px; line-height: 1.55;
+  font-family: var(--mono); font-size: var(--editor-fs); line-height: 1.55;
   tab-size: 2; white-space: pre;
   overflow: auto;
 }
 .editor-wrap.mirrored .editor-mirror,
 .editor-wrap.mirrored textarea.editor { min-height: 0; }
 textarea.editor { resize: vertical; field-sizing: content; }
-textarea.editor:focus { outline: none; }
+textarea.editor:focus-visible { outline: none; }
 .editor-mirror {
   overflow: hidden; pointer-events: none; user-select: none;
   color: var(--fg);
@@ -1117,7 +1119,12 @@ textarea.editor:focus { outline: none; }
 .editor-mirror .ml.cur {
   background: color-mix(in srgb, var(--muted) 75%, transparent);
 }
+.editor-wrap { --editor-fs: 12.5px; }
 .editor-wrap:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+/* Touch screens zoom a field set under 16px; the gutter, mirror and textarea share the size so they stay aligned. */
+@media (pointer: coarse) { .editor-wrap { --editor-fs: 16px; } }
+/* The ring above is a shadow, which forced colours drop; the textarea's own outline is off, so draw one. */
+@media (forced-colors: active) { .editor-wrap:focus-within { outline: 2px solid Highlight; outline-offset: 2px; } }
 .editor-preview {
   border: 1px solid var(--border); border-top: none;
   border-radius: 0 0 var(--radius) var(--radius);
