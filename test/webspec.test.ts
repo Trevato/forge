@@ -205,3 +205,9 @@ test("compression: a big page and stylesheet must leave encoded with Vary", asyn
   expect(found[1]!.message).toContain("/a.css");
   expect(found[0]!.section).toBe("https://specification.website/");
 });
+
+test("a data: icon is not fetched: it carries its own bytes", async () => {
+  const { headTargets } = await import("../src/release/webspec.ts");
+  const html = `<link rel="icon" href="data:image/svg+xml,%3Csvg/%3E"><link rel="manifest" href="/m.json">`;
+  expect(headTargets(html, "https://x.test/")).toEqual({ urls: ["https://x.test/m.json"], bad: [] });
+});

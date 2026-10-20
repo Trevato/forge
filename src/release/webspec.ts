@@ -150,8 +150,10 @@ export function headTargets(html: string, pageUrl: string): { urls: string[]; ba
   const bad: string[] = [];
   for (const h of hrefs) {
     try {
-      const u = new URL(h, pageUrl).href;
-      if (!urls.includes(u)) urls.push(u);
+      const u = new URL(h, pageUrl);
+      // A data: icon carries its own bytes; there is nothing to fetch.
+      if (u.protocol === "data:") continue;
+      if (!urls.includes(u.href)) urls.push(u.href);
     } catch {
       bad.push(h);
     }
