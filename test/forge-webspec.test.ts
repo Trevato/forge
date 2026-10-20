@@ -7,10 +7,12 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { brotliDecompressSync } from "node:zlib";
 import { createApp, type App } from "../src/app.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createUser } from "../src/core/users.ts";
+import { compress } from "../src/http/compress.ts";
 import { securityFloor } from "../src/http/respond.ts";
 import { forgeHttp, type ForgeHttp } from "../src/http/server.ts";
 import { webspec } from "../src/release/webspec.ts";
@@ -20,16 +22,8 @@ quietLogs();
 
 const PATHS = ["/", "/signin", "/signup", "/explore", "/alice/notes", "/alice/notes/issues", "/alice/notes/issues/1"];
 
-/**
- * `check path` -> [section, why it stands]. Every one is expected on every
- * page it names; one fixed fails the test, one new fails it too. "compression"
- * is an edge finding (set by the CDN in front of the forge): listed, not hidden.
- */
+/** `check path` -> [section, why it stands]. Every one is expected on every page it names; one fixed fails the test, one new fails it too. */
 const KNOWN: Record<string, [string, string]> = {};
-const WHY: Record<string, [string, string]> = {
-  compression: ["https://specification.website/", "bodies leave the forge uncompressed: compression is set at the edge (edge: true)"],
-};
-for (const [check, why] of Object.entries(WHY)) for (const path of PATHS) KNOWN[`${check} ${path}`] = why;
 
 let dir = "";
 let app: App;
@@ -62,7 +56,18 @@ afterAll(async () => {
 });
 
 test("the forge's signed-out pages raise exactly the findings named in KNOWN", async () => {
-  const fetcher = (input: string, init?: RequestInit) => http.handle(new Request(input, init)).then(securityFloor);
+  // The seam production uses (server.ts): compress, then the security floor.
+  // Like fetch, the body arrives decoded while Content-Encoding stays for webspec to read.
+  const fetcher = async (input: string, init?: RequestInit) => {
+    const request = new Request(input, init);
+    if (!request.headers.has("accept-encoding")) request.headers.set("accept-encoding", "br, gzip");
+    const response = await compress(request, await http.handle(request)).then(securityFloor);
+    const encoding = response.headers.get("content-encoding");
+    if (encoding !== "br" && encoding !== "gzip") return response;
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    const plain = encoding === "br" ? brotliDecompressSync(bytes) : Bun.gunzipSync(bytes);
+    return new Response(plain, response);
+  };
   const found = await webspec("http://forge.test", PATHS, fetcher, { site: true });
   const keyOf = (f: { check: string; path: string }) => `${f.check} ${f.path}`;
   // New: not named, or citing another section than the one named.
