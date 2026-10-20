@@ -332,7 +332,9 @@ describe("apps, runs and the crew on the web", () => {
   });
 
   test("the runs list, one run's log page, and the short door to it", async () => {
-    const [run] = await runsOf(hello);
+    // Every wait here is on the machine, not the code: give each a wide
+    // bound so a loaded check lane fails only on a real hang.
+    const [run] = await runsOf(hello, () => true, 30_000);
     expect(run).toBeDefined();
     // The live log exists only while it is going, and the page never
     // reloads itself either way (#2873).
@@ -348,7 +350,7 @@ describe("apps, runs and the crew on the web", () => {
     // Read the state before and after the render and assert only when they
     // agree: a run that settles mid-render says nothing, so render again.
     // A run only moves forward, so this ends once it is done.
-    const deadline = Date.now() + 5_000;
+    const deadline = Date.now() + 15_000;
     for (;;) {
       const before = isGoing();
       const html = await bodyOf(alice, `/alice/hello/runs/${run!.id}`);
@@ -368,7 +370,7 @@ describe("apps, runs and the crew on the web", () => {
     // Let the deploy settle before the list and log are read: a queued run
     // has no log lines yet and moves between the list's words, so those
     // assertions would depend on how loaded the machine is.
-    const settleBy = Date.now() + 20_000;
+    const settleBy = Date.now() + 60_000;
     while (isGoing()) {
       if (Date.now() >= settleBy) {
         throw new Error(`run ${run!.id} never settled`);
@@ -413,7 +415,7 @@ describe("apps, runs and the crew on the web", () => {
     }
     expect((await web(alice, "/runs/nope")).status).toBe(404);
     expect((await web(alice, "/alice/hello/runs/nope")).status).toBe(404);
-  }, 40_000);
+  }, 120_000);
 
   test("cancelling a run: a writer may, a reader may not", async () => {
     const [run] = await runsOf(hello);
