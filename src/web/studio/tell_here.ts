@@ -11,15 +11,20 @@ import { parseFrom } from "../../actions/tell.ts";
 import { mayDirectCrew } from "../../crew/direct.ts";
 import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, loadRepo, notFoundPage, pageHead, repoBase, signInFirst } from "../chrome.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { html } from "../html.ts";
 import { fragment, page } from "../layout.ts";
 import { composer } from "../pages/thread.ts";
 
 export function tellHerePage(ctx: Ctx): Response {
-  const repo = loadRepo(ctx);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const repo = timePhase(ctx.request, "repo", () => loadRepo(ctx));
   if (!repo) return notFoundPage(ctx);
   if (!ctx.auth.user) return signInFirst(ctx);
-  if (!mayDirectCrew(ctx.app.db, repo, ctx.auth.user)) return notFoundPage(ctx);
+  const user = ctx.auth.user;
+  const may = timePhase(ctx.request, "access", () => mayDirectCrew(ctx.app.db, repo, user));
+  if (!may) return notFoundPage(ctx);
+  const rendering = performance.now();
   const from = parseFrom(ctx.url.searchParams.get("from") ?? undefined) ?? null;
   // The page of the app the toolbar was pressed on, and its pull: both
   // checked here and again when the tell is sent.
@@ -44,12 +49,15 @@ export function tellHerePage(ctx: Ctx): Response {
       ...(where?.pull === undefined ? {} : { pull: where.pull }),
     },
   });
-  if (ctx.url.searchParams.get("in") === "place")
-    return fragment(box, { request: ctx.request });
-  return page({
-    ctx,
-    title: `Tell the crew · ${repo.name}`,
-    crumbs: crumbsFor(repo),
-    body: html`${pageHead("Tell the crew")}${box}`,
-  });
+  const response =
+    ctx.url.searchParams.get("in") === "place"
+      ? fragment(box, { request: ctx.request })
+      : page({
+          ctx,
+          title: `Tell the crew · ${repo.name}`,
+          crumbs: crumbsFor(repo),
+          body: html`${pageHead("Tell the crew")}${box}`,
+        });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
