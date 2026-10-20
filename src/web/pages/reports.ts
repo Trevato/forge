@@ -22,6 +22,11 @@ import {
 import { canRead, type Repo } from "../../core/repos.ts";
 import { scopeAllows } from "../../core/tokens.ts";
 import type { Ctx } from "../../http/context.ts";
+import {
+  notePhase,
+  takeSessionTime,
+  timePhase,
+} from "../../core/route_timing.ts";
 import { clientBucket } from "../../http/peer.ts";
 import {
   crumbsFor,
@@ -231,16 +236,21 @@ function reportCard(base: string, report: Report): Html {
 
 // GET /:owner/:name/reports
 export function reportsPage(ctx: Ctx): Response {
-  const repo = loadRepo(ctx);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const repo = timePhase(ctx.request, "repo", () => loadRepo(ctx));
   if (!repo) return notFoundPage(ctx);
   if (!ctx.auth.user) return signInFirst(ctx);
   // A read-only token (an app process holds its owner's) never reads them.
   if (ctx.auth.scope === undefined || !scopeAllows(ctx.auth.scope, "rw"))
     return notFoundPage(ctx);
-  const waiting = waitingReports(ctx.app, ctx.auth.user, repo);
+  const user = ctx.auth.user;
+  const waiting = timePhase(ctx.request, "reports", () =>
+    waitingReports(ctx.app, user, repo),
+  );
   if (!waiting.ok) return notFoundPage(ctx);
   const base = repoBase(repo);
-  return page({
+  const rendering = performance.now();
+  const response = page({
     ctx,
     title: `Reports from outside · ${repo.ownerName}/${repo.name}`,
     crumbs: crumbsFor(repo),
@@ -264,6 +274,8 @@ export function reportsPage(ctx: Ctx): Response {
           : waiting.value.map((r) => reportCard(base, r))}
       </div>`,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 // POST /:owner/:name/reports/:id/accept
