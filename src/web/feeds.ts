@@ -20,6 +20,7 @@ import { listEvents, type ForgeEvent } from "../core/events.ts";
 import { getIssuesByRef } from "../core/issues.ts";
 import { canRead, forkParentFor, getRepo } from "../core/repos.ts";
 import { getUsersByIds } from "../core/users.ts";
+import { notePhase, takeSessionTime, timePhase } from "../core/route_timing.ts";
 import type { Ctx } from "../http/context.ts";
 import { notFound } from "../http/respond.ts";
 
@@ -63,26 +64,63 @@ function pushedBranch(event: ForgeEvent): string {
   return typeof ref === "string" ? ref.replace(/^refs\/heads\//, "") : "";
 }
 
+/** Does an `If-None-Match` header name this tag (weakly, or as `*`)? */
+function holds(header: string | null, etag: string): boolean {
+  if (header === null) return false;
+  return header
+    .split(",")
+    .map((t) => t.trim().replace(/^W\//, ""))
+    .some((t) => t === "*" || t === etag.replace(/^W\//, ""));
+}
+
 export function activityAtom(ctx: Ctx): Response {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const repo = getRepo(ctx.app.db, ctx.params["owner"]!, ctx.params["name"]!);
   if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFound();
   const origin = ctx.url.origin;
   const base = `${origin}/${repo.ownerName}/${repo.name}`;
-  const events = listEvents(ctx.app.db, { repoId: repo.id, limit: 200 })
-    .filter((e) => FEED_KINDS.has(e.kind))
-    .filter(audienceFilter(ctx.app.db, ctx.auth.user))
-    .slice(0, FEED_ENTRIES);
-  const actors = getUsersByIds(
-    ctx.app.db,
-    events.map((e) => e.actorId ?? "").filter(Boolean),
+  const events = timePhase(ctx.request, "events", () =>
+    listEvents(ctx.app.db, { repoId: repo.id, limit: 200 })
+      .filter((e) => FEED_KINDS.has(e.kind))
+      .filter(audienceFilter(ctx.app.db, ctx.auth.user))
+      .slice(0, FEED_ENTRIES),
   );
-  const issues = getIssuesByRef(
-    ctx.app.db,
-    events
-      .map((e) => e.payload["number"])
-      .filter((n): n is number => typeof n === "number")
-      .map((number) => ({ repoId: repo.id, number })),
-  );
+  const { actors, issues } = timePhase(ctx.request, "people", () => ({
+    actors: getUsersByIds(
+      ctx.app.db,
+      events.map((e) => e.actorId ?? "").filter(Boolean),
+    ),
+    issues: getIssuesByRef(
+      ctx.app.db,
+      events
+        .map((e) => e.payload["number"])
+        .filter((n): n is number => typeof n === "number")
+        .map((number) => ({ repoId: repo.id, number })),
+    ),
+  }));
+  // The newest event the reader may see, who the reader is (a writer and a
+  // stranger see different lists), and the names and titles the body will
+  // print, which can change with no event.
+  const shown = Bun.hash(
+    JSON.stringify([
+      repo.ownerName,
+      repo.name,
+      repo.description,
+      [...actors.values()].map((u) => [u.id, u.username]),
+      [...issues.values()].map((i) => [i.number, i.title]),
+    ]),
+  ).toString(36);
+  const etag = `W/"${events[0]?.id ?? "none"}.${ctx.auth.user?.id ?? "anon"}.${shown}"`;
+  const cacheControl =
+    repo.visibility === "public" ? "public, max-age=300" : "private, no-store";
+  // The body differs by who asks, so a shared cache must key on them.
+  const vary = "authorization, cookie";
+  if (holds(ctx.request.headers.get("if-none-match"), etag))
+    return new Response(null, {
+      status: 304,
+      headers: { etag, "cache-control": cacheControl, vary },
+    });
+  const renderStart = performance.now();
 
   const entries = events.map((event) => {
     const who = eventActor(
@@ -135,15 +173,15 @@ export function activityAtom(ctx: Ctx): Response {
 ${entries.join("\n")}
 </feed>
 `;
+  notePhase(ctx.request, "render", performance.now() - renderStart);
   return new Response(body, {
     headers: {
       "content-type": "application/atom+xml; charset=utf-8",
       // A public feed may be cached briefly by anyone; a private one by
       // nobody but the reader who asked.
-      "cache-control":
-        repo.visibility === "public"
-          ? "public, max-age=300"
-          : "private, no-store",
+      "cache-control": cacheControl,
+      etag,
+      vary,
     },
   });
 }

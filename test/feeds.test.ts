@@ -8,13 +8,16 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { openIssue } from "../src/actions/issues.ts";
+import { editIssue, openIssue } from "../src/actions/issues.ts";
 import {
   commitToBranch,
   createRepo,
   createWebhook,
   forkRepo,
+  updateRepoSettings,
 } from "../src/actions/repos.ts";
+import { getIssue } from "../src/core/issues.ts";
+import { getRepo } from "../src/core/repos.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -167,6 +170,87 @@ describe("a repository's feed", () => {
     expect((await fetch(`${base}/alice/nothing/activity.atom`)).status).toBe(
       404,
     );
+  });
+
+  test("it names its Server-Timing phases", async () => {
+    const res = await fetch(`${base}/alice/game/activity.atom`);
+    const timing = res.headers.get("server-timing") ?? "";
+    for (const name of ["session", "events", "people", "render"])
+      expect(timing).toContain(`${name};dur=`);
+  });
+
+  test("a repeat request with the ETag answers 304, and a new event a 200", async () => {
+    const url = `${base}/alice/game/activity.atom`;
+    const first = await fetch(url);
+    const etag = first.headers.get("etag")!;
+    expect(etag).toMatch(/^W\//);
+    expect(first.headers.get("vary")).toBe("authorization, cookie");
+    await first.text();
+    const again = await fetch(url, { headers: { "if-none-match": etag } });
+    expect(again.status).toBe(304);
+    expect(await again.text()).toBe("");
+    expect(again.headers.get("vary")).toBe("authorization, cookie");
+    // A different audience never shares the tag.
+    const token = createToken(app.db, alice.id, "t", "ro").token;
+    const mine = await fetch(url, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(mine.headers.get("etag")).not.toBe(etag);
+    await mine.text();
+    const repo = getRepo(app.db, "alice", "game")!;
+    const made = openIssue(app, bob, repo, { title: "a fresh one" });
+    if (!made.ok) throw new Error(String(made.error));
+    const after = await fetch(url, { headers: { "if-none-match": etag } });
+    expect(after.status).toBe(200);
+    expect(after.headers.get("etag")).not.toBe(etag);
+    expect(await after.text()).toContain("a fresh one");
+  });
+
+  test("a retitled issue changes the tag though no event arrived", async () => {
+    const url = `${base}/alice/game/activity.atom`;
+    const first = await fetch(url);
+    const etag = first.headers.get("etag")!;
+    await first.text();
+    const repo = getRepo(app.db, "alice", "game")!;
+    const issue = getIssue(app.db, repo.id, 1)!;
+    const edited = editIssue(app, bob, repo, issue, { title: "renamed quietly" });
+    if (!edited.ok) throw new Error(String(edited.error));
+    const after = await fetch(url, { headers: { "if-none-match": etag } });
+    expect(after.status).toBe(200);
+    expect(await after.text()).toContain("renamed quietly");
+  });
+
+  test("an edited description changes the tag though no event arrived", async () => {
+    const url = `${base}/alice/game/activity.atom`;
+    const first = await fetch(url);
+    const etag = first.headers.get("etag")!;
+    await first.text();
+    const repo = getRepo(app.db, "alice", "game")!;
+    const done = await updateRepoSettings(app, alice, repo, {
+      description: "a quieter subtitle",
+    });
+    if (!done.ok) throw new Error(String(done.error));
+    const after = await fetch(url, { headers: { "if-none-match": etag } });
+    expect(after.status).toBe(200);
+    expect(await after.text()).toContain("<subtitle>a quieter subtitle</subtitle>");
+  });
+
+  test("a matching If-None-Match never gets a 304 before the read check", async () => {
+    const alices = createToken(app.db, alice.id, "t", "ro").token;
+    const mine = await fetch(`${base}/alice/secret/activity.atom`, {
+      headers: { authorization: `Bearer ${alices}` },
+    });
+    const etag = mine.headers.get("etag")!;
+    expect(etag).toBeTruthy();
+    await mine.text();
+    for (const headers of [
+      { "if-none-match": etag },
+      { "if-none-match": "*" },
+    ])
+      expect(
+        (await fetch(`${base}/alice/secret/activity.atom`, { headers }))
+          .status,
+      ).toBe(404);
   });
 
   test("the repository's page advertises its feed", async () => {
