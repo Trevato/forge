@@ -9,6 +9,7 @@
  * bigger.
  */
 
+import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { cardPath } from "../og/path.ts";
 import { pullProposalOf } from "../../core/proposal_token.ts";
 import { getIssueById } from "../../core/issues.ts";
@@ -287,7 +288,7 @@ export const changePage = pullPage;
  * disagree. Bounded the way the page is: `pullWord` and one `pullStatus`, no
  * diff, no query per comment.
  */
-async function pullPanels(ctx: Ctx, repo: Repo, pull: Pull) {
+async function pullPanels(ctx: Ctx, repo: Repo, pull: Pull, spent: Spent = newSpent()) {
   const record: AppRecord | undefined = getAppByRepo(ctx.app.db, repo.id);
   const db = ctx.app.db;
   const base = repoBase(repo);
@@ -305,7 +306,9 @@ async function pullPanels(ctx: Ctx, repo: Repo, pull: Pull) {
     history: servingHistory(),
     viewer: ctx.auth.user,
   };
-  const { word, note: checkNote } = await pullWord(wordCtx, pull);
+  const { word, note: checkNote } = await lap(spent, "checks", () =>
+    pullWord(wordCtx, pull),
+  );
   // Whether this change still merges into its base is asked here, on its own
   // page, and nowhere a list of changes renders — a git call per open pull
   // would undo the home's own bound (`askCandidatesFor`). Only an open,
@@ -314,10 +317,12 @@ async function pullPanels(ctx: Ctx, repo: Repo, pull: Pull) {
   // a change `mergePull` would refuse for want of an approval.
   const status =
     pull.mergedAt === null && pull.state !== "closed"
-      ? await pullStatus(wordCtx.dir, pull, {
-          db,
-          requireReview: repo.requireReview,
-        })
+      ? await lap(spent, "diff", () =>
+          pullStatus(wordCtx.dir, pull, {
+            db,
+            requireReview: repo.requireReview,
+          }),
+        )
       : undefined;
   const conflicted =
     status !== undefined && !status.mergeable && status.conflicts.length > 0;
@@ -335,7 +340,9 @@ async function pullPanels(ctx: Ctx, repo: Repo, pull: Pull) {
   // down, and the word above is judged by production regardless.
   let deploy: { id: string; commitOid: string } | undefined;
   if (pull.mergedAt === null) {
-    const run = checkSummary(db, pull.id, pull.headOid).run;
+    const run = (await lap(spent, "checks", async () =>
+      checkSummary(db, pull.id, pull.headOid),
+    )).run;
     if (run) deploy = { id: run.id, commitOid: run.commitOid };
   } else {
     const production =
@@ -419,20 +426,28 @@ async function changeConversation(
   repo: Repo,
   pull: Pull,
 ): Promise<Response> {
+  const { request } = ctx;
+  const began = performance.now();
+  const spent = newSpent();
+  notePhase(request, "session", takeSessionTime(request));
   const { record, db, base, thread, wordCtx, word, status, conflicted, note, checkLine, preview } =
-    await pullPanels(ctx, repo, pull);
+    await pullPanels(ctx, repo, pull, spent);
   // The check's own line, live, with a running check's counts: the one the
   // Files step draws (`pullChecksLineFor`), for an open change.
   const runLine =
     status === undefined
       ? undefined
-      : await pullChecksLineFor(ctx, repo, pull, status, wordCtx.dir);
+      : await lap(spent, "checks", () =>
+          pullChecksLineFor(ctx, repo, pull, status, wordCtx.dir),
+        );
   // A change that loosens the policy is a person's call: said here, above
   // the decision, as well as on the Files step beside the merge box.
   const wall =
     status === undefined
       ? undefined
-      : await wallOf(wordCtx.dir, status.baseOid, status.headOid);
+      : await lap(spent, "diff", () =>
+          wallOf(wordCtx.dir, status.baseOid, status.headOid),
+        );
   const crewDecision = decisionsFor(ctx, [repo], { evenDismissed: true }).find(
     (d) => d.pull?.id === pull.id,
   );
@@ -559,11 +574,13 @@ async function changeConversation(
   const siblings = variantSiblings(db, [pull])[0] ?? [];
   const glyph = originGlyph(repo);
   const headOid = status?.headOid ?? pull.headOid;
+  const reviewsAt = performance.now();
   const reviews = listReviews(db, pull.id);
   const reviewerMarks = marksByName(
     db,
     reviews.map((r) => r.authorName),
   );
+  spent.reviews += performance.now() - reviewsAt;
   const talk = conversation(ctx, repo, pull, {
     openVerb: "opened this",
     extra: reviews.map((review) =>
@@ -622,7 +639,7 @@ async function changeConversation(
       head: pull.mergedOid ?? pull.headOid,
     })}`;
 
-  return page({
+  const response = page({
     ctx,
     title: `${pull.title} · ${repo.name}`,
     ogImage: cardPath("pull", repo, pull),
@@ -637,4 +654,34 @@ async function changeConversation(
     body,
     scriptJs: `${liveClientJs}\n${liveRegionsJs}`,
   });
+  // Each phase is named once, from what the laps added up to; render is what
+  // is left of the page's own time, so the phases never exceed `app`.
+  const { diff, checks, reviews: reviewMs } = spent;
+  notePhase(request, "diff", diff);
+  notePhase(request, "checks", checks);
+  notePhase(request, "reviews", reviewMs);
+  notePhase(
+    request,
+    "render",
+    Math.max(0, performance.now() - began - diff - checks - reviewMs),
+  );
+  return response;
+}
+
+/** Milliseconds a change's page spent in each of its named phases. */
+interface Spent {
+  diff: number;
+  checks: number;
+  reviews: number;
+}
+const newSpent = (): Spent => ({ diff: 0, checks: 0, reviews: 0 });
+
+/** Run `work` and add the time it took to `spent[key]`. */
+async function lap<T>(spent: Spent, key: "diff" | "checks", work: () => Promise<T>): Promise<T> {
+  const started = performance.now();
+  try {
+    return await work();
+  } finally {
+    spent[key] += performance.now() - started;
+  }
 }
