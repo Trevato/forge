@@ -19,15 +19,23 @@ import { html, when } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import { btn, card } from "../ui.ts";
 import { NOT_A_MEMBER } from "../../core/roles.ts";
+import {
+  notePhase,
+  takeSessionTime,
+  timePhaseAsync,
+  timePhase,
+} from "../../core/route_timing.ts";
 
 // GET /:owner/:name/make-it-yours
 export async function makeItYoursPage(ctx: Ctx): Promise<Response> {
-  const repo = loadRepo(ctx);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const repo = timePhase(ctx.request, "repo", () => loadRepo(ctx));
   if (!repo) return notFoundPage(ctx);
   if (!ctx.auth.user) return signInFirst(ctx);
-  const plan = await makeItYours(ctx.app, ctx.auth.user, repo, {
-    dryRun: true,
-  });
+  const user = ctx.auth.user;
+  const plan = await timePhaseAsync(ctx.request, "plan", () =>
+    makeItYours(ctx.app, user, repo, { dryRun: true }),
+  );
   if (!plan.ok) {
     if (plan.error.kind === "own")
       return flashTo(ctx, repoBase(repo), {
@@ -46,6 +54,7 @@ export async function makeItYoursPage(ctx: Ctx): Promise<Response> {
     });
   }
   const p = plan.value;
+  const rendering = performance.now();
   const body = html`<div class="narrow-wide">
     ${pageHead("Make it yours", {
       sub: p.existing
@@ -111,7 +120,9 @@ export async function makeItYoursPage(ctx: Ctx): Promise<Response> {
       </form>`,
     )}
   </div>`;
-  return page({ ctx, title: `Make ${p.from} yours`, body });
+  const response = page({ ctx, title: `Make ${p.from} yours`, body });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 // POST /:owner/:name/make-it-yours
