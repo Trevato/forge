@@ -104,6 +104,24 @@ describe("archive and wake", () => {
     expect(getRepo(app.db, "ada", "old")?.archivedAt).toBeNull();
   });
 
+  test("a clone of an archived repository still works", async () => {
+    expect((await patch(owner, true)).status).toBe(200);
+    try {
+      for (const service of ["git-upload-pack", "git-receive-pack"]) {
+        const res = await fetch(
+          `${base}/ada/old.git/info/refs?service=${service}`,
+          { headers: { cookie: owner } },
+        );
+        expect(res.status).toBe(200);
+        expect(res.headers.get("content-type")).toContain(service);
+      }
+      const anon = await fetch(`${base}/ada/old.git/info/refs?service=git-upload-pack`);
+      expect(anon.status).toBe(200);
+    } finally {
+      await patch(owner, false);
+    }
+  });
+
   test("the Settings form archives, the page says so, and Wake clears it", async () => {
     const post = (cookie: string, fields: Record<string, string>, origin = base) =>
       fetch(`${base}/ada/old/settings/archive`, {
