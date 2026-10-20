@@ -1117,6 +1117,7 @@ export function moveArchived(
     : db
         .query("UPDATE repo SET archived_at = NULL WHERE id = ?1 AND archived_at IS NOT NULL")
         .run(repoId).changes;
+  if (changes === 1) forgetListings(db);
   return changes === 1;
 }
 

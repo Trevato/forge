@@ -59,7 +59,10 @@ export function llmsRepos(db: Database): readonly string[] {
 }
 
 function names(db: Database, limit: number): string[] {
-  return listReposVisibleTo(db, undefined, { limit }).map(
+  return listReposVisibleTo(db, undefined, {
+    limit,
+    withoutArchived: true,
+  }).map(
     (r) => `${r.ownerName}/${r.name}`,
   );
 }

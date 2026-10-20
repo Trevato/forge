@@ -19,7 +19,7 @@ import { markPng } from "../src/design/mark.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { forgetListings, listingBuilds } from "../src/core/listings.ts";
 import { createOrg, retireOrg } from "../src/core/orgs.ts";
-import { getRepo } from "../src/core/repos.ts";
+import { getRepo, moveArchived } from "../src/core/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
 describe("what the open web expects", () => {
@@ -199,6 +199,32 @@ describe("what the open web expects", () => {
     expect(await lists()).toContain("gone-co/ledger");
     retireOrg(app.db, org.value.id, new Date().toISOString());
     expect(await lists()).not.toContain("gone-co/ledger");
+  });
+
+  test("an archived repository leaves the listings, and waking it brings it back", async () => {
+    const made = await createRepo(app, alice, {
+      name: "shelved",
+      visibility: "public",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    const repo = getRepo(app.db, "alice", "shelved")!;
+    const lists = async () =>
+      (
+        await Promise.all(
+          ["/sitemap.xml", "/llms.txt"].map((p) =>
+            fetch(`${base}${p}`).then((x) => x.text()),
+          ),
+        )
+      ).join("\n");
+    forgetListings(app.db);
+    expect(await lists()).toContain("alice/shelved");
+    moveArchived(app.db, repo.id, true);
+    const hidden = await lists();
+    expect(hidden).not.toContain("alice/shelved");
+    expect(hidden).toContain("alice/open");
+    expect((await fetch(`${base}/alice/shelved`)).status).toBe(200);
+    moveArchived(app.db, repo.id, false);
+    expect(await lists()).toContain("alice/shelved");
   });
 
   test("the manifest is installable and its icons are real PNGs", async () => {
