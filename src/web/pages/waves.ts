@@ -6,6 +6,7 @@
  * it does for any other page of a private repository.
  */
 
+import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { VERSION } from "../../story/wave.ts";
@@ -66,14 +67,18 @@ export const webUrl = (s: string): boolean => /^https?:\/\//i.test(s);
 
 // GET /:owner/:name/waves/:version
 export async function wavePage(ctx: Ctx): Promise<Response> {
-  const repo = loadRepo(ctx);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const repo = timePhase(ctx.request, "repo", () => loadRepo(ctx));
   if (!repo) return notFoundPage(ctx);
-  const entry = await readWave(
-    repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
-    repo.defaultBranch,
-    ctx.params.version ?? "",
+  const entry = await timePhaseAsync(ctx.request, "wave", () =>
+    readWave(
+      repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
+      repo.defaultBranch,
+      ctx.params.version ?? "",
+    ),
   );
   if (!entry) return notFoundPage(ctx);
+  const rendering = performance.now();
   const scope = localScope(ctx, repo);
   const back = html`<a href="${repoBase(repo)}/waves">All waves</a>`;
 
@@ -100,11 +105,13 @@ export async function wavePage(ctx: Ctx): Promise<Response> {
   const body = html`${scopeHeader(ctx, scope, "code", { compact: true })}
     <div class="mt">${content}<p>${back}</p></div>`;
 
-  return page({
+  const response = page({
     ctx,
     title: `${entry.ok ? entry.wave.version : entry.file} · Waves · ${scope.facts.name}`,
     crumbs: scope.crumbs,
     palette: scope.palette,
     body,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
