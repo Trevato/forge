@@ -55,6 +55,14 @@ const SIZES: readonly [number, number][] = [
   [200, 60],
 ];
 
+/**
+ * What a test that resizes through several sizes may take. Each resize
+ * settles the app against a real forge, so the default five seconds measures
+ * the check machine's load, not the layout; a hang still fails, by
+ * `FRAME_WAIT_MS`, naming the size it waited for.
+ */
+const TEST_TIMEOUT_MS = 60_000;
+
 /** How long a harness step waits for the frame it caused. */
 const FRAME_WAIT_MS = 10_000;
 
@@ -334,7 +342,7 @@ describe("the terminal lays out for the terminal it is in", () => {
     } finally {
       h.stop();
     }
-  });
+  }, TEST_TIMEOUT_MS);
 });
 
 describe("rows and tables give way in the right order", () => {
