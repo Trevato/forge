@@ -24,6 +24,8 @@ import { runGitCapture, type RunOptions } from "../git/env.ts";
 import { listRefs } from "../git/read.ts";
 import { ZERO_OID } from "../git/hooks.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { vetHost, type OutboundOptions } from "../kernel/outbound.ts";
+import { pinFor, remoteGitEnv } from "../git/remote-env.ts";
 import { redact, safeRemoteUrl, secretsIn } from "./credentials.ts";
 
 /** A mirror fetch can be genuinely slow; Forgejo allows its own 300s. */
@@ -39,6 +41,33 @@ export const MIRROR_REFSPECS = [
   "+refs/heads/*:refs/heads/*",
   "+refs/tags/*:refs/tags/*",
 ] as const;
+
+let outbound: OutboundOptions = {};
+
+/** Test seam: what `vetHost` is told (resolver, exempt addresses). Never read from the environment. */
+export function provideMirrorOutboundForTest(options: OutboundOptions): void {
+  outbound = options;
+}
+
+export const MIRROR_REFUSED = "refused: the remote's host is a private address";
+export const MIRROR_UNRESOLVED = "the remote's host could not be resolved";
+
+/**
+ * Vet the clone URL's host and return git's environment pinned to the
+ * address that passed — or the one sentence that ends the sync.
+ */
+async function vettedEnv(
+  url: string,
+  authEnv: Record<string, string>,
+): Promise<Result<Record<string, string>, GitMirrorError>> {
+  const host = new URL(url).hostname;
+  const vetted = await vetHost(host, outbound);
+  if (!vetted.ok)
+    return err({
+      message: vetted.error === "refused" ? MIRROR_REFUSED : MIRROR_UNRESOLVED,
+    });
+  return ok(remoteGitEnv(authEnv, pinFor(url, vetted.value[0]!)));
+}
 
 export interface RefSnapshot {
   /** ref name → object id. */
@@ -159,6 +188,8 @@ export async function fetchMirror(
   if (url === undefined)
     return err({ message: "refusing an unusable clone URL" });
 
+  const pinned = await vettedEnv(url, authEnv);
+  if (!pinned.ok) return pinned;
   const before = await snapshotRefs(dir);
   const run = await runGitCapture(
     [
@@ -170,7 +201,7 @@ export async function fetchMirror(
       url,
       ...MIRROR_REFSPECS,
     ],
-    { cwd: dir, env: authEnv, timeoutMs: FETCH_TIMEOUT_MS },
+    { cwd: dir, env: pinned.value, timeoutMs: FETCH_TIMEOUT_MS },
   );
   if (run.code !== 0) {
     return err({
@@ -209,6 +240,8 @@ export async function fetchRefFrom(
   if (!isSafeRef(srcRef))
     return err({ message: `refusing an unsafe ref: ${srcRef}` });
 
+  const pinned = await vettedEnv(url, authEnv);
+  if (!pinned.ok) return pinned;
   const run = await runGitCapture(
     [
       "fetch",
@@ -220,7 +253,7 @@ export async function fetchRefFrom(
       // without any local ref moving.
       srcRef,
     ],
-    { cwd: dir, env: authEnv, timeoutMs: FETCH_TIMEOUT_MS },
+    { cwd: dir, env: pinned.value, timeoutMs: FETCH_TIMEOUT_MS },
   );
   if (run.code !== 0) {
     return err({

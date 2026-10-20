@@ -660,6 +660,12 @@ and the next sync brings back the merge commit it actually made. Pushes go
 through too — the pre-receive hook forwards the push upstream first, so a push
 the origin refuses never lands here either.
 
+Mirror fetches are vetted and pinned: the origin's host is resolved once, refused
+if it is a loopback, LAN or other private address, and git is pinned to the
+address that passed. Git follows no redirects for a mirror, so give the clone
+URL in its final form (https, with the `.git` suffix the host expects); a URL
+that redirects fails with git's redirect error.
+
 Only the person who connected an origin can write through it. Another writer
 gets `origin_owner_only` rather than a comment appearing upstream under
 someone else's name with someone else's token.

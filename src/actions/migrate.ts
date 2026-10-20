@@ -50,6 +50,7 @@ import {
   type CreateRepoActionError,
 } from "./repos.ts";
 import { tell, toldWords } from "./tell.ts";
+import { remoteGitEnv } from "../git/remote-env.ts";
 
 /** The whole clone — the HEAD probe and the fetch — gets this long. */
 export const MIGRATE_TIMEOUT_MS = 120_000;
@@ -266,21 +267,6 @@ export function isPrivateHost(hostname: string): boolean {
   return false;
 }
 
-/**
- * Whatever the source's own git config says, a clone follows no redirect:
- * the address that was checked is the only address that is fetched. Added
- * after any entries the credential brought, at the next free index.
- */
-function noRedirects(env: Record<string, string>): Record<string, string> {
-  const n = Number(env["GIT_CONFIG_COUNT"] ?? "0");
-  return {
-    ...env,
-    GIT_CONFIG_COUNT: String(n + 1),
-    [`GIT_CONFIG_KEY_${n}`]: "http.followRedirects",
-    [`GIT_CONFIG_VALUE_${n}`]: "false",
-  };
-}
-
 /** Dotted IPv4 → inside the network?; `undefined` when not IPv4 at all. */
 function privateV4(h: string): boolean | undefined {
   const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
@@ -490,7 +476,7 @@ async function cloneInto(
   const deadline = Date.now() + MIGRATE_TIMEOUT_MS;
   const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
   const authEnv = await source.authEnv();
-  const env = { ...noRedirects(authEnv), GIT_ALLOW_PROTOCOL: ALLOWED_PROTOCOL };
+  const env = remoteGitEnv(authEnv, undefined, ALLOWED_PROTOCOL);
   const said = (stderr: string, fallback: string): string =>
     redact(stderr.trim(), ...secretsIn(authEnv))
       .split("\n")
