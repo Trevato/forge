@@ -356,7 +356,9 @@ export async function driveRepo(
   // operator's; at a wall nothing new starts until the reset.
   const paced = repoPace(app, repo, now);
   if (paced.slots === 0 && slotted.length === 0) return "waiting";
-  const held = heldBy(app, repo, readyNow(repoGraph(app.db, repo.id, { sealed: true })), crew, active);
+  const sorted = () => heldBy(app, repo, readyNow(repoGraph(app.db, repo.id, { sealed: true })), crew, active);
+  let held = sorted();
+  if (freeParked(app, repo, by, held) > 0) held = sorted();
   const ready = held.startable;
   if (slotted.length >= paced.slots) {
     // The builders are busy; the planner can still refill the map, when
@@ -413,6 +415,30 @@ export async function driveRepo(
   const stuck = replannable(held).length > 0 ? held : null;
   if (await planIfThin(app, repo, by, crew, active, 0, now, stuck)) return "planned";
   return "idle";
+}
+
+/**
+ * A ready issue assigned to a planner or a reviewer with no run on it is
+ * parked on a crew member that never builds it — a sentinel's finding, a
+ * planner's pass that ended (#3002). Its assignee is cleared so a builder
+ * may start it this tick. Returns how many were freed.
+ */
+export function freeParked(app: App, repo: Repo, by: User, held: Held): number {
+  let freed = 0;
+  for (const issue of held.by.planner) {
+    const cleared = assignIssue(app, by, repo, issue, null);
+    if (!cleared.ok) {
+      log.warn("could not free an issue parked on a non-builder", {
+        repo: `${repo.ownerName}/${repo.name}`,
+        issue: issue.number,
+        error: cleared.error,
+      });
+      continue;
+    }
+    log.info("freed", { repo: `${repo.ownerName}/${repo.name}`, issue: issue.number });
+    freed++;
+  }
+  return freed;
 }
 
 /**

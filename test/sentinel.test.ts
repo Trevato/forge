@@ -696,7 +696,7 @@ describe("a budget breach is crew work at once", () => {
     await rm(bdir, { recursive: true, force: true });
   });
 
-  test("an open lane breach is filed once, labelled, and handed to the sentinel's run", () => {
+  test("an open lane breach is filed once, labelled, and left unassigned for a builder", () => {
     bapp.db
       .query(
         "INSERT INTO degraded_span (cause, sentence, href, opened_at) VALUES ('queue:check', '22 checks wait behind one lane; the oldest since 04:13; the lane runs #1212 for 31 min (limit 60).', '/settings/capacity', ?1)",
@@ -713,11 +713,10 @@ describe("a budget breach is crew work at once", () => {
     const open = listIssues(bapp.db, brepo.id, { state: "open" } as never);
     expect(open.length).toBe(1);
     const issue = open[0]!;
-    expect(issue.assigneeId).toBe(sentinelId);
+    // The sentinel never builds, so it never assigns itself (#3002).
+    expect(issue.assigneeId).toBeNull();
     expect(labelsFor(bapp.db, issue.id).map((l) => l.name)).toEqual(["P0 Trust"]);
-    const assigned = listEvents(bapp.db, { kind: "issue.assigned" });
-    expect(assigned.length).toBe(1);
-    expect(assigned[0]!.payload["agent"]).toBe(true);
+    expect(listEvents(bapp.db, { kind: "issue.assigned" }).length).toBe(0);
   });
 
   test("a breach brings a hunt within a tick, inside the signal gap", () => {

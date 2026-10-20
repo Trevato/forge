@@ -8,7 +8,8 @@
  * The filters, in the order they are asked:
  * - `running`: a run is in flight on it.
  * - `open_pull`: an open pull already proposes it (`direct.ts`).
- * - `planner`: the planner or a reviewer holds it, not a builder.
+ * - `planner`: the planner or a reviewer holds it, not a builder. The tick
+ *   frees these (`freeParked` in `autonomy.ts`): neither ever builds it.
  * - `with_planner`: its limb was handed to the planner by a person and the
  *   planner has not answered (`core/limb_replan.ts`).
  * - `done_on_main`: the crew found it done on the base branch and waits for

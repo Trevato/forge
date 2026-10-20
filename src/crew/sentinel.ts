@@ -23,7 +23,7 @@ import {
 } from "../core/capacity.ts";
 import { decisionsSince } from "../core/decisions.ts";
 import { getAgentByName } from "../core/agents.ts";
-import { getIssueById, getLabel, setAssignee, setIssueLabels as writeLabels, type Issue } from "../core/issues.ts";
+import { getIssueById, getLabel, setIssueLabels as writeLabels, type Issue } from "../core/issues.ts";
 import { getRepo, type Repo } from "../core/repos.ts";
 import { leaseLapsed, listRunning } from "../core/runs.ts";
 import { migrations } from "../core/schema.ts";
@@ -58,7 +58,7 @@ export interface Finding {
   readonly evidence: readonly string[];
   readonly pillar: string;
   readonly lookFor: string;
-  /** A budget breach: filed at once, labelled, handed to the sentinel's own run. */
+  /** A budget breach: filed at once, labelled, left unassigned for a builder (#3002). */
   readonly urgent?: true;
   /** What a person or a run would do, when it is mechanical and reversible. */
   readonly fix?: string;
@@ -553,12 +553,13 @@ const bodyOf = (f: Finding, now: string): string =>
   ].join("\n");
 
 /**
- * A breach is crew work at once: the P0 Trust label, and the sentinel
- * assigned, whose run the dispatcher queues on the assignment event. Each
- * step may fail alone (no such label, the actor is a person): the issue is
- * filed either way, and the failure is said.
+ * A breach is crew work at once: the P0 Trust label, and no assignee, so a
+ * builder may start it on the next tick (#3002). The sentinel never builds,
+ * so it never assigns itself: a finding parked on it is held from every
+ * builder. The label may fail alone (no such label): the issue is filed
+ * either way, and the failure is said.
  */
-function handOver(app: App, repo: Repo, actor: User, issue: Issue): void {
+function labelBreach(app: App, repo: Repo, actor: User, issue: Issue): void {
   try {
     // The forge acts on its own finding: no access check stands between it
     // and its label, as none stands between it and the issue it just filed.
@@ -573,16 +574,8 @@ function handOver(app: App, repo: Repo, actor: User, issue: Issue): void {
         payload: { number: issue.number, labels: [label.name] },
       });
     }
-    if (actor.kind !== "agent") return;
-    if (setAssignee(app.db, issue.id, actor.id) === undefined) return;
-    app.bus.append({
-      kind: "issue.assigned",
-      repoId: repo.id,
-      actorId: actor.id,
-      payload: { number: issue.number, assignee: actor.username, agent: true },
-    });
   } catch (error) {
-    log.error("sentinel could not hand over", { issue: issue.number, error: String(error) });
+    log.error("sentinel could not label", { issue: issue.number, error: String(error) });
   }
 }
 
@@ -790,7 +783,7 @@ export function hunt(
           }
           issueId = made.value.id;
           filed++;
-          if (f.urgent && f.kept === undefined) handOver(app, repo, actor, made.value);
+          if (f.urgent && f.kept === undefined) labelBreach(app, repo, actor, made.value);
         }
         app.db
           .query("INSERT INTO sentinel_finding (key, issue_id, evidence, first_seen, last_seen, incident) VALUES (?1, ?2, ?3, ?4, ?4, ?5)")

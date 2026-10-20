@@ -16,7 +16,7 @@ import { addComment, assignIssue, openIssue } from "../src/actions/issues.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo, updateRepoSettings } from "../src/actions/repos.ts";
 import { getAgentByName, setCrewRole } from "../src/core/agents.ts";
-import { getIssueById, type Issue } from "../src/core/issues.ts";
+import { getIssueById, listIssues, type Issue } from "../src/core/issues.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { DONE_NOTE } from "../src/core/done_on_main.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
@@ -27,7 +27,7 @@ import { taskPrompt } from "../src/crew/brief.ts";
 import { ISSUE_RUN_CAP } from "../src/crew/guard.ts";
 import { heldCounts, heldNow, heldWords, replannable, stuckOf } from "../src/crew/held.ts";
 import { PARK_NOTE } from "../src/crew/parks.ts";
-import { keyPart } from "../src/crew/sentinel.ts";
+import { hunt, keyPart } from "../src/crew/sentinel.ts";
 import { HELD_TTL_MS, readHeld } from "../src/flow/held.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { flowLines, heldLines } from "../src/tui/screens/flow.ts";
@@ -202,6 +202,52 @@ describe("the tick says why each ready issue cannot start", () => {
     );
     // Something can start: the planner is not told the crew is stuck.
     expect(stuckOf(held)).toBeUndefined();
+  });
+
+  test("a sentinel finding is a builder's to start on the next tick, never parked on the sentinel (#3002)", async () => {
+    const { repo, mason } = await crewed(app, alice, "watched");
+    const fresh = () => getRepoById(app.db, repo.id)!;
+    const made = await createAgent(app, alice, { username: "sentinel" });
+    if (!made.ok) throw new Error(String(made.error));
+    expect(addToCrew(app, alice, fresh(), "sentinel").ok).toBe(true);
+    const sentinel = getUserByName(app.db, "sentinel")!;
+    setCrewRole(app.db, repo.id, sentinel.id, "reviewer");
+
+    // A lane past its budget: the sentinel files it at once, unassigned.
+    const now = Date.now();
+    const span = app.db
+      .query<{ id: number }, [number]>(
+        "INSERT INTO degraded_span (cause, sentence, href, opened_at) VALUES ('stuck:held-test', 'One lane is past its budget.', '/x', ?1) RETURNING id",
+      )
+      .get(now - 2 * 60_000)!;
+    try {
+      hunt(app, `alice/${repo.name}`, now);
+    } finally {
+      app.db.query("UPDATE degraded_span SET closed_at = ?2 WHERE id = ?1").run(span.id, now);
+    }
+    const filed = listIssues(app.db, repo.id, { state: "open" } as never).filter((i) => i.title.startsWith("Sentinel: "));
+    const finding = filed.find((i) => i.title.includes("stuck:held-test"))!;
+    expect(finding).toBeDefined();
+    expect(finding.assigneeId).toBeNull();
+    // Only the finding is left to start, so the tick's pick is it.
+    for (const other of filed) if (other.id !== finding.id) app.db.query("UPDATE issue SET state = 'closed' WHERE id = ?1").run(other.id);
+    expect(heldNow(app, fresh()).startable.map((r) => r.issue.number)).toContain(finding.number);
+
+    // One parked on the sentinel as it used to be: the tick frees it, and a builder starts it.
+    expect(assignIssue(app, alice, fresh(), finding, sentinel).ok).toBe(true);
+    expect(heldNow(app, fresh()).by.planner.map((i) => i.number)).toEqual([finding.number]);
+    expect(await driveRepo(app, fresh())).toBe("picked");
+    expect(getIssueById(app.db, finding.id)!.assigneeId).toBe(mason.id);
+  });
+
+  test("a planner or a reviewer with a run in flight keeps its issue", async () => {
+    const { repo, atlas } = await crewed(app, alice, "in-flight");
+    const fresh = () => getRepoById(app.db, repo.id)!;
+    const held = issue(fresh(), "The planner's, running");
+    expect(assignIssue(app, alice, fresh(), held, atlas).ok).toBe(true);
+    createRun(app.db, { repoId: repo.id, kind: "agent", issueId: held.id, actorId: atlas.id, reason: "assigned" });
+    await driveRepo(app, fresh());
+    expect(getIssueById(app.db, held.id)!.assigneeId).toBe(atlas.id);
   });
 
   test("an issue found done on main is held as done_on_main, never re-planned, until the crew parks it", async () => {
