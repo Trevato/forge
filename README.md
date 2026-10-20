@@ -1099,6 +1099,15 @@ so its comment says "Closed by the crew's live triage". Reopening the issue
 undoes it and the reopen stands: an issue that already has a close note is
 never closed by triage again. The tick line counts them as `triaged=N`.
 
+Live triage also folds duplicates: of two open issues whose titles match after
+case and punctuation, the newer closes (reason dropped) with the comment
+"duplicate of #N", and whatever waited on it waits on the older. A person's
+newer issue is never closed into a crew member's; the older closes instead. A
+fold a person reopened stands, the plan's own issues are never folded, a
+dependency that would make a loop stays where it was, and folds share the
+25-per-tick cap with the already-done closes. Exact match only, no fuzzy
+matching.
+
 **Live triage files issues.** On the same tick, an open issue an hour old
 that serves no pillar is filed: under the pillar its title, else its body,
 names by its short form (`P0`) or whole label (`P0 Trust`) — a bare word like

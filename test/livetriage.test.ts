@@ -7,8 +7,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
+import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { addComment, openIssue, setIssueState } from "../src/actions/issues.ts";
 import { commitToBranch, createRepo, updateRepoSettings } from "../src/actions/repos.ts";
+import { addDependency, blockerNumbersFor } from "../src/core/dependencies.ts";
 import { getIssueById, labelsFor, listComments, type Issue } from "../src/core/issues.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
@@ -148,6 +150,127 @@ describe("live triage", () => {
     for (const m of many) note(m, oid);
     expect((await liveTriage(app, fresh())).closed).toBe(MOST_CHANGES);
     expect((await liveTriage(app, fresh())).closed).toBe(3);
+  });
+
+  describe("duplicate titles", () => {
+    let bot: User;
+    beforeAll(async () => {
+      const made = await createAgent(app, alice, { username: "dupbot" });
+      if (!made.ok) throw new Error(String(made.error));
+      bot = made.value.user;
+      expect(addToCrew(app, alice, fresh(), "dupbot").ok).toBe(true);
+    });
+    const by = (who: User, title: string): Issue => {
+      const opened = openIssue(app, who, fresh(), { title });
+      if (!opened.ok) throw new Error(String(opened.error));
+      return opened.value;
+    };
+
+    test("the newer closes into the older, dependents follow, case and punctuation ignored", async () => {
+      const older = by(alice, "Dup: Add the Thing!");
+      const newer = by(alice, "dup add   the thing");
+      const waiter = issue("Waits on the newer");
+      addDependency(app.db, waiter, newer, alice.id);
+      const did = await liveTriage(app, fresh());
+      expect(did.closed).toBe(1);
+      expect(state(older).state).toBe("open");
+      expect(state(newer).state).toBe("closed");
+      expect(listComments(app.db, newer.id).some((c) => c.body === `duplicate of #${older.number}`)).toBe(true);
+      expect(blockerNumbersFor(app.db, [waiter.id]).get(waiter.id)).toEqual([older.number]);
+      expect((await liveTriage(app, fresh())).closed).toBe(0);
+    });
+
+    test("a person's newer issue is never closed into a crew member's: the older closes", async () => {
+      const older = by(bot, "Crew wrote this first");
+      const newer = by(alice, "crew wrote this FIRST");
+      expect((await liveTriage(app, fresh())).closed).toBe(1);
+      expect(state(older).state).toBe("closed");
+      expect(state(newer).state).toBe("open");
+      expect(listComments(app.db, older.id).some((c) => c.body === `duplicate of #${newer.number}`)).toBe(true);
+    });
+
+    test("a crew member's newer issue closes into a person's older one", async () => {
+      const older = by(alice, "Person wrote this first");
+      const newer = by(bot, "Person wrote this first");
+      expect((await liveTriage(app, fresh())).closed).toBe(1);
+      expect(state(older).state).toBe("open");
+      expect(state(newer).state).toBe("closed");
+      expect(listComments(app.db, newer.id).some((c) => c.body === `duplicate of #${older.number}`)).toBe(true);
+    });
+
+    test("the folded issue's own blockers move to the survivor", async () => {
+      const older = by(alice, "Blockers move");
+      const newer = by(alice, "blockers MOVE");
+      const gate = issue("Blocks the newer");
+      addDependency(app.db, newer, gate, alice.id);
+      expect((await liveTriage(app, fresh())).closed).toBe(1);
+      expect(blockerNumbersFor(app.db, [older.id]).get(older.id)).toEqual([gate.number]);
+    });
+
+    test("a near-miss title stays open", async () => {
+      const a = by(alice, "Make the parser faster");
+      const b = by(alice, "Make the parsers faster");
+      expect((await liveTriage(app, fresh())).closed).toBe(0);
+      expect(state(a).state).toBe("open");
+      expect(state(b).state).toBe("open");
+    });
+
+    test("a person's reopen of a folded issue stands, in both orders", async () => {
+      const older = by(alice, "Reopen me please");
+      const newer = by(alice, "reopen me please");
+      expect((await liveTriage(app, fresh())).closed).toBe(1);
+      expect(setIssueState(app, alice, fresh(), state(newer), "open").ok).toBe(true);
+      expect((await liveTriage(app, fresh())).closed).toBe(0);
+      expect(state(newer).state).toBe("open");
+      expect(state(older).state).toBe("open");
+
+      const crewOlder = by(bot, "Reopen the crew one");
+      const personNewer = by(alice, "Reopen the crew one");
+      expect((await liveTriage(app, fresh())).closed).toBe(1);
+      expect(state(crewOlder).state).toBe("closed");
+      expect(setIssueState(app, alice, fresh(), state(crewOlder), "open").ok).toBe(true);
+      expect((await liveTriage(app, fresh())).closed).toBe(0);
+      expect(state(crewOlder).state).toBe("open");
+      expect(state(personNewer).state).toBe("open");
+    });
+
+    test("a person's comment that starts like the note does not protect a duplicate", async () => {
+      by(alice, "Typed note title");
+      const newer = by(alice, "Typed note title");
+      addComment(app, alice, fresh(), newer, "duplicate of #1 is what I thought, but no");
+      expect((await liveTriage(app, fresh())).closed).toBe(1);
+      expect(state(newer).state).toBe("closed");
+    });
+
+    test("a link that would close a loop is kept, not dropped", async () => {
+      const older = by(alice, "Loop survivor");
+      const newer = by(alice, "loop survivor");
+      const mid = issue("Loop middle");
+      addDependency(app.db, mid, newer, alice.id);
+      addDependency(app.db, older, mid, alice.id);
+      expect((await liveTriage(app, fresh())).closed).toBe(1);
+      expect(state(newer).state).toBe("closed");
+      expect(blockerNumbersFor(app.db, [mid.id]).get(mid.id)).toEqual([newer.number]);
+    });
+
+    test("the plan's own issues are neither folded nor chosen as survivor", async () => {
+      const umbrella = by(alice, "Later: park these");
+      const twin = by(alice, "later: park these");
+      expect((await liveTriage(app, fresh())).closed).toBe(0);
+      expect(state(umbrella).state).toBe("open");
+      expect(state(twin).state).toBe("open");
+    });
+
+    test("folds plus already-done closes stay within 25 per tick", async () => {
+      for (let n = 0; n < MOST_CHANGES + 3; n++) {
+        by(alice, `Twin ${n}`);
+        by(alice, `twin ${n}`);
+      }
+      const extra = issue("Done too");
+      note(extra, oid);
+      expect((await liveTriage(app, fresh())).closed).toBe(MOST_CHANGES);
+      expect((await liveTriage(app, fresh())).closed).toBe(4);
+    });
   });
 
   describe("questions", () => {
