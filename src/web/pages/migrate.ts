@@ -34,6 +34,12 @@ import {
   type BranchTip,
 } from "../../origins/work-branch.ts";
 import { scopeAllows } from "../../core/tokens.ts";
+import {
+  notePhase,
+  takeSessionTime,
+  timePhase,
+  timePhaseAsync,
+} from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import type { MirrorJob, MirrorStage } from "../../origins/jobs.ts";
 import { notFoundPage, pageHead, signInFirst } from "../chrome.ts";
@@ -530,9 +536,12 @@ async function show(
   // Asked for only: each draw is a listing and a commit per branch at the
   // origin (remembered a minute), so a plain visit costs none of it.
   const branches = values.showBranches
-    ? await branchChoices(ctx, origins, values.source, values.branch)
+    ? await timePhaseAsync(ctx.request, "branches", () =>
+        branchChoices(ctx, origins, values.source, values.branch),
+      )
     : undefined;
-  return page(
+  const rendering = performance.now();
+  const response = page(
     {
       ctx,
       title: "Migrate",
@@ -541,14 +550,22 @@ async function show(
     },
     status,
   );
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 // GET /migrate
 export async function migratePage(ctx: Ctx): Promise<Response> {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   if (!ctx.auth.user) return signInFirst(ctx);
   const q = ctx.url.searchParams;
-  const origins = await originChoices(ctx);
-  const agents = listAllAgents(ctx.app, ctx.auth.user);
+  const origins = await timePhaseAsync(ctx.request, "origins", () =>
+    originChoices(ctx),
+  );
+  const user = ctx.auth.user;
+  const agents = timePhase(ctx.request, "agents", () =>
+    listAllAgents(ctx.app, user),
+  );
   const names = agents.ok ? agents.value.map((a) => a.user.username) : [];
   const linked = prefill(
     { from: q.get("from"), crew: q.get("crew") },
@@ -718,8 +735,12 @@ const migrateJobJs = /* js */ `
 `;
 
 export function migrationJobPage(ctx: Ctx): Response {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   if (!ctx.auth.user) return signInFirst(ctx);
-  const found = migrationJobFor(ctx.auth.user, ctx.params.job ?? "");
+  const user = ctx.auth.user;
+  const found = timePhase(ctx.request, "job", () =>
+    migrationJobFor(user, ctx.params.job ?? ""),
+  );
   if (!found.ok) return notFoundPage(ctx);
   const job = found.value;
   if (job.stage === "done" && job.repo !== undefined)
@@ -727,7 +748,8 @@ export function migrationJobPage(ctx: Ctx): Response {
       message: `${capitalise(job.detail)}.`,
     });
   const failed = job.stage === "failed";
-  return page({
+  const rendering = performance.now();
+  const response = page({
     ctx,
     title: `Migrating ${job.fullName}`,
     ...(failed ? {} : { scriptJs: migrateJobJs }),
@@ -759,6 +781,8 @@ export function migrationJobPage(ctx: Ctx): Response {
             </p>`}
       </div>`,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 const capitalise = (s: string): string =>
