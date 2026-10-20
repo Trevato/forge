@@ -66,13 +66,10 @@ import {
   type CreateRepoActionError,
 } from "./repos.ts";
 import { tell, toldWords } from "./tell.ts";
-import { remoteGitEnv } from "../git/remote-env.ts";
+import { pinFor, remoteGitEnv, type Pin } from "../git/remote-env.ts";
 
 /** The whole clone — the HEAD probe and the fetch — gets this long. */
 export const MIGRATE_TIMEOUT_MS = 120_000;
-
-/** The transports a migration will speak. Anything else is refused. */
-const ALLOWED_PROTOCOL = "https:http:git";
 
 export type MigrateSource =
   | { readonly originId: string; readonly fullName: string }
@@ -123,6 +120,8 @@ interface Resolved {
   readonly name: string;
   readonly description: string;
   readonly authEnv: () => Promise<Record<string, string>>;
+  /** The address `vetHost` passed, when the host was vetted: git must dial it, not look the name up again. */
+  readonly pin?: Pin;
   /** A connected origin's adapter: what issues and pulls are read through. */
   readonly provider?: Provider;
   /** The person, as the source's commits may name them. */
@@ -220,7 +219,7 @@ export function migrationJobFor(
 export function migrateMessage(error: MigrateError, limit = "at the repositories limit"): string {
   switch (error) {
     case "invalid_url":
-      return "That is not a URL this forge will clone from. Paste an https:// (or http://, git://) address of a public repository, with no password in it.";
+      return "That is not a URL this forge will clone from. Paste an https:// (or http://) address of a public repository, with no password in it. A git:// address is not supported: use its https:// address.";
     case "private_host":
       return "That address is inside the network, not a public repository. An admin may bring it here; connect the host as an origin instead.";
     case "no_such_origin":
@@ -275,7 +274,6 @@ export function migrateUrl(raw: string): string | undefined {
   }
   if (parsed.hostname === "") return undefined;
   if (parsed.username !== "" || parsed.password !== "") return undefined;
-  if (parsed.protocol === "git:") return parsed.toString();
   return safeRemoteUrl(parsed.toString());
 }
 
@@ -385,14 +383,18 @@ export async function resolveSource(
       user.isAdmin ||
       app.config.migrateFromPrivateHosts === true ||
       isTrustedHost(new URL(url).hostname);
+    let pin: Pin | undefined;
     if (!mayReachPrivate) {
       const hostname = new URL(url).hostname;
       if (isPrivateHost(hostname)) return err("private_host");
       // A public-looking name can resolve inside the network.
       const vetted = await vetHost(hostname, resolve ? { resolve } : {});
       if (!vetted.ok && vetted.error === "refused") return err("private_host");
+      if (!vetted.ok) return err("unreachable");
+      pin = pinFor(url, vetted.value[0]!);
     }
     return ok({
+      ...(pin ? { pin } : {}),
       url,
       label: url,
       originId: "",
@@ -425,6 +427,14 @@ export async function resolveSource(
     provider: provider.value,
     who: { logins: [origin.login, user.username], emails: [user.email] },
   });
+}
+
+/** What git runs a migration fetch with: the vetted address pinned when there is one. */
+export function fetchEnv(
+  source: Pick<Resolved, "pin">,
+  authEnv: Record<string, string>,
+): Record<string, string> {
+  return remoteGitEnv(authEnv, source.pin);
 }
 
 /** The job itself. Nothing here throws out: a detached promise must not. */
@@ -572,7 +582,7 @@ async function cloneInto(
   const deadline = Date.now() + MIGRATE_TIMEOUT_MS;
   const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
   const authEnv = await source.authEnv();
-  const env = remoteGitEnv(authEnv, undefined, ALLOWED_PROTOCOL);
+  const env = fetchEnv(source, authEnv);
   const said = (stderr: string, fallback: string): string =>
     redact(stderr.trim(), ...secretsIn(authEnv))
       .split("\n")
@@ -688,7 +698,7 @@ async function fetchForkHeads(
     ],
     {
       cwd: dir,
-      env: remoteGitEnv(authEnv, undefined, ALLOWED_PROTOCOL),
+      env: fetchEnv(source, authEnv),
       timeoutMs: MIGRATE_TIMEOUT_MS,
     },
   );

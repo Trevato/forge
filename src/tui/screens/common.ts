@@ -862,7 +862,7 @@ const MESSAGES: Record<string, string> = {
   git_init_failed: "git could not create the repository",
   fork_failed: "the fork could not be created",
   bad_anchor: "that line is not part of this diff",
-  invalid_url: "that URL is not valid",
+  invalid_url: "that URL is not valid (a git:// address is not supported: use its https:// address)",
   // Reviews. `review_required` is the merge gate refusing, and it is the one
   // refusal a reviewer can act on, so it names the act rather than the rule.
   review_required: "this needs an approval of its current head first",

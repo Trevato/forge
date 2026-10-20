@@ -20,6 +20,9 @@ import { createApp, type App } from "../src/app.ts";
 import {
   isPrivateHost,
   migrateRepo,
+  fetchEnv,
+  migrateMessage,
+  resolveSource,
   migrateUrl,
 } from "../src/actions/migrate.ts";
 import { createAgent, listCrew } from "../src/actions/crew.ts";
@@ -376,9 +379,11 @@ describe("migrate", () => {
     expect(body.message).toContain("not a URL this forge will clone from");
     // What a person meant is what they get.
     expect(migrateUrl("github.com/a/b")).toBe("https://github.com/a/b");
-    expect(migrateUrl("git://example.com/a/b.git")).toBe(
-      "git://example.com/a/b.git",
+    expect(migrateUrl("git://example.com/a/b.git")).toBeUndefined();
+    expect(migrateUrl("https://example.com/a/b.git")).toBe(
+      "https://example.com/a/b.git",
     );
+    expect(migrateMessage("invalid_url")).toContain("git:// address is not supported");
     expect(count()).toBe(before);
   });
 
@@ -1201,6 +1206,29 @@ describe("migrate", () => {
     } finally {
       config.migrateFromPrivateHosts = true;
     }
+  });
+
+  test("a vetted host is pinned to the vetted address; a trusted one is not", async () => {
+    const config = app.config as { migrateFromPrivateHosts?: boolean };
+    config.migrateFromPrivateHosts = false;
+    try {
+      const source = { url: "https://looks-public.example/a/b.git" };
+      const resolved = await resolveSource(app, bob, source, async () => ["93.184.216.34"]);
+      if (!resolved.ok) throw new Error("expected a resolved source");
+      const env = fetchEnv(resolved.value, {});
+      const pins = Object.entries(env).filter(([, v]) => v.startsWith("looks-public.example:443:"));
+      expect(pins).toEqual([[expect.any(String), "looks-public.example:443:93.184.216.34"]]);
+      expect(env["GIT_ALLOW_PROTOCOL"]).toBe("https:http");
+      // A host that does not resolve is not fetched unpinned.
+      const lost = await resolveSource(app, bob, source, async () => []);
+      expect(lost).toEqual({ ok: false, error: "unreachable" });
+    } finally {
+      config.migrateFromPrivateHosts = true;
+    }
+    // No vetting (the caller may reach private hosts), so no pin.
+    const open = await resolveSource(app, bob, { url: "https://looks-public.example/a/b.git" });
+    if (!open.ok) throw new Error("expected a resolved source");
+    expect(Object.values(fetchEnv(open.value, {})).some((v) => v.includes(":443:"))).toBe(false);
   });
 
   test("a clone follows no redirect: the address that was checked is the only one fetched", async () => {
