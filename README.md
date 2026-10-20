@@ -912,6 +912,14 @@ pull, the panel also says `scout is working on this` and links the run; it asks
 read the repository (and, for a run on a sealed issue, that issue), and shows
 nothing when the crew is idle.
 
+**When the pill is not shown** (an app whose own policy refuses foreign
+scripts), `/__forge/` on the app's host is the way back: a small page from the
+forge, never the app, with no script, saying the app and where you are
+(`production` or `preview of pull #N`) and linking Home, the repository (to
+who may read it) and *Tell the crew* (the same link `/__forge/crew` gives; signed
+out it offers sign in). The prefix was already the forge's, so an app's own
+`/__forge/` path is not reachable.
+
 **Tell the crew from the pill.** Signed in as someone who may direct the crew,
 the panel also offers *Tell the crew* (`/__forge/crew` adds a `tell` link, only
 for them; signed out there is no action). It opens the forge's own

@@ -36,6 +36,8 @@ import { loadKey } from "../kernel/secret.ts";
 import { previewEnv, type EnvName } from "./data.ts";
 import type { AppsRuntime, EnvStatus } from "./runtime.ts";
 import { crewNow, tellLink } from "./crew.ts";
+import { doorPage } from "./door.ts";
+import { notFound } from "../http/respond.ts";
 import { appMeasure } from "./measure.ts";
 import { rewritable, withToolbar, type PillWhere } from "./toolbar.ts";
 
@@ -597,6 +599,35 @@ export async function proxyApp(
         "x-content-type-options": "nosniff",
       },
     });
+  }
+  // The forge's small page on the app's own host: the way back when the pill
+  // is not shown. A nested host is its guest's, and has no such page.
+  if (url.pathname === "/__forge/") {
+    if (target.nested) return notFound();
+    if (request.method !== "GET" && request.method !== "HEAD")
+      return new Response(null, {
+        status: 405,
+        headers: { allow: "GET, HEAD", "x-content-type-options": "nosniff" },
+      });
+    const cookie = cookieValue(request, grantCookieName(target));
+    const signed =
+      cookie === undefined
+        ? undefined
+        : readGrant(runtime.app.config.dataDir, cookie, target);
+    const tell = tellLink(
+      runtime.app.db,
+      runtime.options.forgeUrl,
+      target.app,
+      signed?.who?.id,
+    );
+    return doorPage(
+      {
+        where: pillWhere(runtime, target, signed?.who),
+        forgeUrl: runtime.options.forgeUrl,
+        ...(tell === undefined ? { signin: "/__forge/signin" } : { tell }),
+      },
+      request.method === "HEAD",
+    );
   }
   // The third door: a problem report, answered without waking or even
   // reaching the app — the app being down is the usual reason to ask. The
