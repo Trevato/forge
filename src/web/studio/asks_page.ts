@@ -7,6 +7,7 @@
  * (`actions/asks_bulk.ts`). `/asks` was its own screen; it lands here now.
  */
 
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { WaitingFor } from "../../core/waiting_for.ts";
 import {
   applyAsksBulk,
@@ -335,7 +336,8 @@ export interface AsksTop {
 /** GET /asks — what needs you as its own page: the home's section and its
  * live script; `?op=<id>` (a bulk action's receipt) rides along. */
 export function asksPage(ctx: Ctx): Response {
-  return renderAsks(ctx, homeTop(ctx));
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  return renderAsks(ctx, timePhase(ctx.request, "top", () => homeTop(ctx)));
 }
 
 /** The asks page, with a bulk step's preview or receipt on top. */
@@ -343,12 +345,15 @@ function renderAsks(ctx: Ctx, top: AsksTop | undefined): Response {
   const user = ctx.auth.user;
   if (!user) return signInFirst(ctx);
   const section = needsYouSection(ctx, user, top);
-  return page({
+  const rendering = performance.now();
+  const response = page({
     ctx,
     title: "Asks",
     body: html`<main class="stack"><h1 class="sr-only">Asks</h1>${onYouRegion(ctx, user, undefined, section.body)}</main>`,
     scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${section.scriptJs}`,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 /** The receipt `?op=<id>` names on the home, when it is the viewer's own. */
@@ -393,10 +398,13 @@ export function needsYouSection(
   top?: AsksTop,
 ): { body: Html; scriptJs: string } {
   const picked = top?.picked ?? new Set<string>();
-  const decisions = decisionsFor(
-    ctx,
-    listReposVisibleTo(ctx.app.db, user, { limit: 200, withoutArchived: true }),
-  );
+  const read = () =>
+    decisionsFor(
+      ctx,
+      listReposVisibleTo(ctx.app.db, user, { limit: 200, withoutArchived: true }),
+    );
+  // Callers that build the section outside a request have none to time against.
+  const decisions = ctx.request instanceof Request ? timePhase(ctx.request, "asks", read) : read();
   const needs = forgeNeedsFor(ctx, user);
   const rows = askRows(decisions);
   const silenced = silencedRepos(ctx.app.db, user);
