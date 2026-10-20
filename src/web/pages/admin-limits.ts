@@ -13,6 +13,7 @@ import { changeSignup, readSignup } from "../../actions/signup.ts";
 import { SIGNUP_MODES } from "../../settings/signup.ts";
 import { QUOTA_KEYS } from "../../settings/quotas.ts";
 import type { Ctx } from "../../http/context.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { notFoundPage, settingsLayout } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when } from "../html.ts";
@@ -22,8 +23,13 @@ import { accountSections } from "./origins.ts";
 
 // GET /admin/limits
 export function limitsPage(ctx: Ctx): Response {
-  const listed = listLimits(ctx.app, ctx.auth.user);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const listed = timePhase(ctx.request, "limits", () => listLimits(ctx.app, ctx.auth.user));
   if (!listed.ok) return notFoundPage(ctx);
+  const quotas = timePhase(ctx.request, "quotas", () => readQuotas(ctx.app, ctx.auth.user));
+  const signup = timePhase(ctx.request, "signup", () => readSignup(ctx.app, ctx.auth.user));
+  const invites = timePhase(ctx.request, "invites", () => listInviteLinks(ctx.app, ctx.auth.user));
+  const rendering = performance.now();
   const { limits, changes } = listed.value;
   const rows = limits.map((l) =>
     row({
@@ -75,7 +81,6 @@ export function limitsPage(ctx: Ctx): Response {
       meta: html`${c.actorName === "" ? "someone" : c.actorName} · ${time(c.at)}`,
     }),
   );
-  const quotas = readQuotas(ctx.app, ctx.auth.user);
   const quotaHistory = (quotas.ok ? quotas.value.changes : []).map((c) =>
     row({
       lead: icon("history"),
@@ -118,7 +123,6 @@ export function limitsPage(ctx: Ctx): Response {
       pad: false,
     },
   );
-  const signup = readSignup(ctx.app, ctx.auth.user);
   const signupHistory = (signup.ok ? signup.value.changes : []).map((c) =>
     row({
       lead: icon("history"),
@@ -152,7 +156,6 @@ export function limitsPage(ctx: Ctx): Response {
       pad: false,
     },
   );
-  const invites = listInviteLinks(ctx.app, ctx.auth.user);
   const inviteRows = (invites.ok ? invites.value : []).map((i) =>
     row({
       lead: icon("activity"),
@@ -226,7 +229,7 @@ export function limitsPage(ctx: Ctx): Response {
         pad: false,
       },
     )}`;
-  return page({
+  const response = page({
     ctx,
     title: "Limits",
     body: html`<div class="page-head"><h1>Limits</h1></div>
@@ -236,6 +239,8 @@ export function limitsPage(ctx: Ctx): Response {
         "Account settings",
       )}`,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 // POST /admin/limits
