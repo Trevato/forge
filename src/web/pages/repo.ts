@@ -46,6 +46,7 @@ import {
 } from "../chrome.ts";
 import { codeJs } from "../client.ts";
 import { highlightBlob } from "../code.ts";
+import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import { appStrip } from "./apps.ts";
 import { studioApp } from "../studio/app.ts";
@@ -437,6 +438,7 @@ export function blobBody(
   ref: string,
   path: string,
   blob: Blob,
+  highlighted?: (ms: number) => void,
 ): { content: Html; lines: number } {
   const encoded = encodeURIComponent(ref);
   if (blob.kind === "binary") {
@@ -471,11 +473,13 @@ export function blobBody(
   const text = new TextDecoder().decode(blob.body).replace(/\n$/, "");
   // Highlight the whole file (multi-line constructs need full context),
   // then take the first N lines for rendering.
-  const highlighted = highlightBlob(text, path);
-  const lines = highlighted.slice(0, MAX_RENDER_LINES);
-  const truncated = highlighted.length > MAX_RENDER_LINES;
+  const began = performance.now();
+  const highlight = highlightBlob(text, path);
+  highlighted?.(performance.now() - began);
+  const lines = highlight.slice(0, MAX_RENDER_LINES);
+  const truncated = highlight.length > MAX_RENDER_LINES;
   return {
-    lines: highlighted.length,
+    lines: highlight.length,
     content: html`<div class="card code">
         <table>
           ${lines.map(
@@ -491,7 +495,7 @@ export function blobBody(
         empty({
           icon: "alert",
           title: "Showing the first 5,000 lines",
-          note: `This file has ${highlighted.length.toLocaleString()} lines. Fetch the raw bytes for all of them.`,
+          note: `This file has ${highlight.length.toLocaleString()} lines. Fetch the raw bytes for all of them.`,
           action: btn("View raw", { href: `${base}/raw/${encoded}/${path}` }),
         }),
       )}`,
@@ -810,6 +814,8 @@ export function renderBlob(
     path: string;
     blob: Blob;
     view?: BlobView;
+    /** Told how long highlighting took, for Server-Timing. */
+    highlighted?: (ms: number) => void;
   },
 ): Html {
   const base = scope.base;
@@ -819,7 +825,7 @@ export function renderBlob(
   const { content, lines } =
     view === "rendered" && o.blob.kind === "text"
       ? renderedMarkdown(o.blob)
-      : blobBody(base, o.ref, o.path, o.blob);
+      : blobBody(base, o.ref, o.path, o.blob, o.highlighted);
   const sizeText =
     o.blob.kind === "too_large" ? "" : sizeWithTokens(o.blob.size, o.path);
   const fileHref = `${base}/blob/${encoded}/${o.path}`;
@@ -1110,6 +1116,28 @@ export function codePage(
   });
 }
 
+/**
+ * The object reads of one request, summed: Server-Timing names `git` once,
+ * however many reads the page made.
+ */
+function gitClock(request: Request): {
+  read: <T>(work: () => Promise<T>) => Promise<T>;
+  done: () => void;
+} {
+  let total = 0;
+  return {
+    read: async (work) => {
+      const began = performance.now();
+      try {
+        return await work();
+      } finally {
+        total += performance.now() - began;
+      }
+    },
+    done: () => notePhase(request, "git", total),
+  };
+}
+
 // GET /:owner/:name/tree/:ref[/*path]
 export async function treePage(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
@@ -1117,20 +1145,29 @@ export async function treePage(ctx: Ctx): Promise<Response> {
   const scope = localScope(ctx, repo);
   const ref = ctx.params.ref ?? "";
   const path = ctx.params.path ?? "";
-  const entries = await scope.source.tree(ref, path);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const git = gitClock(ctx.request);
+  const entries = await git.read(() => scope.source.tree(ref, path));
   if (!entries.ok) return notFoundPage(ctx);
 
   // The explorer's lazy expansion asks for exactly one directory.
-  if (ctx.url.searchParams.get("fragment") === "explorer")
+  if (ctx.url.searchParams.get("fragment") === "explorer") {
+    git.done();
     return fragment(explorerFragment(scope.base, ref, path, entries.value), {
       request: ctx.request,
     });
+  }
 
-  const [refs, explorer] = await Promise.all([
-    refSetFrom(scope.source),
-    loadExplorer(scope.source, ref, path, false),
-  ]);
-  return codePage(ctx, scope, {
+  const [refs, explorer] = await git.read(() =>
+    Promise.all([
+      refSetFrom(scope.source),
+      loadExplorer(scope.source, ref, path, false),
+    ]),
+  );
+  git.done();
+  // `render` includes the README read: it is fetched while the page is built.
+  const began = performance.now();
+  const response = codePage(ctx, scope, {
     title: `${path || ref} · ${repo.name}`,
     ref,
     explorer: explorerColumn(scope, explorer, {
@@ -1144,6 +1181,8 @@ export async function treePage(ctx: Ctx): Promise<Response> {
       entries: entries.value,
     }),
   });
+  notePhase(ctx.request, "render", performance.now() - began);
+  return response;
 }
 
 // GET /:owner/:name/blob/:ref/*path
@@ -1153,25 +1192,39 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
   const scope = localScope(ctx, repo);
   const ref = ctx.params.ref ?? "";
   const path = ctx.params.path ?? "";
-  const blob = await scope.source.blob(ref, path);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const git = gitClock(ctx.request);
+  const blob = await git.read(() => scope.source.blob(ref, path));
   if (!blob.ok) return notFoundPage(ctx);
-  const refs = await refSetFrom(scope.source);
+  const refs = await git.read(() => refSetFrom(scope.source));
+  let highlightMs: number | undefined;
+  const renderStart = performance.now();
   const pane = renderBlob(scope, {
     refs,
     ref,
     path,
     blob: capped(blob.value),
     view: blobView(ctx.url.searchParams.get("view")),
+    highlighted: (ms) => (highlightMs = (highlightMs ?? 0) + ms),
   });
+  if (highlightMs !== undefined) notePhase(ctx.request, "highlight", highlightMs);
+  const paneMs = performance.now() - renderStart - (highlightMs ?? 0);
 
   // The preview a script drops into the pane beside the explorer. Same
   // renderer, same markup — a preview and a real page load are the same file.
-  if (ctx.url.searchParams.get("fragment") === "1")
+  if (ctx.url.searchParams.get("fragment") === "1") {
+    git.done();
+    notePhase(ctx.request, "render", paneMs);
     return fragment(pane, { request: ctx.request });
+  }
 
-  const explorer = await loadExplorer(scope.source, ref, path, true);
+  const explorer = await git.read(() =>
+    loadExplorer(scope.source, ref, path, true),
+  );
+  git.done();
   const filename = path.split("/").pop() ?? path;
-  return codePage(ctx, scope, {
+  const pageStart = performance.now();
+  const response = await codePage(ctx, scope, {
     title: `${filename} · ${repo.name}`,
     ref,
     explorer: explorerColumn(scope, explorer, {
@@ -1184,6 +1237,8 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
     }),
     content: pane,
   });
+  notePhase(ctx.request, "render", paneMs + performance.now() - pageStart);
+  return response;
 }
 
 /**

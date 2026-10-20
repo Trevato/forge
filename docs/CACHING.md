@@ -230,6 +230,21 @@ and rounds to 0.0):
   the table below (a push to the boards repository is one of them).
 - **Max age:** 30 seconds.
 
+### Where a code page's time goes (#3194)
+
+A repository's tree and blob pages (`/:owner/:name/tree/…`, `/blob/…`) name
+each phase once, after `app`; the phases never add up to more than `app`.
+
+- `session`: resolving the viewer, as on `/map`.
+- `git`: every object read of the request summed into one entry: the tree
+  or blob, the ref set and the explorer's listing.
+- `highlight`: blob only; `highlightBlob`, the syntax colouring. A rendered
+  Markdown file and a binary or oversized file send none.
+- `render`: building the page, less highlighting. On a tree it includes the
+  README read, which happens while the page is built. On a blob it is the
+  pane plus the page; the `?fragment=1` preview sends the pane alone, and
+  the explorer fragment of a tree sends no `render`.
+
 ### Where home's time goes (#3160)
 
 `/`'s `Server-Timing` names `feed`, `kpis` and `panels` for a signed-in
