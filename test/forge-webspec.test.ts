@@ -22,13 +22,13 @@ import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
 
-const PATHS = ["/", "/signin", "/signup", "/explore", "/alice/notes", "/alice/notes/issues", "/alice/notes/issues/1"];
+const PATHS = ["/", "/signin", "/signup", "/explore", "/alice/notes", "/alice/notes/issues", "/alice/notes/issues/1", "/alice/notes/tree/main", "/alice/notes/blob/main/a.txt"];
 
 /** `check path` -> [section, why it stands]. Every one is expected on every page it names; one fixed fails the test, one new fails it too. */
 const KNOWN: Record<string, [string, string]> = {};
 
 /** The owner's pages: signed in, so no-store by design; webspec's caching findings on them are not asserted away, they are named. */
-const SIGNED_IN = ["/map", "/system", "/boards", "/settings/crew", "/alice/notes/pulls/2", "/settings"];
+const SIGNED_IN = ["/map", "/system", "/boards", "/settings/crew", "/alice/notes/pulls/2", "/settings", "/audit", "/settings/backups", "/fleet/graph"];
 const CACHING = "https://specification.website/#caching";
 const NO_ETAG = "signed-in HTML is no-store by design: it is per-person, so there is no validator to revalidate against";
 const KNOWN_SIGNED_IN: Record<string, [string, string]> = {
@@ -38,6 +38,9 @@ const KNOWN_SIGNED_IN: Record<string, [string, string]> = {
   "etag /alice/notes/pulls/2": [CACHING, NO_ETAG],
   "etag /settings": [CACHING, NO_ETAG],
   "etag /settings/crew": [CACHING, NO_ETAG],
+  "etag /settings/backups": [CACHING, NO_ETAG],
+  "etag /audit": [CACHING, NO_ETAG],
+  "etag /fleet/graph": [CACHING, NO_ETAG],
   "title /map": ["https://specification.website/#title", "each map node is an inline SVG element whose <title> is its tooltip and accessible name, beside the page's own"],
 };
 
@@ -62,7 +65,9 @@ beforeAll(async () => {
   if (!made.ok) throw new Error("user");
   const repo = await createRepo(app, made.value, { name: "notes", visibility: "public" });
   if (!repo.ok) throw new Error("repo");
-  await commitToBranch(app, made.value, repo.value, { message: "seed", files: [{ path: "a.txt", content: "a" }] });
+  const seeded = await commitToBranch(app, made.value, repo.value, { message: "seed", files: [{ path: "a.txt", content: "a" }] });
+  if (!seeded.ok) throw new Error("seed");
+  PATHS.push(`/alice/notes/commit/${seeded.value.commitOid}`);
   const issue = openIssue(app, made.value, repo.value, { title: "First", body: "hello" });
   if (!issue.ok) throw new Error("issue");
   const branched = await commitToBranch(app, made.value, repo.value, { branch: "feature", message: "feature", files: [{ path: "b.txt", content: "b" }] });
