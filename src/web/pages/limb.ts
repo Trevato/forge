@@ -19,6 +19,7 @@ import {
 import type { FleetValue, Operation } from "../../core/fleet_ops.ts";
 import { getIssuesByIds } from "../../core/issues.ts";
 import { pillarsOf } from "../../core/pillars.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
   crumbsFor,
@@ -148,7 +149,8 @@ function requestOf(
 
 /** GET /:owner/:name/milestones/:number/limb?action= — what it will do, before it does. */
 export function limbPreviewPage(ctx: Ctx): Response {
-  const repo = loadRepo(ctx);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const repo = timePhase(ctx.request, "repo", () => loadRepo(ctx));
   if (!repo) return notFoundPage(ctx);
   if (!ctx.auth.user) return signInFirst(ctx);
   const number = Number(ctx.params.number);
@@ -158,12 +160,15 @@ export function limbPreviewPage(ctx: Ctx): Response {
     return notFoundPage(ctx);
   const request = requestOf(action, (n) => ctx.url.searchParams.get(n) ?? "");
   // A close is planned before its reason is typed: the rows do not depend on it.
-  const plan = previewLimb(ctx.app, ctx.auth.user, repo, number, {
-    ...request,
-    ...(action === "close" && request.reason === undefined
-      ? { reason: "…" }
-      : {}),
-  });
+  const user = ctx.auth.user;
+  const plan = timePhase(ctx.request, "plan", () =>
+    previewLimb(ctx.app, user, repo, number, {
+      ...request,
+      ...(action === "close" && request.reason === undefined
+        ? { reason: "…" }
+        : {}),
+    }),
+  );
   const base = repoBase(repo);
   const words = WORDS[action];
   if (!plan.ok) {
@@ -186,7 +191,10 @@ export function limbPreviewPage(ctx: Ctx): Response {
   const willWrite = p.counts.change > 0;
   const moving = action === "raise" || action === "lower";
   const pillars =
-    action === "resume" ? pillarsOf(ctx.app.db, repo).pillars : [];
+    action === "resume"
+      ? timePhase(ctx.request, "pillars", () => pillarsOf(ctx.app.db, repo).pillars)
+      : [];
+  const rendering = performance.now();
   const body = html`${repoHeader(ctx, repo, "map")}
     <div class="stack mt">
       <p class="small muted">
@@ -324,13 +332,15 @@ export function limbPreviewPage(ctx: Ctx): Response {
           Nothing here is yours to change.
           <a href="${milestoneHref(base, number)}">Back</a>
         </p>`}`;
-  return page({
+  const response = page({
     ctx,
     title: `${words.ask} ${p.limb.title} · ${repo.name}`,
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 /** POST /:owner/:name/milestones/:number/limb — apply, and show the receipt. */
