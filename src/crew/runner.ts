@@ -69,6 +69,7 @@ import {
 } from "../core/runs.ts";
 import { createToken, deleteToken } from "../core/tokens.ts";
 import { runGit } from "../git/env.ts";
+import { cloneWithMirror } from "./mirror.ts";
 import { isSafeRef } from "../git/guard.ts";
 import { runGitCapture } from "../git/env.ts";
 import { looksForEnv } from "../core/looks.ts";
@@ -1656,9 +1657,13 @@ async function prepareClone(
   if (!existsSync(join(dir, ".git"))) {
     mkdirSync(dir, { recursive: true });
     write(`cloning ${repo.ownerName}/${repo.name}`);
-    const cloned = await runGit(["clone", "--quiet", "--", url, dir], {
+    const cloned = await cloneWithMirror({
+      dataDir: app.config.dataDir,
+      repoId: repo.id,
+      url,
+      dir,
       env,
-      timeoutMs: 5 * 60_000,
+      signal,
     });
     if (!cloned.ok)
       return {

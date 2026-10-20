@@ -20,6 +20,7 @@ import {
   updateLabel as writeLabel,
   type Label,
 } from "../core/issues.ts";
+import { dropMirror } from "../crew/mirror.ts";
 import { accessAllows, getOrg, orgAccess } from "../core/orgs.ts";
 import {
   createRepo as initRepo,
@@ -502,6 +503,7 @@ export async function deleteRepo(
   if (!admin.ok) return admin;
   const deleted = await destroyRepo(app.db, app.reposRoot, repo);
   if (!deleted.ok) return deleted;
+  dropMirror(app.config.dataDir, repo.id);
   storageChanged(app, repo.ownerId);
   // The row is gone (events cascade with it), so this event carries no repo.
   app.bus.append({ kind: "repo.deleted", actorId: admin.value.id });

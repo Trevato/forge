@@ -23,6 +23,7 @@ import {
   setSuspended,
   type AccountRow,
 } from "../core/accounts.ts";
+import { dropMirror } from "../crew/mirror.ts";
 import { deleteRepo as destroyRepo, listReposOwnedBy } from "../core/repos.ts";
 import { listActive } from "../core/runs.ts";
 import { getUserByName, type User } from "../core/users.ts";
@@ -184,6 +185,7 @@ async function removeOwnedRepos(
     const label = `${owner.username}/${repo.name}`;
     const deleted = await destroyRepo(app.db, app.reposRoot, repo);
     if (!deleted.ok) return label;
+    dropMirror(app.config.dataDir, repo.id);
     removed.push(label);
     if (owner.kind === "org")
       app.bus.append({

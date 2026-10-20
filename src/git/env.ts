@@ -236,6 +236,8 @@ export interface RunOptions {
   stdin?: Uint8Array | string;
   /** Kill the process after this long. @default 30_000 */
   timeoutMs?: number;
+  /** Kill the process when this aborts. */
+  signal?: AbortSignal;
 }
 
 /** Run git to completion, capturing output as bytes. Non-zero exit is an Err. */
@@ -254,6 +256,9 @@ export async function runGitRaw(
 
     const timeoutMs = options.timeoutMs ?? 30_000;
     const timer = setTimeout(() => proc.kill("SIGKILL"), timeoutMs);
+    const stop = () => proc.kill("SIGKILL");
+    if (options.signal?.aborted) stop();
+    options.signal?.addEventListener("abort", stop, { once: true });
     try {
       const [stdout, stderr, code] = await Promise.all([
         readAll(proc.stdout),
@@ -264,6 +269,7 @@ export async function runGitRaw(
       return ok(stdout);
     } finally {
       clearTimeout(timer);
+      options.signal?.removeEventListener("abort", stop);
     }
   });
 }

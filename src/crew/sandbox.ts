@@ -250,6 +250,8 @@ export function sandboxPolicy(input: {
     ...others(data, "crew"),
     // Every agent but this one.
     ...others(crew, input.agentName),
+    // The mirrors, by name: one a later run creates is not in the listing.
+    join(crew, ".mirrors"),
     // This agent's other runs' temp directories.
     ...others(join(own, ".t"), tmpDir === undefined ? "" : basename(tmpDir)),
     // The machine's temp directory: every other session's files, and the
