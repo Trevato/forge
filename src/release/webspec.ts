@@ -6,6 +6,8 @@
  * The HTML is read with small regexes, one function per check.
  */
 
+import { siteFindings } from "./webspec-site.ts";
+
 export interface Finding {
   path: string;
   check: string;
@@ -205,8 +207,12 @@ export function encodingProblems(h: Headers, bodyBytes: number): Problem[] {
   return out;
 }
 
-/** Fetches `paths` of `base` and reports head and header findings. */
-export async function webspec(base: string, paths: string[], fetcher: Fetcher = fetch): Promise<Finding[]> {
+/**
+ * Fetches `paths` of `base` and reports head and header findings. With
+ * `opts.site` it also reports the well-known files and error pages, once for
+ * the base (checks 3 and 4); `opts.errorPath` names a path that must answer 500.
+ */
+export async function webspec(base: string, paths: string[], fetcher: Fetcher = fetch, opts: { site?: boolean; errorPath?: string } = {}): Promise<Finding[]> {
   const findings: Finding[] = [];
   for (const path of paths) {
     const report = (ps: Problem[]) => {
@@ -264,5 +270,6 @@ export async function webspec(base: string, paths: string[], fetcher: Fetcher = 
       if (again !== 304) report([{ check: "etag", message: `If-None-Match answered ${again || "nothing"}, not 304`, section: s("caching") }]);
     }
   }
+  if (opts.site) findings.push(...(await siteFindings(base, fetcher, opts.errorPath ? { errorPath: opts.errorPath } : {})));
   return findings;
 }

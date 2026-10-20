@@ -315,11 +315,19 @@ pull adds the proof but does not reopen signup — the gitops gate stays for a
 person.
 
 `bun scripts/smoke.ts <url> --standards` prints the website-specification
-report (`src/release/webspec.ts`): it fetches each path in forge.json's
-`app.looks` from `<url>` and prints one line per head or header finding with
-the specification.website section it cites. It only reports and always exits
-0. `(edge)` marks a finding the edge in front of the app may own (HSTS), so
-fix it there rather than in the app. Each fetch gives up after 10 seconds.
+report (`src/release/webspec.ts`, `webspec-site.ts`): it fetches each path in
+forge.json's `app.looks` from `<url>` and prints one line per finding with the
+specification.website section it cites. Head and header findings come per
+path. Once per site it also checks the well-known files (robots.txt and the
+sitemap it names, with each listed same-origin URL, at most 50, fetched
+anonymously; `/.well-known/security.txt` with a future `Expires:`; the web
+manifest with a name and icons; `/llms.txt`; `/.well-known/change-password`
+redirecting) and the error pages (a random path must answer 404 with the app's
+own HTML page). `--error-path <path>` names a path that is meant to answer 500
+with the custom page; the 500 check runs only when it is named, because the
+report never causes an error on its own. It only reports and always exits 0.
+`(edge)` marks a finding the edge in front of the app may own (HSTS), so fix it
+there rather than in the app. Each fetch gives up after 10 seconds.
 
 What you asked for: `Ctrl+K`, then **Asked**, is `/asked` in the terminal — your
 thoughts, then the issues you can write to that are not shipped, oldest first

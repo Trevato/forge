@@ -12,7 +12,8 @@
  *
  * `--standards` runs the website-specification report (`release/webspec.ts`)
  * over forge.json's `app.looks` paths, prints one line per finding with its
- * section, and exits 0: it reports, it does not gate.
+ * section (head, headers, well-known files, error pages; `--error-path`
+ * names a path that must answer 500), and exits 0: it reports, it does not gate.
  *
  * `--outsider` also signs up a fresh account and proves each thing a
  * stranger must not do is refused over HTTP and MCP (`release/outsider.ts`,
@@ -37,12 +38,13 @@ if (import.meta.main) {
   if (withOutsider) args.splice(args.indexOf("--outsider"), 1);
   const standards = args.includes("--standards");
   if (standards) args.splice(args.indexOf("--standards"), 1);
+  const errorPath = flag("--error-path");
   const version = flag("--version");
   const wait = flag("--wait");
   const base = args[0];
   const seconds = wait === undefined ? 120 : Number(wait);
   if (!base || !Number.isFinite(seconds) || seconds < 0 || args.length > 1) {
-    console.error("usage: bun scripts/smoke.ts <url> [--version <v>] [--wait <seconds>] [--outsider] [--standards]  (--version needs FORGE_PROBE, the forge's probe)");
+    console.error("usage: bun scripts/smoke.ts <url> [--version <v>] [--wait <seconds>] [--outsider] [--standards [--error-path <path that answers 500>]]  (--version needs FORGE_PROBE, the forge's probe)");
     process.exit(2);
   }
   if (withOutsider && !process.env["FORGE_TOKEN"]) {
@@ -52,7 +54,7 @@ if (import.meta.main) {
   if (standards) {
     const looks = (await Bun.file(new URL("../forge.json", import.meta.url)).json())?.app?.looks;
     const paths: string[] = Array.isArray(looks) ? looks.filter((p): p is string => typeof p === "string") : ["/"];
-    const findings = await webspec(base, paths);
+    const findings = await webspec(base, paths, fetch, { site: true, ...(errorPath ? { errorPath } : {}) });
     for (const f of findings) console.log(`${f.path} ${f.check}${f.edge ? " (edge)" : ""}: ${f.message} <${f.section}>`);
     console.log(`standards: ${findings.length} finding(s) over ${paths.length} path(s); report only`);
     process.exit(0);
