@@ -13,6 +13,7 @@ import {
   type ExploreQuery,
   type ExploreRow,
 } from "../../actions/explore.ts";
+import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { pageHead } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
@@ -63,8 +64,12 @@ function rowHtml(row: ExploreRow): Html {
 
 // GET /explore
 export async function explorePage(ctx: Ctx): Promise<Response> {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const query = parseExploreQuery(ctx.url.searchParams.get("q") ?? "");
+  const ranking = performance.now();
   const rows = await explore(ctx.app, ctx.auth.user, query);
+  notePhase(ctx.request, "rank", performance.now() - ranking);
+  const rendering = performance.now();
   const kinds = [
     { label: "All", kind: "all" as const },
     { label: "Apps", kind: "app" as const },
@@ -124,5 +129,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
           note: "Clear the line to see everything you can.",
         })
       : listCard(rows.map(rowHtml))}`;
-  return page({ ctx, title: "Explore", body });
+  const response = page({ ctx, title: "Explore", body });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
