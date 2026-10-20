@@ -34,6 +34,7 @@ import {
 } from "../../core/standing.ts";
 import { getUserById } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
@@ -127,24 +128,34 @@ function shell(ctx: Ctx, body: Html): Response {
 
 // GET /settings/subscriptions
 export function subscriptionsPage(ctx: Ctx): Response {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const denied = requireAdmin(ctx);
   if (denied) return denied;
   const now = new Date();
-  const pool = listCredentials(ctx.app.db);
-  const places = listGrantPlaces(ctx.app.db);
-  const scopes = scopesOf(ctx.app.db);
+  const pool = timePhase(ctx.request, "credentials", () =>
+    listCredentials(ctx.app.db),
+  );
+  const places = timePhase(ctx.request, "places", () =>
+    listGrantPlaces(ctx.app.db),
+  );
+  const scopes = timePhase(ctx.request, "scopes", () => scopesOf(ctx.app.db));
   const scopeText = (s: Subscription): string =>
     s.id === PLATFORM
       ? "the crew's: every app no subscription is granted to"
       : scopes.has(s.id)
         ? `for ${scopes.get(s.id)!.join(", ")}`
         : "not offered to the crew — granted nowhere";
-  const budgets = budgetsOf(ctx.app.db);
-  const standingOf = standings(
-    ctx.app.db,
-    pool.map((s) => s.id),
-    now,
+  const budgets = timePhase(ctx.request, "budgets", () =>
+    budgetsOf(ctx.app.db),
   );
+  const standingOf = timePhase(ctx.request, "standings", () =>
+    standings(
+      ctx.app.db,
+      pool.map((s) => s.id),
+      now,
+    ),
+  );
+  const rendering = performance.now();
 
   const sealed = pool.filter((s) => s.id !== PLATFORM);
   const none =
@@ -368,7 +379,7 @@ export function subscriptionsPage(ctx: Ctx): Response {
           },
         );
 
-  return shell(
+  const response = shell(
     ctx,
     html`${list} ${none === null ? null : html`<div class="mt">${none}</div>`}
       ${when(
@@ -387,6 +398,8 @@ export function subscriptionsPage(ctx: Ctx): Response {
       <div class="mt">${add}</div>
       ${used === null ? null : html`<div class="mt">${used}</div>`}`,
   );
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 // POST /settings/subscriptions
