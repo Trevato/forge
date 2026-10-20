@@ -19,7 +19,7 @@
   "test/crew-already-done.test.ts": 1.2,
   "test/crew-check-failed.test.ts": 1.8,
   "test/crew-continues.test.ts": 12.5,
-  "test/crew-declines.test.ts": 11.3,
+  "test/crew-declines.test.ts": 1.1,
   "test/crew-limits.test.ts": 0.5,
   "test/crew-pause.test.ts": 12.5,
   "test/crew-review-budget.test.ts": 1.5,

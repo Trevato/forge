@@ -34,7 +34,8 @@ describe("the crew, with a stand-in Claude Code: declines", () => {
     agentRunSettled(app, repo, where, timeoutMs);
 
   beforeAll(async () => {
-    standIn = await startStandInCrew();
+    // The pump ticks every 50 ms, not every five seconds: a run starts at once.
+    standIn = await startStandInCrew({ tickMs: 50 });
     ({ app, alice, bot, repo } = standIn);
   }, 30_000);
 
