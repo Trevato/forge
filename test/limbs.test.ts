@@ -719,14 +719,30 @@ describe("limb actions", () => {
     expect(preview).toContain("4 stop being picked");
     expect(preview).toMatch(/1 stays: something\s+outside this limb still waits for\s+it/);
     expect(preview).toContain("A shared toolbar");
-    // The row is the issue by its title, and where it goes.
-    expect(preview).toContain(
-      `<a href="/alice/engine/issues/${iface.number}">One interface</a>`,
+    // The row is the §5 row: the issue by its title, and where it goes.
+    expect(preview).toMatch(
+      new RegExp(
+        `<a href="/alice/engine/issues/${iface.number}"\\s+class="row"[^>]*>[\\s\\S]*?<span\\s+class="row-title"[^>]*>One interface</span`,
+      ),
     );
     expect(preview).toContain(
       `under #${feed.number} → behind #${gate.number}, under #${later.number}`,
     );
+    // The confirm is the §5 dialog: a same-origin POST to the limb, nothing
+    // written until it is sent.
+    expect(preview).toMatch(
+      new RegExp(
+        `<form\\s+method="post"\\s+action="${at}/limb"\\s+class="dialog"`,
+      ),
+    );
+    expect(preview).toContain('<h2 id="limb-confirm-title">Defer this limb?</h2>');
     expect(preview).toContain("Defer this limb");
+    expect(preview).not.toContain('class="limb-');
+    // A close asks its reason in the dialog, as a §5 field.
+    const closing = await (await get("alice", `${at}/limb?action=close`)).text();
+    expect(closing).toMatch(/<label for="limb-reason">Why, in one sentence<\/label>/);
+    expect(closing).toMatch(/id="limb-reason"\s+name="reason"\s+required/);
+    expect(closing).toContain('maxlength="300"');
     // A reader's preview says so, and offers nothing to confirm.
     const looked = await (await get("bob", `${at}/limb?action=defer`)).text();
     expect(looked).toContain("Nothing here is yours to change.");

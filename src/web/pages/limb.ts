@@ -32,7 +32,14 @@ import {
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { page, redirect } from "../layout.ts";
-import { btn } from "../ui.ts";
+import {
+  badge,
+  btn,
+  field as formField,
+  listCard,
+  row,
+  selectField,
+} from "../ui.ts";
 import { replanPreviewPage, replanSubmit } from "./limb_replan.ts";
 import { milestoneHref, milestonesCss } from "./milestones.ts";
 
@@ -123,27 +130,24 @@ function rowList(
     ctx.app.db,
     rows.map((r) => r.targetId),
   );
-  return html`<ul class="ms-rows limb-rows">
-    ${rows.map((r) => {
+  return listCard(
+    rows.map((r) => {
       const issue = issues.get(r.targetId);
-      return html`<li data-outcome="${r.outcome}">
-          ${issue === undefined
-            ? html`<b>${r.label}</b>`
-            : html`<a href="${base}/issues/${issue.number}">${issue.title}</a>
-                <span class="muted small">#${issue.number}</span>`}
-          <span class="muted small"
-            >${shown(r.before)} → ${shown(r.after)}</span
-          >
-          ${when(
-            r.outcome !== "change" && r.outcome !== "ok",
-            () =>
-              html`<span class="limb-why small"
-                >${r.outcome}${r.reason === "" ? "" : `: ${r.reason}`}</span
-              >`,
-          )}
-        </li>`;
-    })}
-  </ul>`;
+      const settled = r.outcome === "change" || r.outcome === "ok";
+      const meta = [
+        ...(issue === undefined ? [] : [`#${issue.number}`]),
+        `${shown(r.before)} → ${shown(r.after)}`,
+        ...(settled || r.reason === "" ? [] : [r.reason]),
+      ].join(" · ");
+      return row({
+        ...(issue === undefined
+          ? { title: r.label }
+          : { href: `${base}/issues/${issue.number}`, title: issue.title }),
+        meta: html`<span title="${meta}">${meta}</span>`,
+        ...(settled ? {} : { trail: badge(r.outcome, { tone: "attn" }) }),
+      });
+    }),
+  );
 }
 
 function requestOf(
@@ -195,7 +199,7 @@ export function limbPreviewPage(ctx: Ctx): Response {
           <p id="limb-refused">Not as one action: ${plan.error.message}.</p>
           <p><a href="${milestoneHref(base, number)}">Back</a></p>
         </div>`,
-      styleCss: `${milestonesCss}${limbCss}`,
+      styleCss: milestonesCss,
     });
   }
   const p = plan.value;
@@ -279,57 +283,61 @@ export function limbPreviewPage(ctx: Ctx): Response {
             : rowList(ctx, base, p.rows)}
         </section>`}
     ${willWrite
-      ? html`<form
-          method="post"
-          action="${milestoneHref(base, number)}/limb"
-          class="limb-confirm mt"
-        >
-          <input type="hidden" name="action" value="${action}" />
-          ${when(
-            request.under,
-            (under) => html`<input type="hidden" name="under" value="${under}" />`,
-          )}
-          ${when(
-            action === "close",
-            () =>
-              html`<label class="small" for="limb-reason"
-                  >Why, in one sentence</label
-                >
-                <input
-                  class="input"
-                  id="limb-reason"
-                  name="reason"
-                  required
-                  maxlength="300"
-                />`,
-          )}
-          ${when(
-            action === "resume",
-            () =>
-              html`<label class="small" for="limb-pillar">Under</label>
-                <select class="input" id="limb-pillar" name="pillar">
-                  <option value="">no pillar</option>
-                  ${pillars.map(
-                    (pillar) =>
-                      html`<option
-                        value="${pillar.short}"
-                        ${request.pillar?.toLowerCase() ===
-                        pillar.short.toLowerCase()
-                          ? html`selected`
-                          : null}
-                      >
-                        ${pillar.name}
-                      </option>`,
-                  )}
-                </select>`,
-          )}
-          <div class="bar">
-            ${btn(words.go, {
-              variant: action === "close" ? "danger" : "primary",
-            })}
-            ${btn("Back", { href: milestoneHref(base, number), variant: "ghost" })}
-          </div>
-        </form>`
+      ? html`<div class="mt">
+          <form
+            method="post"
+            action="${milestoneHref(base, number)}/limb"
+            class="dialog"
+            aria-labelledby="limb-confirm-title"
+          >
+            <div class="dialog-head">
+              <h2 id="limb-confirm-title">${words.go}?</h2>
+            </div>
+            <div class="dialog-body stack">
+              <input type="hidden" name="action" value="${action}" />
+              ${when(
+                request.under,
+                (under) =>
+                  html`<input type="hidden" name="under" value="${under}" />`,
+              )}
+              ${when(action === "close", () =>
+                formField({
+                  label: "Why, in one sentence",
+                  name: "reason",
+                  id: "limb-reason",
+                  required: true,
+                  maxlength: 300,
+                }),
+              )}
+              ${when(action === "resume", () =>
+                selectField({
+                  label: "Under",
+                  name: "pillar",
+                  id: "limb-pillar",
+                  options: [
+                    { value: "", label: "no pillar" },
+                    ...pillars.map((pillar) => ({
+                      value: pillar.short,
+                      label: pillar.name,
+                      selected:
+                        request.pillar?.toLowerCase() ===
+                        pillar.short.toLowerCase(),
+                    })),
+                  ],
+                }),
+              )}
+            </div>
+            <div class="dialog-foot">
+              ${btn("Back", {
+                href: milestoneHref(base, number),
+                variant: "ghost",
+              })}
+              ${btn(words.go, {
+                variant: action === "close" ? "danger" : "primary",
+              })}
+            </div>
+          </form>
+        </div>`
       : html`<p class="mt">
           Nothing here is yours to change.
           <a href="${milestoneHref(base, number)}">Back</a>
@@ -340,7 +348,7 @@ export function limbPreviewPage(ctx: Ctx): Response {
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,
-    styleCss: `${milestonesCss}${limbCss}`,
+    styleCss: milestonesCss,
   });
 }
 
@@ -431,7 +439,7 @@ export function limbReceiptPage(ctx: Ctx): Response {
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,
-    styleCss: `${milestonesCss}${limbCss}`,
+    styleCss: milestonesCss,
   });
 }
 
@@ -450,10 +458,3 @@ export async function limbUndo(ctx: Ctx): Promise<Response> {
     `${milestoneHref(base, number)}/limb/${undone.ok ? undone.value.id : (ctx.params.op ?? "")}`,
   );
 }
-
-const limbCss = /* css */ `
-.limb-rows li[data-outcome="refused"], .limb-rows li[data-outcome="failed"] { color: var(--muted-fg); }
-.limb-why { color: var(--attn); }
-.limb-confirm { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; max-width: 520px; }
-.limb-confirm .input { width: 100%; box-sizing: border-box; }
-`;

@@ -1025,6 +1025,7 @@ export interface FieldOptions {
   placeholder?: string;
   pattern?: string;
   minlength?: number;
+  maxlength?: number;
   rows?: number;
   mono?: boolean;
   id?: string;
@@ -1056,6 +1057,7 @@ ${o.value ?? ""}</textarea
           ${o.autocomplete ? html`autocomplete="${o.autocomplete}"` : null}
           ${o.pattern ? html`pattern="${o.pattern}"` : null}
           ${o.minlength !== undefined ? html`minlength="${o.minlength}"` : null}
+          ${o.maxlength !== undefined ? html`maxlength="${o.maxlength}"` : null}
         />`;
   return html`<div class="field" ${o.error ? raw("data-invalid") : null}>
     <label for="${id}">${o.label}</label>
