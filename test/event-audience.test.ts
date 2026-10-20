@@ -28,6 +28,8 @@ import { serve, type Servers } from "../src/http/server.ts";
 
 const HOOK = "https://hooks.example.test/services/T000/B000/s3cr3t-in-the-path";
 
+const EGRESS = "100.89.95.68:8101";
+
 describe("who an event is for", () => {
   let dataDir: string;
   let app: App;
@@ -88,6 +90,12 @@ describe("who an event is for", () => {
       "sk_live_x",
     );
     if (!set.ok) throw new Error(String(set.error));
+    app.bus.append({
+      kind: "app.egress.granted",
+      repoId: repo.id,
+      actorId: alice.id,
+      payload: { destination: EGRESS },
+    });
     expect(pinRepo(app, bob, repo).ok).toBe(true);
   }, 30_000);
 
@@ -108,6 +116,8 @@ describe("who an event is for", () => {
     expect(eventAudience("webhook.deleted")).toBe("admins");
     expect(eventAudience("app.env_set")).toBe("admins");
     expect(eventAudience("app.env_deleted")).toBe("admins");
+    expect(eventAudience("app.egress.granted")).toBe("admins");
+    expect(eventAudience("app.egress.revoked")).toBe("admins");
     expect(eventAudience("repo.settings_updated")).toBe("admins");
     expect(eventAudience("prompt.told")).toBe("admins");
     expect(eventAudience("prompt.source_added")).toBe("admins");
@@ -132,6 +142,16 @@ describe("who an event is for", () => {
     expect(alices).toContain("webhook.created");
     expect(alices).toContain("app.env_set");
     expect(alices).not.toContain("repo.pinned"); // bob's, even to an admin
+  });
+
+  test("a private destination and its granter are for the repository's admins", () => {
+    const all = listEvents(app.db, { repoId: repo.id });
+    const text = (viewer: User | undefined) =>
+      JSON.stringify(all.filter(audienceFilter(app.db, viewer)));
+    expect(text(undefined)).not.toContain(EGRESS);
+    expect(text(bob)).not.toContain(EGRESS);
+    expect(text(alice)).toContain(EGRESS);
+    expect(text(alice)).toContain(alice.id);
   });
 
   test("the JSON outbox never tells a reader a webhook's URL or a variable's name", async () => {

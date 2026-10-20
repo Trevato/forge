@@ -139,6 +139,8 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     kind.startsWith("webhook.") ||
     kind.startsWith("app.env_") ||
     kind.startsWith("app.domain.") ||
+    // A private address and port, and who may reach it (#3543).
+    kind.startsWith("app.egress.") ||
     kind.startsWith("prompt.") ||
     kind.startsWith("secret.") ||
     // The forge's mail ceiling is its owner's to hear (`actions/mail.ts`).
