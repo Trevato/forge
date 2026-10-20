@@ -29,4 +29,17 @@ describe("the refresh meta", () => {
     ).text();
     expect(client).not.toContain('meta[http-equiv="refresh"]');
   });
+
+  test("a closed mirror stream reloads the page at most once per stream url", async () => {
+    const { mirrorJs } = await import("../src/web/client.ts");
+    const at = mirrorJs.indexOf("location.reload()");
+    expect(at).toBeGreaterThan(-1);
+    const before = mirrorJs.slice(0, at);
+    // The guard is read and then set, both ahead of the one reload.
+    expect(before).toContain("sessionStorage.getItem(url)");
+    expect(before.indexOf("sessionStorage.getItem(url)")).toBeLessThan(
+      before.indexOf("sessionStorage.setItem(url"),
+    );
+    expect(mirrorJs.match(/location\.reload\(\)/g)).toHaveLength(1);
+  });
 });

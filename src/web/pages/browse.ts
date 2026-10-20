@@ -1031,10 +1031,9 @@ export function stageList(job: MirrorJob, streamUrl: string): Html {
 /**
  * GET /settings/origins/:id/mirror/:job — a mirror, while it happens.
  *
- * With no JavaScript this is a page that refreshes itself every two seconds
- * and stops when the job stops. With JavaScript it subscribes to the job's
- * own event stream and the checklist moves without a reload. Both render the
- * same markup, and the page is correct if the script never arrives.
+ * With JavaScript it subscribes to the job's own event stream, the checklist
+ * moves without a reload, and it goes to the mirror when the job is done.
+ * Without, the same markup says to Reload; there is no meta refresh.
  */
 export function mirrorJobPage(ctx: Ctx): Response {
   const denied = accountOnly(ctx);
@@ -1084,21 +1083,19 @@ export function mirrorJobPage(ctx: Ctx): Response {
           </div>`
         : html`<p class="muted small mt">
             This keeps going if you close the page — come back to this link and
-            it will say where it got to. No JavaScript? This page refreshes
-            itself every couple of seconds.
+            it will say where it got to.
+            <noscript>
+              Without JavaScript this page does not move by itself:
+              <a href="${ctx.url.pathname}">Reload</a> to see where it is.
+            </noscript>
           </p>`;
 
-  // Only a job still going refreshes or streams: a finished one is a page
-  // that stands, a failed one a page with the reason and a way to retry —
-  // never one that reloads itself over and over on the same news.
+  // Only a job still going streams: a finished one is a page that stands, a
+  // failed one a page with the reason and a way to retry. No page here
+  // refreshes itself; the script follows the stream and goes to the mirror.
   return page({
     ctx,
     title: `Mirroring ${job.fullName}`,
-    ...(running
-      ? { refresh: { seconds: 2 } }
-      : job.stage === "done" && mirror !== undefined
-        ? { refresh: { seconds: 1, url: mirror } }
-        : {}),
     body: html`<div class="page-head">
         <h1>Mirroring ${job.fullName}</h1>
         <span class="spacer"></span>

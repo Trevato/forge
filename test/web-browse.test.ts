@@ -493,8 +493,9 @@ describe("browsing an origin repository on the web", () => {
     ]) {
       expect(running).toContain(stage);
     }
-    // The no-JavaScript half: it refreshes itself while the job runs.
-    expect(running).toContain('http-equiv="refresh"');
+    // The no-JavaScript half: a plain Reload link, never a meta refresh.
+    expect(running).not.toContain("http-equiv");
+    expect(running).toContain(">Reload</a>");
     // The enhancement is a static script under the strict CSP — the job it
     // watches arrives as a data attribute, never interpolated into the code.
     expect(running).toContain(
@@ -510,9 +511,9 @@ describe("browsing an origin repository on the web", () => {
     const after = await bodyOf(alice, jobPath);
     expect(after).toContain("Done");
     expect(after).toContain("Open the mirror");
-    // Finished: no two-second self-refresh, a hop to the mirror instead.
-    expect(after).toContain("url=/alice/widgets");
-    expect(after).not.toContain('content="2"');
+    // Finished: a page that stands, with a link to the mirror.
+    expect(after).not.toContain("http-equiv");
+    expect(after).toContain('href="/alice/widgets"');
   });
 
   test("after the mirror, the workbench is where the page reads from", async () => {

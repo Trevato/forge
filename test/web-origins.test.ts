@@ -251,7 +251,8 @@ describe("origins on the web", () => {
     expect(live).toContain(
       `data-stream="/api/v1/user/origins/${id}/mirror/${running.id}/stream"`,
     );
-    expect(live).toMatch(/<meta[^>]*http-equiv="refresh"/);
+    expect(live).not.toContain("http-equiv");
+    expect(live).toContain(">Reload</a>");
     advance(running.id, {
       stage: "failed",
       detail: "",
@@ -315,9 +316,39 @@ describe("origins on the web", () => {
 
     // Finished: no self-refresh loop, a redirect to the mirror instead.
     const after = await (await asUser(alice, jobPath)).text();
-    expect(after).toContain("url=/alice/widgets");
-    expect(after).not.toContain('content="2"');
+    expect(after).not.toContain("http-equiv");
     expect(after).toContain("Open the mirror");
+  });
+
+  test("a running job's stream sends the next stage, then done with the mirror's address; only its starter may read it", async () => {
+    const id = listOrigins(app.db, getUserByName(app.db, "alice")!.id)[0]!.id;
+    const job = createJob(id, "octo/streamed");
+    const path = `/api/v1/user/origins/${id}/mirror/${job.id}/stream`;
+    expect((await asUser(bob, path)).status).toBe(404);
+    expect((await asUser("", path)).status).toBeGreaterThanOrEqual(401);
+
+    const response = await asUser(alice, path);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let seen = "";
+    const until = async (needle: string) => {
+      while (!seen.includes(needle)) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        seen += decoder.decode(value);
+      }
+    };
+    await until("event: mirror.creating");
+    advance(job.id, { stage: "fetching", detail: "objects" });
+    await until("event: mirror.fetching");
+    advance(job.id, { stage: "done", detail: "", repo: getRepo(app.db, "alice", "widgets")! });
+    await until("event: mirror.done");
+    await reader.cancel();
+    expect(seen).toContain("event: mirror.fetching");
+    expect(seen).toContain('"name":"widgets"');
+    expect(seen.indexOf("mirror.fetching")).toBeLessThan(seen.indexOf("mirror.done"));
   });
 
   test("the repo header wears the where strip and the About rail one block", async () => {

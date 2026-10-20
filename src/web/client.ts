@@ -124,7 +124,18 @@ export const mirrorJs = /* js */ `
   }
 
   var source = new EventSource(url);
-  source.addEventListener('error', function () { /* the meta refresh, or the next event */ });
+  source.addEventListener('error', function () {
+    // EventSource reconnects by itself; once it has closed for good (the job
+    // expired, or the stream is gone) the page re-reads itself, once per
+    // stream url. The key is set before the reload, so a stream that fails
+    // the same way again cannot loop; with no storage, there is no reload.
+    if (source.readyState !== 2) return;
+    try {
+      if (sessionStorage.getItem(url)) return;
+      sessionStorage.setItem(url, '1');
+    } catch (err) { return; }
+    location.reload();
+  });
   ['creating', 'fetching', 'labels', 'issues', 'pulls', 'comments', 'done', 'failed'].forEach(function (stage) {
     source.addEventListener('mirror.' + stage, function (event) {
       var job;
