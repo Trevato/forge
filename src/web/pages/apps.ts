@@ -41,6 +41,12 @@ import {
 } from "../../core/repos.ts";
 import type { User } from "../../core/users.ts";
 import { safeBack, type Ctx } from "../../http/context.ts";
+import {
+  notePhase,
+  takeSessionTime,
+  timePhase,
+  timePhaseAsync,
+} from "../../core/route_timing.ts";
 import { isHostPort, resolveAppHostname } from "../../apps/proxy.ts";
 import {
   loadRepo,
@@ -133,7 +139,8 @@ export function envLabel(env: EnvName): string {
  * never sees its crew or its cost.
  */
 export async function appsList(ctx: Ctx): Promise<Response> {
-  const entries = appsForViewer(ctx);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const entries = timePhase(ctx.request, "apps", () => appsForViewer(ctx));
   const liveCount = entries.filter(
     (e) => e.production?.state === "running",
   ).length;
@@ -169,13 +176,19 @@ export async function appsList(ctx: Ctx): Promise<Response> {
             },
           ])}
         </div>`;
-  const rows = await shelfRows(
-    ctx,
-    shown.map((e) => e.repo),
+  const rows = await timePhaseAsync(ctx.request, "shelf", () =>
+    shelfRows(
+      ctx,
+      shown.map((e) => e.repo),
+    ),
   );
+  const cost = timePhase(ctx.request, "cost", () =>
+    costLine(ctx.app.db, writableAppsOf(ctx, ctx.auth.user).repos),
+  );
+  const rendering = performance.now();
   const body = html`${when(ctx.auth.user, () => homeTabs("apps"))}
     ${pageHead("Apps", { actions: create })}
-    ${costLine(ctx.app.db, writableAppsOf(ctx, ctx.auth.user).repos)}
+    ${cost}
     ${filters}
     ${shown.length === 0
       ? empty({
@@ -187,7 +200,9 @@ export async function appsList(ctx: Ctx): Promise<Response> {
           action: create,
         })
       : listCard(rows)}`;
-  return page({ ctx, title: "Apps", body });
+  const response = page({ ctx, title: "Apps", body });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 // ---- new app ----
