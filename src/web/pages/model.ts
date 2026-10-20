@@ -17,6 +17,7 @@ import {
 import { API_BASE_MAX } from "../../core/subscriptions.ts";
 import type { User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
@@ -29,7 +30,10 @@ export function modelPage(ctx: Ctx): Response {
   const denied = accountOnly(ctx);
   if (denied) return denied;
   const user = ctx.auth.user!;
-  const own = ownSubscription(ctx.app.db, user.id);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const own = timePhase(ctx.request, "subscription", () => ownSubscription(ctx.app.db, user.id));
+  const budget = timePhase(ctx.request, "budget", () => budgetLine(ctx.app.db, user, new Date()));
+  const rendering = performance.now();
   const form = own
     ? html`<p class="muted">
         Your subscription <strong>${own.name}</strong> pays for the crew on your
@@ -53,7 +57,7 @@ export function modelPage(ctx: Ctx): Response {
         </div>
         <div>${btn("Add", { variant: "primary", size: "sm" })}</div>
       </form>`;
-  return page({
+  const response = page({
     ctx,
     title: "Model",
     body: html`<div class="page-head"><h1>Model</h1></div>
@@ -62,12 +66,14 @@ export function modelPage(ctx: Ctx): Response {
         card(html`${form}`, {
           head: html`<h2>Your model budget</h2>
             <p class="muted" id="model-budget">
-              ${budgetLine(ctx.app.db, user, new Date())}
+              ${budget}
             </p>`,
         }),
         "Account settings",
       )}`,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 // POST /settings/model
