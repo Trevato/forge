@@ -494,6 +494,7 @@ import {
   notFound,
   prefersHtml,
   securityFloor,
+  tooManyAttempts,
 } from "./respond.ts";
 import { compress } from "./compress.ts";
 import { RateLimiter, type Verdict } from "../core/ratelimit.ts";
@@ -590,7 +591,7 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
     }
     if (username !== "" && secret !== "") {
       // Counted in the sign-in windows like every password door; past them
-      // the right password is refused too, so a guesser learns nothing.
+      // the right password is refused too, with a 429 and Retry-After.
       const verified = await verifyPasswordThrottled(app.db, {
         username,
         password: secret,
@@ -598,6 +599,10 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
       });
       if (verified.ok)
         return { user: verified.value, scope: "admin", via: "password" };
+      // Not a wrong password: a git client or script must back off, not
+      // read this as bad credentials.
+      if (verified.error.reason === "throttled")
+        return { ...NO_AUTH, retryAfter: verified.error.retryAfter };
     }
   }
   return NO_AUTH;
@@ -2424,6 +2429,7 @@ async function answerGet(
     return noRoute(request.method, url.pathname);
   }
   const auth = await resolveAuth(app, request);
+  if (auth.retryAfter !== undefined) return tooManyAttempts(auth.retryAfter);
   noteUsage(request, { pattern: matched.pattern, role: roleOf(auth) });
   // From here a body's cap depends on who is asking (`http/limits.ts`), and
   // a stream this request opens is the account's, to end with it.

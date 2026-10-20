@@ -3,6 +3,7 @@
  * an account authenticates with over the SSH listener.
  */
 
+import { withinPasswordCap } from "../core/hash-gate.ts";
 import { emailChanged, welcome } from "./verify.ts";
 import type { App } from "../app.ts";
 import type { Credential } from "../auth/webauthn.ts";
@@ -126,6 +127,7 @@ export async function signUp(
   const email = (input.email ?? "").trim();
   if (email !== "" && !givenEmail(email)) return err("invalid_email");
   if (input.password.length < MIN_SIGNUP_PASSWORD) return err("weak_password");
+  if (!withinPasswordCap(input.password)) return err("password_too_long");
   const secret = app.config.turnstileSecret;
   // The terminal cannot render a widget, so with a secret set it brings no
   // token and is refused, the forge's first account too: sign up on the web page.
@@ -319,7 +321,8 @@ export type ChangePasswordError =
   | "unauthorized"
   | "bad_credentials"
   | "throttled"
-  | "weak_password";
+  | "weak_password"
+  | "password_too_long";
 
 /** Replace the password; the current one must be presented and verified. */
 export async function changePassword(
@@ -336,7 +339,12 @@ export async function changePassword(
   });
   if (!verified.ok) return err(verified.error.reason);
   const changed = await rehash(app.db, user.value.id, input.next);
-  if (!changed.ok) return err(changed.error === "weak_password" ? "weak_password" : "unauthorized");
+  if (!changed.ok)
+    return err(
+      changed.error === "weak_password" || changed.error === "password_too_long"
+        ? changed.error
+        : "unauthorized",
+    );
   app.bus.append({
     kind: "user.updated",
     actorId: user.value.id,

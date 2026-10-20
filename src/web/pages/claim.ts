@@ -18,6 +18,7 @@
  * so before anyone submits, and where to remove it.
  */
 
+import { PASSWORD_TOO_LONG, withinPasswordCap } from "../../core/hash-gate.ts";
 import { givenEmail, MIN_SIGNUP_PASSWORD, noEmail } from "../../actions/users.ts";
 import type { Credential } from "../../auth/webauthn.ts";
 import { crossOrigin, type Ctx } from "../../http/context.ts";
@@ -303,6 +304,7 @@ export async function claimSubmit(ctx: Ctx): Promise<Response> {
   const errors = problems(ctx, values.username, values.email.trim(), withKey);
   if (!withKey && password.length < MIN_SIGNUP_PASSWORD)
     errors.password = `Passwords need at least ${MIN_SIGNUP_PASSWORD} characters.`;
+  else if (!withinPasswordCap(password)) errors.password = PASSWORD_TOO_LONG;
   if (Object.keys(errors).length > 0) return again(errors);
   // A key in the form is the passkey door; none is the password door.
   let credential: Credential | undefined;

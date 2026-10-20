@@ -8,6 +8,7 @@
  * typed still in it. A dead end that loses input is a bug, not a message.
  */
 
+import { PASSWORD_TOO_LONG } from "../../core/hash-gate.ts";
 import { NOT_A_MEMBER } from "../../core/roles.ts";
 import { storageLimitMessage } from "../../core/storage.ts";
 import { signOutHere } from "../../actions/signins.ts";
@@ -665,6 +666,7 @@ export async function signupSubmit(ctx: Ctx): Promise<Response> {
       username_taken: { username: "That username is taken." },
       username_reserved: { username: "That name is reserved." },
       email_taken: { email: "That email already has an account." },
+      password_too_long: { password: PASSWORD_TOO_LONG },
       weak_password: { password: "Passwords need at least 12 characters." },
       invalid_email: { email: "That does not look like an email address." },
       human_check: { human: HUMAN_CHECK_MESSAGE },

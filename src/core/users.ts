@@ -3,6 +3,7 @@
  * narrower; there is no second identity system.
  */
 
+import { GATE_RETRY_AFTER, withinPasswordCap, withHashSlot } from "./hash-gate.ts";
 import { markUnproven, markVerified } from "./verify.ts";
 import type { Database } from "bun:sqlite";
 import { isSafeName } from "../git/guard.ts";
@@ -88,6 +89,8 @@ export const isActive = (user: User): boolean =>
 export const hiddenFrom = (user: User, viewer: User | undefined): boolean =>
   user.kind === "user" && !isActive(user) && viewer?.isAdmin !== true;
 
+// The minimum counts characters, the cap (`hash-gate.ts`) counts bytes: the
+// hash reads bytes, and a person never meets the difference at these sizes.
 const MIN_PASSWORD = 10;
 const MAX_EMAIL = 254;
 const MAX_DISPLAY_NAME = 80;
@@ -98,6 +101,7 @@ export type CreateUserError =
   | "username_reserved"
   | "email_taken"
   | "weak_password"
+  | "password_too_long"
   | "signup_closed";
 
 /**
@@ -280,6 +284,8 @@ export async function createUser(
   const password = agent ? undefined : input.password;
   if (password !== undefined && password.length < MIN_PASSWORD)
     return err("weak_password");
+  if (password !== undefined && !withinPasswordCap(password))
+    return err("password_too_long");
 
   const existing = db
     .query<
@@ -423,8 +429,9 @@ export async function changePassword(
   db: Database,
   userId: string,
   next: string,
-): Promise<Result<void, "weak_password" | "no_such_user">> {
+): Promise<Result<void, "weak_password" | "password_too_long" | "no_such_user">> {
   if (next.length < MIN_PASSWORD) return err("weak_password");
+  if (!withinPasswordCap(next)) return err("password_too_long");
   const hash = await Bun.password.hash(next, "argon2id");
   const changed = db
     .query("UPDATE user SET password_hash = ?1 WHERE id = ?2 AND kind = 'user'")
@@ -494,10 +501,19 @@ export async function verifyPasswordThrottled(
   db: Database,
   attempt: PasswordAttempt,
 ): Promise<Result<User, PasswordRefusal>> {
+  if (!withinPasswordCap(attempt.password))
+    return err({ reason: "bad_credentials" });
   const admission = admitSignin(db, attempt.username, attempt.source);
   if (!admission.admitted)
     return err({ reason: "throttled", retryAfter: admission.retryAfter });
-  const checked = await checkPassword(db, attempt.username, attempt.password);
+  const checked = await withHashSlot(() =>
+    checkPassword(db, attempt.username, attempt.password),
+  );
+  if (checked === undefined) {
+    // Never hashed, so it is not a guess: give it back and ask for a moment.
+    admission.succeeded();
+    return err({ reason: "throttled", retryAfter: GATE_RETRY_AFTER });
+  }
   if (!checked.ok) return err({ reason: "bad_credentials" });
   admission.succeeded();
   return checked;

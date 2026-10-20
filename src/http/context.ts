@@ -21,6 +21,9 @@ export interface Auth {
   readonly sessionId?: string;
   /** Set for a proposal token: all it may do (`http/proposal_gate.ts`). */
   readonly proposal?: Proposal;
+  /** Set when a Basic password was turned away by the sign-in windows or the
+   * hash gate, not found wrong: the request answers 429, not 401. */
+  readonly retryAfter?: number;
 }
 
 export interface Ctx {

@@ -67,7 +67,11 @@ describe("password doors share the sign-in windows", () => {
   test("HTTP Basic with a password refuses the right password after the window fills", async () => {
     const { url } = await forge();
     for (let i = 0; i < TRIES; i++) expect((await basic(url, `wrong-${i}`)).status).toBe(401);
-    expect((await basic(url, PASSWORD)).status).toBe(401);
+    // Past the window even the right password is turned away, as a 429 with
+    // Retry-After, the answer every other password door gives.
+    const refused = await basic(url, PASSWORD);
+    expect(refused.status).toBe(429);
+    expect(Number(refused.headers.get("retry-after"))).toBeGreaterThan(0);
   });
 
   test("a right password is given back: git sending it on every request is not throttled", async () => {

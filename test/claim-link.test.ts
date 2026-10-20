@@ -229,6 +229,11 @@ describe("the claim link in the fragment, and its re-issue", () => {
     expect(weak.status).toBe(422);
     expect(await weak.text()).toContain("Passwords need at least 12 characters.");
     expect(getUserByName(child.db, "maria-owner")).toBeUndefined();
+    // So is one past the hash cap, in words, also without spending the link.
+    const long = await claim({ token: tokenOf(second), username: "maria-owner", password: "x".repeat(1025) });
+    expect(long.status).toBe(422);
+    expect(await long.text()).toContain("Use 1024 bytes or fewer.");
+    expect(getUserByName(child.db, "maria-owner")).toBeUndefined();
     // A malformed address is refused on the password door, and so is a stand-in typed by hand.
     for (const email of ["not-an-address", "me@no-email.invalid"]) {
       const bad = await claim({ token: tokenOf(second), username: "maria-owner", email, password: PASSWORD });

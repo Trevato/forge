@@ -7,6 +7,7 @@
  * of them. Nothing here knows about repos or issues — that is the point.
  */
 
+import { PASSWORD_TOO_LONG } from "../../core/hash-gate.ts";
 import { refusalText } from "../../http/refusal.ts";
 import { NOT_A_MEMBER } from "../../core/roles.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -841,6 +842,7 @@ const MESSAGES: Record<string, string> = {
   key_exists: "that key is already registered",
   taken: "that name is taken",
   weak_password: "the password is too short (10 characters at least)",
+  password_too_long: PASSWORD_TOO_LONG.toLowerCase().replace(/\.$/, ""),
   bad_credentials: "wrong username or password",
   throttled: "too many attempts: try again in a minute",
   already_forked: "you already have a fork of this repo",

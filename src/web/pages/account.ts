@@ -9,6 +9,7 @@
  * has been read once.
  */
 
+import { PASSWORD_TOO_LONG } from "../../core/hash-gate.ts";
 import { resendVerification } from "../../actions/verify.ts";
 import { clientAddress } from "../../http/peer.ts";
 import { emailVerified } from "../../core/verify.ts";
@@ -506,6 +507,8 @@ export async function passwordUpdate(ctx: Ctx): Promise<Response> {
               field: "current" as const,
               text: "Too many attempts. Try again in a minute.",
             }
+          : changed.error === "password_too_long"
+          ? { field: "next" as const, text: PASSWORD_TOO_LONG }
           : changed.error === "weak_password"
           ? {
               field: "next" as const,
