@@ -10,6 +10,7 @@
 import type { CheckDetail, Run } from "../core/runs.ts";
 import { parseBunTestFailure } from "./bun-test.ts";
 import { oneLine } from "./words.ts";
+import { webvitals, type Entries } from "../release/webvitals.ts";
 
 /**
  * The first line of the block a timed full gate ends its log with
@@ -198,4 +199,54 @@ export const stepWord = (state: StepState): string => STEP_WORDS[state];
 
 export function stepsWords(steps: readonly CheckStep[]): string {
   return steps.map((s) => `${s.name} ${stepWord(s.state)}`).join(" · ");
+}
+
+/** One look's recorded entries, or why it has none; plain data from the caller. */
+export type LookVitals =
+  | { readonly look: string; readonly entries: Entries }
+  | { readonly look: string; readonly skipped: string };
+
+/** One cell row of a look's table: words only, escaped where they are rendered. */
+export interface VitalsRow {
+  readonly vital: string;
+  /** `n/a` when the page recorded no entry, never zero. */
+  readonly value: string;
+  readonly thresholds: string;
+  readonly grade: string;
+}
+
+export interface LookRows {
+  readonly look: string;
+  /** Why the look has no numbers (`no browser`); empty when it has rows. */
+  readonly skipped: string;
+  readonly rows: readonly VitalsRow[];
+}
+
+const VITAL_ROWS = [
+  ["LCP", "lcpMs"],
+  ["CLS", "cls"],
+  ["TBT", "tbtMs"],
+] as const;
+
+const shown = (n: number, unit: string): string => `${n}${unit === "" ? "" : ` ${unit}`}`;
+
+/**
+ * Each look's LCP, CLS and TBT beside their thresholds and grade. Report-only:
+ * it returns words and has no verdict, so nothing in it can turn a check red.
+ */
+export function vitalsRows(looks: readonly LookVitals[]): readonly LookRows[] {
+  return looks.map((l) => {
+    if ("skipped" in l) return { look: l.look, skipped: l.skipped, rows: [] };
+    const v = webvitals(l.entries);
+    const rows = VITAL_ROWS.map(([vital, key]): VitalsRow => {
+      const x = v[key];
+      return {
+        vital,
+        value: x.value === null ? "n/a" : shown(x.value, x.unit),
+        thresholds: `good ≤ ${shown(x.good, x.unit)}, poor > ${shown(x.poor, x.unit)}`,
+        grade: x.grade ?? "n/a",
+      };
+    });
+    return { look: l.look, skipped: "", rows };
+  });
 }

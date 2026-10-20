@@ -11,6 +11,7 @@
  * id, so the redirect itself says nothing about what exists.
  */
 
+import { readLooks } from "../../checks/looks.ts";
 import type { Database } from "bun:sqlite";
 import {
   cancelRepoRun,
@@ -304,7 +305,8 @@ export async function runPage(ctx: Ctx): Promise<Response> {
   const found = runLog(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "");
   if (!found.ok) return notFoundPage(ctx);
   const { run, lines, truncated, logHidden } = found.value;
-  return await runView(ctx, repo, run, lines, truncated, logHidden);
+  const looks = logHidden ? [] : readLooks(ctx.app.config.dataDir, run.id);
+  return await runView(ctx, repo, run, lines, truncated, logHidden, looks);
 }
 
 // POST /:owner/:name/runs/:id/steer  { text }

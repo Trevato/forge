@@ -8,7 +8,8 @@
  */
 
 import type { CheckSummary } from "../core/runs.ts";
-import { checkSteps, stepsWords } from "./summary.ts";
+import { readLooks } from "./looks.ts";
+import { checkSteps, stepsWords, vitalsRows, type LookVitals } from "./summary.ts";
 import { parseTestsRow, testsRowLine } from "./tests-row.ts";
 import { readRunLog } from "../runs/log.ts";
 
@@ -109,5 +110,15 @@ export function stepsLine(
   const { lines, truncated } = readRunLog(dataDir, run.id);
   const steps = stepsWords(checkSteps({ ...run, state: check.state === "none" ? run.state : check.state }, lines, truncated));
   const tests = testsRowLine(parseTestsRow(lines));
-  return tests === "" ? steps : `${steps} · ${tests}`;
+  return [steps, tests, vitalsLine(readLooks(dataDir, run.id))].filter((w) => w !== "").join(" · ");
+}
+
+/** `vitals home: LCP 3100 ms needs-improvement, CLS 0.3 poor, TBT 100 ms good; mobile: skipped: no browser` */
+export function vitalsLine(looks: readonly LookVitals[]): string {
+  const groups = vitalsRows(looks).map((g) =>
+    g.skipped !== ""
+      ? `${g.look}: skipped: ${g.skipped}`
+      : `${g.look}: ${g.rows.map((r) => `${r.vital} ${r.value}${r.grade === "n/a" ? "" : ` ${r.grade}`}`).join(", ")}`,
+  );
+  return groups.length === 0 ? "" : `vitals ${groups.join("; ")}`;
 }

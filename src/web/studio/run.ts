@@ -8,7 +8,8 @@
  * at `?all=1`.
  */
 
-import { checkSteps, stepWord } from "../../checks/summary.ts";
+import { checkSteps, stepWord, type LookVitals } from "../../checks/summary.ts";
+import { vitalsTable } from "./vitals.ts";
 import { parseTestsRow, testsRowWords } from "../../checks/tests-row.ts";
 import { directionNote } from "../../crew/direct.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
@@ -59,6 +60,19 @@ export function stopForm(ctx: Ctx, repo: Repo, run: Run): Html | null {
 }
 
 /**
+ * The web-vitals table of a check's run page: nothing for another kind of
+ * run, for a reader the log is hidden from (as the rows are), or when no
+ * look recorded anything.
+ */
+export function vitalsBlock(
+  run: Pick<Run, "kind">,
+  logHidden: boolean,
+  looks: readonly LookVitals[],
+): Html {
+  return run.kind === "check" && !logHidden ? vitalsTable(looks) : html``;
+}
+
+/**
  * GET /:owner/:name/runs/:id: who is on it, the tell it came from, the
  * commit a deploy or a check is about, how long it has gone and what it has
  * cost, the secrets it held, the transcript itself, and its state in the
@@ -73,6 +87,8 @@ export async function runView(
   lines: readonly string[],
   truncated: boolean,
   logHidden = false,
+  /** `readLooks` of the run; the caller reads it, as it reads the log. */
+  looks: readonly LookVitals[] = [],
 ): Promise<Response> {
   const db = ctx.app.db;
   const base = repoBase(repo);
@@ -309,6 +325,7 @@ export async function runView(
         </div>`;
       },
     )}
+    ${vitalsBlock(run, logHidden, looks)}
     <div class="run-live" id="run-live" data-state="${run.state}">
       ${when(
         // The head above is what makes \`liveRegionsJs\` open the one

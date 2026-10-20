@@ -15,7 +15,10 @@ import {
   spyOn,
   test,
 } from "bun:test";
+import { writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
+import { looksPath } from "../src/checks/looks.ts";
+import { stepsLine } from "../src/checks/progress.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
@@ -786,6 +789,24 @@ describe("working: a run's own page in the studio", () => {
       "── shard 1/3 done (exit 1, 2.0s)",
       "── shard 2/3: test/b.test.ts",
     ]);
+    // A recorded look is on the page, escaped, and in the terminal's line.
+    const noLooks = await (await get(`/alice/engine/runs/${run.id}`, writerCookie)).text();
+    expect(noLooks).not.toContain("vitals");
+    writeFileSync(
+      looksPath(app.config.dataDir, run.id),
+      JSON.stringify([
+        { look: "<b>home</b>", entries: { layoutShift: [{ startTime: 1, value: 0.3 }] } },
+        { look: "mobile", skipped: "no browser" },
+      ]),
+    );
+    const seen = await (await get(`/alice/engine/runs/${run.id}`, writerCookie)).text();
+    expect(seen).toContain("<td>CLS</td><td>0.3</td>");
+    expect(seen).toContain("&lt;b&gt;home&lt;/b&gt;");
+    expect(seen).toContain("skipped: no browser");
+    expect(stepsLine(app.config.dataDir, { state: "running", run }, true)).toContain(
+      "vitals <b>home</b>: LCP n/a, CLS 0.3 poor, TBT 0 ms good; mobile: skipped: no browser",
+    );
+    expect(stepsLine(app.config.dataDir, { state: "running", run }, false)).toBe("");
     const page = await (await get(`/alice/engine/runs/${run.id}`, writerCookie)).text();
     expect(page).toContain('<progress class="tests-bar" aria-label="Test files started" max="9" value="2"');
     expect(page).toContain("2 of 9 files started · 4 passed, 1 failed · running test/b.test.ts");
@@ -821,6 +842,8 @@ describe("working: a run's own page in the studio", () => {
     const ended = await (await get(`/alice/engine/runs/${done.id}`, writerCookie)).text();
     expect(ended).toContain("check-progress");
     expect(ended).not.toContain("<progress");
+    // No look has recorded vitals yet: the run page renders no table, not an empty one.
+    expect(ended).not.toContain("vitals");
     // A reader the log is hidden from gets none of it.
     const plain = await createRepo(app, alice, { name: "plainb", visibility: "public", description: "x" });
     if (!plain.ok) throw new Error(String(plain.error));
