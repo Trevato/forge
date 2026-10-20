@@ -420,7 +420,12 @@ asked, under **Settings → Autonomy**:
   person: a pull whose check stays red past its tries, or whose branch
   could not be brought up to date, is _parked_ — closed with the reason,
   its issue put back on the map unassigned with the same note — and the
-  crew moves on; the planner's next pass splits or rewrites a parked
+  crew moves on. An approved pull is finished before anything starts: a
+  slot freed goes first to an approved pull that no longer merges, then
+  to a pull with changes requested, then to a new issue, and one whose
+  two updates ended without a push is handed to the person who turned
+  autonomy on — assigned to them, not closed (`crew/finishing.ts`; the
+  tick line says `finishing=N` and `conflict="N waiting"`). The planner's next pass splits or rewrites a parked
   issue, and one parked twice is handed to the planner (below). The planner
   keeps a standing reserve of startable work — two issues per builder
   slot, never fewer than three — and is asked whenever fewer than that can

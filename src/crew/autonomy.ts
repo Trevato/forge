@@ -115,6 +115,7 @@ import {
   markReaders,
 } from "./direct.ts";
 import { crewOffInPreview } from "./preview.ts";
+import { approvedOnHead, finishApproved, finishFields } from "./finishing.ts";
 import { moveRequested, tallyRequested, tallyWords } from "./requested.ts";
 import { reviewersOf, sendToReview, sweepReviews } from "./review.ts";
 import { lastWaits, noteWaits, tallyWaits, type Wait, waitWords } from "./waits.ts";
@@ -1139,6 +1140,9 @@ export async function autonomyTick(
     if (repo.archivedAt !== null) continue;
     try {
       void startSweep(app, repo, sweep);
+      // First of all: a slot freed goes to an approved pull that no longer
+      // merges, before a changes-requested one or a new issue (#3682).
+      const finishing = await finishApproved(app, repo, freeSlots(app, repo, now));
       // Quick, and before the picks: a pull main moved under is brought up
       // to date within this tick, not after a landing gate (#2039).
       await sweepConflicts(app, repo).catch((error) =>
@@ -1185,6 +1189,8 @@ export async function autonomyTick(
         held: heldWords(held),
         active: status.active,
         slots: status.slots,
+        // Approved pulls being brought up to date, and those still waiting (#3682).
+        ...finishFields(finishing),
         ...(requested.length === 0
           ? {}
           : {
@@ -1445,7 +1451,8 @@ export function releaseConflicted(
  * Every tick, each open crew pull that no longer merges gets a
  * bring-up-to-date run (one in flight per pull). After two finished
  * attempts, or 24 h since the first, it is closed and its issue is ready
- * again. Returns how many pulls were acted on.
+ * again. An approved pull is not this sweep's but `finishApproved`'s.
+ * Returns how many pulls were acted on.
  */
 export async function sweepConflicts(app: App, repo: Repo): Promise<number> {
   if (repo.autonomy !== "autonomous") return 0;
@@ -1500,6 +1507,9 @@ export async function sweepConflicts(app: App, repo: Repo): Promise<number> {
       continue;
     }
     const files = seen.files;
+    // An approved pull is finished first, and handed to a person rather
+    // than closed: the tick's finishing pass has it (`finishing.ts`).
+    if (approvedOnHead(app.db, pull)) continue;
     const issue = getIssueById(app.db, pull.id);
     if (!issue || issue.state !== "open") continue;
     if (activeRunFor(app.db, "agent", issue.id) !== undefined) continue;
@@ -1689,7 +1699,8 @@ async function admit(
     if (!clean.ok) {
       if (clean.error.kind === "conflict") {
         conflicted.set(pull.id, between);
-        bringUpToDate(app, repo, pull, clean.error.files);
+        // An approved one waits for the tick's finishing pass and its slot.
+        if (!approvedOnHead(app.db, pull)) bringUpToDate(app, repo, pull, clean.error.files);
       }
       return err("conflict");
     }
