@@ -10,6 +10,11 @@
 import { listSecrets, putSecret, removeSecret } from "../../actions/secrets.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
+  notePhase,
+  takeSessionTime,
+  timePhase,
+} from "../../core/route_timing.ts";
+import {
   NAME_MAX,
   type SecretName,
   type SecretScope,
@@ -154,19 +159,26 @@ function humanCheckLine(ctx: Ctx): string {
 
 // GET /settings/secrets
 export function secretsPage(ctx: Ctx): Response {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const denied = requireAdmin(ctx);
   if (denied) return denied;
-  return page({
+  const card = timePhase(ctx.request, "secrets", () =>
+    secretsSection(ctx, "forge", "")!,
+  );
+  const rendering = performance.now();
+  const response = page({
     ctx,
     title: "Secrets",
     body: html`<div class="page-head"><h1>Secrets</h1></div>
       ${settingsLayout(
         accountSections("secrets", { admin: true }),
-        html`${secretsSection(ctx, "forge", "")!}
+        html`${card}
           <p class="muted small">${humanCheckLine(ctx)}</p>`,
         "Account settings",
       )}`,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 // POST /settings/secrets
