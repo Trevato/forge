@@ -1079,12 +1079,12 @@ export const mapCss = /* css */ `
 .map-node[data-state="deferred"] .map-card { fill: none; stroke-dasharray: 4 3; }
 .map-node[data-state="deferred"] .map-title { fill: var(--muted-fg); }
 .map-node[data-state="blocked"] .map-title { fill: var(--muted-fg); }
-.map-meta { font-size: 11.5px; fill: var(--faint); font-variant-numeric: tabular-nums; }
+.map-meta { font-size: var(--fs-min); fill: var(--faint); font-variant-numeric: tabular-nums; }
 .map-who circle { fill: var(--muted); stroke: var(--border); }
-.map-who-i { font-size: 11.5px; font-weight: 650; text-transform: uppercase; fill: var(--fg); }
-.map-who-n { font-size: 11.5px; fill: var(--muted-fg); }
-.map-word { font-size: 11.5px; font-weight: 550; fill: var(--muted-fg); }
-.map-word .map-dot { font-size: 11.5px; fill: var(--faint); }
+.map-who-i { font-size: var(--fs-min); font-weight: 650; text-transform: uppercase; fill: var(--fg); }
+.map-who-n { font-size: var(--fs-min); fill: var(--muted-fg); }
+.map-word { font-size: var(--fs-min); font-weight: 550; fill: var(--muted-fg); }
+.map-word .map-dot { font-size: var(--fs-min); fill: var(--faint); }
 .map-node[data-state="ready"] .map-dot { fill: var(--success); }
 .map-node[data-state="working"] .map-dot { fill: var(--accent); }
 .map-node[data-state="working"] .map-word { fill: var(--accent); }
@@ -1100,7 +1100,7 @@ export const mapCss = /* css */ `
 .map-edge-crit { stroke: var(--accent); }
 .map-edge-done { opacity: .45; }
 .map-rule line { stroke: var(--border); stroke-width: 1; }
-.map-rule text { font-size: 11.5px; fill: var(--faint); letter-spacing: .02em; }
+.map-rule text { font-size: var(--fs-min); fill: var(--faint); letter-spacing: .02em; }
 
 /* ---- the line under a drawing ---- */
 .map-counts { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 8px 2px 0; font-size: 12.5px; color: var(--muted-fg); }

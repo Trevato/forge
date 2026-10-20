@@ -26,6 +26,7 @@ export const base = /* css */ `
   --radius-sm: 6px;   /* controls: buttons, inputs, chips, kbd */
   --radius: 8px;      /* surfaces: cards, panels, code blocks */
   --radius-lg: 12px;  /* overlays: dialogs, palette, menus */
+  --fs-min: 12px;     /* type floor: no meaningful text is smaller */
   --topbar-h: 56px;
   --page: 1120px;
   --measure: 72ch;

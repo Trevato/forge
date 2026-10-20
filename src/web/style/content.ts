@@ -69,7 +69,7 @@ a.where-place:hover, button.where-place:hover {
 .where-place .ico { color: var(--faint); flex: none; }
 /* A thumb needs more than a 12px word to land on. */
 @media (pointer: coarse) { .where-place { min-height: 32px; padding: 4px 8px; } }
-.where-dot { font-size: 11.5px; line-height: 1; }
+.where-dot { font-size: var(--fs-min); line-height: 1; }
 .where-note { color: var(--faint); }
 /* Accent is interaction everywhere else in the product; here it is the one
    place a page is *reading from*, which is the page's own subject. */
@@ -312,7 +312,7 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 /* A fork's relationship to what it follows: one sentence, one action. */
 .following { margin-top: 12px; }
 .following-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.following-eyebrow { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11.5px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-fg); }
+.following-eyebrow { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: var(--fs-min); font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-fg); }
 .following-eyebrow a { color: var(--fg); text-transform: none; letter-spacing: 0; font-family: var(--font); font-size: 13px; font-weight: 600; }
 .following-sentence { margin: 8px 0 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; text-wrap: balance; }
 .following-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
@@ -389,7 +389,9 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .bt-bar::-moz-meter-bar { background: var(--accent); }
 .bt-bar:-moz-meter-sub-optimum::-moz-meter-bar { background: var(--accent); }
 .bt-bar:-moz-meter-sub-sub-optimum::-moz-meter-bar { background: var(--danger); }
-.table-wrap { overflow-x: auto; }
+.table-wrap { overflow-x: auto; max-width: 100%; }
+#summary { display: flex; flex-wrap: wrap; gap: 6px; }
+#summary .pill { max-width: 100%; white-space: normal; }
 .bt-procs { font-size: 12.5px; }
 .bt-procs th, .bt-procs td { padding: 2px 8px; white-space: nowrap; }
 .bt-group th, .bt-group td { background: var(--muted); font-weight: 600; }
@@ -437,7 +439,7 @@ form.inline { display: inline; margin-left: auto; }
 }
 .lineage-children .row { padding-left: 12px; }
 .lineage-here {
-  margin-left: 6px; font-family: var(--mono); font-size: 11.5px; font-weight: 500;
+  margin-left: 6px; font-family: var(--mono); font-size: var(--fs-min); font-weight: 500;
   letter-spacing: 0.04em; color: var(--accent);
 }
 .lineage .row[aria-current="page"] { background: var(--muted); }
@@ -832,7 +834,7 @@ form.inline { display: inline; margin-left: auto; }
 .check-progress[data-state="queued"] .pinned-slot, .check-progress[data-state="running"] .pinned-slot { height: 9em; }
 .pinned-failures { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
 .pinned-failures li { padding: 6px 12px; border: 1px solid var(--danger); border-radius: var(--radius); }
-.pinned-failures pre { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.85em; }
+.pinned-failures pre { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-min); }
 @media (max-width: 480px) { .check-steps { grid-template-columns: minmax(0, 1fr); } }
 .check-steps .step-state { color: var(--faint); }
 .check-steps [data-state="ok"] .step-state { color: var(--success); }
@@ -1040,7 +1042,7 @@ form.inline { display: inline; margin-left: auto; }
 .finder { width: min(720px, calc(100vw - 24px)); }
 @media (max-width: 719px) { .finder { width: 100%; max-width: 100%; } }
 .finder .palette-item .cat {
-  font-family: var(--mono); font-size: 11.5px;
+  font-family: var(--mono); font-size: var(--fs-min);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 45%;
 }
 .finder .palette-item .grow { font-family: var(--mono); font-size: 12.5px; }

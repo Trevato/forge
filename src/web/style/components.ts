@@ -45,6 +45,9 @@ export const components = /* css */ `
 .btn[data-variant="outline"] { background: transparent; box-shadow: none; }
 .btn[data-variant="ghost"] { background: transparent; border-color: transparent; box-shadow: none; color: var(--muted-fg); }
 .btn[data-variant="ghost"]:hover { background: var(--muted); color: var(--fg); border-color: transparent; }
+/* A toggle shows its state: the chip, the sort button. */
+.btn[aria-pressed="true"] { background: var(--muted); border-color: var(--border-strong); color: var(--fg); font-weight: 550; }
+.btn[aria-pressed="false"] { color: var(--muted-fg); }
 .btn[data-variant="danger"] { color: var(--danger); }
 .btn[data-variant="danger"]:hover {
   border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
@@ -153,7 +156,7 @@ fieldset.field > .check + .check { margin-top: 8px; }
 .badge {
   display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px;
   border: 1px solid var(--border); border-radius: 999px;
-  font-size: 11.5px; font-weight: 500; line-height: 18px; color: var(--muted-fg);
+  font-size: var(--fs-min); font-weight: 500; line-height: 18px; color: var(--muted-fg);
   font-variant-numeric: tabular-nums; white-space: nowrap;
 }
 .badge[data-variant="secondary"] { background: var(--muted); border-color: transparent; }
@@ -192,7 +195,7 @@ fieldset.field > .check + .check { margin-top: 8px; }
 .label {
   --label: var(--muted-fg);
   display: inline-flex; align-items: center; padding: 0 8px;
-  border-radius: 999px; font-size: 11.5px; font-weight: 500; line-height: 18px;
+  border-radius: 999px; font-size: var(--fs-min); font-weight: 500; line-height: 18px;
   color: color-mix(in srgb, var(--label) 78%, var(--fg));
   background: color-mix(in srgb, var(--label) 14%, transparent);
   border: 1px solid color-mix(in srgb, var(--label) 32%, transparent);
@@ -204,7 +207,7 @@ a.label:hover { color: color-mix(in srgb, var(--label) 90%, var(--fg)); }
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 20px; padding: 0 6px; border-radius: 999px;
   background: var(--muted); color: var(--muted-fg);
-  font-size: 11.5px; font-weight: 550; line-height: 18px;
+  font-size: var(--fs-min); font-weight: 550; line-height: 18px;
   font-variant-numeric: tabular-nums;
 }
 .pill[data-tone="accent"] { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
@@ -255,7 +258,7 @@ kbd {
   min-width: 20px; height: 20px; padding: 0 5px;
   border: 1px solid var(--border); border-bottom-width: 2px;
   border-radius: var(--radius-sm); background: var(--muted);
-  font-family: var(--mono); font-size: 11.5px; font-weight: 500; color: var(--muted-fg);
+  font-family: var(--mono); font-size: var(--fs-min); font-weight: 500; color: var(--muted-fg);
 }
 
 .sha {
@@ -274,7 +277,7 @@ a.sha:hover { color: var(--accent); }
   background: color-mix(in srgb, hsl(var(--hue, 220) 62% 52%) 22%, var(--card));
   color: color-mix(in srgb, hsl(var(--hue, 220) 62% 42%) 88%, var(--fg));
   border: 1px solid color-mix(in srgb, hsl(var(--hue, 220) 62% 52%) 30%, transparent);
-  font-size: 9.5px; font-weight: 650; letter-spacing: 0; text-transform: uppercase;
+  font-size: var(--fs-min); font-weight: 650; letter-spacing: 0; text-transform: uppercase;
   user-select: none;
 }
 .avatar[data-size="md"] { width: 28px; height: 28px; font-size: 12.5px; }
@@ -284,7 +287,7 @@ a.sha:hover { color: var(--accent); }
 .byline a:hover { color: var(--accent); }
 .name-mark {
   display: inline-block; padding: 0 5px; border-radius: 4px;
-  font-size: 11.5px; font-weight: 600; line-height: 15px; letter-spacing: 0.04em;
+  font-size: var(--fs-min); font-weight: 600; line-height: 15px; letter-spacing: 0.04em;
   text-transform: uppercase; white-space: nowrap; vertical-align: 1px;
   color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
@@ -363,7 +366,7 @@ a.row:hover .row-title { color: var(--accent); }
   font-variant-numeric: tabular-nums;
 }
 .row-meta .byline { display: inline; }
-.row-meta .avatar { width: 16px; height: 16px; font-size: 8.5px; vertical-align: -0.28em; }
+.row-meta .avatar { width: 16px; height: 16px; font-size: var(--fs-min); vertical-align: -0.28em; }
 .row-meta .byline-name { margin-left: 4px; }
 .row-lead { color: var(--faint); display: inline-flex; flex: none; }
 .row-trail { display: flex; align-items: center; gap: 8px; flex: none; }
@@ -461,7 +464,7 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 
 /* ---- tabs (navigation links, never role=tab) ---- */
 .tabs {
-  display: flex; gap: 2px; align-items: stretch;
+  min-width: 0; max-width: 100%; display: flex; gap: 2px; align-items: stretch;
   border-bottom: 1px solid var(--border);
   overflow-x: auto; scrollbar-width: none;
   scroll-snap-type: x proximity;
@@ -527,7 +530,7 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 @keyframes pop { from { opacity: 0; transform: translateY(-4px); } }
 .menu-title {
   display: block; padding: 6px 10px 4px;
-  font-size: 11.5px; font-weight: 600; letter-spacing: .08em;
+  font-size: var(--fs-min); font-weight: 600; letter-spacing: .08em;
   text-transform: uppercase; color: var(--faint);
 }
 .menu-item {
@@ -639,7 +642,7 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 .palette-group + .palette-group { margin-top: 4px; }
 .palette-heading {
   padding: 8px 10px 4px;
-  font-size: 11.5px; font-weight: 600; letter-spacing: .08em;
+  font-size: var(--fs-min); font-weight: 600; letter-spacing: .08em;
   text-transform: uppercase; color: var(--faint);
 }
 .palette-item {
@@ -774,9 +777,9 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 .card.empty { border-style: dashed; box-shadow: none; }
 
 /* ---- settings shell ---- */
-.settings { display: grid; gap: 20px; margin-top: 16px; }
+.settings { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; margin-top: 16px; }
 .settings-nav {
-  display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none;
+  min-width: 0; display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none;
   border-bottom: 1px solid var(--border);
 }
 .settings-nav::-webkit-scrollbar { display: none; }

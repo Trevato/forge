@@ -984,7 +984,7 @@ export function dependenciesCard(
             (i.closeReason === "dropped" || i.closeReason === "split")
               ? html`<form method="post" action="${action}" class="inline">
                   <input type="hidden" name="confirm" value="${i.number}" />
-                  <button class="btn btn-ghost btn-xs" type="submit">
+                  <button class="btn" data-variant="ghost" data-size="sm" type="submit">
                     Still holds
                   </button>
                 </form>`
@@ -993,7 +993,7 @@ export function dependenciesCard(
               ? html`<form method="post" action="${action}" class="inline">
                   <input type="hidden" name="unlink" value="${i.number}" />
                   <button
-                    class="btn btn-ghost btn-xs"
+                    class="btn" data-variant="ghost" data-size="sm"
                     type="submit"
                     aria-label="No longer waits for #${i.number}"
                   >

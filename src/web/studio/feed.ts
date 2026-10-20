@@ -80,8 +80,8 @@ export function feedCard(
         ${btn(target ? "Steer" : "Tell", { size: "sm", variant: "primary" })}
       </form>
       <span class="bar">
-        <button type="button" class="btn btn-sm btn-ghost" data-feed="dismissed" title="Dismiss (x)">Dismiss</button>
-        ${item.kind === "ask" || item.kind === "milestone" || item.kind === "choose" ? null : html`<button type="button" class="btn btn-sm btn-ghost" data-feed="muted" title="Mute ${item.app}">Mute app</button>`}
+        <button type="button" class="btn" data-variant="ghost" data-size="sm" data-feed="dismissed" title="Dismiss (x)">Dismiss</button>
+        ${item.kind === "ask" || item.kind === "milestone" || item.kind === "choose" ? null : html`<button type="button" class="btn" data-variant="ghost" data-size="sm" data-feed="muted" title="Mute ${item.app}">Mute app</button>`}
       </span>
     </details>`;
   return card(body, {
@@ -219,7 +219,7 @@ function chipsBar(user: User, ctx: Ctx, items: readonly FeedItem[]): Html {
   const chip = (kind: string, value: string, label: string, shown: boolean): Html =>
     html`<button
       type="button"
-      class="btn btn-sm btn-ghost feed-chip"
+      class="btn feed-chip" data-variant="ghost" data-size="sm"
       data-chip="${kind}"
       data-value="${value}"
       aria-pressed="${String(shown)}"
@@ -297,9 +297,12 @@ ${outboxJs}
     var n = outbox ? outbox.size() : 0;
     if (n > 0) parts.push(n + (n === 1 ? ' act is' : ' acts are') + ' waiting to send.');
     if (problem) parts.push(problem);
+    if (said) parts.unshift(said);
     note.textContent = parts.join(' ');
     note.hidden = parts.length === 0;
   }
+  var said = '';
+  function say(t) { said = t; paint(); setTimeout(function () { if (said === t) { said = ''; paint(); } }, 4000); }
   function flush() {
     if (!outbox) return;
     outbox.flush().then(paint);
@@ -321,7 +324,10 @@ ${outboxJs}
     if (next) next.focus();
   }
   // Acting is instant: the card goes, the act is kept and sent.
-  function act(card, kind) { if (send(card, kind)) gone(card); }
+  function act(card, kind) {
+    var app = card.getAttribute('data-app');
+    if (send(card, kind)) { gone(card); say((kind === 'muted' ? 'Muted ' + app + '.' : 'Dismissed.') ); }
+  }
   // A chip flips at once; the saved filter then redraws the region in place
   // (the same fragment the live region pulls), keeping scroll and focus. A
   // refusal puts the chip back and says why in the note.

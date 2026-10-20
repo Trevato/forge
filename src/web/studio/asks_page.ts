@@ -255,7 +255,7 @@ function mutableRow(ctx: Ctx, r: AskRow<Decision>, picked: ReadonlySet<string>):
       <input type="hidden" name="repo" value="${r.repo.id}" />
       <button
         type="submit"
-        class="btn btn-sm btn-ghost"
+        class="btn" data-variant="ghost" data-size="sm"
         title="Stop its asks reaching your home, inbox and phone"
         >Mute ${r.repo.ownerName}/${r.repo.name}</button
       >
@@ -408,7 +408,7 @@ export function needsYouSection(
           <span class="muted small" title="${silenced.map((r) => `${r.ownerName}/${r.name}`).join(", ")}"
             >${silenced.length} muted ${silenced.length === 1 ? "repository still asks" : "repositories still ask"}</span
           >
-          <button type="submit" class="btn btn-sm btn-ghost">Listen again</button>
+          <button type="submit" class="btn" data-variant="ghost" data-size="sm">Listen again</button>
         </form>`;
   const aside = putAsideWaves(ctx.app.db, user);
   const asideNote =

@@ -102,9 +102,10 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
   const onReviewer = requestedSays(requested.reviewer, "reviewer", now);
   const listed = asked(url);
   const shown = listed === null ? undefined : out.get(listed.key);
-  return html`<p id="bottleneck" data-stage="${worst?.key ?? ""}">
-      <strong>${verdict(stages, now)}</strong>
-    </p>
+  return html`${card(
+      html`<p id="bottleneck" data-stage="${worst?.key ?? ""}">
+          <strong>${verdict(stages, now)}</strong>
+        </p>
     ${conflicted === null ? "" : html`<p id="conflicted">${conflicted}</p>`}
     ${onBuilder === null ? "" : html`<p id="requested-builder">${onBuilder}</p>`}
     ${onReviewer === null ? "" : html`<p id="requested-reviewer">${onReviewer}</p>`}
@@ -127,7 +128,9 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
     <p class="muted small">
       Limits are set on <a href="/settings/capacity">Capacity</a>. How the forge stands against its threats is on
       <a href="/resilience">Resilience</a>; where an outside agent can help is on <a href="/contribute">Contribute</a>.
-    </p>
+    </p>`,
+      { id: "flow-summary" },
+    )}
     ${card(
       html`<div class="table-scroll">
         <table class="table" aria-label="Pipeline stages">
@@ -154,7 +157,7 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
                     <div class="muted small">${STAGE_HOLDS[s.key]}</div>
                   </th>
                   <td class="mono">${String(s.waiting)}</td>
-                  <td class="mono">${String(s.active)}</td>
+                  <td class="mono">${s.key === "live" ? "—" : String(s.active)}</td>
                   <td class="mono">${waited(s, now) ?? "—"}</td>
                   <td class="small">${s.capacity ?? "—"}</td>
                   <td>${outCell(base, out.get(s.key)!)}</td>

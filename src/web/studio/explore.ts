@@ -116,7 +116,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
         })),
       )}
       <a
-        class="btn btn-sm"
+        class="btn" data-size="sm"
         href="${href({ ...query, archived: !query.archived })}"
         aria-pressed="${query.archived ? "true" : "false"}"
         >Show archived</a

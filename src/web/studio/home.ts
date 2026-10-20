@@ -125,7 +125,7 @@ function yourApps(ctx: Ctx, user: User): Html {
         )}
         ${when(
           user.isAdmin && rows.length > 0,
-          () => html`<label class="btn btn-sm" for="apps-select">Select</label>
+          () => html`<label class="btn" data-size="sm" for="apps-select">Select</label>
             <span class="home-pick">${btn("Archive", { size: "sm" })}</span>`,
         )}
       </div>`;

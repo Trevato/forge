@@ -205,8 +205,7 @@ function userMenu(
     { label: "Explore", href: "/explore", icon: "search" },
     { label: "Map", href: "/map", icon: "map" },
     { separator: true, label: "" },
-    // The "+" menu is hidden on a phone to keep the topbar inside the
-    // screen; creating things stays one tap away here.
+    // The "+" menu shows on every width; these repeat it for the user menu.
     { label: "New app", href: "/apps/new", icon: "rocket" },
     { label: "New repository", href: "/new", icon: "repo" },
     { label: "Migrate", href: "/migrate", icon: "download" },
@@ -450,7 +449,7 @@ function topbar(
         ${searchBar()}
         ${user
           ? html`<a class="small" href="/asks" data-shortcut="g q">Asks</a
-              ><span class="hide-sm">${newMenu(ctx)}</span>${userMenu(
+              >${newMenu(ctx)}${userMenu(
                 ctx,
                 user,
                 theme,
