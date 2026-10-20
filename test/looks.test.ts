@@ -670,7 +670,7 @@ describe("the look", () => {
     const production = looksForEnv(app.db, record.id, "production").find(
       (l) => l.kind === "thumb",
     )!;
-    expect(page).toContain(`class="look-now"`);
+    expect(page).toContain(`class="look" data-slot="now"`);
     expect(page).toContain(
       `src="/alice/hello/looks/production/${production.commitOid}/thumb.png?v=`,
     );
@@ -761,8 +761,8 @@ describe("the look", () => {
     const page = await (
       await web(`/alice/hello/pulls/${opened.value.number}`, aliceCookie)
     ).text();
-    expect(page).toContain(`<p class="muted small look-page">/</p>`);
-    expect(page).toContain(`<p class="muted small look-page">/board</p>`);
+    expect(page).toContain(`<p class="muted small">/</p>`);
+    expect(page).toContain(`<p class="muted small">/board</p>`);
     expect(page).toContain(
       `src="/alice/hello/looks/${env}/${commitOid}/board-phone.png?v=`,
     );
@@ -805,7 +805,7 @@ describe("the look", () => {
       await web(`/alice/hello/pulls/${opened.value.number}`, aliceCookie)
     ).text();
     expect(darkPage).toContain(
-      `<a class="look look-phone" href="/alice/hello/looks/${env}/${commitOid}/phone-dark.png?v=`,
+      `<a class="look" data-slot="phone" href="/alice/hello/looks/${env}/${commitOid}/phone-dark.png?v=`,
     );
     expect(darkPage).toContain(
       `src="/alice/hello/looks/${env}/${commitOid}/board-desktop-dark.png?v=`,
@@ -1120,7 +1120,7 @@ describe("the look", () => {
       await web(`/alice/hello/pulls/${pull.number}`, aliceCookie)
     ).text();
     const group = (page: string) =>
-      text.split(`<p class="muted small look-page">${page}</p>`)[1]!.split("look-group")[0]!;
+      text.split(`<p class="muted small">${page}</p>`)[1]!.split("<section")[0]!;
     const map = group("/map");
     expect(map).toContain(`/looks/production/${mainOid}/map-phone.png?v=`);
     expect(map).toContain(`/looks/${env}/${oid}/map-phone.png?v=`);

@@ -161,7 +161,7 @@ export function lookCard(
       html`<p class="muted small">
         No picture yet. One is taken when the preview comes up green.
       </p>`,
-      { head, extra: "look-card" },
+      { head },
     );
   }
   // Home first, then the rest in the order the manifest is likeliest to
@@ -182,7 +182,7 @@ export function lookCard(
   ): Html => {
     const url = lookUrl(base, look);
     const scheme = look.theme === "dark" ? " in the dark" : "";
-    return html`<a class="look look-${kind}" href="${url}">
+    return html`<a class="look" data-slot="${kind}" href="${url}">
       <img
         src="${url}"
         width="${LOOK_SIZES[kind].width}"
@@ -202,18 +202,18 @@ export function lookCard(
       (l) => l.commitOid === headOid && l.error !== null,
     );
     const label = when(labelled, () =>
-      html`<p class="muted small look-page">${page}</p>`,
+      html`<p class="muted small">${page}</p>`,
     );
     const shown = phone ?? desktop;
     if (shown === undefined)
-      return html`<div class="look-group">
+      return html`<section class="stack stack-tight">
         ${label}
         <p class="muted small">
           ${failed === undefined
             ? "No picture yet. One is taken when the preview comes up green."
             : html`No picture of ${sha(headOid)}: ${failed.error}.`}
         </p>
-      </div>`;
+      </section>`;
     const moved = shown.commitOid !== headOid;
     const mainOfPage = mainLooks.filter((l) => l.page === page);
     const beforePhone = pictured(mainOfPage, "phone");
@@ -231,26 +231,26 @@ export function lookCard(
     );
     const darkPhone = pictured(darkOfPage, "phone");
     const darkDesktop = pictured(darkOfPage, "desktop");
-    return html`<div class="look-group">
+    return html`<section class="stack stack-tight">
       ${label}
-      <div class="look-compare">
-        <div class="look-side look-before">
+      <div class="looks" data-compare>
+        <div>
           <p class="muted small">Before · main</p>
           ${beforeShown.length === 0
-            ? html`<p class="muted small look-nobefore">
+            ? html`<p class="muted small">
                 Main has no look of ${page} yet.
               </p>`
-            : html`<div class="look-pair">
+            : html`<div class="looks">
                   ${beforeShown.map((l) => picture(l, l.kind, page, "main"))}
                 </div>
-                <span class="muted small look-of"
-                  >at ${sha(beforeShown[0]!.commitOid, `${base}/commit/${beforeShown[0]!.commitOid}`)} ·
-                  ${time(beforeShown[0]!.createdAt)}</span
-                >`}
+                <p class="muted small">
+                  at ${sha(beforeShown[0]!.commitOid, `${base}/commit/${beforeShown[0]!.commitOid}`)} ·
+                  ${time(beforeShown[0]!.createdAt)}
+                </p>`}
         </div>
-        <div class="look-side look-after">
+        <div>
           <p class="muted small">After · #${pull.number}</p>
-          <div class="look-pair">
+          <div class="looks">
             ${when(phone, (l) => picture(l, "phone", page))}
             ${when(desktop, (l) => picture(l, "desktop", page))}
           </div>
@@ -259,14 +259,14 @@ export function lookCard(
       ${when(darkPhone ?? darkDesktop, () =>
         html`<details class="quiet-details">
           <summary class="muted small">In the dark</summary>
-          <div class="look-pair">
+          <div class="looks">
             ${when(darkPhone, (l) => picture(l, "phone", page))}
             ${when(darkDesktop, (l) => picture(l, "desktop", page))}
           </div>
         </details>`,
       )}
-      <span class="muted small look-of"
-        >at ${sha(shown.commitOid, `${base}/commit/${shown.commitOid}`)} ·
+      <p class="muted small">
+        at ${sha(shown.commitOid, `${base}/commit/${shown.commitOid}`)} ·
         ${time(shown.createdAt)}${when(
           moved,
           () =>
@@ -274,16 +274,16 @@ export function lookCard(
             since${failed === undefined
               ? html`; a new picture follows its deploy`
               : html`; no picture of ${sha(headOid)}: ${failed.error}`}`,
-        )}</span
-      >
-    </div>`;
+        )}
+      </p>
+    </section>`;
   };
   // What people attached sits in the same strip, each with its line and
   // who put it there. Their size is their own: the picture's, not a window's.
   const person = (look: Look): Html => {
     const url = lookUrl(base, look);
     const size = attachedSize(ctx, look);
-    return html`<figure class="look-attached look-attached-${look.kind}">
+    return html`<figure data-slot="${look.kind}">
       <a class="look" href="${url}">
         <img
           src="${url}"
@@ -299,10 +299,12 @@ export function lookCard(
     </figure>`;
   };
   return card(
-    html`${pages.map(group)}${when(attached.length > 0, () =>
-      html`<div class="look-pair look-attachments">${attached.map(person)}</div>`,
-    )}`,
-    { head, extra: "look-card" },
+    html`<div class="stack">
+      ${pages.map(group)}${when(attached.length > 0, () =>
+        html`<div class="looks">${attached.map(person)}</div>`,
+      )}
+    </div>`,
+    { head },
   );
 }
 
@@ -346,7 +348,7 @@ export function lookNow(ctx: Ctx, repo: Repo, record: AppRecord): Html {
   const base = repoBase(repo);
   const size = LOOK_SIZES[look.kind];
   return html`<a
-    class="look-now"
+    class="look" data-slot="now"
     href="${base}/app/production/open"
     title="How it looks now, at ${look.commitOid.slice(0, 7)}"
   >
@@ -361,7 +363,7 @@ export function lookNow(ctx: Ctx, repo: Repo, record: AppRecord): Html {
 
 /** A small picture as a thumbnail that opens the pull. */
 export function lookThumb(href: string, src: string): Html {
-  return html`<a class="look-thumb" href="${href}"
+  return html`<a class="look" data-slot="thumb" href="${href}"
     ><img src="${src}" width="30" height="40" alt="" loading="lazy"
   /></a>`;
 }

@@ -294,6 +294,28 @@ a.sha:hover { color: var(--accent); }
 .card[data-tone="merged"] { border-color: color-mix(in srgb, var(--merged) 40%, var(--border)); }
 .card[data-tone="attn"] { border-color: color-mix(in srgb, var(--attn) 40%, var(--border)); }
 
+/* ---- look: a picture the forge took, in a hairline frame ----
+   A strip sets a phone beside a desktop: the phone keeps a phone's
+   narrowness, the desktop takes what is left, never more than its own size;
+   under 640px they stack. data-compare sets two sides (before, after) beside
+   each other instead. A thumb shows the top of the picture; now is
+   production small. */
+.look { display: block; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; background: var(--muted); }
+.look img { display: block; width: 100%; height: auto; }
+.look[data-slot="thumb"] { flex: none; width: 30px; height: 40px; border-radius: 4px; }
+.look[data-slot="thumb"] img { height: 100%; object-fit: cover; object-position: top; }
+.look[data-slot="now"] { flex: none; width: 168px; }
+.looks { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
+.looks > [data-slot="phone"] { flex: 0 0 200px; }
+.looks > [data-slot="desktop"] { flex: 1 1 320px; min-width: 0; max-width: 1280px; }
+.looks > figure { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.looks[data-compare] { gap: 20px; }
+.looks[data-compare] > * { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+@media (max-width: 640px) {
+  .looks:not([data-compare]) { flex-direction: column; }
+  .looks > [data-slot="phone"] { flex-basis: auto; width: 200px; }
+}
+
 /* ---- list rows ---- */
 .list > li + li { border-top: 1px solid var(--border); }
 .row {
