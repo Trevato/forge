@@ -39,7 +39,7 @@ import { crewNow, tellLink } from "./crew.ts";
 import { doorPage } from "./door.ts";
 import { notFound } from "../http/respond.ts";
 import { appMeasure } from "./measure.ts";
-import { rewritable, withToolbar, type PillWhere } from "./toolbar.ts";
+import { htmlAnswer, readPage, rewritable, withToolbar, type PillWhere } from "./toolbar.ts";
 
 export interface AppTarget {
   readonly app: AppRecord;
@@ -749,18 +749,32 @@ export async function proxyApp(
     !target.nested &&
     status.toolbar !== false &&
     response.body !== null &&
-    rewritable(out, response.status)
+    (rewritable(out, response.status) ||
+      (!out.has("content-length") && htmlAnswer(out, response.status)))
   ) {
-    let page: Uint8Array<ArrayBuffer> | undefined;
+    let bytes: Uint8Array<ArrayBuffer>;
     try {
-      page = withToolbar(
-        new Uint8Array(await response.arrayBuffer()),
-        runtime.options.forgeUrl,
-        pillWhere(runtime, target, vouched?.who),
-      );
+      if (out.has("content-length")) bytes = new Uint8Array(await response.arrayBuffer());
+      else {
+        // A streamed page is held only while it is small, quick and HTML;
+        // past that it goes on as it came, what was read first.
+        const read = await readPage(response.body);
+        if (!read.whole)
+          return new Response(read.rest, {
+            status: response.status,
+            statusText: response.statusText,
+            headers: out,
+          });
+        bytes = read.bytes;
+      }
     } catch {
       return unavailable(runtime, target, status, "the app stopped answering");
     }
+    const page = withToolbar(
+      bytes,
+      runtime.options.forgeUrl,
+      pillWhere(runtime, target, vouched?.who),
+    );
     let sent = page;
     // Whether it is gzipped depends on the client, so every copy says so.
     out.append("vary", "accept-encoding");

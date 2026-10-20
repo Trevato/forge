@@ -843,6 +843,15 @@ file), and if you named an agent, the sentence became issue #1, assigned.
   (`, M the edge owns`). The terminal's pull screen ends its checks row with the
   same words. Nothing here fails a deploy or the check; see
   [`docs/WEBSPEC-PREVIEWS.md`](docs/WEBSPEC-PREVIEWS.md).
+- **A streamed page gets the pill too.** An HTML answer with no
+  `Content-Length` is read up to 4 MiB for at most 100 ms, and only while its
+  first chunk starts like markup; if it ends in that window it gets the pill
+  like a sized page. Otherwise what was read is sent first and the rest of the
+  stream follows unchanged. The cost: a streamed page that is still going
+  waits up to those 100 ms before its first byte reaches the browser, so a slow
+  server-rendered page paints up to 100 ms later (a page sent with a
+  `Content-Length`, or one that starts with something other than markup, does
+  not wait). Event streams and WebSockets are untouched.
 - **The forge pill acts.** The pill the proxy adds to an app's pages
   (`"toolbar": false` in `forge.json` turns it off; to write it in, the proxy asks the app for the page uncompressed, so a page that carries the pill goes out without gzip) links to a forge page,
   `/:owner/:name/toolbar?env=production|pull-N`, opened in a tab of its own: the

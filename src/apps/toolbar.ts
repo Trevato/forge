@@ -161,12 +161,15 @@ export const REWRITE_MAX = 4 * 1024 * 1024;
 
 const SAFE_CHARSETS = new Set(["utf-8", "utf8", "us-ascii", "iso-8859-1", "latin1", "windows-1252"]);
 
+/** How long a streamed page may take to show its first bytes and its end. */
+export const STREAM_WAIT_MS = 100;
+
 /**
- * Whether a response's headers say its body can be rewritten byte-wise:
- * HTML, not compressed, not an attachment, in a charset where `</body>`
- * is plain ASCII, and of a length that is declared and bounded.
+ * Whether a response's headers say its body can be rewritten byte-wise,
+ * length aside: HTML, not compressed, not an attachment, in a charset where
+ * `</body>` is plain ASCII.
  */
-export function rewritable(headers: Headers, status: number): boolean {
+export function htmlAnswer(headers: Headers, status: number): boolean {
   if (status < 200 || status === 204 || status === 205 || status === 206 || status === 304)
     return false;
   // A byte range cannot be rewritten: Content-Range would stop matching.
@@ -179,6 +182,12 @@ export function rewritable(headers: Headers, status: number): boolean {
   if (encoding !== "" && encoding !== "identity") return false;
   if ((headers.get("content-disposition") ?? "").toLowerCase().startsWith("attachment"))
     return false;
+  return true;
+}
+
+/** An `htmlAnswer` whose length is declared and bounded. */
+export function rewritable(headers: Headers, status: number): boolean {
+  if (!htmlAnswer(headers, status)) return false;
   const length = headers.get("content-length");
   if (length === null || !/^\d{1,9}$/.test(length)) return false;
   return Number(length) <= REWRITE_MAX;
@@ -234,4 +243,76 @@ export function withToolbar(
   const at = buffer.toString("latin1").toLowerCase().lastIndexOf("</body");
   const cut = at < 0 ? buffer.length : at;
   return Buffer.concat([buffer.subarray(0, cut), tag, buffer.subarray(cut)]);
+}
+
+type Read = { done: boolean; value?: Uint8Array | undefined };
+
+/** What `readPage` found: the whole page, or every byte as a stream. */
+export type PageRead =
+  | { whole: true; bytes: Uint8Array<ArrayBuffer> }
+  | { whole: false; rest: ReadableStream<Uint8Array> };
+
+/** Whether a first chunk looks like markup: optional BOM and space, then `<`. */
+function htmlShaped(chunk: Uint8Array): boolean {
+  let i = 0;
+  if (chunk[0] === 0xef && chunk[1] === 0xbb && chunk[2] === 0xbf) i = 3;
+  while (i < chunk.length && [0x20, 0x09, 0x0a, 0x0d].includes(chunk[i]!)) i++;
+  return chunk[i] === 0x3c;
+}
+
+/**
+ * Read a streamed page of unknown length. If it ends within `max` bytes and
+ * `wait` milliseconds, and begins like HTML, it is returned whole. Otherwise
+ * `rest` carries every byte, those already read first, in order.
+ */
+export async function readPage(
+  body: ReadableStream<Uint8Array>,
+  max = REWRITE_MAX,
+  wait = STREAM_WAIT_MS,
+): Promise<PageRead> {
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  let pending: Promise<Read> | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<"late">((resolve) => {
+    timer = setTimeout(resolve, wait, "late");
+  });
+  let whole = false;
+  try {
+    for (;;) {
+      pending ??= reader.read();
+      const got = await Promise.race([pending, late]);
+      if (got === "late") break;
+      pending = undefined;
+      if (got.done) {
+        whole = true;
+        break;
+      }
+      const first = chunks.length === 0;
+      chunks.push(got.value!);
+      size += got.value!.length;
+      if ((first && !htmlShaped(got.value!)) || size > max) break;
+    }
+  } catch (error) {
+    reader.cancel(error).catch(() => {});
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+  if (whole) return { whole: true, bytes: new Uint8Array(Buffer.concat(chunks)) };
+  return {
+    whole: false,
+    rest: new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        const next = chunks.shift();
+        if (next !== undefined) return controller.enqueue(next);
+        const got = await (pending ?? reader.read());
+        pending = undefined;
+        if (got.done) controller.close();
+        else controller.enqueue(got.value!);
+      },
+      cancel: (reason) => reader.cancel(reason),
+    }),
+  };
 }

@@ -17,7 +17,7 @@ import { getAppByRepo } from "../src/core/apps.ts";
 import { listRuns } from "../src/core/runs.ts";
 import { AppsRuntime, type EnvStatus } from "../src/apps/runtime.ts";
 import { parseManifest } from "../src/apps/manifest.ts";
-import { REWRITE_MAX, TOOLBAR_PATH, toolbarJs, withToolbar } from "../src/apps/toolbar.ts";
+import { REWRITE_MAX, TOOLBAR_PATH, readPage, toolbarJs, withToolbar } from "../src/apps/toolbar.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -76,6 +76,46 @@ describe("the forge pill", () => {
             }),
             { headers: html },
           );
+        if (path === "/chunked-big") {
+          const piece = new TextEncoder().encode("<p>" + "b".repeat(1024 * 1024) + "</p>");
+          return new Response(
+            new ReadableStream({
+              start(c) {
+                c.enqueue(new TextEncoder().encode("<html><body>"));
+                for (let i = 0; i < 5; i++) c.enqueue(piece);
+                c.enqueue(new TextEncoder().encode("</body></html>"));
+                c.close();
+              },
+            }),
+            { headers: html },
+          );
+        }
+        if (path === "/slow") {
+          return new Response(
+            new ReadableStream({
+              async start(c) {
+                c.enqueue(new TextEncoder().encode("<html><body>one"));
+                await Bun.sleep(250);
+                c.enqueue(new TextEncoder().encode("two</body></html>"));
+                c.close();
+              },
+            }),
+            { headers: html },
+          );
+        }
+        if (path === "/notmarkup") {
+          return new Response(
+            new ReadableStream({
+              async start(c) {
+                c.enqueue(new TextEncoder().encode('{"a":1}'));
+                await Bun.sleep(10);
+                c.enqueue(new TextEncoder().encode("</body>"));
+                c.close();
+              },
+            }),
+            { headers: html },
+          );
+        }
         if (path === "/range")
           return new Response(HTML.slice(0, 20), {
             status: 206,
@@ -174,7 +214,29 @@ describe("the forge pill", () => {
     expect(gz.headers.get("content-encoding")).toBe("gzip");
     // The client unzips what the app zipped; no tag went in before that.
     expect(await gz.text()).toBe(HTML);
-    expect(await (await at("/stream")).text()).toBe(HTML);
+  });
+
+  test("a chunked page under the limit gets the pill", async () => {
+    const text = await (await at("/stream")).text();
+    expect(text).toContain(tag());
+    expect(text.replace(tag(), "")).toBe(HTML);
+  });
+
+  test("a chunked page over the limit arrives byte-identical with no pill", async () => {
+    const res = await at("/chunked-big");
+    const got = Buffer.from(await res.arrayBuffer()).toString();
+    const piece = "<p>" + "b".repeat(1024 * 1024) + "</p>";
+    expect(got).toBe("<html><body>" + piece.repeat(5) + "</body></html>");
+    expect(got).not.toContain(TOOLBAR_PATH);
+  });
+
+  test("a streamed page still open after the wait arrives whole with no pill", async () => {
+    const got = await (await at("/slow")).text();
+    expect(got).toBe("<html><body>onetwo</body></html>");
+  });
+
+  test("a streamed text/html answer that does not start like markup is untouched", async () => {
+    expect(await (await at("/notmarkup")).text()).toBe('{"a":1}</body>');
   });
 
   test("a ranged answer, a HEAD, a huge page and a foreign charset pass through", async () => {
@@ -500,4 +562,57 @@ describe("the opt-out, from forge.json to the proxy", () => {
     expect(html).toContain("<");
     expect(html).not.toContain(TOOLBAR_PATH);
   }, 180_000);
+});
+
+describe("readPage", () => {
+  const enc = new TextEncoder();
+  const stream = (parts: (string | Uint8Array | number)[]) =>
+    new ReadableStream<Uint8Array>({
+      async start(c) {
+        for (const part of parts) {
+          if (typeof part === "number") await Bun.sleep(part);
+          else c.enqueue(typeof part === "string" ? enc.encode(part) : part);
+        }
+        c.close();
+      },
+    });
+  const text = async (body: ReadableStream<Uint8Array>) => await new Response(body).text();
+
+  test("a page that ends in time and in size is returned whole", async () => {
+    const got = await readPage(stream(["<p>a", "b</p>"]), 100, 1000);
+    expect(got.whole).toBe(true);
+    if (got.whole) expect(new TextDecoder().decode(got.bytes)).toBe("<p>ab</p>");
+  });
+
+  test("a page still open after the wait is passed on in order", async () => {
+    const got = await readPage(stream(["<p>a", 200, "b</p>"]), 100, 30);
+    expect(got.whole).toBe(false);
+    if (!got.whole) expect(await text(got.rest)).toBe("<p>ab</p>");
+  });
+
+  test("a page past max is passed on in order", async () => {
+    const got = await readPage(stream(["<p>aaaa", "bbbb", "cccc</p>"]), 8, 1000);
+    expect(got.whole).toBe(false);
+    if (!got.whole) expect(await text(got.rest)).toBe("<p>aaaabbbbcccc</p>");
+  });
+
+  test("a first chunk that is not markup passes through, even if the stream is short", async () => {
+    const got = await readPage(stream(['{"a":1}', "</body>"]), 100, 1000);
+    expect(got.whole).toBe(false);
+    if (!got.whole) expect(await text(got.rest)).toBe('{"a":1}</body>');
+  });
+
+  test("a BOM and leading whitespace before < still count as markup", async () => {
+    const bom = Uint8Array.from([0xef, 0xbb, 0xbf, ...enc.encode(" \r\n\t<p>x</p>")]);
+    const got = await readPage(stream([bom]), 100, 1000);
+    expect(got.whole).toBe(true);
+    const spaced = await readPage(stream(["  \n<p>"]), 100, 1000);
+    expect(spaced.whole).toBe(true);
+  });
+
+  test("a BOM or whitespace followed by something else is not markup", async () => {
+    const bom = Uint8Array.from([0xef, 0xbb, 0xbf, ...enc.encode("x<p>")]);
+    expect((await readPage(stream([bom]), 100, 1000)).whole).toBe(false);
+    expect((await readPage(stream(["  \nplain"]), 100, 1000)).whole).toBe(false);
+  });
 });
