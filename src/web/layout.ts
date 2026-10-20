@@ -634,6 +634,7 @@ export function page(options: PageOptions, status = 200): Response {
             />`,
         )}
         ${when(options.refresh, refreshMeta)}
+        <meta name="color-scheme" content="light dark" />
         ${theme
           ? html`<meta name="theme-color" content="${metaThemeColor(theme)}" />`
           : html`<meta
