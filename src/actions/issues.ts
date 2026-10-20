@@ -46,7 +46,7 @@ import {
   standsForPerson,
 } from "../core/issues.ts";
 import { isStructural, pillarsOf } from "../core/pillars.ts";
-import { getPull } from "../core/pulls.ts";
+import { closesFromBody, getPull } from "../core/pulls.ts";
 import { canRead, canWrite, type Repo } from "../core/repos.ts";
 import { getUserById, type User } from "../core/users.ts";
 import {
@@ -400,12 +400,16 @@ export function setIssueState(
     issue.kind === "pull" &&
     user.value.kind === "agent" &&
     user.value.id === issue.authorId;
+  const plannerClosesPull =
+    state === "closed" &&
+    plannerMayClosePull(app, repo, issue, user.value, closing);
   const mayModerate =
     ownSay ||
     withdrawsOwn ||
     canWrite(app.db, repo, user.value) ||
     (state === "closed" &&
-      handedToPlanner(app, repo, issue, user.value, closing));
+      handedToPlanner(app, repo, issue, user.value, closing)) ||
+    plannerClosesPull;
   if (!mayModerate) return err("forbidden");
   // The plan's own issues — a pillar's umbrella, the Later umbrella, the
   // Later gate — are a person's to close, whatever access an agent holds:
@@ -463,6 +467,13 @@ export function setIssueState(
             : ""
         }`,
       });
+    // The planner's close of a pull is logged on its thread, with the why.
+    if (written && plannerClosesPull && !canWrite(app.db, repo, user.value))
+      insertComment(app.db, {
+        issueId: issue.id,
+        authorId: user.value.id,
+        body: PLANNER_CLOSED_PULL_NOTE,
+      });
     return written;
   })();
   if (!changed) return ok(getIssueById(app.db, issue.id) ?? issue);
@@ -485,6 +496,34 @@ export function setIssueState(
   return ok(changed);
 }
 
+export const PLANNER_CLOSED_PULL_NOTE =
+  "Closed by the planner: the issue this pull was built for is closed.";
+
+/**
+ * The one close the planner has on a pull: an open, unmerged pull an agent
+ * wrote, whose description names the issue(s) it was built for and every
+ * one of them is closed. A person's pull, a merge, and a reopen stay with
+ * the people who can write here.
+ */
+function plannerMayClosePull(
+  app: App,
+  repo: Repo,
+  issue: Issue,
+  actor: User,
+  closing: Closing,
+): boolean {
+  if (issue.kind !== "pull" || issue.state !== "open") return false;
+  if (actor.kind !== "agent" || crewRole(app.db, repo.id, actor.id) !== "planner")
+    return false;
+  if (closing.reason !== undefined || closing.into !== undefined) return false;
+  if (!issue.authorIsAgent) return false;
+  if (getPull(app.db, repo.id, issue.number)?.mergedAt != null) return false;
+  const built = closesFromBody(issue.body)
+    .map((n) => getIssue(app.db, repo.id, n))
+    .filter((i): i is Issue => i !== undefined && i.kind === "issue");
+  return built.length > 0 && built.every((i) => i.state === "closed");
+}
+
 /**
  * The one close a crew member may make on an issue it did not write: the
  * repository's planner, on an open issue it is re-planning — one the crew
@@ -501,8 +540,8 @@ export function setIssueState(
  *
  * - done, only when commits on main already name the issue (`alreadyDone`).
  *
- * A pull, a reopen, and any other close stay with the people who can write
- * here.
+ * A reopen and any other close stay with the people who can write here; the
+ * one close of a pull is `plannerMayClosePull`'s.
  */
 function handedToPlanner(
   app: App,

@@ -333,7 +333,7 @@ import {
 import { appsRuntime, envsFor, type AppsRuntime } from "../apps/runtime.ts";
 import { isEnvName } from "../apps/data.ts";
 import { getAppByRepo } from "../core/apps.ts";
-import { isCrew, type Agent } from "../core/agents.ts";
+import { crewRole, isCrew, type Agent } from "../core/agents.ts";
 import { listApps, type AppRecord } from "../core/apps.ts";
 import {
   CLOSE_REASONS,
@@ -3748,7 +3748,20 @@ export function apiRoutes(router: Router<Handler>): void {
           getPull(ctx.app.db, found.repo.id, found.pull.number)!,
           wanted,
         );
-        if (!changed.ok) return originAware(changed.error, 409);
+        if (!changed.ok) {
+          // A planner told no learns the one rule it works by.
+          if (
+            changed.error === "forbidden" &&
+            wanted === "closed" &&
+            crewRole(ctx.app.db, found.repo.id, ctx.auth.user!.id) === "planner"
+          )
+            return apiError(
+              "forbidden",
+              403,
+              "a planner may close only an agent's pull whose issue is closed",
+            );
+          return originAware(changed.error, 409);
+        }
       }
       return json(
         withLabels(ctx, getPull(ctx.app.db, found.repo.id, found.pull.number)!),
