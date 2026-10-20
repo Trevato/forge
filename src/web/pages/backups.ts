@@ -30,6 +30,12 @@ import type { Store } from "../../snapshot/store.ts";
 import { snapshotsOf, type SnapshotsHandle } from "../../snapshot/service.ts";
 import { lastSnapshotOutcome } from "../../snapshot/outcome.ts";
 import type { Ctx } from "../../http/context.ts";
+import {
+  notePhase,
+  takeSessionTime,
+  timePhase,
+  timePhaseAsync,
+} from "../../core/route_timing.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
@@ -242,15 +248,25 @@ export function domainsMoved(): Response {
   return redirect("/settings/backups#domains");
 }
 
+/** Build the page and name the time it took as `render`. */
+const rendered = (ctx: Ctx, build: () => Response): Response =>
+  timePhase(ctx.request, "render", build);
+
 export async function backupsPage(ctx: Ctx): Promise<Response> {
   const denied = requireAdmin(ctx);
   if (denied) return denied;
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const svc = snapshotsOf(ctx.app);
-  const form = html`${destinationCard(ctx)}${mirrorCard(ctx)}${domainsCard(ctx)}`;
-  if (svc === undefined || svc.store === undefined)
-    return shell(
-      ctx,
-      html`${recoveryLine({
+  const form = html`${timePhase(ctx.request, "destination", () => destinationCard(ctx))}${timePhase(
+    ctx.request,
+    "mirror",
+    () => mirrorCard(ctx),
+  )}${timePhase(ctx.request, "domains", () => domainsCard(ctx))}`;
+  if (svc === undefined || svc.store === undefined) {
+    return rendered(ctx, () =>
+      shell(
+        ctx,
+        html`${recoveryLine({
         reachable: false,
         unreachable: "no snapshot store is set",
         now: Date.now(),
@@ -259,8 +275,11 @@ export async function backupsPage(ctx: Ctx): Promise<Response> {
         title: "No snapshots are taken",
         note: "This forge was given nowhere to put them. On the platform an app's bucket (S3_*) is the place; on a machine, FORGE_SNAPSHOT_DIR names a directory. Seal a bucket below, or restart with one set, and a snapshot is taken every night at 08:00 UTC.",
       })}${form}`,
+      ),
     );
-  return shell(ctx, html`${await movingPart(ctx, svc, svc.store)}${form}`);
+  }
+  const moving = await movingPart(ctx, svc, svc.store, true);
+  return rendered(ctx, () => shell(ctx, html`${moving}${form}`));
 }
 
 /** GET /settings/backups/live — the moving part alone, which the page refetches on an event. */
@@ -279,11 +298,14 @@ async function movingPart(
   ctx: Ctx,
   svc: SnapshotsHandle,
   store: Store,
+  timed = false,
 ): Promise<Html> {
   const now = Date.now();
+  const read = <T>(name: string, work: () => T): T =>
+    timed ? timePhase(ctx.request, name, work) : work();
   // A failure is kept on disk, so it is shown after a restart too; this
   // process's own failure is newer when the file could not be written.
-  const kept = lastSnapshotOutcome(ctx.app.config.dataDir);
+  const kept = read("outcome", () => lastSnapshotOutcome(ctx.app.config.dataDir));
   const last = svc.last();
   const failing =
     kept?.failingSince !== undefined
@@ -296,11 +318,13 @@ async function movingPart(
   let snapshots: Awaited<ReturnType<typeof svc.list>> = [];
   let listing: string | undefined;
   try {
-    snapshots = await svc.list();
+    snapshots = timed
+      ? await timePhaseAsync(ctx.request, "snapshots", () => svc.list())
+      : await svc.list();
   } catch (error) {
     listing = String(error);
   }
-  const d = lastDrill(ctx.app.db);
+  const d = read("drill", () => lastDrill(ctx.app.db));
   const recovery = recoveryLine({
     reachable: listing === undefined,
     unreachable: "the snapshot store could not be listed",
