@@ -328,7 +328,7 @@ describe("shardCount", () => {
     const src = readFileSync(new URL("../scripts/test-shards.ts", import.meta.url), "utf8");
     expect(src).toContain('resolveLimits("step", declared).memoryMiB');
     const saved = process.env["FORGE_CELL_MEMORY_MAX_MIB"];
-    delete process.env["FORGE_CELL_MEMORY_MAX_MIB"];
+    process.env["FORGE_CELL_MEMORY_MAX_MIB"] = "4096";
     try {
       expect(resolveLimits("step", { memoryMiB: 8192 }).memoryMiB).toBe(4096);
     } finally {

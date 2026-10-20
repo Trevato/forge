@@ -39,9 +39,14 @@ import { portInsteadOfSocket } from "../git/hook-address.ts";
 import { relay, startEgress, type Egress } from "./egress.ts";
 import { cgroupHost, enterArgv, openCellCgroup } from "./cgroup.ts";
 
+/** `ceiling`: a declaration was cut to the machine's maximum; `declared`: forge.json's own; `default`: neither. */
+export type MemorySource = "ceiling" | "declared" | "default";
+
 export interface Limits {
   /** Resident memory of every process in the cell together, MiB. */
   readonly memoryMiB: number;
+  /** Where `memoryMiB` came from, for the line that says it was exceeded. */
+  readonly memorySource?: MemorySource | undefined;
   /** Cores, averaged over `CPU_WINDOW_MS`. */
   readonly cpus: number;
   /** Bytes on disk under the cell's writable directories, MiB. */
@@ -60,10 +65,52 @@ export const DEFAULT_LIMITS: Record<"app" | "step", Limits> = {
 /** The most any declaration gets on this machine. */
 export function maxLimits(): Limits {
   return {
-    memoryMiB: positive(process.env["FORGE_CELL_MEMORY_MAX_MIB"]) ?? 4096,
+    memoryMiB: memoryCeiling(process.env["FORGE_CELL_MEMORY_MAX_MIB"]),
     cpus: availableParallelism(),
     diskMiB: positive(process.env["FORGE_CELL_DISK_MAX_MIB"]) ?? 16384,
   };
+}
+
+/** The share of the pod's memory a single cell may be given. */
+export const POD_MEMORY_SHARE = 0.75;
+
+/**
+ * The most memory one cell gets, MiB: `FORGE_CELL_MEMORY_MAX_MIB` when set,
+ * else a share of the pod's own `memory.max`, else 4096 where the host
+ * states no limit. Never a number the host cannot give.
+ */
+export function memoryCeiling(
+  env: string | undefined,
+  podFile = "/sys/fs/cgroup/memory.max",
+): number {
+  const set = positive(env);
+  if (set !== undefined) return set;
+  try {
+    const bytes = Number(readFileSync(podFile, "utf8").trim());
+    if (Number.isFinite(bytes) && bytes > 0)
+      return Math.max(1, Math.floor((bytes * POD_MEMORY_SHARE) / 1048576));
+  } catch {
+    // no cgroup v2 here, or "max" (unlimited): the fixed default below
+  }
+  return 4096;
+}
+
+/** The line saying a declared memory limit is cut to the machine's ceiling; none when it is not. */
+export function limitWarnings(declared: DeclaredLimits | undefined): string[] {
+  const want = declared?.memoryMiB;
+  const have = maxLimits().memoryMiB;
+  return want !== undefined && want > have
+    ? [`warning: forge.json declares memory ${want} MiB; this machine grants at most ${have} (FORGE_CELL_MEMORY_MAX_MIB, else a share of the pod's memory)`]
+    : [];
+}
+
+/** Where a cell's memory limit came from, for the line that says it was exceeded. */
+export function memorySource(source: MemorySource | undefined): string {
+  return source === "ceiling"
+    ? "the machine's ceiling, FORGE_CELL_MEMORY_MAX_MIB; a higher forge.json limit was held to it"
+    : source === "declared"
+      ? "forge.json limits.memory"
+      : "the default";
 }
 
 function positive(raw: string | undefined): number | undefined {
@@ -78,8 +125,10 @@ export function resolveLimits(
 ): Limits {
   const base = DEFAULT_LIMITS[kind];
   const max = maxLimits();
+  const want = declared?.memoryMiB;
   return {
-    memoryMiB: Math.min(declared?.memoryMiB ?? base.memoryMiB, max.memoryMiB),
+    memoryMiB: Math.min(want ?? base.memoryMiB, max.memoryMiB),
+    memorySource: want === undefined ? "default" : want > max.memoryMiB ? "ceiling" : "declared",
     cpus: Math.min(declared?.cpus ?? base.cpus, max.cpus),
     diskMiB: Math.min(declared?.diskMiB ?? base.diskMiB, max.diskMiB),
   };
@@ -672,7 +721,7 @@ function descendants(root: number): number[] {
   return order;
 }
 
-function watchTree(
+export function watchTree(
   root: number,
   limits: Limits,
   cap: MemoryCap,
@@ -821,7 +870,7 @@ function tick(): void {
     entry.last = { ticks, kib };
     if (kib > limits.memoryMiB * 1024) {
       entry.breach(
-        `used ${mib(kib * 1024)} of memory, over its ${limits.memoryMiB} MiB limit`,
+        `used ${mib(kib * 1024)} of memory, over its ${limits.memoryMiB} MiB limit (${memorySource(limits.memorySource)})`,
       );
       continue;
     }

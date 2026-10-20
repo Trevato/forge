@@ -75,6 +75,7 @@ import {
 } from "../core/capacity.ts";
 import {
   cellsAvailable,
+  limitWarnings,
   resolveLimits,
   STEP_HOSTS,
   type CellSpec,
@@ -798,6 +799,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         }
       : undefined;
     try {
+      for (const line of limitWarnings(manifest.limits)) write(line);
       const cellCpus = resolveLimits("step", manifest.limits).cpus;
       const env = childEnv({
         // The shard count an admin set (`core/capacity.ts`), else the
