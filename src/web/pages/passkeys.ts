@@ -23,6 +23,7 @@ import { createSession } from "../../core/sessions.ts";
 import { recoveryAccount, requestRecovery, spendRecoveryLink } from "../../actions/verify.ts";
 import { getUserById, isActive } from "../../core/users.ts";
 import { crossOrigin, type Ctx } from "../../http/context.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { clientAddress, clientBucket } from "../../http/peer.ts";
 import { STRANGER_MAX } from "../../http/limits.ts";
 import { boundedBody, json, str } from "../../http/respond.ts";
@@ -61,8 +62,11 @@ function sessionOnly(ctx: Ctx): Response | undefined {
 
 // GET /settings/passkeys
 export function passkeysPage(ctx: Ctx): Response {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   if (!ctx.auth.user) return signInFirst(ctx);
-  const keys = listPasskeys(ctx.app.db, ctx.auth.user.id);
+  const user = ctx.auth.user;
+  const keys = timePhase(ctx.request, "passkeys", () => listPasskeys(ctx.app.db, user.id));
+  const rendering = performance.now();
   const body = html`<p class="muted small mb">
       A passkey signs you in with a fingerprint, face or device PIN instead of
       a password. Add one per device; each can be removed on its own.
@@ -99,7 +103,9 @@ export function passkeysPage(ctx: Ctx): Response {
         </div>`,
       { head: html`<h3>New passkey</h3>` },
     )}`;
-  return accountShell(ctx, "passkeys", "Passkeys", body, 200, passkeyJs);
+  const response = accountShell(ctx, "passkeys", "Passkeys", body, 200, passkeyJs);
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 // POST /settings/passkeys/options — a challenge for a new passkey.
