@@ -682,8 +682,8 @@ function node(
     data-crit="${emphasis.critical.has(n.issue.id) ? "1" : "0"}"
     ${run ? html`data-run="${run}"` : null}
     href="${issueHref(base, n.issue.number)}"
+    aria-label="${number} ${n.issue.title} — ${word}${word === "held" ? ` by ${emphasis.marks.onHold.get(n.issue.id)}` : word === "deferred" ? `: ${emphasis.marks.deferred.get(n.issue.id)}` : emphasis.marks.why.has(n.issue.id) ? `: ${emphasis.marks.why.get(n.issue.id)}` : ""}"
   >
-    <title>${number} ${n.issue.title} — ${word}${word === "held" ? ` by ${emphasis.marks.onHold.get(n.issue.id)}` : word === "deferred" ? `: ${emphasis.marks.deferred.get(n.issue.id)}` : emphasis.marks.why.has(n.issue.id) ? `: ${emphasis.marks.why.get(n.issue.id)}` : ""}</title>
     ${word === "working"
       ? html`<rect
           class="map-breath"

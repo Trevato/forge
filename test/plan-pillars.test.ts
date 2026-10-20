@@ -253,9 +253,9 @@ describe("a plan says what each issue is for", () => {
       )?.[0] ?? "";
     // Deferred is its own word (#733): not ready, and not blocked by work.
     expect(card("The profit slider")).toContain('data-state="deferred"');
-    expect(card("The profit slider")).toContain(
-      "— deferred: behind the Later gate</title>",
-    );
+    expect(
+      card("The profit slider").match(/aria-label="([^"]*)"/)?.[1],
+    ).toMatch(/— deferred: behind the Later gate$/);
     expect(card("Repo transfer")).toContain('data-state="deferred"');
     expect(card("Contain the agent")).toContain('data-state="ready"');
     expect(card("Later gate")).toContain('data-state="blocked"');

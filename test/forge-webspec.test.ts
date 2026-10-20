@@ -41,7 +41,6 @@ const KNOWN_SIGNED_IN: Record<string, [string, string]> = {
   "etag /settings/backups": [CACHING, NO_ETAG],
   "etag /audit": [CACHING, NO_ETAG],
   "etag /fleet/graph": [CACHING, NO_ETAG],
-  "title /map": ["https://specification.website/#title", "each map node is an inline SVG element whose <title> is its tooltip and accessible name, beside the page's own"],
 };
 
 let cookie = "";
