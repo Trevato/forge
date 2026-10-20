@@ -5,6 +5,7 @@
  * not do here.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { chmodSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -166,6 +167,7 @@ describe("the forge over MCP", () => {
     expect(names).toEqual([
       "sizes",
       "apps",
+      "new_app",
       "repo",
       "here",
       "tell",
@@ -1072,4 +1074,62 @@ describe("the forge over MCP", () => {
     expect(cleared.value).toEqual({ username: "ceilee", dailyUsd: null, perRunUsd: null });
     expect(getAccountCeiling(app.db, id)).toBeUndefined();
   });
+
+  test("new_app makes an app from a sentence and apps reads it back", async () => {
+    const bot = await createAgent(app, alice, { username: "newappbot", brief: "builds" });
+    if (!bot.ok) throw new Error(String(bot.error));
+    const made = (await tool(rw, "new_app", {
+      name: "sentence",
+      description: "a page that says hello",
+      agent: "newappbot",
+    })) as any;
+    expect(made.value.repo).toBe("alice/sentence");
+    expect(made.value.issue).toBe(1);
+    expect(made.value.agent).toBe("newappbot");
+    const seen = (await tool(rw, "apps")) as any;
+    const row = seen.value.find((r: any) => r.app === "alice/sentence");
+    expect(row).toBeDefined();
+    expect(row.url).toBe(made.value.url);
+    // The API's refusals, in its words.
+    expect((await tool(rw, "new_app", { name: "sentence" })).error).toContain("name_taken");
+    expect((await tool(rw, "new_app", { name: "other", agent: "nobody-here" })).error).toContain("no_such_agent");
+    // Without the rw scope nothing is made.
+    const denied = await tool(ro, "new_app", { name: "readonly" });
+    expect(denied.error).toContain("forbidden");
+    expect((await tool(rw, "apps") as any).value.some((r: any) => r.app === "alice/readonly")).toBe(false);
+  }, 30_000);
+
+  test("new_app with pick lets the planner name the agent", async () => {
+    const picked = await createAgent(app, alice, { username: "pickbot", brief: "builds" });
+    if (!picked.ok) throw new Error(String(picked.error));
+    const dir = await mkdtemp(join(tmpdir(), "forge-mcp-pick-"));
+    const fake = join(dir, "fake-claude");
+    writeFileSync(
+      fake,
+      `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
+printf '%s\\n' '{"is_error":false,"result":"{\\"summary\\":\\"Build it\\",\\"checklist\\":[\\"One\\"],\\"agent\\":\\"pickbot\\",\\"confidence\\":0.8}"}'
+`,
+    );
+    chmodSync(fake, 0o755);
+    const real = process.env["FORGE_CLAUDE"];
+    process.env["FORGE_CLAUDE"] = fake;
+    try {
+      const made = (await tool(rw, "new_app", {
+        name: "picked",
+        description: "a page that says hello",
+        pick: true,
+      })) as any;
+      expect(made.error).toBeUndefined();
+      expect(made.value.agent).toBe("pickbot");
+      expect(typeof made.value.issue).toBe("number");
+      const row = ((await tool(rw, "apps")) as any).value.find((r: any) => r.app === "alice/picked");
+      expect(row.url).toBe(made.value.url);
+      if (row.url !== null) expect(typeof made.value.url).toBe("string");
+    } finally {
+      if (real === undefined) delete process.env["FORGE_CLAUDE"];
+      else process.env["FORGE_CLAUDE"] = real;
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

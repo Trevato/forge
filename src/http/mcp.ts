@@ -140,7 +140,10 @@ import {
   directionNote,
   OUTSIDERS_NOTE,
 } from "../crew/direct.ts";
-import { setArchived, setCrewOutsiders, setDecisionsBy } from "../actions/repos.ts";
+import { setArchived, setCrewOutsiders, setDecisionsBy, repositoryLimitMessage } from "../actions/repos.ts";
+import { newApp } from "../actions/apps.ts";
+import { appLimitWords } from "../actions/app_limit.ts";
+import { storageLimitMessage } from "../core/storage.ts";
 import { mapJson, marksFor } from "../web/pages/map.ts";
 import { applyFleetIds, previewFleetIds, undoFleetOp } from "../actions/fleet.ts";
 import { applyLimb, isLimbAction, previewLimb } from "../actions/limbs.ts";
@@ -433,6 +436,62 @@ const TOOLS: readonly Tool[] = [
           };
         }),
       );
+    },
+  },
+  {
+    name: "new_app",
+    description:
+      "Make an app from a sentence: a repository with a working app in it, production started, and — with `description` — the first issue, on the agent you name (`agent`) or the one the forge picks (`pick`). Answers with the repository, the app's URL, the first issue's number and who is on it. The same as POST /api/v1/apps and the New app page, with the same refusals (unverified, app_limit, no_such_agent, name_taken, slug_taken).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", maxLength: 100, description: "The app's name." },
+        description: { type: "string", maxLength: 4000, description: "What it should become; opens the first issue." },
+        owner: { type: "string", maxLength: 39, description: "You, or an organisation you can write to." },
+        visibility: { type: "string", enum: ["public", "private"], description: "Private unless you say public." },
+        agent: { type: "string", maxLength: 39, description: "The agent to put on the crew and hand the first issue to." },
+        pick: { type: "boolean", description: "Let the forge pick the agent from the description, when `agent` is not given." },
+      },
+      required: ["name"],
+    },
+    writes: true,
+    async run(ctx, user, args) {
+      const text = (k: string) => (typeof args[k] === "string" ? (args[k] as string) : undefined);
+      const visibility = args["visibility"];
+      const owner = text("owner");
+      const description = text("description");
+      const agent = text("agent");
+      const made = await newApp(ctx.app, user, {
+        name: str(args["name"]),
+        ...(owner === undefined ? {} : { owner }),
+        ...(description === undefined ? {} : { description }),
+        ...(visibility === "public" || visibility === "private" ? { visibility } : {}),
+        ...(agent === undefined ? {} : { agent }),
+        ...(args["pick"] === true ? { pickAgent: true } : {}),
+      });
+      if (!made.ok) {
+        switch (made.error) {
+          case "unverified":
+            return bad("unverified", "verify your email first");
+          case "app_limit": {
+            const who = getUserByName(ctx.app.db, owner || user.username);
+            return bad("app_limit", who ? appLimitWords(ctx.app, who.id) : "App limit reached.");
+          }
+          case "repository_limit":
+            return bad("repository_limit", repositoryLimitMessage(ctx.app, user));
+          case "storage_limit":
+            return bad("storage_limit", storageLimitMessage(ctx.app, user.id));
+          default:
+            return bad(made.error, made.error);
+        }
+      }
+      const { repo, app: record, issue } = made.value;
+      return good({
+        repo: `${repo.ownerName}/${repo.name}`,
+        url: appsRuntime(ctx.app)?.urlFor(record, "production") ?? null,
+        issue: issue === undefined ? null : issue.number,
+        agent: issue?.assigneeName ?? null,
+      });
     },
   },
   {

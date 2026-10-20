@@ -28,6 +28,7 @@ for a tunnel and a forge that sleeps.
 | tool           | does                                                                                              | writes |
 | -------------- | ------------------------------------------------------------------------------------------------- | ------ |
 | `apps`         | the apps you can see: live or not, where served, how each runs itself, what is working            |        |
+| `new_app`      | `{ name, description?, owner?, visibility?, agent?, pick? }`: make an app from a sentence; answers `{ repo, url, issue, agent }`; refused as `POST /api/v1/apps` is (unverified, app_limit, no_such_agent, name_taken) | yes    |
 | `repo`         | `{ repo }`: one repository's description, visibility, autonomy and `audience { level, sentence }`, the same as `GET /api/v1/repos/:owner/:name` |        |
 | `tell`         | a sentence becomes an issue, a builder is picked, a run starts on the crew's next tick            | yes    |
 | `say`          | speak on an issue or a pull; a working builder hears it as its next step                          | yes    |
