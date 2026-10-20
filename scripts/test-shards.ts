@@ -297,6 +297,12 @@ if (tier === "fast") {
   );
   for (const file of plan.files)
     console.log(`  ${file}: ${plan.why.get(file)}`);
+  // A diff no test reaches (a timing table, a doc) is judged by the
+  // type check alone: green, not a usage error.
+  if (plan.files.length === 0) {
+    console.log("test-shards: the change reaches no tests; nothing to run");
+    process.exit(0);
+  }
   files = plan.files;
 }
 

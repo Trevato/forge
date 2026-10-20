@@ -37,7 +37,7 @@
   "test/feed.test.ts": 8.3,
   "test/forge-cloudflare.test.ts": 0.1,
   "test/fork-flow.test.ts": 48.4,
-  "test/forks.test.ts": 28.9,
+  "test/forks.test.ts": 1.5,
   "test/git-trust.test.ts": 0.3,
   "test/helpers.test.ts": 0.7,
   "test/landing.test.ts": 9.4,

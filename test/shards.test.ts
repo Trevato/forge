@@ -667,6 +667,37 @@ describe("the gate audit before any shard", () => {
     expect(got.out).toContain("for 1 changed");
     expect(got.out).toContain("  test/zz-new.test.ts: changed\n");
   }, 30_000);
+
+  test("a pull no test reaches is green with nothing to run, not a usage error (#3579)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "forge-audit-"));
+    mkdirSync(join(dir, "test"));
+    for (const file of listed) writeFileSync(join(dir, file), "");
+    writeFileSync(join(dir, "impact.json"), JSON.stringify(Object.fromEntries(listed.map((f) => [f, []]))));
+    expect(git(dir, "init", "-q")).toBe(0);
+    expect(git(dir, "add", "-A")).toBe(0);
+    expect(git(dir, "commit", "-qm", "base")).toBe(0);
+    mkdirSync(join(dir, "scripts"));
+    writeFileSync(join(dir, "scripts", "test-times.json"), "{}\n");
+    expect(git(dir, "add", "-A")).toBe(0);
+    expect(git(dir, "commit", "-qm", "a table only")).toBe(0);
+    const child = Bun.spawn(["bun", script, "--tier", "fast", "--diff", "HEAD~1..HEAD"], {
+      cwd: dir,
+      env: { ...process.env, FORGE_CHECK_IMPACT: "impact.json" },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    const code = await child.exited;
+    rmSync(dir, { recursive: true, force: true });
+    expect(out).toContain(`0 of ${gateFiles().length} files for 1 changed`);
+    expect(out).toContain("test-shards: the change reaches no tests; nothing to run");
+    expect(err).not.toContain("name the test files");
+    expect(code).toBe(0);
+  }, 30_000);
 });
 
 describe("the gate audit alone, first in the check", () => {
