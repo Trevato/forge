@@ -33,6 +33,7 @@ import { createLog, recentErrors, redactSecrets } from "../kernel/log.ts";
 import { spans } from "../kernel/degraded_history.ts";
 import { QUEUE_WAIT_MAX_MS } from "../kernel/vitals.ts";
 import { STALE_AFTER_MS } from "../runs/lease.ts";
+import { isOutageSummary } from "./network.ts";
 
 const log = createLog("sentinel");
 
@@ -334,9 +335,12 @@ export function runStreaks(db: Database): Finding[] {
     } else {
       // A decline is the run's own decision ("I pushed nothing"), not a push that failed,
       // whether or not the summary leads with it.
+      // An outage the runner retried ("no changes pushed: ... EAI_AGAIN") is not a
+      // push that was refused; a "push failed: ... ECONNREFUSED" still counts.
       const pushes = failed.filter(
         (r) =>
           !/\bdeclined:/i.test(r.summary) &&
+          !isOutageSummary(r.summary) &&
           /\bpush|sandbox|operation not permitted/i.test(r.summary),
       );
       if (pushes.length < STREAK) continue;

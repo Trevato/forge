@@ -122,6 +122,49 @@ describe("a decline that does not lead the summary", () => {
   });
 });
 
+describe("a dropped connection is not a failed push", () => {
+  test("runs that ended on EAI_AGAIN file no push fault", async () => {
+    const made = await createRepo(app, alice, { name: "offline", visibility: "private" });
+    if (!made.ok) throw new Error(String(made.error));
+    for (let n = 0; n < 5; n++) {
+      const run = createRun(app.db, { repoId: made.value.id, kind: "agent" });
+      app.db
+        .query("UPDATE run SET state = 'failed', summary = ?2, created_at = ?3 WHERE id = ?1")
+        .run(
+          run.id,
+          "no changes pushed: API Error: Can't reach the API server — check your internet or DNS (EAI_AGAIN) (api_error)",
+          ago((30 + n) * HOUR),
+        );
+    }
+    const keys = findFaults(app.db, NOW).map((f) => f.key);
+    expect(keys).not.toContain(`push:${made.value.id}`);
+  });
+});
+
+describe("a push blocked on the network is still a push fault", () => {
+  test("push failed with ECONNREFUSED or unable to connect raises it", async () => {
+    const made = await createRepo(app, alice, { name: "walled", visibility: "private" });
+    if (!made.ok) throw new Error(String(made.error));
+    const lines = [
+      "push failed: unable to connect to forge",
+      "push failed: ECONNREFUSED",
+      "push failed: unable to connect to forge",
+      "push failed: ECONNREFUSED",
+      "push failed: unable to connect to forge",
+    ];
+    lines.forEach((line, n) => {
+      const run = createRun(app.db, { repoId: made.value.id, kind: "agent" });
+      app.db
+        .query("UPDATE run SET state = 'failed', summary = ?2, created_at = ?3 WHERE id = ?1")
+        .run(run.id, line, ago((30 + n) * HOUR));
+    });
+    const keys = findFaults(app.db, NOW).map((f) => f.key);
+    expect(keys).toContain(`push:${made.value.id}`);
+    // Later suites count the day's faults; leave none of this one behind.
+    app.db.query("DELETE FROM run WHERE repo_id = ?1").run(made.value.id);
+  });
+});
+
 describe("a failed push that pushed nothing", () => {
   test("still raises the push fault", async () => {
     const made = await createRepo(app, alice, { name: "blocked", visibility: "private" });

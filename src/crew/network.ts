@@ -22,6 +22,15 @@ export function isNetworkError(outcome: ClaudeOutcome): boolean {
   return NETWORK.test(outcome.result) || NETWORK.test(outcome.reason);
 }
 
+/**
+ * Whether a summary is the run's own wording for an outage it retried: it
+ * leads with "no changes pushed:" and then names the network. A bare
+ * "push failed: ... ECONNREFUSED" is a blocked push and does not match.
+ */
+export function isOutageSummary(summary: string): boolean {
+  return /^\s*no changes pushed:/i.test(summary) && NETWORK.test(summary);
+}
+
 /** Resolves after `ms`, or at once when `signal` aborts. */
 export function pause(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
