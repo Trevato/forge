@@ -43,7 +43,7 @@ export interface StandInCrew {
 
 /** A forge with checks and a crew whose Claude Code is the stand-in. */
 export async function startStandInCrew(
-  options: { readonly tickMs?: number } = {},
+  options: { readonly reviewBudgetMs?: number; readonly tickMs?: number } = {},
 ): Promise<StandInCrew> {
   const dataDir = await mkdtemp(join(tmpdir(), "forge-crew-"));
   const app = createApp({ dataDir, port: 0 });
@@ -177,8 +177,8 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     budgetUsd: 1,
     runTimeoutMs: 60_000,
     networkRetryScale: 0,
-    reviewBudgetMs: 4_000,
-    tickMs: options.tickMs,
+    reviewBudgetMs: options.reviewBudgetMs ?? 4_000,
+    ...(options.tickMs === undefined ? {} : { tickMs: options.tickMs }),
   });
   const a = await createUser(app.db, {
     origin: "seed",

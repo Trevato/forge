@@ -32,7 +32,10 @@ describe("the crew, with a stand-in Claude Code: review budget", () => {
     agentRunSettled(app, repo, where, timeoutMs);
 
   beforeAll(async () => {
-    standIn = await startStandInCrew();
+    standIn = await startStandInCrew({
+      reviewBudgetMs: 300,
+      tickMs: 50,
+    });
     ({ app, alice, repo } = standIn);
   }, 30_000);
 
@@ -73,5 +76,5 @@ describe("the crew, with a stand-in Claude Code: review budget", () => {
     expect(reviews.find((r) => r.state === "cancelled")?.summary).toMatch(
       /^budget: a review run/,
     );
-  }, 90_000);
+  }, 10_000);
 });
