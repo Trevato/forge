@@ -74,6 +74,20 @@ describe("spawn over the API and MCP", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
+  test("size passes through the door into the plan; a bad size is a 422 on size", async () => {
+    const good = await post(rw, { name: "kid", apps: ["alice/notes"], size: "medium" });
+    expect(good.status).toBe(200);
+    expect(((await good.json()) as any).plan.size).toBe("medium");
+    const none = await post(rw, { name: "kid", apps: ["alice/notes"] });
+    expect("size" in ((await none.json()) as any).plan).toBe(false);
+    const bad = await post(rw, { name: "kid", apps: ["alice/notes"], size: "huge" });
+    expect(bad.status).toBe(422);
+    expect(((await bad.json()) as any).message).toContain("size:");
+    const viaMcp = await mcp(rw, { name: "kid", apps: ["alice/notes"], size: "huge" });
+    expect(viaMcp.error).toBe(true);
+    expect(viaMcp.text).toContain("size:");
+  });
+
   test("dry-run is the default: the plan comes back and nothing is made", async () => {
     const res = await post(rw, { name: "kid", apps: ["alice/notes"], crew: ["scout"] });
     expect(res.status).toBe(200);

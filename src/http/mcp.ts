@@ -1490,6 +1490,12 @@ const TOOLS: readonly Tool[] = [
           description:
             "How the child follows this forge's code: tell-me (default) says when the parent has moved; take-updates takes them.",
         },
+        size: {
+          type: "string",
+          enum: ["small", "medium", "large"],
+          description:
+            "How big the child is (optional). Recorded in the plan only: nothing enforces its limits yet.",
+        },
         keepAccess: {
           type: "boolean",
           description:

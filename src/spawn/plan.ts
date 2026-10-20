@@ -9,6 +9,7 @@
 
 import { err, ok, type Result } from "../kernel/result.ts";
 import { DEFAULT_MODE, type FollowMode } from "./chain.ts";
+import { parseSize, type Size } from "./sizes.ts";
 
 export const MAX_APPS = 50;
 export const MAX_BRIEFS = 100;
@@ -69,6 +70,8 @@ export interface SpawnInput {
   readonly fresh?: unknown;
   /** How the child follows the forge's code: `tell-me` (default) or `take-updates`. */
   readonly followMode?: unknown;
+  /** How big the child is: `small`, `medium` or `large`; optional. */
+  readonly size?: unknown;
 }
 
 /** What the parent has to offer. Extra fields are ignored, never copied. */
@@ -109,6 +112,8 @@ export interface SpawnPlan {
   readonly fresh?: PlannedFresh;
   /** How the child follows its parent's forge code; absent means `tell-me`. */
   readonly followMode?: FollowMode;
+  /** The child's size, present only when chosen. */
+  readonly size?: Size;
 }
 
 export interface DryRun {
@@ -250,6 +255,14 @@ export function planSpawn(
     if (input.followMode !== DEFAULT_MODE) followMode = input.followMode;
   }
 
+  // Checked last, so every older field's refusal comes first.
+  let size: Size | undefined;
+  if (input.size !== undefined && input.size !== null && input.size !== "") {
+    const parsed = parseSize(input.size);
+    if (!parsed.ok) return refuse("size", parsed.error);
+    size = parsed.value;
+  }
+
   // `forWhom` only when said, so a plan without it hashes as it always did.
   return ok({
     name,
@@ -263,6 +276,7 @@ export function planSpawn(
     ...(forWhom === "" ? {} : { forWhom }),
     ...(fresh === undefined ? {} : { fresh }),
     ...(followMode === undefined ? {} : { followMode }),
+    ...(size === undefined ? {} : { size }),
   });
 }
 
