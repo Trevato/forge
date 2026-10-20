@@ -32,7 +32,7 @@ import { behindStanding } from "../release/behind.ts";
 import { newestDrills } from "../core/domain_drills.ts";
 import { DOMAINS } from "./domains.ts";
 import { domainDrillNeeds } from "./domain_drill.ts";
-import { heldChecks, redSentence } from "../checks/red_main.ts";
+import { freeChecks, heldChecks, redSentence } from "../checks/red_main.ts";
 import { flakeHref, sharedCause, sharedSentence, sharedTests } from "../checks/shared_red.ts";
 
 /** Free disk under this share of the volume is something to say. */
@@ -249,16 +249,18 @@ export function laneSentence(
   oldest: string,
   lane: Lane,
   now: number,
+  held = 0,
 ): string {
   const since = new Date(oldest).toISOString().slice(11, 16);
   const head = `${queued} check${queued === 1 ? "" : "s"} ${queued === 1 ? "waits" : "wait"} behind one lane; the oldest since ${since}`;
-  if (lane.running === null) return `${head}; the lane runs nothing.`;
+  const more = held > 0 ? `; ${held} more held by a red main` : "";
+  if (lane.running === null) return `${head}; the lane runs nothing${more}.`;
   const age = Math.max(
     0,
     Math.round((now - new Date(lane.running.since).getTime()) / 60_000),
   );
   const what = lane.running.pull === null ? "a check" : `#${lane.running.pull}`;
-  return `${head}; the lane runs ${what} for ${age} min (limit ${BUDGETS.gate / 60_000}).`;
+  return `${head}; the lane runs ${what} for ${age} min (limit ${BUDGETS.gate / 60_000})${more}.`;
 }
 
 export function vitals(input: VitalsInput): Vitals {
@@ -307,17 +309,25 @@ export function vitals(input: VitalsInput): Vitals {
   const running = listRunning(input.db);
   const lane = readLane(input.db, running, now);
   const queue: Record<string, number> = {};
+  const reds = heldChecks(input.db);
+  const held = reds.reduce((n, r) => n + r.held, 0);
+  const free = freeChecks(input.db, reds.map((r) => r.red.repoId), now);
   for (const row of queueDepth(input.db, now)) {
     queue[row.kind] = row.queued;
+    if (row.kind === "check") {
+      // Checks a red main holds are not waiting for the lane: the red: card names them.
+      // Age and "since" come from the free checks alone.
+      if (free.oldest !== null && now - new Date(free.oldest).getTime() > BUDGETS.laneWait)
+        need(
+          "queue:check",
+          laneSentence(free.n, free.oldest, lane, now, Math.min(held, row.queued)),
+          new Date(free.oldest).toISOString(),
+          "/settings/capacity",
+        );
+      continue;
+    }
     const waited = now - new Date(row.oldest).getTime();
-    if (row.kind === "check" && waited > BUDGETS.laneWait)
-      need(
-        "queue:check",
-        laneSentence(row.queued, row.oldest, lane, now),
-        new Date(row.oldest).toISOString(),
-        "/settings/capacity",
-      );
-    else if (row.kind !== "check" && waited > QUEUE_WAIT_MAX_MS)
+    if (waited > QUEUE_WAIT_MAX_MS)
       need(
         `queue:${row.kind}`,
         `The ${row.kind} queue has waited over ${QUEUE_WAIT_MAX_MS / 60_000} minutes.`,
@@ -364,7 +374,7 @@ export function vitals(input: VitalsInput): Vitals {
     );
 
   // A red main holding its pulls' checks is one card, naming the test.
-  for (const { red, held } of heldChecks(input.db))
+  for (const { red, held } of reds)
     need(
       `red:${red.repoId}`,
       redSentence(red, held),

@@ -197,3 +197,44 @@ describe("one fix issue for a red main (#1971)", () => {
     expect(coveredByRedFix(db, "r1", dup)).toBe(false);
   });
 });
+
+describe("the lane sentence and a red main", () => {
+  const old = (ids: string[]) =>
+    ids.forEach((id) =>
+      db.run("UPDATE run SET created_at = ?2 WHERE id = ?1", [id, new Date(Date.now() - 20 * 60_000).toISOString()]),
+    );
+  const read = () =>
+    vitals({
+      db,
+      signals: { errors: new ErrorLedger(), refused: new RefusedLedger() } as never,
+      dataDir: tmpdir(),
+      disk: () => ({ freeBytes: 95, totalBytes: 100 }),
+    }).degraded;
+
+  test("checks all held by a red main, with an idle lane, raise red: and not queue:check", () => {
+    main("b", "failed", ["x"]);
+    old(Array.from({ length: 10 }, (_, i) => pullCheck(String(i)).id));
+    const causes = read().map((d) => d.cause);
+    expect(causes).toContain("red:r1");
+    expect(causes).not.toContain("queue:check");
+  });
+
+  test("some held, some free: the sentence counts the free ones and names the held", () => {
+    main("b", "failed", ["x"]);
+    const held = [pullCheck("1"), pullCheck("2"), pullCheck("3")];
+    const asked = pullCheck("4", "asked");
+    old([...held, asked].map((r) => r.id));
+    const lane = read().find((d) => d.cause === "queue:check");
+    expect(lane?.sentence).toStartWith("1 check waits behind one lane;");
+    expect(lane?.sentence).toEndWith("; 3 more held by a red main.");
+  });
+
+  test("old held checks and a fresh free one: the lane is not blamed", () => {
+    main("b", "failed", ["x"]);
+    old([pullCheck("1"), pullCheck("2"), pullCheck("3")].map((r) => r.id));
+    createRun(db, { repoId: "r1", kind: "check", env: "pull-7", issueId: pull, commitOid: OID("4"), reason: "asked" });
+    const causes = read().map((d) => d.cause);
+    expect(causes).toContain("red:r1");
+    expect(causes).not.toContain("queue:check");
+  });
+});

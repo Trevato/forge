@@ -170,6 +170,27 @@ export function heldChecks(db: Database): { red: RedMain; held: number }[] {
   return out;
 }
 
+/**
+ * The queued checks no red main holds (startable now): how many, and the
+ * oldest one's queue time. A held check's age says nothing about the lane.
+ */
+export function freeChecks(
+  db: Database,
+  redRepoIds: readonly string[],
+  now: number,
+): { n: number; oldest: string | null } {
+  const row = db
+    .query<{ n: number; oldest: string | null }, [string, string]>(
+      `SELECT COUNT(*) AS n, MIN(created_at) AS oldest FROM run
+        WHERE state = 'queued' AND kind = 'check'
+          AND (not_before IS NULL OR not_before <= ?1)
+          AND NOT (issue_id IS NOT NULL AND reason <> '${ASKED}'
+                   AND repo_id IN (SELECT value FROM json_each(?2)))`,
+    )
+    .get(new Date(now).toISOString(), JSON.stringify(redRepoIds));
+  return row ?? { n: 0, oldest: null };
+}
+
 /** The card's sentence: what is red, by which test, and what waits. */
 export function redSentence(red: RedMain, held: number): string {
   const first = red.failing[0];
