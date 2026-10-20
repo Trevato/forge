@@ -1,7 +1,7 @@
 /**
- * The website specification as a report (#2915, checks 1, 2 and 7). `webspec()`
+ * The website specification as a report (#2915, checks 1, 2, 5 and 7). `webspec()`
  * fetches each path of a site once and returns what the page's head and
- * response headers get wrong, each finding citing its specification.website
+ * response headers get wrong, and what the body's structure gets wrong, each finding citing its specification.website
  * section. It reports; it never throws on a bad page and never fails a run.
  * The HTML is read with small regexes, one function per check.
  */
@@ -65,6 +65,79 @@ export function headProblems(html: string): Problem[] {
   if (!(metaContent(html, "name", "color-scheme") ?? "").trim()) add("color-scheme", "no color-scheme meta", "color-scheme");
   for (const p of ["og:title", "og:type", "og:url", "og:description", "og:image"])
     if (!(metaContent(html, "property", p) ?? "").trim()) add("open-graph", `missing ${p}`, "open-graph");
+  return out;
+}
+
+const HEADING = /<h([1-6])\b[^>]*>/gi;
+const NO_LABEL_TYPES = new Set(["hidden", "submit", "button", "reset", "image"]);
+/** A tag with its quoted values blanked, so attribute names can be read safely. */
+const bare = (tag: string) => tag.replace(/"[^"]*"|'[^']*'/g, '""');
+const text = (inner: string) => inner.replace(/<[^>]*>/g, "").replace(/&nbsp;|\s+/g, " ").trim();
+const nonEmpty = (v: string | undefined) => (v ?? "").trim() !== "";
+
+/** The body's structure: headings, names, labels, landmarks, handlers, scripts. */
+export function bodyProblems(html: string, https: boolean): Problem[] {
+  const out: Problem[] = [];
+  const add = (check: string, message: string, section: string) => out.push({ check, message, section: s(section) });
+  const clean = html.replace(/<!--[\s\S]*?-->/g, "").replace(/(<(script|style)\b[^>]*>)[\s\S]*?<\/\2\s*>/gi, "$1</$2>");
+  const bodyAt = clean.search(/<body\b/i);
+  const body = bodyAt < 0 ? clean : clean.slice(bodyAt);
+
+  let prev = 0;
+  let h1 = 0;
+  for (const m of body.matchAll(HEADING)) {
+    const level = Number(m[1]);
+    if (level === 1) h1++;
+    if (level > prev + 1) add("headings", `<h${level}> follows ${prev ? `<h${prev}>` : "no heading"}; levels must not skip`, "headings");
+    prev = level;
+  }
+  if (h1 !== 1) add("h1", `expected exactly one <h1>, found ${h1}`, "headings");
+
+  for (const t of tags(body, "img")) if (attr(t, "alt") === undefined) add("img-alt", `<img> has no alt: ${attr(t, "src") ?? "no src"}`, "images");
+
+  const labels = [...body.matchAll(/<label\b[^>]*>[\s\S]*?<\/label\s*>/gi)];
+  const forIds = labels.map((l) => attr(l[0].match(/^<label\b[^>]*>/i)![0], "for")).filter(nonEmpty);
+  for (const f of body.matchAll(/<(input|select|textarea)\b[^>]*>/gi)) {
+    const t = f[0];
+    if (f[1]!.toLowerCase() === "input" && NO_LABEL_TYPES.has((attr(t, "type") ?? "text").toLowerCase())) continue;
+    const at = f.index!;
+    const wrapped = labels.some((l) => at > l.index! && at < l.index! + l[0].length);
+    const id = attr(t, "id");
+    if (!wrapped && !(nonEmpty(id) && forIds.includes(id!)) && !nonEmpty(attr(t, "aria-label")) && !nonEmpty(attr(t, "aria-labelledby")))
+      add("label", `<${f[1]!.toLowerCase()}${id ? ` id="${id}"` : attr(t, "name") ? ` name="${attr(t, "name")}"` : ""}> has no label`, "forms");
+  }
+
+  for (const m of body.matchAll(/<(a|button)\b([^>]*)>([\s\S]*?)<\/\1\s*>/gi)) {
+    const open = `<${m[1]}${m[2]}>`;
+    if (m[1]!.toLowerCase() === "a" && attr(open, "href") === undefined) continue;
+    const imgAlt = tags(m[3]!, "img").some((i) => nonEmpty(attr(i, "alt")));
+    if (!text(m[3]!) && !imgAlt && !nonEmpty(attr(open, "aria-label")) && !nonEmpty(attr(open, "aria-labelledby")) && !nonEmpty(attr(open, "title")))
+      add("accessible-name", `<${m[1]!.toLowerCase()}${attr(open, "href") ? ` href="${attr(open, "href")}"` : ""}> has no accessible name`, "names");
+  }
+
+  const focusable = body.match(/<(a\b[^>]*\shref|button\b|input\b|select\b|textarea\b|[a-z0-9]+\b[^>]*\stabindex\s*=\s*["']?(?:0|[1-9]))[^>]*>/i);
+  const first = focusable?.[0] ?? "";
+  const href = /^<a\b/i.test(first) ? (attr(first, "href") ?? "") : "";
+  if (focusable && !(href.startsWith("#") && href.length > 1)) add("skip-link", "the first focusable element is not a skip link (an in-page #target link)", "skip-link");
+
+  const mains = (body.match(/<main\b/gi) ?? []).length;
+  if (mains !== 1) add("main", `expected exactly one <main>, found ${mains}`, "landmarks");
+
+  for (const m of body.matchAll(/<[a-z][^>]*>/gi))
+    for (const h of bare(m[0]).matchAll(/[\s"'/](on[a-z]+)\s*=/gi)) add("inline-handler", `inline ${h[1]!.toLowerCase()} handler on ${m[0].slice(0, 60)}`, "csp");
+
+  for (const t of tags(body, "script")) {
+    if (attr(t, "src") === undefined) continue;
+    const flags = bare(t);
+    if (!/[\s"'/](defer|async)(?=[\s>/=]|$)/i.test(flags) && (attr(t, "type") ?? "").toLowerCase() !== "module")
+      add("script-defer", `external script ${attr(t, "src")} is not defer, async or module`, "scripts");
+  }
+
+  if (https) {
+    const refs = [...tags(clean, "link").filter((t) => !/\b(canonical|alternate|author)\b/i.test(attr(t, "rel") ?? "")).map((t) => attr(t, "href")),
+      ...["img", "script", "iframe", "source", "video", "audio", "embed", "track"].flatMap((n) => tags(clean, n).map((t) => attr(t, "src")))];
+    for (const r of refs) if (/^\s*http:\/\//i.test(r ?? "")) add("mixed-content", `http:// subresource on an https page: ${r}`, "https");
+  }
   return out;
 }
 
@@ -162,6 +235,7 @@ export async function webspec(base: string, paths: string[], fetcher: Fetcher = 
       continue;
     }
     report(headProblems(html));
+    report(bodyProblems(html, new URL(url).protocol === "https:"));
     report(encodingProblems(res.headers, htmlBytes));
     for (const sheet of stylesheetTargets(html, url)) {
       try {

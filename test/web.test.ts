@@ -378,21 +378,22 @@ describe("web pages end to end", () => {
     const shell = shellAsset();
     const home = await (await fetch(base, { headers: { cookie } })).text();
     expect(home).toMatch(
-      new RegExp(`<script nonce="[^"]+" src="${shell.path}"></script>`),
+      new RegExp(`<script nonce="[^"]+" src="${shell.path}" defer></script>`),
     );
     // Its source is no longer in the HTML, and the page is a good deal lighter.
     expect(home).not.toContain(shellJs.slice(0, 400));
     expect(home).not.toContain(shellJs.slice(-400));
 
-    // A page with its own script: the shell is a classic script placed first,
-    // so it has run by the time the nonce'd inline one does.
+    // A page with its own script: the shell is deferred and the inline one waits
+    // for DOMContentLoaded, so the shell has run by then.
     const apps = await (
       await fetch(`${base}/apps/new`, { headers: { cookie } })
     ).text();
-    const at = apps.indexOf(`src="${shell.path}">`);
+    const at = apps.indexOf(`src="${shell.path}" defer>`);
     const inline = apps.indexOf("<script nonce=", at);
     expect(at).toBeGreaterThan(-1);
     expect(inline).toBeGreaterThan(at);
+    expect(apps).toContain('document.addEventListener("DOMContentLoaded"');
     expect(apps).not.toContain(shellJs.slice(0, 400));
 
     const file = await fetch(base + shell.path);

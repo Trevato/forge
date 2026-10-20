@@ -668,10 +668,12 @@ export function page(options: PageOptions, status = 200): Response {
       </head>
       <body>
         ${shell}${iconSprite(shell.text)}
-        <script nonce="${nonce}" src="${shellAsset().path}"></script>
+        <script nonce="${nonce}" src="${shellAsset().path}" defer></script>
         <script nonce="${nonce}" src="${beaconAsset().path}" defer></script>
         ${options.scriptJs
-          ? raw(`<script nonce="${nonce}">${options.scriptJs}</script>`)
+          ? raw(
+              `<script nonce="${nonce}">document.addEventListener("DOMContentLoaded",()=>{${options.scriptJs}\n})</script>`,
+            )
           : null}
       </body>
     </html>`;

@@ -143,9 +143,9 @@ let shell: BuiltAsset | null = null;
 
 /**
  * The shell script, content-addressed like the stylesheet. Hashed once per
- * process. Linked as a classic (blocking) script ahead of the page's own
- * inline one, so everything it defines is in scope when that runs, exactly as
- * when the two were one inline block.
+ * process. Linked `defer`; the page's own inline script waits for
+ * DOMContentLoaded, which fires after deferred scripts, so everything the
+ * shell defines is in scope when that runs.
  */
 export function shellAsset(): BuiltAsset {
   if (shell === null) {
