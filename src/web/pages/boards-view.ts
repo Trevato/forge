@@ -13,6 +13,7 @@ import { CHART_NAMES } from "../../boards/chart.ts";
 import { MAX_H, MAX_PANELS, MAX_TITLE, MAX_W, RANGES, type Board, type Panel } from "../../boards/store.ts";
 import type { App } from "../../app.ts";
 import type { Ctx } from "../../http/context.ts";
+import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { liveRegionsJs } from "../client.ts";
 import { notFoundPage } from "../chrome.ts";
 import { html, raw, when, type Html } from "../html.ts";
@@ -177,18 +178,23 @@ function manage(slug: string, board: Board, adding: Html, pins: ReturnType<typeo
 // GET /boards/:slug
 export async function boardShow(ctx: Ctx): Promise<Response> {
   const slug = ctx.params.slug ?? "";
-  const shown = await showBoard(ctx.app, ctx.auth.user, slug);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const shown = await timePhaseAsync(ctx.request, "board", () => showBoard(ctx.app, ctx.auth.user, slug));
   if (!shown.ok) return notFoundPage(ctx);
   const board = shown.value;
-  return page({
+  const panels = timePhase(ctx.request, "grid", () => grid(ctx.app, slug, board));
+  const rendering = performance.now();
+  const response = page({
     ctx,
     title: board.title,
     body: html`<div class="page-head"><h1>${board.title}</h1>
         ${btn("All boards", { href: "/boards", variant: "ghost" })}</div>
-      ${grid(ctx.app, slug, board)}
+      ${panels}
       ${manage(slug, board, queryFields(readParams(ctx.url.searchParams)), listPins(ctx.app.db, ctx.auth.user?.id ?? ""))}`,
     scriptJs: liveRegionsJs,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 // GET /boards/:slug/live
