@@ -8,6 +8,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
+import { openIssue } from "../src/actions/issues.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createUser } from "../src/core/users.ts";
 import { securityFloor } from "../src/http/respond.ts";
@@ -17,7 +18,7 @@ import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
 
-const PATHS = ["/", "/signin", "/signup", "/explore"];
+const PATHS = ["/", "/signin", "/signup", "/explore", "/alice/notes", "/alice/notes/issues", "/alice/notes/issues/1"];
 
 /**
  * `check path` -> [section, why it stands]. Every one is expected on every
@@ -38,6 +39,20 @@ beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), "forge-webspec-"));
   app = createApp({ dataDir: dir, port: 0 });
   http = forgeHttp(app);
+  const made = await createUser(app.db, {
+    origin: "seed",
+    trusted: true,
+    username: "alice",
+    email: "a@forge.local",
+    password: "a-good-passphrase",
+    adminIfFirst: true,
+  });
+  if (!made.ok) throw new Error("user");
+  const repo = await createRepo(app, made.value, { name: "notes", visibility: "public" });
+  if (!repo.ok) throw new Error("repo");
+  await commitToBranch(app, made.value, repo.value, { message: "seed", files: [{ path: "a.txt", content: "a" }] });
+  const issue = openIssue(app, made.value, repo.value, { title: "First", body: "hello" });
+  if (!issue.ok) throw new Error("issue");
 });
 
 afterAll(async () => {
@@ -58,18 +73,6 @@ test("the forge's signed-out pages raise exactly the findings named in KNOWN", a
 });
 
 test("a page that answers 200 names its canonical address, equal to og:url; a 404 names none", async () => {
-  const made = await createUser(app.db, {
-    origin: "seed",
-    trusted: true,
-    username: "alice",
-    email: "a@forge.local",
-    password: "a-good-passphrase",
-    adminIfFirst: true,
-  });
-  if (!made.ok) throw new Error("user");
-  const repo = await createRepo(app, made.value, { name: "notes", visibility: "public" });
-  if (!repo.ok) throw new Error("repo");
-  await commitToBranch(app, made.value, repo.value, { message: "seed", files: [{ path: "a.txt", content: "a" }] });
   const head = async (path: string) => {
     const res = await http.handle(new Request(`http://forge.test${path}`));
     return { status: res.status, html: await res.text() };
@@ -85,4 +88,10 @@ test("a page that answers 200 names its canonical address, equal to og:url; a 40
   const missing = await head("/no-such-page-here");
   expect(missing.status).toBe(404);
   expect(missing.html).not.toContain('rel="canonical"');
+});
+
+test("the walked repository pages exist", async () => {
+  for (const path of ["/alice/notes", "/alice/notes/issues", "/alice/notes/issues/1"]) {
+    expect((await http.handle(new Request(`http://forge.test${path}`))).status).toBe(200);
+  }
 });
