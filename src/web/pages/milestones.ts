@@ -37,6 +37,7 @@ import { watchMilestone } from "../../actions/watches.ts";
 import { replanResult } from "../../actions/limb_replan.ts";
 import { given, pendingFor } from "../../core/limb_replan.ts";
 import type { Ctx } from "../../http/context.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { askToLiveFor } from "../ask_to_live.ts";
 import {
   crumbsFor,
@@ -196,13 +197,19 @@ function limbLine(base: string, limb: Limb, move: Html | null = null): Html {
 
 /** GET /:owner/:name/milestones — the plan, collapsed to its limbs. */
 export function milestonesPage(ctx: Ctx): Response {
-  const repo = loadRepo(ctx);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const repo = timePhase(ctx.request, "repo", () => loadRepo(ctx));
   if (!repo) return notFoundPage(ctx);
-  const plan = readPlan(ctx.app.db, repo, {
-    spend: canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user),
-  });
+  const plan = timePhase(ctx.request, "plan", () =>
+    readPlan(ctx.app.db, repo, {
+      spend: canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user),
+    }),
+  );
   const base = repoBase(repo);
-  const move = moverFor(ctx.app.db, repo, ctx.auth.user, plan.read);
+  const move = timePhase(ctx.request, "seats", () =>
+    moverFor(ctx.app.db, repo, ctx.auth.user, plan.read),
+  );
+  const rendering = performance.now();
   const body = html`${repoHeader(ctx, repo, "map")}
     <div class="page-head mt">
       <h1>Milestones</h1>
@@ -224,7 +231,7 @@ export function milestonesPage(ctx: Ctx): Response {
           )}
         </div>`}
     ${liveMount({ repo: base })}`;
-  return page({
+  const response = page({
     ctx,
     title: `Milestones · ${repo.name}`,
     crumbs: crumbsFor(repo),
@@ -232,6 +239,8 @@ export function milestonesPage(ctx: Ctx): Response {
     body,
     scriptJs: liveClientJs,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 const STATE_TONE: Record<LeafState, "success" | "attn" | undefined> = {
