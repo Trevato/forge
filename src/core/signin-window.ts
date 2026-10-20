@@ -9,7 +9,9 @@
  * exactly a window later. One limiter per forge database, so a test's forge
  * never throttles another's. Every door that proves a secret asks here: the
  * password doors through `verifyPasswordThrottled` (`core/users.ts`), the
- * passkey, claim and parent doors with a key of their own.
+ * passkey, claim and parent doors with a key of their own. The passkey door
+ * is the operator's way in and is not counted in the forge-wide window, so
+ * guessing passwords at every account cannot shut it.
  */
 
 import type { Database } from "bun:sqlite";
@@ -46,7 +48,12 @@ export type SigninAdmission =
  * that sends the right password on every request, never fills a window;
  * every wrong guess stays counted.
  */
-export function admitSignin(db: Database, account: string, address: string): SigninAdmission {
+export function admitSignin(
+  db: Database,
+  account: string,
+  address: string,
+  options: { readonly forgeWide?: boolean } = {},
+): SigninAdmission {
   const limiter = limiterOf(accounts, db);
   // Read on every attempt, so a change on /admin/limits governs the next one.
   limiter.setLimits({
@@ -63,14 +70,19 @@ export function admitSignin(db: Database, account: string, address: string): Sig
   const sourceKey = `source:${bucketOf(address)}`;
   const source = peers.take(sourceKey, "ro");
   if (!source.allowed) return { admitted: false, retryAfter: source.retryAfter };
-  const whole = limiter.take("forge", "admin");
-  if (!whole.allowed) return { admitted: false, retryAfter: whole.retryAfter };
+  // The operator's door (a passkey: a signature cannot be guessed) skips the
+  // forge-wide window, so a flood of password guesses cannot lock it out.
+  const counted = options.forgeWide !== false;
+  if (counted) {
+    const whole = limiter.take("forge", "admin");
+    if (!whole.allowed) return { admitted: false, retryAfter: whole.retryAfter };
+  }
   return {
     admitted: true,
     succeeded: () => {
       limiter.refund(accountKey);
       peers.refund(sourceKey);
-      limiter.refund("forge");
+      if (counted) limiter.refund("forge");
     },
   };
 }
@@ -80,7 +92,12 @@ export function admitSignin(db: Database, account: string, address: string): Sig
  * secret is checked elsewhere (passkey, claim, parent). Seconds to wait when
  * refused, or undefined when the attempt may go on.
  */
-export function signinWindow(db: Database, account: string, address: string): number | undefined {
-  const admission = admitSignin(db, account, address);
+export function signinWindow(
+  db: Database,
+  account: string,
+  address: string,
+  options: { readonly forgeWide?: boolean } = {},
+): number | undefined {
+  const admission = admitSignin(db, account, address, options);
   return admission.admitted ? undefined : admission.retryAfter;
 }

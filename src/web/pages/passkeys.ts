@@ -108,7 +108,7 @@ export function passkeyOptions(ctx: Ctx): Response {
   if (denied) return denied;
   const user = ctx.auth.user!;
   return json({
-    challenge: store(ctx.app).add.issue(),
+    challenge: store(ctx.app).add.issue(user.id),
     rpId: relying(ctx).rpId,
     rpName: "forge",
     user: {
@@ -160,16 +160,16 @@ export async function passkeyDelete(ctx: Ctx): Promise<Response> {
 // POST /signin/passkey/options — a challenge for someone with no session yet.
 export function signinOptions(ctx: Ctx): Response {
   if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, "forbidden");
-  const wait = signinAllowed(ctx, `passkey:${clientAddress(ctx.request)}`);
+  const wait = signinAllowed(ctx, `passkey:${clientAddress(ctx.request)}`, { forgeWide: false });
   if (wait !== undefined)
     return json({ error: "rate_limited", message: `Too many attempts. Try again in ${wait}s.` }, 429, { "retry-after": String(wait) });
-  return json({ challenge: store(ctx.app).signin.issue(), rpId: relying(ctx).rpId });
+  return json({ challenge: store(ctx.app).signin.issue(clientBucket(ctx.request)), rpId: relying(ctx).rpId });
 }
 
 // POST /signin/passkey — a good assertion gets the session a password gets.
 export async function signinPasskey(ctx: Ctx): Promise<Response> {
   if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, "forbidden");
-  const wait = signinAllowed(ctx, `passkey:${clientAddress(ctx.request)}`);
+  const wait = signinAllowed(ctx, `passkey:${clientAddress(ctx.request)}`, { forgeWide: false });
   if (wait !== undefined)
     return json({ error: "rate_limited", message: `Too many attempts. Try again in ${wait}s.` }, 429, { "retry-after": String(wait) });
   const data = await boundedBody(ctx.request, STRANGER_MAX);
@@ -287,7 +287,7 @@ export async function recoverOptions(ctx: Ctx): Promise<Response> {
   const user = recoveryAccount(ctx.app, str(data.token));
   if (user === undefined) return refuse(400, NOT_VALID);
   return json({
-    challenge: store(ctx.app).recover.issue(),
+    challenge: store(ctx.app).recover.issue(clientBucket(ctx.request)),
     rpId: relying(ctx).rpId,
     rpName: "forge",
     user: {

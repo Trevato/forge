@@ -15,6 +15,7 @@ import { findPasskey } from "../core/passkeys.ts";
 import type { Ctx } from "../http/context.ts";
 import { field, type Form } from "./form.ts";
 import { html, type Html } from "./html.ts";
+import { clientBucket } from "../http/peer.ts";
 import { relying, store } from "./pages/passkeys.ts";
 
 /**
@@ -26,7 +27,7 @@ export type Ceremony = "claim" | "everyday" | "firstAdmin";
 /** What the browser needs for `navigator.credentials.create`, for `username`. */
 export function makeOptions(ctx: Ctx, ceremony: Ceremony, username: string) {
   return {
-    challenge: store(ctx.app)[ceremony].issue(),
+    challenge: store(ctx.app)[ceremony].issue(clientBucket(ctx.request)),
     rpId: relying(ctx).rpId,
     rpName: "forge",
     user: { id: newChallenge(), name: username, displayName: username },

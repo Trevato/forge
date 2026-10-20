@@ -486,8 +486,12 @@ export function signupPage(ctx: Ctx): Response {
  * forge's sign-in windows (`core/signin-window.ts`). Seconds to wait when
  * refused, or undefined when the attempt may go on.
  */
-export function signinAllowed(ctx: Ctx, key: string): number | undefined {
-  return signinWindow(ctx.app.db, key, clientAddress(ctx.request));
+export function signinAllowed(
+  ctx: Ctx,
+  key: string,
+  options: { readonly forgeWide?: boolean } = {},
+): number | undefined {
+  return signinWindow(ctx.app.db, key, clientAddress(ctx.request), options);
 }
 
 /**

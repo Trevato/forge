@@ -14,7 +14,7 @@ import { isSafeName } from "../../git/guard.ts";
 import { edgeStrangerLogin } from "../../http/edge.ts";
 import { crossOrigin, type Ctx } from "../../http/context.ts";
 import { STRANGER_MAX } from "../../http/limits.ts";
-import { clientAddress } from "../../http/peer.ts";
+import { clientAddress, clientBucket } from "../../http/peer.ts";
 import { boundedBody, json, str } from "../../http/respond.ts";
 import { relying, store } from "./passkeys.ts";
 import { EDGE_NAME_MESSAGE, inviteOf, pinnedTo, safeNext, sessionCookie, signinAllowed, signupSlot } from "./site.ts";
@@ -66,7 +66,7 @@ export async function signupOptions(ctx: Ctx): Promise<Response> {
   const bad = problem(ctx, username, email);
   if (bad) return refuse(422, bad);
   return json({
-    challenge: store(ctx.app).signup.issue(),
+    challenge: store(ctx.app).signup.issue(clientBucket(ctx.request)),
     rpId: relying(ctx).rpId,
     rpName: "forge",
     user: { id: newChallenge(), name: username, displayName: username },

@@ -173,7 +173,8 @@ test("garbage is refused, never thrown", async () => {
 describe("challenges", () => {
   test("a challenge answers once: a replay is refused", () => {
     const c = challenges();
-    const x = c.issue();
+    const owner = "o";
+    const x = c.issue(owner);
     expect(c.consume(x)).toBe(true);
     expect(c.consume(x)).toBe(false);
     expect(c.consume("never-issued")).toBe(false);
@@ -182,7 +183,8 @@ describe("challenges", () => {
   test("a challenge expires", () => {
     let t = 0;
     const c = challenges(1000, () => t);
-    const x = c.issue();
+    const owner = "o";
+    const x = c.issue(owner);
     t = 1000;
     expect(c.consume(x)).toBe(false);
   });

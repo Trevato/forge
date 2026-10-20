@@ -42,25 +42,50 @@ export function newChallenge(): string {
 
 /**
  * Outstanding challenges: each answers once, and only before it expires.
- * One global store: when it gets a route, rate-limit `issue()` per socket
- * address or key challenges by session, or a flood evicts real ones.
+ * Each is issued for an `owner` (the socket peer's bucket): an owner holds at
+ * most `perOwner`, its oldest going first, and when the store is full the
+ * oldest of the owner holding the most goes, so one source or many cannot
+ * push a quiet owner's challenge out while a heavier one stands.
+ * `owner` is required: an unowned caller would share one bucket and let a
+ * single source wipe everyone's. Past `max` distinct owners holding one each,
+ * the oldest is still evicted.
  */
-export function challenges(ttlMs = 5 * 60_000, now: () => number = Date.now, max = 10_000) {
-  const open = new Map<string, number>();
+export function challenges(ttlMs = 5 * 60_000, now: () => number = Date.now, max = 10_000, perOwner = 20) {
+  const open = new Map<string, { at: number; owner: string }>();
+  const held = new Map<string, Set<string>>();
+  const drop = (c: string) => {
+    const e = open.get(c);
+    if (!e) return;
+    open.delete(c);
+    const set = held.get(e.owner);
+    set?.delete(c);
+    if (set?.size === 0) held.delete(e.owner);
+  };
+  const oldest = (owner: string) => held.get(owner)?.values().next().value;
   return {
-    issue(): string {
-      for (const [c, at] of open) if (at <= now()) open.delete(c);
-      if (open.size >= max) open.delete(open.keys().next().value!);
+    issue(owner: string): string {
+      for (const [c, e] of open) if (e.at <= now()) drop(c);
+      const mine = held.get(owner);
+      if (mine && mine.size >= perOwner) drop(oldest(owner)!);
+      if (open.size >= max) {
+        let heaviest = "";
+        let most = -1;
+        for (const [o, set] of held) if (set.size > most) { most = set.size; heaviest = o; }
+        drop(oldest(heaviest)!);
+      }
       const c = newChallenge();
-      open.set(c, now() + ttlMs);
+      open.set(c, { at: now() + ttlMs, owner });
+      let set = held.get(owner);
+      if (!set) held.set(owner, (set = new Set()));
+      set.add(c);
       return c;
     },
     /** True once per issued, unexpired challenge; a replay is false. */
     consume(challenge: unknown): boolean {
       if (typeof challenge !== "string") return false;
-      const at = open.get(challenge);
-      open.delete(challenge);
-      return at !== undefined && at > now();
+      const e = open.get(challenge);
+      drop(challenge);
+      return e !== undefined && e.at > now();
     },
   };
 }
