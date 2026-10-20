@@ -138,7 +138,7 @@ import { trackAgentRun, untrackAgentRun } from "./running.ts";
 import { sandboxPolicy } from "./sandbox.ts";
 import { grantSecrets, parseDeclaration, type Grant } from "./grant.ts";
 import { historyHolds, scrubTree } from "./leak.ts";
-import { workdirFor } from "./workdir.ts";
+import { removeClone, workdirFor } from "./workdir.ts";
 import { readersAmong, voiceOf } from "./direct.ts";
 import { feedbackSince } from "./news.ts";
 import { handedOverPulls, RETRY_SUMMARY, SKIP_SUMMARY, skipsFeedback } from "./guard.ts";
@@ -364,7 +364,7 @@ export async function executeAgentRun(
   // try something — ends with the run. The sandbox refuses it `kill`, so the
   // forge does the tidying, by the directory the process is working in.
   await reapOrphans(app, run, write);
-  forgetLandedClone(app, run);
+  await forgetLandedClone(app, run);
   meterUsage(app, claimed, outcome, meter, started);
   if (overran) {
     const summary = budgetSummary(
@@ -494,7 +494,7 @@ function skipsQueued(app: App, run: Run): boolean {
  * moment its pull closes with no run in it; a run in flight lets go of its
  * own, here, once its git is done with the floor.
  */
-function forgetLandedClone(app: App, run: Run): void {
+async function forgetLandedClone(app: App, run: Run): Promise<void> {
   const repo = getRepoById(app.db, run.repoId);
   const agent =
     run.actorId === null ? undefined : getAgent(app.db, run.actorId);
@@ -510,10 +510,19 @@ function forgetLandedClone(app: App, run: Run): void {
         );
   if (pull === undefined || (pull.state === "open" && pull.mergedAt === null))
     return;
-  rmSync(workdirFor(app.config.dataDir, agent, repo, number), {
-    recursive: true,
-    force: true,
-  });
+  // The run is over, so a clone that will not go is not the run's failure.
+  // It stays on disk (nothing sweeps a closed pull's leftover later); the
+  // warning names it, and a person can remove the directory.
+  const dir = workdirFor(app.config.dataDir, agent, repo, number);
+  try {
+    await removeClone(dir);
+  } catch (error) {
+    log.warn("a landed pull's clone would not go and is left on disk", {
+      run: run.id,
+      dir,
+      error: String(error),
+    });
+  }
 }
 
 /**
