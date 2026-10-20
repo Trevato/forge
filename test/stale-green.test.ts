@@ -1,18 +1,19 @@
 /**
- * An approved pull whose green went stale lands on its own (#3055). Its
- * check passed against an older base; main moved; a repository that
- * requires checks will not merge it on that green (`checksHold`). The
- * green sweep asks for the check again on the base as it is now, and the
- * fresh green lands it — no person re-queues anything. The tick line's
- * words say how many approved pulls wait, and why.
+ * Approved pulls whose green went stale land together (#3316). Each check
+ * passed against an older base; main moved. The merge queue does not ask
+ * each pull for a check of its own first: the candidate's full gate runs
+ * on main's tip with every one of them merged, and that is the proof. A
+ * batch of N lands in one gate, not N re-checks and N gates. A person's
+ * merge, which no gate ran for, still refuses a stale green.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { openPull } from "../src/actions/pulls.ts";
+import { mergePull, openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { gateRuns } from "../src/checks/queue.ts";
 import { provideChecksForTest, type ChecksHandle } from "../src/checks/service.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
@@ -23,7 +24,7 @@ import { sweepGreen } from "../src/crew/autonomy.ts";
 import { lastWaits, tallyWaits, waitWords } from "../src/crew/waits.ts";
 import { repoDir } from "../src/git/repos.ts";
 
-describe("a stale green is checked again by the queue", () => {
+describe("stale greens land in one candidate", () => {
   let dataDir: string;
   let app: App;
   let alice: User;
@@ -102,18 +103,18 @@ describe("a stale green is checked again by the queue", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("approve a green pull, move main, and it lands with nobody acting", async () => {
+  async function approvedGreen(name: string): Promise<Pull> {
     const pushed = await commitToBranch(app, alice, repo, {
-      branch: "feature/a",
+      branch: `feature/${name}`,
       base: "main",
-      message: "a",
-      files: [{ path: "a.ts", content: "export const a = 1;\n" }],
+      message: name,
+      files: [{ path: `${name}.ts`, content: `export const ${name} = 1;\n` }],
     });
     if (!pushed.ok) throw new Error(JSON.stringify(pushed.error));
     const opened = await openPull(app, alice, repo, {
-      title: "a",
+      title: name,
       baseBranch: "main",
-      headBranch: "feature/a",
+      headBranch: `feature/${name}`,
     });
     if (!opened.ok) throw new Error(String(opened.error));
     const pull = getPull(app.db, repo.id, opened.value.number)!;
@@ -124,34 +125,54 @@ describe("a stale green is checked again by the queue", () => {
       state: "approved",
       commitOid: pull.headOid,
     });
+    return pull;
+  }
 
-    // Main moves past the base the green was checked on.
+  async function moveMain(path: string): Promise<void> {
     const moved = await commitToBranch(app, alice, repo, {
-      message: "elsewhere",
-      files: [{ path: "b.ts", content: "export const b = 1;\n" }],
+      message: path,
+      files: [{ path, content: "export const moved = 1;\n" }],
     });
     if (!moved.ok) throw new Error(JSON.stringify(moved.error));
+  }
+
+  test("a person's merge still refuses a green on an older main", async () => {
+    const pull = await approvedGreen("manual");
+    await moveMain("before-manual.ts");
+    app.db.query("UPDATE repo SET autonomy = 'off' WHERE id = ?1").run(repo.id);
+    try {
+      const merged = await mergePull(app, alice, fresh(), pull, "squash");
+      expect(merged.ok).toBe(false);
+      if (!merged.ok) expect(merged.error).toBe("checks_required");
+    } finally {
+      app.db.query("UPDATE repo SET autonomy = 'autonomous' WHERE id = ?1").run(repo.id);
+    }
+  });
+
+  test("five approved pulls, main moves, and all five land in one candidate", async () => {
+    const pulls = [];
+    for (const name of ["a", "b", "c", "d", "e"]) pulls.push(await approvedGreen(name));
+    // Main moves past the base every green was checked on.
+    await moveMain("elsewhere.ts");
     const before = mainTip();
+    const gatesBefore = gateRuns(repo.id);
+    asked.length = 0;
 
-    // The first sweep does not land on the stale green: it asks again.
-    expect(await sweepGreen(app, fresh())).toBe(0);
-    expect(asked).toEqual([{ commit: pull.headOid, reason: "stale" }]);
-    expect(lastWaits(repo.id)).toEqual({ stale: 1 });
-    expect(mainTip()).toBe(before);
-
-    // The fresh green, on main as it is now, lands on the next sweep.
-    expect(await sweepGreen(app, fresh())).toBe(1);
-    expect(asked).toHaveLength(1);
-    const landed = getPull(app.db, repo.id, pull.number)!;
-    expect(landed.mergedAt).not.toBeNull();
+    // One sweep: no pull is asked for a check of its own, one gate runs,
+    // and every pull lands (the person's one from the test above too).
+    expect(await sweepGreen(app, fresh())).toBe(6);
+    expect(asked).toEqual([]);
+    expect(gateRuns(repo.id) - gatesBefore).toBe(1);
+    for (const pull of pulls) expect(getPull(app.db, repo.id, pull.number)!.mergedAt).not.toBeNull();
     expect(mainTip()).not.toBe(before);
+    expect(lastWaits(repo.id)).toEqual({ queued: 6 });
   });
 });
 
 describe("the tick's words for approved pulls that wait", () => {
   test("say how many, and why, most first", () => {
-    expect(waitWords(tallyWaits(["stale", "queued", "stale", "review"]))).toBe(
-      "4 approved: stale=2 queued=1 review=1",
+    expect(waitWords(tallyWaits(["review", "queued", "review", "conflict"]))).toBe(
+      "4 approved: review=2 conflict=1 queued=1",
     );
   });
 

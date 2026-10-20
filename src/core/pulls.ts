@@ -896,14 +896,17 @@ export async function mergePull(
   if (status.reviews !== null && !status.reviews.mergeable)
     return err("review_required");
   // The check is the latest deploy run of *this* head. Read here, not
-  // handed in, for the same reason as the review verdict above.
+  // handed in, for the same reason as the review verdict above. A landing
+  // the merge queue gated (`expect`) is not held for a green on an older
+  // base: the full tier ran on this very tree on this very base, which is
+  // the proof a re-check would give (#3316). The head must still be green.
   if (input.gate !== undefined) {
     const check = checkSummary(input.gate.db, pull.id, status.headOid);
     if (
       checksHold(
         input.gate.requireChecks === true,
         check.state,
-        checkStale(check.run, status.baseOid),
+        input.expect === undefined && checkStale(check.run, status.baseOid),
       )
     )
       return err("checks_required");
