@@ -19,7 +19,9 @@ import { getRepo, type Repo } from "../core/repos.ts";
 import { getUserById, getUserByName } from "../core/users.ts";
 import { runGit } from "../git/env.ts";
 import { repoDir } from "../git/repos.ts";
+import { basicHeader, gitAuthEnv, redact, secretsIn } from "../origins/credentials.ts";
 import { forgeLinkOf, originOf } from "./chain.ts";
+import { parentCredential } from "./parent_credential.ts";
 import { newestCommits, takeFromParent, type Taken } from "./take.ts";
 
 export const CHECK_MS = 60 * 60_000;
@@ -125,14 +127,20 @@ async function run(app: App, options: { remote?: string; now?: number }): Promis
     const [o, n] = link.repo.split("/") as [string, string];
     const dir = repoDir(app.reposRoot, o, n);
     const checkedAt = options.now ?? Date.now();
+    // A parent that handed this forge a proposal token is read with it, so a
+    // private parent can be followed; the header is scoped to the remote's host.
+    const cred = await parentCredential(app);
+    const scope = URL.parse(remote)?.origin; // a local path has none, and is sent nothing
+    const auth = cred === undefined || scope === undefined ? {} : gitAuthEnv(scope, basicHeader(cred.child, cred.token));
+    const secrets = cred === undefined ? [] : [...secretsIn(auth), cred.token];
     const fetched = await runGit(
       ["fetch", "--quiet", "--no-tags", "--prune", "--", remote, "+refs/heads/*:refs/upstream/*", "+HEAD:refs/upstream/HEAD"],
-      { cwd: dir, timeoutMs: FETCH_TIMEOUT_MS },
+      { cwd: dir, timeoutMs: FETCH_TIMEOUT_MS, env: auth },
     );
     let state: UpstreamState;
     if (!fetched.ok) {
       const line = fetched.error.stderr.split("\n").find((l) => l.trim() !== "")?.trim();
-      const error = line ?? (fetched.error.code === 137 ? "the fetch timed out after 60 s" : "the fetch failed");
+      const error = redact(line ?? "", ...secrets) || (fetched.error.code === 137 ? "the fetch timed out after 60 s" : "the fetch failed");
       const before = await upstreamState(app);
       state = { behind: before?.behind ?? null, parentTip: before?.parentTip ?? "", checkedAt, error: error.slice(0, 200), toldTip: before?.toldTip ?? "" };
     } else {

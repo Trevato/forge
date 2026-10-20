@@ -1,9 +1,11 @@
 /**
  * The one gate every proposal-token request passes, before any handler.
  *
- * A proposal token (`core/proposal_token.ts`) may do four things at the
- * parent repository it was minted for and nothing else: advertise
- * receive-pack, run receive-pack, open a pull, and read back one it opened. Everything is refused
+ * A proposal token (`core/proposal_token.ts`) may do six things at the
+ * parent repository it was minted for and nothing else: fetch its code
+ * (advertise and run upload-pack: the read grant that lets the child's
+ * forge fork it), advertise receive-pack, run receive-pack, open a pull,
+ * and read back one it opened. Revoking the token ends all six. Everything is refused
  * unless it matches one of those exactly, so a route added tomorrow is
  * closed to these tokens until someone writes it in here. Which refs the
  * push may touch is decided at the ref update (`handleHook`), where the
@@ -40,7 +42,7 @@ const refuse = (): Response =>
   apiError(
     "forbidden",
     403,
-    "a proposal token can only push child/<name>/… branches and open pulls from them",
+    "a proposal token can only read this repository, push child/<name>/… branches and open pulls from them",
   );
 
 /** The refusal for this request, or undefined when it may proceed. */
@@ -76,13 +78,12 @@ export function proposalGate(
       `too many proposals: ${verdict.limit} per minute per token — retry in ${verdict.retryAfter}s`,
     );
 
-  if (
-    method === "GET" &&
-    path === `${at}/info/refs` &&
-    url.searchParams.get("service") === "git-receive-pack"
-  )
+  if (method === "GET" && path === `${at}/info/refs`) {
+    const service = url.searchParams.get("service");
+    if (service === "git-receive-pack" || service === "git-upload-pack") return undefined;
+  }
+  if (method === "POST" && (path === `${at}/git-receive-pack` || path === `${at}/git-upload-pack`))
     return undefined;
-  if (method === "POST" && path === `${at}/git-receive-pack`) return undefined;
   if (method === "POST" && path === pulls) {
     // An early refusal on the length the client wrote, nothing more: the
     // handler's `boundedBody` counts the bytes actually read and is the cap.

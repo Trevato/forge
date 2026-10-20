@@ -177,7 +177,8 @@ the same token Settings mints; revoke it there. Details in `docs/MCP.md`.
 ### Proposal tokens
 
 A writer of a repository can hand a child (a fork, or a project on another
-forge) a credential that proposes and nothing more:
+forge) a credential that reads this repository's code (so the child's forge can
+fork it), proposes, and nothing more:
 
 ```sh
 curl -sX POST localhost:3000/api/v1/repos/you/hello/proposal-tokens \
@@ -189,7 +190,9 @@ curl -sX POST localhost:3000/api/v1/repos/you/hello/proposal-tokens \
 `childRepo` (optional) a fork of this repository, and deleting it deletes the
 token, as does deleting the repository. The token expires in 30 days. It is
 listed as `proposal:<child>` among your tokens, and revoking it there ends it.
-Over HTTPS it pushes only `child/<name>/…` branches of this repository (anything
+Over HTTPS it clones and fetches this one repository (private or not; no other
+repository, secret, app or issue; a fetch sees every branch, other children's
+`child/*` included), pushes only `child/<name>/…` branches of this repository (anything
 else is refused with one line) and `POST …/pulls` from one of them, with a
 body of at most 64 KiB and 20 requests a minute. Every other request is a
 403, decided in `src/http/proposal_gate.ts` before any handler runs. A proposed pull

@@ -1,7 +1,8 @@
 /**
  * Proposal tokens: a credential a writer of a parent repository hands to
  * one named child. It is a `rw` token for the writer that minted it, but
- * the gate in `http/proposal_gate.ts` lets it do exactly two things — push
+ * the gate in `http/proposal_gate.ts` lets it do exactly three things — read
+ * this one repository (so the child's forge can fork and follow it), push
  * branches under `child/<name>/` and open a pull from one. This module is
  * the data and the rules about names; it decides nothing about requests.
  */

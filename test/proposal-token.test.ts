@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { revokeProposal } from "../src/actions/proposal_tokens.ts";
 import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import {
@@ -375,8 +376,9 @@ describe("over HTTP", () => {
       ["POST", "/api/v1/repos/alice/lib/issues"],
       ["POST", "/api/v1/repos/alice/lib/pulls/1/merge"],
       ["POST", "/api/v1/repos/alice/other/pulls"],
-      ["POST", "/alice/lib.git/git-upload-pack"],
-      ["GET", "/alice/lib.git/info/refs?service=git-upload-pack"],
+      ["POST", "/alice/other.git/git-upload-pack"],
+      ["GET", "/alice/other.git/info/refs?service=git-upload-pack"],
+      ["GET", "/alice/lib.git/info/refs?service=git-bogus"],
       ["GET", "/alice/lib"],
       ["GET", "/nonesuch"],
     ] as const) {
@@ -433,5 +435,69 @@ describe("over HTTP", () => {
     expect(count(second.value.id)).toBe(0);
     // Others are untouched.
     expect(count(tokenId)).toBe(1);
+  });
+
+  test("the grant reads one private repository: fork-fetch, then propose; a revoke stops both", async () => {
+    const hush = await createRepo(app, alice, { name: "hush", visibility: "private" });
+    if (!hush.ok) throw new Error(String(hush.error));
+    const seeded = await commitToBranch(app, alice, hush.value, {
+      branch: "main", message: "Secret start", files: [{ path: "a.md", content: "private\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const vault = await createRepo(app, alice, { name: "vault", visibility: "private" });
+    if (!vault.ok) throw new Error(String(vault.error));
+    await commitToBranch(app, alice, vault.value, {
+      branch: "main", message: "Vault", files: [{ path: "v.md", content: "v\n" }],
+    });
+    const grant = mintProposalToken(app.db, alice.id, hush.value.id, { child: "kid", origin: ORIGIN });
+    if (!grant.ok) throw new Error(grant.error);
+    const at = (name: string, token: string) =>
+      servers.url.replace("://", `://child:${token}@`) + `/alice/${name}.git`;
+    const dest = (n: string) => join(dataDir, n);
+
+    // Without a grant nothing is readable; with it, that repository is.
+    expect((await git(["clone", `${servers.url}/alice/hush.git`, dest("anon")], dataDir)).code).not.toBe(0);
+    const cloned = await git(["clone", at("hush", grant.value.token), dest("fork")], dataDir);
+    expect(cloned.code).toBe(0);
+
+    // Not another repository of the same owner, nor the API's secrets, apps or issues.
+    expect((await git(["clone", at("vault", grant.value.token), dest("vault")], dataDir)).code).not.toBe(0);
+    for (const path of [
+      "/api/v1/repos/alice/hush/secrets",
+      "/api/v1/repos/alice/hush/issues",
+      "/api/v1/repos/alice/hush/apps",
+      "/api/v1/repos/alice/vault",
+    ]) expect([path, [403, 404].includes((await api(path, {}, grant.value.token)).status)]).toEqual([path, true]);
+
+    // It never pushes the default branch, nor anything outside its namespace.
+    await git(["config", "user.email", "kid@example.com"], dest("fork"));
+    await git(["config", "user.name", "kid"], dest("fork"));
+    await Bun.write(join(dest("fork"), "kid.md"), "x\n");
+    await git(["add", "."], dest("fork"));
+    await git(["commit", "-m", "Kid"], dest("fork"));
+    const before = await Bun.$`git -C ${join(dataDir, "repos", "alice", "hush.git")} rev-parse main`.quiet().nothrow();
+    for (const ref of ["main", "refs/heads/other"])
+      expect((await git(["push", at("hush", grant.value.token), `HEAD:${ref}`], dest("fork"))).code).not.toBe(0);
+    expect((await git(["push", at("hush", grant.value.token), "HEAD:refs/heads/child/kid/idea"], dest("fork"))).code).toBe(0);
+    if (before.exitCode === 0) {
+      const after = await Bun.$`git -C ${join(dataDir, "repos", "alice", "hush.git")} rev-parse main`.quiet().nothrow();
+      expect(after.stdout.toString()).toBe(before.stdout.toString());
+    }
+    const opened = await api("/api/v1/repos/alice/hush/pulls", {
+      method: "POST",
+      body: JSON.stringify({ title: "Idea", base: "main", head: "child/kid/idea" }),
+    }, grant.value.token);
+    expect(opened.status).toBe(201);
+
+    // Revoke: fetch and propose both stop.
+    expect(revokeProposal(app, alice, hush.value, grant.value.id).ok).toBe(true);
+    expect((await git(["fetch", at("hush", grant.value.token)], dest("fork"))).code).not.toBe(0);
+    expect((await git(["clone", at("hush", grant.value.token), dest("again")], dataDir)).code).not.toBe(0);
+    expect((await git(["push", at("hush", grant.value.token), "HEAD:refs/heads/child/kid/more"], dest("fork"))).code).not.toBe(0);
+    const late = await api("/api/v1/repos/alice/hush/pulls", {
+      method: "POST",
+      body: JSON.stringify({ title: "Idea", base: "main", head: "child/kid/idea" }),
+    }, grant.value.token);
+    expect(late.status).toBe(401);
   });
 });

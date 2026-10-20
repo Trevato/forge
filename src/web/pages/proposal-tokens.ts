@@ -22,9 +22,9 @@ export function proposalTokensSection(ctx: Ctx, repo: Repo): Html | null {
   const tokens = listed.ok ? listed.value : [];
   return card(
     html`<p class="muted">
-        A proposal token lets one named child forge push
+        A proposal token lets one named child forge read this repository's code (to fork it), push
         <code>child/&lt;name&gt;/…</code> branches here and open pulls from
-        them — nothing else. It lives 30 days.
+        them — nothing else, and revoking it ends all of it. It lives 30 days.
       </p>
       ${tokens.length === 0
         ? html`<p class="muted">No proposal tokens.</p>`
