@@ -28,6 +28,7 @@ import type { User } from "../core/users.ts";
 import { runGitCapture } from "../git/env.ts";
 import { isSafeRef } from "../git/guard.ts";
 import { repoDir } from "../git/repos.ts";
+import { type Resolve, vetHost } from "../kernel/outbound.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { providerForOrigin } from "../origins/credential.ts";
 import { redact, safeRemoteUrl, secretsIn } from "../origins/credentials.ts";
@@ -70,6 +71,8 @@ export interface MigrateInput {
   readonly visibility?: "public" | "private";
   /** Put an agent on it: the crew makes it run here. */
   readonly crew?: { readonly agent: string; readonly autonomous: boolean };
+  /** Name → addresses, for the private-address check. Tests inject it. */
+  readonly resolve?: Resolve;
 }
 
 export interface MigrateStarted {
@@ -113,7 +116,7 @@ export async function migrateRepo(
   const proven = requireVerified(app, user.value);
   if (!proven.ok) return proven;
 
-  const source = await resolveSource(app, user.value, input.source);
+  const source = await resolveSource(app, user.value, input.source, input.resolve);
   if (!source.ok) return source;
   if (input.crew !== undefined && !getAgentByName(app.db, input.crew.agent))
     return err("no_such_agent");
@@ -235,8 +238,8 @@ export function migrateUrl(raw: string): string | undefined {
 /**
  * Whether a hostname names something inside the network rather than on the
  * open internet: loopback, link-local, the private ranges, `.localhost`,
- * and the unspecified address. Names are not resolved here — a public name
- * pointing at a private address is the network's own filter to catch.
+ * and the unspecified address. Names are not resolved here: that is
+ * `vetHost`'s job, which runs after this literal check.
  */
 export function isPrivateHost(hostname: string): boolean {
   const h = hostname.toLowerCase().replace(/^\[|\]$/g, "");
@@ -340,6 +343,7 @@ async function resolveSource(
   app: App,
   user: User,
   source: MigrateSource,
+  resolve?: Resolve,
 ): Promise<Result<Resolved, MigrateError>> {
   if ("url" in source) {
     const url = migrateUrl(source.url);
@@ -348,12 +352,15 @@ async function resolveSource(
     // range — is not a public repository, and a pasted address must not
     // become a way to knock on it. An admin may; a forge run for one person
     // may say so once (`FORGE_MIGRATE_PRIVATE_HOSTS=1`).
-    if (
-      isPrivateHost(new URL(url).hostname) &&
-      !user.isAdmin &&
-      app.config.migrateFromPrivateHosts !== true
-    )
-      return err("private_host");
+    const mayReachPrivate =
+      user.isAdmin || app.config.migrateFromPrivateHosts === true;
+    if (!mayReachPrivate) {
+      const hostname = new URL(url).hostname;
+      if (isPrivateHost(hostname)) return err("private_host");
+      // A public-looking name can resolve inside the network.
+      const vetted = await vetHost(hostname, resolve ? { resolve } : {});
+      if (!vetted.ok && vetted.error === "refused") return err("private_host");
+    }
     return ok({
       url,
       label: url,

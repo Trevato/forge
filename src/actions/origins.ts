@@ -136,6 +136,7 @@ function tooManyAttempts(app: App, userId: string): boolean {
 export type ConnectError =
   | "unauthorized"
   | "unknown_host"
+  | "private_host"
   | "unreachable"
   | "bad_token"
   | "already_connected"
@@ -330,6 +331,7 @@ export function listUserOrigins(app: App, actor: User): Origin[] {
 export type OAuthStartError =
   | "unauthorized"
   | "unknown_host"
+  | "private_host"
   | "unreachable"
   | "no_app"
   | "rate_limited"
@@ -661,7 +663,10 @@ export function registerOriginApp(
     clientId: string;
     clientSecret?: string;
   },
-): Promise<Result<AppRow, "unauthorized" | "unknown_host" | "unreachable">> {
+): Promise<Result<
+  AppRow,
+  "unauthorized" | "unknown_host" | "private_host" | "unreachable"
+>> {
   return (async () => {
     const user = requireUser(actor);
     if (!user.ok) return user;

@@ -627,10 +627,10 @@ describe("discovery will not dial anything it is asked to", () => {
     }
     // Public https hosts are fine, and so is loopback (this machine).
     expect(allowedOrigin("codeberg.org", env())).toBe("https://codeberg.org");
-    expect(allowedOrigin("http://localhost:3000", env())).toBe(
+    expect(allowedOrigin("http://localhost:3000", { FORGE_DEV: "1" })).toBe(
       "http://localhost:3000",
     );
-    expect(allowedOrigin("http://127.0.0.1:9", env())).toBe(
+    expect(allowedOrigin("http://127.0.0.1:9", { FORGE_DEV: "1" })).toBe(
       "http://127.0.0.1:9",
     );
 
@@ -655,5 +655,44 @@ describe("discovery will not dial anything it is asked to", () => {
     expect(
       allowedOrigin("http://10.1.2.4:9", env("10.1.2.3:9")),
     ).toBeUndefined();
+  });
+});
+
+describe("discovery vets every host and every hop (#2993)", () => {
+  test("a name that resolves privately, and a redirect to the metadata address, are refused", async () => {
+    const resolved = await discover("https://sneaky.example", {}, {
+      resolve: async () => ["10.0.0.5"],
+    });
+    expect(resolved).toEqual({ ok: false, error: "private_host" });
+
+    const hop = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: () =>
+        new Response(null, {
+          status: 302,
+          headers: { location: "http://169.254.169.254/latest/meta-data" },
+        }),
+    });
+    try {
+      const env = { FORGE_DEV: "1" };
+      const found = await discover(`http://127.0.0.1:${hop.port}`, env);
+      expect(found).toEqual({ ok: false, error: "private_host" });
+    } finally {
+      hop.stop(true);
+    }
+  });
+
+  test("loopback is reachable in dev only, and an operator can still name it", () => {
+    expect(allowedOrigin("http://127.0.0.1:9", { FORGE_DEV: "1" })).toBe(
+      "http://127.0.0.1:9",
+    );
+    expect(allowedOrigin("http://127.0.0.1:9", {})).toBeUndefined();
+    expect(allowedOrigin("http://localhost:3000", {})).toBeUndefined();
+    expect(
+      allowedOrigin("http://localhost:3000", {
+        FORGE_ORIGIN_ALLOW: "localhost:3000",
+      }),
+    ).toBe("http://localhost:3000");
   });
 });

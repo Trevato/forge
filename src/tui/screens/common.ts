@@ -882,6 +882,7 @@ const MESSAGES: Record<string, string> = {
   already_connected: "that account is already connected",
   already_mirrored: "that repository is already mirrored here",
   unknown_host: "that does not look like a forge",
+  private_host: "that address is inside a network, not on the internet",
   unreachable: "that instance could not be reached",
   bad_token: "the origin refused that token",
   rate_limited: "too many connect attempts; wait a few minutes",

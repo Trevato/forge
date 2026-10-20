@@ -657,6 +657,20 @@ describe("migrate", () => {
     }
   });
 
+  test("a name that resolves to a private address is refused like the literal", async () => {
+    const config = app.config as { migrateFromPrivateHosts?: boolean };
+    config.migrateFromPrivateHosts = false;
+    try {
+      const refused = await migrateRepo(app, bob, {
+        source: { url: "https://looks-public.example/a/b.git" },
+        resolve: async () => ["10.0.0.5"],
+      });
+      expect(refused).toEqual({ ok: false, error: "private_host" });
+    } finally {
+      config.migrateFromPrivateHosts = true;
+    }
+  });
+
   test("a clone follows no redirect: the address that was checked is the only one fetched", async () => {
     let hits = 0;
     const target = Bun.serve({

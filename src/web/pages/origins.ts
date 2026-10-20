@@ -819,6 +819,7 @@ export async function originConnectToken(ctx: Ctx): Promise<Response> {
 function connectMessage(error: string): string {
   const words: Record<string, string> = {
     unknown_host: "That does not look like a forge this can talk to.",
+    private_host: "That address is inside a network, not on the internet.",
     unreachable: "That instance could not be reached.",
     bad_token: "That token was refused by the origin.",
     already_connected: "That account is already connected.",

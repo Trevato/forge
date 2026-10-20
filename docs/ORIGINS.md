@@ -111,8 +111,9 @@ publishes neither, so the user names it (`kind: "github"` with a host →
 `/api/v3`). `whoami()` then validates the credential and fixes `login`.
 
 Discovery fetches a host a stranger named, so it is https-only, refuses
-private address literals and non-http schemes, follows no redirect off-host,
-caps the body at 64 KB and times out in 5 s. An operator can vouch for a LAN
+resolves the name and refuses any private answer (`vetHost`, at every hop,
+dialling the address it judged), refuses non-http schemes, follows no redirect
+off-host, reaches loopback only in dev (`FORGE_DEV=1`), caps the body at 64 KB and times out in 5 s. An operator can vouch for a LAN
 or plaintext host with `FORGE_ORIGIN_ALLOW=host[,host…]`; there is no
 per-user toggle, because the risk it accepts belongs to the server.
 

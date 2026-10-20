@@ -5895,6 +5895,8 @@ export function forgeBaseUrl(
 
 function connectMessage(code: string): string {
   if (code === "unknown_host") return "that does not look like a forge host";
+  if (code === "private_host")
+    return "that address is inside a network, not on the internet";
   if (code === "unreachable") return "that host could not be reached";
   if (code === "bad_token") return "the origin rejected that token";
   if (code === "already_connected")

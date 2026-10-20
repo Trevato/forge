@@ -16,6 +16,12 @@
  * a redirect may never leave the host we asked.
  */
 
+import {
+  outboundFetch,
+  type OutboundOptions,
+  RefusedError,
+  vetHost,
+} from "../kernel/outbound.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { readCapped } from "./providers/http.ts";
 import type { Discovered, OriginKind } from "./types.ts";
@@ -24,7 +30,7 @@ const TIMEOUT_MS = 5_000;
 const MAX_BYTES = 64 * 1024;
 const MAX_HOPS = 3;
 
-export type DiscoverError = "unknown_host" | "unreachable";
+export type DiscoverError = "unknown_host" | "unreachable" | "private_host";
 
 export interface DiscoverInput {
   /** What the user typed: `github`, `github.com`, `https://codeberg.org`. */
@@ -47,8 +53,13 @@ function allowedHosts(env: Record<string, string | undefined>): Set<string> {
   );
 }
 
-/** Loopback is always reachable: it is this machine, and it is where a
- * development instance and the test suite live. */
+/** A development instance (`FORGE_DEV=1`, also set for the test suite). */
+function isDev(env: Record<string, string | undefined>): boolean {
+  return env.FORGE_DEV === "1";
+}
+
+/** Loopback is this machine: reachable in dev, where a development instance
+ * and the test suite live, and nowhere else unless an operator names it. */
 function isLoopback(hostname: string): boolean {
   const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
   return (
@@ -140,7 +151,7 @@ export function allowedOrigin(
     allowed.has(url.host.toLowerCase()) ||
     allowed.has(url.hostname.toLowerCase());
   if (named) return url.origin;
-  if (isLoopback(url.hostname)) return url.origin;
+  if (isDev(env) && isLoopback(url.hostname)) return url.origin;
   if (url.protocol !== "https:") return undefined;
   if (isPrivateLiteral(url.hostname)) return undefined;
   return url.origin;
@@ -149,6 +160,7 @@ export function allowedOrigin(
 export async function discover(
   input: string | DiscoverInput,
   env: Record<string, string | undefined> = process.env,
+  options: OutboundOptions = {},
 ): Promise<Result<Discovered, DiscoverError>> {
   const wanted: DiscoverInput =
     typeof input === "string" ? { host: input } : input;
@@ -173,6 +185,11 @@ export async function discover(
 
   const web = allowedOrigin(wanted.host, env);
   if (web === undefined) return err("unknown_host");
+  const probe: Probe = { env, options, refused: false };
+  if (!exempt(web, env)) {
+    const vetted = await vetHost(new URL(web).hostname, options);
+    if (!vetted.ok && vetted.error === "refused") return err("private_host");
+  }
 
   // GitHub Enterprise publishes neither NodeInfo nor a version endpoint we
   // can read unauthenticated; the user says so, and we believe them.
@@ -187,13 +204,13 @@ export async function discover(
   }
 
   // One cheap look at the standard, then the probe that actually answers.
-  const node = await viaNodeInfo(web);
+  const node = await viaNodeInfo(web, probe);
   if (node) return ok(node);
 
-  const version = await viaVersionEndpoint(web);
+  const version = await viaVersionEndpoint(web, probe);
   if (version) return ok(version);
 
-  return err("unreachable");
+  return err(probe.refused ? "private_host" : "unreachable");
 }
 
 // ---- probes ----
@@ -205,8 +222,9 @@ export async function discover(
  */
 async function viaVersionEndpoint(
   web: string,
+  probe: Probe,
 ): Promise<Discovered | undefined> {
-  const doc = await getJson(`${web}/api/v1/version`, web);
+  const doc = await getJson(`${web}/api/v1/version`, web, probe);
   if (!doc.ok) return undefined;
   const version = asString(field(doc.value, "version"));
   if (version === "") return undefined;
@@ -220,8 +238,11 @@ async function viaVersionEndpoint(
   };
 }
 
-async function viaNodeInfo(web: string): Promise<Discovered | undefined> {
-  const index = await getJson(`${web}/.well-known/nodeinfo`, web);
+async function viaNodeInfo(
+  web: string,
+  probe: Probe,
+): Promise<Discovered | undefined> {
+  const index = await getJson(`${web}/.well-known/nodeinfo`, web, probe);
   if (!index.ok) return undefined;
   const links = asArray(field(index.value, "links"));
   // Prefer the newest schema the host offers; any of them carries `software`.
@@ -234,7 +255,7 @@ async function viaNodeInfo(web: string): Promise<Discovered | undefined> {
   for (const href of hrefs.slice(0, 3)) {
     // A NodeInfo document on another host is a redirect we did not consent to.
     if (!sameOrigin(href, web)) continue;
-    const doc = await getJson(href, web);
+    const doc = await getJson(href, web, probe);
     if (!doc.ok) continue;
     const name = asString(field(field(doc.value, "software"), "name"))
       .trim()
@@ -255,6 +276,28 @@ async function viaNodeInfo(web: string): Promise<Discovered | undefined> {
 
 // ---- careful fetching ----
 
+/** What one discovery carries between its requests. */
+interface Probe {
+  env: Record<string, string | undefined>;
+  options: OutboundOptions;
+  /** Set when any hop was refused for its address. */
+  refused: boolean;
+}
+
+/** An operator-named host, or loopback in dev: dialled as typed, unvetted. */
+function exempt(
+  href: string,
+  env: Record<string, string | undefined>,
+): boolean {
+  const url = new URL(href);
+  const allowed = allowedHosts(env);
+  return (
+    allowed.has(url.host.toLowerCase()) ||
+    allowed.has(url.hostname.toLowerCase()) ||
+    (isDev(env) && isLoopback(url.hostname))
+  );
+}
+
 function sameOrigin(href: string, web: string): boolean {
   try {
     return new URL(href).origin === web;
@@ -271,18 +314,31 @@ function sameOrigin(href: string, web: string): boolean {
 async function getJson(
   url: string,
   web: string,
+  probe: Probe,
 ): Promise<Result<unknown, "failed">> {
   let target = url;
   for (let hop = 0; hop < MAX_HOPS; hop++) {
-    if (!sameOrigin(target, web)) return err("failed");
+    if (!sameOrigin(target, web)) {
+      // Say so when the hop it was sent to is inside the network.
+      if (!exempt(target, probe.env)) {
+        const vetted = await vetHost(new URL(target).hostname, probe.options);
+        if (!vetted.ok && vetted.error === "refused") probe.refused = true;
+      }
+      return err("failed");
+    }
+    const init = {
+      headers: { accept: "application/json", "user-agent": "forge" },
+      redirect: "manual",
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    } satisfies RequestInit;
     let response: Response;
     try {
-      response = await fetch(target, {
-        headers: { accept: "application/json", "user-agent": "forge" },
-        redirect: "manual",
-        signal: AbortSignal.timeout(TIMEOUT_MS),
-      });
-    } catch {
+      // Vetted, pinned to the judged address, and never auto-followed.
+      response = exempt(target, probe.env)
+        ? await fetch(target, init)
+        : await outboundFetch(target, init, probe.options);
+    } catch (e) {
+      if (e instanceof RefusedError) probe.refused = true;
       return err("failed");
     }
     if (response.status >= 300 && response.status < 400) {
