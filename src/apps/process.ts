@@ -78,6 +78,8 @@ export interface CellBase {
   readonly home: string;
   /** Told of an undeclared host reached while egress is only reported. */
   readonly onUndeclared?: ((host: string, port: number) => void) | undefined;
+  /** Private `host:port` destinations a site admin granted this repository. */
+  readonly granted?: readonly string[] | undefined;
   /** The egress mode, as the forge's setting says at this start. */
   readonly egressMode?: "enforce" | "report" | undefined;
   /** Whose cell, for the machine sampler: `app:<slug>/<env>`. */
@@ -416,6 +418,7 @@ export async function startProcess(
             home: input.cell.home,
             hide: input.cell.hide,
             egress: manifest.egress ?? [],
+            granted: input.cell.granted,
             reach: [input.forgeUrl],
             limits: resolveLimits("app", manifest.limits),
             listen: port,

@@ -208,13 +208,19 @@ function egressField(root: Json): Result<readonly string[], ManifestError> {
       Number(item.split(":")[1] ?? 1) > 65535
     )
       return invalid(
-        "forge.json: egress entries must be host names (api.example.com, *.example.com, or db.example.com:5432 for a port other than 80 and 443); a private address is only ever one exact address:port like 100.89.95.68:8101, never a range",
+        "forge.json: egress entries must be host names (api.example.com, " +
+          "*.example.com, or db.example.com:5432 for a port other than 80 " +
+          "and 443); a private address is only ever one exact address:port " +
+          "like 100.89.95.68:8101, never a range",
       );
     const entry = item.toLowerCase();
     const literal = (entry.split(":")[0] ?? "").replace(/^\*\./, "");
-    if (isIP(literal) === 4 && !isPublicAddress(literal) && (entry.startsWith("*.") || !entry.includes(":")))
+    const portless = entry.startsWith("*.") || !entry.includes(":");
+    if (isIP(literal) === 4 && !isPublicAddress(literal) && portless)
       return invalid(
-        `forge.json: egress "${item}" is a private address: name exactly one address and port (like 100.89.95.68:8101), not a wildcard or an address without a port; a site admin then grants it`,
+        `forge.json: egress "${item}" is a private address: name exactly ` +
+          "one address and port (like 100.89.95.68:8101), not a wildcard " +
+          "or an address without a port; a site admin then grants it",
       );
     hosts.push(entry);
   }

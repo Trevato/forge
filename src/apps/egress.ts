@@ -113,7 +113,9 @@ export async function decide(
   );
   const declared = origin || hostAllowed(policy.hosts, name, port);
   const literalPrivate = isIP(name) !== 0 && !isPublicAddress(name);
-  const askAdmin = `${name}:${port} is a private destination: add it to forge.json egress and ask a site admin to grant it`;
+  const askAdmin =
+    `${name}:${port} is a private destination: ` +
+    "add it to forge.json egress and ask a site admin to grant it";
   const granted = declared && (policy.granted ?? []).includes(`${name}:${port}`);
   // Reporting lets an undeclared host through (and says so) on the web
   // ports alone; any other port, and any private address (below), is
@@ -137,12 +139,18 @@ export async function decide(
     if (!granted)
       return {
         ok: false,
-        why: literalPrivate ? askAdmin : `${name} resolves to a private address; add ${name}:${port} to forge.json egress and ask a site admin to grant it`,
+        why: literalPrivate
+          ? askAdmin
+          : `${name} resolves to a private address; add ${name}:${port} ` +
+            "to forge.json egress and ask a site admin to grant it",
       };
     // A grant opens one destination, never the metadata service or the
     // forge's own cluster, whatever a name resolves to.
     if (addresses.some((a) => !isPublicAddress(a) && neverGrantable(a)))
-      return { ok: false, why: `${name} resolves to an address that can never be granted` };
+      return {
+        ok: false,
+        why: `${name} resolves to an address that can never be granted`,
+      };
   }
   return { ok: true, address: first, undeclared: !declared };
 }

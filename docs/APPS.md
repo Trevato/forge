@@ -288,7 +288,7 @@ port; a range, a wildcard or no port is refused when `forge.json` is read) and
 a site admin has granted that same `host:port` (`core/egress_grants.ts`). A
 grant on :8101 does not open :22, and 169.254.0.0/16, loopback and the forge's
 own pod and service ranges (`FORGE_NEVER_GRANT_CIDRS` adds more) are never
-grantable. Until granted, the refusal says to add it and ask a site admin.
+grantable. Until granted, the refusal says to add it and ask a site admin. Grants are stored in the `egress_grant` table and read at every app start; there is not yet a page, API or terminal command to make one (a follow-up), so for now they are written through `grantEgress`.
 
 A release that turns egress on must not break an app whose writers have
 not declared what it uses yet, so the operator can start it reported:

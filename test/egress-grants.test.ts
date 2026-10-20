@@ -11,6 +11,7 @@ import { createApp, type App } from "../src/app.ts";
 import { createRepo } from "../src/core/repos.ts";
 import { decide, type EgressPolicy } from "../src/apps/egress.ts";
 import { parseManifest } from "../src/apps/manifest.ts";
+import { grantedFor } from "../src/apps/runtime.ts";
 import { grantEgress, listEgressGrants, revokeEgress } from "../src/core/egress_grants.ts";
 import { createUser } from "../src/core/users.ts";
 
@@ -46,6 +47,10 @@ describe("forge.json egress and private destinations", () => {
       expect(r.ok).toBe(false);
       if (!r.ok) expect(JSON.stringify(r.error)).toMatch(/private address|never a range/);
     }
+  });
+  test("an IPv6 literal, private or not, is refused: egress takes IPv4 and names", () => {
+    for (const bad of ["fd00::1", "[fd00::1]:8101", "::1", "[::1]:80"])
+      expect(read([bad]).ok).toBe(false);
   });
   test("a public address without a port is still fine", () => {
     expect(read(["8.8.8.8"]).ok).toBe(true);
@@ -106,5 +111,24 @@ describe("the proxy's verdict", () => {
   test("a public host is unaffected", async () => {
     const v = await decide(policy(["8.8.8.8"]), "8.8.8.8", 443);
     expect(v.ok).toBe(true);
+  });
+});
+
+describe("from a stored grant to the proxy policy", () => {
+  test("grantedFor reads what an admin stored, and the verdict follows it", async () => {
+    const hosts = ["100.89.95.68:8101"];
+    const before = { hosts, origins: [], granted: grantedFor(app.db, repoId) };
+    expect((await decide(before, "100.89.95.68", 8101)).ok).toBe(false);
+    grantEgress(app.db, repoId, "100.89.95.68:8101", admin);
+    const after = { hosts, origins: [], granted: grantedFor(app.db, repoId) };
+    expect(after.granted).toEqual(["100.89.95.68:8101"]);
+    expect((await decide(after, "100.89.95.68", 8101)).ok).toBe(true);
+    revokeEgress(app.db, repoId, "100.89.95.68:8101", admin);
+    expect(grantedFor(app.db, repoId)).toEqual([]);
+  });
+  test("a grant belongs to its repository alone", () => {
+    grantEgress(app.db, repoId, "100.89.95.68:8101", admin);
+    expect(grantedFor(app.db, "some-other-repo")).toEqual([]);
+    revokeEgress(app.db, repoId, "100.89.95.68:8101", admin);
   });
 });
