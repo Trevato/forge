@@ -51,6 +51,7 @@ import {
   updateRepoSettings,
 } from "../../actions/repos.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { appVitals, shiftText, speedText as ms, type AppVitals } from "../../apps/vitals.ts";
 import type { PreviewData } from "../../apps/data.ts";
 import {
@@ -581,10 +582,15 @@ function appSettingsView(
     },
   );
   if (record === undefined) return form;
-  const domains = listAppDomains(ctx.app, ctx.auth.user, repo);
+  const domains = timePhase(ctx.request, "domains", () =>
+    listAppDomains(ctx.app, ctx.auth.user, repo),
+  );
+  const vitals = timePhase(ctx.request, "vitals", () =>
+    appVitals(ctx.app.db, record.id),
+  );
   return html`${form}
     ${when(listed?.ok === true, () => html`<div class="mt">${appMembersView(base, values.access, named)}</div>`)}
-    <div class="mt">${appVisitorsView(appVitals(ctx.app.db, record.id))}</div>
+    <div class="mt">${appVisitorsView(vitals)}</div>
     <div class="mt">
       ${appEnvView(base, listAppEnvNames(ctx.app.db, record.id))}
     </div>
@@ -880,14 +886,13 @@ const appValues = (repo: Repo, record: AppRecord | undefined): AppValues => ({
 export function appSettingsPage(ctx: Ctx): Response {
   const repo = loadAdminRepo(ctx);
   if (!repo) return repoNotFound(ctx);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const record = getAppByRepo(ctx.app.db, repo.id);
-  return settingsPageResponse(
-    ctx,
-    repo,
-    "app",
-    "App",
-    appSettingsView(ctx, repo, record, appValues(repo, record)),
-  );
+  const view = appSettingsView(ctx, repo, record, appValues(repo, record));
+  const rendering = performance.now();
+  const response = settingsPageResponse(ctx, repo, "app", "App", view);
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 // POST /:owner/:name/settings/app — enable, or change.
