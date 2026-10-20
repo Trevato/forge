@@ -7,6 +7,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { resolveLimits } from "../src/apps/contain.ts";
 import {
   SECONDS_PER_BYTE_DEFAULT,
   SHARDS_MAX,
@@ -295,6 +296,18 @@ describe("shardCount", () => {
     // Memory never raises the count past the CPUs, and the override wins.
     expect(shardCount(4, 400, undefined, 64 * GiB)).toEqual({ ok: true, value: 4 });
     expect(shardCount(16, 400, "20", 4 * GiB)).toEqual({ ok: true, value: 20 });
+  });
+
+  test("the declared memory is held to what the machine grants before shards are sized (#3105)", () => {
+    const src = readFileSync(new URL("../scripts/test-shards.ts", import.meta.url), "utf8");
+    expect(src).toContain('resolveLimits("step", declared).memoryMiB');
+    const saved = process.env["FORGE_CELL_MEMORY_MAX_MIB"];
+    delete process.env["FORGE_CELL_MEMORY_MAX_MIB"];
+    try {
+      expect(resolveLimits("step", { memoryMiB: 8192 }).memoryMiB).toBe(4096);
+    } finally {
+      if (saved !== undefined) process.env["FORGE_CELL_MEMORY_MAX_MIB"] = saved;
+    }
   });
 
   test("the cell's declared CPUs hold the workers under the watchdog's limit (#2161)", () => {

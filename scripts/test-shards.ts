@@ -42,6 +42,7 @@
 import { availableParallelism, tmpdir, totalmem } from "node:os";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { resolveLimits } from "../src/apps/contain.ts";
 import {
   formatTimes,
   heaviestFirst,
@@ -344,8 +345,10 @@ const readLimit = (path: string): string | undefined => {
   }
 };
 // The cell's memory as forge.json declares it: its watchdog stops the
-// check over it, and nothing in /proc or /sys says it. Its CPUs come from
-// FORGE_CELL_CPUS (shardCountFromEnv).
+// check over it, and nothing in /proc or /sys says it. The machine grants
+// no more than its maximum (resolveLimits), so a declared 8 GiB on a 4 GiB
+// machine is 4 GiB: sizing shards by the declaration overran the cap (#3105).
+// Its CPUs come from FORGE_CELL_CPUS (shardCountFromEnv).
 const cell = parseCheck(readLimit(new URL("../forge.json", import.meta.url).pathname), undefined);
 const declared = cell.ok ? cell.value?.limits : undefined;
 const cpus = availableParallelism();
@@ -353,7 +356,9 @@ const shardsOverride = process.env["FORGE_CHECK_SHARDS"];
 const memory = memoryLimit(totalmem(), [
   readLimit("/sys/fs/cgroup/memory.max"),
   readLimit("/sys/fs/cgroup/memory/memory.limit_in_bytes"),
-  declared?.memoryMiB === undefined ? undefined : String(declared.memoryMiB * 1024 * 1024),
+  declared?.memoryMiB === undefined
+    ? undefined
+    : String(resolveLimits("step", declared).memoryMiB * 1024 * 1024),
 ]);
 const count = shardCountFromEnv(process.env, cpus, files.length, memory);
 if (!count.ok) {
