@@ -8,6 +8,7 @@
  * one closed Details section.
  */
 
+import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { cardPath } from "../og/path.ts";
 import { mayEditIssue } from "../../actions/issues.ts";
 import { marksByName } from "../../core/marks.ts";
@@ -264,6 +265,18 @@ async function studioTell(
   issue: Issue,
 ): Promise<Response> {
   const db = ctx.app.db;
+  const { request } = ctx;
+  const started = performance.now();
+  notePhase(request, "session", takeSessionTime(request));
+  let linksMs = 0;
+  const links = <T>(work: () => T): T => {
+    const t = performance.now();
+    try {
+      return work();
+    } finally {
+      linksMs += performance.now() - t;
+    }
+  };
   const base = repoBase(repo);
   // The only address the page *posts* to: the reply, the close and every
   // Details form live under `/issues/:number`, whether a reader arrived
@@ -271,7 +284,7 @@ async function studioTell(
   // does not move with the noun.
   const thread = `${base}/issues/${issue.number}`;
   const direction = repo.directionIssueId === issue.id;
-  const closingPull = openPullsClosing(db, repo.id).get(issue.number);
+  const closingPull = links(() => openPullsClosing(db, repo.id).get(issue.number));
   const wordCtx: WordCtx = {
     db,
     dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
@@ -367,6 +380,7 @@ async function studioTell(
     </div>
   </div>`;
 
+  const threadStart = performance.now();
   const talk = conversation(ctx, repo, issue, {
     openVerb: "opened this",
     editAction:
@@ -374,6 +388,11 @@ async function studioTell(
         ? `${repoBase(repo)}/issues/${issue.number}/edit`
         : undefined,
   });
+  const threadMs = performance.now() - threadStart;
+  const dependencies = links(() =>
+    dependenciesCard(ctx, repo, issue, `${thread}/dependencies`),
+  );
+  const teams = links(() => issueTeamsCard(ctx, repo, issue, `${thread}/teams`));
   const applied = labelsFor(db, issue.id);
   const allLabels = listLabels(db, repo.id);
   // Closed until asked for: neither is the next thing a person does here,
@@ -384,7 +403,7 @@ async function studioTell(
     <summary>Details</summary>
     ${assigneeCard(ctx, repo, issue, `${thread}/assignee`)}
     ${labelsCard(ctx, repo, issue, applied, allLabels, `${thread}/labels`)}
-    ${issueTeamsCard(ctx, repo, issue, `${thread}/teams`)}
+    ${teams}
     ${sealCard(ctx, repo, issue, `${thread}/seal`)}
   </details>`;
 
@@ -409,7 +428,7 @@ async function studioTell(
         ${privateWorkCard(ctx, repo, issue, `${thread}/private`)}
         ${runsCard}
         ${closingCard}
-        ${dependenciesCard(ctx, repo, issue, `${thread}/dependencies`)}
+        ${dependencies}
         ${details}
       </aside>
     </div>
@@ -420,7 +439,7 @@ async function studioTell(
       lastCommentId: talk.lastCommentId,
     })}`;
 
-  return page({
+  const response = page({
     ctx,
     title: `${issue.title} · ${repo.name}`,
     ogImage: cardPath("issue", repo, issue),
@@ -436,6 +455,11 @@ async function studioTell(
     styleCss: labelCss([...allLabels, ...applied]),
     scriptJs: liveClientJs,
   });
+  // Render is what is left of the page's own time once the named phases are out.
+  notePhase(request, "thread", threadMs);
+  notePhase(request, "links", linksMs);
+  notePhase(request, "render", Math.max(0, performance.now() - started - linksMs - threadMs));
+  return response;
 }
 
 /**
