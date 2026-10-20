@@ -221,6 +221,7 @@ describe("the forge over MCP", () => {
       "watch",
       "limb",
       "returns",
+      "review",
       "spend",
       "usage",
       "labels",

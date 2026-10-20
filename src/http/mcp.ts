@@ -53,6 +53,7 @@ import {
   linkIssue,
   unlinkIssue,
 } from "../actions/dependencies.ts";
+import { submitReview } from "../actions/pulls.ts";
 import { originError } from "../web/pages/thread.ts";
 import { holdPull, releasePull } from "../actions/holds.ts";
 import { openPlan, parsePlan, PLAN_MAX, proposePlan } from "../actions/plan.ts";
@@ -2346,6 +2347,62 @@ const TOOLS: readonly Tool[] = [
       return read.error === "bad_days"
         ? bad("invalid_days", "days is a whole number from 1 to 90")
         : bad("not_found", "no such app of yours (owner/name)");
+    },
+  },
+  {
+    name: "review",
+    description:
+      "Approve a pull, or request changes with a reason (`reason` is required for changes); approving your own pull, or a verdict without write access, is refused as on the page.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        number: { type: "integer", minimum: 1 },
+        verdict: { type: "string", enum: ["approve", "changes"] },
+        reason: { type: "string", maxLength: 65536 },
+      },
+      required: ["repo", "number", "verdict"],
+    },
+    writes: true,
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const verdict = args["verdict"];
+      if (verdict !== "approve" && verdict !== "changes")
+        return bad("invalid", "verdict is approve or changes");
+      const reason = str(args["reason"]);
+      if (verdict === "changes" && reason === "")
+        return bad("invalid", "say what to change (reason)");
+      const n = args["number"];
+      const pull =
+        typeof n === "number" && Number.isInteger(n) && n > 0
+          ? getPull(ctx.app.db, repo.id, n)
+          : undefined;
+      if (pull === undefined || !mayView(ctx.app.db, repo, pull, user))
+        return bad("no_such_pull", `no pull #${String(n)}`);
+      const state = verdict === "approve" ? "approved" : "changes_requested";
+      const sent = await submitReview(ctx.app, user, repo, pull, {
+        state,
+        ...(reason === "" ? {} : { body: reason }),
+      });
+      if (!sent.ok) {
+        const error = sent.error;
+        return bad(
+          "refused",
+          originError(error) ??
+            (error === "self_review"
+              ? "You cannot approve your own pull request."
+              : error === "forbidden"
+                ? "A verdict that gates a merge needs write access."
+                : error === "body_too_long"
+                  ? "That review is too long (64 KB at most)."
+                  : "That review could not be recorded."),
+        );
+      }
+      return good({
+        says: verdict === "approve" ? "Approved." : "Changes requested.",
+        url: `/${repo.ownerName}/${repo.name}/pulls/${pull.number}`,
+      });
     },
   },
   {
