@@ -4,7 +4,7 @@
  * fake placement stands in for where the child lives.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
@@ -164,6 +164,7 @@ describe("spawn over the API and MCP", () => {
         for: null,
         apps: expect.any(Array),
         createdAt: expect.any(String),
+        size: "small",
       },
     ]);
     // The same request again is answered, not made twice.
@@ -211,5 +212,39 @@ describe("spawn over the API and MCP", () => {
     const body = JSON.parse(shown.text) as { claimUrl: string; says: string };
     expect(body.claimUrl).toContain("/claim#");
     expect(body.says).toContain("live secret");
+  });
+
+  const ledgerOf = async (name: string) => JSON.parse(await Bun.file(join(dataDir, "spawn", `${name}.json`)).text());
+  const parentOf = async (bodyId: string) => JSON.parse(await Bun.file(join(dataDir, "children", bodyId, "parent.json")).text());
+  const sizeListed = async (name: string) => ((await (await get(ro)).json()) as any).items.find((i: any) => i.name === name)?.size;
+
+  test("size travels through POST /api/v1/forges into the ledger, parent.json and the list; huge is refused", async () => {
+    const bad = await post(rw, { name: "sized-api", apps: [], size: "huge" });
+    expect(bad.status).toBe(422);
+    expect(((await bad.json()) as any).message).toStartWith("size:");
+    const res = await post(rw, { name: "sized-api", apps: [], size: "medium", dryRun: false });
+    expect(res.status).toBe(201);
+    const ledger = await ledgerOf("sized-api");
+    expect(ledger.size).toBe("medium");
+    expect((await parentOf(ledger.bodyId)).size).toBe("medium");
+    expect(await sizeListed("sized-api")).toBe("medium");
+  });
+
+  test("size travels through MCP spawn into the ledger, parent.json and the list", async () => {
+    const m = await mcp(rw, { name: "sized-mcp", apps: [], size: "large", dryRun: false });
+    expect(m.error).toBe(false);
+    const ledger = await ledgerOf("sized-mcp");
+    expect(ledger.size).toBe("large");
+    expect((await parentOf(ledger.bodyId)).size).toBe("large");
+    expect(await sizeListed("sized-mcp")).toBe("large");
+  });
+
+  test("a ledger without a size, or with a bad one, lists as small", async () => {
+    const dir = join(dataDir, "spawn");
+    await mkdir(dir, { recursive: true });
+    await Bun.write(join(dir, "legacy-a.json"), JSON.stringify({ name: "legacy-a", bodyId: "old-a", done: true }));
+    await Bun.write(join(dir, "legacy-b.json"), JSON.stringify({ name: "legacy-b", bodyId: "old-b", done: true, size: "__proto__" }));
+    expect(await sizeListed("legacy-a")).toBe("small");
+    expect(await sizeListed("legacy-b")).toBe("small");
   });
 });

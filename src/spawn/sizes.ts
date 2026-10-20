@@ -24,3 +24,7 @@ export function parseSize(v: unknown): Result<Size, string> {
   if (typeof v === "string" && Object.hasOwn(SIZES, v)) return ok(v as Size);
   return err("size must be small, medium or large");
 }
+
+export const DEFAULT_SIZE: Size = "small";
+
+export const isSize = (v: unknown): v is Size => typeof v === "string" && Object.hasOwn(SIZES, v);

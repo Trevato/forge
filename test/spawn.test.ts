@@ -85,6 +85,7 @@ describe("spawnForge", () => {
       org: "kids",
       url: "https://kid--forge.test",
       keepAccess: false,
+      size: "small",
       // A hash only: what the parent answers to stays in its own ledger.
       statusHash: expect.stringMatching(/^[0-9a-f]{64}$/),
       // The child signs heartbeats to its parent with it (#425).

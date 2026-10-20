@@ -54,6 +54,7 @@ import { loadOrCreateHostKey } from "../ssh/keys.ts";
 import { claimLink, hasAdmin, mintClaim, spawnedOrg } from "../spawn/claim.ts";
 import { childPublicUrl, parentOrigin, type Placement } from "../spawn/placement.ts";
 import { planSpawn, type SpawnInput, type SpawnPlan, type SpawnSource } from "../spawn/plan.ts";
+import { DEFAULT_SIZE, isSize, type Size } from "../spawn/sizes.ts";
 import { chainForChild, DEFAULT_MODE, forgeLinkOf, type FollowMode, type Hop } from "../spawn/chain.ts";
 import { requireUser } from "./access.ts";
 
@@ -108,6 +109,8 @@ interface Ledger {
   readonly forWhom?: string;
   readonly apps?: readonly string[];
   readonly createdAt?: string;
+  /** Absent on a ledger written before sizes; reads as small. */
+  readonly size?: Size;
   /**
    * What the parent shows the child to learn its private facts (when anything
    * last happened); the child keeps only its hash. Never in an answer.
@@ -254,6 +257,7 @@ async function make(
       ...(plan.forWhom === undefined ? {} : { forWhom: plan.forWhom }),
       apps: plan.apps.map((a) => a.ref),
       createdAt: new Date().toISOString(),
+      size: plan.size ?? DEFAULT_SIZE,
       statusToken: secret(),
       beatKey: secret(),
     };
@@ -448,6 +452,7 @@ async function copyInto(
         // The child's own address: <name>--<parent's host>.
         url: liveChildUrl(app, plan.name),
         keepAccess: plan.keepAccess,
+        size: plan.size ?? DEFAULT_SIZE,
         // Each app is a fork: where it came from, so the child can follow it.
         apps: plan.apps.map((a) => ({ repo: `${plan.org}/${a.ref.split("/")[1]}`, upstream: a.ref })),
         ...(plan.fresh === undefined ? {} : { fresh: `${plan.org}/${plan.fresh.name}` }),
@@ -656,6 +661,7 @@ export interface Child {
   readonly apps: readonly string[];
   /** When it was begun; null on a ledger older than the client list. */
   readonly createdAt: string | null;
+  readonly size: Size;
 }
 
 /** The children this forge has made or begun, from its ledger, by name. */
@@ -674,6 +680,7 @@ export async function listChildren(app: App): Promise<Child[]> {
         for: ledger.forWhom ?? null,
         apps: ledger.apps ?? [],
         createdAt: ledger.createdAt ?? null,
+        size: isSize(ledger.size) ? ledger.size : DEFAULT_SIZE,
       });
   }
   return out;
