@@ -16,7 +16,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { clearMapCache, layoutKey } from "../src/web/map_cache.ts";
 import { layout } from "../src/web/pages/map.ts";
 import type { Graph } from "../src/core/dependencies.ts";
-import { FORGE_SIZE, seedFixture, type Fixture, type Shape } from "../bench/map-home.ts";
+import { seedFixture, type Fixture, type Shape } from "../bench/map-home.ts";
 import { countStatements } from "../bench/run.ts";
 
 const SMALL: Shape = {
@@ -32,6 +32,26 @@ const SMALL: Shape = {
   runs: 2,
   comments: 1,
   events: 50,
+};
+
+/**
+ * Many lanes and a real graph, without the forge's 60,000 events: the
+ * statement counts asserted below depend on the code, not on the fixture's
+ * size, and seeding the full size under load is what timed this suite out.
+ */
+const MANY: Shape = {
+  repos: 20,
+  bigIssues: 300,
+  bigOpen: 60,
+  bigGraph: 120,
+  bigEdges: 200,
+  bigPulls: 5,
+  lanes: [20, 12, 9, 6, 4, 2, 1, 1],
+  privateLanes: 2,
+  sealed: 2,
+  runs: 3,
+  comments: 2,
+  events: 1_000,
 };
 
 /** What the page around the lanes reads, however many lanes there are. */
@@ -58,11 +78,11 @@ const get = async (servers: Servers, path: string, cookie: string): Promise<stri
 
 const lanesIn = (page: string): number => page.split('class="map-lane"').length - 1;
 
-describe("/map on the forge-sized fixture, warm", () => {
+describe("/map on a many-lane fixture, warm", () => {
   let servers: Servers;
   let f: Fixture;
   beforeAll(async () => {
-    ({ f, servers } = await boot(FORGE_SIZE));
+    ({ f, servers } = await boot(MANY));
   }, 120_000);
   afterAll(() => servers.stop(), 60_000);
 
