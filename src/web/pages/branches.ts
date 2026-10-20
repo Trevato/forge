@@ -17,6 +17,7 @@
 
 import { createBranch, deleteBranch } from "../../actions/branches.ts";
 import type { Repo } from "../../core/repos.ts";
+import { notePhase, takeSessionTime, timePhaseAsync } from "../../core/route_timing.ts";
 import { listBranches, type BranchInfo } from "../../git/branches.ts";
 import { commitLog, type Commit } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
@@ -244,10 +245,12 @@ export async function renderBranches(
   scope: RepoScope,
   banner?: Html,
 ): Promise<Response> {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const [{ rows, compared }, refs] = await Promise.all([
-    branchRows(ctx, scope),
-    refSetFrom(scope.source),
+    timePhaseAsync(ctx.request, "branches", () => branchRows(ctx, scope)),
+    timePhaseAsync(ctx.request, "refs", () => refSetFrom(scope.source)),
   ]);
+  const rendering = performance.now();
   const from = ctx.url.searchParams.get("from") ?? scope.facts.defaultBranch;
   const all = [...refs.branches, ...refs.tags];
   const startFrom = all.includes(from) ? from : scope.facts.defaultBranch;
@@ -287,7 +290,7 @@ export async function renderBranches(
     </div>
     ${when(scope.kind === "local", () => liveMount({ repo: scope.base }))}`;
 
-  return page({
+  const response = page({
     ctx,
     title: `Branches · ${scope.facts.name}`,
     crumbs: scope.crumbs,
@@ -295,6 +298,8 @@ export async function renderBranches(
     body,
     ...(scope.kind === "local" ? { scriptJs: liveClientJs } : {}),
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 export const CREATE_ERRORS: Record<string, string> = {
