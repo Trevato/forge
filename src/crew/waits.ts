@@ -2,8 +2,9 @@
  * Why an approved pull has not landed (#3055): the reason the green sweep's
  * `admit` gave each one, counted per repository, so the tick line says how
  * many approved pulls wait and on what. An approved pull that sits still
- * is then never a mystery: "stale" is a check the queue has asked for
- * again on the moved base, "queued" is a pull in the merge queue's line.
+ * is then never a mystery: "queued" is a pull in the merge queue's line,
+ * and a green on an older base is queued too — the candidate's gate is its
+ * re-check (#3316).
  */
 
 /** Why a pull did not join the merge queue on this sweep, or that it did. */
@@ -20,8 +21,7 @@ export type Wait =
   | "carried"
   | "wall"
   | "review"
-  | "red"
-  | "stale";
+  | "red";
 
 /** How many approved pulls waited on each reason. */
 export type Waits = Partial<Record<Wait, number>>;

@@ -23,8 +23,6 @@ import {
 import type { AccessError } from "../actions/access.ts";
 import { gateCandidate, releaseOnLand } from "../checks/landing.ts";
 import { addLearned } from "../checks/learned.ts";
-import { checksFor } from "../checks/service.ts";
-import { checkStale } from "../checks/stale.ts";
 import { enqueue, type GateCandidate, type Queued } from "../checks/queue.ts";
 import { mergeable, resolveOid, treeOf } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
@@ -77,7 +75,6 @@ import {
   activeRunFor,
   automaticRunsSince,
   listActive,
-  checkSummary,
   type Run,
   verdictForHead,
 } from "../core/runs.ts";
@@ -1755,29 +1752,11 @@ async function admit(
   const told = latestDecision(app.db, pull.id, "land");
   const gatedAt = `${pull.headOid}:${baseTip}`;
   if (redAt(told, gatedAt) && !regateDue(told!, Date.now())) return err("red");
-  // Green only against a base that has moved since: the merge would hold
-  // it (`checksHold`), so the queue asks for the check again on the base
-  // as it is now rather than wait for a person to (#3055). The fresh green
-  // admits it on a later sweep; one already queued is not asked twice.
-  if (
-    repo.requireChecks &&
-    checkStale(checkSummary(app.db, pull.id, pull.headOid).run, baseTip)
-  ) {
-    const again = await checksFor(app)?.request(
-      repo,
-      `pull-${pull.number}`,
-      pull.headOid,
-      "stale",
-      pull.id,
-    );
-    log.info("green on an older base, checked again", {
-      repo: `${repo.ownerName}/${repo.name}`,
-      pull: pull.number,
-      base: baseTip.slice(0, 7),
-      queued: again !== undefined,
-    });
-    return err("stale");
-  }
+  // Green only against a base that has moved since is admitted as it is:
+  // the candidate's full gate runs on the base tip with this pull merged,
+  // which is the proof a re-check of its own would give, and a red one
+  // bisects out (#3316). Re-checking each first made the line serial — a
+  // landing staled every other pull, and each waited a check of its own.
   return ok({
     pull,
     dir,
