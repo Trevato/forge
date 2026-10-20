@@ -110,6 +110,8 @@ interface Stored {
   triedAt: number;
   ok: boolean;
   releases: ParentRelease[];
+  /** The parent's ETag for `releases`, when it sent a well-formed one. */
+  etag?: string;
 }
 
 function readStored(file: string, url: string): Stored | undefined {
@@ -122,13 +124,30 @@ function readStored(file: string, url: string): Stored | undefined {
   }
 }
 
-async function fetchDoc(url: string, f: typeof fetch): Promise<unknown> {
+/** A strong ETag as the parent sends it; anything else is ignored. */
+function strongEtag(raw: string | null | undefined): string | undefined {
+  return typeof raw === "string" && /^"[\x21\x23-\x7e]{1,128}"$/.test(raw)
+    ? raw
+    : undefined;
+}
+
+/** The parent's document and its ETag; `unchanged` when it answered 304. */
+async function fetchDoc(
+  url: string,
+  f: typeof fetch,
+  etag?: string,
+): Promise<{ doc?: unknown; etag?: string; unchanged?: true }> {
   const res = await f(`${url.replace(/\/+$/, "")}/releases.json`, {
     signal: AbortSignal.timeout(TIMEOUT_MS),
     redirect: "error",
-    headers: { accept: "application/json" },
+    headers: {
+      accept: "application/json",
+      ...(etag === undefined ? {} : { "if-none-match": etag }),
+    },
   });
+  if (res.status === 304 && etag !== undefined) return { unchanged: true };
   if (!res.ok || res.body === null) throw new Error(`status ${res.status}`);
+  const tag = strongEtag(res.headers.get("etag"));
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -142,7 +161,10 @@ async function fetchDoc(url: string, f: typeof fetch): Promise<unknown> {
     }
     chunks.push(value);
   }
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  return {
+    doc: JSON.parse(Buffer.concat(chunks).toString("utf8")),
+    ...(tag === undefined ? {} : { etag: tag }),
+  };
 }
 
 const refreshing = new Map<string, Promise<void>>();
@@ -173,12 +195,23 @@ export function refreshParentReleases(
     const copy = kept?.fetchedAt ?? null;
     let next: Stored;
     try {
-      const releases = parseReleases(
-        await fetchDoc(url, opts.fetch ?? fetch),
-        opts.loopback ?? false,
-      );
-      if (releases === undefined) throw new Error("not a releases document");
-      next = { url, fetchedAt: now, triedAt: now, ok: true, releases };
+      // The ETag only counts beside a copy it describes.
+      const sent = copy === null ? undefined : strongEtag(kept?.etag);
+      const got = await fetchDoc(url, opts.fetch ?? fetch, sent);
+      if (got.unchanged === true && kept !== undefined) {
+        next = { ...kept, fetchedAt: now, triedAt: now, ok: true };
+      } else {
+        const releases = parseReleases(got.doc, opts.loopback ?? false);
+        if (releases === undefined) throw new Error("not a releases document");
+        next = {
+          url,
+          fetchedAt: now,
+          triedAt: now,
+          ok: true,
+          releases,
+          ...(got.etag === undefined ? {} : { etag: got.etag }),
+        };
+      }
     } catch {
       next = {
         url,
@@ -186,6 +219,9 @@ export function refreshParentReleases(
         triedAt: now,
         ok: false,
         releases: copy === null ? [] : (kept?.releases ?? []),
+        ...(copy === null || kept?.etag === undefined
+          ? {}
+          : { etag: kept.etag }),
       };
     }
     try {

@@ -105,6 +105,26 @@ describe("what the open web expects", () => {
     expect(read![0]!.url).toStartWith(`${base}/releases.json#`);
   });
 
+  test("releases.json carries a strong ETag, and a matching If-None-Match is a 304 with no body", async () => {
+    const res = await fetch(`${base}/releases.json`);
+    const etag = res.headers.get("etag")!;
+    expect(etag).toMatch(/^"[0-9a-f]+"$/);
+    await res.text();
+    const same = await fetch(`${base}/releases.json`, {
+      headers: { "if-none-match": etag },
+    });
+    expect(same.status).toBe(304);
+    expect(await same.text()).toBe("");
+    expect(same.headers.get("etag")).toBe(etag);
+    expect(same.headers.get("cache-control")).toBe(
+      res.headers.get("cache-control"),
+    );
+    const other = await fetch(`${base}/releases.json`, {
+      headers: { "if-none-match": '"nope"' },
+    });
+    expect(other.status).toBe(200);
+  });
+
   test("robots keeps crawlers out of accounts and points at the sitemap", async () => {
     const body = await fetch(`${base}/robots.txt`).then((r) => r.text());
     expect(body).toContain("User-agent: *");

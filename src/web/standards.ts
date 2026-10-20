@@ -100,14 +100,35 @@ export function changePassword(): Response {
  * release to point at.
  */
 export function releasesJson(ctx: Ctx): Response {
-  const body = {
-    releases: releases.releases.map((r) => ({
-      name: r.version,
-      url: `${ctx.url.origin}/releases.json#${encodeURIComponent(r.version)}`,
-    })),
-  };
-  return text(JSON.stringify(body), "application/json");
+  const origin = ctx.url.origin;
+  let kept = releasesBodies.get(origin);
+  if (kept === undefined) {
+    const body = JSON.stringify({
+      releases: releases.releases.map((r) => ({
+        name: r.version,
+        url: `${origin}/releases.json#${encodeURIComponent(r.version)}`,
+      })),
+    });
+    const etag = `"${new Bun.CryptoHasher("sha256").update(body).digest("hex").slice(0, 32)}"`;
+    kept = { body, etag };
+    // Origins come from the Host header: keep a handful, not one per guess.
+    if (releasesBodies.size >= 16) releasesBodies.clear();
+    releasesBodies.set(origin, kept);
+  }
+  const cache = "public, max-age=3600";
+  const sent = ctx.request.headers.get("if-none-match");
+  if (sent !== null && sent.split(",").some((t) => t.trim() === kept.etag))
+    return new Response(null, {
+      status: 304,
+      headers: { etag: kept.etag, "cache-control": cache },
+    });
+  const res = text(kept.body, "application/json");
+  res.headers.set("etag", kept.etag);
+  return res;
 }
+
+/** The releases document and its ETag, per origin; the file is read once at boot. */
+const releasesBodies = new Map<string, { body: string; etag: string }>();
 
 /** GET /robots.txt */
 export function robotsTxt(ctx: Ctx): Response {
