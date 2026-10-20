@@ -1260,4 +1260,12 @@ textarea.editor:focus { outline: none; }
   .ask-more-acts[open] > summary { display: none; }
   .ask-more-acts > .btn { min-height: 44px; flex: 1 1 auto; }
 }
+/* Reduced motion: the pulses hold still at a legible level, the scroll-tied
+   fade stays at its resting width, and these transitions land at once. */
+@media (prefers-reduced-motion: reduce) {
+  .front-live, .run-log .ln-pulse i { animation: none; }
+  .run-log .ln-pulse i { opacity: .6; }
+  .explore-filters { animation: none; }
+  .ex-twist, .code-main[aria-busy="true"], .code-split::after { transition: none; }
+}
 `;
