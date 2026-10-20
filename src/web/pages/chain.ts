@@ -8,6 +8,7 @@
 import { FOLLOW_MODE_REFUSALS, setFollowMode, severForge, takeForgeCode, takeForgeWords } from "../../actions/follow.ts";
 import { forgeProposals, proposeToParentForge, type ForgeProposal } from "../../actions/upstream.ts";
 import { canAdmin, canWrite } from "../../core/repos.ts";
+import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { chainView, FOLLOW_MODES, forgeLinkOf, type ChainLine, type FollowMode } from "../../spawn/chain.ts";
 import { checkUpstream, upstreamState, upstreamWords } from "../../spawn/upstream.ts";
@@ -107,18 +108,24 @@ function proposalCard(base: string, proposals: readonly ForgeProposal[], writer:
 
 // GET /:owner/:name/following
 export async function chainPage(ctx: Ctx): Promise<Response> {
-  const repo = loadRepo(ctx);
+  const at = ctx.request;
+  notePhase(at, "session", takeSessionTime(at));
+  const repo = timePhase(at, "repo", () => loadRepo(ctx));
   if (!repo) return notFoundPage(ctx);
-  const view = (await carriesChain(ctx)) ? await chainView(ctx.app) : undefined;
+  const view = await timePhaseAsync(at, "chain", async () => ((await carriesChain(ctx)) ? await chainView(ctx.app) : undefined));
   // Any other repository's following is the card on its home.
   if (view === undefined) return redirect(`${repoBase(repo)}#following`);
   const base = repoBase(repo);
   const owner = canAdmin(ctx.app.db, repo, ctx.auth.user);
-  const proposing = view.severedAt === null && (await parentCredential(ctx.app)) !== undefined;
-  const proposals = proposing ? await forgeProposals(ctx.app, repo, Date.now(), ctx.auth.user !== undefined) : [];
+  const proposing =
+    view.severedAt === null && (await timePhaseAsync(at, "parent", () => parentCredential(ctx.app))) !== undefined;
+  const proposals = proposing
+    ? await timePhaseAsync(at, "proposals", () => forgeProposals(ctx.app, repo, Date.now(), ctx.auth.user !== undefined))
+    : [];
   const writer = canWrite(ctx.app.db, repo, ctx.auth.user);
-  const state = await upstreamState(ctx.app);
-  return page({
+  const state = await timePhaseAsync(at, "upstream", () => upstreamState(ctx.app));
+  const rendering = performance.now();
+  const response = page({
     ctx,
     title: "Following",
     body: html`<div class="narrow-wide">
@@ -175,6 +182,8 @@ export async function chainPage(ctx: Ctx): Promise<Response> {
       </div>
     </div>`,
   });
+  notePhase(at, "render", performance.now() - rendering);
+  return response;
 }
 
 /** POST /:owner/:name/following/sever {confirm: sever}; the owner only. */
