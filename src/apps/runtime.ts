@@ -409,6 +409,11 @@ export class AppsRuntime {
   ) {
     this.gate = options.gate ?? new Gate(options.concurrency ?? 2);
     runtimes.set(app, this);
+    // Closing the forge closes the database next: end every open awake
+    // interval now, while it can be written, and write nothing after.
+    app.closing.signal.addEventListener("abort", () => this.closeMeter(), {
+      once: true,
+    });
   }
 
   /** The gate this runtime's deploys wait at; a hosted child shares it. */
@@ -1905,11 +1910,23 @@ export class AppsRuntime {
    * worth taking a deploy, a sleep or a shutdown down with it.
    */
   private metered<T>(write: () => T): T | undefined {
+    if (this.app.closing.signal.aborted) return undefined;
     try {
       return write();
     } catch (error) {
       log.error("meter write failed", { error: String(error) });
       return undefined;
+    }
+  }
+
+  /** The forge is closing: stop the sweeper, end open intervals, then the meter goes quiet. */
+  private closeMeter(): void {
+    this.stopped = true;
+    if (this.sweeper !== undefined) clearInterval(this.sweeper);
+    try {
+      closeAllAwake(this.app.db, new Date().toISOString());
+    } catch (error) {
+      log.error("meter write failed", { error: String(error) });
     }
   }
 

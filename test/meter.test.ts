@@ -2,7 +2,8 @@
  * The meter: awake intervals and storage samples, and the two sums read
  * from them — awake seconds and GB-hours — checked against a hand count.
  */
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -259,4 +260,39 @@ describe("the runtime meters what it runs", () => {
       await dirBytes(repoDir(app.reposRoot, repo.ownerName, repo.name)),
     );
   }, 30_000);
+});
+
+describe("closing the forge", () => {
+  test("ends the open interval while the database is open and writes nothing after", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-meter-close-"));
+    const lines: string[] = [];
+    const spy = spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map(String).join(" "));
+    });
+    try {
+      const app = createApp({ dataDir, port: 0 });
+      const runtime = new AppsRuntime(app, {
+        domain: "apps.test",
+        scheme: "http",
+        forgeUrl: "http://localhost",
+        sweepEveryMs: 20,
+      });
+      await runtime.start();
+      openAwake(app.db, { repoId: "r9", env: "production", placement: "owned", at: T("09:00") });
+      app.close();
+      // The sweeper would have beaten the meter by now, on a closed database.
+      await Bun.sleep(80);
+      await runtime.stop();
+      expect(lines.filter((l) => l.includes("meter write failed"))).toEqual([]);
+      const db = new Database(join(dataDir, "forge.db"), { readonly: true });
+      const row = db
+        .query<MeterRow, []>("SELECT * FROM meter WHERE repo_id = 'r9'")
+        .get();
+      db.close();
+      expect(row!.ended_at).not.toBeNull();
+    } finally {
+      spy.mockRestore();
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
 });
