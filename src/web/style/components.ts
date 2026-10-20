@@ -833,4 +833,18 @@ a.row:hover .row-title { color: var(--accent); }
   input, textarea, select, .input, .input[data-size="sm"], .topbar-search input,
   .palette .palette-input { font-size: 16px; }
 }
+
+/* Asked for less motion, the page keeps every state and loses the movement.
+   \`!important\` because a bare \`*\` has no specificity: every class rule above
+   that sets an animation or transition would win. Durations collapse rather
+   than \`animation: none\`, so \`animationend\` still fires (src/web/live.ts
+   removes its flash class on it). A busy loader stops turning and dims. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+  .btn[aria-busy="true"] .ico-loader { opacity: .6; }
+}
 `;
