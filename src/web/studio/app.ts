@@ -55,6 +55,12 @@ import { repoAsks } from "./asks.ts";
 import { appPanels } from "./previews.ts";
 import { noCrewLine, servingHistory, type WordCtx } from "./words.ts";
 import { crewKeyNote } from "./crew.ts";
+import {
+  notePhase,
+  takeSessionTime,
+  timePhase,
+  timePhaseAsync,
+} from "../../core/route_timing.ts";
 import { noteAppOpened } from "../../core/next-steps.ts";
 
 /**
@@ -213,6 +219,8 @@ export async function studioApp(
   record: AppRecord,
 ): Promise<Response> {
   const db = ctx.app.db;
+  const req = ctx.request;
+  notePhase(req, "session", takeSessionTime(req));
   const base = repoBase(repo);
   // Money, the crew roster, autonomy limits and the decision ledger are the
   // owner's facts, not the app's — a viewer who cannot write here reads this
@@ -223,7 +231,9 @@ export async function studioApp(
   // the app IS the step, and a beacon would miss a person without
   // JavaScript. It is one user_setting row, written once, only on a spawned
   // forge, only for its owner, and changes nothing anyone else sees.
-  await noteAppOpened(ctx.app, ctx.auth.user);
+  await timePhaseAsync(req, "opened", () =>
+    noteAppOpened(ctx.app, ctx.auth.user),
+  );
   const wordCtx: WordCtx = {
     db,
     dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
@@ -232,27 +242,33 @@ export async function studioApp(
     history: servingHistory(),
     viewer: ctx.auth.user,
   };
-  const crew = listCrewRoles(db, repo.id);
+  const crew = timePhase(req, "crew", () => listCrewRoles(db, repo.id));
   const builders = crew.filter((c) => c.role === "builder").map((c) => c.agent);
-  const openPulls = listPulls(db, repo.id, {
-    state: "open",
-    limit: 10,
-    ...sealedScope(db, repo, ctx.auth.user),
-  });
+  const openPulls = timePhase(req, "pulls", () =>
+    listPulls(db, repo.id, {
+      state: "open",
+      limit: 10,
+      ...sealedScope(db, repo, ctx.auth.user),
+    }),
+  );
   const week = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString();
   // What landed this week, counted by the database like the runs and the
   // spend below — a page of closed pulls would stop at a hundred and the
   // cost per shipped change would read high off the short count.
-  const shipped = mergedPullCount(db, repo.id, week);
+  const shipped = timePhase(req, "shipped", () =>
+    mergedPullCount(db, repo.id, week),
+  );
   // The rest is spend, worked out only for a viewer who is going to see it —
   // counted by the database over the whole week, not off a page of rows.
   const weekTotals = ownerFacts
-    ? agentRunTotals(db, repo.id, week)
+    ? timePhase(req, "spend", () => agentRunTotals(db, repo.id, week))
     : { runs: 0, spentUsd: 0 };
   const spent = weekTotals.spentUsd;
-  const ledgerWeek = ownerFacts ? decisionStats(db, repo.id, week) : [];
+  const ledgerWeek = ownerFacts
+    ? timePhase(req, "decisions", () => decisionStats(db, repo.id, week))
+    : [];
   const weekLatency = ownerFacts
-    ? previewLatency(db, repo.id, week)
+    ? timePhase(req, "latency", () => previewLatency(db, repo.id, week))
     : undefined;
   // Whether there is any history at all — ever, not this week's — so a
   // fresh app reads as "nothing yet" rather than a stretch of zeros and a
@@ -261,24 +277,23 @@ export async function studioApp(
   // gets the quieter line. Deploys are not part of this: they happen on
   // their own the moment an app exists, so they say nothing about whether
   // anyone has done anything yet.
-  const everShipped = shipped > 0 || mergedPullCount(db, repo.id, EPOCH) > 0;
-  const everRuns = ownerFacts
-    ? weekTotals.runs > 0 || agentRunTotals(db, repo.id, EPOCH).runs > 0
-    : false;
-  const hasHistory = everShipped || everRuns;
+  const hasHistory = timePhase(req, "history", () => {
+    const everShipped = shipped > 0 || mergedPullCount(db, repo.id, EPOCH) > 0;
+    const everRuns = ownerFacts
+      ? weekTotals.runs > 0 || agentRunTotals(db, repo.id, EPOCH).runs > 0
+      : false;
+    return everShipped || everRuns;
+  });
   const autonomy =
     !ownerFacts || repo.autonomy === "off"
       ? undefined
-      : autonomyStatus(ctx.app, repo);
+      : timePhase(req, "autonomy", () => autonomyStatus(ctx.app, repo));
 
   // ---- the app itself ----
   // `deployTailing` says the head card is tailing production's own deploy —
   // the "Now" panel's empty-state words below care about that distinction.
-  const { head, previews, deployTailing } = appPanels(
-    ctx,
-    repo,
-    record,
-    openPulls,
+  const { head, previews, deployTailing } = timePhase(req, "panels", () =>
+    appPanels(ctx, repo, record, openPulls),
   );
 
   // ---- the box ----
@@ -318,13 +333,15 @@ export async function studioApp(
       </form>`;
 
   // ---- now: one row per thing, in the five words (studio/now.ts) ----
-  const { card: now } = await nowCard(ctx, repo, record, {
-    openPulls,
-    builderCount: builders.length,
-    ownerFacts,
-    wordCtx,
-    deployTailing,
-  });
+  const { card: now } = await timePhaseAsync(req, "now", () =>
+    nowCard(ctx, repo, record, {
+      openPulls,
+      builderCount: builders.length,
+      ownerFacts,
+      wordCtx,
+      deployTailing,
+    }),
+  );
 
   // ---- the rail ----
   // Crew, spend and autonomy are the owner's facts; a viewer who cannot
@@ -453,7 +470,13 @@ export async function studioApp(
 
   // An app that follows another says so before anything else: whether it
   // is in step is the first thing its owner wants to know.
-  const following = await followingOf(ctx, repo);
+  const following = await timePhaseAsync(req, "following", () =>
+    followingOf(ctx, repo),
+  );
+  const policy = await timePhaseAsync(req, "policy", () =>
+    policyLine(ctx, repo, record),
+  );
+  const rendering = performance.now();
   const body = html`${repoHeader(ctx, repo, "app", {
       compact: true,
       ownTitle: true,
@@ -461,7 +484,7 @@ export async function studioApp(
     ${following === undefined ? "" : followingCard(ctx, repo, following)}
     <div id="app-head">${head}</div>
     ${askingLine(ctx, repo)}
-    ${await policyLine(ctx, repo, record)}
+    ${policy}
     ${ownerFacts ? crewKeyNote(ctx) : null}
     ${ownerFacts
       ? egressNote(
@@ -484,7 +507,7 @@ export async function studioApp(
       </aside>
     </div>
     ${liveMount({ repo: base, app: true })}`;
-  return page({
+  const response = page({
     ctx,
     title: `${repo.name}`,
     description: appLine({
@@ -503,4 +526,6 @@ export async function studioApp(
     body,
     scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${appTailJs}`,
   });
+  notePhase(req, "render", performance.now() - rendering);
+  return response;
 }
