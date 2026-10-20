@@ -18,8 +18,8 @@ import { interruptedSummary } from "../../src/crew/interrupted.ts";
 /**
  * One forge with alice's `engine` on its own: atlas plans, mason builds.
  * `ended` is a builder's run on an issue that ends without a pull, settled
- * as the crew would settle it. Shared by `test/crew-parks.test.ts` and
- * `test/crew-parks-done.test.ts`.
+ * as the crew would settle it. Shared by `test/crew-parks.test.ts`,
+ * `test/crew-parks-done.test.ts` and `test/crew-parks-planner.test.ts`.
  */
 export async function engine(
   prefix: string,
