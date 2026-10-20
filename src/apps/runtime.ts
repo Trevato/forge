@@ -17,6 +17,7 @@ import { recordCarried } from "../core/carried.ts";
 import { pullDir, runDir } from "../core/pulls.ts";
 import { accountActive } from "../core/accounts.ts";
 import { sshCommand } from "../ssh/command.ts";
+import { checkPreview } from "./preview_spec.ts";
 import { appHostSuffix } from "./host.ts";
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -1184,6 +1185,17 @@ export class AppsRuntime {
     } catch (error) {
       log.error("could not publish app.serving", { error: String(error) });
     }
+
+    // A preview is held to the website specification once it is live, beside
+    // its tests and after the swap-in (#2955). Report-only and unawaited: the
+    // run neither waits for it nor can it fail.
+    if (state.env !== "production")
+      void checkPreview(
+        this.app.db,
+        run.id,
+        `http://127.0.0.1:${live.handle.port}`,
+        live.manifest.looks,
+      );
 
     const tested = await outcome.tested;
     state.deploying = undefined;

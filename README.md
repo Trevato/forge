@@ -787,6 +787,14 @@ file), and if you named an agent, the sentence became issue #1, assigned.
   redeployed on each push and gone when the pull closes. Its data starts as
   a copy of production's — copy-on-write where the filesystem can — and
   never writes back. Merging moves code and touches no data.
+- **A preview is held to the website specification, report-only.** Once it is
+  live, `webspec()` runs over the `app.looks` paths of its `forge.json`. The pull
+  page shows the result under the Checks line as **Website spec: N findings
+  (report only)**; open it for one row per finding and its
+  specification.website section. Findings the edge owns are counted apart
+  (`, M the edge owns`). The terminal's pull screen ends its checks row with the
+  same words. Nothing here fails a deploy or the check; see
+  [`docs/WEBSPEC-PREVIEWS.md`](docs/WEBSPEC-PREVIEWS.md).
 - **The forge pill acts.** The pill the proxy adds to an app's pages
   (`"toolbar": false` in `forge.json` turns it off; to write it in, the proxy asks the app for the page uncompressed, so a page that carries the pill goes out without gzip) links to a forge page,
   `/:owner/:name/toolbar?env=production|pull-N`, opened in a tab of its own: the

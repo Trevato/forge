@@ -172,7 +172,7 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
    asked for, the same disclosure as the one above. */
 .quiet-details > summary {
   cursor: pointer; font-weight: 560; list-style: none; color: var(--muted-fg);
-  display: flex; align-items: center; gap: 6px; padding: 6px 0;
+  display: flex; align-items: center; gap: 6px; padding: 6px 0; min-height: 44px;
 }
 .quiet-details > summary::-webkit-details-marker { display: none; }
 .quiet-details > summary::before {

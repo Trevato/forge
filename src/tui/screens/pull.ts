@@ -41,6 +41,7 @@ import {
 import { openEnvUrl } from "../../actions/apps.ts";
 import { listRepoRuns, mayReadRunLog } from "../../actions/runs.ts";
 import { previewEnv } from "../../apps/data.ts";
+import { findingsWords, pullPreviewFindings } from "../../core/preview_findings.ts";
 import {
   appsRuntime,
   type EnvState,
@@ -249,6 +250,8 @@ export function pullScreen(
   let checkProgress = "";
   /** The run page's three step rows as a line; empty when the log is hidden. */
   let checkSteps = "";
+  /** `findingsWords` of the preview's website-spec findings; empty when none were recorded. */
+  let specWords = "";
   /** The check's green was against a base that has since moved. */
   let checkOld = false;
   /** Agent runs about this pull, newest first. */
@@ -300,6 +303,11 @@ export function pullScreen(
         : checkSummary(f.db, row.id, row.headOid || (facts?.headOid ?? ""));
     checkBase = row?.baseBranch ?? facts?.baseBranch ?? "";
     checkProgress = runningProgress(f.app.config.dataDir, check);
+    const spec =
+      repo === undefined || !isApp
+        ? null
+        : pullPreviewFindings(f.db, repo.id, previewEnv(number));
+    specWords = spec === null ? "" : findingsWords(spec);
     checkSteps =
       settings === undefined
         ? ""
@@ -817,7 +825,7 @@ export function pullScreen(
       // The box is exactly as tall as what is in it: the state, then a row
       // for the verdicts when there are any, then a row for the checks when
       // a deploy has run or the gate demands one.
-      const checksLine = checksText(check, requireChecks, isApp, checkBase, checkOld, checkProgress, checkSteps);
+      const checksLine = checksText(check, requireChecks, isApp, checkBase, checkOld, checkProgress, checkSteps, specWords);
       const boxH =
         3 +
         (standingText(standing(), requireReview) === "" ? 0 : 1) +
@@ -1282,9 +1290,12 @@ export function checksText(
   progress = "",
   /** `stepsLine` of the check's log; empty when none is shown. */
   steps = "",
+  /** `findingsWords` of the preview; empty when none were recorded. */
+  spec = "",
 ): string {
   const line = checksLine(check, required, isApp, baseBranch, stale, progress);
-  return line === "" || steps === "" ? line : `${line} · ${steps}`;
+  const withSteps = line === "" || steps === "" ? line : `${line} · ${steps}`;
+  return withSteps === "" || spec === "" ? withSteps : `${withSteps} · ${spec}`;
 }
 
 function checksLine(

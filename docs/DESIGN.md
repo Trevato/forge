@@ -357,6 +357,14 @@ The merge box gains a seventh state, _Waiting on checks_, when
 `runStateBadge` does elsewhere — a check is a deploy, never a separate
 object that can drift.
 
+**Website spec findings** — under a pull's Checks line, from the preview's
+latest deploy run (`core/preview_findings.ts`): a `.quiet-details` whose
+summary is the count (edge-owned findings counted apart) and whose body is
+a `.list` of `.row`s, one per finding, with its specification.website
+section as an https link. Report-only, so the words never say failed; the
+summary is at least 44px tall for a thumb. The terminal says the same count
+at the end of the checks row.
+
 ### 5d. Page-local classes
 
 Every class a stylesheet defines is named in this section (`bun

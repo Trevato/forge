@@ -94,6 +94,9 @@ import {
   originError,
   threadFragment,
 } from "./thread.ts";
+import { previewEnv } from "../../apps/data.ts";
+import { specFindings } from "./pull-spec.ts";
+import { pullPreviewFindings } from "../../core/preview_findings.ts";
 import { crewActivityCard } from "./runs.ts";
 import { holdCard } from "../studio/hold.ts";
 import {
@@ -346,7 +349,7 @@ function pullChecksLine(
 ): Html {
   const thread = `${repoBase(repo)}/pulls/${pull.number}`;
   const progress = runningProgress(ctx.app.config.dataDir, check);
-  return checksLine(
+  const line = checksLine(
     repoBase(repo),
     check,
     repo.requireChecks,
@@ -364,6 +367,8 @@ function pullChecksLine(
     progress,
     `${thread}/checks-line`,
   );
+  const found = !isApp ? null : pullPreviewFindings(ctx.app.db, repo.id, previewEnv(pull.number));
+  return html`${line}${found === null ? "" : specFindings(found)}`;
 }
 
 /**
