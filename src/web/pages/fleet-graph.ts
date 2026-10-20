@@ -14,6 +14,7 @@ import {
   readFleetGraph,
   type FleetGraph,
 } from "../../actions/fleet-graph.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { signInFirst } from "../chrome.ts";
 import {
@@ -32,15 +33,19 @@ function selection(ctx: Ctx) {
 
 /** GET /fleet/graph */
 export function fleetGraphPage(ctx: Ctx): Response {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const user = ctx.auth.user;
   if (!user) return signInFirst(ctx);
   const asked = selection(ctx);
   const graph = asked.ok
-    ? readFleetGraph(ctx.app, user, asked.value)
+    ? timePhase(ctx.request, "graph", () =>
+        readFleetGraph(ctx.app, user, asked.value),
+      )
     : undefined;
+  const rendering = performance.now();
   const q = graph === undefined ? "" : selectionQuery(graph);
   const names = ctx.url.searchParams.getAll("repo").join(" ");
-  return page(
+  const response = page(
     {
       ctx,
       title: "Fleet graph",
@@ -88,6 +93,8 @@ export function fleetGraphPage(ctx: Ctx): Response {
     },
     graph === undefined ? 422 : 200,
   );
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 /** GET /fleet/graph/live — the section alone, for the redraw. */
