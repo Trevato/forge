@@ -23,6 +23,7 @@ import { canWrite } from "../../core/repos.ts";
 import { listRuns } from "../../core/runs.ts";
 import { mayView, mayViewId } from "../../core/sealed.ts";
 import { mayDirectCrew } from "../../crew/direct.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, pageHead, loadRepo, repoBase } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
@@ -60,36 +61,47 @@ const toolbarPath = (base: string, env: string, address: string): string =>
 
 // GET /:owner/:name/toolbar
 export function toolbarPage(ctx: Ctx): Response {
-  const repo = loadRepo(ctx);
+  const request = ctx.request;
+  notePhase(request, "session", takeSessionTime(request));
+  const repo = timePhase(request, "repo", () => loadRepo(ctx));
   if (!repo) return notFoundPage(ctx);
   const where = parseEnv(ctx.url.searchParams.get("env") ?? "production");
-  if (where === undefined || getAppByRepo(ctx.app.db, repo.id) === undefined)
+  if (where === undefined || timePhase(request, "app-row", () => getAppByRepo(ctx.app.db, repo.id)) === undefined)
     return notFoundPage(ctx);
   const db = ctx.app.db;
   const user = ctx.auth.user;
-  const pull = where.pull === undefined ? undefined : getIssue(db, repo.id, where.pull);
+  const pull =
+    where.pull === undefined
+      ? undefined
+      : timePhase(request, "pull", () => getIssue(db, repo.id, where.pull!));
   if (where.pull !== undefined && (!pull || pull.kind !== "pull" || !mayView(db, repo, pull, user)))
     return notFoundPage(ctx);
   const address = pageAddress(ctx.url.searchParams.get("page") ?? "");
   const base = repoBase(repo);
   const here = html`${repo.name}, ${pull ? html`preview of pull #${pull.number}` : "production"}`;
   const home = btn("Home", { href: "/", variant: "ghost" });
+  const rendering = performance.now();
   if (!user) {
-    return page({
+    const response = page({
       ctx,
       title: `${repo.name} · forge`,
       body: html`<div class="narrow-wide">${pageHead(here)}<div class="form-actions">${home}</div></div>`,
     });
+    notePhase(request, "render", performance.now() - rendering);
+    return response;
   }
   // Read once, now, as the page opens: the live agent run on this app, or
   // on this preview's pull.
   // A run on work the viewer may not see (a sealed report) is not theirs to read.
-  const live = listRuns(db, repo.id, {
-    kind: "agent",
-    ...(pull ? { issueId: pull.id } : {}),
-    state: "running",
-    limit: 200,
-  }).find((r) => mayViewId(db, repo, r.issueId, user));
+  const live = timePhase(request, "runs", () =>
+    listRuns(db, repo.id, {
+      kind: "agent",
+      ...(pull ? { issueId: pull.id } : {}),
+      state: "running",
+      limit: 200,
+    }).find((r) => mayViewId(db, repo, r.issueId, user)),
+  );
+  const renderStart = performance.now();
   const comment = pull ? "Comment on this pull" : "Report this page";
   const body = html`<div class="narrow-wide">
     ${pageHead(here)}
@@ -131,7 +143,9 @@ export function toolbarPage(ctx: Ctx): Response {
       ${home}
     </div>
   </div>`;
-  return page({ ctx, title: `${repo.name} · forge`, body });
+  const response = page({ ctx, title: `${repo.name} · forge`, body });
+  notePhase(request, "render", performance.now() - renderStart);
+  return response;
 }
 
 // POST /:owner/:name/toolbar/comment
