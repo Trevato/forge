@@ -48,7 +48,7 @@ import { certain } from "./decide.ts";
 import { decideAndRecord } from "./ledger.ts";
 import { sentinelTick } from "./sentinel.ts";
 import { triageTick } from "./triage.ts";
-import { liveTriage, none as noTriage } from "./livetriage.ts";
+import { liveTriage, none as noTriage, tickFields } from "./livetriage.ts";
 import { wallOf, wallSentence } from "../contract/policy.ts";
 import {
   getIssue,
@@ -1153,7 +1153,7 @@ export async function autonomyTick(
       const requested = await moveRequested(app, current, freeSlots(app, current, now), now);
       const did = await driveRepo(app, current, now);
       // Rules only, no run: an issue noted already done on the base closes.
-      const triaged = await liveTriage(app, current).catch((error) => {
+      const triaged = await liveTriage(app, current, now).catch((error) => {
         log.error("live triage failed", {
           repo: `${repo.ownerName}/${repo.name}`,
           error: String(error),
@@ -1175,7 +1175,7 @@ export async function autonomyTick(
       log.info("tick", {
         repo: `${repo.ownerName}/${repo.name}`,
         did,
-        triaged: triaged.closed,
+        ...tickFields(triaged),
         ready: ready.length,
         // What the builders could start after the filters (#2143), and
         // what holds the rest, per filter (#2244).

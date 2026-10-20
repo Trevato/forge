@@ -1074,6 +1074,16 @@ so its comment says "Closed by the crew's live triage". Reopening the issue
 undoes it and the reopen stands: an issue that already has a close note is
 never closed by triage again. The tick line counts them as `triaged=N`.
 
+**Live triage files issues.** On the same tick, an open issue an hour old
+that serves no pillar is filed: under the pillar its title, else its body,
+names by its short form (`P0`) or whole label (`P0 Trust`) — a bare word like
+"trust" does not count — otherwise behind the Later gate. Each gets a comment
+marked automatic. Directions, umbrellas and the gate are skipped, as is a
+repository with neither pillars nor a gate. To undo it, name a pillar (link
+its umbrella to wait for the issue) or unlink the gate; the comment stays, so
+triage does not file that issue again. The tick line counts `labelled=N`, and
+shows `triageMiss=N` for old issues it could not file (no gate to defer to).
+
 **A red pull.** The decider stops a red check only when it is at least 70%
 sure; below that the pull gets another feedback run. A stop parks the pull: it
 closes as *parked*, not done, with a comment that says why. The pull page's
