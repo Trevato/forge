@@ -70,4 +70,7 @@ test("GET /:owner/:name/milestones/:number/limb names its phases", async () => {
   expect(defer.find((p) => p.startsWith("pillars;"))).toBeUndefined();
   const resume = await phases("resume");
   expect(resume.find((p) => p.startsWith("pillars;"))).toMatch(/^pillars;dur=\d+\.\d$/);
+  const replan = await phases("replan");
+  for (const name of ["session", "repo", "plan", "render"])
+    expect(replan.find((p) => p.startsWith(`${name};`))).toMatch(/^[a-z]+;dur=\d+\.\d$/);
 });

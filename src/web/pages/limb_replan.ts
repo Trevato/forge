@@ -11,6 +11,7 @@ import {
   type ReplanAction,
 } from "../../actions/limb_replan.ts";
 import type { Repo } from "../../core/repos.ts";
+import { notePhase, timePhase } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
   crumbsFor,
@@ -28,12 +29,15 @@ import { milestoneHref } from "./milestones.ts";
 
 /** GET /:owner/:name/milestones/:number/limb?action=replan — what the planner will be given. */
 export function replanPreviewPage(ctx: Ctx, repo: Repo, number: number): Response {
-  const plan = previewReplan(ctx.app, ctx.auth.user, repo, number);
+  const plan = timePhase(ctx.request, "plan", () =>
+    previewReplan(ctx.app, ctx.auth.user, repo, number),
+  );
   if (!plan.ok) return notFoundPage(ctx);
+  const rendering = performance.now();
   const base = repoBase(repo);
   const p = plan.value;
   const back = milestoneHref(base, number);
-  return page({
+  const response = page({
     ctx,
     title: `Re-plan ${p.limb.title} · ${repo.name}`,
     crumbs: crumbsFor(repo),
@@ -69,6 +73,8 @@ export function replanPreviewPage(ctx: Ctx, repo: Repo, number: number): Respons
             ${btn("Back", { href: back, variant: "ghost" })}
           </form>`}`,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 /** POST /:owner/:name/milestones/:number/limb with action replan or takeback, its form already read. */
