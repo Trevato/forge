@@ -268,6 +268,8 @@ export async function spawnDoor(
       body: {
         dryRun: true,
         plan: planned.value,
+        // Who the child's first admin will be: the caller, or whoever claims it.
+        firstAdmin: user?.username ?? null,
         ...dryRun(planned.value, source),
         ...(planned.value.budgetUsd === null ? {} : { keyNote: KEY_BUDGET_NOTE }),
       },
