@@ -27,6 +27,7 @@ import {
 import {
   crewScorecards,
   crewScorecardSplits,
+  teamScorecards,
   splitLabel,
   RECENT_DAYS,
   recentWindow,
@@ -34,6 +35,7 @@ import {
   type Scorecard,
   type SplitScorecard,
 } from "../../core/scorecard.ts";
+import { listTeams, type Team } from "../../core/teams.ts";
 import { crewFor } from "../../crew/dispatch.ts";
 import { MODELS } from "../../crew/models.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -247,6 +249,9 @@ const pairKey = (p: SplitScorecard) => `${p.model}\0${p.promptVersion}`;
  */
 function scorecardCard(
   agents: readonly Agent[],
+  teams: readonly Team[],
+  teamCards: ReadonlyMap<string, Scorecard>,
+  recentTeamCards: ReadonlyMap<string, Scorecard>,
   cards: ReadonlyMap<string, Scorecard>,
   recent: ReadonlyMap<string, Scorecard>,
   splits: ReadonlyMap<string, readonly SplitScorecard[]>,
@@ -284,7 +289,7 @@ function scorecardCard(
       <table class="table" id="crew-scorecard" data-sticky-lead>
         <thead>
           <tr>
-            <th>Agent</th>
+            <th>Agent / team</th>
             ${windowHead("Pulls landed", lately)}
             ${windowHead("Pulls landed", "all time")}
             ${windowHead("Review rounds", lately)}
@@ -320,6 +325,12 @@ function scorecardCard(
                 </tr>`;
               })}`;
           })}
+          ${teams
+            .filter((team) => teamCards.has(team.slug))
+            .map((team) => html`<tr data-team="${team.slug}">
+              <td>${team.name} <span class="muted small">team</span></td>
+              ${figures(recentTeamCards.get(team.slug), teamCards.get(team.slug))}
+            </tr>`)}
         </tbody>
       </table>
     </div>`,
@@ -329,7 +340,8 @@ function scorecardCard(
       head: html`${icon("activity")}
         <h2>Scorecard</h2>
         <span class="muted small"
-          >Over the pulls each agent opened in the last ${RECENT_DAYS} days
+          >Over the pulls each agent opened, and each team's members pooled (an
+          agent on two teams counts in both), in the last ${RECENT_DAYS} days
           and over all time: review rounds are change requests per landed pull, red checks
           the share of finished checks that failed; reverts (the landed pulls
           a merged pull took back) and time to land (the mean from opening to
@@ -401,6 +413,9 @@ function crewView(ctx: Ctx, values: AgentValues, error?: string): Html {
   const listed = listAllAgents(ctx.app, ctx.auth.user);
   const agents = listed.ok ? listed.value : [];
   const totals = agentTotals(ctx.app.db);
+  const teams = listTeams(ctx.app.db);
+  const teamCards = teamScorecards(ctx.app.db);
+  const recentTeamCards = teamScorecards(ctx.app.db, recentWindow());
   const scorecards = crewScorecards(ctx.app.db);
   const recentScorecards = crewScorecards(ctx.app.db, recentWindow());
   const splitScorecards = crewScorecardSplits(ctx.app.db);
@@ -505,6 +520,9 @@ function crewView(ctx: Ctx, values: AgentValues, error?: string): Html {
   ${when(agents.length > 0, () =>
     scorecardCard(
       agents,
+      teams,
+      teamCards,
+      recentTeamCards,
       scorecards,
       recentScorecards,
       splitScorecards,

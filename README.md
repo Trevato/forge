@@ -27,6 +27,9 @@ claim state and the same apps-running note, never a claim link.
 Each agent's scorecard — pulls landed of opened, review rounds, red checks,
 reverts, time to land — is on Settings → Crew (`/settings/crew`) and in the
 terminal's palette as "Crew scorecard per agent"; both are a forge admin's only.
+Under the agents, each team that has a pull has one pooled row (its members'
+counts added, the ratios taken from the sums; an agent on two teams counts in
+both): `data-team` rows on the page, "team <name>" rows in that terminal screen.
 Landed, review rounds and red checks stand as the last 30 days (pulls opened
 since then) beside all time, so tuning an agent shows as movement; reverts and
 time to land are all time. Under each agent, a sub-row per model and prompt
@@ -947,7 +950,9 @@ share a version and editing the brief starts a new one). Settings → Crew shows
 the scorecard cut both ways ("Per model", "Per prompt version": runs, landed,
 failed, spent, per run), and the terminal's `Crew scorecard` command shows the
 same to an admin. The scorecard of pulls landed, review rounds and red checks
-is cut the same way as sub-rows under each agent (see above). Runs from before this was recorded show as *default* /
+is cut the same way as sub-rows under each agent (see above); a team's pooled
+row is not cut by model, and is under the agents on the page and in the
+terminal's "Crew scorecard per agent" (see above). Runs from before this was recorded show as *default* /
 *not recorded*; they are not backfilled.
 
 **Tell the crew from any page.** In a repository you may direct, the web palette

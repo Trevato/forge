@@ -20,6 +20,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { listTeams } from "./teams.ts";
 
 export interface Scorecard {
   /** Pulls the agent opened. */
@@ -72,6 +73,63 @@ export function crewScorecards(
 }
 
 /**
+ * Each team's scorecard, keyed by team slug: its members' counts pooled, then
+ * the ratios taken from the pooled counts (never an average of the members'
+ * ratios, which would weigh a one-pull agent like a fifty-pull one). A team
+ * whose members opened no pull in the window is absent. An agent on two
+ * teams counts toward both.
+ */
+export function teamScorecards(
+  db: Database,
+  window: ScorecardWindow = {},
+): Map<string, Scorecard> {
+  const byAgent = new Map(scorecardRows(db, window, false).map((r) => [r.authorId, r]));
+  const out = new Map<string, Scorecard>();
+  for (const team of listTeams(db)) {
+    const sum = { opened: 0, landed: 0, rounds: 0, ok: 0, failed: 0, reverts: 0, landDays: 0 };
+    let any = false;
+    for (const id of team.members) {
+      const r = byAgent.get(id);
+      if (r === undefined) continue;
+      any = true;
+      sum.opened += r.card.opened;
+      sum.landed += r.card.landed;
+      sum.rounds += r.rounds;
+      sum.ok += r.checksOk;
+      sum.failed += r.checksFailed;
+      sum.reverts += r.card.reverts;
+      sum.landDays += r.landDays;
+    }
+    if (any) out.set(team.slug, toCard(sum));
+  }
+  return out;
+}
+
+interface Counts {
+  opened: number;
+  landed: number;
+  rounds: number;
+  ok: number;
+  failed: number;
+  reverts: number;
+  /** Days from opening to merge, summed over landed pulls. */
+  landDays: number;
+}
+
+function toCard(c: Counts): Scorecard {
+  const checks = c.ok + c.failed;
+  return {
+    opened: c.opened,
+    landed: c.landed,
+    reviewRounds: c.landed === 0 ? null : c.rounds / c.landed,
+    redCheckRate: checks === 0 ? null : c.failed / checks,
+    reverts: c.reverts,
+    meanLandMs:
+      c.landed === 0 ? null : Math.max(0, Math.round((c.landDays / c.landed) * 86_400_000)),
+  };
+}
+
+/**
  * Each agent's scorecard cut by (model, prompt version), keyed by user id.
  * A pull belongs to the pairing of the agent's latest run on it; a pull with
  * no recorded run (opened before the migration) is the pairing ('', ''),
@@ -101,7 +159,16 @@ function scorecardRows(
   db: Database,
   window: ScorecardWindow,
   split: boolean,
-): { authorId: string; model: string; promptVersion: string; card: Scorecard }[] {
+): {
+  authorId: string;
+  model: string;
+  promptVersion: string;
+  card: Scorecard;
+  rounds: number;
+  checksOk: number;
+  checksFailed: number;
+  landDays: number;
+}[] {
   // created_at is stored as ISO-8601 UTC, so the string compare is the time compare.
   // An invalid Date throws here rather than widen the window to all time.
   const since = window.since === undefined ? null : window.since.toISOString();
@@ -117,7 +184,7 @@ function scorecardRows(
         checks_ok: number;
         checks_failed: number;
         reverts: number;
-        mean_land_days: number | null;
+        land_days: number | null;
       },
       [string | null]
     >(
@@ -140,9 +207,9 @@ function scorecardRows(
                   SELECT 1 FROM pull AS back
                    WHERE back.reverts_issue_id = issue.id
                      AND back.merged_at IS NOT NULL)) AS reverts,
-              AVG(CASE WHEN pull.merged_at IS NOT NULL
+              SUM(CASE WHEN pull.merged_at IS NOT NULL
                        THEN julianday(pull.merged_at) - julianday(issue.created_at) END)
-                AS mean_land_days
+                AS land_days
          FROM issue
          JOIN pull ON pull.issue_id = issue.id
          JOIN user ON user.id = issue.author_id AND user.is_agent = 1
@@ -151,23 +218,25 @@ function scorecardRows(
     )
     .all(since);
   return rows.map((r) => {
-      const checks = r.checks_ok + r.checks_failed;
-      return {
-        authorId: r.author_id,
-        model: r.model,
-        promptVersion: r.prompt_version,
-        card: {
-          opened: r.opened,
-          landed: r.landed,
-          reviewRounds: r.landed === 0 ? null : r.rounds / r.landed,
-          redCheckRate: checks === 0 ? null : r.checks_failed / checks,
-          reverts: r.reverts,
-          meanLandMs:
-            r.mean_land_days === null
-              ? null
-              : Math.max(0, Math.round(r.mean_land_days * 86_400_000)),
-        },
-      };
+    const counts = {
+      opened: r.opened,
+      landed: r.landed,
+      rounds: r.rounds,
+      ok: r.checks_ok,
+      failed: r.checks_failed,
+      reverts: r.reverts,
+      landDays: r.land_days ?? 0,
+    };
+    return {
+      authorId: r.author_id,
+      model: r.model,
+      promptVersion: r.prompt_version,
+      card: toCard(counts),
+      rounds: r.rounds,
+      checksOk: r.checks_ok,
+      checksFailed: r.checks_failed,
+      landDays: counts.landDays,
+    };
   });
 }
 

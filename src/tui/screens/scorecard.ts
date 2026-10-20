@@ -11,6 +11,7 @@ import { listAllAgents } from "../../actions/crew.ts";
 import {
   crewScorecards,
   crewScorecardSplits,
+  teamScorecards,
   RECENT_DAYS,
   recentWindow,
   spanText,
@@ -19,6 +20,7 @@ import {
   type SplitScorecard,
 } from "../../core/scorecard.ts";
 import type { Agent } from "../../core/agents.ts";
+import { listTeams, type Team } from "../../core/teams.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { style } from "../term/style.ts";
@@ -58,7 +60,8 @@ function figures(
  * zeros. Each windowed figure reads "<recent>d … · all …", the page's order.
  * Under an agent, one indented row per model · prompt version its pulls ran
  * on, with the same figures ("unrecorded" for pulls from before runs
- * recorded them).
+ * recorded them). Then one row per team that has a card, its members'
+ * counts pooled (an agent on two teams counts in both), under the agents.
  */
 export function scorecardRows(
   agents: readonly Agent[],
@@ -66,8 +69,11 @@ export function scorecardRows(
   recent: ReadonlyMap<string, Scorecard>,
   splits: ReadonlyMap<string, readonly SplitScorecard[]> = new Map(),
   recentSplits: ReadonlyMap<string, readonly SplitScorecard[]> = new Map(),
+  teams: readonly Team[] = [],
+  teamCards: ReadonlyMap<string, Scorecard> = new Map(),
+  recentTeamCards: ReadonlyMap<string, Scorecard> = new Map(),
 ): ListRow[] {
-  return agents.flatMap((agent) => {
+  const agentRows = agents.flatMap((agent) => {
     const s = cards.get(agent.user.id);
     if (s === undefined)
       return [{ title: agent.user.username, secondary: "no pull yet" }];
@@ -81,6 +87,13 @@ export function scorecardRows(
       ),
     ];
   });
+  const teamRows = teams.flatMap((team) => {
+    const s = teamCards.get(team.slug);
+    return s === undefined
+      ? []
+      : [figures(`team ${team.name}`, recentTeamCards.get(team.slug), s)];
+  });
+  return [...agentRows, ...teamRows];
 }
 
 export function scorecardScreen(f: Session, ctx: Ctx): Screen {
@@ -96,6 +109,9 @@ export function scorecardScreen(f: Session, ctx: Ctx): Screen {
           crewScorecards(f.db, recentWindow()),
           crewScorecardSplits(f.db),
           crewScorecardSplits(f.db, recentWindow()),
+          listTeams(f.db),
+          teamScorecards(f.db),
+          teamScorecards(f.db, recentWindow()),
         )
       : [];
   return {
@@ -109,7 +125,7 @@ export function scorecardScreen(f: Session, ctx: Ctx): Screen {
         : rows.length === 0
           ? "No agents yet."
           : `Over the last ${RECENT_DAYS} days (${RECENT_DAYS}d) and all time, ` +
-            "as Settings → Crew shows it.";
+            "as Settings → Crew shows it, with a pooled row per team.";
       s.text(head!.x, head!.y, truncate(text, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
       drawList(s, list!, c, state, rows);
     },
