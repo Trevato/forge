@@ -5,6 +5,7 @@
 import { setTelemetryGrant } from "../../actions/telemetry.ts";
 import { grantable, recentReads } from "../../core/telemetry.ts";
 import type { Ctx } from "../../http/context.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html } from "../html.ts";
@@ -19,10 +20,12 @@ function owner(ctx: Ctx): Response | undefined {
 
 // GET /settings/telemetry
 export function telemetryPage(ctx: Ctx): Response {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const denied = owner(ctx);
   if (denied) return denied;
-  const agents = grantable(ctx.app.db);
-  const reads = recentReads(ctx.app.db);
+  const agents = timePhase(ctx.request, "agents", () => grantable(ctx.app.db));
+  const reads = timePhase(ctx.request, "reads", () => recentReads(ctx.app.db));
+  const rendering = performance.now();
   const body = html`${card(
       html`<div class="card-body"><p class="muted small">
         A granted agent reads <a href="/boards">Boards</a>, <a href="/system">System</a> and the
@@ -60,7 +63,9 @@ export function telemetryPage(ctx: Ctx): Response {
           )}</ul>`,
       { head: html`${icon("history")}<h2>Reads</h2>`, pad: false },
     )}`;
-  return usageShell(ctx, "telemetry", body);
+  const response = usageShell(ctx, "telemetry", body);
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 // POST /settings/telemetry
