@@ -229,6 +229,7 @@ describe("the forge over MCP", () => {
       "plan",
       "access",
       "capacity",
+      "scorecard",
       "flow",
       "system",
       "contribute",

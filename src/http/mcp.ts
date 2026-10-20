@@ -27,6 +27,7 @@ import { changeLimit, listLimits } from "../actions/limits.ts";
 import { ISSUE_TEAMS_SAY, nameTeams } from "../actions/issue_teams.ts";
 import { teamsOfIssue } from "../core/issue_teams.ts";
 import { changeTeam, planTeam, readTeams, TEAM_SAYS } from "../actions/teams.ts";
+import { readScorecards } from "../actions/scorecard.ts";
 import { addAccount, allowWrite, auditAccount, removeAccount, renameAccount, reverify, rotateAccount } from "../actions/cloud.ts";
 import { usesByVendor, type VendorUse } from "../cloud/declared.ts";
 import { cloudOverview } from "../cloud/overview.ts";
@@ -227,6 +228,8 @@ interface Tool {
   readonly inputSchema: Record<string, unknown>;
   /** Whether it changes anything: `rw` scope, and said so to the client. */
   readonly writes: boolean;
+  /** Listed, and callable, for a forge admin only. */
+  readonly adminOnly?: true;
   /** With this argument absent the tool only reads, whatever the token. */
   readonly readsWithout?: string;
   /** A write that only plans (`dryRun` not false) is a read: `ro` may ask. */
@@ -2687,6 +2690,18 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "scorecard",
+    description:
+      "The crew's scorecard, for a forge admin: per agent (username), its figures over all time (`all`) and the last 30 days (`recent`) — pulls opened and landed, mean review rounds, red check rate, reverts, mean ms to land (a ratio over nothing is null) — and `splits` by model and prompt. Read-only. The same as /settings/crew and /api/v1/crew/scorecard.",
+    inputSchema: { type: "object", properties: {} },
+    writes: false,
+    adminOnly: true,
+    run(ctx, user) {
+      const card = readScorecards(ctx.app, user);
+      return card ? good(card) : bad("forbidden", "the crew's scorecard is a forge admin's to read");
+    },
+  },
+  {
     name: "flow",
     description:
       "The forge's pipeline, for a forge admin: ready, building, check queue, checking, review, approved, landed and live, each with how many wait, how many are being worked, when the oldest waiting one entered (oldestWaiting) and what limits it (capacity), and one sentence (says) naming the stage whose oldest has waited longest — the bottleneck. Beside it, throughput: per stage how many left it in the last hour (lastHour), in 24 hours (day) and in each of the last 24 hours (hours, 0 the last), the median ask→live in ms over the last 24 hours, and its own sentence (says). Also `conflicted`: pulls main moved under that the crew is bringing up to date, oldest first, with a sentence (says). And `requested`: open crew pulls whose reviewer last asked for changes, split into those waiting on a builder (builder: the verdict is on the head) and on a reviewer (reviewer: a push came since), each oldest first with a sentence (says). And the merge queue (queue): per repository (repo), the pulls queued for the next candidate (queued), the pulls in the candidate at the gate (gating) and the pulls landed in the last hour (landedHour). Read-only; the knobs are the `capacity` tool. The same as the flow panel on /boards.",
@@ -3100,7 +3115,7 @@ function rpcOne(
     case "tools/list":
       return reply({
         tools: [
-          ...TOOLS.map((t) => ({
+          ...TOOLS.filter((t) => t.adminOnly !== true || user.isAdmin).map((t) => ({
             name: t.name,
             description: t.description,
             inputSchema: t.inputSchema,
@@ -3134,7 +3149,7 @@ function rpcOne(
     }
     case "tools/call": {
       const tool = TOOLS.find((t) => t.name === params["name"]);
-      if (tool === undefined)
+      if (tool === undefined || (tool.adminOnly === true && !user.isAdmin))
         return refuse(-32602, `no tool named ${String(params["name"])}`);
       const args =
         typeof params["arguments"] === "object" && params["arguments"] !== null

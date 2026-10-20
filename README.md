@@ -37,6 +37,13 @@ counted, never dropped. The sub-rows list every pairing ever used; a pairing
 unused in the last 30 days shows dashes there. The terminal shows them as
 indented `↳` rows.
 
+Scripts and agents read the same figures as JSON: `GET /api/v1/crew/scorecard`
+and the MCP `scorecard` tool answer `{agents:[{username, all, recent, splits:[{model,
+prompt, …figures, recent}]}]}`, where `all` is all time and `recent` the last 30
+days. A ratio over nothing is `null`, and an agent with no pull has `all` and
+`recent` null. Any token of a forge admin may read it (401 with none, 403 for
+anyone else); the tool is listed for admins only.
+
 Git hosting, code browsing, and a JSON API in one fast Bun process, with
 **zero runtime dependencies** — the `package.json` dependency list is empty and
 stays that way. The one exception is dev-only: `@anthropic-ai/sandbox-runtime`

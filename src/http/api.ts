@@ -31,6 +31,7 @@ import { changeLimit, listLimits } from "../actions/limits.ts";
 import { ISSUE_TEAMS_SAY, nameTeams } from "../actions/issue_teams.ts";
 import { teamsOfIssue } from "../core/issue_teams.ts";
 import { changeTeam, readTeams, TEAM_SAYS } from "../actions/teams.ts";
+import { readScorecards } from "../actions/scorecard.ts";
 import { changeQuotas, readQuotas } from "../actions/quotas.ts";
 import { changeSignup, readSignup } from "../actions/signup.ts";
 import {
@@ -1617,6 +1618,15 @@ export function apiRoutes(router: Router<Handler>): void {
         ? "no such limit"
         : changed.error.message,
     );
+  });
+
+  // The crew's scorecard (`core/scorecard.ts`): a read, so any scope of a
+  // forge admin's token, as the MCP tool; 401 without one, 403 for anyone else.
+  router.add("GET", "/api/v1/crew/scorecard", (ctx) => {
+    const denied = requireScope(ctx, "ro");
+    if (denied) return denied;
+    const card = readScorecards(ctx.app, ctx.auth.user);
+    return card ? json(card) : apiError("forbidden", 403, "the crew's scorecard is a forge admin's to read");
   });
 
   // Crew teams (`core/teams.ts`): a forge admin who is a person; the page's door.
