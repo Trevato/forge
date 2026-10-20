@@ -13,6 +13,8 @@
  * commit, once.
  */
 
+import type { Database } from "bun:sqlite";
+import { listEgressGrants } from "../core/egress_grants.ts";
 import { recordCarried } from "../core/carried.ts";
 import { pullDir, runDir } from "../core/pulls.ts";
 import { accountActive } from "../core/accounts.ts";
@@ -1402,7 +1404,9 @@ export class AppsRuntime {
       home: join(envDir(dataDir, record.id, env), "home"),
       onUndeclared: (host, port) =>
         noteReached(dataDir, record.repoId, host, port),
-      // Asked at every start: an admin's flip reaches the next cell.
+      // Asked at every start: an admin's grant reaches the next cell.
+      granted: grantedFor(this.app.db, record.repoId),
+      // Likewise an admin's flip of the egress mode.
       egressMode: egressSetting(this.app.db),
       label: `app:${record.slug}/${env}`,
     };
@@ -1444,6 +1448,7 @@ export class AppsRuntime {
               home: base.home,
               hide: base.hide,
               egress: live.manifest.egress ?? [],
+              granted: base.granted,
               // A terminal is the app's own client: it reaches the app on
               // its port, as it would beside it.
               reach: [
@@ -2032,3 +2037,8 @@ export class AppsRuntime {
 }
 
 const key = (appId: string, env: EnvName): string => `${appId}/${env}`;
+
+/** The `host:port` destinations a site admin granted this repository's cells. */
+export function grantedFor(db: Database, repoId: string): string[] {
+  return listEgressGrants(db, repoId).map((g) => g.destination);
+}

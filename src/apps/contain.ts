@@ -183,6 +183,8 @@ export interface CellSpec {
   readonly hide: readonly string[];
   /** Hosts the repository declared (`forge.json` `egress`). */
   readonly egress: readonly string[];
+  /** Private `host:port` destinations a site admin granted (`core/egress_grants.ts`). */
+  readonly granted?: readonly string[] | undefined;
   /** Origins always reachable: the forge's own URL. */
   readonly reach: readonly string[];
   readonly limits: Limits;
@@ -359,6 +361,7 @@ export function openCell(
       join(sockets, "out.sock"),
       {
         hosts: spec.egress,
+        granted: spec.granted,
         origins,
         report:
           (spec.egressMode ?? egressMode()) === "report"
