@@ -55,6 +55,9 @@ const SIZES: readonly [number, number][] = [
   [200, 60],
 ];
 
+/** How long a harness step waits for the frame it caused. */
+const FRAME_WAIT_MS = 10_000;
+
 interface Harness {
   app: App;
   session: Session;
@@ -81,13 +84,48 @@ describe("the terminal lays out for the terminal it is in", () => {
     );
     app.start();
     await settleApp(app);
-    const settle = (): Promise<void> => settleApp(app);
+    /**
+     * Settle, then wait for a frame drawn after `since` at the wanted size.
+     * Bounded: it fails naming the size it was waiting for, not whatever
+     * assertion follows a half-drawn screen.
+     */
+    const framed = async (
+      since: number,
+      want: { cols: number; rows: number },
+    ): Promise<void> => {
+      const deadline = Date.now() + FRAME_WAIT_MS;
+      await settleApp(app);
+      for (;;) {
+        app.frame();
+        const { cols, rows } = app.screen;
+        if (
+          app.frameCount > since &&
+          cols === want.cols &&
+          rows === want.rows &&
+          terminal.toText() === app.screen.toText()
+        )
+          return;
+        if (Date.now() > deadline)
+          throw new Error(
+            `no frame at ${want.cols}×${want.rows} within ${FRAME_WAIT_MS}ms ` +
+              `(have ${cols}×${rows}, frames ${since}→${app.frameCount})\n${app.screen.toText()}`,
+          );
+        await settleApp(app);
+      }
+    };
+    const here = (): { cols: number; rows: number } => ({
+      cols: app.screen.cols,
+      rows: app.screen.rows,
+    });
     return {
       app,
       session,
       terminal,
       lines: () => app.screen.toText().split("\n"),
       async press(...keys) {
+        // A key that changes nothing draws nothing, so a press waits for
+        // the app to settle and the grid to agree, not for a new frame.
+        const since = -1;
         for (const key of keys)
           app.dispatch({
             type: "key",
@@ -96,15 +134,17 @@ describe("the terminal lays out for the terminal it is in", () => {
             alt: false,
             shift: false,
           });
-        await settle();
+        await framed(since, here());
       },
       async resize(c, r) {
+        const since = app.frameCount;
         terminal.resize(c, r);
-        await settle();
+        await framed(since, { cols: c, rows: r });
       },
       async push(screen) {
+        const since = app.frameCount;
         app.push(screen(session, app.ctx));
-        await settle();
+        await framed(since, here());
       },
       stop: () => app.stop(),
     };
