@@ -366,7 +366,7 @@ describe("the forge pill", () => {
     expect(res.headers.get("content-type")).toContain("javascript");
     const code = await res.text();
     expect(code).toBe(toolbarJs);
-    expect(code.length).toBeLessThan(6 * 1024);
+    expect(code.length).toBeLessThan(7 * 1024);
     expect(code).not.toMatch(/\beval\b|new Function|\son[a-z]+\s*=/);
     expect(code).toContain("attachShadow");
   });
@@ -459,6 +459,32 @@ describe("the pill's keyboard and touch behaviour", () => {
       expect(pill.attrs["aria-expanded"]).toBe("true");
       pill.focused = false;
       doc.listeners.keydown![0]!({ key: "Escape" });
+      expect(panel.hidden).toBe(true);
+      expect(pill.focused).toBe(true);
+    });
+
+    test("display carries the state, because an inline display beats [hidden]", () => {
+      const { doc, pill, panel } = tree({ app: "notes" });
+      expect(panel.style.display).toBe("none");
+      pill.listeners.click![0]!();
+      expect(panel.style.display).toBe("flex");
+      pill.listeners.click![0]!();
+      expect(panel.style.display).toBe("none");
+      pill.listeners.click![0]!();
+      doc.listeners.pointerdown![0]!({ composedPath: () => [] });
+      expect(panel.style.display).toBe("none");
+      pill.listeners.click![0]!();
+      doc.listeners.keydown![0]!({ key: "Escape" });
+      expect(panel.style.display).toBe("none");
+    });
+
+    test("the × button closes the panel and returns focus to the pill", () => {
+      const { pill, panel } = tree({ app: "notes" });
+      const x = panel.children.find((c) => c.attrs["aria-label"] === "Close")!;
+      pill.listeners.click![0]!();
+      pill.focused = false;
+      x.listeners.click![0]!();
+      expect(panel.style.display).toBe("none");
       expect(panel.hidden).toBe(true);
       expect(pill.focused).toBe(true);
     });
