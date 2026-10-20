@@ -51,7 +51,7 @@ import {
   updateRepoSettings,
 } from "../../actions/repos.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
-import { appVitals, speedText as ms, type AppVitals } from "../../apps/vitals.ts";
+import { appVitals, shiftText, speedText as ms, type AppVitals } from "../../apps/vitals.ts";
 import type { PreviewData } from "../../apps/data.ts";
 import {
   getAppByRepo,
@@ -634,8 +634,11 @@ function appVisitorsView(v: AppVitals): Html {
       <dl class="stats">
         <div><dt>Visitors today</dt><dd>${v.today}</dd></div>
         <div><dt>Visitors, 7 days</dt><dd>${v.week}</dd></div>
+        <div><dt>p75 TTFB</dt><dd>${ms(v.ttfbP75)}</dd></div>
         <div><dt>p75 load</dt><dd>${ms(v.loadP75)}</dd></div>
+        <div><dt>p75 LCP</dt><dd>${ms(v.lcpP75)}</dd></div>
         <div><dt>p75 INP</dt><dd>${ms(v.inpP75)}</dd></div>
+        <div><dt>p75 CLS</dt><dd>${shiftText(v.clsP75)}</dd></div>
       </dl>`,
     { head: html`${icon("rocket")}<h2>Visitors and speed</h2>` },
   );

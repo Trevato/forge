@@ -226,6 +226,32 @@ describe("what is kept", () => {
     expect(v.week).toBe(4);
   });
 
+  test("every one of the five p75s reads back, and a missing one is undefined", () => {
+    const at = Date.UTC(2026, 0, 7, 12);
+    recordAppVital(app.db, "old5", { path: "/", ttfb: null, load: 5, lcp: null, inp: null, cls: 0 }, "z", "u", at);
+    for (const [i, n] of [1, 2, 3, 4].entries())
+      recordAppVital(
+        app.db,
+        "five",
+        { path: "/", ttfb: n * 10, load: n * 100, lcp: n * 1000, inp: n * 20, cls: n / 10 },
+        `c${i}`,
+        "u",
+        at,
+      );
+    expect(appVitals(app.db, "five", at)).toMatchObject({
+      ttfbP75: 30,
+      loadP75: 300,
+      lcpP75: 3000,
+      inpP75: 60,
+      clsP75: 0.3,
+    });
+    const old = appVitals(app.db, "old5", at);
+    expect(old.loadP75).toBe(5);
+    expect(old.ttfbP75).toBeUndefined();
+    expect(old.lcpP75).toBeUndefined();
+    expect(old.clsP75).toBe(0);
+  });
+
   test("the prune and the per-app reads use an index", () => {
     const plan = (sql: string) =>
       app.db.query<{ detail: string }, []>(`EXPLAIN QUERY PLAN ${sql}`).all().map((r) => r.detail).join("\n");

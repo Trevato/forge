@@ -131,8 +131,8 @@ test("an admin sees the app's visitors and speed above the deploys, and a reader
   if (!made.ok) throw new Error(made.error);
   const record = made.value;
   const at = Date.now();
-  recordAppVital(forge.db, record.id, { path: "/", ttfb: null, load: 420, lcp: null, inp: 80, cls: 0 }, "c", "u", at);
-  expect(await screenText(alice, r.value)).toContain("visitors 1 today, 1 in 7 days · p75 load 420 ms · p75 INP 80 ms");
+  recordAppVital(forge.db, record.id, { path: "/", ttfb: 90, load: 420, lcp: 1300, inp: 80, cls: 0.05 }, "c", "u", at);
+  expect(await screenText(alice, r.value)).toContain("visitors 1 today, 1 in 7 days · p75 TTFB 90 ms · load 420 ms · LCP 1.3 s · INP 80 ms · CLS 0.05");
   const c = await signUp(forge, {
     username: "carol",
     email: "carol@forge.test",
