@@ -6,6 +6,7 @@
  */
 
 import { listAccess } from "../../actions/access_log.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { html } from "../html.ts";
@@ -15,14 +16,19 @@ import { accountSections } from "./origins.ts";
 
 // GET /settings/access
 export function accessPage(ctx: Ctx): Response {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   if (!ctx.auth.user) return signInFirst(ctx);
+  const user = ctx.auth.user;
   const ua = ctx.url.searchParams.get("ua")?.slice(0, 100) ?? "";
   const path = ctx.url.searchParams.get("path")?.slice(0, 200) ?? "";
-  const listed = listAccess(ctx.app, ctx.auth.user, {
-    ...(ua === "" ? {} : { ua }),
-    ...(path === "" ? {} : { path }),
-  });
+  const listed = timePhase(ctx.request, "access", () =>
+    listAccess(ctx.app, user, {
+      ...(ua === "" ? {} : { ua }),
+      ...(path === "" ? {} : { path }),
+    }),
+  );
   if (!listed.ok) return notFoundPage(ctx);
+  const rendering = performance.now();
   const rows = listed.value.map((l) =>
     row({
       lead: icon("activity"),
@@ -73,7 +79,7 @@ export function accessPage(ctx: Ctx): Response {
       pad: false,
     },
   )}`;
-  return page({
+  const response = page({
     ctx,
     title: "Access",
     body: html`<div class="page-head"><h1>Access</h1></div>
@@ -83,4 +89,6 @@ export function accessPage(ctx: Ctx): Response {
         "Account settings",
       )}`,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
