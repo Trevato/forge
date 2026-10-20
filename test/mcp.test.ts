@@ -911,6 +911,7 @@ describe("the forge over MCP", () => {
     const tools = (await call(rw, "tools/list")).body.result.tools;
     const meta = (n: string) => tools.find((t: any) => t.name === n)._meta?.ui?.resourceUri;
     expect(meta("apps")).toBe("ui://forge/app");
+    expect(meta("new_app")).toBe("ui://forge/app");
     expect(meta("now")).toBe("ui://forge/run");
     expect(meta("asks")).toBe("ui://forge/decision");
     expect(meta("milestones")).toBe("ui://forge/wave");
@@ -1086,6 +1087,16 @@ describe("the forge over MCP", () => {
     expect(made.value.repo).toBe("alice/sentence");
     expect(made.value.issue).toBe(1);
     expect(made.value.agent).toBe("newappbot");
+    expect(["queued", "running", "none"]).toContain(made.value.run);
+    const cardRes = await call(rw, "tools/call", { name: "new_app", arguments: { name: "carded", description: "<b>hi</b>", agent: "newappbot" } });
+    const card = cardRes.body.result.structuredContent.card;
+    expect(card.kind).toBe("app");
+    expect(card.title).toBe("New app");
+    const byLabel = (l: string) => card.rows.find((r: any) => r.label === l)?.value;
+    expect(byLabel("App")).toBe("alice/carded");
+    expect(byLabel("First issue")).toBe("#1");
+    expect(byLabel("Agent")).toBe("newappbot");
+    expect(byLabel("First run")).toBeDefined();
     const seen = (await tool(rw, "apps")) as any;
     const row = seen.value.find((r: any) => r.app === "alice/sentence");
     expect(row).toBeDefined();

@@ -41,6 +41,7 @@ export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   now: "run",
   asks: "decision",
   milestones: "wave",
+  new_app: "app",
 };
 
 const CARD_TITLE: Readonly<Record<CardKind, string>> = {
@@ -65,6 +66,20 @@ export function cardFor(tool: string, value: unknown): Card | undefined {
   const rows: CardRow[] = [];
   const actions: CardAction[] = [];
   let status = "";
+  if (tool === "new_app") {
+    const made = obj(value);
+    const repo = text(made["repo"]);
+    const run = text(made["run"]);
+    status = run === "none" || run === "" ? "alive" : `alive · first run ${run}`;
+    rows.push({ label: "App", value: repo });
+    if (made["url"]) rows.push({ label: "Production", value: text(made["url"]) });
+    if (made["issue"]) rows.push({ label: "First issue", value: `#${text(made["issue"])}` });
+    if (made["agent"]) rows.push({ label: "Agent", value: text(made["agent"]) });
+    rows.push({ label: "First run", value: run === "" ? "none" : run });
+    if (repo !== "")
+      actions.push({ label: `Tell ${repo}`, tool: "tell", args: { repo, context: {} }, words: true });
+    return { kind, title: "New app", status, rows, actions };
+  }
   if (kind === "app") {
     const apps = list(value).map(obj);
     status = `${apps.length} app${apps.length === 1 ? "" : "s"}`;

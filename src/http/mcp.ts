@@ -486,11 +486,13 @@ const TOOLS: readonly Tool[] = [
         }
       }
       const { repo, app: record, issue } = made.value;
+      const first = listActiveRuns(ctx.app.db, [repo.id])[0];
       return good({
         repo: `${repo.ownerName}/${repo.name}`,
         url: appsRuntime(ctx.app)?.urlFor(record, "production") ?? null,
         issue: issue === undefined ? null : issue.number,
         agent: issue?.assigneeName ?? null,
+        run: first?.state ?? "none",
       });
     },
   },

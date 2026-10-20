@@ -28,7 +28,7 @@ for a tunnel and a forge that sleeps.
 | tool           | does                                                                                              | writes |
 | -------------- | ------------------------------------------------------------------------------------------------- | ------ |
 | `apps`         | the apps you can see: live or not, where served, how each runs itself, what is working            |        |
-| `new_app`      | `{ name, description?, owner?, visibility?, agent?, pick? }`: make an app from a sentence; answers `{ repo, url, issue, agent }`; refused as `POST /api/v1/apps` is (unverified, app_limit, no_such_agent, name_taken) | yes    |
+| `new_app`      | `{ name, description?, owner?, visibility?, agent?, pick? }`: make an app from a sentence; answers `{ repo, url, issue, agent, run }` (`run` is the first run's state, or `none`) and draws the `ui://forge/app` card: name, production URL, first issue, agent, first run; refused as `POST /api/v1/apps` is (unverified, app_limit, no_such_agent, name_taken) | yes    |
 | `repo`         | `{ repo }`: one repository's description, visibility, autonomy and `audience { level, sentence }`, the same as `GET /api/v1/repos/:owner/:name` |        |
 | `tell`         | a sentence becomes an issue, a builder is picked, a run starts on the crew's next tick            | yes    |
 | `say`          | speak on an issue or a pull; a working builder hears it as its next step                          | yes    |
@@ -170,7 +170,7 @@ answers
 
 ## Cards, the contract and the plugins (#1116)
 
-- **Cards.** `apps`, `now`, `asks` and `milestones` name a `ui://` resource in
+- **Cards.** `apps`, `new_app`, `now`, `asks` and `milestones` name a `ui://` resource in
   `_meta.ui.resourceUri` (MCP Apps, SEP-1865): `ui://forge/app`, `run`,
   `decision`, `wave`. `resources/list` and `resources/read` serve one small
   sandboxed page, which draws the `structuredContent.card` model that the
