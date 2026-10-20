@@ -72,6 +72,37 @@ export function cachedLane<T>(
   return value;
 }
 
+const plans = new ViewCache({ maxEntries: 64 });
+let planBuilds = 0;
+
+/**
+ * The milestones page's plan: `build()` once per write stamp (the forge's
+ * write clock, which also moves for runs, their cost and limb places, none
+ * of which write an event), spend visibility and UTC day, for at most a lane's lifetime. The plan holds no
+ * viewer: who may read the repository and the seats are the caller's, every
+ * request.
+ */
+export function cachedPlan<T>(
+  key: { repoId: string; stamp: string | undefined; spend: boolean; now: Date },
+  build: () => T,
+): T {
+  // No stamp inside a transaction: nothing is kept that a rollback could outlive.
+  if (key.stamp === undefined) {
+    planBuilds++;
+    return build();
+  }
+  const k = `plan:${key.repoId}:${key.stamp}:${key.spend ? "spend" : "plain"}:${utcDay(key.now)}`;
+  const kept = plans.get<{ value: T }>(k);
+  if (kept !== undefined) return kept.value;
+  planBuilds++;
+  const value = build();
+  plans.set(k, { value }, LANE_TTL_MS);
+  return value;
+}
+
+/** How many plans were built rather than served from the cache. */
+export const planBuildCount = (): number => planBuilds;
+
 /** The key is the graph's own input: issues in order and the edges between. */
 export function layoutKey(graph: Pick<Graph, "issues" | "edges">): string {
   const hash = new Bun.CryptoHasher("sha256");
@@ -117,6 +148,7 @@ export function cachedLayout<
 /** Test seam: start from nothing. */
 export function clearMapCache(): void {
   lanes.clear();
+  plans.clear();
   layouts.clear();
 }
 

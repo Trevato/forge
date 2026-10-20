@@ -38,6 +38,8 @@ import { replanResult } from "../../actions/limb_replan.ts";
 import { given, pendingFor } from "../../core/limb_replan.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
+import { writeStamp } from "../../core/write_clock.ts";
+import { cachedPlan } from "../map_cache.ts";
 import { askToLiveFor } from "../ask_to_live.ts";
 import {
   crumbsFor,
@@ -200,10 +202,17 @@ export function milestonesPage(ctx: Ctx): Response {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const repo = timePhase(ctx.request, "repo", () => loadRepo(ctx));
   if (!repo) return notFoundPage(ctx);
+  const spend = canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user);
   const plan = timePhase(ctx.request, "plan", () =>
-    readPlan(ctx.app.db, repo, {
-      spend: canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user),
-    }),
+    cachedPlan(
+      {
+        repoId: repo.id,
+        stamp: writeStamp(ctx.app.db),
+        spend,
+        now: new Date(),
+      },
+      () => readPlan(ctx.app.db, repo, { spend }),
+    ),
   );
   const base = repoBase(repo);
   const move = timePhase(ctx.request, "seats", () =>
