@@ -1,14 +1,5 @@
 {
   "files": {
-    "src/web/pages/conflicts.ts": {
-      "colour": 0,
-      "size": 1,
-      "motion": 0,
-      "forced": 0,
-      "focus": 0,
-      "input": 0,
-      "target": 0
-    },
     "src/web/standards.ts": {
       "colour": 2,
       "size": 0,

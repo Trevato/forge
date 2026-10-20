@@ -133,7 +133,7 @@ const CSS = `
 .rs-card { content-visibility: auto; contain-intrinsic-size: auto 260px; }
 .rs-sides { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); }
 .rs-side { min-width: 0; }
-.rs-side pre, .rs-merged { margin: 4px 0 0; padding: 8px; overflow: auto; max-height: 12em; font-size: 12px; white-space: pre; background: var(--muted-bg, transparent); border: 1px solid var(--border, #8884); border-radius: 6px; }
+.rs-side pre, .rs-merged { margin: 4px 0 0; padding: 8px; overflow: auto; max-height: 12em; font-size: 12.5px; white-space: pre; background: var(--muted-bg, transparent); border: 1px solid var(--border, #8884); border-radius: 6px; }
 .rs-merged { max-height: 32em; }
 .rs-taps { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
 .rs-taps label { flex: 1 1 0; text-align: center; padding: 8px 6px; min-height: 40px; border: 1px solid var(--border, #8884); border-radius: 6px; cursor: pointer; }
