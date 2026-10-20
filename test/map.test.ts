@@ -392,23 +392,30 @@ describe("the map, per app and across the forge", () => {
     ).text();
     expect(page).toContain("<h1>Map</h1>");
     expect(page).toMatch(
-      /<div[^>]*id="map-lanes"[^>]*data-live="run\.queued,run\.started,run\.finished,issue\.\*,pull\.\*"/,
+      /<div[^>]*id="lanes"[^>]*data-live="run\.queued,run\.started,run\.finished,issue\.\*,pull\.\*"/,
     );
+    // A lane is a §5 list row that folds: its <li> and its <details>.
     const lane = (id: string) =>
-      page.match(new RegExp(`<details[^>]*id="${id}"[^>]*>`))?.[0] ?? "";
+      page.match(new RegExp(`<li[^>]*>\\s*<details[^>]*id="${id}"[^>]*>`))?.[0] ??
+      "";
     // engine has the crew on it: open, with who is working in its header.
     expect(lane("lane-alice-engine")).toMatch(/\sopen\s*>/);
     expect(lane("lane-alice-engine")).not.toContain("data-idle");
     expect(page).toContain('href="/alice/engine/map"');
     expect(page).toContain("Extract renderer");
     expect(page).toMatch(
-      /class="map-lane-crew"[^>]*>[\s\S]*?class="avatar"[^>]*>s</,
+      /title="Working: s[^"]*"[^>]*>[\s\S]*?class="avatar"[^>]*>s</,
     );
     expect(page).toContain('data-autonomy="off"');
     // dormant has nothing ready and nobody working: it folds to its header.
     expect(lane("lane-alice-dormant")).toContain('data-idle="1"');
     expect(lane("lane-alice-dormant")).not.toMatch(/\sopen\s*>/);
     expect(page).toContain('<i data-state="parked"></i>parked <b>1</b>');
+    // The lanes are §5's list and rows, not a page-local component (#3651).
+    expect(page).toMatch(/id="lanes"[^>]*>\s*<div\s+class="card"[^>]*>\s*<ul class="list">/);
+    expect(page).toMatch(/<details[^>]*id="lane-alice-engine"[^>]*>\s*<summary\s+class="row"/);
+    for (const gone of ["map-lane", "map-lane-caret", "map-lane-crew", "map-lane-head", "map-lane-name", "map-lane-word", "map-lanes"])
+      expect(page).not.toContain(gone);
     // Every lane is drawn at the widest lane's width: one scale, one grid.
     const widths = [
       ...page.matchAll(/class="map-canvas"[^>]*data-w="(\d+)"/g),
@@ -442,7 +449,7 @@ describe("the map, per app and across the forge", () => {
       await fetch(`${base}/map`, { headers: { cookie: await signIn("carol") } })
     ).text();
     expect(page).toContain("Nothing to map");
-    expect(page).not.toContain('class="map-lane"');
+    expect(page).not.toContain('id="lane-');
     expect(page).not.toContain("No open issues to map");
 
     const anonymous = await fetch(`${base}/map`, { redirect: "manual" });

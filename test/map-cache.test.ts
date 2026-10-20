@@ -76,7 +76,7 @@ async function boot(shape: Shape): Promise<{ f: Fixture; servers: Servers }> {
 const get = async (servers: Servers, path: string, cookie: string): Promise<string> =>
   (await fetch(`${servers.url}${path}`, { headers: { cookie } })).text();
 
-const lanesIn = (page: string): number => page.split('class="map-lane"').length - 1;
+const lanesIn = (page: string): number => page.split('<details id="lane-').length - 1;
 
 describe("/map on a many-lane fixture, warm", () => {
   let servers: Servers;

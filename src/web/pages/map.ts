@@ -57,7 +57,7 @@ import {
 import { liveRegionsJs } from "../client.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { avatar, icon } from "../ui.ts";
+import { avatar, badge, icon, listCard, row } from "../ui.ts";
 import { autonomyStatus, type AutonomyStatus } from "../../crew/autonomy.ts";
 import {
   parkedTwice,
@@ -878,12 +878,12 @@ export function countWords(words: readonly Word[]): Record<Word, number> {
 
 function countsLine(counts: Record<Word, number>): Html {
   const always = new Set<Word>(["ready", "working", "blocked", "done"]);
-  return html`<p class="map-counts">
+  return html`<span class="map-counts">
     ${WORDS.filter((w) => always.has(w) || counts[w] > 0).map(
       (w) =>
         html`<span><i data-state="${w}"></i>${w} <b>${counts[w]}</b></span>`,
     )}
-  </p>`;
+  </span>`;
 }
 
 function rankedList(
@@ -1123,32 +1123,17 @@ export const mapCss = /* css */ `
 .map-pillars ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; font-size: 14px; }
 .map-empty { display: grid; justify-items: center; gap: 8px; padding: 40px 16px; border: 1px dashed var(--border); border-radius: var(--radius); color: var(--muted-fg); text-align: center; }
 
-/* ---- lanes ---- */
-.map-lanes { display: grid; gap: 14px; margin-top: 16px; }
-.map-lane { border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); box-shadow: var(--shadow-1); }
-.map-lane-head { display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; padding: 10px 14px; cursor: pointer; list-style: none; }
-.map-lane-head::-webkit-details-marker { display: none; }
-.map-lane-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--radius); }
-.map-lane-caret { display: inline-flex; color: var(--faint); transition: transform 160ms var(--ease); }
-.map-lane[open] > .map-lane-head .map-lane-caret { transform: rotate(90deg); }
-.map-lane-name { font-weight: 620; font-size: 15px; letter-spacing: -0.01em; }
-.map-lane-name .muted { font-weight: 500; }
-.map-lane-word { font-size: 12.5px; color: var(--muted-fg); padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px; line-height: 18px; }
-.map-lane-word[data-autonomy="autonomous"] { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 34%, transparent); }
-.map-lane-crew { display: inline-flex; align-items: center; gap: 4px; }
-.map-lane-crew .avatar { box-shadow: 0 0 0 2px var(--card); }
-.map-lane-head .map-counts { margin: 0 0 0 auto; }
-.map-lane[data-idle="1"] > .map-lane-head .map-lane-name { color: var(--muted-fg); font-weight: 560; }
-.map-lane > .map-canvas, .map-lane > .map-empty { border: 0; border-top: 1px solid var(--border); border-radius: 0 0 var(--radius) var(--radius); }
-@media (max-width: 600px) {
-  .map-lane-head { gap: 6px 10px; }
-  .map-lane-head .map-counts { margin-left: 0; flex-basis: 100%; }
-}
+/* ---- lanes: §5 list rows that fold ---- */
+#lanes { margin-top: 16px; }
+#lanes .row-meta .map-counts { margin: 0; }
+#lanes li[data-autonomy="autonomous"] .row-title .badge { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 34%, transparent); }
+#lanes li[data-idle] .row-title { color: var(--muted-fg); }
+#lanes details > .map-canvas, #lanes details > .map-empty { border: 0; border-top: 1px solid var(--border); border-radius: 0; }
 @media (prefers-reduced-motion: reduce) {
-  .map-card, .map-title, .map-lane-caret { transition: none; }
+  .map-card, .map-title { transition: none; }
 }
 @media (forced-colors: active) {
-  .map-tool:focus-visible, .map-lane-head:focus-visible { outline: 2px solid Highlight; }
+  .map-tool:focus-visible { outline: 2px solid Highlight; }
   .map-node:focus-visible .map-card { stroke: Highlight; stroke-width: 3; }
 }
 `;
@@ -1294,12 +1279,12 @@ export const mapViewJs = /* js */ `
 
   document.addEventListener('toggle', function (e) {
     var d = e.target;
-    if (!d || !d.classList || !d.classList.contains('map-lane') || !d.id) return;
+    if (!d || !d.id || d.id.indexOf('lane-') !== 0) return;
     folds[d.id] = d.open;
     if (d.open) all(d).forEach(function (c) { setup(c, false); });
   }, true);
   function restore(root) {
-    Array.prototype.forEach.call(root.querySelectorAll('.map-lane'), function (d) { if (d.id in folds) d.open = folds[d.id]; });
+    Array.prototype.forEach.call(root.querySelectorAll('details[id^="lane-"]'), function (d) { if (d.id in folds) d.open = folds[d.id]; });
     if (root.classList && root.classList.contains('map-canvas')) setup(root, false);
     all(root).forEach(function (c) { setup(c, false); });
   }
@@ -1654,51 +1639,47 @@ export function globalLanes(
   );
 }
 
-/** A lane: the repository's name, its autonomy mode, who is on it, and its map. */
+/** A lane: one folding list row — the caret, the repository's name and its
+ * autonomy mode, who is on it, its counts — over its map. */
 export function laneHtml(lane: Lane, width: number): Html {
   const { repo } = lane;
-  const id = `lane-${repo.ownerName}-${repo.name}`;
-  return html`<details
-    class="map-lane"
-    id="${id}"
-    ${lane.idle ? html`data-idle="1"` : html`open`}
-  >
-    <summary class="map-lane-head">
-      <span class="map-lane-caret">${icon("chevronRight")}</span>
-      <span class="map-lane-name"
-        ><a href="${repoBase(repo)}/map"
-          ><span class="muted">${repo.ownerName}/</span>${repo.name}</a
-        ></span
+  return row({
+    lead: icon("chevronRight"),
+    title: html`<a href="${repoBase(repo)}/map"
+        ><span class="muted">${repo.ownerName}/</span>${repo.name}</a
       >
-      <span class="map-lane-word" data-autonomy="${repo.autonomy}"
-        >${repo.autonomy}</span
-      >
-      ${lane.workers.length === 0
-        ? null
-        : html`<span
-            class="map-lane-crew"
-            title="Working: ${lane.workers.join(", ")}"
-            >${lane.workers.slice(0, 5).map((w) => avatar(w))}${lane.workers
-              .length > 5
+      ${badge(repo.autonomy, { variant: "outline" })}`,
+    meta: countsLine(lane.counts),
+    trail:
+      lane.workers.length === 0
+        ? html``
+        : html`<span title="Working: ${lane.workers.join(", ")}"
+            >${lane.workers.slice(0, 5).map((w) => html`${avatar(w)} `)}${lane
+              .workers.length > 5
               ? html`<span class="muted small"
                   >+${lane.workers.length - 5}</span
                 >`
               : null}</span
-          >`}
-      ${countsLine(lane.counts)}
-    </summary>
-    ${drawMap(
-      repo,
-      lane.graph,
-      lane.placed,
-      emphasisFor(lane.ready, lane.critical, lane.marks),
-      {
-        id: `map-canvas-${repo.ownerName}-${repo.name}`,
-        minWidth: width,
-        cap: 0.6,
-      },
-    )}
-  </details>`;
+          >`,
+    data: lane.idle
+      ? { autonomy: repo.autonomy, idle: "1" }
+      : { autonomy: repo.autonomy },
+    fold: {
+      id: `lane-${repo.ownerName}-${repo.name}`,
+      open: !lane.idle,
+      body: drawMap(
+        repo,
+        lane.graph,
+        lane.placed,
+        emphasisFor(lane.ready, lane.critical, lane.marks),
+        {
+          id: `map-canvas-${repo.ownerName}-${repo.name}`,
+          minWidth: width,
+          cap: 0.6,
+        },
+      ),
+    },
+  });
 }
 
 /** GET /map — every app the viewer can see, one lane each. */
@@ -1718,13 +1699,13 @@ export function globalMapPage(ctx: Ctx): Response {
   const body = html`${pageHead("Map", {
       sub: "Every app you can see, laid out by what waits for what. The top edge of each lane is ready now; a ringed card is where the crew is.",
     })}
-    <div id="map-lanes" class="map-lanes" data-live="${LIVE_KINDS}">
+    <div id="lanes" data-live="${LIVE_KINDS}">
       ${lanes.length === 0
         ? html`<p class="muted">
             Nothing to map: no open issues anywhere you can see, and nobody
             working.
           </p>`
-        : lanes.map((lane) => laneHtml(lane, width))}
+        : listCard(lanes.map((lane) => laneHtml(lane, width)))}
     </div>`;
   const response = page({
     ctx,

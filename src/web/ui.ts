@@ -834,10 +834,14 @@ export interface RowOptions {
   data?: Readonly<Record<string, string>>;
   /** The row is the one chosen (`aria-current="true"`). */
   current?: boolean;
+  /** The row folds: it is the `<summary>` of a `<details>` holding `body`,
+   * open when `open` says so. Its `lead` is the caret. */
+  fold?: { id: string; open: boolean; body: Html };
 }
 
 /** One list row. `<a>` when it navigates, `<div>` when it holds its own
- * controls — the hover affordance follows automatically. */
+ * controls, `<summary>` when it folds — the hover affordance follows
+ * automatically. */
 export function row(o: RowOptions): Html {
   const inner = html`${o.lead
       ? html`<span class="row-lead">${o.lead}</span>`
@@ -860,7 +864,12 @@ export function row(o: RowOptions): Html {
     .filter(([key]) => /^[a-z][a-z-]*$/.test(key))
     .map(([key, value]) => html` data-${raw(key)}="${value}"`);
   return html`<li${data}${o.current ? raw(' aria-current="true"') : null}>
-    ${o.href !== undefined
+    ${o.fold !== undefined
+      ? html`<details id="${o.fold.id}" ${o.fold.open ? raw("open") : null}>
+          <summary ${attrs}>${inner}</summary>
+          ${o.fold.body}
+        </details>`
+      : o.href !== undefined
       ? html`<a href="${o.href}" ${attrs}>${inner}</a>`
       : html`<div ${attrs}>${inner}</div>`}
   </li>`;

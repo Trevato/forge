@@ -372,6 +372,10 @@ a.row:hover .row-title { color: var(--accent); }
 .row[data-state="closed"] .row-lead { color: var(--danger); }
 .row[data-state="merged"] .row-lead { color: var(--merged); }
 .row[data-state="draft"] .row-lead { color: var(--muted-fg); }
+/* A row that folds is a <summary>: its lead is the caret, turned when open. */
+summary.row { cursor: pointer; list-style: none; }
+summary.row:hover { background: var(--muted); }
+details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 /* A count with its glyph: comments on a row, members on a team. */
 .count {
   display: inline-flex; align-items: center; gap: 4px;
