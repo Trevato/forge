@@ -446,6 +446,7 @@ import {
   originReposPage,
   originSyncSubmit,
   originsPage,
+  originTrustedHosts,
 } from "../web/pages/origins.ts";
 import { pushThrough } from "../origins/push-through.ts";
 import { notFoundPage } from "../web/chrome.ts";
@@ -951,6 +952,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/origins/token", originConnectToken);
   router.add("POST", "/settings/origins/oauth", originOAuthStart);
   router.add("POST", "/settings/origins/apps", originAppCreate);
+  router.add("POST", "/settings/origins/trusted-hosts", originTrustedHosts);
   router.add("POST", "/settings/origins/apps/:id/delete", originAppDelete);
   router.add("GET", "/settings/origins/flows/:id", originFlowPage);
   router.add("POST", "/settings/origins/flows/:id/poll", originFlowPoll);

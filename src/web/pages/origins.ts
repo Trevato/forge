@@ -30,6 +30,14 @@ import {
   syncOriginNow,
   type Reattachment,
 } from "../../actions/origins.ts";
+import {
+  editableHosts,
+  envHosts,
+  isTrustedHost,
+  mayEditTrustedHosts,
+  rejectedSentence,
+  updateTrustedHosts,
+} from "../../origins/trusted-hosts.ts";
 import { reattachMessage } from "./frozen.ts";
 import { getFlowFor } from "../../origins/oauth.ts";
 import {
@@ -319,6 +327,13 @@ function originCard(origin: Origin, mirrors: number): Html {
               ? html`never synced`
               : html`synced ${time(origin.lastSyncAt)}`}</span
           >
+          ${when(
+            isTrustedHost(URL.parse(origin.webUrl)?.hostname ?? ""),
+            () =>
+              html`<span class="row-meta muted small"
+                >trusted internal host</span
+              >`,
+          )}
         </span>
         ${healthBadge(origin)}
       </div>
@@ -358,6 +373,8 @@ interface ConnectValues {
   tokenHost: string;
   tokenError?: string;
   registerError?: string;
+  trustedText?: string;
+  trustedError?: string;
 }
 
 const blankValues = (): ConnectValues => ({
@@ -618,6 +635,41 @@ function tokenSection(values: ConnectValues): Html {
   </div>`;
 }
 
+/** The admin's list of hosts an origin may reach inside the network. */
+function trustedHostsCard(text: string, error?: string): Html {
+  const fixed = envHosts();
+  return card(
+    html`<h3>${icon("lock")}Trusted internal hosts</h3>
+      <p class="muted small">
+        Origins on these exact host names may resolve to a private address
+        (your own Forgejo, reached inside the cluster). Webhooks never do.
+        Separate names with a space, comma or new line; addresses, wildcards and
+        URLs are not accepted.
+      </p>
+      ${when(
+        fixed.length > 0,
+        () =>
+          html`<p class="muted small">
+            Set by the environment:
+            <span class="mono">${fixed.join(", ")}</span>
+          </p>`,
+      )}
+      <form method="post" action="/settings/origins/trusted-hosts">
+        ${uiField({
+          label: "Host names",
+          name: "hosts",
+          type: "textarea",
+          rows: 3,
+          value: text,
+          mono: true,
+          spellcheck: false,
+          ...(error ? { error } : {}),
+        })}
+        <div class="form-actions">${btn("Save", { variant: "primary" })}</div>
+      </form>`,
+  );
+}
+
 // ---- the page ----
 
 function originsView(ctx: Ctx, values: ConnectValues): Html {
@@ -646,6 +698,12 @@ function originsView(ctx: Ctx, values: ConnectValues): Html {
           ${origins.map((o) => originCard(o, mirrors.get(o.id)?.count ?? 0))}
         </div>`}
     ${frozenCard(ctx)}
+    ${mayEditTrustedHosts(user)
+      ? trustedHostsCard(
+          values.trustedText ?? editableHosts().join("\n"),
+          values.trustedError,
+        )
+      : null}
     ${card(
       html`${tokenSection(values)}
         <details
@@ -945,6 +1003,29 @@ export async function originAppCreate(ctx: Ctx): Promise<Response> {
   }
   return flashTo(ctx, `/settings/origins?host=${encodeURIComponent(host)}`, {
     message: "Application registered. Authorize it to finish connecting.",
+  });
+}
+
+// POST /settings/origins/trusted-hosts
+export async function originTrustedHosts(ctx: Ctx): Promise<Response> {
+  const denied = accountOnly(ctx);
+  if (denied) return denied;
+  if (!mayEditTrustedHosts(ctx.auth.user))
+    return new Response("forbidden", { status: 403 });
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const text = field(form, "hosts");
+  const saved = updateTrustedHosts(ctx.app.db, ctx.auth.user, text);
+  if (!saved.ok) {
+    if (saved.error === "forbidden")
+      return new Response("forbidden", { status: 403 });
+    const values = blankValues();
+    values.trustedText = text.slice(0, 4000);
+    values.trustedError = rejectedSentence(saved.rejected);
+    return shell(ctx, originsView(ctx, values), 422);
+  }
+  return flashTo(ctx, "/settings/origins", {
+    message: "Trusted internal hosts saved.",
   });
 }
 

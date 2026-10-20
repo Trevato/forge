@@ -35,6 +35,7 @@ import type { User } from "../core/users.ts";
 import { runGitCapture } from "../git/env.ts";
 import { isSafeRef } from "../git/guard.ts";
 import { repoDir } from "../git/repos.ts";
+import { isTrustedHost } from "../origins/trusted-hosts.ts";
 import { type Resolve, vetHost } from "../kernel/outbound.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { carryConversations, plural } from "../origins/carry.ts";
@@ -367,7 +368,7 @@ function nameFromUrl(url: string): string {
   return last.replace(/\.git$/i, "");
 }
 
-async function resolveSource(
+export async function resolveSource(
   app: App,
   user: User,
   source: MigrateSource,
@@ -381,7 +382,9 @@ async function resolveSource(
     // become a way to knock on it. An admin may; a forge run for one person
     // may say so once (`FORGE_MIGRATE_PRIVATE_HOSTS=1`).
     const mayReachPrivate =
-      user.isAdmin || app.config.migrateFromPrivateHosts === true;
+      user.isAdmin ||
+      app.config.migrateFromPrivateHosts === true ||
+      isTrustedHost(new URL(url).hostname);
     if (!mayReachPrivate) {
       const hostname = new URL(url).hostname;
       if (isPrivateHost(hostname)) return err("private_host");

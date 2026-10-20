@@ -46,6 +46,8 @@ import { blobScreen } from "./screens/repo.ts";
 import { dashboardScreen } from "./screens/dashboard.ts";
 import { mayManageFlags } from "../core/flags.ts";
 import { accessScreen } from "./screens/access.ts";
+import { mayEditTrustedHosts } from "../origins/trusted-hosts.ts";
+import { trustedHostsPrompt } from "./screens/trustedhosts.ts";
 import { flagsScreen } from "./screens/flags.ts";
 import { scorecardScreen } from "./screens/scorecard.ts";
 import { cloudScreen } from "./screens/cloud.ts";
@@ -362,6 +364,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Flags",
         hint: "declared flags and their live values",
         run: () => ctx.push(flagsScreen(session, ctx)),
+      });
+    // Settings → Origins' trusted internal hosts: the same admin gate as the page.
+    if (mayEditTrustedHosts(session.user))
+      commands.push({
+        id: "trusted-hosts",
+        title: "Trusted hosts",
+        hint: "internal hosts an origin may reach",
+        run: () => ctx.push(trustedHostsPrompt(session, ctx, blank("Trusted hosts"))),
       });
     // Settings → Usage, as the page has it: the same gate as Flags (#1565).
     if (mayManageFlags(session.user))

@@ -22,6 +22,7 @@ import {
   RefusedError,
   vetHost,
 } from "../kernel/outbound.ts";
+import { trustedHosts } from "./trusted-hosts.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { readCapped } from "./providers/http.ts";
 import type { Discovered, OriginKind } from "./types.ts";
@@ -160,8 +161,9 @@ export function allowedOrigin(
 export async function discover(
   input: string | DiscoverInput,
   env: Record<string, string | undefined> = process.env,
-  options: OutboundOptions = {},
+  given: OutboundOptions = {},
 ): Promise<Result<Discovered, DiscoverError>> {
+  const options: OutboundOptions = { trusted: trustedHosts(), ...given };
   const wanted: DiscoverInput =
     typeof input === "string" ? { host: input } : input;
   const typed = wanted.host.trim().toLowerCase().replace(/\/+$/, "");

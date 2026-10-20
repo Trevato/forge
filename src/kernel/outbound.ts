@@ -39,6 +39,11 @@ export interface OutboundOptions {
   resolve?: Resolve;
   /** Addresses exempt from the refusal list. For tests only; never read from the environment. */
   allow?: readonly string[];
+  /**
+   * Exact host names an admin vouched for: they may resolve to a private
+   * address. Origins pass this; webhooks never do.
+   */
+  trusted?: readonly string[];
   /** Permit plain http. For tests only; never read from the environment. */
   plain?: boolean;
   /** Extra trusted CA certificate (PEM) for https. For tests only. */
@@ -73,6 +78,11 @@ export async function vetHost(
     }
   }
   if (found.length === 0) return err("unresolved");
+  if (
+    isIP(bare) === 0 &&
+    (options.trusted ?? []).includes(bare.toLowerCase())
+  )
+    return ok([...found]);
   const allow = options.allow ?? [];
   if (found.some((a) => isRefusedAddress(a) && !allow.includes(a)))
     return err("refused");

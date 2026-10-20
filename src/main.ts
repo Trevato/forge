@@ -13,6 +13,7 @@ import { parentUrlProblem } from "./core/parent_releases.ts";
 import { releaseEnv } from "./release/env.ts";
 import { createApp } from "./app.ts";
 import { backfillCarried } from "./core/carried.ts";
+import { loadTrustedHosts } from "./origins/trusted-hosts.ts";
 import { flushFlagUses, loadFlags } from "./core/flags.ts";
 import { reconcile } from "./core/reconcile.ts";
 import { offerStartingBoards } from "./actions/boards.ts";
@@ -261,6 +262,7 @@ const app = createApp({
 });
 
 loadFlags(app.db);
+loadTrustedHosts(app.db);
 // FORGE_SIGNUP (checked in configProblem) sets who may sign up; kept like any change.
 const bootSignup = signupFromEnv(process.env.FORGE_SIGNUP);
 if (bootSignup.ok && bootSignup.value !== null)

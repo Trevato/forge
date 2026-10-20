@@ -614,6 +614,8 @@ paged. Every other cause (`drill`, `mirror`, `stuck:*`, `red:*`, `snapshots`,
 
 ## Origins
 
+Outbound git refuses a host that resolves to a private address. A site admin can vouch for exact host names (the owner's own Forgejo, reached by its in-cluster address): `FORGE_OUTBOUND_TRUSTED_HOSTS=git.example.test` (comma or space separated), plus the same list editable by an admin on **Settings → Origins**. A trusted host may resolve privately for origin sync, mirror, migrate and write-through; trust is by name, never by address range, and webhooks never read it. The origin row says "trusted internal host". In the terminal, the palette's **Trusted hosts** reads and saves the same list (admins only, same audit). An entry that is not a bare host name (an address, a wildcard, a URL) is refused with its name, on the page and in the terminal, never silently dropped.
+
 Your forge is the index of everything you work on, wherever it actually lives.
 An **origin** is a connected account on another forge — GitHub, Forgejo, Gitea.
 Mirror a repository in and its issues, pulls, comments and labels come with the

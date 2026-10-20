@@ -24,6 +24,7 @@ import { runGitCapture, type RunOptions } from "../git/env.ts";
 import { listRefs } from "../git/read.ts";
 import { ZERO_OID } from "../git/hooks.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { trustedHosts } from "./trusted-hosts.ts";
 import { vetHost, type OutboundOptions } from "../kernel/outbound.ts";
 import { pinFor, remoteGitEnv } from "../git/remote-env.ts";
 import { redact, safeRemoteUrl, secretsIn } from "./credentials.ts";
@@ -61,7 +62,7 @@ async function vettedEnv(
   authEnv: Record<string, string>,
 ): Promise<Result<Record<string, string>, GitMirrorError>> {
   const host = new URL(url).hostname;
-  const vetted = await vetHost(host, outbound);
+  const vetted = await vetHost(host, { ...outbound, trusted: trustedHosts() });
   if (!vetted.ok)
     return err({
       message: vetted.error === "refused" ? MIRROR_REFUSED : MIRROR_UNRESOLVED,
