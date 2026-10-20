@@ -40,6 +40,7 @@ import { relay, startEgress, type Egress } from "./egress.ts";
 import { cgroupHost, enterArgv, openCellCgroup } from "./cgroup.ts";
 
 /** `ceiling`: a declaration was cut to the machine's maximum; `declared`: forge.json's own; `default`: neither. */
+export type CeilingFrom = "env" | "pod" | "default";
 export type MemorySource = "ceiling" | "declared" | "default";
 
 export interface Limits {
@@ -47,6 +48,8 @@ export interface Limits {
   readonly memoryMiB: number;
   /** Where `memoryMiB` came from, for the line that says it was exceeded. */
   readonly memorySource?: MemorySource | undefined;
+  /** Where the machine's memory ceiling came from, named when `memorySource` is `ceiling`. */
+  readonly ceilingFrom?: CeilingFrom | undefined;
   /** Cores, averaged over `CPU_WINDOW_MS`. */
   readonly cpus: number;
   /** Bytes on disk under the cell's writable directories, MiB. */
@@ -93,14 +96,14 @@ export function memoryCeiling(
 export function memoryCeilingSource(
   env: string | undefined,
   podFile = POD_MEMORY_FILE,
-): "env" | "pod" | "default" {
+): CeilingFrom {
   return ceiling(env, podFile).from;
 }
 
 function ceiling(
   env: string | undefined,
   podFile: string,
-): { mib: number; from: "env" | "pod" | "default" } {
+): { mib: number; from: CeilingFrom } {
   const set = positive(env);
   if (set !== undefined) return { mib: set, from: "env" };
   try {
@@ -114,18 +117,30 @@ function ceiling(
 }
 
 /** The line saying a declared memory limit is cut to the machine's ceiling; none when it is not. */
-export function limitWarnings(declared: DeclaredLimits | undefined): string[] {
+export function limitWarnings(
+  declared: DeclaredLimits | undefined,
+  podFile = POD_MEMORY_FILE,
+): string[] {
   const want = declared?.memoryMiB;
-  const have = maxLimits().memoryMiB;
+  const have = maxLimits(podFile).memoryMiB;
   return want !== undefined && want > have
-    ? [`warning: forge.json declares memory ${want} MiB; this machine grants at most ${have} (FORGE_CELL_MEMORY_MAX_MIB, else a share of the pod's memory)`]
+    ? [`warning: forge.json declares memory ${want} MiB; this machine grants at most ${have} (${ceilingText(memoryCeilingSource(process.env["FORGE_CELL_MEMORY_MAX_MIB"], podFile))})`]
     : [];
 }
 
+/** The ceiling's real source in words: only the variable that is set is named. */
+function ceilingText(from: CeilingFrom | undefined): string {
+  return from === "env"
+    ? "FORGE_CELL_MEMORY_MAX_MIB"
+    : from === "pod"
+      ? `${POD_MEMORY_SHARE * 100}% of the pod's memory.max`
+      : "the 4096 MiB default, the host states no memory limit";
+}
+
 /** Where a cell's memory limit came from, for the line that says it was exceeded. */
-export function memorySource(source: MemorySource | undefined): string {
+export function memorySource(source: MemorySource | undefined, from?: CeilingFrom): string {
   return source === "ceiling"
-    ? "the machine's ceiling, FORGE_CELL_MEMORY_MAX_MIB; a higher forge.json limit was held to it"
+    ? `the machine's ceiling, ${ceilingText(from)}; a higher forge.json limit was held to it`
     : source === "declared"
       ? "forge.json limits.memory"
       : "the default";
@@ -148,6 +163,7 @@ export function resolveLimits(
   return {
     memoryMiB: Math.min(want ?? base.memoryMiB, max.memoryMiB),
     memorySource: want === undefined ? "default" : want > max.memoryMiB ? "ceiling" : "declared",
+    ceilingFrom: memoryCeilingSource(process.env["FORGE_CELL_MEMORY_MAX_MIB"], podFile),
     cpus: Math.min(declared?.cpus ?? base.cpus, max.cpus),
     diskMiB: Math.min(declared?.diskMiB ?? base.diskMiB, max.diskMiB),
   };
@@ -889,7 +905,7 @@ function tick(): void {
     entry.last = { ticks, kib };
     if (kib > limits.memoryMiB * 1024) {
       entry.breach(
-        `used ${mib(kib * 1024)} of memory, over its ${limits.memoryMiB} MiB limit (${memorySource(limits.memorySource)})`,
+        `used ${mib(kib * 1024)} of memory, over its ${limits.memoryMiB} MiB limit (${memorySource(limits.memorySource, limits.ceilingFrom)})`,
       );
       continue;
     }

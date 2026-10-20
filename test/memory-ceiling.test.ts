@@ -40,12 +40,42 @@ describe("the memory ceiling is never a silent clamp (#3128)", () => {
     process.env["FORGE_CELL_MEMORY_MAX_MIB"] = "4096";
     try {
       const source = (declared?: { memoryMiB: number }) =>
-        memorySource(resolveLimits("step", declared).memorySource);
+        {
+          const l = resolveLimits("step", declared);
+          return memorySource(l.memorySource, l.ceilingFrom);
+        };
       expect(source({ memoryMiB: 8192 })).toContain("FORGE_CELL_MEMORY_MAX_MIB");
       expect(source({ memoryMiB: 4096 })).toBe("forge.json limits.memory");
       expect(source({ memoryMiB: 1024 })).toBe("forge.json limits.memory");
       expect(source()).toBe("the default");
       expect(limitWarnings({ memoryMiB: 4096 })).toEqual([]);
+    } finally {
+      if (saved === undefined) delete process.env["FORGE_CELL_MEMORY_MAX_MIB"];
+      else process.env["FORGE_CELL_MEMORY_MAX_MIB"] = saved;
+    }
+  });
+
+  test("each source is named by the warning and the kill message, and only a set variable is called a variable", () => {
+    const saved = process.env["FORGE_CELL_MEMORY_MAX_MIB"];
+    const small = pod(String(4096 * 1048576));
+    try {
+      process.env["FORGE_CELL_MEMORY_MAX_MIB"] = "1024";
+      expect(limitWarnings({ memoryMiB: 2048 }, small)[0]).toContain("FORGE_CELL_MEMORY_MAX_MIB");
+      expect(memorySource("ceiling", resolveLimits("step", { memoryMiB: 2048 }, small).ceilingFrom)).toContain("FORGE_CELL_MEMORY_MAX_MIB");
+
+      delete process.env["FORGE_CELL_MEMORY_MAX_MIB"];
+      const podLine = limitWarnings({ memoryMiB: 8192 }, small)[0] ?? "";
+      expect(podLine).toContain("75% of the pod's memory.max");
+      expect(podLine).not.toContain("FORGE_CELL_MEMORY_MAX_MIB");
+      const podKill = memorySource("ceiling", resolveLimits("step", { memoryMiB: 8192 }, small).ceilingFrom);
+      expect(podKill).toContain("75% of the pod's memory.max");
+      expect(podKill).not.toContain("FORGE_CELL_MEMORY_MAX_MIB");
+
+      const none = pod("max\n");
+      const defLine = limitWarnings({ memoryMiB: 8192 }, none)[0] ?? "";
+      expect(defLine).toContain("4096 MiB default");
+      expect(defLine).not.toContain("FORGE_CELL_MEMORY_MAX_MIB");
+      expect(memorySource("ceiling", "default")).not.toContain("FORGE_CELL_MEMORY_MAX_MIB");
     } finally {
       if (saved === undefined) delete process.env["FORGE_CELL_MEMORY_MAX_MIB"];
       else process.env["FORGE_CELL_MEMORY_MAX_MIB"] = saved;

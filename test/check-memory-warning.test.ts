@@ -83,7 +83,7 @@ test("the breach text names where the limit came from", async () => {
   );
   try {
     const why = await new Promise<string>((resolve) => {
-      const limits: Limits = { memoryMiB: 64, memorySource: "ceiling", cpus: 64, diskMiB: 1 << 20 };
+      const limits: Limits = { memoryMiB: 64, memorySource: "ceiling", ceilingFrom: "env", cpus: 64, diskMiB: 1 << 20 };
       const unwatch = watchTree(hog.pid, limits, { bytes: 64 << 20, by: "watch" }, [], undefined, (w) => {
         unwatch();
         resolve(w);
