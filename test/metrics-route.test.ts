@@ -60,6 +60,13 @@ test("a recorded request moves its bucket, count and sum", async () => {
   expect(after).not.toContain("# EOF");
 });
 
+test("a request without credentials is answered 404, as docs/METRICS.md says", async () => {
+  const res = await fetch(`${servers.url}/metrics`);
+  expect(res.status).toBe(404);
+  const doc = await readFile(join(import.meta.dir, "..", "docs", "METRICS.md"), "utf8");
+  expect(doc).toContain("404 without credentials");
+});
+
 test("every family the route serves is listed in docs/METRICS.md", async () => {
   const text = await read();
   const doc = await readFile(join(import.meta.dir, "..", "docs", "METRICS.md"), "utf8");

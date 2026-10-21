@@ -8,6 +8,10 @@
  * nothing: the records go back and the timer retries. Rows older than
  * `KEEP_DAYS` are deleted, checked once per hour at flush.
  *
+ * `record` also adds to totals kept in memory per database for the life of
+ * the process (`readTotals`). They never drop, so `GET /metrics` can serve
+ * them as a Prometheus histogram (#4013); a restart starts them at zero.
+ *
  * The key is the route pattern the router matched, never the raw path, so
  * `/alice/x` and `/bob/y` land in one bucket and the table does not grow
  * with what strangers type. Not the forge's health: that is `kernel/vitals`.
@@ -23,6 +27,8 @@ const HOUR_MS = 3_600_000;
 const FLUSH_MS = 1000;
 const FLUSH_KEYS = 500;
 const SEP = "\u0000";
+/** Distinct patterns kept in the totals; the router bounds them far below this. */
+export const MAX_TOTAL_PATTERNS = 1000;
 
 export interface TimingRow {
   readonly hour: string;
@@ -36,6 +42,39 @@ export interface RouteTiming {
   record(pattern: string, ms: number): void;
   flush(): void;
   stop(): void;
+}
+
+/** One pattern's totals since the process started: a count per bucket and the summed duration. */
+export interface RouteTotal {
+  /** `EDGES_MS.length + 1` counts, not cumulative; the last is everything slower. */
+  readonly counts: readonly number[];
+  readonly sumUs: number;
+}
+
+const totals = new WeakMap<Database, Map<string, { counts: number[]; sumUs: number }>>();
+
+function addTotal(db: Database, pattern: string, bucket: number, us: number): void {
+  let byPattern = totals.get(db);
+  if (byPattern === undefined) {
+    byPattern = new Map();
+    totals.set(db, byPattern);
+  }
+  let t = byPattern.get(pattern);
+  if (t === undefined) {
+    if (byPattern.size >= MAX_TOTAL_PATTERNS) return;
+    t = { counts: new Array<number>(EDGES_MS.length + 1).fill(0), sumUs: 0 };
+    byPattern.set(pattern, t);
+  }
+  t.counts[bucket] = (t.counts[bucket] ?? 0) + 1;
+  t.sumUs += us;
+}
+
+/** Every pattern recorded against `db` in this process, with its totals; a copy. */
+export function readTotals(db: Database): Map<string, RouteTotal> {
+  const out = new Map<string, RouteTotal>();
+  for (const [pattern, t] of totals.get(db) ?? [])
+    out.set(pattern, { counts: [...t.counts], sumUs: t.sumUs });
+  return out;
 }
 
 /** The bucket a duration falls in. */
@@ -119,8 +158,10 @@ export function createRouteTiming(
       throw new RangeError("route timing refused: bad pattern");
     if (!Number.isFinite(ms) || ms < 0)
       throw new RangeError("route timing refused: bad duration");
-    const key = `${Math.floor(now() / HOUR_MS)}${SEP}${pattern}${SEP}${bucketOf(ms)}`;
+    const bucket = bucketOf(ms);
+    const key = `${Math.floor(now() / HOUR_MS)}${SEP}${pattern}${SEP}${bucket}`;
     const us = Math.round(ms * 1000);
+    addTotal(db, pattern, bucket, us);
     const had = pending.get(key);
     if (had) {
       had.n++;
