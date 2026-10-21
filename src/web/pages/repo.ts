@@ -34,6 +34,7 @@ import { blobForRender, type TreeEntry } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
 import { estimateTokens } from "../../kernel/tokens-format.ts";
 import { safeBack, type Ctx } from "../../http/context.ts";
+import { holds } from "../../http/etag.ts";
 import { json, notFound } from "../../http/respond.ts";
 import type { Blob, RepoSource } from "../../view/source.ts";
 import {
@@ -913,19 +914,39 @@ function renderedMarkdown(blob: Blob & { kind: "text" }): {
 }
 
 /** The bytes, with the headers that stop them ever executing as a page. */
-export function rawResponse(blob: Blob): Response {
+export function rawResponse(
+  blob: Blob,
+  cache: {
+    oid?: string;
+    immutable?: boolean;
+    public?: boolean;
+    request?: Request;
+  } = {},
+): Response {
   if (blob.kind === "too_large") return new Response("", { status: 404 });
-  return new Response(blob.body, {
-    headers: {
-      "content-type":
-        blob.kind === "text"
-          ? "text/plain; charset=utf-8"
-          : "application/octet-stream",
-      "x-content-type-options": "nosniff",
-      "content-security-policy": "default-src 'none'; sandbox",
-      "cache-control": "private, max-age=0",
-    },
-  });
+  // A full commit id names bytes that can never change; a branch name does
+  // not, so it revalidates every time, against the blob's own oid. Only a
+  // public repository's bytes may sit in a shared cache.
+  const etag = cache.oid ? `"${cache.oid}"` : undefined;
+  const control =
+    cache.immutable && etag
+      ? `${cache.public ? "public" : "private"}, max-age=31536000, immutable`
+      : "private, max-age=0";
+  const headers: Record<string, string> = {
+    "content-type":
+      blob.kind === "text"
+        ? "text/plain; charset=utf-8"
+        : "application/octet-stream",
+    "x-content-type-options": "nosniff",
+    "content-security-policy": "default-src 'none'; sandbox",
+    "cache-control": control,
+  };
+  if (etag) {
+    headers.etag = etag;
+    if (cache.request && holds(cache.request, etag))
+      return new Response(null, { status: 304, headers });
+  }
+  return new Response(blob.body, { headers });
 }
 
 // GET /:owner/:name — the repo home. An app's home is the app, for every
@@ -1314,5 +1335,12 @@ export async function rawBlob(ctx: Ctx): Promise<Response> {
   const blob = await blobForRender(dir, ref, path, 25_000_000);
   if (blob.kind === "missing" || blob.kind === "too_large")
     return notFoundPage(ctx);
-  return rawResponse(blob);
+  return rawResponse(blob, {
+    oid: blob.oid,
+    immutable: FULL_OID.test(ref),
+    public: repo.visibility === "public",
+    request: ctx.request,
+  });
 }
+
+const FULL_OID = /^[0-9a-f]{40}$/;

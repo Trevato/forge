@@ -293,8 +293,14 @@ export type BlobForRender =
       readonly kind: "binary";
       readonly body: Uint8Array;
       readonly size: number;
+      readonly oid: string;
     }
-  | { readonly kind: "text"; readonly body: Uint8Array; readonly size: number };
+  | {
+      readonly kind: "text";
+      readonly body: Uint8Array;
+      readonly size: number;
+      readonly oid: string;
+    };
 
 /**
  * Read a blob for rendering, size-bounded up front. The object is *stat*ed
@@ -329,9 +335,11 @@ export async function blobForRender(
   if (!Number.isSafeInteger(size)) return { kind: "missing" };
   if (size > maxBytes) return { kind: "too_large", size };
 
+  const named = await runGit(["rev-parse", "--verify", spec], { cwd: dir });
+  if (!named.ok) return { kind: "missing" };
   const body = await runGitRaw(["cat-file", "blob", spec], { cwd: dir });
   if (!body.ok) return { kind: "missing" };
-  return classify(body.value, size);
+  return classify(body.value, size, named.value.trim());
 }
 
 /**
@@ -356,17 +364,18 @@ async function viaReader(
     if (size > maxBytes) return { kind: "too_large", size };
     const object = await reader.object(spec);
     if (!object.ok) return { kind: "missing" };
-    return classify(object.value.body, size);
+    return classify(object.value.body, size, object.value.oid);
   } catch {
     closeReader(dir);
     return undefined;
   }
 }
 
-function classify(body: Uint8Array, size: number): BlobForRender {
+function classify(body: Uint8Array, size: number, oid: string): BlobForRender {
   // NUL in the first 8KB is git's own binary heuristic.
-  if (body.subarray(0, 8000).includes(0)) return { kind: "binary", body, size };
-  return { kind: "text", body, size };
+  if (body.subarray(0, 8000).includes(0))
+    return { kind: "binary", body, size, oid };
+  return { kind: "text", body, size, oid };
 }
 
 export interface Ref {

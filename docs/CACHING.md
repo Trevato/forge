@@ -382,6 +382,38 @@ warm:
 | home KPI row       | forge head, UTC hour; admin-gated |  30 s |
 | home pinned panel  | board blob, panel, forge head; admin-gated | 30 s |
 
+## Raw files at a full commit id (#3381)
+
+`GET /:owner/:name/raw/:ref/*path` is the one place the forge tells shared
+caches (browsers, a CDN, a proxy) to keep bytes for a year.
+
+| `ref` is                  | repository | `Cache-Control`                          |
+| ------------------------- | ---------- | ---------------------------------------- |
+| 40 hex digits (a commit)  | public     | `public, max-age=31536000, immutable`    |
+| 40 hex digits (a commit)  | not public | `private, max-age=31536000, immutable`   |
+| a branch, tag or anything else | any   | `private, max-age=0` (revalidates)       |
+
+- **Why immutable.** A full commit id names one tree forever, so the bytes
+  at a path under it can never change. A branch name moves, so it always
+  revalidates.
+- **Public vs private.** Only `repo.visibility === "public"` (wired in
+  `rawBlob`) allows `public`. Any other repository is `private`: the
+  browser may keep it, a shared cache may not.
+- **ETag and 304.** Every raw answer carries the blob's own oid as a strong
+  `ETag`. `If-None-Match` naming it (weak or strong, a list, or `*`) gets a
+  bodiless 304 that keeps the same `Cache-Control`, `nosniff` and sandbox
+  CSP. A branch read changes oid only when the file changes, so it costs
+  one round trip and no body.
+- **Why the blob page is left out.** `/:owner/:name/blob/...` is HTML: it
+  carries the viewer's name, a CSP nonce and links that change with the
+  repository, so it is not a function of the commit alone. Only the raw
+  bytes are. The origin-browse raw route (`browseRaw`) is also left alone:
+  its source is another host, whose bytes this forge cannot vouch for.
+- **Known limit.** A public repository that later turns private keeps
+  year-long `public` copies in whatever shared caches already fetched
+  them; the forge cannot recall them. Anyone who needs that undone must
+  purge those caches. A commit id is also not secret once public.
+
 ## What is built (#2675)
 
 The map half is #2716's (`web/map_cache.ts`, numbers above). #2675 adds

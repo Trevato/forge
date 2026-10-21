@@ -17,6 +17,7 @@ import { createApp, type App } from "../src/app.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { listLabels, labelsFor, getIssue } from "../src/core/issues.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { rawResponse } from "../src/web/pages/repo.ts";
 import { safeNext } from "../src/web/pages/site.ts";
 import { shellJs } from "../src/web/client.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
@@ -267,6 +268,143 @@ describe("web ui", () => {
   });
 
   // ---- raw ----
+
+  async function revParse(spec: string): Promise<string> {
+    const proc = Bun.spawn(["git", "rev-parse", spec], {
+      cwd: join(work, "proj"),
+      env: gitEnv,
+      stdout: "pipe",
+    });
+    return (await new Response(proc.stdout).text()).trim();
+  }
+
+  test("raw at a full commit id is immutable, with the blob oid as ETag and a 304", async () => {
+    const commit = await revParse("main");
+    const blobOid = await revParse("main:a.txt");
+    const url = `${base}/mel/proj/raw/${commit}/a.txt`;
+    const res = await fetch(url);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe(
+      "public, max-age=31536000, immutable",
+    );
+    expect(res.headers.get("etag")).toBe(`"${blobOid}"`);
+    expect(res.headers.get("content-security-policy")).toBe(
+      "default-src 'none'; sandbox",
+    );
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    await res.text();
+
+    const again = await fetch(url, {
+      headers: { "if-none-match": `"${blobOid}"` },
+    });
+    expect(again.status).toBe(304);
+    expect(await again.text()).toBe("");
+    expect(again.headers.get("cache-control")).toContain("immutable");
+  });
+
+  test("raw at a branch name revalidates against the blob oid", async () => {
+    const blobOid = await revParse("main:a.txt");
+    const res = await fetch(`${base}/mel/proj/raw/main/a.txt`);
+    expect(res.headers.get("cache-control")).toBe("private, max-age=0");
+    expect(res.headers.get("etag")).toBe(`"${blobOid}"`);
+    await res.text();
+    const again = await fetch(`${base}/mel/proj/raw/main/a.txt`, {
+      headers: { "if-none-match": `"${blobOid}"` },
+    });
+    expect(again.status).toBe(304);
+    expect(await again.text()).toBe("");
+    const other = await fetch(`${base}/mel/proj/raw/main/a.txt`, {
+      headers: { "if-none-match": '"0000"' },
+    });
+    expect(other.status).toBe(200);
+    await other.text();
+  });
+
+  test("raw answers 304 to a weak tag, a list holding the tag, and *", () => {
+    const oid = "b".repeat(40);
+    const blob = {
+      kind: "text" as const,
+      body: new TextEncoder().encode("x"),
+      size: 1,
+      oid,
+    };
+    const ask = (inm: string) =>
+      rawResponse(blob, {
+        oid,
+        immutable: true,
+        public: true,
+        request: new Request("http://x/", {
+          headers: { "if-none-match": inm },
+        }),
+      }).status;
+    expect(ask(`W/"${oid}"`)).toBe(304);
+    expect(ask(`"zzz", "${oid}"`)).toBe(304);
+    expect(ask("*")).toBe(304);
+    expect(ask('"zzz"')).toBe(200);
+  });
+
+  test("raw of a repository that is not public is never cached as public", () => {
+    const blob = {
+      kind: "text" as const,
+      body: new TextEncoder().encode("x"),
+      size: 1,
+      oid: "a".repeat(40),
+    };
+    const res = rawResponse(blob, {
+      oid: blob.oid,
+      immutable: true,
+      public: false,
+    });
+    expect(res.headers.get("cache-control")).toBe(
+      "private, max-age=31536000, immutable",
+    );
+    expect(res.headers.get("content-security-policy")).toContain("sandbox");
+  });
+
+  test("raw of a private repository at a full commit id is private, over HTTP", async () => {
+    await fetch(`${base}/new`, {
+      method: "POST",
+      headers: { cookie: owner },
+      body: form({ name: "hush", visibility: "private" }),
+      redirect: "manual",
+    });
+    const dir = join(work, "hush");
+    await mkdir(dir, { recursive: true });
+    await git(["init", "-q", "-b", "main", "."], dir);
+    await writeFile(join(dir, "s.txt"), "secret\n");
+    await git(["add", "."], dir);
+    await git(["commit", "-q", "-m", "s"], dir);
+    await git(
+      [
+        "push",
+        "-q",
+        `http://mel:web-ui-password@localhost:${servers.port}/mel/hush.git`,
+        "main",
+      ],
+      dir,
+    );
+    const proc = Bun.spawn(["git", "rev-parse", "HEAD"], {
+      cwd: dir,
+      env: gitEnv,
+      stdout: "pipe",
+    });
+    const commit = (await new Response(proc.stdout).text()).trim();
+    const url = `${base}/mel/hush/raw/${commit}/s.txt`;
+    const res = await fetch(url, { headers: { cookie: owner } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe(
+      "private, max-age=31536000, immutable",
+    );
+    expect(res.headers.get("cache-control")).not.toContain("public");
+    await res.text();
+    const etag = res.headers.get("etag")!;
+    const again = await fetch(url, {
+      headers: { cookie: owner, "if-none-match": etag },
+    });
+    expect(again.status).toBe(304);
+    expect(again.headers.get("cache-control")).not.toContain("public");
+    expect((await fetch(url)).status).toBe(404);
+  });
 
   test("raw serves bytes as text with nosniff, and conflates not-found", async () => {
     const res = await fetch(`${base}/mel/proj/raw/main/a.txt`);
