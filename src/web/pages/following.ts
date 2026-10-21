@@ -42,7 +42,7 @@ import { openProposal, proposeUpstream } from "../../actions/upstream.ts";
 import { field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
 import { flashOrJson } from "../layout.ts";
-import { badge, btn, card, icon, type Tone } from "../ui.ts";
+import { badge, btn, card, icon, row, type Tone } from "../ui.ts";
 import { disconnectedOn } from "./frozen.ts";
 
 /**
@@ -140,25 +140,17 @@ export async function followingOf(
  * parent cannot be read, that it cannot and how old the last copy is.
  * Every field comes from another server and is escaped by `html`.
  */
-export function releasesBlock(parentUrl: string, releases: ParentReleases): Html {
+export function releasesBlock(
+  parentUrl: string,
+  releases: ParentReleases,
+): { sentence: Html; links: Html[] } {
   const host = new URL(parentUrl).host;
   const version = running().version;
   const { releases: news } = parentForgeOf(parentUrl, releases, version);
-  return html`<div class="following-releases">
-    <p class="following-sentence">
-      ${releasesSentence(releases, version, host)}
-    </p>
-    ${news.length === 0
-      ? null
-      : html`<ul class="list">
-          ${news.map(
-            (r) =>
-              html`<li>
-                <a href="${r.url}" rel="noopener noreferrer">${r.name}</a>
-              </li>`,
-          )}
-        </ul>`}
-  </div>`;
+  return {
+    sentence: html`<p>${releasesSentence(releases, version, host)}</p>`,
+    links: news.map((r) => row({ href: r.url, title: r.name })),
+  };
 }
 
 function plural(n: number, one: string, many = `${one}s`): string {
@@ -325,47 +317,54 @@ export function followingCard(
                 >; say there what to do.`
             : null;
 
-  const body = html`<div class="following-head">
-        <span class="following-eyebrow"
-          >${icon("fork")} following
-          <a href="/${parent.ownerName}/${parent.name}">${parentName}</a></span
-        >
-        ${converge?.kind === "proposed"
-          ? badge("proposal ready", { tone: "merged" })
-          : converge?.kind === "working"
-            ? badge("converging", { tone: "attn" })
-            : relationBadge(relation)}
-      </div>
-      <p class="following-sentence">
-        ${parent.detached === null
-          ? relationSentence(relation)
-          : html`${parentName} is frozen: its origin
-              ${disconnectedOn(parent.detached)}, so what is here may be behind.
-              <a href="/${parent.ownerName}/${parent.name}#frozen"
-                >Reconnect it.</a
-              >`}
-      </p>
-      ${following.releases === undefined
-        ? null
-        : releasesBlock(following.releases.url, following.releases.view)}
-      ${when(
-        actions.length > 0,
-        () => html`<div class="following-actions">${actions}</div>`,
-      )}
-      ${when(foot, (f) => html`<p class="muted small following-foot">${f}</p>`)}
-      ${when(
-        followers > 0,
-        () =>
-          html`<p class="muted small following-foot">
-            <a href="${base}/forks"
-              >${followers === 1
-                ? "One fork follows"
-                : `${followers} forks follow`}
-              this one.</a
-            >
-          </p>`,
-      )}`;
-  return card(body, { id: "following", extra: "following" });
+  const head = html`${icon("fork")} following
+    <a href="/${parent.ownerName}/${parent.name}">${parentName}</a>
+    ${converge?.kind === "proposed"
+      ? badge("proposal ready", { tone: "merged" })
+      : converge?.kind === "working"
+        ? badge("converging", { tone: "attn" })
+        : relationBadge(relation)}`;
+  // Sentences wrap in plain paragraphs: a row title is one clipped line,
+  // and these carry the links a person needs.
+  const prose: Html[] = [
+    html`<p>
+      ${parent.detached === null
+        ? relationSentence(relation)
+        : html`${parentName} is frozen: its origin
+            ${disconnectedOn(parent.detached)}, so what is here may be behind.
+            <a href="/${parent.ownerName}/${parent.name}#frozen"
+              >Reconnect it.</a
+            >`}
+    </p>`,
+  ];
+  const rows: Html[] = [];
+  if (following.releases !== undefined) {
+    const block = releasesBlock(following.releases.url, following.releases.view);
+    prose.push(block.sentence);
+    rows.push(...block.links);
+  }
+  if (foot !== null) prose.push(html`<p class="muted small">${foot}</p>`);
+  if (followers > 0)
+    rows.push(
+      row({
+        href: `${base}/forks`,
+        title: `${followers === 1 ? "One fork follows" : `${followers} forks follow`} this one.`,
+      }),
+    );
+  return card(
+    html`<div class="card-body stack">${prose}</div>${when(
+        rows.length > 0,
+        () => html`<ul class="list">
+          ${rows}
+        </ul>`,
+      )}`,
+    {
+      id: "following",
+      head,
+      ...(actions.length > 0 ? { foot: html`${actions}` } : {}),
+      pad: false,
+    },
+  );
 }
 
 /**
