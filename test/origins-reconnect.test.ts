@@ -7,7 +7,7 @@ import { forkRepo } from "../src/actions/repos.ts";
 import { eventAudience } from "../src/core/event_audience.ts";
 import { listEvents } from "../src/core/events.ts";
 import { createOrigin, getOriginById } from "../src/core/origins.ts";
-import { syncOrigin } from "../src/origins/sync.ts";
+import { syncOrigin, syncsSettled } from "../src/origins/sync.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { getUserByName } from "../src/core/users.ts";
 import { readFeed } from "../src/feed/feed.ts";
@@ -285,15 +285,18 @@ describe("a frozen mirror is said, and reconnected in one click", () => {
   }, 60_000);
 
   afterAll(async () => {
+    // A sync started by a reconnect may outlive the test that waited for its
+    // refs; it must not write into a directory being removed.
+    await syncsSettled();
     octo.stop();
     mona.stop();
     servers.stop();
     originServers.stop();
     app.close();
     originApp.close();
-    await rm(dataDir, { recursive: true, force: true });
-    await rm(originDataDir, { recursive: true, force: true });
-    await rm(workDir, { recursive: true, force: true });
+    await rm(dataDir, { recursive: true, force: true, maxRetries: 5 });
+    await rm(originDataDir, { recursive: true, force: true, maxRetries: 5 });
+    await rm(workDir, { recursive: true, force: true, maxRetries: 5 });
   });
 
   test("an attached mirror says where it comes from, and is not frozen", async () => {
@@ -487,6 +490,7 @@ describe("a frozen mirror is said, and reconnected in one click", () => {
       },
     ]);
     expect((await repoJson()).origin?.detached).toBe(true);
+    await syncsSettled();
     octo.state.repos.push(...held);
     // A mirror from before remote ids were kept is not guessed at: the same
     // name could be a repository made again.
@@ -585,6 +589,7 @@ describe("a frozen mirror is said, and reconnected in one click", () => {
       },
     ]);
     await mirrorReaches(tip);
+    await syncsSettled();
 
     const repo = await repoJson();
     expect(repo.origin).toMatchObject({
@@ -625,6 +630,7 @@ describe("a frozen mirror is said, and reconnected in one click", () => {
       detached: false,
     });
     await mirrorReaches(tip);
+    await syncsSettled();
 
     await disconnect(byApi);
     expect((await repoJson()).origin?.detached).toBe(true);
@@ -651,6 +657,7 @@ describe("a frozen mirror is said, and reconnected in one click", () => {
       decodeURIComponent(viaPage.headers.get("set-cookie") ?? ""),
     ).toContain(`Reconnected to ${octo.state.login} at ${new URL(octo.url).host}; syncing.`);
     await mirrorReaches(tip);
+    await syncsSettled();
     expect((await repoJson()).origin).toMatchObject({
       originId: again,
       detached: false,

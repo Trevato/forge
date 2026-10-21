@@ -134,6 +134,14 @@ export function syncOrigin(
   return run;
 }
 
+/**
+ * Resolves once no origin sync is running, however each ended. It loops, so a
+ * sync that starts while it waits (a reconnect chaining another) is awaited too.
+ */
+export async function syncsSettled(): Promise<void> {
+  while (inFlight.size > 0) await Promise.allSettled([...inFlight.values()]);
+}
+
 async function runOrigin(
   app: App,
   origin: Origin,
