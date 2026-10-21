@@ -8,7 +8,9 @@
  * the system's own voice and takes no actor.
  */
 
-import { commitCheck, isCommitId, type CommitCheck } from "../checks/commit_check.ts";
+import { isCommitId, releaseCheck, type CommitCheck } from "../checks/commit_check.ts";
+import { hasCommit, isAncestor } from "../git/local.ts";
+import { repoDir } from "../git/repos.ts";
 import { mayViewId } from "../core/sealed.ts";
 import { requireVerified } from "./verify.ts";
 import { requireAbility } from "./roles.ts";
@@ -153,17 +155,25 @@ export function listRepoRuns(
 }
 
 /**
- * The default branch's own check of one commit (`checks/commit_check.ts`),
- * for whoever may read the repository's runs: what a release waits on.
+ * The default branch's check that covers one commit (`checks/commit_check.ts`
+ * `releaseCheck`), for whoever may read the repository's runs: what a
+ * release waits on — the commit's own check, or a later main commit's that
+ * contains it when main moved on before the commit's own check ran (#3966).
  */
-export function checkOfCommit(
+export async function checkOfCommit(
   app: App,
   actor: User | undefined,
   repo: Repo,
   oid: string,
-): Result<CommitCheck, "not_found"> {
+): Promise<Result<CommitCheck, "not_found">> {
   if (!isCommitId(oid) || !mayReadRuns(app, actor, repo)) return err("not_found");
-  return ok(commitCheck(app.db, repo.id, repo.defaultBranch, oid));
+  const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+  return ok(
+    await releaseCheck(app.db, repo.id, repo.defaultBranch, oid, {
+      has: () => hasCommit(dir, oid),
+      contains: (descendant) => isAncestor(dir, oid, descendant),
+    }),
+  );
 }
 
 /** A run by id, only if it belongs to a repository the actor can see. */

@@ -156,6 +156,12 @@ A release ships on two proofs, and nothing else holds it:
    decides; a cancelled one is passed over when another check of the commit
    stands (a restart queues it again), and is `superseded` when none does:
    main moved on while it waited, and nothing will check that commit again.
+   Main moving does not hold a release (#3966): when the commit's own check
+   is `superseded` or `none`, the newest of main's checks of a later commit
+   that contains it (`git merge-base --is-ancestor`) answers instead — `ok`
+   when green, `pending` while running — since that full check ran the
+   tagged tree plus what landed after. A red later check is no verdict on
+   the tag and is passed over. `checkedCommit` names whose check answered.
    `release.yml`'s first gated step polls it every 30 s for up to two hours
    and builds only on `ok`; `failed` stops the release with the run's link,
    `superseded` stops it at once, and `none` stops it after ten minutes (a

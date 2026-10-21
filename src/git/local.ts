@@ -861,6 +861,13 @@ export async function isAncestor(
   return out.ok;
 }
 
+/** Is `oid` a commit object in the repository? One `git cat-file -e`. */
+export async function hasCommit(dir: string, oid: string): Promise<boolean> {
+  if (!isSafeRef(oid)) return false;
+  const out = await runLocal(["cat-file", "-e", `${oid}^{commit}`], { cwd: dir });
+  return out.ok;
+}
+
 /** `rev-list --left-right --count a...b` — what each side has alone. */
 export async function aheadBehind(
   dir: string,

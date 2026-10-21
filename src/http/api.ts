@@ -2757,12 +2757,12 @@ export function apiRoutes(router: Router<Handler>): void {
     });
   });
 
-  // The default branch's own check of a full commit id: what a release
-  // waits on before it builds (#2794). Never cached: `pending` turns.
-  router.add("GET", "/api/v1/repos/:owner/:name/commits/:oid/check", (ctx) => {
+  // The default branch's check covering a full commit id: what a release
+  // waits on before it builds (#2794, #3966). Never cached: `pending` turns.
+  router.add("GET", "/api/v1/repos/:owner/:name/commits/:oid/check", async (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const found = checkOfCommit(ctx.app, ctx.auth.user, repo, ctx.params.oid ?? "");
+    const found = await checkOfCommit(ctx.app, ctx.auth.user, repo, ctx.params.oid ?? "");
     if (!found.ok) return notFound();
     return json(found.value, 200, { "cache-control": "no-store" });
   });
