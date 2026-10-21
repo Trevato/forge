@@ -1,5 +1,6 @@
-/** A repository's settings pages name session, each read and render in Server-Timing, and answer under 50 ms (#4318). */
+/** A repository's settings pages name session, each read and render in Server-Timing, and answer within budget (#4318). */
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { baselineMs, expectBudget } from "./helpers/budget.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -56,12 +57,13 @@ const PAGES: [string, string[]][] = [
 ];
 
 for (const [path, names] of PAGES)
-  test(`GET ${path} names its phases and answers under 50 ms`, async () => {
+  test(`GET ${path} names its phases and answers within its budget`, async () => {
     const get = async () => {
       const res = await fetch(`${servers.url}${path}`, { headers: { cookie } });
       await res.text();
       return res;
     };
+    const against = await baselineMs(servers.url);
     await get(); // warm
     const res = await get();
     expect(res.status).toBe(200);
@@ -73,7 +75,7 @@ for (const [path, names] of PAGES)
       expect(Number.isFinite(dur(name))).toBe(true);
     }
     expect(got.filter((n) => n === "render").length).toBe(1);
-    expect(dur("app")).toBeLessThan(50);
+    expectBudget(dur("app"), { ms: 50, against });
     // The named phases cover the request (route and compress are the server's own); the issue's bound is 1 ms.
     const sum = names.reduce((t, n) => t + dur(n), 0);
     expect(Math.abs(dur("app") - sum)).toBeLessThanOrEqual(1);

@@ -1,5 +1,6 @@
-/** `/:owner/:name/app` and its `answers`, `now` and `state` fragments name their Server-Timing phases and answer under 50 ms (#4320). */
+/** `/:owner/:name/app` and its `answers`, `now` and `state` fragments name their Server-Timing phases and answer within budget (#4320). */
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { baselineMs, expectBudget } from "./helpers/budget.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -79,7 +80,8 @@ const get = (path: string) =>
   fetch(`${servers.url}${path}`, { headers: { cookie }, redirect: "manual" });
 
 for (const [route, reads] of ROUTES)
-  test(`GET /alice/vault${route} names its phases and answers under 50 ms`, async () => {
+  test(`GET /alice/vault${route} names its phases and answers within its budget`, async () => {
+    const against = await baselineMs(servers.url);
     await (await get(`/alice/vault${route}`)).arrayBuffer(); // warm
     // Timers and GC jitter on a busy machine: judge the best of several requests.
     let total = Infinity;
@@ -94,7 +96,7 @@ for (const [route, reads] of ROUTES)
       total = Math.min(total, got.get("app")!);
       left = Math.min(left, Math.abs(got.get("app")! - sum));
     }
-    expect(total).toBeLessThan(50);
+    expectBudget(total, { ms: 50, against });
     expect(left).toBeLessThanOrEqual(1.5); // each is rounded to 0.1
   });
 

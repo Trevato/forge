@@ -1,5 +1,6 @@
-/** `/settings/cloud/audit`, `/organizations/new` and `/apps/open` name their Server-Timing phases and answer under 50 ms (#4322). */
+/** `/settings/cloud/audit`, `/organizations/new` and `/apps/open` name their Server-Timing phases and answer within budget (#4322). */
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { baselineMs, expectBudget } from "./helpers/budget.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -52,7 +53,8 @@ const PAGES: [string, string[]][] = [
 ];
 
 for (const [path, names] of PAGES)
-  test(`GET ${path} names its phases and answers under 50 ms`, async () => {
+  test(`GET ${path} names its phases and answers within its budget`, async () => {
+    const against = await baselineMs(servers.url);
     const get = () => fetch(`${servers.url}${path}`, { headers: { cookie }, redirect: "manual" });
     await (await get()).text(); // warm
     // Timers jitter on a busy machine: judge the best of several requests.
@@ -69,8 +71,8 @@ for (const [path, names] of PAGES)
       // Phases name the whole request: what is left over is small.
       left = Math.min(left, Math.abs(dur("app") - names.reduce((sum, n) => sum + dur(n), 0)));
     }
-    expect(total).toBeLessThan(50);
-    expect(left).toBeLessThan(1.5);
+    expectBudget(total, { ms: 50, against });
+    expect(left).toBeLessThanOrEqual(1.5); // accounting, not speed: each phase is rounded to 0.1
   });
 
 // Signed out, the redirect to sign-in is still a named phase.

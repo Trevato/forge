@@ -1,5 +1,6 @@
-/** `/signin` and `/signup` name session, each read and render in Server-Timing, and answer under 10 ms (#4106). */
+/** `/signin` and `/signup` name session, each read and render in Server-Timing, and answer within budget (#4106). */
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { baselineMs, expectBudget } from "./helpers/budget.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,7 +31,8 @@ const PAGES: [string, string[]][] = [
 ];
 
 for (const [path, names] of PAGES)
-  test(`GET ${path} names its phases and answers under 10 ms`, async () => {
+  test(`GET ${path} names its phases and answers within its budget`, async () => {
+    const against = await baselineMs(servers.url);
     await fetch(`${servers.url}${path}`); // warm
     const res = await fetch(`${servers.url}${path}`);
     await res.text();
@@ -39,5 +41,5 @@ for (const [path, names] of PAGES)
     for (const name of ["app", ...names])
       expect(parts.find((p) => p.startsWith(`${name};`))).toMatch(/^[a-z]+;dur=\d+\.\d$/);
     const app = parts.find((p) => p.startsWith("app;"))!;
-    expect(Number(app.slice("app;dur=".length))).toBeLessThan(10);
+    expectBudget(Number(app.slice("app;dur=".length)), { ms: 10, against });
   });

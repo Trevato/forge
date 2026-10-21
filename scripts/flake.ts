@@ -288,6 +288,31 @@ export function tightBounds(name: string, source: string): string[] {
   return found;
 }
 
+const BUDGET_TITLE = /\b(?:answers?|renders?|runs?|takes?)\s+(?:in\s+)?under\s+[\d_.]+\s*ms\b/i;
+const BUDGET_MEASURE =
+  /^(?:dur\(|total\b|best\b|left\b|(?:got|res|out|r)\.(?:ms|app))/;
+
+/**
+ * Every line of `source` that holds a speed to a raw millisecond number: a
+ * title saying "under N ms", or a Server-Timing/elapsed time bounded by a
+ * literal under the floor (a hang guard above it stays a plain expect). `test/helpers/budget.ts` is the one way (#4429).
+ */
+export function rawBudgets(name: string, source: string): string[] {
+  const found: string[] = [];
+  source.split("\n").forEach((line, i) => {
+    let raw = BUDGET_TITLE.test(line);
+    for (const [, measured, bound] of line.matchAll(UPPER_BOUND))
+      if (
+        (TIMED.test(measured!) || BUDGET_MEASURE.test(measured!.trim())) &&
+        Number(bound!.replaceAll("_", "")) < WALL_CLOCK_FLOOR_MS
+      )
+        raw = true;
+    if (raw && !/expectBudget/.test(line))
+      found.push(`${name}:${i + 1}: ${line.trim()} — bound speed with expectBudget() from test/helpers/budget.ts`);
+  });
+  return found;
+}
+
 /** The record an admitting pull carries. */
 export function admissionRecord(
   file: string,
