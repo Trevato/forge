@@ -6,13 +6,16 @@
  * it does for any other page of a private repository.
  */
 
+import { canRead, getRepo } from "../../core/repos.ts";
+import { notFound } from "../../http/respond.ts";
+import { holds, stamp, xml } from "../feeds.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { VERSION } from "../../story/wave.ts";
 import { readWave, readWaves } from "../../story/waves.ts";
 import { loadRepo, notFoundPage, repoBase, scopeHeader } from "../chrome.ts";
-import { html } from "../html.ts";
+import { escapeHtml, html } from "../html.ts";
 import { page } from "../layout.ts";
 import { empty, listCard, row } from "../ui.ts";
 import { localScope } from "../scope.ts";
@@ -60,9 +63,75 @@ export async function wavesPage(ctx: Ctx): Promise<Response> {
     crumbs: scope.crumbs,
     palette: scope.palette,
     body,
+    feed: {
+      href: `${repoBase(repo)}/waves.atom`,
+      title: `${repo.ownerName}/${repo.name} waves`,
+    },
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
+}
+
+const FEED_ENTRIES = 50;
+
+// GET /:owner/:name/waves.atom
+export async function wavesAtom(ctx: Ctx): Promise<Response> {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const repo = getRepo(ctx.app.db, ctx.params["owner"]!, ctx.params["name"]!);
+  if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFound();
+  const waves = (
+    await timePhaseAsync(ctx.request, "waves", () =>
+      readWaves(repoDir(ctx.app.reposRoot, repo.ownerName, repo.name), repo.defaultBranch),
+    )
+  )
+    .flatMap((e) => (e.ok ? [e.wave] : []))
+    .slice(0, FEED_ENTRIES);
+  const base = `${ctx.url.origin}/${repo.ownerName}/${repo.name}`;
+  const updatedAt = (date: string): string => stamp(`${date}T00:00:00`);
+  // The newest wave names the tag; the content hash covers edits to it.
+  const newest = waves[0];
+  const shown = Bun.hash(JSON.stringify([repo.ownerName, repo.name, repo.description, waves]))
+    .toString(36);
+  const etag = `W/"${newest?.version ?? "none"}.${shown}"`;
+  const cacheControl = repo.visibility === "public" ? "public, max-age=300" : "private, no-store";
+  const vary = "authorization, cookie";
+  if (holds(ctx.request.headers.get("if-none-match"), etag))
+    return new Response(null, { status: 304, headers: { etag, "cache-control": cacheControl, vary } });
+  const renderStart = performance.now();
+  const entries = waves.map((w) => {
+    const summary = `<ul>${w.highlights
+      .map((h) => `<li><strong>${escapeHtml(h.title)}</strong> — ${escapeHtml(h.why)}</li>`)
+      .join("")}</ul>`;
+    const link = `${base}/waves/${encodeURIComponent(w.version)}`;
+    return `  <entry>
+    <id>urn:forge:wave:${xml(repo.id)}:${xml(w.version)}</id>
+    <title>${xml(w.headline)}</title>
+    <updated>${xml(updatedAt(w.date))}</updated>
+    <link rel="alternate" type="text/html" href="${xml(link)}"/>
+    <summary type="html">${xml(summary)}</summary>
+  </entry>`;
+  });
+  const body = `<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <id>${xml(base)}/waves.atom</id>
+  <title>${xml(`${repo.ownerName}/${repo.name} waves`)}</title>
+  <subtitle>${xml(repo.description === "" ? "Waves" : repo.description)}</subtitle>
+  <updated>${xml(newest ? updatedAt(newest.date) : new Date(0).toISOString())}</updated>
+  <link rel="self" type="application/atom+xml" href="${xml(base)}/waves.atom"/>
+  <link rel="alternate" type="text/html" href="${xml(base)}/waves"/>
+  <generator>forge</generator>
+${entries.join("\n")}
+</feed>
+`;
+  notePhase(ctx.request, "render", performance.now() - renderStart);
+  return new Response(body, {
+    headers: {
+      "content-type": "application/atom+xml; charset=utf-8",
+      "cache-control": cacheControl,
+      etag,
+      vary,
+    },
+  });
 }
 
 /** Only http(s) becomes a link; anything else is shown as plain text. */

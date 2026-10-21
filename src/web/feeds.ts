@@ -52,7 +52,7 @@ export function xml(s: string): string {
 }
 
 /** RFC 3339, which Atom requires; the outbox already stores it. */
-const stamp = (iso: string): string =>
+export const stamp = (iso: string): string =>
   /Z$|[+-]\d\d:\d\d$/.test(iso) ? iso : `${iso}Z`;
 
 /** The branch a push moved, from the one payload field a push always has. */
@@ -65,7 +65,7 @@ function pushedBranch(event: ForgeEvent): string {
 }
 
 /** Does an `If-None-Match` header name this tag (weakly, or as `*`)? */
-function holds(header: string | null, etag: string): boolean {
+export function holds(header: string | null, etag: string): boolean {
   if (header === null) return false;
   return header
     .split(",")

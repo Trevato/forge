@@ -170,4 +170,42 @@ describe("waves page", () => {
     expect(await out.text()).not.toContain("Secret launch");
     expect(await (await get("/alice/priv/waves/1.0.0")).text()).toContain("Secret launch");
   });
+
+  test("waves.atom is Atom, one entry per wave, newest first", async () => {
+    const res = await get("/alice/pub/waves.atom");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/atom+xml");
+    const body = await res.text();
+    expect(body.match(/<entry>/g)?.length).toBe(4);
+    expect(body.indexOf("Tenth")).toBeLessThan(body.indexOf("Ninth"));
+    expect(body).toContain('href="http://');
+    expect(body).toContain("/alice/pub/waves/0.10.0");
+  });
+
+  test("waves.atom escapes markup in headlines and notes", async () => {
+    const body = await (await get("/alice/pub/waves.atom")).text();
+    expect(body).not.toContain("<script>");
+    expect(body).not.toContain("<b>");
+    expect(body).toContain("&amp;lt;u&amp;gt;one&amp;lt;/u&amp;gt;");
+  });
+
+  test("waves.atom of a private repository is a 404 to a stranger", async () => {
+    expect((await get("/alice/priv/waves.atom", false)).status).toBe(404);
+    expect((await get("/alice/priv/waves.atom")).status).toBe(200);
+  });
+
+  test("waves.atom answers a repeat with 304", async () => {
+    const first = await get("/alice/pub/waves.atom");
+    const etag = first.headers.get("etag")!;
+    const again = await fetch(`${servers.url}/alice/pub/waves.atom`, {
+      headers: { cookie, "if-none-match": etag },
+    });
+    expect(again.status).toBe(304);
+  });
+
+  test("the waves page advertises the feed", async () => {
+    const body = await (await get("/alice/pub/waves")).text();
+    expect(body).toContain('href="/alice/pub/waves.atom"');
+    expect(body).toContain("application/atom+xml");
+  });
 });

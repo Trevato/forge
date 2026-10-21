@@ -1863,6 +1863,10 @@ work here.
   terminal, `V` in a repository opens the same list and Enter (or a click) on
   a row opens the same wave as plain text (a live browse of another forge says
   waves are only read on this forge).
+  `/:owner/:name/waves.atom` is the same list as an Atom feed (newest 50, each
+  entry the headline, its highlights and a link to the wave), advertised from
+  the waves page; a private repository's feed is a 404 to anyone who cannot
+  read it.
 
 - **Accounts & access** — register/sign in, personal access tokens with coarse
   scopes (ro/rw/admin), public and private repositories.

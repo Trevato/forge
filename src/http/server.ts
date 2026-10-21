@@ -206,7 +206,7 @@ import {
   branchDelete,
   branchesPage,
 } from "../web/pages/branches.ts";
-import { wavePage, wavesPage } from "../web/pages/waves.ts";
+import { wavePage, wavesAtom, wavesPage } from "../web/pages/waves.ts";
 import {
   contributeSubmit,
   deleteFilePage,
@@ -1295,6 +1295,7 @@ export function buildRouter(): Router<Handler> {
   // The repository's activity, for a feed reader.
   router.add("GET", "/:owner/:name/activity.atom", activityAtom);
   router.add("GET", "/:owner/:name/branches", branchesPage);
+  router.add("GET", "/:owner/:name/waves.atom", wavesAtom);
   router.add("GET", "/:owner/:name/waves", wavesPage);
   router.add("GET", "/:owner/:name/waves/:version", wavePage);
   router.add("POST", "/:owner/:name/branches", branchCreate);
