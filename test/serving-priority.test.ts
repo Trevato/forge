@@ -73,7 +73,10 @@ describe.skipIf(!hasProc)("the background class", () => {
     const [stat, args] = (await new Response(proc.stdout).text()).trim().split("\n");
     expect(await proc.exited).toBe(0);
     const f = statFields(stat!);
-    expect(Number(f[NICE])).toBe(BACKGROUND_NICE);
+    // `nice -n` adds to the niceness the runner already has (a niced check
+    // runs this test), capped at 19.
+    const mine = Number(statFields(await Bun.file("/proc/self/stat").text())[NICE]);
+    expect(Number(f[NICE])).toBe(Math.min(19, mine + BACKGROUND_NICE));
     if (Bun.which("chrt") !== null) expect(Number(f[POLICY])).toBe(SCHED_BATCH);
     // Arguments pass as arguments: a space and a `$(…)` are never script.
     expect(args).toBe("a b|$(c)");

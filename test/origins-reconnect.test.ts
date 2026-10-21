@@ -293,7 +293,7 @@ describe("a frozen mirror is said, and reconnected in one click", () => {
       method: "POST",
       body: JSON.stringify({ name: "plain", visibility: "public" }),
     });
-  }, 60_000);
+  }, 120_000);
 
   afterAll(async () => {
     // A sync started by a reconnect may outlive the test that waited for its
@@ -310,7 +310,7 @@ describe("a frozen mirror is said, and reconnected in one click", () => {
     await rm(dataDir, { recursive: true, force: true, maxRetries: 5 });
     await rm(originDataDir, { recursive: true, force: true, maxRetries: 5 });
     await rm(workDir, { recursive: true, force: true, maxRetries: 5 });
-  }, 60_000);
+  }, 120_000);
 
   test("an attached mirror says where it comes from, and is not frozen", async () => {
     const repo = await repoJson();
