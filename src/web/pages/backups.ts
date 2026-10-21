@@ -41,7 +41,7 @@ import { field, readForm, type Form } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { liveRegionsJs } from "../client.ts";
 import { flashTo, fragment, page, redirect } from "../layout.ts";
-import { btn, card, empty, fileSize, icon, row, time } from "../ui.ts";
+import { badge, btn, card, empty, fileSize, icon, row, time } from "../ui.ts";
 import { accountSections } from "./origins.ts";
 
 function requireAdmin(ctx: Ctx): Response | undefined {
@@ -87,16 +87,16 @@ function keyNote(
           ? " The last snapshot carried the key unwrapped, as older snapshots did; take a new one."
           : " The last snapshot carried no key.";
   return wraps
-    ? html`<p>
-        ${icon("check")} The key is wrapped under
+    ? html`<p class="break">
+        ${badge("Ready", { tone: "success", icon: "check" })} The key is wrapped under
         <code>FORGE_SNAPSHOT_PASSPHRASE</code> and travels with each
         snapshot.${last} Keep that passphrase somewhere other than this bucket:
         without it a restore brings back repositories and issues, but every
         sealed value (secrets, app variables, origin tokens) is lost and must be
         set again.
       </p>`
-    : html`<p class="backups-error">
-        ${icon("alert")} Snapshots carry no key: the bucket never holds key and
+    : html`<p class="break">
+        ${badge("At risk", { tone: "danger", icon: "alert" })} Snapshots carry no key: the bucket never holds key and
         data together, and a restore will bring back repositories and issues but
         not sealed values, which must be set again.${last} To carry the key
         wrapped, set <code>FORGE_SNAPSHOT_PASSPHRASE</code> and restart — and
@@ -124,24 +124,24 @@ function drillLine(ctx: Ctx): Html {
   const timing = d === undefined ? "" : drillTiming(d);
   const line =
     d === undefined
-      ? html`<p class="backups-drill">No restore drill has run yet.</p>`
+      ? html`<p class="break">No restore drill has run yet.</p>`
       : d.verdict === "green"
-        ? html`<p class="backups-drill">
-            ${icon("check")} Last drill: ${time(d.at)}, ${d.ms} ms, all counts matched —
+        ? html`<p class="break">
+            ${badge("Ready", { tone: "success", icon: "check" })} Last drill: ${time(d.at)}, ${d.ms} ms, all counts matched —
             snapshot <code>${d.snapshotId ?? ""}</code>, key opened —
             ${d.counts.users} users, ${d.counts.repositories} repositories, ${d.counts.issues} issues, ${d.counts.pulls} pulls, ${d.counts.apps} apps.${timing
-              ? html` <span class="backups-timing">${timing}.</span>`
+              ? html` <span class="muted small">${timing}.</span>`
               : ""}
           </p>`
-        : html`<p class="backups-error backups-drill">
-            ${icon("alert")} Last drill ${time(d.at)}: snapshot
+        : html`<p class="break">
+            ${badge("At risk", { tone: "danger", icon: "alert" })} Last drill ${time(d.at)}: snapshot
             <code>${d.snapshotId ?? "none"}</code> failed at
             ${d.failedStep ?? "an unknown step"} after ${d.ms} ms${d.reason
               ? html`: ${d.reason}`
-              : ""}.${timing ? html` <span class="backups-timing">${timing}.</span>` : ""}
+              : ""}.${timing ? html` <span class="muted small">${timing}.</span>` : ""}
           </p>`;
   return html`${line}
-    <form method="post" action="/settings/backups/drill" class="backups-now">
+    <form method="post" action="/settings/backups/drill" class="mt">
       ${btn("Run a drill", { type: "submit", icon: "clock" })}
     </form>`;
 }
@@ -192,8 +192,8 @@ export function recoverySentence(r: Recovery): string {
 function recoveryLine(r: Recovery): Html {
   const sentence = recoverySentence(r);
   const ok = sentence === "Recoverable now";
-  return html`<p class="backups-recovery${ok ? "" : " backups-error"}" role="status">
-    ${icon(ok ? "check" : "alert")} <strong>${sentence}</strong>
+  return html`<p class="break" role="status">
+    ${ok ? badge("Ready", { tone: "success", icon: "check" }) : badge("At risk", { tone: "danger", icon: "alert" })} <strong>${sentence}</strong>
   </p>`;
 }
 
@@ -335,8 +335,7 @@ async function movingPart(
     now,
   });
   const restore = snapshots[0]
-    ? html`<pre class="backups-restore">
-bun run src/snapshot/restore.ts ${snapshots[0].name} /path/to/empty/data</pre>`
+    ? html`<pre class="domain-records" tabindex="0" aria-label="Restore command">bun run src/snapshot/restore.ts ${snapshots[0].name} /path/to/empty/data</pre>`
     : null;
   return html`<div id="backups-live" data-live="backup.*" data-live-src="/settings/backups/live">${recovery}${card(
       html`<p>
@@ -349,8 +348,8 @@ bun run src/snapshot/restore.ts ${snapshots[0].name} /path/to/empty/data</pre>`
         ${when(
           svc.progress(),
           (p) =>
-            html`<p class="backups-progress">
-              ${icon("clock")} A snapshot is being taken: ${p.objects} objects,
+            html`<p class="break">
+              ${badge("Running", { icon: "clock", variant: "secondary" })} A snapshot is being taken: ${p.objects} objects,
               ${fileSize(p.bytes)} so far, ${Math.round(p.elapsedMs / 1000)} s
               in.
             </p>`,
@@ -358,20 +357,20 @@ bun run src/snapshot/restore.ts ${snapshots[0].name} /path/to/empty/data</pre>`
         ${when(
           failing,
           (f) =>
-            html`<p class="backups-error" role="alert">
-              ${icon("alert")} The last snapshot failed ${time(f.at)}, failing
+            html`<p class="break" role="alert">
+              ${badge("Failed", { tone: "danger", icon: "alert" })} The last snapshot failed ${time(f.at)}, failing
               since ${time(f.since)}: ${f.error}
             </p>`,
         )}
         ${when(
           listing,
           (error) =>
-            html`<p class="backups-error">
-              ${icon("alert")} The store could not be listed just now: ${error}
+            html`<p class="break">
+              ${badge("Failed", { tone: "danger", icon: "alert" })} The store could not be listed just now: ${error}
             </p>`,
         )}
         ${drillLine(ctx)}
-        <form method="post" action="/settings/backups/now" class="backups-now">
+        <form method="post" action="/settings/backups/now" class="mt">
           ${btn("Snapshot now", {
             type: "submit",
             variant: "primary",
@@ -414,17 +413,18 @@ bun run src/snapshot/restore.ts ${snapshots[0].name} /path/to/empty/data</pre>`
                     </div>
                   </li>`,
               )}
-            </ul>`,
+            </ul>
+            <div class="card-body">
+              <p class="muted small break">
+                To restore, stop a forge, point it at an empty data directory,
+                and run this with the same S3_* variables or FORGE_SNAPSHOT_DIR:
+              </p>
+              ${restore}
+            </div>`,
             {
               pad: false,
               head: html`${icon("history")}
                 <h2>Snapshots</h2>`,
-              foot: html`<span class="muted small"
-                  >To restore, stop a forge, point it at an empty data
-                  directory, and run this with the same S3_* variables or
-                  FORGE_SNAPSHOT_DIR:</span
-                >
-                ${restore}`,
             },
           )
     }
@@ -532,8 +532,8 @@ function mirrorCard(ctx: Ctx): Html {
         every snapshot is copied there within the hour.</p>`
     : state === undefined
       ? html`<p>Mirroring to <code>${svc!.mirror!.where}</code>; the first pass has not run yet.</p>`
-      : html`<p class="${need ? "backups-error" : ""}">
-          ${icon(need ? "alert" : "check")} <code>${state.where}</code> is
+      : html`<p class="break">
+          ${need ? badge("At risk", { tone: "danger", icon: "alert" }) : badge("Ready", { tone: "success", icon: "check" })} <code>${state.where}</code> is
           ${state.reachable ? "reachable" : "unreachable"} (checked
           ${time(state.attemptAt)}).
           ${state.newest

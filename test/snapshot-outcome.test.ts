@@ -102,7 +102,7 @@ describe("a nightly that fails", () => {
       // The terminal's dashboard prints the forge's needs: the card is there too.
       expect(forgeNeeds(app, admin)?.some((l) => l.includes("The last snapshot failed"))).toBe(true);
       const page = await (await fetch(`${servers.url}/settings/backups`, { headers: { cookie } })).text();
-      expect(page).toContain("backups-error");
+      expect(page).not.toContain("backups-error");
       expect(page.replace(/\s+/g, " ")).toContain("The last snapshot failed");
       expect(page).toContain("no answer in 180 s");
 

@@ -92,6 +92,8 @@ test("a backup moving emits its events, and /backups does not reload itself mean
   const moving = await fetch(`${servers.url}/settings/backups`, { headers: { cookie: alice } });
   const text = await moving.text();
   expect(text).not.toContain('http-equiv="refresh"');
+  expect(text).toContain("A snapshot is being taken");
+  expect(text).not.toMatch(/class="[^"]*\bbackups-/);
   expect(text).toContain('id="backups-live"');
   expect(text).toContain('data-live="backup.*"');
   expect(text).toContain('data-live-src="/settings/backups/live"');
