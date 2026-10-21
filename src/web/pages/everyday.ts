@@ -44,7 +44,7 @@ function suggestedName(ctx: Ctx, admin: User): string {
 /** The card, for an admin with no everyday account and no recorded choice. */
 export function everydayCard(ctx: Ctx, user: User): Html | null {
   if (!askForEveryday(ctx.app.db, user)) return null;
-  return html`<div class="everyday-ask">${everydayForm(ctx, user, true)}</div>`;
+  return html`<div class="mb">${everydayForm(ctx, user, true)}</div>`;
 }
 
 /**

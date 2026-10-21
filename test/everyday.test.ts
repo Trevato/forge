@@ -112,6 +112,7 @@ describe("the everyday account", () => {
     expect(admin).toContain(WHY);
     expect(admin).toContain('value="ada-me"');
     expect(admin).toContain("Keep using admin");
+    expect(admin).not.toContain("everyday-ask");
     expect(await page(await signIn("kim"), "/")).not.toContain(
       "Make your everyday account",
     );

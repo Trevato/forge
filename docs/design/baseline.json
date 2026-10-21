@@ -2,7 +2,7 @@
   "files": {
     "src/web/style/components.ts": {
       "colour": 3,
-      "size": 2,
+      "size": 0,
       "motion": 0,
       "forced": 1,
       "focus": 2,
