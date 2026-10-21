@@ -31,7 +31,9 @@ import { promote } from "./helpers/members.ts";
 
 quietLogs();
 // Git and a fake forge under a loaded check machine outlast bun's 5 s default.
-setDefaultTimeout(30_000);
+// The test's own limit sits above the longest wait inside it (`settledTarget`'s
+// deadline), so a slow push is waited for, never cut off as a timeout.
+setDefaultTimeout(120_000);
 
 describe("migrate: after", () => {
   let dataDir: string;
@@ -113,7 +115,7 @@ describe("migrate: after", () => {
     if (!connected.ok) throw new Error(connected.error);
     originId = connected.value.id;
     stopMirror = startMirrorOut(app);
-  }, 30_000);
+  }, 120_000);
 
   afterAll(async () => {
     // Pushes still running read the database and the repositories: let them
@@ -131,7 +133,7 @@ describe("migrate: after", () => {
     // directory goes once they let go. A scratch directory that will not go
     // is the machine's to sweep, not a verdict on the code under test.
     await rm(dataDir, { recursive: true, force: true, maxRetries: 40, retryDelay: 100 }).catch(() => {});
-  }, 30_000);
+  }, 120_000);
 
   test("the form's word: anything but archive or mirror leaves it alone", () => {
     expect(afterChoice("archive")).toBe("archive");
@@ -184,7 +186,7 @@ describe("migrate: after", () => {
   const settledTarget = async (copy: string, ok: (t: NonNullable<ReturnType<typeof getMirrorTarget>>) => boolean) => {
     // A deadline, not a count of naps: a loaded check machine slows the push,
     // never the verdict.
-    const deadline = Date.now() + 40_000;
+    const deadline = Date.now() + 90_000;
     while (Date.now() < deadline) {
       const held = getMirrorTarget(app.db, getRepo(app.db, "alice", copy)!.id);
       if (held !== undefined && ok(held)) return held;
@@ -269,13 +271,13 @@ describe("migrate: after, refused at the boundary", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-migrate-after-400-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-  }, 60_000);
+  }, 120_000);
 
   afterAll(async () => {
     servers.stop();
     app.close();
     await rm(dataDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
-  }, 30_000);
+  }, 120_000);
 
   test("POST /api/v1/migrate with an unknown `after` is a 400 naming the three words", async () => {
     const made = await createUser(app.db, {
@@ -297,5 +299,5 @@ describe("migrate: after, refused at the boundary", () => {
     expect(said).toContain("leave");
     expect(said).toContain("archive");
     expect(said).toContain("mirror");
-  }, 60_000);
+  }, 120_000);
 });
