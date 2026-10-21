@@ -357,7 +357,7 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
   };
 
   const form = html`<form
-    class="filters"
+    class="bar mb"
     method="get"
     action="/search"
     role="search"
@@ -473,7 +473,7 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
   );
 
   const body = html`${pageHead(html`Results for “${a.query}”`)} ${form}
-  <div class="filters">${chips}</div>
+  <div class="bar mb">${chips}</div>
   ${liveToggle}
   ${when(
     busy !== undefined,
