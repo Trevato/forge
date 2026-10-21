@@ -879,13 +879,13 @@ describe("working: a run's own page in the studio", () => {
     const page = await (await get(`/alice/engine/runs/${run.id}`, writerCookie)).text();
     expect(page).toContain('<progress aria-label="Test files started" max="9" value="2"');
     expect(page).toContain("2 of 9 files started · 4 passed, 1 failed · running test/b.test.ts");
-    expect(page).toContain("<strong>a breaks</strong>");
+    expect(page).toContain('<strong class="break">a breaks</strong>');
     expect(page).toContain("error: &lt;b&gt;boom&lt;/b&gt;");
     // The pins sit after the live region closes.
     const live = page.indexOf('role="status"');
     expect(live).toBeGreaterThan(-1);
-    expect(page.indexOf("pinned-failures")).toBeGreaterThan(page.indexOf("Test files"));
-    expect(page.slice(live, page.indexOf("pinned-slot"))).not.toContain("a breaks");
+    expect(page.indexOf('id="check-pins"')).toBeGreaterThan(page.indexOf("Test files"));
+    expect(page.slice(live, page.indexOf('id="check-pins"'))).not.toContain("a breaks");
     // The replaced element (#check-steps) closes before the pin slot, which is
     // patched in place so focus and scroll survive a refetch.
     const at = page.indexOf('id="check-steps"');
@@ -902,7 +902,11 @@ describe("working: a run's own page in the studio", () => {
     expect(block).not.toContain("tabindex");
     expect(block).not.toContain('role="region"');
     // With pins, the slot is focusable and labelled; the live region holds no pin.
-    expect(page).toContain('class="pinned-slot" id="check-pins" role="region" tabindex="0" aria-label="Failed tests"');
+    expect(page).toContain('data-pins id="check-pins" role="region" tabindex="0" aria-label="Failed tests"');
+    expect(page).not.toMatch(/data-pins[^>]*class="[^"]*stack/);
+    expect(page).not.toContain("pinned-failures");
+    expect(page).not.toContain("pinned-slot");
+    expect(page.slice(page.indexOf('id="check-pins"'))).toMatch(/class="card"\s+data-tone="danger"/);
     expect(page.slice(live, page.indexOf(`id="check-pins"`, live))).toContain("2 of 9 files started");
     expect(quiet).toContain('<p class="check-words small muted break"></p>'); // empty, but still rendered
     for (const old of ["tests-bar", "tests-words"]) {
@@ -2332,6 +2336,23 @@ describe("a deploy that just landed is news on the front door", () => {
  * as `canWrite` today — that every surface carrying money, the crew or the
  * decision ledger must ask before it computes or renders one of those.
  */
+
+describe("the pin slot's stylesheet", () => {
+  test("caps [data-pins] with scroll and reserves it while a check is open", async () => {
+    const { css } = await import("../src/web/style.ts");
+    expect(css).toContain("[data-pins] { max-height: 9em; overflow-y: auto; }");
+    expect(css).toContain('[data-check-progress][data-state="running"] [data-pins] { height: 9em; }');
+    expect(css).toContain('[data-check-progress][data-state="queued"] [data-pins]');
+    expect(css).not.toContain(".pinned-");
+    // Cards stack as blocks (a flex column would squash them into 9em), and output wraps.
+    expect(css).toContain("[data-pins] .card + .card { margin-top: 12px; }");
+    expect(css).toContain("[data-pins] pre { margin: 4px 0 0; white-space: pre-wrap; font-size: var(--fs-min); }");
+  });
+  test("the slot is not a flex column", async () => {
+    const { css } = await import("../src/web/style.ts");
+    expect(css).not.toMatch(/\[data-pins\][^{]*\{[^}]*display:\s*(flex|grid)/);
+  });
+});
 
 describe("run page controls leave the old classes behind (#4263)", () => {
   test("no run-jump, run-live or run-steer class selector is defined, and [hidden] still beats .btn", async () => {
