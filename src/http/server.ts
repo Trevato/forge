@@ -2061,6 +2061,50 @@ async function clearStaleSockets(app: App): Promise<void> {
 }
 
 
+/** A forge's internal listener: where its git hooks relay (`git/hooks.ts`). */
+interface InternalListener {
+  stop(): void;
+}
+
+/**
+ * Start `app`'s internal listener on its own socket (or a loopback port, see
+ * `git/hook-address.ts`) and point `app.hookAddress` at it. Every request
+ * must carry `app`'s own boot secret, so one forge's hooks can never be
+ * answered by another forge's listener in the same process.
+ */
+function serveInternal(app: App): InternalListener {
+  const onPort = portInsteadOfSocket();
+  const internal = Bun.serve({
+    ...(onPort ? { hostname: "127.0.0.1", port: 0 } : { unix: app.socketPath }),
+    fetch(request) {
+      // The socket's file mode used to be the only door check; a loopback
+      // port has none, so every internal request proves the boot secret.
+      if (!hookCallerAllowed(app, request)) {
+        const path = new URL(request.url).pathname;
+        if (noteRefusedInternal(request.method, path, Date.now(), app.signals.refused))
+          app.log.warn("internal call refused: no boot secret", {
+            method: request.method,
+            path: path.slice(0, 120),
+          });
+        return new Response("forbidden", { status: 403 });
+      }
+      const url = new URL(request.url);
+      if (request.method === "POST" && url.pathname === "/internal/hook") {
+        return handleHook(app, request);
+      }
+      return new Response("not found", { status: 404 });
+    },
+  });
+  if (onPort) app.hookAddress.current = tcpAddress(internal.port ?? 0);
+  return {
+    stop() {
+      internal.stop(true);
+      // Our socket goes with us; a corpse is only ever an unclean exit's.
+      rmSync(app.socketPath, { force: true });
+    },
+  };
+}
+
 /**
  * One forge's HTTP routes without a listener: what the parent's Host
  * dispatch uses to answer for a hosted child in-process.
@@ -2090,6 +2134,8 @@ export async function serve(app: App): Promise<Servers> {
   const limiter = new RateLimiter();
   // Hosted children answered in-process: one ForgeHttp per child dataDir.
   const childHttps = new Map<string, ForgeHttp>();
+  // And one internal (hook) listener per hosted child App it has answered for.
+  const childInternals = new Map<App, InternalListener>();
   // An account suspended or removed ends what it has open on this
   // listener: its event streams and the app sockets it was let into. A
   // browser signed out ends the streams it opened.
@@ -2264,6 +2310,12 @@ export async function serve(app: App): Promise<Servers> {
             http = forgeHttp(child);
             childHttps.set(key, http);
           }
+          // Its pushes run its hooks, which relay to its own listener with
+          // its own boot secret: one per child App, never the parent's.
+          if (!childInternals.has(child)) {
+            await clearStaleSockets(child);
+            if (!childInternals.has(child)) childInternals.set(child, serveInternal(child));
+          }
           notePeer(request, server.requestIP(request)?.address, trust);
           armClose(request, () => server.timeout(request, 1));
           const response = await answered(child, request, () => http.handle(request));
@@ -2312,30 +2364,7 @@ export async function serve(app: App): Promise<Servers> {
     error: (error) => failure(app, error),
   });
 
-  const onPort = portInsteadOfSocket();
-  const internal = Bun.serve({
-    ...(onPort ? { hostname: "127.0.0.1", port: 0 } : { unix: app.socketPath }),
-    fetch(request) {
-      // The socket's file mode used to be the only door check; a loopback
-      // port has none, so every internal request proves the boot secret.
-      if (!hookCallerAllowed(app, request)) {
-        const path = new URL(request.url).pathname;
-        if (noteRefusedInternal(request.method, path, Date.now(), app.signals.refused))
-          app.log.warn("internal call refused: no boot secret", {
-            method: request.method,
-            path: path.slice(0, 120),
-          });
-        return new Response("forbidden", { status: 403 });
-      }
-      const url = new URL(request.url);
-      if (request.method === "POST" && url.pathname === "/internal/hook") {
-        return handleHook(app, request);
-      }
-      return new Response("not found", { status: 404 });
-    },
-  });
-
-  if (onPort) app.hookAddress.current = tcpAddress(internal.port ?? 0);
+  const internal = serveInternal(app);
   const port = web.port ?? 0;
   return {
     url: `http://localhost:${port}`,
@@ -2374,12 +2403,13 @@ export async function serve(app: App): Promise<Servers> {
       timings.clear();
       for (const http of childHttps.values()) http.close();
       childHttps.clear();
+      // A child's hooks stop answering before its database closes.
+      for (const listener of childInternals.values()) listener.stop();
+      childInternals.clear();
       closeHostedChildren(app);
       flushAccess();
       web.stop(true);
-      internal.stop(true);
-      // Our socket goes with us; a corpse is only ever an unclean exit's.
-      rmSync(app.socketPath, { force: true });
+      internal.stop();
     },
   };
 }
