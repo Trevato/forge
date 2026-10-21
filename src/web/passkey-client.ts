@@ -33,6 +33,16 @@ export const passkeyJs = /* js */ `
       });
     });
   }
+  // A failure is an alert in the danger style, the class the note names in
+  // data-fail; a cancel or a clear goes back to quiet.
+  function say(note, msg, failed) {
+    if (!note) return;
+    var danger = note.getAttribute('data-fail');
+    note.textContent = msg;
+    if (danger) note.classList.toggle(danger, failed);
+    note.classList.toggle('muted', !failed);
+    if (failed) note.setAttribute('role', 'alert'); else note.setAttribute('role', 'status');
+  }
   function wire(id, run) {
     var el = doc.getElementById(id);
     if (!el) return;
@@ -45,9 +55,10 @@ export const passkeyJs = /* js */ `
     el.addEventListener('click', function (e) {
       e.preventDefault();
       el.disabled = true;
-      if (note) note.textContent = '';
+      say(note, '', false);
       run().catch(function (err) {
-        if (note) note.textContent = err && err.name === 'NotAllowedError' ? 'Cancelled.' : (err && err.message) || 'That did not work.';
+        var cancelled = err && err.name === 'NotAllowedError';
+        say(note, cancelled ? 'Cancelled.' : (err && err.message) || 'That did not work.', !cancelled);
         el.disabled = false;
       });
     });

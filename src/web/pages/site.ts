@@ -296,9 +296,9 @@ function authForm(
   // newcomer before they look for a door that is not there.
   const passkeyFirst = when(
     kind === "signin",
-    () => html`<div class="passkey-on passkey-lead">
+    () => html`<div class="passkey-on stack stack-tight mb">
       <button type="button" id="passkey-signin" class="btn" data-variant="primary" data-size="lg">Sign in with a passkey</button>
-      <p class="passkey-note small" id="passkey-signin-note" role="status"></p>
+      <p class="muted small break" id="passkey-signin-note" data-fail="error-note" role="status"></p>
     </div>
     ${when(SIGNUP_SENTENCES[timePhase(ctx.request, "settings", () => getSignup(ctx.app.db))], (said) => html`<p class="muted small mb" id="signup-mode">${said}</p>`)}`,
   );

@@ -48,8 +48,9 @@ describe("/signin", () => {
 
   test("the passkey lead shows only where a passkey can run, and Sign in is primary everywhere else", async () => {
     const page = await signin("open");
-    expect(page).toMatch(/<div class="passkey-on passkey-lead">\s*<button[^>]*id="passkey-signin"/);
-    expect(page).toMatch(/<p class="passkey-note small" id="passkey-signin-note" role="status"><\/p>\s*<\/div>/);
+    expect(page).toMatch(/<div class="passkey-on stack stack-tight mb">\s*<button[^>]*id="passkey-signin"/);
+    expect(page).not.toMatch(/passkey-lead|passkey-note/);
+    expect(page).toMatch(/<p class="muted small break" id="passkey-signin-note" data-fail="error-note" role="status"><\/p>\s*<\/div>/);
     // Both variants of Sign in, each a named btn() variant picked in markup.
     expect(page).toMatch(/<button\s+type="submit"\s+class="btn passkey-on"\s+data-variant="outline"[^>]*>\s*Sign in\s*</);
     expect(page).toMatch(/<button\s+type="submit"\s+class="btn passkey-off"\s+data-variant="primary"[^>]*>\s*Sign in\s*</);
@@ -73,5 +74,55 @@ describe("/signin", () => {
     const page = await signin("closed");
     expect(page).toContain(CLOSED);
     expect(page).not.toContain(INVITE);
+  });
+});
+
+describe("the passkey note", () => {
+  // Runs the client script against a stub DOM: click Sign in with a passkey and let it fail.
+  async function press(fail: { name?: string; message: string }) {
+    const classes = new Set(["muted", "small", "break"]);
+    const attrs: Record<string, string> = { role: "status" };
+    const note = {
+      textContent: "",
+      classList: {
+        toggle: (c: string, on: boolean) => void (on ? classes.add(c) : classes.delete(c)),
+        add: (c: string) => void classes.add(c),
+      },
+      setAttribute: (k: string, v: string) => void (attrs[k] = v),
+      getAttribute: (k: string) => (k === "data-fail" ? "error-note" : null),
+    };
+    let click: (e: { preventDefault(): void }) => void = () => {};
+    const button = { disabled: false, addEventListener: (_: string, f: typeof click) => void (click = f) };
+    const doc = {
+      documentElement: { classList: { add() {} } },
+      getElementById: (id: string) => (id === "passkey-signin" ? button : id === "passkey-signin-note" ? note : null),
+    };
+    const nav = { credentials: {} };
+    const fetchFails = async () => {
+      throw Object.assign(new Error(fail.message), fail.name ? { name: fail.name } : {});
+    };
+    new Function("document", "window", "navigator", "fetch", passkeyJs.replace(/^[\s\S]*?\(function \(\) \{/, "(function () {").replace(/\}\)\s*$/, ""))(
+      doc, { PublicKeyCredential: {} }, nav, fetchFails,
+    );
+    click({ preventDefault() {} });
+    await new Promise((r) => setTimeout(r, 0));
+    return { note, classes, attrs, button };
+  }
+
+  test("a failure is an alert in the danger style, not muted text", async () => {
+    const { note, classes, attrs, button } = await press({ message: "That did not work." });
+    expect(note.textContent).toBe("That did not work.");
+    expect(classes.has("error-note")).toBe(true);
+    expect(classes.has("muted")).toBe(false);
+    expect(attrs.role).toBe("alert");
+    expect(button.disabled).toBe(false);
+  });
+
+  test("a cancel stays quiet", async () => {
+    const { note, classes, attrs } = await press({ name: "NotAllowedError", message: "x" });
+    expect(note.textContent).toBe("Cancelled.");
+    expect(classes.has("error-note")).toBe(false);
+    expect(classes.has("muted")).toBe(true);
+    expect(attrs.role).toBe("status");
   });
 });
