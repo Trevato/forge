@@ -489,6 +489,30 @@ describe("working: a run's own page in the studio", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
+  test("a run's and a tell's heads draw §5's page head and meta row, not .issue-head or .issue-meta", async () => {
+    const tell = openIssue(app, alice, repo, { title: "Head check" });
+    if (!tell.ok) throw new Error(String(tell.error));
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: tell.value.id,
+      actorId: scoutId,
+      reason: "assigned",
+    });
+    const runPage = await (
+      await get(`/alice/engine/runs/${run.id}`, writerCookie)
+    ).text();
+    const tellPage = await (
+      await get(`/alice/engine/issues/${tell.value.number}`, writerCookie)
+    ).text();
+    for (const page of [runPage, tellPage]) {
+      expect(page).not.toContain("issue-head");
+      expect(page).not.toContain("issue-meta");
+      expect(page).toContain('class="page-head"');
+      expect(page).toContain('class="sub bar"');
+    }
+  });
+
   test("the studio transcript names the tell, the cost, and the steer box", async () => {
     const tell = openIssue(app, alice, repo, {
       title: "Fix the flicker on load",
@@ -619,8 +643,10 @@ describe("working: a run's own page in the studio", () => {
     // Word, cost and clock sit in one region, swapped in place on any
     // run.* event about this repository and no other.
     expect(going).toMatch(
-      /<div\s+class="issue-head"\s+id="run-head"\s+data-live="run\.\*"\s+data-live-repo="alice\/engine"/,
+      /<div\s+class="page-head"\s+id="run-head"\s+data-live="run\.\*"\s+data-live-repo="alice\/engine"/,
     );
+    expect(going).not.toContain("issue-head");
+    expect(going).not.toContain("issue-meta");
     expect(head(going)).toContain('data-word="working"');
     expect(head(going)).toContain("$0.25 spent");
     expect(head(going)).toContain("running for");

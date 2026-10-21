@@ -461,6 +461,8 @@ describe("apps, runs and the crew on the web", () => {
     expect(page).toContain("<h1>Deploy production</h1>");
     expect(page).toContain('id="run-log"');
     expect(page).toContain('id="run-word"');
+    expect(page).not.toContain("issue-head");
+    expect(page).not.toContain("issue-meta");
     // The log is drawn line by line, each by what kind of line it is: the
     // forge's own words ("checking out …") are marked as such.
     expect(page).toContain('class="ln ln-forge"');

@@ -145,14 +145,14 @@ export async function runView(
   // finishing shows its final state without a reload. Its id stays once the
   // run is over, so the last swap still finds its match.
   const head = html`<div
-    class="issue-head"
+    class="page-head"
     id="run-head"
     ${unfinished
       ? html`data-live="run.*" data-live-repo="${repo.ownerName}/${repo.name}"`
       : null}
   >
     <h1>${title}</h1>
-    <div class="issue-meta">
+    <div class="sub bar">
       ${wordBadge(word, "run-word")}
       ${when(
         issue,
