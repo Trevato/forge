@@ -19,14 +19,15 @@ import { localScope } from "../scope.ts";
 
 // GET /:owner/:name/waves
 export async function wavesPage(ctx: Ctx): Promise<Response> {
-  const repo = loadRepo(ctx);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const repo = timePhase(ctx.request, "repo", () => loadRepo(ctx));
   if (!repo) return notFoundPage(ctx);
   const scope = localScope(ctx, repo);
   const branch = repo.defaultBranch;
-  const entries = await readWaves(
-    repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
-    branch,
+  const entries = await timePhaseAsync(ctx.request, "waves", () =>
+    readWaves(repoDir(ctx.app.reposRoot, repo.ownerName, repo.name), branch),
   );
+  const rendering = performance.now();
   const fileHref = (file: string): string =>
     VERSION.test(file.slice(0, -3))
       ? `${repoBase(repo)}/waves/${encodeURIComponent(file.slice(0, -3))}`
@@ -53,13 +54,15 @@ export async function wavesPage(ctx: Ctx): Promise<Response> {
         : listCard(rows, { head: html`<h2>Waves</h2>` })}
     </div>`;
 
-  return page({
+  const response = page({
     ctx,
     title: `Waves · ${scope.facts.name}`,
     crumbs: scope.crumbs,
     palette: scope.palette,
     body,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 /** Only http(s) becomes a link; anything else is shown as plain text. */
