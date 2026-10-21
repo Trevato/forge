@@ -132,6 +132,10 @@ interface OnYouItem {
   readonly hand?: true;
   /** A pull the crew handed to a person: closed, marked and opened like any row. */
   readonly over?: true;
+  /** For a handed-over row: the crew's advice, when it wrote one. */
+  readonly overAdvice?: string;
+  /** A pull no person has touched for a day, with the crew's advice when it wrote one. */
+  readonly late?: { readonly advice: string };
   /** What it waits for, and on whom: the word the web's asks row shows. */
   readonly waiting: WaitingFor;
 }
@@ -324,6 +328,10 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     rows: ReturnType<typeof askLinesFor>,
     waitingOf: (id: string) => WaitingFor,
   ): OnYouItem[] => {
+    const advice = (id: string, kind: "waiting" | "handover" = "waiting"): string => {
+      const r = rows.find((row) => row.items.includes(`${kind}:${id}`))?.recommendation;
+      return r === undefined ? "" : ` · crew advises: ${r.verdict}${r.reason === "" ? "" : ` — ${r.reason}`}`;
+    };
     if (f.user === undefined) return [];
     const idsOf = (kind: string, prefix: string): string[] =>
       rows
@@ -331,11 +339,12 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         .flatMap((row) => row.items)
         .filter((id) => id.startsWith(prefix))
         .map((id) => id.slice(prefix.length));
-    const wanted: { id: string; flag: "hand" | "over" }[] = [
+    const wanted: { id: string; flag: "hand" | "over" | "late" }[] = [
       ...(f.app.config.decider === undefined
         ? []
         : idsOf("parked", "parked:").map((id) => ({ id, flag: "hand" as const }))),
       ...idsOf("handover", "handover:").map((id) => ({ id, flag: "over" as const })),
+      ...idsOf("waiting", "waiting:").map((id) => ({ id, flag: "late" as const })),
     ];
     const out: OnYouItem[] = [];
     const seen = new Set<string>();
@@ -345,7 +354,11 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       const issue = getIssueById(f.db, id);
       const repo = issue === undefined ? undefined : getRepoById(f.db, issue.repoId);
       if (issue !== undefined && repo !== undefined)
-        out.push({ issue, repo, waiting: waitingOf(id), ...(flag === "hand" ? { hand: true as const } : { over: true as const }) });
+        out.push({ issue, repo, waiting: waitingOf(id), ...(flag === "hand"
+            ? { hand: true as const }
+            : flag === "over"
+              ? { over: true as const, overAdvice: advice(id, "handover") }
+              : { late: { advice: advice(id) } }) });
     }
     return out;
   };
@@ -414,7 +427,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
 
   /** One verb for the set, through the same action the web and API use. */
   const clear = (action: "close" | "mute" | "ship", reason?: string): void => {
-    const items = targets().map((t) => `${t.over === true ? "handover" : "issue"}:${t.issue.id}`);
+    const items = targets().map((t) => `${t.over === true ? "handover" : t.late !== undefined ? "waiting" : "issue"}:${t.issue.id}`);
     if (items.length === 0) return;
     runAsync(ctx, async () => {
       const done = await applyAsksBulk(f.app, f.user, action, items, reason);
@@ -1022,8 +1035,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
               ? PULL_MARK
               : ISSUE_MARK;
         return {
-          title: `${marked.has(item.issue.id) ? "[x] " : ""}${item.hand === true ? "parked " : item.over === true ? "handed over " : ""}${mark} #${item.issue.number} ${item.issue.title} · ${item.repo.ownerName}/${item.repo.name}`,
-          meta: `${item.waiting.word} · on ${item.waiting.on}`,
+          title: `${marked.has(item.issue.id) ? "[x] " : ""}${item.hand === true ? "parked " : item.over === true ? "handed over " : item.late !== undefined ? "waiting " : ""}${mark} #${item.issue.number} ${item.issue.title} · ${item.repo.ownerName}/${item.repo.name}`,
+          meta: `${item.waiting.word} · on ${item.waiting.on}${item.late?.advice ?? item.overAdvice ?? ""}`,
         };
       }),
         ...waves.map(

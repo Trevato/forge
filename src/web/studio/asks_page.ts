@@ -69,10 +69,12 @@ const ASK_KIND_WORDS: Readonly<Record<string, string>> = {
   stopped: "Stopped",
   parked: "Parked",
   assigned: "Assigned",
+  waiting: "Waiting",
+  handover: "Handed over",
 };
 
 /** The kinds a bulk action takes: a ceiling and a planner's decline are decided where they live. */
-const BULK_KINDS: ReadonlySet<Decision["kind"]> = new Set(["look", "review", "stopped", "handover", "parked", "assigned"]);
+const BULK_KINDS: ReadonlySet<Decision["kind"]> = new Set(["look", "review", "stopped", "handover", "waiting", "parked", "assigned"]);
 
 /** A row's box for the bulk form, which sits apart (`form="asks-bulk"`): forms do not nest. */
 const pick = (d: Decision, picked: ReadonlySet<string>): Html | null =>
@@ -172,6 +174,7 @@ const KIND_LABEL: Readonly<Record<Decision["kind"], string>> = {
   review: "Needs review",
   stopped: "Stopped",
   handover: "Handed over",
+  waiting: "Waiting",
   parked: "Parked",
   declined: "Declined",
   proposal: "Proposed",
@@ -196,6 +199,12 @@ function acts(ctx: Ctx, d: Decision): Html {
         </details>`}
   </div>`;
 }
+
+/** What the crew advised on a pull waiting for a person, in one plain line; nothing when it wrote none. */
+const adviceLine = (d: Decision): Html | null =>
+  d.recommendation === undefined
+    ? null
+    : html`<p class="small muted">The crew advises: ${d.recommendation.verdict}${d.recommendation.reason === "" ? "" : html` — ${d.recommendation.reason}`}</p>`;
 
 /** A wave proposal's why, its issue titles and the Redirect box; nothing for any other ask. */
 function proposalBody(ctx: Ctx, d: Decision): Html | null {
@@ -223,6 +232,7 @@ function decisionCard(ctx: Ctx, d: Decision, picked: ReadonlySet<string>): Html 
         : html`<a href="${base}/settings/autonomy">Paused</a>`;
   return card(
     html`${clause(d, d.kind, d.consequence)}
+      ${adviceLine(d)}
       ${proposalBody(ctx, d)}
       ${acts(ctx, d)}`,
     {

@@ -15,6 +15,7 @@ import { waitingFor, type WaitingFor } from "../../core/waiting_for.ts";
 import { crewForRepos } from "../../core/agents.ts";
 import { appsForRepos } from "../../core/apps.ts";
 import { latestDecision, latestDecisionsFor, stopStands } from "../../core/decisions.ts";
+import { lastPersonAction, recommendationsFor, waitWords, WAIT_LIMIT_MS, type Recommendation } from "../../core/pull_wait.ts";
 import { getHold, holdsFor } from "../../core/holds.ts";
 import { issueTitles, proposalsFor, type Proposal } from "../../core/proposals.ts";
 import { chipsOf, type Chips } from "../../core/feed_chips.ts";
@@ -106,7 +107,7 @@ export function writableAppsOf(ctx: Ctx, user: User | undefined) {
   );
 }
 
-export type DecisionKind = "stopped" | "look" | "review" | "paused" | "parked" | "declined" | "handover" | "assigned" | "proposal";
+export type DecisionKind = "stopped" | "look" | "review" | "paused" | "parked" | "declined" | "handover" | "waiting" | "assigned" | "proposal";
 
 /** Dollars as a person reads them: cents when small, whole when not. */
 const dollars = (n: number): string => (n < 10 ? n.toFixed(2) : n.toFixed(0));
@@ -137,6 +138,8 @@ export interface Decision {
   readonly consequence: Consequence;
   /** What it waits for, and on whom (`core/waiting_for.ts`). */
   readonly waiting: WaitingFor;
+  readonly why?: string | undefined;
+  readonly recommendation?: Recommendation | undefined;
 }
 
 /** What an ask asks, the answers it takes, and what happens if nobody gives one. */
@@ -157,6 +160,11 @@ export const ASK_WORDS: Readonly<Record<DecisionKind, AskWords>> = {
     decision: "Review this pull request: ship it, or say what is off?",
     options: ["Ship", "Say what is off"],
     ifNothing: "it waits; an agent's change never ships unreviewed",
+  },
+  waiting: {
+    decision: "No one has looked at this in a day: merge it, close it, or say what to change?",
+    options: ["Ship", "Say what to change", "Close it"],
+    ifNothing: "it keeps waiting for you",
   },
   stopped: {
     decision: "The check fails and the crew stopped: what should it try?",
@@ -213,6 +221,7 @@ export const KIND_TIER: Readonly<Record<DecisionKind, Consequence>> = {
   declined: { score: 70, why: "the planner has stopped for this app" },
   stopped: { score: 50, why: "red, and the crew stopped" },
   review: { score: 45, why: "an agent's change waits for a review" },
+  waiting: { score: 42, why: "no person has acted on it for a day" },
   handover: { score: 55, why: "three reviews without an approval: handed to a person" },
   parked: { score: 40, why: "parked by the crew" },
   look: { score: 30, why: "green, waiting" },
@@ -279,7 +288,15 @@ interface AskCandidate {
   readonly decline?: { readonly runId: string; readonly words: string };
   /** For "handover": the reviews that asked for changes. */
   readonly handover?: Handover;
+  /** For "handover" and "waiting": one sentence on why a person must decide. */
+  readonly why?: string;
+  /** For "handover" and "waiting": what the crew advised, when it wrote one. */
+  readonly recommendation?: Recommendation;
 }
+
+/** How a handed-over pull says why: the rounds, and the hand-over. */
+const THREE_ROUNDS = "three reviews asked for changes";
+const HANDOVER_WHY = `${THREE_ROUNDS} with no approval between; the crew handed it to a person`;
 
 /**
  * Open pulls the viewer may land, sorted into what asks them: stopped (red
@@ -352,6 +369,7 @@ function askCandidatesFor(
     new Date(),
     handedOver,
   );
+  const first = out.length;
   for (const issue of pulls) {
     const repo = byId.get(issue.repoId)!;
     const pull = joined.get(issue.id);
@@ -381,6 +399,7 @@ function askCandidatesFor(
         who,
         authorIsAgent: issue.authorIsAgent,
         handover: over,
+        why: HANDOVER_WHY,
       });
       continue;
     }
@@ -462,6 +481,38 @@ function askCandidatesFor(
           reviewWait: wait,
         });
     }
+  }
+  // Whatever else a pull is, one no person has touched for a day is theirs
+  // to decide, whatever its check says. The crew's own pull still at work
+  // never reaches here; nor does one younger than a day.
+  const asked = new Set(out.slice(first).map((a) => a.pull?.id));
+  const idle = pulls.filter(
+    (p) => joined.has(p.id) && !asked.has(p.id) && held.get(p.id)?.heldBy !== user.id && !working.has(p.id),
+  );
+  const acted = lastPersonAction(db, idle);
+  const nowMs = Date.now();
+  const stale = idle.filter((p) => nowMs - Date.parse(acted.get(p.id)!) > WAIT_LIMIT_MS);
+  const advice = recommendationsFor(db, [...stale.map((p) => p.id), ...out.slice(first).filter((a) => a.kind === "handover").map((a) => a.pull!.id)]);
+  for (const issue of stale) {
+    const since = acted.get(issue.id)!;
+    const rounds = handedOver.has(issue.id) ? `, ${THREE_ROUNDS}` : "";
+    const rec = advice.get(issue.id);
+    out.push({
+      kind: "waiting",
+      id: `waiting:${issue.id}`,
+      since,
+      repo: byId.get(issue.repoId)!,
+      pull: joined.get(issue.id)!,
+      who: issue.authorName,
+      authorIsAgent: issue.authorIsAgent,
+      why: `${waitWords(nowMs - Date.parse(since))}${rounds}`,
+      ...(rec === undefined ? {} : { recommendation: rec }),
+    });
+  }
+  for (let i = first; i < out.length; i++) {
+    const a = out[i]!;
+    const rec = a.kind === "handover" ? advice.get(a.pull!.id) : undefined;
+    if (rec !== undefined) out[i] = { ...a, recommendation: rec };
   }
   const crew = crewForRepos(
     db,
@@ -644,7 +695,7 @@ function consequencesOf(
 /** The row an ask collapses into: one kind in one repository. */
 const groupId = (a: { kind: DecisionKind; repo: Repo; id: string }): string =>
   // Work assigned to you is each its own row: they share no decision.
-  a.kind === "assigned" || a.kind === "proposal" ? a.id : `${a.kind}:${a.repo.id}`;
+  a.kind === "assigned" || a.kind === "waiting" || a.kind === "proposal" ? a.id : `${a.kind}:${a.repo.id}`;
 
 /**
  * The asks the viewer has not set aside: a muted repository's asks are all
@@ -818,7 +869,7 @@ export function endOf(
   raisedAt: string,
 ): Exclude<AskEnd, "dismissed"> {
   const [kind, what] = askId.split(":") as [DecisionKind, string];
-  if (kind === "look" || kind === "review" || kind === "stopped" || kind === "handover") {
+  if (kind === "look" || kind === "review" || kind === "stopped" || kind === "handover" || kind === "waiting") {
     const pull = getIssueById(db, what);
     // Shipped or closed: someone decided. Held by the one it asked: they
     // answered "not yet". Still open otherwise: the cause went away.
@@ -904,6 +955,7 @@ function lineOf(c: AskCandidate): string {
     return `proposes "${c.proposal?.title ?? ""}" and waits for your nod`;
   if (c.kind === "declined")
     return "the planner declined the direction and waits for you";
+  if (c.kind === "waiting") return `"${c.pull?.title ?? ""}" is ${c.why ?? "waiting"} for a person`;
   if (c.kind === "handover")
     return `"${c.pull?.title ?? ""}" had three reviews asking for changes and waits for you`;
   const title = c.pull?.title ?? "";
@@ -931,6 +983,7 @@ export const ROW_PLURAL: Readonly<Record<DecisionKind, (n: number) => string>> =
   stopped: (n) => `the crew stopped on ${n} changes`,
   parked: (n) => `the crew parked ${n} issues after three failed runs`,
   handover: (n) => `${n} changes had three reviews asking for changes and wait for you`,
+  waiting: (n) => `${n} changes have waited a day for a person`,
   declined: (n) => `the planner declined ${n} times and waits for you`,
   proposal: (n) => `${n} waves wait for your nod`,
   paused: (n) => `${n} pauses at the ceiling`,
@@ -974,6 +1027,10 @@ export function askLinesFor(
   consequence: Consequence;
   /** What the row waits for (the weightiest ask's), and on whom. */
   waitingFor: WaitingFor;
+  /** For a row of one handed-over or long-waiting pull: why a person must decide. */
+  why?: string;
+  /** The crew's advice on it, when it wrote one. */
+  recommendation?: Recommendation;
 }[] {
   const repos = listReposVisibleTo(db, user, { limit: 200, withoutArchived: true });
   return askRows(waitingOn(db, user, repos, chips)).map((row) => {
@@ -989,6 +1046,8 @@ export function askLinesFor(
       waitingFor: row.items[0]!.waiting,
     };
     const only = row.items.length === 1 ? row.items[0]! : undefined;
+    if (only?.why !== undefined) Object.assign(about, { why: only.why });
+    if (only?.recommendation !== undefined) Object.assign(about, { recommendation: only.recommendation });
     if (only === undefined)
       return {
         ...about,
@@ -1113,6 +1172,20 @@ export function decisionsFor(
         who: c.who,
         says: `The reviewer asked for changes three times with no approval between, so the crew stopped. ${handoverLines(c.handover).join(" ")} Say what to try (or approve it on its page), or close it.`,
         short: `"${c.pull.title}" had three reviews asking for changes`,
+        why: c.why,
+        recommendation: c.recommendation,
+      };
+    if (c.kind === "waiting" && c.pull)
+      return {
+        kind: "waiting",
+        id: `waiting:${c.pull.id}`,
+        repo: c.repo,
+        pull: c.pull,
+        who: c.who,
+        says: `"${c.pull.title}" is ${c.why ?? "waiting"}, and no person has acted on it. Ship it, say what to change, or close it.`,
+        short: c.why ?? "waiting for a person",
+        why: c.why,
+        recommendation: c.recommendation,
       };
     if (c.kind === "stopped" && c.pull) {
       const tries = c.tries ?? 0;
@@ -1209,6 +1282,13 @@ export function decisionForm(d: Decision, back?: string): Html | null {
     return html`<form ${own} action="${base}/pulls/${pull.number}/ship">
       <input type="hidden" name="pull" value="${pull.number}" />${where}
     </form>`;
+  if (d.kind === "waiting")
+    return html`<form ${own} action="${base}/pulls/${pull.number}/ship">
+        <input type="hidden" name="pull" value="${pull.number}" />${where}
+      </form>
+      <form id="${askFormId(d)}-close" method="post" hidden action="${base}/pulls/${pull.number}/state">
+        <input type="hidden" name="state" value="closed" />${where}
+      </form>`;
   return null;
 }
 
@@ -1249,6 +1329,17 @@ export function decisionButtons(ctx: Ctx, d: Decision): { primary: Html; others:
           href: `${changeHref(base, pull.number)}#comment-body`,
           size: "sm",
         }),
+      ],
+    };
+  if (d.kind === "waiting" && pull)
+    return {
+      primary: btn("Ship", { size: "sm", form: askFormId(d), variant: "primary" }),
+      others: [
+        btn("Say what to change", {
+          href: `${changeHref(base, pull.number)}#comment-body`,
+          size: "sm",
+        }),
+        btn("Close", { size: "sm", form: `${askFormId(d)}-close` }),
       ],
     };
   if (d.kind === "assigned" && (d.pull ?? d.issue))
@@ -1352,6 +1443,7 @@ export function askItemsOf(issue: Issue): string[] {
         `ask:review:${issue.id}`,
         `ask:stopped:${issue.id}`,
         `ask:handover:${issue.id}`,
+        `ask:waiting:${issue.id}`,
         `ask:assigned:${issue.id}`,
       ]
     : [`ask:parked:${issue.id}`, `ask:assigned:${issue.id}`];
