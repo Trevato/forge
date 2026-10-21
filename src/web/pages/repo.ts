@@ -571,18 +571,21 @@ function aboutCard(
     (o) =>
       html`<div class="where-block">
         <h3>Where it lives</h3>
-        <dl>
-          <dt>Origin</dt>
-          <dd>
-            ${o.htmlUrl === ""
-              ? html`${o.fullName}`
-              : html`<a href="${o.htmlUrl}" rel="noreferrer noopener"
-                  >${o.fullName}</a
-                >`}
-          </dd>
-          <dt>Last fetch</dt>
-          <dd>${o.lastFetchAt === null ? "never" : time(o.lastFetchAt)}</dd>
-        </dl>
+        <ul class="list setting-list">
+          ${row({
+            title: "Origin",
+            trail:
+              o.htmlUrl === ""
+                ? html`${o.fullName}`
+                : html`<a href="${o.htmlUrl}" rel="noreferrer noopener"
+                    >${o.fullName}</a
+                  >`,
+          })}
+          ${row({
+            title: "Last fetch",
+            trail: html`${o.lastFetchAt === null ? "never" : time(o.lastFetchAt)}`,
+          })}
+        </ul>
         ${when(
           o.fetchError !== "",
           () => html`<p class="error-note mt">${o.fetchError}</p>`,
@@ -601,50 +604,54 @@ function aboutCard(
         </p>
       </div>`,
   );
-  return html`<aside class="about">
-    ${card(
+  return html`${card(
       html`${when(
           repo.description !== "",
           () => html`<p class="mb">${repo.description}</p>`,
         )}
-        <dl>
-          <dt>Visibility</dt>
-          <dd>${repo.visibility}</dd>
-          <dt>Default</dt>
-          <dd class="mono">${repo.defaultBranch}</dd>
-          <dt>Protection</dt>
-          <dd>${repo.protectDefault ? "on" : "off"}</dd>
-          <dt>Branches</dt>
-          <dd class="num">${refs.branches.length}</dd>
+        <ul class="list setting-list">
+          ${row({ title: "Visibility", trail: html`${repo.visibility}` })}
+          ${row({
+            title: "Default",
+            trail: html`<span class="mono">${repo.defaultBranch}</span>`,
+          })}
+          ${row({ title: "Protection", trail: html`${repo.protectDefault ? "on" : "off"}` })}
+          ${row({
+            title: "Branches",
+            trail: html`<span class="num">${refs.branches.length}</span>`,
+          })}
           ${when(
             refs.tags.length > 0,
             () =>
-              html`<dt>Tags</dt>
-                <dd class="num">${refs.tags.length}</dd>`,
+              row({
+                title: "Tags",
+                trail: html`<span class="num">${refs.tags.length}</span>`,
+              }),
           )}
           ${when(
             parent,
             (p) =>
               // The standing and the one thing to do about it live in the
               // Following card above the code; the rail only names the parent.
-              html`<dt>Fork of</dt>
-                <dd>
-                  <a href="/${p.ownerName}/${p.name}"
-                    >${p.ownerName}/${p.name}</a
-                  >
-                </dd>`,
+              row({
+                title: "Fork of",
+                trail: html`<a href="/${p.ownerName}/${p.name}"
+                  >${p.ownerName}/${p.name}</a
+                >`,
+              }),
           )}
           ${when(
             upstream,
             (up) =>
-              html`<dt>Fork of</dt>
-                <dd>
-                  ${upstreamHref === undefined
+              row({
+                title: "Fork of",
+                trail:
+                  upstreamHref === undefined
                     ? html`<span class="mono">${up}</span>`
-                    : html`<a href="${upstreamHref}">${up}</a>`}
-                </dd>`,
+                    : html`<a href="${upstreamHref}">${up}</a>`,
+              }),
           )}
-        </dl>
+        </ul>
         ${whereItLives}
         ${when(
           repo.visibility === "public" && repo.origin === null,
@@ -679,8 +686,7 @@ function aboutCard(
               >`,
         )}`,
       { head: html`<h2>About</h2>` },
-    )}
-  </aside>`;
+  )}`;
 }
 
 // ---- pages ----
@@ -763,7 +769,7 @@ export async function renderCode(
     ? main
     : html`<div class="repo-layout">
         <div>${main}</div>
-        ${o.rail}
+        <aside aria-label="About">${o.rail}</aside>
       </div>`;
 }
 

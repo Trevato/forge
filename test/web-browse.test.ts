@@ -260,6 +260,11 @@ describe("browsing an origin repository on the web", () => {
     expect(html).toContain(new URL(fake.url).host);
     expect(html).toContain("read-only");
     expect(html).toContain("Mirror it to");
+    // The About rail is a §5 card, not the retired `.about` aside.
+    expect(html).toContain("Where it lives");
+    expect(html).not.toMatch(/class="about"/);
+    expect(html).toContain('<aside aria-label="About">');
+    expect(html).toMatch(/row-title"[^>]*>Visibility</);
     expect(html).toContain("keep it in sync");
     // And the two things it offers instead of the write buttons.
     expect(html).toContain("Mirror into your workbench");

@@ -66,6 +66,7 @@ import {
   listCard,
   originTag,
   pager,
+  row,
   seg,
   stateBadge,
   time,
@@ -556,32 +557,33 @@ export async function browseCommitPage(ctx: Ctx): Promise<Response> {
 function aboutRail(scope: RepoScope): Html {
   const facts = scope.facts;
   const origin = scope.origin;
-  return html`<aside class="about">
-    ${card(
+  return html`${card(
       html`${when(
           facts.description !== "",
           () => html`<p class="mb">${facts.description}</p>`,
         )}
         <div class="where-block">
           <h3>Where it lives</h3>
-          <dl>
-            <dt>Origin</dt>
-            <dd>
-              ${scope.originUrl === ""
-                ? html`${scope.fullName}`
-                : html`<a href="${scope.originUrl}" rel="noreferrer noopener"
-                    >${scope.fullName}</a
-                  >`}
-            </dd>
-            <dt>Last push</dt>
-            <dd>
-              ${facts.pushedAt === null ? "unknown" : time(facts.pushedAt)}
-            </dd>
-            <dt>Visibility</dt>
-            <dd>${facts.visibility}</dd>
-            <dt>Default</dt>
-            <dd class="mono">${facts.defaultBranch}</dd>
-          </dl>
+          <ul class="list setting-list">
+            ${row({
+              title: "Origin",
+              trail:
+                scope.originUrl === ""
+                  ? html`${scope.fullName}`
+                  : html`<a href="${scope.originUrl}" rel="noreferrer noopener"
+                      >${scope.fullName}</a
+                    >`,
+            })}
+            ${row({
+              title: "Last push",
+              trail: html`${facts.pushedAt === null ? "unknown" : time(facts.pushedAt)}`,
+            })}
+            ${row({ title: "Visibility", trail: html`${facts.visibility}` })}
+            ${row({
+              title: "Default",
+              trail: html`<span class="mono">${facts.defaultBranch}</span>`,
+            })}
+          </ul>
           <p class="mt small muted">
             Nothing is stored here yet. Mirror it and this becomes a repository
             you own — issues, pulls and comments come with it, and pushes go
@@ -606,8 +608,7 @@ function aboutRail(scope: RepoScope): Html {
           )}
         </div>`,
       { head: html`<h2>About</h2>` },
-    )}
-  </aside>`;
+  )}`;
 }
 
 // ---- issues and pulls ----

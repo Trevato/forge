@@ -226,11 +226,8 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .repo-layout { display: grid; gap: 16px; margin-top: 16px; align-items: start; }
 @media (min-width: 960px) {
   .repo-layout { grid-template-columns: minmax(0, 1fr) 280px; gap: 24px; }
-  .repo-layout > .about { position: sticky; top: calc(var(--topbar-h) + 16px); }
+  .repo-layout > aside { position: sticky; top: calc(var(--topbar-h) + 16px); }
 }
-.about dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 13px; margin: 0; }
-.about dt { color: var(--muted-fg); }
-.about dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 
 .issue-head { margin: 20px 0 14px; }
 .issue-head h1 { font-size: clamp(20px, 1rem + 1.4vw, 26px); letter-spacing: -0.025em; }
