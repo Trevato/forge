@@ -1183,13 +1183,7 @@ export const mapCss = /* css */ `
 .map-counts i[data-state="done"] { background: transparent; border: 1px solid var(--faint); }
 
 /* ---- beside the drawing ---- */
-.map-list h2 { font-size: 13px; margin: 0 0 6px; }
-.map-list ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 14px; list-style: decimal; }
-.map-list ol li::marker { color: var(--faint); font-variant-numeric: tabular-nums; }
-.map-list li span { display: block; }
-.map-list + .map-list { margin-top: 18px; }
 .map-ask { display: inline; }
-.map-empty { display: grid; justify-items: center; gap: 8px; padding: 40px 16px; border: 1px dashed var(--border); border-radius: var(--radius); color: var(--muted-fg); text-align: center; }
 
 /* ---- lanes: §5 list rows that fold ---- */
 #lanes { margin-top: 16px; }
@@ -1197,7 +1191,7 @@ export const mapCss = /* css */ `
 #lanes li[data-autonomy="autonomous"] .row-title .badge { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 34%, transparent); }
 #lanes li[data-idle] .row-title { color: var(--muted-fg); }
 #lanes details > .card.empty { border: 0; border-top: 1px solid var(--border); border-radius: 0; }
-#lanes details > .map-canvas, #lanes details > .map-empty { border: 0; border-top: 1px solid var(--border); border-radius: 0; }
+#lanes details > .map-canvas { border: 0; border-top: 1px solid var(--border); border-radius: 0; }
 @media (prefers-reduced-motion: reduce) {
   .map-card, .map-title { transition: none; }
 }
