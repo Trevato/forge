@@ -561,8 +561,9 @@ export async function signinSubmit(ctx: Ctx): Promise<Response> {
 
 // GET /verify?token= — the link in a verification email.
 export function verifyPage(ctx: Ctx): Response {
-  const done = verifyEmail(ctx.app, ctx.url.searchParams.get("token") ?? "");
-  return page(
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const done = timePhase(ctx.request, "verify", () => verifyEmail(ctx.app, ctx.url.searchParams.get("token") ?? ""));
+  return timePhase(ctx.request, "render", () => page(
     {
       ctx,
       title: done.ok ? "Email verified" : "Link not valid",
@@ -575,7 +576,7 @@ export function verifyPage(ctx: Ctx): Response {
             <p><a href="/settings">Settings</a></p>`,
     },
     done.ok ? 200 : 400,
-  );
+  ));
 }
 
 export const EDGE_NAME_MESSAGE = "Sign up under the name your platform sign-in gave you.";

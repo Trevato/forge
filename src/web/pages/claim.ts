@@ -230,7 +230,7 @@ const fragmentJs = /* js */ `
 export async function claimFragmentPage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const spawned = await timePhaseAsync(ctx.request, "spawned", () => spawnedOrg(ctx.app));
-  if (spawned === undefined) return dead(ctx, "unknown");
+  if (spawned === undefined) return timePhase(ctx.request, "render", () => dead(ctx, "unknown"));
   const { spawner } = timePhase(ctx.request, "owners", () => owners(ctx, spawned));
   const rendering = performance.now();
   const response = page({

@@ -234,9 +234,11 @@ const NOT_VALID = "This link has expired, been used, or is not valid. Ask for a 
 
 // GET /recover — the request form, or (with ?token=) the new-passkey step.
 export function recoverPage(ctx: Ctx): Response {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const render = (draw: () => Response): Response => timePhase(ctx.request, "render", draw);
   const token = ctx.url.searchParams.get("token");
   if (token === null) {
-    return page({
+    return render(() => page({
       ctx,
       title: "Recover your account",
       body: html`<div class="page-head"><h1>Recover your account</h1></div>
@@ -246,12 +248,12 @@ export function recoverPage(ctx: Ctx): Response {
             <input id="recover-email" name="email" type="email" maxlength="254" autocomplete="email" required /></div>
           <div class="form-actions"><button class="btn" data-variant="primary">Send the link</button></div>
         </form>`,
-    });
+    }));
   }
-  const user = recoveryAccount(ctx.app, token);
+  const user = timePhase(ctx.request, "link", () => recoveryAccount(ctx.app, token));
   if (user === undefined)
-    return page({ ctx, title: "Link not valid", body: html`<div class="page-head"><h1>Link not valid</h1></div><p>${NOT_VALID}</p><p><a href="/recover">Ask for a new link</a></p>` }, 400);
-  return page({
+    return render(() => page({ ctx, title: "Link not valid", body: html`<div class="page-head"><h1>Link not valid</h1></div><p>${NOT_VALID}</p><p><a href="/recover">Ask for a new link</a></p>` }, 400));
+  return render(() => page({
     ctx,
     title: "Register a new passkey",
     scriptJs: passkeyJs,
@@ -262,7 +264,7 @@ export function recoverPage(ctx: Ctx): Response {
       <p class="error-note" id="passkey-recover-note" role="status"></p>
       <noscript><p class="muted small">Registering a passkey needs JavaScript.</p></noscript>
       <div class="form-actions"><button type="button" id="passkey-recover" class="btn" data-variant="primary">Register and sign in</button></div>`,
-  });
+  }));
 }
 
 // POST /recover — ask for a link. The same page for every address.
