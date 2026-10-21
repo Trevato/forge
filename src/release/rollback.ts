@@ -24,15 +24,19 @@ export function liveSchema(dataDir: string): number {
   if (!existsSync(file)) return 0;
   const db = new Database(file, { readonly: true });
   try {
-    const table = db
-      .query<{ n: number }, []>("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name='schema_migration'")
-      .get();
-    if (table?.n === 1)
-      return db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM schema_migration").get()?.n ?? 0;
-    return db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0;
+    return schemaCount(db);
   } finally {
     db.close();
   }
+}
+
+/** The same count from a connection already open: no second reader to meet a busy WAL. */
+export function schemaCount(db: Database): number {
+  const table = db
+    .query<{ n: number }, []>("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name='schema_migration'")
+    .get();
+  if (table?.n === 1) return db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM schema_migration").get()?.n ?? 0;
+  return db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0;
 }
 
 /** How many migrations the kept release knows, read from its own schema module. */
