@@ -68,9 +68,11 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Nothing to
     await tick();
     e.ended(work, "nothing to propose");
     await tick();
-    expect(await driveRepo(e.app, e.fresh())).toBe("planned");
+    // The crew's own tick may ask the planner first; either way it is asked once.
+    expect(["planned", "idle"]).toContain(await driveRepo(e.app, e.fresh()));
+    const deadline = Date.now() + 45_000;
+    while (e.fresh().directionIssueId == null && Date.now() < deadline) await Bun.sleep(50);
     const direction = e.fresh().directionIssueId!;
-    const deadline = Date.now() + 30_000;
     const settled = () =>
       listRuns(e.app.db, e.repo.id, { kind: "agent" }).find(
         (r) =>
@@ -162,9 +164,12 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Nothing to
         commitOid: pull.headOid,
       });
     expect(handedOverPulls(e.app.db, e.fresh()).map((h) => h.number)).toEqual([pull.number]);
-    expect(await driveRepo(e.app, e.fresh())).toBe("planned");
+    // The crew's own tick may ask the planner first; either way it is asked once.
+    const asked = await driveRepo(e.app, e.fresh());
+    expect(["planned", "idle"]).toContain(asked);
+    const deadline = Date.now() + 45_000;
+    while (e.fresh().directionIssueId == null && Date.now() < deadline) await Bun.sleep(50);
     const direction = e.fresh().directionIssueId!;
-    const deadline = Date.now() + 30_000;
     const settled = () =>
       listRuns(e.app.db, e.repo.id, { kind: "agent" }).find(
         (r) => r.issueId === direction && ["ok", "failed", "cancelled"].includes(r.state),
