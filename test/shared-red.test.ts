@@ -142,7 +142,7 @@ describe("a red many pulls share", () => {
   });
 
   test("the cause is the sentinel's key, whole, and a breach it files at once", () => {
-    const cause = sharedCause({ repoId: "01m23vygyffx5hg2f5vm8r74sr", test: "two forges in one process keep their own error and refusal signals" });
+    const cause = sharedCause({ repoId: "r1", test: "two forges in one process keep their own error and refusal signals" });
     expect(flakeKey(cause)).toBe(`degraded:${keyPart(cause)}`);
     expect(keyPart(cause)).toBe(cause.replaceAll(":", "-"));
     db.run("INSERT INTO degraded_span (cause, sentence, href, opened_at) VALUES (?1, 's', '/x', 1000)", [cause]);

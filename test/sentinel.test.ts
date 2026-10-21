@@ -641,6 +641,30 @@ describe("a budget breach is crew work at once", () => {
     expect(listEvents(bapp.db, { kind: "issue.assigned" }).length).toBe(0);
   });
 
+  test("a red main is filed only for the sentinel's own repository", () => {
+    const prior = process.env.FORGE_SENTINEL_REPO;
+    process.env.FORGE_SENTINEL_REPO = "alice/forge";
+    const ins = bapp.db.query(
+      "INSERT INTO degraded_span (cause, sentence, href, opened_at) VALUES (?1, 'main is red', '/x', ?2)",
+    );
+    try {
+      ins.run("red:someotherrepoid", NOW - 60_000);
+      expect(budgetBreaches(bapp.db, NOW, brepo.id).some((f) => f.title.startsWith("red:"))).toBe(false);
+      ins.run("shared:someotherrepoid:abc", NOW - 60_000);
+      expect(budgetBreaches(bapp.db, NOW, brepo.id).some((f) => f.title.startsWith("shared:"))).toBe(false);
+      ins.run(`shared:${brepo.id}:abc`, NOW - 60_000);
+      expect(budgetBreaches(bapp.db, NOW, brepo.id).filter((f) => f.title.startsWith("shared:")).length).toBe(1);
+      ins.run(`red:${brepo.id}`, NOW - 60_000);
+      const own = budgetBreaches(bapp.db, NOW, brepo.id).filter((f) => f.title.startsWith("red:"));
+      expect(own.length).toBe(1);
+      expect(own[0]!.fix).toContain("Fix the failing test on main");
+    } finally {
+      if (prior === undefined) delete process.env.FORGE_SENTINEL_REPO;
+      else process.env.FORGE_SENTINEL_REPO = prior;
+      bapp.db.query("DELETE FROM degraded_span WHERE cause LIKE 'red:%' OR cause LIKE 'shared:%'").run();
+    }
+  });
+
   test("a breach brings a hunt within a tick, inside the signal gap", () => {
     const t = Date.parse("2026-10-14T12:00:00.000Z");
     hunt(bapp, "alice/forge", t);

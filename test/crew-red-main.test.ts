@@ -14,6 +14,9 @@ import { getPull, type Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun, listRuns } from "../src/core/runs.ts";
 import type { User } from "../src/core/users.ts";
+import { vitals } from "../src/kernel/vitals.ts";
+import { ErrorLedger } from "../src/kernel/log.ts";
+import { RefusedLedger } from "../src/kernel/internal_refused.ts";
 import { startStandInCrew, stopStandInCrew, type StandInCrew } from "./helpers/crew-standin.ts";
 
 describe("the crew, with a red main it shares", () => {
@@ -109,5 +112,28 @@ describe("the crew, with a red main it shares", () => {
     requested = [];
     finish("main", "ok", []);
     expect(requested.map((r) => r[4])).toEqual([kept.id]);
+  });
+
+  test("the red main card says another repository's red is not fixable here; the forge's own says nothing of it", async () => {
+    const prior = process.env.FORGE_SENTINEL_REPO;
+    try {
+      const pull = await pullOf();
+      finish("main", "failed", ["X"]);
+      // A pull's check queued behind the red main is what makes the card.
+      createRun(app.db, { repoId: repo.id, kind: "check", env: `pull-${pull.number}`, commitOid: pull.headOid, reason: "push", issueId: pull.id });
+      const card = () =>
+        vitals({
+          db: app.db,
+          dataDir: app.config.dataDir,
+          signals: { errors: new ErrorLedger(), refused: new RefusedLedger() },
+        }).degraded.find((d) => d.cause === `red:${repo.id}`)!.sentence;
+      process.env.FORGE_SENTINEL_REPO = "someone/else";
+      expect(card()).toContain("Not fixable from this forge");
+      process.env.FORGE_SENTINEL_REPO = `${alice.username}/${repo.name}`;
+      expect(card()).not.toContain("Not fixable from this forge");
+    } finally {
+      if (prior === undefined) delete process.env.FORGE_SENTINEL_REPO;
+      else process.env.FORGE_SENTINEL_REPO = prior;
+    }
   });
 });

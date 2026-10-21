@@ -119,4 +119,18 @@ describe("the crew, with a red many pulls share", () => {
     mainGreen();
     expect(requested).toHaveLength(3);
   });
+
+  test("the card says another repository's red is not fixable here; the forge's own says nothing of it", async () => {
+    const prior = process.env.FORGE_SENTINEL_REPO;
+    try {
+      const card = () => sharedCards()[0]!.sentence;
+      process.env.FORGE_SENTINEL_REPO = "someone/else";
+      expect(card()).toContain("Not fixable from this forge");
+      process.env.FORGE_SENTINEL_REPO = `${alice.username}/${repo.name}`;
+      expect(card()).not.toContain("Not fixable from this forge");
+    } finally {
+      if (prior === undefined) delete process.env.FORGE_SENTINEL_REPO;
+      else process.env.FORGE_SENTINEL_REPO = prior;
+    }
+  });
 });

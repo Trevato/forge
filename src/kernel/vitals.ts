@@ -21,6 +21,7 @@ import {
   queueDepth,
 } from "../core/runs.ts";
 import { STALE_AFTER_MS } from "../runs/lease.ts";
+import { ownRepoPath } from "./own_repo.ts";
 import { BUDGETS } from "./budgets.ts";
 import { openDbFiles } from "./file_modes.ts";
 import { lastMirror, mirrorNeed } from "../snapshot/mirror.ts";
@@ -34,6 +35,11 @@ import { DOMAINS } from "./domains.ts";
 import { domainDrillNeeds } from "./domain_drill.ts";
 import { freeChecks, heldChecks, redHref, redSentence } from "../checks/red_main.ts";
 import { flakeHref, sharedCause, sharedSentence, sharedTests } from "../checks/shared_red.ts";
+
+/** A red in a repository other than the forge's own is not fixable from here: say so, so it reads as known. */
+function foreignNote(repo: string): string {
+  return repo === ownRepoPath() ? "" : " Not fixable from this forge: it is another repository's to fix.";
+}
 
 /** Free disk under this share of the volume is something to say. */
 export const DISK_FREE_MIN = 0.1;
@@ -377,14 +383,14 @@ export function vitals(input: VitalsInput): Vitals {
   for (const { red, held } of reds)
     need(
       `red:${red.repoId}`,
-      redSentence(red, held),
+      redSentence(red, held) + foreignNote(red.repo),
       red.since,
       redHref(red),
     );
 
   // A test failing on many pulls in the hour is one card, not a park per pull.
   for (const shared of sharedTests(input.db, now))
-    need(sharedCause(shared), sharedSentence(shared), shared.since, flakeHref(input.db, shared));
+    need(sharedCause(shared), sharedSentence(shared) + foreignNote(shared.repo), shared.since, flakeHref(input.db, shared));
 
   // A red restore drill, or none in eight days, is a card until a drill passes.
   const drill = lastVerdict(input.dataDir);

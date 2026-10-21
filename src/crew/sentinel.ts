@@ -20,6 +20,7 @@ import { decisionsSince } from "../core/decisions.ts";
 import { getAgentByName } from "../core/agents.ts";
 import { getIssueById, getLabel, setIssueLabels as writeLabels, type Issue } from "../core/issues.ts";
 import { getRepo, type Repo } from "../core/repos.ts";
+import { ownRepoPath } from "../kernel/own_repo.ts";
 import { leaseLapsed, listRunning } from "../core/runs.ts";
 import { migrations } from "../core/schema.ts";
 import { getUserByName, type User } from "../core/users.ts";
@@ -405,7 +406,10 @@ const BREACH_CAUSE = /^(queue:check|stuck:|budget:|red:|shared:)/;
  * `forgeRepoId` unset means no repository is known and nothing is dropped.
  */
 export function ownCause(cause: string, forgeRepoId: string | undefined): boolean {
-  return forgeRepoId === undefined || !cause.startsWith("red:") || cause === `red:${forgeRepoId}`;
+  if (forgeRepoId === undefined) return true;
+  if (cause.startsWith("red:")) return cause === `red:${forgeRepoId}`;
+  if (cause.startsWith("shared:")) return cause.split(":")[1] === forgeRepoId;
+  return true;
 }
 
 /**
@@ -486,8 +490,7 @@ export interface HuntResult {
 /** `filed` in a recorded hunt that had nowhere to file. */
 const UNFILED = -1;
 
-export const sentinelRepoPath = (): string =>
-  (process.env.FORGE_SENTINEL_REPO ?? "trevato/forge").trim();
+export const sentinelRepoPath = ownRepoPath;
 
 /** Why a hunt could not file, or undefined when it can. */
 export function cannotFile(
