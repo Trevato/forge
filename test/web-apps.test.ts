@@ -12,6 +12,12 @@
  * only through a grant, and every new POST refuses a cross-origin form.
  */
 
+import { createOrg } from "../src/core/orgs.ts";
+import {
+  MAX_STARTER_LENGTH,
+  STARTERS,
+  starterHref,
+} from "../src/web/pages/apps-starters.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -183,6 +189,59 @@ describe("apps, runs and the crew on the web", () => {
     expect(await bodyOf(bob, "/apps/new")).not.toContain(
       'href="/settings/crew"',
     );
+  });
+
+  test("New app: starters are plain links that prefill the box; a hostile description is escaped or ignored", async () => {
+    const plain = await (await web(alice, "/apps/new")).text();
+    for (const starter of STARTERS)
+      expect(plain).toContain(`href="${starterHref(starter)}"`);
+
+    const starter = STARTERS[0]!;
+    const filled = await (
+      await web(alice, starterHref(starter))
+    ).text();
+    expect(filled).toMatch(
+      new RegExp(`data-grow>\\s*${starter}</textarea\\s*>`),
+    );
+
+    const hostile = `</textarea><script>alert(1)</script>"><img src=x onerror=1>`;
+    const escaped = await (
+      await web(alice, `/apps/new?description=${encodeURIComponent(hostile)}`)
+    ).text();
+    expect(escaped).not.toContain("<script>alert(1)");
+    expect(escaped).not.toContain("<img src=x");
+    expect(escaped).toContain("&lt;script&gt;alert(1)");
+
+    for (const bad of ["x".repeat(MAX_STARTER_LENGTH + 1), "a\u0000b", "   "]) {
+      const ignored = await (
+        await web(alice, `/apps/new?description=${encodeURIComponent(bad)}`)
+      ).text();
+      expect(ignored).toMatch(/data-grow>\s*<\/textarea\s*>/);
+    }
+  });
+
+  test("New app: starters keep a valid ?owner= (an org the viewer writes to) and drop an unknown one", async () => {
+    const org = createOrg(app.db, "starterorg", user("alice").id);
+    if (!org.ok) throw new Error(org.error);
+    const starter = STARTERS[1]!;
+    const withOrg = await (
+      await web(alice, "/apps/new?owner=starterorg")
+    ).text();
+    for (const s of STARTERS)
+      expect(withOrg).toContain(
+        `href="${starterHref(s, "starterorg").replace("&", "&amp;")}"`,
+      );
+    expect(withOrg).toMatch(/<option\s+value="starterorg"\s+selected/);
+    const filled = await (
+      await web(alice, starterHref(starter, "starterorg"))
+    ).text();
+    expect(filled).toMatch(/<option\s+value="starterorg"\s+selected/);
+
+    const stranger = await (
+      await web(alice, "/apps/new?owner=nobody%22%3E%3Cb%3E")
+    ).text();
+    expect(stranger).not.toContain("&owner=");
+    expect(stranger).not.toContain("<b>");
   });
 
   test("New app creates the app and lands on its own page, URL in hand", async () => {

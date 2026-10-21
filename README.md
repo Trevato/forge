@@ -935,6 +935,11 @@ a sentence about what it should do. Seconds later it is serving at
 `http://<name>.<your forge's host>` from a small, real app (notes in a SQLite
 file), and if you named an agent, the sentence became issue #1, assigned.
 
+Under the box, four starter sentences are plain links (no script):
+`/apps/new?description=…` fills the box with that text (plain text up to
+200 characters, anything else is ignored; always escaped), and
+`&owner=` keeps the chosen owner. The list is `src/web/pages/apps-starters.ts`.
+
 - **Private egress is a site admin's yes.** An app reaches a private
   destination (a tailnet or LAN `host:port`) only when `forge.json` `egress`
   names it exactly and a site admin has granted it: on the

@@ -27,6 +27,7 @@ import {
 import { listAllAgents } from "../../actions/crew.ts";
 import { planningAvailable } from "../../crew/plan.ts";
 import { appNameJs, deriveAppName } from "./apps-name.ts";
+import { STARTERS, starterFromQuery, starterHref } from "./apps-starters.ts";
 import { envPull, previewEnv, type EnvName } from "../../apps/data.ts";
 import { appsRuntime, type EnvStatus, envsFor } from "../../apps/runtime.ts";
 import { firstPreviews, goldenPath, goldenPathLine } from "../../apps/golden_path.ts";
@@ -281,6 +282,13 @@ function newAppForm(
   const crew = agents.ok ? agents.value : [];
   const domain = appsRuntime(ctx.app)?.options.domain;
 
+  // An org's form stays the org's: carry the owner only when it is one the
+  // select offers, and only when it is not the viewer's own default.
+  const carried =
+    values.owner !== user.username && owners.includes(values.owner)
+      ? values.owner
+      : undefined;
+
   return html`<div class="narrow-wide">
     ${pageHead("New app", {
       sub: "A repository with a small working app in it: a first issue from your sentence, a crew member on it, production at its hostname, and a preview for every change.",
@@ -297,6 +305,18 @@ function newAppForm(
           autofocus: true,
           hint: "A sentence is enough — it becomes the first issue, and the agent you pick below starts on it.",
         })}
+        <div class="stack mb" role="group" aria-labelledby="starters-label">
+          <span id="starters-label" class="muted small"
+            >No idea where to start? Tap a starter to fill the box:</span
+          >
+          ${STARTERS.map((s) =>
+            btn(s, {
+              href: starterHref(s, carried),
+              variant: "outline",
+              size: "lg",
+            }),
+          )}
+        </div>
         ${selectField({
           label: "Owner",
           name: "owner",
@@ -395,7 +415,7 @@ export function newAppPage(ctx: Ctx): Response {
     body: newAppForm(ctx, {
       owner: ctx.url.searchParams.get("owner") ?? ctx.auth.user.username,
       name: "",
-      description: "",
+      description: starterFromQuery(ctx.url.searchParams.get("description")),
       visibility: "private",
       agent: picks ? PICK_AGENT : "",
     }, picks),
