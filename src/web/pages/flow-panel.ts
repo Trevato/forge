@@ -30,7 +30,7 @@ import {
   stageOf,
   type StageThroughput,
 } from "../../flow/throughput.ts";
-import type { QueueRow } from "../../flow/queue.ts";
+import { type QueueRow, redBatchWords } from "../../flow/queue.ts";
 import { readHeld } from "../../flow/held.ts";
 import type { App } from "../../app.ts";
 import { html, type Html } from "../html.ts";
@@ -162,7 +162,7 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
       { head: html`<h2>Pipeline</h2><a class="muted small" href="/settings/capacity">Capacity</a>`, id: "pipeline", pad: false },
     )}
     ${heldCard(readHeld(app, reader.kind === "owner", now))}
-    ${queueCard(queuesFor(app, reader, new Date(now)))}
+    ${queueCard(queuesFor(app, reader, new Date(now), { batches: true }))}
     ${listed === null || shown === undefined ? null : outList(shown, listed.hour, now)}`;
 }
 
@@ -174,7 +174,8 @@ function queueCard(rows: readonly QueueRow[]): Html {
         Green, approved pulls join their repository's queue; each candidate
         is gated once and lands whole, or is searched for the red one. Where
         check slots are free the next candidate gates on top of this one, and
-        a red one's halves gate at once.
+        a red one's halves gate at once. A pull found red is re-checked alone
+        before it rides with others again.
       </p>
       ${rows.length === 0
         ? html`<p class="muted">Nothing queued, gating or landed in the last hour.</p>`
@@ -188,6 +189,7 @@ function queueCard(rows: readonly QueueRow[]): Html {
                   <th scope="col">Gates</th>
                   <th scope="col">Landed, last hour</th>
                   <th scope="col">Approved to landed</th>
+                  <th scope="col">Red batches, last hour</th>
                 </tr>
               </thead>
               <tbody>
@@ -200,6 +202,7 @@ function queueCard(rows: readonly QueueRow[]): Html {
                       <td class="mono" data-gates>${String(r.gates)}</td>
                       <td class="mono" data-landed>${String(r.landedHour)}</td>
                       <td class="mono" data-approved-to-landed>${r.approvedToLanded === null ? "—" : `${r.approvedToLanded} min`}</td>
+                      <td class="mono" data-red-batches>${redBatchWords(r)}</td>
                     </tr>`,
                 )}
               </tbody>

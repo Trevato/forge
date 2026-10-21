@@ -287,7 +287,7 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
               session.db,
               new Date(),
               systemFor(session.app, flowReader).duplicates,
-              flowReader.kind === "agent" ? { queues: queuesFor(session.app, flowReader) } : undefined,
+              flowReader.kind === "agent" ? { queues: queuesFor(session.app, flowReader, new Date(), { batches: true }) } : undefined,
               readHeld(session.app, flowReader.kind === "owner"),
             )));
         },

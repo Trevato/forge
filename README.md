@@ -1269,9 +1269,16 @@ it does not, the next is formed again on main. A gate beyond a line's first
 starts only on a free check slot and holds it, and two slots are always kept
 for pull checks (`PULL_RESERVE`); with no slot spare the queue gates one
 candidate at a time and halves a red one, as it always did. A red
-waits for a push or a new main, except once: after 30 minutes with neither
-side moved it is gated again, and lands if green; a red that reproduces
-stays red and is not told twice. A gate cut off by the forge stopping (a
+waits for a push, not a new main (a pull red on main would otherwise ride a
+batch after every landing), except once: after 30 minutes on the same head
+it is gated again, and lands if green; a red that reproduces stays red and
+is not told twice. The queue remembers what its searches found: a pull
+handed back red on top of others of its candidate that landed first is a
+clash (the comment names them; the log says `[queue] red on top of its
+candidate`, or `red on its own merge`), and the tick line counts them as
+`clashes=N`. A remembered pull that joins again at the same head is gated
+alone, only once no fresh pull waits, and nothing is stacked on it, so a red
+re-check never cuts off a batch of fresh pulls; a push forgets it. A gate cut off by the forge stopping (a
 roll, a drain) or by the cluster losing its Job is no red at all: the next
 sweep gates it again. So is a gate that has not answered in 15 minutes
 (`GATE_DEADLINE_MS`): it is abandoned and its check aborted, the log says
@@ -1280,7 +1287,12 @@ that turn green while a candidate is gating wait for the next one. Each
 queue's numbers — how many pulls are queued, how many are gating, how many
 gates are in flight, how many landed in the last hour, and their median
 minutes from approval to landing — show in three places: the flow panel on `/boards`, the
-terminal's Flow command, and the MCP `flow` tool's `queue` field.
+terminal's Flow command, and the MCP `flow` tool's `queue` field. The flow
+panel and the terminal's Flow command also show the last hour's red batches
+(`1 of 3`: candidates gated red, of those gated; search prefixes and
+re-checks are not counted) — the panel as a column, the terminal as a
+`Red batches, last hour:` line under its table. The MCP `queue` rows do not
+carry it: their shape is unchanged.
 When a repository requires checks, an approved pull that is green only
 against an older main joins the queue as it is: the candidate's full gate
 runs on main's tip with that pull merged, which is the proof a re-check of

@@ -23,7 +23,7 @@ import {
 import type { AccessError } from "../actions/access.ts";
 import { gateCandidate, releaseOnLand } from "../checks/landing.ts";
 import { addLearned } from "../checks/learned.ts";
-import { enqueue, type GateCandidate, type Queued, type QueueOptions, queueWords } from "../checks/queue.ts";
+import { enqueue, type GateCandidate, type Queued, type QueueOptions, queueClashes, queueWords } from "../checks/queue.ts";
 import { checksFor } from "../checks/service.ts";
 import { queueDepth } from "../core/capacity.ts";
 import { mergeable, resolveOid, treeOf } from "../git/merge.ts";
@@ -1278,6 +1278,8 @@ export async function autonomyTick(
         ...(approved === undefined ? {} : { approved }),
         // What the merge queue is doing now, not what the sweep admitted (#3430).
         queue: queueWords(current.id),
+        // Pulls the queue found red on top of others of their candidate (#4235).
+        clashes: queueClashes(current.id),
         spent: `${status.spentTodayUsd.toFixed(2)}/${status.ceilingUsd}`,
         ...(status.paused === null ? {} : { paused: status.paused }),
         // Starts after the first, and how many followed a crash (#3708).
@@ -1868,13 +1870,14 @@ async function admit(
   const review = await reviewed(app, repo, pull);
   if (review === "hold") return err("review");
   // The full tier, once, on the queue's candidate (#1198, #2036). Red is
-  // told to the pull once per head and base, and the pull waits for a push
-  // — but a red neither side has moved off is gated once more after
-  // REGATE_RED_MS, so a red that was the machine's and not the code's does
-  // not hold the queue for good; a red that reproduces stays red (#3155).
+  // told to the pull once per head and base, and the pull is out of the
+  // queue until a push — a base that moved is no new try, or a pull red on
+  // main rides every batch after each landing (#4235). A red the pull has
+  // not moved off is gated once more after REGATE_RED_MS, alone (the queue
+  // remembers it), so a red that was the machine's and not the code's does
+  // not hold it for good; a red that reproduces stays red (#3155).
   const told = latestDecision(app.db, pull.id, "land");
-  const gatedAt = `${pull.headOid}:${baseTip}`;
-  if (redAt(told, gatedAt) && !regateDue(told!, Date.now())) return err("red");
+  if (redOf(told)?.head === pull.headOid && !regateDue(told!, Date.now())) return err("red");
   // Green only against a base that has moved since is admitted as it is:
   // the candidate's full gate runs on the base tip with this pull merged,
   // which is the proof a re-check of its own would give, and a red one
@@ -1895,7 +1898,7 @@ async function admit(
           why: error instanceof Error ? error.message : String(error),
         }),
       ),
-    handBack: (red, baseOid) => {
+    handBack: (red, baseOid, together) => {
       // Told on the base it was found red on: a new base is a new try. Red
       // again on the same head and base is the re-gate reproducing it: it
       // stays red for good, and the pull is not told twice.
@@ -1913,12 +1916,23 @@ async function admit(
         ms: 0,
       });
       addLearned(app.config.dataDir, pull.id, red.learn);
-      if (!again) addComment(app, by, repo, getIssueById(app.db, pull.id) ?? pull, red.comment);
+      if (!again) addComment(app, by, repo, getIssueById(app.db, pull.id) ?? pull, clashSaid(red.comment, together));
     },
   });
 }
 
-/** How long a red neither side has moved off waits before it is gated once more (#3155). */
+/**
+ * A red's comment, and when it was red on top of pulls of its candidate
+ * that landed first, a line naming them (#4235). The search does not gate
+ * the pull alone on the base before them, so it says both readings.
+ */
+function clashSaid(comment: string, together: readonly number[]): string {
+  if (together.length === 0) return comment;
+  const names = together.map((n) => `#${n}`).join(", ");
+  return `${comment}\n\nRed on top of ${names}, which landed first from the same merge-queue candidate: red on its own on that base, or only together with them. Bring this pull up to date with the base and push.`;
+}
+
+/** How long a red the pull has not moved off waits before it is gated once more (#3155). */
 export const REGATE_RED_MS = 30 * 60_000;
 
 /**

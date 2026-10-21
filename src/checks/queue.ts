@@ -23,9 +23,19 @@
  * cut off, logged, and the line re-formed by the next sweep, so one gate
  * that never returns cannot hold the queue for good (#3430).
  *
+ * The line remembers what its searches found (#4235): a pull handed back
+ * red is remembered at its head, with the pulls its red tree held besides
+ * it — a clash when there are any: red on top of them (green alone, or red
+ * on its own too; the search does not spend a gate to tell which). A
+ * remembered pull that joins again at the same head is re-checked in a
+ * candidate of its own, formed only when no fresh pull waits and never
+ * stacked on, so a red re-check cuts off no batch of fresh pulls. It is
+ * forgotten when it lands or its head changes.
+ *
  * What is queued is not stored: it is the pulls `landIfGreen` admitted, and
  * every sweep admits them again. The queue only orders them and remembers
- * what is at the gate, for the flow panel on /boards.
+ * what is at the gate and what its searches found, for the tick line and
+ * the flow panel on /boards.
  */
 
 import type { Pull } from "../core/pulls.ts";
@@ -58,8 +68,12 @@ export interface Queued {
    * now at `tip`: called once per candidate that landed anything.
    */
   release(tip: string): void;
-  /** The gate found this pull to be the red one, on this base. */
-  handBack(red: Red, baseOid: string): void;
+  /**
+   * The gate found this pull to be the red one, on this base. `together`
+   * names the pulls of its candidate that landed onto that base first and
+   * that its red tree held: none when it was red on its own merge.
+   */
+  handBack(red: Red, baseOid: string, together: readonly number[]): void;
 }
 
 /** One pull's squash on top of the steps before it. */
@@ -134,6 +148,21 @@ type Room = () => number;
 interface Waiting {
   readonly entry: Queued;
   readonly settle: (landed: boolean) => void;
+  /** Handed back red at this head before: gated alone, after the fresh pulls. */
+  readonly recheck: boolean;
+}
+
+/** A pull the line handed back red, while its head is the same (#4235). */
+interface Remembered {
+  readonly head: string;
+  /** The pulls its red tree held besides it: a clash when there are any. */
+  readonly together: readonly number[];
+}
+
+/** A first candidate's verdict, for the red-batch rate. */
+interface BatchVerdict {
+  readonly at: number;
+  readonly red: boolean;
 }
 
 /** One gate in flight: the pulls its candidate carries, and since when. */
@@ -151,6 +180,10 @@ interface Line {
   readonly flights: Set<InFlight>;
   /** The gate runs this line has made, for a test and the log. */
   gates: number;
+  /** Pulls handed back red, by pull id: re-checked alone if they join again. */
+  readonly reds: Map<string, Remembered>;
+  /** The last hour's candidate verdicts, search prefixes and re-checks not counted. */
+  batches: BatchVerdict[];
   draining: boolean;
   /** Wakes a drain waiting on a gate when pulls join the line. */
   wake: (() => void) | undefined;
@@ -162,6 +195,8 @@ interface Flight {
   readonly candidate: Candidate;
   /** Built on the flight before it, not on the base's tip. */
   readonly speculative: boolean;
+  /** A remembered red gated alone: nothing stacks on it. */
+  readonly recheck: boolean;
   readonly branch: string;
   readonly verdict: Promise<LandVerdict>;
   readonly abort: AbortController;
@@ -194,7 +229,17 @@ const UNDECIDED: LandVerdict = { lands: false, interrupted: true };
 function lineOf(repoId: string): Line {
   let line = lines.get(repoId);
   if (line === undefined) {
-    line = { repoId, waiting: [], holds: new Set(), flights: new Set(), gates: 0, draining: false, wake: undefined };
+    line = {
+      repoId,
+      waiting: [],
+      holds: new Set(),
+      flights: new Set(),
+      gates: 0,
+      reds: new Map(),
+      batches: [],
+      draining: false,
+      wake: undefined,
+    };
     lines.set(repoId, line);
   }
   return line;
@@ -215,11 +260,16 @@ export function enqueue(
   const answers = entries.map((entry) => {
     if (line.holds.has(entry.pull.id)) return Promise.resolve(false);
     line.holds.add(entry.pull.id);
+    const red = line.reds.get(entry.pull.id);
+    if (red !== undefined && red.head !== entry.pull.headOid) line.reds.delete(entry.pull.id);
+    const recheck = red !== undefined && red.head === entry.pull.headOid;
     return new Promise<boolean>((resolve) =>
       line.waiting.push({
         entry,
+        recheck,
         settle: (landed) => {
           line.holds.delete(entry.pull.id);
+          if (landed) line.reds.delete(entry.pull.id);
           resolve(landed);
         },
       }),
@@ -274,6 +324,31 @@ export function queueWords(repoId: string): string {
   if (s.gating === 0) return waiting === "" ? "idle" : waiting;
   const gates = s.gates > 1 ? ` in ${s.gates} gates` : "";
   return `gating ${pullsWord(s.gating)} since ${hhmm(s.since)}${gates}${waiting === "" ? "" : `, ${waiting}`}`;
+}
+
+/**
+ * Clashes the line remembers, for the tick line (#4235): pulls handed back
+ * red on top of others of their candidate, at the head they were red on.
+ */
+export function queueClashes(repoId: string): number {
+  let n = 0;
+  for (const red of lines.get(repoId)?.reds.values() ?? []) if (red.together.length > 0) n++;
+  return n;
+}
+
+const HOUR_MS = 60 * 60_000;
+
+/** The last hour's first candidates of a line, and how many of them were red (#4235). */
+export interface BatchRate {
+  readonly batches: number;
+  readonly red: number;
+}
+
+export function redBatchRate(repoId: string, now = Date.now()): BatchRate {
+  const line = lines.get(repoId);
+  if (line === undefined) return { batches: 0, red: 0 };
+  line.batches = line.batches.filter((b) => now - b.at < HOUR_MS);
+  return { batches: line.batches.length, red: line.batches.filter((b) => b.red).length };
 }
 
 /** `1 pull`, `8 pulls`. */
@@ -393,7 +468,7 @@ async function drain(line: Line, gate: GateCandidate, options: QueueOptions): Pr
       ahead.shift();
       let left: Waiting[];
       try {
-        left = await settleHead(head, verdict, ahead, gated, room);
+        left = await settleHead({ line, gated, room }, head, verdict, ahead);
       } catch (error) {
         log.warn("merge queue round failed", { error: String(error) });
         for (const w of head.steps) w.settle(false);
@@ -409,17 +484,21 @@ async function drain(line: Line, gate: GateCandidate, options: QueueOptions): Pr
 
 /**
  * Take the next batch from the front of the line, build it — on `on`'s tip
- * when there is a flight to stack on — and start its gate. `apart` when
- * the front of the line cannot stack on `on`; undefined when nothing of
- * the batch could be built.
+ * when there is a flight to stack on — and start its gate. Fresh pulls go
+ * first; a re-check is a batch of one, once no fresh pull waits. `apart`
+ * when the front of the line cannot stack on `on`, or `on` is a re-check;
+ * undefined when nothing of the batch could be built.
  */
 async function launch(line: Line, gated: Gated, on: Flight | undefined): Promise<Flight | undefined | "apart"> {
-  const first = line.waiting[0]!.entry;
+  const front = line.waiting.find((w) => !w.recheck) ?? line.waiting[0]!;
+  const first = front.entry;
   const branch = first.pull.baseBranch;
-  if (on !== undefined && (first.dir !== on.candidate.dir || branch !== on.branch)) return "apart";
-  const batch = line.waiting
-    .filter((w) => w.entry.dir === first.dir && w.entry.pull.baseBranch === branch)
-    .slice(0, MAX_CANDIDATE);
+  if (on !== undefined && (on.recheck || first.dir !== on.candidate.dir || branch !== on.branch)) return "apart";
+  const batch = front.recheck
+    ? [front]
+    : line.waiting
+        .filter((w) => !w.recheck && w.entry.dir === first.dir && w.entry.pull.baseBranch === branch)
+        .slice(0, MAX_CANDIDATE);
   line.waiting = line.waiting.filter((w) => !batch.includes(w));
   let candidate: Candidate | undefined;
   try {
@@ -437,7 +516,7 @@ async function launch(line: Line, gated: Gated, on: Flight | undefined): Promise
     log.warn("merge queue round failed", { error: String(error) });
     return UNDECIDED;
   });
-  return { steps, candidate, speculative: on !== undefined, branch, verdict, abort };
+  return { steps, candidate, speculative: on !== undefined, recheck: front.recheck, branch, verdict, abort };
 }
 
 /**
@@ -459,13 +538,7 @@ function inCandidate(batch: readonly Waiting[], candidate: Candidate): Waiting[]
  * the tree it was built on — the flight before it landed whole. Returns
  * what waits for the next candidate.
  */
-async function settleHead(
-  head: Flight,
-  verdict: LandVerdict,
-  ahead: Flight[],
-  gated: Gated,
-  room: Room,
-): Promise<Waiting[]> {
+async function settleHead(search: Search, head: Flight, verdict: LandVerdict, ahead: Flight[]): Promise<Waiting[]> {
   let candidate = head.candidate;
   if (head.speculative) {
     const tip = await onTip(candidate, head.branch);
@@ -475,6 +548,7 @@ async function settleHead(
     }
     candidate = { ...candidate, baseOid: tip };
   }
+  if (!head.recheck && !("interrupted" in verdict)) search.line.batches.push({ at: Date.now(), red: !verdict.lands });
   if (verdict.lands) {
     if (await land(candidate, head.steps)) return [];
     return discard(ahead);
@@ -486,7 +560,7 @@ async function settleHead(
     for (const w of head.steps) w.settle(false);
     return behind;
   }
-  return [...(await judged(candidate, head.steps, verdict, gated, room)), ...behind];
+  return [...(await judged(search, candidate, head.steps, verdict, [])), ...behind];
 }
 
 /**
@@ -515,18 +589,27 @@ async function discard(ahead: Flight[]): Promise<Waiting[]> {
   return gone.flatMap((f) => [...f.steps]);
 }
 
+/** What a red candidate's search works with: its line, the gate, the free slots. */
+interface Search {
+  readonly line: Line;
+  readonly gated: Gated;
+  readonly room: Room;
+}
+
 /**
  * Build, gate and land one candidate of `batch` on the base's tip. `known`
  * is a red verdict already read for a tree: a candidate that builds to
- * that same tree is not gated again. Returns what waits for the next
+ * that same tree is not gated again. `landed` are the pulls of this search
+ * that landed onto the base before it. Returns what waits for the next
  * candidate.
  */
 async function round(
+  search: Search,
   batch: readonly Waiting[],
-  gated: Gated,
-  room: Room,
-  known?: { treeOid: string; red: Red },
+  known: { treeOid: string; red: Red },
+  landed: readonly Queued[],
 ): Promise<Waiting[]> {
+  const { gated } = search;
   const candidate = await build(batch);
   if (candidate === undefined || candidate.steps.length === 0) {
     for (const w of batch) w.settle(false);
@@ -534,7 +617,7 @@ async function round(
   }
   const steps = inCandidate(batch, candidate);
   const verdict: LandVerdict =
-    known !== undefined && known.treeOid === candidate.treeOid ? known.red : await gated(candidate);
+    known.treeOid === candidate.treeOid ? known.red : await gated(candidate);
   if (verdict.lands) {
     await land(candidate, steps);
     return [];
@@ -543,7 +626,7 @@ async function round(
     for (const w of steps) w.settle(false);
     return [];
   }
-  return judged(candidate, steps, verdict, gated, room);
+  return judged(search, candidate, steps, verdict, landed);
 }
 
 /**
@@ -557,14 +640,26 @@ async function round(
  * candidate.
  */
 async function judged(
+  search: Search,
   candidate: Candidate,
   steps: readonly Waiting[],
   red: Red,
-  gated: Gated,
-  room: Room,
+  landed: readonly Queued[],
 ): Promise<Waiting[]> {
+  const { gated, room } = search;
   if (steps.length === 1) {
-    steps[0]!.entry.handBack(red, candidate.baseOid);
+    const culprit = steps[0]!.entry;
+    // Red on top of pulls of its own candidate that landed first: a clash
+    // with them, or red on its own — not gated alone on the base before
+    // them to tell which. Remembered with them either way (#4235).
+    const together = landed.map((q) => q.pull.number);
+    search.line.reds.set(culprit.pull.id, { head: culprit.pull.headOid, together });
+    log.info(together.length === 0 ? "red on its own merge" : "red on top of its candidate", {
+      repo: search.line.repoId,
+      pull: culprit.pull.number,
+      ...(together.length === 0 ? {} : { with: together.map((n) => `#${n}`).join(",") }),
+    });
+    culprit.handBack(red, candidate.baseOid, together);
     steps[0]!.settle(false);
     return [];
   }
@@ -605,7 +700,8 @@ async function judged(
     return [];
   }
   const known = stop === undefined ? { treeOid: candidate.treeOid, red } : { treeOid: prefix(stopAt).treeOid, red: stop };
-  const left = await round(steps.slice(green, stopAt), gated, room, known);
+  const now = [...landed, ...steps.slice(0, green).map((w) => w.entry)];
+  const left = await round(search, steps.slice(green, stopAt), known, now);
   return [...left, ...steps.slice(stopAt)];
 }
 

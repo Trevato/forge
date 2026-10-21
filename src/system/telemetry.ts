@@ -9,7 +9,7 @@ import type { App } from "../app.ts";
 import { SOURCES } from "../boards/sources.ts";
 import { conflictedPulls, conflictedSays } from "../flow/conflicted.ts";
 import { readPipeline, verdict } from "../flow/pipeline.ts";
-import { readQueues } from "../flow/queue.ts";
+import { type QueueReading, readQueues } from "../flow/queue.ts";
 import { requestedSays, requestedWaits } from "../flow/requested.ts";
 import { readThroughput, stageOut, throughputSays } from "../flow/throughput.ts";
 import type { Reader } from "../actions/telemetry.ts";
@@ -48,8 +48,8 @@ export function flowFor(app: App, reader: Reader, now = new Date()) {
 }
 
 /** The merge queue as `reader` may see it: an agent's has private repositories cut out. */
-export function queuesFor(app: App, reader: Reader, now = new Date()) {
-  return readQueues(app.db, now).filter((q) => reader.kind === "owner" || publicRepo(app, q.repo));
+export function queuesFor(app: App, reader: Reader, now = new Date(), reading: QueueReading = {}) {
+  return readQueues(app.db, now, reading).filter((q) => reader.kind === "owner" || publicRepo(app, q.repo));
 }
 
 function publicRepo(app: App, full: string): boolean {

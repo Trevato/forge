@@ -18,7 +18,7 @@ import { HOLDS } from "../../crew/held.ts";
 import type { HeldRow } from "../../flow/held.ts";
 import { conflictedPulls, conflictedSays } from "../../flow/conflicted.ts";
 import { readPipeline, STAGE_LABEL, verdict } from "../../flow/pipeline.ts";
-import { readQueues } from "../../flow/queue.ts";
+import { readQueues, redBatchWords } from "../../flow/queue.ts";
 import { requestedSays, requestedWaits } from "../../flow/requested.ts";
 import { readThroughput, stageOut, throughputSays } from "../../flow/throughput.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -43,7 +43,9 @@ export function flowLines(
   const stages = readPipeline(db, now);
   const flow = readThroughput(db, stages.map((s) => s.key), now);
   const inner = WIDTH - 6;
-  const queues = agent?.queues ?? readQueues(db, now);
+  const queues = agent?.queues ?? readQueues(db, now, { batches: true });
+  // The row is full at 58 columns: the red-batch rate (#4235) is a line under it.
+  const red = queues.filter((q) => (q.batches?.batches ?? 0) > 0);
   const conflicted = conflictedSays(conflictedPulls(db, agent !== undefined), now.getTime());
   const requested = requestedWaits(db, agent !== undefined);
   const waits = [
@@ -68,6 +70,9 @@ export function flowLines(
           (q) =>
             `${pad(truncate(q.repo, 15), 15)} ${pad(String(q.queued), 6, "right")} ${pad(String(q.gating), 6, "right")} ${pad(String(q.gates), 5, "right")} ${pad(String(q.landedHour), 9, "right")} ${pad(q.approvedToLanded === null ? "—" : String(q.approvedToLanded), 12, "right")}`,
         )),
+    ...(red.length === 0
+      ? []
+      : wrap(`Red batches, last hour: ${red.map((q) => `${q.repo} ${redBatchWords(q)}`).join(", ")}.`, inner)),
     ...(conflicted === null ? [] : ["", ...wrap(conflicted, inner)]),
     ...waits,
     ...(held === undefined ? [] : ["", ...heldLines(held, inner)]),

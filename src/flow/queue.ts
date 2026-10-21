@@ -5,10 +5,12 @@
  * last hour, and their median minutes from approval to landing. Queued,
  * gating and gates are this process's line (`checks/queue.ts`); landed is
  * the rows. A repository with nothing queued, gating or landed is not listed.
+ * /boards and the terminal also read the last hour's red-batch rate (#4235),
+ * the line's too; the MCP rows keep their shape without it.
  */
 
 import type { Database } from "bun:sqlite";
-import { queueStatus } from "../checks/queue.ts";
+import { type BatchRate, queueStatus, redBatchRate } from "../checks/queue.ts";
 
 export interface QueueRow {
   /** `owner/name`. */
@@ -23,12 +25,20 @@ export interface QueueRow {
    * over the last hour's; null when none of them was approved.
    */
   readonly approvedToLanded: number | null;
+  /** The last hour's candidates and how many were red: only when asked for. */
+  readonly batches?: BatchRate;
+}
+
+/** What the caller wants beyond the counts every door shows. */
+export interface QueueReading {
+  /** The red-batch rate, for /boards. */
+  readonly batches?: boolean;
 }
 
 const HOUR_MS = 60 * 60 * 1000;
 
 /** Three queries, however many repositories have a line. */
-export function readQueues(db: Database, now: Date): QueueRow[] {
+export function readQueues(db: Database, now: Date, reading: QueueReading = {}): QueueRow[] {
   const since = new Date(now.getTime() - HOUR_MS).toISOString();
   const landed = db
     .query<{ id: string; full: string; n: number }, [string, string]>(
@@ -75,8 +85,15 @@ export function readQueues(db: Database, now: Date): QueueRow[] {
       gates: lines.get(id)?.gates ?? 0,
       landedHour: count.get(id) ?? 0,
       approvedToLanded: medianMinutes(waits.get(id) ?? []),
+      ...(reading.batches === true ? { batches: redBatchRate(id, now.getTime()) } : {}),
     }))
     .sort((a, b) => b.gating + b.queued - (a.gating + a.queued) || a.repo.localeCompare(b.repo));
+}
+
+/** `2 of 9` red candidates in the last hour; a dash when none was gated or none was asked for. */
+export function redBatchWords(row: QueueRow): string {
+  const b = row.batches;
+  return b === undefined || b.batches === 0 ? "—" : `${b.red} of ${b.batches}`;
 }
 
 /** The median of `ms`, in whole minutes; null for none. */
