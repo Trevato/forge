@@ -57,7 +57,7 @@ import { submitReview } from "../actions/pulls.ts";
 import { originError } from "../web/pages/thread.ts";
 import { holdPull, releasePull } from "../actions/holds.ts";
 import { openPlan, parsePlan, PLAN_MAX, proposePlan } from "../actions/plan.ts";
-import { cancelRepoRun } from "../actions/runs.ts";
+import { cancelRepoRun, listRepoRuns } from "../actions/runs.ts";
 import { familyView } from "../spawn/family.ts";
 import { clientRows } from "../spawn/clients.ts";
 import { reissueDoor, spawnDoor } from "../spawn/door.ts";
@@ -2410,6 +2410,45 @@ const TOOLS: readonly Tool[] = [
       return set.ok
         ? good(set.value)
         : bad("forbidden", "only a person watches a milestone");
+    },
+  },
+  {
+    name: "runs",
+    description:
+      "A repository's recent runs, newest first: id, kind, state, the issue or pull number, started and ended; the same rules as the runs page.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 50,
+          description: "How many, 1 to 50; 20 when absent.",
+        },
+      },
+      required: ["repo"],
+    },
+    writes: false,
+    run(ctx, user, args) {
+      const limit = args["limit"] ?? 20;
+      if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1 || limit > 50)
+        return bad("bad_limit", "limit is a whole number from 1 to 50");
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const runs = listRepoRuns(ctx.app, user, repo, { limit });
+      if (!runs.ok) return bad("not_found", "no such app or repository (owner/name)");
+      return good({
+        runs: runs.value.map((r) => ({
+          id: r.id,
+          kind: r.kind,
+          state: r.state,
+          number:
+            r.issueId === null ? null : (getIssueById(ctx.app.db, r.issueId)?.number ?? null),
+          startedAt: r.startedAt,
+          endedAt: r.finishedAt,
+        })),
+      });
     },
   },
   {
