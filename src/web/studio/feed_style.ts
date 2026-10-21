@@ -17,8 +17,6 @@ export const feedCss = /* css */ `
 /* The composer: the home's one primary action, on top of the timeline. */
 .composer { display: grid; gap: 8px; border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; background: var(--card, var(--bg)); }
 .composer textarea { width: 100%; min-height: 64px; resize: vertical; }
-.composer-bar { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.composer-bar select { min-width: 0; max-width: 60%; }
 /* Your apps: a narrow column on a desk, a tab away on a phone. */
 /* An admin's tick boxes are always shown (no Select toggle); 24 px to tap. */
 #live-apps input[type="checkbox"] { width: 24px; height: 24px; }
