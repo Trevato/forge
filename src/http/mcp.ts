@@ -45,9 +45,11 @@ import { chainOfRepo, FOLLOW_MODES, forgeLinkOf } from "../spawn/chain.ts";
 import { watchMilestone } from "../actions/watches.ts";
 import {
   addCommentThrough,
+  closingFrom,
   editIssue,
   setIssueLabelsThrough,
   setIssueSealed,
+  setIssueStateThrough,
   TAKEN_UP,
 } from "../actions/issues.ts";
 import {
@@ -103,6 +105,7 @@ import { share } from "../feed/share.ts";
 import { parseTargets } from "./feed.ts";
 import { appsRuntime, envsFor } from "../apps/runtime.ts";
 import {
+  CLOSE_REASONS,
   getIssue,
   getIssueById,
   labelsFor,
@@ -293,7 +296,6 @@ const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
 
 const REPO_ARG = {
   type: "string",
-  description: "owner/name",
 } as const;
 
 /** A repository the caller may read, by `owner/name`. */
@@ -947,6 +949,54 @@ const TOOLS: readonly Tool[] = [
         says: `Edited #${issue.number}: ${edited.value.title}`,
         number: issue.number,
         title: edited.value.title,
+      });
+    },
+  },
+  {
+    name: "close",
+    description:
+      "Close an issue or pull, or reopen it (`state` open); the PATCH route's refusals apply. `reason`: done, dropped, or split (with `into`).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        number: { type: "integer", minimum: 1 },
+        state: { type: "string", enum: ["closed", "open"] },
+        reason: { type: "string", enum: [...CLOSE_REASONS] },
+        into: {
+          type: "array",
+          items: { type: "integer", minimum: 1 },
+          maxItems: 50,
+        },
+      },
+      required: ["repo", "number"],
+    },
+    writes: true,
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const issue = issueArg(ctx, repo, args, "number");
+      if ("ok" in issue) return issue;
+      const state = args["state"] ?? "closed";
+      if (state !== "closed" && state !== "open")
+        return bad("invalid_state", "state is closed or open");
+      // The PATCH route's own check of `reason` and `into`.
+      const closing = closingFrom(args);
+      if (closing === undefined)
+        return bad("invalid_reason", "a reason is done, dropped, or split (with `into`: up to 50 issue numbers)");
+      const changed = await setIssueStateThrough(ctx.app, user, repo, issue, state, closing);
+      if (!changed.ok)
+        return bad(
+          changed.error,
+          changed.error === "forbidden"
+            ? "this is not yours to close or reopen"
+            : "that state could not be set",
+        );
+      return good({
+        says: `#${issue.number} is ${changed.value.state}.`,
+        number: issue.number,
+        state: changed.value.state,
+        closeReason: changed.value.closeReason,
       });
     },
   },

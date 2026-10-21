@@ -27,6 +27,7 @@ import { moveBlockersToChildren } from "../core/dependencies.ts";
 import {
   addComment as insertComment,
   createIssue,
+  CLOSE_REASONS,
   getIssue,
   getIssueById,
   getLabel,
@@ -613,6 +614,30 @@ export interface Closing {
   readonly into?: readonly number[];
   /** The crew's live triage closed it, not the person whose name it carries. */
   readonly triage?: boolean;
+}
+
+/**
+ * `reason` and `into` of a close request, or undefined when they are not
+ * the shapes they must be (a bad reason word, `into` not a list of numbers).
+ */
+export function closingFrom(input: Record<string, unknown>): Closing | undefined {
+  const reason = input.reason;
+  if (reason !== undefined && !CLOSE_REASONS.includes(reason as CloseReason))
+    return undefined;
+  let into: number[] | undefined;
+  if (input.into !== undefined) {
+    if (
+      !Array.isArray(input.into) ||
+      input.into.length > 50 ||
+      !input.into.every((n) => Number.isInteger(n) && n > 0)
+    )
+      return undefined;
+    into = input.into as number[];
+  }
+  return {
+    ...(reason === undefined ? {} : { reason: reason as CloseReason }),
+    ...(into === undefined ? {} : { into }),
+  };
 }
 
 /**

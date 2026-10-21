@@ -13,6 +13,8 @@ import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { pullDir } from "../src/core/pulls.ts";
 import { resolveOid } from "../src/git/merge.ts";
+import { openIssue } from "../src/actions/issues.ts";
+import { setCrewRole } from "../src/core/agents.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
 import { createApp as insertApp } from "../src/core/apps.ts";
@@ -181,6 +183,7 @@ describe("the forge over MCP", () => {
       "pulls",
       "variant",
       "edit",
+      "close",
       "read_file",
       "asks",
       "asks_act",
@@ -454,6 +457,66 @@ describe("the forge over MCP", () => {
       (await tool(rw, "say", { repo: "alice/game", number: 999, text: "x" }))
         .error,
     ).toContain("not_found");
+  });
+
+  test("close is the PATCH route's action: the same refusals, the new state answered", async () => {
+    const made = await createAgent(app, alice, { username: "closer", brief: "x" });
+    if (!made.ok) throw new Error(String(made.error));
+    expect(addToCrew(app, alice, game, "closer").ok).toBe(true);
+    setCrewRole(app.db, game.id, made.value.user.id, "planner");
+    const botToken = createToken(app.db, made.value.user.id, "bot", "rw").token;
+    const mine = (title: string) => {
+      const o = openIssue(app, made.value.user, game, { title });
+      if (!o.ok) throw new Error(String(o.error));
+      return o.value;
+    };
+    const patch = async (token: string, number: number, payload: unknown) => {
+      const res = await fetch(`${base}/api/v1/repos/alice/game/issues/${number}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload),
+      });
+      return { status: res.status, json: (await res.json()) as any };
+    };
+
+    // Done with no commit naming it: refused, with the API's code.
+    const noNote = mine("a thing nobody did");
+    const viaApi = await patch(botToken, noNote.number, { state: "closed", reason: "done" });
+    expect(viaApi.json.error).toBe("forbidden");
+    const refused = await tool(botToken, "close", { repo: "alice/game", number: noNote.number, reason: "done" });
+    expect(refused.error).toContain("forbidden");
+
+    // Its own, dropped: closed, and the answer says so.
+    const own = mine("a thing to drop");
+    const dropped = await tool(botToken, "close", {
+      repo: "alice/game",
+      number: own.number,
+      reason: "dropped",
+    });
+    expect(dropped.value).toMatchObject({ number: own.number, state: "closed", closeReason: "dropped" });
+
+    // A person's ask is not an agent's to drop.
+    const asked = openIssue(app, alice, game, { title: "a person asks" });
+    if (!asked.ok) throw new Error(String(asked.error));
+    expect(
+      (await tool(botToken, "close", { repo: "alice/game", number: asked.value.number, reason: "dropped" })).error,
+    ).toContain("forbidden");
+    // Nor does an agent reopen.
+    expect((await tool(botToken, "close", { repo: "alice/game", number: own.number, state: "open" })).error).toContain(
+      "forbidden",
+    );
+
+    // A person reopens it; closing defaults to done.
+    const reopened = await tool(rw, "close", { repo: "alice/game", number: own.number, state: "open" });
+    expect(reopened.value).toMatchObject({ state: "open", closeReason: null });
+    const closed = await tool(rw, "close", { repo: "alice/game", number: own.number });
+    expect(closed.value).toMatchObject({ state: "closed", closeReason: "done" });
+
+    // The boundary: bad words are refused before the action.
+    expect((await tool(rw, "close", { repo: "alice/game", number: own.number, state: "x" })).error).toContain("invalid_state");
+    expect((await tool(rw, "close", { repo: "alice/game", number: own.number, reason: "x" })).error).toContain("invalid_reason");
+    expect((await tool(rw, "close", { repo: "alice/game", number: own.number, into: [0] })).error).toContain("invalid_reason");
+    expect((await tool(ro, "close", { repo: "alice/game", number: own.number })).error).toContain("forbidden: this token may read, not act");
   });
 
   test("issue reads body, comments, labels and what it waits for; a sealed one is not found; a reader is marked untrusted", async () => {

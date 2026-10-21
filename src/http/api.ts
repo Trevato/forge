@@ -347,12 +347,8 @@ import { isEnvName } from "../apps/data.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import { crewRole, isCrew, type Agent } from "../core/agents.ts";
 import { listApps, type AppRecord } from "../core/apps.ts";
-import {
-  CLOSE_REASONS,
-  listAssignedTo,
-  type CloseReason,
-} from "../core/issues.ts";
-import type { Closing } from "../actions/issues.ts";
+import { listAssignedTo } from "../core/issues.ts";
+import { closingFrom } from "../actions/issues.ts";
 import {
   checkSummary,
   checksForHead,
@@ -840,30 +836,6 @@ const NOTHING_TO_CHANGE = () =>
     422,
     "send a new title or body, a state, or both",
   );
-
-/**
- * `reason` and `into` of a close request, or undefined when they are not
- * the shapes they must be (a bad reason word, `into` not a list of numbers).
- */
-function closingFrom(input: Record<string, unknown>): Closing | undefined {
-  const reason = input.reason;
-  if (reason !== undefined && !CLOSE_REASONS.includes(reason as CloseReason))
-    return undefined;
-  let into: number[] | undefined;
-  if (input.into !== undefined) {
-    if (
-      !Array.isArray(input.into) ||
-      input.into.length > 50 ||
-      !input.into.every((n) => Number.isInteger(n) && n > 0)
-    )
-      return undefined;
-    into = input.into as number[];
-  }
-  return {
-    ...(reason === undefined ? {} : { reason: reason as CloseReason }),
-    ...(into === undefined ? {} : { into }),
-  };
-}
 
 /**
  * Which status a branch refusal deserves. A conflict is something that
