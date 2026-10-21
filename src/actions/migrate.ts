@@ -4,6 +4,9 @@
  * history — every branch, every tag — into a native repository that is
  * yours from the first second: no `origin_id`, no write-through, nothing
  * that reaches back. After it, the forge is where the repository lives.
+ * What it keeps of the source is where it came from, as links and nothing
+ * more (`core/provenance.ts`, #3293): the address, and what that forks when
+ * its host says — the header's "Migrated from … · fork of …" line.
  *
  * The source is one of two things. A repository on an origin you have
  * connected is read with that origin's credential, and the credential
@@ -32,6 +35,7 @@ import { getAgentByName } from "../core/agents.ts";
 import { storageStale } from "../core/storage.ts";
 import { setMirrorTarget } from "../core/migrate_mirror.ts";
 import { getOriginFor } from "../core/origins.ts";
+import { recordProvenance } from "../core/provenance.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { runGitCapture } from "../git/env.ts";
@@ -44,6 +48,7 @@ import { carryConversations, plural } from "../origins/carry.ts";
 import { providerForOrigin } from "../origins/credential.ts";
 import { redact, safeRemoteUrl, secretsIn } from "../origins/credentials.ts";
 import { MIRROR_REFSPECS, snapshotRefs } from "../origins/git-mirror.ts";
+import { lookupLineage } from "../origins/lineage.ts";
 import {
   localTips,
   pickWorkBranch,
@@ -136,6 +141,18 @@ interface Resolved {
   readonly originId: string;
   readonly name: string;
   readonly description: string;
+  /** Where a person reads the source: the address the line links (#3293). */
+  readonly webUrl: string;
+  /**
+   * What the source forks, nearest first, as its origin reported it — or
+   * `undefined` for a pasted address, whose host is asked after the clone.
+   */
+  readonly parents: readonly string[] | undefined;
+  /**
+   * Private where it came from: its name and owner are not this forge's to
+   * publish, so its trail starts hidden whatever it is migrated as.
+   */
+  readonly private: boolean;
   readonly authEnv: () => Promise<Record<string, string>>;
   /** The address `vetHost` passed, when the host was vetted: git must dial it, not look the name up again. */
   readonly pin?: Pin;
@@ -210,6 +227,7 @@ export async function migrateRepo(
     crew: input.crew,
     after: input.after ?? "leave",
     jobId: job.id,
+    lookup: input.resolve,
   });
   return ok({ repo, job: getJob(job.id) ?? job });
 }
@@ -420,6 +438,10 @@ export async function resolveSource(
       originId: "",
       name: nameFromUrl(url),
       description: "",
+      webUrl: url,
+      parents: undefined,
+      // Cloned without logging in, so anyone could already read it.
+      private: false,
       authEnv: () => Promise.resolve({}),
       who: { logins: [user.username], emails: [user.email] },
     });
@@ -441,6 +463,12 @@ export async function resolveSource(
     originId: origin.id,
     name: remote.value.name,
     description: remote.value.description,
+    webUrl: remote.value.htmlUrl,
+    parents: [
+      ...(remote.value.parent === null ? [] : [remote.value.parent]),
+      ...(remote.value.root === undefined ? [] : [remote.value.root]),
+    ],
+    private: remote.value.private,
     // Only the header: the origin's credential reaches this one git
     // invocation scoped to its host, and the repository never learns it.
     authEnv: () => provider.value.gitAuthEnv(url),
@@ -471,9 +499,11 @@ async function runMigration(
     readonly crew: MigrateInput["crew"];
     readonly after: AfterMigration;
     readonly jobId: string;
+    /** How a pasted address's host is looked up for its lineage (#3293). */
+    readonly lookup: Resolve | undefined;
   },
 ): Promise<void> {
-  const { crew, jobId } = asked;
+  const { crew, jobId, lookup } = asked;
   const fail = async (error: string): Promise<void> => {
     // An empty repository nobody asked for is clutter, and it holds the
     // name a retry wants: a clone that did not happen leaves nothing.
@@ -566,6 +596,17 @@ async function runMigration(
         },
       });
     }
+
+    // Where it came from, kept as links and nothing more (#3293): a pasted
+    // address's host is asked once, anonymously, what it forks. A private
+    // source's trail is kept hidden until its owner turns it on.
+    recordProvenance(app.db, current.id, {
+      shown: !source.private,
+      url: source.webUrl,
+      parents:
+        source.parents ??
+        (await lookupLineage(source.url, lookup ? { resolve: lookup } : {})),
+    });
 
     // The source becomes the upstream this repository follows (#3442): on
     // when the crew runs it on its own, off — but filled in — otherwise.

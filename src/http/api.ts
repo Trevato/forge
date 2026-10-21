@@ -8,6 +8,8 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { showProvenance } from "../actions/provenance.ts";
+import { getProvenance, provenanceFacts } from "../core/provenance.ts";
 import { goldenPath } from "../apps/golden_path.ts";
 import { upstreamPayload } from "../spawn/upstream.ts";
 import { setRole } from "../actions/roles.ts";
@@ -603,6 +605,13 @@ function repoJson(ctx: Ctx, repo: Repo) {
     pinned:
       ctx.auth.user !== undefined &&
       isPinned(ctx.app.db, ctx.auth.user.id, repo.id),
+    provenance: provenanceFacts(
+      ctx.app.db,
+      repo,
+      repo.forkParentId === null
+        ? undefined
+        : forkParentFor(ctx.app.db, repo, ctx.auth.user),
+    ),
   };
 }
 
@@ -2375,6 +2384,18 @@ export function apiRoutes(router: Router<Handler>): void {
       );
     if (input.plansNeedNod !== undefined && typeof input.plansNeedNod !== "boolean")
       return apiError("bad_plans_need_nod", 422, "plansNeedNod is true or false");
+    if (input.showProvenance !== undefined) {
+      if (typeof input.showProvenance !== "boolean")
+        return apiError("bad_show_provenance", 422, "showProvenance is true or false");
+      // A person's call and an admin's, refused before anything is written,
+      // so a request that cannot have this field saves none of the others —
+      // and before the record is looked at, so the refusal is the same
+      // whether there is a hidden trail or none.
+      if (ctx.auth.user?.kind === "agent" || !canAdmin(ctx.app.db, repo, ctx.auth.user))
+        return respondAccess("not_found", 422);
+      if (getProvenance(ctx.app.db, repo.id) === undefined)
+        return apiError("no_provenance", 422, "this repository was not migrated here");
+    }
     const updated = await updateRepoSettings(ctx.app, ctx.auth.user, repo, {
       ...(input.visibility === "public" || input.visibility === "private"
         ? { visibility: input.visibility }
@@ -2412,6 +2433,11 @@ export function apiRoutes(router: Router<Handler>): void {
         : {}),
     });
     if (!updated.ok) return respondAccess(updated.error, 422);
+    // "Show where this came from" (#3293): an admin's, never an agent's.
+    if (typeof input.showProvenance === "boolean") {
+      const shown = showProvenance(ctx.app, ctx.auth.user, repo, input.showProvenance);
+      if (!shown.ok) return respondAccess(shown.error, 422);
+    }
     return json(repoJson(ctx, updated.value));
   });
 

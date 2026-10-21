@@ -381,6 +381,7 @@ import {
   settingsUpdate,
   waveCut,
   archiveSubmit,
+  provenanceSubmit,
   mirrorStop,
   webhookCreate,
   webhookDelete,
@@ -1339,6 +1340,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/settings", settingsUpdate);
   router.add("POST", "/:owner/:name/settings/wave", waveCut);
   router.add("POST", "/:owner/:name/settings/archive", archiveSubmit);
+  router.add("POST", "/:owner/:name/settings/provenance", provenanceSubmit);
   router.add("POST", "/:owner/:name/settings/mirror/stop", mirrorStop);
   router.add("POST", "/:owner/:name/settings/proposal-tokens", proposalTokenMint);
   router.add(

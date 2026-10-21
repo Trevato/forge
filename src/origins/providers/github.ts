@@ -722,6 +722,14 @@ function repoFromApiUrl(url: string): string {
   return owner === "" || name === "" ? "" : `${owner}/${name}`;
 }
 
+/** GitHub's `source` — the root of the fork network — when it is not the parent. */
+function rootOf(raw: unknown): { root?: string } {
+  const root = asString(dig(raw, "source", "full_name"));
+  return root === "" || root === asString(dig(raw, "parent", "full_name"))
+    ? {}
+    : { root };
+}
+
 function toRepo(raw: unknown): RemoteRepo {
   const fullName = asString(field(raw, "full_name"));
   const named = splitFullName(fullName);
@@ -734,6 +742,7 @@ function toRepo(raw: unknown): RemoteRepo {
     private: asBool(field(raw, "private")),
     fork: asBool(field(raw, "fork")),
     parent: asString(dig(raw, "parent", "full_name")) || null,
+    ...rootOf(raw),
     defaultBranch: asString(field(raw, "default_branch")) || "main",
     cloneUrl: asString(field(raw, "clone_url")),
     sshUrl: asString(field(raw, "ssh_url")),

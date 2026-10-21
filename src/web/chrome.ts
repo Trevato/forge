@@ -22,6 +22,8 @@ import {
   visibleForks,
 } from "../core/repos.ts";
 import type { Repo } from "../core/repos.ts";
+import { parentUrl, shownTrail, sourceLabel } from "../core/provenance.ts";
+import type { Database } from "bun:sqlite";
 import type { Ctx } from "../http/context.ts";
 import { html, raw, when, type Html } from "./html.ts";
 import { icon } from "./icons.ts";
@@ -322,14 +324,7 @@ export function scopeHeader(
       !options.compact && facts.description !== "",
       () => html`<p class="repo-desc">${facts.description}</p>`,
     )}
-    ${when(
-      parent,
-      (p) =>
-        html`<p class="repo-lineage">
-          forked from
-          <a href="/${p.ownerName}/${p.name}">${p.ownerName}/${p.name}</a>
-        </p>`,
-    )}
+    ${repo === undefined ? null : lineageLine(ctx.app.db, repo, parent)}
     ${when(
       scope.upstream !== undefined && upstreamHref(scope) === undefined,
       // The where strip carries "fork of octo/widgets" and links it, which
@@ -345,6 +340,44 @@ export function scopeHeader(
     ${studio ? studioOriginNote(repo) : whereRow(ctx, scope)}
     ${tabs(items, "Repository")}
   </header>`;
+}
+
+/**
+ * The trail up, as one quiet line however it was built (#3293): "forked
+ * from alice/arm" for a fork made here, "Migrated from github.com/a/arm ·
+ * fork of b/arm" for a repository brought here, and the two joined when a
+ * fork here was made of a migrated one. Every segment links up; a link off
+ * this forge opens the original and hands it nothing (`noopener
+ * noreferrer`). A migrated trail whose owner turned it off is not drawn.
+ */
+export function lineageLine(
+  db: Database,
+  repo: Repo,
+  parent: Repo | undefined,
+): Html | null {
+  const shown = shownTrail(db, repo, parent);
+  if (parent === undefined && shown === undefined) return null;
+  const out = (href: string, text: string): Html =>
+    html`<a href="${href}" rel="noopener noreferrer">${text}</a>`;
+  const segments: Html[] = [];
+  if (parent !== undefined)
+    segments.push(
+      html`forked from
+        <a href="/${parent.ownerName}/${parent.name}"
+          >${parent.ownerName}/${parent.name}</a
+        >`,
+    );
+  if (shown !== undefined) {
+    segments.push(
+      html`${segments.length === 0 ? "Migrated" : "migrated"} from
+      ${out(shown.sourceUrl, sourceLabel(shown.sourceUrl))}`,
+    );
+    for (const p of shown.parents)
+      segments.push(html`fork of ${out(parentUrl(shown.sourceUrl, p), p)}`);
+  }
+  return html`<p class="repo-lineage" data-lineage>
+    ${segments.map((s, i) => (i === 0 ? s : html` · ${s}`))}
+  </p>`;
 }
 
 /**

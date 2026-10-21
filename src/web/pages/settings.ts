@@ -9,6 +9,8 @@
  */
 
 import { appLimitWords } from "../../actions/app_limit.ts";
+import { showProvenance } from "../../actions/provenance.ts";
+import { getProvenance, parentUrl, sourceLabel } from "../../core/provenance.ts";
 import {
   deleteAppEnvVar,
   disableApp,
@@ -351,6 +353,7 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
     { head: html`${icon("rocket")}<h2>Cut a wave</h2>` },
   );
   const proposals = proposalTokensSection(ctx, repo);
+  const trail = provenanceCard(ctx, repo);
   const archive = card(
     html`<form method="post" action="${base}/settings/archive">
       <input type="hidden" name="archived" value="${repo.archivedAt === null ? "1" : "0"}" />
@@ -388,7 +391,9 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
     repo,
     "general",
     "Settings",
-    html`${lead}${mirror ? html`<div class="mt">${mirror}</div>` : null}<div class="mt">${body}</div><div class="mt">${wave}</div><div class="mt">${archive}</div>${proposals
+    html`${lead}${mirror ? html`<div class="mt">${mirror}</div>` : null}<div class="mt">${body}</div>${trail
+      ? html`<div class="mt">${trail}</div>`
+      : null}<div class="mt">${wave}</div><div class="mt">${archive}</div>${proposals
       ? html`<div class="mt">${proposals}</div>`
       : null}${secrets
       ? html`<div class="mt">${secrets}</div>`
@@ -470,6 +475,62 @@ export async function archiveSubmit(ctx: Ctx): Promise<Response> {
     back,
     updated.ok
       ? { message: archived ? "Archived." : "Awake again." }
+      : { tone: "danger", message: "That could not be changed." },
+  );
+}
+
+/**
+ * "Show where this came from" (#3293), drawn only for a repository that
+ * has a trail to show: the line as it reads, and the one switch for it.
+ */
+function provenanceCard(ctx: Ctx, repo: Repo): Html | null {
+  const trail = getProvenance(ctx.app.db, repo.id);
+  if (trail === undefined) return null;
+  const base = repoBase(repo);
+  return card(
+    html`<form method="post" action="${base}/settings/provenance">
+      <input type="hidden" name="shown" value="${trail.shown ? "0" : "1"}" />
+      <p class="muted">
+        Migrated from
+        <a href="${trail.sourceUrl}" rel="noopener noreferrer"
+          >${sourceLabel(trail.sourceUrl)}</a
+        >${trail.parents.map(
+          (p) =>
+            html` · fork of
+              <a href="${parentUrl(trail.sourceUrl, p)}" rel="noopener noreferrer"
+                >${p}</a
+              >`,
+        )}
+        on ${trail.migratedAt.slice(0, 10)}.
+        ${trail.shown
+          ? "Shown under the repository's name on every page and in the API. Hiding it keeps the record, so it can come back."
+          : "Hidden: nobody else sees it, on a page or in the API. The record is kept."}
+      </p>
+      <div class="form-actions">
+        ${btn(trail.shown ? "Hide where this came from" : "Show where this came from", {
+          variant: "outline",
+        })}
+      </div>
+    </form>`,
+    { head: html`${icon("fork")}<h2>Show where this came from</h2>` },
+  );
+}
+
+/** POST /:owner/:name/settings/provenance — show or hide the trail. */
+export async function provenanceSubmit(ctx: Ctx): Promise<Response> {
+  const gate = await adminForm(ctx);
+  if (gate instanceof Response) return gate;
+  const { repo, form } = gate;
+  const asked = field(form, "shown");
+  const back = `${repoBase(repo)}/settings`;
+  if (asked !== "0" && asked !== "1")
+    return flashTo(ctx, back, { tone: "danger", message: "That could not be changed." });
+  const set = showProvenance(ctx.app, ctx.auth.user, repo, asked === "1");
+  return flashTo(
+    ctx,
+    back,
+    set.ok
+      ? { message: set.value.shown ? "Where this came from is shown." : "Where this came from is hidden." }
       : { tone: "danger", message: "That could not be changed." },
   );
 }

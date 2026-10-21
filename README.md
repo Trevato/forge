@@ -661,6 +661,36 @@ fleet's receipt: the page that answers lists what was archived and an **Undo**
 button for the person who ran it (kept for a day), after which the apps are back
 on the home. The terminal's dashboard archives and undoes the same way (below), and so does the MCP `archive` tool given `repos` (at most 50; it answers the `operation` id, which `limb` with `action: "undo"` reverts for a day); each door refreshes an open web home (the `fleet.operated` event).
 
+## Where it came from
+
+A repository brought here with **Migrate** (`/migrate`) keeps where it came
+from as links, never as a connection: the source's address, and — when its host
+says it is a fork — what it forks (GitHub's `parent` and `source`, Forgejo's and
+Gitea's `parent`; a pasted address's host is asked once, anonymously, after the
+clone). The repository header then reads "Migrated from
+github.com/Trevato/SO-ARM100 · fork of TheRobotStudio/SO-ARM100", each part a
+link up. A fork made here of a migrated repository inherits its parent's
+trail and reads "forked from … · migrated from … · fork of …" — at every door
+below, for anyone who may read the parent; only the parent's admin can hide
+that inherited part, and a fork's own record, if it has one, wins. The
+terminal's About card (`I`) shows the same
+as `migrated from` and `fork of` rows, `GET /api/v1/repos/:owner/:name` as
+`provenance` `{ source, sourceUrl, parents: [{ fullName, url }], migratedAt }`,
+and the MCP `repo` tool the same field.
+
+An admin turns it off with **Settings → Show where this came from**,
+`PATCH /api/v1/repos/:owner/:name {"showProvenance":false}`, `t` on the About
+card, or the MCP `trail` tool (dry by default, admin scope). Off hides the line
+on every page, in the terminal, and `provenance` is `null` in the API and MCP;
+the record is kept, so on brings it back as it was. A source that was private
+on its connected origin starts off, whatever it is migrated here as: its name
+and owner on the other host are not published until an admin turns the line
+on (a later re-record never overrides that choice). It is a person's call:
+anyone else, an agent included, is refused (the API answers 404 before any
+other field in the same request is saved). Repositories migrated from a pasted
+address before this existed were filled in from their migration's `push`
+event, without a fork chain; one picked from a connected origin then has none.
+
 ## Search
 
 `/search` answers repositories and issues in full, and greps code repository by repository. A first search starts no new `git grep` after 30 ms (`codeBudgetMs` in the forge config; a soft stop, since the grep in flight still finishes, one batch of four) and shows what it has with one link, **More code results** (`?code=all`), that greps the rest. The API and the terminal palette always grep everything.

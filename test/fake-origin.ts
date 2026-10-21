@@ -41,6 +41,8 @@ export interface FakeRepo {
   fork?: boolean;
   /** `owner/name` this repo forks, as `getRepo` reports it. */
   parent?: string;
+  /** `owner/name` of the network's root: GitHub's `source`, not sent by Forgejo. */
+  root?: string;
   defaultBranch?: string;
   cloneUrl: string;
   htmlUrl?: string;
@@ -981,6 +983,9 @@ function repoJson(state: FakeState, repo: FakeRepo): Record<string, unknown> {
     ...(repo.parent === undefined
       ? {}
       : { parent: { full_name: repo.parent } }),
+    ...(repo.root === undefined || state.kind !== "github"
+      ? {}
+      : { source: { full_name: repo.root } }),
   };
   return state.kind === "github"
     ? {

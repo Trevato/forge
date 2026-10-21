@@ -61,6 +61,11 @@ export interface RemoteRepo {
    * keeps the value it already has rather than letting a listing clear it.
    */
   readonly parent: string | null;
+  /**
+   * `owner/name` of the root of the fork network, when the origin says and
+   * it is not `parent` — GitHub's `source`. Forgejo reports no such thing.
+   */
+  readonly root?: string;
   readonly defaultBranch: string;
   readonly cloneUrl: string;
   readonly sshUrl: string;

@@ -17,6 +17,8 @@
  * no page. `ro` tokens read; `rw` tokens act.
  */
 
+import { showProvenance } from "../actions/provenance.ts";
+import { getProvenance, provenanceFacts, trailFacts } from "../core/provenance.ts";
 import { upstreamPayload } from "../spawn/upstream.ts";
 import { NOT_A_MEMBER } from "../core/roles.ts";
 import { voteVariant } from "../actions/variants.ts";
@@ -130,6 +132,7 @@ import { askToLiveFor } from "../web/ask_to_live.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import {
   ARCHIVED_WHY,
+  canAdmin,
   canRead,
   canWrite,
   forkParentFor,
@@ -379,7 +382,7 @@ const APP_ARG = {
 const REVEAL_ARG = {
   type: "boolean",
   description:
-    "Put the live claim link in this conversation (default false); only when its person reads it.",
+    "Put the live claim link here (default false); only when its person reads it.",
 } as const;
 const LINK_KEPT =
   "The claim link is a secret, so it is not in this conversation: a person admin of this forge gets a fresh one on /forges (Send a fresh link) and hands it to the child's person. Send reveal: true only to have it here on purpose.";
@@ -515,7 +518,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "repo",
     description:
-      "One repository you can read: name, description, visibility, autonomy, `audience`. Same as GET /api/v1/repos/:owner/:name.",
+      "One repository you can read: name, description, visibility, autonomy, `audience`, `provenance`. Same as GET /api/v1/repos/:owner/:name.",
     inputSchema: {
       type: "object",
       properties: { repo: REPO_ARG },
@@ -531,6 +534,11 @@ const TOOLS: readonly Tool[] = [
         visibility: repo.visibility,
         autonomy: repo.autonomy,
         audience: audienceFor(ctx.app.db, repo, user),
+        provenance: provenanceFacts(
+          ctx.app.db,
+          repo,
+          forkParentFor(ctx.app.db, repo, user),
+        ),
       });
     },
   },
@@ -564,7 +572,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "tell",
     description:
-      "Tell an app's crew what should change; the first line becomes the title. A builder starts on the next tick. Without `repo` nothing is built: it is kept for the forge and answers with a thought id.",
+      "Tell an app's crew what should change (first line is the title); a builder starts next tick. Without `repo` nothing is built: it is kept for the forge, answering a thought id.",
     inputSchema: {
       type: "object",
       properties: {
@@ -702,7 +710,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "issue",
     description:
-      "Read one issue: title, state, closeReason, body, labels, assignee, its comments (author, whether the author is an agent, body, time), and `blockedBy` and `blocks` (what it waits for, and what waits for it). Text written by someone who cannot write the repository carries `untrusted: true`, as in GET /api/v1/repos/:owner/:name/issues/:number (shown to a crew agent only). A sealed or private issue you cannot see is not found.",
+      "Read one issue: title, state, closeReason, body, labels, assignee, comments (author, agent or not, body, time), `blockedBy`, `blocks`. A crew agent sees `untrusted: true` on text by non-writers, as in the REST API. Sealed or private issues you cannot see are not found.",
     inputSchema: {
       type: "object",
       properties: {
@@ -816,7 +824,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "pulls",
     description:
-      "List a repository's pulls briefly, newest first: number, title, author, head, check, approvals, changesRequested, mergeable. `state` open (default) or closed; `limit` 1-50 (default 20).",
+      "A repository's pulls, briefly, newest first: number, title, author, head, check, approvals, changesRequested, mergeable. `state` open (default) or closed; `limit` 1-50 (default 20).",
     inputSchema: {
       type: "object",
       properties: {
@@ -997,7 +1005,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "asks",
     description:
-      "What waits on you, most consequential first: each row names the decision, options, and the cost of inaction. Your saved filter (`feed_chips`) applies.",
+      "What waits on you, most consequential first: each row's decision, options, and cost of inaction. Your saved filter (`feed_chips`) applies.",
     inputSchema: { type: "object", properties: { ...CHIP_ARGS } },
     writes: false,
     run(ctx, user, args) {
@@ -1190,7 +1198,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "now",
     description:
-      "What the crew is doing right now across your apps: who, on what, since when, cost so far; what waits on your review comes first.",
+      "What the crew is doing now across your apps: who, on what, since when, cost so far; what waits on your review first.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     run(ctx, user) {
@@ -1645,6 +1653,58 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "trail",
+    description:
+      "A migrated repository's source and forks; `shown` shows or hides them (admin).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        shown: { type: "boolean" },
+        dryRun: { type: "boolean", description: "false to apply (default plans)." },
+      },
+      required: ["repo"],
+    },
+    writes: true,
+    dryByDefault: true,
+    run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const shown = args["shown"];
+      if (shown === undefined) {
+        const found = getProvenance(ctx.app.db, repo.id);
+        // The hidden record is the admin's to read, as on the settings page;
+        // to anyone else a hidden trail reads exactly like no trail at all.
+        const trail =
+          found === undefined || (!found.shown && !canAdmin(ctx.app.db, repo, user))
+            ? undefined
+            : found;
+        return good({
+          migrated: trail !== undefined,
+          shown: trail?.shown ?? false,
+          provenance: trail === undefined ? null : trailFacts(trail),
+        });
+      }
+      if (typeof shown !== "boolean") return bad("invalid", "`shown` is true or false");
+      const dryRun = args["dryRun"] !== false;
+      if (!dryRun && !scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "showing or hiding the trail needs an admin token");
+      const set = showProvenance(ctx.app, user, repo, shown, dryRun);
+      if (!set.ok)
+        return set.error === "no_provenance"
+          ? bad("no_provenance", "this repository was not migrated here")
+          : bad("forbidden", "only an admin of this repository shows or hides its trail");
+      return good({
+        ...set.value,
+        says: dryRun
+          ? `This is the plan; nothing changed. It is ${set.value.was ? "shown" : "hidden"} now; send dryRun: false to ${set.value.shown ? "show" : "hide"} it.`
+          : set.value.shown
+            ? "Where this came from is shown."
+            : "Where this came from is hidden; the record is kept.",
+      });
+    },
+  },
+  {
     name: "branches",
     description:
       "List a repository's branches, or with `name` and `action` create (from `from`) or delete one; the default branch is never deleted.",
@@ -1820,12 +1880,12 @@ const TOOLS: readonly Tool[] = [
         direction: {
           type: "string",
           description:
-            "What the child is for (at most 2000 characters); the planner's first issue there.",
+            "What the child is for (max 2000 chars); its planner's first issue.",
         },
         fresh: {
           type: "string",
           description:
-            "One line (at most 200 characters) on a fresh app to start beside the copied ones.",
+            "One line (max 200 chars): a fresh app to start beside the copied ones.",
         },
         followMode: {
           type: "string",
@@ -2338,7 +2398,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "make_it_yours",
     description:
-      "Make an app you can see yours: a fork of its code and history, following the original; data, secrets, crew and domains are not copied.",
+      "Make an app you can see yours: a fork of its code and history, following the original; data, secrets, crew, domains are not copied.",
     inputSchema: {
       type: "object",
       properties: {
@@ -3166,7 +3226,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "access",
     description:
-      "What outside agents tried: the redacted log of non-browser requests to public paths, newest first, at most 500, for a forge admin. Needs a write-scope token.",
+      "What outside agents tried: the redacted log of non-browser requests to public paths, newest first, max 500. Forge admin, write-scope token.",
     inputSchema: {
       type: "object",
       properties: {

@@ -50,7 +50,13 @@ export const ROUTES: readonly Route[] = [
     refusals: APP_REFUSALS,
   },
   { method: "get", path: "/api/v1/repos", summary: "List public repositories", auth: false },
-  { method: "get", path: REPO, summary: "Read one repository", auth: false },
+  {
+    method: "get",
+    path: REPO,
+    summary:
+      "Read one repository; `provenance` is where a migrated one came from ({ source, sourceUrl, parents: [{ fullName, url }], migratedAt }), null when it was not migrated or its owner hid it",
+    auth: false,
+  },
   {
     method: "post",
     path: `${REPO}/reports`,
@@ -99,7 +105,19 @@ export const ROUTES: readonly Route[] = [
     body: { verdict: "string", body: "string" },
   },
   { method: "post", path: `${REPO}/pulls/{number}/merge`, summary: "Merge a pull (a person's)", auth: true },
-  { method: "patch", path: REPO, summary: "Change a repository's settings", auth: true },
+  {
+    method: "patch",
+    path: REPO,
+    summary:
+      "Change a repository's settings (an admin's); `showProvenance` shows or hides where a migrated one came from (a person's, never an agent's)",
+    auth: true,
+    body: {
+      description: "string",
+      visibility: "string",
+      archived: "boolean",
+      showProvenance: "boolean",
+    },
+  },
   { method: "get", path: `${REPO}/app/production/open`, summary: "Open the running app", auth: false },
   { method: "get", path: `${REPO}/map`, summary: "Read the plan: issues, their dependency edges and pillars", auth: false },
   {

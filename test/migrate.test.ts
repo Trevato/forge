@@ -41,6 +41,11 @@ import {
 import { getAppByRepo } from "../src/core/apps.ts";
 import { listIssues } from "../src/core/issues.ts";
 import { listOrigins } from "../src/core/origins.ts";
+import {
+  getProvenance,
+  recordProvenance,
+  setProvenanceShown,
+} from "../src/core/provenance.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { repoDir } from "../src/git/repos.ts";
@@ -272,6 +277,29 @@ describe("migrate", () => {
       defaultBranch: "main",
       private: true,
     });
+    // A public fork on the origin, whose host says what it forks (#3293).
+    state.repos.push({
+      id: 78,
+      fullName: "octo/arm",
+      description: "an arm, forked",
+      cloneUrl: `${base}/octo/secret-widgets.git`,
+      htmlUrl: "https://code.example/octo/arm",
+      defaultBranch: "main",
+      fork: true,
+      parent: "TheRobotStudio/arm",
+    });
+    // A private fork: its name is not ours to publish, whatever it becomes.
+    state.repos.push({
+      id: 79,
+      fullName: "octo/hush",
+      description: "a quiet fork",
+      cloneUrl: `${base}/octo/secret-widgets.git`,
+      htmlUrl: "https://code.example/octo/hush",
+      defaultBranch: "main",
+      private: true,
+      fork: true,
+      parent: "TheRobotStudio/hush",
+    });
     forgejo = serveFakeForge(state);
     forgetProviders(dataDir);
     const connected = await browser(aliceCookie, "/settings/origins/token", {
@@ -309,6 +337,13 @@ describe("migrate", () => {
     expect(job?.detail).toContain("3 branches, 2 tags");
 
     const migrated = getRepo(app.db, "bob", "fixture")!;
+    // Where it came from is kept as a link, the `.git` dropped; a plain
+    // http host on loopback is not asked what it forks (#3293).
+    expect(getProvenance(app.db, migrated.id)).toMatchObject({
+      sourceUrl: `${base}/alice/fixture`,
+      parents: [],
+      shown: true,
+    });
     const dir = repoDir(app.reposRoot, "bob", "fixture");
     // Every commit, every branch, every tag — the annotated one as itself.
     expect(await allCommits(dir)).toEqual(await allCommits(sourceDir));
@@ -537,6 +572,107 @@ describe("migrate", () => {
     expect(((await bobs.json()) as { error: string }).error).toBe(
       "no_such_origin",
     );
+  });
+
+  test("a migrated fork shows its trail, and its owner can hide it and bring it back", async () => {
+    const job = await migrate(alice, {
+      source: { originId, fullName: "octo/arm" },
+      visibility: "public",
+    });
+    expect(job?.error).toBeUndefined();
+    const repo = getRepo(app.db, "alice", "arm")!;
+    const lineage = async (cookie: string): Promise<string> => {
+      const page = await (await browser(cookie, "/alice/arm")).text();
+      return /<p class="repo-lineage" data-lineage>[\s\S]*?<\/p>/.exec(page)?.[0] ?? "";
+    };
+    const shown = await lineage("");
+    expect(shown).toContain("Migrated from");
+    expect(shown).toContain(
+      '<a href="https://code.example/octo/arm" rel="noopener noreferrer">code.example/octo/arm</a>',
+    );
+    expect(shown).toContain("fork of");
+    expect(shown).toContain(
+      '<a href="https://code.example/TheRobotStudio/arm" rel="noopener noreferrer">TheRobotStudio/arm</a>',
+    );
+    const facts = async () =>
+      ((await (await browser("", "/api/v1/repos/alice/arm")).json()) as {
+        provenance: { source: string; parents: { url: string }[] } | null;
+      }).provenance;
+    expect((await facts())?.source).toBe("code.example/octo/arm");
+    expect((await facts())?.parents[0]?.url).toBe(
+      "https://code.example/TheRobotStudio/arm",
+    );
+
+    // Not bob's to hide: he can read it, not administer it.
+    const refused = await browser(bobCookie, "/alice/arm/settings/provenance", {
+      shown: "0",
+    });
+    expect(refused.status).not.toBe(303);
+    expect(getProvenance(app.db, repo.id)?.shown).toBe(true);
+
+    // Off: gone for anyone else and from the API, the record kept.
+    const settings = await (await browser(aliceCookie, "/alice/arm/settings")).text();
+    expect(settings).toContain("Hide where this came from");
+    const off = await browser(aliceCookie, "/alice/arm/settings/provenance", {
+      shown: "0",
+    });
+    expect(off.status).toBe(303);
+    expect(await lineage("")).toBe("");
+    expect(await lineage(bobCookie)).toBe("");
+    expect(await facts()).toBeNull();
+    expect(getProvenance(app.db, repo.id)).toMatchObject({
+      sourceUrl: "https://code.example/octo/arm",
+      parents: ["TheRobotStudio/arm"],
+      shown: false,
+    });
+
+    // On again, by the API this time: back as it was.
+    const on = await fetch(`${base}/api/v1/repos/alice/arm`, {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        cookie: aliceCookie,
+        origin: new URL(base).origin,
+      },
+      body: JSON.stringify({ showProvenance: true }),
+    });
+    expect(on.status).toBe(200);
+    expect(await lineage("")).toBe(shown);
+  });
+
+  test("a private source migrated as public keeps its trail hidden until its owner shows it", async () => {
+    const job = await migrate(alice, {
+      source: { originId, fullName: "octo/hush" },
+      visibility: "public",
+    });
+    expect(job?.error).toBeUndefined();
+    const repo = getRepo(app.db, "alice", "hush")!;
+    expect(repo.visibility).toBe("public");
+    const page = await (await browser("", "/alice/hush")).text();
+    expect(page).not.toContain("data-lineage");
+    expect(page).not.toContain("octo/hush");
+    const api = (await (await browser("", "/api/v1/repos/alice/hush")).json()) as {
+      provenance: unknown;
+    };
+    expect(api.provenance).toBeNull();
+    expect(getProvenance(app.db, repo.id)).toMatchObject({
+      sourceUrl: "https://code.example/octo/hush",
+      parents: ["TheRobotStudio/hush"],
+      shown: false,
+    });
+    const settings = await (await browser(aliceCookie, "/alice/hush/settings")).text();
+    expect(settings).toContain("Hidden: nobody else sees it");
+    expect(settings).not.toContain("Hide where this came from");
+    expect(settings).toMatch(/<button[^>]*>\s*Show where this came from/);
+
+    // A second record (a re-migration's) leaves the owner's choice alone.
+    setProvenanceShown(app.db, repo.id, true);
+    recordProvenance(app.db, repo.id, {
+      url: "https://code.example/octo/hush",
+      parents: [],
+      shown: false,
+    });
+    expect(getProvenance(app.db, repo.id)?.shown).toBe(true);
   });
 
   test("one click from GitHub: the repository, 3 issues, 1 open pull request and a crew run on the app", async () => {

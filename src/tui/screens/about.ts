@@ -23,7 +23,18 @@ import { checkMemoryAt } from "../../apps/check-memory.ts";
 import { repoDir } from "../../git/repos.ts";
 import { listRefs } from "../../git/read.ts";
 import { updateRepoSettings } from "../../actions/repos.ts";
-import { canAdmin, getRepoById, type Repo } from "../../core/repos.ts";
+import { showProvenance } from "../../actions/provenance.ts";
+import {
+  getProvenance,
+  shownTrail,
+  sourceLabel,
+} from "../../core/provenance.ts";
+import {
+  canAdmin,
+  forkParentFor,
+  getRepoById,
+  type Repo,
+} from "../../core/repos.ts";
 import type { RepoFacts, RepoSource } from "../../view/source.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -54,9 +65,17 @@ export function aboutScreen(
   const may = (): boolean =>
     repo !== undefined && f.user !== undefined && canAdmin(f.db, repo, f.user);
   let cell: [string, string][] = [];
+  // The trail's switch (#3293) is a person's, an admin's, and only where
+  // there is a trail to switch: the same rule as the settings page.
+  const mayTrail = (): boolean =>
+    may() &&
+    f.user?.kind !== "agent" &&
+    repo !== undefined &&
+    getProvenance(f.db, repo.id) !== undefined;
   const factRows = (): [string, string][] => [
     ...archivedRow(repo),
     ...aboutFacts(f, src, facts, ref),
+    ...trailRows(f, repo),
     ...cell,
   ];
   let rows = factRows();
@@ -93,6 +112,16 @@ export function aboutScreen(
               binding(
                 ["a"],
                 repo?.archivedAt === null ? "archive" : "wake",
+              ),
+            ]
+          : []),
+        ...(mayTrail()
+          ? [
+              binding(
+                ["t"],
+                getProvenance(f.db, repo!.id)?.shown === true
+                  ? "hide where this came from"
+                  : "show where this came from",
               ),
             ]
           : []),
@@ -205,6 +234,16 @@ export function aboutScreen(
         });
         return true;
       }
+      if (e.key === "t" && repo !== undefined && mayTrail()) {
+        const shown = getProvenance(f.db, repo.id)?.shown === true;
+        const done = showProvenance(f.app, f.user, repo, !shown);
+        if (done.ok) {
+          rows = factRows();
+          ctx.toast(done.value.shown ? "where this came from is shown" : "where this came from is hidden", "success");
+        } else ctx.toast("that could not be changed", "danger");
+        ctx.invalidate();
+        return true;
+      }
       if (e.key === "e" && repo !== undefined && f.user?.isAdmin === true) {
         ctx.push(egressScreen(f, ctx, repo));
         return true;
@@ -220,6 +259,25 @@ export function aboutScreen(
       return true;
     },
   };
+}
+
+/**
+ * Where a migrated repository came from (#3293), as the web header says it:
+ * the source, then each repository up the fork chain — a fork made here of
+ * a migrated repository inherits its parent's. Nothing when `shownTrail`
+ * has none.
+ */
+export function trailRows(
+  f: Session,
+  repo: Repo | undefined,
+): [string, string][] {
+  if (repo === undefined) return [];
+  const trail = shownTrail(f.db, repo, forkParentFor(f.db, repo, f.user));
+  if (trail === undefined) return [];
+  return [
+    ["migrated from", sourceLabel(trail.sourceUrl)],
+    ...trail.parents.map((p): [string, string] => ["fork of", p]),
+  ];
 }
 
 /** One line when an admin has put the repository away. */
