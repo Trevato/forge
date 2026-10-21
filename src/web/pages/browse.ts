@@ -805,30 +805,28 @@ function timelineOf(
 function mergeElsewhere(scope: RepoScope): Html {
   const host =
     scope.origin === undefined ? "the origin" : hostLabel(scope.origin.webUrl);
+  // One §5 row in a toned card: `.setting-list` lets the sentence wrap and
+  // drops the button under it on a phone.
   return card(
-    html`${icon(scope.origin ? originIcon(scope.origin.kind) : "globe")}
-      <div class="grow">
-        <div class="merge-headline">Merge on ${host}.</div>
-        <p class="merge-sub">
-          You are reading this pull request live. Merging, reviewing and
-          commenting all happen where it lives — mirror the repository and
-          comments come back through this forge instead.
-        </p>
-      </div>
-      ${when(
-        scope.originUrl !== "",
-        () =>
+    html`<ul class="list setting-list">
+      ${row({
+        lead: icon(scope.origin ? originIcon(scope.origin.kind) : "globe"),
+        title: `Merge on ${host}.`,
+        meta: html`You are reading this pull request live. Merging, reviewing
+          and commenting all happen where it lives — mirror the repository and
+          comments come back through this forge instead.`,
+        trail: when(scope.originUrl !== "", () =>
           // Outline: the header's Mirror button is this page's one accent.
-          html`<span class="merge-form"
-            >${btn("Open on the origin", {
-              href: scope.originUrl,
-              variant: "outline",
-              icon: "external",
-              external: true,
-            })}</span
-          >`,
-      )}`,
-    { tone: "attn", extra: "merge-box" },
+          btn("Open on the origin", {
+            href: scope.originUrl,
+            variant: "outline",
+            icon: "external",
+            external: true,
+          }),
+        ),
+      })}
+    </ul>`,
+    { tone: "attn", pad: false, extra: "mt" },
   );
 }
 

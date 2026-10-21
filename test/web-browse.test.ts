@@ -475,6 +475,23 @@ describe("browsing an origin repository on the web", () => {
     expect(pull).toContain("Merge on");
   });
 
+  test("a live pull's merge box is §5's card and row, with no merge-* class", async () => {
+    const pull = await bodyOf(alice, `${browse}/pulls/9`);
+    for (const name of ["merge-box", "merge-form", "merge-headline", "merge-sub"])
+      expect(pull).not.toContain(name);
+    const box =
+      (pull.match(/<div\s+class="card mt"[^>]*data-tone="attn"[\s\S]*?<\/ul>/)?.[0] ?? "")
+        .replace(/\s+/g, " ");
+    expect(box).toContain('<ul class="list setting-list">');
+    expect(box).toContain(`class="row-title" >Merge on ${new URL(fake.url).host}.</span`);
+    expect(box).toContain(
+      "You are reading this pull request live. Merging, reviewing and commenting all happen where it lives — mirror the repository and comments come back through this forge instead.",
+    );
+    expect(box).toContain('class="row-trail"');
+    expect(box).toContain("Open on the origin");
+    expect(box).not.toContain("<form");
+  });
+
   // ---- the where strip ----
 
   test("a live browse shows origin filled, workbench and machine hollow", async () => {
