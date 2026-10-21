@@ -182,9 +182,9 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .quiet-details[open] > summary::before { transform: rotate(90deg); }
 .quiet-details > summary:hover { color: var(--accent); }
 /* Why an issue closes, beside the button that closes it. */
-.form-actions .close-reason { width: auto; min-height: 32px; padding-block: 0; }
-.form-actions .close-into { display: none; width: 7em; min-height: 32px; }
-.form-actions:has(.close-reason option[value="split"]:checked) .close-into { display: inline-block; }
+.form-actions select[name="reason"] { width: auto; }
+.form-actions input[name="into"] { display: none; width: 7em; }
+.form-actions:has(select[name="reason"] option[value="split"]:checked) input[name="into"] { display: inline-block; }
 /* On a phone the Markdown hint takes its own line, so the reason, Close and
    Comment stay together on the next one instead of Comment wrapping alone. */
 @media (max-width: 480px) {
@@ -194,7 +194,7 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
   /* The reason select, Close and Comment must fit 332 px with room to
      spare: a tighter gap and a narrower select. */
   .comment-form .form-actions { gap: 6px; }
-  .comment-form .form-actions .close-reason { padding-inline: 8px 24px; max-width: 84px; }
+  .comment-form .form-actions select[name="reason"] { padding-inline: 8px 24px; max-width: 84px; }
   /* Words carry the buttons here; their icons give back the width a 360 px
      row needs for "Close issue", and the buttons keep their full height. */
   .comment-form .form-actions .btn .ico { display: none; }

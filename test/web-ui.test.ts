@@ -776,6 +776,11 @@ describe("web ui", () => {
       /<form[^>]*class="card comment-form"[^>]*data-box="Write a comment"[^>]*data-submit-key/,
     );
     expect(await as("/mel/proj/issues/1")).not.toContain("data-box=");
+    // The close form is drawn from the design system's input, not page classes.
+    expect(issue).toMatch(/<select[^>]*class="input"[^>]*name="reason"/);
+    expect(issue).toMatch(/<input[^>]*class="input"[^>]*name="into"/);
+    expect(issue).not.toContain("close-reason");
+    expect(issue).not.toContain("close-into");
 
     // The verdicts are `v` chords on the radios, and only the verdicts this
     // person may pass: the author never sees `v a`, a reader only `v c`.
@@ -868,5 +873,18 @@ describe("web ui", () => {
     expect(getRepo(app.db, "mel", "proj")).toBeDefined();
     const repo = getRepo(app.db, "mel", "proj")!;
     expect(getIssue(app.db, repo.id, 1)!.state).toBe("open");
+  });
+});
+
+describe("the issue close form's styles", () => {
+  const css = String(require("../src/web/style/content.ts").content);
+
+  test("the 'close into' input is hidden until 'split into…' is chosen", () => {
+    expect(css).toMatch(/\.form-actions input\[name="into"\]\s*\{[^}]*display:\s*none/);
+    expect(css).toMatch(
+      /\.form-actions:has\(select\[name="reason"\] option\[value="split"\]:checked\)\s+input\[name="into"\]\s*\{[^}]*display:\s*inline-block/,
+    );
+    expect(css).not.toContain("close-reason");
+    expect(css).not.toContain("close-into");
   });
 });

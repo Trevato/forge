@@ -462,11 +462,11 @@ export function composer(ctx: Ctx, o: ComposerOptions): Html {
       : null;
   // Why it closes sits beside the button that closes it, joined to the
   // state form by id like the button; the numbers it split into only show
-  // once "split into…" is picked (`.close-into`, no script needed).
+  // once "split into…" is picked (an attribute rule, no script needed).
   const reasons =
     stateForm !== null && o.reasons && o.state === "open"
       ? html`<select
-            class="input close-reason"
+            class="input"
             name="reason"
             form="thread-state"
             aria-label="Why it closes"
@@ -476,7 +476,7 @@ export function composer(ctx: Ctx, o: ComposerOptions): Html {
             <option value="split">split into…</option>
           </select>
           <input
-            class="input close-into"
+            class="input"
             name="into"
             form="thread-state"
             inputmode="numeric"
