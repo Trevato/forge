@@ -350,10 +350,11 @@ export function repeatedErrors(now: number): Finding[] {
  * Each cause whose spans total more than ten minutes in the day ending at
  * `now`, quoting its sentence. Shorter totals stay in the history.
  */
-export function degradedCauses(db: Database, now: number): Finding[] {
+export function degradedCauses(db: Database, now: number, forgeRepoId?: string): Finding[] {
   const from = now - DAY_MS;
   const byCause = new Map<string, { sentence: string; href: string; first: number; opened: number; ms: number }>();
   for (const s of spans(db, from, now)) {
+    if (!ownCause(s.cause, forgeRepoId)) continue;
     const start = Math.max(s.openedAt, from);
     const held = Math.min(s.closedAt ?? now, now) - start;
     const seen = byCause.get(s.cause);
@@ -398,14 +399,24 @@ export function degradedCauses(db: Database, now: number): Finding[] {
 const BREACH_CAUSE = /^(queue:check|stuck:|budget:|red:|shared:)/;
 
 /**
+ * A red main in another repository is its owner's to fix, not the forge's
+ * (#3992): the crew cannot see that repository, so no issue is filed here.
+ * Its card stays in the vitals and the owner is notified (`crew/notify.ts`).
+ * `forgeRepoId` unset means no repository is known and nothing is dropped.
+ */
+export function ownCause(cause: string, forgeRepoId: string | undefined): boolean {
+  return forgeRepoId === undefined || !cause.startsWith("red:") || cause === `red:${forgeRepoId}`;
+}
+
+/**
  * Each budget breach that holds right now, however briefly: the crew hears
  * at once, not when the day has added up. The finding shares its key with
  * `degradedCauses`, so one cause is one issue.
  */
-export function budgetBreaches(db: Database, now: number): Finding[] {
+export function budgetBreaches(db: Database, now: number, forgeRepoId?: string): Finding[] {
   const out: Finding[] = [];
   for (const s of spans(db, now - DAY_MS, now)) {
-    if (s.closedAt !== null || !BREACH_CAUSE.test(s.cause)) continue;
+    if (s.closedAt !== null || !BREACH_CAUSE.test(s.cause) || !ownCause(s.cause, forgeRepoId)) continue;
     out.push({
       key: `degraded:${keyPart(s.cause)}`,
       title: `${s.cause} is past its budget: ${clip(oneLine(s.sentence), 120)}`,
@@ -442,15 +453,15 @@ function runLogLines(db: Database, cause: string): string[] {
 }
 
 /** Everything the sentinel reads, in one pass. */
-export function findFaults(db: Database, now = Date.now()): Finding[] {
+export function findFaults(db: Database, now = Date.now(), forgeRepoId?: string): Finding[] {
   const found = [
-    ...budgetBreaches(db, now),
+    ...budgetBreaches(db, now, forgeRepoId),
     ...heldSlots(db, now),
     ...strayTriggers(db),
     ...ledgerStreaks(db, now),
     ...runStreaks(db),
     ...repeatedErrors(now),
-    ...degradedCauses(db, now),
+    ...degradedCauses(db, now, forgeRepoId),
   ];
   const keys = new Set<string>();
   return found
@@ -644,11 +655,11 @@ export function hunt(
   now = Date.now(),
 ): HuntResult {
   const at = new Date(now).toISOString();
-  const findings = findFaults(app.db, now);
   let filed = 0;
   let commented = 0;
   const [owner = "", name = ""] = repoPath.split("/");
   const repo = getRepo(app.db, owner, name);
+  const findings = findFaults(app.db, now, repo?.id);
   const actor = sentinelActor(app.db);
   if (repo !== undefined && actor !== undefined) {
     for (const f of findings) {
@@ -776,7 +787,8 @@ export function sentinelTick(app: App, now = Date.now()): HuntResult | null {
   const repoPath = sentinelRepoPath();
   const last = sentinelStanding(app.db).lastHuntAt;
   const since = last === null ? Infinity : now - new Date(last).getTime();
-  const breaches = budgetBreaches(app.db, now);
+  const [own = "", ownName = ""] = repoPath.split("/");
+  const breaches = budgetBreaches(app.db, now, getRepo(app.db, own, ownName)?.id);
   if (since < SIGNAL_GAP_MS && breaches.length === 0) return null;
   if (since < HUNT_EVERY_MS) {
     // A breach is not held back by the gap: the crew hears within a tick.

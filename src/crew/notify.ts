@@ -28,6 +28,7 @@ import type { App } from "../app.ts";
 import { isPrivateHost } from "../actions/migrate.ts";
 import { getUserSetting, setUserSetting } from "../core/settings.ts";
 import { getUserById, type User } from "../core/users.ts";
+import { redHref, redMain, redSentence } from "../checks/red_main.ts";
 import { landedLines } from "../core/watches.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { lastMirror, mirrorNeed } from "../snapshot/mirror.ts";
@@ -187,6 +188,29 @@ export function mirrorLines(
   if (need === undefined) return [];
   const id = `mirror:${need.key}`;
   return [{ id, line: need.sentence, items: [id] }];
+}
+
+/**
+ * A person hears once when main is red in a repository they own, however
+ * the check failed: the crew files nothing for another repository's red
+ * main (#3992), so the owner is the one told. The id is the failing run's.
+ */
+export function redLines(
+  app: App,
+  user: User,
+  _now = Date.now(),
+): { id: string; line: string; items: readonly string[]; link: string }[] {
+  if (user.kind !== "user") return [];
+  const out: { id: string; line: string; items: readonly string[]; link: string }[] = [];
+  for (const { id } of app.db
+    .query<{ id: string }, [string]>("SELECT id FROM repo WHERE owner_id = ?1 AND archived_at IS NULL")
+    .all(user.id)) {
+    const red = redMain(app.db, id);
+    if (red === undefined || red.limit) continue;
+    const key = `red:${red.runId}`;
+    out.push({ id: key, line: redSentence(red, 0), items: [key], link: redHref(red) });
+  }
+  return out;
 }
 
 export interface Notifier {
@@ -368,6 +392,7 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
       ...mailCeilingLines(app, user, now()),
       ...drillLines(app, user, now()),
       ...mirrorLines(app, user, now()),
+      ...redLines(app, user, now()),
     ];
     const before = seen.get(userId);
     // What is gone may ask again later, and then it is new again. Seen by

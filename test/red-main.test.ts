@@ -9,9 +9,10 @@ import { tmpdir } from "node:os";
 import { migrations } from "../src/core/schema.ts";
 import { openDb } from "../src/kernel/db.ts";
 import { claimRun, createRun, finishRun, listActive, type Run } from "../src/core/runs.ts";
-import { RED_HOLD_MS, heldChecks, redMain, redSentence, sharedWithMain, unheld } from "../src/checks/red_main.ts";
+import { RED_HOLD_MS, heldChecks, redHref, redMain, redSentence, sharedWithMain, unheld } from "../src/checks/red_main.ts";
 import { coveredByRedFix } from "../src/crew/red_fix.ts";
-import { budgetBreaches } from "../src/crew/sentinel.ts";
+import { budgetBreaches, findFaults } from "../src/crew/sentinel.ts";
+import { redLines } from "../src/crew/notify.ts";
 import { vitals } from "../src/kernel/vitals.ts";
 import { ErrorLedger } from "../src/kernel/log.ts";
 import { RefusedLedger } from "../src/kernel/internal_refused.ts";
@@ -236,5 +237,48 @@ describe("the lane sentence and a red main", () => {
     const causes = read().map((d) => d.cause);
     expect(causes).toContain("red:r1");
     expect(causes).not.toContain("queue:check");
+  });
+});
+
+describe("a red main in another repository (#3992)", () => {
+  const span = (cause: string) =>
+    db.run(
+      "INSERT INTO degraded_span (cause, sentence, href, opened_at) VALUES (?1, 'x: main is red', '/x', 1000)",
+      [cause],
+    );
+
+  test("files no sentinel issue for it; the forge's own red main still files one", () => {
+    span("red:r2");
+    span("red:r1");
+    expect(budgetBreaches(db, 2000, "r1").map((f) => f.key)).toEqual(["degraded:red-r1"]);
+    expect(findFaults(db, 2000, "r1").map((f) => f.key)).toEqual(["degraded:red-r1"]);
+    expect(budgetBreaches(db, 2000, "r2").map((f) => f.key)).toEqual(["degraded:red-r2"]);
+  });
+
+  test("a manifest error reads as an invalid forge.json, quotes it and links to the file", () => {
+    const run = createRun(db, { repoId: "r1", kind: "check", env: "main", commitOid: OID("d"), reason: "push" });
+    claimRun(db, run.id);
+    finishRun(db, run.id, { state: "failed", summary: "check failed: forge.json: check.run is required" });
+    const r = redMain(db, "r1")!;
+    const sentence = redSentence(r, 2);
+    expect(sentence).toContain("forge.json on main");
+    expect(sentence).toContain("invalid");
+    expect(sentence).toContain("forge.json: check.run is required");
+    expect(redHref(r)).toBe("/trevato/forge/blob/main/forge.json");
+    expect(redSentence(redMain(db, "r1")!, 0)).not.toContain("tests");
+  });
+
+  test("a failing test keeps its own sentence and run link", () => {
+    const r = redMain(db, main("e", "failed", ["a test"]).repoId)!;
+    expect(redSentence(r, 1)).toContain('"a test" fails');
+    expect(redHref(r)).toBe(`/trevato/forge/runs/${r.runId}`);
+  });
+
+  test("the owner of the red repository is told, once per failing run", () => {
+    main("f", "failed", ["a test"]);
+    const lines = redLines({ db } as never, { id: "u1", kind: "user" } as never);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.line).toContain("trevato/forge: main is red");
+    expect(redLines({ db } as never, { id: "u2", kind: "user" } as never)).toEqual([]);
   });
 });

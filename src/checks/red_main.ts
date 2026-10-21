@@ -29,6 +29,8 @@ export interface RedMain {
   /** The failing tests' names the check recorded, else its summary. */
   readonly failing: readonly string[];
   readonly summary: string;
+  /** The repository's default branch, for the link to its forge.json. */
+  readonly branch: string;
   /** The check was stopped by its cell's limit or its budget, not by a test: no pull shares it. */
   readonly limit: boolean;
   readonly since: string;
@@ -44,6 +46,7 @@ interface Row {
   id: string;
   repo_id: string;
   repo: string;
+  branch: string;
   commit_oid: string;
   state: string;
   summary: string;
@@ -69,7 +72,7 @@ export function redMain(db: Database, repoId: string): RedMain | undefined {
 const lastMain = (from: string): string => `
   SELECT run.id, run.repo_id, run.commit_oid, run.state, run.summary,
          run.check_detail, run.finished_at, run.created_at,
-         u.username || '/' || repo.name AS repo
+         u.username || '/' || repo.name AS repo, repo.default_branch AS branch
     FROM (${from}) l
     JOIN repo ON repo.id = l.repo_id
     JOIN user u ON u.id = repo.owner_id
@@ -100,6 +103,7 @@ function toRed(row: Row): RedMain | undefined {
     commitOid: row.commit_oid,
     failing,
     summary: row.summary,
+    branch: row.branch,
     limit: LIMIT.test(row.summary),
     since: row.finished_at ?? row.created_at,
   };
@@ -191,8 +195,28 @@ export function freeChecks(
   return row ?? { n: 0, oldest: null };
 }
 
+/**
+ * The manifest error a check failed on before any test ran
+ * (`apps/manifest.ts`), else undefined: such a check is the repository's own
+ * to fix, not a failing test.
+ */
+export function manifestError(red: RedMain): string | undefined {
+  const text = red.summary.replace(/^check failed: /, "");
+  return red.failing.length === 0 && text.startsWith("forge.json: ") ? text : undefined;
+}
+
+/** Where a red main's card points: its forge.json when that is invalid, else the run. */
+export function redHref(red: RedMain): string {
+  return manifestError(red) === undefined
+    ? `/${red.repo}/runs/${red.runId}`
+    : `/${red.repo}/blob/${encodeURIComponent(red.branch)}/forge.json`;
+}
+
 /** The card's sentence: what is red, by which test, and what waits. */
 export function redSentence(red: RedMain, held: number): string {
+  const bad = manifestError(red);
+  if (bad !== undefined)
+    return `${red.repo}: the forge.json on main (${red.commitOid.slice(0, 7)}) is invalid, so no check can run — "${bad.slice(0, 200)}"; fix forge.json (${redHref(red)}); ${held} pull check${held === 1 ? "" : "s"} wait for it.`;
   const first = red.failing[0];
   const what =
     first === undefined

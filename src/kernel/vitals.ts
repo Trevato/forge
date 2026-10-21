@@ -32,7 +32,7 @@ import { behindStanding } from "../release/behind.ts";
 import { newestDrills } from "../core/domain_drills.ts";
 import { DOMAINS } from "./domains.ts";
 import { domainDrillNeeds } from "./domain_drill.ts";
-import { freeChecks, heldChecks, redSentence } from "../checks/red_main.ts";
+import { freeChecks, heldChecks, redHref, redSentence } from "../checks/red_main.ts";
 import { flakeHref, sharedCause, sharedSentence, sharedTests } from "../checks/shared_red.ts";
 
 /** Free disk under this share of the volume is something to say. */
@@ -379,7 +379,7 @@ export function vitals(input: VitalsInput): Vitals {
       `red:${red.repoId}`,
       redSentence(red, held),
       red.since,
-      `/${red.repo}/runs/${red.runId}`,
+      redHref(red),
     );
 
   // A test failing on many pulls in the hour is one card, not a park per pull.
