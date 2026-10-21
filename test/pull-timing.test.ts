@@ -137,24 +137,36 @@ async function filesApp(): Promise<number> {
   return Number(app![1]);
 }
 
-test("the Files page's cold first view of a fresh head: median of 3 under a ceiling beside its measurement", async () => {
-  const runs: number[] = [];
+/** 40 files of 50 lines each, new content per `i` so each is a fresh head. */
+async function commitHead(i: number): Promise<void> {
+  const done = await commitToBranch(app, owner, repoRow, {
+    branch: "topic",
+    message: `head ${i}`,
+    files: Array.from({ length: 40 }, (_, f) => ({
+      path: `d/f${f}.ts`,
+      content: Array.from({ length: 50 }, (_, l) => `export const v${i}_${f}_${l} = ${l};`).join("\n"),
+    })),
+  });
+  if (!done.ok) throw new Error(JSON.stringify(done.error));
+}
+
+// Measured over 3 runs of this test (40 files x 50 lines): the cold median of 3 was 125-135 ms
+// (a single cold view up to 244 ms); the repeat median of 5 was 55 ms (single views 49-76 ms).
+// 250 ms is ~2x the cold median; 100 ms is the issue's bar for a repeat view.
+const COLD_MS = 250;
+
+const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
+
+test("the Files page of a 40-file diff: cold median of 3 and repeat median of 5 stay under their ceilings", async () => {
+  const cold: number[] = [];
   for (let i = 0; i < 3; i++) {
     // A new head each time, so nothing rendered before is reused.
-    const done = await commitToBranch(app, owner, repoRow, {
-      branch: "topic",
-      message: `head ${i}`,
-      files: Array.from({ length: 20 }, (_, f) => ({
-        path: `d/f${f}.ts`,
-        content: Array.from({ length: 50 }, (_, l) => `export const v${i}_${f}_${l} = ${l};`).join("\n"),
-      })),
-    });
-    if (!done.ok) throw new Error(JSON.stringify(done.error));
-    runs.push(await filesApp());
+    await commitHead(i);
+    cold.push(await filesApp());
   }
-  const median = runs.sort((a, b) => a - b)[1]!;
-  // Measured over 10 runs of this file: the median of 3 was 76-95 ms (typically ~85), a single
-  // render up to 147 ms. 170 ms is 2x the typical median: loose enough for a slow machine, tight
-  // enough to catch a return to per-line highlighting.
-  expect(median).toBeLessThan(170);
+  // The head is unchanged now: every view reuses the rendered diff.
+  const repeat: number[] = [];
+  for (let i = 0; i < 5; i++) repeat.push(await filesApp());
+  expect(median(cold)).toBeLessThan(COLD_MS);
+  expect(median(repeat)).toBeLessThan(100);
 });
