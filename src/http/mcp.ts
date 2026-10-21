@@ -112,9 +112,10 @@ import { dependenciesOf } from "../core/dependencies.ts";
 import { waitsForPerson } from "../crew/review.ts";
 import { attachLook } from "../actions/attach_look.ts";
 import { lookUrl } from "../core/looks.ts";
+import { reviewSummariesFor } from "../core/reviews.ts";
 import { pullProposalOf } from "../core/proposal_token.ts";
 import { resolveOid } from "../git/merge.ts";
-import { getPull, pullDir, pullMergeState } from "../core/pulls.ts";
+import { getPull, listPulls, pullDir, pullMergeState, pullMergeStates } from "../core/pulls.ts";
 import { repoGraph } from "../core/dependencies.ts";
 import { pillarView } from "../core/pillars.ts";
 import { createBranch, deleteBranch } from "../actions/branches.ts";
@@ -809,6 +810,50 @@ const TOOLS: readonly Tool[] = [
         check: { state: check.state, baseOid: check.run?.baseOid ?? "" },
         checkStale: stale,
         ...(state ?? {}),
+      });
+    },
+  },
+  {
+    name: "pulls",
+    description:
+      "List a repository's pulls briefly, newest first: number, title, author, head, check, approvals, changesRequested, mergeable. `state` open (default) or closed; `limit` 1-50 (default 20).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        state: { type: "string", enum: ["open", "closed"] },
+        limit: { type: "integer", minimum: 1, maximum: 50 },
+      },
+      required: ["repo"],
+    },
+    writes: false,
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const state = args["state"] ?? "open";
+      if (state !== "open" && state !== "closed")
+        return bad("invalid", "`state` is open or closed");
+      const limit = args["limit"] ?? 20;
+      if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1 || limit > 50)
+        return bad("invalid", "`limit` is a whole number from 1 to 50");
+      const db = ctx.app.db;
+      const pulls = listPulls(db, repo.id, { state, limit, ...sealedScope(db, repo, user) });
+      const reviews = reviewSummariesFor(db, pulls);
+      const dirs = await Promise.all(
+        pulls.map((p) => pullDir(db, ctx.app.reposRoot, repo, p)),
+      );
+      const merge = await pullMergeStates(pulls.map((pull, i) => ({ dir: dirs[i]!, pull })));
+      return good({
+        pulls: pulls.map((p, i) => ({
+          number: p.number,
+          title: p.title,
+          author: p.authorName,
+          head: p.headBranch,
+          check: checkSummary(db, p.id, p.headOid).state,
+          approvals: reviews.get(p.id)?.approvals ?? 0,
+          changesRequested: reviews.get(p.id)?.changesRequested ?? 0,
+          mergeable: merge[i]?.mergeable ?? null,
+        })),
       });
     },
   },
