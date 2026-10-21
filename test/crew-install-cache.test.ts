@@ -70,6 +70,19 @@ describe("the shared install cache", () => {
     expect(none).toEqual({});
   });
 
+  test("bun's temp directory is the one the sandboxed shell can write", () => {
+    const p = policy(data, "r1");
+    const env: Record<string, string> = {};
+    installCacheEnv(p, env);
+    const writable = join(p.tmpDir!, `claude-${process.getuid?.() ?? 0}`);
+    // The run's temp directory itself is read-only in the shell; only the
+    // claude-<uid> directory under it is bound writable.
+    expect(env["BUN_TMPDIR"]).toBe(writable);
+    expect(env["BUN_TMPDIR"]).not.toBe(p.tmpDir!);
+    expect(existsSync(writable)).toBe(true);
+    expect(p.denyRead).not.toContain(p.tmpDir!);
+  });
+
   test("removing a repository clears its cache and only its", async () => {
     await removeInstallCache(data, "r1");
     expect(existsSync(installCacheDir(data, "r1"))).toBe(false);

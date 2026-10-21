@@ -61,6 +61,16 @@ export interface SandboxPolicy {
 }
 
 /**
+ * The one directory under the run's temp directory the sandboxed shell may
+ * write, and the `TMPDIR` it re-exports: `<tmpDir>/claude-<uid>`.
+ */
+export function shellTmpDir(policy: SandboxPolicy): string | undefined {
+  return policy.tmpDir === undefined
+    ? undefined
+    : join(policy.tmpDir, `claude-${process.getuid?.() ?? 0}`);
+}
+
+/**
  * The run's env for its repository's install cache: the directory made, and
  * bun told to use it. A policy with no cache (no repository) changes nothing.
  */
@@ -68,6 +78,13 @@ export function installCacheEnv(
   policy: SandboxPolicy,
   env: Record<string, string>,
 ): void {
+  // Bun reads BUN_TMPDIR before TMPDIR. The run's temp directory is read-only
+  // to the shell; only `shellTmpDir` under it is writable.
+  const tmp = shellTmpDir(policy);
+  if (tmp !== undefined) {
+    mkdirSync(tmp, { recursive: true });
+    env["BUN_TMPDIR"] = tmp;
+  }
   if (policy.installCache === undefined) return;
   mkdirSync(policy.installCache, { recursive: true });
   env["BUN_INSTALL_CACHE_DIR"] = policy.installCache;
