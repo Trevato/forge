@@ -200,10 +200,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
   margin-top: 8px; font-size: 13px; color: var(--muted-fg);
 }
 
-.tree-row { padding: 8px 14px; min-height: 36px; }
-.tree-row .ico { color: var(--faint); }
-.tree-row[data-kind="tree"] .ico { color: var(--accent); }
-.tree-total { margin: 6px 2px 0; text-align: right; }
 .tok { white-space: nowrap; }
 
 /* The file's location stays on screen while its contents scroll past. Opaque
