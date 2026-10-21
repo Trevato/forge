@@ -309,22 +309,23 @@ function reviewRows(
   const currentHash = hashLine(currentText);
   const thread = comments.map((c) => {
     const outdated = c.lineHash !== currentHash;
-    return html`<div class="rc">
-      <div class="rc-head">
+    return html`<div class="card comment">
+      <div class="card-head">
         ${userLink(c.authorName, { mark: opts.marks?.get(c.authorName) })}
         ${time(c.createdAt)}
         ${when(
           outdated,
-          () => html`<span class="badge rc-outdated">outdated</span>`,
+          () => html`<span class="badge" data-variant="danger">outdated</span>`,
         )}
       </div>
-      <div class="prose rc-body">${renderMarkdown(c.body)}</div>
+      <div class="comment-body prose">${renderMarkdown(c.body)}</div>
     </div>`;
   });
 
   const form = isActive
     ? html`<form
-        class="rc-form"
+        class="card comment-form"
+        data-submit-key
         method="post"
         action="${opts.reviewBase}/review"
         id="rc"
@@ -332,10 +333,10 @@ function reviewRows(
         <input type="hidden" name="path" value="${path}" />
         <input type="hidden" name="side" value="${side}" />
         <input type="hidden" name="line" value="${line}" />
-        <label class="sr-only" for="rc-body">Comment on this line</label>
+        <label class="sr-only" for="rc-text">Comment on this line</label>
         <textarea
           class="input"
-          id="rc-body"
+          id="rc-text"
           name="body"
           rows="3"
           data-grow
@@ -370,7 +371,7 @@ function reviewRows(
   const body =
     state?.resolvedAt != null
       ? html`<div class="rc-resolved">
-          <span class="rc-resolved-line"
+          <span class="muted small"
             >${icon("check")}
             resolved${state.resolvedBy === null
               ? null

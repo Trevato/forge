@@ -747,23 +747,13 @@ form.inline { display: inline; margin-left: auto; }
   padding: 8px 12px; background: var(--muted);
   border-left: 3px solid var(--accent); white-space: normal; font-family: var(--font);
 }
-.rc { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; margin-bottom: 8px; }
-.rc-head { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; font-size: 13px; }
-.rc-body { font-size: 14px; padding: 0; }
-.rc-body p:first-child { margin-top: 0; }
-.rc-body p:last-child { margin-bottom: 0; }
-.rc-outdated { color: var(--del-fg); border-color: color-mix(in srgb, var(--del-fg) 40%, var(--border)); }
-.rc-form { display: block; }
-.rc-form textarea { width: 100%; }
-
+.dl-review .comment { margin-bottom: 8px; }
+.dl-review .comment-form { margin-top: 0; }
 /* A settled thread is one line plus a disclosure: the point of resolving is
    to get an answered question out of the way of the unanswered ones. */
 .rc-resolved { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.rc-resolved-line {
-  display: inline-flex; align-items: center; gap: 6px;
-  font-size: 13px; color: var(--muted-fg);
-}
-.rc-resolved-line .ico { width: 14px; height: 14px; color: var(--success); }
+.rc-resolved .muted { display: inline-flex; align-items: center; gap: 6px; }
+.rc-resolved .ico { width: 14px; height: 14px; color: var(--success); }
 .rc-hidden { flex-basis: 100%; }
 .rc-hidden > summary {
   cursor: pointer; font-size: 13px; color: var(--muted-fg);
