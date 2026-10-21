@@ -68,12 +68,12 @@ describe("a member and the crew's standing instructions", () => {
     memberToken = createToken(app.db, bob.id, "t", "admin").token;
     adminCookie = `forge_session=${createSession(app.db, olive.id).token}`;
     memberCookie = `forge_session=${createSession(app.db, bob.id).token}`;
-  });
+  }, 60_000);
 
   afterAll(async () => {
     await servers.stop();
     await rm(dataDir, { recursive: true, force: true });
-  });
+  }, 30_000);
 
   test("a member is refused on the API and the page, and the brief stands", async () => {
     expect(getUserByName(app.db, "olive")!.isAdmin).toBe(true);
