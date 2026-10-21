@@ -7,6 +7,7 @@
 
 import { mayManageFlags } from "../../core/flags.ts";
 import { ROLES, SURFACES } from "../../core/usage_count.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { routeUsage, WINDOW_DAYS } from "../../core/usage_report.ts";
 import type { Ctx } from "../../http/context.ts";
 import { signInFirst } from "../chrome.ts";
@@ -20,6 +21,7 @@ const part = (counts: Readonly<Record<string, number>>, keys: readonly string[])
 
 // GET /settings/usage
 export function usagePage(ctx: Ctx, patterns: () => readonly string[]): Response {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const user = ctx.auth.user;
   if (!user) return signInFirst(ctx);
   if (!mayManageFlags(user))
@@ -37,7 +39,9 @@ export function usagePage(ctx: Ctx, patterns: () => readonly string[]): Response
       },
       403,
     );
-  const rows = routeUsage(ctx.app.db, patterns(), new Date());
+  const known = timePhase(ctx.request, "patterns", patterns);
+  const rows = timePhase(ctx.request, "usage", () => routeUsage(ctx.app.db, known, new Date()));
+  const rendering = performance.now();
   const unused = rows.filter((r) => r.total === 0).length;
   const body = card(
     html`<p class="muted small card-body">${String(unused)} of ${String(rows.length)} routes had no request in
@@ -55,5 +59,7 @@ export function usagePage(ctx: Ctx, patterns: () => readonly string[]): Response
       </table>`,
     { head: html`${icon("activity")}<h2>Routes</h2>`, pad: false },
   );
-  return usageShell(ctx, "routes", body);
+  const res = usageShell(ctx, "routes", body);
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return res;
 }
