@@ -32,7 +32,7 @@ import { truncate, wrap } from "../term/width.ts";
 import { badge, card } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
 import { PIN_MARK, ago, drawFacts, plural } from "./common.ts";
-import { egressScreen } from "./egress.ts";
+import { connectionsScreen, egressScreen } from "./egress.ts";
 import { forkOf, hostOf, liveOrigin, localRepo, sourceName } from "./where.ts";
 
 /**
@@ -98,7 +98,7 @@ export function aboutScreen(
           : []),
         // A site admin also reaches the repository's private egress grants.
         ...(f.user?.isAdmin === true && repo !== undefined
-          ? [binding(["e"], "egress")]
+          ? [binding(["e"], "egress"), binding(["c"], "connections")]
           : []),
         binding(["esc"], "close"),
       ];
@@ -207,6 +207,10 @@ export function aboutScreen(
       }
       if (e.key === "e" && repo !== undefined && f.user?.isAdmin === true) {
         ctx.push(egressScreen(f, ctx, repo));
+        return true;
+      }
+      if (e.key === "c" && f.user?.isAdmin === true) {
+        ctx.push(connectionsScreen(f, ctx));
         return true;
       }
       if (e.key === "esc" || e.key === "q" || e.key === "I") {

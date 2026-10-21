@@ -8,6 +8,8 @@
 
 import { changeCapacity, listCapacity, type CapacityRow } from "../../actions/capacity.ts";
 import { CAPACITY, type CapacityKey } from "../../core/capacity.ts";
+import { bytes } from "../../system/format.ts";
+import { egressSnapshot } from "../../apps/egress.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
@@ -155,7 +157,32 @@ export function capacityPage(ctx: Ctx): Response {
       pad: false,
     },
   );
-  const body = html`${happened}${when(
+  const open = egressSnapshot();
+  const connections = card(
+    open.length === 0
+      ? html`<div class="card-body">
+          <p class="muted small" id="egress-open">
+            No app holds an egress connection open.
+          </p>
+        </div>`
+      : html`<ul class="list" id="egress-open">
+          ${open.map((r) =>
+            row({
+              lead: icon("activity"),
+              title: r.label === "" ? "(unlabelled)" : r.label,
+              meta: html`<span class="mono">${r.destination}</span> ·
+                ${bytes(r.bytesIn)} in · ${bytes(r.bytesOut)} out`,
+              trail: html`<span class="mono">${r.open} open</span>`,
+            }),
+          )}
+        </ul>`,
+    {
+      head: html`${icon("activity")}
+        <h2>Egress connections</h2>`,
+      pad: false,
+    },
+  );
+  const body = html`${happened}${connections}${when(
       reported,
       () => html`<p class="muted small mb" id="egress-reported">
         ${icon("activity")} Egress is reported, not enforced: every new app,

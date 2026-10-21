@@ -867,6 +867,15 @@ file), and if you named an agent, the sentence became issue #1, assigned.
   names it exactly and a site admin has granted it: on the
   app's settings page, or in the terminal (About `I`, then `e`, `g`
   to grant, `x` to revoke). See `docs/APPS.md`.
+- **Egress connections are bounded.** The proxy closes the upstream socket
+  the moment the cell side closes, errors or stops, and the other way round.
+  An app holds at most 8 open connections to one destination (the ninth
+  gets a `429`, logged), and a connection that moves no bytes, either way, for 5 min is
+  cut, so a tunnel quiet for longer than that (a websocket or SSE stream with
+  very long gaps) needs a keepalive. Open connections per app and
+  destination, with the bytes moved, are on the Capacity page
+  (`/settings/capacity`, admins) and in the terminal: About `I`, then `c`
+  (site admins).
 - **Production is the default branch.** The only way code reaches it is that
   branch moving, and an agent cannot move it: the crew proposes through
   pulls, a person merges.
@@ -1950,3 +1959,8 @@ same rule. A guard installed by hand without the prefix answers `refused`
 until it is re-created with `forge: ` in front of its message.
 
 `reach` is a boards source for an admin only (anyone else gets 403, an agent too): `visitors` per day, `lcp_p75` and `inp_p75` per route per day, `server_p50` and `server_p95` per route per day (the beacon's time to first byte, the only per-route server timing the forge keeps), and `accounts_active_1d`, `accounts_active_7d` and `accounts_total` as of now. Filter by `metric`, group by `route` or a time bucket. Percentiles are nearest-rank within one route and day, so a `max` or `avg` over several days is a summary of daily percentiles, not a percentile of the period. Account activity comes from a session's last-seen time, so it is a count as of now, not a history. No dependency was added.
+
+`GET /metrics` (site admin only; repository names are in the labels) serves
+`forge_egress_connections`, `forge_egress_bytes_in` and `forge_egress_bytes_out`
+per `repo` and `destination` as Prometheus text, so a leaked upstream socket
+shows as a gauge that never falls (#3719).

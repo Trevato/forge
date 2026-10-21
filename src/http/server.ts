@@ -2425,7 +2425,8 @@ async function answerGet(
   // generic as `/:owner/:name` can never claim it — a route added there
   // next year still can't bring the HTML 404 back for an API caller.
   const isApiPath = url.pathname === "/api" || url.pathname.startsWith("/api/");
-  const matched = isApiPath
+  // `/metrics` is the API router's too: a scraper, not a page.
+  const matched = isApiPath || url.pathname === "/metrics"
     ? apiRouter.match(routeMethod, url.pathname)
     : router.match(routeMethod, url.pathname);
   if (!matched) {

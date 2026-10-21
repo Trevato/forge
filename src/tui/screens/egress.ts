@@ -10,6 +10,8 @@ import {
   revokeAppEgress,
   type EgressRow,
 } from "../../actions/egress_grants.ts";
+import { egressSnapshot } from "../../apps/egress.ts";
+import { bytes } from "../../system/format.ts";
 import type { Repo } from "../../core/repos.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -73,4 +75,39 @@ export function egressScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     },
   };
   return screen;
+}
+
+/**
+ * The egress connections open right now, per app and destination: the
+ * Capacity page's card, for a site admin. Read again on every draw, so it
+ * moves as connections do; anyone else is offered nothing.
+ */
+export function connectionsScreen(f: Session, ctx: Ctx): Screen {
+  const state = new ListState();
+  const lines = (): ListRow[] =>
+    f.user?.isAdmin !== true
+      ? []
+      : egressSnapshot().map((r) => ({
+          title: r.label === "" ? "(unlabelled)" : r.label,
+          meta: `${r.destination} · ${r.open} open · ${bytes(r.bytesIn)} in · ${bytes(r.bytesOut)} out`,
+        }));
+  return {
+    title: "Egress connections",
+    keys: [binding(["j", "k"], "move cursor")],
+    render(area, s) {
+      const c = ctx.theme.c;
+      const rows = lines();
+      state.clamp(rows.length);
+      const [head, list] = split(area, "v", [len(1), fill(1)]);
+      const note =
+        rows.length === 0
+          ? "No app holds an egress connection open."
+          : `${rows.length} destination${rows.length === 1 ? "" : "s"} in use`;
+      s.text(head!.x, head!.y, truncate(note, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
+      drawList(s, list!, c, state, rows);
+    },
+    key(e) {
+      return state.key(e, lines().length);
+    },
+  };
 }

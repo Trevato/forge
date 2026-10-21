@@ -13,6 +13,7 @@ import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { listEgressGrants } from "../src/core/egress_grants.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
+import { startEgress } from "../src/apps/egress.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -105,6 +106,43 @@ describe("egress grants in the terminal", () => {
       expect(grants()).toEqual([]);
     } finally {
       h.tui.stop();
+    }
+  });
+
+  test("an admin sees the open egress connections from About; a non-admin does not", async () => {
+    const camera = Bun.listen<undefined>({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    const probe = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    const listen = probe.port;
+    probe.stop(true);
+    const egress = startEgress(
+      { tcp: listen },
+      { hosts: [], origins: [{ host: "127.0.0.1", port: camera.port }], label: "app:cam/main" },
+    );
+    let reply = "";
+    const client = await Bun.connect<undefined>({
+      hostname: "127.0.0.1",
+      port: listen,
+      socket: { data: (_s, c) => void (reply += new TextDecoder().decode(c)) },
+    });
+    client.write(`CONNECT 127.0.0.1:${camera.port} HTTP/1.1\r\n\r\n`);
+    while (!reply.includes("200")) await Bun.sleep(10);
+    const admin = boot(ada);
+    const other = boot(bob);
+    try {
+      await admin.openAbout();
+      await admin.press("c");
+      await settleUntil(admin.tui, "app:cam/main");
+      expect(admin.text()).toContain(`127.0.0.1:${camera.port} · 1 open`);
+      await other.openAbout();
+      await other.press("c");
+      expect(other.text()).not.toContain("Egress connections");
+      expect(other.text()).not.toContain("app:cam/main");
+    } finally {
+      admin.tui.stop();
+      other.tui.stop();
+      client.terminate();
+      egress.close();
+      camera.stop(true);
     }
   });
 });

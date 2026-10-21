@@ -38,6 +38,14 @@ export interface EgressPolicy {
    * refused. Private addresses are refused either way.
    */
   readonly report?: ((host: string, port: number) => void) | undefined;
+  /** Whose proxy this is (`app:<slug>/<env>`), for the connection gauges. */
+  readonly label?: string | undefined;
+  /** Most connections open to one destination at once; default 8. */
+  readonly maxPerDestination?: number | undefined;
+  /** Close a connection that moved no bytes for this long; default 5 min. */
+  readonly idleMs?: number | undefined;
+  /** Bytes held for a client that does not read before it is cut; default 4 MiB. */
+  readonly queueMax?: number | undefined;
 }
 
 export interface Egress {
@@ -45,6 +53,59 @@ export interface Egress {
 }
 
 const HEAD_MAX = 16 * 1024;
+const MAX_PER_DESTINATION = 8;
+const IDLE_MS = 5 * 60_000;
+/** Bytes held for a client that does not read before its upstream is cut. */
+const QUEUE_MAX = 4 * 1024 * 1024;
+
+interface Tally {
+  open: number;
+  bytesIn: number;
+  bytesOut: number;
+}
+
+/**
+ * label -> `host:port` -> counts, for the connections open right now. A
+ * destination's entry goes when its last connection closes (and the label
+ * with its last destination), so it only ever holds what is live.
+ */
+const tallies = new Map<string, Map<string, Tally>>();
+
+function tally(label: string, destination: string): Tally {
+  let byDestination = tallies.get(label);
+  if (byDestination === undefined) tallies.set(label, (byDestination = new Map()));
+  let t = byDestination.get(destination);
+  if (t === undefined)
+    byDestination.set(destination, (t = { open: 0, bytesIn: 0, bytesOut: 0 }));
+  return t;
+}
+
+/** One connection closed: drop its destination, then its label, when empty. */
+function untally(label: string, destination: string): void {
+  const byDestination = tallies.get(label);
+  const t = byDestination?.get(destination);
+  if (byDestination === undefined || t === undefined) return;
+  if (--t.open > 0) return;
+  byDestination.delete(destination);
+  if (byDestination.size === 0) tallies.delete(label);
+}
+
+export interface EgressRow {
+  readonly label: string;
+  readonly destination: string;
+  readonly open: number;
+  readonly bytesIn: number;
+  readonly bytesOut: number;
+}
+
+/** Every destination an app holds connections to now, busiest first. */
+export function egressSnapshot(): EgressRow[] {
+  const rows: EgressRow[] = [];
+  for (const [label, byDestination] of tallies)
+    for (const [destination, t] of byDestination)
+      rows.push({ label, destination, open: t.open, bytesIn: t.bytesIn, bytesOut: t.bytesOut });
+  return rows.sort((a, b) => b.open - a.open || a.label.localeCompare(b.label));
+}
 
 /** The ports a declared host may be reached on when its entry names none. */
 export const WEB_PORTS: readonly number[] = [80, 443];
@@ -165,7 +226,25 @@ interface Conn {
   toPeer: Uint8Array[];
   toClient: Uint8Array[];
   done: boolean;
+  /** The destination's counts once dialled; the data path adds to it directly. */
+  tally?: Tally;
+  /** When bytes last moved either way (ms). */
+  last: number;
+  /** Frees the destination's slot and counts it closed; set once dialled. */
+  release: (() => void) | undefined;
 }
+
+/** Cut both sides now: the upstream must never outlive the client. */
+function drop(client: Socket<Conn>): void {
+  const conn = client.data;
+  conn.done = true;
+  conn.release?.();
+  conn.release = undefined;
+  conn.peer?.terminate();
+}
+
+const queued = (queue: Uint8Array[]): number =>
+  queue.reduce((n, c) => n + c.length, 0);
 
 /** Write what the socket takes now; keep the rest for its `drain`. */
 function send(
@@ -295,31 +374,59 @@ async function open(
     log(`egress reported: ${host}:${port} is not in forge.json "egress" (let through while egress is only reported)`);
     policy.report?.(host.toLowerCase(), port);
   }
+  const destination = `${host.toLowerCase()}:${port}`;
+  const count = tally(policy.label ?? "", destination);
+  const cap = policy.maxPerDestination ?? MAX_PER_DESTINATION;
+  if (count.open >= cap) {
+    log(`egress capped: ${policy.label ?? "app"} already has ${count.open} connections to ${destination}`);
+    refuse(
+      client,
+      "429 Too Many Requests",
+      `${destination} already has ${cap} open connections from this app`,
+    );
+    return;
+  }
+  // The slot is taken before the dial so a burst cannot all pass the check.
+  count.open++;
+  client.data.tally = count;
+  const label = policy.label ?? "";
+  client.data.release = () => untally(label, destination);
+  const ended = () => {
+    if (!client.data.done) {
+      drop(client);
+      client.end();
+    }
+  };
   try {
     const peer = await Bun.connect<undefined>({
       hostname: verdict.address,
       port,
       socket: {
         data(_peer, chunk) {
-          if (!client.data.done) send(client, client.data.toClient, chunk);
+          if (client.data.done) return;
+          client.data.last = Date.now();
+          count.bytesIn += chunk.length;
+          send(client, client.data.toClient, chunk);
+          if (queued(client.data.toClient) > (policy.queueMax ?? QUEUE_MAX)) {
+            drop(client);
+            client.terminate();
+          }
         },
         drain(peer) {
           flush(peer, client.data.toPeer);
         },
-        close() {
-          if (!client.data.done) {
-            client.data.done = true;
-            client.end();
-          }
-        },
-        error() {
-          if (!client.data.done) {
-            client.data.done = true;
-            client.end();
-          }
-        },
+        close: ended,
+        error: ended,
       },
     });
+    // The client went away while the dial was in flight: nobody is left to
+    // take this connection, so it must not stay open.
+    if (client.data.done) {
+      peer.terminate();
+      client.data.release?.();
+      client.data.release = undefined;
+      return;
+    }
     client.data.peer = peer;
     if (tunnel)
       send(
@@ -330,67 +437,111 @@ async function open(
     // Everything after the head — including what arrived during the dial,
     // kept with it — goes out now; from here `data` forwards directly.
     const first = concat(prefix, client.data.head.subarray(end));
-    if (first.length > 0) send(peer, client.data.toPeer, first);
+    if (first.length > 0) {
+      count.bytesOut += first.length;
+      send(peer, client.data.toPeer, first);
+    }
   } catch {
+    client.data.release?.();
+    client.data.release = undefined;
     refuse(client, "502 Bad Gateway", `${host}:${port} did not answer`);
   }
 }
 
-/** Listen at `path` and forward only what `policy` allows. */
+/**
+ * Listen at `path` and forward only what `policy` allows. `{ tcp }` (a
+ * loopback port) exists for the tests, where a unix socket cannot be bound.
+ */
 export function startEgress(
-  path: string,
+  path: string | { tcp: number },
   policy: EgressPolicy,
   log: (line: string) => void = () => {},
 ): Egress {
-  const server = Bun.listen<Conn>({
-    unix: path,
-    socket: {
-      open(client) {
-        client.data = {
-          head: new Uint8Array(0),
-          peer: undefined,
-          toPeer: [],
-          toClient: [],
-          done: false,
-        };
-      },
-      data(client, chunk) {
-        const conn = client.data;
-        if (conn.peer !== undefined) {
-          send(conn.peer, conn.toPeer, chunk);
-          return;
-        }
-        if (conn.done) return;
-        const before = conn.head.length;
-        conn.head = concat(conn.head, chunk);
-        // Waiting on the upstream dial: whatever else arrives is kept with
-        // the head, and goes out after it.
-        if (before > 0 && headEnd(conn.head.subarray(0, before)) !== -1) return;
-        if (headEnd(conn.head) === -1) {
-          if (conn.head.length > HEAD_MAX)
-            refuse(
-              client,
-              "431 Request Header Fields Too Large",
-              "head too large",
-            );
-          return;
-        }
-        void open(client, policy, log);
-      },
-      drain(client) {
-        flush(client, client.data.toClient);
-      },
-      close(client) {
-        client.data.done = true;
-        client.data.peer?.end();
-      },
-      error(client) {
-        client.data.done = true;
-        client.data.peer?.end();
-      },
+  const live = new Set<Socket<Conn>>();
+  const handlers = {
+    open(client: Socket<Conn>) {
+      live.add(client);
+      client.data = {
+        head: new Uint8Array(0),
+        peer: undefined,
+        toPeer: [],
+        toClient: [],
+        done: false,
+        last: Date.now(),
+        release: undefined,
+      };
     },
-  });
-  return { close: () => server.stop(true) };
+    data(client: Socket<Conn>, chunk: Uint8Array) {
+      const conn = client.data;
+      conn.last = Date.now();
+      if (conn.peer !== undefined) {
+        if (conn.done) return;
+        if (conn.tally !== undefined) conn.tally.bytesOut += chunk.length;
+        send(conn.peer, conn.toPeer, chunk);
+        return;
+      }
+      if (conn.done) return;
+      const before = conn.head.length;
+      conn.head = concat(conn.head, chunk);
+      // Waiting on the upstream dial: whatever else arrives is kept with
+      // the head, and goes out after it.
+      if (before > 0 && headEnd(conn.head.subarray(0, before)) !== -1) return;
+      if (headEnd(conn.head) === -1) {
+        if (conn.head.length > HEAD_MAX)
+          refuse(
+            client,
+            "431 Request Header Fields Too Large",
+            "head too large",
+          );
+        return;
+      }
+      void open(client, policy, log);
+    },
+    drain(client: Socket<Conn>) {
+      client.data.last = Date.now();
+      flush(client, client.data.toClient);
+    },
+    close(client: Socket<Conn>) {
+      live.delete(client);
+      drop(client);
+    },
+    error(client: Socket<Conn>) {
+      live.delete(client);
+      drop(client);
+    },
+  };
+  const server =
+    typeof path === "string"
+      ? Bun.listen<Conn>({ unix: path, socket: handlers })
+      : Bun.listen<Conn>({ hostname: "127.0.0.1", port: path.tcp, socket: handlers });
+  // A tunnel that moves nothing (a client that stopped reading, an upstream
+  // that stopped sending) is cut, so it cannot hold an upstream open.
+  const idleMs = policy.idleMs ?? IDLE_MS;
+  const sweep = setInterval(
+    () => {
+      const now = Date.now();
+      for (const client of live)
+        if (now - client.data.last > idleMs) {
+          log(`egress idle: closed a connection quiet for ${idleMs} ms`);
+          drop(client);
+          client.terminate();
+          live.delete(client);
+        }
+    },
+    Math.max(50, Math.min(5_000, idleMs / 2)),
+  );
+  sweep.unref();
+  return {
+    close() {
+      clearInterval(sweep);
+      for (const client of live) {
+        drop(client);
+        client.terminate();
+      }
+      live.clear();
+      server.stop(true);
+    },
+  };
 }
 
 /**
@@ -472,11 +623,11 @@ export function relay(
     },
     close(client: Socket<Pair>) {
       client.data.done = true;
-      client.data.peer?.end();
+      client.data.peer?.terminate();
     },
     error(client: Socket<Pair>) {
       client.data.done = true;
-      client.data.peer?.end();
+      client.data.peer?.terminate();
     },
   };
   const server =

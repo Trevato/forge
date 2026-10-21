@@ -18,6 +18,7 @@ import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { assignIssue, openIssue } from "../src/actions/issues.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { enableApp } from "../src/actions/apps.ts";
+import { startEgress } from "../src/apps/egress.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
 import {
@@ -382,6 +383,39 @@ describe("report mode is loud to admins, and to nobody else", () => {
     expect(shown).toContain('id="egress-reported"');
     expect(shown).not.toMatch(/error-note[^>]*id="egress-reported"/);
     expect(shown.replace(/\s+/g, " ")).toContain("may reach any public host on ports 80 and 443");
+  });
+
+  test("the page shows the egress connections an app holds open, and none once they close", async () => {
+    const camera = Bun.listen<undefined>({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    const front = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    const listen = front.port;
+    front.stop(true);
+    const egress = startEgress(
+      { tcp: listen },
+      { hosts: [], origins: [{ host: "127.0.0.1", port: camera.port }], label: "app:cam/main" },
+    );
+    try {
+      let reply = "";
+      const client = await Bun.connect<undefined>({
+        hostname: "127.0.0.1",
+        port: listen,
+        socket: { data: (_s, c) => void (reply += new TextDecoder().decode(c)) },
+      });
+      client.write(`CONNECT 127.0.0.1:${camera.port} HTTP/1.1\r\n\r\n`);
+      while (!reply.includes("200")) await Bun.sleep(10);
+      const shown = (await page()).replace(/\s+/g, " ");
+      expect(shown).toContain("app:cam/main");
+      expect(shown).toContain(`127.0.0.1:${camera.port}`);
+      expect(shown).toContain("1 open");
+      expect(shown).toMatch(/\d+ B in · \d+ B out/);
+      expect(shown).not.toContain("→ 127.0.0.1");
+      egress.close();
+      expect(await page()).toContain("No app holds an egress connection open.");
+      client.terminate();
+    } finally {
+      egress.close();
+      camera.stop(true);
+    }
   });
 
   test("reported: the public health check, a member and a stranger hear nothing of it", async () => {

@@ -430,6 +430,8 @@ import { passportRoutes } from "./passport_edge.ts";
 import type { Router } from "./router.ts";
 import { clientAddress, clientBucket } from "./peer.ts";
 import { manifestFor } from "../actions/here.ts";
+import { egressSnapshot } from "../apps/egress.ts";
+import { egressMetrics } from "../apps/egress_metrics.ts";
 import {
   acceptReport,
   dismissReport,
@@ -4862,6 +4864,20 @@ export function apiRoutes(router: Router<Handler>): void {
       { "cache-control": "no-store", vary: "authorization, cookie, x-forge-probe" },
     ),
   );
+
+  // Open egress connections per app and destination, as Prometheus text
+  // (#3719). Repository names are in the labels, so a site admin only.
+  router.add("GET", "/metrics", (ctx) => {
+    const denied = accountAdmin(ctx, "ro");
+    if (denied) return denied;
+    return new Response(egressMetrics(egressSnapshot()), {
+      headers: {
+        "content-type": "text/plain; version=0.0.4; charset=utf-8",
+        "cache-control": "no-store",
+        vary: "authorization, cookie",
+      },
+    });
+  });
 
   // Explore (#607): the rows /explore shows, for the same one line.
   router.add("GET", "/api/v1/explore", async (ctx) => {

@@ -362,6 +362,7 @@ export function openCell(
       {
         hosts: spec.egress,
         granted: spec.granted,
+        label: spec.label,
         origins,
         report:
           (spec.egressMode ?? egressMode()) === "report"
