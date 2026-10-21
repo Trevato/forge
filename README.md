@@ -1307,7 +1307,10 @@ bar, and the terminal's Flow command prints it as a line per app
 held are stalled, capped or parked twice, the planner is owed one pass with
 that breakdown in its brief, to re-plan them into smaller, fresh issues; a
 full plate and its own unanswered decline do not hold that pass, and the
-same breakdown does not ask it twice.
+same breakdown does not ask it twice. A stalled issue does not wait for that
+pass: the next tick parks it with who stalled it and why, so another builder
+picks it, and a second stall hands it to the planner past its day's cap
+(`crew/stalls.ts`, `unstuck=N` on the tick line).
 
 The forge asks the host for one more binary: `claude`, on `PATH` or at
 `FORGE_CLAUDE`, authenticated as the operator (an `ANTHROPIC_API_KEY` in the

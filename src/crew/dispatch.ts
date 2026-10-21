@@ -60,6 +60,7 @@ import { issueOfBranch, type RunReason } from "./brief.ts";
 import { detectClaude } from "./claude.ts";
 import { followDivergence, settleAll, settleOnPush } from "./converge.ts";
 import { breakerTripped } from "./breaker.ts";
+import { unstickOwed } from "./stalls.ts";
 import {
   CAP_NOTE,
   capNoted,
@@ -279,6 +280,22 @@ function handOver(
   });
 }
 
+/**
+ * Whether a run on the direction is the planner's pass owed for an issue a
+ * stall struck out since its last pass: that pass starts past the day's
+ * planning cap, since unsticking is not planning (`stalls.ts`).
+ */
+function unstickDue(app: App, repo: Repo, issue: Issue): boolean {
+  if (issue.id !== repo.directionIssueId) return false;
+  const last = app.db
+    .query<{ at: string }, [string]>(
+      `SELECT created_at AS at FROM run WHERE issue_id = ?1 AND kind = 'agent'
+        ORDER BY created_at DESC LIMIT 1`,
+    )
+    .get(issue.id);
+  return unstickOwed(app.db, repo, last?.at ?? "");
+}
+
 /** Queue a run about an issue for an agent, unless one is already waiting. */
 export function queueAgentRun(
   app: App,
@@ -330,7 +347,11 @@ export function queueAgentRun(
   // a pause or a restart is the same start, never a new one. The direction
   // issue has its own, larger share (`runCapOf`).
   const cap = runCapOf(repo, issue, app.config);
-  if (again === undefined && capReached(app.db, repo, issue, cap)) {
+  if (
+    again === undefined &&
+    capReached(app.db, repo, issue, cap) &&
+    !unstickDue(app, repo, issue)
+  ) {
     if (
       !capNoted(app.db, repo, issue) &&
       parkForBreaker(app, repo, issue, agent, CAP_NOTE)

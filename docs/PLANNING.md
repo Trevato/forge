@@ -469,9 +469,14 @@ closes #12 when it lands, as the person who landed it; that is what frees
 the map, on any repository, autonomous or not. An open pull that closes an
 issue means the issue is proposed, neither ready nor done, and the tick
 leaves it alone. An issue a builder ran on and left without a pull is
-stalled: the clock never picks it again, because running it again blind is
-the loop autonomy refuses. A person's comment on it is a feedback run like
-any other. On every tick, green pulls that have not landed — a check that
+stalled: running it again blind is the loop autonomy refuses, so the next
+tick parks it in the crew's name — a note with whose run stalled it and the
+run's last summary, the assignee cleared — and another builder may pick it;
+the one that stalled it leaves it for the hour unless a person says what to
+try. A second stall strikes it out and hands it to the planner with both
+reasons, past the direction's day's planning cap: unsticking is not
+planning. The tick line counts them as `unstuck=N` (`src/crew/stalls.ts`).
+A person's comment on it is a feedback run like any other. On every tick, green pulls that have not landed — a check that
 passed before autonomy was on — land, so nothing green waits on chance.
 
 **What holds it.** The ceiling is dollars of agent spend per UTC day; at

@@ -97,6 +97,7 @@ import { BREAKER_NOTE, breakerTripped } from "./breaker.ts";
 import { given, pendingReplans } from "../core/limb_replan.ts";
 import { handedOverPulls, SKIP_SUMMARY, skipsReplan } from "./guard.ts";
 import { atRunCap, type Held, heldBy, heldWords, replannable } from "./held.ts";
+import { NO_PULL, shunnedBy, stallReason, unstickOwed } from "./stalls.ts";
 import { BY_CREW, DONE_LIKE } from "../core/done_on_main.ts";
 import { ALREADY_NOTE, alreadyDoneOids } from "./already.ts";
 import { interruptionOf } from "./interrupted.ts";
@@ -382,9 +383,16 @@ export async function driveRepo(
   for (const r of active)
     if (r.actorId !== null)
       inFlight.set(r.actorId, (inFlight.get(r.actorId) ?? 0) + 1);
-  const next = await nextOf(app, repo, ready);
+  // A builder that stalled an issue within the hour leaves it to the
+  // others; one no builder may take now is skipped, not waited on (#4073).
+  const crewFor = (issue: Issue) => {
+    const shunned = shunnedBy(app.db, repo, issue.id, now);
+    return crew.filter((c) => c.role !== "builder" || !shunned.has(c.agent.user.id));
+  };
+  const pickable = ready.filter((r) => crewFor(r.issue).some((c) => c.role === "builder"));
+  const next = await nextOf(app, repo, pickable);
   if (next !== undefined) {
-    const routed = await routeIssue(app, repo, next.issue, crew, inFlight);
+    const routed = await routeIssue(app, repo, next.issue, crewFor(next.issue), inFlight);
     if (!routed) return "paused";
     const builder = routed.builder;
     // Assigning is the event that starts a run. An issue already carrying
@@ -445,6 +453,31 @@ export function freeParked(app: App, repo: Repo, by: User, held: Held): number {
     }
     log.info("freed", { repo: `${repo.ownerName}/${repo.name}`, issue: issue.number });
     freed++;
+  }
+  return freed;
+}
+
+/**
+ * A ready issue a builder ran on and left without a pull, nobody having
+ * spoken since, is parked by the next tick rather than held for a person
+ * (#4073): the note says whose run stalled it and the run's last summary,
+ * the assignee is cleared, and any other builder may pick it. That note is
+ * a strike (`parks.ts`), so a second stall hands it to the planner. A run
+ * still in flight is not a stall yet. Returns how many were freed.
+ */
+export function freeStalled(app: App, repo: Repo, by: User, held: Held): number {
+  let freed = 0;
+  for (const issue of held.by.stalled) {
+    const last = app.db
+      .query<{ state: string; summary: string; actor: string | null }, [string]>(
+        `SELECT state, summary, actor_id AS actor FROM run
+          WHERE issue_id = ?1 AND kind = 'agent' ORDER BY created_at DESC LIMIT 1`,
+      )
+      .get(issue.id);
+    if (!last || last.state === "queued" || last.state === "running") continue;
+    const who = last.actor === null ? undefined : getUserById(app.db, last.actor)?.username;
+    if (parkAs(app, by, repo, issue, stallReason(who, last.summary || last.state), "unstuck"))
+      freed++;
   }
   return freed;
 }
@@ -626,7 +659,8 @@ async function planIfThin(
   const news = owed.length + unstuck.length + limbsOwed.length;
   // The direction is the planner's standing issue, not one issue retried:
   // it is held to its own day's share, never the builders' cap (#2143).
-  if (atRunCap(app, repo, direction))
+  // Except for an issue struck out by a stall: unsticking is not planning (#4073).
+  if (atRunCap(app, repo, direction) && !unstickOwed(app.db, repo, seen))
     return notPlanned(repo, "parked: the direction is at its day's planning cap");
   // An issue the crew handed over is owed its pass whatever the hold: the
   // planner splitting it is how work starts landing again.
@@ -860,10 +894,23 @@ export function parkIssue(
 ): boolean {
   if (repo.autonomy !== "autonomous" || repo.autonomyBy === null) return false;
   const by = getUserById(app.db, repo.autonomyBy);
-  if (!by || issue.state !== "open") return false;
+  if (!by) return false;
+  return parkAs(app, by, repo, issue, why, "parked");
+}
+
+/** Park `issue` in `by`'s name: the strike note, the assignee cleared, and `said` in the log. */
+function parkAs(
+  app: App,
+  by: User,
+  repo: Repo,
+  issue: Issue,
+  why: string,
+  said: string,
+): boolean {
+  if (issue.state !== "open") return false;
   if (issue.assigneeId !== null) assignIssue(app, by, repo, issue, null);
   addComment(app, by, repo, issue, strikeNote(app.db, repo, issue, why));
-  log.info("parked", {
+  log.info(said, {
     repo: `${repo.ownerName}/${repo.name}`,
     issue: issue.number,
     why,
@@ -925,7 +972,7 @@ export function settleAgentRun(
     app,
     repo,
     issue,
-    `the run ended without a pull: ${run.summary || run.state}`,
+    `the ${NO_PULL}: ${run.summary || run.state}`,
   );
 }
 
@@ -1181,6 +1228,7 @@ export async function autonomyTick(
       // Before the picks: a pull a reviewer answered is finished before new
       // work takes the slots it needs (#2172).
       const requested = await moveRequested(app, current, freeSlots(app, current, now), now);
+      const unstuck = unstickNow(app, current, now);
       const did = await driveRepo(app, current, now);
       // Rules only, no run: an issue noted already done on the base closes.
       const triaged = await liveTriage(app, current, now).catch((error) => {
@@ -1214,6 +1262,8 @@ export async function autonomyTick(
         // The standing reserve the planner keeps: startable/target (#3237).
         reserve: reserveWords(reserveOf(held.startable.length, status.slots)),
         held: heldWords(held),
+        // Stalled issues this tick parked and freed for another builder (#4073).
+        unstuck,
         active: status.active,
         slots: status.slots,
         // Approved pulls being brought up to date, and those still waiting (#3682).
@@ -1259,6 +1309,25 @@ export async function autonomyTick(
   } catch (error) {
     log.error("review sweep failed", { error: String(error) });
   }
+}
+
+/**
+ * The stalled issues freed this tick (`freeStalled`): none while the crew
+ * is off or paused, or nobody stands behind it.
+ */
+function unstickNow(app: App, repo: Repo, now: Date): number {
+  if (repo.autonomy === "off" || repo.autonomyBy === null) return 0;
+  if (autonomyStatus(app, repo, now).paused !== null) return 0;
+  const by = getUserById(app.db, repo.autonomyBy);
+  if (!by) return 0;
+  const held = heldBy(
+    app,
+    repo,
+    readyNow(repoGraph(app.db, repo.id, { sealed: true })),
+    listCrewRoles(app.db, repo.id),
+    activeRuns(app, repo.id),
+  );
+  return held.by.stalled.length === 0 ? 0 : freeStalled(app, repo, by, held);
 }
 
 /**

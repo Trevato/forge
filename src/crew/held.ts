@@ -15,7 +15,8 @@
  * - `done_on_main`: the crew found it done on the base branch and waits for
  *   a person to close it (`done_on_main.ts`); nothing is left to plan.
  * - `stalled`: a builder ran on it and left without a pull, and nobody
- *   who directs the crew has spoken since.
+ *   who directs the crew has spoken since. The next tick parks it in the
+ *   crew's name, which frees it (`stalls.ts`).
  * - `run_cap`: it has used its runs for the day (`guard.ts`).
  * - `parked_twice`: the crew parked it twice; it is the planner's (`parks.ts`).
  * - `red_fix`: a fix for a red main already covers it (`red_fix.ts`).
@@ -66,9 +67,10 @@ export interface Held {
 
 /**
  * An issue a builder already ran on and left without a pull — declined, or
- * cut short — is not picked again by the clock: running it again blind is
- * the loop autonomy refuses. It waits for a person's word, which is a
- * feedback run like any other.
+ * cut short — is not picked again blind: running it again unchanged is the
+ * loop autonomy refuses. A person's word lifts it, and so does the park the
+ * next tick writes with who stalled it and why (`stalls.ts`); two such
+ * parks hand it to the planner.
  */
 export function stalled(app: App, repo: Repo, issue: Issue): boolean {
   const last = app.db
