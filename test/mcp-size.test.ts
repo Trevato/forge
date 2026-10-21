@@ -13,6 +13,8 @@ import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
 const CEILING = 40_000;
+// Headroom: a new tool should fit without another round of cuts.
+const HEADROOM_CEILING = 37_000;
 
 let dataDir: string;
 let app: App;
@@ -42,7 +44,7 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-test("tools/list stays under 40 KB", async () => {
+test("tools/list stays under 40 KB, with 3 KB of headroom (37,000 bytes)", async () => {
   const res = await fetch(`${servers.url}/mcp`, {
     method: "POST",
     headers: {
@@ -69,4 +71,8 @@ test("tools/list stays under 40 KB", async () => {
     bytes,
     `tools/list is ${bytes} bytes, over ${CEILING}; the five longest descriptions: ${longest.join(", ")}`,
   ).toBeLessThanOrEqual(CEILING);
+  expect(
+    bytes,
+    `tools/list is ${bytes} bytes, over the ${HEADROOM_CEILING} headroom; the five longest descriptions: ${longest.join(", ")}`,
+  ).toBeLessThanOrEqual(HEADROOM_CEILING);
 });

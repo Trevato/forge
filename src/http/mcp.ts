@@ -294,11 +294,9 @@ function chipArgs(ctx: Ctx, args: Record<string, unknown>) {
 
 const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
 
-const REPO_ARG = {
-  type: "string",
-} as const;
+const REPO_ARG = { type: "string" } as const;
 
-/** A repository the caller may read, by `owner/name`. */
+/** A repository the caller may read, by `owner/name`; a wrong one is answered with that form. */
 function repoArg(ctx: Ctx, user: User, args: Args): Repo | Answer {
   const [owner, name, ...rest] = str(args["repo"]).split("/");
   const repo =
@@ -382,10 +380,7 @@ function lean(schema: unknown): unknown {
   );
 }
 
-const APP_ARG = {
-  type: "string",
-  description: "owner/name",
-} as const;
+const APP_ARG = { type: "string" } as const;
 
 // A child's claim link is a live secret: whoever holds it takes the child.
 // It stays out of an agent's conversation unless asked for there on purpose
@@ -433,7 +428,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "sizes",
     description:
-      "What a child forge's sizes mean: small, medium and large, with CPU, memory and disk.",
+      "What a child forge's sizes mean: small, medium and large, each with CPU, memory and disk.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     run: () => good(sizesView()),
@@ -441,7 +436,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "apps",
     description:
-      "The apps you can see: whether each is live, where it is served, how it runs itself, what is working.",
+      "The apps on this forge you can see: live or not, where served, how each runs itself, what is working.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     async run(ctx, user) {
@@ -530,7 +525,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "repo",
     description:
-      "One repository you can read: name, description, visibility, autonomy, `audience`, `provenance`. Same as GET /api/v1/repos/:owner/:name.",
+      "One repository you can read, as GET /api/v1/repos/:owner/:name.",
     inputSchema: {
       type: "object",
       properties: { repo: REPO_ARG },
@@ -584,7 +579,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "tell",
     description:
-      "Tell an app's crew what should change (first line is the title); a builder starts next tick. Without `repo` nothing is built: kept for the forge, returning a thought id.",
+      "Tell an app's crew what should change (first line is the title). Without `repo` it is only kept, answering a thought id.",
     inputSchema: {
       type: "object",
       properties: {
@@ -663,7 +658,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "share",
     description:
-      "Share a feed item. With no `to` it goes to the app's crew and owners, else to its followers; a daily budget applies.",
+      "Share a feed item. With no `to` it goes to the app's crew and owners, else to its followers; daily budget each.",
     inputSchema: {
       type: "object",
       properties: {
@@ -690,7 +685,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "say",
     description:
-      "Say something on an issue or a pull. A working builder hears it as its next step; otherwise it is feedback for the next run.",
+      "Say something on an issue or a pull. A working builder hears it next; otherwise it is feedback for the next run.",
     inputSchema: {
       type: "object",
       properties: {
@@ -722,7 +717,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "issue",
     description:
-      "Read one issue with its comments, `blockedBy` and `blocks`. For a crew agent, text by non-writers carries `untrusted: true`, as in the REST API. Issues you cannot see are not found.",
+      "Read one issue with its comments, `blockedBy` and `blocks`. A crew agent sees `untrusted: true` on text by non-writers.",
     inputSchema: {
       type: "object",
       properties: {
@@ -791,7 +786,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "pull",
     description:
-      "Read a pull: title, state, head, base, and for an open pull `mergeable`, `conflicts`, `proposal`, `checkStale` and `check`.",
+      "Read a pull: title, state, head, base, and when open `mergeable`, `conflicts`, `proposal`, `checkStale`, `check`.",
     inputSchema: {
       type: "object",
       properties: {
@@ -834,7 +829,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "pulls",
     description:
-      "A repository's pulls, briefly, newest first, with check, review counts and mergeable. `state` open (default) or closed; `limit` 1-50 (default 20).",
+      "A repository's pulls, newest first, briefly. `state` open (default) or closed; `limit` 1-50 (default 20).",
     inputSchema: {
       type: "object",
       properties: {
@@ -878,7 +873,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "variant",
     description:
-      "Like or dislike one pull among its variant siblings; a later vote replaces it. A dislike closes the pull with `reason` (one line).",
+      "Like or dislike one pull among its variants; a later vote replaces it. A dislike closes it with `reason`.",
     inputSchema: {
       type: "object",
       properties: {
@@ -919,7 +914,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "edit",
     description:
-      "Give an issue or pull a new title or body: your own, or anyone's where you write; an agent edits only what it wrote.",
+      "Give an issue or a pull a new title or body: your own, or anyone's where you write; an agent edits only its own.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1011,7 +1006,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "read_file",
     description:
-      "Read a file, or list a directory, of a repository at a ref (default branch); over 5 MB answers tooLarge, a binary one base64.",
+      "Read a file, or list a directory, of a repository at a ref (default branch); over 5 MB answers tooLarge.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1063,7 +1058,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "asks",
     description:
-      "What waits on you, most consequential first: each row's decision, options, and cost of inaction. Your saved filter (`feed_chips`) applies.",
+      "What waits on you, most consequential first: decision, options, cost of inaction. Your saved filter applies.",
     inputSchema: { type: "object", properties: { ...CHIP_ARGS } },
     writes: false,
     run(ctx, user, args) {
@@ -1075,14 +1070,14 @@ const TOOLS: readonly Tool[] = [
   {
     name: "asks_act",
     description:
-      "Decide many asks at once: dismiss, decline, ship (never undone), close (`reason`), mute, or replan. `items` are ids from `asks`, or `issue:<id>`.",
+      "Decide many asks at once: dismiss, decline, ship (never undone), close (`reason`), mute, replan. `items`: ids from `asks`, or `issue:<id>`.",
     inputSchema: {
       type: "object",
       properties: {
         action: { type: "string", enum: ["dismiss", "decline", "mute", "ship", "close", "replan"] },
         items: { type: "array", items: { type: "string" }, maxItems: 100 },
         reason: { type: "string", maxLength: 300 },
-        dryRun: { type: "boolean", description: "false to apply (default plans)." },
+        dryRun: { type: "boolean", description: "false to apply" },
       },
       required: ["action", "items"],
     },
@@ -1099,7 +1094,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "asks_decide",
     description:
-      "Let the decider answer a hand-over (`item` is the row's `parked:<id>`). Only a sure set_aside (70%+) takes the card off your board.",
+      "Let the decider answer a hand-over (`item` is the row's `parked:<id>`). Only a sure set_aside (70%+) clears the card.",
     inputSchema: {
       type: "object",
       properties: { item: { type: "string", maxLength: 80 } },
@@ -1114,7 +1109,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "asks_proposal",
     description:
-      "Act on a wave proposal (an `asks` row with `proposal`): `approve`, `redirect` (`words`), or `later` (until `again`). App owner only.",
+      "Act on a wave proposal (an `asks` row): `approve`, `redirect` (`words`), or `later` (until `again`). Owner only.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1135,7 +1130,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "proposal_tokens",
     description:
-      "Give a child (fork or other forge's project) a propose-only credential: `mint` (`child`, `origin`), `list`, `revoke` (`id`). Writers only.",
+      "Give a child a propose-only credential: `mint` (`child`, `origin`), `list`, `revoke` (`id`). Writers only.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1171,7 +1166,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "asks_undecide",
     description:
-      "Put a card the decider set aside back on your board, within a day of its answer. `id` is the decision's id from `asks_decide`.",
+      "Put a card the decider set aside back on your board, within a day. `id` is from `asks_decide`.",
     inputSchema: {
       type: "object",
       properties: { id: { type: "string", maxLength: 80 } },
@@ -1186,7 +1181,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "seal",
     description:
-      "Seal or unseal an issue or pull: a sealed one is seen only by people who write the app and its crew. Recorded in the app's activity.",
+      "Seal or unseal an issue or pull: a sealed one is seen only by the app's writers and crew.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1224,7 +1219,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "issue_teams",
     description:
-      "Name the crew teams (design, data-science, security, platform) on an issue: at most two; the closing pull is reviewed once per team.",
+      "Name the crew teams (design, data-science, security, platform) on an issue: at most two; each reviews the closing pull.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1371,7 +1366,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "health",
     description:
-      "How this forge is: version and commit (`dev` from source), whether it is draining, the platform's word on its rollout, and incidents.",
+      "How this forge is: version, commit, draining or not, rollout, incidents.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     run: (ctx, user) => good(readHealth(ctx.app, user)),
@@ -1379,7 +1374,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "audit",
     description:
-      "Who can do what, across every app you can see, from each app's contract.json: every resource × verb answered yes, own or no.",
+      "Who can do what across every app you can see, from each contract.json: resource × verb answered yes, own or no.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1433,7 +1428,7 @@ const TOOLS: readonly Tool[] = [
       properties: {
         username: { type: "string" },
         usdPerMonth: { type: "number", description: "0.01 to 10000; 0 takes it back." },
-        dryRun: { type: "boolean", description: "false to apply (default plans)." },
+        dryRun: { type: "boolean", description: "false to apply" },
       },
       required: ["username", "usdPerMonth"],
     },
@@ -1479,7 +1474,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "mint_invite",
     description:
-      "Mint a single-use invite link to sign up with; it expires in `days` (1–30, default 7) and is shown once. Person admins only.",
+      "Mint a single-use invite link; it expires in `days` (1–30, default 7) and is shown once. Person admins only.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1507,7 +1502,7 @@ const TOOLS: readonly Tool[] = [
         username: { type: "string" },
         role: { type: "string", enum: ["member", "guest"] },
         usdPerMonth: { type: ["number", "null"], description: "0.01 to 10000; omit or null for none." },
-        dryRun: { type: "boolean", description: "false to apply (default plans)." },
+        dryRun: { type: "boolean", description: "false to apply" },
       },
       required: ["username", "role"],
     },
@@ -1553,7 +1548,7 @@ const TOOLS: readonly Tool[] = [
         username: { type: "string" },
         dailyUsd: { type: ["number", "null"], description: "0.01–10000; null with perRunUsd null clears." },
         perRunUsd: { type: ["number", "null"], description: "0.01–10000; null with dailyUsd null clears." },
-        dryRun: { type: "boolean", description: "false to apply (default plans)." },
+        dryRun: { type: "boolean", description: "false to apply" },
       },
       required: ["username", "dailyUsd", "perRunUsd"],
     },
@@ -1596,7 +1591,7 @@ const TOOLS: readonly Tool[] = [
         on: { type: "boolean" },
         dryRun: {
           type: "boolean",
-          description: "false to apply (default plans).",
+          description: "false to apply",
         },
       },
       required: ["repo"],
@@ -1627,7 +1622,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "decisions_by",
     description:
-      "The standing rule for a repository's parked hand-over cards: `me`, `decider`, or `decider_tell`. Without `by`, says how it is set.",
+      "The standing rule for a repository's parked hand-over cards: `me`, `decider`, or `decider_tell`. Without `by`, reads it.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1635,7 +1630,7 @@ const TOOLS: readonly Tool[] = [
         by: { type: "string", enum: ["me", "decider", "decider_tell"] },
         dryRun: {
           type: "boolean",
-          description: "false to apply (default plans).",
+          description: "false to apply",
         },
       },
       required: ["repo"],
@@ -1666,7 +1661,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "archive",
     description:
-      "Archive a repository or wake it (`archived` true/false); nothing is deleted. Plans (dryRun false applies); repository admin token.",
+      "Archive a repository or wake it (`archived` true/false); nothing is deleted. Plans first; repository admin token.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1680,7 +1675,7 @@ const TOOLS: readonly Tool[] = [
         archived: { type: "boolean" },
         dryRun: {
           type: "boolean",
-          description: "false to apply (default plans).",
+          description: "false to apply",
         },
       },
     },
@@ -1719,7 +1714,7 @@ const TOOLS: readonly Tool[] = [
       properties: {
         repo: REPO_ARG,
         shown: { type: "boolean" },
-        dryRun: { type: "boolean", description: "false to apply (default plans)." },
+        dryRun: { type: "boolean", description: "false to apply" },
       },
       required: ["repo"],
     },
@@ -1765,7 +1760,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "branches",
     description:
-      "List a repository's branches, or with `name` and `action` create (from `from`) or delete one; the default branch is never deleted.",
+      "List a repository's branches, or with `name` and `action` create (from `from`) or delete one; never the default.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1848,7 +1843,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "probe",
     description:
-      "Knock on every door of a running app as nobody, a user and an admin, and compare each answer with its contract.json. Writes nothing.",
+      "Try every door of a running app as nobody, a user and an admin against its contract.json. Writes nothing.",
     inputSchema: {
       type: "object",
       properties: { repo: REPO_ARG },
@@ -1882,7 +1877,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "following",
     description:
-      "Where a fork stands against the repository it follows: in step, behind, ahead or diverged, and the files that need a decision.",
+      "Where a fork stands against what it follows: in step, behind, ahead or diverged, and files needing a decision.",
     inputSchema: {
       type: "object",
       properties: { repo: REPO_ARG },
@@ -1964,7 +1959,7 @@ const TOOLS: readonly Tool[] = [
         },
         dryRun: {
           type: "boolean",
-          description: "false to apply (default plans).",
+          description: "false to apply",
         },
         reveal: REVEAL_ARG,
       },
@@ -1997,7 +1992,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "forges",
     description:
-      "The forges you sent from here (an admin's list): name, address, whom for, apps given, whether claimed, and last activity.",
+      "The forges you sent from here (an admin's list): name, address, whom for, apps, claimed or not, last activity.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     async run(ctx, user) {
@@ -2016,7 +2011,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "claim_link",
     description:
-      "A new claim link for an unclaimed child forge; the old one stops at once. Nothing changes unless you send `reveal: true`.",
+      "A new claim link for an unclaimed child forge, only with `reveal: true`; the old one then stops at once. Nothing changes without it.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2038,7 +2033,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "take_updates",
     description:
-      "Take the parent forge's updates into a fork: on a spawned forge they open as one pull; otherwise a fast-forward or clean merge.",
+      "Take the parent forge's updates into a fork: one pull on a spawned forge; otherwise a fast-forward or clean merge.",
     inputSchema: {
       type: "object",
       properties: { repo: REPO_ARG },
@@ -2090,7 +2085,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "sever",
     description:
-      "Cut a spawned forge's link to the forge its code came from (its `forge` repository's owner only). Nothing is deleted or sent.",
+      "Cut a spawned forge's link to the forge its code came from (its `forge` repository's owner only). Deletes nothing.",
     inputSchema: {
       type: "object",
       properties: { repo: REPO_ARG },
@@ -2132,7 +2127,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "propose_to_parent_forge",
     description:
-      "Offer this forge's landed change to its parent as a pull on `child/<name>/…`; asking again for the same tip answers with that pull.",
+      "Offer this forge's landed change to its parent as a pull on `child/<name>/…`; the same tip answers with that pull.",
     inputSchema: {
       type: "object",
       properties: { repo: REPO_ARG },
@@ -2163,7 +2158,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "forge_proposals",
     description:
-      "What this forge proposed to its parent, newest first: pull, number and state there. `reachable` is false if the parent did not answer.",
+      "What this forge proposed to its parent, newest first. `reachable` is false if the parent did not answer.",
     inputSchema: {
       type: "object",
       properties: { repo: REPO_ARG },
@@ -2180,7 +2175,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "converge",
     description:
-      "Have a fork's crew merge the parent's updates where both sides changed the same files. The result comes back as a pull on the fork.",
+      "Have a fork's crew merge the parent's updates where both sides changed the same files, as a pull on the fork.",
     inputSchema: {
       type: "object",
       properties: { repo: REPO_ARG },
@@ -2217,7 +2212,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "next_steps",
     description:
-      "On a spawned forge, your first three steps and whether each is done. Empty anywhere else, or for anyone but the forge's owner.",
+      "On a spawned forge, your first three steps and whether each is done. Empty elsewhere or for anyone but its owner.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     async run(ctx, user) {
@@ -2228,7 +2223,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "thought",
     description:
-      "Where one of your thoughts went: its id (from `tell` without a repo) answers with the planner's placement and reply.",
+      "Where one of your thoughts went: its id (from `tell` without a repo) answers with the placement and reply.",
     inputSchema: {
       type: "object",
       properties: { id: { type: "string", maxLength: 64 } },
@@ -2258,7 +2253,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "asked",
     description:
-      "What people asked the crew for, in repositories you can write: by default what has nothing merged yet, oldest first, with closing pulls.",
+      "What people asked the crew for, in repositories you can write: by default what has nothing merged yet, oldest first.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2288,7 +2283,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "app_members",
     description:
-      "The people a private app names: they may enter the app and its previews. Without `members`, the list; with it, plans.",
+      "The people a private app names, who may enter it and its previews. Without `members`, the list; with it, plans.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2419,7 +2414,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "feed_chips",
     description:
-      "The feed chips you switched off, which `feed` and `asks` leave out. With `kind`, `value` and `hidden` it switches one off or on.",
+      "The feed chips you switched off, left out of `feed` and `asks`. With `kind`, `value` and `hidden` it sets one.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2456,7 +2451,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "make_it_yours",
     description:
-      "Make an app you can see yours: a fork of its code and history, following the original; data, secrets, crew, domains are not copied.",
+      "Make an app you can see yours: a fork of its code and history, following the original; nothing else is copied.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2506,7 +2501,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "front_page",
     description:
-      "The forge's front page as a stranger sees it. A site admin also gets the picks, and with `pinned`, `hidden`, `weights` sets them.",
+      "The forge's front page as a stranger sees it. A site admin also gets the picks and sets them with `pinned`, `hidden`, `weights`.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2621,7 +2616,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "watch",
     description:
-      "Watch a milestone, or stop (`watch: false`): its progress shows as one feed item, and your phone is told once, when it lands.",
+      "Watch a milestone, or stop (`watch: false`): progress is one feed item; your phone is told once, when it lands.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2699,7 +2694,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "run_log",
     description:
-      "A run's log, or its last `tail` lines: the same text and the same access as GET /api/v1/repos/:owner/:name/runs/:id/log.",
+      "A run's log, or its last `tail` lines, as GET /api/v1/repos/:owner/:name/runs/:id/log.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2838,7 +2833,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "returns",
     description:
-      "What the crew's tokens bought over the last days (1–90, default 7): dollars, runs by state, changes landed, cost per landed change.",
+      "What the crew's tokens bought over the last days (1–90, default 7): dollars, runs, changes landed, cost per change.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2863,7 +2858,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "review",
     description:
-      "Approve a pull, or request changes with a `reason` (required for changes); approving your own pull is refused as on the page.",
+      "Approve a pull, or request changes with a `reason` (required for changes); your own pull is refused.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2919,7 +2914,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "spend",
     description:
-      "Report what your session spent on an app's work the forge did not run: who, model, tokens and/or dollars, the issue or pull.",
+      "Report what your session spent on an app's work the forge did not run: who, model, tokens and/or dollars, issue or pull.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2948,7 +2943,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "usage",
     description:
-      "What the crew's runs on an app spent over the last days (1–90, default 7): tokens, dollars, time, by agent and issue. Writers only.",
+      "What the crew's runs on an app spent over the last days (1–90, default 7), by agent and issue. Writers only.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2979,7 +2974,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "labels",
     description:
-      "Set the labels of an issue or a pull to exactly these (none clears them): only labels the repository has; writers only.",
+      "Set the labels of an issue or a pull to exactly these (none clears): only the repository's labels; writers only.",
     inputSchema: {
       type: "object",
       properties: {
@@ -3075,7 +3070,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "attach_look",
     description:
-      "Attach a look to an open pull: a PNG or JPEG (at most 5 MB, base64 in `image`) at `phone` or `desktop` width, with one line in `says`.",
+      "Attach a look to an open pull: PNG or JPEG (max 5 MB, base64 in `image`), `phone` or `desktop`, one line in `says`.",
     inputSchema: {
       type: "object",
       properties: {
@@ -3088,7 +3083,7 @@ const TOOLS: readonly Tool[] = [
         image: { type: "string" },
         dryRun: {
           type: "boolean",
-          description: "false to apply (default plans).",
+          description: "false to apply",
         },
       },
       required: ["app", "pull", "width", "says", "image"],
@@ -3129,7 +3124,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "hold",
     description:
-      "Hold a pull, or let it go: while held, nothing reviews or lands it. App writers only. `why` holds; `release: true` lets go.",
+      "Hold a pull (`why`) or let it go (`release: true`): while held, nothing reviews or lands it. Writers only.",
     inputSchema: {
       type: "object",
       properties: {
@@ -3144,7 +3139,7 @@ const TOOLS: readonly Tool[] = [
         },
         dryRun: {
           type: "boolean",
-          description: "false to apply (default plans).",
+          description: "false to apply",
         },
       },
       required: ["app", "pull"],
@@ -3203,7 +3198,7 @@ const TOOLS: readonly Tool[] = [
   },
   {
     name: "plan",
-    description: `Open and link several small issues, all or none (max ${PLAN_MAX}). Items: key, title, body, optional blockedBy; with pillars, \`pillar\` or \`later: true\` with \`why\`.`,
+    description: `Open and link several small issues, all or none (max ${PLAN_MAX}). With pillars, each has \`pillar\` or \`later: true\` with \`why\`.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -3281,7 +3276,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "access",
     description:
-      "What outside agents tried: the redacted log of non-browser requests to public paths, newest first, max 500. Forge admin, write-scope token.",
+      "What outside agents tried: the redacted log of non-browser requests to public paths, newest first, max 500. Forge admin.",
     inputSchema: {
       type: "object",
       properties: {
@@ -3309,7 +3304,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "capacity",
     description:
-      "The forge's capacity and guards, live. With `key` and `value` (\"\" restores default), plans; dryRun false makes it.",
+      "The forge's capacity and guards, live. With `key` and `value` (\"\" restores default), plans.",
     inputSchema: {
       type: "object",
       properties: {
@@ -3318,7 +3313,7 @@ const TOOLS: readonly Tool[] = [
           enum: ["crew.concurrency", "checks.concurrency", "checks.shards", "cells.egress", "guard_new_accounts", "signin.edge"],
         },
         value: { type: "string", maxLength: 16 },
-        dryRun: { type: "boolean", description: "false to apply (default plans)." },
+        dryRun: { type: "boolean", description: "false to apply" },
       },
     },
     writes: true,
@@ -3348,7 +3343,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "scorecard",
     description:
-      "Crew scorecard (forge admin): per agent, all time and 30 days (landed, review rounds, red rate, reverts), by model and prompt.",
+      "Crew scorecard (forge admin): per agent, all time and 30 days (landed, review rounds, red rate, reverts).",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     adminOnly: true,
@@ -3360,7 +3355,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "flow",
     description:
-      "The forge's pipeline for a forge admin: per stage counts, `oldestWaiting`, `capacity`, `says` naming the bottleneck, merge `queue`.",
+      "The forge's pipeline (forge admin): per stage counts, `oldestWaiting`, `capacity`, the bottleneck, merge `queue`.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     run(ctx, user) {
@@ -3388,7 +3383,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "contribute",
     description:
-      "For any agent that arrives: what this forge is, its bottleneck, open “help wanted” issues in public repositories, and how to propose.",
+      "For any arriving agent: what this forge is, its bottleneck, open “help wanted” issues, how to propose.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     run: (ctx) => good(welcome(ctx.app)),
@@ -3396,13 +3391,13 @@ const TOOLS: readonly Tool[] = [
   {
     name: "limits",
     description:
-      "Every limit the forge's owner can hit, with value, bounds and reason. With `key` and `value` (\"\" restores default), plans.",
+      "Every limit the forge's owner can hit, with value, bounds. With `key` and `value` (\"\" restores default), plans.",
     inputSchema: {
       type: "object",
       properties: {
         key: { type: "string", enum: [...LIMIT_KEYS] },
         value: { type: "string", maxLength: 16 },
-        dryRun: { type: "boolean", description: "false to apply (default plans)." },
+        dryRun: { type: "boolean", description: "false to apply" },
       },
     },
     writes: true,
@@ -3440,7 +3435,7 @@ const TOOLS: readonly Tool[] = [
         charter: { type: "string", maxLength: 2000 },
         dial: { type: "integer", minimum: 0, maximum: 100 },
         members: { type: "array", maxItems: 500, items: { type: "string", maxLength: 64 } },
-        dryRun: { type: "boolean", description: "false to apply (default plans)." },
+        dryRun: { type: "boolean", description: "false to apply" },
       },
     },
     writes: true,
@@ -3482,7 +3477,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "cloud_accounts",
     description:
-      "Cloud accounts for a forge admin: each attached provider token with use, verification, write permission and today's vendor calls.",
+      "Cloud accounts (forge admin): each attached provider token with use, verification, write permission, today's calls.",
     inputSchema: { type: "object", properties: {} },
     // A read, but marked a write so a `ro` token never lists the accounts; it
     // is a forge admin's and the audit rows name every vendor call.
@@ -3498,7 +3493,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "cloud_account",
     description:
-      "Change a cloud account (forge admin, admin-scope token). `verb`: attach, verify, rotate, rename, remove, allow_writes or audit.",
+      "Change a cloud account (admin-scope token). `verb`: attach, verify, rotate, rename, remove, allow_writes, audit.",
     inputSchema: {
       type: "object",
       properties: {
@@ -3553,13 +3548,13 @@ const TOOLS: readonly Tool[] = [
   {
     name: "quotas",
     description:
-      "Per-account repository and app quotas (number or null; not enforced yet). With `key` and `value` (\"\" clears), plans; dryRun false makes it.",
+      "Per-account repository and app quotas (number or null; not enforced yet). With `key` and `value` (\"\" clears), plans.",
     inputSchema: {
       type: "object",
       properties: {
         key: { type: "string", enum: [...QUOTA_KEYS] },
         value: { type: "string", maxLength: 16 },
-        dryRun: { type: "boolean", description: "false to apply (default plans)." },
+        dryRun: { type: "boolean", description: "false to apply" },
       },
     },
     writes: true,
@@ -3596,7 +3591,7 @@ const TOOLS: readonly Tool[] = [
       type: "object",
       properties: {
         mode: { type: "string", enum: [...SIGNUP_MODES] },
-        dryRun: { type: "boolean", description: "false to apply (default plans)." },
+        dryRun: { type: "boolean", description: "false to apply" },
       },
     },
     writes: true,
@@ -3666,7 +3661,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "board_write",
     description:
-      "Write a whole board under a slug (made or replaced). `board` is {title, range, refresh, panels: [{title, chart, query, w, h}]}.",
+      "Write a whole board under a slug (made or replaced): {title, range, refresh, panels: [{title, chart, query, w, h}]}.",
     inputSchema: {
       type: "object",
       properties: {
