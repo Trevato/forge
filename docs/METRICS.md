@@ -12,6 +12,14 @@ not an admin, 200 for an admin's `ro` token. It is never cached
 | `forge_egress_bytes_in` | gauge | `repo`, `destination` | Bytes received from the destination over open connections. |
 | `forge_egress_bytes_out` | gauge | `repo`, `destination` | Bytes sent to the destination over open connections. |
 | `forge_http_request_duration_seconds` | histogram | `pattern` (plus `le`) | Seconds taken to answer a request, by the route pattern matched (never the raw path), since the process started. Buckets are `route_timing`'s edges, 1 ms to 2.5 s, in seconds. |
+| `forge_app_up` | gauge | `app`, `env` | 1 when the app environment is serving, 0 when it is asleep, stopped, deploying or failed. |
+| `forge_cell_cpu_seconds` (samples `forge_cell_cpu_seconds_total`) | counter | `app`, `env` | CPU seconds (user plus system) used by the processes of a running app cell. |
+| `forge_cell_memory_bytes` | gauge | `app`, `env` | Resident memory of the processes of a running app cell. |
+
+`app` is the app's slug, or its id for a private app: a private app's name is
+never in the body. `env` is `production` or `pull-<n>`. The cell families are
+what the cell watch last read (every few seconds); a cell that is not running
+has no series (a cell keeps the slug it started under, so after a rename its figures return when it restarts), and the forge starts nothing and reads no process to answer.
 
 The duration histogram counts every request the process has answered since
 it started; its `_bucket`, `_count` and `_sum` only grow, so `rate()` and
