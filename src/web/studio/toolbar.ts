@@ -161,7 +161,10 @@ export async function toolbarPage(ctx: Ctx): Promise<Response> {
       () =>
         card(
           html`<form method="post" action="${base}/tell" class="stack">
-            <input type="hidden" name="from" value="${toolbarPath(base, where.env, "")}" />
+            ${address === ""
+              ? html`<input type="hidden" name="from" value="${toolbarPath(base, where.env, "")}" />`
+              : html`<input type="hidden" name="page" value="${address}" />
+                  ${when(pull !== undefined, () => html`<input type="hidden" name="pull" value="${pull!.number}" />`)}`}
             <label>Tell the crew
               <textarea name="text" rows="3" maxlength="${MAX_BODY}" required></textarea>
             </label>

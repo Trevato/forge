@@ -239,7 +239,7 @@ describe("toolbar actions", () => {
   });
 
   test("the page's tell form posts to the one tell door and the tell lands back on the page", async () => {
-    const text = await (await get(url("production"), aliceCookie)).text();
+    const text = await (await get("/alice/notes/toolbar?env=production", aliceCookie)).text();
     const form = /<form method="post" action="([^"]+\/tell)"[^>]*>([\s\S]*?)<\/form>/.exec(text);
     expect(form).not.toBeNull();
     const from = /name="from" value="([^"]+)"/.exec(form![2]!)![1]!.replaceAll("&amp;", "&");
@@ -253,6 +253,43 @@ describe("toolbar actions", () => {
     expect(made.length).toBe(1);
     expect(listIssues(app.db, repoId, {}).length).toBe(before + 1);
     expect(made[0]!.body).toContain("Told from");
+  });
+
+  test("the tell form carries the page, and the pull on a preview, into the tell", async () => {
+    const tellForm = async (env: string) => {
+      const text = await (await get(url(env), aliceCookie)).text();
+      return /<form method="post" action="[^"]+\/tell"[^>]*>([\s\S]*?)<\/form>/.exec(text)![1]!;
+    };
+    const prod = await tellForm("production");
+    expect(prod).toContain(`name="page" value="https://notes.example.test/a"`);
+    expect(prod).not.toContain('name="pull"');
+    expect(prod).not.toContain('name="from"');
+    const res = await post("/alice/notes/tell", aliceCookie, { text: "Page tell prod", page: "https://notes.example.test/a" });
+    expect(res.status).toBe(200);
+    const one = listIssues(app.db, repoId, {}).find((i) => i.title === "Page tell prod")!;
+    expect(one.body).toContain("- page: https://notes.example.test/a");
+    expect(one.body).not.toContain("- pull:");
+
+    const prev = await tellForm(`pull-${pullNumber}`);
+    expect(prev).toContain(`name="pull" value="${pullNumber}"`);
+    await post("/alice/notes/tell", aliceCookie, {
+      text: "Page tell preview",
+      page: "https://notes.example.test/b",
+      pull: String(pullNumber),
+    });
+    const two = listIssues(app.db, repoId, {}).find((i) => i.title === "Page tell preview")!;
+    expect(two.body).toContain("- page: https://notes.example.test/b");
+    expect(two.body).toContain(`- pull: #${pullNumber}`);
+  });
+
+  test("an off-origin or over-long page is dropped from the form, and escaped", async () => {
+    const bad = await (await get("/alice/notes/toolbar?env=production&page=javascript:alert(1)", aliceCookie)).text();
+    expect(bad).toContain('name="from"');
+    expect(bad).not.toContain("javascript:");
+    const long = await (await get(`/alice/notes/toolbar?env=production&page=${encodeURIComponent("https://a.test/" + "x".repeat(600))}`, aliceCookie)).text();
+    expect(long).toContain('name="from"');
+    const quote = await (await get(`/alice/notes/toolbar?env=production&page=${encodeURIComponent('https://a.test/"><script>')}`, aliceCookie)).text();
+    expect(quote).not.toContain("<script>");
   });
 
   test("a live run on a sealed issue is not shown to a reader who did not file it", async () => {
