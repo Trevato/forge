@@ -1480,7 +1480,7 @@ export async function originReposPage(ctx: Ctx): Promise<Response> {
               forkable,
               () =>
                 html`<form
-                  class="bar"
+                  class="row-fields"
                   method="post"
                   action="${browseBase(origin.id, remote.fullName)}/fork"
                 >
@@ -1502,7 +1502,7 @@ export async function originReposPage(ctx: Ctx): Promise<Response> {
                   })}`
                 : html`${counted}${forkForm}
                     <form
-                      class="bar"
+                      class="row-fields"
                       method="post"
                       action="/settings/origins/${origin.id}/mirror"
                     >

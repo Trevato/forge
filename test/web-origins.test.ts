@@ -336,19 +336,35 @@ describe("origins on the web", () => {
     expect(html).not.toContain("Mirror all");
   });
 
-  test("the origin row and the mirror forms use the shared row, bar and btn, not the page-local names", async () => {
+  test("the origin row and the mirror forms are drawn with the design's row and default inputs", async () => {
     const id = listOrigins(app.db, getUserByName(app.db, "alice")!.id)[0]!.id;
     const old = /origin-row|origin-name|origin-mark|mirror-form/;
-    const list = await (await asUser(alice, "/settings/origins")).text();
-    expect(list).not.toMatch(old);
-    expect(list).toContain(`class="list setting-list"`);
-    expect(list).toContain(`class="row"`);
-    expect(list).toContain(`action="/settings/origins/${id}/sync"`);
-    expect(list).toContain(`href="/settings/origins/${id}/repos"`);
-    expect(list).toContain("Sync now");
-    expect(list).toContain("Repositories");
-    expect(list).toContain("Disconnect");
-    expect(list).toContain("personal access token");
+    const card = await (await asUser(alice, "/settings/origins")).text();
+    expect(card).not.toMatch(old);
+    expect(card).toContain('class="list setting-list"');
+    expect(card).toContain("personal access token");
+    expect(card).toContain(`action="/settings/origins/${id}/sync"`);
+    expect(card).toContain(`href="/settings/origins/${id}/repos"`);
+    expect(card).toContain(encodeURIComponent(`/settings/origins/${id}/delete`));
+    expect(card).toContain("Sync now");
+    expect(card).toContain("Repositories");
+    expect(card).toContain("Disconnect");
+    const html = await (
+      await asUser(alice, `/settings/origins/${id}/repos`)
+    ).text();
+    expect(html).not.toMatch(old);
+    expect(html).toContain('class="row-fields"');
+    expect(html).toContain(`action="/settings/origins/${id}/mirror"`);
+    expect(html).toContain('name="fullName"');
+    expect(html).toContain("Mirror");
+    for (const page of [card, html])
+      for (const input of page.match(/<input\b[^>]*>/g) ?? [])
+        expect(input).not.toContain("data-size");
+  });
+
+  test("a remote whose name is taken locally gets the labelled name box in a row-fields form", async () => {
+    const id = listOrigins(app.db, getUserByName(app.db, "alice")!.id)[0]!.id;
+    const old = /origin-row|origin-name|origin-mark|mirror-form/;
     // A remote whose name is already taken locally gets the labelled name box.
     const alicia = getUserByName(app.db, "alice")!;
     const taken = await createRepo(app, alicia, {
@@ -371,7 +387,7 @@ describe("origins on the web", () => {
     // Refresh again so the cached repository list forgets the fixture.
     await asUser(alice, `/settings/origins/${id}/repos?refresh=1`);
     expect(picker).not.toMatch(old);
-    const mirrorForm = `<form[^>]*class="bar"[^>]*action="/settings/origins/${id}/mirror"`;
+    const mirrorForm = `<form[^>]*class="row-fields"[^>]*action="/settings/origins/${id}/mirror"`;
     expect(picker).toMatch(new RegExp(mirrorForm));
     expect(picker).toContain('name="fullName"');
     expect(picker).toMatch(
