@@ -108,7 +108,7 @@ function everydayFields(ctx: Ctx, user: User, offerKeep: boolean): Html {
           It signs in with a passkey of its own: a fingerprint, face or
           device PIN. There is no password.
         </p>
-        <p class="passkey-note" id="passkey-make-note" role="alert"></p>
+        <p class="muted small" id="passkey-make-note" data-fail="error-note" role="status"></p>
         <noscript><p class="muted small">Making the passkey needs JavaScript.</p></noscript>
         <div class="form-actions">
           <button type="submit" id="passkey-make" class="btn" data-variant="primary" data-options="/settings/everyday/options">Make it with a passkey</button>

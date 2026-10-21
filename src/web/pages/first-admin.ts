@@ -78,7 +78,7 @@ function form(values: Values, errors: Errors): Html {
             You sign in with a passkey: a fingerprint, face or device PIN.
             There is no password to remember.
           </p>
-          <p class="passkey-note mb" id="passkey-make-note" role="alert">${errors.passkey ?? ""}</p>
+          <p class="${errors.passkey ? "error-note" : "muted small"} mb" id="passkey-make-note" data-fail="error-note" role="${errors.passkey ? "alert" : "status"}">${errors.passkey ?? ""}</p>
           <noscript><p class="muted small">Making the passkey needs JavaScript.</p></noscript>
           <div class="form-actions">
             <button type="submit" id="passkey-make" class="btn" data-variant="primary" data-options="/first-admin/options">Make the admin with a passkey</button>

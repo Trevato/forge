@@ -198,7 +198,7 @@ function claimForm(
               Or skip the password: a passkey signs you in with a fingerprint,
               face or device PIN. It needs an email address above.
             </p>
-            <p class="passkey-note mb" id="passkey-make-note" role="alert">${errors.passkey ?? ""}</p>
+            <p class="${errors.passkey ? "error-note" : "muted small"} mb" id="passkey-make-note" data-fail="error-note" role="${errors.passkey ? "alert" : "status"}">${errors.passkey ?? ""}</p>
             <button type="button" id="passkey-make" class="btn" data-variant="outline" data-options="/claim/options" data-needs-email>Claim with a passkey instead</button>
           </div>
         </form>`,

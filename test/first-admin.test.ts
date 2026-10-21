@@ -298,6 +298,9 @@ describe("a person: /first-admin with a passkey", () => {
       redirect: "manual",
     });
     expect(res.status).toBe(422);
+    const refusedPage = await res.text();
+    expect(refusedPage).not.toContain("passkey-note");
+    expect(refusedPage).toMatch(/<p class="error-note mb" id="passkey-make-note" data-fail="error-note" role="alert">[^<]+<\/p>/);
     expect(getUserByName(app.db, "ada")).toBeUndefined();
     expect(readFirstAdmin(app.db, code)).toBe("ok");
   });

@@ -182,6 +182,8 @@ describe("the everyday account", () => {
     const root = await signIn("ada");
     const home = await page(root, "/");
     expect(home).toContain('id="passkey-make"');
+    expect(home).not.toContain("passkey-note");
+    expect(home).toContain('<p class="muted small" id="passkey-make-note" data-fail="error-note" role="status"></p>');
     expect(home).not.toContain('name="password"');
     const res = await make(root, {
       username: "ada-me",

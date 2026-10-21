@@ -459,7 +459,7 @@ describe("web pages end to end", () => {
     expect(changeCapacity(app, ada, "cells.egress", "report").ok).toBe(true);
     try {
       const text = await (await fetch(base, { headers: { cookie } })).text();
-      expect(text).not.toContain("error-note");
+      expect(text).not.toMatch(/class="[^"]*\berror-note/);
       expect(text).not.toContain("Egress is reported");
     } finally {
       changeCapacity(app, ada, "cells.egress", "enforce");
