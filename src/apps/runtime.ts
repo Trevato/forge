@@ -38,6 +38,7 @@ import { runningLimitSentence } from "../settings/quotas.ts";
 import type { User } from "../core/users.ts";
 import {
   cancelRun,
+  getRun,
   listRuns,
   claimRun,
   createRun,
@@ -71,6 +72,7 @@ import { dirBytes } from "./bytes.ts";
 import { BUSY_WORDS, busyReason, type BusyReason } from "./busy.ts";
 import { exportTree, readFileAt } from "./checkout.ts";
 import { seconds, Stopwatch } from "./timing.ts";
+import { DRAIN_BUDGET_MS, drainPort } from "./handoff.ts";
 import type { DomainResolver } from "./domains.ts";
 import {
   appsRoot,
@@ -609,6 +611,26 @@ export class AppsRuntime {
 
   // ---- lifecycle ----
 
+  /** Each production environment the boot asked to deploy, and the run that does it. */
+  private readonly bootRuns = new Map<Environment, string>();
+
+  /**
+   * How many of the productions this boot asked for are neither serving
+   * nor settled yet. Until it reads 0 the forge is not ready (`/readyz`),
+   * so in a rollout the forge it replaces keeps proxying to its own copy
+   * of each app and no request finds an app that is still starting (#4496).
+   */
+  startingCount(): number {
+    let count = 0;
+    for (const [state, runId] of this.bootRuns) {
+      const run = state.live?.runId === runId ? undefined : getRun(this.app.db, runId);
+      const pending = run?.state === "queued" || run?.state === "running";
+      if (pending) count++;
+      else this.bootRuns.delete(state);
+    }
+    return count;
+  }
+
   /** Rebuild every environment from git and the open pulls, then listen. */
   async start(): Promise<void> {
     this.cells = await cellsAvailable();
@@ -670,7 +692,11 @@ export class AppsRuntime {
         cancelRun(this.app.db, state.queued.id, STOPPED_SUMMARY);
       if (state.live) {
         revokeAppToken(this.app.db, state.live.tokenId);
-        stops.push(state.live.handle.stop());
+        // A forge leaving (a rollout) lets its sockets reconnect to the
+        // forge that replaced it, and answers what it took, before it
+        // stops the app (#4496).
+        const handle = state.live.handle;
+        stops.push(drainPort(handle.port).then(() => handle.stop()));
       }
       // Abort only cancels the step in flight; the `execute()` continuation
       // chained onto `state.chain` still runs afterwards to record the
@@ -956,6 +982,7 @@ export class AppsRuntime {
       state.deploying === undefined &&
       state.queued === undefined &&
       reason !== "restart" &&
+      reason !== "oom" &&
       reason !== "redeploy"
     ) {
       return undefined;
@@ -983,6 +1010,7 @@ export class AppsRuntime {
       );
     }
     state.queued = run;
+    if (reason === "boot" && env === "production") this.bootRuns.set(state, run.id);
     state.chain = state.chain.then(async () => {
       if (state.queued?.id !== run.id) return; // superseded
       state.queued = undefined;
@@ -1162,6 +1190,11 @@ export class AppsRuntime {
         `stopping the previous deployment (${previous.commitOid.slice(0, 7)})`,
       );
       revokeAppToken(this.app.db, previous.tokenId);
+      // Traffic already goes to the new one: the old one's sockets are told
+      // to reconnect (1012), and what it was answering is answered (#4496).
+      const unanswered = await drainPort(previous.handle.port);
+      if (unanswered > 0)
+        write(`${unanswered} request(s) to the previous deployment were still waiting after ${seconds(DRAIN_BUDGET_MS)}`);
       await previous.handle.stop();
       if (previous.dir !== live.dir)
         rmSync(previous.dir, { recursive: true, force: true });
@@ -1477,6 +1510,10 @@ export class AppsRuntime {
         state.live = undefined;
         this.resting(state);
         revokeAppToken(this.app.db, live.tokenId);
+        // The cell's memory cap — its own watch or the kernel's OOM killer —
+        // is a cause of its own on the restarts board (`boards/sources.ts`).
+        const breach = live.handle.breach?.();
+        const oom = breach !== undefined && /memory/.test(breach);
         state.lastError = `exited with code ${code}`;
         appendRunLog(
           this.app.config.dataDir,
@@ -1503,7 +1540,7 @@ export class AppsRuntime {
               fresh,
               state.env,
               live.commitOid,
-              "restart",
+              oom ? "oom" : "restart",
             );
         }, delay);
       })

@@ -37,6 +37,8 @@ export interface ProcessHandle {
   readonly exited: Promise<number>;
   /** SIGTERM, a grace period, then SIGKILL. Resolves once it is gone. */
   stop(): Promise<void>;
+  /** The cell limit it broke, once it has ended over one (`Cell.breach`). */
+  breach?: () => string | undefined;
 }
 
 export interface StartInput {
@@ -459,7 +461,10 @@ export async function startProcess(
   // The cell's sockets and watch end with the process, however it ends.
   // Without a cell, so does the rest of its group: a child that outlived
   // the app, stopped or crashed, is not left running on its data.
+  // Read before the cell closes: its cgroup's OOM count goes with it.
+  let breach: string | undefined;
   void proc.exited.then(() => {
+    breach = cell?.breach();
     cell?.close();
     if (cell === undefined) signalGroup(proc.pid, "SIGKILL");
   });
@@ -488,6 +493,7 @@ export async function startProcess(
     },
     port,
     exited: proc.exited,
+    breach: () => breach,
     stop: async () => {
       if (proc.exitCode !== null || proc.signalCode !== null) return;
       // In a cell the pid is bubblewrap's, which passes no signal on: the

@@ -772,6 +772,32 @@ a forge coming up fails only runs whose lease has lapsed, so the old
 process's live work is never mistaken for a crash's leftovers, and a real
 crash is still cleaned up within a minute or two.
 
+An app goes through a release without a refused connection (#4496). A
+forge with apps on beats `serving/<id>.json` on the data volume every 5 s
+(`apps/presence.ts`). A new forge that finds another still beating — fresh
+within 15 s, and on the same host a pid that runs — starts every app's
+production and answers `/readyz` 503 (`starting N apps`) until each serves
+or fails, for up to two minutes (`STARTING_BUDGET_MS`, `http/health.ts`);
+the platform keeps routing to the old forge, whose copies still serve,
+until then. A cold start — a crash, an eviction, the first boot — finds
+nobody serving in its place and is ready at once, as is a forge whose
+predecessor stops beating during the wait. The old forge stops
+its apps only after its linger, once routers have moved: each proxied
+websocket is closed with 1012 Service Restart (`apps/handoff.ts`) — a
+client reconnects at once, to the new forge — and each request still with
+the app is given up to 30 s to be answered before the app is stopped. An
+app's own deploy hands over the same way: the new version serves first,
+then the old one's sockets get 1012 and its requests their 30 s. The
+**App restarts** board counts every production start over one that
+served, per day and per app, with its cause: its own deploy, a forge
+roll, a crash, or the memory cap (`oom`).
+
+The app's process still restarts on a forge release: it lives in the
+forge's pod, and the old pod's processes go with it. A forge roll is
+counted on that board so the rate is visible; keeping the process itself
+running across a roll needs the cells supervised outside the forge
+process, which this does not do.
+
 ## Where state lives
 
 Git is truth for code. The app's serving configuration (slug, access, the

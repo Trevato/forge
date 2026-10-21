@@ -323,6 +323,28 @@ export const SOURCES: Readonly<Record<string, Source>> = {
       value: "milliseconds; the budget is 180000 (three minutes)",
     },
   },
+  // Every time an app's production process was started again over one that
+  // served (#4496), from its deploy runs: one row per deploy that came to
+  // serve, timed by that instant, with why — the reason a deploy carries,
+  // mapped to four fixed words. A wake from sleep is not a restart: nothing
+  // was serving to be interrupted.
+  restarts: {
+    table: "restart",
+    owner: "repo_id",
+    select:
+      "SELECT repo_id, serving_at AS at, CASE reason WHEN 'boot' THEN 'forge roll' WHEN 'restart' THEN 'crash' " +
+      "WHEN 'oom' THEN 'oom' ELSE 'own deploy' END AS cause FROM run " +
+      "WHERE kind = 'deploy' AND env = 'production' AND serving_at IS NOT NULL AND reason NOT IN ('wake', 'enabled')",
+    time: "at",
+    columns: { repo_id: "text", cause: "text", at: "time" },
+    docs: {
+      cause:
+        "own deploy (a push, a merge, a redeploy), forge roll (the forge itself restarted: a release, " +
+        "and also a crash or eviction of the forge, which its deploys cannot tell apart), " +
+        "crash (the process exited and was started again) or oom (over its memory cap, by its cell's watch or the kernel)",
+      at: "when the new process began serving, UTC",
+    },
+  },
   // Items entering each stage from issue to live, one row per entry, read
   // from issue, run and pull as `flow/throughput.ts` reads them: an issue
   // opens, a builder first starts on it (a retry is not a second item), its
