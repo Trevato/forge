@@ -35,7 +35,9 @@ describe("the crew, with a stand-in Claude Code: review", () => {
     agentRunSettled(app, repo, where, timeoutMs);
 
   beforeAll(async () => {
-    standIn = await startStandInCrew();
+    // The crew ticks every 20 ms here, not every five seconds: a queued
+    // run starts at once instead of waiting out the tick (#3594).
+    standIn = await startStandInCrew({ tickMs: 20 });
     ({ app, alice, repo, argsFile } = standIn);
   }, 30_000);
 
