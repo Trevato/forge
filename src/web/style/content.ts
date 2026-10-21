@@ -680,23 +680,16 @@ form.inline { display: inline; margin-left: auto; }
   font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; tab-size: 4;
 }
 #run-live:has(#run-steer) .run-log { border-radius: var(--radius) var(--radius) 0 0; }
-.run-log .ln { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 10px; padding: 2px 0; }
-.run-log .who { color: var(--faint); font-size: 12.5px; font-weight: 600; padding-top: 2px; user-select: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.run-log .txt { white-space: pre-wrap; }
-.run-log .ln-say .who { color: var(--fg); }
-.run-log .ln-say + .ln-say > .who, .run-log .ln-say + .ln-tool > .who, .run-log .ln-tool + .ln-tool > .who,
-.run-log .ln-tool + .ln-say > .who, .run-log .ln-forge + .ln-forge > .who, .run-log .ln-say + .ln-pulse > .who,
-.run-log .ln-tool + .ln-pulse > .who { visibility: hidden; }
-.run-log .ln-tool .txt { font-family: var(--mono); font-size: 12.5px; color: var(--faint); }
-.run-log .ln-tool b { color: var(--fg); font-weight: 600; }
-.run-log .ln-forge .txt { color: var(--faint); font-style: italic; }
-.run-log .ln-you { margin: 6px 0; }
-.run-log .ln-you .who { color: var(--accent); }
-.run-log .ln-you .txt { background: color-mix(in srgb, var(--accent) 10%, transparent); border-left: 2px solid var(--accent); padding: 4px 10px; border-radius: 0 var(--radius) var(--radius) 0; }
-.run-log .ln-pulse .txt { padding-top: 6px; }
-.run-log .ln-pulse i { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--faint); margin-right: 4px; animation: run-pulse 1.2s infinite ease-in-out; }
-.run-log .ln-pulse i:nth-child(2) { animation-delay: .2s; }
-.run-log .ln-pulse i:nth-child(3) { animation-delay: .4s; }
+.run-log .row { padding: 2px 0; min-height: 0; align-items: flex-start; }
+.run-log .row-lead { flex: 0 0 72px; justify-content: flex-start; overflow: hidden; }
+.run-log .row-lead .badge { overflow: hidden; text-overflow: ellipsis; }
+.run-log .row-title { font-weight: 400; white-space: pre-wrap; overflow: visible; }
+.run-log [data-line="tool"] .row-title { font-family: var(--mono); font-size: 12.5px; color: var(--faint); }
+.run-log [data-line="tool"] b { color: var(--fg); font-weight: 600; }
+.run-log [data-line="forge"] .row-title { color: var(--faint); font-style: italic; }
+.run-log [data-line="pulse"] i { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--faint); margin-right: 4px; animation: run-pulse 1.2s infinite ease-in-out; }
+.run-log [data-line="pulse"] i:nth-child(2) { animation-delay: .2s; }
+.run-log [data-line="pulse"] i:nth-child(3) { animation-delay: .4s; }
 @keyframes run-pulse { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
 #run-jump {
   position: sticky; bottom: 6px; float: right; margin-top: 6px; border-radius: 999px; box-shadow: var(--shadow-2);
@@ -1064,8 +1057,8 @@ textarea.editor:focus-visible { outline: none; }
 /* Reduced motion: the pulses hold still at a legible level, the scroll-tied
    fade stays at its resting width, and these transitions land at once. */
 @media (prefers-reduced-motion: reduce) {
-  .front-live, .run-log .ln-pulse i { animation: none; }
-  .run-log .ln-pulse i { opacity: .6; }
+  .front-live, .run-log [data-line="pulse"] i { animation: none; }
+  .run-log [data-line="pulse"] i { opacity: .6; }
   .ex-dir > summary > .ico, .code-layout > #code-main[aria-busy="true"], .code-layout > [data-split]::after { transition: none; }
 }
 `;

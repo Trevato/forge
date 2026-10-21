@@ -194,31 +194,39 @@ const elapsedTickJs = /* js */ `
 
 const logLineJs = /* js */ `
   var FORGE = /^(claude:|done:|failed:|paused|declined:|cloning |branch |forked |pushing |push refused|clone kept|nothing to propose|opened pull|updated pull|committed the|could not|checking out|deploy |data: |\\$ |session |the session|interrupted|passed in|install |test |start |ready |process |timing: )/;
-  function line(kind, speaker, fill) {
+  function line(kind, speaker, fill, variant) {
     var el = document.createElement('div');
-    el.className = 'ln ln-' + kind;
+    el.className = 'row';
+    el.setAttribute('data-line', kind);
+    var lead = document.createElement('span');
+    lead.className = 'row-lead';
     var w = document.createElement('span');
-    w.className = 'who';
+    w.className = 'badge';
+    if (variant) w.setAttribute('data-variant', variant);
     w.textContent = speaker;
+    lead.appendChild(w);
+    var main = document.createElement('span');
+    main.className = 'row-main';
     var t = document.createElement('span');
-    t.className = 'txt';
+    t.className = 'row-title';
     fill(t);
-    el.appendChild(w);
-    el.appendChild(t);
+    main.appendChild(t);
+    el.appendChild(lead);
+    el.appendChild(main);
     return el;
   }
   function draw(text) {
-    if (text.indexOf('you: ') === 0) return line('you', 'you', function (t) { t.textContent = text.slice(5); });
+    if (text.indexOf('you: ') === 0) return line('you', 'you', function (t) { t.textContent = text.slice(5); }, 'secondary');
     if (text.indexOf('\\u2192 ') === 0) {
       var rest = text.slice(2), at = rest.indexOf(' ');
-      return line('tool', '', function (t) {
+      return line('tool', 'tool', function (t) {
         var b = document.createElement('b');
         b.textContent = at === -1 ? rest : rest.slice(0, at);
         t.appendChild(b);
         t.appendChild(document.createTextNode(at === -1 ? '' : ' ' + rest.slice(at + 1)));
       });
     }
-    if (FORGE.test(text)) return line('forge', 'forge', function (t) { t.textContent = text; });
+    if (FORGE.test(text)) return line('forge', 'forge', function (t) { t.textContent = text; }, 'outline');
     return line('say', who, function (t) { t.textContent = text; });
   }
 `;
@@ -298,8 +306,8 @@ export const studioRunJs = /* js */ `
   function add(el) {
     log.insertBefore(el, pulse && pulse.parentNode === log ? pulse : jump);
     if (cap) {
-      var kept = log.querySelectorAll('.ln:not(#run-pulse)');
-      while (kept.length > cap) { log.removeChild(kept[0]); kept = log.querySelectorAll('.ln:not(#run-pulse)'); }
+      var kept = log.querySelectorAll('.row[data-line]:not(#run-pulse)');
+      while (kept.length > cap) { log.removeChild(kept[0]); kept = log.querySelectorAll('.row[data-line]:not(#run-pulse)'); }
     }
     if (follow) toEnd(); else if (jump) jump.hidden = false;
   }
@@ -462,8 +470,8 @@ export const appTailJs = /* js */ `
   function add(el) {
     tail.appendChild(el);
     if (cap) {
-      var kept = tail.querySelectorAll('.ln');
-      while (kept.length > cap) { tail.removeChild(kept[0]); kept = tail.querySelectorAll('.ln'); }
+      var kept = tail.querySelectorAll('.row[data-line]');
+      while (kept.length > cap) { tail.removeChild(kept[0]); kept = tail.querySelectorAll('.row[data-line]'); }
     }
     tail.scrollTop = tail.scrollHeight;
   }

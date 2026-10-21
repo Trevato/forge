@@ -794,7 +794,7 @@ describe("working: a run's own page in the studio", () => {
     // The deploy speaks for itself: the box, and every line in it — never
     // "an agent", which is nobody that was actually there.
     expect(page).toContain('data-who="the deploy"');
-    expect(page).toContain('class="who">the deploy<');
+    expect(page).toContain('>the deploy<');
     expect(page).not.toContain("an agent");
     // A deploy that finished with nothing else to show reads as done, not
     // as a run that has not started yet.

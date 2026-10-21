@@ -465,7 +465,8 @@ describe("apps, runs and the crew on the web", () => {
     expect(page).not.toContain("issue-meta");
     // The log is drawn line by line, each by what kind of line it is: the
     // forge's own words ("checking out …") are marked as such.
-    expect(page).toContain('class="ln ln-forge"');
+    expect(page).toContain(`data-line="forge"`);
+    expect(page).not.toMatch(/class="[^"]*\bln-/);
     expect(page).toContain('id="run-elapsed"');
 
     const door = await web(alice, `/runs/${run!.id}`);

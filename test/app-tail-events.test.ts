@@ -13,6 +13,7 @@ function node(tag: string) {
     className: "",
     textContent: "",
     children: [] as unknown[],
+    setAttribute(_n: string, _v: string) {},
     appendChild(c: unknown) {
       el.children.push(c);
       return c;
