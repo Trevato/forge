@@ -31,7 +31,7 @@ afterAll(async () => {
 
 test("a warm home reads neither the KPIs nor the panels again; a write does", async () => {
   const a = await home(f.ownerCookie);
-  expect(a).toContain('class="kpis"');
+  expect(a).toContain('class="stats mb"');
   expect(a).toContain("<h2>Pin A</h2>");
   const kpi = kpiCache(f.app.db);
   const panel = panelCache(f.app.db);
@@ -50,8 +50,8 @@ test("the owner's KPIs and panels never render for another viewer, warm or not",
   await home(f.ownerCookie);
   for (const cookie of [f.peerCookie, undefined]) {
     const page = await home(cookie);
-    expect(page).not.toContain('class="kpis"');
-    expect(page).not.toContain('class="card kpi"');
+    expect(page).not.toContain('class="stats mb"');
+    expect(page).not.toContain('class="stat"');
     expect(page).not.toContain("Pin A");
   }
 });

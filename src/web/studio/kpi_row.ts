@@ -3,8 +3,8 @@
  * hour with a day's sparkline, the live version and since when, the median
  * check time, the crew builders running of their slots, the crew's spend
  * today of the daily ceiling, the age of the last off-box backup, visitors with 30 days as a sparkline, accounts signed in, and page speed.
- * Server-rendered, one fixed-height card each, so nothing moves when it
- * paints. Only the studio's words: shipped, change, check time.
+ * Server-rendered, one fixed-height §5 stat tile each, so nothing moves when
+ * it paints. Only the studio's words: shipped, change, check time.
  */
 
 import type { Database } from "bun:sqlite";
@@ -14,7 +14,7 @@ import { cachedKpis } from "./home_cache.ts";
 import { escapeHtml, html, raw, type Html } from "../html.ts";
 import { BOOTED } from "../../release/gate.ts";
 import { running } from "../../kernel/version.ts";
-import { sha, time } from "../ui.ts";
+import { sha, stat, time } from "../ui.ts";
 
 const W = 96;
 const H = 24;
@@ -25,8 +25,9 @@ function at(i: number, n: number, v: number, top: number): [string, string] {
   return [(i * step).toFixed(1), (H - 2 - (v / top) * (H - 4)).toFixed(1)];
 }
 
-function svg(label: string, body: string): Html {
-  return raw(`<svg class="kpi-spark" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${label}">${body}</svg>`);
+/** `cls` is for a sparkline outside a stat tile (the app settings page's), which styles itself. */
+function svg(label: string, body: string, cls = ""): Html {
+  return raw(`<svg${cls === "" ? "" : ` class="${cls}"`} viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${label}">${body}</svg>`);
 }
 
 /** A series oldest first as a fixed-size SVG polyline; the numbers are the only input. */
@@ -62,7 +63,7 @@ export function daySpark(days: readonly (number | null)[], label: string): Html 
         : `<polyline points="${r.map((p) => p.join(",")).join(" ")}" fill="none" stroke="currentColor" stroke-width="1.5"/>`,
     )
     .join("");
-  return svg(escapeHtml(label), body);
+  return svg(escapeHtml(label), body, "kpi-spark");
 }
 
 /** The last 24 hours, newest first in, oldest on the left out. */
@@ -76,12 +77,7 @@ export function visitorsSpark(days: readonly number[]): Html {
 }
 
 function tile(label: string, href: string, value: Html | string, full: string, note: string | Html, title: string, extra: Html | null = null, tone: "attn" | null = null): Html {
-  return html`<a class="card kpi" href="${href}"${tone === null ? "" : raw(` data-tone="${tone}"`)} aria-label="${label}: ${full}, ${title}">
-    <span class="small muted">${label}</span>
-    <span class="kpi-value num" title="${full}">${value}</span>
-    <span class="kpi-note small muted" title="${title}">${note}</span>
-    ${extra}
-  </a>`;
+  return stat({ label, href, value, title: full, note, noteTitle: title, aria: `${label}: ${full}, ${title}`, spark: extra, ...(tone === null ? {} : { tone }) });
 }
 
 /** The version this forge is running, and since when: the same source as `/releases`. */
@@ -93,7 +89,7 @@ export function liveNow(): { sha: string; at: string } | null {
 export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null, now: Date = new Date()): Html {
   const overdue = backupOverdue(k.backupAt, now);
   const rate = k.landed / k.landedHours.length;
-  return html`<section class="kpis" aria-label="The last 24 hours, as of this page load">
+  return html`<section class="stats mb" aria-label="The last 24 hours, as of this page load">
     ${tile(
       "Shipped per hour",
       "/board",

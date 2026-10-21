@@ -167,6 +167,7 @@ fieldset.field > .check + .check { margin-top: 8px; }
   background: var(--card); color: var(--fg); text-decoration: none;
 }
 a.stat:hover { border-color: var(--border-strong); }
+.stat[data-tone="attn"] { border-color: color-mix(in srgb, var(--attn) 40%, var(--border)); }
 .stat-label { display: block; height: 18px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: var(--fs-min); line-height: 18px; color: var(--muted-fg); }
 .stat-value { display: block; height: 32px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 20px; font-weight: 600; line-height: 32px; }
 .stat-note {

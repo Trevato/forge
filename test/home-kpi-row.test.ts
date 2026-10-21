@@ -5,7 +5,7 @@ import { NO_REACH, readReach } from "../src/flow/reach.ts";
 import { describe, expect, test } from "bun:test";
 import { checkTime, kpiLines, sparkText } from "../src/flow/kpi_words.ts";
 import { running } from "../src/kernel/version.ts";
-import { feedCss } from "../src/web/studio/feed_style.ts";
+import { components } from "../src/web/style/components.ts";
 import { kpiRowFor, liveNow, sparkline } from "../src/web/studio/kpi_row.ts";
 
 const hours = (n: number) => Array.from({ length: 24 }, (_, i) => (i === 3 ? n : 0));
@@ -75,24 +75,24 @@ describe("home kpi row", () => {
   });
 
   test("the note wraps into two reserved lines instead of cutting off on a phone", () => {
-    const rule = (sel: string) => new RegExp(`\\${sel} \\{([^}]*)\\}`).exec(feedCss)![1]!;
-    expect(rule(".kpi-note")).not.toContain("nowrap");
-    expect(rule(".kpi-note")).toContain("line-height: 20px");
-    expect(rule(".kpi-note")).toContain("line-clamp: 2");
-    expect(rule(".kpi")).toContain("grid-template-rows: 20px 32px 40px 24px");
+    const rule = (sel: string) => new RegExp(`\\${sel} \\{([^}]*)\\}`).exec(components)![1]!;
+    expect(rule(".stat-note")).not.toContain("nowrap");
+    expect(rule(".stat-note")).toContain("line-clamp: 2");
+    expect(rule(".stat-note")).toContain("height: 36px");
+    expect(rule(".stat")).toContain("height: 104px");
   });
 
   test("the builders tile says running of slots, titles it, and links to the crew", () => {
     const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: NO_REACH, medianCheckMs: null, builders: { running: 2, slots: 4 }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
     expect(out).toContain('href="/settings/crew"');
-    expect(out).toContain('class="kpi-value num" title="2 of 4">2 of 4<');
+    expect(out).toContain('class="stat-value num" title="2 of 4">2 of 4<');
     expect(out).toContain('title="Crew builders running now, of 4 slots"');
     expect(out).toContain('aria-label="Builders running: 2 of 4, Crew builders running now, of 4 slots"');
   });
 
   test("with no slots set the builders tile shows a dash and says so", () => {
     const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: NO_REACH, medianCheckMs: null, builders: { running: 0, slots: 0 }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
-    expect(out).toContain('class="kpi-value num" title="—">—<');
+    expect(out).toContain('class="stat-value num" title="—">—<');
     expect(out).toContain('title="No slots set">No slots set<');
     expect(out).toContain(`aria-label="Builders running: —, No slots set"`);
     expect(out).not.toContain("Builders running: 0 of 0");
@@ -155,7 +155,7 @@ describe("the spend tile", () => {
 
   test("shows today's spend of the ceiling, the cents in the title, linking to the crew page", () => {
     const out = row({ todayUsd: 12.34, ceilingUsd: 40 });
-    expect(out).toContain('class="kpi-value num" title="$12.34 of $40.00">$12 of $40<');
+    expect(out).toContain('class="stat-value num" title="$12.34 of $40.00">$12 of $40<');
     expect(out).toContain('aria-label="Crew spend today: $12.34 of $40.00, Crew spend today (UTC), of the daily ceiling"');
     expect(out).toContain(">of the daily ceiling<");
   });
@@ -198,7 +198,7 @@ describe("home kpi row: the last off-box backup", () => {
   const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3_600_000).toISOString();
   const row = (backupAt: string | null) =>
     kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt, reach: NO_REACH, builders: { running: 0, slots: 0 }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: null }, null, NOW).toString();
-  const tile = (out: string) => /<a class="card kpi"[^>]*href="\/settings\/backups"[^>]*>/.exec(out)![0];
+  const tile = (out: string) => /<a class="stat"[^>]*href="\/settings\/backups"[^>]*>/.exec(out)![0];
 
   test("a backup 2 h old reads its age, with the exact time, and is not flagged", () => {
     const out = row(hoursAgo(2));
@@ -246,7 +246,7 @@ describe("the reach tiles", () => {
     const reach = { usersToday: 3, usersTotal: 12, visitorsToday: 5, visitors7d: 31, visitorDays: new Array<number>(30).fill(0), loadP75: 1250, inpP75: 180 };
     const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach, medianCheckMs: null, builders: { running: 0, slots: 0 }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
     for (const v of ["5 today", "31 in 7 days", "3 of 12", "signed in today", "1.3 s", "reacts in 180 ms"]) expect(out).toContain(`>${v}<`);
-    expect((out.match(/class="card kpi" href="\/boards\/reach"/g) ?? []).length).toBe(3);
+    expect((out.match(/class="stat" href="\/boards\/reach"/g) ?? []).length).toBe(3);
     expect(out).not.toContain("INP");
     expect(out).not.toContain("p75");
   });

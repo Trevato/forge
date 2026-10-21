@@ -59,9 +59,12 @@ test("home renders the nine tiles; only an admin sees them", async () => {
   view(day, "a", 1900, null);
   view(yesterday, "z", 400, 160);
   const a = await home(admin);
-  expect(a).toContain('class="kpis"');
-  expect((a.match(/class="card kpi"/g) ?? []).length).toBe(9);
-  for (const href of ["/board", "/releases", "/boards", "/settings/crew"]) expect(a).toContain(`class="card kpi" href="${href}"`);
+  expect(a).toContain('class="stats mb"');
+  expect((a.match(/class="stat"/g) ?? []).length).toBe(9);
+  for (const href of ["/board", "/releases", "/boards", "/settings/crew", "/settings/backups"]) expect(a).toContain(`class="stat" href="${href}"`);
+  // The tiles are §5 stats (#3982): none of the page-local kpi classes is left on home.
+  for (const name of ["kpis", "kpi", "kpi-value", "kpi-note", "kpi-spark"]) expect(a).not.toMatch(new RegExp(`class="[^"]*\\b${name}\\b(?!-)`));
+  expect(a).toContain('role="img" aria-label="Shipped each hour over the last 24 hours"');
 
   // 2 accounts, the admin alone with a session today; visitors 3 today and 4 over 7 days;
   // load p75 of [100,200,300,400,1900] is 400 ms, INP p75 of [40,80,120,160] is 120 ms.
@@ -70,14 +73,14 @@ test("home renders the nine tiles; only an admin sees them", async () => {
   expect(a).toContain(">4 in 7 days<");
   expect(a).toContain(">400 ms<");
   expect(a).toContain(">reacts in 120 ms<");
-  expect((a.match(/class="card kpi" href="\/boards\/reach"/g) ?? []).length).toBe(3);
+  expect((a.match(/class="stat" href="\/boards\/reach"/g) ?? []).length).toBe(3);
 
   // The figures count every repository, so a non-admin sees none.
   expect(a).toContain("no ceiling");
   expect(a).toContain("last 30 days");
-  expect(await home(bob)).not.toContain('class="kpis"');
+  expect(await home(bob)).not.toContain('class="stats mb"');
   expect(await home(bob)).not.toContain("last 30 days");
-  expect(await home()).not.toContain('class="kpis"');
+  expect(await home()).not.toContain('class="stats mb"');
   expect(await home()).not.toContain("last 30 days");
 });
 

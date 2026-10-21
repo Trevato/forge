@@ -238,25 +238,29 @@ export function badge(
 }
 
 /** A number with a label: one tile of a `.stats` grid. The value is `.num`
- * with its full form in `title`; the note is clamped to two lines; `spark` is
- * trusted markup (an inline SVG) the caller built. A link when `href` is set. */
+ * with its full form in `title`; the note is clamped to two lines, its whole
+ * text in `noteTitle`; `spark` is trusted markup (an inline SVG) the caller
+ * built, labelled by its own `role="img"` and `aria-label` or by nothing. A
+ * link when `href` is set, named by `aria` when given; `tone` marks it. */
 export function stat(o: {
   label: string;
-  value: string | number;
+  value: string | number | Html;
   title?: string;
-  note?: string;
+  note?: string | Html;
+  noteTitle?: string;
   href?: string;
-  spark?: Html;
+  aria?: string;
+  tone?: "attn";
+  spark?: Html | null;
 }): Html {
-  const body = html`<span class="stat-label">${o.label}</span
-    ><span class="stat-value num" title="${o.title ?? String(o.value)}"
-      >${String(o.value)}</span
-    >${o.note ? html`<span class="stat-note">${o.note}</span>` : null}${o.spark
-      ? html`<span class="stat-spark" aria-hidden="true">${o.spark}</span>`
-      : null}`;
+  const noteTitle = o.noteTitle === undefined ? null : html` title="${o.noteTitle}"`;
+  const body = html`<span class="stat-label">${o.label}</span><span class="stat-value num" title="${o.title ?? String(o.value)}">${o.value}</span>${o.note
+    ? html`<span class="stat-note"${noteTitle}>${o.note}</span>`
+    : null}${o.spark ? html`<span class="stat-spark">${o.spark}</span>` : null}`;
+  const tone = o.tone === undefined ? null : html` data-tone="${o.tone}"`;
   return o.href !== undefined
-    ? html`<a class="stat" href="${o.href}">${body}</a>`
-    : html`<div class="stat">${body}</div>`;
+    ? html`<a class="stat" href="${o.href}"${tone}${o.aria === undefined ? null : html` aria-label="${o.aria}"`}>${body}</a>`
+    : html`<div class="stat"${tone}>${body}</div>`;
 }
 
 /** The one badge whose value is a state machine, so it renders identically
