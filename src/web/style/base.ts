@@ -169,6 +169,8 @@ export const utilities = /* css */ `
 .stack { display: flex; flex-direction: column; gap: 12px; }
 .stack-tight { gap: 4px; }
 .bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.bar:has(> .field) { align-items: flex-end; }
+.bar > .field { margin: 0; }
 .mt { margin-top: 12px; }
 .mb { margin-bottom: 12px; }
 .narrow { max-width: 400px; margin: 8dvh auto 0; }

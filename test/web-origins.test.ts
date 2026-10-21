@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { createRepo } from "../src/actions/repos.ts";
 import { enableApp } from "../src/actions/apps.ts";
 import { createToken } from "../src/actions/users.ts";
 import { listOrigins } from "../src/core/origins.ts";
@@ -291,6 +292,50 @@ describe("origins on the web", () => {
     expect(html).toContain("read it live");
     // No "mirror everything" anywhere on the page.
     expect(html).not.toContain("Mirror all");
+  });
+
+  test("the origin row and the mirror forms use the shared row, bar and btn, not the page-local names", async () => {
+    const id = listOrigins(app.db, getUserByName(app.db, "alice")!.id)[0]!.id;
+    const old = /origin-row|origin-name|origin-mark|mirror-form/;
+    const list = await (await asUser(alice, "/settings/origins")).text();
+    expect(list).not.toMatch(old);
+    expect(list).toContain(`class="list setting-list"`);
+    expect(list).toContain(`class="row"`);
+    expect(list).toContain(`action="/settings/origins/${id}/sync"`);
+    expect(list).toContain(`href="/settings/origins/${id}/repos"`);
+    expect(list).toContain("Sync now");
+    expect(list).toContain("Repositories");
+    expect(list).toContain("Disconnect");
+    expect(list).toContain("personal access token");
+    // A remote whose name is already taken locally gets the labelled name box.
+    const alicia = getUserByName(app.db, "alice")!;
+    const taken = await createRepo(app, alicia, {
+      name: "gadgets",
+      visibility: "private",
+    });
+    expect(taken.ok).toBe(true);
+    forgejo.state.repos.push({
+      id: 42,
+      fullName: "octo/gadgets",
+      description: "",
+      cloneUrl: `${originServers.url}/octo/gadgets.git`,
+      htmlUrl: `${originServers.url}/octo/gadgets`,
+      defaultBranch: "main",
+    });
+    const picker = await (
+      await asUser(alice, `/settings/origins/${id}/repos?refresh=1`)
+    ).text();
+    forgejo.state.repos.pop();
+    // Refresh again so the cached repository list forgets the fixture.
+    await asUser(alice, `/settings/origins/${id}/repos?refresh=1`);
+    expect(picker).not.toMatch(old);
+    const mirrorForm = `<form[^>]*class="bar"[^>]*action="/settings/origins/${id}/mirror"`;
+    expect(picker).toMatch(new RegExp(mirrorForm));
+    expect(picker).toContain('name="fullName"');
+    expect(picker).toMatch(
+      /<label for="mirror-name-[^"]+">Local name<\/label>/,
+    );
+    expect(picker).toContain("Mirror");
   });
 
   test("Mirror starts a job, shows its stages, and lands on the mirror", async () => {

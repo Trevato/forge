@@ -313,31 +313,26 @@ function reauthNote(origin: Origin, mirrors: number): Html {
 function originCard(origin: Origin, mirrors: number): Html {
   const base = `/settings/origins/${origin.id}`;
   return card(
-    html`<div class="origin-row">
-        <span class="origin-mark">${icon(originIcon(origin.kind))}</span>
-        <span class="grow">
-          <span class="origin-name"
-            >${origin.login}<span class="muted"> @ </span>${hostLabel(
+    html`<ul class="list setting-list">
+        ${row({
+          lead: icon(originIcon(origin.kind)),
+          title: html`${origin.login}<span class="muted"> @ </span>${hostLabel(
               origin.webUrl,
-            )}</span
-          >
-          <span class="row-meta muted small"
-            >${origin.authKind === "oauth" ? "OAuth" : "personal access token"}
+            )}`,
+          meta: html`${origin.authKind === "oauth"
+              ? "OAuth"
+              : "personal access token"}
             ·
             ${origin.lastSyncAt === null
               ? html`never synced`
-              : html`synced ${time(origin.lastSyncAt)}`}</span
-          >
-          ${when(
-            isTrustedHost(URL.parse(origin.webUrl)?.hostname ?? ""),
-            () =>
-              html`<span class="row-meta muted small"
-                >trusted internal host</span
-              >`,
-          )}
-        </span>
-        ${healthBadge(origin)}
-      </div>
+              : html`synced ${time(origin.lastSyncAt)}`}
+            ${when(
+              isTrustedHost(URL.parse(origin.webUrl)?.hostname ?? ""),
+              () => html` · trusted internal host`,
+            )}`,
+          trail: healthBadge(origin),
+        })}
+      </ul>
       ${when(
         origin.lastError !== "",
         () => html`<p class="error-note mt">${origin.lastError}</p>`,
@@ -1454,7 +1449,7 @@ export async function originReposPage(ctx: Ctx): Promise<Response> {
               forkable,
               () =>
                 html`<form
-                  class="mirror-form"
+                  class="bar"
                   method="post"
                   action="${browseBase(origin.id, remote.fullName)}/fork"
                 >
@@ -1476,7 +1471,7 @@ export async function originReposPage(ctx: Ctx): Promise<Response> {
                   })}`
                 : html`${counted}${forkForm}
                     <form
-                      class="mirror-form"
+                      class="bar"
                       method="post"
                       action="/settings/origins/${origin.id}/mirror"
                     >
@@ -1488,13 +1483,14 @@ export async function originReposPage(ctx: Ctx): Promise<Response> {
                       ${when(
                         collides,
                         () =>
-                          html`<input
-                            class="input"
-                            name="name"
-                            placeholder="local name"
-                            aria-label="Local name for ${remote.fullName}"
-                            autocomplete="off"
-                          />`,
+                          uiField({
+                            label: "Local name",
+                            name: "name",
+                            id: `mirror-name-${remote.fullName}`,
+                            placeholder: "local name",
+                            autocomplete: "off",
+                            spellcheck: false,
+                          }),
                       )}
                       ${btn("Mirror", {
                         size: "sm",
