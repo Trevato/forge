@@ -250,6 +250,14 @@ describe("+ New forge", () => {
     expect(res.headers.get("location")).toBeNull();
     const html = await res.text();
     expect(html).toMatch(/https:\/\/kai--forge.test\/claim#[A-Za-z0-9_-]{43}/);
+    // Drawn with §5's row; the old names are gone and the words and the copy button stay.
+    expect(html).not.toContain("claim-link-box");
+    expect(html).not.toContain("forges-sent");
+    expect(html).toMatch(/<li>\s*<div class="row"/);
+    expect(html).toContain('id="claim-link"');
+    expect(html).toContain('data-copy="claim-link"');
+    expect(html).toContain("Send this link to the person it is for");
+    expect(html).toContain('href="/forges"');
     expect(await children()).toBe(2);
     // Asked again, the child exists: no second link.
     const again = await post(admin, [

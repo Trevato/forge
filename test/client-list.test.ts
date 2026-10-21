@@ -201,6 +201,9 @@ describe("the client list", () => {
     expect(html).not.toContain("forges-sent");
     const lou = html.slice(html.indexOf('data-forge="lou"'));
     expect(lou).toMatch(/data-claimed="unknown"/);
+    expect(html).not.toContain("claim-link-box");
+    expect(maria).toContain('class="row"');
+    expect(maria).toContain("Send a fresh link");
     expect(lou).toContain("it did not answer just now");
     // The claim link itself is never kept, so never shown here.
     expect(html).not.toContain(claimUrl.split("#")[1]!);
