@@ -5808,6 +5808,19 @@ export function apiRoutes(router: Router<Handler>): void {
     return json(readFleetGraph(ctx.app, ctx.auth.user, asked.value));
   });
 
+  // The address an agent tries first.
+  router.add(
+    "GET",
+    "/api/v1/openapi.json",
+    () =>
+      new Response(null, {
+        status: 308,
+        headers: {
+          location: "/contract/openapi.json",
+          "cache-control": "public, max-age=86400",
+        },
+      }),
+  );
   // What the caller can do on a forge page, as who they are (#604): the
   // manifest every page links to. It differs by caller, so it is never cached.
   router.add("GET", "/api/v1/here", (ctx) => {

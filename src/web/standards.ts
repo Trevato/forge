@@ -289,6 +289,7 @@ export function llmsTxt(ctx: Ctx): Response {
       "",
       `- MCP: ${o}/mcp (OAuth discovery: ${o}/.well-known/oauth-protected-resource)`,
       `- API: ${o}/api/v1, Authorization: Bearer <token>`,
+      `- OpenAPI: GET ${o}/api/v1/openapi.json (redirects to ${o}/contract/openapi.json)`,
       "",
       "## Public repositories",
       "",

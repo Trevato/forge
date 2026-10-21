@@ -1140,6 +1140,14 @@ describe("the forge over MCP", () => {
     expect(doc.openapi).toBe("3.1.0");
     expect(doc.paths["/mcp"].post).toBeDefined();
   });
+  test("GET /api/v1/openapi.json redirects to the document", async () => {
+    const res = await fetch(`${base}/api/v1/openapi.json`, { redirect: "manual" });
+    expect(res.status).toBe(308);
+    expect(res.headers.get("location")).toBe("/contract/openapi.json");
+    expect(res.headers.get("cache-control")).toContain("public");
+    const target = await fetch(new URL(res.headers.get("location")!, base));
+    expect(target.status).toBe(200);
+  });
   test("feed_chips reads and switches the chips the feed answers through", async () => {
     app.bus.append({ kind: "app.serving", repoId: game.id, actorId: alice.id, payload: {} });
     const kinds = async () => {
