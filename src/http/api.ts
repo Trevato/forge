@@ -4884,11 +4884,12 @@ export function apiRoutes(router: Router<Handler>): void {
 
   // Explore (#607): the rows /explore shows, for the same one line.
   router.add("GET", "/api/v1/explore", async (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const query = parseExploreQuery(ctx.url.searchParams.get("q") ?? "");
-    return json({
-      query: exploreLine(query),
-      items: await explore(ctx.app, ctx.auth.user, query),
-    });
+    const items = await timePhaseAsync(ctx.request, "explore", () =>
+      explore(ctx.app, ctx.auth.user, query),
+    );
+    return timePhase(ctx.request, "render", () => json({ query: exploreLine(query), items }));
   });
 
   // Make it yours (#606): a fork with its app, planned unless dryRun is
