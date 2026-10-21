@@ -75,15 +75,14 @@ describe("a subscription's standing", () => {
     const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
-      password: "a-good-passphrase",
       adminIfFirst: true,
     });
     if (!a.ok) throw new Error(a.error);
     const made = await createRepo(app, a.value, { name: "one", visibility: "private" });
     if (!made.ok) throw new Error("repo");
     repo = made.value;
-    // Hashing the password and creating the repo take as long as the check
-    // machine lets them; the 5 s default made the verdict depend on its load.
+    // No password: argon2 hashing (64 MiB, a core) made this hook's verdict
+    // depend on the check machine's load, and nothing here signs in.
   }, 60_000);
   afterAll(async () => {
     app.close();
