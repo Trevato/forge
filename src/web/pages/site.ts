@@ -268,7 +268,7 @@ function authForm(
   const action = query.size === 0 ? `/${kind}` : `/${kind}?${query.toString()}`;
   // "Is this the first account?" is a `LIMIT 1` existence check, not a count
   // of the whole user table — and the sign-in screen paints on every session.
-  const firstAccount = kind === "signup" && !hasAnyUser(ctx.app.db);
+  const firstAccount = kind === "signup" && !timePhase(ctx.request, "users", () => hasAnyUser(ctx.app.db));
 
   // A newcomer the edge vouched for is already through it: no door to go
   // round again, and the name is theirs alone.
@@ -302,7 +302,7 @@ function authForm(
       <button type="button" id="passkey-signin" class="btn" data-variant="primary" data-size="lg">Sign in with a passkey</button>
       <p class="passkey-note small" id="passkey-signin-note" role="status"></p>
     </div>
-    ${when(SIGNUP_SENTENCES[getSignup(ctx.app.db)], (said) => html`<p class="muted small mb" id="signup-mode">${said}</p>`)}`,
+    ${when(SIGNUP_SENTENCES[timePhase(ctx.request, "settings", () => getSignup(ctx.app.db))], (said) => html`<p class="muted small mb" id="signup-mode">${said}</p>`)}`,
   );
 
   const body = html`${unknownLink}
@@ -412,7 +412,7 @@ function authForm(
 
   // A spawned forge nobody has claimed yet: its person may arrive here with
   // the code from their link but not the link itself (#730).
-  const unowned = !hasAdmin(ctx.app.db);
+  const unowned = !timePhase(ctx.request, "claim", () => hasAdmin(ctx.app.db));
   const claimable =
     existsSync(join(ctx.app.config.dataDir, "parent.json")) && unowned;
   return html`<div class="narrow">
@@ -437,12 +437,11 @@ function authForm(
 }
 
 export function signinPage(ctx: Ctx): Response {
-  return page({
-    ctx,
-    title: "Sign in",
-    body: authForm(ctx, "signin"),
-    scriptJs: passkeyJs,
-  });
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const body = authForm(ctx, "signin");
+  return timePhase(ctx.request, "render", () =>
+    page({ ctx, title: "Sign in", body, scriptJs: passkeyJs }),
+  );
 }
 
 /** The widget's public site key, when signup is gated on Turnstile. */
@@ -471,16 +470,15 @@ function signupClosedPage(ctx: Ctx): Response {
 }
 
 export function signupPage(ctx: Ctx): Response {
-  if (signupClosed(ctx.app, inviteOf(ctx))) return signupClosedPage(ctx);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  if (timePhase(ctx.request, "signup", () => signupClosed(ctx.app, inviteOf(ctx))))
+    return timePhase(ctx.request, "render", () => signupClosedPage(ctx));
   const first = throughEdgeFirst(ctx);
   if (first) return first;
-  return page({
-    ctx,
-    title: "Sign up",
-    body: authForm(ctx, "signup"),
-    turnstile: siteKey(ctx) !== undefined,
-    scriptJs: passkeyJs,
-  });
+  const body = authForm(ctx, "signup");
+  return timePhase(ctx.request, "render", () =>
+    page({ ctx, title: "Sign up", body, turnstile: siteKey(ctx) !== undefined, scriptJs: passkeyJs }),
+  );
 }
 
 /**

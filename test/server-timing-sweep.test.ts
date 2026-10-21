@@ -52,10 +52,8 @@ const UNNAMED: Array<[path: string, issue: string]> = [
   ["/settings/password", "#3390"],
   ["/settings/tokens", "#3390"],
   ["/settings/usage", "#3279"],
-  ["/signin", "#3390"],
   ["/signin/parent", "#3390"],
   ["/signin/parent/callback", "#3390"],
-  ["/signup", "#3390"],
   ["/verify", "#3390"],
 ];
 
