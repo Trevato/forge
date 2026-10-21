@@ -19,6 +19,7 @@ import { bytes, spark, span } from "../../system/format.ts";
 import { eventStream } from "../../http/sse.ts";
 import type { SystemView } from "../../system/view.ts";
 import { live } from "../../system/live.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
 import { html, raw, type Html } from "../html.ts";
 import { page } from "../layout.ts";
@@ -67,7 +68,7 @@ const hhmm = (at: number) => new Date(at).toISOString().slice(0, 16).replace("T"
 /** The forge's RSS beside its JS heap, an hour a row; empty for anyone `canSeeMemory` refuses. */
 function memorySection(ctx: Ctx): Html {
   if (!canSeeMemory(ctx.auth.user)) return html``;
-  const hours = memoryHours(ctx.app.db, Date.now());
+  const hours = timePhase(ctx.request, "memory", () => memoryHours(ctx.app.db, Date.now()));
   const series = (title: string, pick: (h: (typeof hours)[number]) => number) =>
     card(
       html`<div class="chart-box">${raw(drawChart("line", hours.map((h) => ({ label: hhmm(h.at).slice(11), value: pick(h) / 1_048_576 })), title))}</div>`,
@@ -145,14 +146,17 @@ export function systemStream(ctx: Ctx): Response {
 // GET /system
 export function systemPage(ctx: Ctx): Response {
   if (!ctx.auth.user) return signInFirst(ctx);
-  const reader = telemetryReader(ctx.app, ctx.auth.user);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const reader = timePhase(ctx.request, "reader", () => telemetryReader(ctx.app, ctx.auth.user!));
   if (reader?.kind !== "owner") return notFoundPage(ctx);
-  const v = live().read();
-  const holder = memoryCapHolder();
+  const v = timePhase(ctx.request, "sample", () => live().read());
+  const holder = timePhase(ctx.request, "caps", () => memoryCapHolder());
   const caps: Html =
     holder.by === "kernel"
       ? html`<p class="small" id="cell-caps" data-by="kernel">Each cell's memory is capped by the kernel (its own cgroup's <code>memory.max</code>): a cell over it is killed alone.</p>`
       : html`<p class="small" id="cell-caps" data-by="watch">Each cell's memory is watched once a second and the cell stopped over its cap; the kernel does not cap it (${holder.reason}).</p>`;
+  const memory = memorySection(ctx);
+  const rendering = performance.now();
   const r = regions(v);
   const at = (id: string): Html => raw(r[id]!);
   const body = html`<div class="page-head">
@@ -178,6 +182,8 @@ export function systemPage(ctx: Ctx): Response {
       <p class="small muted"><span class="js-only">Sort by <button class="btn" data-size="sm" type="button" data-sort="cpu" aria-pressed="true"><kbd>c</kbd> CPU</button>
         <button class="btn" data-size="sm" type="button" data-sort="mem" aria-pressed="false"><kbd>m</kbd> memory</button></span></p></div>
     <div id="sys-procs">${at("sys-procs")}</div>
-    ${memorySection(ctx)}`;
-  return page({ ctx, title: "System", body, wide: true, scriptJs: systemLiveJs });
+    ${memory}`;
+  const response = page({ ctx, title: "System", body, wide: true, scriptJs: systemLiveJs });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
