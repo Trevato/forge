@@ -984,7 +984,7 @@ Under the box, four starter sentences are plain links (no script):
   (`"toolbar": false` in `forge.json` turns it off; to write it in, the proxy asks the app for the page uncompressed, so a page that carries the pill goes out without gzip) links to a forge page,
   `/:owner/:name/toolbar?env=production|pull-N`, opened in a tab of its own: the
   pill posts nothing and reads nothing of the app's page, and every action is a
-  same-origin form on the forge. Signed out, the page is where you are and Home.
+  same-origin form on the forge. On a preview, everyone who may see the pull sees what it changed (files, +added, −removed, linked to its Files tab) and where its latest check stands (linked to the run); the totals are left out when git cannot give them. Signed out, the page is where you are and Home.
   Signed in it shows the live agent run on this app or preview, linked to its
   run page (read once when the page opens; runs on work you may not see, such as
   a sealed report, are left out); *Report this page* / *Comment on this pull*,

@@ -545,6 +545,18 @@ function fileHasReview(file: FileDiff, opts: DiffViewOptions): boolean {
   return false;
 }
 
+/** The diff's own totals as the summary line words them: "3 files", "+12", "−4". */
+export function diffTotals(diff: {
+  files: { length: number };
+  additions: number;
+  deletions: number;
+}): Html {
+  const n = diff.files.length;
+  return html`<strong>${n}</strong> ${n === 1 ? "file" : "files"}
+    <span class="add">+${diff.additions}</span>
+    <span class="del">−${diff.deletions}</span>`;
+}
+
 /**
  * The whole diff: a summary line, then one collapsible view per file. Options
  * add syntax color and inline review comments; omit them and the diff still

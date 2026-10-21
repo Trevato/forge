@@ -19,21 +19,24 @@ import { addCommentThrough, openIssueThrough } from "../../actions/issues.ts";
 import { reportTitle } from "../../actions/page-report.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { getIssue, MAX_BODY } from "../../core/issues.ts";
+import { diffBetween, getPull, pullDir, type Pull } from "../../core/pulls.ts";
 import { canWrite, type Repo } from "../../core/repos.ts";
-import { listRuns } from "../../core/runs.ts";
+import { checkSummary, listRuns } from "../../core/runs.ts";
 import { mayView, mayViewId } from "../../core/sealed.ts";
 import { mayDirectCrew } from "../../crew/direct.ts";
 import { isSafeOid } from "../../git/guard.ts";
+import { resolveOid } from "../../git/merge.ts";
 import { commitLog } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
-import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
+import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, pageHead, loadRepo, repoBase } from "../chrome.ts";
+import { diffTotals } from "../diff-view.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { originError } from "../pages/thread.ts";
-import { btn, card, envFacts } from "../ui.ts";
+import { btn, card, envFacts, runStateBadge, badge } from "../ui.ts";
 
 /** The longest page address the bar may carry. */
 const PAGE_MAX = 512;
@@ -56,6 +59,57 @@ function parseEnv(raw: string): { env: string; pull?: number } | undefined {
   if (raw === "production") return { env: raw };
   const n = /^pull-([1-9]\d{0,8})$/.exec(raw)?.[1];
   return n === undefined ? undefined : { env: raw, pull: Number(n) };
+}
+
+interface Stat {
+  readonly files: number;
+  readonly additions: number;
+  readonly deletions: number;
+}
+
+/** The diff stat per pull, head oid and base oid: git is asked once per pair. */
+const stats = new Map<string, Stat>();
+const STATS_MAX = 500;
+
+/** How many times git was asked for a stat: a test reads it to prove the cache. */
+export const statReads = { count: 0 };
+
+/** The totals, or undefined when git could not say: a guess would read as "changed nothing". */
+async function statOf(ctx: Ctx, repo: Repo, pull: Pull): Promise<Stat | undefined> {
+  try {
+    const dir = await pullDir(ctx.app.db, ctx.app.reposRoot, repo, pull);
+    const baseOid = (await resolveOid(dir, `refs/heads/${pull.baseBranch}`)) ?? pull.baseOid;
+    const key = `${pull.id}:${pull.headOid}:${baseOid}`;
+    const kept = stats.get(key);
+    if (kept) return kept;
+    statReads.count++;
+    const { diff, failed } = await diffBetween(dir, baseOid, pull.headOid);
+    if (failed) return undefined;
+    const found = { files: diff.files.length, additions: diff.additions, deletions: diff.deletions };
+    if (stats.size >= STATS_MAX) stats.delete(stats.keys().next().value!);
+    stats.set(key, found);
+    return found;
+  } catch {
+    return undefined;
+  }
+}
+
+/** What the pull changed and where its latest check stands, each a link. */
+async function changeLine(ctx: Ctx, repo: Repo, pull: Pull, base: string) {
+  const stat = await statOf(ctx, repo, pull);
+  const check = checkSummary(ctx.app.db, pull.id, pull.headOid);
+  return html`<p class="change-line">
+    ${stat
+      ? html`<a href="${base}/pulls/${pull.number}/files">${diffTotals({
+          files: { length: stat.files },
+          additions: stat.additions,
+          deletions: stat.deletions,
+        })}</a>`
+      : html``}
+    ${check.run
+      ? html`<a href="${base}/runs/${check.run.id}">${runStateBadge(check.run.state, check.run.kind)}</a>`
+      : badge("No check", { icon: "clock", variant: "outline" })}
+  </p>`;
 }
 
 /** The toolbar page's own path, for forms to come back to. */
@@ -113,13 +167,18 @@ export async function toolbarPage(ctx: Ctx): Promise<Response> {
   const here = html`${repo.name}, ${pull ? html`preview of pull #${pull.number}` : "production"}`;
   const liveNote = pull ? html`` : await liveLine(ctx, repo, base);
   const home = btn("Home", { href: "/", variant: "ghost" });
+  // The issue row carries no head oid; a pull row may be absent (an import in progress).
+  const joined = pull ? getPull(db, repo.id, pull.number) : undefined;
+  const change = joined
+    ? await timePhaseAsync(request, "change", () => changeLine(ctx, repo, joined, base))
+    : null;
   const rendering = performance.now();
   if (!user) {
     const next = encodeURIComponent(toolbarPath(base, where.env, address));
     const response = page({
       ctx,
       title: `${repo.name} · forge`,
-      body: html`<div class="narrow-wide">${pageHead(here)}${liveNote}<div class="form-actions">${btn("Sign in to comment", { href: `/signin?next=${next}`, variant: "primary" })}${home}</div></div>`,
+      body: html`<div class="narrow-wide">${pageHead(here)}${change}${liveNote}<div class="form-actions">${btn("Sign in to comment", { href: `/signin?next=${next}`, variant: "primary" })}${home}</div></div>`,
     });
     notePhase(request, "render", performance.now() - rendering);
     return response;
@@ -139,7 +198,7 @@ export async function toolbarPage(ctx: Ctx): Promise<Response> {
   const comment = pull ? "Comment on this pull" : "Report this page";
   const body = html`<div class="narrow-wide">
     ${pageHead(here)}
-    ${liveNote}
+    ${change}${liveNote}
     ${when(
       live !== undefined,
       () => html`<p class="mono" data-working>
