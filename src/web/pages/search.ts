@@ -149,7 +149,7 @@ function repoHitRow(ctx: Ctx, apps: Apps, hit: RepoHit): Html {
     meta: html`<span
         class="where-place"
         data-state="${mirror === null ? "absent" : "present"}"
-        ><span class="where-dot" aria-hidden="true"
+        ><span aria-hidden="true"
           >${mirror === null ? "○" : "●"}</span
         >${mirror === null
           ? "not mirrored here"

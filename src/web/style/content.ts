@@ -69,22 +69,23 @@ a.where-place:hover, button.where-place:hover {
 .where-place .ico { color: var(--faint); flex: none; }
 /* A thumb needs more than a 12px word to land on. */
 @media (pointer: coarse) { .where-place { min-height: 32px; padding: 4px 8px; } }
-.where-dot { font-size: var(--fs-min); line-height: 1; }
-.where-note { color: var(--faint); }
+/* The dot is the place's aria-hidden span: ● ○ ◆ are decoration, and the
+   state and the word beside them already say what they mean. */
+.where-place > span[aria-hidden="true"] { font-size: var(--fs-min); line-height: 1; }
 /* Accent is interaction everywhere else in the product; here it is the one
    place a page is *reading from*, which is the page's own subject. */
 .where-place[data-state="reading"] { color: var(--fg); font-weight: 560; }
-.where-place[data-state="reading"] .where-dot { color: var(--accent); }
-.where-place[data-state="present"] .where-dot { color: var(--success); }
+.where-place[data-state="reading"] > span[aria-hidden="true"] { color: var(--accent); }
+.where-place[data-state="present"] > span[aria-hidden="true"] { color: var(--success); }
 .where-place[data-state="absent"] { color: var(--faint); }
-.where-place[data-state="absent"] .where-dot { color: var(--faint); }
+.where-place[data-state="absent"] > span[aria-hidden="true"] { color: var(--faint); }
 .where-pin { margin-left: auto; }
 /* Inside a list row the strip is text, not a layout: the row promises one
    honest line with an ellipsis, and only inline children can keep it. */
 .row-meta .where { display: inline; }
 .row-meta .where-place { display: inline; padding: 0; }
 .row-meta .where-place .ico { display: none; }
-.row-meta .where-dot { margin-right: 3px; }
+.row-meta .where-place > span[aria-hidden="true"] { margin-right: 3px; }
 .row-meta .where-sep { margin: 0 3px; }
 .row-title a { color: inherit; text-decoration: none; }
 .row-title a:hover { color: var(--accent); }

@@ -1522,7 +1522,7 @@ export async function originReposPage(ctx: Ctx): Promise<Response> {
                 mirror,
                 (m) =>
                   html`<span class="where-place" data-state="present"
-                      ><span class="where-dot" aria-hidden="true">●</span
+                      ><span aria-hidden="true">●</span
                       >mirrored as
                       <a href="/${m.ownerName}/${m.name}"
                         >${m.ownerName}/${m.name}</a
@@ -1535,7 +1535,7 @@ export async function originReposPage(ctx: Ctx): Promise<Response> {
                             class="where-place"
                             data-state="present"
                             title="Kept on your machine"
-                            ><span class="where-dot" aria-hidden="true">◆</span
+                            ><span aria-hidden="true">◆</span
                             >this machine</span
                           >`,
                     )}

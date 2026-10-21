@@ -117,16 +117,16 @@ export function downloadsCard(ctx: Ctx, user: User): Html {
               at,
               (o) =>
                 html`<span class="where-place" data-state="present"
-                    ><span class="where-dot" aria-hidden="true">●</span
+                    ><span aria-hidden="true">●</span
                     >${hostOf(o.htmlUrl) || o.fullName}</span
                   ><span class="where-sep" aria-hidden="true">·</span>`,
             )}
             <span class="where-place" data-state="present"
-              ><span class="where-dot" aria-hidden="true">●</span
+              ><span aria-hidden="true">●</span
               >workbench</span
             ><span class="where-sep" aria-hidden="true">·</span
             ><span class="where-place" data-state="present"
-              ><span class="where-dot" aria-hidden="true">◆</span>this
+              ><span aria-hidden="true">◆</span>this
               machine</span
             >
           </span>`,

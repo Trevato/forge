@@ -544,6 +544,26 @@ describe("browsing an origin repository on the web", () => {
     expect(strip).toContain("Stop keeping this repository on my machine");
   });
 
+  test("every where trail is drawn from §5's where strip, not where-dot or where-note", async () => {
+    // The repository header, the origin picker's mirrored row, the home
+    // page's "On your machine" rail and search: each draws a trail.
+    const pages = {
+      repo: await bodyOf(alice, "/alice/widgets"),
+      picker: await bodyOf(alice, `/settings/origins/${originId}/repos`),
+      home: await bodyOf(alice, "/"),
+      search: await bodyOf(alice, "/search?q=widgets"),
+    };
+    const strip = stripOf(pages.repo);
+    expect(strip).toMatch(/<span aria-hidden="true"\s*>◆<\/span/);
+    expect(strip).toMatch(/<span class="muted">\(synced [^)]+\)<\/span>/);
+    expect(pages.picker).toContain("mirrored as");
+    expect(pages.home).toContain("On your machine");
+    for (const [name, html] of Object.entries(pages)) {
+      expect(`${name}:${html.includes("where-place")}`).toBe(`${name}:true`);
+      expect(`${name}:${/where-dot|where-note/.test(html)}`).toBe(`${name}:false`);
+    }
+  });
+
   test("starting a mirror that is already running joins it", async () => {
     // The repository is mirrored, so a second start is refused rather than
     // racing — but it must land somewhere that says so, not on a 500.

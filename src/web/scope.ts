@@ -426,12 +426,12 @@ function placesFor(ctx: Ctx, scope: RepoScope): Place[] {
 }
 
 function placeNode(place: Place): Html {
-  const inner = html`<span class="where-dot" aria-hidden="true"
+  const inner = html`<span aria-hidden="true"
       >${place.glyph}</span
     >${place.icon ? icon(place.icon) : null}<span class="where-name"
       >${place.label}</span
     >${place.note
-      ? html`<span class="where-note">(${place.note})</span>`
+      ? html`<span class="muted">(${place.note})</span>`
       : null}`;
   const attrs = html`class="where-place" data-state="${place.state}"
   ${place.title ? html`title="${place.title}"` : null}`;
