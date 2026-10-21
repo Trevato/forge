@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { classesIn, compare, countFile, documentedClasses, registeredClasses, scan, webCss } from "../scripts/design-lint.ts";
+import { areaFiles, classesIn, compare, countFile, documentedClasses, locate, registeredClasses, scan, webCss } from "../scripts/design-lint.ts";
 
 /** A DESIGN.md in miniature: the §5 table, a §5d register, and a §6 that names a class too. */
 const DESIGN = [
@@ -25,7 +25,7 @@ const SLOW = 60_000;
 describe("design check: nothing added outside the system (#2678)", () => {
   test("the tree is no worse than its baseline", () => {
     const base = JSON.parse(readFileSync("docs/design/baseline.json", "utf8"));
-    expect(compare(base, treeNow(), readFileSync("docs/DESIGN.md", "utf8"))).toEqual([]);
+    expect(compare(base, treeNow(), readFileSync("docs/DESIGN.md", "utf8"), areaFiles("."))).toEqual([]);
   }, SLOW);
 
   test("counts colour literals and off-scale sizes, not on-scale ones", () => {
@@ -91,7 +91,49 @@ describe("design check: nothing added outside the system (#2678)", () => {
   });
 
   test("every class the stylesheets define is one DESIGN.md §5 names (#2700)", () => {
-    const named = new Set(documentedClasses(readFileSync("docs/DESIGN.md", "utf8")));
+    const named = new Set(documentedClasses(readFileSync("docs/DESIGN.md", "utf8"), areaFiles(".")));
     expect(treeNow().classes.filter((k) => !named.has(k))).toEqual([]);
   }, SLOW);
+
+  test("a red names the file:line, the literal and the token to use (#4063)", () => {
+    const text = "const css = /* css */ `\n.card{\n  color: #abc;\n  font-size: 13.5px;\n}`;";
+    expect(locate(text)).toEqual([
+      { line: 3, kind: "colour", text: "#abc", use: expect.stringContaining("var(--fg)") },
+      { line: 4, kind: "size", text: "font-size: 13.5px", use: expect.stringContaining("13px") },
+    ]);
+    const base = { files: {} };
+    const now = { classes: ["btn", "run-log", "x-card", "x-row", "x-wrapped"], files: { "src/web/x.ts": countFile(text) }, found: { "src/web/x.ts": locate(text) } };
+    const [colour, size] = compare(base, now, DESIGN);
+    expect(colour).toContain("src/web/x.ts:3  #abc  →  use var(--fg)");
+    expect(size).toContain("src/web/x.ts:4  font-size: 13.5px  →  use 13px");
+  });
+
+  test("an unknown class says where to name it, and what is alike (#4063)", () => {
+    const now = { files: {}, classes: ["btn", "run-log", "x-card", "x-row", "x-wrapped", "btn-big"] };
+    const [msg] = compare({ files: {} }, now, DESIGN);
+    expect(msg).toContain("docs/design/areas/<area>.md");
+    expect(msg).toContain(".btn");
+  });
+
+  test("two pulls naming different components in their own area files do not touch DESIGN.md (#4063)", () => {
+    const now = { files: {}, classes: ["btn", "run-log", "x-card", "x-row", "x-wrapped", "gizmo", "widget"] };
+    expect(compare({ files: {} }, now, DESIGN)).toHaveLength(2);
+    expect(compare({ files: {} }, now, DESIGN, ["`.gizmo` a gizmo"])).toHaveLength(1);
+    expect(compare({ files: {} }, now, DESIGN, ["`.gizmo` a gizmo", "`.widget` a widget"])).toEqual([]);
+  });
+
+  test("a named colour is reported at its own line, repeats included (#4063)", () => {
+    const text = "const css = /* css */ `\na{color: red}\nb{color: blue}\nc{color: red}`;";
+    expect(locate(text).map((f) => f.line)).toEqual([2, 3, 4]);
+  });
+
+  test("the areas README is not vocabulary (#4063)", () => {
+    const readme = readFileSync("docs/design/areas/README.md", "utf8");
+    const own = namedFromReadme(readme);
+    expect(own.length).toBeGreaterThan(0);
+    const read = areaFiles(".").join("\n");
+    for (const k of own) expect(read).not.toContain("`." + k + "`");
+  });
 });
+
+const namedFromReadme = (text: string) => documentedClasses("## 5. x\n" + text);

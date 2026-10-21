@@ -30,6 +30,11 @@
  *   target   a button, link, input or select under 24px wide or high, WCAG 2.5.8
  *            (specification.website, target size)
  *
+ * A red names the file:line, the literal and what to use instead, so one pass
+ * fixes it; run `bun scripts/design-lint.ts` before pushing. A new class is named
+ * in its own `docs/design/areas/<area>.md` rather than in DESIGN.md, which
+ * every pull would otherwise edit (#4063).
+ *
  * Known gaps, so nobody mistakes the gate for more than it is: colours built
  * in JS strings other than the forms above, `oklch()`,
  * `lab()` and system colours are not seen; sizes in `rem`/`em` are not
@@ -67,7 +72,9 @@ const WEB_MESSAGE: Record<(typeof WEB_KEYS)[number], string> = {
   target: "interactive target under 24x24 CSS px, WCAG 2.5.8 (specification.website, target size)",
 };
 export type Baseline = { files: Record<string, Counts> };
-export type Scan = Baseline & { classes: string[] };
+/** One offence, where it is and what the system offers instead. */
+export type Finding = { line: number; kind: "colour" | "size"; text: string; use: string };
+export type Scan = Baseline & { classes: string[]; found?: Record<string, Finding[]> };
 
 const SKIP = /(^|\/)(og\/vendor)\//;
 
@@ -86,9 +93,14 @@ export function sourceFiles(root: string): string[] {
 
 /** The CSS inside `/* css *\/ \`…\`` templates — the only place a class is defined. */
 function cssBlocks(text: string): string[] {
-  const out: string[] = [];
+  return cssBlocksAt(text).map((b) => b.css);
+}
+
+/** The same blocks with the offset in `text` where each one's css starts. */
+function cssBlocksAt(text: string): { css: string; at: number }[] {
+  const out: { css: string; at: number }[] = [];
   const re = /\/\* css \*\/\s*`((?:[^`\\]|\\.)*)`/g;
-  for (let m = re.exec(text); m; m = re.exec(text)) out.push(m[1]!);
+  for (let m = re.exec(text); m; m = re.exec(text)) out.push({ css: m[1]!, at: m.index + m[0].length - 1 - m[1]!.length });
   return out;
 }
 
@@ -114,6 +126,43 @@ export function countFile(text: string): Counts {
     if (!TYPE_SCALE.includes(Number(m[1]))) size++;
   }
   return { colour, size };
+}
+
+/** Comments blanked but newlines kept, so an offset still maps to its line. */
+const blanked = (text: string): string =>
+  text.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " ")).replace(/(^|\s)\/\/.*$/gm, (_m, a) => a);
+
+/** The token a colour literal on this line should be, from the property it sits in. */
+function tokenFor(line: string): string {
+  if (/\b(?:border|outline)[-\w]*\s*:/.test(line)) return "var(--border) (a hairline) or var(--border-strong)";
+  if (/\bbackground[-\w]*\s*:/.test(line)) return "var(--card) (raised), var(--muted) (recessed) or var(--bg)";
+  if (/\b(?:fill|stroke)\s*:/.test(line)) return "var(--fg), var(--muted-fg) or a status token";
+  if (/\bcolor\s*:/.test(line)) return "var(--fg), var(--muted-fg) or a status token (--success, --danger, --attn)";
+  return "a token from docs/DESIGN.md §2 (var(--…))";
+}
+
+/** Where `countFile` counts colours and off-scale sizes: file line, the literal, the system's answer. */
+export function locate(text: string): Finding[] {
+  const code = blanked(text);
+  const lines = code.split("\n");
+  const out: Finding[] = [];
+  const colour = /#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b(?![0-9a-zA-Z_-])|\b(?:rgba?|hsla?)\([^)]*\)/g;
+  lines.forEach((l, i) => {
+    for (const m of l.matchAll(colour)) out.push({ line: i + 1, kind: "colour", text: m[0], use: tokenFor(l) });
+    for (const m of l.matchAll(/font-size:\s*([0-9.]+)px/g)) {
+      const px = Number(m[1]);
+      if (TYPE_SCALE.includes(px)) continue;
+      const near = TYPE_SCALE.reduce((a, b) => (Math.abs(b - px) < Math.abs(a - px) ? b : a));
+      out.push({ line: i + 1, kind: "size", text: `font-size: ${m[1]}px`, use: `${near}px (the scale is ${TYPE_SCALE.join(", ")}px, §3)` });
+    }
+  });
+  for (const { css, at: start } of cssBlocksAt(text)) {
+    for (const m of css.matchAll(NAMED_RE)) {
+      const line = text.slice(0, start + m.index!).split("\n").length;
+      out.push({ line, kind: "colour", text: m[0].trim(), use: tokenFor(m[0]) });
+    }
+  }
+  return out.sort((a, b) => a.line - b.line);
 }
 
 const INTERACTIVE = /(^|[\s,>+~])(a|button|input|select|summary)\b|\.btn\b|\[role=["']?button/i;
@@ -177,8 +226,24 @@ function namedIn(text: string): string[] {
 }
 
 /** Every class DESIGN.md §5 names, its subsections and the §5d register included. */
-export function documentedClasses(design: string): string[] {
-  return namedIn(section(design, "5."));
+export function documentedClasses(design: string, areas: readonly string[] = []): string[] {
+  return [...new Set([...namedIn(section(design, "5.")), ...areas.flatMap(namedIn)])].sort();
+}
+
+/** The area files under docs/design/areas/: each is wholly vocabulary, one file per component area (#4063). */
+export function areaFiles(root: string): string[] {
+  try {
+    return readdirSync(join(root, AREAS)).filter((n) => n.endsWith(".md") && n !== "README.md").sort().map((n) => readFileSync(join(root, AREAS, n), "utf8"));
+  } catch {
+    return [];
+  }
+}
+
+/** A documented class that shares a word with the new one, or none: the nearest thing to reuse. */
+function similar(k: string, named: readonly string[]): string {
+  const words = k.split("-").filter((w) => w.length > 2);
+  const hit = named.filter((n) => n !== k && n.split("-").some((w) => words.includes(w))).slice(0, 3);
+  return hit.length ? ` (already named and alike: ${hit.map((h) => "." + h).join(" ")})` : "";
 }
 
 /** The §5d register alone: the page-local classes that predate the rule. */
@@ -192,30 +257,35 @@ export function registeredClasses(design: string): string[] {
 
 export function scan(root: string): Scan {
   const files: Record<string, Counts> = {};
+  const found: Record<string, Finding[]> = {};
   const classes = new Set<string>();
   for (const f of sourceFiles(root)) {
     const text = readFileSync(f, "utf8");
     const c: Counts = { ...countFile(text), ...webCss(text) };
     if (c.colour || c.size || WEB_KEYS.some((k) => c[k])) files[relative(root, f)] = c;
+    if (c.colour || c.size) found[relative(root, f)] = locate(text);
     for (const k of classesIn(text)) classes.add(k);
   }
-  return { files, classes: [...classes].sort() };
+  return { files, classes: [...classes].sort(), found };
 }
 
 /** What a pull made worse, one line each. Empty means the check passes. */
-export function compare(base: Baseline, now: Scan, design: string): string[] {
+export function compare(base: Baseline, now: Scan, design: string, areas: readonly string[] = []): string[] {
   const out: string[] = [];
   for (const [file, c] of Object.entries(now.files)) {
     const b = base.files[file] ?? { colour: 0, size: 0 };
     for (const k of WEB_KEYS) {
       if ((c[k] ?? 0) > (b[k] ?? 0)) out.push(`${file}: ${(c[k] ?? 0) - (b[k] ?? 0)} new ${WEB_MESSAGE[k]}`);
     }
-    if (c.colour > b.colour) out.push(`${file}: ${c.colour - b.colour} new colour literal(s) — use a token from themes.ts (var(--…))`);
-    if (c.size > b.size) out.push(`${file}: ${c.size - b.size} new off-scale font-size — the scale is ${TYPE_SCALE.join(", ")}px`);
+    const where = (kind: Finding["kind"]) =>
+      (now.found?.[file] ?? []).filter((f) => f.kind === kind).map((f) => `\n  ${file}:${f.line}  ${f.text}  →  use ${f.use}`).join("");
+    if (c.colour > b.colour) out.push(`${file}: ${c.colour - b.colour} new colour literal(s) — a colour is a token, not a literal (${b.colour} already there are the baseline; the new one is among these):${where("colour") || " use var(--…) from docs/DESIGN.md §2"}`);
+    if (c.size > b.size) out.push(`${file}: ${c.size - b.size} new off-scale font-size — the scale is ${TYPE_SCALE.join(", ")}px:${where("size") || " pick the nearest"}`);
   }
-  const named = new Set(documentedClasses(design));
+  const all = documentedClasses(design, areas);
+  const named = new Set(all);
   for (const k of now.classes) {
-    if (!named.has(k)) out.push(`.${k}: a component class the design system does not have — use one docs/DESIGN.md §5 names, or name it there first`);
+    if (!named.has(k)) out.push(`.${k}: a component class the design system does not have${similar(k, all)} — use one docs/DESIGN.md §5 names, or name it in a code span in your own file docs/design/areas/<area>.md (not DESIGN.md, so parallel pulls never conflict)`);
   }
   const defined = new Set(now.classes);
   for (const k of registeredClasses(design)) {
@@ -226,6 +296,7 @@ export function compare(base: Baseline, now: Scan, design: string): string[] {
 
 const BASELINE = "docs/design/baseline.json";
 const DESIGN = "docs/DESIGN.md";
+const AREAS = "docs/design/areas";
 
 if (import.meta.main) {
   const root = process.cwd();
@@ -236,7 +307,7 @@ if (import.meta.main) {
     console.log(`wrote ${BASELINE}`);
   } else {
     const base: Baseline = JSON.parse(readFileSync(join(root, BASELINE), "utf8"));
-    const problems = compare(base, now, readFileSync(join(root, DESIGN), "utf8"));
+    const problems = compare(base, now, readFileSync(join(root, DESIGN), "utf8"), areaFiles(root));
     for (const p of problems) console.error(p);
     if (problems.length) process.exit(1);
     console.log("design: no colour, size or component added outside the system");
