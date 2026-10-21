@@ -447,6 +447,8 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
    they wrap under the text before they would clip, at any width. */
 .row-fields { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .row-fields .input { min-width: 0; max-width: 100%; }
+/* A number beside its label in a settings row stays a few digits wide. */
+.row-fields .input[type="number"] { width: 5em; }
 .row-fields .check { align-items: center; }
 .setting-list .row { flex-wrap: wrap; align-items: flex-start; }
 .setting-list .row-main { flex: 1 1 18rem; }

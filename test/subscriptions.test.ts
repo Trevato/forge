@@ -630,6 +630,15 @@ describe("the pages", () => {
     expect(getHeadroom(app.db, work.id)).toBe(25);
   });
 
+  test("the headroom form is §5's row fields, with no class of its own", async () => {
+    const work = account();
+    const html = await get("/settings/subscriptions");
+    expect(html).not.toContain('class="headroom');
+    expect(html).toContain(`action="/settings/subscriptions/${work.id}/headroom"`);
+    expect(html).toMatch(/<form\s+class="row-fields"[^>]*headroom"/);
+    expect(html).toMatch(/<input[^>]*name="headroom"/);
+  });
+
   test("nobody but an admin reaches the pool", async () => {
     const signed = await fetch(`${base}/signup`, {
       method: "POST",

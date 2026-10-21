@@ -222,7 +222,7 @@ export function subscriptionsPage(ctx: Ctx): Response {
                 st !== undefined,
                 () =>
                   html`<form
-                    class="headroom row-fields"
+                    class="row-fields"
                     method="post"
                     action="${POOL}/${s.id}/headroom"
                   >
@@ -246,7 +246,7 @@ export function subscriptionsPage(ctx: Ctx): Response {
                 s.id !== PLATFORM,
                 () =>
                   html`<form
-                    class="headroom row-fields"
+                    class="row-fields"
                     method="post"
                     action="${POOL}/${s.id}/budget"
                   >
@@ -287,6 +287,7 @@ export function subscriptionsPage(ctx: Ctx): Response {
               )}`,
             });
           }),
+          { extra: "setting-list" },
         );
 
   const add = card(
