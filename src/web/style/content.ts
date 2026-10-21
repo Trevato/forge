@@ -974,12 +974,6 @@ textarea.editor:focus-visible { outline: none; }
   background: color-mix(in srgb, var(--attn) 35%, transparent);
   color: var(--fg); border-radius: 2px; padding: 0 1px;
 }
-.live-toggle {
-  display: flex; align-items: center; gap: 6px;
-  margin: 10px 0 0; color: var(--muted-fg);
-}
-.live-toggle .ico { color: var(--faint); flex: none; }
-.live-toggle a { color: var(--accent); }
 
 }
 /* What needs you, pinned on the home: the bulk step's select as wide as
