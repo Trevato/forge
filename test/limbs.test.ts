@@ -452,7 +452,9 @@ describe("limb actions", () => {
     expect(mapPage).toContain(
       `aria-label="#${extra.number} One home: the footer — deferred: ${through}"`,
     );
-    expect(mapPage).toMatch(/data-state="deferred"><\/i>deferred <b>5<\/b>/);
+    expect(mapPage).toMatch(
+      /class="badge"[^>]*data-state="deferred"[^>]*>deferred <b>5<\/b><\/span>/,
+    );
     const issuePage = await (
       await get("alice", `/alice/engine/issues/${extra.number}`)
     ).text();

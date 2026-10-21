@@ -918,10 +918,18 @@ export function countWords(words: readonly Word[]): Record<Word, number> {
 
 function countsLine(counts: Record<Word, number>): Html {
   const always = new Set<Word>(["ready", "working", "blocked", "done"]);
-  return html`<span class="map-counts">
+  const tone: Partial<Record<Word, string>> = {
+    ready: "success",
+    working: "attn",
+    waiting: "merged",
+    parked: "attn",
+    held: "attn",
+    done: "outline",
+  };
+  return html`<span data-counts>
     ${WORDS.filter((w) => always.has(w) || counts[w] > 0).map(
       (w) =>
-        html`<span><i data-state="${w}"></i>${w} <b>${counts[w]}</b></span>`,
+        html`<span class="badge" data-variant="${tone[w] ?? "secondary"}" data-state="${w}">${w} <b>${counts[w]}</b></span> `,
     )}
   </span>`;
 }

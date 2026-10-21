@@ -317,6 +317,20 @@ describe("the map, per app and across the forge", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
+  test("the counts line is §5 badges: every word and count present, the old name absent", async () => {
+    const cookie = await signIn("alice");
+    const page = await (
+      await fetch(`${base}/alice/engine/map`, { headers: { cookie } })
+    ).text();
+    expect(page).not.toContain('class="map-counts"');
+    expect(page).not.toMatch(/<[^>]*map-counts/);
+    for (const w of ["ready", "working", "blocked", "done"])
+      expect(page).toMatch(
+        new RegExp(`class="badge"[^>]*data-state="${w}"[^>]*>${w} <b>\\d+</b></span>`),
+      );
+    expect(page).toContain('class="map-node"');
+  });
+
   test("a card says its word, who is on it, and wears a ring while the crew works", async () => {
     const cookie = await signIn("alice");
     const page = await (
@@ -345,12 +359,24 @@ describe("the map, per app and across the forge", () => {
     // The edge from a done issue recedes with it.
     expect(page).toContain('class="map-edge map-edge-done"');
     // The line under the drawing counts the words.
-    expect(page).toContain('<i data-state="ready"></i>ready <b>2</b>');
-    expect(page).toContain('<i data-state="working"></i>working <b>1</b>');
-    expect(page).toContain('<i data-state="blocked"></i>blocked <b>1</b>');
-    expect(page).toContain('<i data-state="done"></i>done <b>1</b>');
-    expect(page).toContain('<i data-state="waiting"></i>waiting <b>1</b>');
-    expect(page).toContain('<i data-state="parked"></i>parked <b>1</b>');
+    expect(page).toMatch(
+      /data-state="ready"[^>]*>ready <b>2<\/b><\/span>/,
+    );
+    expect(page).toMatch(
+      /data-state="working"[^>]*>working <b>1<\/b><\/span>/,
+    );
+    expect(page).toMatch(
+      /data-state="blocked"[^>]*>blocked <b>1<\/b><\/span>/,
+    );
+    expect(page).toMatch(
+      /data-state="done"[^>]*>done <b>1<\/b><\/span>/,
+    );
+    expect(page).toMatch(
+      /data-state="waiting"[^>]*>waiting <b>1<\/b><\/span>/,
+    );
+    expect(page).toMatch(
+      /data-state="parked"[^>]*>parked <b>1<\/b><\/span>/,
+    );
     // The lists beside it still read the graph; the critical path is the
     // accent on the canvas alone, and spend and flow live on their boards.
     expect(page).toContain("Ready now");
@@ -410,7 +436,9 @@ describe("the map, per app and across the forge", () => {
     // dormant has nothing ready and nobody working: it folds to its header.
     expect(lane("lane-alice-dormant")).toContain('data-idle="1"');
     expect(lane("lane-alice-dormant")).not.toMatch(/\sopen\s*>/);
-    expect(page).toContain('<i data-state="parked"></i>parked <b>1</b>');
+    expect(page).toMatch(
+      /data-state="parked"[^>]*>parked <b>1<\/b><\/span>/,
+    );
     // The lanes are §5's list and rows, not a page-local component (#3651).
     expect(page).toMatch(/id="lanes"[^>]*>\s*<div\s+class="card"[^>]*>\s*<ul class="list">/);
     expect(page).toMatch(/<details[^>]*id="lane-alice-engine"[^>]*>\s*<summary\s+class="row"/);
