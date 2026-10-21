@@ -428,7 +428,7 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
   const liveToggle = when(
     ctx.auth.user !== undefined,
     () =>
-      html`<p class="live-toggle small">
+      html`<p class="row small muted">
         ${icon("globe")}
         ${a.live
           ? html`<span
