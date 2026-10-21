@@ -486,23 +486,36 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
  * step deeper, on the change. Narrowed as `tellsList` is.
  */
 export async function changesList(ctx: Ctx): Promise<Response> {
+  const started = performance.now();
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
   const db = ctx.app.db;
   const base = repoBase(repo);
   const f = readFacets(ctx);
   const { options, record, wordCtx } = listRead(ctx, repo, f);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
 
+  let mark = performance.now();
+  notePhase(ctx.request, "repo", mark - started);
+  const lap = (name: string): void => {
+    const now = performance.now();
+    notePhase(ctx.request, name, now - mark);
+    mark = now;
+  };
   const fetched = listPulls(db, repo.id, {
     ...options,
     ...sealedScope(db, repo, ctx.auth.user),
   });
+  lap("pulls");
   const words = await Promise.all(
     fetched.map((pull) => pullWord(wordCtx, pull)),
   );
+  lap("words");
   const answered = tellsAnswered(db, repo.id, fetched);
+  lap("tells");
   const labels = labelsForIssues(db, fetched.map((pull) => pull.id));
   const repoLabels = listLabels(db, repo.id);
+  lap("labels");
   const rows = fetched
     .map((pull, i) => ({ pull, info: words[i]! }))
     .filter((r) => shown(r.info.word, f));
@@ -558,7 +571,7 @@ export async function changesList(ctx: Ctx): Promise<Response> {
     </div>
     ${liveMount({ repo: base })}`;
 
-  return page({
+  const res = page({
     ctx,
     title: pageTitle("changes", repo, record !== undefined),
     crumbs: crumbsFor(repo),
@@ -567,6 +580,8 @@ export async function changesList(ctx: Ctx): Promise<Response> {
     styleCss: labelCss([...repoLabels, ...[...labels.values()].flat()]),
     scriptJs: liveClientJs,
   });
+  lap("render");
+  return res;
 }
 
 /** Which runs a list shows: all three kinds by default, or the one that
