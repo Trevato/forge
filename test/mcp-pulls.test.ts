@@ -144,7 +144,7 @@ test("a private repository the caller cannot read is not found, as pull says", a
 
 test("tools/list lists pulls and stays under 40 KB", async () => {
   const { text } = await rpc(tok["ada"]!, "tools/list");
-  expect(Buffer.byteLength(text)).toBeLessThanOrEqual(40_000);
+  expect(Buffer.byteLength(text)).toBeLessThanOrEqual(38_500); // headroom: a new tool must not tip the lane red
   expect(JSON.parse(text).result.tools.map((t: any) => t.name)).toContain("pulls");
 });
 

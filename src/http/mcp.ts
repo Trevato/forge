@@ -372,6 +372,16 @@ async function archiveMany(ctx: Ctx, user: User, args: Args): Promise<Answer> {
   });
 }
 
+// tools/list is held under 40 KB (test/mcp-pulls.test.ts). The server checks
+// every length at the boundary, so the listing leaves the maxLength hints out.
+function lean(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(lean);
+  if (schema === null || typeof schema !== "object") return schema;
+  return Object.fromEntries(
+    Object.entries(schema).filter(([k]) => k !== "maxLength").map(([k, v]) => [k, lean(v)]),
+  );
+}
+
 const APP_ARG = {
   type: "string",
   description: "owner/name",
@@ -1818,7 +1828,7 @@ const TOOLS: readonly Tool[] = [
       type: "object",
       properties: {
         repo: REPO_ARG,
-        ref: { type: "string", maxLength: 255, description: "A branch, tag or commit; default the default branch." },
+        ref: { type: "string", maxLength: 255, description: "Branch, tag or commit; default branch." },
         limit: { type: "integer", minimum: 1, maximum: 100 },
       },
       required: ["repo"],
@@ -2454,7 +2464,7 @@ const TOOLS: readonly Tool[] = [
       properties: {
         repo: REPO_ARG,
         name: { type: "string" },
-        visibility: { type: "string", enum: ["private", "public"], description: "Private by default; public only when the original is." },
+        visibility: { type: "string", enum: ["private", "public"], description: "Private by default." },
         dryRun: { type: "boolean" },
       },
       required: ["repo"],
@@ -3220,18 +3230,15 @@ const TOOLS: readonly Tool[] = [
               },
               pillar: {
                 type: "string",
-                description:
-                  'The pillar this serves, by short form or name: "P0" or "P0 Trust". Its umbrella issue then waits for it.',
+                description: 'Pillar served: "P0" or "P0 Trust".',
               },
               later: {
                 type: "boolean",
-                description:
-                  "True when no pillar: opens behind the Later gate. Needs why.",
+                description: "No pillar: needs why.",
               },
               why: {
                 type: "string",
-                description:
-                  "With later: one sentence why.",
+                description: "With later: why.",
               },
             },
             required: ["key", "title"],
@@ -3280,7 +3287,7 @@ const TOOLS: readonly Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        since: { type: "string", maxLength: 40, description: "ISO time; default the last day, at most 14 days back." },
+        since: { type: "string", maxLength: 40, description: "ISO time; default last day, max 14 days." },
         ua: { type: "string", maxLength: 100, description: "Part of the user agent." },
         path: { type: "string", maxLength: 200, description: "Path prefix." },
       },
@@ -3500,10 +3507,10 @@ const TOOLS: readonly Tool[] = [
         verb: { type: "string", enum: ["attach", "verify", "rotate", "rename", "remove", "allow_writes", "audit"] },
         provider: { type: "string", enum: [...PROVIDERS] },
         name: { type: "string", maxLength: 32 },
-        value: { type: "string", maxLength: 4096, description: "The token, for attach and rotate." },
+        value: { type: "string", maxLength: 4096, description: "Token, for attach and rotate." },
         to: { type: "string", maxLength: 32 },
-        allowed: { type: "boolean", description: "For allow_writes: may runs that declare writes hold the token." },
-        repo: { type: "string", maxLength: 200, description: "For audit: owner/name, where the findings are filed as issues." },
+        allowed: { type: "boolean", description: "For allow_writes." },
+        repo: { type: "string", maxLength: 200, description: "For audit: owner/name." },
       },
       required: ["verb", "provider", "name"],
     },
@@ -3624,7 +3631,7 @@ const TOOLS: readonly Tool[] = [
       type: "object",
       properties: {
         slug: { type: "string", maxLength: 40 },
-        panel: { type: "integer", minimum: 0, maximum: 23, description: "One panel's data, by its place on the board from 0." },
+        panel: { type: "integer", minimum: 0, maximum: 23, description: "One panel's data, by place from 0." },
         from: { type: "string", maxLength: 64 },
         to: { type: "string", maxLength: 64 },
         step: { type: "string", maxLength: 16, description: "With panel: seconds per bucket, or a count of s, m, h or d." },
@@ -3790,7 +3797,7 @@ function rpcOne(
           ...TOOLS.filter((t) => t.adminOnly !== true || user.isAdmin).map((t) => ({
             name: t.name,
             description: t.description,
-            inputSchema: t.inputSchema,
+            inputSchema: lean(t.inputSchema),
             annotations: { readOnlyHint: !t.writes },
             ...(CARD_OF_TOOL[t.name] === undefined
               ? {}
