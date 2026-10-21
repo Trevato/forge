@@ -44,6 +44,7 @@ test("the settings card breaks the line at the silent day", () => {
   expect(out).toContain("p75 load each day over the last 30 days");
   expect(out.match(/<polyline|<circle/g)).toHaveLength(2);
   expect(out).toContain('<div class="bar muted"><svg viewBox');
+  expect(out).not.toContain("kpi-spark");
   expect(out).not.toContain("No load reports");
 });
 

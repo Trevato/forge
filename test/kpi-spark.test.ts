@@ -39,6 +39,7 @@ describe("daySpark", () => {
     const out = daySpark([0, null, 5], "Days")!.toString();
     expect(out).toStartWith('<svg viewBox="0 0 96 24" width="96" height="24" role="img" aria-label="Days">');
     expect(out).not.toContain("style=");
+    expect(out).not.toContain("class=");
     expect(out).not.toMatch(/#[0-9a-f]{3,8}\b|rgb|hsl/i);
   });
 

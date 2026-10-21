@@ -42,6 +42,7 @@ function spark(series: readonly number[], label: string): Html {
  * the one shared scale, a run of one day is a dot, and no number at all is no
  * sparkline. Non-finite values count as missing.
  */
+/** Outside a stat tile the caller wraps it in `<div class="bar muted">`: a flex row makes the svg a block (no baseline gap) and `.muted` colours it. */
 export function daySpark(days: readonly (number | null)[], label: string): Html | null {
   const known = days.filter((v): v is number => v !== null && Number.isFinite(v));
   if (known.length === 0) return null;
