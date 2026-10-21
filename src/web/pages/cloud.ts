@@ -218,10 +218,11 @@ export async function cloudAudit(ctx: Ctx): Promise<Response> {
 
 // GET /settings/cloud/audit
 export function cloudAuditPage(ctx: Ctx): Response {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const denied = requireAdmin(ctx);
-  if (denied) return denied;
-  const rows = auditToday(ctx.app.db);
-  return page({
+  if (denied) return timePhase(ctx.request, "render", () => denied);
+  const rows = timePhase(ctx.request, "audit", () => auditToday(ctx.app.db));
+  return timePhase(ctx.request, "render", () => page({
     ctx,
     title: "Cloud audit",
     body: html`<div class="page-head"><h1>Cloud audit</h1></div>
@@ -244,7 +245,7 @@ export function cloudAuditPage(ctx: Ctx): Response {
         ),
         "Account settings",
       )}`,
-  });
+  }));
 }
 
 // POST /settings/cloud/rotate

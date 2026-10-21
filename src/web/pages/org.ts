@@ -443,8 +443,10 @@ function orgForm(ctx: Ctx, value: string, error?: string): Response {
 
 // GET /organizations/new
 export function newOrgPage(ctx: Ctx): Response {
-  if (!ctx.auth.user) return signInFirst(ctx);
-  return orgForm(ctx, "");
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  return timePhase(ctx.request, "render", () =>
+    ctx.auth.user ? orgForm(ctx, "") : signInFirst(ctx),
+  );
 }
 
 // POST /organizations/new

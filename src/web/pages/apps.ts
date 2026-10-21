@@ -699,6 +699,11 @@ export function previewCard(ctx: Ctx, repo: Repo, pull: Pull): Html {
  * theirs, nothing else is.
  */
 export function appsOpen(ctx: Ctx): Response {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  return timePhase(ctx.request, "render", () => appsOpenResponse(ctx));
+}
+
+function appsOpenResponse(ctx: Ctx): Response {
   const runtime = appsRuntime(ctx.app);
   const host = (ctx.url.searchParams.get("host") ?? "").trim();
   const wanted = ctx.url.searchParams.get("to") ?? "/";
