@@ -71,7 +71,8 @@ describe("a member and the crew's standing instructions", () => {
   }, 60_000);
 
   afterAll(async () => {
-    await servers.stop();
+    servers.stop();
+    app.close();
     await rm(dataDir, { recursive: true, force: true });
   }, 30_000);
 
