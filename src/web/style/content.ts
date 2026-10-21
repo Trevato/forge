@@ -456,14 +456,6 @@ form.inline { display: inline; margin-left: auto; }
 .dash { display: grid; gap: 16px; align-items: start; }
 @media (min-width: 900px) { .dash { grid-template-columns: minmax(0, 1fr) 320px; gap: 24px; } }
 
-/* The activity rail: a sentence on top, where it happened underneath, and the
-   clock beside the sentence it belongs to. */
-.act .row { align-items: flex-start; padding: 10px 14px; }
-.act .row-lead, .act .row-trail { margin-top: 1px; }
-.act .row-title { font-weight: 400; }
-.act .row-title strong { font-weight: 600; }
-.act .row-trail { font-size: 12.5px; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
-
 /* ---- code view ---- */
 .code { overflow-x: auto; scrollbar-width: thin; }
 .code table { width: 100%; }
