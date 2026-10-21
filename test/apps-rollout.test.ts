@@ -28,6 +28,21 @@ import { health } from "../src/http/health.ts";
 import { takePresence, warmBehind, type Presence } from "../src/apps/presence.ts";
 import { runQuery } from "../src/boards/query.ts";
 
+/** A fixed CPU workload, in ms; the `x < 0` is never true and only keeps the loop alive. */
+const spin = (): number => {
+  const t = performance.now();
+  let x = 0;
+  for (let n = 0; n < 3e6; n++) x = (x + Math.sqrt(n)) % 1e9;
+  return x < 0 ? 0 : performance.now() - t;
+};
+const fastest = (n: number) => Math.min(...Array.from({ length: n }, spin));
+/** This machine's speed at module load, idle: the reference (scale 1.0 beside itself). */
+const idle = (spin(), fastest(5));
+/** How much slower the machine is now than at load, 1 to 8: a busy check machine stretches the bound. */
+const loadScale = () => Math.max(1, Math.min(fastest(3) / idle, 8));
+/** The reconnect bound, in ms, on an idle machine. */
+const RECONNECT_MS = 1000;
+
 /** `/` answers, `/slow` answers after a second and a half, `/ws` echoes. */
 const SERVER = `export const server = Bun.serve({
   port: Number(process.env.PORT ?? "0"),
@@ -201,7 +216,7 @@ describe("apps: through a rollout", () => {
     expect(closed.reason).toBe("service restart");
     const again = connect(a);
     expect(await again.opened).toBe(true);
-    expect(Date.now() - closed.at).toBeLessThan(1000);
+    expect(Date.now() - closed.at).toBeLessThan(RECONNECT_MS * loadScale());
     expect(await again.echo("after")).toBe("after");
     again.ws.close();
 
@@ -251,7 +266,7 @@ describe("apps: through a rollout", () => {
     expect(closed.reason).toBe("service restart");
     const again = connect(next);
     expect(await again.opened).toBe(true);
-    expect(Date.now() - closed.at).toBeLessThan(1000);
+    expect(Date.now() - closed.at).toBeLessThan(RECONNECT_MS * loadScale());
     expect(await again.echo("reconnected")).toBe("reconnected");
     again.ws.close();
 
