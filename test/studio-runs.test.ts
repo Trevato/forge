@@ -517,6 +517,17 @@ describe("working: a run's own page in the studio", () => {
     expect(page).toContain('data-who="scout"');
     expect(page).toContain('id="run-steer"');
     expect(page).toContain("Steer scout");
+    // Jump, live and steer draw §5's btn, bar and card (#4263).
+    for (const old of ["run-jump", "run-live", "run-steer"]) {
+      expect(page).not.toMatch(new RegExp(`class="[^"]*\\b${old}\\b`));
+    }
+    expect(page).toContain("newer below");
+    expect(page).toMatch(/<button[^>]*class="btn"[^>]*id="run-jump"/);
+    expect(page).toMatch(
+      /<form[^>]*class="card stack"[^>]*id="run-steer"[^>]*action="\/alice\/engine\/runs\/\w+\/steer"/s,
+    );
+    expect(page).toContain('name="text"');
+    expect(page).toContain('formaction="/alice/engine/runs/');
     expect(page).toContain('id="run-stop"');
     // The transcript is on the page, and there is no second reading of it.
     expect(page).toContain('id="run-log"');
@@ -2295,3 +2306,16 @@ describe("a deploy that just landed is news on the front door", () => {
  * as `canWrite` today — that every surface carrying money, the crew or the
  * decision ledger must ask before it computes or renders one of those.
  */
+
+describe("run page controls leave the old classes behind (#4263)", () => {
+  test("no run-jump, run-live or run-steer class selector is defined, and [hidden] still beats .btn", async () => {
+    const { css } = await import("../src/web/style.ts");
+    for (const old of ["run-jump", "run-live", "run-steer"]) {
+      expect(css).not.toMatch(new RegExp(`\\.${old}(?![\\w-])`));
+    }
+    // The layout is kept under the ids the client script already uses.
+    expect(css).toMatch(/#run-steer \{[^}]*position: sticky/);
+    expect(css).toMatch(/#run-jump \{[^}]*position: sticky/);
+    expect(css).toMatch(/\[hidden\] \{ display: none !important; \}/);
+  });
+});

@@ -728,13 +728,13 @@ form.inline { display: inline; margin-left: auto; }
 .pinned-failures pre { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-min); }
 /* A run, live: a transcript with a speaker column, bounded so the page
    head stays reachable, and a composer that sits under it. */
-.run-live { position: relative; margin-top: 12px; }
+#run-live { position: relative; }
 .run-log {
   margin: 0; padding: 10px 14px 8px; max-height: calc(100dvh - 300px); min-height: 12em; overflow: auto;
   background: var(--muted); border: 1px solid var(--border); border-radius: var(--radius);
   font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; tab-size: 4;
 }
-.run-live:has(.run-steer) .run-log { border-radius: var(--radius) var(--radius) 0 0; }
+#run-live:has(#run-steer) .run-log { border-radius: var(--radius) var(--radius) 0 0; }
 .run-log .ln { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 10px; padding: 2px 0; }
 .run-log .who { color: var(--faint); font-size: 12.5px; font-weight: 600; padding-top: 2px; user-select: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .run-log .txt { white-space: pre-wrap; }
@@ -753,17 +753,15 @@ form.inline { display: inline; margin-left: auto; }
 .run-log .ln-pulse i:nth-child(2) { animation-delay: .2s; }
 .run-log .ln-pulse i:nth-child(3) { animation-delay: .4s; }
 @keyframes run-pulse { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
-.run-jump {
-  position: sticky; bottom: 6px; float: right; margin-top: 6px; padding: 4px 10px; font: inherit; font-size: 12.5px;
-  color: var(--bg); background: var(--fg); border: 0; border-radius: 999px; cursor: pointer; box-shadow: var(--shadow-2);
+#run-jump {
+  position: sticky; bottom: 6px; float: right; margin-top: 6px; border-radius: 999px; box-shadow: var(--shadow-2);
 }
-.run-steer {
-  position: sticky; bottom: 0; display: grid; gap: 6px; padding: 10px 12px; background: var(--bg);
-  border: 1px solid var(--border); border-top: 0; border-radius: 0 0 var(--radius) var(--radius);
+#run-steer {
+  position: sticky; bottom: 0; gap: 6px; padding: 10px 12px; background: var(--bg);
+  border-top: 0; border-radius: 0 0 var(--radius) var(--radius); box-shadow: none;
 }
-.run-steer textarea { min-height: 38px; max-height: 160px; resize: none; }
-.run-steer .bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.run-steer .bar .muted { flex: 1 1 200px; }
+#run-steer textarea { min-height: 38px; max-height: 160px; resize: none; }
+#run-steer .bar .muted { flex: 1 1 200px; }
 /* A tail beside a running row (studio/app.ts): the same log, a peek at it
    — fixed height so nothing around it shifts as lines arrive, and it
    scrolls itself rather than the page. */

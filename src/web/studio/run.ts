@@ -332,7 +332,7 @@ export async function runView(
       },
     )}
     ${vitalsBlock(run, logHidden, looks)}
-    <div class="run-live" id="run-live" data-state="${run.state}">
+    <div class="mt" id="run-live" data-state="${run.state}">
       ${when(
         // The head above is what makes \`liveRegionsJs\` open the one
         // /events connection this log and its finish ride on.
@@ -363,7 +363,14 @@ export async function runView(
             }
           : {}),
         pulse: run.state === "running",
-        extra: html`<button type="button" class="run-jump" id="run-jump" hidden>
+        extra: html`<button
+          type="button"
+          class="btn"
+          data-size="sm"
+          data-variant="primary"
+          id="run-jump"
+          hidden
+        >
           newer below
         </button>`,
       }))}
@@ -375,7 +382,7 @@ export async function runView(
         writer && run.kind === "agent" && issue !== undefined,
         () =>
           html`<form
-            class="run-steer"
+            class="card stack"
             id="run-steer"
             method="post"
             action="${base}/runs/${run.id}/steer"
@@ -386,7 +393,7 @@ export async function runView(
               >Say something to ${who}</label
             >
             <textarea
-              class="input"
+              class="input break"
               id="steer-text"
               name="text"
               rows="1"
