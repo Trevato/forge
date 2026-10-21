@@ -27,6 +27,7 @@ import type {
   RemoteReadme,
   RemoteRepo,
   RemoteReview,
+  RemoteMilestone,
   RemoteReviewState,
   RemoteTreeEntry,
 } from "../types.ts";
@@ -325,6 +326,33 @@ export class GitHubProvider implements Provider {
       if (batch.length < PER_PAGE) break;
     }
     return succeed(labels.filter((l) => l.name !== ""));
+  }
+
+  async listMilestones(
+    fullName: string,
+  ): Promise<ProviderResult<readonly RemoteMilestone[]>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const milestones: RemoteMilestone[] = [];
+    for (let page = 1; page <= MAX_INTERNAL_PAGES; page++) {
+      const result = await this.api.call({
+        path: `/repos/${seg(named.owner)}/${seg(named.name)}/milestones`,
+        query: { state: "all", per_page: PER_PAGE, page },
+      });
+      if (!result.ok) return result;
+      const batch = asArray(result.value.data);
+      for (const raw of batch) {
+        milestones.push({
+          number: asNumber(field(raw, "number")),
+          title: asString(field(raw, "title")),
+          description: asString(field(raw, "description")),
+          dueOn: asTime(field(raw, "due_on")),
+          state: asState(field(raw, "state")),
+        });
+      }
+      if (batch.length < PER_PAGE) break;
+    }
+    return succeed(milestones.filter((m) => m.number > 0));
   }
 
   /**

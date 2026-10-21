@@ -308,6 +308,11 @@ new repository. It is the same `migrateRepo` as `/migrate` and
 crew's brief says the app lives on it. The web form takes it too (it lists the
 picked repository's branches newest first), as does the API's `branch` field.
 
+A GitHub migration also carries each milestone (title, description, due date,
+open or closed) as an issue here, with the due date and GitHub's milestone
+number kept in `milestone_origin`; carrying again makes no duplicates. Which
+issues belong to a milestone is not carried yet.
+
 On a forge made for a client (one that was spawned, signed in by its claim
 link), the home is their apps, one plain sentence each and one more saying
 whether its agents are working, about to start, or waiting: no map, board or

@@ -89,6 +89,16 @@ export interface RemoteLabel {
   readonly color: string;
 }
 
+export interface RemoteMilestone {
+  /** The origin's number for it, per repository: what a second carry matches on. */
+  readonly number: number;
+  readonly title: string;
+  readonly description: string;
+  /** ISO 8601, or null when it has no due date. */
+  readonly dueOn: string | null;
+  readonly state: "open" | "closed";
+}
+
 export interface RemoteComment {
   readonly remoteId: string;
   readonly author: string;
@@ -302,6 +312,10 @@ export interface Provider {
   getPullDiff(fullName: string, number: number): Promise<ProviderResult<Diff>>;
 
   listLabels(fullName: string): Promise<ProviderResult<readonly RemoteLabel[]>>;
+  /** Every milestone, open and closed. Left out by an origin that is not carried from. */
+  listMilestones?(
+    fullName: string,
+  ): Promise<ProviderResult<readonly RemoteMilestone[]>>;
   listIssues(
     fullName: string,
     query: ListIssuesQuery,

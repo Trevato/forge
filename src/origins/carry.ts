@@ -18,12 +18,15 @@
  *   mirror's do — and is returned in `forkPulls`, for the caller to fetch
  *   its head into `refs/pull/<n>/head`.
  *
+ * Milestones come too (`milestones.ts`), once each.
+ *
  * Every issue comes, open and closed; of pulls only the open ones — a
  * closed pull's work is either in the history already or was turned down.
  * Plain data in (a provider, the repository's ids), counts out; no git.
  */
 
 import type { Database } from "bun:sqlite";
+import { carryMilestone } from "./milestones.ts";
 import { importComments, importIssue, importLabels } from "./import.ts";
 import type { ListIssuesQuery, Provider, RemoteIssue } from "./types.ts";
 
@@ -52,6 +55,8 @@ export interface Carried {
   readonly issues: number;
   readonly pulls: number;
   readonly comments: number;
+  /** Milestones made here: those already carried are not counted. */
+  readonly milestones: number;
   /** Open pulls whose head branch is in a fork, not in the clone. */
   readonly forkPulls: readonly ForkPull[];
   /** The first thing the origin refused, in words; "" when nothing was. */
@@ -90,7 +95,7 @@ export async function carryConversations(input: CarryInput): Promise<Carried> {
   const where = originName(provider);
   const ctx = { db, repoId, actorId };
   let error = "";
-  const counts = { labels: 0, issues: 0, pulls: 0, comments: 0 };
+  const counts = { labels: 0, issues: 0, pulls: 0, comments: 0, milestones: 0 };
   const forkPulls: ForkPull[] = [];
 
   const labels = await provider.listLabels(fullName);
@@ -150,6 +155,17 @@ export async function carryConversations(input: CarryInput): Promise<Carried> {
       if (listed.value.next === null) break;
       cursor = listed.value.next;
     }
+  }
+
+  // After the issues, so a milestone's number here is past every number the
+  // origin gave a conversation.
+  if (provider.listMilestones !== undefined) {
+    const listed = await provider.listMilestones(fullName);
+    if (listed.ok) {
+      for (const remote of listed.value)
+        if (carryMilestone(db, repoId, actorId, remote)?.created)
+          counts.milestones++;
+    } else error ||= listed.error.message;
   }
   return { ...counts, forkPulls, error };
 }

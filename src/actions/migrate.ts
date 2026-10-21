@@ -12,7 +12,8 @@
  * pasted URL is cloned anonymously: public repositories only.
  *
  * From a connected origin the conversations come too (`origins/carry.ts`):
- * every issue with its comments and labels, and the open pull requests as
+ * every issue with its comments and labels, each milestone (title,
+ * description, due date, state) and the open pull requests as
  * pulls here, on the branches the clone brought — each opening with a link
  * back to the original; one from a fork has its head under
  * `refs/pull/<n>/head` and waits for a writer to approve it to run. A
@@ -503,7 +504,7 @@ async function runMigration(
         carried.forkPulls.map((p) => p.number),
       );
       const forks = carried.forkPulls.length;
-      conversations = `; ${plural(carried.issues, "issue")}, ${plural(carried.pulls, "open pull request")}${forks === 0 ? "" : ` (${forks} from forks, waiting for your approval to run here)`}, ${plural(carried.comments, "comment")}${carried.error === "" ? "" : ` (the origin stopped part-way: ${redact(carried.error)})`}`;
+      conversations = `; ${plural(carried.issues, "issue")}, ${plural(carried.pulls, "open pull request")}${forks === 0 ? "" : ` (${forks} from forks, waiting for your approval to run here)`}, ${plural(carried.comments, "comment")}${carried.milestones === 0 ? "" : `, ${plural(carried.milestones, "milestone")}`}${carried.error === "" ? "" : ` (the origin stopped part-way: ${redact(carried.error)})`}`;
       app.bus.append({
         kind: "repo.imported",
         repoId: current.id,

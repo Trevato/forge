@@ -125,6 +125,15 @@ export interface FakeLabel {
   color: string;
 }
 
+export interface FakeMilestone {
+  number: number;
+  title: string;
+  description?: string;
+  /** ISO 8601, or absent for no due date. */
+  dueOn?: string;
+  state?: "open" | "closed";
+}
+
 export interface FakeBranch {
   name: string;
   sha: string;
@@ -159,6 +168,8 @@ export interface FakeState {
   token: string;
   repos: FakeRepo[];
   labels: Map<string, FakeLabel[]>;
+  /** GitHub milestones, keyed `owner/name`. */
+  milestones: Map<string, FakeMilestone[]>;
   issues: Map<string, FakeIssue[]>;
   comments: Map<string, FakeComment[]>;
   reviews: Map<string, FakeReview[]>;
@@ -219,6 +230,7 @@ export function newFakeState(
     token,
     repos: [],
     labels: new Map(),
+    milestones: new Map(),
     issues: new Map(),
     comments: new Map(),
     reviews: new Map(),
@@ -552,6 +564,19 @@ function route(
       return jsonResponse(labels, 200, { etag });
     }
     return jsonResponse(labels);
+  }
+
+  // ---- milestones ----
+  if (tail === "/milestones" && method === "GET" && state.kind === "github") {
+    return jsonResponse(
+      (state.milestones.get(fullName) ?? []).map((m) => ({
+        number: m.number,
+        title: m.title,
+        description: m.description ?? null,
+        due_on: m.dueOn ?? null,
+        state: m.state ?? "open",
+      })),
+    );
   }
 
   // ---- issues and pulls ----
