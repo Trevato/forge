@@ -54,6 +54,8 @@ export interface Egress {
 
 const HEAD_MAX = 16 * 1024;
 const MAX_PER_DESTINATION = 8;
+/** A public destination's cap: an install opens dozens of parallel fetches to one registry. */
+export const MAX_PER_PUBLIC_DESTINATION = 64;
 const IDLE_MS = 5 * 60_000;
 /** Bytes held for a client that does not read before its upstream is cut. */
 const QUEUE_MAX = 4 * 1024 * 1024;
@@ -376,7 +378,9 @@ async function open(
   }
   const destination = `${host.toLowerCase()}:${port}`;
   const count = tally(policy.label ?? "", destination);
-  const cap = policy.maxPerDestination ?? MAX_PER_DESTINATION;
+  // The cap guards a granted private device (a Pi's camera, #3719); a public host such as the package
+  // registry is reached by many parallel requests from one install, so it gets the wider cap.
+  const cap = policy.maxPerDestination ?? (isPublicAddress(verdict.address) ? MAX_PER_PUBLIC_DESTINATION : MAX_PER_DESTINATION);
   if (count.open >= cap) {
     log(`egress capped: ${policy.label ?? "app"} already has ${count.open} connections to ${destination}`);
     refuse(
