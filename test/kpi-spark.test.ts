@@ -35,9 +35,9 @@ describe("daySpark", () => {
     expect(daySpark([], "Days")).toBeNull();
   });
 
-  test("it keeps the class, the box and currentColor, and adds no style or colour", () => {
+  test("it carries no class, keeps the box and currentColor, and adds no style or colour", () => {
     const out = daySpark([0, null, 5], "Days")!.toString();
-    expect(out).toStartWith('<svg class="kpi-spark" viewBox="0 0 96 24" width="96" height="24" role="img" aria-label="Days">');
+    expect(out).toStartWith('<svg viewBox="0 0 96 24" width="96" height="24" role="img" aria-label="Days">');
     expect(out).not.toContain("style=");
     expect(out).not.toMatch(/#[0-9a-f]{3,8}\b|rgb|hsl/i);
   });

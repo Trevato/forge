@@ -758,7 +758,7 @@ export function appVisitorsView(v: AppVitals): Html {
         <div><dt>p75 INP</dt><dd>${ms(v.inpP75)}</dd></div>
         <div><dt>p75 CLS</dt><dd>${shiftText(v.clsP75)}</dd></div>
       </dl>
-      ${spark ?? html`<p class="muted small mt">No load reports in the last 30 days</p>`}`,
+      ${spark ? html`<div class="bar muted">${spark}</div>` : html`<p class="muted small mt">No load reports in the last 30 days</p>`}`,
     { head: html`${icon("rocket")}<h2>Visitors and speed</h2>` },
   );
 }

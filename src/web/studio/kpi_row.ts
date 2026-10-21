@@ -25,9 +25,8 @@ function at(i: number, n: number, v: number, top: number): [string, string] {
   return [(i * step).toFixed(1), (H - 2 - (v / top) * (H - 4)).toFixed(1)];
 }
 
-/** `cls` is for a sparkline outside a stat tile (the app settings page's), which styles itself. */
-function svg(label: string, body: string, cls = ""): Html {
-  return raw(`<svg${cls === "" ? "" : ` class="${cls}"`} viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${label}">${body}</svg>`);
+function svg(label: string, body: string): Html {
+  return raw(`<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${label}">${body}</svg>`);
 }
 
 /** A series oldest first as a fixed-size SVG polyline; the numbers are the only input. */
@@ -63,7 +62,7 @@ export function daySpark(days: readonly (number | null)[], label: string): Html 
         : `<polyline points="${r.map((p) => p.join(",")).join(" ")}" fill="none" stroke="currentColor" stroke-width="1.5"/>`,
     )
     .join("");
-  return svg(escapeHtml(label), body, "kpi-spark");
+  return svg(escapeHtml(label), body);
 }
 
 /** The last 24 hours, newest first in, oldest on the left out. */

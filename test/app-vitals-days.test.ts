@@ -43,13 +43,14 @@ test("the settings card breaks the line at the silent day", () => {
   const out = String(appVisitorsView({ ...none, loadDays: loadP75Days(db, "a1", NOW, 4) }));
   expect(out).toContain("p75 load each day over the last 30 days");
   expect(out.match(/<polyline|<circle/g)).toHaveLength(2);
+  expect(out).toContain('<div class="bar muted"><svg viewBox');
   expect(out).not.toContain("No load reports");
 });
 
 test("no reports in 30 days says so in words, with no svg", () => {
   const out = String(appVisitorsView({ ...none, loadDays: loadP75Days(seeded(), "nobody", NOW) }));
   expect(out).toContain("No load reports in the last 30 days");
-  expect(out).not.toContain("kpi-spark");
+  expect(out).not.toContain("<svg viewBox=\"0 0 96 24\"");
 });
 
 test("the day query uses the app/day index", () => {

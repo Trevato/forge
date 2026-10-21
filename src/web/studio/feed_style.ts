@@ -19,8 +19,6 @@ export const feedCss = /* css */ `
 .composer textarea { width: 100%; min-height: 64px; resize: vertical; }
 .composer-bar { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .composer-bar select { min-width: 0; max-width: 60%; }
-/* A day sparkline outside a stat tile: the app settings page's visitors card (daySpark). */
-.kpi-spark { display: block; color: var(--muted-fg); max-width: 100%; }
 /* Your apps: a narrow column on a desk, a tab away on a phone. */
 .home-tabs { display: none; margin-bottom: 12px; }
 .home-app { gap: 8px; }
