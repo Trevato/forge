@@ -453,6 +453,7 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 .setting-list .row { flex-wrap: wrap; align-items: flex-start; }
 .setting-list .row-main { flex: 1 1 18rem; }
 .setting-list .row-title, .setting-list .row-meta { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+.setting-list .record-value { user-select: all; }
 .setting-list .row-trail { flex: 0 1 auto; max-width: 100%; }
 @media (max-width: 640px) { .setting-list .row-trail { flex-basis: 100%; } }
 @media (pointer: coarse) { .row-actions { opacity: 1; } .row { min-height: 44px; } }

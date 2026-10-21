@@ -937,7 +937,7 @@ function appDomainsView(
       ${when(
         rows.length > 0,
         () =>
-          html`<ul class="list">
+          html`<ul class="list setting-list">
             ${rows}
           </ul>`,
       )}
@@ -982,13 +982,20 @@ function appDomainsView(
 
 /** The records as a person copies them into a zone: type, name, value. */
 function recordsToPublish(records: DnsRecord[]): Html {
-  const width = Math.max(...records.map((r) => r.name.length)) + 2;
-  const lines = records
-    .map((r) => `${r.type.padEnd(6)} ${r.name.padEnd(width)} ${r.value}`)
-    .join("\n");
-  const notes = records.filter((r) => r.note !== undefined);
-  return html`<pre class="domain-records">${lines}</pre>
-    ${notes.map((r) => html`<span class="row-meta">${r.note}</span>`)}`;
+  return html`${records.map(
+    (r) =>
+      html`<span class="row-meta"
+        >${badge(r.type, { variant: "outline" })}
+        <span class="mono">${r.name}</span>
+        <span aria-hidden="true">→</span>
+        <span class="mono record-value" title="${r.value}"
+          >${r.value}</span
+        ></span
+      >`,
+  )}
+  ${records
+    .filter((r) => r.note !== undefined)
+    .map((r) => html`<span class="row-meta">${r.note}</span>`)}`;
 }
 
 const appValues = (repo: Repo, record: AppRecord | undefined): AppValues => ({

@@ -595,6 +595,15 @@ describe("an app gets its own domain", () => {
       `forge-verify=${getDomain(app.db, "example.com")!.token}`,
     );
     expect(page).toContain("ALIAS");
+    expect(page).not.toContain("domain-records");
+    // The records wrap instead of truncating (.row-meta only wraps inside
+    // .setting-list), carry the type badge, and the whole value is selectable.
+    const token = getDomain(app.db, "example.com")!.token;
+    expect(page).toContain('<ul class="list setting-list">');
+    expect(page).toMatch(/badge[^>]*>\s*TXT\s*</);
+    expect(page).toMatch(
+      new RegExp(`class="mono record-value" title="forge-verify=${token}"`),
+    );
     expect(page).toContain(`${settings}/domains/example.com/check`);
     expect(page).toContain(
       encodeURIComponent(`${settings}/domains/example.com/delete`),
