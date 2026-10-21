@@ -147,7 +147,7 @@ function filterBar(
   labels: Label[],
   counts: { open: number; closed: number } | undefined,
 ): Html {
-  return html`<div class="filters">
+  return html`<div class="bar mb">
       ${seg([
         {
           label: "Open",
@@ -167,7 +167,7 @@ function filterBar(
           current: query.state === "all",
         },
       ])}
-      <form method="get" action="${base}" role="search">
+      <form class="bar" method="get" action="${base}" role="search">
         ${when(query.state !== "open", () => hidden("state", query.state))}
         ${when(query.label !== "", () => hidden("label", query.label))}
         ${when(query.author !== "", () => hidden("author", query.author))}

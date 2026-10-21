@@ -260,6 +260,10 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
    little less padding there, and a scroll inside the bar as the last resort. */
 .filters .seg { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
 @media (max-width: 420px) { .filters .seg > a { padding: 0 8px; } }
+/* The same three reaches for a filter bar drawn with §5's .bar. */
+.bar .search { min-width: 180px; flex: 1; max-width: 320px; }
+.bar .seg { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+@media (max-width: 420px) { .bar .seg > a { padding: 0 8px; } }
 
 .merge-box { margin-top: 14px; }
 .merge-box .card-body { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }

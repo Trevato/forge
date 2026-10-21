@@ -100,8 +100,8 @@ function repoSection(
   const lead = (repo: Repo) =>
     icon(repo.forkParentId !== null ? "fork" : "repo");
 
-  return html`<div class="filters mt">
-      <form method="get" action="/${owner.username}" role="search">
+  return html`<div class="bar mt mb">
+      <form class="bar" method="get" action="/${owner.username}" role="search">
         <input
           class="input search"
           type="search"

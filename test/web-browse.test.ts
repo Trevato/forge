@@ -449,6 +449,15 @@ describe("browsing an origin repository on the web", () => {
     expect(list).toContain("mona");
     expect(list).toContain("bug");
 
+    // The filter bar is §5's `.bar`; the page-local `.filters` is gone.
+    expect(list).not.toMatch(/class="[^"]*\bfilters\b/);
+    expect(list).toMatch(
+      /<form class="bar" method="get" action="[^"]*\/issues" role="search">/,
+    );
+    for (const word of ["Open", "Closed", "All", "Search"])
+      expect(list).toContain(word);
+    expect(list).toContain('name="q"');
+
     const one = await bodyOf(alice, `${browse}/issues/7`);
     expect(one).toContain("The gear slips");
     expect(one).toContain("under load");
