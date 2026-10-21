@@ -1,5 +1,5 @@
 /**
- * The boards the forge offers a new install: Usage, Crew, Releases, Apps, Security, Throughput, Forges and Reach. They are plain
+ * The boards the forge offers a new install: Usage, Serving, Crew, Releases, Apps, Security, Throughput, Forges and Reach. They are plain
  * boards in `forge/boards` once written, so a person edits or deletes them
  * like any other; `.offered` (a JSON list of slugs, committed with the
  * boards) records what was offered so a deletion sticks and an edit is
@@ -53,6 +53,20 @@ export const STARTING_BOARDS: Readonly<Record<string, Board>> = {
       panel("Node CPU (cores)", "line", machine("eq", "node", "cpu_cores")),
       panel("Node load", "line", machine("eq", "node", "load")),
       panel("Requests per hour", "bar", { source: "usage", aggregate: "sum", column: "n", groupBy: "hour", series: "status" }, 2),
+    ],
+  },
+  // Whether the forge still answers while its children work (#3319): the
+  // event loop's lateness beside what competes with it for CPU.
+  serving: {
+    title: "Serving",
+    range: "24h",
+    refresh: "1m",
+    panels: [
+      panel("Event-loop lag p99 (ms)", "line", { ...machine("eq", "forge", "lag_ms_max"), aggregate: "max" }, 2),
+      panel("Checks running", "line", { ...machine("eq", "forge", "checks"), aggregate: "max" }),
+      panel("Crew runs running", "line", { ...machine("eq", "forge", "agents"), aggregate: "max" }),
+      panel("Pod CPU (cores)", "line", machine("eq", "forge", "cpu_cores"), 2),
+      panel("Checks CPU (cores)", "area", { ...machine("starts", "check:", "cpu_cores"), series: "target" }, 2),
     ],
   },
   releases: {

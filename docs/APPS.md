@@ -283,6 +283,22 @@ writable cgroup mount owned by the forge's uid. Without that, cells are
 watched only. /system says which holds the cap, and why, and shows each
 cell's memory beside its cap.
 
+The forge's own process outranks what it starts (#3319, `apps/background.ts`).
+Every check step (install, test, check) and every crew run starts in the
+background class: `SCHED_BATCH`, nice 10 (a CFS weight of 110 against the
+forge's 1024) and best-effort IO at level 7, inherited by everything it
+starts. Where the cpu and io controllers are delegated with memory, the
+forge's leaf `<R>/forge` gets `cpu.weight` and `io.weight` 1000 against the
+cells' 100, and a step's cell 10 against an app's 100. Each crew run gets a
+cell cgroup of its own at weight 10 (no memory cap; it ran in the forge's
+leaf, where only nice told it apart). The kernel holds each step's cell to
+its declared cores (`check.limits.cpus`, by `cpu.max`) and each crew run to
+`FORGE_CREW_CPUS` cores (default 4, at most 1024), so one busy check slows
+itself instead of taking the pod's quota. Each is asked for and
+none is required: a host without `chrt` or `ionice`, or one that refuses
+them, runs the work as before. A full lane slows checks, not pages; an app's
+own process is not lowered.
+
 Where the host cannot hold cells (or the crew's shell sandbox), the forge
 runs uncontained and says so in one line: a boot warning, and, in the foot of
 every page a site admin reads, `Reduced protection: apps (<reason>) runs
@@ -1171,6 +1187,7 @@ a link to the milestone (`docs/PLANNING.md`); its progress never does.
 | `FORGE_CHECK_SHARDS`      | the machine's cores             | test shards per check (live: Settings → Capacity) |
 | `FORGE_CELLS_EGRESS`      | `enforce`                       | `report` lets undeclared egress through on 80/443 (live: Settings → Capacity) |
 | `FORGE_CELL_CGROUP`       | `/sys/fs/cgroup` at a namespace root | the delegated cgroup v2 whose children cap each cell's memory; `off` watches only |
+| `FORGE_CREW_CPUS`         | `4` | cores one crew run may use (`cpu.max` on its own cell cgroup, where the cpu controller is delegated) |
 | `FORGE_CREW_BUDGET_USD`   | `5`                             | spend per run unless the agent says otherwise     |
 | `FORGE_CREW_TIMEOUT_MIN`  | `45`                            | wall-clock limit of one agent run                 |
 | `FORGE_CREW_ALLOW_HOSTS`  | —                               | hosts an agent's shell may reach, comma-separated |
@@ -1266,6 +1283,11 @@ CPU's `topology/physical_package_id` and `core_id`. Every other thermometer
 `target starts cpu:`; the machine card on `/boards/data?source=machine`
 links a per-core CPU and a per-core temperature query. On an 80-CPU node
 that is 80 more targets, about 1.2 M rows at most (~80 MB) in the ring.
+The `forge` target also carries whether the forge still serves (#3319):
+`lag_ms`, its event loop's p99 lateness over the step in ms (a timer asks to
+wake every 50 ms; `kernel/loop_lag.ts`), and `checks` and `agents`, the
+checks and crew runs running at the instant. The **Serving** starting board
+draws the lag beside them.
 `boards/ring.ts` keeps it in
 `machine_sample`: 15-s points for 24 h and 5-min mean and max for 30 days,
 dropping what leaves its window on every write. A file this machine lacks

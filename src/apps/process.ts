@@ -14,6 +14,7 @@ import type { AppManifest } from "./manifest.ts";
 import type { EnvName } from "./data.ts";
 import { envPull } from "./data.ts";
 import { forgeApiUrl } from "./token.ts";
+import { backgroundArgv } from "./background.ts";
 import { isReservedAppEnvName } from "../core/app_env.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { spellings, stripForgeDirs } from "../runs/paths.ts";
@@ -261,9 +262,12 @@ export async function runStep(
   },
 ): Promise<Result<void, string>> {
   options.log(`$ ${command}`);
+  // A step is background work: the forge's own pages outrank it (#3319).
   const cell: Cell | undefined =
-    options.cell === undefined ? undefined : openCell(options.cell, options.log);
-  const proc = Bun.spawn(cell?.argv(command) ?? ["/bin/sh", "-c", command], {
+    options.cell === undefined
+      ? undefined
+      : openCell({ ...options.cell, background: true }, options.log);
+  const proc = Bun.spawn(backgroundArgv(cell?.argv(command) ?? ["/bin/sh", "-c", command]), {
     cwd: options.cwd,
     env: cell?.env(options.env) ?? options.env,
     stdin: "ignore",

@@ -206,6 +206,7 @@ export const SOURCES: Readonly<Record<string, Source>> = {
       cpu_cores: "number", cpu_cores_max: "number",
       memory_bytes: "number", memory_bytes_max: "number", load: "number",
       celsius: "number", celsius_max: "number",
+      lag_ms: "number", lag_ms_max: "number", checks: "number", agents: "number",
     },
     docs: {
       target:
@@ -220,6 +221,11 @@ export const SOURCES: Readonly<Record<string, Source>> = {
       load: "node only: the 1-min load average, runnable tasks",
       celsius: "°C, mean over the step: a cpu:<nnn>'s core, a package or a sensor; null for the rest",
       celsius_max: "°C, the highest 15-s point in the step",
+      lag_ms:
+        "forge only: how late its event loop woke, ms, 99th percentile over the 15 s; a 5-min point is the mean of its 15-s points",
+      lag_ms_max: "forge only: ms, the highest 15-s point in the step",
+      checks: "forge only: checks running at the instant; a 5-min point is the mean",
+      agents: "forge only: crew runs running at the instant; a 5-min point is the mean",
     },
   },
   // Who visits and how fast it is (#2712): one row per metric (and route, and
