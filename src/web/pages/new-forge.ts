@@ -26,7 +26,7 @@ import { notFoundPage, pageHead } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { btn, card, field as formField } from "../ui.ts";
+import { btn, card, field as formField, row } from "../ui.ts";
 
 interface Values {
   readonly name: string;
@@ -355,11 +355,13 @@ export function claimLinkBody(link: string, note?: string): Html {
     <p class="muted small mb">
       Send it as you would a password: to them alone, not to a group.
     </p>
-    <p class="claim-link-box"><code class="mono" id="claim-link">${link}</code></p>
-    <p class="mt">
-      ${btn("Copy the link", { type: "button", copy: "claim-link", icon: "copy", variant: "primary", size: "sm" })}
-      ${btn("Forges you sent", { href: "/forges", size: "sm" })}
-    </p>
+    ${card(html`<ul class="list setting-list">${
+      row({
+        title: html`<code class="mono" id="claim-link">${link}</code>`,
+        trail: btn("Copy the link", { type: "button", copy: "claim-link", icon: "copy", variant: "primary", size: "sm" }),
+      })
+    }</ul>`, { pad: false })}
+    <p class="mt">${btn("Forges you sent", { href: "/forges", size: "sm" })}</p>
     ${note === undefined ? null : html`<p class="small mt">${note}</p>`}`;
 }
 

@@ -198,8 +198,10 @@ describe("the client list", () => {
     expect(maria).toContain("alice/bakery");
     expect(maria).toContain('href="https://maria--forge.test"');
     expect(maria).toMatch(/data-claimed="no"/);
+    expect(html).not.toContain("forges-sent");
     const lou = html.slice(html.indexOf('data-forge="lou"'));
     expect(lou).toMatch(/data-claimed="unknown"/);
+    expect(lou).toContain("it did not answer just now");
     // The claim link itself is never kept, so never shown here.
     expect(html).not.toContain(claimUrl.split("#")[1]!);
   });
@@ -257,5 +259,18 @@ describe("the client list", () => {
     expect(rows.maria.claimed).toBe(true);
     expect(typeof rows.maria.lastActivityAt).toBe("string");
     expect(rows.lou.claimed).toBeNull();
+  });
+});
+
+describe("the claim link's markup", () => {
+  test("is drawn from the design system and stays one tap to copy", async () => {
+    const { claimLinkBody } = await import("../src/web/pages/new-forge.ts");
+    const out = claimLinkBody("https://x.test/claim#abc").text;
+    expect(out).not.toContain("claim-link-box");
+    expect(out).toContain('id="claim-link"');
+    expect(out).toContain('class="row"');
+    // The long link wraps rather than ellipsizes: only .setting-list lifts nowrap.
+    expect(out).toContain("list setting-list");
+    expect(out).toContain("Copy the link");
   });
 });

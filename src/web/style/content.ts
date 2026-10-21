@@ -1108,22 +1108,6 @@ textarea.editor:focus-visible { outline: none; }
   border: 1px dashed var(--border); border-radius: var(--radius);
 }
 .no-hits .ico { color: var(--faint); flex: none; }
-/* The client list (#776): whom a forge is for is the point of the row, so
-   its line wraps rather than being cut off on a phone. */
-.forges-sent .row-meta { white-space: normal; }
-.forges-sent .row-trail { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
-.forges-sent .row-trail form { margin: 0; }
-.forges-sent a.row-title { color: var(--fg); }
-@media (max-width: 560px) {
-  .forges-sent .row { flex-wrap: wrap; }
-  .forges-sent .row-trail { flex-basis: 100%; justify-content: flex-start; }
-}
-/* "+ New forge" (#426): the claim link, shown once, impossible to miss. */
-.claim-link-box {
-  margin: 0; padding: 12px 14px; font-size: 15px;
-  border: 1px solid var(--border); border-radius: var(--radius);
-  background: var(--muted); overflow-wrap: anywhere;
-}
 
 }
 /* What needs you, pinned on the home: the bulk step's select as wide as

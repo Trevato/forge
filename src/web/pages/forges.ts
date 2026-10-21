@@ -14,7 +14,7 @@ import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { reissueDoor } from "../../spawn/door.ts";
 import { readForm } from "../form.ts";
-import { btn, card, empty, time } from "../ui.ts";
+import { badge, btn, card, empty, row, time } from "../ui.ts";
 import { noRoom } from "../../spawn/door.ts";
 import { claimLinkBody } from "./new-forge.ts";
 
@@ -31,6 +31,7 @@ function runningNote(r: ClientRow): Html | null {
 function forgeRow(r: ClientRow): Html {
   const state = claimState(r);
   const meta = [
+    state === "unknown" ? html`it did not answer just now` : null,
     r.for === null ? null : html`for ${r.for}`,
     r.apps.length === 0 ? null : html`${r.apps.join(", ")}`,
     runningNote(r),
@@ -39,28 +40,18 @@ function forgeRow(r: ClientRow): Html {
       ? null
       : html`last activity ${time(r.lastActivityAt)}`,
   ].filter((m): m is Html => m !== null);
-  return html`<li data-forge="${r.name}" data-claimed="${state}">
-    <div class="row">
-      <span class="row-main">
-        <a class="row-title" href="${r.url}">${r.name}</a>
-        <span class="row-meta"
-          >${meta.map((m, i) => html`${i > 0 ? " · " : ""}${m}`)}</span
-        >
-      </span>
-      <span class="row-trail"
-        ><span
-          class="pill"
-          ${state === "unknown" ? html`title="It did not answer just now"` : null}
-          ${state === "yes" ? html`data-tone="accent"` : null}
-          >${CLAIM_WORDS[state]}</span
-        >${state === "no"
-          ? html`<form method="post" action="/forges/${r.name}/claim-link">
-              ${btn("Send a fresh link", { size: "sm", title: "A new claim link; the old one stops working" })}
-            </form>`
-          : null}</span
-      >
-    </div>
-  </li>`;
+  return row({
+    title: html`<a href="${r.url}">${r.name}</a>`,
+    meta: html`${meta.map((m, i) => html`${i > 0 ? " · " : ""}${m}`)}`,
+    data: { forge: r.name, claimed: state },
+    trail: html`${badge(CLAIM_WORDS[state], {
+        ...(state === "yes" ? { tone: "success" as const } : { variant: "outline" as const }),
+      })}${state === "no"
+        ? html`<form method="post" action="/forges/${r.name}/claim-link">
+            ${btn("Send a fresh link", { size: "sm", title: "A new claim link; the old one stops working" })}
+          </form>`
+        : null}`,
+  });
 }
 
 // GET /forges — an admin's only.
@@ -92,7 +83,7 @@ export async function forgesPage(ctx: Ctx): Promise<Response> {
             action,
           })
         : card(
-            html`<ul class="list forges-sent">
+            html`<ul class="list setting-list">
               ${rows.map(forgeRow)}
             </ul>`,
             { pad: false },
