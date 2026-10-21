@@ -15,6 +15,7 @@
  * - Forges are the children this forge spawned, for a site admin.
  */
 
+import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import { appsForRepos } from "../core/apps.ts";
 import { markOf, type Mark } from "../core/marks.ts";
@@ -26,6 +27,8 @@ import {
 } from "../core/front.ts";
 import { canEnterApp, listReposVisibleTo, type Repo } from "../core/repos.ts";
 import { getUsersByIds, isActive, type User } from "../core/users.ts";
+import { writeStamp } from "../core/write_clock.ts";
+import { Stamped } from "../kernel/stamped.ts";
 import { listChildren } from "./spawn.ts";
 
 export type ExploreKind = "app" | "person" | "forge";
@@ -136,12 +139,57 @@ export interface ExploreRow {
   readonly copyable?: boolean;
 }
 
+/**
+ * The ranking as last computed, per viewer (id and admin standing) and line
+ * (#3394). Valid while the forge's write clock has not moved — a new star,
+ * push or merge moves it, so it shows on the next request — and for 5 seconds
+ * at most, because a score ages with the clock. Admins' answers are kept too;
+ * the spawned forges, which no write clock sees, are read fresh on every call
+ * and added to a copy after the kept read. A call at a given `now` is never kept.
+ */
+const RANK_MAX_AGE_MS = 5_000;
+const ranked = new WeakMap<Database, Stamped<ExploreRow[]>>();
+
 export async function explore(
   app: App,
   viewer: User | undefined,
   query: ExploreQuery,
-  now = Date.now(),
+  now?: number,
 ): Promise<ExploreRow[]> {
+  const forgeRows = await forges(app, viewer, query);
+  const stamp = now === undefined ? writeStamp(app.db) : undefined;
+  if (stamp === undefined) return place(rank(app, viewer, query, now ?? Date.now()), forgeRows, query);
+  let cache = ranked.get(app.db);
+  if (cache === undefined) {
+    cache = new Stamped<ExploreRow[]>({ maxEntries: 64, maxAgeMs: RANK_MAX_AGE_MS });
+    ranked.set(app.db, cache);
+  }
+  const kept = cache.get(`${viewer?.id ?? ""}\n${viewer?.isAdmin === true ? "admin" : ""}\n${exploreLine(query)}`, stamp, () =>
+    rank(app, viewer, query, Date.now()),
+  );
+  return place(kept, forgeRows, query);
+}
+
+/** The forges this forge spawned, for a site admin asking for them. */
+async function forges(app: App, viewer: User | undefined, query: ExploreQuery): Promise<ExploreRow[]> {
+  if (viewer?.isAdmin !== true || (query.kind !== "all" && query.kind !== "forge")) return [];
+  return (await listChildren(app)).map((child) => ({
+    kind: "forge",
+    name: child.name,
+    url: child.url,
+    description: child.done ? "spawned from this forge" : "being spawned",
+    numbers: { forks: 0, ships: 0, awakeHours: 0, apps: 0 },
+    shippedAt: null,
+    score: 0,
+  }));
+}
+
+function rank(
+  app: App,
+  viewer: User | undefined,
+  query: ExploreQuery,
+  now: number,
+): ExploreRow[] {
   const db = app.db;
   const repos = listReposVisibleTo(db, viewer, {
     limit: READ,
@@ -243,26 +291,24 @@ export async function explore(
     });
   });
 
-  const forgeRows: ExploreRow[] =
-    viewer?.isAdmin === true && (query.kind === "all" || query.kind === "forge")
-      ? (await listChildren(app)).map((child) => ({
-          kind: "forge",
-          name: child.name,
-          url: child.url,
-          description: child.done ? "spawned from this forge" : "being spawned",
-          numbers: { forks: 0, ships: 0, awakeHours: 0, apps: 0 },
-          shippedAt: null,
-          score: 0,
-        }))
-      : [];
-
   const text = query.text.toLowerCase();
-  const rows = [...appRows, ...people.values(), ...forgeRows].filter(
-    (row) =>
-      (query.kind === "all" || row.kind === query.kind) &&
-      (text === "" ||
-        `${row.name} ${row.description}`.toLowerCase().includes(text)),
+  // Kept rows are shared by every request that reads them: none may change.
+  const freeze = (row: ExploreRow): ExploreRow => {
+    Object.freeze(row.numbers);
+    return Object.freeze(row);
+  };
+  return order(
+    [...appRows, ...people.values()].map(freeze).filter(
+      (row) =>
+        (query.kind === "all" || row.kind === query.kind) &&
+        (text === "" || `${row.name} ${row.description}`.toLowerCase().includes(text)),
+    ),
+    query,
   );
+}
+
+/** Rows sorted as the query says, in place. */
+function order(rows: ExploreRow[], query: ExploreQuery): ExploreRow[] {
   const by: Record<ExploreSort, (r: ExploreRow) => number | string> = {
     score: (r) => r.score,
     forks: (r) => r.numbers.forks,
@@ -272,11 +318,24 @@ export async function explore(
     name: (r) => r.name.toLowerCase(),
   };
   const key = by[query.sort];
-  rows.sort((a, b) => {
+  return rows.sort((a, b) => {
     const x = key(a);
     const y = key(b);
     if (query.sort === "name") return String(x).localeCompare(String(y));
     return (y as number) - (x as number) || a.name.localeCompare(b.name);
   });
-  return rows.slice(0, ROWS);
+}
+
+/**
+ * The answer: the ranked rows (kept, so never changed here) with the forge
+ * rows among them, cut to a page. Only the forge rows lack a write clock,
+ * so they are added after the kept read, to a copy.
+ */
+function place(ranked: readonly ExploreRow[], forgeRows: ExploreRow[], query: ExploreQuery): ExploreRow[] {
+  const text = query.text.toLowerCase();
+  const own = forgeRows.filter(
+    (row) => text === "" || `${row.name} ${row.description}`.toLowerCase().includes(text),
+  );
+  if (own.length === 0) return ranked.slice(0, ROWS);
+  return order([...ranked, ...own], query).slice(0, ROWS);
 }
