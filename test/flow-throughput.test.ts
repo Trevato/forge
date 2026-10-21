@@ -190,13 +190,15 @@ describe("/flow: actual throughput per stage", () => {
     expect(page).toMatch(/data-out="landed">\s*<a class="mono" href="\/boards\?out=landed&amp;hour=0#out" data-hour="0">2<\/a>/);
     expect(page).toContain('data-day="6">6 in 24 h');
     expect(page).toContain("2 passed · 1 failed");
-    expect((page.match(/class="flow-bar"/g) ?? []).length).toBe(PIPELINE.length * 24);
+    expect(page).not.toContain("flow-bar");
+    expect(page).not.toContain("flow-out");
+    expect((page.match(/<rect /g) ?? []).length).toBeGreaterThanOrEqual(PIPELINE.length * 24);
   });
 
   test("each sparkline is a picture only: hidden from assistive tech, no links or tab stops of its own", async () => {
     const page = await (await get("/boards")).text();
     const svgs = page.match(/<svg[\s\S]*?<\/svg>/g) ?? [];
-    const sparks = svgs.filter((s) => s.includes('class="flow-bar"'));
+    const sparks = svgs.filter((s) => s.includes('viewBox="0 0 72 16"'));
     expect(sparks).toHaveLength(PIPELINE.length);
     for (const svg of sparks) {
       expect(svg).toContain('aria-hidden="true"');

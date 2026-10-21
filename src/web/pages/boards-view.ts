@@ -19,7 +19,7 @@ import { notFoundPage } from "../chrome.ts";
 import { html, raw, when, type Html } from "../html.ts";
 import { fragment, page } from "../layout.ts";
 import { btn, card, empty } from "../ui.ts";
-import { flowPanel, flowPanelCss } from "./flow-panel.ts";
+import { flowPanel } from "./flow-panel.ts";
 import { isPinned, listPins } from "../../boards/pins.ts";
 import { cellsOf, chartBox, paramsOf, queryFields, readParams, runFor } from "./boards.ts";
 
@@ -105,7 +105,6 @@ export async function boardsList(ctx: Ctx): Promise<Response> {
     body: html`<div class="page-head"><h1>Boards</h1>
         ${btn("Explore the data", { href: "/boards/data", variant: "ghost" })}</div>
       ${card(make)} ${body} ${flowPanel(ctx.app, { kind: "owner" }, ctx.url, "/boards")}`,
-    styleCss: flowPanelCss,
   });
 }
 

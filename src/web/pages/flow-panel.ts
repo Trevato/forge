@@ -37,13 +37,6 @@ import { html, type Html } from "../html.ts";
 import { heldCard } from "./boards-held.ts";
 import { badge, card } from "../ui.ts";
 
-export const flowPanelCss = /* css */ `
-.flow-out { display: inline-flex; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; }
-.flow-out svg { width: 72px; height: 16px; }
-.flow-bar { fill: var(--muted-fg); }
-.flow-bar[data-empty] { fill: var(--muted); }
-`;
-
 /** What `?out=` and `?hour=` ask to list, checked: an unknown stage or hour lists nothing. */
 function asked(url: URL): { key: PipelineKey; hour: number | null } | null {
   const key = stageOf(url.searchParams.get("out") ?? "");
@@ -69,15 +62,15 @@ function sparkline(t: StageThroughput): Html {
   const bars = t.hours.map((n, hour) => {
     const x = (HOURS - 1 - hour) * 3;
     const h = n === 0 ? 1 : Math.max(2, Math.round((n / max) * 16));
-    return html`<rect class="flow-bar" ${n === 0 ? html`data-empty` : null} x="${String(x)}" y="${String(16 - h)}" width="2" height="${String(h)}" />`;
+    return html`<rect ${n === 0 ? html`fill-opacity="0.3"` : null} x="${String(x)}" y="${String(16 - h)}" width="2" height="${String(h)}" />`;
   });
-  return html`<svg viewBox="0 0 72 16" aria-hidden="true" focusable="false">${bars}</svg>`;
+  return html`<svg class="muted" viewBox="0 0 72 16" width="72" height="16" fill="currentColor" aria-hidden="true" focusable="false">${bars}</svg>`;
 }
 
 function outCell(base: string, t: StageThroughput): Html {
   const day = t.items.length;
   const passed = t.items.filter((i) => i.outcome === "passed").length;
-  return html`<span class="flow-out" data-out="${OUTFLOW[t.key].out}">
+  return html`<span class="bar num" data-out="${OUTFLOW[t.key].out}">
       <a class="mono" href="${outHref(base, t.key, 0)}" data-hour="0">${String(t.hours[0] ?? 0)}</a>
       ${sparkline(t)}
       <a class="muted small" href="${outHref(base, t.key, null)}" data-day="${String(day)}">${String(day)} in 24 h</a>
