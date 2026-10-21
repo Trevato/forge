@@ -1,4 +1,11 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import {
+  afterAll,
+  beforeAll,
+  describe,
+  expect,
+  setDefaultTimeout,
+  test,
+} from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,6 +41,10 @@ import { seedAdmin } from "./helpers/admin.ts";
  * says so everywhere its state is shown, refuses pushes still, and comes
  * back by connecting again or by one click, with its refs moving at once.
  */
+
+// Every test here clones, syncs or waits on a background sync; on a loaded
+// check machine the 5 s default decides nothing about the code under test.
+setDefaultTimeout(60_000);
 
 const ORIGIN_LOGIN = "octo";
 const ORIGIN_TOKEN = "octo-origin-secret-5c1e";
@@ -297,7 +308,7 @@ describe("a frozen mirror is said, and reconnected in one click", () => {
     await rm(dataDir, { recursive: true, force: true, maxRetries: 5 });
     await rm(originDataDir, { recursive: true, force: true, maxRetries: 5 });
     await rm(workDir, { recursive: true, force: true, maxRetries: 5 });
-  });
+  }, 60_000);
 
   test("an attached mirror says where it comes from, and is not frozen", async () => {
     const repo = await repoJson();
