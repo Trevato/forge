@@ -237,6 +237,28 @@ export function badge(
   >`;
 }
 
+/** A number with a label: one tile of a `.stats` grid. The value is `.num`
+ * with its full form in `title`; the note is clamped to two lines; `spark` is
+ * trusted markup (an inline SVG) the caller built. A link when `href` is set. */
+export function stat(o: {
+  label: string;
+  value: string | number;
+  title?: string;
+  note?: string;
+  href?: string;
+  spark?: Html;
+}): Html {
+  const body = html`<span class="stat-label">${o.label}</span
+    ><span class="stat-value num" title="${o.title ?? String(o.value)}"
+      >${String(o.value)}</span
+    >${o.note ? html`<span class="stat-note">${o.note}</span>` : null}${o.spark
+      ? html`<span class="stat-spark" aria-hidden="true">${o.spark}</span>`
+      : null}`;
+  return o.href !== undefined
+    ? html`<a class="stat" href="${o.href}">${body}</a>`
+    : html`<div class="stat">${body}</div>`;
+}
+
 /** The one badge whose value is a state machine, so it renders identically
  * on issues, pulls and lists. */
 export function stateBadge(

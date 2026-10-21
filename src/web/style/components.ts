@@ -152,6 +152,23 @@ fieldset.field > .check + .check { margin-top: 8px; }
 .passkey-lead > .btn { width: 100%; }
 .passkey-lead > .passkey-note:not(:empty) { margin: 8px 0 0; }
 
+/* ---- stat tile ---- fixed heights: a changing value shifts nothing */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+.stat {
+  position: relative; display: block; box-sizing: border-box; height: 104px; padding: 10px 12px;
+  overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--card); color: var(--fg); text-decoration: none;
+}
+a.stat:hover { border-color: var(--border-strong); }
+.stat-label { display: block; height: 18px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: var(--fs-min); line-height: 18px; color: var(--muted-fg); }
+.stat-value { display: block; height: 32px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 20px; font-weight: 600; line-height: 32px; }
+.stat-note {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+  height: 36px; font-size: var(--fs-min); line-height: 18px; color: var(--muted-fg);
+}
+.stat-spark { position: absolute; top: 10px; right: 12px; width: 56px; height: 24px; color: var(--muted-fg); }
+.stat-spark svg { display: block; width: 100%; height: 100%; }
+
 /* ---- badge / label chip / pill / dot ---- */
 .badge {
   display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px;
