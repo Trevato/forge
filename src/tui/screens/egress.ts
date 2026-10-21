@@ -24,9 +24,14 @@ import { ListState, drawList, type ListRow } from "./common.ts";
 export function egressScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   const state = new ListState();
   let rows: EgressRow[] = [];
+  // Whether the action says this viewer may change grants; it decides, not the screen.
+  let canChange = false;
   const reload = async (): Promise<void> => {
     const view = await egressView(f.app, f.user, repo);
-    rows = view.ok ? view.value.rows : [];
+    canChange = view.ok && view.value.canChange;
+    // Deliberately stricter than the web page, which shows a repository admin the
+    // list read-only: the terminal's list is a site admin's, as #3618 asks.
+    rows = view.ok && view.value.canChange ? view.value.rows : [];
     state.clamp(rows.length);
     ctx.invalidate();
   };
@@ -50,7 +55,12 @@ export function egressScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
 
   const screen: Screen = {
     title: "Private egress",
-    keys: [binding(["g"], "grant"), binding(["x"], "revoke"), binding(["j", "k"], "move cursor")],
+    get keys() {
+      return [
+        ...(canChange ? [binding(["g"], "grant"), binding(["x"], "revoke")] : []),
+        binding(["j", "k"], "move cursor"),
+      ];
+    },
     render(area, s) {
       const c = ctx.theme.c;
       const [head, list] = split(area, "v", [len(1), fill(1)]);
@@ -62,7 +72,7 @@ export function egressScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       drawList(s, list!, c, state, lines());
     },
     key(e) {
-      const row = rows[state.index];
+      const row = canChange ? rows[state.index] : undefined;
       if (e.key === "g" && row !== undefined) {
         void change(grantAppEgress(f.app, f.user, repo, row.destination), `${row.destination} is granted.`);
         return true;

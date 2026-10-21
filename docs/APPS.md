@@ -300,7 +300,9 @@ else who administers the repository sees the list with no buttons. A
 destination forge.json does not name is refused, and each change is an
 `app.egress.granted` or `app.egress.revoked` event with who and when. In the terminal a site admin
 opens the repository's About (`I`), then `e`: `g` grants and `x` revokes the
-destination under the cursor.
+destination under the cursor. The terminal is stricter than the page on
+purpose: a repository admin who is no site admin sees the list read-only on the
+page, and nothing on the terminal screen (no rows, no `g`/`x`).
 
 A release that turns egress on must not break an app whose writers have
 not declared what it uses yet, so the operator can start it reported:

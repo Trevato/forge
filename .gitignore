@@ -40,3 +40,6 @@ typesafe-api-key
 # where a sandboxed `bun install` keeps its temp files and package cache
 # when the default temp directory is read-only (#2706)
 /.bun-tmp/
+
+# a sandbox's bun/bunx scratch directory; never source
+/.tmpx/
