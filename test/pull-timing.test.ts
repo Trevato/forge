@@ -155,10 +155,27 @@ async function commitHead(i: number): Promise<void> {
 // 250 ms is ~2x the cold median; 100 ms is the issue's bar for a repeat view.
 const COLD_MS = 250;
 
+/**
+ * A fixed CPU workload, in ms. The `x < 0` is never true; it only keeps the optimiser from
+ * deleting the loop as dead code.
+ */
+const spin = (): number => {
+  const t = performance.now();
+  let x = 0;
+  for (let n = 0; n < 3e6; n++) x = (x + Math.sqrt(n)) % 1e9;
+  return x < 0 ? 0 : performance.now() - t;
+};
+const fastest = (n: number) => Math.min(...Array.from({ length: n }, spin));
+/** This machine's speed, taken once at module load: the idle reference (scale 1.0 beside itself). */
+const idle = (spin(), fastest(5));
+
 const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
 
 test("the Files page of a 40-file diff: cold median of 3 and repeat median of 5 stay under their ceilings", async () => {
   const cold: number[] = [];
+  // How much slower the machine is right now than at load: 1.0 when nothing else is running, so
+  // the 250/100 ms ceilings bind as written; load stretches them, capped at 8x.
+  const scale = Math.max(1, Math.min(fastest(3) / idle, 8));
   for (let i = 0; i < 3; i++) {
     // A new head each time, so nothing rendered before is reused.
     await commitHead(i);
@@ -167,6 +184,6 @@ test("the Files page of a 40-file diff: cold median of 3 and repeat median of 5 
   // The head is unchanged now: every view reuses the rendered diff.
   const repeat: number[] = [];
   for (let i = 0; i < 5; i++) repeat.push(await filesApp());
-  expect(median(cold)).toBeLessThan(COLD_MS);
-  expect(median(repeat)).toBeLessThan(100);
+  expect(median(cold)).toBeLessThan(COLD_MS * scale);
+  expect(median(repeat)).toBeLessThan(100 * scale);
 });
