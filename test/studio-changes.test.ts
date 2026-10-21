@@ -1188,6 +1188,7 @@ describe("the studio, continued", () => {
         expect(body).toContain("Nothing public is up yet");
         expect(body).toContain('href="/signup"');
         expect(body).toContain('href="/signin"');
+        expect(body).not.toContain("terminal is off");
         expect(body).not.toContain("<h1>Your code, your machine.</h1>");
         expect(body).not.toContain("Public repositories");
         expect(body).not.toContain(`href="/olga/just-code"`);

@@ -64,7 +64,10 @@ describe("the terminal on the website", () => {
   test("the landing page invites you in over ssh", async () => {
     const page = await fetch(`${base}/`).then((r) => r.text());
     expect(page).toContain("ssh -p 2222 forge.example");
-    expect(page).toContain("hero-terminal");
+    expect(page).toContain("terminal-line");
+    expect(page).toContain("your key is your identity");
+    expect(page).not.toContain("hero-terminal");
+    expect(page).not.toContain('class="hero');
   });
 
   test("the dashboard has a Terminal card, with the host key", async () => {

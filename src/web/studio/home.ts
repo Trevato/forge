@@ -38,6 +38,7 @@ import {
   icon,
   listCard,
   timeAgo,
+  terminalLine,
 } from "../ui.ts";
 import {
   downloadsCard,
@@ -505,9 +506,10 @@ export function studioDoor(ctx: Ctx): Response {
   // comes back to them rather than to a bare home, so they are not lost.
   const back = ctx.url.pathname === "/" ? "/" + ctx.url.search : "/";
   const nextQuery = back === "/" ? "" : `?next=${encodeURIComponent(back)}`;
-  const body = html`<section class="hero">
+  const ssh = sshCommand(ctx.app);
+  const body = html`<section class="narrow narrow-wide stack">
       <h1>Apps, live.</h1>
-      <p>A software forge that builds and serves its own apps.</p>
+      <p class="muted">A software forge that builds and serves its own apps.</p>
       <div class="bar">
         ${ctx.auth.user !== undefined
           ? null
@@ -525,15 +527,13 @@ export function studioDoor(ctx: Ctx): Response {
               })}
       </div>
       ${when(
-        sshCommand(ctx.app),
-        (ssh) =>
-          html`<p class="hero-terminal">
-            <code class="mono">${ssh}</code>
-            <span class="muted"
-              >the whole forge in your terminal — your key is your
-              identity</span
-            >
-          </p>`,
+        ssh,
+        (command) => html`<div class="stack-tight">
+          ${terminalLine({ command })}
+          <p class="muted small">
+            The whole forge in your terminal — your key is your identity.
+          </p>
+        </div>`,
       )}
     </section>
     ${when(front.featured, (f) => html`<div class="mt">${featuredCard(f)}</div>`)}

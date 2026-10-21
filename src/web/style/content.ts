@@ -409,13 +409,7 @@ form.inline { display: inline; margin-left: auto; }
 .lineage .row[aria-current="page"] { background: var(--muted); }
 @media (max-width: 719px) { .lineage-children { margin-left: 12px; } }
 
-.hero { max-width: 620px; margin: 12dvh auto 0; text-align: center; }
-.hero h1 { font-size: clamp(30px, 7vw, 44px); letter-spacing: -0.04em; line-height: 1.05; }
-.hero p { margin: 12px 0 24px; font-size: 16px; color: var(--muted-fg); text-wrap: pretty; }
-.hero-terminal { display: flex; flex-wrap: wrap; justify-content: center; align-items: baseline; gap: 6px 14px; margin: -8px 0 28px; font-size: 14px; }
-.hero-terminal .mono { font-size: 15px; }
 .terminal-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
-.hero .bar { justify-content: center; }
 
 /* The studio's front door: the public apps, live first, as pictures. */
 .app-shelf {
