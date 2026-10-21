@@ -5,6 +5,7 @@
 
 import type { Proposal } from "../core/proposal_token.ts";
 import type { App } from "../app.ts";
+import type { RunScope } from "../core/run_token.ts";
 import type { TokenScope } from "../core/tokens.ts";
 import type { User } from "../core/users.ts";
 import type { ThemeName } from "../design/themes.ts";
@@ -21,6 +22,9 @@ export interface Auth {
   readonly sessionId?: string;
   /** Set for a proposal token: all it may do (`http/proposal_gate.ts`). */
   readonly proposal?: Proposal;
+  /** Set for a crew run's token: the repositories it may reach
+   * (`http/run_gate.ts`). */
+  readonly run?: RunScope;
   /** Set when a Basic password was turned away by the sign-in windows or the
    * hash gate, not found wrong: the request answers 429, not 401. */
   readonly retryAfter?: number;

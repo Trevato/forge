@@ -457,6 +457,7 @@ import { inNamespace } from "../core/proposal_token.ts";
 import { proposalTokenMint, proposalTokenRevoke } from "../web/pages/proposal-tokens.ts";
 import { adminGate } from "./admin_gate.ts";
 import { proposalGate } from "./proposal_gate.ts";
+import { runGate } from "./run_gate.ts";
 import { feedRoutes } from "./feed.ts";
 import type { Database } from "bun:sqlite";
 import { mcpRoutes } from "./mcp.ts";
@@ -564,6 +565,7 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
         scope: verified.value.scope,
         via: "token",
         ...(verified.value.proposal ? { proposal: verified.value.proposal } : {}),
+        ...(verified.value.run ? { run: verified.value.run } : {}),
       };
     }
     return NO_AUTH;
@@ -589,6 +591,7 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
           ...(verified.value.proposal
             ? { proposal: verified.value.proposal }
             : {}),
+          ...(verified.value.run ? { run: verified.value.run } : {}),
         };
       }
       return NO_AUTH;
@@ -2471,6 +2474,9 @@ async function answerGet(
   // request it makes ends here, before the limiter or any handler.
   const proposalRefusal = proposalGate(app, request, url, auth);
   if (proposalRefusal !== undefined) return proposalRefusal;
+  // A crew run's token reaches its own repository and nothing else.
+  const runRefusal = runGate(app, request, url, auth);
+  if (runRefusal !== undefined) return runRefusal;
 
   // Admin settings and releases are an admin's; a member is told so.
   const adminRefusal = adminGate(app, request, url, auth);

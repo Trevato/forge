@@ -3701,6 +3701,11 @@ export function apiRoutes(router: Router<Handler>): void {
           ? getRepo(ctx.app.db, owner, name)
           : undefined;
       if (!headRepo) return notFound();
+      // A crew run's head comes from its own two repositories, never another
+      // fork the crew member can read (defense in depth past the run gate).
+      const run = ctx.auth.run;
+      if (run !== undefined && headRepo.id !== run.forkId && headRepo.id !== run.repoId)
+        return notFound();
     }
     const created = await openPull(ctx.app, ctx.auth.user, repo, {
       title: str(input.title),

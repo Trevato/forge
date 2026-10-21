@@ -67,7 +67,8 @@ import {
   overranBefore,
   type Run,
 } from "../core/runs.ts";
-import { createToken, deleteToken } from "../core/tokens.ts";
+import { mintRunToken } from "../core/run_token.ts";
+import { deleteToken } from "../core/tokens.ts";
 import { runGit } from "../git/env.ts";
 import { cloneWithMirror } from "./mirror.ts";
 import { isSafeRef } from "../git/guard.ts";
@@ -820,13 +821,18 @@ async function work(
     `${agent.user.username} on ${repo.ownerName}/${repo.name}#${issue.number} (${reason}), branch ${branch}`,
   );
 
-  // The credential: rw, named for the run, gone when it ends.
+  // The credential: rw, named for the run, bound to this repository and the
+  // fork it pushes to (`http/run_gate.ts`), gone when it ends.
   const expires = new Date(
     Date.now() + options.runTimeoutMs + 10 * 60_000,
   ).toISOString();
-  const token = createToken(app.db, agent.user.id, `run:${run.id}`, "rw", {
-    expiresAt: expires,
-  });
+  const token = mintRunToken(
+    app.db,
+    agent.user.id,
+    run.id,
+    { repoId: repo.id, forkId: fork.value.id },
+    expires,
+  );
   const gitAuth = {
     GIT_CONFIG_COUNT: "2",
     GIT_CONFIG_KEY_0: "http.extraHeader",

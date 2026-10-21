@@ -45,7 +45,9 @@ canAdmin`), token scope (`readForm` floor + `minScope`), and branch
     never moves the default branch — the pre-receive hook refuses it,
     protected or not — and `mergePull` refuses an agent actor. Its only grant
     is `repo_crew` (read + write, never admin); its only credential is a
-    token minted for a run with an expiry, deleted when the run ends. Never
+    token minted for a run with an expiry, deleted when the run ends, and
+    bound to the run's repository and the fork it pushes to — every other
+    request answers 404 (`http/run_gate.ts`, #3963). Never
     give an agent a path around these (`docs/APPS.md`, rule 1 and 6).
 11. **A child inherits nothing it was not handed.** App and agent processes
     start from `childEnv` (`apps/process.ts`) — an explicit, short

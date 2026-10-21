@@ -9,6 +9,7 @@ import { sha256 } from "../kernel/hash.ts";
 import { id, secret } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import type { Proposal } from "./proposal_token.ts";
+import type { RunScope } from "./run_token.ts";
 import { getUserById, isActive, type User } from "./users.ts";
 
 export type TokenScope = "ro" | "rw" | "admin";
@@ -70,7 +71,7 @@ export function verifyToken(
   db: Database,
   presented: string,
 ): Result<
-  { user: User; scope: TokenScope; proposal?: Proposal },
+  { user: User; scope: TokenScope; proposal?: Proposal; run?: RunScope },
   "invalid_token"
 > {
   const row = db
@@ -84,12 +85,16 @@ export function verifyToken(
         p_repo: string | null;
         p_child: string | null;
         p_origin: string | null;
+        r_repo: string | null;
+        r_fork: string | null;
       },
       [string]
     >(
       `SELECT t.id, t.user_id, t.scope, t.last_used_at, t.expires_at,
-              p.repo_id AS p_repo, p.child AS p_child, p.origin AS p_origin
+              p.repo_id AS p_repo, p.child AS p_child, p.origin AS p_origin,
+              r.repo_id AS r_repo, r.fork_id AS r_fork
          FROM token t LEFT JOIN proposal_token p ON p.token_id = t.id
+                      LEFT JOIN run_token r ON r.token_id = t.id
         WHERE t.token_hash = ?1`,
     )
     .get(sha256(presented));
@@ -121,6 +126,13 @@ export function verifyToken(
         child: row.p_child!,
         origin: row.p_origin!,
       },
+    });
+  // A run's token is bound to its repository (`http/run_gate.ts`).
+  if (row.r_repo !== null)
+    return ok({
+      user,
+      scope: row.scope,
+      run: { repoId: row.r_repo, forkId: row.r_fork! },
     });
   return ok({ user, scope: row.scope });
 }
