@@ -17,7 +17,7 @@ import {
 import { field, readForm } from "../form.ts";
 import { html, when } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
-import { btn, card } from "../ui.ts";
+import { btn, card, row } from "../ui.ts";
 import { NOT_A_MEMBER } from "../../core/roles.ts";
 import {
   notePhase,
@@ -69,47 +69,48 @@ export async function makeItYoursPage(ctx: Ctx): Promise<Response> {
         action="${repoBase(repo)}/make-it-yours"
         class="stack"
       >
-        <dl class="kv">
-          <dt>Yours as</dt>
-          <dd class="mono">${p.repo}</dd>
-          <dt>Its address</dt>
-          <dd class="mono">${p.slug}</dd>
-          <dt>Copied</dt>
-          <dd>${p.copied.join(", ")}</dd>
-          <dt>Not copied</dt>
-          <dd>
-            ${p.notCopied.join(", ")} — they stay ${p.from.split("/")[0]}'s;
-            yours starts empty.
-          </dd>
-          <dt>Follows</dt>
-          <dd>
-            ${p.from}: it moves with the original until you change it, and tells
-            you when it cannot.
-          </dd>
+        <ul class="list setting-list">
+          ${row({ title: "Yours as", trail: html`<span class="mono">${p.repo}</span>` })}
+          ${row({ title: "Its address", trail: html`<span class="mono">${p.slug}</span>` })}
+          ${row({ title: "Copied", meta: html`${p.copied.join(", ")}` })}
+          ${row({
+            title: "Not copied",
+            meta: html`${p.notCopied.join(", ")} — they stay
+            ${p.from.split("/")[0]}'s; yours starts empty.`,
+          })}
+          ${row({
+            title: "Follows",
+            meta: html`${p.from}: it moves with the original until you change
+            it, and tells you when it cannot.`,
+          })}
           ${p.existing
-            ? html`<dt>Who sees it</dt>
-                <dd>${p.visibility === "public" ? "anyone" : "you"}</dd>`
-            : html`<dt>Who sees it</dt>
-                <dd class="stack stack-tight">
-                  <label
+            ? row({
+                title: "Who sees it",
+                trail: html`${p.visibility === "public" ? "anyone" : "you"}`,
+              })
+            : html`${row({
+                title: "Who sees it",
+                trail: html`<span class="row-fields" role="radiogroup" aria-label="Who sees it"
+                  ><label class="check"
                     ><input type="radio" name="visibility" value="private" checked />
                     Only you, until you open it up</label
                   >
                   ${when(
                     repo.visibility === "public",
                     () =>
-                      html`<label
+                      html`<label class="check"
                         ><input type="radio" name="visibility" value="public" />
                         Anyone, from the start</label
                       >`,
-                  )}
-                </dd>
-                <dt>Today</dt>
-                <dd>
-                  ${p.copiesLeft} more cop${p.copiesLeft === 1 ? "y" : "ies"} you
-                  can make in the next day
-                </dd>`}
-        </dl>
+                  )}</span
+                >`,
+              })}
+              ${row({
+                title: "Today",
+                meta: html`${p.copiesLeft} more cop${p.copiesLeft === 1 ? "y" : "ies"}
+                you can make in the next day`,
+              })}`}
+        </ul>
         <div class="form-actions">
           ${btn(p.existing ? "Open mine" : "Make it yours", {
             variant: "primary",

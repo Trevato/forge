@@ -132,6 +132,9 @@ describe("make it yours", () => {
     expect(page).toContain("Make it yours");
     expect(page).toContain("bob/garden");
     expect(page).toContain("its variables and secrets");
+    expect(page).not.toMatch(/class="kv"|<dl/);
+    expect(page).toContain('name="visibility"');
+    expect(page).toContain('role="radiogroup" aria-label="Who sees it"');
     // An ro token may plan, never make; a stranger neither; the owner has it.
     expect(
       (
