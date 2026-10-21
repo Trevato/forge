@@ -65,7 +65,7 @@ export function liveMount(config: LiveConfig): Html {
       data-app="${config.app ? "1" : ""}"
     ></div>
     <p
-      class="live-status"
+      class="sr-only"
       id="live-status"
       role="status"
       aria-live="polite"

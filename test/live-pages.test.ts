@@ -281,3 +281,14 @@ describe("the beat of a region with data-live-every", () => {
     expect(cleared.length).toBe(0);
   });
 });
+
+describe("the live mount's markup", () => {
+  test("the status line is a polite region drawn with §5's .sr-only, and the pill keeps its words and link", async () => {
+    const { liveMount } = await import("../src/web/live.ts");
+    const out = String(liveMount({ repo: "/a/b" }));
+    expect(out).not.toContain('class="live-status"');
+    expect(out).toMatch(/<p\s+class="sr-only"\s+id="live-status"\s+role="status"\s+aria-live="polite"/);
+    expect(out).toContain('id="live-pill"');
+    expect(out).toContain("New activity — refresh");
+  });
+});
