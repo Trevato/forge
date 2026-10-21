@@ -24,7 +24,7 @@ import { readRunLogTail } from "../../runs/log.ts";
 import { mayReadRunLog } from "../../actions/runs.ts";
 import { loadRepo, repoBase } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
-import { fragment } from "../layout.ts";
+import { fragment, missingFragment } from "../layout.ts";
 import { avatar, badge, btn, card, icon, listCard, row, time } from "../ui.ts";
 import { changeHref, tellHref } from "./nouns.ts";
 import { LOG_TAIL_CAP, logBox } from "./log.ts";
@@ -334,10 +334,9 @@ export async function appNowFragment(ctx: Ctx): Promise<Response> {
   const req = ctx.request;
   notePhase(req, "session", takeSessionTime(req));
   const repo = timePhase(req, "repo", () => loadRepo(ctx));
-  if (!repo) return fragment(html``, { status: 404 });
   const db = ctx.app.db;
-  const record = timePhase(req, "record", () => getAppByRepo(db, repo.id));
-  if (!record) return fragment(html``, { status: 404 });
+  const record = repo && timePhase(req, "record", () => getAppByRepo(db, repo.id));
+  if (!repo || !record) return missingFragment(req);
   const openPulls = timePhase(req, "pulls", () =>
     listPulls(db, repo.id, {
       state: "open",

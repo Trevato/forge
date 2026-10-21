@@ -35,6 +35,7 @@ import {
   type Flash,
 } from "./flash.ts";
 import { prefersJson } from "./form.ts";
+import { notePhase } from "../core/route_timing.ts";
 import { html, raw, when, type Html } from "./html.ts";
 import { noRoom } from "../spawn/door.ts";
 import { icon, iconSprite, inlineIcons, themeGlyph } from "./icons.ts";
@@ -759,6 +760,14 @@ export function fragment(
     text.replace(/^(\s*<[a-zA-Z][^\s>]*)/, `$1 data-etag="${hash}"`),
     { status, headers },
   );
+}
+
+/** The empty 404 fragment, its build named `render` so the request's phases still add up. */
+export function missingFragment(request: Request): Response {
+  const started = performance.now();
+  const response = fragment(html``, { status: 404 });
+  notePhase(request, "render", performance.now() - started);
+  return response;
 }
 
 /** Redirect back to a page carrying a message — the shape most handlers want. */

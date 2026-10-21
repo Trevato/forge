@@ -22,10 +22,6 @@ quietLogs();
 const UNNAMED: Array<[path: string, issue: string]> = [
   ["/-/confirm", "#3390"],
   ["/alice/forge", "#3325"],
-  ["/alice/forge/app", "#3390"],
-  ["/alice/forge/app/answers", "#3390"],
-  ["/alice/forge/app/now", "#3390"],
-  ["/alice/forge/app/state", "#3390"],
   ["/alice/forge/changes", "#3323"],
   ["/alice/forge/issues/new", "#3390"],
   ["/alice/forge/make-it-yours", "#3390"],

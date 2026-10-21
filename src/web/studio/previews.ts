@@ -25,7 +25,7 @@ import { readRunLogTail } from "../../runs/log.ts";
 import { loadRepo, repoBase } from "../chrome.ts";
 import { testsClause } from "./words.ts";
 import { html, when, type Html } from "../html.ts";
-import { fragment } from "../layout.ts";
+import { fragment, missingFragment } from "../layout.ts";
 import {
   badge,
   btn,
@@ -361,9 +361,8 @@ export function appStateFragment(ctx: Ctx): Response {
   const req = ctx.request;
   notePhase(req, "session", takeSessionTime(req));
   const repo = timePhase(req, "repo", () => loadRepo(ctx));
-  if (!repo) return fragment(html``, { status: 404 });
-  const record = timePhase(req, "record", () => getAppByRepo(ctx.app.db, repo.id));
-  if (!record) return fragment(html``, { status: 404 });
+  const record = repo && timePhase(req, "record", () => getAppByRepo(ctx.app.db, repo.id));
+  if (!repo || !record) return missingFragment(req);
   const openPulls = timePhase(req, "pulls", () =>
     listPulls(ctx.app.db, repo.id, {
       state: "open",

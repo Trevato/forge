@@ -607,13 +607,19 @@ export function appHref(repo: Repo): string {
 // The old URL keeps answering: a reader of an app is sent to the studio app
 // page; anyone else gets the same not-found the page always gave them.
 export function appPage(ctx: Ctx): Response {
-  const repo = loadRepo(ctx);
-  if (!repo) return notFoundPage(ctx);
-  if (!appView(ctx.app, ctx.auth.user, repo).ok) return notFoundPage(ctx);
-  return new Response(null, {
-    status: 302,
-    headers: { location: appHref(repo), "cache-control": "no-store" },
-  });
+  const req = ctx.request;
+  notePhase(req, "session", takeSessionTime(req));
+  const repo = timePhase(req, "repo", () => loadRepo(ctx));
+  const seen = repo !== undefined && timePhase(req, "view", () => appView(ctx.app, ctx.auth.user, repo).ok);
+  const rendering = performance.now();
+  const response = !repo || !seen
+    ? notFoundPage(ctx)
+    : new Response(null, {
+        status: 302,
+        headers: { location: appHref(repo), "cache-control": "no-store" },
+      });
+  notePhase(req, "render", performance.now() - rendering);
+  return response;
 }
 
 // ---- the pull page's preview card ----

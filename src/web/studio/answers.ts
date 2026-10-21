@@ -18,7 +18,7 @@ import { getUsersByIds, type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { loadRepo, repoBase } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
-import { fragment } from "../layout.ts";
+import { fragment, missingFragment } from "../layout.ts";
 import { time } from "../ui.ts";
 import { tellHref } from "./nouns.ts";
 
@@ -116,7 +116,7 @@ export function appAnswersFragment(ctx: Ctx): Response {
   const repo = timePhase(ctx.request, "repo", () => loadRepo(ctx));
   const user = ctx.auth.user;
   if (!repo || !timePhase(ctx.request, "access", () => canSeeAnswers(ctx.app.db, repo, user)))
-    return fragment(html``, { status: 404 });
+    return missingFragment(ctx.request);
   const answers = timePhase(ctx.request, "answers", () => answersFor(ctx.app.db, repo, user!));
   const rendering = performance.now();
   const region = answersRegion(ctx, repo, user!, answers);
