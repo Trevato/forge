@@ -48,6 +48,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { advance, createJob, settled } from "../src/origins/jobs.ts";
+import { getFollow } from "../src/core/upstream_follow.ts";
 import { forgetProviders } from "../src/origins/providers/index.ts";
 import {
   newFakeOAuth,
@@ -468,6 +469,9 @@ describe("migrate", () => {
       ]);
       expect(getAppByRepo(app.db, repo.id)).toBeDefined();
       expect(repo.autonomy).toBe(autonomous ? "autonomous" : "off");
+      // The source is the upstream it follows: on when autonomous (#3442).
+      const follow = getFollow(app.db, repo.id)!;
+      expect([follow.url, follow.branch, follow.enabled]).toEqual([fixtureUrl, "trunk", autonomous]);
 
       const issues = listIssues(app.db, repo.id, {
         kind: "issue",

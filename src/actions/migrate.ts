@@ -68,6 +68,7 @@ import {
   type CreateRepoActionError,
 } from "./repos.ts";
 import { tell, toldWords } from "./tell.ts";
+import { putFollow, upstreamUrl } from "../core/upstream_follow.ts";
 import { pinFor, remoteGitEnv, type Pin } from "../git/remote-env.ts";
 
 /** The whole clone — the HEAD probe and the fetch — gets this long. */
@@ -142,6 +143,8 @@ interface Resolved {
   readonly provider?: Provider;
   /** The person, as the source's commits may name them. */
   readonly who: Who;
+  /** The source's own parent on its host, when it is a fork. */
+  readonly parentUrl?: string;
 }
 
 /** Why the work branch is the one it is: said in the job and the brief. */
@@ -443,6 +446,9 @@ export async function resolveSource(
     authEnv: () => provider.value.gitAuthEnv(url),
     provider: provider.value,
     who: { logins: [origin.login, user.username], emails: [user.email] },
+    ...(remote.value.parent === null
+      ? {}
+      : { parentUrl: `${origin.webUrl.replace(/\/+$/, "")}/${remote.value.parent}` }),
   });
 }
 
@@ -560,6 +566,21 @@ async function runMigration(
         },
       });
     }
+
+    // The source becomes the upstream this repository follows (#3442): on
+    // when the crew runs it on its own, off — but filled in — otherwise.
+    // Only an https or http source can be followed.
+    const followUrl = upstreamUrl(source.url);
+    if (followUrl !== undefined)
+      putFollow(app.db, {
+        repoId: current.id,
+        url: followUrl,
+        branch: cloned.value.head ?? work?.name ?? current.defaultBranch,
+        enabled: crew?.autonomous === true,
+        byId: user.id,
+        originId: source.originId,
+        ...(source.parentUrl === undefined ? {} : { parentUrl: source.parentUrl }),
+      });
 
     const where = `${current.ownerName}/${current.name}`;
     let detail = `migrated as ${where} — ${plural(branches.length, "branch", "branches")}, ${plural(refs.size - branches.length, "tag")}${conversations}`;

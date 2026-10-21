@@ -160,6 +160,9 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     // Which of a person's connected accounts a mirror syncs through is too.
     kind.startsWith("origin.") ||
     kind === "repo.settings_updated" ||
+    // Where a repository follows is its admins' to read, off or on: the
+    // address is often a private repository's.
+    kind === "repo.upstream_follow" ||
     kind === "repo.crew_outsiders"
   )
     return "admins";
