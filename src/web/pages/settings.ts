@@ -1508,7 +1508,7 @@ function promptsView(base: string, sources: PromptSourceView[]): Html {
         The one-time steps at Meta, for a professional account of your own. None
         of them needs App Review.
       </p>
-      <ol class="steps">
+      <ol class="muted">
         <li>
           Make the Instagram account a professional one — Business or Creator —
           in the Instagram app's settings.

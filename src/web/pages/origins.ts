@@ -404,7 +404,7 @@ function githubSection(configured: boolean, callback: string): Html {
         for this forge yet, so the device flow has no client id to use. Three
         steps, once, for every user of this forge:
       </p>
-      <ol class="steps small">
+      <ol class="muted small">
         <li>
           Create an OAuth App at
           <a
@@ -491,7 +491,7 @@ function forgejoSection(
             there is no shared client id, and no device grant to fall back on.
             It takes about a minute:
           </p>
-          <ol class="steps small">
+          <ol class="muted small">
             <li>
               Open
               <span class="mono"
