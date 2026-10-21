@@ -3247,7 +3247,8 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/repos/:owner/:name/issues/:number", (ctx) => {
     // Numbers are shared with pulls: a pull's number answers as the same
     // shape, marked `kind: "pull"`, with the path where its diff lives (#3299).
-    const found = loadConversation(ctx);
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const found = timePhase(ctx.request, "issue", () => loadConversation(ctx));
     if ("error" in found) return found.error;
     const { repo, issue } = found;
     // comments=N answers the newest N, oldest first, and the total (#4097).
@@ -3258,21 +3259,30 @@ export function apiRoutes(router: Router<Handler>): void {
         return apiError("invalid_comments", 422, "comments must be a whole number from 0 to 200");
       tail = Number(asked);
     }
-    const all = listComments(ctx.app.db, found.issue.id);
-    return json({
-      ...withLabels(ctx, issue),
-      ...(issue.kind === "pull"
-        ? {
-            pull: `/api/v1/repos/${repo.ownerName}/${repo.name}/pulls/${issue.number}`,
-          }
-        : {}),
-      comments: readerMarked(
-        ctx,
-        found.repo.id,
-        tail === null ? all : tail === 0 ? [] : all.slice(-tail),
-      ),
-      ...(tail === null ? {} : { commentCount: all.length }),
+    const { all, shown } = timePhase(ctx.request, "comments", () => {
+      const rows = listComments(ctx.app.db, found.issue.id);
+      return {
+        all: rows,
+        shown: readerMarked(
+          ctx,
+          found.repo.id,
+          tail === null ? rows : tail === 0 ? [] : rows.slice(-tail),
+        ),
+      };
     });
+    const labelled = timePhase(ctx.request, "labels", () => withLabels(ctx, issue));
+    return timePhase(ctx.request, "render", () =>
+      json({
+        ...labelled,
+        ...(issue.kind === "pull"
+          ? {
+              pull: `/api/v1/repos/${repo.ownerName}/${repo.name}/pulls/${issue.number}`,
+            }
+          : {}),
+        comments: shown,
+        ...(tail === null ? {} : { commentCount: all.length }),
+      }),
+    );
   });
 
   // A thread, a page at a time: oldest first, `next` is the `after` of the
