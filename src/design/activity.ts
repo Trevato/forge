@@ -120,6 +120,7 @@ const WORDS: Record<string, string> = {
   "repo.created": "created a repository",
   "repo.forked": "forked a repository",
   "repo.settings_updated": "changed repository settings",
+  "repo.upstream_follow": "changed which upstream the repository follows",
   "repo.crew_outsiders": "changed who may trigger the crew",
   "repo.mirrored": "mirrored a repository",
   "repo.imported": "imported issues and pulls",

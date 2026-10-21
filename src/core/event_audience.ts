@@ -163,6 +163,7 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     // Where a repository follows is its admins' to read, off or on: the
     // address is often a private repository's.
     kind === "repo.upstream_follow" ||
+    kind === "repo.upstream_checked" ||
     kind === "repo.crew_outsiders"
   )
     return "admins";

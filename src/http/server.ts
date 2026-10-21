@@ -5,6 +5,7 @@
  * verdict. Auth is resolved once per request and handed to handlers as data.
  */
 
+import { followUpstreamCheck, followUpstreamUpdate } from "../web/pages/upstream-follow.ts";
 import { refusedByDatabase, shownRefusal } from "./refusal.ts";
 import { NOT_A_MEMBER } from "../core/roles.ts";
 import { signupOptions, signupPasskey } from "../web/pages/signup-passkey.ts";
@@ -1409,6 +1410,8 @@ export function buildRouter(): Router<Handler> {
   );
   router.add("GET", "/:owner/:name/settings/autonomy", autonomySettingsPage);
   router.add("POST", "/:owner/:name/settings/autonomy", autonomySettingsUpdate);
+  router.add("POST", "/:owner/:name/settings/upstream", followUpstreamUpdate);
+  router.add("POST", "/:owner/:name/settings/upstream/check", followUpstreamCheck);
   router.add("GET", "/:owner/:name/settings/labels", labelsPage);
   router.add("POST", "/:owner/:name/settings/labels", labelCreate);
   router.add("POST", "/:owner/:name/settings/labels/:id", labelUpdate);

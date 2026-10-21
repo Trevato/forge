@@ -534,6 +534,36 @@ The clone runs as a job in the mirror's registry (`origins/jobs.ts`, kind
 app and the crew's first run — and then lands on the repository, which is
 the app's page, with what happened as the flash.
 
+## Follow an upstream
+
+A repository can follow a git URL outside the forge (`repo_upstream`,
+`core/upstream_follow.ts`; the check is `actions/upstream_follow.ts`). An
+admin of the repository does it, on its settings page's **Follow upstream**
+card: the URL, the branch (default `main`), and an on/off box; **Check
+upstream now** appears once it is on. The URL is `https:` or `http:` with no
+password in it — `git:`, `ssh:`, `file:` and the rest are refused at save,
+so the vetted-address pin always holds. A host inside the network is checked
+as the mirror's fetch is: vetted, and the vetted address pinned.
+
+Every 30 minutes (the server's one-minute timer runs `checkDue`) and on
+**Check now**: `ls-remote`, a fetch only when the tip moved into
+`refs/upstream-follow/<branch>` — not a branch — and, when the commits merge
+cleanly, one pull from `upstream/<tip7>`. One check runs per repository at a
+time, the clock's and the admin's sharing one claim; a second is `busy`
+(409 in the API). Never a push to the default branch.
+
+**Credentials.** A public upstream needs none. A private one is fetched with
+the credential of the origin the admin connected (Settings → Origins), sent
+only to the exact https origin it was connected at, as a header in git's
+environment — never in the URL, never in argv. Nothing is stored in the
+repository. A check's failure message is the remote's stderr with secrets
+redacted, shown to admins only.
+
+The About card says "Following <upstream> · last checked HH:MM · N behind",
+to admins only. API, all admin-only (anyone else gets 404):
+`GET|PUT /api/v1/repos/:owner/:name/upstream` (PUT takes
+`{url, branch, enabled}`) and `POST …/upstream/check`.
+
 ## API
 
 ```

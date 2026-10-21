@@ -8,6 +8,13 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import {
+  checkUpstreamNow,
+  FOLLOW_REFUSALS,
+  followJson,
+  setFollowUpstream,
+} from "../actions/upstream_follow.ts";
+import { getFollow } from "../core/upstream_follow.ts";
 import { showProvenance } from "../actions/provenance.ts";
 import { getProvenance, provenanceFacts } from "../core/provenance.ts";
 import { goldenPath } from "../apps/golden_path.ts";
@@ -2336,6 +2343,50 @@ export function apiRoutes(router: Router<Handler>): void {
     const res = json({ ...facts, audience });
     notePhase(ctx.request, "render", performance.now() - rendering);
     return res;
+  });
+
+  // Following an outside upstream (#3442): an admin reads, sets and checks.
+  router.add("GET", "/api/v1/repos/:owner/:name/upstream", (ctx) => {
+    const denied = requireScope(ctx, "ro");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    if (!canAdmin(ctx.app.db, repo, ctx.auth.user)) return notFound();
+    const follow = getFollow(ctx.app.db, repo.id);
+    return json({ following: follow === undefined ? null : followJson(follow) });
+  });
+
+  router.add("PUT", "/api/v1/repos/:owner/:name/upstream", async (ctx) => {
+    const denied = requireScope(ctx, "admin");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const input = await body(ctx.request);
+    if (typeof input.enabled !== "boolean")
+      return apiError("bad_enabled", 422, "enabled is true or false");
+    const saved = setFollowUpstream(ctx.app, ctx.auth.user, repo, {
+      url: str(input.url),
+      branch: str(input.branch),
+      enabled: input.enabled,
+    });
+    if (!saved.ok)
+      return saved.error === "not_found" || saved.error === "unauthorized" || saved.error === "forbidden"
+        ? respondAccess(saved.error, 422)
+        : apiError(saved.error, 422, FOLLOW_REFUSALS[saved.error]);
+    return json({ following: followJson(saved.value) });
+  });
+
+  router.add("POST", "/api/v1/repos/:owner/:name/upstream/check", async (ctx) => {
+    const denied = requireScope(ctx, "admin");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const checked = await checkUpstreamNow(ctx.app, ctx.auth.user, repo);
+    if (!checked.ok)
+      return checked.error === "not_found" || checked.error === "unauthorized" || checked.error === "forbidden"
+        ? respondAccess(checked.error, 422)
+        : apiError(checked.error, checked.error === "busy" ? 409 : 422, FOLLOW_REFUSALS[checked.error]);
+    return json(checked.value);
   });
 
   router.add("PATCH", "/api/v1/repos/:owner/:name", async (ctx) => {

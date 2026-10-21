@@ -119,6 +119,7 @@ import { cutWaveFor } from "../../actions/cut_wave.ts";
 import { proposalTokensSection } from "./proposal-tokens.ts";
 import { secretsSection } from "./secrets.ts";
 import { checkMemoryAt } from "../../apps/check-memory.ts";
+import { followUpstreamCard } from "./upstream-follow.ts";
 import { saveGrants } from "./subscriptions.ts";
 
 type Section =
@@ -340,6 +341,7 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
     { head: html`${icon("branch")}<h2>Branch and gates</h2>` },
   );
   const secrets = secretsSection(ctx, "repo", `${repo.ownerName}/${repo.name}`);
+  const upstream = followUpstreamCard(ctx, repo);
   const wave = card(
     html`<form method="post" action="${base}/settings/wave">
       <p class="muted">
@@ -393,7 +395,7 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
     "Settings",
     html`${lead}${mirror ? html`<div class="mt">${mirror}</div>` : null}<div class="mt">${body}</div>${trail
       ? html`<div class="mt">${trail}</div>`
-      : null}<div class="mt">${wave}</div><div class="mt">${archive}</div>${proposals
+      : null}${upstream ? html`<div class="mt">${upstream}</div>` : null}<div class="mt">${wave}</div><div class="mt">${archive}</div>${proposals
       ? html`<div class="mt">${proposals}</div>`
       : null}${secrets
       ? html`<div class="mt">${secrets}</div>`

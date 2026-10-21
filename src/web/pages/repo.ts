@@ -8,6 +8,7 @@
  * path segment and can never smuggle a path of its own.
  */
 
+import { followingLine } from "./upstream-follow.ts";
 import { NOT_A_MEMBER } from "../../core/roles.ts";
 import { storageLimitMessage } from "../../core/storage.ts";
 import { canRead, listForks, type Repo } from "../../core/repos.ts";
@@ -647,6 +648,7 @@ function aboutCard(
               }),
           )}
         </ul>
+        ${followingLine(ctx, repo)}
         ${whereItLives}
         ${when(
           repo.visibility === "public" && repo.origin === null,

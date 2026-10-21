@@ -21,12 +21,19 @@ import type { App } from "../app.ts";
 import { getIssueById, updateIssueText } from "../core/issues.ts";
 import { getOriginFor } from "../core/origins.ts";
 import { pullForBranch, retargetPull } from "../core/pulls.ts";
-import { canWrite, getRepoById, type Repo } from "../core/repos.ts";
+import { canAdmin, canWrite, getRepoById, type Repo } from "../core/repos.ts";
 import { storageStale } from "../core/storage.ts";
-import { getFollow, listFollowing, noteCheck } from "../core/upstream_follow.ts";
-import { getUserById } from "../core/users.ts";
+import {
+  getFollow,
+  listFollowing,
+  noteCheck,
+  putFollow,
+  upstreamUrl,
+  type UpstreamFollow,
+} from "../core/upstream_follow.ts";
+import { getUserById, type User } from "../core/users.ts";
 import { runGitCapture } from "../git/env.ts";
-import { isSafeOid } from "../git/guard.ts";
+import { isSafeOid, isSafeRef } from "../git/guard.ts";
 import { aheadCount, mergeable, resolveOid, writeRef } from "../git/merge.ts";
 import { REMOTE_PROTOCOLS } from "../git/remote-env.ts";
 import { repoDir } from "../git/repos.ts";
@@ -34,6 +41,7 @@ import { err, ok, type Result } from "../kernel/result.ts";
 import { providerForOrigin } from "../origins/credential.ts";
 import { redact, secretsIn } from "../origins/credentials.ts";
 import { vettedEnv } from "../origins/git-mirror.ts";
+import { migrateUrl } from "./migrate.ts";
 import { openPull } from "./pulls.ts";
 
 /** How often a following repository is checked on its own. */
@@ -95,7 +103,11 @@ export async function checkUpstream(app: App, repo: Repo): Promise<Result<Checke
   if (checking.has(repo.id)) return err("busy");
   checking.add(repo.id);
   try {
-    return await checkOnce(app, repo);
+    const result = await checkOnce(app, repo);
+    // So an open settings page or About card updates; no address in it.
+    if (result.ok || result.error !== "off")
+      app.bus.append({ kind: "repo.upstream_checked", repoId: repo.id, payload: {} });
+    return result;
   } finally {
     checking.delete(repo.id);
   }
@@ -231,4 +243,112 @@ async function checkOnce(app: App, repo: Repo): Promise<Result<Checked, CheckErr
   }
   noteCheck(app.db, repo.id, { at, tip: staged, behind, error: "" });
   return ok({ tip: staged, behind, outcome: "proposed", pull: number });
+}
+
+export type FollowError = "invalid_url" | "invalid_branch" | "not_found" | "unauthorized" | "forbidden";
+
+/** What each refusal of a save says, at every door; a check's are `CHECK_REFUSALS`. */
+export const FOLLOW_REFUSALS: Record<FollowError | CheckError, string> = {
+  ...CHECK_REFUSALS,
+  invalid_url: "The upstream is an https or http git address, with no password in it.",
+  invalid_branch: "That is not a branch name git accepts.",
+  not_found: "No such repository.",
+  unauthorized: "Sign in first.",
+  forbidden: "Only an admin of this repository follows an upstream.",
+};
+
+/** The follow row, for an admin of the repository and for nobody else. */
+export function followShown(app: App, repo: Repo, actor: User | undefined): UpstreamFollow | undefined {
+  if (actor === undefined || !canAdmin(app.db, repo, actor)) return undefined;
+  return getFollow(app.db, repo.id);
+}
+
+/** Point a repository at an upstream and turn following on or off. Admins only. */
+export function setFollowUpstream(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  input: { readonly url: string; readonly branch: string; readonly enabled: boolean },
+): Result<UpstreamFollow, FollowError> {
+  if (actor === undefined || !canAdmin(app.db, repo, actor)) return err("not_found");
+  const was = getFollow(app.db, repo.id);
+  // Turning it off needs no address: the row keeps the last one.
+  const blank = input.url.trim() === "";
+  const raw = blank && was !== undefined ? was.url : input.url;
+  const normal = migrateUrl(raw);
+  const url = normal === undefined ? undefined : upstreamUrl(normal);
+  if (url === undefined) return err("invalid_url");
+  const branch = input.branch.trim() === "" ? (was?.branch ?? "main") : input.branch.trim();
+  if (!isSafeRef(branch) || branch.length > 200) return err("invalid_branch");
+  const saved = putFollow(app.db, {
+    repoId: repo.id,
+    url,
+    branch,
+    enabled: input.enabled,
+    byId: actor.id,
+    originId: was?.url === url ? was.originId : "",
+  });
+  app.bus.append({
+    kind: "repo.upstream_follow",
+    repoId: repo.id,
+    actorId: actor.id,
+    payload: { enabled: saved.enabled, branch: saved.branch },
+  });
+  return ok(saved);
+}
+
+/** "Check upstream now": an admin's, through the same claim as the clock. */
+export async function checkUpstreamNow(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+): Promise<Result<Checked, FollowError | CheckError>> {
+  if (actor === undefined || !canAdmin(app.db, repo, actor)) return err("not_found");
+  return checkUpstream(app, repo);
+}
+
+/** The follow row as the API shows it. */
+export function followJson(f: UpstreamFollow): Record<string, unknown> {
+  return {
+    url: f.url,
+    branch: f.branch,
+    enabled: f.enabled,
+    checked_at: f.checkedAt,
+    tip: f.tip === "" ? null : f.tip,
+    behind: f.behind,
+    error: f.error === "" ? null : f.error,
+    pending_id: f.pendingId,
+    opened: f.opened,
+  };
+}
+
+/** `host/path` of an upstream, for a line of prose. */
+export function upstreamLabel(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.host}${u.pathname}`.replace(/\.git$/, "").replace(/\/$/, "");
+  } catch {
+    return url;
+  }
+}
+
+/** HH:MM, UTC. */
+export const clockWords = (iso: string): string => {
+  const at = new Date(iso);
+  return Number.isNaN(at.getTime()) ? "" : at.toISOString().slice(11, 16);
+};
+
+/** Where a following stands: what the last check read. */
+export function standing(f: UpstreamFollow): string {
+  if (!f.enabled) return "off";
+  if (f.error !== "") return f.error === "conflict" ? `${f.behind} behind, conflicts` : "last check failed";
+  if (f.checkedAt === null) return "not checked yet";
+  return f.behind === 0 ? "up to date" : `${f.behind} behind`;
+}
+
+/** What "Check upstream now" found, in a sentence. */
+export function checkedWords(c: Checked): string {
+  if (c.outcome === "none") return "Up to date: nothing new upstream.";
+  if (c.outcome === "conflict") return `${c.behind} new upstream commits conflict with the default branch.`;
+  return `${c.behind} new upstream commit${c.behind === 1 ? "" : "s"} proposed${c.pull === undefined ? "" : ` in #${c.pull}`}.`;
 }
