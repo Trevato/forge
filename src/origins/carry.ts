@@ -26,7 +26,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { carryMilestone } from "./milestones.ts";
+import { carryMilestone, joinMilestones } from "./milestones.ts";
 import { importComments, importIssue, importLabels } from "./import.ts";
 import type { ListIssuesQuery, Provider, RemoteIssue } from "./types.ts";
 
@@ -97,6 +97,7 @@ export async function carryConversations(input: CarryInput): Promise<Carried> {
   let error = "";
   const counts = { labels: 0, issues: 0, pulls: 0, comments: 0, milestones: 0 };
   const forkPulls: ForkPull[] = [];
+  const members: { issueId: string; milestone: number }[] = [];
 
   const labels = await provider.listLabels(fullName);
   if (labels.ok) {
@@ -137,7 +138,13 @@ export async function carryConversations(input: CarryInput): Promise<Carried> {
             ).run(imported.issueId);
           else forkPulls.push({ issueId: imported.issueId, number: remote.number });
           counts.pulls++;
-        } else counts.issues++;
+        } else {
+          counts.issues++;
+          // A pull is not an issue to the plan (`core/dependencies.ts`), so
+          // only issues can wait inside a milestone.
+          if (remote.milestone !== undefined)
+            members.push({ issueId: imported.issueId, milestone: remote.milestone });
+        }
 
         if (remote.comments > 0) {
           const comments = await provider.listComments(fullName, remote.number);
@@ -167,6 +174,7 @@ export async function carryConversations(input: CarryInput): Promise<Carried> {
           counts.milestones++;
     } else error ||= listed.error.message;
   }
+  joinMilestones(db, repoId, actorId, members);
   return { ...counts, forkPulls, error };
 }
 

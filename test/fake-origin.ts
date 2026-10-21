@@ -70,6 +70,8 @@ export interface FakeIssue {
   closedAt?: string | null;
   /** What the listing says `comments` is; the thread itself is `comments`. */
   commentCount?: number;
+  /** GitHub: the number of the milestone it belongs to. */
+  milestone?: number;
   /** Present for a pull request. */
   pull?: {
     base: string;
@@ -1014,6 +1016,9 @@ function issueJson(
     closed_at: issue.closedAt ?? null,
     html_url: `${url.origin}/${issue.number}`,
     comments: issue.commentCount ?? 0,
+    ...(issue.milestone === undefined
+      ? {}
+      : { milestone: { number: issue.milestone } }),
   };
   if (issue.pull === undefined) return common;
   // GitHub marks a pull by the mere presence of this key; Forgejo puts the

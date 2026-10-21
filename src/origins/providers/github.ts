@@ -784,7 +784,9 @@ function toReviewState(raw: unknown): RemoteReviewState | undefined {
 }
 
 function toIssue(raw: unknown): RemoteIssue {
+  const milestone = asNumber(dig(raw, "milestone", "number"));
   return {
+    ...(milestone > 0 ? { milestone } : {}),
     remoteId: asId(field(raw, "id")),
     number: asNumber(field(raw, "number")),
     title: asString(field(raw, "title")),

@@ -37,6 +37,9 @@ describe("migrate carries milestones", () => {
     });
     state.issues.set("octo/gadgets", [
       { id: 11, number: 1, title: "A conversation", user: "mona" },
+      { id: 12, number: 2, title: "In v1", user: "mona", milestone: 1 },
+      { id: 13, number: 3, title: "Also v1", user: "mona", milestone: 1 },
+      { id: 14, number: 4, title: "In v0", user: "mona", milestone: 2 },
     ]);
     state.milestones.set("octo/gadgets", [
       { number: 1, title: "v1", description: "The first cut.", dueOn: "2026-12-01T00:00:00Z" },
@@ -87,6 +90,14 @@ describe("migrate carries milestones", () => {
       )
       .all(repo.value.id);
     expect(rows.map((r) => r.origin_number)).toEqual([1, 2, 3]);
+    const waits = () =>
+      app.db
+        .query<{ m: number; n: number }, []>(
+          `SELECT m.origin_number AS m, i.number AS n FROM issue_dependency d
+             JOIN milestone_origin m ON m.issue_id = d.issue_id
+             JOIN issue i ON i.id = d.blocked_by_id ORDER BY m, n`,
+        )
+        .all();
     const issues = rows.map((r) => {
       const issue = app.db
         .query<{ title: string; body: string; state: string }, [string]>(
@@ -100,6 +111,13 @@ describe("migrate carries milestones", () => {
       { title: "v0", body: "Done long ago.", state: "closed" },
       { title: "Someday", body: "", state: "open" },
     ]);
+    // Issues 2 and 3 landed in v1, 4 in v0; the unfiled one in none.
+    const members = waits().map((w) => [w.m, getIssue(app.db, repo.value.id, w.n)?.title]);
+    expect(members).toEqual([
+      [1, "In v1"],
+      [1, "Also v1"],
+      [2, "In v0"],
+    ]);
     expect(dueOf(app.db, repo.value.id, 1)).toBe("2026-12-01T00:00:00.000Z");
     expect(dueOf(app.db, repo.value.id, 2)).toBe("2026-01-15T00:00:00.000Z");
     expect(dueOf(app.db, repo.value.id, 3)).toBeNull();
@@ -109,6 +127,7 @@ describe("migrate carries milestones", () => {
     const before = app.db.query<{ n: number }, []>("SELECT count(*) AS n FROM issue").get()!.n;
     const second = await carry();
     expect(second.milestones).toBe(0);
+    expect(waits().length).toBe(3);
     expect(app.db.query<{ n: number }, []>("SELECT count(*) AS n FROM issue").get()!.n).toBe(before);
     expect(
       app.db.query<{ n: number }, []>("SELECT count(*) AS n FROM milestone_origin").get()!.n,

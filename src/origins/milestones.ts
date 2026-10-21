@@ -8,11 +8,19 @@
  * which is also how a second carry finds the milestone it made the first
  * time and leaves it alone — what a person has changed since is theirs.
  *
- * Which issues belong to which milestone is not carried here.
+ * Which issues belong to which milestone is `joinMilestones`: the milestone
+ * waits for each member, and linking twice leaves one link.
  */
 
 import type { Database } from "bun:sqlite";
-import { createIssue, MAX_BODY, MAX_TITLE, setIssueState } from "../core/issues.ts";
+import { addDependency } from "../core/dependencies.ts";
+import {
+  createIssue,
+  getIssueById,
+  MAX_BODY,
+  MAX_TITLE,
+  setIssueState,
+} from "../core/issues.ts";
 import type { RemoteMilestone } from "./types.ts";
 
 /** Control bytes out, length capped: an origin does not get to write a novel. */
@@ -65,4 +73,24 @@ export function carryMilestone(
      VALUES (?1, ?2, ?3, ?4)`,
   ).run(repoId, remote.number, made.value.id, remote.dueOn);
   return { issueId: made.value.id, created: true };
+}
+
+/** Put each carried issue in the milestone the origin named, if that one was carried. */
+export function joinMilestones(
+  db: Database,
+  repoId: string,
+  actorId: string,
+  members: readonly { readonly issueId: string; readonly milestone: number }[],
+): void {
+  const find = db.query<{ issue_id: string }, [string, number]>(
+    "SELECT issue_id FROM milestone_origin WHERE repo_id = ?1 AND origin_number = ?2",
+  );
+  for (const member of members) {
+    const home = find.get(repoId, member.milestone);
+    if (home === null) continue;
+    const milestone = getIssueById(db, home.issue_id);
+    const issue = getIssueById(db, member.issueId);
+    if (milestone !== undefined && issue !== undefined)
+      addDependency(db, milestone, issue, actorId);
+  }
 }

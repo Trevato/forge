@@ -122,6 +122,8 @@ export interface RemoteIssue {
   readonly closedAt: string | null;
   readonly htmlUrl: string;
   readonly comments: number;
+  /** The origin's number of the milestone it belongs to, when it does. */
+  readonly milestone?: number;
   /**
    * `owner/name` on the origin. Only a cross-repo result (search) carries
    * it — a per-repo list already knows which repo it asked about.
