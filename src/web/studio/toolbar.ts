@@ -19,18 +19,21 @@ import { addCommentThrough, openIssueThrough } from "../../actions/issues.ts";
 import { reportTitle } from "../../actions/page-report.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { getIssue, MAX_BODY } from "../../core/issues.ts";
-import { canWrite } from "../../core/repos.ts";
+import { canWrite, type Repo } from "../../core/repos.ts";
 import { listRuns } from "../../core/runs.ts";
 import { mayView, mayViewId } from "../../core/sealed.ts";
 import { mayDirectCrew } from "../../crew/direct.ts";
+import { isSafeOid } from "../../git/guard.ts";
+import { commitLog } from "../../git/read.ts";
+import { repoDir } from "../../git/repos.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, pageHead, loadRepo, repoBase } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
-import { html, when } from "../html.ts";
+import { html, when, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { originError } from "../pages/thread.ts";
-import { btn, card } from "../ui.ts";
+import { btn, card, envFacts } from "../ui.ts";
 
 /** The longest page address the bar may carry. */
 const PAGE_MAX = 512;
@@ -59,8 +62,37 @@ function parseEnv(raw: string): { env: string; pull?: number } | undefined {
 const toolbarPath = (base: string, env: string, address: string): string =>
   `${base}/toolbar?env=${env}${address === "" ? "" : `&page=${encodeURIComponent(address)}`}`;
 
+/**
+ * Production's "Live:" line: the commit its latest serving deploy ran (not
+ * the branch tip) and when it went live, plus a note when a newer deploy is
+ * still coming up. Empty when production never served.
+ */
+async function liveLine(ctx: Ctx, repo: Repo, base: string): Promise<Html> {
+  const deploys = listRuns(ctx.app.db, repo.id, { kind: "deploy", env: "production", limit: 20 });
+  const at = deploys.findIndex((r) => r.servingAt !== null && isSafeOid(r.commitOid));
+  const live = deploys[at];
+  if (live === undefined || live.servingAt === null) return html``;
+  const coming = deploys
+    .slice(0, at)
+    .some((r) => (r.state === "queued" || r.state === "running") && r.commitOid !== live.commitOid);
+  const log = await commitLog(repoDir(ctx.app.reposRoot, repo.ownerName, repo.name), live.commitOid, { limit: 1 });
+  const subject = log.ok ? (log.value[0]?.subject ?? "") : "";
+  const facts = envFacts(base, {
+    env: "production",
+    state: "running",
+    commitOid: live.commitOid,
+    url: "",
+    since: live.servingAt,
+    runId: live.id,
+  });
+  return html`<div data-live>
+    <p class="small"><strong>Live:</strong> ${subject}${when(coming, () => html` · a newer commit is deploying`)}</p>
+    ${facts}
+  </div>`;
+}
+
 // GET /:owner/:name/toolbar
-export function toolbarPage(ctx: Ctx): Response {
+export async function toolbarPage(ctx: Ctx): Promise<Response> {
   const request = ctx.request;
   notePhase(request, "session", takeSessionTime(request));
   const repo = timePhase(request, "repo", () => loadRepo(ctx));
@@ -79,13 +111,14 @@ export function toolbarPage(ctx: Ctx): Response {
   const address = pageAddress(ctx.url.searchParams.get("page") ?? "");
   const base = repoBase(repo);
   const here = html`${repo.name}, ${pull ? html`preview of pull #${pull.number}` : "production"}`;
+  const liveNote = pull ? html`` : await liveLine(ctx, repo, base);
   const home = btn("Home", { href: "/", variant: "ghost" });
   const rendering = performance.now();
   if (!user) {
     const response = page({
       ctx,
       title: `${repo.name} · forge`,
-      body: html`<div class="narrow-wide">${pageHead(here)}<div class="form-actions">${home}</div></div>`,
+      body: html`<div class="narrow-wide">${pageHead(here)}${liveNote}<div class="form-actions">${home}</div></div>`,
     });
     notePhase(request, "render", performance.now() - rendering);
     return response;
@@ -105,6 +138,7 @@ export function toolbarPage(ctx: Ctx): Response {
   const comment = pull ? "Comment on this pull" : "Report this page";
   const body = html`<div class="narrow-wide">
     ${pageHead(here)}
+    ${liveNote}
     ${when(
       live !== undefined,
       () => html`<p class="mono" data-working>
