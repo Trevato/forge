@@ -27,6 +27,8 @@ describe("MCP issue", () => {
   let bobTok: string;
   let number: number;
   let secret: number;
+  let sealedNo: number;
+  let pullNo: number;
   let id = 1;
 
   const tool = async (token: string, args: unknown) => {
@@ -86,6 +88,23 @@ describe("MCP issue", () => {
     setIssueLabels(app.db, issue.value.id, [label.value.id]);
     setAssignee(app.db, issue.value.id, a.value.id);
 
+    const sealed = createIssue(app.db, {
+      repoId: pub.value.id,
+      authorId: a.value.id,
+      title: "Embargoed",
+      sealed: true,
+    });
+    if (!sealed.ok) throw new Error(sealed.error);
+    sealedNo = sealed.value.number;
+    const pull = createIssue(app.db, {
+      repoId: pub.value.id,
+      authorId: a.value.id,
+      title: "A pull",
+      kind: "pull",
+    });
+    if (!pull.ok) throw new Error(pull.error);
+    pullNo = pull.value.number;
+
     const priv = await createRepo(app, a.value, { name: "vault", visibility: "private" });
     if (!priv.ok) throw new Error(String(priv.error));
     const hidden = createIssue(app.db, {
@@ -119,6 +138,19 @@ describe("MCP issue", () => {
     const other = await tool(bobTok, { repo: "alice/vault", number: secret });
     expect(other.error).toBeDefined();
     expect(other.error).not.toContain("Hidden");
+  });
+
+  test("a sealed issue is not found by someone who may not see it", async () => {
+    const own = await tool(aliceTok, { repo: "alice/game", number: sealedNo });
+    expect(own.value.title).toBe("Embargoed");
+    const other = await tool(bobTok, { repo: "alice/game", number: sealedNo });
+    expect(other.error).toContain(`no issue #${sealedNo}`);
+    expect(other.error).not.toContain("Embargoed");
+  });
+
+  test("a pull's number says to use the pull tool", async () => {
+    const r = await tool(bobTok, { repo: "alice/game", number: pullNo });
+    expect(r.value).toEqual({ kind: "pull", tool: "pull" });
   });
 
   test("a bad number is refused", async () => {

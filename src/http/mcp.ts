@@ -740,12 +740,10 @@ const TOOLS: readonly Tool[] = [
         typeof n === "number" && Number.isInteger(n) && n > 0
           ? getIssue(ctx.app.db, repo.id, n)
           : undefined;
-      if (
-        issue === undefined ||
-        issue.kind !== "issue" ||
-        !mayView(ctx.app.db, repo, issue, user)
-      )
+      if (issue === undefined || !mayView(ctx.app.db, repo, issue, user))
         return bad("not_found", `no issue #${String(n)}`);
+      // Seen only after the sealed check, so a sealed pull is not told apart.
+      if (issue.kind !== "issue") return good({ kind: "pull", tool: "pull" });
       const db = ctx.app.db;
       // Marked only for a crew agent, as the API does: to anyone else the
       // mark would say which commenters cannot write.

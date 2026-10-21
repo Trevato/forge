@@ -569,7 +569,7 @@ describe("the forge over MCP", () => {
       headBranch: "issue-kind",
     });
     if (!opened.ok) throw new Error(String(opened.error));
-    expect((await tool(rw, "issue", { repo: "alice/game", number: opened.value.number })).error).toContain("not_found");
+    expect((await tool(rw, "issue", { repo: "alice/game", number: opened.value.number })).value).toEqual({ kind: "pull", tool: "pull" });
 
     // Sealed: the writer reads it; a reader of a public repo is told not found.
     const pub = await createRepo(app, alice, { name: "sealedpub", visibility: "public" });
