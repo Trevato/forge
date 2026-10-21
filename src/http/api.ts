@@ -2626,9 +2626,13 @@ export function apiRoutes(router: Router<Handler>): void {
   );
 
   router.add("GET", "/api/v1/repos/:owner/:name/following/proposals", async (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    return json({ items: await forgeProposals(ctx.app, repo, Date.now(), ctx.auth.user !== undefined) });
+    const items = await timePhaseAsync(ctx.request, "read", () =>
+      forgeProposals(ctx.app, repo, Date.now(), ctx.auth.user !== undefined),
+    );
+    return timePhase(ctx.request, "render", () => json({ items }));
   });
 
   router.add(
@@ -3354,22 +3358,30 @@ export function apiRoutes(router: Router<Handler>): void {
   // Milestones as data: the plan's limbs with their weights, and one
   // milestone opened. The same numbers as the pages.
   router.add("GET", "/api/v1/repos/:owner/:name/milestones", async (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    return json(await milestonesJson(ctx, repo));
+    const data = await timePhaseAsync(ctx.request, "read", () =>
+      milestonesJson(ctx, repo),
+    );
+    return timePhase(ctx.request, "render", () => json(data));
   });
   router.add(
     "GET",
     "/api/v1/repos/:owner/:name/milestones/:number",
     async (ctx) => {
+      notePhase(ctx.request, "session", takeSessionTime(ctx.request));
       const repo = loadRepo(ctx);
       if (!repo) return notFound();
       const number = positiveInt(ctx.params.number);
       const data =
         number === undefined
           ? undefined
-          : await milestoneData(ctx, repo, number);
-      return data === undefined ? notFound() : json(data);
+          : await timePhaseAsync(ctx.request, "read", () =>
+              milestoneData(ctx, repo, number),
+            );
+      if (data === undefined) return notFound();
+      return timePhase(ctx.request, "render", () => json(data));
     },
   );
   // Keep a thought exactly as typed (#1658): append-only, never edited.
