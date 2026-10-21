@@ -5004,10 +5004,11 @@ export function apiRoutes(router: Router<Handler>): void {
   // when anything last happened, only to its parent's secret. Nothing else;
   // 404 when not spawned.
   router.add("GET", "/api/v1/forge", async (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const shown = ctx.request.headers.get(PARENT_HEADER) ?? undefined;
-    const state = await forgeState(ctx.app, shown);
+    const state = await timePhaseAsync(ctx.request, "read", () => forgeState(ctx.app, shown));
     if (!state) return apiError("not_found", 404, "this forge was not spawned");
-    return json(state);
+    return timePhase(ctx.request, "render", () => json(state));
   });
 
   // A child's signed heartbeat (docs/SPAWN.md): counts and version, never
@@ -5022,9 +5023,13 @@ export function apiRoutes(router: Router<Handler>): void {
 
   // The family (#425): the parent for anyone, the children for an admin.
   router.add("GET", "/api/v1/family", async (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = ctx.auth.user === undefined ? undefined : requireScope(ctx, "ro");
     if (denied) return denied;
-    return json(await familyView(ctx.app, ctx.auth.user?.isAdmin === true));
+    const view = await timePhaseAsync(ctx.request, "read", () =>
+      familyView(ctx.app, ctx.auth.user?.isAdmin === true),
+    );
+    return timePhase(ctx.request, "render", () => json(view));
   });
 
   // What small, medium and large mean: public, and cacheable by ETag.
@@ -5038,10 +5043,12 @@ export function apiRoutes(router: Router<Handler>): void {
 
   // A forge's children (docs/SPAWN.md): an admin's, planned before made.
   router.add("GET", "/api/v1/forges", async (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireScope(ctx, "ro");
     if (denied) return denied;
     if (!ctx.auth.user?.isAdmin) return forbidden();
-    return json({ items: await listChildren(ctx.app), next_cursor: null });
+    const items = await timePhaseAsync(ctx.request, "read", () => listChildren(ctx.app));
+    return timePhase(ctx.request, "render", () => json({ items, next_cursor: null }));
   });
 
   // `dryRun` is true unless it is `false`: the plan, and nothing is made.
