@@ -49,7 +49,7 @@ export interface Action {
 
 export interface Manifest {
   readonly here:
-    | { readonly kind: "forge" }
+    | { readonly kind: "forge" | "explore" | "search" }
     | {
         readonly kind: "repository";
         readonly name: string;
@@ -106,6 +106,10 @@ export function manifestFor(
         return s;
       }
     });
+  const page =
+    name === undefined && (owner === "explore" || owner === "search")
+      ? owner
+      : undefined;
   // Two segments under a name the forge keeps for itself are its own page,
   // never a repository (`core/reserved.ts`).
   // `/:owner/-/…` is an account's or an org's own page (its teams), never
@@ -117,9 +121,15 @@ export function manifestFor(
     SYSTEM.has(owner.toLowerCase())
   )
     return ok({
-      here: { kind: "forge" },
+      here: { kind: page ?? "forge" },
       you: youFor(viewer, scope, undefined, app),
-      actions: forgeActions(viewer),
+      actions:
+        page === undefined
+          ? forgeActions(viewer)
+          : [
+              pageRead(page, path),
+              ...forgeActions(viewer).filter((a) => a.mcp !== page),
+            ],
       ...common,
     });
   const repo = getRepo(app.db, owner, name.replace(/\.git$/, ""));
@@ -203,8 +213,31 @@ function repoHere(
   };
 }
 
+/** The read an explore or search page pages through, its `?q=` carried over. */
+function pageRead(page: "explore" | "search", path: string): Action {
+  const q = new URL(path, "http://forge.invalid").searchParams.get("q") ?? "";
+  const query =
+    q === "" ? "" : `?q=${encodeURIComponent(q).replace(/%3A/gi, ":")}`;
+  const http = `GET /api/v1/${page}${query}`;
+  return {
+    do: `${page === "explore" ? "browse the forge" : "search the forge"}${q === "" ? "" : `: ${q.slice(0, 200)}`}`,
+    http,
+    mcp: page,
+  };
+}
+
 function forgeActions(viewer: User | undefined): Action[] {
   return [
+    {
+      do: "explore apps and repositories",
+      http: "GET /api/v1/explore?q=",
+      mcp: "explore",
+    },
+    {
+      do: "search issues, pulls, repositories and code",
+      http: "GET /api/v1/search?q=",
+      mcp: "search",
+    },
     { do: "list public repositories", http: "GET /api/v1/repos" },
     {
       do: "report a problem",

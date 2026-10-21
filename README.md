@@ -2101,3 +2101,8 @@ about why.
 `forge_egress_connections`, `forge_egress_bytes_in` and `forge_egress_bytes_out`
 per `repo` and `destination` as Prometheus text, so a leaked upstream socket
 shows as a gauge that never falls (#3719).
+
+The here-manifest (`GET /api/v1/here?path=…`) reads the same for guests and
+members. On `/explore` and `/search` it names the page's own read, `?q=` carried
+over and encoded: `GET /api/v1/explore?q=…` (MCP tool `explore`) or
+`GET /api/v1/search?q=…` (MCP tool `search`), listed once.

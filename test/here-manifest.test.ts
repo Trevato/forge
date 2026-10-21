@@ -215,6 +215,32 @@ describe("the manifest: what you can do here, as who you are", () => {
     expect(JSON.stringify(body)).not.toContain("vault");
   });
 
+  test("/explore and /search name their query API and MCP tool, the query carried over", async () => {
+    for (const who of [undefined, "carol"]) {
+      const e = (await manifest("/explore?q=kind:app", who)).body;
+      expect(e.here).toEqual({ kind: "explore" });
+      expect(e.actions[0].http).toBe("GET /api/v1/explore?q=kind:app");
+      expect(e.actions[0].mcp).toBe("explore");
+      const s = (await manifest("/search", who)).body;
+      expect(s.here).toEqual({ kind: "search" });
+      expect(s.actions[0].http).toBe("GET /api/v1/search");
+      expect(s.actions[0].mcp).toBe("search");
+      const f = (await manifest("/", who)).body;
+      expect(f.here.kind).toBe("forge");
+      expect(f.actions.map((a: any) => a.mcp)).toEqual(
+        expect.arrayContaining(["explore", "search"]),
+      );
+      for (const a of f.actions)
+        if (a.mcp === "explore" || a.mcp === "search")
+          expect(a.account).toBeUndefined();
+    }
+    const q = (await manifest("/search?q=a%20b%26c")).body;
+    expect(q.actions[0].http).toBe("GET /api/v1/search?q=a%20b%26c");
+    const other = (await manifest("/elsewhere")).body;
+    expect(other.here).toEqual({ kind: "forge" });
+    expect(other.actions[0].do).toBe("explore apps and repositories");
+  });
+
   test("it is small", async () => {
     for (const who of [undefined, "carol", "wes", "alice", "bot"]) {
       const res = await here("/acme/game", who);
@@ -321,5 +347,13 @@ describe("the manifest: what you can do here, as who you are", () => {
     if (!own.ok) throw new Error(String(own.error));
     const ownBody = (await manifest(`/acme/game/pulls/${own.value.number}`)).body;
     expect(ownBody.here.pull).toEqual({ number: own.value.number, runs: true });
+  });
+
+  test("on /explore the page read is not repeated by the generic one", async () => {
+    const { body } = await manifest("/explore?q=kind:app");
+    const reads = body.actions.filter((a: any) => a.mcp === "explore");
+    expect(reads.length).toBe(1);
+    expect(reads[0].http).toBe("GET /api/v1/explore?q=kind:app");
+    expect(body.actions.filter((a: any) => a.mcp === "search").length).toBe(1);
   });
 });

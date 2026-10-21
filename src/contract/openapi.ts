@@ -49,6 +49,8 @@ export const ROUTES: readonly Route[] = [
     body: APP_BODY,
     refusals: APP_REFUSALS,
   },
+  { method: "get", path: "/api/v1/explore", summary: "Explore apps and repositories; `q` takes words and `kind:`/`owner:` filters; answers { query, items }", auth: false, query: { q: "string" } },
+  { method: "get", path: "/api/v1/search", summary: "Search issues, pulls, repositories and code; `kind` narrows it", auth: false, query: { q: "string", kind: "string" } },
   { method: "get", path: "/api/v1/repos", summary: "List public repositories", auth: false },
   {
     method: "get",
