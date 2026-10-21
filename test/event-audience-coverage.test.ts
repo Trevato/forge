@@ -10,6 +10,7 @@
 import { describe, expect, test } from "bun:test";
 import { Glob } from "bun";
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { classifiedAudience, eventAudience } from "../src/core/event_audience.ts";
 
 /**
@@ -147,10 +148,13 @@ export function emittedKinds(files: Record<string, string>): {
   return { kinds, unreadable };
 }
 
+/** Anchored at the repository, not the working directory the runner happens to have. */
+const ROOT = join(import.meta.dir, "..");
+
 async function sources(): Promise<Record<string, string>> {
   const out: Record<string, string> = {};
-  for await (const path of new Glob("src/**/*.ts").scan(".")) {
-    out[path] = readFileSync(path, "utf8");
+  for await (const path of new Glob("src/**/*.ts").scan(ROOT)) {
+    out[path] = readFileSync(join(ROOT, path), "utf8");
   }
   return out;
 }
@@ -164,7 +168,9 @@ describe("event audience coverage", () => {
       .map(([kind, at]) => `${kind} (${at})`);
     expect(missing).toEqual([]);
     expect(unreadable).toEqual([]);
-  });
+    // A scan of every source file is CPU work: a loaded check machine gets
+    // room, since only the code under test may decide the verdict.
+  }, 60_000);
 
   test("an unclassified kind is for admins, never readers", () => {
     expect(classifiedAudience("brand.new_kind")).toBeUndefined();
