@@ -469,6 +469,9 @@ import {
   createRouteTiming,
   noteDbTime,
   noteSessionTime,
+  notePhase,
+  namesFrame,
+  noteStart,
   takePhases,
   serverTiming,
   takeDbTime,
@@ -2207,7 +2210,12 @@ export async function serve(app: App): Promise<Servers> {
     if (request.signal.aborted) onAbort();
     else request.signal.addEventListener("abort", onAbort, { once: true });
     const work = run().then(
-      (response) => compress(request, response).then(securityFloor),
+      async (response) => {
+        const compressing = performance.now();
+        const done = await compress(request, response).then(securityFloor);
+        if (namesFrame(request)) notePhase(request, "compress", performance.now() - compressing);
+        return done;
+      },
       (error) => failure(owner, error),
     );
     try {
@@ -2225,6 +2233,7 @@ export async function serve(app: App): Promise<Servers> {
     server: Bun.Server<AppSocket>,
   ): Promise<Response | undefined> => {
       const started = performance.now();
+      noteStart(request, started);
       // An app's hostname is answered before any route: `hello.<domain>` is
       // the app, whatever its path, and the forge's own routes never apply.
       const runtime = appsRuntime(app);
