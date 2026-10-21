@@ -118,6 +118,12 @@ export interface ListEventsOptions {
   afterId?: string;
   /** @default 100 */
   limit?: number;
+  /**
+   * Of the newest `limit` events, keep only these kinds. The window is the
+   * same one an unfiltered read sees; the rows left out are never parsed,
+   * which is what a busy thread's comment events would otherwise cost.
+   */
+  kinds?: readonly string[];
 }
 
 /**
@@ -202,10 +208,17 @@ export function listEvents(
   }
   params.push(options.limit ?? 100);
   const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+  const limit = params.length;
+  let sql = `SELECT * FROM event ${where} ORDER BY event.seq DESC LIMIT ?${limit}`;
+  if (options.kinds !== undefined) {
+    const marks = options.kinds.map((kind) => {
+      params.push(kind);
+      return `?${params.length}`;
+    });
+    sql = `SELECT * FROM (${sql}) WHERE kind IN (${marks.join(", ")}) ORDER BY seq DESC`;
+  }
   return db
-    .query<EventRow, (string | number)[]>(
-      `SELECT * FROM event ${where} ORDER BY event.seq DESC LIMIT ?${params.length}`,
-    )
+    .query<EventRow, (string | number)[]>(sql)
     .all(...params)
     .map(toEvent);
 }

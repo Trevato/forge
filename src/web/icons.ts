@@ -117,13 +117,32 @@ export function icon(name: IconName, size: 16 | 20 = 16): Html {
 /** The reference `icon()` leaves behind, and the only thing read back. */
 const REFERENCE = /<use href="#i-([A-Za-z]+)"\/>/g;
 
-/** Every icon this markup references, once each, in first-seen order. */
-function referenced(markup: string): IconName[] {
+/** What `REFERENCE` starts with, so a page can be searched for it by `indexOf`. */
+const REFERENCE_OPEN = '<use href="#i-';
+
+/**
+ * Every icon this markup references, once each, in first-seen order. Found
+ * with `indexOf`, which skips through a long page far faster than a regular
+ * expression does, and accepts exactly what `REFERENCE` accepts: letters,
+ * then `"/>`.
+ */
+export function referenced(markup: string): IconName[] {
   const names: IconName[] = [];
-  for (const match of markup.matchAll(REFERENCE)) {
-    const name = match[1];
-    if (name === undefined || !(name in PATHS)) continue;
-    if (!names.includes(name as IconName)) names.push(name as IconName);
+  let at = markup.indexOf(REFERENCE_OPEN);
+  while (at !== -1) {
+    const start = at + REFERENCE_OPEN.length;
+    let end = start;
+    while (end < markup.length) {
+      const c = markup.charCodeAt(end) | 32;
+      if (c < 97 || c > 122) break;
+      end++;
+    }
+    if (end > start && markup.startsWith('"/>', end)) {
+      const name = markup.slice(start, end);
+      if (name in PATHS && !names.includes(name as IconName))
+        names.push(name as IconName);
+    }
+    at = markup.indexOf(REFERENCE_OPEN, end);
   }
   return names;
 }

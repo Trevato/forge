@@ -12,6 +12,7 @@ import { toolbarComment, toolbarPage } from "../web/studio/toolbar.ts";
 import { TOOLBAR_NAME, toolbarResponse } from "../apps/toolbar.ts";
 import { unsealReleased } from "../actions/sealed.ts";
 import { parentCallback, parentLinkStart, parentStart } from "./rp.ts";
+import { prerenderComments } from "../web/prerender.ts";
 import { accessPage } from "../web/pages/access.ts";
 import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
 import { systemPage, systemStream } from "../web/pages/system.ts";
@@ -2104,6 +2105,7 @@ export async function serve(app: App): Promise<Servers> {
     if (user === undefined) return;
     closeStreamsOf(app.db, user.id, unclosed);
   });
+  const prerender = prerenderComments(app);
   // And every process holds what it has open against the database, so a
   // suspension or sign-out another process wrote reaches it too (#846).
   const sweep = setInterval(
@@ -2347,6 +2349,7 @@ export async function serve(app: App): Promise<Servers> {
     },
     stop() {
       endOpen();
+      prerender();
       clearInterval(sweep);
       // Counts first: a hosted child's database closes with its app.
       for (const counter of counters.values()) {

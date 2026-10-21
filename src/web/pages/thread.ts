@@ -171,7 +171,11 @@ const EVENT_LOOK: Record<string, { icon: IconName; tone: Tone; verb: string }> =
  * disagree with what actually happened.
  */
 function stateEvents(ctx: Ctx, repo: Repo, issue: Issue): Entry[] {
-  const events = listEvents(ctx.app.db, { repoId: repo.id, limit: 200 }).filter(
+  const events = listEvents(ctx.app.db, {
+    repoId: repo.id,
+    limit: 200,
+    kinds: Object.keys(EVENT_LOOK),
+  }).filter(
     (event) =>
       EVENT_LOOK[event.kind] !== undefined &&
       Number(event.payload.number) === issue.number &&

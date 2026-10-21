@@ -16,12 +16,20 @@ import { highlightToHtml } from "./highlight-html.ts";
 import { escapeHtml, Html, raw } from "./html.ts";
 
 function inline(escaped: string): string {
-  return (
-    escaped
-      // `code` first, so nothing inside it is styled
-      .replace(/`([^`]+)`/g, "<code>$1</code>")
+  // Most lines of prose carry none of the marks; each rule only runs on a
+  // line that has the character it starts with, which changes nothing about
+  // what the rules produce.
+  let text = escaped;
+  // `code` first, so nothing inside it is styled
+  if (text.includes("`")) text = text.replace(/`([^`]+)`/g, "<code>$1</code>");
+  if (text.includes("*")) {
+    text = text
       .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-      .replace(/(^|\W)\*([^*\s][^*]*)\*/g, "$1<em>$2</em>")
+      .replace(/(^|\W)\*([^*\s][^*]*)\*/g, "$1<em>$2</em>");
+  }
+  if (!text.includes("](")) return text;
+  return (
+    text
       // [text](url) — safe schemes only; quotes are already escaped away
       .replace(
         /\[([^\]]+)\]\(([^)\s]+)\)/g,
