@@ -71,9 +71,13 @@ describe("a member and the crew's standing instructions", () => {
   }, 60_000);
 
   afterAll(async () => {
+    // Let a request still in flight finish before the data goes: a late
+    // write into the directory is what fails `rm` with ENOTEMPTY on a loaded
+    // machine, and retrying covers the rest.
+    await servers.stopAccepting(2_000);
     servers.stop();
     app.close();
-    await rm(dataDir, { recursive: true, force: true });
+    await rm(dataDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }, 30_000);
 
   test("a member is refused on the API and the page, and the brief stands", async () => {
