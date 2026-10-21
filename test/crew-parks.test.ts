@@ -511,24 +511,16 @@ describe("an issue parked twice is the planner's", () => {
     expect(told({ parkedTwice: [] })).not.toContain("Parked twice");
   });
 
-  test("the board lists it with its reasons for whoever owns the app, linked to the issue", async () => {
-    const mine = await board("alice");
-    expect(mine).toContain('id="declined"');
-    expect(mine).toMatch(
-      new RegExp(
-        `the crew parked #${work.number} twice and\\s+handed it to the planner —\\s+Scene graph\\.`,
-      ),
-    );
-    expect(mine).toContain(`<q>${declined}</q> <q>${nothing}</q>`);
-    expect(mine).toContain(
-      `<a class="btn" href="/alice/engine/issues/${work.number}">Open</a>`,
-    );
-    expect(mine).toContain(`href="/alice/engine/issues/${again.number}"`);
-    // Nobody else is told: bob cannot see the engine.
-    const theirs = await board("bob");
-    expect(theirs).not.toContain('id="declined"');
-    expect(theirs).not.toContain("parked #");
-    // An owner who is no admin gets the line, escaped, and no word on the forge.
+  test("the board never carries it: parked twice is the crew's business, and the map still lists it", async () => {
+    for (const who of ["alice", "bob"]) {
+      const text = await board(who);
+      expect(text).not.toContain("parked #");
+      expect(text).not.toContain("handed it to the planner");
+      expect(text).not.toContain(declined);
+      expect(text).not.toContain("data-parked");
+      expect(text).not.toContain("/alice/engine/issues/");
+    }
+    // Nor bob's own app, with its title, its reasons and no escaping to get wrong.
     const made = await createRepo(app, bob, {
       name: "tool",
       visibility: "private",
@@ -551,15 +543,13 @@ describe("an issue parked twice is the planner's", () => {
       addComment(app, bob, tool, hinge, `Parked by the crew: ${why}`);
       await tick();
     }
+    expect(parkedTwice(app.db, [tool]).map((i) => i.number)).toEqual([hinge.number]);
     const own = await board("bob");
-    expect(own).toContain(`href="/bob/tool/issues/${hinge.number}"`);
-    expect(own).toContain("A &lt;b&gt;hinge&lt;/b&gt;.");
-    expect(own).toContain(
-      "<q>the check stayed red</q> <q>main moved under it &lt;twice&gt;</q>",
-    );
-    expect(own).not.toContain('id="forge"');
+    expect(own).not.toContain("hinge");
+    expect(own).not.toContain("main moved under it");
     expect(own).not.toContain("All fine");
-    expect(own).not.toContain("/alice/engine/");
+    // And bob still cannot see alice's engine through the board.
+    expect(own).not.toContain("/alice/engine/issues/");
   });
 
   test("the map's data and the MCP's `map` list it with its reasons", async () => {
@@ -981,8 +971,6 @@ describe("an issue parked twice is the planner's", () => {
     expect(await board("alice")).not.toContain("/alice/engine/issues/");
     // A person's word is the other way off: bob says what to try on his.
     addComment(app, bob, tool, hinge, "Try a smaller hinge.");
-    expect(await board("bob")).not.toContain('id="declined"');
-    expect(await board("alice")).not.toContain('id="declined"');
     // The owner opens the gate: what waited is as it was, so it is the
     // planner's again.
     expect(

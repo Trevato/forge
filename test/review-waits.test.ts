@@ -174,7 +174,7 @@ describe("an agent pull that waits for a person's review says so", () => {
     expect(askLinesFor(app.db, bob).some((l) => l.kind === "review")).toBe(
       false,
     );
-    expect(await page(bobCookie, "/board")).not.toContain('id="review-waits"');
+    expect(await page(bobCookie, "/board")).not.toContain("No reviewer");
     expect((await now(bobRo)).some((r) => r.why === "review")).toBe(false);
   });
 
@@ -197,7 +197,7 @@ describe("an agent pull that waits for a person's review says so", () => {
 
   test("the board and the autonomy settings say so", async () => {
     const board = await page(aliceCookie, "/board");
-    expect(board).toContain('id="review-waits"');
+    expect(board).toContain('<details id="notes-list" class="quiet-details">');
     expect(board).toContain("No reviewer: agent pulls wait for you");
     expect(board).toContain("<b>1</b> waiting since");
     const settings = await page(aliceCookie, "/alice/engine/settings");

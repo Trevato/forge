@@ -17,7 +17,7 @@
 import { sentinelNotice } from "../../crew/sentinel.ts";
 import { appsForRepos, type AppRecord } from "../../core/apps.ts";
 import { askMeasure } from "../../core/ask_ledger.ts";
-import { reviewersOf, waitsForPerson } from "../../crew/review.ts";
+import { declinedWaits, reviewWaits } from "../../actions/owner_waits.ts";
 import { tokenReturns } from "../../core/returns.ts";
 import { forgeVitals, needLine } from "../../actions/health.ts";
 import { returnsRepos } from "../../actions/returns.ts";
@@ -67,11 +67,9 @@ import {
   autonomyStatus,
   holdWords,
   plannerHold,
-  plannerDeclines,
   startOfTodayUtc,
-  truncateAtWord,
 } from "../../crew/autonomy.ts";
-import { parkedTwice } from "../../crew/parks.ts";
+import { distinct, notesRegion, type Note } from "./board-notes.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase, signInFirst } from "../chrome.ts";
 import { boardJs, liveRegionsJs } from "../client.ts";
@@ -261,15 +259,15 @@ export function boardPage(ctx: Ctx): Response {
       >
       <time class="num small muted" id="board-clock"></time>
     </header>
-    <div class="stack">
-      ${forgeStrip(ctx)} ${declinedStrip(ctx, scope)} ${reviewStrip(ctx, scope)}
-      ${asksStrip(ctx)}
-      ${returnsStrip(ctx, scope)}
-      ${windowsStrip(ctx)}
-    </div>
+    ${boardNotes(ctx, scope)}
     <div class="board-grid">
       ${working(ctx, scope)} ${landed(ctx, scope)} ${decided(ctx, scope)}
       ${today(ctx, scope)}
+    </div>
+    <div class="stack">
+      ${asksStrip(ctx)}
+      ${returnsStrip(ctx, scope)}
+      ${windowsStrip(ctx)}
     </div>
   </div>`;
   return page({
@@ -360,19 +358,11 @@ export function bigRedirect(ctx: Ctx): Response {
 
 // ---- the forge ----
 
-/** The sentinel's open findings, a link to them; nothing when there are none. */
-function sentinelSpan(app: Ctx["app"]): Html {
-  const n = sentinelNotice(app.db);
-  if (n === null) return html``;
-  return html`<a data-need id="sentinel" href="${n.href}">${dot("attn")} ${n.text}</a>`;
-}
-
 /**
- * The forge's health as one line, for a site admin only: *All fine*, or
- * each thing that needs them. A live region of its own; nobody else gets
- * the element or pays for the reads.
+ * The forge's health as notes, for a site admin only: each thing that needs
+ * them, and the lane when checks are queued. Nobody else pays for the reads.
  */
-function forgeStrip(ctx: Ctx): Html | null {
+function forgeNotes(ctx: Ctx): { notes: Note[]; ok: boolean } | null {
   if (!ctx.auth.user?.isAdmin) return null;
   const v = forgeVitals(ctx.app);
   const fh = forgeHealth();
@@ -382,75 +372,49 @@ function forgeStrip(ctx: Ctx): Html | null {
   const others = fh.incidents.filter((i) => !said(`${i.key}: ${i.message}`));
   const ok = v.ok && fh.ok && verdict === undefined;
   const lane = laneLine(v.lane);
-  return html`<div
-    class="bar small muted"
-    id="forge"
-    data-live="run.queued,run.started,run.finished,app.*"
-    data-ok="${ok ? "yes" : "no"}"
-    data-rollout="${fh.rollout.state}"
-    role="status"
-  >
-    ${sentinelSpan(ctx.app)}
-    ${rollout === null || said(rollout) ? "" : html`<span data-need>${dot("attn")} ${rollout}</span>`}
-    ${verdict === undefined ? "" : html`<span data-need>${dot("attn")} ${verdictLine(verdict)}</span>`}
-    ${others.map((i) => html`<span data-need>${dot("attn")} ${i.key}: ${i.message}</span>`)}
-    ${lane === null ? "" : html`<span>Lane: ${lane}</span>`}
-    ${
-      ok
-        ? html`<span>${dot("success")} All fine</span>`
-        : v.degraded.map(
-            (d) =>
-              html`<a data-need href="${d.href}">${dot("attn")} ${needLine(d)}</a>`,
-          )
-    }
-  </div>`;
+  const sentinel = sentinelNotice(ctx.app.db);
+  const need = (key: string, line: Html): Note => ({ key, need: true, line });
+  const notes: Note[] = [
+    ...(sentinel === null
+      ? []
+      : [need("sentinel", html`<a data-need id="sentinel" href="${sentinel.href}">${dot("attn")} ${sentinel.text}</a>`)]),
+    ...(rollout === null || said(rollout)
+      ? []
+      : [need("rollout", html`<span data-need>${dot("attn")} ${rollout}</span>`)]),
+    ...(verdict === undefined
+      ? []
+      : [need("verdict", html`<span data-need>${dot("attn")} ${verdictLine(verdict)}</span>`)]),
+    ...others.map((i) => need(`incident:${i.key}`, html`<span data-need>${dot("attn")} ${i.key}: ${i.message}</span>`)),
+    ...(ok
+      ? []
+      : v.degraded.map((d) =>
+          need(`degraded:${d.cause}`, html`<a data-need href="${d.href}">${dot("attn")} ${needLine(d)}</a>`),
+        )),
+    ...(lane === null ? [] : [{ key: "lane", need: false, line: html`<span>Lane: ${lane}</span>` }]),
+  ];
+  return { notes, ok };
 }
 
 // ---- agent pulls that wait for a person's review ----
 
-/**
- * One line per autonomous app whose agent pulls wait for a person's review
- * (#597): "No reviewer: agent pulls wait for you" when its crew has none,
- * and how many wait and since when — a lapsed review or no reviewer, never
- * a silent hold. Owner facts only; absent when nothing waits and every
- * autonomous app has its reviewer.
- */
-function reviewStrip(ctx: Ctx, scope: BoardScope): Html | null {
-  const db = ctx.app.db;
-  const repos = scope.repos.filter(
-    (r) => scope.ownerFacts.has(r.id) && r.autonomy === "autonomous",
+/** The review waits (#597) as notes: owner facts only, one per app. */
+function reviewNotes(ctx: Ctx, scope: BoardScope): Note[] {
+  const owned = scope.repos.filter((r) => scope.ownerFacts.has(r.id));
+  return reviewWaits(ctx.app.db, owned).flatMap((w): Note[] =>
+    w.kind !== "review"
+      ? []
+      : [
+          {
+            key: `review:${w.repo.id}`,
+            need: true,
+            line: html`<a data-need href="/asks"
+              >${dot("attn")} <b>${w.repo.name}</b>: ${w.none ? "No reviewer: agent pulls wait for you" : "agent pulls wait for your review"}${w.waiting === 0 || w.since === null
+                ? null
+                : html` · <b>${w.waiting}</b> waiting since ${w.since.slice(0, 10)}`}</a
+            >`,
+          },
+        ],
   );
-  if (repos.length === 0) return null;
-  const ids = db
-    .query<{ id: string }, string[]>(
-      `SELECT issue.id AS id FROM issue JOIN user ON user.id = issue.author_id
-       WHERE issue.kind = 'pull' AND issue.state = 'open' AND user.is_agent = 1
-         AND issue.repo_id IN (${repos.map((_, i) => `?${i + 1}`).join(",")})`,
-    )
-    .all(...repos.map((r) => r.id))
-    .map((r) => r.id);
-  const pulls = joinMany(db, [...getIssuesByIds(db, ids).values()]);
-  const lines = repos.flatMap((repo) => {
-    const waits = pulls
-      .filter((p) => p.repoId === repo.id)
-      .flatMap((p) => {
-        const w = waitsForPerson(db, repo.id, p);
-        return w === undefined ? [] : [w];
-      });
-    const none = reviewersOf(db, repo.id).length === 0;
-    if (!none && waits.length === 0) return [];
-    const oldest = waits.map((w) => w.since).sort()[0];
-    return [
-      html`<a class="muted small" href="/asks"
-        ><b>${repo.name}</b>: ${none ? "No reviewer: agent pulls wait for you" : "agent pulls wait for your review"}${waits.length === 0
-          ? null
-          : html` · <b>${waits.length}</b> waiting since ${oldest!.slice(0, 10)}`}</a
-      >`,
-    ];
-  });
-  return lines.length === 0
-    ? null
-    : html`<div class="stack stack-tight" id="review-waits">${lines}</div>`;
 }
 
 // ---- what asked you, and what came of it ----
@@ -519,72 +483,54 @@ function returnsStrip(ctx: Ctx, scope: BoardScope): Html | null {
 
 // ---- the planner, waiting for a person ----
 
-/** An issue's title and a park's reason on the board: one clause each, cut at a word. */
-const TITLE_MAX = 64;
-const REASON_MAX = 96;
-
 /**
- * One line per app whose planner declined the direction: its last words
- * and a box to answer them, which is a comment on the direction issue —
- * the word `planIfThin` waits for. And one line per issue a crew parked
- * twice and handed to its planner (`crew/parks.ts`): why, and a link to
- * the issue, where the planner answers; it stays until the issue is split,
- * replaced or deferred. Only for apps whose owner facts the viewer may
- * see; nothing at all when no planner is waiting and none holds an issue.
+ * One note per app whose planner declined the direction: that it waits for
+ * the owner, a link to the run that declined (where the words are) and a
+ * box to answer it: a comment on the direction issue. Only
+ * for apps whose owner facts the viewer may see. An issue the crew parked
+ * twice is the planner's business and is not here (it is on the map).
  */
-function declinedStrip(ctx: Ctx, scope: BoardScope): Html | null {
+function declinedNotes(ctx: Ctx, scope: BoardScope): Note[] {
   const owned = scope.repos.filter((r) => scope.ownerFacts.has(r.id));
-  const declines = plannerDeclines(ctx.app.db, owned);
-  const parked = parkedTwice(ctx.app.db, owned);
-  if (declines.length === 0 && parked.length === 0) return null;
-  return html`<div
-    class="stack"
-    id="declined"
-    data-live="run.queued,run.started,run.finished,issue.*,pull.*"
-    role="status"
-  >
-    ${declines.map((d) => {
-      const base = `/${d.repo.ownerName}/${d.repo.name}`;
-      return html`<form
-        class="card"
-        data-tone="attn"
-        method="post"
-        action="${base}/issues/${d.issue.number}/comments"
+  return declinedWaits(ctx.app.db, owned).flatMap((d) => d.kind !== "declined" ? [] : [{
+    key: `declined:${d.repo.id}`,
+    need: true,
+    line: html`<form
+      class="edit-row"
+      data-need
+      method="post"
+      action="${repoBase(d.repo)}/issues/${d.issue.number}/comments"
+    >
+      <span class="grow"
+        >${dot("attn")} <b>${d.repo.name}</b>: the planner declined the direction
+        and waits for you — <a href="${repoBase(d.repo)}/runs/${d.runId}">why</a></span
       >
-        <div class="edit-row">
-          <span class="grow"
-            ><b>${d.repo.name}</b>: the planner declined the direction and waits
-            for you. <q>${d.words}</q></span
-          >
-          <input type="hidden" name="back" value="board" />
-          <input
-            class="input"
-            name="body"
-            required
-            aria-label="Answer the planner on #${d.issue.number}"
-            placeholder="Answer the planner"
-          />
-          <button class="btn" data-variant="primary" type="submit">Answer</button>
-        </div>
-      </form>`;
-    })}
-    ${parked.map((issue) => {
-      const repo = scope.byId.get(issue.repoId)!;
-      return html`<div class="card" data-tone="attn" data-parked="">
-        <div class="edit-row">
-          <span class="grow"
-            ><b>${repo.name}</b>: the crew parked #${issue.number} twice and
-            handed it to the planner —
-            ${truncateAtWord(issue.title, TITLE_MAX)}.
-            ${issue.reasons.map(
-              (reason) => html`<q>${truncateAtWord(reason, REASON_MAX)}</q> `,
-            )}</span
-          >
-          <a class="btn" href="${repoBase(repo)}/issues/${issue.number}">Open</a>
-        </div>
-      </div>`;
-    })}
-  </div>`;
+      <input type="hidden" name="back" value="board" />
+      <input
+        class="input"
+        name="body"
+        required
+        aria-label="Answer the planner on #${d.issue.number}"
+        placeholder="Answer the planner"
+      />
+      <button class="btn" type="submit">Answer</button>
+    </form>`,
+  }]);
+}
+
+/** Every note for this viewer, as the one live region under the title. */
+function boardNotes(ctx: Ctx, scope: BoardScope): Html {
+  const forge = forgeNotes(ctx);
+  const notes = distinct([
+    ...(forge?.notes ?? []),
+    ...declinedNotes(ctx, scope),
+    ...reviewNotes(ctx, scope),
+  ]);
+  return notesRegion(notes, {
+    fine: forge !== null && forge.ok,
+    live: "run.queued,run.started,run.finished,issue.*,pull.*,app.*",
+    ok: forge === null ? null : forge.ok,
+  });
 }
 
 // ---- the subscriptions' windows ----
@@ -1059,6 +1005,10 @@ export const boardCss = /* css */ `
 @layer components {
 .board { --pad: clamp(16px, 2.2vw, 32px); display: flex; flex-direction: column; min-height: 100dvh; }
 .board > header, .board > .stack { padding: 12px var(--pad) 0; }
+.board > #notes { padding: 8px var(--pad) 0; }
+#notes ul { list-style: none; margin: 4px 0 0; padding: 0; max-height: 30dvh; overflow: auto; }
+#notes li > * { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-height: 44px; overflow-wrap: anywhere; }
+#notes li > a { display: block; padding-block: 12px; min-height: 0; }
 .board #board-live { display: inline-flex; align-items: center; }
 .board #board-clock { min-width: 5ch; text-align: right; }
 .board [data-started] { min-width: 7ch; text-align: right; }
@@ -1069,7 +1019,6 @@ export const boardCss = /* css */ `
 .board-region .row-lead img { display: block; border: 1px solid var(--border); border-radius: 4px; object-fit: cover; object-position: top; }
 .board-region .row-main > meter { margin-top: 4px; }
 .board [data-window] > meter { width: 56px; }
-.board[data-wall] #declined :is(.input, .btn) { display: none; }
 .spend-table { margin-top: 8px; }
 .spend-table caption { text-align: left; color: var(--muted-fg); }
 .spend-totals { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 8px 0 0; }
@@ -1090,5 +1039,6 @@ export const boardCss = /* css */ `
 .board[data-focus] .board-region > * { zoom: 1.3; }
 .board[data-wall] .board-region > *, .board[data-wall] > .stack { zoom: 1.4; }
 .board[data-wall] { cursor: none; }
+.board[data-wall] #notes :is(.input, .btn) { display: none; }
 }
 `;

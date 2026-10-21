@@ -468,7 +468,7 @@ describe("the board's forge strip", () => {
 
   test("an admin reads All fine; a stuck run becomes a linked sentence; a non-admin sees nothing", async () => {
     const fine = await board("root");
-    expect(fine).toMatch(/id="forge"\s+data-live="run\.queued,run\.started,run\.finished,app\.\*"/);
+    expect(fine).toMatch(/id="notes"\s+data-live="[^"]*app\.\*"\s+data-ok="yes"/);
     expect(fine).toContain("All fine");
 
     const made = await createRepo(app, admin, { name: "stuck" });
@@ -485,7 +485,7 @@ describe("the board's forge strip", () => {
     expect(stuck).toContain(`href="/root/stuck/runs/${run.id}"`);
 
     const other = await board("bob");
-    expect(other).not.toContain('id="forge"');
+    expect(other).not.toContain("data-ok");
     expect(other).not.toContain("All fine");
     expect(other).not.toContain("stuck.");
   });
@@ -560,6 +560,39 @@ describe("the board's forge strip", () => {
       expect(forgeNeeds(app, admin)).toContain("held: preflight refused 1.2");
       writeFileSync(join(guard, "status.json"), JSON.stringify({ incidents: {} }));
       expect(await board("root")).toContain("All fine");
+    } finally {
+      delete process.env["FORGE_GUARD_DIR"];
+      rmSync(guard, { recursive: true, force: true });
+    }
+  });
+
+  test("eight notes fold into one closed line; the panels come first and nothing else sits above them", async () => {
+    const guard = mkdtempSync(join(tmpdir(), "forge-board-guard-"));
+    process.env["FORGE_GUARD_DIR"] = guard;
+    try {
+      const incidents = Object.fromEntries(
+        Array.from({ length: 8 }, (_, i) => [`cause${i}`, `trouble ${i} <raw words>`]),
+      );
+      writeFileSync(join(guard, "status.json"), JSON.stringify({ incidents }));
+      writeFileSync(join(guard, "checkedAt"), new Date().toISOString());
+      const text = await board("root");
+      const top = text.slice(text.indexOf('<div class="board"'), text.indexOf('class="board-grid"'));
+      // Closed by default; one summary, counted.
+      expect(top).toMatch(/<details id="notes-list" class="quiet-details">/);
+      expect(top).not.toMatch(/<details[^>]*\sopen/);
+      expect(top).toMatch(/<summary[^>]*>\s*\d+ notes · <span[^>]*>\s*<span\s+class="dot"\s+data-tone="attn"\s*><\/span> \d+ need you<\/span>\s*<\/summary>/);
+      expect(top.match(/<li>/g)?.length).toBeGreaterThanOrEqual(8);
+      expect(top).toContain("trouble 7 &lt;raw words&gt;");
+      // The title and the notes are all that precede the panels.
+      expect(top).not.toContain('id="returns-line"');
+      expect(top).not.toContain('id="asks-measure"');
+      expect(top).not.toContain('id="windows"');
+      expect(text.indexOf('id="notes"')).toBeLessThan(text.indexOf('id="working"'));
+      // Notes wrap rather than clip, and the summary is a real touch target.
+      expect(boardCss).not.toMatch(/#notes li[^\n]*nowrap/);
+      expect(boardCss).not.toMatch(/#notes summary \{/);
+      // No stored state: the first paint is the only paint.
+      expect(text).not.toContain("localStorage");
     } finally {
       delete process.env["FORGE_GUARD_DIR"];
       rmSync(guard, { recursive: true, force: true });

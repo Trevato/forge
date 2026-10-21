@@ -11,6 +11,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
+import { createForgeApp } from "../src/tui/forge.ts";
+import { dashboardScreen } from "../src/tui/screens/dashboard.ts";
+import { headlessTerminal } from "../src/tui/term/terminal.ts";
+import { settleApp } from "./helpers/tui.ts";
+import { boardCss } from "../src/web/pages/board.ts";
+import { liveRegionsJs } from "../src/web/client.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp as insertApp } from "../src/core/apps.ts";
@@ -179,10 +185,36 @@ describe("the planner declined, waiting for a person", () => {
     expect(board).toContain(
       "the planner declined the direction and waits for you",
     );
-    expect(board).toContain("the direction is already done");
+    // One line linking the run, where the words are, with the answer box.
+    expect(board).not.toContain("the direction is already done");
+    expect(board).toContain(`href="/alice/garden/runs/${runId}"`);
     expect(board).toContain(
       `action="/alice/garden/issues/${direction.number}/comments"`,
     );
+    expect(board).toContain('name="back" value="board"');
+    // The wall board has no pointer or keys: the box and button are hidden there.
+    expect(boardCss).toMatch(/\[data-wall\] #notes :is\(\.input, \.btn\) \{ display: none; \}/);
+    // A live swap never wipes words a person has typed in a box.
+    expect(liveRegionsJs).toContain("input.input, textarea");
+    // The terminal's first screen says the same, one line.
+    const shown = async (user: User): Promise<string> => {
+      const terminal = headlessTerminal(160, 30);
+      const { app: tui, session } = createForgeApp(
+        app,
+        { sshUsername: user.username, remoteAddress: "127.0.0.1", fingerprint: "SHA256:test", user },
+        { terminal, exitHooks: false },
+      );
+      tui.start();
+      tui.ctx.push(dashboardScreen(session, tui.ctx));
+      await settleApp(tui);
+      const text = tui.screen.toText();
+      tui.stop?.();
+      return text;
+    };
+    expect(await shown(alice)).toContain(
+      `garden: the planner declined the direction and waits for you (issue #${direction.number})`,
+    );
+    expect(await shown(bob)).not.toContain("the planner declined");
     const asks = await page(aliceCookie, "/asks");
     expect(asks).toContain("The planner declined the direction");
     expect(asks).toContain(

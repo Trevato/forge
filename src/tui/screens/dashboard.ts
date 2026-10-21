@@ -17,6 +17,7 @@
 import { protectionNotice } from "../../kernel/protection.ts";
 import { holdWords, plannerHold } from "../../crew/autonomy.ts";
 import { forgeLane, forgeNeeds } from "../../actions/health.ts";
+import { ownerWaits, waitLine, withMore } from "../../actions/owner_waits.ts";
 import { forgeHealth } from "../../kernel/guard.ts";
 import { coveredByVerdict, forgeVerdict, verdictLine } from "../../kernel/guard_verdict.ts";
 import { clientAppRows } from "../../core/client-apps.ts";
@@ -53,6 +54,7 @@ import {
   withoutArchived,
   type Repo,
   getRepoById,
+  ownerFactRepoIds,
 } from "../../core/repos.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -157,6 +159,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   /** Why planning is paused, for the autonomous apps where it is; as on the board. */
   let holds = new Map<string, string>();
   let forge: string[] | undefined;
+  /** What the crews wait on this person for, one line each, as the board's notes say it. */
+  let waits: string[] = [];
   /** A client's apps, one sentence each on whether its agents work or wait (#1812). */
   let clientLines: string[] = [];
   /** The check lane, as the board's strip says it; null when nothing is queued. */
@@ -228,6 +232,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
           ...forge.filter((line) => !coveredByVerdict(line, verdict, fh)),
         ];
     }
+    const facts = f.user === undefined ? new Set<string>() : ownerFactRepoIds(f.db, all, f.user);
+    waits = ownerWaits(f.db, all.filter((r) => facts.has(r.id))).map(waitLine);
     lane = forgeLane(f.app, f.user);
     decider = deciderLine(f.app, f.user);
     const commit = running().commit;
@@ -794,7 +800,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         body = rest!;
       }
       if (forge !== undefined) {
-        const lines = forge.length === 0 ? ["All fine"] : forge.slice(0, 3);
+        const lines = forge.length === 0 ? ["All fine"] : withMore(forge, 3);
         if (lane !== null) lines.push(`Lane: ${lane}`);
         const [strip, rest] = split(body, "v", [len(lines.length), fill(1)]);
         lines.forEach((line, i) =>
@@ -805,6 +811,14 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
             style(forge!.length === 0 ? c.mutedFg : c.fg, c.bg),
             strip!.x + strip!.w,
           ),
+        );
+        body = rest!;
+      }
+      if (waits.length > 0) {
+        const lines = withMore(waits, 3);
+        const [strip, rest] = split(body, "v", [len(lines.length), fill(1)]);
+        lines.forEach((line, i) =>
+          s.text(strip!.x, strip!.y + i, truncate(line, strip!.w), style(c.fg, c.bg), strip!.x + strip!.w),
         );
         body = rest!;
       }

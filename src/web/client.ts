@@ -2008,6 +2008,9 @@ export const liveRegionsJs = /* js */ `
       if (mine.querySelector('input[type=checkbox]:checked')) return;
       var active = document.activeElement;
       if (active && mine.contains(active) && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+      // Nor a box with words already typed in it, focused or not.
+      var typed = Array.prototype.some.call(mine.querySelectorAll('input.input, textarea'), function (i) { return i.value !== ''; });
+      if (typed) return;
       if (same(mine.innerHTML, theirs.innerHTML)) return;
       // A disclosure the reader opened stays open across the swap.
       var opened = Array.prototype.map.call(mine.querySelectorAll('details[id][open]'), function (d) { return d.id; });

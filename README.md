@@ -268,6 +268,20 @@ An app made from the template ships the same beacon as `static/beacon.js`, posti
 
 The `app_vital` board source (`src/boards/sources.ts`) charts those reports: one row per app per day with `app` (the app's id), `day`, `load_p75`, `inp_p75` (ms) and `reports` (rows kept that day), the percentiles nearest-rank per app per day as `reach` does. `max` or `avg` over several days summarises daily percentiles, not the percentile of the whole range. Its rows belong to the app's repository, so a query sees only the repos in its scope. Today boards query with `repoIds: "all"` (`src/web/pages/boards.ts`) and only a site admin reaches them; no non-admin scope exists, so nothing yet applies the settings page's `canAdmin` gate per repository, and whoever builds one must. Days older than the 90-day trim are gone, not zero. The slug and the visitor hash are not columns. No dependency was added. Left out: a starting board for it; pick `app_vital` in the `/boards` source picker.
 
+## The board's notes
+
+`/board` opens on its panels. Everything that is not a panel — the forge's
+health (admins), a planner that declined and waits for you, agent pulls that
+wait for your review — is folded into one quiet line under the title, "3 notes
+· 2 need you". It is closed by default; click it (or Tab to it and press
+Enter) to open the list in place, and it stays open across live updates. A
+declined planner has its answer box right in its note. The crew's own
+housekeeping (an issue parked twice) is not a note; it is on `/map`. The
+terminal's first screen says the declined and review-wait notes too, one line
+each, under the forge strip; a list cut to three says "+N more".
+The line is the shared `.quiet-details` disclosure, and the "need you" count
+carries the attention dot.
+
 ## Live in the terminal
 
 `ssh` into the forge and you get the whole thing — repositories, code, issues,
