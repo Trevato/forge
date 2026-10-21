@@ -1506,21 +1506,25 @@ export function apiRoutes(router: Router<Handler>): void {
   };
 
   router.add("GET", "/api/v1/boards", async (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = boardsAdmin(ctx);
     if (denied) return denied;
-    const listed = await listAllBoards(ctx.app, ctx.auth.user);
-    return listed.ok
-      ? json({ boards: listed.value.map((b) => ({ slug: b.slug, ...b.board })) })
-      : notFound();
+    const listed = await timePhaseAsync(ctx.request, "boards", () => listAllBoards(ctx.app, ctx.auth.user));
+    return timePhase(ctx.request, "render", () =>
+      listed.ok
+        ? json({ boards: listed.value.map((b) => ({ slug: b.slug, ...b.board })) })
+        : notFound());
   });
 
   // The signed-in admin's pins for home: GET lists them in order, POST
   // {op: pin|unpin|move, slug, title, by?} changes them. Above `:slug`.
   router.add("GET", "/api/v1/boards/pins", async (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = boardsAdmin(ctx);
     if (denied) return denied;
-    const listed = await listPinnedPanels(ctx.app, ctx.auth.user);
-    return listed.ok ? json({ pins: listed.value.map((p) => ({ slug: p.slug, title: p.title, panel: p.panel })) }) : notFound();
+    const listed = await timePhaseAsync(ctx.request, "boards", () => listPinnedPanels(ctx.app, ctx.auth.user));
+    return timePhase(ctx.request, "render", () =>
+      listed.ok ? json({ pins: listed.value.map((p) => ({ slug: p.slug, title: p.title, panel: p.panel })) }) : notFound());
   });
 
   router.add("POST", "/api/v1/boards/pins", async (ctx) => {
@@ -1549,10 +1553,12 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/boards/:slug", async (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = boardsAdmin(ctx);
     if (denied) return denied;
-    const shown = await showBoard(ctx.app, ctx.auth.user, ctx.params.slug!);
-    return shown.ok ? json({ slug: ctx.params.slug, ...shown.value }) : notFound();
+    const shown = await timePhaseAsync(ctx.request, "boards", () => showBoard(ctx.app, ctx.auth.user, ctx.params.slug!));
+    return timePhase(ctx.request, "render", () =>
+      shown.ok ? json({ slug: ctx.params.slug, ...shown.value }) : notFound());
   });
 
   // One panel's data (`boards/panel_data.ts`): `:id` is its place on the
