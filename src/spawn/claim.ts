@@ -28,7 +28,9 @@ import {
   OWNERS_TEAM,
   removeTeamMember,
 } from "../core/orgs.ts";
-import type { User } from "../core/users.ts";
+import type { Credential } from "../auth/webauthn.ts";
+import { addPasskey } from "../core/passkeys.ts";
+import { getUserByName, isActive, type User } from "../core/users.ts";
 import { sha256 } from "../kernel/hash.ts";
 
 const KEY = "spawn_claim";
@@ -227,6 +229,75 @@ export function unburnClaim(db: Database, orgId: string, token: string): void {
  * Owners and, unless the spawner asked to keep access, the spawner leaves.
  * The claim page and the first-admin code (`core/first_admin.ts`) both end here.
  */
+/**
+ * The spawn-made founder a claim may take over, when the name asked for is
+ * its name: the account `copyInto` made under the spawner's own username,
+ * so the spawner could never claim their child as themselves. Only while
+ * it is untouched — the Owners team's first member, a person, active, with
+ * no password, passkey or token — and only when the spawner is leaving
+ * (`keepAccess` false): an account the spawner keeps is theirs, not the
+ * claimant's to take.
+ */
+export function founderToTake(
+  db: Database,
+  spawned: Spawned,
+  username: string,
+): User | undefined {
+  if (spawned.keepAccess) return undefined;
+  const user = getUserByName(db, username);
+  if (user === undefined || user.kind !== "user" || !isActive(user)) return undefined;
+  const team = listTeams(db, spawned.org.id).find((t) => t.name === OWNERS_TEAM);
+  const founder = team === undefined ? undefined : listTeamMembers(db, team.id)[0];
+  if (founder?.id !== user.id) return undefined;
+  return untouched(db, user.id) ? user : undefined;
+}
+
+function untouched(db: Database, userId: string): boolean {
+  return (
+    db
+      .query<{ n: number }, [string]>(
+        `SELECT count(*) AS n FROM user u WHERE u.id = ?1 AND u.password_hash = '' AND u.is_agent = 0
+           AND NOT EXISTS (SELECT 1 FROM passkey WHERE user_id = ?1)
+           AND NOT EXISTS (SELECT 1 FROM token WHERE user_id = ?1)`,
+      )
+      .get(userId)!.n === 1
+  );
+}
+
+/**
+ * The claimant becomes the founder: its credential (a password hash, or a
+ * passkey with an empty hash), its email, and admin, in one transaction
+ * that re-checks the account is still untouched. "gone" when it is not
+ * (or the passkey would not go on); "email_taken" when another account
+ * holds the address.
+ */
+export function takeFounder(
+  db: Database,
+  userId: string,
+  input: { readonly hash: string; readonly email: string; readonly credential?: Credential },
+): "ok" | "gone" | "email_taken" {
+  const take = db.transaction((): boolean => {
+    if (!untouched(db, userId)) return false;
+    db.query("UPDATE user SET password_hash = ?2, email = ?3, is_admin = 1 WHERE id = ?1").run(
+      userId,
+      input.hash,
+      input.email,
+    );
+    if (input.credential !== undefined && !addPasskey(db, userId, "Passkey", input.credential).ok)
+      throw new PasskeyRefused();
+    return true;
+  });
+  try {
+    return take() ? "ok" : "gone";
+  } catch (error) {
+    if (error instanceof PasskeyRefused) return "gone";
+    if (error instanceof Error && /UNIQUE constraint failed/.test(error.message)) return "email_taken";
+    throw error;
+  }
+}
+
+class PasskeyRefused extends Error {}
+
 export function handOver(db: Database, spawned: Spawned, userId: string): void {
   const team = listTeams(db, spawned.org.id).find((t) => t.name === OWNERS_TEAM);
   if (team === undefined) return;

@@ -42,9 +42,11 @@ import { createSession } from "../../core/sessions.ts";
 import { createUser, discardFreshUser, getUserByName, type User } from "../../core/users.ts";
 import {
   burnClaim,
+  founderToTake,
   handOver,
   readClaim,
   spawnedOrg,
+  takeFounder,
   unburnClaim,
   type ClaimState,
   type Spawned,
@@ -247,11 +249,19 @@ export async function claimFragmentPage(ctx: Ctx): Promise<Response> {
  * Whether a name and address are fit for the first admin; else the words.
  * The address is optional unless a passkey is being made.
  */
-function problems(ctx: Ctx, username: string, email: string, needEmail: boolean): Errors {
+function problems(
+  ctx: Ctx,
+  spawned: Spawned,
+  username: string,
+  email: string,
+  needEmail: boolean,
+): Errors {
   const errors: Errors = {};
   if (!USERNAME.test(username))
     errors.username = "Usernames are letters, digits, dots, dashes.";
-  else if (getUserByName(ctx.app.db, username))
+  // The spawn-made founder holds the spawner's own name; the claim may take
+  // it over (`founderToTake`), so it is not "taken" to the claimant.
+  else if (getUserByName(ctx.app.db, username) && founderToTake(ctx.app.db, spawned, username) === undefined)
     errors.username = "That username is taken.";
   if (email !== "" ? !givenEmail(email) : needEmail)
     errors.email = "That does not look like an email address.";
@@ -275,7 +285,7 @@ export async function claimOptions(ctx: Ctx): Promise<Response> {
   if (state !== "ok")
     return refuse(state === "unknown" ? 404 : 410, state === "unknown" ? "This is not a claim link." : `This link is ${state === "owned" ? "already claimed" : state}.`);
   const username = str(data.username).trim();
-  const bad = problems(ctx, username, str(data.email).trim(), true);
+  const bad = problems(ctx, spawned, username, str(data.email).trim(), true);
   const first = bad.username ?? bad.email;
   if (first !== undefined) return refuse(422, first);
   return json(makeOptions(ctx, "claim", username));
@@ -312,7 +322,7 @@ export async function claimSubmit(ctx: Ctx): Promise<Response> {
     );
   const password = typeof form.get("password") === "string" ? (form.get("password") as string) : "";
   const withKey = field(form, "attestationObject") !== "";
-  const errors = problems(ctx, values.username, values.email.trim(), withKey);
+  const errors = problems(ctx, spawned, values.username, values.email.trim(), withKey);
   if (!withKey && password.length < MIN_SIGNUP_PASSWORD)
     errors.password = `Passwords need at least ${MIN_SIGNUP_PASSWORD} characters.`;
   else if (!withinPasswordCap(password)) errors.password = PASSWORD_TOO_LONG;
@@ -325,12 +335,34 @@ export async function claimSubmit(ctx: Ctx): Promise<Response> {
     credential = key.value;
   }
 
+  const email = values.email.trim() === "" ? noEmail(values.username) : values.email.trim();
+  // Hashed before the link is spent: nothing is awaited between the burn
+  // and the takeover.
+  const founder = founderToTake(ctx.app.db, spawned, values.username);
+  const founderHash =
+    founder === undefined || credential !== undefined ? "" : await Bun.password.hash(password, "argon2id");
   // Spent first, in one statement: of two people on one link, one wins.
   const spent = burnClaim(ctx.app.db, orgId, token);
   if (spent.state !== "ok") return dead(ctx, spent.state);
+  if (founder !== undefined) {
+    const taken = takeFounder(ctx.app.db, founder.id, {
+      hash: founderHash,
+      email,
+      ...(credential === undefined ? {} : { credential }),
+    });
+    if (taken !== "ok") {
+      unburnClaim(ctx.app.db, orgId, token);
+      return again(
+        taken === "email_taken"
+          ? { email: "That email already has an account." }
+          : { username: "That username is taken." },
+      );
+    }
+    return claimed(ctx, spawned, founder);
+  }
   const made = await createUser(ctx.app.db, {
     username: values.username,
-    email: values.email.trim() === "" ? noEmail(values.username) : values.email.trim(),
+    email,
     ...(credential === undefined ? { password } : {}),
     isAdmin: true,
     // The one-time claim link the owner handed out is the proof.
@@ -352,14 +384,19 @@ export async function claimSubmit(ctx: Ctx): Promise<Response> {
     unburnClaim(ctx.app.db, orgId, token);
     return again({ passkey: PASSKEY_WORDS.taken });
   }
+  return claimed(ctx, spawned, made.value);
+}
+
+/** The claimant is in: an owner, signed in, sent home. */
+function claimed(ctx: Ctx, spawned: Spawned, user: User): Response {
   // As the page said: unless the spawner kept access, they leave now.
-  handOver(ctx.app.db, spawned, made.value.id);
+  handOver(ctx.app.db, spawned, user.id);
   ctx.app.log.info("forge claimed", {
     org: spawned.org.username,
-    user: made.value.username,
+    user: user.username,
     spawnerKeeps: spawned.keepAccess,
   });
-  const session = createSession(ctx.app.db, made.value.id);
+  const session = createSession(ctx.app.db, user.id);
   // Home: where the crew's work shows (its first-login screen is #600).
   return redirect(
     "/",
