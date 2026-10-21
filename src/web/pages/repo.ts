@@ -746,7 +746,7 @@ export async function renderCode(
           <span class="spacer"></span>
           ${finderButton()}
         </div>`
-      : html`<div class="path-head">
+      : html`<div class="bar mb">
           ${refMenu(
             o.refs,
             ref,
@@ -850,7 +850,7 @@ export function renderBlob(
     o.blob.kind === "too_large" ? "" : sizeWithTokens(o.blob.size, o.path);
   const fileHref = `${base}/blob/${encoded}/${o.path}`;
   return html`<div class="code-pane" id="code-pane" data-path="${o.path}">
-    <div class="path-head">
+    <div class="bar mb">
       ${refMenu(
         o.refs,
         o.ref,
