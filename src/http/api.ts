@@ -2682,19 +2682,24 @@ export function apiRoutes(router: Router<Handler>): void {
   // protected — the three facts a branch list is asked for. `ahead`/`behind`
   // are null when the repo has more branches than the comparison cap.
   router.add("GET", "/api/v1/repos/:owner/:name/branches", async (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const listed = await listBranches(dirOf(ctx, repo), repo.defaultBranch);
-    if (!listed.ok) return json([]);
-    return json(
-      listed.value.branches.map((b) => ({
-        name: b.name,
-        oid: b.oid,
-        isDefault: b.isDefault,
-        ahead: b.ahead,
-        behind: b.behind,
-        protected: b.isDefault && repo.protectDefault,
-      })),
+    const listed = await timePhaseAsync(ctx.request, "git", () =>
+      listBranches(dirOf(ctx, repo), repo.defaultBranch),
+    );
+    if (!listed.ok) return timePhase(ctx.request, "render", () => json([]));
+    return timePhase(ctx.request, "render", () =>
+      json(
+        listed.value.branches.map((b) => ({
+          name: b.name,
+          oid: b.oid,
+          isDefault: b.isDefault,
+          ahead: b.ahead,
+          behind: b.behind,
+          protected: b.isDefault && repo.protectDefault,
+        })),
+      ),
     );
   });
 
