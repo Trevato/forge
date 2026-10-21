@@ -43,11 +43,15 @@ describe("a child's founder holds the spawner's name", () => {
     });
 
   /** A real child, booted and served on its own, with its claim token. */
-  const child = async (name: string, keepAccess: boolean) => {
+  const child = async (name: string, keepAccess: boolean, edgeToken?: string) => {
     const made = await spawn({ name, keepAccess, dryRun: false });
     if (made.status !== 201) throw new Error(`spawn ${made.status} ${await made.text()}`);
     const body = (await made.json()) as { claimUrl: string; bodyId: string };
-    const app = createApp({ dataDir: childDirOf(parent, body.bodyId), port: 0 });
+    const app = createApp({
+      dataDir: childDirOf(parent, body.bodyId),
+      port: 0,
+      ...(edgeToken === undefined ? {} : { edgeToken }),
+    });
     await firstBoot(app);
     const servers = await serve(app);
     kids.push({ app, servers });
@@ -166,5 +170,12 @@ describe("a child's founder holds the spawner's name", () => {
     expect(res.status).toBe(422);
     expect(await res.text()).toContain("That username is taken.");
     expect(getUserByName(kid.app.db, "alice")!.email).toBe(founder.email);
+  });
+
+  test("where the platform edge signs people in, the founder's name is a login, never handed over", async () => {
+    const kid = await child("eve", false, "edge-secret-for-this-test-only");
+    const res = await kid.claim({ username: "alice", email: "alice@x.test", password: PASSWORD });
+    expect(res.status).toBe(422);
+    expect(await res.text()).toContain("That username is taken.");
   });
 });

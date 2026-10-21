@@ -261,7 +261,7 @@ function problems(
     errors.username = "Usernames are letters, digits, dots, dashes.";
   // The spawn-made founder holds the spawner's own name; the claim may take
   // it over (`founderToTake`), so it is not "taken" to the claimant.
-  else if (getUserByName(ctx.app.db, username) && founderToTake(ctx.app.db, spawned, username) === undefined)
+  else if (getUserByName(ctx.app.db, username) && founderToTake(ctx.app, spawned, username) === undefined)
     errors.username = "That username is taken.";
   if (email !== "" ? !givenEmail(email) : needEmail)
     errors.email = "That does not look like an email address.";
@@ -338,7 +338,7 @@ export async function claimSubmit(ctx: Ctx): Promise<Response> {
   const email = values.email.trim() === "" ? noEmail(values.username) : values.email.trim();
   // Hashed before the link is spent: nothing is awaited between the burn
   // and the takeover.
-  const founder = founderToTake(ctx.app.db, spawned, values.username);
+  const founder = founderToTake(ctx.app, spawned, values.username);
   const founderHash =
     founder === undefined || credential !== undefined ? "" : await Bun.password.hash(password, "argon2id");
   // Spent first, in one statement: of two people on one link, one wins.

@@ -30,6 +30,7 @@ import {
 } from "../core/orgs.ts";
 import type { Credential } from "../auth/webauthn.ts";
 import { addPasskey } from "../core/passkeys.ts";
+import { activeEdgeToken } from "../http/edge.ts";
 import { getUserByName, isActive, type User } from "../core/users.ts";
 import { sha256 } from "../kernel/hash.ts";
 
@@ -236,14 +237,19 @@ export function unburnClaim(db: Database, orgId: string, token: string): void {
  * it is untouched — the Owners team's first member, a person, active, with
  * no password, passkey or token — and only when the spawner is leaving
  * (`keepAccess` false): an account the spawner keeps is theirs, not the
- * claimant's to take.
+ * claimant's to take. Never on a forge with edge sign-in on.
  */
 export function founderToTake(
-  db: Database,
+  app: App,
   spawned: Spawned,
   username: string,
 ): User | undefined {
   if (spawned.keepAccess) return undefined;
+  // Where the platform edge signs people in, a name is a login: the
+  // spawner's edge sign-in lands on this account, so it is never handed to
+  // whoever holds the link.
+  if (activeEdgeToken(app) !== undefined) return undefined;
+  const db = app.db;
   const user = getUserByName(db, username);
   if (user === undefined || user.kind !== "user" || !isActive(user)) return undefined;
   const team = listTeams(db, spawned.org.id).find((t) => t.name === OWNERS_TEAM);
