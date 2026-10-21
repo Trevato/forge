@@ -315,23 +315,25 @@ export async function studioHome(
 function tile(entry: FrontEntry): Html {
   const { repo, state, picture } = entry;
   if (picture === undefined) return html``;
-  return html`<a class="app-tile" href="${repoBase(repo)}">
-    <img
-      class="app-tile-look"
-      src="${picture}"
-      width="${LOOK_SIZES.thumb.width}"
-      height="${LOOK_SIZES.thumb.height}"
-      alt=""
-      loading="lazy"
-    />
-    <span class="app-tile-body">
-      <span class="app-tile-name">${repo.name}</span>
-      <span class="app-tile-desc truncate" title="${repo.description}"
-        >${repo.description !== "" ? repo.description : repo.ownerName}</span
-      >
-      ${state !== undefined ? envStateBadge(state) : null}
-    </span>
-  </a>`;
+  const href = repoBase(repo);
+  return card(
+    html`<a class="look" href="${href}" tabindex="-1" aria-hidden="true"
+        ><img
+          src="${picture}"
+          width="${LOOK_SIZES.thumb.width}"
+          height="${LOOK_SIZES.thumb.height}"
+          alt=""
+          loading="lazy"
+      /></a>
+      <div class="card-body stack stack-tight">
+        <a href="${href}"><strong>${repo.name}</strong></a>
+        <span class="muted small truncate" title="${repo.description}"
+          >${repo.description !== "" ? repo.description : repo.ownerName}</span
+        >
+        ${state !== undefined ? envStateBadge(state) : null}
+      </div>`,
+    { pad: false },
+  );
 }
 
 /**

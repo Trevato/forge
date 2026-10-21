@@ -440,6 +440,14 @@ describe("the front page", () => {
     expect(body).not.toContain('href="/owner/moved"');
     // The shelf's tiles are the stranger's picture, at the thumb's size.
     expect(body).toContain('width="640"');
+    // The tiles are §5's card and look, not the page's own classes; the name
+    // still links, the picture still links, and the words are there.
+    for (const old of ["app-tile", "app-tile-body", "app-tile-desc", "app-tile-look", "app-tile-name"])
+      expect(body).not.toContain(old);
+    const shelf = body.slice(body.indexOf('class="mt app-shelf"'));
+    expect(shelf).toMatch(/<div\s+class="card"/);
+    expect(shelf).toContain('<a class="look" href="/owner/one"');
+    expect(shelf).toMatch(/<a href="\/owner\/one"><strong>one<\/strong><\/a>/);
     const json = (await (await fetch(`${base}/api/v1/front`)).json()) as any;
     expect(json.featured.repo).toBe("zed/loved");
     expect(json.featured.signals.forks).toBe(3);
