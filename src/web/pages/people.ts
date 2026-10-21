@@ -9,6 +9,7 @@ import { setRole } from "../../actions/roles.ts";
 import { GRANT_MAX_USD } from "../../core/model_grant.ts";
 import { listPeople, type Person } from "../../core/roles.ts";
 import { getUserByName, type User } from "../../core/users.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
@@ -21,7 +22,9 @@ import { accountSections } from "./origins.ts";
 export function peoplePage(ctx: Ctx): Response {
   if (!ctx.auth.user) return signInFirst(ctx);
   if (!ctx.auth.user.isAdmin) return notFoundPage(ctx);
-  const rows = listPeople(ctx.app.db);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const rows = timePhase(ctx.request, "people", () => listPeople(ctx.app.db));
+  const rendering = performance.now();
   const line = (p: Person) => {
     const role = p.role;
     const at = `/settings/people/${encodeURIComponent(p.username)}/role`;
@@ -46,7 +49,7 @@ export function peoplePage(ctx: Ctx): Response {
       <td>${act}</td>
     </tr>`;
   };
-  return page({
+  const response = page({
     ctx,
     title: "People",
     body: html`<div class="page-head"><h1>People</h1></div>
@@ -69,12 +72,15 @@ export function peoplePage(ctx: Ctx): Response {
         "Account settings",
       )}`,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 // POST /settings/people/:username/role
 export async function roleAct(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return signInFirst(ctx);
   if (!ctx.auth.user.isAdmin) return notFoundPage(ctx);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
   const username = ctx.params.username ?? "";
@@ -82,7 +88,7 @@ export async function roleAct(ctx: Ctx): Promise<Response> {
   if (role !== "member" && role !== "guest") return notFoundPage(ctx);
   const raw = field(form, "usd").trim().replace(/^\$/, "");
   const usd = raw === "" || Number(raw) === 0 ? null : /^\d{1,6}(\.\d{1,2})?$/.test(raw) ? Number(raw) : NaN;
-  const done = setRole(ctx.app, ctx.auth.user as User, username, role, usd);
+  const done = timePhase(ctx.request, "role", () => setRole(ctx.app, ctx.auth.user as User, username, role, usd));
   const back = "/settings/people";
   if (!done.ok) {
     if (done.error === "not_found" || getUserByName(ctx.app.db, username) === undefined) return notFoundPage(ctx);
