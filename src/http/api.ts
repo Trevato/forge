@@ -434,6 +434,7 @@ import { clientAddress, clientBucket } from "./peer.ts";
 import { manifestFor } from "../actions/here.ts";
 import { egressSnapshot } from "../apps/egress.ts";
 import { egressMetrics } from "../apps/egress_metrics.ts";
+import { forgeMetrics } from "../metrics/forge.ts";
 import {
   acceptReport,
   dismissReport,
@@ -4915,7 +4916,7 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/metrics", (ctx) => {
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
-    return new Response(egressMetrics(egressSnapshot()), {
+    return new Response(egressMetrics(egressSnapshot()) + forgeMetrics(ctx.app.db), {
       headers: {
         "content-type": "text/plain; version=0.0.4; charset=utf-8",
         "cache-control": "no-store",
