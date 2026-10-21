@@ -463,6 +463,9 @@ describe("browsing an origin repository on the web", () => {
     expect(one).toContain("under load");
     expect(one).toContain("seen it too");
     expect(one).toContain("view on origin");
+    expect(one).toContain('class="page-head"');
+    expect(one).not.toContain("issue-head");
+    expect(one).not.toContain("issue-meta");
 
     const pulls = await bodyOf(alice, `${browse}/pulls`);
     expect(pulls).toContain("Tighten the bolt");

@@ -110,7 +110,7 @@ export function renderCommit(
         commit.body.trim() !== "",
         () => html`<pre class="commit-body">${commit.body}</pre>`,
       )}
-      <div class="issue-meta">
+      <div class="bar small muted">
         ${commit.login
           ? originTag(
               commit.login,

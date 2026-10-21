@@ -706,6 +706,9 @@ describe("the studio, continued", () => {
     expect(changeHtml).toContain(`action="/alice/notes/pulls/${p}/comments"`);
     expect(changeHtml).toContain(`href="/alice/notes/pulls/${p}/files"`);
     expect(changeHtml).toContain('id="comment-body"');
+    expect(changeHtml).toContain('class="page-head"');
+    expect(changeHtml).not.toContain("issue-head");
+    expect(changeHtml).not.toContain("issue-meta");
     // The tabs are §5's bar, not the retired .filters wrapper.
     expect(changeHtml).not.toMatch(/class="[^"]*\bfilters\b/);
     expect(changeHtml).toContain("Conversation");

@@ -708,12 +708,12 @@ async function browseThread(
   const state: "open" | "closed" | "merged" =
     detail.pull?.mergedAt != null ? "merged" : detail.issue.state;
 
-  const body = html`<div class="issue-head">
+  const body = html`<div class="page-head">
       <h1>
         ${detail.issue.title}
         <span class="number">#${detail.issue.number}</span>
       </h1>
-      <div class="issue-meta">
+      <div class="sub bar">
         ${stateBadge(state)}
         <span
           >${detail.issue.originAuthor ?? detail.issue.authorName} opened this

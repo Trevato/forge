@@ -86,3 +86,12 @@ test("GET /:owner/:name/commit/:oid names its phases", async () => {
   for (const name of ["app", "session", "git", "highlight", "render"])
     expect(parts.find((p) => p.startsWith(`${name};`))).toMatch(/^[a-z]+;dur=\d+\.\d$/);
 });
+
+test("a commit's head draws §5's bar, not .issue-meta", async () => {
+  const body = await (await fetch(`${servers.url}/ada/engine/commit/${oid}`)).text();
+  expect(body).not.toContain("issue-meta");
+  expect(body).not.toContain("issue-head");
+  expect(body).toContain("Ada committed");
+  expect(body).toContain("Browse files");
+  expect(body).toContain(oid.slice(0, 7));
+});

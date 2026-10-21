@@ -192,9 +192,9 @@ function reviewEntry(
 export function changeHead(ctx: Ctx, repo: Repo, pull: Pull): Html {
   const who = toldBy(ctx.app.db, pull);
   const marks = marksByName(ctx.app.db, [pull.authorName, who ?? ""]);
-  return html`<div class="issue-head">
+  return html`<div class="page-head">
     <h1>${pull.title} <span class="number">#${pull.number}</span></h1>
-    <div class="issue-meta">
+    <div class="sub bar">
       ${stateBadge(
         pullState(pull),
         getIssueById(ctx.app.db, pull.id)?.closeReason === "parked",
