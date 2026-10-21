@@ -14,10 +14,8 @@ import { mayEditIssue } from "../../actions/issues.ts";
 import { marksByName } from "../../core/marks.ts";
 import { threadNote } from "../../crew/direct.ts";
 import { alreadyDone } from "../../core/done_on_main.ts";
-import type { Database } from "bun:sqlite";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { getAppByRepo } from "../../core/apps.ts";
-import { listEvents } from "../../core/events.ts";
 import { repoGraph } from "../../core/dependencies.ts";
 import { labelsFor, listLabels, type Issue } from "../../core/issues.ts";
 import { getPull, openPullsClosing, type Pull } from "../../core/pulls.ts";
@@ -74,22 +72,56 @@ import {
   type WordCtx,
 } from "./words.ts";
 
+/** Per word context, per repository: the pull each issue's merge closed. */
+const mergeClosings = new WeakMap<
+  WordCtx,
+  Map<string, Map<number, number | null>>
+>();
+
+/**
+ * Read, once for the numbers given, which pull's merge closed each of those
+ * issues (the newest `issue.closed` event by merge wins), so wording a page
+ * of tells costs one read, not one per row. `tellWord` falls back to a read
+ * of its own number for a caller that did not say its page first.
+ */
+export function knowMergeClosings(
+  wordCtx: WordCtx,
+  repoId: string,
+  numbers: readonly number[],
+): void {
+  const byRepo = mergeClosings.get(wordCtx) ?? new Map();
+  mergeClosings.set(wordCtx, byRepo);
+  const known: Map<number, number | null> = byRepo.get(repoId) ?? new Map();
+  byRepo.set(repoId, known);
+  const want = numbers.filter((n) => !known.has(n));
+  if (want.length === 0) return;
+  for (const n of want) known.set(n, null);
+  const rows = wordCtx.db
+    .query<{ number: unknown; pull: unknown }, [string, string]>(
+      `SELECT json_extract(payload, '$.number') AS number,
+              json_extract(payload, '$.pull') AS pull
+         FROM event INDEXED BY event_kind
+        WHERE repo_id = ?1 AND kind = 'issue.closed'
+          AND json_extract(payload, '$.by') = 'merge'
+          AND json_extract(payload, '$.number') IN (SELECT value FROM json_each(?2))
+        ORDER BY seq`,
+    )
+    .all(repoId, JSON.stringify(want));
+  // Oldest first, so the newest event for a number is the one left standing.
+  for (const r of rows) known.set(Number(r.number), Number(r.pull));
+}
+
 /** The pull whose merge closed this issue, from the event it left behind —
  * the same record `stateEvents` (thread.ts) reads for the timeline's own
  * "closed this" line, so this never disagrees with what the page already
  * shows. Undefined for an issue closed by hand, or still open. */
-function shippedBy(db: Database, repo: Repo, issue: Issue): Pull | undefined {
+function shippedBy(wordCtx: WordCtx, repo: Repo, issue: Issue): Pull | undefined {
   if (issue.state !== "closed") return undefined;
-  const closed = listEvents(db, {
-    repoId: repo.id,
-    kind: "issue.closed",
-    limit: 200,
-  }).find(
-    (e) => Number(e.payload.number) === issue.number && e.payload.by === "merge",
-  );
-  if (closed === undefined) return undefined;
-  const number = Number(closed.payload.pull);
-  return Number.isInteger(number) ? getPull(db, repo.id, number) : undefined;
+  knowMergeClosings(wordCtx, repo.id, [issue.number]);
+  const number = mergeClosings.get(wordCtx)?.get(repo.id)?.get(issue.number);
+  return number !== null && number !== undefined && Number.isInteger(number)
+    ? getPull(wordCtx.db, repo.id, number)
+    : undefined;
 }
 
 /**
@@ -111,7 +143,7 @@ export async function tellWord(
 ): Promise<{ word: Word; note: string } | undefined> {
   const db = wordCtx.db;
   if (issue.state === "closed") {
-    const pull = shippedBy(db, repo, issue);
+    const pull = shippedBy(wordCtx, repo, issue);
     return pull ? await pullWord(wordCtx, pull) : undefined;
   }
   if (closingPull !== undefined) return await pullWord(wordCtx, closingPull);

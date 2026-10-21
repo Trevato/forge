@@ -58,7 +58,7 @@ import { actorsFor, durationText, issuesFor, runTitleFrom } from "../pages/runs.
 import { originGlyph } from "../pages/thread.ts";
 import { changeHref, PAGE_TITLES, pageTitle, tellHref } from "./nouns.ts";
 import { tellLine, tellsAnswered } from "./branch_tell.ts";
-import { tellWord } from "./tell.ts";
+import { knowMergeClosings, tellWord } from "./tell.ts";
 import {
   pullWord,
   runWord,
@@ -354,6 +354,11 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "issues", performance.now() - at);
   at = performance.now();
   const closingPulls = openPullsClosing(db, repo.id);
+  knowMergeClosings(
+    wordCtx,
+    repo.id,
+    fetched.filter((i) => i.state === "closed").map((i) => i.number),
+  );
   notePhase(ctx.request, "closing", performance.now() - at);
   at = performance.now();
   const words = await Promise.all(
