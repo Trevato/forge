@@ -131,6 +131,22 @@ describe("migrate: after", () => {
     expect(afterChoice("delete")).toBe("leave");
   });
 
+  // Ahead of the tests that start migrations and mirror pushes: its verdict
+  // is the handler's, not whatever git work an earlier test left running.
+  test("POST /api/v1/migrate with an unknown `after` is a 400 naming the three words", async () => {
+    const token = createToken(app.db, alice.id, "api", "admin").token;
+    const res = await fetch(`http://127.0.0.1:${servers.port}/api/v1/migrate`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ source: { url: "https://github.com/octo/x" }, after: "delete" }),
+    });
+    expect(res.status).toBe(400);
+    const said = JSON.stringify(await res.json());
+    expect(said).toContain("leave");
+    expect(said).toContain("archive");
+    expect(said).toContain("mirror");
+  }, 30_000);
+
   test("/migrate offers the three choices, leaving it alone by default", async () => {
     const html = await (
       await fetch(`http://127.0.0.1:${servers.port}/migrate`, {
@@ -246,19 +262,5 @@ describe("migrate: after", () => {
     expect(getMirrorTarget(app.db, getRepo(app.db, "alice", copy)!.id)).toBeDefined();
     expect((await stop({ cookie, origin: base })).status).toBe(303);
     expect(getMirrorTarget(app.db, getRepo(app.db, "alice", copy)!.id)).toBeUndefined();
-  });
-
-  test("POST /api/v1/migrate with an unknown `after` is a 400 naming the three words", async () => {
-    const token = createToken(app.db, alice.id, "api", "admin").token;
-    const res = await fetch(`http://127.0.0.1:${servers.port}/api/v1/migrate`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify({ source: { url: "https://github.com/octo/x" }, after: "delete" }),
-    });
-    expect(res.status).toBe(400);
-    const said = JSON.stringify(await res.json());
-    expect(said).toContain("leave");
-    expect(said).toContain("archive");
-    expect(said).toContain("mirror");
   });
 });
