@@ -756,8 +756,7 @@ form.inline { display: inline; margin-left: auto; }
 .checks-line .ok { display: inline-flex; align-items: center; gap: 4px; color: var(--success); }
 .checks-line .bad { display: inline-flex; align-items: center; gap: 4px; color: var(--danger); }
 .checks-line .now { display: inline-flex; align-items: center; gap: 4px; color: var(--attn); }
-.tests-bar { display: block; width: 100%; height: 8px; margin-top: 8px; }
-.tests-words { margin: 4px 0 0; min-height: 1.4em; }
+.check-words { margin: 4px 0 0; min-height: 1.4em; }
 /* Reserved only while the run is open: pins arriving never move the log. */
 .pinned-slot { max-height: 9em; overflow-y: auto; }
 [data-check-progress][data-state="queued"] .pinned-slot, [data-check-progress][data-state="running"] .pinned-slot { height: 9em; }

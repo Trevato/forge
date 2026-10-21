@@ -840,14 +840,14 @@ describe("working: a run's own page in the studio", () => {
     );
     expect(stepsLine(app.config.dataDir, { state: "running", run }, false)).toBe("");
     const page = await (await get(`/alice/engine/runs/${run.id}`, writerCookie)).text();
-    expect(page).toContain('<progress class="tests-bar" aria-label="Test files started" max="9" value="2"');
+    expect(page).toContain('<progress aria-label="Test files started" max="9" value="2"');
     expect(page).toContain("2 of 9 files started · 4 passed, 1 failed · running test/b.test.ts");
     expect(page).toContain("<strong>a breaks</strong>");
     expect(page).toContain("error: &lt;b&gt;boom&lt;/b&gt;");
     // The pins sit after the live region closes.
     const live = page.indexOf('role="status"');
     expect(live).toBeGreaterThan(-1);
-    expect(page.indexOf("pinned-failures")).toBeGreaterThan(page.indexOf("tests-words"));
+    expect(page.indexOf("pinned-failures")).toBeGreaterThan(page.indexOf("Test files"));
     expect(page.slice(live, page.indexOf("pinned-slot"))).not.toContain("a breaks");
     // The replaced element (#check-steps) closes before the pin slot, which is
     // patched in place so focus and scroll survive a refetch.
@@ -859,15 +859,19 @@ describe("working: a run's own page in the studio", () => {
     // Nothing logged yet: the bar and the line are still there, empty.
     const fresh = mk([]);
     const quiet = await (await get(`/alice/engine/runs/${fresh.id}`, writerCookie)).text();
-    expect(quiet).toContain('<progress class="tests-bar" aria-label="Test files started"></progress>');
+    expect(quiet).toContain('<progress aria-label="Test files started"></progress>');
     const block = quiet.slice(quiet.indexOf('id="check-steps"'), quiet.indexOf('id="run-live"'));
     expect(block).not.toContain("value=");
     expect(block).not.toContain("tabindex");
     expect(block).not.toContain('role="region"');
     // With pins, the slot is focusable and labelled; the live region holds no pin.
     expect(page).toContain('class="pinned-slot" id="check-pins" role="region" tabindex="0" aria-label="Failed tests"');
-    expect(page.slice(live, page.indexOf(`id="check-pins"`, live))).toContain("tests-words");
-    expect(quiet).toContain('class="tests-words');
+    expect(page.slice(live, page.indexOf(`id="check-pins"`, live))).toContain("2 of 9 files started");
+    expect(quiet).toContain('<p class="check-words small muted break"></p>'); // empty, but still rendered
+    for (const old of ["tests-bar", "tests-words"]) {
+      expect(page).not.toContain(old);
+      expect(quiet).not.toContain(old);
+    }
     // A finished run with no known count shows no bar at all.
     const done = mk(["$ bun install"]);
     finishRun(app.db, done.id, { state: "failed", summary: "x" });

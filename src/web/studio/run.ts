@@ -309,11 +309,11 @@ export async function runView(
               ),
             )}
             ${known
-              ? html`<progress class="tests-bar" aria-label="Test files started" max="${row.of ?? 0}" value="${row.started ?? 0}"></progress>`
+              ? html`<progress aria-label="Test files started" max="${row.of ?? 0}" value="${row.started ?? 0}"></progress>`
               : open
-                ? html`<progress class="tests-bar" aria-label="Test files started"></progress>`
+                ? html`<progress aria-label="Test files started"></progress>`
                 : ""}
-            <p class="tests-words small muted">${[words, runningWords].filter((w) => w !== "").join(" · ")}</p>
+            <p class="check-words small muted break">${[words, runningWords].filter((w) => w !== "").join(" · ")}</p>
           </div>
           <div class="pinned-slot" id="check-pins"${row.failures.length > 0 ? raw(' role="region" tabindex="0" aria-label="Failed tests"') : ""}>
             ${when(
