@@ -358,25 +358,26 @@ function featuredCard(featured: NonNullable<FrontPage["featured"]>): Html {
             }),
           ])
         : null;
-  return html`<section class="front-featured" aria-label="Featured">
-    ${when(
-      picture,
-      (src) =>
-        html`<a class="front-featured-look" href="${base}"
-          ><img
-            src="${src}"
-            width="${LOOK_SIZES.thumb.width}"
-            height="${LOOK_SIZES.thumb.height}"
-            alt="${repo.name} as it looks now"
-        /></a>`,
-    )}
-    <div class="front-featured-body">
-      <span class="small muted">Featured</span>
-      <h2><a href="${base}">${repo.ownerName}/${repo.name}</a></h2>
-      ${when(repo.description, (d) => html`<p>${d}</p>`)} ${work}
-      <div class="bar">${btn("Open", { href: base, variant: "primary" })}</div>
-    </div>
-  </section>`;
+  return card(
+    html`${when(
+        picture,
+        (src) =>
+          html`<a class="look" href="${base}"
+            ><img
+              src="${src}"
+              width="${LOOK_SIZES.thumb.width}"
+              height="${LOOK_SIZES.thumb.height}"
+              alt="${repo.name} as it looks now"
+          /></a>`,
+      )}
+      <div class="card-body stack stack-tight">
+        <span class="small muted">Featured</span>
+        <h2><a href="${base}">${repo.ownerName}/${repo.name}</a></h2>
+        ${when(repo.description, (d) => html`<p class="muted">${d}</p>`)} ${work}
+        <div class="bar">${btn("Open", { href: base, variant: "primary" })}</div>
+      </div>`,
+    { pad: false, attrs: html`role="region" aria-label="Featured"` },
+  );
 }
 
 /** A weight's name as the controls say it. */

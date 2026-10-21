@@ -427,10 +427,10 @@ describe("the front page", () => {
     forgetFrontScores(app);
     const body = await door();
     // The most-forked app is featured — a stranger's, ahead of the owner's.
-    const featured = body.slice(
-      body.indexOf('class="front-featured"'),
-      body.indexOf("</section>", body.indexOf('class="front-featured"')),
-    );
+    const start = body.indexOf('aria-label="Featured"');
+    expect(start).toBeGreaterThan(-1);
+    const next = body.indexOf('class="card', start);
+    const featured = body.slice(start, next === -1 ? undefined : next);
     expect(featured).toContain('href="/zed/loved"');
     expect(body).not.toContain('href="/owner/down"');
     expect(body).not.toContain('href="/owner/bare"');
