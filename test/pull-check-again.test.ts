@@ -130,3 +130,30 @@ describe("asking again over HTTP", () => {
     expect(await page(alice, closedNumber)).not.toContain("Check again");
   });
 });
+
+describe("reading a pull without its diff (#3367)", () => {
+  const read = async (query: string): Promise<Response> =>
+    fetch(`${servers.url}/api/v1/repos/alice/gate/pulls/${openNumber}${query}`);
+
+  test("diff=0 leaves out only the diff", async () => {
+    const full = await read("");
+    const lean = await read("?diff=0");
+    expect(full.status).toBe(200);
+    expect(lean.status).toBe(200);
+    const fullText = await full.text();
+    const leanText = await lean.text();
+    const a = JSON.parse(fullText) as Record<string, unknown>;
+    const b = JSON.parse(leanText) as Record<string, unknown>;
+    expect("diff" in a).toBe(true);
+    expect("diff" in b).toBe(false);
+    delete a["diff"];
+    expect(b).toEqual(a);
+    expect(leanText.length).toBeLessThan(fullText.length);
+    expect(((await (await read("?diff=1")).json()) as object)).toHaveProperty("diff");
+  });
+
+  test("any other value is a 422", async () => {
+    for (const q of ["?diff=2", "?diff=", "?diff=false"])
+      expect((await read(q)).status).toBe(422);
+  });
+});

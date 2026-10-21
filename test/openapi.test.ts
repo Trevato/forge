@@ -61,6 +61,14 @@ test("listing issues and pulls is described with the query the handlers read", (
   }
 });
 
+test("reading one pull describes its diff switch", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const get = doc.paths["/api/v1/repos/{owner}/{name}/pulls/{number}"].get;
+  const diff = get.parameters.find((p: any) => p.in === "query" && p.name === "diff");
+  expect(diff.schema.enum).toEqual(["0", "1"]);
+  expect(diff.schema.default).toBe("1");
+});
+
 test("reading and closing one issue and reading one pull are described", () => {
   const doc = openapi("https://f.test", "1") as any;
   const R = "/api/v1/repos/{owner}/{name}";

@@ -75,7 +75,7 @@ export const ROUTES: readonly Route[] = [
     auth: true,
     body: { state: "string", reason: "string", into: "integer" },
   },
-  { method: "get", path: `${REPO}/pulls/{number}`, summary: "Read one pull with its diff and review gate", auth: false },
+  { method: "get", path: `${REPO}/pulls/{number}`, summary: "Read one pull with its diff and review gate (diff=0 leaves the diff out)", auth: false, query: { diff: "string" } },
   {
     method: "post",
     path: `${REPO}/issues/{number}/comments`,
@@ -147,7 +147,12 @@ export function openapi(origin: string, version: string): Record<string, unknown
       name,
       in: "query",
       required: false,
-      schema: name === "state" ? { type: "string", enum: ["open", "closed", "all"] } : schema(t),
+      schema:
+        name === "state"
+          ? { type: "string", enum: ["open", "closed", "all"] }
+          : name === "diff"
+            ? { type: "string", enum: ["0", "1"], default: "1" }
+            : schema(t),
     }));
     (paths[r.path] ??= {})[r.method] = {
       operationId: `${r.method}${r.path.replace(/[^A-Za-z0-9]+(.)?/g, (_, c: string | undefined) => (c ?? "").toUpperCase())}`,

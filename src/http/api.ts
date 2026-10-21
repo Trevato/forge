@@ -205,6 +205,7 @@ import {
   listPulls,
   variantSiblings,
   pullDiff,
+  pullStatus,
   pullDir,
   pullMergeStates,
   type Pull,
@@ -3722,6 +3723,10 @@ export function apiRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const found = timePhase(ctx.request, "pull", () => loadPull(ctx));
     if ("error" in found) return found.error;
+    // `?diff=0` reads the pull without its diff, and skips computing it.
+    const wantDiff = ctx.url.searchParams.get("diff");
+    if (wantDiff !== null && wantDiff !== "0" && wantDiff !== "1")
+      return apiError("invalid_diff", 422, "diff is 0 or 1");
     // A fork may have pushed since the pull opened; review what is being
     // proposed now, not the snapshot taken when it was.
     await timePhaseAsync(ctx.request, "head", () =>
@@ -3730,12 +3735,13 @@ export function apiRoutes(router: Router<Handler>): void {
     // Include the diff so a reviewer (human or agent) reads the change without
     // a second round trip, and the review gate beside it so a client knows
     // whether merging is even on offer.
-    const { status, diff } = await timePhaseAsync(ctx.request, "diff", async () =>
-      pullDiff(await pullDirOf(ctx, found.repo, found.pull), found.pull, {
-        db: ctx.app.db,
-        requireReview: found.repo.requireReview,
-      }),
-    );
+    const gate = { db: ctx.app.db, requireReview: found.repo.requireReview };
+    const { status, diff } = await timePhaseAsync(ctx.request, "diff", async () => {
+      const dir = await pullDirOf(ctx, found.repo, found.pull);
+      return wantDiff === "0"
+        ? { status: await pullStatus(dir, found.pull, gate), diff: undefined }
+        : await pullDiff(dir, found.pull, gate);
+    });
     const live = found.pull.state === "open" && found.pull.mergedAt === null;
     const checkStaleNow = await timePhaseAsync(
       ctx.request,
@@ -3759,7 +3765,7 @@ export function apiRoutes(router: Router<Handler>): void {
         ...(live ? { mergeable: status.mergeable, conflicts: status.conflicts } : {}),
         proposal: pullProposalOf(ctx.app.db, found.pull.id) ?? null,
         status,
-        diff,
+        ...(diff === undefined ? {} : { diff }),
         hold: hold === undefined ? null : holdJson(hold),
       });
     });
