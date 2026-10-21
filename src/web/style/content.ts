@@ -1058,8 +1058,8 @@ textarea.editor:focus-visible { outline: none; }
 }
 /* What needs you, pinned on the home: the bulk step's select as wide as
    its words, not the column. */
-.needs-you #asks-bulk select { width: auto; max-width: 100%; }
-.needs-you #asks-bulk .input[name="reason"] { flex: 1 1 12rem; width: auto; min-width: 0; }
+#needs-you #asks-bulk select { width: auto; max-width: 100%; }
+#needs-you #asks-bulk .input[name="reason"] { flex: 1 1 12rem; width: auto; min-width: 0; }
 /* A row's box sits in a label, so a phone's thumb has 44 px to hit. */
 .ask-pick-hit { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
 /* A phone shows the top asks and one "N more" that opens in place to all
@@ -1068,19 +1068,19 @@ textarea.editor:focus-visible { outline: none; }
    stay, so every ask is still a tap away. */
 @supports selector(::details-content) {
   @media (max-width: 480px) {
-    .needs-you #asks-more > summary { display: none; }
-    .needs-you #asks-more::details-content { content-visibility: visible; }
-    .needs-you #asks-more > .stack { margin-top: 0; }
+    #needs-you #asks-more > summary { display: none; }
+    #needs-you #asks-more::details-content { content-visibility: visible; }
+    #needs-you #asks-more > .stack { margin-top: 0; }
   }
   @media (min-width: 481px) {
-    .needs-you #asks-phone-more > summary { display: none; }
-    .needs-you #asks-phone-more::details-content { content-visibility: visible; }
-    .needs-you #asks-phone-more > .stack { margin-top: 0; }
-    .needs-you .ask-group > summary { display: none; }
-    .needs-you .ask-group::details-content { content-visibility: visible; }
+    #needs-you #asks-phone-more > summary { display: none; }
+    #needs-you #asks-phone-more::details-content { content-visibility: visible; }
+    #needs-you #asks-phone-more > .stack { margin-top: 0; }
+    #needs-you .ask-group > summary { display: none; }
+    #needs-you .ask-group::details-content { content-visibility: visible; }
   }
 }
-.needs-you .ask-group > summary { padding: 10px 14px; cursor: pointer; }
+#needs-you .ask-group > summary { padding: 10px 14px; cursor: pointer; }
 /* An ask's actions: the decider, then the rest. Wide: in a line, as ever.
    The kind label is for a phone, where the sentence under the title goes. */
 .ask-acts { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
@@ -1100,7 +1100,7 @@ textarea.editor:focus-visible { outline: none; }
    go; the page's 16 px gutter stays), the title wraps under "kind · repo",
    the decider sits at the trailing edge and the rest wait behind "More". */
 @media (max-width: 480px) {
-  .needs-you .ask-card {
+  #needs-you .ask-card {
     margin-inline: -16px; border-inline: 0; border-radius: 0; box-shadow: none; background: none;
   }
   .ask-card .card-head { padding: 12px 16px 0; background: none; border: 0; gap: 4px 8px; align-items: baseline; }
@@ -1114,7 +1114,7 @@ textarea.editor:focus-visible { outline: none; }
   .ask-card .ask-short { display: none; }
   .ask-card .ask-waiting { order: 3; flex: 0 1 auto; margin-left: 0; min-width: 0; max-width: 100%; white-space: normal; }
   .ask-card .ask-pick-hit { order: 0; }
-  .needs-you .ask-pick-hit { min-width: 44px; min-height: 44px; }
+  #needs-you .ask-pick-hit { min-width: 44px; min-height: 44px; }
   .ask-card .ask-pick { min-width: 24px; min-height: 24px; }
   .ask-card .ask-group > summary { padding: 10px 16px; min-height: 44px; }
   .ask-card .ask-group .row { flex-wrap: wrap; padding-inline: 16px; }

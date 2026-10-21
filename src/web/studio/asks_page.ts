@@ -479,7 +479,7 @@ export function needsYouSection(
       : more("asks-more", rest.length, html`${rest.map((r) => mutableRow(ctx, r, picked))}`);
   // The asks come first, so the first Tab after #needs-you lands on one;
   // the bulk step acts on what was picked, after them.
-  const body = html`<section id="needs-you" class="needs-you stack">
+  const body = html`<section id="needs-you" class="stack">
     <h2 id="asks-sentence">${askSentence(count)}</h2>
     ${top?.banner ?? null}
     ${needs.map(forgeCard)} ${first.map((r) => mutableRow(ctx, r, picked))}

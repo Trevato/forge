@@ -254,8 +254,8 @@ describe("asks that earn their place", () => {
     // Only where the browser can hold a details element open: an older one
     // keeps both summaries, so no ask is out of reach.
     const held = css.slice(css.indexOf("@supports selector(::details-content) {"));
-    expect(held).toContain("@media (max-width: 480px) {\n    .needs-you #asks-more > summary { display: none; }");
-    expect(held).toContain("@media (min-width: 481px) {\n    .needs-you #asks-phone-more > summary { display: none; }");
+    expect(held).toContain("@media (max-width: 480px) {\n    #needs-you #asks-more > summary { display: none; }");
+    expect(held).toContain("@media (min-width: 481px) {\n    #needs-you #asks-phone-more > summary { display: none; }");
     expect(css.indexOf("#asks-more > summary")).toBeGreaterThan(css.indexOf("@supports selector(::details-content)"));
     // Arriving at #needs-you, the first Tab lands on an ask, not the bulk step.
     const bulk = asks.indexOf('id="asks-bulk"');
@@ -350,7 +350,9 @@ describe("asks that earn their place", () => {
     expect(asks).toMatch(/class="ask-acts">\s*<button[^>]*data-variant="primary"/);
     const css = await (await fetch(`${servers.url}${home.match(/href="(\/[^"]*\.css[^"]*)"/)![1]}`)).text();
     expect(css).toContain(".ask-acts > .btn { min-height: 44px;");
-    expect(css).toContain(".needs-you .ask-card {\n    margin-inline: -16px;");
+    // The markup lost the .needs-you class (#4189): no selector may still need it.
+    expect(css).not.toMatch(/\.needs-you\b/);
+    expect(css).toContain("#needs-you .ask-card {\n    margin-inline: -16px;");
   });
 
   test("a collapsed row that ranks for security names which of its asks it is", async () => {
@@ -368,7 +370,7 @@ describe("asks that earn their place", () => {
     const css = await (await fetch(`${servers.url}${asks.match(/href="(\/[^"]*\.css[^"]*)"/)![1]}`)).text();
     const wide = css.slice(css.indexOf("@supports selector(::details-content) {"));
     expect(wide.slice(wide.indexOf("@media (min-width: 481px)"))).toContain(
-      ".needs-you .ask-group > summary { display: none; }",
+      "#needs-you .ask-group > summary { display: none; }",
     );
   });
 });

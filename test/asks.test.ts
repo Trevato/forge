@@ -166,6 +166,13 @@ describe("the asks page", () => {
     expect(sentence(page)).toBe("1 thing needs you");
     expect(page).toContain("Bot did a thing");
     expect(headerCount(page)).toBe(1);
+    // The section is §5's .stack: the page-local .needs-you class is gone
+    // from the markup, while the words, links and forms stay (#4189).
+    expect(page).toContain('<section id="needs-you" class="stack">');
+    expect(page).not.toContain("needs-you ");
+    expect(page).not.toMatch(/class="[^"]*\bneeds-you\b/);
+    expect(page).toContain('href="/');
+    expect(page).toMatch(/<form [^>]*method="post"/);
     // The home counts it in the header's Asks link; the dev dashboard's
     // own "needs you" line went with the dashboard (#625).
     const home = await get(alice, "/asks");
