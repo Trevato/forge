@@ -549,7 +549,9 @@ describe("the pages", () => {
   test("the crew page grants it to the repository, and a run there picks it", async () => {
     const work = account();
     let html = await get(`/ada/hello/settings/crew`);
-    expect(html).toContain('class="table grants"');
+    expect(html).toContain('<table class="table">');
+    expect(html).not.toContain('class="table grants"');
+    expect(html).not.toContain("grants-foot");
     expect(html).toContain(`value="*:${work.id}"`);
     const saved = await post(
       `/ada/hello/settings/crew/subscriptions`,

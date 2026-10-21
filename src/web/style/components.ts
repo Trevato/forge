@@ -114,6 +114,13 @@ select.input {
   font-weight: 400; font-size: 14px; cursor: pointer; margin: 0;
 }
 .check input { accent-color: var(--accent); margin-top: 2px; flex: none; }
+/* A thumb needs a 44px target and a box it can see; in a table the bare
+   check centres in its cell's target, so a miss does not tick the next one. */
+@media (pointer: coarse) {
+  .check { min-height: 44px; min-width: 44px; align-items: center; }
+  .check input { width: 24px; height: 24px; margin: 0; }
+  .table .check { justify-content: center; }
+}
 
 .field { display: block; margin: 0 0 16px; }
 .field > label {

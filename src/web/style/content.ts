@@ -325,14 +325,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .frozen-form .field { margin: 0; min-width: 0; flex: 1 1 14rem; max-width: 22rem; }
 
 .wall-cells { margin: 8px 0 0; padding-left: 18px; font-family: var(--mono); font-size: 12.5px; }
-.grants th, .grants td { padding: 8px 12px; border-top: 1px solid var(--border); }
-.grants thead th { border-top: 0; font-weight: 600; }
-.grants th[scope="col"], .grants td { text-align: center; }
-.grants th[scope="row"] { text-align: left; font-weight: 500; white-space: nowrap; }
-.grants { --grant-box: 16px; }
-.grants input[type="checkbox"] { width: var(--grant-box); height: var(--grant-box); accent-color: var(--accent); }
-@media (pointer: coarse) { .grants { --grant-box: 24px; } }
-.grants-foot { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-top: 1px solid var(--border); }
 /* A subscription's headroom for people: a small number beside its windows. */
 .headroom { display: flex; align-items: center; gap: 6px; }
 .headroom .input { width: 5em; }

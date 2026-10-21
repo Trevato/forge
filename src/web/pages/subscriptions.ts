@@ -556,42 +556,46 @@ export function grantsSection(
       ${pool.map(
         (s) =>
           html`<td>
-            <input
-              type="checkbox"
-              name="grant"
-              value="${agentId === EVERYONE ? "*" : agentId}:${s.id}"
-              aria-label="${s.name} for ${agentId === EVERYONE
-                ? "everyone"
-                : label}"
-              ${granted.has(`${agentId}:${s.id}`) ? html`checked` : null}
-            />
+            <label class="check"
+              ><input
+                type="checkbox"
+                name="grant"
+                value="${agentId === EVERYONE ? "*" : agentId}:${s.id}"
+                aria-label="${s.name} for ${agentId === EVERYONE
+                  ? "everyone"
+                  : label}"
+                ${granted.has(`${agentId}:${s.id}`) ? html`checked` : null}
+            /></label>
           </td>`,
       )}
     </tr>`;
-  return card(
-    html`<form method="post" action="${o.action}">
-      <table class="table grants">
-        <thead>
-          <tr>
-            <th></th>
-            ${pool.map((s) => html`<th scope="col">${s.name}</th>`)}
-          </tr>
-        </thead>
-        <tbody>
-          ${line(EVERYONE, html`Everyone on the crew`)}
-          ${o.agents.map((a) => line(a.user.id, html`${a.user.username}`))}
-        </tbody>
-      </table>
-      <div class="grants-foot">
-        ${btn("Save", { variant: "primary", size: "sm" })}
-        <span class="muted small"
-          >Two ticked on one row take turns. Nothing ticked means the wider
-          grant applies: ${o.wider}.</span
-        >
-      </div>
-    </form>`,
-    { head, pad: false },
-  );
+  return html`<form method="post" action="${o.action}">
+    ${card(
+      html`<div class="table-scroll">
+        <table class="table">
+          <thead>
+            <tr>
+              <th></th>
+              ${pool.map((s) => html`<th scope="col">${s.name}</th>`)}
+            </tr>
+          </thead>
+          <tbody>
+            ${line(EVERYONE, html`Everyone on the crew`)}
+            ${o.agents.map((a) => line(a.user.id, html`${a.user.username}`))}
+          </tbody>
+        </table>
+      </div>`,
+      {
+        head,
+        pad: false,
+        foot: html`${btn("Save", { variant: "primary", size: "sm" })}
+          <span class="muted small"
+            >Two ticked on one row take turns. Nothing ticked means the wider
+            grant applies: ${o.wider}.</span
+          >`,
+      },
+    )}
+  </form>`;
 }
 
 /**
