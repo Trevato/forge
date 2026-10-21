@@ -2273,6 +2273,7 @@ export function apiRoutes(router: Router<Handler>): void {
   // of its own first (`strangers.ts`): `git grep` over fifty repositories
   // is not a request to answer as fast as anyone can send it.
   router.add("GET", "/api/v1/search", async (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const q = ctx.url.searchParams;
     const kind = searchKind(q.get("kind"));
     const query = q.get("q") ?? "";
@@ -2287,14 +2288,15 @@ export function apiRoutes(router: Router<Handler>): void {
       return refused;
     }
     try {
-      return json(
-        await search(ctx.app, ctx.auth.user, {
+      const found = await timePhaseAsync(ctx.request, "search", () =>
+        search(ctx.app, ctx.auth.user, {
           q: query,
           kind,
           ...(q.has("limit") ? { limit: Number(q.get("limit")) } : {}),
           live: q.get("live") === "1" || q.get("live") === "true",
         }),
       );
+      return timePhase(ctx.request, "render", () => json(found));
     } finally {
       held?.release();
     }
