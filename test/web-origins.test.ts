@@ -481,6 +481,11 @@ describe("origins on the web", () => {
     const page = await (await asUser(alice, "/alice/widgets/issues/7")).text();
     expect(page).toContain("mona");
     expect(page).toContain("view on origin");
+    // §5's muted small text, not the retired .origin-link.
+    expect(page).not.toContain("origin-link");
+    expect(page).toMatch(
+      /<a class="bar muted small" href="[^"]+" rel="noreferrer noopener"/,
+    );
   });
 
   test("commenting on a mirrored issue goes through to the origin", async () => {

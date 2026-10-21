@@ -46,7 +46,7 @@ export function commentCard(card: CommentCard): Html {
         card.originUrl != null && card.originUrl !== "",
         () => html`<span class="spacer"></span>
           <a
-            class="origin-link small"
+            class="bar muted small"
             href="${card.originUrl ?? ""}"
             rel="noreferrer noopener"
             >${icon("external")}view on origin</a

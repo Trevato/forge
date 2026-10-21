@@ -214,7 +214,7 @@ export function changeHead(ctx: Ctx, repo: Repo, pull: Pull): Html {
       ${when(
         pull.originUrl,
         (url) =>
-          html`<a class="origin-link" href="${url}" rel="noreferrer noopener"
+          html`<a class="bar muted small" href="${url}" rel="noreferrer noopener"
             >${icon("external")}view on origin</a
           >`,
       )}

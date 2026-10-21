@@ -722,7 +722,7 @@ async function browseThread(
         ${when(
           detail.issue.originUrl,
           (url) =>
-            html`<a class="origin-link" href="${url}" rel="noreferrer noopener"
+            html`<a class="bar muted small" href="${url}" rel="noreferrer noopener"
               >${icon("external")}view on origin</a
             >`,
         )}
