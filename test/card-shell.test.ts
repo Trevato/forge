@@ -6,7 +6,8 @@ class Node {
   textContent = "";
   className = "";
   value = "";
-  onclick: (() => void) | undefined;
+  href = "";
+  onclick: ((ev?: any) => void) | undefined;
   focused = false;
   constructor(readonly tag: string) {}
   append(...n: Node[]) { this.children.push(...n); }
@@ -84,5 +85,24 @@ describe("the card shell", () => {
   test("an ask without a number offers no Redirect", () => {
     const card = cardFor("asks", { rows: [{ line: "a", kind: "paused", items: ["x"], repo: "a/b", words: {} }] })!;
     expect(card.actions.some((a) => a.tool === "say")).toBe(false);
+  });
+
+  test("a feed row with a forge link is an anchor that asks the host to open it; no link, or a javascript: one, stays text", () => {
+    const s = shell();
+    const feed = cardFor("feed", { items: [{ what: "x", link: "/a/b/pulls/1" }, { what: "y" }] }, "https://forge.test")!;
+    s.send(s.result({ ...feed, rows: [...feed.rows, { label: "z", value: "", link: "javascript:alert(1)" }] }));
+    const dts = s.root.all().filter((n) => n.tag === "dt");
+    expect(dts).toHaveLength(3);
+    const anchor = dts[0]!.children[0]!;
+    expect(anchor.tag).toBe("a");
+    expect(anchor.href).toBe("https://forge.test/a/b/pulls/1");
+    expect(anchor.textContent).toBe("x");
+    let prevented = false;
+    anchor.onclick!({ preventDefault: () => (prevented = true) });
+    expect(prevented).toBe(true);
+    expect(s.posted[1]).toMatchObject({ method: "ui/open-link", params: { url: "https://forge.test/a/b/pulls/1" } });
+    expect(dts[1]!.children).toHaveLength(0);
+    expect(dts[2]!.children).toHaveLength(0);
+    expect(s.root.all().filter((n) => n.tag === "a")).toHaveLength(1);
   });
 });

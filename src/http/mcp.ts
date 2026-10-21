@@ -3591,8 +3591,8 @@ function adminNote(ctx: Ctx, user: User): string {
 }
 
 /** A card's model beside the text, for a host that draws `ui://` resources. */
-function cardResult(name: string, value: unknown): Record<string, unknown> {
-  const card = cardFor(name, value);
+function cardResult(name: string, value: unknown, origin: string): Record<string, unknown> {
+  const card = cardFor(name, value, origin);
   return card === undefined ? {} : { structuredContent: { card } };
 }
 
@@ -3692,7 +3692,7 @@ function rpcOne(
           answer.ok
             ? {
                 content: [{ type: "text", text: JSON.stringify(answer.value) }],
-                ...cardResult(String(params["name"]), answer.value),
+                ...cardResult(String(params["name"]), answer.value, ctx.url.origin),
               }
             : {
                 content: [

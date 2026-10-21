@@ -1021,6 +1021,7 @@ describe("the forge over MCP", () => {
     expect(uris).toEqual([
       "ui://forge/app",
       "ui://forge/decision",
+      "ui://forge/feed",
       "ui://forge/run",
       "ui://forge/wave",
     ]);
@@ -1038,6 +1039,32 @@ describe("the forge over MCP", () => {
     expect(meta("now")).toBe("ui://forge/run");
     expect(meta("asks")).toBe("ui://forge/decision");
     expect(meta("milestones")).toBe("ui://forge/wave");
+    expect(meta("feed")).toBe("ui://forge/feed");
+  });
+
+  test("the feed card draws one linked row per item, ten at most, escaped as text", async () => {
+    const { cardFor } = await import("../src/web/studio/cards.ts");
+    const items = Array.from({ length: 12 }, (_, n) => ({
+      actor: "scout",
+      what: n === 0 ? "<b>shipped</b>" : `did ${n}`,
+      app: "alice/game",
+      at: new Date().toISOString(),
+      link: `/alice/game/pulls/${n + 1}`,
+    }));
+    const card = cardFor("feed", { items }, "https://forge.test")!;
+    expect(card.kind).toBe("feed");
+    expect(card.title).toBe("Feed");
+    expect(card.status).toBe("Latest");
+    expect(card.rows).toHaveLength(10);
+    expect(card.rows[0]).toEqual({
+      label: "scout: <b>shipped</b>",
+      value: "alice/game · just now",
+      link: "https://forge.test/alice/game/pulls/1",
+    });
+    expect(cardFor("feed", { items, new: 3 })!.status).toBe("3 new since you last looked");
+    expect(cardFor("feed", { items: [{ what: "x", link: "//evil.test/" }] }, "https://forge.test")!.rows[0]!.link).toBeUndefined();
+    const { body } = await call(rw, "tools/call", { name: "feed", arguments: {} });
+    expect(body.result.structuredContent.card.kind).toBe("feed");
   });
 
   test("a tool result carries the card it renders", async () => {

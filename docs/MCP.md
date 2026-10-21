@@ -176,9 +176,9 @@ answers
 
 ## Cards, the contract and the plugins (#1116)
 
-- **Cards.** `apps`, `new_app`, `now`, `asks` and `milestones` name a `ui://` resource in
+- **Cards.** `apps`, `new_app`, `now`, `asks`, `milestones` and `feed` name a `ui://` resource in
   `_meta.ui.resourceUri` (MCP Apps, SEP-1865): `ui://forge/app`, `run`,
-  `decision`, `wave`. `resources/list` and `resources/read` serve one small
+  `decision`, `wave`, `feed`. `resources/list` and `resources/read` serve one small
   sandboxed page, which draws the `structuredContent.card` model that the
   tool result carries, with `textContent` only. The model is built in
   `src/web/studio/cards.ts`. A card's

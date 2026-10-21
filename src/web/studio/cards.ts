@@ -8,12 +8,15 @@
  */
 
 import { html, raw } from "../html.ts";
+import { timeAgo } from "../ui.ts";
 
-export type CardKind = "app" | "run" | "decision" | "wave";
+export type CardKind = "app" | "run" | "decision" | "wave" | "feed";
 
 export interface CardRow {
   readonly label: string;
   readonly value: string;
+  /** An absolute http(s) address the row's label links to. */
+  readonly link?: string;
 }
 export interface CardAction {
   readonly label: string;
@@ -33,7 +36,7 @@ export interface Card {
 
 export const CARD_MIME = "text/html;profile=mcp-app";
 export const CARD_URI = (kind: CardKind): string => `ui://forge/${kind}`;
-export const CARD_KINDS: readonly CardKind[] = ["app", "run", "decision", "wave"];
+export const CARD_KINDS: readonly CardKind[] = ["app", "run", "decision", "wave", "feed"];
 
 /** The tool whose answer each card draws. */
 export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
@@ -41,6 +44,7 @@ export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   now: "run",
   asks: "decision",
   milestones: "wave",
+  feed: "feed",
   new_app: "app",
 };
 
@@ -49,6 +53,7 @@ const CARD_TITLE: Readonly<Record<CardKind, string>> = {
   run: "Working now",
   decision: "Waiting on you",
   wave: "Wave",
+  feed: "Feed",
 };
 
 type Obj = Record<string, unknown>;
@@ -58,9 +63,10 @@ const list = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 const text = (v: unknown): string =>
   typeof v === "string" ? v : typeof v === "number" ? String(v) : "";
 const LIMIT = 12;
+const FEED_LIMIT = 10;
 
 /** The card for a tool's answer, or nothing when the answer has no card. */
-export function cardFor(tool: string, value: unknown): Card | undefined {
+export function cardFor(tool: string, value: unknown, origin = ""): Card | undefined {
   const kind = CARD_OF_TOOL[tool];
   if (kind === undefined) return undefined;
   const rows: CardRow[] = [];
@@ -130,6 +136,19 @@ export function cardFor(tool: string, value: unknown): Card | undefined {
       if (repo !== "" && Number.isInteger(number) && number > 0)
         actions.push({ label: "Redirect", tool: "say", args: { repo, number }, words: true });
     }
+  } else if (kind === "feed") {
+    const fresh = Number(obj(value)["new"]);
+    status = Number.isInteger(fresh) && fresh > 0 ? `${fresh} new since you last looked` : "Latest";
+    for (const i of list(obj(value)["items"]).map(obj).slice(0, FEED_LIMIT)) {
+      const link = text(i["link"]);
+      const who = text(i["actor"]);
+      rows.push({
+        label: `${who === "" ? "" : `${who}: `}${text(i["what"])}`,
+        value: [text(i["app"]), timeAgo(text(i["at"]))].filter((x) => x !== "").join(" · "),
+        // Only a rooted path on this forge: "//host" would leave it.
+        ...(origin !== "" && /^\/(?!\/)/.test(link) ? { link: origin + link } : {}),
+      });
+    }
   } else {
     const limbs = list(obj(value)["limbs"]).map(obj);
     const repo = obj(obj(value)["repo"]);
@@ -156,7 +175,11 @@ let n = 0;
 function draw(card) {
   root.replaceChildren(el("h2", card.title), el("p", card.status, "status"));
   const dl = document.createElement("dl");
-  for (const r of card.rows) dl.append(el("dt", r.label), el("dd", r.value));
+  for (const r of card.rows) {
+    const dt = el("dt", r.label);
+    if (r.link && (r.link.startsWith("https://") || r.link.startsWith("http://"))) { const a = el("a", r.label); a.href = r.link; a.onclick = (ev) => { ev.preventDefault(); parent.postMessage({ jsonrpc: "2.0", id: ++n, method: "ui/open-link", params: { url: r.link } }, "*"); }; dt.replaceChildren(a); }
+    dl.append(dt, el("dd", r.value));
+  }
   root.append(dl);
   const field = card.actions.some((a) => a.words) ? document.createElement("input") : null;
   if (field) { field.type = "text"; field.maxLength = 2000; field.placeholder = "Your words"; field.setAttribute("aria-label", "Your words"); root.append(field); }
