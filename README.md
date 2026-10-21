@@ -1299,7 +1299,9 @@ runs on main's tip with that pull merged, which is the proof a re-check of
 its own would give, and a red candidate bisects as above. So a landing that
 moves main does not send every other approved pull off for a check of its
 own first; the batch lands in one gate. A pull's own check runs again only
-when its head changes. A person's merge, which no candidate gated, still
+when its head changes: an approval checks a head that was never checked,
+and a green one only when main moved since and the repository is not
+autonomous, whose land gates on today's main anyway (`src/checks/approval.ts`). A person's merge, which no candidate gated, still
 refuses a stale green. Each sweep reads every open pull, oldest first, not
 only the newest page, so an older approved pull is batched with the rest
 rather than joining alone on its own event. The autonomy tick line counts the approved pulls the

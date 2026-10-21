@@ -45,6 +45,7 @@ import {
 import { Gate, runGit } from "../git/env.ts";
 import { resolveOid } from "../git/merge.ts";
 import { mergeForCheck } from "./merged.ts";
+import { checkOnApproval } from "./approval.ts";
 import { checkKey, provenBy, recordProven } from "./proven.ts";
 import { giveHistory } from "./history.ts";
 import { readLearned } from "./learned.ts";
@@ -1093,15 +1094,16 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         const pull = getPull(app.db, repo.id, number);
         if (!pull || pull.state !== "open") return;
         const head = await headOf(repo, pull);
-        if (head !== undefined)
-          await request(
-            repo,
-            `pull-${pull.number}`,
-            head,
-            "approved",
-            pull.id,
-            actor,
-          );
+        if (head === undefined) return;
+        // A head already green is not checked again for nothing (#4391).
+        const env = `pull-${pull.number}`;
+        const dir = await pullDir(app.db, app.reposRoot, repo, pull);
+        const tip = await resolveOid(dir, `refs/heads/${pull.baseBranch}`);
+        // The merge queue gates only an autonomous repository's lands (`crew/autonomy.ts` admit).
+        const landGated = repo.autonomy === "autonomous" && repo.autonomyBy !== null;
+        if (!checkOnApproval(checksForHead(app.db, pull.id, head), env, tip, landGated))
+          return;
+        await request(repo, env, head, "approved", pull.id, actor);
         return;
       }
       // Landed or closed: nothing left to check, so nothing waits in the lane.
