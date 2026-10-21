@@ -11,13 +11,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
+import { markVerified } from "../src/core/verify.ts";
 import { createSession } from "../src/core/sessions.ts";
-import { createUser } from "../src/core/users.ts";
 import { migrations } from "../src/core/schema.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { releaseDir } from "../src/release/checkout.ts";
+import { beginSwap, endSwap } from "../src/release/swap.ts";
 import { recordRelease } from "../src/release/record.ts";
-import { proveAll } from "./helpers/verified.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -42,6 +42,15 @@ describe("the releases page", () => {
     const u = app.db.query<{ id: string }, [string]>("SELECT id FROM user WHERE username = ?").get(username)!;
     return `forge_session=${createSession(app.db, u.id).token}`;
   };
+  // Accounts inserted directly: no password hash is made, and none of these tests signs in with one.
+  const addUser = (username: string, isAdmin: boolean) => {
+    const id = `u-${username}`;
+    app.db
+      .query("INSERT INTO user (id, username, email, password_hash, is_admin) VALUES (?1, ?2, ?3, 'x', ?4)")
+      .run(id, username, `${username}@forge.local`, isAdmin ? 1 : 0);
+    markVerified(app.db, id, new Date().toISOString());
+    return id;
+  };
   const post = (path: string, cookie: string, origin: string) =>
     fetch(`${servers.url}${path}`, {
       method: "POST",
@@ -53,23 +62,9 @@ describe("the releases page", () => {
     process.env["FORGE_COMMIT"] = LIVE;
     root = mkdtempSync(join(tmpdir(), "forge-releases-"));
     app = createApp({ dataDir: root, port: 0, forgeRepo: "alice/forge" });
-    for (const [username, password, adminIfFirst] of [
-      ["alice", "a-good-passphrase", true],
-      ["bob", "another-good-passphrase", false],
-    ] as const) {
-      const u = await createUser(app.db, {
-        origin: "seed",
-        trusted: true,
-        username,
-        email: `${username}@forge.local`,
-        password,
-        adminIfFirst,
-      });
-      if (!u.ok) throw new Error(u.error);
-    }
-    proveAll(app);
-    const alice = app.db.query<{ id: string }, []>("SELECT id FROM user WHERE username='alice'").get()!;
-    const made = await createRepo(app, { id: alice.id, username: "alice" } as never, { name: "forge" });
+    addUser("alice", true);
+    addUser("bob", false);
+    const made = await createRepo(app, { id: "u-alice", username: "alice" } as never, { name: "forge" });
     if (!made.ok) throw new Error(made.error);
     const repoId = app.db.query<{ id: string }, []>("SELECT id FROM repo WHERE name='forge'").get()!.id;
     for (const [s, pull, line] of [
@@ -125,30 +120,25 @@ describe("the releases page", () => {
     expect(home).not.toContain("aaaaaaa");
     expect((await post(`/releases/${KEPT}/rollback`, cookie, servers.url)).status).toBe(403);
 
-    app.db.query("UPDATE repo SET visibility = 'public' WHERE name = 'forge'").run();
-    const refused = await get("/releases");
-    expect(refused.status).toBe(403);
-    const body = await refused.text();
-    expect(body).not.toContain("bbbbbbb");
-    expect(body).not.toContain("/rollback");
-    expect((await post(`/releases/${KEPT}/rollback`, cookie, servers.url)).status).toBe(403);
-    expect((await post(`/releases/${KEPT}/rollback`, "", servers.url)).status).toBe(403);
-    expect(await (await get("/")).text()).not.toContain("live-release");
-    app.db.query("UPDATE repo SET visibility = 'private' WHERE name = 'forge'").run();
+    try {
+      app.db.query("UPDATE repo SET visibility = 'public' WHERE name = 'forge'").run();
+      const refused = await get("/releases");
+      expect(refused.status).toBe(403);
+      const body = await refused.text();
+      expect(body).not.toContain("bbbbbbb");
+      expect(body).not.toContain("/rollback");
+      expect((await post(`/releases/${KEPT}/rollback`, cookie, servers.url)).status).toBe(403);
+      expect((await post(`/releases/${KEPT}/rollback`, "", servers.url)).status).toBe(403);
+      expect(await (await get("/")).text()).not.toContain("live-release");
+    } finally {
+      app.db.query("UPDATE repo SET visibility = 'private' WHERE name = 'forge'").run();
+    }
   });
 
   test("an agent that can write the repository gets no button and a 403", async () => {
-    const u = await createUser(app.db, {
-      origin: "seed",
-      trusted: true,
-      username: "crew1",
-      email: "crew1@forge.local",
-      password: "crew-good-passphrase",
-      adminIfFirst: false,
-    });
-    if (!u.ok) throw new Error(u.error);
-    app.db.query("UPDATE user SET is_agent = 1, is_admin = 1 WHERE username = 'crew1'").run();
-    const cookie = `forge_session=${createSession(app.db, u.value.id).token}`;
+    const id = addUser("crew1", true);
+    app.db.query("UPDATE user SET is_agent = 1 WHERE id = ?").run(id);
+    const cookie = `forge_session=${createSession(app.db, id).token}`;
     const body = await (await fetch(`${servers.url}/releases`, { headers: { cookie } })).text();
     expect(body).toContain("bbbbbbb");
     expect(body).not.toContain("/rollback");
@@ -168,6 +158,10 @@ describe("the releases page", () => {
     const flash = (res.headers.getSetCookie() ?? []).map((c) => c.split(";")[0]).join("; ");
     const shown = await (await fetch(`${servers.url}/releases`, { headers: { cookie: `${cookie}; ${flash}` } })).text();
     expect(shown).toContain("FORGE_SELF_SWAP is off");
+    // No swap began: the one turn this process may take is still free.
+    const turn = beginSwap();
+    if (turn.ok) endSwap(false);
+    else expect(turn.line).not.toContain("already under way");
   });
 
   test("the home links the live release", async () => {
