@@ -12,6 +12,10 @@ not an admin, 200 for an admin's `ro` token. It is never cached
 | `forge_egress_bytes_in` | gauge | `repo`, `destination` | Bytes received from the destination over open connections. |
 | `forge_egress_bytes_out` | gauge | `repo`, `destination` | Bytes sent to the destination over open connections. |
 | `forge_http_request_duration_seconds` | histogram | `pattern` (plus `le`) | Seconds taken to answer a request, by the route pattern matched (never the raw path), since the process started. Buckets are `route_timing`'s edges, 1 ms to 2.5 s, in seconds. |
+| `forge_pulls_merged_total` | counter | `repo` | Pulls merged, from `pull.merged_at`. |
+| `forge_releases_total` | counter | none | Releases that went live, from the `release` table's `ok` rows. |
+| `forge_ask_to_live_seconds` | histogram | none (plus `le`) | Seconds from an issue opening to the first successful release of a pull that closes it. Buckets: 1 m, 5 m, 15 m, 1 h, 4 h, 12 h, 1 d, 3 d, 7 d. |
+| `forge_main_red_seconds_total` | counter | `repo` | Seconds the default branch's check spent failing: from a failed check to the next green one, or to now while still red. |
 | `forge_app_up` | gauge | `app`, `env` | 1 when the app environment is serving, 0 when it is asleep, stopped, deploying or failed. |
 | `forge_cell_cpu_seconds` (samples `forge_cell_cpu_seconds_total`) | counter | `app`, `env` | CPU seconds (user plus system) used by the processes of a running app cell. |
 | `forge_cell_memory_bytes` | gauge | `app`, `env` | Resident memory of the processes of a running app cell. |
@@ -20,6 +24,12 @@ not an admin, 200 for an admin's `ro` token. It is never cached
 never in the body. `env` is `production` or `pull-<n>`. The cell families are
 what the cell watch last read (every few seconds); a cell that is not running
 has no series (a cell keeps the slug it started under, so after a rename its figures return when it restarts), and the forge starts nothing and reads no process to answer.
+
+The delivery series are read from the `pull`, `release` and `run` tables on
+every scrape, so the scrape cost grows with those tables.
+
+A public repository's `repo` label is `owner/name`; a private one appears
+under its id only, never its name.
 
 The duration histogram counts every request the process has answered since
 it started; its `_bucket`, `_count` and `_sum` only grow, so `rate()` and

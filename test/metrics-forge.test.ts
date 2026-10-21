@@ -47,6 +47,7 @@ test("no bucket, count or sum drops as the hours pass", () => {
 
 test("the HELP line says since the process started, not the last hour", () => {
   const db = new Database(":memory:");
+  migrate(db, migrationFiles);
   expect(forgeMetrics(db)).toContain(
     "# HELP forge_http_request_duration_seconds Seconds the forge took to answer a request, by route pattern, since the process started.",
   );

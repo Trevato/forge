@@ -5,12 +5,16 @@
  * totals `route_timing` keeps in memory since the process started, not from
  * the hourly table, so every value only grows (#4013): Prometheus reads a drop
  * as a counter reset, and a restart resets them, which it expects. Nothing is
- * started or shelled out to read a figure. The text comes from `openmetrics.ts`.
+ * started or shelled out to read a figure. The delivery series (#4057) are
+ * read from the tables that hold the facts: `pull`, `release` (successful rows
+ * only) and the default branch's `run` rows. The text comes from
+ * `openmetrics.ts`.
  */
 import type { Database } from "bun:sqlite";
 import type { CellCounter } from "../apps/contain.ts";
 import type { EnvState } from "../apps/runtime.ts";
 import { EDGES_MS, readTotals } from "../core/route_timing.ts";
+import { closesFromBody } from "../core/pulls.ts";
 import { openMetrics, type Family, type HistogramSample, type Sample } from "./openmetrics.ts";
 
 export const DURATION_FAMILY = "forge_http_request_duration_seconds";
@@ -32,6 +36,132 @@ export function durationFamily(db: Database): Family {
     name: DURATION_FAMILY,
     help: "Seconds the forge took to answer a request, by route pattern, since the process started.",
     samples,
+  };
+}
+
+export const PULLS_FAMILY = "forge_pulls_merged_total";
+export const RELEASES_FAMILY = "forge_releases_total";
+export const ASK_FAMILY = "forge_ask_to_live_seconds";
+export const RED_FAMILY = "forge_main_red_seconds_total";
+
+/** Ask-to-live bucket edges in seconds: a minute to a week. */
+export const ASK_EDGES_S = [60, 300, 900, 3600, 14_400, 43_200, 86_400, 259_200, 604_800];
+
+/** A repository's label: `owner/name` when public, its id alone when private. */
+const REPO_LABEL = `CASE WHEN repo.visibility = 'public' THEN user.username || '/' || repo.name ELSE repo.id END`;
+
+const seconds = (from: string, to: string): number => Math.max(0, (Date.parse(to) - Date.parse(from)) / 1000);
+
+const bySeries = (a: Sample, b: Sample): number =>
+  (a.labels?.repo ?? "") < (b.labels?.repo ?? "") ? -1 : 1;
+
+/** Pulls merged, per repository: one grouped read of `pull` by its issue's repository. */
+export function pullsMergedFamily(db: Database): Family {
+  const rows = db
+    .query<{ repo: string; n: number }, []>(
+      `SELECT ${REPO_LABEL} AS repo, COUNT(*) AS n
+         FROM pull JOIN issue ON issue.id = pull.issue_id
+         JOIN repo ON repo.id = issue.repo_id JOIN user ON user.id = repo.owner_id
+        WHERE pull.merged_at IS NOT NULL GROUP BY repo.id`,
+    )
+    .all();
+  return {
+    type: "counter",
+    name: PULLS_FAMILY,
+    help: "Pulls merged, by repository.",
+    samples: rows.map((r) => ({ labels: { repo: r.repo }, value: r.n })).sort(bySeries),
+  };
+}
+
+/** Releases cut: one count of the `release` rows that went live (`ok = 1`). */
+export function releasesFamily(db: Database): Family {
+  const row = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM release WHERE ok = 1").get();
+  return { type: "counter", name: RELEASES_FAMILY, help: "Releases cut.", samples: [{ value: row?.n ?? 0 }] };
+}
+
+/**
+ * Seconds from an ask opening to the release of the pull that closes it. Each
+ * release names its pull; the pull's body names the issues it closes; the
+ * first successful release of a pull counts once, against the oldest issue it closes.
+ */
+export function askToLiveFamily(db: Database): Family {
+  const releases = db
+    .query<{ at: string; body: string; repo_id: string }, []>(
+      `SELECT MIN(release.created_at) AS at, issue.body, issue.repo_id
+         FROM release JOIN issue ON issue.repo_id = release.repo_id
+          AND issue.number = release.pull_number AND issue.kind = 'pull'
+        WHERE release.pull_number IS NOT NULL AND release.ok = 1 GROUP BY issue.id`,
+    )
+    .all();
+  const opened = db.query<{ created_at: string }, [string, number]>(
+    "SELECT created_at FROM issue WHERE repo_id = ?1 AND number = ?2 AND kind = 'issue'",
+  );
+  const counts = new Array<number>(ASK_EDGES_S.length).fill(0);
+  let count = 0;
+  let sum = 0;
+  for (const r of releases) {
+    let from: string | undefined;
+    for (const n of closesFromBody(r.body)) {
+      const at = opened.get(r.repo_id, n)?.created_at;
+      if (at !== undefined && (from === undefined || at < from)) from = at;
+    }
+    if (from === undefined) continue;
+    const s = seconds(from, r.at);
+    count++;
+    sum += s;
+    const i = ASK_EDGES_S.findIndex((edge) => s <= edge);
+    if (i >= 0) counts[i]!++;
+  }
+  let running = 0;
+  const buckets = ASK_EDGES_S.map((le, i) => ({ le, count: (running += counts[i]!) }));
+  return {
+    type: "histogram",
+    name: ASK_FAMILY,
+    help: "Seconds from an issue opening to the release of the pull that closed it.",
+    samples: [{ buckets, count, sum }],
+  };
+}
+
+/**
+ * Seconds the default branch's check spent failing, per repository: from a
+ * failed check's finish to the finish of the next green one (or `now` while
+ * it is still red). One read of the branch's finished checks in run order.
+ */
+export function mainRedFamily(db: Database, now: number = Date.now()): Family {
+  const rows = db
+    .query<{ repo: string; repo_id: string; state: string; finished_at: string | null }, []>(
+      `SELECT ${REPO_LABEL} AS repo, run.repo_id, run.state, run.finished_at
+         FROM run JOIN repo ON repo.id = run.repo_id JOIN user ON user.id = repo.owner_id
+        WHERE run.kind = 'check' AND run.issue_id IS NULL AND run.env = repo.default_branch
+          AND run.state IN ('ok','failed') AND run.finished_at IS NOT NULL
+        ORDER BY run.repo_id, run.id`,
+    )
+    .all();
+  const red = new Map<string, number>();
+  const since = new Map<string, string>();
+  const nowIso = new Date(now).toISOString();
+  const seen = new Set<string>();
+  const close = (id: string, at: string): void => {
+    const from = since.get(id);
+    if (from === undefined) return;
+    red.set(id, (red.get(id) ?? 0) + seconds(from, at));
+    since.delete(id);
+  };
+  const labels = new Map<string, string>();
+  for (const r of rows) {
+    labels.set(r.repo_id, r.repo);
+    seen.add(r.repo_id);
+    if (r.state === "failed") {
+      if (!since.has(r.repo_id)) since.set(r.repo_id, r.finished_at!);
+    } else close(r.repo_id, r.finished_at!);
+  }
+  for (const id of [...since.keys()]) close(id, nowIso);
+  const samples = [...seen].map((id) => ({ labels: { repo: labels.get(id)! }, value: red.get(id) ?? 0 }));
+  return {
+    type: "counter",
+    name: RED_FAMILY,
+    help: "Seconds the default branch's check spent failing, by repository.",
+    samples: samples.sort(bySeries),
   };
 }
 
@@ -96,6 +226,14 @@ export function appFamilies({ apps, cells }: AppSources): Family[] {
 export function forgeMetrics(
   db: Database,
   sources: AppSources = { apps: [], cells: [] },
+  now: number = Date.now(),
 ): string {
-  return openMetrics([durationFamily(db), ...appFamilies(sources)]).replace(/# EOF\n$/, "");
+  return openMetrics([
+    durationFamily(db),
+    ...appFamilies(sources),
+    pullsMergedFamily(db),
+    releasesFamily(db),
+    askToLiveFamily(db),
+    mainRedFamily(db, now),
+  ]).replace(/# EOF\n$/, "");
 }

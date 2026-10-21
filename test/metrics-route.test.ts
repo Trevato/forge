@@ -73,5 +73,6 @@ test("every family the route serves is listed in docs/METRICS.md", async () => {
   const families = [...text.matchAll(/^# TYPE (\S+) /gm)].map((m) => m[1]!);
   expect(families).toContain("forge_egress_connections");
   expect(families).toContain("forge_http_request_duration_seconds");
-  for (const f of families) expect(doc).toContain(`\`${f}\``);
+  // A counter's TYPE line names the family without `_total`; the doc names the sample.
+  for (const f of families) expect(doc.includes(`\`${f}\``) || doc.includes(`\`${f}_total\``)).toBe(true);
 });

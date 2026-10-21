@@ -5,6 +5,8 @@ import { Database } from "bun:sqlite";
 import type { CellCounter } from "../src/apps/contain.ts";
 import { appFamilies, forgeMetrics, type AppReading } from "../src/metrics/forge.ts";
 import { openMetrics } from "../src/metrics/openmetrics.ts";
+import { migrate } from "../src/kernel/migrate.ts";
+import { migrationFiles } from "../src/core/schema.ts";
 
 const app = (state: "running" | "asleep"): AppReading[] => [
   { id: "app1", slug: "notes", private: false, envs: [{ env: "production", state }] },
@@ -35,7 +37,7 @@ test("a private app appears under its id only", () => {
 
 test("forgeMetrics carries the families as Prometheus text without a trailing EOF", () => {
   const db = new Database(":memory:");
-  db.run("CREATE TABLE route_timing (hour TEXT, pattern TEXT, bucket INTEGER, n INTEGER, sum_us INTEGER)");
+  migrate(db, migrationFiles);
   const body = forgeMetrics(db, { apps: app("running"), cells: [] });
   expect(body).toContain("# TYPE forge_app_up gauge");
   expect(body).toContain("# TYPE forge_cell_cpu_seconds counter");
@@ -44,7 +46,7 @@ test("forgeMetrics carries the families as Prometheus text without a trailing EO
 
 test("two cells under one label (a deploy's old and new) are one series, summed, and the scrape does not throw", () => {
   const db = new Database(":memory:");
-  db.run("CREATE TABLE route_timing (hour TEXT, pattern TEXT, bucket INTEGER, n INTEGER, sum_us INTEGER)");
+  migrate(db, migrationFiles);
   const cells = [cell("app:notes/production"), { ...cell("app:notes/production"), key: 2 }];
   const body = forgeMetrics(db, { apps: app("running"), cells });
   expect(body).toContain('forge_cell_memory_bytes{app="notes",env="production"} 8192');
