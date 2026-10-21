@@ -140,24 +140,26 @@ function pinForm(slug: string, title: string, pinned: boolean): Html {
 }
 
 function manage(slug: string, board: Board, adding: Html, pins: ReturnType<typeof listPins>): Html {
-  const one = (p: Panel, i: number) => html`<li class="row bmanage">
-    <details>
-      <summary><strong>${p.title}</strong> <span class="muted small">${CHART_NAMES[p.chart]} · ${String(p.w)}×${String(p.h)}</span></summary>
+  const one = (p: Panel, i: number) => html`<li class="row">
+    <details class="row-main">
+      <summary><strong class="break">${p.title}</strong> <span class="muted small">${CHART_NAMES[p.chart]} · ${String(p.w)}×${String(p.h)}</span></summary>
       ${panelForm(slug, "edit", p, i, queryFields(paramsOf(p.query, p.chart)))}
     </details>
-    ${pinForm(slug, p.title, isPinned(pins, slug, p.title))}
-    <form method="post" action="/boards/${slug}/move" class="row-actions">
-      <input type="hidden" name="index" value="${String(i)}" />
-      ${btn("Up", { size: "sm", name: "by", value: "-1", label: `Move ${p.title} up` })}
-      ${btn("Down", { size: "sm", name: "by", value: "1", label: `Move ${p.title} down` })}
-    </form>
-    <form method="post" action="/boards/${slug}/remove">
-      <input type="hidden" name="index" value="${String(i)}" />
-      ${btn("Remove", { size: "sm", variant: "danger", label: `Remove ${p.title}` })}
-    </form>
+    <div class="row-trail bar">
+      ${pinForm(slug, p.title, isPinned(pins, slug, p.title))}
+      <form method="post" action="/boards/${slug}/move" class="row-actions">
+        <input type="hidden" name="index" value="${String(i)}" />
+        ${btn("Up", { size: "sm", name: "by", value: "-1", label: `Move ${p.title} up` })}
+        ${btn("Down", { size: "sm", name: "by", value: "1", label: `Move ${p.title} down` })}
+      </form>
+      <form method="post" action="/boards/${slug}/remove">
+        <input type="hidden" name="index" value="${String(i)}" />
+        ${btn("Remove", { size: "sm", variant: "danger", label: `Remove ${p.title}` })}
+      </form>
+    </div>
   </li>`;
   return html`${card(
-      html`<ul class="list">${board.panels.map(one)}</ul>`,
+      html`<ul class="list setting-list">${board.panels.map(one)}</ul>`,
       { head: html`<h2>Panels</h2>`, pad: false },
     )}
     ${when(

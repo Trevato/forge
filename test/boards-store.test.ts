@@ -168,6 +168,21 @@ describe("/boards", () => {
     expect(body).not.toContain('data-live-src="/boards');
   });
 
+  test("manage controls draw §5's row and bar, not .bmanage, and keep every form", async () => {
+    const body = await (await asAdmin("/boards/fleet-health")).text();
+    expect(body).not.toContain("bmanage");
+    expect(body).toContain('class="row-trail bar"');
+    expect(body).toContain('class="list setting-list"');
+    expect(body).toContain('action="/boards/pin-panel"');
+    for (const op of ["move", "remove", "rename", "settings", "duplicate", "delete"]) {
+      expect(body).toContain(`action="/boards/fleet-health/${op}"`);
+    }
+    for (const word of ["Panels", "Add a panel", "Up", "Down", "Remove", "Pin to home", "Save settings", "Duplicate", "Delete this board"]) {
+      expect(body).toContain(word);
+    }
+    expect(body).toContain('<strong class="break">');
+  });
+
   test("settings turn on refresh, and the grid answers alone with an etag", async () => {
     const saved = await post("/boards/fleet-health/settings", { range: "24h", refresh: "10s" });
     expect(saved.status).toBe(303);
