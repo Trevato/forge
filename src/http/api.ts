@@ -3592,25 +3592,35 @@ export function apiRoutes(router: Router<Handler>): void {
   // ── pull requests — so automation drives the review/merge loop ───────
 
   router.add("GET", "/api/v1/repos/:owner/:name/pulls", async (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const query = listQuery(ctx);
-    const pulls = listPulls(ctx.app.db, repo.id, {
-      ...query,
-      ...sealedScope(ctx.app.db, repo, ctx.auth.user),
+    const { query, pulls } = timePhase(ctx.request, "list", () => {
+      const query = listQuery(ctx);
+      const pulls = listPulls(ctx.app.db, repo.id, {
+        ...query,
+        ...sealedScope(ctx.app.db, repo, ctx.auth.user),
+      });
+      return { query, pulls };
     });
-    const states = await pullMergeStates(
-      await Promise.all(
-        pulls.map(async (p) => ({ dir: await pullDirOf(ctx, repo, p), pull: p })),
+    const states = await timePhaseAsync(ctx.request, "merge", async () =>
+      pullMergeStates(
+        await Promise.all(
+          pulls.map(async (p) => ({ dir: await pullDirOf(ctx, repo, p), pull: p })),
+        ),
       ),
     );
-    const siblings = variantSiblings(ctx.app.db, pulls);
-    const items = withLabelsMany(ctx, pulls).map((item, i) => ({
-      ...item,
-      variantSiblings: siblings[i] ?? [],
-      ...(states[i] ?? {}),
-    }));
-    return json(paged(items, query.limit, (p) => p.number));
+    const items = timePhase(ctx.request, "labels", () => {
+      const siblings = variantSiblings(ctx.app.db, pulls);
+      return withLabelsMany(ctx, pulls).map((item, i) => ({
+        ...item,
+        variantSiblings: siblings[i] ?? [],
+        ...(states[i] ?? {}),
+      }));
+    });
+    return timePhase(ctx.request, "render", () =>
+      json(paged(items, query.limit, (p) => p.number)),
+    );
   });
 
   // A writer hands a child its own narrow credential for this repository
