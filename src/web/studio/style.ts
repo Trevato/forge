@@ -35,7 +35,7 @@ const wordBadges = part(/* css */ `
 const phone = part(/* css */ `
 @media (max-width: 600px) {
   .feed .card-head { row-gap: 2px; }
-  .feed .bar .btn, .fcard-form .btn { min-height: 44px; }
+  .feed .bar .btn { min-height: 44px; }
 }
 `);
 

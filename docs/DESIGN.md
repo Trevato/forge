@@ -403,7 +403,7 @@ gone, so this list only shrinks.
 - **`style/content.ts`, search results** — search results, the inbox's ask cards: `.ask-acts` `.ask-card` `.ask-group` `.ask-kind` `.ask-meta` `.ask-more-acts` `.ask-pick` `.ask-pick-hit` `.ask-short` `.ask-waiting` `.live-toggle`
 - **`pages/board.ts`** — the board itself is §5's **board**; the spend tables `spend.ts` draws wear §5's `.table` and `.stack`, no class of their own
 - **`pages/map.ts`** — the map of what waits for what: `.map-ask` `.map-breath` `.map-canvas` `.map-card` `.map-counts` `.map-dot` `.map-edge` `.map-edge-crit` `.map-edge-done` `.map-empty` `.map-list` `.map-main` `.map-meta` `.map-node` `.map-rule` `.map-svg` `.map-title` `.map-tool` `.map-tools` `.map-who` `.map-who-i` `.map-who-n` `.map-word` `.map-wrap`
-- **`studio/feed_style.ts`** — the home feed's cards and its composer (the apps rail is §5's card, row and btn; an admin's tick boxes and Archive are always shown, deliberately, with no Select toggle): `.composer` `.fcard-form` `.fcard-reason` `.fcard-reply` `.fcard-text` `.fcard-unblock` `.fcard-who` `.fcard-why` `.feed` `.feed-head`
+- **`studio/feed_style.ts`** — the home feed's cards and its composer (the apps rail is §5's card, row and btn; an admin's tick boxes and Archive are always shown, deliberately, with no Select toggle): `.composer` `.feed` `.feed-head`
 ---
 
 ## 6. Keyboard

@@ -22,7 +22,7 @@ import { getPull } from "../src/core/pulls.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { stalledScreen } from "../src/tui/screens/stalled.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
-import { feedCss } from "../src/web/studio/feed_style.ts";
+import { utilities } from "../src/web/style/base.ts";
 import { settleApp } from "./helpers/tui.ts";
 import { unblock } from "../src/flow/unblock.ts";
 import { stalledRows } from "../src/tui/screens/stalled.ts";
@@ -289,7 +289,6 @@ describe("stalled steps on the home", () => {
     const page = await home();
     expect(page.split("data-flow-card=").length - 1).toBe(stalled().length);
     expect(stalled().length).toBeGreaterThan(6);
-    expect(feedCss).toContain(".fcard-unblock { display: flex;");
-    expect(feedCss).toContain("flex-wrap: wrap");
+    expect(utilities).toMatch(/\.bar \{[^}]*flex-wrap: wrap/);
   });
 });
