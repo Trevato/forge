@@ -876,10 +876,10 @@ export function drawMap(
       )}
       ${placed.nodes.map((n) => node(base, n, g, emphasis, issueHref))}
     </svg>
-    <div class="map-tools js-only" role="group" aria-label="Zoom">
+    <div class="bar js-only" role="group" aria-label="Zoom">
       <button
         type="button"
-        class="map-tool"
+        class="btn btn-icon" data-size="sm"
         data-map="out"
         aria-label="Zoom out"
       >
@@ -887,13 +887,19 @@ export function drawMap(
       </button>
       <button
         type="button"
-        class="map-tool"
+        class="btn" data-size="sm"
         data-map="fit"
         title="Fit the map to view. Drag to pan; ⌘ or Ctrl and scroll to zoom."
       >
         fit
       </button>
-      <button type="button" class="map-tool" data-map="in" aria-label="Zoom in">
+      <button
+        type="button"
+        class="btn btn-icon"
+        data-size="sm"
+        data-map="in"
+        aria-label="Zoom in"
+      >
         +
       </button>
     </div>
@@ -1100,6 +1106,7 @@ export const mapCss = /* css */ `
 .map-svg { display: block; width: 100%; height: auto; }
 .map-canvas.is-view .map-svg { height: 100%; }
 .map-svg text { font-family: var(--font); pointer-events: none; }
+.map-canvas > [role="group"] { position: absolute; top: 8px; right: 8px; gap: 4px; }
 .map-tools { position: absolute; top: 8px; right: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--card); box-shadow: var(--shadow-1); overflow: hidden; }
 .map-tool { min-width: 26px; height: 24px; padding: 0 7px; border: 0; background: transparent; color: var(--muted-fg); font-size: 12.5px; font-weight: 550; line-height: 1; cursor: pointer; }
 .map-tool + .map-tool { border-left: 1px solid var(--border); }
@@ -1250,7 +1257,7 @@ export const mapViewJs = /* js */ `
   var pointers = {}, drag = null;
   document.addEventListener('pointerdown', function (e) {
     var canvas = canvasOf(e);
-    if (!canvas || !views[canvas.id] || e.target.closest('.map-tools')) return;
+    if (!canvas || !views[canvas.id] || e.target.closest('[role="group"]')) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
     var ids = Object.keys(pointers);
@@ -1309,7 +1316,7 @@ export const mapViewJs = /* js */ `
   }, { passive: false });
   document.addEventListener('dblclick', function (e) {
     var canvas = canvasOf(e);
-    if (!canvas || !views[canvas.id] || e.target.closest('.map-tools')) return;
+    if (!canvas || !views[canvas.id] || e.target.closest('[role="group"]')) return;
     e.preventDefault();
     var p = at(canvas, e);
     zoom(canvas, 1.6, p[0], p[1]);

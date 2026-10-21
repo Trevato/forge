@@ -409,6 +409,29 @@ describe("the map, per app and across the forge", () => {
     expect(page).toContain("not linked");
   });
 
+  test("the zoom tools are §5's bar and btn, found by data-map, not by the old names", async () => {
+    const cookie = await signIn("alice");
+    const page = await (
+      await fetch(`${base}/alice/engine/map`, { headers: { cookie } })
+    ).text();
+    // The stylesheet still holds the old rules (#4239 removes them); the markup must not.
+    const markup = page.replace(/<style[\s\S]*?<\/style>/g, "").replace(/<script[\s\S]*?<\/script>/g, "");
+    expect(markup).not.toMatch(/class="[^"]*\bmap-tools?\b/);
+    const group = markup.match(/<div[^>]*role="group"[^>]*aria-label="Zoom"[^>]*>/)?.[0] ?? "";
+    expect(group).toMatch(/class="bar js-only"/);
+    for (const what of ["out", "fit", "in"]) {
+      expect(markup).toMatch(
+        new RegExp(`<button[^>]*class="btn[^"]*"[^>]*data-map="${what}"`),
+      );
+    }
+    expect(markup).toContain('aria-label="Zoom out"');
+    expect(markup).toContain('aria-label="Zoom in"');
+    expect(markup).toContain("Fit the map to view.");
+    expect(markup).toMatch(/data-map="fit"[^>]*>\s*fit\s*</);
+    expect(markup).toMatch(/data-map="out"[^>]*>\s*−\s*</);
+    expect(markup).toMatch(/data-map="in"[^>]*>\s*\+\s*</);
+  });
+
   test("a person sees a lane for each repository they can read, idle lanes folded, at one scale", async () => {
     const cookie = await signIn("alice");
     const page = await (
