@@ -907,7 +907,6 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
   animation: pop 200ms var(--ease) both;
 }
 .live-pill:hover { color: var(--primary-fg); opacity: .92; }
-.live-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 
 }
 
