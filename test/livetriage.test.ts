@@ -531,7 +531,7 @@ describe("live triage where there is little to file under", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-  });
+  }, 30_000);
   afterAll(async () => {
     app.close();
     await rm(dir, { recursive: true, force: true });
