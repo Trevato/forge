@@ -189,6 +189,23 @@ describe("a reader's words over the API carry the brief's mark", () => {
     expect(listed.untrusted).toBe(READER);
   });
 
+  test("a brief listing keeps the mark and shows an imported author as such", async () => {
+    const imported = ok(
+      openIssue(app, alice, repo, { title: "From elsewhere", body: "x" }),
+    );
+    app.db
+      .query("UPDATE issue SET origin_author = 'octocat' WHERE id = ?")
+      .run(imported.id);
+    const list = await get("/issues?fields=brief");
+    const byNumber = (n: number) =>
+      list.items.find((i: { number: number }) => i.number === n);
+    expect(byNumber(issueNumber).untrusted).toBe(READER);
+    expect(byNumber(issueNumber).originAuthor).toBeNull();
+    expect(byNumber(imported.number).untrusted).toBe(READER);
+    expect(byNumber(imported.number).author).toBe("octocat");
+    expect(byNumber(imported.number).originAuthor).toBe("octocat");
+  });
+
   test("a pull: its body, its verdicts and its line comments", async () => {
     const pull = await get(`/pulls/${pullNumber}`);
     expect(pull.untrusted).toBe(READER);

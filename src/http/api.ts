@@ -565,6 +565,24 @@ function withLabelsMany<T extends Issue>(ctx: Ctx, issues: T[]) {
   }));
 }
 
+/** An issue for a listing: what to pick from, without bodies. */
+function briefIssue(i: ReturnType<typeof withLabelsMany>[number]) {
+  return {
+    number: i.number,
+    kind: i.kind,
+    title: i.title,
+    state: i.state,
+    labels: i.labels,
+    assignee: i.assigneeName,
+    author: i.originAuthor ?? i.authorName,
+    originAuthor: i.originAuthor,
+    ...(i.untrusted === undefined ? {} : { untrusted: i.untrusted }),
+    authorIsAgent: i.authorIsAgent,
+    createdAt: i.createdAt,
+    updatedAt: i.updatedAt,
+  };
+}
+
 const NO_COUNTS: RepoCounts = { openIssues: 0, openPulls: 0 };
 
 /**
@@ -3000,6 +3018,9 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/repos/:owner/:name/issues", (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
+    const fields = ctx.url.searchParams.get("fields");
+    if (fields !== null && fields !== "brief")
+      return apiError("invalid_fields", 422, "fields must be brief, or left out");
     const query = listQuery(ctx);
     const items = withLabelsMany(
       ctx,
@@ -3009,7 +3030,10 @@ export function apiRoutes(router: Router<Handler>): void {
         ...sealedScope(ctx.app.db, repo, ctx.auth.user),
       }),
     );
-    return json(paged(items, query.limit, (i) => i.number));
+    const page = paged(items, query.limit, (i) => i.number);
+    return json(
+      fields === "brief" ? { ...page, items: page.items.map(briefIssue) } : page,
+    );
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/issues", async (ctx) => {

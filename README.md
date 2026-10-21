@@ -208,7 +208,7 @@ runs no check and no preview until a writer approves its head or lets it run
 (**Let it run here**, which is not a review; a new push waits again), and a bare push to `child/…` starts none. A pull
 opened with it says "proposed by child … from …" on every tab of the pull's
 page, in the terminal's pull view, and as `proposal` in the pull's JSON
-(`GET …/pulls/:number`, and MCP's `pull` tool). `GET …/pulls/:number?diff=0` reads the pull without its diff (and skips computing it); `diff` is `0` or `1`, default `1`, and anything else answers 422.
+(`GET …/pulls/:number`, and MCP's `pull` tool). `GET …/pulls/:number?diff=0` reads the pull without its diff (and skips computing it); `diff` is `0` or `1`, default `1`, and anything else answers 422. `GET …/issues?fields=brief` lists issues with only number, kind, title, state, labels, assignee, author, originAuthor, authorIsAgent, createdAt and updatedAt (and `untrusted` where it applies); no bodies or comments. `fields` is `brief` or left out, and anything else answers 422 `invalid_fields`.
 
 ### Proposing to a parent forge
 

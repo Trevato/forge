@@ -54,7 +54,9 @@ test("listing issues and pulls is described with the query the handlers read", (
     const get = doc.paths[`${R}/${kind}`].get;
     expect(get.security).toBeUndefined();
     const q = get.parameters.filter((p: any) => p.in === "query");
-    expect(q.map((p: any) => p.name)).toEqual(["state", "limit", "cursor", "label", "author"]);
+    const base = ["state", "limit", "cursor", "label", "author"];
+    expect(q.map((p: any) => p.name)).toEqual(kind === "issues" ? [...base, "fields"] : base);
+    if (kind === "issues") expect(q.find((p: any) => p.name === "fields").schema.enum).toEqual(["brief"]);
     expect(q.find((p: any) => p.name === "limit").schema.type).toBe("integer");
     expect(q.find((p: any) => p.name === "state").schema.enum).toEqual(["open", "closed", "all"]);
     expect(get.parameters.filter((p: any) => p.in === "path").length).toBe(2);
