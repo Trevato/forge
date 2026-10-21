@@ -362,15 +362,6 @@ form.inline { display: inline; margin-left: auto; }
   display: grid; gap: 16px; max-width: 1040px; margin-inline: auto;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
 }
-.app-tile {
-  display: block; border: 1px solid var(--border); border-radius: var(--radius);
-  overflow: hidden; background: var(--card); color: inherit; text-decoration: none;
-}
-.app-tile:hover { border-color: var(--accent); }
-.app-tile-look { display: block; width: 100%; height: auto; background: var(--muted); }
-.app-tile-body { display: grid; gap: 6px; padding: 10px 12px; }
-.app-tile-name { font-weight: 600; font-size: 14px; }
-.app-tile-desc { color: var(--muted-fg); font-size: 12.5px; }
 
 /* Explore (#607): a row is a name, a line, its numbers, and one verb. */
 .explore-row { gap: 12px; }
@@ -432,7 +423,6 @@ form.inline { display: inline; margin-left: auto; }
 @media (max-width: 520px) {
   /* Two to a row on a phone: a few live apps in one screen, not a scroll. */
   .app-shelf { gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .app-tile-body { padding: 8px 10px; }
 }
 @media (max-width: 720px) {
   .front-featured { grid-template-columns: 1fr; }
