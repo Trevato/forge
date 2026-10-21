@@ -756,7 +756,6 @@ form.inline { display: inline; margin-left: auto; }
 /* A tail beside a running row (studio/app.ts): the same log, a peek at it
    — fixed height so nothing around it shifts as lines arrive, and it
    scrolls itself rather than the page. */
-.log-tail-row { padding: 0 14px 10px; }
 .run-log.log-tail { max-height: 8.5em; min-height: 0; margin: 6px 0 0; font-size: 12.5px; }
 .table .truncate { max-width: 34ch; display: inline-block; vertical-align: bottom; }
 
