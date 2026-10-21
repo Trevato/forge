@@ -32,7 +32,7 @@ import { runSync } from "./origins/sync.ts";
 import { startForgeSsh } from "./tui/ssh.ts";
 import { AppsRuntime } from "./apps/runtime.ts";
 import { resolveAppDomain } from "./apps/host.ts";
-import { requeueAbandonedChecks, startChecks } from "./checks/service.ts";
+import { LAND_SETTLE_MS, requeueAbandonedChecks, startChecks } from "./checks/service.ts";
 import { RED_HOLD_MS } from "./checks/red_main.ts";
 import { startLooks } from "./looks/service.ts";
 import { startMirrorOut } from "./origins/mirror-out.ts";
@@ -348,6 +348,7 @@ const checks =
         // Sized to the pod's CPUs unless the environment says (#2549).
         concurrency: positive(process.env.FORGE_CHECKS_CONCURRENCY, Number(capacityDefault("checks.concurrency"))),
         redHoldMs: RED_HOLD_MS,
+        landSettleMs: LAND_SETTLE_MS,
         // A roll lets running checks finish this long before cutting them off.
         drainMs: positive(process.env.FORGE_CHECKS_DRAIN_S, 300) * 1000,
       });

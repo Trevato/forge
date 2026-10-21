@@ -416,9 +416,16 @@ can select it and hold what `egress` declares.
 Checks share `FORGE_CHECKS_CONCURRENCY` slots (default `1`), and when one
 frees, it goes to the most recently requested check waiting, not the one
 queued longest — a fresh push is never stuck behind pulls that queued hours
-earlier. The one exception is starvation: a check that has waited ten
-minutes to start outranks a newer one regardless, so nothing waits forever.
-A pull's status names how long its queued check has been waiting.
+earlier. The one exception is starvation: a check that has waited five
+minutes to start outranks a newer one regardless, so nothing waits forever
+and nothing waits out the lane's ten-minute budget only because it was passed
+over.
+A pull's status names how long its queued check has been waiting. The check
+of the default branch that a landed pull asks for waits thirty seconds
+before it may start: the merge queue lands a candidate's pulls seconds
+apart, and each one's check is superseded by the next while still queued,
+so the lane checks the head the candidate ends at, not every step on the
+way.
 
 ### Environment
 

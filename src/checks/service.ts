@@ -109,6 +109,12 @@ export interface ChecksOptions {
    */
   readonly redHoldMs?: number | undefined;
   /**
+   * How long main's check after a land waits before it may start, so the
+   * steps of one candidate supersede each other while queued. @default 0,
+   * none; the forge says `LAND_SETTLE_MS`.
+   */
+  readonly landSettleMs?: number | undefined;
+  /**
    * How long `stop` lets checks already running finish before it cuts them
    * off and queues them again (#1796). Nothing new starts meanwhile.
    * @default 0
@@ -156,15 +162,27 @@ export interface ChecksHandle {
   readonly lane: Gate;
 }
 
+/**
+ * How long main's check after a land waits to start (#4061). The merge queue
+ * lands a candidate's steps seconds apart, and only its tip was gated: a
+ * step's check that started at once ran the full suite on a commit the next
+ * step replaced, up to seven of them filling the lane for nine minutes. A
+ * step's check that waits is superseded by the next while still queued, and
+ * the tip's is proven green by the gate.
+ */
+export const LAND_SETTLE_MS = 30_000;
+
 /** How often queued checks another forge left are looked for. */
 const TICK_MS = 5_000;
 
 /**
  * How long a queued check may wait before it outranks a newer one however
  * fresh: the bound that keeps `pickNext` from starving a pull nobody has
- * pushed to in a while.
+ * pushed to in a while. Half the lane's budget (#4061): at the budget
+ * itself, every check the newest-first order passed over waited exactly
+ * long enough to make the lane a cause, even when the lane kept up.
  */
-export const STARVATION_MS = 10 * 60 * 1000;
+export const STARVATION_MS = BUDGETS.laneWait / 2;
 
 /**
  * Which queued check takes a slot when one frees: the one requested most
@@ -270,6 +288,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   >();
   /** Checks already told why they wait, so the log says it once. */
   const waiting = new Set<string>();
+  const settle = options.landSettleMs ?? 0;
   let stopped = false;
 
   sweepCheckouts(app);
@@ -281,6 +300,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     reason: string,
     issueId?: string,
     actorId?: string,
+    notBefore?: string,
   ): Promise<Run | undefined> {
     // A suspended or removed owner's code is not run, not even to check it.
     if (stopped || !accountActive(app.db, repo.ownerId)) return undefined;
@@ -336,6 +356,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         reason,
         ...(issueId === undefined ? {} : { issueId }),
         ...(actorId === undefined ? {} : { actorId }),
+        ...(notBefore === undefined ? {} : { notBefore }),
       });
       return { run: created, fresh: true };
     });
@@ -402,7 +423,10 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       // A pull's check waits while its main is red (`checks/red_main.ts`).
       const queued = unheld(
         listActive(app.db, "check").filter(
-          (run) => run.state === "queued" && !inFlight.has(run.id),
+          (run) =>
+            run.state === "queued" &&
+            !inFlight.has(run.id) &&
+            (run.notBefore === null || Date.parse(run.notBefore) <= Date.now()),
         ),
         (repoId) => redMain(app.db, repoId),
         options.redHoldMs ?? 0,
@@ -1083,7 +1107,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           announceRun(app, run);
         }
         // A land moves the default branch without a push event: check its
-        // new head, or a red main stays red until someone pushes to it.
+        // new head, or a red main stays red until someone pushes to it. The
+        // check settles first: a candidate's next step supersedes it.
         const mergeOid = event.payload["mergeOid"];
         if (
           event.kind === "pull.merged" &&
@@ -1098,6 +1123,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
             "push",
             undefined,
             actor,
+            settle > 0 ? new Date(Date.now() + settle).toISOString() : undefined,
           );
         return;
       }
