@@ -260,7 +260,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
   color: var(--muted-fg); margin: 8px 0 4px;
 }
 
-.fork-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
 
 /* A mirror whose origin went: what froze, and the one way back. */
 .frozen { margin-top: 12px; }
