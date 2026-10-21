@@ -5,7 +5,9 @@
 # image; it is the largest thing here by far, and the only way to see a page
 # as a browser does. package.json's dependency list is empty, so there is
 # nothing to install.
-FROM oven/bun:1.3-debian
+# The Bun version is chosen, not floated: a rebuild must not change the
+# runtime unasked. Whether to move off 1.3.14 waits on the decode issue (#3726).
+FROM oven/bun:1.3.14-debian
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git ca-certificates curl bubblewrap socat nodejs npm tini chromium fonts-liberation \
  && rm -rf /var/lib/apt/lists/* \
