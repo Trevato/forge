@@ -57,7 +57,7 @@ import {
 import { liveRegionsJs } from "../client.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { avatar, badge, icon, listCard, row } from "../ui.ts";
+import { avatar, badge, btn, card, empty, icon, listCard, row } from "../ui.ts";
 import { autonomyStatus, type AutonomyStatus } from "../../crew/autonomy.ts";
 import {
   parkedTwice,
@@ -819,10 +819,20 @@ export interface DrawOptions {
   /** Where a card's own link goes. Defaults to dev's `/issues/:number`. */
   readonly issueHref?: (base: string, number: number) => string;
   /** What the empty state says, in the reader's own noun for an issue. */
-  readonly emptyHtml?: Html;
+  readonly empty?: MapEmpty;
 }
 
-const DEV_EMPTY = html`<p>No open issues to map. Open one, then link what it waits for.</p>`;
+const DEV_EMPTY: MapEmpty = {
+  title: "No open issues to map",
+  note: "Open one, then link what it waits for.",
+};
+
+/** What the map says when there is nothing on it: §5's empty state. */
+export interface MapEmpty {
+  readonly title: string;
+  readonly note: string;
+  readonly action?: Html;
+}
 
 export function drawMap(
   repo: Repo,
@@ -832,9 +842,7 @@ export function drawMap(
   options: DrawOptions,
 ): Html {
   if (placed.nodes.length === 0)
-    return html`<div class="map-empty">
-      ${icon("map", 20)} ${options.emptyHtml ?? DEV_EMPTY}
-    </div>`;
+    return empty({ icon: "map", ...(options.empty ?? DEV_EMPTY) });
   const base = repoBase(repo);
   const issueHref = options.issueHref ?? devIssueHref;
   const g = geometry(placed, options.minWidth ?? 0);
@@ -949,21 +957,23 @@ function rankedList(
   issueHref: (base: string, number: number) => string,
 ): Html {
   const base = repoBase(repo);
-  return html`<section class="map-list">
+  return html`<section class="stack-tight">
     <h2>${title}</h2>
     ${items.length === 0
       ? html`<p class="muted small">${empty}</p>`
-      : html`<ol>
-          ${items.slice(0, 6).map(
-            (r) =>
-              html`<li>
-                <a href="${issueHref(base, r.issue.number)}"
-                  >${r.issue.title}</a
-                >
-                <span class="muted small">#${r.issue.number} · ${say(r)}</span>
-              </li>`,
-          )}
-        </ol>`}
+      : card(
+          html`<ul class="list setting-list">
+            ${items.slice(0, 6).map((r) =>
+              row({
+                href: issueHref(base, r.issue.number),
+                title: r.issue.title,
+                titleAttr: r.issue.title,
+                meta: html`#${r.issue.number} · ${say(r)}`,
+              }),
+            )}
+          </ul>`,
+          { pad: false },
+        )}
   </section>`;
 }
 
@@ -1052,44 +1062,48 @@ function pillarList(repo: Repo, rows: readonly PillarRow[]): Html {
     r.open === 0
       ? "nothing open"
       : `${r.open} open · ${r.ready} ready · ${r.blocked} blocked`;
-  return html`<section class="map-list" id="map-pillars">
+  return html`<section class="stack-tight" id="map-pillars">
     <h2>By pillar</h2>
-    <ul class="list">
-      ${rows.map((r) =>
-        r.name === null
-          ? row({
-              title: NO_PILLAR,
-              meta: html`${(r.issues ?? []).slice(0, 8).map(
+    ${card(
+      html`<ul class="list setting-list">
+        ${rows.map((r) =>
+          r.name === null
+            ? row({
+                title: NO_PILLAR,
+                meta: html`${(r.issues ?? []).slice(0, 8).map(
                   (i) =>
                     html`<a href="${base}/issues/${i.number}" title="${i.title}"
                         >#${i.number}</a
                       >${" "}`,
                 )}${(r.issues ?? []).length > 8 ? "…" : ""}`,
-              trail: badge(counts(r)),
-              data: { pillar: "" },
-            })
-          : row({
-              title: html`<a
-                href="${r.umbrella === undefined
-                  ? pillarHref(base, r.name)
-                  : milestoneHref(base, r.umbrella)}"
-                >${r.name}</a
-              >`,
-              meta: html`<span title="Median and slowest hours from an issue opening to its change live in production, over ${PILLAR_DAYS} days"
-                >${r.merged ?? 0} merged · ask to live
-                ${r.askToLive === undefined
-                  ? "—"
-                  : html`${hours(r.askToLive.medianHours)} median, slowest
-                      <a href="${base}/issues/${r.askToLive.slowest.number}"
-                        >#${r.askToLive.slowest.number}</a
-                      >
-                      ${hours(r.askToLive.slowest.hours)}`}</span
-              >`,
-              trail: badge(counts(r)),
-              data: { pillar: r.name },
-            }),
-      )}
-    </ul>
+                trail: badge(counts(r)),
+                data: { pillar: "" },
+              })
+            : row({
+                title: html`<a
+                  class="break"
+                  href="${r.umbrella === undefined
+                    ? pillarHref(base, r.name)
+                    : milestoneHref(base, r.umbrella)}"
+                  >${r.name}</a
+                >`,
+                meta: html`<span class="map-ask" title="Median and slowest hours from an issue opening to its change live in production, over ${PILLAR_DAYS} days"
+                  >${r.merged ?? 0} merged · ask to live
+                  ${r.askToLive === undefined
+                    ? "—"
+                    : html`${hours(r.askToLive.medianHours)} median, slowest
+                        <a href="${base}/issues/${r.askToLive.slowest.number}"
+                          >#${r.askToLive.slowest.number}</a
+                        >
+                        ${hours(r.askToLive.slowest.hours)}`}</span
+                >`,
+                trail: badge(counts(r)),
+                data: { pillar: r.name },
+              }),
+        )}
+      </ul>`,
+      { pad: false },
+    )}
   </section>`;
 }
 
@@ -1174,10 +1188,7 @@ export const mapCss = /* css */ `
 .map-list ol li::marker { color: var(--faint); font-variant-numeric: tabular-nums; }
 .map-list li span { display: block; }
 .map-list + .map-list { margin-top: 18px; }
-.map-ask { display: block; }
-.map-list .list span { display: inline; }
-.map-list .list .row-main, .map-list .list .row-trail { display: flex; }
-.map-pillars ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; font-size: 14px; }
+.map-ask { display: inline; }
 .map-empty { display: grid; justify-items: center; gap: 8px; padding: 40px 16px; border: 1px dashed var(--border); border-radius: var(--radius); color: var(--muted-fg); text-align: center; }
 
 /* ---- lanes: §5 list rows that fold ---- */
@@ -1185,6 +1196,7 @@ export const mapCss = /* css */ `
 #lanes .row-meta .map-counts { margin: 0; }
 #lanes li[data-autonomy="autonomous"] .row-title .badge { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 34%, transparent); }
 #lanes li[data-idle] .row-title { color: var(--muted-fg); }
+#lanes details > .card.empty { border: 0; border-top: 1px solid var(--border); border-radius: 0; }
 #lanes details > .map-canvas, #lanes details > .map-empty { border: 0; border-top: 1px solid var(--border); border-radius: 0; }
 @media (prefers-reduced-motion: reduce) {
   .map-card, .map-title { transition: none; }
@@ -1355,8 +1367,11 @@ const LIVE_KINDS = "run.queued,run.started,run.finished,issue.*,pull.*";
 
 /** The empty state in the studio's own words, pointing at the app page's
  * own box for telling the crew (`#tell`, `src/web/studio/app.ts`). */
-const studioEmpty = (base: string): Html =>
-  html`<p>No issues to map yet. <a href="${base}#tell">Say one</a>, then link what it waits for.</p>`;
+const studioEmpty = (base: string): MapEmpty => ({
+  title: "No issues to map yet",
+  note: "Say one, then link what it waits for.",
+  action: btn("Say one", { href: `${base}#tell`, variant: "primary" }),
+});
 
 /** GET /:owner/:name/map */
 export async function mapPage(ctx: Ctx): Promise<Response> {
@@ -1398,11 +1413,11 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
           id: "map-canvas",
           cap: 1,
           issueHref: tellHref,
-          ...(studio ? { emptyHtml: studioEmpty(repoBase(repo)) } : {}),
+          ...(studio ? { empty: studioEmpty(repoBase(repo)) } : {}),
         })}
         ${placed.nodes.length === 0 ? null : countsLine(counts)}
       </div>
-      <aside>
+      <aside class="stack">
         ${pillars === undefined
           ? null
           : pillarList(

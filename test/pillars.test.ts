@@ -400,15 +400,17 @@ describe("pillars", () => {
       ),
     );
     expect(page).toContain("3 open · 2 ready · 1 blocked");
-    // §5's row and badge draw it; the page-local class is gone, the id stays.
-    expect(page).not.toMatch(/class="[^"]*map-pillars/);
-    expect(page).toMatch(
-      /class="row-title"\s*>no pillar<\/span/,
-    );
-    expect(page).toMatch(
-      /class="badge"\s*>3 open · 2 ready · 1 blocked<\/span/,
-    );
-    expect(page).toMatch(/data-pillar="P0 Trust"/);
+    expect(page).toMatch(/class="row-title"\s*>no pillar<\/span/);
+    expect(page).toMatch(/class="badge"\s*>3 open · 2 ready · 1 blocked<\/span/);
+    // §5's rows draw the section; the old names are gone (#4292).
+    expect(page).not.toMatch(/class="[^"]*\bmap-list\b/);
+    expect(page).not.toMatch(/class="[^"]*\bmap-empty\b/);
+    expect(page).toMatch(/id="map-pillars"[^>]*>\s*<h2>By pillar<\/h2>/);
+    expect(page).toContain('data-pillar="P0 Trust"');
+    // No rule restyles the card's rows: the list keeps §5's look, and the
+    // ask-to-live line stays on the row's one meta line.
+    expect(page).not.toMatch(/\.map-pillars\s+ul\b/);
+    expect(page).toMatch(/\.map-ask\s*\{\s*display:\s*inline/);
     expect(page).toContain(`href="/alice/engine/issues/${loose.number}"`);
     // The pillar's label narrows the one list.
     const list = await get("/alice/engine/issues?label=P0%20Trust");

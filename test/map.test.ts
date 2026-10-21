@@ -381,6 +381,10 @@ describe("the map, per app and across the forge", () => {
     // accent on the canvas alone, and spend and flow live on their boards.
     expect(page).toContain("Ready now");
     expect(page).toContain("Blocked on");
+    expect(page).not.toMatch(/class="[^"]*\bmap-list\b/);
+    expect(page).not.toMatch(/class="[^"]*\bmap-empty\b/);
+    expect(page).toContain('class="row-title"');
+    expect(page).toContain("finishing it frees");
     expect(page).not.toContain("Critical path");
     expect(page).not.toContain("Two weeks");
     expect(page).not.toContain("map-autonomy");
@@ -493,6 +497,21 @@ describe("the map, per app and across the forge", () => {
     expect(bobs).toContain("Rotate the keys");
     expect(bobs).not.toContain("alice/engine");
     expect(bobs).not.toContain("Extract renderer");
+  });
+
+  test("an empty map is §5's empty state, with the words and the way on", async () => {
+    const { drawMap, layout } = await import("../src/web/pages/map.ts");
+    const graph = { issues: [], edges: [] } as unknown as Graph;
+    const out = String(
+      drawMap({ ownerName: "a", name: "b" } as Repo, graph, layout(graph), {} as never, {
+        id: "x",
+        empty: { title: "Nothing yet", note: "Say one." },
+      }),
+    );
+    expect(out).toContain('class="card empty"');
+    expect(out).toContain("Nothing yet");
+    expect(out).toContain("Say one.");
+    expect(out).not.toContain("map-empty");
   });
 
   test("nothing to draw anywhere is one quiet sentence; a stranger is sent to sign in", async () => {

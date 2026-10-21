@@ -582,7 +582,7 @@ describe("dev's vocabulary never reaches a studio page", () => {
         // The empty case: what a new app's map says before anything is told.
         word: "map (empty)",
         path: "/alice/blank/map",
-        shows: ["No issues to map yet."],
+        shows: ["No issues to map yet"],
       },
       // A word from the app's own description, not its name — the app's own
       // row coming back for it proves the search reaches the description,
