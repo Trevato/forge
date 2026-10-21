@@ -2777,19 +2777,24 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/commits/:oid", async (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const rev = ctx.params.oid!;
     if (!isSafeRef(rev)) return notFound();
     const dir = dirOf(ctx, repo);
-    const log = await commitLog(dir, rev, { limit: 1 });
+    const log = await timePhaseAsync(ctx.request, "git", () =>
+      commitLog(dir, rev, { limit: 1 }),
+    );
     const commit = log.ok ? log.value[0] : undefined;
     if (!commit) return notFound();
-    const diff = await diffCommit(dir, commit.oid);
-    return json({
-      ...commit,
-      diff: diff.ok ? diff.value : { files: [], additions: 0, deletions: 0 },
-    });
+    const diff = await timePhaseAsync(ctx.request, "diff", () => diffCommit(dir, commit.oid));
+    return timePhase(ctx.request, "render", () =>
+      json({
+        ...commit,
+        diff: diff.ok ? diff.value : { files: [], additions: 0, deletions: 0 },
+      }),
+    );
   });
 
   // The default branch's check covering a full commit id: what a release
