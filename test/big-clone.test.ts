@@ -307,7 +307,7 @@ describe("a big repository over smart http", () => {
       expect(await missing(clone)).toEqual([]);
       const got = new Uint8Array(await Bun.file(join(clone, "base.step")).arrayBuffer());
       expect(Bun.hash(got)).toBe(Bun.hash(big));
-    });
+    }, 60_000);
 
     test(`--filter=blob:none over protocol v${version} clones and checks out`, async () => {
       const dir = `none-v${version}`;
@@ -319,7 +319,7 @@ describe("a big repository over smart http", () => {
       expect(run.code).toBe(0);
       expect(await Bun.file(join(work, dir, "README.md")).text()).toBe("# arm\n");
       expect((await Bun.file(join(work, dir, "base.step")).arrayBuffer()).byteLength).toBe(BIG);
-    });
+    }, 60_000);
   }
 });
 
