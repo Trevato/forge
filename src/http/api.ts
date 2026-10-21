@@ -3046,24 +3046,27 @@ export function apiRoutes(router: Router<Handler>): void {
   // ── issues — the label-as-queue surface automation drives ────────────
 
   router.add("GET", "/api/v1/repos/:owner/:name/issues", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const fields = ctx.url.searchParams.get("fields");
     if (fields !== null && fields !== "brief")
       return apiError("invalid_fields", 422, "fields must be brief, or left out");
     const query = listQuery(ctx);
-    const items = withLabelsMany(
-      ctx,
+    const listed = timePhase(ctx.request, "list", () =>
       listIssues(ctx.app.db, repo.id, {
         ...query,
         kind: "issue",
         ...sealedScope(ctx.app.db, repo, ctx.auth.user),
       }),
     );
-    const page = paged(items, query.limit, (i) => i.number);
-    return json(
-      fields === "brief" ? { ...page, items: page.items.map(briefIssue) } : page,
-    );
+    const items = timePhase(ctx.request, "labels", () => withLabelsMany(ctx, listed));
+    return timePhase(ctx.request, "render", () => {
+      const page = paged(items, query.limit, (i) => i.number);
+      return json(
+        fields === "brief" ? { ...page, items: page.items.map(briefIssue) } : page,
+      );
+    });
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/issues", async (ctx) => {
