@@ -255,16 +255,31 @@ interface NewAppValues {
 /** The agent select's sentinel for "turn the sentence into a plan and pick". */
 const PICK_AGENT = "__pick__";
 
-function newAppForm(ctx: Ctx, values: NewAppValues, error?: string): Html {
+/** Whether the form can offer "pick for me": the planner is on the path (timed as `planner`). */
+function plannerOffered(ctx: Ctx): boolean {
+  return timePhase(ctx.request, "planner", () =>
+    planningAvailable(process.env["FORGE_CLAUDE"] ?? "claude"),
+  );
+}
+
+function newAppForm(
+  ctx: Ctx,
+  values: NewAppValues,
+  canPlan: boolean,
+  error?: string,
+): Html {
   const user = ctx.auth.user!;
-  const writeOrgs = listOrgsForUser(ctx.app.db, user.id).filter((org) =>
-    accessAllows(orgAccess(ctx.app.db, org.id, user), "write"),
+  const writeOrgs = timePhase(ctx.request, "orgs", () =>
+    listOrgsForUser(ctx.app.db, user.id).filter((org) =>
+      accessAllows(orgAccess(ctx.app.db, org.id, user), "write"),
+    ),
   );
   const owners = [user.username, ...writeOrgs.map((o) => o.username)];
-  const agents = listAllAgents(ctx.app, user);
+  const agents = timePhase(ctx.request, "agents", () =>
+    listAllAgents(ctx.app, user),
+  );
   const crew = agents.ok ? agents.value : [];
   const domain = appsRuntime(ctx.app)?.options.domain;
-  const canPlan = planningAvailable(process.env["FORGE_CLAUDE"] ?? "claude");
 
   return html`<div class="narrow-wide">
     ${pageHead("New app", {
@@ -371,7 +386,10 @@ function newAppForm(ctx: Ctx, values: NewAppValues, error?: string): Html {
 // GET /apps/new
 export function newAppPage(ctx: Ctx): Response {
   if (!ctx.auth.user) return signInFirst(ctx);
-  return page({
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const picks = plannerOffered(ctx);
+  const rendering = performance.now();
+  const response = page({
     ctx,
     title: "New app",
     body: newAppForm(ctx, {
@@ -379,12 +397,12 @@ export function newAppPage(ctx: Ctx): Response {
       name: "",
       description: "",
       visibility: "private",
-      agent: planningAvailable(process.env["FORGE_CLAUDE"] ?? "claude")
-        ? PICK_AGENT
-        : "",
-    }),
+      agent: picks ? PICK_AGENT : "",
+    }, picks),
     scriptJs: appNameJs,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 /** Nothing in the sentence a slug can carry: punctuation only, or a script `[a-z0-9]` cannot. */
@@ -430,7 +448,7 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
       {
         ctx,
         title: "New app",
-        body: newAppForm(ctx, values, NO_NAME_ERROR),
+        body: newAppForm(ctx, values, plannerOffered(ctx), NO_NAME_ERROR),
         scriptJs: appNameJs,
       },
       422,
@@ -473,6 +491,7 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
         body: newAppForm(
           ctx,
           values,
+          plannerOffered(ctx),
           made.error === "repository_limit"
             ? `Not made: ${repositoryLimitMessage(ctx.app, ctx.auth.user!)}.`
             : made.error === "storage_limit"

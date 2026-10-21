@@ -244,11 +244,19 @@ export async function plan(
   }
 }
 
+/** Whether each binary was on the path when first asked: the lookup runs once per process. */
+const found = new Map<string, boolean>();
+
 /** Whether a call to `claude` is worth offering at all: the feature's switch. */
 export function planningAvailable(binary: string): boolean {
   if ((process.env["FORGE_APP_PLAN"] ?? "") === "0") return false;
   if (binary.trim() === "") return false;
-  return Bun.which(binary) !== null;
+  let present = found.get(binary);
+  if (present === undefined) {
+    present = Bun.which(binary) !== null;
+    found.set(binary, present);
+  }
+  return present;
 }
 
 /** A plan's checklist as an issue body: the summary, then the boxes. */
