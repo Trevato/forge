@@ -346,30 +346,23 @@ export function treeListing(
     const target = path === "" ? entry.name : `${path}/${entry.name}`;
     const isTree = entry.type === "tree";
     rows.push(
-      html`<li>
-        <a
-          class="row tree-row"
-          data-kind="${entry.type}"
-          data-nav
-          tabindex="-1"
-          href="${base}/${isTree ? "tree" : "blob"}/${encoded}/${target}"
-        >
-          <span class="row-lead">${icon(isTree ? "folder" : "file")}</span>
-          <span class="row-main"
-            ><span class="row-title">${entry.name}</span></span
-          >
-          ${when(
-            entry.size >= 0,
-            () =>
-              html`<span class="row-trail muted small num"
+      row({
+        href: `${base}/${isTree ? "tree" : "blob"}/${encoded}/${target}`,
+        lead: icon(isTree ? "folder" : "file"),
+        title: entry.name,
+        trail:
+          entry.size >= 0
+            ? html`<span class="muted small num"
                 >${sizeWithTokens(entry.size, target)}</span
-              >`,
-          )}
-        </a>
-      </li>`,
+              >`
+            : html``,
+        nav: true,
+        data: { kind: entry.type },
+      }),
     );
   }
-  return html`${listCard(rows)}${directoryTotal(entries)}`;
+  const total = directoryTotal(entries);
+  return listCard(rows, total.text.trim() === "" ? {} : { foot: total });
 }
 
 /**
@@ -390,13 +383,13 @@ export function directoryTotal(entries: readonly TreeEntry[]): Html {
     tokens += estimateTokens(entry.size, entry.name) ?? 0;
   }
   if (files === 0) return html``;
-  return html`<p
-    class="muted small num tree-total"
+  return html`<span
+    class="muted small num"
     title="Files at this level only; subdirectories are not counted"
   >
     ${files.toLocaleString("en-US")} file${files === 1 ? "" : "s"} here ·
     ${fileSize(bytes)} · ${tokenCount(tokens, "estimated")}
-  </p>`;
+  </span>`;
 }
 
 /**
