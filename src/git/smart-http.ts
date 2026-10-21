@@ -16,6 +16,7 @@ import {
   readBounded,
 } from "../http/limits.ts";
 import { gitEnv, transferGate } from "./env.ts";
+import { pullPipe, type PullPipe } from "./pull-pipe.ts";
 import { transferDeadline, type Stall } from "./progress.ts";
 
 export type GitService = "git-upload-pack" | "git-receive-pack";
@@ -180,17 +181,24 @@ async function spawnService(
     env.GIT_PROTOCOL = protocol;
   }
 
-  const spawn = () =>
-    Bun.spawn(serviceCommand(service, ["--stateless-rpc", ...extraArgs, repoDir]), {
-      env: gitEnv(env),
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "ignore",
-    });
-  let proc: ReturnType<typeof spawn>;
+  // git's stdout is a pipe read on demand (`pull-pipe.ts`): a slow client
+  // holds git blocked on a full pipe, not its whole pack in memory.
+  let pipe: PullPipe | undefined;
+  let proc: Bun.Subprocess<"pipe", number, "ignore">;
   try {
-    proc = spawn();
+    pipe = await pullPipe(() => proc.kill("SIGKILL"));
+    proc = Bun.spawn(
+      serviceCommand(service, ["--stateless-rpc", ...extraArgs, repoDir]),
+      {
+        env: gitEnv(env),
+        stdin: "pipe",
+        stdout: pipe.writeFd,
+        stderr: "ignore",
+      },
+    );
+    pipe.sealed();
   } catch (error) {
+    pipe?.close();
     // A spawn that never happened still holds a permit. Sixteen of these and
     // no transfer would ever start again — the permit has to go back on
     // every path out of here, not just the one where a process exists.
@@ -203,7 +211,7 @@ async function spawnService(
   };
   const deadline = transferDeadline(
     service === "git-upload-pack",
-    proc.stdout,
+    pipe.stream,
     options,
     kill,
   );
@@ -242,7 +250,7 @@ async function spawnService(
  * loose in the process.
  */
 async function feedStdin(
-  proc: Bun.Subprocess<"pipe", "pipe", "ignore">,
+  proc: Bun.Subprocess<"pipe", number, "ignore">,
   service: GitService,
   request: Request,
   idleMs: number,

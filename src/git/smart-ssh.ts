@@ -11,6 +11,7 @@
 
 import { isSafeName } from "./guard.ts";
 import { gitEnv } from "./env.ts";
+import { pullPipeSync } from "./pull-pipe.ts";
 import { transferDeadline, type Stall } from "./progress.ts";
 import { serviceCommand, type GitService } from "./smart-http.ts";
 
@@ -138,19 +139,30 @@ export function runGitService(
   channel: GitChannel,
   options: GitServiceOptions = {},
 ): Promise<number> {
-  const proc = Bun.spawn(serviceCommand(service, [dir]), {
-    env: gitEnv(options.env),
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  // "git-upload-pack" the service is "upload-pack" the subcommand.
+  // stdout is read on demand (`pull-pipe.ts`), so a slow peer leaves git
+  // blocked on a full pipe instead of its pack buffered here.
+  let proc: Bun.Subprocess<"pipe", number, "pipe">;
+  const pipe = pullPipeSync(() => proc.kill("SIGKILL"));
+  try {
+    proc = Bun.spawn(serviceCommand(service, [dir]), {
+      env: gitEnv(options.env),
+      stdin: "pipe",
+      stdout: pipe.writeFd,
+      stderr: "pipe",
+    });
+  } catch (error) {
+    pipe.close();
+    throw error;
+  }
+  pipe.sealed();
 
   const kill = (): void => {
     proc.kill("SIGKILL");
   };
   const { stdout, moved, stop } = transferDeadline(
     service === "git-upload-pack",
-    proc.stdout,
+    pipe.stream,
     options,
     kill,
   );
