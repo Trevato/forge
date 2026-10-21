@@ -2310,13 +2310,15 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name", (ctx) => {
-    const repo = loadRepo(ctx);
-    return repo
-      ? json({
-          ...repoJson(ctx, repo),
-          audience: audienceFor(ctx.app.db, repo, ctx.auth.user),
-        })
-      : notFound();
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const repo = timePhase(ctx.request, "repo", () => loadRepo(ctx));
+    if (!repo) return notFound();
+    const facts = timePhase(ctx.request, "counts", () => repoJson(ctx, repo));
+    const audience = timePhase(ctx.request, "audience", () => audienceFor(ctx.app.db, repo, ctx.auth.user));
+    const rendering = performance.now();
+    const res = json({ ...facts, audience });
+    notePhase(ctx.request, "render", performance.now() - rendering);
+    return res;
   });
 
   router.add("PATCH", "/api/v1/repos/:owner/:name", async (ctx) => {
