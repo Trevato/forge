@@ -200,6 +200,7 @@ describe("the forge over MCP", () => {
       "decisions_by",
       "archive",
       "branches",
+      "commits",
       "probe",
       "following",
       "spawn",

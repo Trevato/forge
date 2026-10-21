@@ -111,6 +111,7 @@ import { repoGraph } from "../core/dependencies.ts";
 import { pillarView } from "../core/pillars.ts";
 import { createBranch, deleteBranch } from "../actions/branches.ts";
 import { listBranches } from "../git/branches.ts";
+import { commitLog } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
 import { runGit } from "../git/env.ts";
 import { isSafeRef, isSafeTreePath } from "../git/guard.ts";
@@ -1572,6 +1573,33 @@ const TOOLS: readonly Tool[] = [
       if (!gone.ok)
         return bad(gone.error, DELETE_ERRORS[gone.error] ?? "That branch was not deleted.");
       return good({ says: `Deleted ${gone.value.name}.`, url: base });
+    },
+  },
+  {
+    name: "commits",
+    description:
+      "List a branch's recent commits (newest first), as GET /api/v1/repos/:owner/:name/commits does.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        ref: { type: "string", maxLength: 255, description: "A branch, tag or commit; default the default branch." },
+        limit: { type: "integer", minimum: 1, maximum: 100, description: "How many, default 30." },
+      },
+      required: ["repo"],
+    },
+    writes: false,
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const ref = args["ref"] ?? repo.defaultBranch;
+      if (typeof ref !== "string" || ref.length > 255 || !isSafeRef(ref))
+        return bad("invalid", "`ref` is a branch, tag or commit");
+      const limit = args["limit"] ?? 30;
+      if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1 || limit > 100)
+        return bad("invalid", "`limit` is a whole number from 1 to 100");
+      const log = await commitLog(repoDir(ctx.app.reposRoot, repo.ownerName, repo.name), ref, { limit });
+      return good({ commits: log.ok ? log.value : [] });
     },
   },
   {
