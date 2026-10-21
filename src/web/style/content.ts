@@ -1093,12 +1093,6 @@ textarea.editor:focus-visible { outline: none; }
 }
 .live-toggle .ico { color: var(--faint); flex: none; }
 .live-toggle a { color: var(--accent); }
-.no-hits {
-  display: flex; align-items: center; gap: 8px;
-  padding: 10px 12px; margin: 0;
-  border: 1px dashed var(--border); border-radius: var(--radius);
-}
-.no-hits .ico { color: var(--faint); flex: none; }
 
 }
 /* What needs you, pinned on the home: the bulk step's select as wide as

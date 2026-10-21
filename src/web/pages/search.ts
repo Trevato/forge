@@ -288,9 +288,7 @@ function section(
           >`}
     </h2>
     ${rows.length === 0
-      ? html`<p class="no-hits muted small">
-          ${icon(emptyIcon)}<span>${emptyText}</span>
-        </p>`
+      ? empty({ icon: emptyIcon, title: emptyText })
       : listCard(rows)}
     ${after}
     ${when(

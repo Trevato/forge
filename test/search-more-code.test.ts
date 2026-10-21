@@ -84,3 +84,12 @@ test("a roomy budget shows every row and offers nothing more", async () => {
   expect(rowsOf(html)).toBe(6);
   expect(html).not.toContain("data-more-code");
 });
+
+test("a search with no hits draws the empty state, not .no-hits", async () => {
+  const html = await page(roomy, "q=qqqxnothingmatchesqqq");
+  expect(html).not.toContain("no-hits");
+  expect(html).toContain("No app or repository matches");
+  expect(html).toContain("No issue or pull request matches");
+  expect(html).toContain("No line of code matches");
+  expect(html).toContain("empty-title");
+});
