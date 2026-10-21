@@ -2741,17 +2741,22 @@ export function apiRoutes(router: Router<Handler>): void {
   );
 
   router.add("GET", "/api/v1/repos/:owner/:name/tags", async (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const refs = await listRefs(dirOf(ctx, repo), "refs/tags/");
-    if (!refs.ok) return json([]);
-    return json(
-      refs.value.map((r) => ({
-        name: r.name.replace("refs/tags/", ""),
-        oid: r.oid,
-        // Annotated tags point at a tag object; this is the commit beneath.
-        commit: r.peeled ?? r.oid,
-      })),
+    const refs = await timePhaseAsync(ctx.request, "git", () =>
+      listRefs(dirOf(ctx, repo), "refs/tags/"),
+    );
+    if (!refs.ok) return timePhase(ctx.request, "render", () => json([]));
+    return timePhase(ctx.request, "render", () =>
+      json(
+        refs.value.map((r) => ({
+          name: r.name.replace("refs/tags/", ""),
+          oid: r.oid,
+          // Annotated tags point at a tag object; this is the commit beneath.
+          commit: r.peeled ?? r.oid,
+        })),
+      ),
     );
   });
 

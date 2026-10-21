@@ -526,10 +526,10 @@ describe("parity: full control through actions and the API", () => {
           .items as Json[]
       ).find((p) => p.number === n)?.labels,
     ).toMatchObject([{ name: "bug" }]);
-    // But the issue endpoint does not impersonate it.
-    expect(
-      (await call("GET", `/api/v1/repos/alice/pub/issues/${n}`)).status,
-    ).toBe(404);
+    // The issue endpoint answers the shared number, marked as a pull (#3299).
+    const asIssue = await call("GET", `/api/v1/repos/alice/pub/issues/${n}`);
+    expect(asIssue.status).toBe(200);
+    expect(asIssue.json.kind).toBe("pull");
     expect(
       (
         await call("PATCH", `/api/v1/repos/alice/pub/issues/${n}`, {
