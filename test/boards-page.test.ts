@@ -184,7 +184,9 @@ describe("every chart type from one seeded query", () => {
   const count = (body: string, re: RegExp) => body.match(re)?.length ?? 0;
 
   test("line draws one point per day, the series set aside", async () => {
-    expect(count(await drawn("line"), /<circle cx="[^"]*" cy="[^"]*" r="4">/g)).toBe(3);
+    const body = await drawn("line");
+    expect(count(body, /<circle cx="[^"]*" cy="[^"]*" r="4">/g)).toBe(3);
+    expect(count(body, /<div class="chart-box"><svg [^>]*class="chart"/g)).toBe(1);
   });
   test("bar draws one bar per day", async () => {
     expect(count(await drawn("bar"), /<rect class="bar"/g)).toBe(3);
@@ -206,6 +208,8 @@ describe("every chart type from one seeded query", () => {
     const table = body.match(/<table class="table chart-table">[\s\S]*?<\/table>/)![0];
     expect(count(table, /<tr>/g)).toBe(1 + 5);
     expect(count(body, /<table/g)).toBe(1);
+    // The panel is chartBox()'s frame, marked as a table (#4282).
+    expect(body).toContain('<div class="chart-box is-table">');
   });
   test("heat strip draws days × kinds cells; each filled cell links to its rows", async () => {
     const body = await drawn("heat");

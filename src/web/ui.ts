@@ -21,6 +21,7 @@ import {
   tokenNote,
   type TokenBasis,
 } from "../kernel/tokens-format.ts";
+import { drawChart, type Cell, type Chart } from "../boards/chart.ts";
 import { icon, type IconName } from "./icons.ts";
 import { Html, html, raw, when } from "./html.ts";
 
@@ -722,6 +723,14 @@ export function meter(percent: number, label: string, tone?: "attn"): Html {
     aria-label="${label}"
     ${tone ? html`data-tone="${tone}"` : null}
   >${value}%</meter>`;
+}
+
+/**
+ * A drawn chart in the box that holds its space: `drawChart`'s svg `.chart`
+ * inside `.chart-box`, which a table panel marks `.is-table`.
+ */
+export function chartBox(chart: Chart, cells: readonly Cell[], title: string): Html {
+  return html`<div class="chart-box${chart === "table" ? " is-table" : ""}">${raw(drawChart(chart, cells, title))}</div>`;
 }
 
 /** A short object id in a monospace chip — always the first 7 characters. */

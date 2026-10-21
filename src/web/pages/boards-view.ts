@@ -18,11 +18,11 @@ import { liveRegionsJs } from "../client.ts";
 import { notFoundPage } from "../chrome.ts";
 import { html, raw, when, type Html } from "../html.ts";
 import { fragment, page } from "../layout.ts";
-import { btn, card, empty } from "../ui.ts";
+import { btn, card, chartBox, empty } from "../ui.ts";
 import { flowPanel } from "./flow-panel.ts";
 import { isPinned, listPins } from "../../boards/pins.ts";
 import { panelData, runFor } from "../../boards/panel_data.ts";
-import { cellsOf, chartBox, paramsOf, queryFields, readParams } from "./boards.ts";
+import { cellsOf, paramsOf, queryFields, readParams } from "./boards.ts";
 
 /** The events the panels' queries read (runs, pulls, checks, issues, usage): any of them may change a chart. */
 const READS = "run.queued,run.started,run.finished,pull.*,check.*,issue.*,usage.*";

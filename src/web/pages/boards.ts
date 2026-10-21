@@ -7,7 +7,7 @@
  * narrowed to that point's window and listed by the source's first column.
  * Anyone else gets the not-found page.
  */
-import { CHART_NAMES, CHARTS, drawChart, usesSeries, type Cell, type Chart } from "../../boards/chart.ts";
+import { CHART_NAMES, CHARTS, usesSeries, type Cell, type Chart } from "../../boards/chart.ts";
 import { runFor } from "../../boards/panel_data.ts";
 import { runQuery, type Query, type Row } from "../../boards/query.ts";
 import { gaps, SYSTEM } from "../../boards/sampler.ts";
@@ -18,7 +18,7 @@ import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../cor
 import { notFoundPage } from "../chrome.ts";
 import { html, raw, when } from "../html.ts";
 import { page } from "../layout.ts";
-import { btn, card, empty } from "../ui.ts";
+import { btn, card, chartBox, empty } from "../ui.ts";
 
 const BUCKET_MS = { minute: 60_000, hour: 3_600_000, day: 86_400_000 } as const;
 const AGGREGATES = ["count", "sum", "avg", "max"] as const;
@@ -81,10 +81,6 @@ export const cellsOf = (rows: readonly Row[], hrefs: readonly (string | null)[] 
     ...(r.series !== undefined ? { series: String(r.series ?? "none") } : {}),
     ...(hrefs[i] ? { href: hrefs[i]! } : {}),
   }));
-
-/** A drawn chart in the box that holds its space. */
-export const chartBox = (chart: Chart, cells: readonly Cell[], title: string) =>
-  html`<div class="chart-box${chart === "table" ? " is-table" : ""}">${raw(drawChart(chart, cells, title))}</div>`;
 
 const link = (p: Params) => {
   const s = new URLSearchParams();
