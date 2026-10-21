@@ -101,6 +101,21 @@ describe("/system as btop", () => {
     }
   });
 
+  test("the panels are drawn with §5's rows, meters and card, and no .bt-* class remains", () => {
+    const r = regions(view);
+    const all = Object.values(r).join("\n");
+    for (const old of ["bt-bar", "bt-grid", "bt-group", "bt-hist", "bt-name", "bt-procs", "bt-row", "bt-val"]) expect(all).not.toContain(old);
+    expect(r["cores"]).toContain('class="row"');
+    expect(r["cores"]).toContain('class="row-title"');
+    expect(r["cores"]).toContain("<meter");
+    expect(r["mem"]).toContain("load");
+    expect(r["sys-disks"]).toContain('class="card"');
+    expect(r["sys-disks"]).toContain('data-io="nvme0n1"');
+    expect(r["sys-disks"]).toContain('data-net="eth0"');
+    expect(r["sys-procs"]).toContain('class="table"');
+    expect(r["sys-procs"]).toContain("2 procs");
+  });
+
   test("diskstats keep whole devices only", () => {
     const text = " 259 0 nvme0n1 10 0 8 0 20 0 16 0\n 259 1 nvme0n1p1 1 0 2 0 1 0 2 0\n   7 0 loop0 1 0 2 0 0 0 0 0\n";
     expect(parseDiskstats(text, (n) => n === "nvme0n1")).toEqual([{ name: "nvme0n1", read: 8 * 512, write: 16 * 512 }]);
