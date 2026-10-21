@@ -224,27 +224,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .bar .seg { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
 @media (max-width: 420px) { .bar .seg > a { padding: 0 8px; } }
 
-.merge-box { margin-top: 14px; }
-.merge-box .card-body { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
-/* Only the verdict glyph, never the merge button's own icon. */
-.merge-box .card-body > .ico { margin-top: 2px; flex: none; color: var(--muted-fg); }
-.merge-box[data-tone="success"] .card-body > .ico { color: var(--success); }
-.merge-box[data-tone="danger"] .card-body > .ico { color: var(--danger); }
-.merge-box[data-tone="merged"] .card-body > .ico { color: var(--merged); }
-.merge-box .card-body > .grow { flex: 1 1 220px; }
-.merge-headline { font-weight: 600; text-wrap: pretty; }
-.merge-sub { color: var(--muted-fg); font-size: 13px; margin-top: 2px; text-wrap: pretty; }
-.merge-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; flex: none; }
-.merge-form select { min-width: 150px; width: auto; }
-/* On a phone the sentence gets the width and the controls go under it, with
-   the primary action full-width where the thumb already is. */
-@media (max-width: 719px) {
-  .merge-box .card-body > .grow { flex-basis: 100%; }
-  .merge-box .merge-form, .merge-box .merge-form > form { width: 100%; }
-  .merge-box .merge-form select { flex: 1 1 140px; }
-  .merge-box .merge-form .btn { flex: 1 1 180px; }
-}
-
 .commit-head .card-body { padding: 14px 16px; }
 .commit-body {
   white-space: pre-wrap; font-family: var(--mono); font-size: 12.5px;

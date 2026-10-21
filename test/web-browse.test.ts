@@ -477,8 +477,7 @@ describe("browsing an origin repository on the web", () => {
 
   test("a live pull's merge box is §5's card and row, with no merge-* class", async () => {
     const pull = await bodyOf(alice, `${browse}/pulls/9`);
-    for (const name of ["merge-box", "merge-form", "merge-headline", "merge-sub"])
-      expect(pull).not.toContain(name);
+    expect(pull).not.toMatch(/\bmerge-(?:box|form|headline|sub)\b/);
     const box =
       (pull.match(/<div\s+class="card mt"[^>]*data-tone="attn"[\s\S]*?<\/ul>/)?.[0] ?? "")
         .replace(/\s+/g, " ");

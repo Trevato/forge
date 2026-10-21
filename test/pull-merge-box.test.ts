@@ -29,8 +29,7 @@ const boxOf = async (repo: string): Promise<string> => {
     { headers: { cookie: `forge_session=${createSession(app.db, alice.id).token}` } },
   );
   const body = await res.text();
-  for (const name of ["merge-box", "merge-form", "merge-headline", "merge-sub"])
-    expect(body).not.toContain(name);
+  expect(body).not.toMatch(/\bmerge-(?:box|form|headline|sub)\b/);
   const at = body.search(/<div\s+class="card mt"[^>]*data-tone=/);
   expect(at).toBeGreaterThan(-1);
   return body.slice(at, body.indexOf("</ul>", at)).replace(/\s+/g, " ");
@@ -38,7 +37,7 @@ const boxOf = async (repo: string): Promise<string> => {
 
 beforeAll(async () => {
   process.env["FORGE_CELLS"] = "off";
-  dataDir = await mkdtemp(join(tmpdir(), "forge-merge-box-"));
+  dataDir = await mkdtemp(join(tmpdir(), "forge-merge-card-"));
   app = createApp({ dataDir, port: 0 });
   servers = await serve(app);
   const made = await createUser(app.db, {
