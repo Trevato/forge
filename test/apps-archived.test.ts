@@ -62,6 +62,16 @@ const get = async (path: string) => {
   return { status: res.status, body: await res.text() };
 };
 
+test("the All/Live filter draws the bar, not .filters, and keeps its links and current mark", async () => {
+  const page = (await get("/apps")).body;
+  expect(page).not.toContain("filters");
+  expect(page).toContain('<div class="bar mb">');
+  expect(page).toContain('href="/apps?live=1"');
+  const live = (await get("/apps?live=1")).body;
+  expect(live).not.toContain("filters");
+  expect(live).toContain('aria-current');
+});
+
 test("archiving hides an app from /apps, lists it at ?archived=1, and waking brings it back", async () => {
   let page = await get("/apps");
   expect(page.body).toContain(ROW_KEEPER);
@@ -107,4 +117,17 @@ test("a signed-out viewer does not see a private archived app", async () => {
   const anon = await (await fetch(`${servers.url}/apps?archived=1`)).text();
   expect(anon).not.toContain("/alice/secret");
   expect((await get("/apps?archived=1")).body).toContain("/alice/secret");
+});
+
+test("the stylesheet sizes .search and .seg inside .bar, without needing .filters", async () => {
+  const { content } = await import("../src/web/style/content.ts");
+  expect(content).toMatch(/^\.bar \.search \{[^}]*min-width: 180px[^}]*max-width: 320px/m);
+  expect(content).toMatch(/^\.bar \.seg \{[^}]*overflow-x: auto/m);
+  expect(content).toMatch(/\.bar \.seg > a \{ padding: 0 8px/);
+});
+
+test("the stylesheet carries no merge-conflict markers", async () => {
+  const { content } = await import("../src/web/style/content.ts");
+  expect(content).not.toMatch(/^(<<<<<<<|=======|>>>>>>>)/m);
+  expect(content).toContain("The same three reaches for a filter bar drawn with §5's .bar.");
 });

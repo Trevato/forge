@@ -1398,7 +1398,7 @@ export async function originReposPage(ctx: Ctx): Promise<Response> {
       )
     : [];
 
-  const filter = html`<form class="filters" method="get" action="${base}">
+  const filter = html`<form class="bar mb" method="get" action="${base}">
     <input
       class="input search"
       type="search"

@@ -186,7 +186,7 @@ export async function appsList(ctx: Ctx): Promise<Response> {
   const filters =
     archivedView || entries.length === 0
       ? null
-      : html`<div class="filters mb">
+      : html`<div class="bar mb">
           ${seg([
             {
               label: "All",

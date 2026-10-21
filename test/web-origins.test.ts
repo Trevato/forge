@@ -387,6 +387,12 @@ describe("origins on the web", () => {
     // Refresh again so the cached repository list forgets the fixture.
     await asUser(alice, `/settings/origins/${id}/repos?refresh=1`);
     expect(picker).not.toMatch(old);
+    expect(picker).not.toContain("filters");
+    expect(picker).toMatch(
+      new RegExp(`<form class="bar mb" method="get" action="/settings/origins/${id}/repos">`),
+    );
+    expect(picker).toContain('name="q"');
+    expect(picker).toContain("Refresh from origin");
     const mirrorForm = `<form[^>]*class="row-fields"[^>]*action="/settings/origins/${id}/mirror"`;
     expect(picker).toMatch(new RegExp(mirrorForm));
     expect(picker).toContain('name="fullName"');
