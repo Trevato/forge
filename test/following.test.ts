@@ -730,11 +730,12 @@ describe("a fork that follows its parent", () => {
       expect(page).toContain("fay/game-fay");
       expect(page).toMatch(
         new RegExp(
-          `aria-current="page"[\\s\\S]{0,2000}${here}[\\s\\S]{0,80}you are here`,
+          `aria-current="true"[\\s\\S]{0,2000}${here}[\\s\\S]{0,600}you are here`,
         ),
       );
+      expect(page).not.toMatch(/class="[^"]*\blineage(-children|-here)?\b/);
       const bobAt = page.indexOf('href="/bob/game"');
-      const nested = page.indexOf("lineage-children", bobAt);
+      const nested = page.indexOf("row-children", bobAt);
       const fayAt = page.indexOf('href="/fay/game-fay"');
       expect(bobAt).toBeGreaterThan(-1);
       expect(nested).toBeGreaterThan(bobAt);
