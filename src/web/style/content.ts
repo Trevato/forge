@@ -356,31 +356,6 @@ form.inline { display: inline; margin-left: auto; }
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
 }
 
-/* Explore (#607): a row is a name, a line, its numbers, and one verb. */
-.explore-row { gap: 12px; }
-.explore-main { display: grid; gap: 2px; min-width: 0; flex: 1; }
-.explore-name { font-weight: 600; }
-.explore-line .input { flex: 1; min-width: 0; }
-/* On a phone the first rows belong on the first screen: one row of chips
-   that scrolls sideways, and a row's verb under its numbers. The chips fade
-   at the right edge, so a cut one says there is more; where the browser
-   ties an animation to scrolling, the fade lifts at the end. */
-@property --chip-fade { syntax: "<length>"; inherits: false; initial-value: 32px; }
-@keyframes chip-fade { 90% { --chip-fade: 32px; } to { --chip-fade: 0px; } }
-@media (max-width: 600px) {
-  .explore-filters {
-    flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none;
-    mask-image: linear-gradient(to right, var(--fg) calc(100% - var(--chip-fade)), transparent);
-  }
-  @supports (animation-timeline: scroll()) {
-    .explore-filters { animation: chip-fade linear both; animation-timeline: scroll(self inline); }
-  }
-  .explore-filters .seg { flex: none; }
-  .explore-row { flex-wrap: wrap; row-gap: 6px; }
-  .explore-row > .explore-main { flex-basis: 100%; }
-  .explore-row > .btn { margin-left: 0; }
-}
-
 /* The featured repository: its picture and its crew at work, side by side
    on a desk, stacked on a phone. */
 .front-featured {
@@ -1095,7 +1070,6 @@ textarea.editor:focus-visible { outline: none; }
 @media (prefers-reduced-motion: reduce) {
   .front-live, .run-log .ln-pulse i { animation: none; }
   .run-log .ln-pulse i { opacity: .6; }
-  .explore-filters { animation: none; }
   .ex-dir > summary > .ico, .code-layout > #code-main[aria-busy="true"], .code-layout > [data-split]::after { transition: none; }
 }
 `;
