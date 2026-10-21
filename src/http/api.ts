@@ -2751,6 +2751,7 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/commits", async (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const ref = ctx.url.searchParams.get("ref") || repo.defaultBranch;
@@ -2759,9 +2760,10 @@ export function apiRoutes(router: Router<Handler>): void {
       Math.max(Number(ctx.url.searchParams.get("limit")) || 30, 1),
       100,
     );
-    const log = await commitLog(dirOf(ctx, repo), ref, { limit });
-    if (!log.ok) return json([]);
-    return json(log.value);
+    const log = await timePhaseAsync(ctx.request, "git", () =>
+      commitLog(dirOf(ctx, repo), ref, { limit }),
+    );
+    return timePhase(ctx.request, "render", () => json(log.ok ? log.value : []));
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/commits/:oid", async (ctx) => {
