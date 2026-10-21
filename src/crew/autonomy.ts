@@ -30,6 +30,7 @@ import { mergeable, resolveOid, treeOf } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { CLOSED_NOTE } from "../core/done_on_main.ts";
 import { mergePull } from "../actions/pulls.ts";
+import { isUpstreamPull } from "../core/upstream_follow.ts";
 import {
   listCrewRoles,
   type Agent,
@@ -2017,7 +2018,9 @@ async function landGated(
       by: "rule",
       ms: 0,
     });
-  const merged = await mergePull(app, by, repo, pull, "squash", expect);
+  // An upstream's commits are kept, not squashed: they stay ancestors of main.
+  const strategy = isUpstreamPull(app.db, pull) ? "merge" : "squash";
+  const merged = await mergePull(app, by, repo, pull, strategy, expect);
   if (!merged.ok) {
     const why = mergeWhy(merged.error);
     log.info("green but not landed", {

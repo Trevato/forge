@@ -12,8 +12,11 @@ import { createApp, type App } from "../src/app.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { audienceFilter } from "../src/core/event_audience.ts";
 import { listEvents } from "../src/core/events.ts";
+import { provideChecksForTest, type ChecksHandle } from "../src/checks/service.ts";
+import { landIfGreen } from "../src/crew/autonomy.ts";
+import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { getPull, listPulls } from "../src/core/pulls.ts";
-import type { Repo } from "../src/core/repos.ts";
+import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { checkDue, checkUpstream, mayCarryCredential } from "../src/actions/upstream_follow.ts";
 import { createOrigin } from "../src/core/origins.ts";
@@ -36,6 +39,8 @@ let guest: User;
 let repo: Repo;
 let target: Repo;
 let dir = "";
+
+const getRepoByIdFor = (id: string): Repo => getRepoById(app.db, id)!;
 
 const ok = <T>(r: { ok: true; value: T } | { ok: false; error: unknown }): T => {
   if (!r.ok) throw new Error(JSON.stringify(r.error));
@@ -318,6 +323,41 @@ describe("checking an upstream (layer 2)", () => {
         expect(second.pull).toBe(first.pull);
         expect(getFollow(app.db, t.r.id)!.opened).toBe(1);
         expect(getFollow(app.db, t.r.id)!.pendingId).toBe(row.pendingId);
+      } finally {
+        t.srv.server.stop(true);
+      }
+    });
+
+    test("the landing gate lands an upstream pull as a merge: the upstream's tip stays an ancestor of main", async () => {
+      const t = await staged("lands", "base\n", "new\n");
+      try {
+        // Main moved too, so a merge and a squash cannot be told apart by a fast-forward.
+        const blob = await t.git(["hash-object", "-w", "--stdin"], "base\n");
+        const tree = await t.git(["mktree"], `100644 blob ${blob}\tf.txt\n100644 blob ${blob}\tg.txt\n`);
+        const main = await t.git(["commit-tree", tree, "-p", t.main, "-m", "ours"]);
+        await t.git(["update-ref", `refs/heads/${t.r.defaultBranch}`, main]);
+        const opened = ok(await checkUpstream(app, t.r));
+        const pull = getPull(app.db, t.r.id, opened.pull!)!;
+        app.db.query("UPDATE repo SET autonomy = 'autonomous', autonomy_by = ?2 WHERE id = ?1").run(t.r.id, alice.id);
+        const run = createRun(app.db, {
+          repoId: t.r.id,
+          kind: "check",
+          issueId: pull.id,
+          env: `pull-${pull.number}`,
+          commitOid: pull.headOid,
+          reason: "pull",
+        });
+        claimRun(app.db, run.id);
+        finishRun(app.db, run.id, { state: "ok", summary: "check passed" });
+        provideChecksForTest(app, { gate: async () => ({ ok: true, error: "", lines: [] }) } as unknown as ChecksHandle);
+        const fresh = getRepoByIdFor(t.r.id);
+        expect(await landIfGreen(app, fresh, getPull(app.db, t.r.id, pull.number)!)).toBe(true);
+        expect(getPull(app.db, t.r.id, pull.number)!.mergedAt).not.toBeNull();
+        const isAncestor = (await runGit(["merge-base", "--is-ancestor", t.up, `refs/heads/${t.r.defaultBranch}`], { cwd: t.d })).ok;
+        expect(isAncestor).toBe(true);
+        expect(await t.git(["rev-list", "--parents", "-n1", `refs/heads/${t.r.defaultBranch}`])).toContain(t.up);
+        const after = ok(await checkUpstream(app, t.r));
+        expect([after.behind, after.outcome]).toEqual([0, "none"]);
       } finally {
         t.srv.server.stop(true);
       }

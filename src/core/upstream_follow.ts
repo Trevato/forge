@@ -97,6 +97,15 @@ export function getFollow(db: Database, repoId: string): UpstreamFollow | undefi
   return row ? fromRow(row) : undefined;
 }
 
+/**
+ * Whether this pull is the one the follow opened for the upstream: its
+ * commits must land as a merge, so the upstream's tip stays an ancestor of
+ * the base and the next check reads nothing behind (#3558).
+ */
+export function isUpstreamPull(db: Database, pull: { id: string; repoId: string; headBranch: string }): boolean {
+  return pull.headBranch.startsWith("upstream/") && getFollow(db, pull.repoId)?.pendingId === pull.id;
+}
+
 /** Every repository whose following is on. */
 export function listFollowing(db: Database): UpstreamFollow[] {
   return db
