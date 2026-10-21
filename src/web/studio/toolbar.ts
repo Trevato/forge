@@ -115,10 +115,11 @@ export async function toolbarPage(ctx: Ctx): Promise<Response> {
   const home = btn("Home", { href: "/", variant: "ghost" });
   const rendering = performance.now();
   if (!user) {
+    const next = encodeURIComponent(toolbarPath(base, where.env, address));
     const response = page({
       ctx,
       title: `${repo.name} · forge`,
-      body: html`<div class="narrow-wide">${pageHead(here)}${liveNote}<div class="form-actions">${home}</div></div>`,
+      body: html`<div class="narrow-wide">${pageHead(here)}${liveNote}<div class="form-actions">${btn("Sign in to comment", { href: `/signin?next=${next}`, variant: "primary" })}${home}</div></div>`,
     });
     notePhase(request, "render", performance.now() - rendering);
     return response;
