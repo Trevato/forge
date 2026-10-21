@@ -30,7 +30,7 @@ import { liveRegionsJs, studioRunJs } from "../client.ts";
 import { html, raw, when, type Html } from "../html.ts";
 import { runLine } from "../describe.ts";
 import { page } from "../layout.ts";
-import { btn, sha } from "../ui.ts";
+import { badge, btn, listCard, row as stepRow, sha, type Tone } from "../ui.ts";
 import { previewCard } from "../pages/apps.ts";
 import { costText, durationText, runTitle, runTokens } from "../pages/runs.ts";
 import { placementLine, sandboxLine } from "./sandbox.ts";
@@ -38,6 +38,9 @@ import { logBox, runVoice, RUN_TRANSCRIPT_CAP } from "./log.ts";
 import { changeHref, tellHref } from "./nouns.ts";
 import { unnamedRun, voiceFor, type Actor } from "./voice.ts";
 import { runWord, servingHistory, wordBadge, type WordCtx } from "./words.ts";
+
+/** A step's badge: red only where it failed; waiting and skipped stay quiet. */
+const STEP_TONES: Record<string, Tone> = { ok: "success", failed: "danger", running: "attn" };
 
 /**
  * The one control a live run has: a person who can write here stops a
@@ -291,17 +294,20 @@ export async function runView(
         // While the run is open every part is rendered at a fixed size (the
         // pin slot by CSS), so the log below never moves as numbers and pins
         // arrive; a run that has ended reserves nothing.
-        return html`<div class="check-progress" id="check-progress" data-state="${run.state}">
+        return html`<div data-check-progress id="check-progress" data-state="${run.state}">
           <div id="check-steps" role="status" aria-live="polite">
-            <ol class="check-steps">
-              ${steps.map(
-                (s) =>
-                  html`<li data-step="${s.name}" data-state="${s.state}">
-                    <span class="step-name">${s.name}</span>
-                    <span class="step-state">${stepWord(s.state)}</span>
-                  </li>`,
-              )}
-            </ol>
+            ${listCard(
+              steps.map((s) =>
+                stepRow({
+                  title: s.name,
+                  data: { step: s.name, state: s.state },
+                  trail: badge(stepWord(s.state), {
+                    tone: STEP_TONES[s.state] ?? "default",
+                    variant: "outline",
+                  }),
+                }),
+              ),
+            )}
             ${known
               ? html`<progress class="tests-bar" aria-label="Test files started" max="${row.of ?? 0}" value="${row.started ?? 0}"></progress>`
               : open

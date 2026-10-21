@@ -834,13 +834,20 @@ describe("working: a run's own page in the studio", () => {
     expect(block).not.toContain('role="region"');
     // With pins, the slot is focusable and labelled; the live region holds no pin.
     expect(page).toContain('class="pinned-slot" id="check-pins" role="region" tabindex="0" aria-label="Failed tests"');
-    expect(page.slice(live, page.indexOf("</div>", live))).toContain("tests-words");
+    expect(page.slice(live, page.indexOf(`id="check-pins"`, live))).toContain("tests-words");
     expect(quiet).toContain('class="tests-words');
     // A finished run with no known count shows no bar at all.
     const done = mk(["$ bun install"]);
     finishRun(app.db, done.id, { state: "failed", summary: "x" });
     const ended = await (await get(`/alice/engine/runs/${done.id}`, writerCookie)).text();
     expect(ended).toContain("check-progress");
+    // Drawn from the design system: the old bespoke classes are gone.
+    for (const old of ['class="check-steps"', 'class="check-progress"', "step-state", "step-name"]) {
+      expect(ended).not.toContain(old);
+      expect(page).not.toContain(old);
+    }
+    expect(page).toContain('data-step="');
+    expect(page).toContain("data-check-progress");
     expect(ended).not.toContain("<progress");
     // No look has recorded vitals yet: the run page renders no table, not an empty one.
     expect(ended).not.toContain("vitals");
