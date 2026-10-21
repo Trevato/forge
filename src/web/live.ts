@@ -70,9 +70,11 @@ export function liveMount(config: LiveConfig): Html {
       role="status"
       aria-live="polite"
     ></p>
-    <a id="live-pill" class="live-pill" href="" hidden
-      >↻ New activity — refresh</a
-    >`;
+    <div class="live-news">
+      <a id="live-pill" class="badge" data-variant="attn" href="" hidden
+        >↻ New activity — refresh</a
+      >
+    </div>`;
 }
 
 export const liveClientJs = /* js */ `

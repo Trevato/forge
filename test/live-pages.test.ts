@@ -291,4 +291,23 @@ describe("the live mount's markup", () => {
     expect(out).toContain('id="live-pill"');
     expect(out).toContain("New activity — refresh");
   });
+
+  test("the pill is §5's attn badge, hidden until news, and the script finds it by id alone", async () => {
+    const { liveMount, liveClientJs } = await import("../src/web/live.ts");
+    const out = String(liveMount({ repo: "/a/b" }));
+    expect(out).toMatch(/<a\s+id="live-pill"\s+class="badge"\s+data-variant="attn"\s+href=""\s+hidden/);
+    expect(out).toMatch(/<div class="live-news">\s*<a id="live-pill"/);
+    expect(out).not.toMatch(/class="[^"]*\blive-pill\b/);
+    expect(liveClientJs).toContain("document.getElementById('live-pill')");
+    expect(liveClientJs).not.toMatch(/\.live-pill|querySelector\([^)]*live-pill/);
+  });
+});
+
+describe("the live pill's wrapper", () => {
+  test("is out of flow and the badge inside is a 36px target", async () => {
+    const { components } = await import("../src/web/style/components.ts");
+    const rule = (sel: string) => components.slice(components.indexOf(sel + " {")).split("}")[0];
+    expect(rule(".live-news")).toMatch(/position: fixed/);
+    expect(rule(".live-news .badge")).toMatch(/min-height: 36px/);
+  });
 });

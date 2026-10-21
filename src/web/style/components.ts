@@ -893,14 +893,15 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 @media (min-width: 720px) { .sticky-action { position: static; background: none; padding: 0; } .sticky-action .btn { flex: none; } }
 
 /* ---- live updates ---- */
-.live-pill {
-  position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 25;
-  padding: 0 14px; min-height: 36px; display: inline-flex; align-items: center; gap: 6px;
-  background: var(--primary); color: var(--primary-fg); border-radius: 999px;
-  font-size: 13px; font-weight: 500; box-shadow: var(--shadow-2);
+.live-news {
+  position: fixed; left: 0; right: 0; bottom: 20px; z-index: 25;
+  display: flex; justify-content: center; pointer-events: none;
+}
+.live-news .badge {
+  pointer-events: auto; min-height: 36px; padding: 0 14px; font-size: 13px;
+  background: var(--card); box-shadow: var(--shadow-2);
   animation: pop 200ms var(--ease) both;
 }
-.live-pill:hover { color: var(--primary-fg); opacity: .92; }
 
 }
 
