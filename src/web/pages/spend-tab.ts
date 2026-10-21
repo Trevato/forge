@@ -5,6 +5,7 @@
  */
 
 import { readSpend } from "../../actions/spend.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
 import { html } from "../html.ts";
@@ -16,9 +17,14 @@ import { usageShell } from "./usage-tabs.ts";
 export function spendPage(ctx: Ctx): Response {
   if (!ctx.auth.user) return signInFirst(ctx);
   if (!ctx.auth.user.isAdmin) return notFoundPage(ctx);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const spend = timePhase(ctx.request, "spend", () => readSpend(ctx.app, new Date()));
+  const rendering = performance.now();
   const body = html`<div id="spend" data-live="run.queued,run.started,run.finished,usage.*">${card(
-    spendView(readSpend(ctx.app, new Date())),
+    spendView(spend),
     { head: html`${icon("clock")}<h2>Spend</h2>` },
   )}</div>`;
-  return usageShell(ctx, "spend", body);
+  const response = usageShell(ctx, "spend", body);
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
