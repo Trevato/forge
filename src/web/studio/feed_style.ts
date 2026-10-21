@@ -21,17 +21,14 @@ export const feedCss = /* css */ `
 .composer-bar select { min-width: 0; max-width: 60%; }
 /* Your apps: a narrow column on a desk, a tab away on a phone. */
 .home-tabs { display: none; margin-bottom: 12px; }
-.home-app { gap: 8px; }
-.home-pick { display: none; }
-#apps-select:checked ~ * .home-pick { display: inline-flex; }
-#apps-select:focus-visible ~ * .home-apps-verbs label { outline: 2px solid var(--accent, currentColor); }
-.home-apps-verbs { flex-wrap: wrap; padding: 10px 14px; }
+/* An admin's tick boxes are always shown (no Select toggle); 24 px to tap. */
+#live-apps input[type="checkbox"] { width: 24px; height: 24px; }
 @media (max-width: 899px) {
   .home-tabs { display: inline-flex; }
   /* "What you asked for" is a tab on a phone: the first post comes next.
      !important, as [hidden] is: .bar sits in a later cascade layer. */
   .feed-head { display: none !important; }
-  .home-rail .home-apps { display: none; }
+  #live-apps { display: none; }
 }
 .fcard-form { display: grid; gap: 8px; margin-top: 6px; }
 .fcard-form textarea { width: 100%; min-height: 56px; resize: vertical; }
@@ -40,6 +37,6 @@ export const feedCss = /* css */ `
   .feed .disclosure > summary { min-height: 44px; display: flex; align-items: center; }
 }
 @media (forced-colors: active) {
-  .feed > .card:focus-visible, #apps-select:focus-visible ~ * .home-apps-verbs label { outline: 2px solid Highlight; }
+  .feed > .card:focus-visible { outline: 2px solid Highlight; }
 }
 `;

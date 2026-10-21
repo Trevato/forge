@@ -90,29 +90,27 @@ function yourApps(ctx: Ctx, user: User): Html {
       record === undefined || runtime === undefined
         ? undefined
         : runtime.status(record).find((env) => env.env === "production")?.state;
-    return html`<li class="row home-app">
-      ${when(
-        user.isAdmin,
-        () =>
-          html`<input
-            class="home-pick"
-            type="checkbox"
-            name="repo"
-            value="${repo.id}"
-            aria-label="Select ${repo.name}"
-          />`,
-      )}
-      <a class="truncate" href="${repoBase(repo)}">${repo.ownerName}/${repo.name}</a>
-      <span class="spacer"></span>
-      ${state === undefined ? null : envStateBadge(state)}
-    </li>`;
+    return row({
+      ...(user.isAdmin
+        ? {
+            lead: html`<input
+              type="checkbox"
+              name="repo"
+              value="${repo.id}"
+              aria-label="Select ${repo.name}"
+            />`,
+          }
+        : {}),
+      title: html`<a class="truncate break" href="${repoBase(repo)}">${repo.ownerName}/${repo.name}</a>`,
+      ...(state === undefined ? {} : { trail: envStateBadge(state) }),
+    });
   });
   const list = html`${rows.length === 0
         ? html`<p class="muted small">No apps yet.</p>`
         : html`<ul class="list">
             ${rows}
           </ul>`}
-      <div class="bar home-apps-verbs">
+      <div class="bar">
         ${btn(`All apps${repos.length > RAIL_APPS ? ` (${repos.length})` : ""}`, { href: "/apps", size: "sm" })}
         ${btn("New app", { href: "/apps/new", size: "sm", icon: "plus" })}
         ${btn("Repositories", {
@@ -126,29 +124,17 @@ function yourApps(ctx: Ctx, user: User): Html {
         ${when(user.isAdmin, () =>
           btn("Front page", { href: "/front", size: "sm", icon: "globe" }),
         )}
-        ${when(
-          user.isAdmin && rows.length > 0,
-          () => html`<label class="btn" data-size="sm" for="apps-select">Select</label>
-            <span class="home-pick">${btn("Archive", { size: "sm" })}</span>`,
-        )}
+        ${when(user.isAdmin && rows.length > 0, () => btn("Archive", { size: "sm" }))}
       </div>`;
   return card(
-    // An admin's list is a form: ticks cost no space until Select shows them.
+    // An admin's list is a form: tick apps, then Archive.
     user.isAdmin && rows.length > 0
-      ? html`<form method="post" action="/home/archive">
-          <input
-            class="sr-only"
-            type="checkbox"
-            id="apps-select"
-            aria-label="Select apps"
-          />${list}
-        </form>`
+      ? html`<form method="post" action="/home/archive">${list}</form>`
       : list,
     {
       head: html`${icon("rocket")}
         <h2>Your apps</h2>`,
       pad: false,
-      extra: "home-apps",
     },
   );
 }
@@ -285,7 +271,7 @@ export async function studioHome(
         ${feedNote()}
         ${timePhase(ctx.request, "feed", () => feedRegion(user, ctx), () => feedCandidateCache(ctx.app.db))}
       </div>
-      <aside class="dash-rail stack home-rail">
+      <aside class="dash-rail stack">
         ${
           // The crew's missing key is the owner's to fix, not the first
           // thing above every post: beside the timeline on a desk, after it

@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { feedCss } from "../src/web/studio/feed_style.ts";
 import { createApp, type App } from "../src/app.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { createApp as insertApp } from "../src/core/apps.ts";
@@ -124,6 +125,24 @@ describe("home archive", () => {
     );
     expect(res.status).toBe(403);
     expect(await home(rootCookie)).toContain("keeper/gamma");
+  });
+
+  test("the apps rail is drawn with the design system's classes alone", async () => {
+    const page = await full(rootCookie);
+    for (const old of ["home-rail", "home-apps", "home-app", "home-apps-verbs", "home-pick"])
+      expect(page).not.toMatch(new RegExp(`class="[^"]*\\b${old}\\b`));
+    expect(page).toContain("Your apps");
+    expect(page).toContain('href="/apps/new"');
+    expect(page).toContain('href="/map"');
+    expect(page).toContain("keeper/gamma");
+    expect(page).toMatch(/<form method="post" action="\/home\/archive">[\s\S]*name="repo"[\s\S]*Archive/);
+    expect(page).toContain('class="truncate break"');
+  });
+
+  test("the stylesheet no longer names the removed classes", () => {
+    for (const old of ["home-rail", "home-apps", "home-app", "home-pick", "apps-select"])
+      expect(feedCss).not.toContain(old);
+    expect(feedCss).toContain("#live-apps");
   });
 
   test("a non-admin sees no checkboxes and cannot post", async () => {
