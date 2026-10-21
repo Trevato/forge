@@ -141,11 +141,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
    where a local avatar would be. */
 .byline.origin-by { display: inline-flex; align-items: center; gap: 5px; }
 .byline.origin-by .ico { color: var(--faint); }
-.origin-link {
-  display: inline-flex; align-items: center; gap: 4px;
-  font-size: 12.5px; color: var(--muted-fg); text-decoration: none;
-}
-.origin-link:hover { color: var(--accent); }
 
 /* The origins settings page. */
 .origin-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
