@@ -256,6 +256,7 @@ import { familyPage } from "../web/pages/family.ts";
 import { forgeLinkSubmit, forgesPage } from "../web/pages/forges.ts";
 import { newForgePage, newForgeSubmit } from "../web/pages/new-forge.ts";
 import { askedPage } from "../web/studio/asked_page.ts";
+import { reviewPage } from "../web/studio/review_page.ts";
 import {
   asksBulkSubmit,
   asksBulkUndo,
@@ -740,6 +741,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/asks/decide/:id/undo", asksDecideUndo);
   // What people asked of the crew, and what became of it (core/asked.ts).
   router.add("GET", "/asked", askedPage);
+  router.add("GET", "/review", reviewPage);
   // The big view, folded into the board: every old address lands on its wall mode.
   router.add("GET", "/big", bigRedirect);
   router.add("GET", "/search", searchPage);

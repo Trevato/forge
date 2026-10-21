@@ -851,7 +851,7 @@ export function repoAsks(
 }
 
 /** What asks the viewer now: candidates, less what they set aside. */
-function waitingOn(
+export function waitingOn(
   db: Database,
   user: User | undefined,
   repos: readonly Repo[],

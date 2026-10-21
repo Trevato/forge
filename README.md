@@ -444,6 +444,11 @@ thoughts, then the issues you can write to that are not shipped, oldest first
 only, shows a guest nothing, and names nothing of a placement in a repository
 you cannot read.
 
+Review: `/review` lists the asks waiting on you, one row each (title, repository,
+age, why), newest first. It only reads; the buttons stay on `/asks`, which links
+to it, and signed out it sends you to sign-in. The terminal has no page of its
+own for it: the same asks are the dashboard's On you card.
+
 A client's forge: `Ctrl+K`, then **New forge** (any signed-in person's, as the
 page is), is `/forges/new` in the terminal — name, for whom, what it is for,
 apps to fork (`owner/name`, comma-separated), a fresh one-line app, model key

@@ -359,7 +359,7 @@ function renderAsks(ctx: Ctx, top: AsksTop | undefined): Response {
   const response = page({
     ctx,
     title: "Asks",
-    body: html`<main class="stack"><h1 class="sr-only">Asks</h1>${onYouRegion(ctx, user, undefined, section.body)}</main>`,
+    body: html`<main class="stack"><h1 class="sr-only">Asks</h1>${onYouRegion(ctx, user, undefined, section.body)}<p class="small muted"><a href="/review">Review: one row per ask</a></p></main>`,
     scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${section.scriptJs}`,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
