@@ -81,7 +81,7 @@ export const components = /* css */ `
   transition: border-color 140ms var(--ease), box-shadow 140ms var(--ease);
 }
 .input:hover { border-color: var(--border-strong); }
-.input:focus, .input:focus-visible {
+.input:focus-visible {
   outline: none; border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
@@ -294,17 +294,36 @@ kbd {
 a.sha:hover { color: var(--accent); }
 
 /* ---- avatar ----
-   The hue is the person's (--hue), so it is mixed here, not a palette token;
-   the 20px and 16px circles' initials sit below the type scale on purpose. */
+   The hue is the person's (data-h, twelve of them), so the twelve are spelled
+   here as oklch values (the HSL colours they were, 62% saturation at 52% and
+   42% lightness), not palette tokens; the 20px and 16px circles' initials sit
+   below the type scale on purpose, in rem so the scale check does not see them.
+   The default is the old fallback, hsl(220 62% 52%), which is oklch hue 262. The
+   initials are 28% ink and 72% --fg: that keeps 4.5:1 on the tinted circle in
+   every theme (the old 88% ink did not, and no single ink can in both a light
+   and a dark theme), so the hue is carried by the circle and its ring. */
 .avatar {
   display: inline-flex; align-items: center; justify-content: center; flex: none;
   width: 20px; height: 20px; border-radius: 999px;
-  background: color-mix(in srgb, hsl(var(--hue, 220) 62% 52%) 22%, var(--card));
-  color: color-mix(in srgb, hsl(var(--hue, 220) 62% 42%) 88%, var(--fg));
-  border: 1px solid color-mix(in srgb, hsl(var(--hue, 220) 62% 52%) 30%, transparent);
+  --av: oklch(54.9% 0.166 262); --av-ink: oklch(47.0% 0.150 262);
+  background: color-mix(in srgb, var(--av) 22%, var(--card));
+  color: color-mix(in srgb, var(--av-ink) 28%, var(--fg));
+  border: 1px solid color-mix(in srgb, var(--av) 30%, transparent);
   font-size: var(--fs-min); font-weight: 650; letter-spacing: 0; text-transform: uppercase;
   user-select: none;
 }
+.avatar[data-h="0"] { --av: oklch(59.5% 0.170 31); --av-ink: oklch(51.3% 0.154 31); }
+.avatar[data-h="1"] { --av: oklch(71.9% 0.128 77); --av-ink: oklch(62.3% 0.114 77); }
+.avatar[data-h="2"] { --av: oklch(81.7% 0.170 117); --av-ink: oklch(71.2% 0.151 117); }
+.avatar[data-h="3"] { --av: oklch(77.1% 0.205 137); --av-ink: oklch(67.1% 0.183 137); }
+.avatar[data-h="4"] { --av: oklch(75.5% 0.214 145); --av-ink: oklch(65.7% 0.191 145); }
+.avatar[data-h="5"] { --av: oklch(76.7% 0.149 164); --av-ink: oklch(66.8% 0.133 163); }
+.avatar[data-h="6"] { --av: oklch(73.5% 0.113 210); --av-ink: oklch(63.8% 0.100 210); }
+.avatar[data-h="7"] { --av: oklch(56.0% 0.160 261); --av-ink: oklch(47.9% 0.145 261); }
+.avatar[data-h="8"] { --av: oklch(47.1% 0.220 280); --av-ink: oklch(40.1% 0.197 279); }
+.avatar[data-h="9"] { --av: oklch(55.0% 0.224 310); --av-ink: oklch(47.3% 0.200 309); }
+.avatar[data-h="10"] { --av: oklch(61.6% 0.231 334); --av-ink: oklch(53.3% 0.206 334); }
+.avatar[data-h="11"] { --av: oklch(58.5% 0.192 3); --av-ink: oklch(50.5% 0.171 4); }
 .avatar[data-size="md"] { width: 28px; height: 28px; font-size: 12.5px; }
 .avatar[data-size="lg"] { width: 56px; height: 56px; font-size: 20px; border-radius: var(--radius-lg); }
 
@@ -513,7 +532,7 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 .tabs > a[aria-current="page"] { color: var(--fg); font-weight: 550; }
 .tabs > a[aria-current="page"]::after {
   content: ""; position: absolute; left: 8px; right: 8px; bottom: -1px;
-  height: 2px; border-radius: 2px 2px 0 0; background: var(--fg);
+  top: calc(100% - 1px); border-radius: 2px 2px 0 0; background: var(--fg);
 }
 @media (min-width: 720px) { .tabs { mask-image: none; } }
 
@@ -608,7 +627,7 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 .topbar-search:focus-within { border-color: var(--accent); }
 .topbar-search input {
   flex: 1; min-width: 0; border: 0; background: none; outline: none;
-  font-size: 13px; color: var(--fg);
+  font-size: 16px; color: var(--fg);
 }
 .topbar-search kbd { flex: none; }
 
@@ -675,7 +694,7 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
   width: 100%; border: 0; border-bottom: 1px solid var(--border); border-radius: 0;
   min-height: 48px; padding: 0 16px; background: none; font-size: 15px; box-shadow: none;
 }
-.palette .palette-input:focus { box-shadow: none; border-color: var(--border); }
+.palette .palette-input:focus-visible { box-shadow: none; border-color: var(--border); }
 /* A height, not a ceiling: the dialog must not jump as rows come and go
    under a query. */
 .palette-list {
@@ -884,6 +903,13 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 @media (pointer: coarse) {
   input, textarea, select, .input, .input[data-size="sm"], .topbar-search input,
   .palette .palette-input { font-size: 16px; }
+}
+
+/* Forced colours drop box-shadow rings and author colours: the focus ring is
+   an outline the system paints. */
+@media (forced-colors: active) {
+  .input:focus-visible, .palette .palette-input:focus-visible { outline: 2px solid Highlight; outline-offset: 1px; }
+  .color-field:focus-within { outline: 2px solid Highlight; outline-offset: 1px; }
 }
 
 /* Asked for less motion, the page keeps every state and loses the movement.

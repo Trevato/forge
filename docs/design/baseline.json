@@ -1,13 +1,22 @@
 {
   "files": {
     "src/web/style/components.ts": {
-      "colour": 3,
+      "colour": 0,
       "size": 0,
       "motion": 0,
-      "forced": 1,
-      "focus": 2,
-      "input": 1,
-      "target": 1
+      "forced": 0,
+      "focus": 0,
+      "input": 0,
+      "target": 0
+    },
+    "src/web/style/content.ts": {
+      "colour": 0,
+      "size": 0,
+      "motion": 0,
+      "forced": 0,
+      "focus": 0,
+      "input": 0,
+      "target": 0
     }
   }
 }

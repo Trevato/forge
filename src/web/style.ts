@@ -29,23 +29,12 @@ import { components } from "./style/components.ts";
 import { content } from "./style/content.ts";
 import { studioCss } from "./studio/style.ts";
 
-/**
- * Twelve avatar hues as static rules. A name hashes to one of these buckets
- * (`ui.ts`, `avatar`), so identity color needs no per-page CSS and no inline
- * style attribute the CSP would refuse.
- */
-const avatarHues = `@layer components {\n${Array.from(
-  { length: 12 },
-  (_, i) => `.avatar[data-h="${i}"] { --hue: ${i * 30 + 8}; }`,
-).join("\n")}\n}`;
-
 export const css = [
   layers,
   themeCss,
   reset,
   base,
   components,
-  avatarHues,
   studioCss,
   boardCss,
   content,
