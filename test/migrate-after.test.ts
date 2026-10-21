@@ -121,7 +121,9 @@ describe("migrate: after", () => {
     servers.stop();
     app.close();
     forgetProviders(dataDir);
-    await rm(dataDir, { recursive: true, force: true });
+    // A mirror push or git child may still be writing as the app closes; the
+    // directory goes once they let go, not on the first ENOTEMPTY.
+    await rm(dataDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }, 30_000);
 
   test("the form's word: anything but archive or mirror leaves it alone", () => {
