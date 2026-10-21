@@ -550,6 +550,9 @@ describe("the front page", () => {
     const body = await door();
     expect(body).toContain("The crew is at work: 1 agent right now");
     expect(body).toContain("Make the board faster");
+    expect(body).toContain(`href="/owner/two/issues/${issue.value.number}"`);
+    for (const old of ["front-crew", "front-live", "front-issues", "front-more"])
+      expect(body).not.toContain(old);
     const json = (await (await fetch(`${base}/api/v1/front`)).json()) as any;
     expect(json.featured.crew).toEqual({
       running: 1,

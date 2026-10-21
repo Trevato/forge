@@ -33,10 +33,12 @@ import { liveClientJs } from "../live.ts";
 import {
   btn,
   card,
+  dot,
   empty,
   envStateBadge,
   icon,
   listCard,
+  row,
   timeAgo,
   terminalLine,
 } from "../ui.ts";
@@ -343,26 +345,29 @@ function featuredCard(featured: NonNullable<FrontPage["featured"]>): Html {
   const agents = `${crew.running} agent${crew.running === 1 ? "" : "s"}`;
   const work =
     crew.running > 0
-      ? html`<p class="front-crew">
-            <span class="front-live" aria-hidden="true"></span>
-            The crew is at work: ${agents} right now
-          </p>
-          <ul class="front-issues">
-            ${crew.issues.map(
-              (i) =>
-                html`<li>
-                  <a href="${base}/issues/${i.number}"
-                    ><span class="muted">#${i.number}</span> ${i.title}</a
-                  >
-                </li>`,
-            )}
-          </ul>`
+      ? listCard([
+          row({
+            lead: dot("success"),
+            title: `The crew is at work: ${agents} right now`,
+          }),
+          ...crew.issues.map((i) =>
+            row({
+              href: `${base}/issues/${i.number}`,
+              lead: html`<span class="muted">#${i.number}</span>`,
+              title: i.title,
+            }),
+          ),
+        ])
       : signals.shippedAt !== null
-        ? html`<p class="front-crew muted">
-            Shipped ${timeAgo(signals.shippedAt)}${signals.ships > 0
-              ? ` · ${signals.ships} change${signals.ships === 1 ? "" : "s"} merged this month`
-              : ""}
-          </p>`
+        ? listCard([
+            row({
+              title: `Shipped ${timeAgo(signals.shippedAt)}${
+                signals.ships > 0
+                  ? ` · ${signals.ships} change${signals.ships === 1 ? "" : "s"} merged this month`
+                  : ""
+              }`,
+            }),
+          ])
         : null;
   return html`<section class="front-featured" aria-label="Featured">
     ${when(
@@ -545,9 +550,14 @@ export function studioDoor(ctx: Ctx): Response {
           ${when(
             front.total > tiles.length + (front.featured === undefined ? 0 : 1),
             () =>
-              html`<p class="mt front-more">
-                <a href="/explore?q=kind%3Aapp">All ${front.total} public apps</a>
-              </p>`,
+              html`<div class="mt">
+                ${listCard([
+                  row({
+                    href: "/explore?q=kind%3Aapp",
+                    title: `All ${front.total} public apps`,
+                  }),
+                ])}
+              </div>`,
           )}`
       : front.featured === undefined
         ? html`<div class="mt">
