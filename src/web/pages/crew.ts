@@ -38,6 +38,7 @@ import {
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { listTeams, type Team } from "../../core/teams.ts";
 import { crewFor } from "../../crew/dispatch.ts";
+import { crewHandover, type CrewHandover } from "../../crew/handed.ts";
 import { MODELS } from "../../crew/models.ts";
 import type { Ctx } from "../../http/context.ts";
 import { autonomyStatus, type AutonomyStatus } from "../../crew/autonomy.ts";
@@ -464,6 +465,7 @@ function crewView(
   const { spending } = data;
   const usernameError =
     error !== undefined && /username/i.test(error) ? error : undefined;
+  const handover = crewHandover(ctx.app.db);
   return html`${crewReadiness(ctx)}
   ${when(spending.length > 0, () =>
     spendingCard(spending, ctx.app.config.crewCeilingUsd),
@@ -576,6 +578,7 @@ function crewView(
     byPrompt,
     () => html`<span class="muted">not recorded</span>`,
   )}
+  ${handedCard(handover.parked)}${drillCard(handover.drill)}
   ${card(
     html`<form method="post" action="/settings/crew">
       ${uiField({
@@ -604,6 +607,57 @@ function crewView(
         <h2>New agent</h2>`,
     },
   )}`;
+}
+
+/** Issues the crew parked twice and the planner now holds; nothing when there are none. */
+function handedCard(parked: CrewHandover["parked"]): Html {
+  if (parked.length === 0) return html``;
+  return card(
+    html`<div class="table-scroll"><table class="table">
+      <thead>
+        <tr>
+          <th>Issue</th>
+          <th>Last parked</th>
+          <th>Why</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${parked.map(
+          (r) => html`<tr>
+            <td>
+              <span class="mono">${r.repo}</span>
+              <a href="/${r.repo}/issues/${r.number}">#${r.number} ${r.title}</a>
+            </td>
+            <td>${time(r.at)}</td>
+            <td>
+              ${r.reasons.map((why) => html`<div class="small">${why}</div>`)}
+            </td>
+          </tr>`,
+        )}
+      </tbody>
+    </table></div>`,
+    {
+      pad: false,
+      id: "crew-handed",
+      head: html`${icon("bot")}
+        <h2>Handed to the planner</h2>`,
+    },
+  );
+}
+
+/** The last restore drill's verdict; nothing before a first drill. */
+function drillCard(drill: CrewHandover["drill"]): Html {
+  if (drill === undefined) return html``;
+  return card(
+    html`<p>${drill.verdict === "green" ? "Passed" : "Failed"} ${time(drill.at)}.</p>`,
+    {
+      id: "crew-drill",
+      tone: drill.verdict === "green" ? "default" : "danger",
+      attrs: html`data-drill="${drill.verdict}"`,
+      head: html`${icon("clock")}
+        <h2>Restore drill</h2>`,
+    },
+  );
 }
 
 /** The scorecard cut by one thing the runs ran on; nothing before a first run. */

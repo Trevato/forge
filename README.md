@@ -27,6 +27,12 @@ claim state and the same apps-running note, never a claim link.
 Each agent's scorecard — pulls landed of opened, review rounds, red checks,
 reverts, time to land — is on Settings → Crew (`/settings/crew`) and in the
 terminal's palette as "Crew scorecard per agent"; both are a forge admin's only.
+Settings → Crew also shows, each only when it has something, a "Handed to the
+planner" card (issues the crew parked twice: repo, issue link, when last
+parked, why) and a "Restore drill" card (the last drill's pass or fail and
+when). The terminal's palette has the same as "Crew hand-overs", a read-only
+list of the same rows (repo#number, title, reasons; it does not open the
+issue — use the link on the page). Both are a forge admin's only.
 Under the agents, each team that has a pull has one pooled row (its members'
 counts added, the ratios taken from the sums; an agent on two teams counts in
 both): `data-team` rows on the page, "team <name>" rows in that terminal screen.

@@ -52,6 +52,7 @@ import { flagsScreen } from "./screens/flags.ts";
 import { scorecardScreen } from "./screens/scorecard.ts";
 import { cloudScreen } from "./screens/cloud.ts";
 import { crewSplitsScreen } from "./screens/crewsplits.ts";
+import { crewHandoverScreen } from "./screens/crewhandover.ts";
 import { usageScreen } from "./screens/usage.ts";
 import { canScreen } from "./screens/can.ts";
 import { peopleScreen } from "./screens/people.ts";
@@ -396,6 +397,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Crew scorecard",
         hint: "agent runs per model and per prompt version",
         run: () => ctx.push(crewSplitsScreen(session, ctx)),
+      });
+    // Settings → Crew's hand-overs: issues parked twice, the last restore drill.
+    if (session.user?.isAdmin === true)
+      commands.push({
+        id: "crew-handover",
+        title: "Crew hand-overs",
+        hint: "issues parked twice, and the last restore drill",
+        run: () => ctx.push(crewHandoverScreen(session, ctx)),
       });
     // Settings → Crew's scorecard per agent, as the page has it: a forge admin (#2677).
     if (session.user?.isAdmin === true)
