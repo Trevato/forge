@@ -25,14 +25,17 @@
  * `CLAUDE_CODE_TMPDIR` and `TMPDIR`) under the agent's own `.t/`; the
  * machine's temp directory, which holds every other session's files and
  * the forge's own, is denied whole, and so are the agent's other runs'
- * temp directories. A run that ends removes its own; what a forge that
- * died left behind is swept at the next crew start (`sweepRunTmp`).
+ * temp directories. The shell also writes bun's install cache, one per
+ * repository under `crew/.cache/<repo id>/bun`: the runs on a repository
+ * share it, and the other repositories' caches are denied. A run that ends
+ * removes its own; what a forge that died left behind is swept at the next
+ * crew start (`sweepRunTmp`).
  */
 
-import { readdirSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative, sep } from "node:path";
-import { crewRoot } from "./workdir.ts";
+import { cacheRoot, crewRoot, installCacheDir } from "./workdir.ts";
 
 export interface SandboxPolicy {
   /** Hostnames the shell may connect to. */
@@ -48,6 +51,26 @@ export interface SandboxPolicy {
   readonly enforced: boolean;
   /** This run's own temp directory, when the policy was asked for a run. */
   readonly tmpDir?: string | undefined;
+  /**
+   * The one place besides the clone and the temp directory the shell may
+   * write: its repository's install cache, shared by every run on it.
+   */
+  readonly installCache?: string | undefined;
+  /** Paths re-allowed within `denyRead`: this run's own repository's cache. */
+  readonly readAllow: readonly string[];
+}
+
+/**
+ * The run's env for its repository's install cache: the directory made, and
+ * bun told to use it. A policy with no cache (no repository) changes nothing.
+ */
+export function installCacheEnv(
+  policy: SandboxPolicy,
+  env: Record<string, string>,
+): void {
+  if (policy.installCache === undefined) return;
+  mkdirSync(policy.installCache, { recursive: true });
+  env["BUN_INSTALL_CACHE_DIR"] = policy.installCache;
 }
 
 /**
@@ -209,6 +232,8 @@ export function sandboxPolicy(input: {
   enforced?: boolean | undefined;
   /** The run this is for: it gets a temp directory of its own (`tmpDir`). */
   runId?: string | undefined;
+  /** The repository the run is on: its install cache is writable (`installCache`). */
+  repoId?: string | undefined;
 }): SandboxPolicy {
   const hosts = new Set<string>(["registry.npmjs.org"]);
   for (const url of input.urls) {
@@ -242,6 +267,10 @@ export function sandboxPolicy(input: {
     input.runId === undefined
       ? undefined
       : runTmpDir(data, input.agentName, input.runId);
+  const installCache =
+    input.repoId === undefined
+      ? undefined
+      : installCacheDir(data, input.repoId);
   const deny = [
     // The floor: named, whether or not the listing below sees them.
     ...ALWAYS_DENIED.map((name) => join(data, name)),
@@ -257,6 +286,10 @@ export function sandboxPolicy(input: {
     // The machine's temp directory: every other session's files, and the
     // forge's own (a cell's sockets, a checkout's index).
     ...tempDenied(data),
+    // Every repository's install cache, whole and not listed: one created
+    // after this policy was built is denied too. This run's own is
+    // re-allowed (`readAllow`) and written (`allowWrite`).
+    cacheRoot(data),
   ];
   const home = homedir();
   for (const secret of HOME_SECRETS) deny.push(join(home, secret));
@@ -264,6 +297,8 @@ export function sandboxPolicy(input: {
     allowHosts: [...hosts],
     denyRead: deny,
     enforced: input.enforced ?? true,
+    readAllow: installCache === undefined ? [] : [installCache],
     ...(tmpDir === undefined ? {} : { tmpDir }),
+    ...(installCache === undefined ? {} : { installCache }),
   };
 }

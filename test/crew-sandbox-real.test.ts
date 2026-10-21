@@ -56,7 +56,7 @@ function runtimeSettings(
       denyRead: [],
       denyWrite: [],
       ...sandbox.filesystem,
-      allowWrite: [workDir],
+      allowWrite: [workDir, ...(sandbox.filesystem?.allowWrite ?? [])],
     },
   };
 }
@@ -188,5 +188,65 @@ own.stop(true);
 
   test("cannot read any denyRead path", () => {
     expect(report.leaks).toEqual([]);
+  });
+});
+
+describe.skipIf(nestedReason !== undefined)("a real sandboxed shell's install cache", () => {
+  let dataDir: string;
+  let report: { wrote: boolean; read: string; other: string[] | "refused" };
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-real-cache-"));
+    const work = join(dataDir, "crew/scout/r1/1");
+    mkdirSync(work, { recursive: true });
+    mkdirSync(join(dataDir, "crew/.cache/r2/bun"), { recursive: true });
+    writeFileSync(join(dataDir, "crew/.cache/r2/bun/pkg"), CANARY);
+    const policy = sandboxPolicy({
+      dataDir,
+      agentName: "scout",
+      urls: [],
+      runId: "01m46abcdefghjkmnpqrstvwxy",
+      repoId: "r1",
+    });
+    mkdirSync(policy.installCache!, { recursive: true });
+    writeFileSync(
+      join(work, "probe.ts"),
+      `
+import { readFileSync, readdirSync, writeFileSync } from "node:fs";
+const cache = ${JSON.stringify(policy.installCache)};
+let wrote = false;
+let read = "";
+try { writeFileSync(cache + "/pkg", "cached"); wrote = true; read = readFileSync(cache + "/pkg", "utf8"); } catch {}
+let other: string[] | "refused";
+try { other = readdirSync(${JSON.stringify(join(dataDir, "crew/.cache/r2"))}); } catch { other = "refused"; }
+console.log(JSON.stringify({ wrote, read, other }));
+`,
+    );
+    const settings = join(dataDir, "srt-settings.json");
+    const real = claudeSettings(policy).sandbox as Record<string, any>;
+    writeFileSync(settings, JSON.stringify(runtimeSettings(real, work)));
+    const proc = Bun.spawn(
+      [srt, "--settings", settings, "-c", `'${process.execPath}' probe.ts`],
+      { cwd: work, stdin: "ignore", stdout: "pipe", stderr: "pipe" },
+    );
+    const [out, err, code] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    if (code !== 0) throw new Error(`sandboxed shell exited ${code}: ${err}`);
+    report = JSON.parse(out.trim().split("\n").pop() ?? "{}");
+  });
+  afterAll(async () => {
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("writes and reads its own repository's cache", () => {
+    expect(report.wrote).toBe(true);
+    expect(report.read).toBe("cached");
+  });
+
+  test("cannot list another repository's cache", () => {
+    expect(report.other).toBe("refused");
   });
 });

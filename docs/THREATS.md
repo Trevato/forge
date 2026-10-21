@@ -87,6 +87,13 @@ person approved.
   forge's repositories, index, key and every other agent's clone are denied by
   name and by allow-list, and a listing that fails refuses the run.
   Test: `test/crew-sandbox.test.ts`
+- The one place a run writes beside its clone and temp directory is its
+  repository's bun install cache (`crew/.cache/<repo id>/bun`), which every
+  run on that repository can write: a run can poison what the next run on the
+  same repository installs. It is per repository: the cache root is denied whole
+  and only this repository's directory re-allowed, so a cache made later is
+  denied too, and deleting the repository removes it.
+  Test: `test/crew-install-cache.test.ts`
 - The same policy holds against a real bubblewrap, not only as a string.
   Test: `test/crew-sandbox-real.test.ts`
 - An agent cannot push to the default branch or merge; a person merges.

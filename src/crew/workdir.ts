@@ -26,6 +26,30 @@ export function workdirFor(
 }
 
 /**
+ * Every repository's install caches, side by side: `<data>/crew/.cache/`.
+ * Not an agent's name (a username cannot start with a dot), so no agent's
+ * directory is mistaken for it.
+ */
+export const cacheRoot = (dataDir: string): string =>
+  join(crewRoot(dataDir), ".cache");
+
+/**
+ * Bun's install cache for one repository: shared by every run on it, never
+ * by two repositories, so a private repository's packages stay with it.
+ */
+export function installCacheDir(dataDir: string, repoId: string): string {
+  return join(cacheRoot(dataDir), repoId, "bun");
+}
+
+/** A removed repository takes its cache with it. */
+export async function removeInstallCache(
+  dataDir: string,
+  repoId: string,
+): Promise<void> {
+  await rm(join(cacheRoot(dataDir), repoId), { recursive: true, force: true });
+}
+
+/**
  * Remove a clone without blocking the event loop: a leftover process still
  * writing into it makes a removal fail with ENOTEMPTY, so it is tried again
  * a few times, awaiting between tries. Rejects with the last error if the

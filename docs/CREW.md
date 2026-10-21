@@ -6,6 +6,8 @@ the package registry, writes stay in the clone and the run's own `tmpDir`,
 and the machine's temp directory, the forge's data and the operator's
 credentials are unreadable. No command runs outside it on request.
 
+Bun's install cache is one per repository, `<data>/crew/.cache/<repo id>/bun` (`BUN_INSTALL_CACHE_DIR`): every run on a repository shares it, no two repositories do, and deleting the repository deletes it.
+
 ## Running this repository's tests inside it
 
 On Linux the sandbox refuses the bind of a unix socket, and the forge's

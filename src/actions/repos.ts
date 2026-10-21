@@ -62,6 +62,7 @@ import {
   requireWriter,
   type AccessError,
 } from "./access.ts";
+import { removeInstallCache } from "../crew/workdir.ts";
 
 export interface CreateRepoInput {
   /** Owner name: the actor themselves (default) or an org they can write to. */
@@ -503,6 +504,7 @@ export async function deleteRepo(
   if (!admin.ok) return admin;
   const deleted = await destroyRepo(app.db, app.reposRoot, repo);
   if (!deleted.ok) return deleted;
+  await removeInstallCache(app.config.dataDir, repo.id);
   dropMirror(app.config.dataDir, repo.id);
   storageChanged(app, repo.ownerId);
   // The row is gone (events cascade with it), so this event carries no repo.

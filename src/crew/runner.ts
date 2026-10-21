@@ -138,7 +138,7 @@ import {
   type UsageOutcome,
 } from "../core/usage.ts";
 import { trackAgentRun, untrackAgentRun } from "./running.ts";
-import { sandboxPolicy } from "./sandbox.ts";
+import { installCacheEnv, sandboxPolicy } from "./sandbox.ts";
 import { grantSecrets, parseDeclaration, type Grant } from "./grant.ts";
 import { historyHolds, scrubTree } from "./leak.ts";
 import { removeClone, workdirFor } from "./workdir.ts";
@@ -1188,6 +1188,7 @@ async function work(
         ],
         enforced: options.sandboxEnforced,
         runId: run.id,
+        repoId: repo.id,
       });
     const sandbox = shellPolicy();
     // The run's own temp directory, never the machine's shared one; it goes
@@ -1200,6 +1201,9 @@ async function work(
       env["CLAUDE_CODE_TMPDIR"] = runTmp;
       env["TMPDIR"] = runTmp;
     }
+    // Bun's install cache is the repository's, shared by its runs, so a
+    // package is downloaded once rather than by every clone.
+    installCacheEnv(sandbox, env);
     // The sandbox refuses a unix socket's bind; the forge's own servers take
     // a loopback port instead (`git/hook-address.ts`), so `bun test` runs.
     if (sandbox.enforced) env["FORGE_TEST_SOCKET"] = "port";
@@ -1800,8 +1804,8 @@ async function prepareClone(
     env,
   });
   // What a run leaves in its tree that is never the work: the temp
-  // directory a sandboxed shell keeps beside the code (`.tmp/`), with bun's
-  // install cache and a test's data in it, and `node_modules/`. The wrap-up
+  // directory a sandboxed shell keeps beside the code (`.tmp/`), with a
+  // test's data in it, and `node_modules/`. The wrap-up
   // commits leftovers with `git add -A`, so the clone says so once, in its
   // own exclude file — the repository's `.gitignore` is the repository's.
   mkdirSync(join(dir, ".git", "info"), { recursive: true });

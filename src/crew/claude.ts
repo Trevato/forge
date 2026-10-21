@@ -122,7 +122,15 @@ export function claudeSettings(
         // An app under test listens on a local port.
         allowLocalBinding: true,
       },
-      filesystem: { denyRead: [...sandbox.denyRead] },
+      filesystem: {
+        denyRead: [...sandbox.denyRead],
+        ...(sandbox.readAllow.length === 0
+          ? {}
+          : { allowRead: [...sandbox.readAllow] }),
+        ...(sandbox.installCache === undefined
+          ? {}
+          : { allowWrite: [sandbox.installCache] }),
+      },
     },
     permissions: {
       allow: [...TOOLS],
