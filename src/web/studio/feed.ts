@@ -67,18 +67,18 @@ export function feedCard(
   const steer = item.kind === "run" || item.kind === "cost";
   const target = steer && RUN_LINK.test(item.link) ? `${item.link}/steer` : null;
   const head = html`${avatar(item.actor ?? item.app)}
-      <strong class="fcard-who">${item.actor ?? item.app}</strong
+      <strong>${item.actor ?? item.app}</strong
       >${nameMark(item.actor === null ? undefined : marks.get(item.actor))}
       <span class="muted small">${item.app} · ${timeAgo(item.at)}</span>
       <span class="spacer"></span>
       <span class="badge">${KIND_LABEL[item.kind]}</span>`;
-  const body = html`<p class="fcard-reason"><a href="${item.link}" data-feed-open>${item.what}</a></p>
-    ${saysMore(item) ? html`<p class="fcard-why small muted">${item.reason}</p>` : null}`;
+  const body = html`<p class="break"><a href="${item.link}" data-feed-open>${item.what}</a></p>
+    ${saysMore(item) ? html`<p class="small muted break">${item.reason}</p>` : null}`;
   const foot = disclosure(
     `${target ? "Steer" : "Tell"} · more`,
-    html`<form method="post" action="${target ?? `/${item.app}/tell`}" class="fcard-form">
+    html`<form method="post" action="${target ?? `/${item.app}/tell`}" class="stack">
         <textarea class="input" name="text" rows="2" maxlength="2000" required aria-label="${target ? "Steer this run" : "Tell the crew"}"></textarea>
-        ${btn(target ? "Steer" : "Tell", { size: "sm", variant: "primary" })}
+        <span class="bar">${btn(target ? "Steer" : "Tell", { size: "sm", variant: "primary" })}</span>
       </form>
       <span class="bar">
         <button type="button" class="btn" data-variant="ghost" data-size="sm" data-feed="dismissed" title="Dismiss (x)">Dismiss</button>
@@ -102,18 +102,22 @@ const THOUGHTS_SHOWN = 3;
 /** A thought stays at the top for a day, then leaves the feed (it is still kept). */
 const THOUGHT_AGE_MS = 24 * 60 * 60 * 1000;
 
+/** Text with its line breaks kept: each line escaped, a `<br>` between. */
+const lines = (text: string): Html[] =>
+  text.split(/\r?\n/).map((line, i) => (i === 0 ? html`${line}` : html`<br />${line}`));
+
 /**
  * A thought as the owner's post: their own words, verbatim (escaped here,
  * once; line breaks kept by CSS), marked "received". It has no controls.
  */
 export function thoughtCard(thought: Thought, who: string, placement?: Placement): Html {
   const head = html`${avatar(who)}
-      <strong class="fcard-who">${who}</strong>
+      <strong>${who}</strong>
       <span class="muted small">${timeAgo(thought.receivedAt)}</span>
       <span class="spacer"></span>
       <span class="badge">Received</span>`;
   return card(
-    html`<p class="fcard-reason fcard-text">${thought.text}</p>
+    html`<p class="break">${lines(thought.text)}</p>
     ${placement ? replyUnder(placement) : ""}`,
     { head, attrs: html`data-kind="thought" data-thought="${thought.id}"` },
   );
@@ -126,7 +130,7 @@ export function replyUnder(placement: Placement): Html {
     const repo = /^#(\d+)$/.test(part) ? where.get(Number(part.slice(1))) : undefined;
     return repo === undefined ? part : html`<a href="/${repo}/issues/${part.slice(1)}">${part}</a>`;
   });
-  return html`<p class="fcard-reply small" data-placement="${placement.kind}"><span class="muted">Planner · ${placement.kind}</span> ${parts}</p>`;
+  return html`<p class="small break" data-placement="${placement.kind}"><span class="muted">Planner · ${placement.kind}</span> ${parts}</p>`;
 }
 
 /** The longest tell the composer takes (its textarea's `maxlength`). */

@@ -93,7 +93,7 @@ test("composer, timeline, a tell, a crew member's run and pull, a share, the app
   });
   const page = await home(alice);
   expect(page).toContain("Sorted the seed list");
-  expect(page).toMatch(/fcard-who">scribe<\/strong\s*>\s*<span[^>]*data-mark="crew"/);
+  expect(page).toMatch(/<strong>scribe<\/strong\s*>\s*<span[^>]*data-mark="crew"/);
   expect(page).toContain("opened a pull request");
 
   // A share reaches another person as a post that says who shared it.
