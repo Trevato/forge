@@ -8,6 +8,7 @@
  * for there on purpose (#839). The account a link makes has a password or a passkey (#2924).
  */
 
+import { insideHiddenDiv } from "./helpers/hidden.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -139,6 +140,15 @@ describe("the claim link in the fragment, and its re-issue", () => {
     expect(html).toContain("location.hash");
     expect(html).toContain("replaceState");
     expect(html).toContain('name="token"');
+  });
+
+  test("the claim page draws the passkey state as a badge, not a passkey-on class", async () => {
+    const html = await (await fetch(`${childServers.url}/claim`)).text();
+    expect(html).toContain("Passkey off");
+    expect(html).toMatch(/<span\s+class="badge"\s+data-variant="outline"\s*>\s*Passkey off/);
+    expect(html).not.toContain("passkey-on");
+    expect(html).not.toContain('class="passkey');
+    expect(insideHiddenDiv(html, "data-passkey-state")).toBe(false);
   });
 
   test("an unclaimed forge's sign-in page leads to the claim page; the parent's does not", async () => {

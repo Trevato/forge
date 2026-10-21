@@ -147,11 +147,6 @@ fieldset.field > .check + .check { margin-top: 8px; }
   background: color-mix(in srgb, var(--danger) 10%, transparent);
   border-radius: var(--radius-sm);
 }
-/* Where a passkey can run — a script, and a browser with WebAuthn, which
-   passkey-client.ts marks as :root.passkey — .passkey-on shows and
-   .passkey-off hides; everywhere else the other way round. Only ever hides,
-   so each element keeps its own display. */
-:root:not(.passkey) .passkey-on, :root.passkey .passkey-off { display: none; }
 
 /* ---- stat tile ---- fixed heights: a changing value shifts nothing */
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
