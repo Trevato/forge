@@ -3227,6 +3227,15 @@ export function apiRoutes(router: Router<Handler>): void {
     const found = loadConversation(ctx);
     if ("error" in found) return found.error;
     const { repo, issue } = found;
+    // comments=N answers the newest N, oldest first, and the total (#4097).
+    const asked = ctx.url.searchParams.get("comments");
+    let tail: number | null = null;
+    if (asked !== null) {
+      if (!/^\d{1,3}$/.test(asked) || Number(asked) > 200)
+        return apiError("invalid_comments", 422, "comments must be a whole number from 0 to 200");
+      tail = Number(asked);
+    }
+    const all = listComments(ctx.app.db, found.issue.id);
     return json({
       ...withLabels(ctx, issue),
       ...(issue.kind === "pull"
@@ -3237,8 +3246,9 @@ export function apiRoutes(router: Router<Handler>): void {
       comments: readerMarked(
         ctx,
         found.repo.id,
-        listComments(ctx.app.db, found.issue.id),
+        tail === null ? all : tail === 0 ? [] : all.slice(-tail),
       ),
+      ...(tail === null ? {} : { commentCount: all.length }),
     });
   });
 
