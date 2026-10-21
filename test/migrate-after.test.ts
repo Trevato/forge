@@ -189,6 +189,19 @@ describe("migrate: after", () => {
     expect(getRepo(app.db, "alice", copy)).toBeDefined();
   });
 
+  /** The copy's mirror target, once `ok` says the push has settled. */
+  const settledTarget = async (copy: string, ok: (t: NonNullable<ReturnType<typeof getMirrorTarget>>) => boolean) => {
+    // A deadline, not a count of naps: a loaded check machine slows the push,
+    // never the verdict.
+    const deadline = Date.now() + 40_000;
+    while (Date.now() < deadline) {
+      const held = getMirrorTarget(app.db, getRepo(app.db, "alice", copy)!.id);
+      if (held !== undefined && ok(held)) return held;
+      await Bun.sleep(25);
+    }
+    throw new Error("the mirror push did not settle");
+  };
+
   test("mirror: no write at migration, then one push to GitHub after a landing", async () => {
     const { job, name, copy } = await migrate("mirror");
     expect(job?.stage).toBe("done");
@@ -200,11 +213,7 @@ describe("migrate: after", () => {
     await commit(alice, "alice", copy, "landed.txt");
     const mine = await resolveOid(repoDir(app.reposRoot, "alice", copy), "refs/heads/main");
     expect(mine).not.toBe(before);
-    for (let i = 0; i < 600; i++) {
-      const held = getMirrorTarget(app.db, getRepo(app.db, "alice", copy)!.id);
-      if (held?.tips["refs/heads/main"] === mine) break;
-      await Bun.sleep(50);
-    }
+    await settledTarget(copy, (t) => t.tips["refs/heads/main"] === mine);
     expect(await resolveOid(sourceDir, "refs/heads/main")).toBe(mine);
     // The credential travelled as a header in git's environment: the API
     // log has no write, and the stored target holds no secret.
@@ -214,16 +223,6 @@ describe("migrate: after", () => {
     expect(target.lastError).toBe("");
     expect(JSON.stringify(target)).not.toContain("token");
   });
-
-  /** The copy's mirror target, once `ok` says the push has settled. */
-  const settledTarget = async (copy: string, ok: (t: NonNullable<ReturnType<typeof getMirrorTarget>>) => boolean) => {
-    for (let i = 0; i < 600; i++) {
-      const held = getMirrorTarget(app.db, getRepo(app.db, "alice", copy)!.id);
-      if (held !== undefined && ok(held)) return held;
-      await Bun.sleep(50);
-    }
-    throw new Error("the mirror push did not settle");
-  };
 
   test("mirror: the crew's work branches never go to the source", async () => {
     const { name, copy } = await migrate("mirror");
