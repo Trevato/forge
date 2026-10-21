@@ -16,7 +16,8 @@ import { resolveOid } from "../src/git/merge.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
 import { createApp as insertApp } from "../src/core/apps.ts";
-import { listIssues } from "../src/core/issues.ts";
+import { addComment, createIssue, listIssues } from "../src/core/issues.ts";
+import { addDependency } from "../src/core/dependencies.ts";
 import { getRepoById, updateRepoSettings, type Repo } from "../src/core/repos.ts";
 import { createRun, listRuns, setRunBase } from "../src/core/runs.ts";
 import { getAccountCeiling } from "../src/core/account_ceiling.ts";
@@ -175,6 +176,7 @@ describe("the forge over MCP", () => {
       "tell",
       "share",
       "say",
+      "issue",
       "pull",
       "variant",
       "edit",
@@ -450,6 +452,92 @@ describe("the forge over MCP", () => {
       (await tool(rw, "say", { repo: "alice/game", number: 999, text: "x" }))
         .error,
     ).toContain("not_found");
+  });
+
+  test("issue reads body, comments, labels and what it waits for; a sealed one is not found; a reader is marked untrusted", async () => {
+    const mk = (title: string, body = "", sealed = false) => {
+      const r = createIssue(app.db, { repoId: game.id, authorId: alice.id, title, body, sealed });
+      if (!r.ok) throw new Error(String(r.error));
+      return r.value;
+    };
+    const waiting = mk("wait for it", "the body");
+    const first = mk("first");
+    expect(addDependency(app.db, waiting, first, alice.id).ok).toBe(true);
+    const bot = await createAgent(app, alice, { username: "issuebot", brief: "x" });
+    if (!bot.ok) throw new Error(String(bot.error));
+    expect(addToCrew(app, alice, game, "issuebot").ok).toBe(true);
+    addComment(app.db, { issueId: waiting.id, authorId: alice.id, body: "one" });
+    addComment(app.db, { issueId: waiting.id, authorId: bot.value.user.id, body: "two" });
+
+    const read = (await tool(rw, "issue", { repo: "alice/game", number: waiting.number })).value;
+    expect(read).toMatchObject({
+      number: waiting.number,
+      title: "wait for it",
+      state: "open",
+      closeReason: null,
+      body: "the body",
+      labels: [],
+      assignee: null,
+      blockedBy: [{ number: first.number, title: "first", state: "open" }],
+      blocks: [],
+    });
+    expect(read.comments.map((c: any) => [c.author, c.authorIsAgent, c.body])).toEqual([
+      ["alice", false, "one"],
+      ["issuebot", true, "two"],
+    ]);
+    expect(read.comments[0].at).toBeString();
+    expect(read.untrusted).toBeUndefined();
+    const other = (await tool(rw, "issue", { repo: "alice/game", number: first.number })).value;
+    expect(other.blocks.map((b: any) => b.number)).toEqual([waiting.number]);
+
+    // Not found: no such number, and a pull's number is not an issue's.
+    expect((await tool(rw, "issue", { repo: "alice/game", number: 9999 })).error).toContain("not_found");
+    const branched = await commitToBranch(app, alice, game, {
+      branch: "issue-kind",
+      message: "a change",
+      files: [{ path: "kind.txt", content: "k\n" }],
+    });
+    if (!branched.ok) throw new Error(JSON.stringify(branched.error));
+    const opened = await openPull(app, alice, game, {
+      title: "Not an issue",
+      baseBranch: "main",
+      headBranch: "issue-kind",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    expect((await tool(rw, "issue", { repo: "alice/game", number: opened.value.number })).error).toContain("not_found");
+
+    // Sealed: the writer reads it; a reader of a public repo is told not found.
+    const pub = await createRepo(app, alice, { name: "sealedpub", visibility: "public" });
+    if (!pub.ok) throw new Error(String(pub.error));
+    const secret = createIssue(app.db, { repoId: pub.value.id, authorId: alice.id, title: "hole", sealed: true });
+    if (!secret.ok) throw new Error(String(secret.error));
+    const open = createIssue(app.db, { repoId: pub.value.id, authorId: alice.id, title: "visible" });
+    if (!open.ok) throw new Error(String(open.error));
+    expect((await tool(rw, "issue", { repo: "alice/sealedpub", number: secret.value.number })).value.title).toBe("hole");
+    expect((await tool(bobRw, "issue", { repo: "alice/sealedpub", number: secret.value.number })).error).toContain("not_found");
+
+    // A public issue waiting on the sealed one: the reader must not learn its title.
+    expect(addDependency(app.db, open.value, secret.value, alice.id).ok).toBe(true);
+    expect((await tool(bobRw, "issue", { repo: "alice/sealedpub", number: open.value.number })).value.blockedBy).toEqual([]);
+    const waits = (await tool(rw, "issue", { repo: "alice/sealedpub", number: open.value.number })).value.blockedBy;
+    expect(waits).toHaveLength(1);
+    expect(waits[0]).toMatchObject({ number: secret.value.number, title: "hole" });
+    expect((await tool(bobRw, "issue", { repo: "alice/sealedpub", number: open.value.number })).value.blockedBy).not.toContainEqual(expect.objectContaining({ title: "hole" }));
+
+    // Untrusted: bob cannot write alice/sealedpub; a crew agent is told so.
+    addComment(app.db, { issueId: open.value.id, authorId: bob.id, body: "from a reader" });
+    addComment(app.db, { issueId: open.value.id, authorId: alice.id, body: "from the owner" });
+    expect(addToCrew(app, alice, pub.value, "issuebot").ok).toBe(true);
+    const botToken = createToken(app.db, bot.value.user.id, "bot", "ro").token;
+    const marked = (await tool(botToken, "issue", { repo: "alice/sealedpub", number: open.value.number })).value;
+    expect(marked.comments.map((c: any) => c.untrusted)).toEqual([true, undefined]);
+    expect(marked.untrusted).toBeUndefined();
+
+    // An issue a reader filed is marked itself, for the crew agent and not for the owner.
+    const theirs = createIssue(app.db, { repoId: pub.value.id, authorId: bob.id, title: "from bob" });
+    if (!theirs.ok) throw new Error(String(theirs.error));
+    expect((await tool(botToken, "issue", { repo: "alice/sealedpub", number: theirs.value.number })).value.untrusted).toBe(true);
+    expect((await tool(rw, "issue", { repo: "alice/sealedpub", number: theirs.value.number })).value.untrusted).toBeUndefined();
   });
 
   test("following, take_updates and converge are the fork's page", async () => {

@@ -100,7 +100,15 @@ import {
 import { share } from "../feed/share.ts";
 import { parseTargets } from "./feed.ts";
 import { appsRuntime, envsFor } from "../apps/runtime.ts";
-import { getIssue, getIssueById, listOpenAgentPullsVisibleTo } from "../core/issues.ts";
+import {
+  getIssue,
+  getIssueById,
+  labelsFor,
+  listComments,
+  listOpenAgentPullsVisibleTo,
+} from "../core/issues.ts";
+import { isCrew } from "../core/agents.ts";
+import { dependenciesOf } from "../core/dependencies.ts";
 import { waitsForPerson } from "../crew/review.ts";
 import { attachLook } from "../actions/attach_look.ts";
 import { lookUrl } from "../core/looks.ts";
@@ -140,6 +148,7 @@ import { audit } from "../contract/audit.ts";
 import { probeApp } from "../contract/probes.ts";
 import { convergeFork, convergeState } from "../crew/converge.ts";
 import {
+  markReaders,
   DIRECTION_NOTE,
   directionNote,
   OUTSIDERS_NOTE,
@@ -688,6 +697,77 @@ const TOOLS: readonly Tool[] = [
       return said.ok
         ? good({ says: `Said on #${issue.number}.` })
         : bad("refused", "that could not be said here");
+    },
+  },
+  {
+    name: "issue",
+    description:
+      "Read one issue: title, state, closeReason, body, labels, assignee, its comments (author, whether the author is an agent, body, time), and `blockedBy` and `blocks` (what it waits for, and what waits for it). Text written by someone who cannot write the repository carries `untrusted: true`, as in GET /api/v1/repos/:owner/:name/issues/:number (shown to a crew agent only). A sealed or private issue you cannot see is not found.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        number: { type: "integer", minimum: 1 },
+      },
+      required: ["repo", "number"],
+    },
+    writes: false,
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const n = args["number"];
+      const issue =
+        typeof n === "number" && Number.isInteger(n) && n > 0
+          ? getIssue(ctx.app.db, repo.id, n)
+          : undefined;
+      if (
+        issue === undefined ||
+        issue.kind !== "issue" ||
+        !mayView(ctx.app.db, repo, issue, user)
+      )
+        return bad("not_found", `no issue #${String(n)}`);
+      const db = ctx.app.db;
+      // Marked only for a crew agent, as the API does: to anyone else the
+      // mark would say which commenters cannot write.
+      const marking = user.kind === "agent" && isCrew(db, repo.id, user.id);
+      const mark = <T extends { authorName: string; originAuthor: string | null }>(
+        items: readonly T[],
+      ): (T & { untrusted?: string })[] =>
+        marking ? markReaders(db, repo, items) : [...items];
+      const comments = mark(listComments(db, issue.id));
+      const authors = getUsersByIds(db, [...new Set(comments.map((c) => c.authorId))]);
+      const deps = dependenciesOf(db, issue.id);
+      const brief = (i: typeof issue) => ({
+        number: i.number,
+        title: i.title,
+        state: i.state,
+        ...(i.closeReason === null ? {} : { closeReason: i.closeReason }),
+      });
+      const seen = (i: typeof issue) => mayView(db, repo, i, user);
+      const flag = (x: { untrusted?: string }) =>
+        x.untrusted === undefined ? {} : { untrusted: true };
+      const [self] = mark([issue]);
+      return good({
+        number: issue.number,
+        title: issue.title,
+        state: issue.state,
+        closeReason: issue.closeReason,
+        body: issue.body,
+        author: issue.authorName,
+        authorIsAgent: issue.authorIsAgent,
+        ...flag(self!),
+        labels: labelsFor(db, issue.id).map((l) => l.name),
+        assignee: issue.assigneeName,
+        comments: comments.map((c) => ({
+          author: c.authorName,
+          authorIsAgent: authors.get(c.authorId)?.kind === "agent",
+          body: c.body,
+          at: c.createdAt,
+          ...flag(c),
+        })),
+        blockedBy: deps.blockedBy.filter(seen).map(brief),
+        blocks: deps.blocks.filter(seen).map(brief),
+      });
     },
   },
   {
