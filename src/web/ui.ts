@@ -888,6 +888,8 @@ export interface RowOptions {
   href?: string;
   title: Html | string;
   meta?: Html;
+  /** Draw `.row-meta` even when `meta` is empty, for a script to write into. */
+  metaSlot?: boolean;
   lead?: Html;
   trail?: Html;
   state?: "open" | "closed" | "merged" | "draft";
@@ -920,7 +922,7 @@ export function row(o: RowOptions): Html {
         ${o.titleAttr ? html`title="${o.titleAttr}"` : null}
         >${o.title}</span
       >
-      ${o.meta ? html`<span class="row-meta">${o.meta}</span>` : null}
+      ${o.meta || o.metaSlot ? html`<span class="row-meta">${o.meta}</span>` : null}
     </span>
     ${o.trail && o.trail.text.trim() !== ""
       ? html`<span class="row-trail">${o.trail}</span>`

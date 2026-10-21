@@ -10,6 +10,7 @@
  * behaviour that a page depends on to be usable.
  */
 
+import { STAGE_BADGE_JS } from "./stage-row.ts";
 import { paletteHelpersJs } from "./palette.ts";
 
 /**
@@ -105,7 +106,7 @@ export const mirrorJs = /* js */ `
 
   var rows = Array.prototype.slice.call(list.querySelectorAll('li[data-stage-name]'));
   var order = rows.map(function (li) { return li.getAttribute('data-stage-name'); });
-  var glyph = { done: '\\u25CF', now: '\\u25D0', failed: '\\u2715', todo: '\\u25CB' };
+  var badges = ${STAGE_BADGE_JS};
 
   function paint(stage, detail) {
     list.setAttribute('data-stage', stage);
@@ -116,9 +117,12 @@ export const mirrorJs = /* js */ `
         : i === there ? (stage === 'done' ? 'done' : 'now')
         : 'todo';
       li.setAttribute('data-state', state);
-      var dot = li.querySelector('.stage-dot');
-      if (dot) dot.textContent = glyph[state];
-      var note = li.querySelector('.stage-detail');
+      var badge = li.querySelector('.badge');
+      if (badge) {
+        badge.textContent = badges[state][0];
+        badge.setAttribute('data-variant', badges[state][1]);
+      }
+      var note = li.querySelector('.row-meta');
       if (note) note.textContent = state === 'now' ? (detail || '') : '';
     });
   }

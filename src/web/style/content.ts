@@ -113,21 +113,9 @@ a.where-place:hover, button.where-place:hover {
 .live-note strong { color: var(--fg); }
 
 /* A mirror in flight. One row per stage, in the order they happen; the row
-   says which of the three states it is in and nothing else moves. */
+   is a §5 row whose badge says which of the three states it is in. */
 .stages { list-style: none; margin: 0; padding: 0; }
-.stages li {
-  display: flex; align-items: center; gap: 10px;
-  padding: 8px 0; font-size: 13px; color: var(--faint);
-}
-.stages li + li { border-top: 1px solid var(--border); }
-.stages li[data-state="done"] { color: var(--muted-fg); }
-.stages li[data-state="done"] .stage-dot { color: var(--success); }
-.stages li[data-state="now"] { color: var(--fg); font-weight: 560; }
-.stages li[data-state="now"] .stage-dot { color: var(--accent); }
-.stages li[data-state="failed"] { color: var(--danger); }
-.stages li[data-state="failed"] .stage-dot { color: var(--danger); }
-.stage-dot { flex: none; width: 16px; text-align: center; }
-.stage-detail { margin-left: auto; color: var(--faint); font-size: 12.5px; font-weight: 400; }
+.stages li[data-state="todo"] .row-title { color: var(--faint); }
 .origin-chip {
   display: inline-flex; align-items: center; gap: 6px;
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

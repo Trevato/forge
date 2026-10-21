@@ -62,6 +62,7 @@ import {
   type FakeForge,
 } from "./fake-origin.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
+import { STAGE_BADGE_JS } from "../src/web/stage-row.ts";
 import { prefill } from "../src/web/pages/migrate-prefill.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { promote } from "./helpers/members.ts";
@@ -1404,6 +1405,34 @@ describe("migrate", () => {
       hop.stop(true);
       target.stop(true);
     }
+  });
+
+  test("the job page draws each stage as a row with a state badge, and no stage-dot", async () => {
+    const job = createJob("", "octo/rows", { kind: "migrate", actorId: alice.id });
+    advance(job.id, { stage: "fetching", detail: "receiving 61%" });
+    const page = await (await browser(aliceCookie, `/migrate/jobs/${job.id}`)).text();
+    expect(page).not.toContain("stage-dot");
+    expect(page).not.toContain("stage-detail");
+    // The page's script is built from the table the rows are drawn from.
+    expect(page).toContain(`var badges = ${STAGE_BADGE_JS};`);
+    expect(page).toMatch(/<li data-stage-name="creating" data-state="done">[\s\S]*?class="row"[\s\S]*?>Done</);
+    expect(page).toMatch(/data-stage-name="fetching" data-state="now">[\s\S]*?receiving 61%[\s\S]*?>Running</);
+    expect(page).toMatch(/data-stage-name="crew" data-state="todo">[\s\S]*?>Waiting</);
+    expect(page).toMatch(/<ol class="list stages" aria-live="polite">/);
+    // Every stage has a `.row-meta` for the live update to write into.
+    const items = page.match(/<li data-stage-name=[\s\S]*?<\/li>/g) ?? [];
+    expect(items.length).toBeGreaterThan(0);
+    for (const li of items) expect(li).toContain('class="row-meta"');
+  });
+
+  test("mark the stage it failed on, and keep the earlier ones done", async () => {
+    const job = createJob("", "octo/broke", { kind: "migrate", actorId: alice.id });
+    advance(job.id, { stage: "fetching", detail: "receiving 3%" });
+    advance(job.id, { stage: "failed", error: "clone went wrong" });
+    const page = await (await browser(aliceCookie, `/migrate/jobs/${job.id}`)).text();
+    expect(page).toMatch(/data-stage-name="creating" data-state="done"/);
+    expect(page).toMatch(/data-stage-name="fetching" data-state="failed">[\s\S]*?data-variant="danger"\s*>Failed</);
+    expect(page).toMatch(/data-stage-name="crew" data-state="todo"/);
   });
 });
 
