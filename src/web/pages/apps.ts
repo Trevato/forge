@@ -428,8 +428,10 @@ const NEW_APP_ERRORS: Record<string, string> = {
 // POST /apps/new
 export async function newAppSubmit(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return signInFirst(ctx);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
+  const phase = (name: string, ms: number) => notePhase(ctx.request, name, ms);
   const values: NewAppValues = {
     owner: field(form, "owner"),
     name: field(form, "name"),
@@ -464,7 +466,7 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
         ? {}
         : { agent: values.agent }),
   } as const;
-  let made = await newApp(ctx.app, ctx.auth.user, { ...rest, name: base });
+  let made = await newApp(ctx.app, ctx.auth.user, { ...rest, name: base }, phase);
   // A derived name that collides tries `base-2`, `base-3`, … — the same
   // `name_taken` check an explicit name gets, just run more than once.
   for (
@@ -475,7 +477,7 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
     made = await newApp(ctx.app, ctx.auth.user, {
       ...rest,
       name: `${base}-${n}`,
-    });
+    }, phase);
   }
   if (!made.ok) {
     if (made.error === "forbidden_owner" || made.error === "unauthorized")

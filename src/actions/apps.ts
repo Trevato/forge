@@ -289,6 +289,8 @@ export async function newApp(
   app: App,
   actor: User | undefined,
   input: NewAppInput,
+  /** Told how long each stretch took (`repo`, `scaffold`, `app`, `issue`), for Server-Timing. */
+  onPhase: (name: string, ms: number) => void = () => {},
 ): Promise<Result<NewAppResult, NewAppError | "unverified">> {
   const user = requireUser(actor);
   if (!user.ok) return user;
@@ -316,12 +318,19 @@ export async function newApp(
   )
     return err("slug_taken");
 
+  let mark = performance.now();
+  const lap = (name: string): void => {
+    const now = performance.now();
+    onPhase(name, now - mark);
+    mark = now;
+  };
   const repo = await createRepo(app, user.value, {
     name: input.name,
     visibility: input.visibility ?? "private",
     description: input.description ?? "",
     ...(input.owner === undefined ? {} : { owner: input.owner }),
   });
+  lap("repo");
   if (!repo.ok) return repo;
   const committed = await commitToBranch(app, user.value, repo.value, {
     message: `Start ${input.name}`,
@@ -330,11 +339,13 @@ export async function newApp(
       description: input.description ?? "",
     }),
   });
+  lap("scaffold");
   if (!committed.ok) {
     await deleteRepo(app, user.value, repo.value);
     return err("scaffold_failed");
   }
   const record = enableApp(app, user.value, repo.value, {});
+  lap("app");
   // The creator administers the repository they just made, so `not_found`
   // here can only mean the row vanished under us — a failed scaffold.
   if (!record.ok) {
@@ -413,6 +424,7 @@ export async function newApp(
       }
     }
   }
+  lap("issue");
   return ok({
     repo: repo.value,
     app: record.value,

@@ -14,6 +14,9 @@ import { runGit } from "./env.ts";
 import { isSafeRef, isSafeTreePath } from "./guard.ts";
 import { resolveOid } from "./merge.ts";
 
+/** Most `hash-object` runs one commit has in flight on the shared git gate. */
+export const HASH_POOL = 4;
+
 export interface FileWrite {
   readonly path: string;
   /** The new bytes, or `null` to delete the path from the tree. */
@@ -106,8 +109,56 @@ export async function commitFiles(
       : await runGit(["read-tree", "--empty"], { cwd: dir, env });
     if (!seed.ok) return err({ kind: "git", message: seed.error.stderr });
 
-    for (const file of input.files) {
+    // Blobs are hashed a few at a time, then staged in as few `update-index`
+    // runs as order allows: a spawn each per file, one after another, is what
+    // made a first commit of twenty files slow. The pool is small and fixed
+    // because every spawn waits on the shared git gate: a thousand-file
+    // request must not queue a thousand spawns in front of everyone else.
+    const hashes: (Awaited<ReturnType<typeof runGit>> | undefined)[] =
+      new Array(input.files.length).fill(undefined);
+    let nextFile = 0;
+    const hashWorker = async (): Promise<void> => {
+      while (nextFile < input.files.length) {
+        const i = nextFile++;
+        const file = input.files[i]!;
+        if (file.content === null) continue;
+        hashes[i] = await runGit(["hash-object", "-w", "--stdin"], {
+          cwd: dir,
+          env,
+          stdin: file.content,
+        });
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(HASH_POOL, input.files.length) }, hashWorker),
+    );
+    let batch: { file: FileWrite; args: string[] }[] = [];
+    let batchBytes = 0;
+    const flush = async (): Promise<CommitFilesError | undefined> => {
+      if (batch.length === 0) return undefined;
+      const staged = await runGit(
+        ["update-index", "--add", ...batch.flatMap((b) => b.args)],
+        { cwd: dir, env },
+      );
+      const took = batch;
+      batch = [];
+      batchBytes = 0;
+      if (staged.ok) return undefined;
+      // update-index (without --replace) refuses to put a file where a
+      // directory is, or under a path that is a file. That is the answer
+      // we want — silently replacing a whole directory with one blob is
+      // how a typo'd path deletes a tree — but it is a caller error with
+      // a name, not a git failure.
+      if (/appears as both a file and as a directory/.test(staged.error.stderr)) {
+        const named = took.find((b) => staged.error.stderr.includes(`'${b.file.path}'`));
+        return { kind: "path_conflict", path: (named ?? took[0]!).file.path };
+      }
+      return { kind: "git", message: staged.error.stderr };
+    };
+    for (const [i, file] of input.files.entries()) {
       if (file.content === null) {
+        const failed = await flush();
+        if (failed) return err(failed);
         // A deletion is mode 0 through `--index-info`, not `--force-remove`:
         // the latter stats the working file and there is no work tree here.
         // `-z` makes the records NUL-terminated, so a path can never be read
@@ -121,34 +172,21 @@ export async function commitFiles(
           return err({ kind: "git", message: removed.error.stderr });
         continue;
       }
-      const hashed = await runGit(["hash-object", "-w", "--stdin"], {
-        cwd: dir,
-        env,
-        stdin: file.content,
-      });
+      const hashed = hashes[i]!;
       if (!hashed.ok) return err({ kind: "git", message: hashed.error.stderr });
-      const staged = await runGit(
-        [
-          "update-index",
-          "--add",
-          "--cacheinfo",
-          `${file.mode ?? "100644"},${hashed.value.trim()},${file.path}`,
-        ],
-        { cwd: dir, env },
-      );
-      if (!staged.ok) {
-        // update-index (without --replace) refuses to put a file where a
-        // directory is, or under a path that is a file. That is the answer
-        // we want — silently replacing a whole directory with one blob is
-        // how a typo'd path deletes a tree — but it is a caller error with
-        // a name, not a git failure.
-        return /appears as both a file and as a directory/.test(
-          staged.error.stderr,
-        )
-          ? err({ kind: "path_conflict", path: file.path })
-          : err({ kind: "git", message: staged.error.stderr });
+      batch.push({
+        file,
+        args: ["--cacheinfo", `${file.mode ?? "100644"},${hashed.value.trim()},${file.path}`],
+      });
+      // Keep one argv well under ARG_MAX: flush on count or bytes.
+      batchBytes += file.path.length + 64;
+      if (batch.length >= 200 || batchBytes > 256 * 1024) {
+        const full = await flush();
+        if (full) return err(full);
       }
     }
+    const failed = await flush();
+    if (failed) return err(failed);
 
     const tree = await runGit(["write-tree"], { cwd: dir, env });
     if (!tree.ok) return err({ kind: "git", message: tree.error.stderr });

@@ -5203,6 +5203,7 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("POST", "/api/v1/apps", async (ctx) => {
     const denied = requireScope(ctx, "rw");
     if (denied) return denied;
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const input = await body(ctx.request);
     const made = await newApp(ctx.app, ctx.auth.user, {
       name: str(input.name),
@@ -5214,7 +5215,7 @@ export function apiRoutes(router: Router<Handler>): void {
         ? { visibility: input.visibility }
         : {}),
       ...(typeof input.agent === "string" ? { agent: input.agent } : {}),
-    });
+    }, (name, ms) => notePhase(ctx.request, name, ms));
     if (!made.ok) {
       if (made.error === "repository_limit")
         return apiError("repository_limit", 403, repositoryLimitMessage(ctx.app, ctx.auth.user!));
