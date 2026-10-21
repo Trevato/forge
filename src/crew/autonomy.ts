@@ -26,6 +26,7 @@ import { addLearned } from "../checks/learned.ts";
 import { enqueue, type GateCandidate, type Queued, type QueueOptions, queueClashes, queueWords } from "../checks/queue.ts";
 import { checksFor } from "../checks/service.ts";
 import { queueDepth } from "../core/capacity.ts";
+import { readConflictRoom } from "./conflict_room.ts";
 import { mergeable, resolveOid, treeOf } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { CLOSED_NOTE } from "../core/done_on_main.ts";
@@ -1554,11 +1555,14 @@ export function releaseConflicted(
  * bring-up-to-date run (one in flight per pull). After two finished
  * attempts, or 24 h since the first, it is closed and its issue is ready
  * again. An approved pull is not this sweep's but `finishApproved`'s.
+ * Runs start oldest pull first, only as many as the check lane has room
+ * for (`conflict_room.ts`); the rest wait for a later tick (#4459).
  * Returns how many pulls were acted on.
  */
 export async function sweepConflicts(app: App, repo: Repo): Promise<number> {
   if (repo.autonomy !== "autonomous") return 0;
   let acted = 0;
+  let room = readConflictRoom(app.db);
   // Forget pulls that are no longer open: closed, merged or released.
   for (const id of new Set([...checked.keys(), ...cleanAt.keys()]))
     if (getIssueById(app.db, id)?.state !== "open") {
@@ -1566,7 +1570,8 @@ export async function sweepConflicts(app: App, repo: Repo): Promise<number> {
       cleanAt.delete(id);
       asked.delete(id);
     }
-  for (const pull of listPulls(app.db, repo.id, { sealed: true, state: "open", limit: 50 })) {
+  const open = listPulls(app.db, repo.id, { sealed: true, state: "open", limit: 50 });
+  for (const pull of open.sort((a, b) => a.number - b.number)) {
     if (!pull.authorIsAgent || pull.mergedAt !== null) continue;
     if (getHold(app.db, pull.id) !== undefined) continue;
     const dir = await pullDir(app.db, app.reposRoot, repo, pull);
@@ -1641,7 +1646,10 @@ export async function sweepConflicts(app: App, repo: Repo): Promise<number> {
     // push must not be queued again on every tick.
     const tried = asked.get(pull.id);
     if (tried?.tip === baseTip && tried.n >= RUNS_PER_TIP) continue;
+    // Its push is a check: none starts that the lane has no slot for (#4459).
+    if (room <= 0) continue;
     if (bringUpToDate(app, repo, pull, files, since) !== undefined) {
+      room--;
       acted++;
       asked.set(pull.id, {
         tip: baseTip,
