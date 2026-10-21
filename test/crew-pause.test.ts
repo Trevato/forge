@@ -37,7 +37,7 @@ describe("the crew, with a stand-in Claude Code: paused by the provider", () => 
     agentRunSettled(app, repo, where, timeoutMs);
 
   beforeAll(async () => {
-    standIn = await startStandInCrew();
+    standIn = await startStandInCrew({ tickMs: 50 });
     ({ dataDir, app, alice, bot, repo, argsFile, promptFile } = standIn);
   }, 30_000);
 
