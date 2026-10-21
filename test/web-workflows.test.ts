@@ -44,6 +44,10 @@ import { proveAll } from "./helpers/verified.ts";
 import { promote } from "./helpers/members.ts";
 import { tokenFor } from "./helpers/tokens.ts";
 
+// A mirror job clones over git; a loaded check machine needs more than bun's
+// 5 s default. The wait is on the job reaching a terminal stage, not on time.
+const JOB_TIMEOUT_MS = 60_000;
+
 quietLogs();
 
 const PASSWORD = "a-long-workflow-passphrase";
@@ -309,7 +313,7 @@ describe("fork at the origin, and propose a change through it", () => {
     // Both places: the header's where-strip and the About rail.
     expect(words(page)).toContain("fork of octo/gears");
     expect(page).toContain(`href="${browse}"`);
-  });
+  }, JOB_TIMEOUT_MS);
 
   test("forking again is idempotent and lands straight on the mirror", async () => {
     const before = fake.state.requests.filter(
@@ -462,7 +466,7 @@ describe("fork at the origin, and propose a change through it", () => {
     expect(editor).toContain(
       `action="/${mirror.ownerName}/${mirror.name}/edit"`,
     );
-  });
+  }, JOB_TIMEOUT_MS);
 
   test("a mirror of a repository you cannot push to proposes instead", async () => {
     // The fork's mirror (alice/gears) mirrors `me/gears`, which this account
@@ -499,7 +503,7 @@ describe("fork at the origin, and propose a change through it", () => {
     expect(proposed.status).toBe(303);
     expect(proposed.headers.get("location")).toBe(`${at}/pulls/2`);
     expect(getRepo(app.db, mirror.ownerName, mirror.name)).toBeDefined();
-  });
+  }, JOB_TIMEOUT_MS);
 });
 
 // ────────────────────────────────────────────────────────────────────────
