@@ -23,6 +23,7 @@ import { runGitCapture } from "../src/git/env.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { settled } from "../src/origins/jobs.ts";
+import { pushToMirrorTarget } from "../src/origins/push-through.ts";
 import { startMirrorOut } from "../src/origins/mirror-out.ts";
 import { forgetProviders } from "../src/origins/providers/index.ts";
 import { newFakeState, serveFakeForge, type FakeForge } from "./fake-origin.ts";
@@ -95,6 +96,9 @@ describe("migrate: after", () => {
     return { name, job, copy: `copy${n}` };
   };
 
+  /** Wakers for whoever waits on a mirror push to end. */
+  const pushEnded = new Set<() => void>();
+
   const writes = () =>
     github.state.requests.filter((r) => r.method !== "GET" && r.method !== "HEAD");
 
@@ -114,7 +118,15 @@ describe("migrate: after", () => {
     });
     if (!connected.ok) throw new Error(connected.error);
     originId = connected.value.id;
-    stopMirror = startMirrorOut(app);
+    stopMirror = startMirrorOut(app, async (a, repo) => {
+      try {
+        return await pushToMirrorTarget(a, repo);
+      } finally {
+        const waiting = [...pushEnded];
+        pushEnded.clear();
+        for (const wake of waiting) wake();
+      }
+    });
   }, 120_000);
 
   afterAll(async () => {
@@ -182,17 +194,20 @@ describe("migrate: after", () => {
     expect(getRepo(app.db, "alice", copy)).toBeDefined();
   });
 
-  /** The copy's mirror target, once `ok` says the push has settled. */
+  /** The copy's mirror target, once `ok` says a push that has ended left it so. */
   const settledTarget = async (copy: string, ok: (t: NonNullable<ReturnType<typeof getMirrorTarget>>) => boolean) => {
-    // A deadline, not a count of naps: a loaded check machine slows the push,
-    // never the verdict.
-    const deadline = Date.now() + 90_000;
-    while (Date.now() < deadline) {
-      const held = getMirrorTarget(app.db, getRepo(app.db, "alice", copy)!.id);
-      if (held !== undefined && ok(held)) return held;
-      await Bun.sleep(25);
+    const id = getRepo(app.db, "alice", copy)!.id;
+    const look = () => {
+      const held = getMirrorTarget(app.db, id);
+      return held !== undefined && ok(held) ? held : undefined;
+    };
+    // Wait on the event, not the clock: each push that ends wakes the waiters,
+    // and the test's own timeout is the only bound.
+    for (;;) {
+      const held = look();
+      if (held) return held;
+      await new Promise<void>((resolve) => pushEnded.add(resolve));
     }
-    throw new Error("the mirror push did not settle");
   };
 
   test("mirror: no write at migration, then one push to GitHub after a landing", async () => {
