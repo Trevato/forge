@@ -151,24 +151,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .origin-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .origin-row .origin-mark .ico { color: var(--muted-fg); }
 .origin-name { display: block; font-weight: 560; }
-.connect-path + .connect-path { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border); }
-/* The two OAuth paths, folded away. Both need somebody to register an
-   application once, and a page whose first control cannot be used until an
-   operator sets an environment variable teaches people the product is
-   fiddly — so the path that always works is open and these are one click. */
-.connect-more { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
-.connect-more > summary {
-  cursor: pointer; font-weight: 560; list-style: none;
-  display: flex; align-items: center; gap: 6px;
-}
-.connect-more > summary::-webkit-details-marker { display: none; }
-.connect-more > summary::before {
-  content: "›"; display: inline-block; color: var(--faint);
-  transition: transform 120ms var(--ease);
-}
-.connect-more[open] > summary::before { transform: rotate(90deg); }
-.connect-more > summary:hover { color: var(--accent); }
-.connect-more > p { margin: 6px 0 4px; }
 /* Why an issue closes, beside the button that closes it. */
 .form-actions select[name="reason"] { width: auto; }
 .form-actions input[name="into"] { display: none; width: 7em; }
@@ -187,9 +169,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
      row needs for "Close issue", and the buttons keep their full height. */
   .comment-form .form-actions .btn .ico { display: none; }
 }
-.connect-more .connect-path { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
-.connect-path h3 { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
-.connect-path h3 .ico { color: var(--muted-fg); }
 .steps { margin: 8px 0 12px 18px; padding: 0; color: var(--muted-fg); }
 .steps li + li { margin-top: 6px; }
 .mirror-form { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -205,17 +184,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
   font-variant-numeric: tabular-nums; letter-spacing: 0.14em;
   text-align: center; user-select: all; word-break: break-all;
 }
-/* Handing a connect to another device: a code to scan, a short link to type,
-   the long one to copy. The QR keeps its own white ground in every theme —
-   a scanner reads dark modules on light and refuses the inverse, so this is
-   the one thing on the page the theme does not get a vote on. */
-.handoff { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 16px; margin-top: 12px; }
-.handoff > svg {
-  flex: none; width: 168px; height: 168px;
-  background: var(--qr-ground); border: 1px solid var(--border); border-radius: var(--radius-sm);
-}
-.handoff-links { flex: 1 1 16rem; min-width: 0; }
-.handoff-links .mono { user-select: all; overflow-wrap: anywhere; }
 .break { overflow-wrap: anywhere; }
 [data-apps] { overflow-wrap: anywhere; }
 
