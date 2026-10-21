@@ -337,5 +337,11 @@ describe("the board", () => {
 
     const spend = await (await fetch(`${servers.url}/settings/spend`, { headers: { cookie } })).text();
     expect(spend).toContain('data-by="byCredential"');
+    expect(spend).not.toContain("spend-table");
+    expect(spend).not.toContain("spend-totals");
+    expect(spend).toContain('class="table-scroll"');
+    expect(spend).toContain("data-dense");
+    expect(spend).toContain('data-by="top" aria-labelledby="spend-top"');
+    expect(spend).toContain('id="spend-top"');
   });
 });

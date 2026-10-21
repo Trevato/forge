@@ -999,7 +999,7 @@ function today(ctx: Ctx, scope: BoardScope): Html {
  * one key to show one. Everything inside them is §5's: rows in a list card,
  * badges, meters, kbd. Assembled into the served stylesheet by
  * `web/style.ts`, last in the `components` layer. The spend tables
- * (`spend.ts`) are drawn on the board first and keep their two rules here.
+ * (`spend.ts`) wear §5's table and stack, with no rules here.
  */
 export const boardCss = /* css */ `
 @layer components {
@@ -1019,9 +1019,6 @@ export const boardCss = /* css */ `
 .board-region .row-lead img { display: block; border: 1px solid var(--border); border-radius: 4px; object-fit: cover; object-position: top; }
 .board-region .row-main > meter { margin-top: 4px; }
 .board [data-window] > meter { width: 56px; }
-.spend-table { margin-top: 8px; }
-.spend-table caption { text-align: left; color: var(--muted-fg); }
-.spend-totals { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 8px 0 0; }
 
 /* Wide: four regions fill the window, each list scrolling on its own. */
 @media (min-width: 1100px) {

@@ -48,7 +48,8 @@ function table(spend: Spend, dim: Dimension, title: string): Html {
   // The week's order: most spent first.
   const week = (n: string): number => at.get(n)!.get("week")?.costUsd ?? 0;
   names.sort((a, b) => week(b) - week(a));
-  return html`<table class="table spend-table" data-by="${dim}">
+  return html`<div class="table-scroll">
+    <table class="table" data-dense data-by="${dim}" aria-label="${title}">
     <thead>
       <tr>
         <th scope="col">${title}</th>
@@ -82,16 +83,17 @@ function table(spend: Spend, dim: Dimension, title: string): Html {
             </tr>`;
           })}
     </tbody>
-  </table>`;
+  </table>
+    </div>`;
 }
 
 /** The whole breakdown: totals, five tables, the top runs. */
 export function spendView(spend: Spend): Html {
-  return html`<div class="spend">
-    <p class="spend-totals num">
+  return html`<div class="spend stack">
+    <p class="num">
       ${spend.spans.map(
-        (s) =>
-          html`<span
+        (s, i) =>
+          html`${i > 0 ? " — " : null}<span
             ><b>${usd(s.total.costUsd)}</b> ${SPAN_WORDS[s.span]} ·
             ${String(s.total.units)} runs · ${tokens(s.total.tokensIn)} in /
             ${tokens(s.total.tokensOut)} out</span
@@ -99,10 +101,9 @@ export function spendView(spend: Spend): Html {
       )}
     </p>
     ${DIMENSIONS.map(([dim, title]) => table(spend, dim, title))}
-    <table class="table spend-table" data-by="top">
-      <caption>
-        The 10 costliest runs, 7 days
-      </caption>
+    <p class="muted" id="spend-top">The 10 costliest runs, 7 days</p>
+    <div class="table-scroll">
+    <table class="table" data-dense data-by="top" aria-labelledby="spend-top">
       <thead>
         <tr>
           <th scope="col">Run</th>
@@ -134,6 +135,7 @@ export function spendView(spend: Spend): Html {
         )}
       </tbody>
     </table>
+    </div>
     <p class="muted small">
       US dollars at list price, as Claude Code reports them; a running session's
       tokens count as they arrive, its cost when it reports one. "Last 5 h" is
