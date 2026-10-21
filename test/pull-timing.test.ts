@@ -1,4 +1,4 @@
-/** `/:owner/:name/pulls/:n`'s Server-Timing names its phases (#3192). */
+/** `/:owner/:name/pulls/:n`'s Server-Timing names its phases (#3192), and its Files page's (#3359). */
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -21,6 +21,7 @@ let app: App;
 let servers: Servers;
 let cookie = "";
 let number = 0;
+let bigNumber = 0;
 let owner: User;
 let repoRow: Repo;
 const cells = process.env["FORGE_CELLS"];
@@ -61,6 +62,27 @@ beforeAll(async () => {
   });
   if (!pull.ok) throw new Error(JSON.stringify(pull.error));
   number = pull.value.number;
+  // A 40-file, 2,000-line change, for the Files page.
+  const big = await commitToBranch(app, alice, repo.value, {
+    branch: "big",
+    message: "big",
+    files: Array.from({ length: 40 }, (_, f) => ({
+      path: `src/m${f}.ts`,
+      content: Array.from(
+        { length: 50 },
+        (_, i) => `export const v${f}_${i} = "<b>${i}</b>" + (${i} < 3 ? 'x' : \`y\${${i}}\`); // note & ${f}`,
+      ).join("\n") + "\n",
+    })),
+  });
+  if (!big.ok) throw new Error(JSON.stringify(big.error));
+  const bigPull = await openPull(app, alice, repo.value, {
+    title: "big",
+    body: "",
+    baseBranch: "main",
+    headBranch: "big",
+  });
+  if (!bigPull.ok) throw new Error(JSON.stringify(bigPull.error));
+  bigNumber = bigPull.value.number;
   createRun(app.db, {
     repoId: repo.value.id,
     kind: "check",
@@ -92,6 +114,18 @@ test("a pull names session, diff, checks, reviews and render after app, summing 
   expect(sum).toBeLessThanOrEqual(ms("app") + 0.1 * after.length);
   expect(ms("diff")).toBeGreaterThan(0);
   expect(ms("checks")).toBeGreaterThan(0);
+});
+
+test("a pull's Files page names session, diff, checks, reviews and render, in that order, on the 40-file seed", async () => {
+  const url = `${servers.url}/alice/r/pulls/${bigNumber}/files`;
+  const res = await fetch(url, { headers: { cookie } });
+  expect(res.status).toBe(200);
+  const html = await res.text();
+  expect(html).toContain("m39.ts");
+  expect(html).not.toContain("<b>1</b>");
+  const parts = (res.headers.get("server-timing") ?? "").split(", ");
+  const names = parts.map((p) => p.split(";")[0]!);
+  expect(names.slice(names.indexOf("app") + 1)).toEqual(["session", "diff", "checks", "reviews", "render"]);
 });
 
 /** The `app` duration of one Files-page view, in ms. */

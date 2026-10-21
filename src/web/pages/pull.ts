@@ -52,7 +52,6 @@ import {
 import { getUsersByIds } from "../../core/users.ts";
 import { canWrite, getRepoById, type Repo } from "../../core/repos.ts";
 import { resolveOid } from "../../git/merge.ts";
-import { timePhaseAsync } from "../../core/route_timing.ts";
 import { commitLog } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
 import { wallOf } from "../../contract/policy.ts";
@@ -65,6 +64,7 @@ import {
   repoPalette,
   signInFirst,
 } from "../chrome.ts";
+import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { diffCacheCounts, diffKey, keptDiff } from "../diff-cache.ts";
 import { diffSyntax } from "../diff-syntax.ts";
 import {
@@ -800,6 +800,27 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
   const found = pullContext(ctx);
   if (found instanceof Response) return found;
   const { repo, pull } = found;
+  const began = performance.now();
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const spent = { diff: 0, checks: 0, reviews: 0 };
+  /** Run `work`, adding the time it took to `spent[key]`. */
+  const lap = async <T>(key: keyof typeof spent, work: () => T | Promise<T>): Promise<T> => {
+    const started = performance.now();
+    try {
+      return await work();
+    } finally {
+      spent[key] += performance.now() - started;
+    }
+  };
+  /** The same for a synchronous call: no await, no microtask. */
+  const tick = <T>(key: keyof typeof spent, work: () => T): T => {
+    const started = performance.now();
+    try {
+      return work();
+    } finally {
+      spent[key] += performance.now() - started;
+    }
+  };
   // Every read of the change is taken where its objects are (`pullDir`).
   const dir = await pullDir(ctx.app.db, ctx.app.reposRoot, repo, pull);
   const base = repoBase(repo);
@@ -807,43 +828,45 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
 
   // The review gate travels with the status, so the merge box and
   // `mergePull` are answering the same question from the same numbers.
-  const status = await pullStatus(dir, pull, {
-    db: ctx.app.db,
-    requireReview: repo.requireReview,
-  });
+  const status = await lap("diff", () =>
+    pullStatus(dir, pull, {
+      db: ctx.app.db,
+      requireReview: repo.requireReview,
+    }),
+  );
   // The diff and its highlighting depend on two oids and nothing else, so
   // the next reader of this head gets them from memory (`diff-cache.ts`).
-  const { diff, syntax } = await timePhaseAsync(
-    ctx.request,
-    "diff",
-    () =>
-      keptDiff(diffKey(status.baseOid, status.headOid), async () => {
-        const { from, diff, failed } = await diffBetween(dir, status.baseOid, status.headOid);
-        return { from, diff, failed, syntax: await diffSyntax(dir, diff, from, status.headOid) };
-      }),
-    diffCacheCounts,
+  const cacheBefore = diffCacheCounts();
+  const { diff, syntax } = await lap("diff", () =>
+    keptDiff(diffKey(status.baseOid, status.headOid), async () => {
+      const { from, diff, failed } = await diffBetween(dir, status.baseOid, status.headOid);
+      return { from, diff, failed, syntax: await diffSyntax(dir, diff, from, status.headOid) };
+    }),
   );
+  const cacheAfter = diffCacheCounts();
+  const diffHit = cacheAfter.hits > cacheBefore.hits && cacheAfter.misses === cacheBefore.misses;
   // A merged or closed pull is history; the wall is a question about landing.
   const wall =
     pull.mergedAt === null && pull.state === "open"
-      ? await wallOf(dir, status.baseOid, status.headOid)
+      ? await lap("diff", () => wallOf(dir, status.baseOid, status.headOid))
       : undefined;
-  const reviewLines = listReviewComments(ctx.app.db, pull.id);
+  const reviewLines = tick("reviews", () => listReviewComments(ctx.app.db, pull.id));
   const reviewComments = byAnchor(reviewLines);
   const mayMerge = canWrite(ctx.app.db, repo, ctx.auth.user);
   const applied = labelsFor(ctx.app.db, pull.id);
   const allLabels = listLabels(ctx.app.db, repo.id);
-  const by = standings(ctx.app.db, pull, status.headOid);
+  const by = tick("reviews", () => standings(ctx.app.db, pull, status.headOid));
   // The checks are the deploy runs of the live head, read here for the same
   // reason the review gate is: the box and the merge answer one question.
-  const check = checkSummary(ctx.app.db, pull.id, status.headOid);
+  const check = tick("checks", () => checkSummary(ctx.app.db, pull.id, status.headOid));
   const isApp = getAppByRepo(ctx.app.db, repo.id) !== undefined;
-  const tier = await tierOf(dir, status.headOid, check);
-  const stale =
+  const tier = await lap("checks", () => tierOf(dir, status.headOid, check));
+  const stale = await lap("checks", async () =>
     pull.state === "open" && pull.mergedAt === null
       ? checkStale(check.run, await resolveOid(dir, `refs/heads/${pull.baseBranch}`))
-      : false;
-  const threads = pullThreads(ctx.app, pull);
+      : false,
+  );
+  const threads = await lap("reviews", () => pullThreads(ctx.app, pull));
   const threadViews = threadStateViews(ctx, repo, threads);
   const unresolved = threads.filter((t) => t.resolvedAt === null).length;
 
@@ -873,9 +896,11 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     ? `${headRepo.ownerName}/${headRepo.name}:${pull.headBranch}`
     : pull.headBranch;
 
-  const log = await commitLog(dir, status.headOid, {
-    limit: Math.min(Math.max(status.ahead, 1), 100),
-  });
+  const log = await lap("diff", () =>
+    commitLog(dir, status.headOid, {
+      limit: Math.min(Math.max(status.ahead, 1), 100),
+    }),
+  );
   const commits = log.ok ? log.value : [];
   const commitsCard = card(
     commits.length === 0
@@ -949,7 +974,7 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     <div class="mt">${renderDiff(diff, diffOptions)}</div>
     ${liveMount({ repo: base })}`;
 
-  return page({
+  const response = page({
     ctx,
     title: `Files · ${pull.title} · ${repo.name}`,
     crumbs: crumbsFor(repo),
@@ -958,6 +983,16 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     styleCss: labelCss([...allLabels, ...applied]),
     scriptJs: `${liveClientJs}\n${liveRegionsJs}`,
   });
+  const { diff: diffMs, checks, reviews } = spent;
+  notePhase(ctx.request, "diff", diffMs, diffHit);
+  notePhase(ctx.request, "checks", checks);
+  notePhase(ctx.request, "reviews", reviews);
+  notePhase(
+    ctx.request,
+    "render",
+    Math.max(0, performance.now() - began - diffMs - checks - reviews),
+  );
+  return response;
 }
 
 // GET /:owner/:name/pulls/:number/thread?after=<id>
