@@ -5,7 +5,7 @@
  * else gets none and a 403; a cross-origin POST is refused; the home links
  * the live release.
  */
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,6 +21,8 @@ import { proveAll } from "./helpers/verified.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
+// A loaded check machine can take seconds over a cold page; the verdict is the markup, not the clock.
+setDefaultTimeout(30_000);
 
 const LIVE = "a".repeat(40);
 const KEPT = "b".repeat(40);
@@ -81,6 +83,8 @@ describe("the releases page", () => {
     servers = await serve(app);
     // Password hashing is the slow step under a loaded check machine: do it once, here, with room.
     aliceCookie = await login("alice", "a-good-passphrase");
+    // Warm the page (the first render imports the kept release's schema module) outside any test's clock.
+    await (await fetch(`${servers.url}/releases`, { headers: { cookie: aliceCookie } })).text();
   }, 60_000);
   afterAll(() => {
     if (was === undefined) delete process.env["FORGE_COMMIT"];
