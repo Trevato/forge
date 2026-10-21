@@ -2435,22 +2435,32 @@ export function apiRoutes(router: Router<Handler>): void {
   // ── following. A fork's standing against its parent, read from git each
   // time; taking updates is git's part, converging is the crew's.
   router.add("GET", "/api/v1/repos/:owner/:name/following", async (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const relation = await relationOf(ctx.app, ctx.auth.user, repo);
-    const chain = await chainOfRepo(ctx.app, repo);
-    if (relation === undefined)
-      return chain === undefined
-        ? apiError("not_a_fork", 404, "this repository follows nothing")
-        : json({ chain: chain.lines, severedAt: chain.severedAt, upstream: await upstreamPayload(ctx.app) });
+    const relation = await timePhaseAsync(ctx.request, "relation", () =>
+      relationOf(ctx.app, ctx.auth.user, repo),
+    );
+    const chain = await timePhaseAsync(ctx.request, "chain", () => chainOfRepo(ctx.app, repo));
+    if (relation === undefined) {
+      if (chain === undefined) return apiError("not_a_fork", 404, "this repository follows nothing");
+      const upstream = await timePhaseAsync(ctx.request, "upstream", () => upstreamPayload(ctx.app));
+      return timePhase(ctx.request, "render", () =>
+        json({ chain: chain.lines, severedAt: chain.severedAt, upstream }),
+      );
+    }
     const converge =
       relation.state === "diverged" && !relation.clean
-        ? convergeState(ctx.app, repo, relation.parent)
+        ? timePhase(ctx.request, "converge", () => convergeState(ctx.app, repo, relation.parent))
         : undefined;
-    return json({
+    const upstream =
+      chain === undefined
+        ? null
+        : await timePhaseAsync(ctx.request, "upstream", () => upstreamPayload(ctx.app));
+    return timePhase(ctx.request, "render", () => json({
       chain: chain?.lines ?? null,
       severedAt: chain?.severedAt ?? null,
-      upstream: chain === undefined ? null : await upstreamPayload(ctx.app),
+      upstream,
       parent: `${relation.parent.ownerName}/${relation.parent.name}`,
       parentBranch: relation.parent.defaultBranch,
       // A parent whose origin was disconnected: the counts below are against
@@ -2483,7 +2493,7 @@ export function apiRoutes(router: Router<Handler>): void {
                   ? converge.agent.user.username
                   : null,
             },
-    });
+    }));
   });
 
   router.add(
