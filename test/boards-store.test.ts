@@ -250,7 +250,7 @@ describe("/boards", () => {
     // runs in range: three days × three kinds for the heat strip; three days of bars, the series set aside
     expect(page.match(/<rect class="cell"/g)?.length).toBe(9);
     expect(page.match(/<rect class="bar"/g)?.length).toBe(3);
-    expect(page).toContain('<option value="heat" selected>heat strip</option>');
+    expect(page).toMatch(/<option\s+value="heat"\s+selected\s*>\s*heat strip/);
     expect(parseBoard({ ...board, panels: [{ ...board.panels[0], chart: "pie" }] }).ok).toBe(false);
     await deleteBoard(app, alice, "charts");
   });
