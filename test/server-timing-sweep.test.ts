@@ -42,7 +42,6 @@ const UNNAMED: Array<[path: string, issue: string]> = [
   ["/board", "#3378"],
   ["/boards", "#3390"],
   ["/claim", "#3390"],
-  ["/front", "#3311"],
   ["/live/apps", "#3390"],
   ["/live/on-you", "#3390"],
   ["/organizations/new", "#3390"],

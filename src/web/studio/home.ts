@@ -495,12 +495,15 @@ function frontControls(ctx: Ctx, front: FrontPage): Html {
  * controls that decide it.
  */
 export function studioDoor(ctx: Ctx): Response {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   let tiles: Html[] = [];
   const front = timePhase(ctx.request, "shelf", () => {
     const found = frontPage(ctx.app);
     tiles = found.shelf.map(tile);
     return found;
   });
+  // Render is what is left of the page once the shelf read is taken out.
+  const rendering = performance.now();
   const admin = ctx.auth.user?.isAdmin === true && ctx.url.pathname === "/front";
   // A share sheet lands here with the shared words in the query; signing in
   // comes back to them rather than to a bare home, so they are not lost.
@@ -556,7 +559,9 @@ export function studioDoor(ctx: Ctx): Response {
           </div>`
         : null}
     ${when(admin, () => html`<div class="mt front-admin">${frontControls(ctx, front)}</div>`)}`;
-  return page({ ctx, title: "forge", body });
+  const res = page({ ctx, title: "forge", body });
+  notePhaseRest(ctx.request, "render", rendering, []);
+  return res;
 }
 
 /** What one `/front` form asks for, applied to what is set now. */
