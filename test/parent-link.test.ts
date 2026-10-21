@@ -76,7 +76,8 @@ describe("link the parent forge from settings", () => {
     await mk(child, "olive", true);
     ({ id: carolId, cookie: carolCookie } = await mk(child, "carol"));
     ({ id: dougId, cookie: dougCookie } = await mk(child, "doug"));
-  });
+    // Four argon2 hashes and two servers: on a loaded check machine that outruns bun's 5 s hook default.
+  }, 60_000);
   afterAll(async () => {
     parentServers.stop();
     childServers.stop();
