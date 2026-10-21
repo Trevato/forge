@@ -58,6 +58,7 @@ import { renderMarkdown } from "../markdown.ts";
 import { browseBase, localScope, type RepoScope } from "../scope.ts";
 import { repoForkOf } from "../../core/origins.ts";
 import {
+  badge,
   btn,
   card,
   empty,
@@ -175,22 +176,23 @@ function forkBar(ctx: Ctx, repo: Repo): Html {
     ctx.auth.user !== undefined && ctx.auth.user.id !== repo.ownerId;
   const forkCount = forksFor(ctx, repo).length;
   if (!canFork && forkCount === 0) return html``;
-  return html`<div class="fork-bar">
-    ${when(
-      forkCount > 0,
-      () =>
-        html`<a class="muted small" href="${repoBase(repo)}/forks"
-          >${icon("fork")} ${forkCount} fork${forkCount === 1 ? "" : "s"}</a
-        >`,
-    )}
-    <span class="spacer"></span>
-    ${when(
-      canFork,
-      () =>
-        html`<form method="post" action="${repoBase(repo)}/fork">
-          ${btn("Fork", { size: "sm", icon: "fork" })}
-        </form>`,
-    )}
+  return html`<div class="mt">
+    ${listCard([
+      row({
+        lead: icon("fork"),
+        title:
+          forkCount > 0
+            ? html`<a href="${repoBase(repo)}/forks"
+                >${badge(`${forkCount} fork${forkCount === 1 ? "" : "s"}`)}</a
+              >`
+            : "Forks",
+        trail: canFork
+          ? html`<form method="post" action="${repoBase(repo)}/fork">
+              ${btn("Fork", { size: "sm", icon: "fork" })}
+            </form>`
+          : html``,
+      }),
+    ])}
   </div>`;
 }
 
