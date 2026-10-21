@@ -297,6 +297,7 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .bform { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 12px; margin-bottom: 8px; }
 .bform .qf { display: flex; flex-direction: column; gap: 4px; flex: 1 1 140px; min-width: 0; }
 .bform .qf > span { font-size: 12.5px; font-weight: 600; color: var(--fg); }
+.bform .field { margin: 0; flex: 1 1 140px; min-width: 0; }
 .bform .btn { flex: none; }
 .boards-result .table { margin-top: 12px; }
 .bt-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 2px 16px; font-family: var(--mono); font-size: 12.5px; margin-top: 8px; }

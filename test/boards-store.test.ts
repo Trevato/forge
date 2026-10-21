@@ -192,7 +192,7 @@ describe("/boards", () => {
     expect(grid).toMatch(/data-live="[^"]+"/);
     expect(grid).toContain('data-live="run.queued,run.started,run.finished,pull.*,check.*,issue.*,usage.*"');
     expect(body).toContain('data-live-src="/boards/fleet-health/live"');
-    expect(body).toMatch(/<option value="10s" selected>on: redraw when events arrive<\/option>/);
+    expect(body).toMatch(/<option\s+value="10s"\s+selected\s*>\s*on: redraw when events arrive\s*<\/option>/);
     expect(body).not.toContain(">1m</option>");
     const live = await asAdmin("/boards/fleet-health/live");
     expect(live.status).toBe(200);
