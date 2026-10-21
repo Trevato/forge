@@ -421,7 +421,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "sizes",
     description:
-      "What a child forge's sizes mean: small, medium and large, each with its CPU, memory and disk, and one sentence about it.",
+      "What a child forge's sizes mean: small, medium and large, with CPU, memory and disk.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     run: () => good(sizesView()),
@@ -429,7 +429,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "apps",
     description:
-      "The apps on this forge you can see: whether each is live, where it is served, how it runs itself, and what is working.",
+      "The apps you can see: whether each is live, where it is served, how it runs itself, what is working.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     async run(ctx, user) {
@@ -460,7 +460,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "new_app",
     description:
-      "Make an app from a sentence: a repository with a working app, production started, and — with `description` — the first issue.",
+      "Make an app from a sentence: a repository, production started, and with `description` the first issue.",
     inputSchema: {
       type: "object",
       properties: {
@@ -469,7 +469,7 @@ const TOOLS: readonly Tool[] = [
         owner: { type: "string", maxLength: 39 },
         visibility: { type: "string", enum: ["public", "private"], description: "Private unless you say public." },
         agent: { type: "string", maxLength: 39, description: "Agent for the crew and first issue." },
-        pick: { type: "boolean", description: "Let the forge pick the agent from the description, when `agent` is not given." },
+        pick: { type: "boolean", description: "Pick the agent from the description when `agent` is not given." },
       },
       required: ["name"],
     },
@@ -545,7 +545,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "here",
     description:
-      "What you can do on a forge page, as who you are: what it is, and each action open to you with its HTTP route and MCP tool.",
+      "What you can do on a forge page, as who you are: each open action with its HTTP route and MCP tool.",
     inputSchema: {
       type: "object",
       properties: { url: { type: "string", maxLength: 2000 } },
@@ -572,7 +572,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "tell",
     description:
-      "Tell an app's crew what should change (first line is the title); a builder starts next tick. Without `repo` nothing is built: it is kept for the forge, answering a thought id.",
+      "Tell an app's crew what should change (first line is the title); a builder starts next tick. Without `repo` nothing is built: kept for the forge, returning a thought id.",
     inputSchema: {
       type: "object",
       properties: {
@@ -651,7 +651,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "share",
     description:
-      "Share a feed item. With no `to` it goes to the app's crew and owners, else to its followers; each person has a daily budget.",
+      "Share a feed item. With no `to` it goes to the app's crew and owners, else to its followers; a daily budget applies.",
     inputSchema: {
       type: "object",
       properties: {
@@ -710,7 +710,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "issue",
     description:
-      "Read one issue: title, state, closeReason, body, labels, assignee, comments (author, agent or not, body, time), `blockedBy`, `blocks`. A crew agent sees `untrusted: true` on text by non-writers, as in the REST API. Sealed or private issues you cannot see are not found.",
+      "Read one issue with its comments, `blockedBy` and `blocks`. For a crew agent, text by non-writers carries `untrusted: true`, as in the REST API. Issues you cannot see are not found.",
     inputSchema: {
       type: "object",
       properties: {
@@ -824,7 +824,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "pulls",
     description:
-      "A repository's pulls, briefly, newest first: number, title, author, head, check, approvals, changesRequested, mergeable. `state` open (default) or closed; `limit` 1-50 (default 20).",
+      "A repository's pulls, briefly, newest first, with check, review counts and mergeable. `state` open (default) or closed; `limit` 1-50 (default 20).",
     inputSchema: {
       type: "object",
       properties: {
@@ -909,7 +909,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "edit",
     description:
-      "Give an issue or a pull a new title or body. Your own, or anyone's where you write the repository; an agent edits only what it wrote.",
+      "Give an issue or pull a new title or body: your own, or anyone's where you write; an agent edits only what it wrote.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1862,7 +1862,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "spawn",
     description:
-      "Spawn a child forge with the apps you name and the crew's briefs. Plans first (dryRun false makes it).",
+      "Spawn a child forge with the named apps and the crew's briefs. Plans first (dryRun false makes it).",
     inputSchema: {
       type: "object",
       properties: {
@@ -2328,7 +2328,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "feed",
     description:
-      "Your home timeline across the apps you can see, ranked. `cursor` pages. Your saved filter (`feed_chips`) applies.",
+      "Your ranked home timeline across visible apps. `cursor` pages. Your saved filter (`feed_chips`) applies.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2404,7 +2404,7 @@ const TOOLS: readonly Tool[] = [
       properties: {
         repo: REPO_ARG,
         name: { type: "string" },
-        visibility: { type: "string", enum: ["private", "public"], description: "Who sees the copy: private by default; public only when the original is." },
+        visibility: { type: "string", enum: ["private", "public"], description: "Private by default; public only when the original is." },
         dryRun: { type: "boolean" },
       },
       required: ["repo"],
@@ -3452,7 +3452,7 @@ const TOOLS: readonly Tool[] = [
         name: { type: "string", maxLength: 32 },
         value: { type: "string", maxLength: 4096, description: "The token, for attach and rotate." },
         to: { type: "string", maxLength: 32 },
-        allowed: { type: "boolean", description: "For allow_writes: whether runs that declare writes may hold the token." },
+        allowed: { type: "boolean", description: "For allow_writes: may runs that declare writes hold the token." },
         repo: { type: "string", maxLength: 200, description: "For audit: owner/name, where the findings are filed as issues." },
       },
       required: ["verb", "provider", "name"],
