@@ -97,12 +97,14 @@ describe("strangers at every door", () => {
       const repo = await createRepo(app, owner.value, { name, visibility: "public" });
       if (!repo.ok) throw new Error(repo.error);
     }
-  });
+    // Hashing a password and making two repositories outrun bun's 5 s hook
+    // default on a loaded check machine, which fails the suite unnamed.
+  }, 60_000);
   afterAll(async () => {
     servers.stop();
     app.close();
     await rm(dataDir, { recursive: true, force: true });
-  });
+  }, 30_000);
 
   const from = (ip: string, extra: Record<string, string> = {}) => ({
     "x-forwarded-for": ip,
