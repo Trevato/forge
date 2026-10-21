@@ -1,14 +1,5 @@
 {
   "files": {
-    "src/web/standards.ts": {
-      "colour": 2,
-      "size": 0,
-      "motion": 0,
-      "forced": 0,
-      "focus": 0,
-      "input": 0,
-      "target": 0
-    },
     "src/web/style/components.ts": {
       "colour": 3,
       "size": 2,

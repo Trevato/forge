@@ -22,6 +22,7 @@
 
 import releases from "../core/releases.json" with { type: "json" };
 import { markPng, type MarkShape } from "../design/mark.ts";
+import { metaThemeColor } from "../design/themes.ts";
 import { BODY_MAX, TITLE_MAX } from "../core/reports.ts";
 import { llmsRepos, sitemapRepos } from "../core/listings.ts";
 import { canRead, getRepo } from "../core/repos.ts";
@@ -199,8 +200,10 @@ export function webManifest(ctx: Ctx): Response {
           method: "GET",
           params: { title: "title", text: "text", url: "url" },
         },
-        background_color: "#fafafa",
-        theme_color: "#fafafa",
+        // The default light theme's ground, read from the theme registry
+        // so the installed app's splash matches the page it opens on.
+        background_color: metaThemeColor("light"),
+        theme_color: metaThemeColor("light"),
         icons: [
           { src: "/icons/forge-192.png", sizes: "192x192", type: "image/png" },
           { src: "/icons/forge-512.png", sizes: "512x512", type: "image/png" },

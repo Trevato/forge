@@ -256,10 +256,15 @@ describe("what the open web expects", () => {
       name: string;
       display: string;
       start_url: string;
+      background_color: string;
+      theme_color: string;
       icons: { src: string; sizes: string; purpose?: string }[];
     };
     expect(m.display).toBe("standalone");
     expect(m.start_url).toBe("/");
+    // The splash and chrome are the default light theme's ground.
+    expect(m.background_color).toBe("#fafafa");
+    expect(m.theme_color).toBe("#fafafa");
     expect(m.icons.some((i) => i.purpose === "maskable")).toBe(true);
     for (const icon of m.icons) {
       const png = await fetch(`${base}${icon.src}`);
