@@ -356,8 +356,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .wall-cells li + li { margin-top: 3px; }
 form.inline { display: inline; margin-left: auto; }
 
-.terminal-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
-
 /* The studio's front door: the public apps, live first, as pictures. */
 .app-shelf {
   display: grid; gap: 16px; max-width: 1040px; margin-inline: auto;
