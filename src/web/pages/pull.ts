@@ -190,11 +190,11 @@ function reviewsChip(
     ${parts.map((part, i) =>
       i === 0
         ? part
-        : html`<span class="where-sep" aria-hidden="true">·</span>${part}`,
+        : html`<span class="sep" aria-hidden="true">·</span>${part}`,
     )}${when(
       reviews.required,
       () =>
-        html`<span class="where-sep" aria-hidden="true">·</span
+        html`<span class="sep" aria-hidden="true">·</span
           ><span class="muted">an approval is required</span>`,
     )}
   </p>`;
@@ -240,14 +240,14 @@ export function checksLine(
   const link =
     run === null
       ? null
-      : html`<span class="where-sep" aria-hidden="true">·</span
+      : html`<span class="sep" aria-hidden="true">·</span
           ><a href="${base}/runs/${run.id}"
             >${run.kind === "check" ? "Check of" : "deploy"} ${run.commitOid.slice(0, 7)}</a
           >`;
   const words = run === null ? undefined : checkWords(run, Date.now(), progress);
   const against =
     run !== null && run.baseOid !== "" && baseBranch !== ""
-      ? html`<span class="where-sep" aria-hidden="true">·</span
+      ? html`<span class="sep" aria-hidden="true">·</span
           ><span class="checked-against"
             >checked against ${baseBranch} at ${run.baseOid.slice(0, 7)}</span
           >`
@@ -288,12 +288,12 @@ export function checksLine(
     ${body}${against}${when(
       tier !== "",
       () =>
-        html`<span class="where-sep" aria-hidden="true">·</span
+        html`<span class="sep" aria-hidden="true">·</span
           ><span class="tier-line">${tier}</span>`,
     )}${when(
       required,
       () =>
-        html`<span class="where-sep" aria-hidden="true">·</span
+        html`<span class="sep" aria-hidden="true">·</span
           ><span>a passing deploy is required</span>`,
     )}${again}
   </p>`;
@@ -938,17 +938,17 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     ${changeHead(ctx, repo, pull)} ${changeTabs(repo, pull, "files")}
     <p class="files-where muted small" id="files">
       <span class="mono">${headLabel} → ${pull.baseBranch}</span>
-      <span class="where-sep" aria-hidden="true">·</span>
+      <span class="sep" aria-hidden="true">·</span>
       ${status.ahead} commit${status.ahead === 1 ? "" : "s"}
       ${when(
         pull.crossRepo,
-        () => html`<span class="where-sep" aria-hidden="true">·</span
+        () => html`<span class="sep" aria-hidden="true">·</span
           >${badge("fork", { icon: "fork" })}`,
       )}
       ${when(
         threads.length > 0,
         () =>
-          html`<span class="where-sep" aria-hidden="true">·</span
+          html`<span class="sep" aria-hidden="true">·</span
             ><span class="thread-count"
               >${threads.length} thread${threads.length === 1 ? "" : "s"} ·
               ${unresolved} unresolved</span

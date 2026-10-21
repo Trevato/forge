@@ -1557,7 +1557,7 @@ export async function originReposPage(ctx: Ctx): Promise<Response> {
                     >${when(
                       pinned,
                       () =>
-                        html`<span class="where-sep" aria-hidden="true">·</span
+                        html`<span class="sep" aria-hidden="true">·</span
                           ><span
                             class="where-place"
                             data-state="present"

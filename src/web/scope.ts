@@ -465,7 +465,7 @@ export function whereStrip(ctx: Ctx, scope: RepoScope): Html {
     ${places.map(
       (place, i) =>
         html`${i > 0
-          ? html`<span class="where-sep" aria-hidden="true">·</span>`
+          ? html`<span class="sep" aria-hidden="true">·</span>`
           : null}${placeNode(place)}`,
     )}
   </div>`;

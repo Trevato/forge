@@ -358,13 +358,13 @@ async function pullPanels(ctx: Ctx, repo: Repo, pull: Pull, spent: Spent = newSp
       ${wordBadge(word)} <span class="muted small">${note}</span>
       ${when(
         tellsAnswered(db, repo.id, [pull]).get(pull.number),
-        (t) => html`<span class="where-sep" aria-hidden="true">·</span
+        (t) => html`<span class="sep" aria-hidden="true">·</span
           >${tellLine(base, t)}`,
       )}
       ${when(
         deploy,
         (d) =>
-          html`<span class="where-sep" aria-hidden="true">·</span
+          html`<span class="sep" aria-hidden="true">·</span
             ><a href="${base}/runs/${d.id}"
               >deploy ${d.commitOid.slice(0, 7)}</a
             >`,

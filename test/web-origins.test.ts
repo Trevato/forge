@@ -544,6 +544,14 @@ describe("origins on the web", () => {
     expect(pinned.status).toBe(303);
     expect(listPins(app.db, aliceId)).toHaveLength(1);
 
+    // A mirrored, pinned row separates its two places with `.sep`, not `.where-sep`.
+    const originId = listOrigins(app.db, aliceId)[0]!.id;
+    const picker = await (await asUser(alice, `/settings/origins/${originId}/repos`)).text();
+    expect(picker).not.toContain("where-sep");
+    expect(picker).toContain('<span class="sep" aria-hidden="true">·</span');
+    expect(picker).toContain("mirrored as");
+    expect(picker).toContain("this machine");
+
     const dash = await (await asUser(`${alice}; forge_mode=dev`, "/")).text();
     expect(dash).toContain("On your machine");
     expect(dash).toContain("forge sync");

@@ -790,6 +790,10 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 /* On a phone the crumbs would be squeezed to "y… / c."; the page header
    right below says where you are, in full. */
 @media (max-width: 719px) { .topbar .crumbs { display: none; } }
+/* The dot between facts on a line (a where strip, a row's meta); the crumbs
+   keep their own for the flex rule. */
+.sep { color: var(--faint); }
+.row-meta .sep { margin: 0 3px; }
 .crumbs .sep { color: var(--faint); flex: none; }
 .crumbs [aria-current="page"] { font-weight: 550; }
 .crumbs.mono, .crumbs.mono a { font-family: var(--mono); font-size: 12.5px; }

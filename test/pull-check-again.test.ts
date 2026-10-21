@@ -157,3 +157,21 @@ describe("reading a pull without its diff (#3367)", () => {
       expect((await read(q)).status).toBe(422);
   });
 });
+
+describe("the pull page's separators", () => {
+  test("a pull's files line draws its dot with .sep, never .where-sep", async () => {
+    const html = await page(alice, openNumber);
+    expect(html).not.toContain("where-sep");
+    expect(html).toContain('<span class="sep" aria-hidden="true">·</span>');
+    expect(html).toContain("open → main");
+    expect(html).toContain("commit");
+  });
+});
+
+describe("the separator's stylesheet", () => {
+  test("components.ts carries a general .sep rule and the row-meta margin", async () => {
+    const { components } = await import("../src/web/style/components.ts");
+    expect(components).toMatch(/(^|\n)\.sep \{ color: var\(--faint\); \}/);
+    expect(components).toContain(".row-meta .sep { margin: 0 3px; }");
+  });
+});
