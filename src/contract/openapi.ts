@@ -142,6 +142,14 @@ export const ROUTES: readonly Route[] = [
   },
   {
     method: "post",
+    path: "/api/v1/migrate",
+    summary: "Migrate a repository here: source is { url } (needs rw scope) or { originId, fullName } (needs admin scope); after is leave, archive or mirror; answers 202 with the repo and its clone job",
+    auth: true,
+    body: { source: "object", owner: "string", name: "string", visibility: "string", branch: "string", after: "string", crew: "object" },
+  },
+  { method: "get", path: "/api/v1/migrate/{job}", summary: "Read a migration job's stage", auth: true },
+  {
+    method: "post",
     path: "/mcp",
     summary: "The forge as an MCP server (JSON-RPC 2.0); see docs/MCP.md",
     auth: true,

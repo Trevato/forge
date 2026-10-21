@@ -47,6 +47,18 @@ test("the map, plan and dependency routes are described", () => {
   expect(del.parameters.find((p: any) => p.name === "blocker").schema.type).toBe("integer");
 });
 
+test("starting a migration and reading its job are described", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const start = doc.paths["/api/v1/migrate"].post;
+  expect(start.security).toBeDefined();
+  expect(Object.keys(start.requestBody.content["application/json"].schema.properties)).toEqual(
+    ["source", "owner", "name", "visibility", "branch", "after", "crew"],
+  );
+  const read = doc.paths["/api/v1/migrate/{job}"].get;
+  expect(read.security).toBeDefined();
+  expect(read.parameters.find((p: any) => p.name === "job").in).toBe("path");
+});
+
 test("listing issues and pulls is described with the query the handlers read", () => {
   const doc = openapi("https://f.test", "1") as any;
   const R = "/api/v1/repos/{owner}/{name}";
