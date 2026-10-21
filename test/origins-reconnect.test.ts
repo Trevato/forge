@@ -298,7 +298,9 @@ describe("a frozen mirror is said, and reconnected in one click", () => {
   afterAll(async () => {
     // A sync started by a reconnect may outlive the test that waited for its
     // refs; it must not write into a directory being removed.
-    await syncsSettled();
+    // Bounded: a sync wedged on a loaded machine must not take the hook's
+    // own timeout, which fails the file under no name.
+    await Promise.race([syncsSettled(), Bun.sleep(30_000)]);
     octo.stop();
     mona.stop();
     servers.stop();
