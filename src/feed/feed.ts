@@ -120,8 +120,14 @@ export function readFeed(
   );
   const pageable =
     options.withoutAsks === true ? candidates.filter((c) => c.kind !== "ask") : candidates;
-  let ranked = rank(pageable, affinityFor(db, viewer, now), now);
   const cursor = options.cursor;
+  // Without a cursor only the page and one more (to know there is a next) are placed.
+  let ranked = rank(
+    pageable,
+    affinityFor(db, viewer, now),
+    now,
+    cursor === undefined ? limit + 1 : Infinity,
+  );
   if (cursor) {
     const at = ranked.findIndex((i) => i.id === cursor.id);
     ranked =

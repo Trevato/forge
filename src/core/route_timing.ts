@@ -220,6 +220,12 @@ export async function timePhaseAsync<T>(request: Request, name: string, work: ()
   return value;
 }
 
+/** Name `name` as the time since `started` less the phases in `except` already named: what is left of the page. */
+export function notePhaseRest(request: Request, name: string, started: number, except: readonly string[]): void {
+  const taken = (phaseLists.get(request) ?? []).reduce((sum, p) => (except.includes(p.name) ? sum + p.ms : sum), 0);
+  notePhase(request, name, Math.max(0, performance.now() - started - taken));
+}
+
 export function takePhases(request: Request): Phase[] {
   const list = phaseLists.get(request) ?? [];
   phaseLists.delete(request);

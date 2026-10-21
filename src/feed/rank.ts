@@ -78,32 +78,39 @@ function affinityReason(c: Candidate, app: Weighted, actor: Weighted, now: numbe
 interface Scored {
   readonly c: Candidate;
   readonly base: number;
-  readonly reason: string;
 }
+
+/** The sentence for the term that led, worded only for an item that is placed. */
+function reasonOf(c: Candidate, aff: Affinity, now: number): string {
+  if (c.said !== undefined) return c.said;
+  const app = aff.app(c.repoId);
+  const actor = c.actorId === null ? aff.get("actor:") : aff.actor(c.actorId);
+  const affinity = affinityOf(app, actor);
+  const recency = recencyOf(c, now);
+  return c.urgency >= Math.max(affinity, recency)
+    ? c.what
+    : affinity >= recency
+      ? affinityReason(c, app, actor, now)
+      : `${c.what}, ${ago(Date.parse(c.at), now)}`;
+}
+
+const affinityOf = (app: Weighted, actor: Weighted): number =>
+  clamp(AFFINITY_WEIGHT * (app.score + 0.5 * actor.score), AFFINITY_MIN, AFFINITY_MAX);
+
+const recencyOf = (c: Candidate, now: number): number =>
+  RECENCY_MAX * decay(now - Date.parse(c.at), RECENCY_HALF_LIFE_MS);
 
 export function rank(
   candidates: readonly Candidate[],
   aff: Affinity,
   now: number,
+  /** Place only the best `upto`: the same first items, without ordering the rest. */
+  upto: number = Infinity,
 ): FeedItem[] {
   const scored: Scored[] = candidates.map((c) => {
     const app = aff.app(c.repoId);
     const actor = c.actorId === null ? aff.get("actor:") : aff.actor(c.actorId);
-    const raw = AFFINITY_WEIGHT * (app.score + 0.5 * actor.score);
-    const affinity = clamp(raw, AFFINITY_MIN, AFFINITY_MAX);
-    const recency =
-      RECENCY_MAX * decay(now - Date.parse(c.at), RECENCY_HALF_LIFE_MS);
-    const urgency = c.urgency;
-    const base = urgency + affinity + recency;
-    const reason =
-      c.said !== undefined
-        ? c.said
-        : urgency >= Math.max(affinity, recency)
-        ? c.what
-        : affinity >= recency
-          ? affinityReason(c, app, actor, now)
-          : `${c.what}, ${ago(Date.parse(c.at), now)}`;
-    return { c, base, reason };
+    return { c, base: c.urgency + affinityOf(app, actor) + recencyOf(c, now) };
   });
 
   // Greedy: place the best remaining, then charge its source against the
@@ -112,7 +119,7 @@ export function rank(
   const perApp = new Map<string, number>();
   const perActor = new Map<string, number>();
   const rest = [...scored];
-  while (rest.length > 0) {
+  while (rest.length > 0 && out.length < upto) {
     let best = 0;
     let bestScore = -Infinity;
     for (let i = 0; i < rest.length; i++) {
@@ -140,7 +147,7 @@ export function rank(
       at: s!.c.at,
       link: s!.c.link,
       what: s!.c.said ?? s!.c.what,
-      reason: s!.reason,
+      reason: reasonOf(s!.c, aff, now),
       score: Math.round(bestScore * 1e6) / 1e6,
       ...(s!.c.ask === undefined ? {} : { ask: s!.c.ask }),
     });

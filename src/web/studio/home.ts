@@ -50,7 +50,7 @@ import { flowCards } from "./flow_card.ts";
 import { composer, feedJs, feedNote, feedRegion } from "./feed.ts";
 import { kpiRow } from "./kpi_row.ts";
 import { feedCandidateCache } from "../../feed/feed.ts";
-import { timePhase, timePhaseAsync } from "../../core/route_timing.ts";
+import { notePhase, notePhaseRest, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { kpiCache, panelCache } from "./home_cache.ts";
 import { pinnedPanels } from "./pinned.ts";
 import { homeTabs } from "./home_tabs.ts";
@@ -211,9 +211,8 @@ export async function studioHome(
   ctx: Ctx,
   user: User,
 ): Promise<Response> {
-  const { repos: appRepos } = writableAppsOf(ctx, user);
   // A spawned forge says where it lives: the address its person shares.
-  const spawned = await spawnedOrg(ctx.app);
+  const spawned = await timePhaseAsync(ctx.request, "spawned", () => spawnedOrg(ctx.app));
   const address = when(
     spawned?.url,
     (url) =>
@@ -223,8 +222,10 @@ export async function studioHome(
   );
   // On a spawned forge its owner's first steps come first, and carry the
   // everyday account themselves (#600); anywhere else, #803's card asks.
-  const steps = await nextStepsOf(ctx, user);
-  const firstSteps = await nextStepsCard(ctx, user, steps);
+  const { steps, firstSteps } = await timePhaseAsync(ctx.request, "steps", async () => {
+    const steps = await nextStepsOf(ctx, user);
+    return { steps, firstSteps: await nextStepsCard(ctx, user, steps) };
+  });
   // Its owner sees their apps first and nothing else until they ask (#1812).
   if (
     ctx.url.searchParams.get("all") === null &&
@@ -247,6 +248,11 @@ export async function studioHome(
       ...(firstSteps ? { scriptJs: passkeyJs } : {}),
     });
   }
+  // The client's first screen names its own phases (`clientApps`).
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const { repos: appRepos } = timePhase(ctx.request, "repos", () => writableAppsOf(ctx, user));
+  // Render is what is left of the page once the named reads are taken out.
+  const rendering = performance.now();
   const ask = firstSteps ?? everydayCard(ctx, user);
   const figures = user.isAdmin && steps === undefined;
   const ceilingUsd = ctx.app.config.crewCeilingUsd;
@@ -288,12 +294,14 @@ export async function studioHome(
         ${orgsCard(ctx, user)}
       </aside>
     </div>`;
-  return page({
+  const res = page({
     ctx,
     title: "Home",
     body,
     scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${feedJs}${ask ? `\n${passkeyJs}` : ""}`,
   });
+  notePhaseRest(ctx.request, "render", rendering, ["kpis", "panels", "feed"]);
+  return res;
 }
 
 /**
