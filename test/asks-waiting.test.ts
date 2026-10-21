@@ -180,7 +180,7 @@ describe("asks that wait on a person", () => {
     expect(page).toContain("Say what to change");
     expect(row).not.toContain("/settings/autonomy");
     expect(page).toContain(">Handed over<");
-    expect(page).toMatch(/class="ask-pick"[^>]*value="waiting:[^"]+"[^>]*data-kind="waiting"/);
+    expect(page).toMatch(/<label class="check"><input[^>]*name="item"[^>]*value="waiting:[^"]+"[^>]*data-kind="waiting"/);
   });
 
   test("the MCP asks tool carries the waiting kind, its why and the recommendation", async () => {

@@ -339,20 +339,17 @@ describe("asks that earn their place", () => {
     recordAskLedger(app.db);
     expect((await mcpAsks()).measure.raised).toBe(6);
   });
-  test("a phone's ask is a full-width row: kind and repo on one line, the decider apart, the rest behind More", async () => {
+  test("an ask is §5's card with §5's buttons and no ask-* class", async () => {
     const home = await page("/asks");
     const asks = home.slice(home.indexOf('<section id="needs-you"'));
-    expect(asks).toContain("ask-card");
-    expect(asks).toContain('<b class="ask-kind">');
-    // No icon column: the row opens with its kind, not a picture.
-    expect(asks.slice(0, asks.indexOf("<h2", asks.indexOf("ask-card")))).not.toContain("<svg");
-    expect(asks).toContain('<details class="ask-more-acts">');
-    expect(asks).toMatch(/class="ask-acts">\s*<button[^>]*data-variant="primary"/);
+    expect(asks).toMatch(/<div\s+class="card"\s+id="look-/);
+    expect(asks).toContain("<b>Ready to ship</b> · ");
+    expect(asks).toMatch(/class="bar mt">\s*<button[^>]*data-variant="primary"/);
+    expect(asks).not.toMatch(/class="[^"]*\bask-(card|acts|kind|pick|group|more-acts|waiting|meta|short)\b/);
     const css = await (await fetch(`${servers.url}${home.match(/href="(\/[^"]*\.css[^"]*)"/)![1]}`)).text();
-    expect(css).toContain(".ask-acts > .btn { min-height: 44px;");
+    expect(css).not.toMatch(/\.ask-/);
     // The markup lost the .needs-you class (#4189): no selector may still need it.
     expect(css).not.toMatch(/\.needs-you\b/);
-    expect(css).toContain("#needs-you .ask-card {\n    margin-inline: -16px;");
   });
 
   test("a collapsed row that ranks for security names which of its asks it is", async () => {
@@ -362,15 +359,8 @@ describe("asks that earn their place", () => {
     const asks = await page("/asks");
     expect(asks).toContain("2 green changes wait for your look");
     expect(asks).toContain("<b>security</b>: \u201cWiden the board id\u201d");
-    // On a phone the row is its head line, its two asks one tap away; a
-    // wider screen holds them open (the lead's call: the fold wins).
     const group = asks.slice(asks.indexOf("2 green changes wait for your look"));
-    expect(group).toContain('<details class="ask-group">');
-    expect(group).toContain("<summary>Show all 2</summary>");
-    const css = await (await fetch(`${servers.url}${asks.match(/href="(\/[^"]*\.css[^"]*)"/)![1]}`)).text();
-    const wide = css.slice(css.indexOf("@supports selector(::details-content) {"));
-    expect(wide.slice(wide.indexOf("@media (min-width: 481px)"))).toContain(
-      "#needs-you .ask-group > summary { display: none; }",
-    );
+    expect(group).toContain('<ul class="list">');
+    expect(group).not.toContain("ask-group");
   });
 });
