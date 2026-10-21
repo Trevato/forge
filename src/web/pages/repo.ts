@@ -131,16 +131,24 @@ function updatable(drift: ForkDrift | undefined): boolean {
  * see, newest first. The count on the repository page is the way in.
  */
 export async function forksPage(ctx: Ctx): Promise<Response> {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  let t = performance.now();
   const repo = loadRepo(ctx);
+  notePhase(ctx.request, "repository", performance.now() - t);
   if (!repo) return notFoundPage(ctx);
+  t = performance.now();
   const forks = listForks(ctx.app.db, repo.id).filter((fork) =>
     canRead(ctx.app.db, fork, ctx.auth.user),
   );
+  notePhase(ctx.request, "forks", performance.now() - t);
+  t = performance.now();
   // The whole family, from the oldest ancestor this viewer may see: who
   // follows whom, and where each stands against the one it follows.
   const lineage = await lineageOf(ctx.app, repo, (r) =>
     canRead(ctx.app.db, r, ctx.auth.user),
   );
+  notePhase(ctx.request, "lineage", performance.now() - t);
+  t = performance.now();
   const body = html`${repoHeader(ctx, repo, "forks")}
     <div class="page-head mt">
       <h2>${forks.length} fork${forks.length === 1 ? "" : "s"}</h2>
@@ -152,7 +160,13 @@ export async function forksPage(ctx: Ctx): Promise<Response> {
           note: "A fork is a copy under another name that can propose changes back here, and follows this one until it has work of its own.",
         })
       : lineageCard(lineage, repo.id)}`;
-  return page({ ctx, title: `Forks · ${repo.ownerName}/${repo.name}`, body });
+  const res = page({
+    ctx,
+    title: `Forks · ${repo.ownerName}/${repo.name}`,
+    body,
+  });
+  notePhase(ctx.request, "render", performance.now() - t);
+  return res;
 }
 
 /** The "forked from …" lineage line and a Fork button, for the repo home. */
