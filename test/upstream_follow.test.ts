@@ -12,6 +12,7 @@ import { createApp, type App } from "../src/app.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { audienceFilter } from "../src/core/event_audience.ts";
 import { listEvents } from "../src/core/events.ts";
+import { getPull, listPulls } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { checkDue, checkUpstream, mayCarryCredential } from "../src/actions/upstream_follow.ts";
@@ -244,7 +245,7 @@ describe("checking an upstream (layer 2)", () => {
   });
 
   describe("what a check records", () => {
-    test("the upstream tip and how far behind, without opening anything", async () => {
+    test("the upstream tip and how far behind, and the one pull it opens", async () => {
       const git = async (args: string[]) => ok(await runGit(args, { cwd: dir, env: ident })).trim();
       const ident = {
         GIT_AUTHOR_NAME: "t",
@@ -263,15 +264,136 @@ describe("checking an upstream (layer 2)", () => {
       try {
         follow(up.url);
         const r = ok(await checkUpstream(app, target));
-        expect(r).toEqual({ tip: c2, behind: 1 });
+        expect(r).toMatchObject({ tip: c2, behind: 1, outcome: "proposed" });
         const row = getFollow(app.db, target.id)!;
         expect(row.tip).toBe(c2);
         expect(row.behind).toBe(1);
         expect(row.error).toBe("");
-        expect(row.pendingId).toBeNull();
-        expect(row.opened).toBe(0);
+        expect(row.pendingId).not.toBeNull();
+        expect(row.opened).toBe(1);
       } finally {
         up.server.stop(true);
+      }
+    });
+  });
+
+  describe("proposing (layer 3)", () => {
+    const ident = {
+      GIT_AUTHOR_NAME: "t",
+      GIT_AUTHOR_EMAIL: "t@x",
+      GIT_COMMITTER_NAME: "t",
+      GIT_COMMITTER_EMAIL: "t@x",
+    };
+    /** A fresh repository whose main holds a file, and an upstream tip staged on top of it. */
+    async function staged(name: string, mainText: string, upText: string) {
+      const r = ok(await createRepo(app, alice, { name, visibility: "public" }));
+      const d = repoDir(app.reposRoot, r.ownerName, r.name);
+      const git = async (args: string[], input?: string) =>
+        ok(await runGit(args, { cwd: d, env: ident, ...(input === undefined ? {} : { stdin: input }) })).trim();
+      const commit = async (text: string, parent?: string) => {
+        const blob = await git(["hash-object", "-w", "--stdin"], text);
+        const tree = await git(["mktree"], `100644 blob ${blob}\tf.txt\n`);
+        return git(["commit-tree", tree, ...(parent ? ["-p", parent] : []), "-m", text]);
+      };
+      const base = await commit("base\n");
+      const main = mainText === "base\n" ? base : await commit(mainText, base);
+      const up = await commit(upText, base);
+      await git(["update-ref", `refs/heads/${r.defaultBranch}`, main]);
+      await git(["update-ref", "refs/upstream-follow/main", up]);
+      const srv = upstream(() => `${up}\trefs/heads/main\n`);
+      putFollow(app.db, { repoId: r.id, url: srv.url, branch: "main", enabled: true, byId: alice.id, originId: "" });
+      return { r, d, up, srv, git, main, branch: `upstream/${up.slice(0, 7)}` };
+    }
+
+    test("a clean merge pushes upstream/<tip7> and opens one pull; a second check opens nothing", async () => {
+      const t = await staged("clean", "base\n", "new\n");
+      try {
+        const first = ok(await checkUpstream(app, t.r));
+        expect(first.outcome).toBe("proposed");
+        expect(await t.git(["rev-parse", `refs/heads/${t.branch}`])).toBe(t.up);
+        const row = getFollow(app.db, t.r.id)!;
+        expect(row.opened).toBe(1);
+        expect(row.error).toBe("");
+        const second = ok(await checkUpstream(app, t.r));
+        expect(second.pull).toBe(first.pull);
+        expect(getFollow(app.db, t.r.id)!.opened).toBe(1);
+        expect(getFollow(app.db, t.r.id)!.pendingId).toBe(row.pendingId);
+      } finally {
+        t.srv.server.stop(true);
+      }
+    });
+
+    test("a later tip moves the open pull instead of opening another", async () => {
+      const t = await staged("moving", "base\n", "new\n");
+      try {
+        const first = ok(await checkUpstream(app, t.r));
+        const blob = await t.git(["hash-object", "-w", "--stdin"], "newer\n");
+        const tree = await t.git(["mktree"], `100644 blob ${blob}\tf.txt\n`);
+        const next = await t.git(["commit-tree", tree, "-p", t.up, "-m", "newer"]);
+        await t.git(["update-ref", "refs/upstream-follow/main", next]);
+        t.srv.server.stop(true);
+        const srv = upstream(() => `${next}\trefs/heads/main\n`);
+        putFollow(app.db, { repoId: t.r.id, url: srv.url, branch: "main", enabled: true, byId: alice.id, originId: "" });
+        try {
+          const second = ok(await checkUpstream(app, t.r));
+          expect(second.pull).toBe(first.pull);
+          expect(getFollow(app.db, t.r.id)!.opened).toBe(1);
+          const branch = `upstream/${next.slice(0, 7)}`;
+          expect(await t.git(["rev-parse", `refs/heads/${branch}`])).toBe(next);
+          const pull = getPull(app.db, t.r.id, first.pull!)!;
+          expect([pull.headBranch, pull.headOid]).toEqual([branch, next]);
+          expect(await t.git(["rev-parse", `refs/pull/${pull.number}/head`])).toBe(next);
+          expect(pull.title).toBe("Upstream: 2 new commits on main");
+          expect(pull.body).toContain(next.slice(0, 7));
+          expect(pull.body).not.toContain(t.up.slice(0, 7));
+        } finally {
+          srv.server.stop(true);
+        }
+      } finally {
+        t.srv.server.stop(true);
+      }
+    });
+
+    test("a closed proposal for the same tip is not reopened", async () => {
+      const t = await staged("closed", "base\n", "new\n");
+      try {
+        const first = ok(await checkUpstream(app, t.r));
+        app.db.query("UPDATE issue SET state = 'closed' WHERE repo_id = ?1 AND number = ?2").run(t.r.id, first.pull!);
+        const again = ok(await checkUpstream(app, t.r));
+        expect(again.pull).toBe(first.pull);
+        expect(getFollow(app.db, t.r.id)!.opened).toBe(1);
+        expect(listPulls(app.db, t.r.id, { state: "all" }).length).toBe(1);
+      } finally {
+        t.srv.server.stop(true);
+      }
+    });
+
+    test("a planted upstream/<tip7> fails the check, opens nothing and is left as it was", async () => {
+      const t = await staged("squat", "base\n", "new\n");
+      try {
+        const planted = await t.git(["rev-parse", `${t.up}^`]);
+        await t.git(["update-ref", `refs/heads/${t.branch}`, planted]);
+        const r = await checkUpstream(app, t.r);
+        expect(!r.ok && r.error).toBe("squatted");
+        expect(getFollow(app.db, t.r.id)!.error).not.toBe("");
+        expect(getFollow(app.db, t.r.id)!.opened).toBe(0);
+        expect(getFollow(app.db, t.r.id)!.pendingId).toBeNull();
+        expect(await t.git(["rev-parse", `refs/heads/${t.branch}`])).toBe(planted);
+      } finally {
+        t.srv.server.stop(true);
+      }
+    });
+
+    test("a conflicting merge is recorded as conflict and opens nothing", async () => {
+      const t = await staged("clash", "ours\n", "theirs\n");
+      try {
+        const r = ok(await checkUpstream(app, t.r));
+        expect(r.outcome).toBe("conflict");
+        const row = getFollow(app.db, t.r.id)!;
+        expect([row.error, row.opened, row.pendingId]).toEqual(["conflict", 0, null]);
+        expect((await runGit(["rev-parse", "--verify", "-q", `refs/heads/${t.branch}`], { cwd: t.d })).ok).toBe(false);
+      } finally {
+        t.srv.server.stop(true);
       }
     });
   });

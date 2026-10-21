@@ -1783,6 +1783,29 @@ carries today, each entry under the issue that owns it; an entry that is no
 longer hollow turns the check red, so the list only shrinks.
 `bun scripts/hollow.ts` prints the same lines on their own.
 
+## Following an upstream
+
+A repository can follow an outside git branch (`repo_upstream`, https or
+http only, no credentials in the address). The clock checks each following
+repository every 30 minutes (`checkDue`); the result is the follow row:
+upstream tip, commits behind, the pull carrying the last proposal, and
+`error`. There is no button or page for it yet, so that row is where a
+check is seen. A check fetches only when the tip moved, into
+`refs/upstream-follow/<branch>` (not a branch), then:
+
+- **Nothing new:** nothing happens.
+- **New commits that merge cleanly into the default branch:** the forge
+  writes `upstream/<tip7>` at the fetched head and opens one pull from it,
+  as the person who turned following on. A second check with the same tip
+  opens nothing, and a proposal someone closed is not reopened.
+- **A newer tip while that pull is open:** the pull is moved to
+  `upstream/<newtip7>` and its title and body rewritten; the old
+  `upstream/<old7>` branch stays, as a person may have built on it.
+- **A conflict:** the row's `error` reads `conflict`; no branch, no pull.
+- **A planted branch:** if `upstream/<tip7>` already exists anywhere but at
+  the fetched head, the check fails (`squatted`), says so on the row, opens
+  no pull and leaves the branch as it was.
+
 ## Shape
 
 ```

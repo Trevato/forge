@@ -375,6 +375,18 @@ export function trackPullHead(
   );
 }
 
+/** Point an open same-repo pull at another branch of this repository, at its tip. */
+export function retargetPull(
+  db: Database,
+  pullId: string,
+  branch: string,
+  headOid: string,
+): void {
+  db.query(
+    "UPDATE pull SET head_branch = ?2, head_oid = ?3 WHERE issue_id = ?1",
+  ).run(pullId, branch, headOid);
+}
+
 /**
  * The pull that already reverts this one, if taking it back has already
  * been done — open, or merged, either one counts as "already taken back".
