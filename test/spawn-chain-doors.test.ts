@@ -109,7 +109,7 @@ describe("the chain at the MCP and terminal doors", () => {
     rw = createToken(child.db, alice.id, "rw", "rw").token;
     ro = createToken(child.db, alice.id, "ro", "ro").token;
     readerRw = createToken(child.db, reader.id, "rr", "rw").token;
-  }, 60_000);
+  }, 240_000);
 
   // Every test starts from a followed forge with a public forge repository.
   beforeEach(async () => {

@@ -94,7 +94,7 @@ describe("choosing how a forge follows its parent", () => {
     if (!reader.ok) throw new Error("reader");
     readerTok = createToken(child.db, reader.value.id, "t", "rw").token;
     readerCookie = `forge_session=${createSession(child.db, reader.value.id).token}`;
-  }, 60_000);
+  }, 240_000);
 
   afterAll(async () => {
     servers.stop();

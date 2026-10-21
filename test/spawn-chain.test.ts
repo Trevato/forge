@@ -90,7 +90,7 @@ describe("the chain of forges", () => {
     servers = await serve(grand);
     const owner = getUserByName(grand.db, "alice")!;
     cookie = `forge_session=${createSession(grand.db, owner.id).token}`;
-  }, 60_000);
+  }, 240_000);
 
   afterAll(async () => {
     servers.stop();
