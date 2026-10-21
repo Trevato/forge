@@ -187,6 +187,25 @@ describe("private destinations asked for", () => {
     expect(cyPage).not.toContain(">Grant<");
   });
 
+  test("the section is a setting list: an outline Grant for a site admin, no buttons for anyone else", async () => {
+    const section = async (cookie: string) => {
+      const page = await (await web(cookie, "/cy/arm/settings/app")).text();
+      const from = page.indexOf("Private destinations asked for");
+      return page.slice(from, page.indexOf("</ul>", from));
+    };
+    const admin = await section(adaCookie);
+    expect(admin).toContain('<ul class="list setting-list">');
+    expect(admin).toContain('class="row-fields"');
+    expect(admin).toMatch(/<button[^>]*data-variant="outline"[^>]*>\s*Grant\s*<\/button>/);
+    expect(admin).toContain("Revoke");
+    const owner = await section(cyCookie);
+    expect(owner).toContain('<ul class="list setting-list">');
+    expect(owner).toContain(CAMERA);
+    expect(owner).not.toContain("Grant<");
+    expect(owner).not.toContain("Revoke");
+    expect(owner).not.toContain("/settings/app/egress/");
+  });
+
   test("the page grants too, and refuses a foreign origin", async () => {
     const path = `/cy/arm/settings/app/egress/${encodeURIComponent(CAMERA)}/grant`;
     await web(adaCookie, path, "https://evil.example");

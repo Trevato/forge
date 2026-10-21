@@ -1185,42 +1185,31 @@ export async function appDomainDelete(ctx: Ctx): Promise<Response> {
 function appEgressView(base: string, egress: EgressView): Html {
   const at = (destination: string) =>
     `${base}/settings/app/egress/${encodeURIComponent(destination)}`;
-  const rows = egress.rows.map(
-    (r) =>
-      html`<li>
-        <div class="row">
-          <span class="row-lead">${icon("globe")}</span>
-          <span class="row-main">
-            <span class="row-title"
-              ><span class="mono">${r.destination}</span> ${r.granted
-                ? badge("granted", { tone: "success" })
-                : badge("not granted", { tone: "attn" })}
-              ${r.asked ? null : badge("no longer asked")}</span
-            >
-            <span class="row-meta"
-              >${r.granted && r.grantedAt !== null
-                ? html`Granted by ${r.grantedBy ?? "someone"}
-                    ${time(r.grantedAt)}`
-                : "Nothing reaches it until a site admin grants it."}</span
-            >
-          </span>
-          ${when(
-            egress.canChange,
-            () =>
-              html`<span class="row-trail">
-                ${r.granted
-                  ? confirmAction({
-                      action: `${at(r.destination)}/revoke`,
-                      verb: "Revoke",
-                      size: "sm",
-                    })
-                  : html`<form method="post" action="${at(r.destination)}/grant">
-                      ${btn("Grant", { size: "sm" })}
-                    </form>`}
-              </span>`,
-          )}
-        </div>
-      </li>`,
+  const rows = egress.rows.map((r) =>
+    row({
+      lead: icon("globe"),
+      title: html`<span class="mono">${r.destination}</span> ${r.granted
+          ? badge("granted", { tone: "success" })
+          : badge("not granted", { tone: "attn" })}
+        ${r.asked ? null : badge("no longer asked")}`,
+      meta:
+        r.granted && r.grantedAt !== null
+          ? html`Granted by ${r.grantedBy ?? "someone"} ${time(r.grantedAt)}`
+          : html`Nothing reaches it until a site admin grants it.`,
+      trail: egress.canChange
+        ? html`<div class="row-fields">
+            ${r.granted
+              ? confirmAction({
+                  action: `${at(r.destination)}/revoke`,
+                  verb: "Revoke",
+                  size: "sm",
+                })
+              : html`<form method="post" action="${at(r.destination)}/grant">
+                  ${btn("Grant", { size: "sm", variant: "outline" })}
+                </form>`}
+          </div>`
+        : html``,
+    }),
   );
   const changes = egress.changes.map(
     (c) =>
@@ -1241,7 +1230,7 @@ function appEgressView(base: string, egress: EgressView): Html {
             : " Only a site admin grants or revokes."}
         </p>
       </div>
-      <ul class="list">
+      <ul class="list setting-list">
         ${rows}
       </ul>
       ${when(
