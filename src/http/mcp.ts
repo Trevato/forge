@@ -2494,7 +2494,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "map",
     description:
-      "An app's plan: open issues as ready or waiting, the critical path, every edge, where the crew is, and `parkedTwice` issues.",
+      "An app's plan: open issues ready or waiting, critical path, every edge, where the crew is, `parkedTwice` issues.",
     inputSchema: {
       type: "object",
       properties: { app: APP_ARG },

@@ -61,7 +61,7 @@ for a tunnel and a forge that sleeps.
 | `feed`         | `{ limit?, cursor? }`: your home timeline — tells, replies, runs, changes and looks — ranked, with who, what, why and a link; the same items as `GET /api/v1/feed` |        |
 | `make_it_yours` | `{ repo, name?, visibility?, dryRun? }`: a fork of an app you can see, as your own app, following the original; code and history copied, data and secrets not; private unless `visibility` is public (a public original only); at most 5 copies an account a day; plans unless `dryRun` is false | yes    |
 | `front_page`   | `{ pinned?, hidden?, weights?, dryRun? }`: the front page as a stranger sees it, ranked, with numbers; a site admin sets what is pinned (first public one featured), hidden, and what counts (weights of forks, ships, use, fresh, 0 to 10) | yes    |
-| `map`          | an app's plan: ready now, waiting on what, the critical path, where the crew is, parked twice and why (`app`) |        |
+| `map`          | an app's plan: ready now, waiting on what, the critical path, where the crew is, parked twice and why (`app`); draws the `ui://forge/map` card |        |
 | `milestones`   | `{ app, issue? }`: how far each thing asked for is (and, with `issue`, whether you watch it: `watching`), from the dependency tree: the plan's limbs with their weights, or one milestone opened (who is building, what is blocked and on what, what merged in 7 days, an estimate, and for an owner `spend`: dollars, changes landed ever, the costliest three issues) |        |
 | `limb`         | `{ app, issue, action, reason?, pillar?, operation?, dryRun? }`: defer, resume or close a whole limb as not doing, or undo an operation; plans unless `dryRun` is false, and applying takes an admin token | yes    |
 | `watch`        | `{ app, issue, watch? }`: watch a milestone, or stop with `watch: false`: one item in your feed that follows it, and one push to your phone when it lands | yes    |
@@ -178,9 +178,11 @@ answers
 
 ## Cards, the contract and the plugins (#1116)
 
-- **Cards.** `apps`, `new_app`, `now`, `asks`, `milestones` and `feed` name a `ui://` resource in
+- **Cards.** `apps`, `new_app`, `now`, `asks`, `milestones`, `map` and `feed` name a `ui://` resource in
   `_meta.ui.resourceUri` (MCP Apps, SEP-1865): `ui://forge/app`, `run`,
-  `decision`, `wave`, `feed`. `resources/list` and `resources/read` serve one small
+  `decision`, `wave`, `map`, `feed`. The Plan card (`map`) shows one row per pillar with
+  its ready, working and waiting counts, and the first five ready issues linked
+  to their pages; it has no actions. `resources/list` and `resources/read` serve one small
   sandboxed page, which draws the `structuredContent.card` model that the
   tool result carries, with `textContent` only. The model is built in
   `src/web/studio/cards.ts`. A card's

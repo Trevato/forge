@@ -10,7 +10,7 @@
 import { html, raw } from "../html.ts";
 import { timeAgo } from "../ui.ts";
 
-export type CardKind = "app" | "run" | "decision" | "wave" | "feed";
+export type CardKind = "app" | "run" | "decision" | "wave" | "map" | "feed";
 
 export interface CardRow {
   readonly label: string;
@@ -36,7 +36,7 @@ export interface Card {
 
 export const CARD_MIME = "text/html;profile=mcp-app";
 export const CARD_URI = (kind: CardKind): string => `ui://forge/${kind}`;
-export const CARD_KINDS: readonly CardKind[] = ["app", "run", "decision", "wave", "feed"];
+export const CARD_KINDS: readonly CardKind[] = ["app", "run", "decision", "wave", "map", "feed"];
 
 /** The tool whose answer each card draws. */
 export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
@@ -44,6 +44,7 @@ export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   now: "run",
   asks: "decision",
   milestones: "wave",
+  map: "map",
   feed: "feed",
   new_app: "app",
 };
@@ -53,6 +54,7 @@ const CARD_TITLE: Readonly<Record<CardKind, string>> = {
   run: "Working now",
   decision: "Waiting on you",
   wave: "Wave",
+  map: "Plan",
   feed: "Feed",
 };
 
@@ -136,6 +138,33 @@ export function cardFor(tool: string, value: unknown, origin = ""): Card | undef
       if (repo !== "" && Number.isInteger(number) && number > 0)
         actions.push({ label: "Redirect", tool: "say", args: { repo, number }, words: true });
     }
+  } else if (kind === "map") {
+    const v = obj(value);
+    const issues = list(v["issues"]).map(obj);
+    const pillars = list(v["pillars"]).map(obj);
+    // The plan's umbrellas are furniture, not work: `pillarRows` skips them, so does this.
+    const furniture = new Set(pillars.map((p) => text(p["umbrella"])));
+    const work = issues.filter((i) => i["state"] === "open" && !furniture.has(text(i["number"])));
+    const count = (word: string): number => work.filter((i) => i["word"] === word).length;
+    status = `${count("ready")} ready · ${count("working")} working · ${count("blocked")} waiting`;
+    for (const p of pillars.slice(0, LIMIT)) {
+      const name = p["pillar"] === null ? "" : text(p["pillar"]);
+      const working = work.filter((i) => i["word"] === "working" && (i["pillar"] ?? null) === (p["pillar"] ?? null)).length;
+      rows.push({
+        label: name === "" ? "No pillar" : name,
+        value: `${text(p["ready"])} ready · ${working} working · ${text(p["blocked"])} waiting`,
+      });
+    }
+    const repo = obj(v["repo"]);
+    const base = `${origin}/${text(repo["owner"])}/${text(repo["name"])}/issues/`;
+    for (const r of list(v["ready"]).map(obj).filter((r) => r["word"] === "ready").slice(0, 5)) {
+      const number = text(r["number"]);
+      rows.push({
+        label: `#${number}`,
+        value: text(r["title"]),
+        ...(/^https?:\/\//.test(origin) && number !== "" ? { link: base + number } : {}),
+      });
+    }
   } else if (kind === "feed") {
     const fresh = Number(obj(value)["new"]);
     status = Number.isInteger(fresh) && fresh > 0 ? `${fresh} new since you last looked` : "Latest";
@@ -177,7 +206,7 @@ function draw(card) {
   const dl = document.createElement("dl");
   for (const r of card.rows) {
     const dt = el("dt", r.label);
-    if (r.link && (r.link.startsWith("https://") || r.link.startsWith("http://"))) { const a = el("a", r.label); a.href = r.link; a.onclick = (ev) => { ev.preventDefault(); parent.postMessage({ jsonrpc: "2.0", id: ++n, method: "ui/open-link", params: { url: r.link } }, "*"); }; dt.replaceChildren(a); }
+    if (r.link && (r.link.startsWith("https://") || r.link.startsWith("http://"))) { const a = el("a", r.label); a.href = r.link; a.target = "_blank"; a.rel = "noopener noreferrer"; a.onclick = (ev) => { ev.preventDefault(); parent.postMessage({ jsonrpc: "2.0", id: ++n, method: "ui/open-link", params: { url: r.link } }, "*"); }; dt.replaceChildren(a); }
     dl.append(dt, el("dd", r.value));
   }
   root.append(dl);

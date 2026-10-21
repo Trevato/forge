@@ -1,17 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import { SHELL_JS, cardFor } from "../src/web/studio/cards.ts";
+import { NO_MARKS, mapJson } from "../src/web/pages/map.ts";
 
 class Node {
   children: Node[] = [];
   textContent = "";
   className = "";
   value = "";
-  href = "";
   onclick: ((ev?: any) => void) | undefined;
   focused = false;
   constructor(readonly tag: string) {}
   append(...n: Node[]) { this.children.push(...n); }
   replaceChildren(...n: Node[]) { this.children = n; }
+  href = "";
+  target = "";
+  rel = "";
   setAttribute() {}
   focus() { this.focused = true; }
   all(): Node[] { return [this, ...this.children.flatMap((c) => c.all())]; }
@@ -85,6 +88,69 @@ describe("the card shell", () => {
   test("an ask without a number offers no Redirect", () => {
     const card = cardFor("asks", { rows: [{ line: "a", kind: "paused", items: ["x"], repo: "a/b", words: {} }] })!;
     expect(card.actions.some((a) => a.tool === "say")).toBe(false);
+  });
+
+  test("the map draws a Plan card from what mapJson returns: one count per issue, agreeing everywhere", () => {
+    const mk = (number: number, state = "open") =>
+      ({ id: `i${number}`, number, title: `T<${number}>`, state, closeReason: null, assigneeName: null, createdAt: `2026-01-${String(number).padStart(2, "0")}` }) as never;
+    // 1 umbrella (P0), 2-8 P0 work (3 is the crew's, 4 held), 9-10 P1 (10 waits on 9), 11 done.
+    const issues = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((n) => mk(n, n === 11 ? "closed" : "open"));
+    const graph = {
+      issues,
+      edges: [{ issueId: "i10", blockedById: "i9" }],
+      held: [],
+      unadopted: new Set(),
+      structural: new Set(["i1"]),
+      deferred: new Map(),
+    } as never;
+    const marks = { ...NO_MARKS, crew: new Map([["i3", {}]]), onHold: new Map([["i4", "a pull"]]) } as never;
+    const of = new Map<string, string>([...[2, 3, 4, 5, 6, 7, 8].map((n) => [`i${n}`, "P0"] as const), ["i9", "P1"], ["i10", "P1"]]);
+    const pillars = {
+      set: { pillars: [{ name: "P0", umbrella: issues[0] }, { name: "P1", umbrella: mk(12) }], gate: undefined, later: undefined },
+      names: ["P0", "P1"], of, merged: [],
+    } as never;
+    const json = mapJson({ ownerName: "a", name: "b", crewOutsiders: false } as never, graph, marks, pillars);
+    const card = cardFor("map", json, "https://f.example")!;
+    expect(card.title).toBe("Plan");
+    expect(card.status).toBe("6 ready · 1 working · 1 waiting");
+    expect(card.rows.slice(0, 2)).toEqual([
+      { label: "P0", value: "5 ready · 1 working · 0 waiting" },
+      { label: "P1", value: "1 ready · 0 working · 1 waiting" },
+    ]);
+    // The headline is the sum of the rows.
+    const sum = (i: number) => card.rows.slice(0, 2).reduce((n, r) => n + Number(r.value.split(" ")[i === 0 ? 0 : i === 1 ? 3 : 6]), 0);
+    expect(`${sum(0)} ready · ${sum(1)} working · ${sum(2)} waiting`).toBe(card.status);
+    // Nothing the crew is on, or a person holds, is offered as ready; five at most.
+    const links = card.rows.slice(2);
+    expect(links.map((r) => r.label)).toEqual(["#9", "#2", "#5", "#6", "#7"]);
+    expect(links[0]).toEqual({ label: "#9", value: "T<9>", link: "https://f.example/a/b/issues/9" });
+    expect(cardFor("map", json, "javascript:x")!.rows[2]!.link).toBeUndefined();
+  });
+
+  test("a row's https link draws an anchor that asks the host to open it; any other scheme stays text", () => {
+    const s = shell();
+    s.send(s.result({
+      kind: "map", title: "Plan", status: "", actions: [],
+      rows: [
+        { label: "#1", value: "ok", link: "https://f.example/a/b/issues/1" },
+        { label: "#2", value: "bad", link: "javascript:alert(1)" },
+      ],
+    }));
+    const dts = s.root.all().filter((n) => n.tag === "dt");
+    expect(dts.length).toBe(2);
+    const a = dts[0]!.children[0]!;
+    expect(a.tag).toBe("a");
+    expect(a.textContent).toBe("#1");
+    expect(a.href).toBe("https://f.example/a/b/issues/1");
+    expect(a.rel).toBe("noopener noreferrer");
+    expect(a.target).toBe("_blank");
+    let prevented = false;
+    a.onclick!({ preventDefault: () => (prevented = true) });
+    expect(prevented).toBe(true);
+    expect(s.posted[1]).toMatchObject({ method: "ui/open-link", params: { url: "https://f.example/a/b/issues/1" } });
+    expect(dts[1]!.children.length).toBe(0);
+    expect(dts[1]!.textContent).toBe("#2");
+    expect(s.root.all().filter((n) => n.tag === "a").length).toBe(1);
   });
 
   test("a feed row with a forge link is an anchor that asks the host to open it; no link, or a javascript: one, stays text", () => {

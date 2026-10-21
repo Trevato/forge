@@ -1024,6 +1024,7 @@ describe("the forge over MCP", () => {
       "ui://forge/app",
       "ui://forge/decision",
       "ui://forge/feed",
+      "ui://forge/map",
       "ui://forge/run",
       "ui://forge/wave",
     ]);
@@ -1041,6 +1042,7 @@ describe("the forge over MCP", () => {
     expect(meta("now")).toBe("ui://forge/run");
     expect(meta("asks")).toBe("ui://forge/decision");
     expect(meta("milestones")).toBe("ui://forge/wave");
+    expect(meta("map")).toBe("ui://forge/map");
     expect(meta("feed")).toBe("ui://forge/feed");
   });
 
