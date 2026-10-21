@@ -20,11 +20,9 @@ export const feedCss = /* css */ `
 .composer-bar { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .composer-bar select { min-width: 0; max-width: 60%; }
 /* Your apps: a narrow column on a desk, a tab away on a phone. */
-.home-tabs { display: none; margin-bottom: 12px; }
 /* An admin's tick boxes are always shown (no Select toggle); 24 px to tap. */
 #live-apps input[type="checkbox"] { width: 24px; height: 24px; }
 @media (max-width: 899px) {
-  .home-tabs { display: inline-flex; }
   /* "What you asked for" is a tab on a phone: the first post comes next.
      !important, as [hidden] is: .bar sits in a later cascade layer. */
   .feed-head { display: none !important; }
