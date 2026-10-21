@@ -400,7 +400,15 @@ describe("pillars", () => {
       ),
     );
     expect(page).toContain("3 open · 2 ready · 1 blocked");
-    expect(page).toContain("<b>no pillar</b>");
+    // §5's row and badge draw it; the page-local class is gone, the id stays.
+    expect(page).not.toMatch(/class="[^"]*map-pillars/);
+    expect(page).toMatch(
+      /class="row-title"\s*>no pillar<\/span/,
+    );
+    expect(page).toMatch(
+      /class="badge"\s*>3 open · 2 ready · 1 blocked<\/span/,
+    );
+    expect(page).toMatch(/data-pillar="P0 Trust"/);
     expect(page).toContain(`href="/alice/engine/issues/${loose.number}"`);
     // The pillar's label narrows the one list.
     const list = await get("/alice/engine/issues?label=P0%20Trust");

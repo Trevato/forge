@@ -1052,32 +1052,30 @@ function pillarList(repo: Repo, rows: readonly PillarRow[]): Html {
     r.open === 0
       ? "nothing open"
       : `${r.open} open · ${r.ready} ready · ${r.blocked} blocked`;
-  return html`<section class="map-list map-pillars" id="map-pillars">
+  return html`<section class="map-list" id="map-pillars">
     <h2>By pillar</h2>
-    <ul>
+    <ul class="list">
       ${rows.map((r) =>
         r.name === null
-          ? html`<li data-pillar="">
-              <b>${NO_PILLAR}</b>
-              <span class="muted small"
-                >${counts(r)}:
-                ${(r.issues ?? []).slice(0, 8).map(
+          ? row({
+              title: NO_PILLAR,
+              meta: html`${(r.issues ?? []).slice(0, 8).map(
                   (i) =>
                     html`<a href="${base}/issues/${i.number}" title="${i.title}"
                         >#${i.number}</a
                       >${" "}`,
-                )}${(r.issues ?? []).length > 8 ? "…" : ""}</span
-              >
-            </li>`
-          : html`<li data-pillar="${r.name}">
-              <a
+                )}${(r.issues ?? []).length > 8 ? "…" : ""}`,
+              trail: badge(counts(r)),
+              data: { pillar: "" },
+            })
+          : row({
+              title: html`<a
                 href="${r.umbrella === undefined
                   ? pillarHref(base, r.name)
                   : milestoneHref(base, r.umbrella)}"
                 >${r.name}</a
-              >
-              <span class="muted small">${counts(r)}</span>
-              <span class="muted small map-ask" title="Median and slowest hours from an issue opening to its change live in production, over ${PILLAR_DAYS} days"
+              >`,
+              meta: html`<span title="Median and slowest hours from an issue opening to its change live in production, over ${PILLAR_DAYS} days"
                 >${r.merged ?? 0} merged · ask to live
                 ${r.askToLive === undefined
                   ? "—"
@@ -1086,8 +1084,10 @@ function pillarList(repo: Repo, rows: readonly PillarRow[]): Html {
                         >#${r.askToLive.slowest.number}</a
                       >
                       ${hours(r.askToLive.slowest.hours)}`}</span
-              >
-            </li>`,
+              >`,
+              trail: badge(counts(r)),
+              data: { pillar: r.name },
+            }),
       )}
     </ul>
   </section>`;
@@ -1175,6 +1175,8 @@ export const mapCss = /* css */ `
 .map-list li span { display: block; }
 .map-list + .map-list { margin-top: 18px; }
 .map-ask { display: block; }
+.map-list .list span { display: inline; }
+.map-list .list .row-main, .map-list .list .row-trail { display: flex; }
 .map-pillars ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; font-size: 14px; }
 .map-empty { display: grid; justify-items: center; gap: 8px; padding: 40px 16px; border: 1px dashed var(--border); border-radius: var(--radius); color: var(--muted-fg); text-align: center; }
 
