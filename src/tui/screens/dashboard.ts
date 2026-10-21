@@ -86,6 +86,7 @@ import {
   openOnWeb,
   promptScreen,
   plural,
+  linkScreen,
 } from "./common.ts";
 import { readKpis } from "../../flow/kpis.ts";
 import { kpiLines } from "../../flow/kpi_words.ts";
@@ -166,6 +167,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   let clientLines: string[] = [];
   /** The ids of those apps, so the key that asks for something stays on them. */
   let clientRepoIds = new Set<string>();
+  /** The live address of each of those apps that is running, by repo id; `o` shows it. */
+  let clientLive = new Map<string, string>();
   /** The check lane, as the board's strip says it; null when nothing is queued. */
   let lane: string | null = null;
   /** What the decider did today, the board's Today line; null on a quiet day or for a reader. */
@@ -190,6 +193,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     figures = [];
     const apps = await clientAppRows(f.app, f.user);
     clientRepoIds = new Set(apps.map((a) => a.repo.id));
+    clientLive = new Map(apps.flatMap((a) => (a.live === undefined ? [] : [[a.repo.id, a.live] as const])));
     const now = new Date();
     const doings = clientDoings(f.app.db, apps.map((a) => a.repo.id), now);
     clientLines =
@@ -197,7 +201,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         ? ["Your apps will appear here."]
         : apps.map((a) => {
             const doing = doingLine(doings.get(a.repo.id), now.getTime());
-            const line = `${a.repo.name}: ${agentsLine(a.working, a.queued)}`;
+            const mark = a.live === undefined ? "" : " (running, o opens it)";
+            const line = `${a.repo.name}${mark}: ${agentsLine(a.working, a.queued)}`;
             return doing === "" ? line : `${line} ${doing}`;
           });
     ctx.invalidate();
@@ -746,6 +751,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         }),
         binding(["C"], "decider", { disabled: !f.user }),
         ...(clientLines.length > 0 ? [binding(["t"], "ask for something")] : []),
+        ...(clientLive.size > 0 ? [binding(["o"], "open the app")] : []),
         binding(["n"], "new repo", { disabled: !f.signedIn }),
         binding(["M"], "migrate", { disabled: !f.signedIn }),
         binding(["A"], "account", { disabled: !f.signedIn }),
@@ -950,6 +956,13 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         // A client's apps are the list; the one under the cursor is asked.
         const repo = shown()[at("repos").index];
         if (repo && clientRepoIds.has(repo.id)) askForSomething(f, ctx, () => screen, repo);
+        return true;
+      }
+      if (e.key === "o" && f.user && clientLive.size > 0) {
+        // The running app under the cursor, as a link the person can open or copy.
+        const repo = shown()[at("repos").index];
+        const live = repo && clientLive.get(repo.id);
+        if (live) ctx.push(linkScreen(ctx, live, screen));
         return true;
       }
       if (e.key === "n" && f.signedIn) {

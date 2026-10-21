@@ -34,7 +34,7 @@ export async function clientApps(ctx: Ctx, user: User): Promise<Html> {
     clientDoings(ctx.app.db, apps.map((a) => a.repo.id), now),
   );
   const rendering = performance.now();
-  const rows = apps.map(({ repo, working, queued }) => {
+  const rows = apps.map(({ repo, working, queued, live }) => {
     const doing = doingLine(doings.get(repo.id), now.getTime());
     const about = repo.description !== "" ? repo.description : "An app of yours.";
     // The tell form with this app chosen; it sends the person back to `/`.
@@ -44,8 +44,15 @@ export async function clientApps(ctx: Ctx, user: User): Promise<Html> {
           variant: "outline",
         })
       : null;
+    // The running app, by the way the apps page opens it; an app that is not up offers nothing.
+    const open =
+      live === undefined
+        ? null
+        : btn("Open", { href: `${repoBase(repo)}/app/production/open`, variant: "outline" });
     return html`<li class="client-app">
-      <a href="${repoBase(repo)}"><b>${repo.name}</b></a> ${ask}
+      <div class="bar">
+        <a href="${repoBase(repo)}"><b>${repo.name}</b></a> ${open} ${ask}
+      </div>
       <span class="client-app-about">${about}</span>
       <span class="client-app-agents muted" data-agents="${working > 0 ? "working" : "waiting"}"
         >${agentsLine(working, queued)}</span

@@ -2085,6 +2085,13 @@ script), in the terminal the `t` key on the app under the cursor. Both go
 through the same `tell()` and answer "Sent. The agents will pick it up."; the
 web returns to `/` with that line.
 
+An app that is running also shows "Open" (web: a link to
+`/:owner/:name/app/production/open`, the apps page's own) and, in the terminal,
+a "(running, o opens it)" marker with `o` showing its live address to open or
+copy. Both read `live` on the row from `clientAppRows`, which is set only while
+production runs; an app that is not running offers neither and says nothing
+about why.
+
 `GET /metrics` (site admin only; repository names are in the labels) serves
 `forge_egress_connections`, `forge_egress_bytes_in` and `forge_egress_bytes_out`
 per `repo` and `destination` as Prometheus text, so a leaked upstream socket

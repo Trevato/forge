@@ -7,6 +7,8 @@
 import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import { ago } from "../feed/rank.ts";
+import { appsRuntime, envsFor } from "../apps/runtime.ts";
+import { appsForRepos } from "./apps.ts";
 import { spawnedRepos } from "./next-steps.ts";
 import { withoutArchived, type Repo } from "./repos.ts";
 import type { User } from "./users.ts";
@@ -17,6 +19,8 @@ export interface ClientApp {
   readonly working: number;
   /** Agent runs lined up, none going yet. */
   readonly queued: number;
+  /** The address the running app answers at, the apps page's; undefined unless it is running. */
+  readonly live: string | undefined;
 }
 
 /** The apps `user` can see on a spawned forge, each with its agent counts; archived ones are put away, not shown. */
@@ -34,11 +38,19 @@ export async function clientAppRows(
        GROUP BY repo_id, state`,
     )
     .all(...repos.map((r) => r.id));
+  const runtime = appsRuntime(app);
+  const records = appsForRepos(app.db, repos.map((r) => r.id));
+  const liveOf = (repo: Repo): string | undefined => {
+    const record = records.get(repo.id);
+    if (record === undefined || runtime === undefined) return undefined;
+    const up = envsFor(app, user, record).find((e) => e.env === "production")?.state === "running";
+    return up ? runtime.urlFor(record, "production") : undefined;
+  };
   return repos.map((repo) => {
     const own = rows.filter((r) => r.repo_id === repo.id);
     const n = (state: string): number =>
       own.find((r) => r.state === state)?.n ?? 0;
-    return { repo, working: n("running"), queued: n("queued") };
+    return { repo, working: n("running"), queued: n("queued"), live: liveOf(repo) };
   });
 }
 

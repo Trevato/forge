@@ -12,6 +12,8 @@ import { join } from "node:path";
 import { createRepo } from "../src/actions/repos.ts";
 import { childDirOf, spawnForge } from "../src/actions/spawn.ts";
 import { createApp, type App } from "../src/app.ts";
+import { AppsRuntime } from "../src/apps/runtime.ts";
+import { getAppByRepo } from "../src/core/apps.ts";
 import { clientApps } from "../src/web/studio/client_home.ts";
 import type { Ctx } from "../src/http/context.ts";
 import { clientAppRows, cutTitle, doingLine } from "../src/core/client-apps.ts";
@@ -234,6 +236,69 @@ describe("a client's first screen", () => {
       expect(String(await clientApps(ctx, maria))).toContain("Ask for something");
     } finally {
       child.db.query("UPDATE repo SET visibility = 'private' WHERE name = 'bakery'").run();
+    }
+  });
+
+  test("a running app offers Open to its live address; one that is not offers nothing", async () => {
+    const maria = getUserByName(child.db, "maria")!;
+    const repo = child.db.query<{ id: string }, []>("SELECT id FROM repo WHERE name = 'bakery'").get()!;
+    const runtime = new AppsRuntime(child, { domain: "apps.test", scheme: "https", forgeUrl: "https://forge.test" });
+    try {
+      const record = getAppByRepo(child.db, repo.id);
+      if (record === undefined) throw new Error("no app record");
+      let state = "stopped";
+      runtime.status = () => [{ env: "production", state }] as never;
+      const ctx = { app: child, request: new Request("https://x.test/"), auth: { user: maria } } as unknown as Ctx;
+      const text = (h: string): string => h.replace(/<[^>]*>/g, " ");
+      const opens = async () => String(await clientApps(ctx, maria));
+
+      const down = await opens();
+      expect(down).not.toContain(">Open<");
+      expect(down).not.toContain("/app/production/open");
+      expect(down).toContain('href="/marias/bakery"');
+
+      state = "running";
+      const up = await opens();
+      expect(up).toContain('href="/marias/bakery/app/production/open"');
+      expect(up).toContain(">Open<");
+      expect(up).toContain('href="/marias/bakery"');
+      expect(runtime.urlFor(record, "production")).toStartWith("https://");
+      for (const shown of [up, down])
+        for (const word of ["deploy", "process", "port"])
+          expect(text(shown)).not.toMatch(new RegExp(`\\b${word}`, "i"));
+
+      // The terminal offers the same: a marker on the running app and `o` for its address.
+      const terminal = headlessTerminal(120, 30);
+      const { app } = createForgeApp(
+        child,
+        { sshUsername: "maria", remoteAddress: "127.0.0.1", fingerprint: "SHA256:t", user: maria },
+        { terminal, exitHooks: false },
+      );
+      app.start();
+      await settleApp(app);
+      expect(app.screen.toText()).toContain("bakery (running, o opens it): ");
+      terminal.feed("o");
+      await settleApp(app);
+      expect(app.screen.toText()).toContain(runtime.urlFor(record, "production"));
+      app.stop();
+
+      state = "stopped";
+      const idle = headlessTerminal(120, 30);
+      const stopped = createForgeApp(
+        child,
+        { sshUsername: "maria", remoteAddress: "127.0.0.1", fingerprint: "SHA256:t", user: maria },
+        { terminal: idle, exitHooks: false },
+      );
+      stopped.app.start();
+      await settleApp(stopped.app);
+      expect(stopped.app.screen.toText()).toContain("bakery: Its agents");
+      expect(stopped.app.screen.toText()).not.toContain("running");
+      idle.feed("o");
+      await settleApp(stopped.app);
+      expect(stopped.app.screen.toText()).not.toContain("https://");
+      stopped.app.stop();
+    } finally {
+      await runtime.stop();
     }
   });
 
