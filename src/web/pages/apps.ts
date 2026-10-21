@@ -553,7 +553,7 @@ export function appStrip(ctx: Ctx, repo: Repo): Html {
       url,
       (u) =>
         html`<a
-          class="app-url"
+          class="mono truncate"
           href="${base}/app/production/open"
           title="Open ${u}"
           >${u}</a

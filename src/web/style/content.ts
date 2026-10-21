@@ -773,10 +773,6 @@ form.inline { display: inline; margin-left: auto; }
   background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
 }
 .app-strip > .ico { color: var(--muted-fg); flex: none; }
-.app-strip .app-url {
-  min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-family: var(--mono); font-size: 12.5px;
-}
 .app-strip .spacer { flex: 1; }
 /* One environment: name and state in the head, the facts and the reason it
    failed in the body. A card rather than a row so a deploy error has a whole

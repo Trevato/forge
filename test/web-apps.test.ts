@@ -323,6 +323,8 @@ describe("apps, runs and the crew on the web", () => {
       files.indexOf("</div>", files.indexOf('class="app-strip"')),
     );
     expect(strip).not.toContain(">App<");
+    // The address wears §5's utilities, not a page-local class.
+    expect(files).not.toContain("app-url");
     // bob reads the public app but cannot write it; a visitor neither.
     expect(await (await web(studio(bob), "/alice/hello")).text()).not.toContain(
       "— Tell the crew",
