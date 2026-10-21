@@ -41,7 +41,7 @@ describe("migrate: after", () => {
   let alice: User;
   let octo: User;
   let originId = "";
-  let stopMirror = () => {};
+  let stopMirror = async () => {};
   let n = 0;
 
   const person = async (username: string): Promise<User> => {
@@ -116,7 +116,9 @@ describe("migrate: after", () => {
   }, 30_000);
 
   afterAll(async () => {
-    stopMirror();
+    // Pushes still running read the database and the repositories: let them
+    // end before either goes, whatever the machine's load.
+    await stopMirror();
     github.stop();
     servers.stop();
     app.close();
