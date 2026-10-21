@@ -6,7 +6,10 @@
  *   body is placed, instead of a 500 `name_taken` half-way through;
  * - the spawner could never claim their child as themselves: the claim now
  *   takes over that untouched founder account, but only when the spawner is
- *   leaving (keepAccess false) and the account has no credential of its own.
+ *   leaving (keepAccess false) and the account has no credential of its own
+ *   (no password, passkey, token or SSH key). That is deliberate: whoever
+ *   holds the link becomes the spawner's name on the child, and the claim
+ *   page says so before anyone submits.
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -16,6 +19,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { childDirOf, founderClash } from "../src/actions/spawn.ts";
 import { createApp, type App } from "../src/app.ts";
+import { addKey, parseAuthorizedKey } from "../src/core/keys.ts";
 import { listPasskeys } from "../src/core/passkeys.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
@@ -170,6 +174,35 @@ describe("a child's founder holds the spawner's name", () => {
     expect(res.status).toBe(422);
     expect(await res.text()).toContain("That username is taken.");
     expect(getUserByName(kid.app.db, "alice")!.email).toBe(founder.email);
+  });
+
+  test("a founder with an SSH key can already push, so it is never handed over", async () => {
+    const kid = await child("sam", false);
+    const founder = getUserByName(kid.app.db, "alice")!;
+    const parsed = parseAuthorizedKey(
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB2S7bF0R4NmuTUvVJXPPjdI1AF8XHXeYSNfr8DJ5eDo alice",
+    );
+    if (!parsed.ok) throw new Error("key");
+    expect(addKey(kid.app.db, founder.id, "laptop", parsed.value).ok).toBe(true);
+    // The page makes no takeover promise for it.
+    const page = await (await fetch(`${kid.servers.url}/claim`)).text();
+    expect(page).not.toContain('id="claim-takeover"');
+    const res = await kid.claim({ username: "alice", email: "alice@x.test", password: PASSWORD });
+    expect(res.status).toBe(422);
+    expect(await res.text()).toContain("That username is taken.");
+    const now = getUserByName(kid.app.db, "alice")!;
+    expect(now.email).toBe(founder.email);
+    expect(now.isAdmin).toBe(founder.isAdmin);
+  });
+
+  test("the claim page says, before anyone submits, that claiming as the spawner takes over their account", async () => {
+    const kid = await child("nia", false);
+    const page = await (await fetch(`${kid.servers.url}/claim`)).text();
+    expect(page).toContain('id="claim-takeover"');
+    expect(page).toContain("Claim it as alice and you will take over alice's account on this forge");
+    // Where it does not apply (the spawner keeps access), the page makes no such promise.
+    const kept = await child("ona", true);
+    expect(await (await fetch(`${kept.servers.url}/claim`)).text()).not.toContain('id="claim-takeover"');
   });
 
   test("where the platform edge signs people in, the founder's name is a login, never handed over", async () => {

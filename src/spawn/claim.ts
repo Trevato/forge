@@ -226,18 +226,17 @@ export function unburnClaim(db: Database, orgId: string, token: string): void {
 }
 
 /**
- * Give a spawned child's organisation to its first admin: they join its
- * Owners and, unless the spawner asked to keep access, the spawner leaves.
- * The claim page and the first-admin code (`core/first_admin.ts`) both end here.
- */
-/**
  * The spawn-made founder a claim may take over, when the name asked for is
  * its name: the account `copyInto` made under the spawner's own username,
  * so the spawner could never claim their child as themselves. Only while
  * it is untouched — the Owners team's first member, a person, active, with
- * no password, passkey or token — and only when the spawner is leaving
- * (`keepAccess` false): an account the spawner keeps is theirs, not the
+ * no password, passkey, token or SSH key — and only when the spawner is
+ * leaving (`keepAccess` false): an account the spawner keeps is theirs, not the
  * claimant's to take. Never on a forge with edge sign-in on.
+ *
+ * Deliberate: whoever holds the claim link becomes the spawner's username
+ * on the child (the link is the proof, as for any claim; an admin can
+ * rename it after). The claim page says so before anyone submits.
  */
 export function founderToTake(
   app: App,
@@ -258,13 +257,15 @@ export function founderToTake(
   return untouched(db, user.id) ? user : undefined;
 }
 
+/** No way in of its own: no password, passkey, token, or SSH key (which can already push). */
 function untouched(db: Database, userId: string): boolean {
   return (
     db
       .query<{ n: number }, [string]>(
         `SELECT count(*) AS n FROM user u WHERE u.id = ?1 AND u.password_hash = '' AND u.is_agent = 0
            AND NOT EXISTS (SELECT 1 FROM passkey WHERE user_id = ?1)
-           AND NOT EXISTS (SELECT 1 FROM token WHERE user_id = ?1)`,
+           AND NOT EXISTS (SELECT 1 FROM token WHERE user_id = ?1)
+           AND NOT EXISTS (SELECT 1 FROM user_key WHERE user_id = ?1)`,
       )
       .get(userId)!.n === 1
   );
@@ -304,6 +305,11 @@ export function takeFounder(
 
 class PasskeyRefused extends Error {}
 
+/**
+ * Give a spawned child's organisation to its first admin: they join its
+ * Owners and, unless the spawner asked to keep access, the spawner leaves.
+ * The claim page and the first-admin code (`core/first_admin.ts`) both end here.
+ */
 export function handOver(db: Database, spawned: Spawned, userId: string): void {
   const team = listTeams(db, spawned.org.id).find((t) => t.name === OWNERS_TEAM);
   if (team === undefined) return;

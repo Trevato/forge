@@ -136,6 +136,17 @@ function accessSentence(spawned: Spawned, spawner: User | undefined): string {
     : `Once you claim it, only you can see its private work: ${who}, who made it, no longer has access unless you invite them back.`;
 }
 
+/**
+ * Where the claim would take over the spawn-made founder (`founderToTake`),
+ * the page says so: claiming under the spawner's name becomes their account
+ * here, with what the spawn made under it. Deliberate, and never silent.
+ */
+function takeover(ctx: Ctx, spawned: Spawned, spawner: User | undefined): Html | null {
+  if (spawner === undefined || founderToTake(ctx.app, spawned, spawner.username) === undefined)
+    return null;
+  return html`<p class="mb" id="claim-takeover">Claim it as ${spawner.username} and you will take over ${spawner.username}'s account on this forge, with everything the spawn made under it.</p>`;
+}
+
 function claimForm(
   ctx: Ctx,
   spawned: Spawned,
@@ -152,6 +163,7 @@ function claimForm(
           is the forge's admin, so it can change everything here.
         </p>
         <p class="mb" id="claim-access">${accessSentence(spawned, spawner)}</p>
+        ${takeover(ctx, spawned, spawner)}
         <form method="post" action="/claim">
           <div id="claim-token-field">
             ${formField({
