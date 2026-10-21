@@ -176,6 +176,7 @@ describe("the forge over MCP", () => {
       "pull",
       "variant",
       "edit",
+      "read_file",
       "asks",
       "asks_act",
       "asks_decide",
