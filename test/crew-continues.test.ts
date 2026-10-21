@@ -33,10 +33,10 @@ describe("the crew, with a stand-in Claude Code: continuing a merged pull", () =
   let promptFile: string;
 
   const settled = (where: (run: Run) => boolean, timeoutMs?: number) =>
-    agentRunSettled(app, repo, where, timeoutMs);
+    agentRunSettled(app, repo, where, timeoutMs, 20);
 
   beforeAll(async () => {
-    standIn = await startStandInCrew();
+    standIn = await startStandInCrew({ tickMs: 20 });
     ({ app, alice, bot, repo, argsFile, promptFile } = standIn);
   }, 30_000);
 
@@ -65,13 +65,14 @@ describe("the crew, with a stand-in Claude Code: continuing a merged pull", () =
     // default branch, in the same session, and lands as a pull of its own.
     const pullIssue = getIssue(app.db, repo.id, pull.number)!;
     const agent = getAgentByName(app.db, "bot")!;
-    // The word that queued it, said after the run that opened the pull.
-    await Bun.sleep(5);
+    // The word that queued it, said after the run that opened the pull:
+    // stamped a second past the run's end, so no wait orders them.
+    const said = new Date(Date.now() + 1_000).toISOString();
     app.db
       .query(
-        "INSERT INTO comment (id, issue_id, author_id, body) VALUES (?1, ?2, ?3, 'Shorter, please.')",
+        "INSERT INTO comment (id, issue_id, author_id, body, created_at) VALUES (?1, ?2, ?3, 'Shorter, please.', ?4)",
       )
-      .run(`c-${pull.number}`, pullIssue.id, alice.id);
+      .run(`c-${pull.number}`, pullIssue.id, alice.id, said);
     const queued = queueAgentRun(
       app,
       repo,
