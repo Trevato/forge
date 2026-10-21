@@ -404,7 +404,9 @@ describe("fork at the origin, and propose a change through it", () => {
     expect(sent.title).toBe("Fix the typo");
     const stored = fake.state.issues.get("octo/gears") ?? [];
     expect(stored[0]?.pull?.headRepo).toBe("me/gears");
-  });
+    // Fork, clone, commit and push over real git take ~2 s alone, which is
+    // over bun's 5 s default once the check machine is loaded (#4232).
+  }, 60_000);
 
   test("a refused proposal re-renders the editor with every word still there", async () => {
     fake.state.refuseWrite = "no pulls today";
