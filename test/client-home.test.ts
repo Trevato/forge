@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { createRepo } from "../src/actions/repos.ts";
 import { childDirOf, spawnForge } from "../src/actions/spawn.ts";
 import { createApp, type App } from "../src/app.ts";
-import { clientAppRows } from "../src/core/client-apps.ts";
+import { clientAppRows, cutTitle, doingLine } from "../src/core/client-apps.ts";
 import { addCrew, createAgentRow, setCrewRole } from "../src/core/agents.ts";
 import { moveArchived } from "../src/core/repos.ts";
 import { createSession } from "../src/core/sessions.ts";
@@ -316,5 +316,96 @@ describe("a client's first screen", () => {
     expect(moveArchived(child.db, bakery.id, false)).toBe(true);
     expect(await names()).toEqual(["bakery", "cafe"]);
     expect(await apps()).toContain('href="/marias/bakery"');
+  });
+
+  describe("what each app is doing", () => {
+    const ids = () => {
+      const maria = getUserByName(child.db, "maria")!;
+      const repo = child.db
+        .query<{ id: string }, []>("SELECT id FROM repo WHERE name = 'bakery'")
+        .get()!;
+      return { maria, repo };
+    };
+    const seedIssue = (id: string, n: number, kind: string, title: string, state: string) => {
+      const { maria, repo } = ids();
+      child.db
+        .query(
+          "INSERT INTO issue (id, repo_id, number, kind, title, body, author_id, state) VALUES (?1, ?2, ?3, ?4, ?5, '', ?6, ?7)",
+        )
+        .run(id, repo.id, n, kind, title, maria.id, state);
+    };
+    const clean = () => {
+      child.db.query("DELETE FROM run WHERE id LIKE 'r-doing-%'").run();
+      child.db.query("DELETE FROM pull WHERE issue_id LIKE 'i-doing-%'").run();
+      child.db.query("DELETE FROM issue WHERE id LIKE 'i-doing-%'").run();
+    };
+    const row = async (): Promise<string> => {
+      const home = main(await page(owner));
+      const from = home.indexOf('href="/marias/bakery"');
+      return home.slice(from, home.indexOf("</li>", from));
+    };
+
+    test("a quiet app gets no extra line", async () => {
+      clean();
+      expect(await row()).not.toContain("client-app-doing");
+    });
+
+    test("work running now reads Working on, escaped", async () => {
+      clean();
+      seedIssue("i-doing-1", 9001, "issue", "Add <b>rye</b> bread", "open");
+      child.db
+        .query("INSERT INTO run (id, repo_id, kind, state, issue_id) VALUES ('r-doing-1', ?1, 'agent', 'running', 'i-doing-1')")
+        .run(ids().repo.id);
+      const r = await row();
+      expect(r).toContain("Working on: Add &lt;b&gt;rye&lt;/b&gt; bread");
+      expect(r).not.toContain("<b>rye");
+      clean();
+    });
+
+    test("a change landed this week reads Last change with its age", async () => {
+      clean();
+      seedIssue("i-doing-2", 9002, "pull", "Fix the menu", "closed");
+      child.db
+        .query("INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, merged_at) VALUES ('i-doing-2', 'main', 'x', ?1, ?1, ?2)")
+        .run("0".repeat(40), new Date(Date.now() - 3 * 86_400_000).toISOString());
+      expect(await row()).toContain("Last change: Fix the menu, 3 days ago");
+      clean();
+    });
+
+    test("the read is its own doing phase beside apps", async () => {
+      const res = await fetch(url("/"), { headers: { cookie: owner } });
+      const timing = res.headers.get("server-timing") ?? "";
+      expect(timing).toMatch(/\bdoing;/);
+      expect(timing).toMatch(/\bapps;/);
+    });
+
+    test("the terminal's line for the app carries it too", async () => {
+      clean();
+      seedIssue("i-doing-3", 9003, "issue", "Add rye bread", "open");
+      child.db
+        .query("INSERT INTO run (id, repo_id, kind, state, issue_id) VALUES ('r-doing-3', ?1, 'agent', 'running', 'i-doing-3')")
+        .run(ids().repo.id);
+      const terminal = headlessTerminal(160, 30);
+      const { app } = createForgeApp(
+        child,
+        { sshUsername: "maria", remoteAddress: "127.0.0.1", fingerprint: "SHA256:t", user: ids().maria },
+        { terminal, exitHooks: false },
+      );
+      app.start();
+      await settleApp(app);
+      expect(app.screen.toText()).toContain("Working on: Add rye bread");
+      app.stop();
+      clean();
+    });
+
+    test("titles are cut to 80 characters at a word boundary", () => {
+      const long = "word ".repeat(30);
+      const cut = cutTitle(long);
+      expect(cut.length).toBeLessThanOrEqual(80);
+      expect(cut.endsWith("word…")).toBe(true);
+      expect(cutTitle("short title")).toBe("short title");
+      expect(cutTitle("x".repeat(200))).toBe(`${"x".repeat(79)}…`);
+      expect(doingLine(undefined, 0)).toBe("");
+    });
   });
 });

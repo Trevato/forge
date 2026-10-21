@@ -20,7 +20,7 @@ import { forgeLane, forgeNeeds } from "../../actions/health.ts";
 import { ownerWaits, waitLine, withMore } from "../../actions/owner_waits.ts";
 import { forgeHealth } from "../../kernel/guard.ts";
 import { coveredByVerdict, forgeVerdict, verdictLine } from "../../kernel/guard_verdict.ts";
-import { clientAppRows } from "../../core/client-apps.ts";
+import { clientAppRows, clientDoings, doingLine } from "../../core/client-apps.ts";
 import { nextStepsFor } from "../../core/next-steps.ts";
 import { agentsLine } from "../../web/studio/client_home.ts";
 import { mayView } from "../../core/sealed.ts";
@@ -186,12 +186,16 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     // A client's home never carries the forge-wide figures, on either door.
     figures = [];
     const apps = await clientAppRows(f.app, f.user);
+    const now = new Date();
+    const doings = clientDoings(f.app.db, apps.map((a) => a.repo.id), now);
     clientLines =
       apps.length === 0
         ? ["Your apps will appear here."]
-        : apps.map(
-            (a) => `${a.repo.name}: ${agentsLine(a.working, a.queued)}`,
-          );
+        : apps.map((a) => {
+            const doing = doingLine(doings.get(a.repo.id), now.getTime());
+            const line = `${a.repo.name}: ${agentsLine(a.working, a.queued)}`;
+            return doing === "" ? line : `${line} ${doing}`;
+          });
     ctx.invalidate();
   };
 

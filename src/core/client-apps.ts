@@ -6,6 +6,7 @@
 
 import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
+import { ago } from "../feed/rank.ts";
 import { spawnedRepos } from "./next-steps.ts";
 import { withoutArchived, type Repo } from "./repos.ts";
 import type { User } from "./users.ts";
@@ -93,4 +94,28 @@ export function clientDoings(
     );
   }
   return doings;
+}
+
+const TITLE_MAX = 80;
+
+/** `title` cut to 80 characters at a word boundary, with "…" when anything was dropped. */
+export function cutTitle(title: string): string {
+  const text = title.replace(/\s+/g, " ").trim();
+  if (text.length <= TITLE_MAX) return text;
+  const head = text.slice(0, TITLE_MAX - 1);
+  const space = head.lastIndexOf(" ");
+  return `${(space > 0 ? head.slice(0, space) : head).trimEnd()}…`;
+}
+
+/** The sentence about what an app's agents are on, or "" for a quiet app. */
+export function doingLine(doing: ClientDoing | undefined, now: number): string {
+  if (!doing) return "";
+  const title = cutTitle(doing.title);
+  if (title === "") return "";
+  switch (doing.kind) {
+    case "working":
+      return `Working on: ${title}`;
+    case "landed":
+      return `Last change: ${title}, ${ago(Date.parse(doing.at), now)}`;
+  }
 }
