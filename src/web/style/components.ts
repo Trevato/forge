@@ -140,8 +140,7 @@ fieldset.field > .check + .check { margin-top: 8px; }
 .field-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; }
 .field-row .field { flex: 1; min-width: 160px; margin-bottom: 0; }
 .form-actions { margin-top: 16px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-/* A passkey ceremony's note slot looks like an error only once it says one. */
-.error-note, .passkey-note:not(:empty) {
+.error-note {
   display: block; color: var(--danger); font-size: 13px; font-weight: 500;
   padding: 8px 12px; margin: 0 0 12px;
   border: 1px solid color-mix(in srgb, var(--danger) 32%, transparent);
@@ -153,11 +152,6 @@ fieldset.field > .check + .check { margin-top: 8px; }
    .passkey-off hides; everywhere else the other way round. Only ever hides,
    so each element keeps its own display. */
 :root:not(.passkey) .passkey-on, :root.passkey .passkey-off { display: none; }
-/* /signin's passkey lead: a full-width button whose note takes no room until
-   it says something. */
-.passkey-lead { margin-bottom: 16px; }
-.passkey-lead > .btn { width: 100%; }
-.passkey-lead > .passkey-note:not(:empty) { margin: 8px 0 0; }
 
 /* ---- stat tile ---- fixed heights: a changing value shifts nothing */
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
