@@ -203,6 +203,7 @@ import { manifestFor } from "../actions/here.ts";
 import { clientBucket } from "./peer.ts";
 import { listPinned as listPinnedPanels, movePinned, pinPanel, unpinPanel } from "../actions/board-pins.ts";
 import { deleteBoard, listAllBoards, showBoard, writeBoard, type BoardError } from "../actions/boards.ts";
+import { panelData, parseWindow } from "../boards/panel_data.ts";
 import { fileReport } from "../actions/reports.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
 import { placementWords } from "../checks/placement.ts";
@@ -3283,10 +3284,16 @@ const TOOLS: readonly Tool[] = [
   {
     name: "boards",
     description:
-      "The forge's boards, for a forge admin who is a person (an agent is refused): each board's slug, title, range, refresh and panels. The same as /boards and GET /api/v1/boards. With `slug`, that one board.",
+      "The forge's boards, for a forge admin who is a person (an agent is refused): each board's slug, title, range, refresh and panels. The same as /boards and GET /api/v1/boards. With `slug`, that one board. With `slug` and `panel` (its place from 0), that panel's data: {from, to, step, rows}, bucketed to `step` (300, 5m, 1h, 1d) or one the panel picks, never cut short; `from` and `to` (dates) stand in for the panel's. The same as GET /api/v1/boards/:slug/panels/:id.",
     inputSchema: {
       type: "object",
-      properties: { slug: { type: "string", maxLength: 40, description: "One board, by slug." } },
+      properties: {
+        slug: { type: "string", maxLength: 40, description: "One board, by slug." },
+        panel: { type: "integer", minimum: 0, maximum: 23, description: "One panel's data, by its place on the board from 0." },
+        from: { type: "string", maxLength: 64, description: "With panel: the window's start, a date." },
+        to: { type: "string", maxLength: 64, description: "With panel: the window's end, a date." },
+        step: { type: "string", maxLength: 16, description: "With panel: seconds per bucket, or a count of s, m, h or d." },
+      },
     },
     writes: false,
     async run(ctx, user, args) {
@@ -3298,7 +3305,22 @@ const TOOLS: readonly Tool[] = [
           : boardFailed(listed.error);
       }
       const shown = await showBoard(ctx.app, user, str(args["slug"]));
-      return shown.ok ? good({ slug: str(args["slug"]), ...shown.value }) : boardFailed(shown.error);
+      if (!shown.ok) return boardFailed(shown.error);
+      if (args["panel"] === undefined) return good({ slug: str(args["slug"]), ...shown.value });
+      const index = args["panel"];
+      const panel = typeof index === "number" && Number.isInteger(index) ? shown.value.panels[index] : undefined;
+      if (!panel) return bad("not_found", "that board has no panel there");
+      const asked = new URLSearchParams();
+      for (const k of ["from", "to", "step"]) {
+        const v = args[k];
+        if (v !== undefined) asked.set(k, typeof v === "number" ? String(v) : str(v));
+      }
+      const window = parseWindow(asked);
+      if (!window.ok) return bad("invalid_window", window.error);
+      const data = panelData(ctx.app.db, shown.value, panel, window.window);
+      if (!data.ok) return bad("bad_query", data.error);
+      const { ok: _, ...out } = data;
+      return good({ board: str(args["slug"]), panel: index, title: panel.title, chart: panel.chart, ...out });
     },
   },
   {

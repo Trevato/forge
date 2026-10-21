@@ -21,37 +21,38 @@ import { fragment, page } from "../layout.ts";
 import { btn, card, empty } from "../ui.ts";
 import { flowPanel } from "./flow-panel.ts";
 import { isPinned, listPins } from "../../boards/pins.ts";
-import { cellsOf, chartBox, paramsOf, queryFields, readParams, runFor } from "./boards.ts";
+import { panelData, runFor } from "../../boards/panel_data.ts";
+import { cellsOf, chartBox, paramsOf, queryFields, readParams } from "./boards.ts";
 
-const RANGE_MS = { "1h": 3_600_000, "24h": 86_400_000, "7d": 604_800_000, "30d": 2_592_000_000 } as const;
 /** The events the panels' queries read (runs, pulls, checks, issues, usage): any of them may change a chart. */
 const READS = "run.queued,run.started,run.finished,pull.*,check.*,issue.*,usage.*";
 
 const option = (value: string, selected: boolean) =>
   html`<option value="${value}" ${selected ? raw("selected") : null}>${value}</option>`;
 
-/** The panel's query as asked, with the board's range as its start when it names none. */
-function ranged(query: Record<string, unknown>, range: Board["range"]): Record<string, unknown> {
-  if (range === "all" || query.from !== undefined) return query;
-  return { ...query, from: new Date(Date.now() - RANGE_MS[range]).toISOString() };
-}
+/** Where a panel lives: its board's slug and its place on it, which name its data door. */
+export type PanelAt = { slug: string; index: number };
 
 export function drawPanel(
   app: App,
   board: Board,
   panel: Panel,
+  at: PanelAt,
   aside: Html | null = null,
   run: typeof runFor = runFor,
 ): Html {
-  const answer = run(app.db, panel.chart, ranged(panel.query, board.range));
+  const answer = panelData(app.db, board, panel, {}, Date.now(), run);
   const q = paramsOf(panel.query, panel.chart);
   const body = !answer.ok
     ? html`<p class="muted small">${answer.error}</p>`
     : chartBox(panel.chart, cellsOf(answer.rows), panel.title);
   const explore = new URLSearchParams(Object.entries(q).filter(([k, v]) => v !== "" && k !== "rows"));
+  const data = `/api/v1/boards/${at.slug}/panels/${String(at.index)}`;
   return html`<div class="card bp-w${String(panel.w)} bp-h${String(panel.h)}">
     <div class="card-head"><h2>${panel.title}</h2>
-      <a class="muted small" href="/boards/data?${explore.toString()}">explore</a></div>
+      <span class="card-links muted small"><a href="/boards/data?${explore.toString()}">explore</a>
+        <a href="${data}" aria-label="${panel.title}: data as JSON">json</a>
+        <a href="${data}?format=csv" download="${at.slug}-${String(at.index)}.csv" aria-label="${panel.title}: data as CSV">csv</a></span></div>
     <div class="card-body">${body}</div>
     ${aside}
   </div>`;
@@ -68,7 +69,7 @@ function grid(app: App, slug: string, board: Board): Html {
   >
     ${board.panels.length === 0
       ? html`<p class="muted">No panels yet. Add one below.</p>`
-      : board.panels.map((p) => drawPanel(app, board, p))}
+      : board.panels.map((p, index) => drawPanel(app, board, p, { slug, index }))}
   </section>`;
 }
 

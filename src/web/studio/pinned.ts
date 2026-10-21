@@ -11,7 +11,7 @@ import type { User } from "../../core/users.ts";
 import { html, type Html } from "../html.ts";
 import { btn } from "../ui.ts";
 import { cachedPanel } from "./home_cache.ts";
-import { runFor } from "../pages/boards.ts";
+import { runFor } from "../../boards/panel_data.ts";
 import { drawPanel } from "../pages/boards-view.ts";
 
 function controls(p: Pin): Html {
@@ -27,10 +27,10 @@ function controls(p: Pin): Html {
 
 /** Admin only: the caller has checked. The answer is kept per panel definition (cache 5). */
 const cached = (p: Pin & { board: Board; panel: Panel }): typeof runFor => (db, chart, query) =>
-  cachedPanel(db, [p.slug, p.board.range, p.panel.title, chart, p.panel.query], () => runFor(db, chart, query));
+  cachedPanel(db, [p.slug, p.board.range, p.panel.title, chart, p.panel.query, query.step], () => runFor(db, chart, query));
 
 export async function pinnedPanels(app: App, user: User): Promise<Html | null> {
   const listed = await listPinned(app, user);
   if (!listed.ok || listed.value.length === 0) return null;
-  return html`<section class="bgrid" aria-label="Pinned panels">${listed.value.map((p) => drawPanel(app, p.board, p.panel, controls(p), cached(p)))}</section>`;
+  return html`<section class="bgrid" aria-label="Pinned panels">${listed.value.map((p) => drawPanel(app, p.board, p.panel, { slug: p.slug, index: p.board.panels.indexOf(p.panel) }, controls(p), cached(p)))}</section>`;
 }

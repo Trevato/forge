@@ -1208,10 +1208,34 @@ a column holding a secret or free text is never listed).
 - `filter`: up to 16 of `{column, op, value}`, `op` one of `eq ne lt lte gt gte`,
   or `starts` (a prefix of a text or time column, matched literally).
 - `groupBy`: a column, or `{"bucket": "minute" | "hour" | "day"}`.
+- `step`: with a bucket only, seconds per bucket in its place (1 to a
+  year); each point is floored to its bucket in UTC.
 
-It answers `{"rows": [{"group", "value"}]}`, at most 1000 rows. A query the
+It answers `{"rows": [{"group", "value"}]}`. A query grouped by a column
+stops at 1000 rows; one grouped by time is never cut short: past 20000
+rows it is refused (`400 bad_query`, "ask for a coarser step"). A query the
 module refuses is `400 bad_query` with its message; a body that is not JSON
 is `400 bad_json`; a body over the cap is `413 too_large`.
+
+Each panel of a board is its own door, `GET
+/api/v1/boards/:slug/panels/:id` (`:id` its place from 0;
+`boards/panel_data.ts`), answering `{board, panel, title, chart, from, to,
+step, rows}`. `from` and `to` (dates) stand in for the panel's, and the
+board's range is the start when neither names one; `step` is seconds or a
+count with a unit (`300`, `15s`, `5m`, `1h`, `1d`). Without a step a panel
+grouped by time picks the finest of 1 min, 2, 5, 10, 15, 30 min, 1, 2, 3,
+6, 12 h, a day or a week that keeps it within 360 buckets (a 24 h board is
+5 min, 288 buckets; with no start, as on an `all` board, the span runs from
+the panel's oldest row), and steps coarser while an answer is too large; a step
+asked for is kept or refused, never cut. A panel grouped by a column
+ignores `step` (`"step": null`). `format=csv` is the same rows as
+`group,value` or `group,series,value`; a text cell that starts with `=`,
+`+`, `-` or `@` is prefixed with `'` so a spreadsheet does not run it. A bad
+window or format is `422`, a missing board or panel `404`. The board page
+and home's pinned panels draw through the same door, and each card links its
+`json` and `csv` beside `explore`; the `boards` MCP tool with `slug` and
+`panel` answers the same, and the terminal's board screen says each panel's
+last bucket and step.
 
 The `machine` source is what the machine itself used (`boards/sampler.ts`):
 every 15 s the forge reads its pod's cgroup v2 (`cpu.stat` `usage_usec` as a

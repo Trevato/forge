@@ -27,6 +27,8 @@ import { savePlacement } from "../src/core/placements.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { limitChanges, limitValue } from "../src/settings/limits.ts";
 import { promote } from "./helpers/members.ts";
+import { showBoard } from "../src/actions/boards.ts";
+import { panelData } from "../src/boards/panel_data.ts";
 
 describe("the forge over MCP", () => {
   let dataDir: string;
@@ -892,6 +894,34 @@ describe("the forge over MCP", () => {
     expect((await tool(rw, "board_delete", { slug: "runs" })).value).toEqual({ deleted: "runs" });
     expect((await tool(rw, "boards")).value.boards).toEqual([]);
     expect((await tool(rw, "board_delete", { slug: "runs" })).error).toContain("not_found");
+  });
+
+  test("boards with a panel: its data through panelData, the window judged; an agent and a non-admin are refused", async () => {
+    const query = { source: "runs", aggregate: "count", groupBy: { bucket: "hour" } };
+    const board = { title: "Hourly", range: "7d", refresh: "off", panels: [{ title: "Runs", chart: "line", query, w: 1, h: 1 }] };
+    expect((await tool(rw, "board_write", { slug: "hourly", board })).value).toMatchObject({ slug: "hourly" });
+    const from = "2026-01-01T00:00:00.000Z";
+    const to = "2027-01-01T00:00:00.000Z";
+    const got = (await tool(ro, "boards", { slug: "hourly", panel: 0, from, to, step: "1d" })).value;
+    const shown = await showBoard(app, alice, "hourly");
+    if (!shown.ok) throw new Error("no board");
+    const direct = panelData(app.db, shown.value, shown.value.panels[0]!, { from, to, step: 86_400 });
+    if (!direct.ok) throw new Error(direct.error);
+    expect(got).toEqual({ board: "hourly", panel: 0, title: "Runs", chart: "line", from, to, step: 86_400, rows: direct.rows });
+    expect((await tool(rw, "boards", { slug: "hourly", panel: 0, step: 300 })).value.step).toBe(300);
+    expect((await tool(rw, "boards", { slug: "hourly", panel: 0 })).value.step).toBe(3600);
+    expect((await tool(rw, "boards", { slug: "hourly", panel: 0, step: "5x" })).error).toContain("invalid_window");
+    expect((await tool(rw, "boards", { slug: "hourly", panel: 0, from: "soon" })).error).toContain("invalid_window");
+    expect((await tool(rw, "boards", { slug: "hourly", panel: 1 })).error).toContain("not_found");
+    expect((await tool(rw, "boards", { slug: "nope", panel: 0 })).error).toContain("not_found");
+    const made = await createAgent(app, alice, { username: "databot", brief: "x" });
+    if (!made.ok) throw new Error(String(made.error));
+    app.db.query("UPDATE user SET is_admin = 1 WHERE id = ?1").run(made.value.user.id);
+    const botToken = createToken(app.db, made.value.user.id, "bot", "rw").token;
+    for (const who of [bobRw, botToken]) {
+      expect((await tool(who, "boards", { slug: "hourly", panel: 0 })).error).toContain("forbidden");
+    }
+    await tool(rw, "board_delete", { slug: "hourly" });
   });
 
   test("ui:// card resources are listed, read, and tied to their tools", async () => {

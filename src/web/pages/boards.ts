@@ -7,9 +7,9 @@
  * narrowed to that point's window and listed by the source's first column.
  * Anyone else gets the not-found page.
  */
-import type { Database } from "bun:sqlite";
 import { CHART_NAMES, CHARTS, drawChart, usesSeries, type Cell, type Chart } from "../../boards/chart.ts";
-import { runQuery, type Answer, type Query, type Row } from "../../boards/query.ts";
+import { runFor } from "../../boards/panel_data.ts";
+import { runQuery, type Query, type Row } from "../../boards/query.ts";
 import { gaps, SYSTEM } from "../../boards/sampler.ts";
 import { SOURCES } from "../../boards/sources.ts";
 import { listAllBoards } from "../../actions/boards.ts";
@@ -73,17 +73,6 @@ export function toQuery(p: Params): Query {
   return q;
 }
 
-/**
- * Run `query` for `chart`: a chart that draws one value per group is asked
- * without the query's series, so its groups are not split. The run is
- * scoped to every repo — only an admin reaches a board.
- */
-export function runFor(db: Database, chart: Chart, query: Record<string, unknown>): Answer {
-  if (usesSeries(chart) || query.series === undefined) return runQuery(db, query, { repoIds: "all" });
-  const { series: _, ...rest } = query;
-  return runQuery(db, rest, { repoIds: "all" });
-}
-
 /** Rows as the cells a chart draws: a null group or series reads "all"/"none". */
 export const cellsOf = (rows: readonly Row[], hrefs: readonly (string | null)[] = []): Cell[] =>
   rows.map((r, i) => ({
@@ -131,8 +120,8 @@ function behind(p: Params, row: Row): string | null {
 
 /**
  * Ready-made queries over the machine's cores and thermometers, from `now`:
- * the last hour per CPU, and twelve hours of hourly heat — 12 × the CPUs
- * stays under the 1000-row cap up to 83 CPUs.
+ * the last hour per CPU (one row each, under the 1000-row cap of a column
+ * group), and twelve hours of hourly heat.
  */
 export function machineLinks(now: number): { label: string; href: string }[] {
   const ago = (h: number) => new Date(Math.floor(now / 60_000) * 60_000 - h * 3_600_000).toISOString();

@@ -20,6 +20,7 @@ import { parentForgeFor } from "../core/parent_releases.ts";
 import { readFlow } from "../flow/read.ts";
 import { listPinned as listPinnedPanels, movePinned, pinPanel, unpinPanel, type PinError } from "../actions/board-pins.ts";
 import { deleteBoard, listAllBoards, showBoard, writeBoard, type BoardError } from "../actions/boards.ts";
+import { panelData, parseWindow, rowsCsv } from "../boards/panel_data.ts";
 import { runQuery } from "../boards/query.ts";
 import { recordDrill } from "../core/domain_drills.ts";
 import { drillVerdict } from "../kernel/domain_drill.ts";
@@ -1548,6 +1549,36 @@ export function apiRoutes(router: Router<Handler>): void {
     if (denied) return denied;
     const shown = await showBoard(ctx.app, ctx.auth.user, ctx.params.slug!);
     return shown.ok ? json({ slug: ctx.params.slug, ...shown.value }) : notFound();
+  });
+
+  // One panel's data (`boards/panel_data.ts`): `:id` is its place on the
+  // board from 0; `from`, `to` and `step` (300, 5m, 1h) the window;
+  // `format=csv` the same rows as a table file.
+  router.add("GET", "/api/v1/boards/:slug/panels/:id", async (ctx) => {
+    const denied = boardsAdmin(ctx);
+    if (denied) return denied;
+    const shown = await showBoard(ctx.app, ctx.auth.user, ctx.params.slug!);
+    const id = ctx.params.id!;
+    const panel = shown.ok && /^\d{1,2}$/.test(id) ? shown.value.panels[Number(id)] : undefined;
+    if (!shown.ok || !panel) return notFound();
+    const format = ctx.url.searchParams.get("format") ?? "json";
+    if (format !== "json" && format !== "csv") return apiError("invalid_format", 422, "format must be json or csv");
+    const window = parseWindow(ctx.url.searchParams);
+    if (!window.ok) return apiError("invalid_window", 422, window.error);
+    const data = panelData(ctx.app.db, shown.value, panel, window.window);
+    if (!data.ok) return apiError("bad_query", 400, data.error);
+    const headers = { "cache-control": "private, no-store" };
+    if (format === "csv") {
+      return new Response(rowsCsv(data.rows), {
+        headers: {
+          ...headers,
+          "content-type": "text/csv; charset=utf-8",
+          "content-disposition": `attachment; filename="${ctx.params.slug}-${id}.csv"`,
+        },
+      });
+    }
+    const { ok: _, ...out } = data;
+    return json({ board: ctx.params.slug, panel: Number(id), title: panel.title, chart: panel.chart, ...out }, 200, headers);
   });
 
   router.add("PUT", "/api/v1/boards/:slug", async (ctx) => {

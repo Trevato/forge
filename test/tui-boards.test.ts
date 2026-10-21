@@ -8,13 +8,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { listPinned, pinPanel, unpinPanel } from "../src/actions/board-pins.ts";
-import { writeBoard } from "../src/actions/boards.ts";
+import { deleteBoard, writeBoard } from "../src/actions/boards.ts";
 import { createAgent } from "../src/actions/crew.ts";
 import { createApp, type App } from "../src/app.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { createForgeApp, forgeCommands, Session } from "../src/tui/forge.ts";
 import { dashboardScreen } from "../src/tui/screens/dashboard.ts";
-import { boardRows, boardsScreen } from "../src/tui/screens/boards.ts";
+import { boardRows, boardsScreen, dataLine, stepWords } from "../src/tui/screens/boards.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
@@ -99,6 +99,28 @@ describe("tui boards", () => {
     expect(text).toContain("Failed runs");
     expect(text).toContain("number");
     expect(text).toContain("source=runs");
+  });
+
+  test("each panel says what panelData reads for it: a time panel its last bucket and step, another its rows", async () => {
+    const wrote = await writeBoard(app, carol, "weekly", {
+      title: "Hourly runs",
+      range: "7d",
+      refresh: "off",
+      panels: [
+        { title: "Runs per hour", chart: "line", query: { source: "runs", aggregate: "count", groupBy: { bucket: "hour" } }, w: 1, h: 1 },
+        { title: "Runs by state", chart: "bar", query: { source: "runs", aggregate: "count", groupBy: "state" }, w: 1, h: 1 },
+      ],
+    });
+    if (!wrote.ok) throw new Error(JSON.stringify(wrote.error));
+    // The boards are listed by slug: runs, then weekly.
+    const text = await screenText(carol, "j\r");
+    expect(text).toContain("no points · step 1h · 0 points");
+    expect(text).toContain("0 rows");
+    expect(dataLine({ ok: true, rows: [{ group: "2026-10-20T21:45:00Z", value: 1500 }], from: null, to: null, step: 300 }))
+      .toBe("last 2026-10-20T21:45:00Z: 1500 · step 5m · 1 point");
+    expect(dataLine({ ok: false, error: "too\u001b[2Jmany" })).toBe("refused: too [2Jmany");
+    expect([15, 300, 3600, 86_400, 90].map(stepWords)).toEqual(["15s", "5m", "1h", "1d", "90s"]);
+    await deleteBoard(app, carol, "weekly");
   });
 
   test("nobody else has rows or the door", async () => {

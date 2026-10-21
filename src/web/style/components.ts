@@ -310,6 +310,10 @@ a.sha:hover { color: var(--accent); }
   padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--muted);
 }
 .card-head h2, .card-head h3 { margin: 0; }
+/* A card head's links: spaced apart, and each a 44px target on a thumb. */
+.card-links { display: inline-flex; align-items: center; gap: 10px; }
+.card-links > a { color: inherit; }
+@media (pointer: coarse) { .card-links { gap: 0; } .card-links > a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 8px; } }
 .card-body { padding: 14px; }
 .card-foot {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;

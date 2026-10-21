@@ -8,18 +8,22 @@ import { SOURCES, type ColumnType } from "./sources.ts";
 
 /** `starts` is a prefix match on a text or time column (`target` starts `cpu:`); the rest compare. */
 const OPS = { eq: "=", ne: "<>", lt: "<", lte: "<=", gt: ">", gte: ">=", starts: null } as const;
-const BUCKETS = {
-  minute: "%Y-%m-%dT%H:%M:00Z",
-  hour: "%Y-%m-%dT%H:00:00Z",
-  day: "%Y-%m-%dT00:00:00Z",
-} as const;
+/** A bucket's width in seconds; a query's `step` replaces it. */
+export const BUCKETS = { minute: 60, hour: 3600, day: 86_400 } as const;
 const AGGREGATES = ["count", "sum", "avg", "max"] as const;
 const MAX_ROWS = 1000;
+/**
+ * A query grouped by time is never cut short: past this many rows it is
+ * refused (`tooMany`), so the caller asks again at a coarser step.
+ */
+export const MAX_POINTS = 20_000;
+/** The widest step, in seconds: a year. */
+export const MAX_STEP = 31_536_000;
 const MAX_FILTERS = 16;
 const MAX_REPOS = 1000;
 
 type Op = keyof typeof OPS;
-type Bucket = keyof typeof BUCKETS;
+export type Bucket = keyof typeof BUCKETS;
 type Aggregate = (typeof AGGREGATES)[number];
 
 export type Query = {
@@ -28,6 +32,8 @@ export type Query = {
   to?: string;
   filter?: { column: string; op: string; value: string | number }[];
   groupBy?: string | { bucket: string };
+  /** Seconds per time bucket, in place of the bucket's own width; only with a `{bucket}` group. */
+  step?: number;
   aggregate: string;
   column?: string;
   /** A second grouping column: each group is split into one row per value (stacked area, heat strip). */
@@ -38,7 +44,8 @@ export type Query = {
 export type Scope = { repoIds: readonly string[] | "all" };
 
 export type Row = { group: string | number | null; value: number | null; series?: string | number | null };
-export type Refusal = { ok: false; error: string };
+/** `tooMany`: a time-grouped answer has more rows than `MAX_POINTS`; a coarser step may fit. */
+export type Refusal = { ok: false; error: string; tooMany?: true };
 export type Answer = { ok: true; rows: Row[] } | Refusal;
 
 const refuse = (error: string): Refusal => ({ ok: false, error });
@@ -50,14 +57,18 @@ function valueFits(type: ColumnType, v: unknown): boolean {
   return typeof v === "string" && v.length <= 256;
 }
 
-/** Validate then run `q` against `db`, over the rows `scope` allows. Never throws on bad input. */
-export function runQuery(db: Database, q: unknown, scope: Scope): Answer {
+type Source = (typeof SOURCES)[string];
+/** The rows `q` reads before grouping: its source, and the WHERE its scope, window and filters make. */
+type Rows = { query: Record<string, unknown>; src: Source; from: string; where: string[]; params: (string | number)[] };
+
+/** Validate `q`'s source, scope, window and filters; the rows they name, nothing (`empty`) or a refusal. */
+function rowsOf(q: unknown, scope: Scope): Rows | Refusal | "empty" {
   const ids = scope?.repoIds;
   if (ids !== "all") {
     if (!Array.isArray(ids) || ids.length > MAX_REPOS || ids.some((i) => typeof i !== "string")) {
       return refuse("scope must list repos or be all");
     }
-    if (ids.length === 0) return { ok: true, rows: [] };
+    if (ids.length === 0) return "empty";
   }
   if (typeof q !== "object" || q === null || Array.isArray(q)) return refuse("query must be an object");
   const query = q as Record<string, unknown>;
@@ -69,7 +80,7 @@ export function runQuery(db: Database, q: unknown, scope: Scope): Answer {
   const cols = src.columns;
   const where: string[] = src.where ? [src.where] : [];
   const params: (string | number)[] = [];
-  if (ids !== "all" && src.owner === "admin") return { ok: true, rows: [] };
+  if (ids !== "all" && src.owner === "admin") return "empty";
   if (ids !== "all") {
     const marks = ids.map(() => "?").join(",");
     where.push(
@@ -102,6 +113,32 @@ export function runQuery(db: Database, q: unknown, scope: Scope): Answer {
     // instr(), not LIKE: a % or _ in the value is a character, never a wildcard.
     where.push(sqlOp === null ? `instr(${ident(column)}, ?) = 1` : `${ident(column)} ${sqlOp} ?`);
   }
+  const from = src.select === undefined ? ident(src.table) : `(${src.select}) AS ${ident(src.table)}`;
+  return { query, src, from, where, params };
+}
+
+const whereSql = (where: readonly string[]) => (where.length ? ` WHERE ${where.join(" AND ")}` : "");
+
+/**
+ * The oldest time among the rows `q` reads, as stored, or null when there
+ * are none (or `q` is refused): what a window with no start spans from.
+ */
+export function oldestTime(db: Database, q: unknown, scope: Scope): string | null {
+  const r = rowsOf(q, scope);
+  if (r === "empty" || !("src" in r)) return null;
+  const row = db.query(`SELECT MIN(${ident(r.src.time)}) AS "at" FROM ${r.from}${whereSql(r.where)}`).get(...r.params) as
+    | { at: string | null }
+    | null;
+  return row?.at ?? null;
+}
+
+/** Validate then run `q` against `db`, over the rows `scope` allows. Never throws on bad input. */
+export function runQuery(db: Database, q: unknown, scope: Scope): Answer {
+  const r = rowsOf(q, scope);
+  if (r === "empty") return { ok: true, rows: [] };
+  if (!("src" in r)) return r;
+  const { query, src, from, where, params } = r;
+  const cols = src.columns;
 
   const agg = query.aggregate;
   if (typeof agg !== "string" || !(AGGREGATES as readonly string[]).includes(agg)) {
@@ -116,7 +153,7 @@ export function runQuery(db: Database, q: unknown, scope: Scope): Answer {
   }
 
   let groupSql = "NULL";
-  let groupParam: string | undefined;
+  let step: number | undefined;
   const g = query.groupBy;
   if (typeof g === "string") {
     if (!has(cols, g)) return refuse(`unknown column: ${JSON.stringify(g)}`);
@@ -124,8 +161,17 @@ export function runQuery(db: Database, q: unknown, scope: Scope): Answer {
   } else if (g !== undefined) {
     const b = typeof g === "object" && g !== null ? (g as Record<string, unknown>).bucket : undefined;
     if (typeof b !== "string" || !has(BUCKETS, b)) return refuse(`unknown bucket: ${JSON.stringify(b)}`);
-    groupSql = `strftime(?, ${ident(src.time)})`;
-    groupParam = BUCKETS[b as Bucket];
+    step = BUCKETS[b as Bucket];
+    // The bucket's start: its time in whole seconds, floored to the step, in UTC.
+    groupSql = `strftime('%Y-%m-%dT%H:%M:%SZ', CAST(strftime('%s', ${ident(src.time)}) AS INTEGER) / ? * ?, 'unixepoch')`;
+  }
+  if (query.step !== undefined) {
+    const n = query.step;
+    if (step === undefined) return refuse("step needs a group by a time bucket");
+    if (typeof n !== "number" || !Number.isInteger(n) || n < 1 || n > MAX_STEP) {
+      return refuse(`step must be a whole number of seconds, 1 to ${MAX_STEP}`);
+    }
+    step = n;
   }
 
   let seriesSql = "";
@@ -136,12 +182,15 @@ export function runQuery(db: Database, q: unknown, scope: Scope): Answer {
   }
   const grouped = [groupSql === "NULL" ? "" : "1", seriesSql === "" ? "" : "3"].filter(Boolean).join(", ");
 
-  const from = src.select === undefined ? ident(src.table) : `(${src.select}) AS ${ident(src.table)}`;
   const sql =
     `SELECT ${groupSql} AS "group", ${valueSql} AS "value"${seriesSql} FROM ${from}` +
-    (where.length ? ` WHERE ${where.join(" AND ")}` : "") +
+    whereSql(where) +
     (grouped === "" ? "" : ` GROUP BY ${grouped} ORDER BY ${grouped}`) +
-    ` LIMIT ${MAX_ROWS}`;
-  const bound = groupParam === undefined ? params : [groupParam, ...params];
-  return { ok: true, rows: db.query(sql).all(...bound) as Row[] };
+    ` LIMIT ${step === undefined ? MAX_ROWS : MAX_POINTS + 1}`;
+  const bound = step === undefined ? params : [step, step, ...params];
+  const rows = db.query(sql).all(...bound) as Row[];
+  if (step !== undefined && rows.length > MAX_POINTS) {
+    return { ok: false, error: `more than ${MAX_POINTS} points: ask for a coarser step or a shorter range`, tooMany: true };
+  }
+  return { ok: true, rows };
 }

@@ -4,10 +4,13 @@
  * `listAllBoards` and `showBoard` the page and the API do, so the gate is the
  * action's (an agent or anyone else is told nothing); the palette offers the
  * door only to that person. Reading only, but for pins: a chart is not drawn, a panel is said
- * as its title, chart, size and the query that feeds it. `[`/`]` mark a panel,
+ * as its title, chart, size and the query that feeds it, then what `panelData` reads for it
+ * (the page's and the API's door): a time panel's last bucket and its step, else its row count. `[`/`]` mark a panel,
  * `p` pins or unpins it to home and `<`/`>` move a pinned one (`actions/board-pins.ts`).
  */
 
+import { formatValue } from "../../boards/chart.ts";
+import { panelData, type PanelData } from "../../boards/panel_data.ts";
 import type { Board } from "../../boards/store.ts";
 import { listPinned, movePinned, pinPanel, unpinPanel } from "../../actions/board-pins.ts";
 import { listAllBoards, showBoard } from "../../actions/boards.ts";
@@ -41,8 +44,24 @@ export async function boardRows(session: Session): Promise<BoardRow[]> {
   }));
 }
 
-/** A board, panel by panel, as lines of text; the panel at `at` is marked, and a pinned one says so. */
-export function boardLines(board: Board, at = -1, pinned: readonly string[] = []): string[] {
+/** A step in seconds as the API takes it: `5m`, `1h`, `1d`, or seconds. */
+export const stepWords = (s: number): string =>
+  s % 86_400 === 0 ? `${s / 86_400}d` : s % 3600 === 0 ? `${s / 3600}h` : s % 60 === 0 ? `${s / 60}m` : `${s}s`;
+
+/** What a panel's data says in one line: its last bucket and step, its row count, or why it was refused. */
+export function dataLine(d: PanelData): string {
+  if (!d.ok) return `refused: ${plain(d.error)}`;
+  if (d.step === null) return plural(d.rows.length, "row");
+  const last = d.rows.at(-1);
+  const at = `step ${stepWords(d.step)} · ${plural(d.rows.length, "point")}`;
+  return last === undefined ? `no points · ${at}` : `last ${plain(String(last.group ?? "all"))}: ${formatValue(last.value ?? 0)} · ${at}`;
+}
+
+/**
+ * A board, panel by panel, as lines of text; the panel at `at` is marked, a
+ * pinned one says so, and each panel with its `data` read says what it holds.
+ */
+export function boardLines(board: Board, at = -1, pinned: readonly string[] = [], data: readonly PanelData[] = []): string[] {
   const lines = [
     plain(board.title),
     `range ${board.range} · refresh ${board.refresh} · ${plural(board.panels.length, "panel")}`,
@@ -52,6 +71,8 @@ export function boardLines(board: Board, at = -1, pinned: readonly string[] = []
       .map(([k, v]) => `${plain(k)}=${plain(typeof v === "string" ? v : JSON.stringify(v))}`)
       .join(" ");
     lines.push("", `${i === at ? "▸ " : ""}${plain(p.title)}${pinned.includes(p.title) ? "  [pinned to home]" : ""}`, `  ${p.chart} · ${p.w}×${p.h}`, `  ${query === "" ? "no query" : query}`);
+    const d = data[i];
+    if (d !== undefined) lines.push(`  ${dataLine(d)}`);
   }
   return lines;
 }
@@ -60,11 +81,14 @@ function boardScreen(ctx: Ctx, f: Session, slug: string, board: Board): Screen {
   const scroll = new Scroll();
   let at = board.panels.length > 0 ? 0 : -1;
   let pinned: string[] = [];
+  let data: PanelData[] = [];
   let lines = boardLines(board, at, pinned);
   const read = async (): Promise<void> => {
     const listed = await listPinned(f.app, f.user);
     pinned = listed.ok ? listed.value.filter((p) => p.slug === slug).map((p) => p.title) : [];
-    lines = boardLines(board, at, pinned);
+    // Only an admin person reaches this screen (`showBoard` let them in), as `panelData` asks.
+    data = board.panels.map((p) => panelData(f.app.db, board, p));
+    lines = boardLines(board, at, pinned, data);
     ctx.invalidate();
   };
   /** Pin the marked panel, or unpin it when it is; `by` moves a pinned one in the home order. */
@@ -98,7 +122,7 @@ function boardScreen(ctx: Ctx, f: Session, slug: string, board: Board): Screen {
       if (scroll.key(e, lines.length)) return true;
       if (e.key === "[" || e.key === "]") {
         if (board.panels.length > 0) at = (at + (e.key === "]" ? 1 : board.panels.length - 1)) % board.panels.length;
-        lines = boardLines(board, at, pinned);
+        lines = boardLines(board, at, pinned, data);
         return true;
       }
       if (e.key === "p") return act(), true;
