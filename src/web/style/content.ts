@@ -838,9 +838,6 @@ form.inline { display: inline; margin-left: auto; }
 .run-steer textarea { min-height: 38px; max-height: 160px; resize: none; }
 .run-steer .bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .run-steer .bar .muted { flex: 1 1 200px; }
-.run-summary { margin: 10px 0 0; text-wrap: pretty; }
-.run-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
-.run-actions form { display: inline-flex; }
 /* A tail beside a running row (studio/app.ts): the same log, a peek at it
    — fixed height so nothing around it shifts as lines arrive, and it
    scrolls itself rather than the page. */

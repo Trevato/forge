@@ -196,7 +196,7 @@ export async function runView(
           >`,
       )}
     </div>
-    <p class="run-summary" id="run-summary">${run.summary}</p>
+    <p class="mt" id="run-summary">${run.summary}</p>
     ${when(
       carried.length > 0,
       () =>
@@ -235,7 +235,7 @@ export async function runView(
     ${when(
       writer && unfinished && run.kind === "agent" && issue === undefined,
       () =>
-        html`<div class="run-actions" id="run-cancel">
+        html`<div class="bar mt" id="run-cancel">
           <form method="post" action="${base}/runs/${run.id}/cancel">
             ${btn("Stop", { size: "sm", variant: "outline", icon: "square" })}
           </form>
@@ -244,7 +244,7 @@ export async function runView(
     ${when(
       writer && unfinished && run.kind !== "agent",
       () =>
-        html`<div class="run-actions" id="run-cancel">
+        html`<div class="bar mt" id="run-cancel">
           <form method="post" action="${base}/runs/${run.id}/cancel">
             ${btn("Cancel run", {
               size: "sm",

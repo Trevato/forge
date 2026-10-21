@@ -521,6 +521,38 @@ describe("working: a run's own page in the studio", () => {
     // The transcript is on the page, and there is no second reading of it.
     expect(page).toContain('id="run-log"');
     expect(page).not.toContain("?mode=dev");
+    // The summary is a plain paragraph, not a page-part class (#3960).
+    expect(page).toMatch(/<p class="mt" id="run-summary">/);
+    expect(page).not.toContain('class="run-summary"');
+    expect(page).not.toContain("run-actions");
+  });
+
+  test("the cancel form sits in a .bar.mt row for an issue-less agent run and a non-agent run", async () => {
+    const agent = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      actorId: scoutId,
+      reason: "assigned",
+    });
+    claimRun(app.db, agent.id);
+    const check = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      reason: "push",
+    });
+    for (const [run, label] of [
+      [agent, "Stop"],
+      [check, "Cancel run"],
+    ] as const) {
+      const page = await (
+        await get(`/alice/engine/runs/${run.id}`, writerCookie)
+      ).text();
+      expect(page).toMatch(
+        new RegExp(
+          `<div class="bar mt" id="run-cancel">\\s*<form method="post" action="/alice/engine/runs/${run.id}/cancel">[\\s\\S]*?${label}[\\s\\S]*?</form>`,
+        ),
+      );
+    }
   });
 
   test("a running run's page reads its log from the one /events stream and opens no other", async () => {
