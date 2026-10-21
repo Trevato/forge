@@ -13,6 +13,7 @@ import { createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser } from "../src/core/users.ts";
+import { migrations } from "../src/core/schema.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { releaseDir } from "../src/release/checkout.ts";
 import { recordRelease } from "../src/release/record.ts";
@@ -29,6 +30,7 @@ describe("the releases page", () => {
   let root = "";
   let app: App;
   let servers: Servers;
+  let aliceCookie = "";
   const was = process.env["FORGE_COMMIT"];
 
   // A session minted directly: the sign-in form's password hash is slow on a loaded
@@ -75,9 +77,11 @@ describe("the releases page", () => {
       recordRelease(app.db, { sha: s, repoId, pullNumber: pull, ok: true, line });
     const dir = releaseDir(root, KEPT);
     mkdirSync(join(dir, "src", "core"), { recursive: true });
-    writeFileSync(join(dir, "src", "core", "schema.ts"), "export const migrations = " + JSON.stringify(Array(10_000).fill("SELECT 1")) + ";\n");
+    writeFileSync(join(dir, "src", "core", "schema.ts"), "export const migrations = " + JSON.stringify(Array(migrations.length + 1).fill("SELECT 1")) + ";\n");
     servers = await serve(app);
-  });
+    // Password hashing is the slow step under a loaded check machine: do it once, here, with room.
+    aliceCookie = await login("alice", "a-good-passphrase");
+  }, 60_000);
   afterAll(() => {
     if (was === undefined) delete process.env["FORGE_COMMIT"];
     else process.env["FORGE_COMMIT"] = was;
@@ -87,8 +91,7 @@ describe("the releases page", () => {
   });
 
   test("it lists the releases, marks the live one and links the pull", async () => {
-    const cookie = await login("alice", "a-good-passphrase");
-    const body = await (await fetch(`${servers.url}/releases`, { headers: { cookie } })).text();
+    const body = await (await fetch(`${servers.url}/releases`, { headers: { cookie: aliceCookie } })).text();
     expect(body).toContain("aaaaaaa");
     expect(body).toContain("bbbbbbb");
     expect(body).toContain("live");
@@ -97,8 +100,7 @@ describe("the releases page", () => {
   });
 
   test("a writer gets a button on a kept release, not on the live or a pruned one", async () => {
-    const cookie = await login("alice", "a-good-passphrase");
-    const body = await (await fetch(`${servers.url}/releases`, { headers: { cookie } })).text();
+    const body = await (await fetch(`${servers.url}/releases`, { headers: { cookie: aliceCookie } })).text();
     expect(body).toContain(`/releases/${KEPT}/rollback`);
     expect(body).not.toContain(`/releases/${LIVE}/rollback`);
     expect(body).not.toContain(`/releases/${PRUNED}/rollback`);
