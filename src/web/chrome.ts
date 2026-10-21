@@ -66,13 +66,12 @@ export function crumbsFor(repo: Repo): { label: string; href: string }[] {
 }
 
 /** The one 404 in the product: same words for "no such thing" and "not
- * yours to see". A signed-out GET also gets the way back in, to this very
- * address; it is offered whether or not the thing exists, so it tells nothing. */
-export function notFoundPage(ctx: Ctx): Response {
-  const back =
-    ctx.auth.user === undefined && ctx.request.method === "GET"
-      ? btn("Sign in", { href: signInHref(ctx) })
-      : undefined;
+ * yours to see". With no session, on a GET, it also offers sign-in back to
+ * this address; `plain` leaves that out for a miss that must reveal nothing
+ * (a dead `/go/:code`). */
+export function notFoundPage(ctx: Ctx, opts: { plain?: boolean } = {}): Response {
+  const offerSignIn =
+    !opts.plain && ctx.auth.user === undefined && ctx.request.method === "GET";
   return page(
     {
       ctx,
@@ -82,8 +81,8 @@ export function notFoundPage(ctx: Ctx): Response {
           icon: "search",
           title: "Nothing here",
           note: "The page you asked for does not exist, or is not visible to you.",
-          action: back
-            ? html`${btn("Go home", { href: "/", variant: "primary" })} ${back}`
+          action: offerSignIn
+            ? btn("Sign in", { href: signInHref(ctx), variant: "primary" })
             : btn("Go home", { href: "/", variant: "primary" }),
         })}`,
     },

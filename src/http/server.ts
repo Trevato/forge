@@ -960,7 +960,7 @@ export function buildRouter(): Router<Handler> {
       ctx.app.config.dataDir,
       ctx.params.code ?? "",
     );
-    if (target === undefined) return notFoundPage(ctx);
+    if (target === undefined) return notFoundPage(ctx, { plain: true });
     return new Response(null, {
       status: 303,
       headers: { location: target, "cache-control": "no-store" },
@@ -2460,7 +2460,9 @@ async function answerGet(
         auth: { user: undefined, scope: undefined, via: "none" },
         theme: isThemeName(themeCookie) ? themeCookie : undefined,
       };
-      return notFoundPage(anonCtx);
+      // No session was read, so it cannot tell signed-out from signed-in:
+      // it offers no sign-in rather than one to someone who has signed in.
+      return notFoundPage(anonCtx, { plain: true });
     }
     return noRoute(request.method, url.pathname);
   }

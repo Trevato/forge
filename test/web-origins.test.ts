@@ -649,7 +649,14 @@ describe("origins on the web", () => {
         .replaceAll(/nonce="[^"]*"/g, 'nonce="N"')
         .replaceAll(/here\?path=[^"&\s]*/g, "here?path=")
         .replaceAll(/next=[^"]*/g, "next=");
-    expect(sameBut(await stale.text())).toBe(sameBut(await unknown.text()));
+    const staleText = await stale.text();
+    const unknownText = await unknown.text();
+    expect(sameBut(staleText)).toBe(sameBut(unknownText));
+    // A dead code offers no sign-in back to itself: it reveals nothing.
+    for (const text of [staleText, unknownText]) {
+      expect(text).toContain("Go home");
+      expect(text).not.toContain("/signin?next=");
+    }
 
     // A finished flow's link dies with it, and the code is not reissued.
     const fresh = await asUser(carol, "/settings/origins/oauth", {

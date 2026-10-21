@@ -311,6 +311,7 @@ describe("web ui", () => {
     expect(out).toContain(
       `href="/signin?next=${encodeURIComponent(asked).replaceAll("&", "&amp;")}"`,
     );
+    expect(out).not.toContain("Go home");
     const hidden = await (await fetch(`${base}/kim/secret`)).text();
     const absent = await (await fetch(`${base}/kim/nothing`)).text();
     const scrub = (t: string) =>
@@ -322,6 +323,7 @@ describe("web ui", () => {
     ).text();
     expect(signedIn).toContain("Nothing here");
     expect(signedIn).not.toContain("/signin?next=");
+    expect(signedIn).toContain("Go home");
   });
 
   test("safeNext refuses another origin", () => {
