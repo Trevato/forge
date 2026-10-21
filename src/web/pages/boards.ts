@@ -272,7 +272,7 @@ export async function boardsPage(ctx: Ctx): Promise<Response> {
         ? chartBox(p.chart, points, `${p.aggregate} of ${p.source}`)
         : html`<p class="muted small">The rows behind a point, as the values of ${cols[0] ?? ""} with how many rows have each. <a href="${link({ ...p, rows: "" })}">Back to the chart</a>.</p>`;
     result = html`${chart}
-      ${when(p.rows !== "" || p.chart !== "table", () => html`<table class="table">
+      ${when(p.rows !== "" || p.chart !== "table", () => html`<table class="table mt">
         <thead><tr><th scope="col">${p.by}</th>${split ? html`<th scope="col">${p.series}</th>` : null}<th scope="col" class="num">${p.aggregate}</th></tr></thead>
         <tbody>
           ${answer.rows.map(
@@ -326,7 +326,7 @@ export async function boardsPage(ctx: Ctx): Promise<Response> {
     ctx,
     title: "Boards",
     body: html`<div class="page-head"><h1>Data</h1>${btn("All boards", { href: "/boards", variant: "ghost" })}</div>
-      ${form} ${absent} ${card(result, { head: html`<h2>${p.source}</h2>`, extra: "boards-result" })} ${pin} ${sources}`,
+      ${form} ${absent} ${card(result, { head: html`<h2>${p.source}</h2>` })} ${pin} ${sources}`,
   });
   notePhase(ctx.request, "render", Math.max(0, performance.now() - rendering - boardsMs));
   return response;

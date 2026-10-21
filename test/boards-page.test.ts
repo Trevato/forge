@@ -64,6 +64,15 @@ const listed = async (url: string) => {
 };
 
 describe("/boards/data", () => {
+  test("the result is drawn with §5's card and table, not .boards-result", async () => {
+    const body = await (await get("/boards/data?source=runs&by=day", "admin")).text();
+    expect(body).not.toContain("boards-result");
+    expect(body).toMatch(/<table\s+class="table mt"/);
+    expect(body).toContain("<h2>runs</h2>");
+    expect(body).toContain('<th scope="col" class="num">');
+    expect(body).toContain("2026-10-02");
+  });
+
   test("seeded runs per day draw one path with one point per day", async () => {
     const res = await get("/boards/data?source=runs&by=day", "admin");
     expect(res.status).toBe(200);
