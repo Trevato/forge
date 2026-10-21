@@ -560,13 +560,24 @@ export function terminalLine(
           <span class="mono">FORGE_SSH_PORT</span> to turn it on.
         </p>`
       : html`<p class="muted small">The terminal is off.</p>`;
-  return html`<p class="terminal-line">
-    <code class="mono"><!--email_off-->${terminal.command}<!--/email_off--></code>
+  return terminalCommand(terminal.command, fingerprint);
+}
+
+/** The command, copyable as one wrapping line, the host key under it and
+ * anything `extra` (a link) under that — a §5 `.stack`, no class of its own. */
+export function terminalCommand(
+  command: string,
+  fingerprint?: string | undefined,
+  extra?: Html,
+): Html {
+  return html`<div class="stack stack-tight">
+    <code class="mono break"><!--email_off-->${command}<!--/email_off--></code>
     ${when(
       fingerprint,
-      (fp) => html`<span class="muted small">host key ${fp}</span>`,
+      (fp) => html`<span class="muted small break">host key ${fp}</span>`,
     )}
-  </p>`;
+    ${extra ?? null}
+  </div>`;
 }
 
 /**

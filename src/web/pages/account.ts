@@ -57,6 +57,7 @@ import {
   confirmAction,
   empty,
   selectField,
+  terminalCommand,
   time,
   field as uiField,
 } from "../ui.ts";
@@ -760,13 +761,9 @@ function keysView(
   const ssh = sshCommand(ctx.app);
   return html`${ssh === undefined
       ? html`<p class="mb muted" id="terminal-off">The terminal is off on this forge.</p>`
-      : html`<p class="mb terminal-line" id="terminal">
-          <code class="mono">${ssh}</code>
-          ${when(
-            ctx.app.config.sshHostKey,
-            (fp) => html`<span class="muted small">host key ${fp}</span>`,
-          )}
-        </p>`}
+      : html`<div class="mb" id="terminal">
+          ${terminalCommand(ssh, ctx.app.config.sshHostKey)}
+        </div>`}
     <p class="muted small mb">
       Keys that sign you in over SSH. Paste a public key (<span class="mono"
         >~/.ssh/id_ed25519.pub</span

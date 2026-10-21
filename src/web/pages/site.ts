@@ -45,6 +45,7 @@ import {
   listCard,
   row,
   selectField,
+  terminalCommand,
 } from "../ui.ts";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -193,14 +194,11 @@ export function terminalCard(ctx: Ctx): Html {
   const ssh = sshCommand(ctx.app);
   if (ssh === undefined) return html``;
   return card(
-    html`<div class="terminal-line">
-        <code class="mono">${ssh}</code>
-        <a class="small" href="/settings/keys">SSH keys</a>
-      </div>
-      ${when(
-        ctx.app.config.sshHostKey,
-        (fp) => html`<p class="muted small mt">host key ${fp}</p>`,
-      )}`,
+    terminalCommand(
+      ssh,
+      ctx.app.config.sshHostKey,
+      html`<a class="small" href="/settings/keys">SSH keys</a>`,
+    ),
     { head: html`<h2>Terminal</h2>` },
   );
 }

@@ -911,7 +911,7 @@ describe("the App page's terminal line survives an email-scanning edge (issue #2
     // Strip only the markers: what is left is exactly the command inside
     // its tag, unchanged — nothing dropped or split, no stray space added.
     const withoutMarkers = html.replace(/<!--\/?email_off-->/g, "");
-    expect(withoutMarkers).toContain(`<code class="mono">${command}</code>`);
+    expect(withoutMarkers).toContain(`<code class="mono break">${command}</code>`);
     expect(html).toContain("host key SHA256:abcdefghijklmnopqrstuvwxyz");
   });
 });

@@ -64,7 +64,7 @@ describe("the terminal on the website", () => {
   test("the landing page invites you in over ssh", async () => {
     const page = await fetch(`${base}/`).then((r) => r.text());
     expect(page).toContain("ssh -p 2222 forge.example");
-    expect(page).toContain("terminal-line");
+    expect(page).not.toContain("terminal-line");
     expect(page).toContain("your key is your identity");
     expect(page).not.toContain("hero-terminal");
     expect(page).not.toContain('class="hero');
@@ -84,6 +84,18 @@ describe("the terminal on the website", () => {
       headers: { cookie },
     }).then((r) => r.text());
     expect(page).toContain("ssh -p 2222 forge.example");
+    expect(page).toContain("host key SHA256:");
+    expect(page).not.toContain("terminal-line");
+    expect(page).toContain('id="terminal"');
+    expect(page).toContain('<code class="mono break">');
+  });
+
+  test("the dashboard's Terminal card has no terminal-line, keeps the keys link", async () => {
+    const page = await fetch(`${base}/`, { headers: { cookie } }).then((r) =>
+      r.text(),
+    );
+    expect(page).not.toContain("terminal-line");
+    expect(page).toContain('<a class="small" href="/settings/keys">SSH keys</a>');
     expect(page).toContain("host key SHA256:");
   });
 
