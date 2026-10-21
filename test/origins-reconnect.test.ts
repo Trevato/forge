@@ -148,12 +148,21 @@ describe("a frozen mirror is said, and reconnected in one click", () => {
     );
 
   /** The sync after a reconnect runs in the background; wait for its refs. */
-  async function mirrorReaches(oid: string, ms = 15_000): Promise<void> {
-    const start = Date.now();
-    while ((await mirrorMain()) !== oid) {
-      if (Date.now() - start > ms)
-        throw new Error(`mirror main never reached ${oid}`);
-      await Bun.sleep(50);
+  async function mirrorReaches(oid: string): Promise<void> {
+    await refReaches(() => mirrorMain(), oid);
+  }
+
+  /**
+   * Wait for a ref to reach an oid. No deadline of its own: the sync that
+   * moves it is awaited, and the test's timeout is the only bound, so a
+   * loaded machine slows it and never fails it.
+   */
+  async function refReaches(
+    read: () => Promise<string | undefined>,
+    oid: string,
+  ): Promise<void> {
+    while ((await read()) !== oid) {
+      await Promise.race([syncsSettled(), Bun.sleep(50)]);
     }
   }
 
@@ -298,9 +307,7 @@ describe("a frozen mirror is said, and reconnected in one click", () => {
   afterAll(async () => {
     // A sync started by a reconnect may outlive the test that waited for its
     // refs; it must not write into a directory being removed.
-    // Bounded: a sync wedged on a loaded machine must not take the hook's
-    // own timeout, which fails the file under no name.
-    await Promise.race([syncsSettled(), Bun.sleep(30_000)]);
+    await syncsSettled();
     octo.stop();
     mona.stop();
     servers.stop();
@@ -678,12 +685,7 @@ describe("a frozen mirror is said, and reconnected in one click", () => {
 
     // And the fork, which has nothing of its own, follows its parent again.
     const forkDir = repoDir(app.reposRoot, "alice", "widgets-fork");
-    const start = Date.now();
-    while ((await resolveOid(forkDir, "refs/heads/main")) !== tip) {
-      if (Date.now() - start > 10_000)
-        throw new Error("the fork never followed");
-      await Bun.sleep(50);
-    }
+    await refReaches(() => resolveOid(forkDir, "refs/heads/main"), tip);
     await syncOrigin(app, getOriginById(app.db, again)!);
   });
 });
