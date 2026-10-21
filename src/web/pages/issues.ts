@@ -13,6 +13,7 @@ import {
 import type { Issue } from "../../core/issues.ts";
 import { canRead, type Repo } from "../../core/repos.ts";
 import { privateRepoForSealed } from "../../actions/repos.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
   crumbsFor,
@@ -128,18 +129,21 @@ function newIssueForm(
 
 // GET /:owner/:name/issues/new
 export function newIssuePage(ctx: Ctx): Response {
-  const repo = loadRepo(ctx);
-  if (!repo) return notFoundPage(ctx);
-  if (!ctx.auth.user)
-    return canRead(ctx.app.db, repo, undefined)
-      ? accountOrReport(ctx, repo)
-      : signInFirst(ctx);
+  const request = ctx.request;
+  notePhase(request, "session", takeSessionTime(request));
+  const repo = timePhase(request, "repo", () => loadRepo(ctx));
+  if (!repo) return timePhase(request, "render", () => notFoundPage(ctx));
+  if (!ctx.auth.user) {
+    const open = timePhase(request, "access", () => canRead(ctx.app.db, repo, undefined));
+    return timePhase(request, "render", () =>
+      open ? accountOrReport(ctx, repo) : signInFirst(ctx),
+    );
+  }
   // `?sealed=1`: the repository page's "report it sealed" link.
-  return composePage(ctx, repo, {
-    title: "",
-    body: "",
-    sealed: ctx.url.searchParams.get("sealed") === "1",
-  });
+  const sealed = ctx.url.searchParams.get("sealed") === "1";
+  return timePhase(request, "render", () =>
+    composePage(ctx, repo, { title: "", body: "", sealed }),
+  );
 }
 
 /**

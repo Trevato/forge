@@ -121,8 +121,15 @@ function reportForm(
 
 // GET /:owner/:name/report
 export function reportPage(ctx: Ctx): Response {
-  const repo = publicRepo(ctx);
-  if (!repo) return notFoundPage(ctx);
+  const request = ctx.request;
+  notePhase(request, "session", takeSessionTime(request));
+  const repo = timePhase(request, "repo", () => loadRepo(ctx));
+  const open = repo !== undefined && timePhase(request, "access", () => canRead(ctx.app.db, repo, undefined));
+  if (!repo || !open) return timePhase(request, "render", () => notFoundPage(ctx));
+  return timePhase(request, "render", () => reportBody(ctx, repo));
+}
+
+function reportBody(ctx: Ctx, repo: Repo): Response {
   if (ctx.url.searchParams.get("sent") === "1")
     return page({
       ctx,

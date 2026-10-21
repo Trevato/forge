@@ -26,33 +26,39 @@ import {
   timePhase,
 } from "../../core/route_timing.ts";
 
+type Refusal = Extract<Awaited<ReturnType<typeof makeItYours>>, { ok: false }>["error"];
+
+/** Where a refused plan lands: back on the repository, saying why. */
+function planRefused(ctx: Ctx, repo: NonNullable<ReturnType<typeof loadRepo>>, error: Refusal): Response {
+  if (error.kind === "own")
+    return flashTo(ctx, repoBase(repo), {
+      tone: "attn",
+      message: "This app is already yours.",
+    });
+  if (error.kind === "not_found") return notFoundPage(ctx);
+  return flashTo(ctx, repoBase(repo), {
+    tone: "danger",
+    message:
+      error.kind === "invalid"
+        ? error.message
+        : error.kind === "not_member"
+          ? `Not for this account: ${NOT_A_MEMBER}.`
+          : "That could not be made yours.",
+  });
+}
+
 // GET /:owner/:name/make-it-yours
 export async function makeItYoursPage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const repo = timePhase(ctx.request, "repo", () => loadRepo(ctx));
-  if (!repo) return notFoundPage(ctx);
-  if (!ctx.auth.user) return signInFirst(ctx);
+  if (!repo) return timePhase(ctx.request, "render", () => notFoundPage(ctx));
+  if (!ctx.auth.user) return timePhase(ctx.request, "render", () => signInFirst(ctx));
   const user = ctx.auth.user;
   const plan = await timePhaseAsync(ctx.request, "plan", () =>
     makeItYours(ctx.app, user, repo, { dryRun: true }),
   );
-  if (!plan.ok) {
-    if (plan.error.kind === "own")
-      return flashTo(ctx, repoBase(repo), {
-        tone: "attn",
-        message: "This app is already yours.",
-      });
-    if (plan.error.kind === "not_found") return notFoundPage(ctx);
-    return flashTo(ctx, repoBase(repo), {
-      tone: "danger",
-      message:
-        plan.error.kind === "invalid"
-          ? plan.error.message
-          : plan.error.kind === "not_member"
-            ? `Not for this account: ${NOT_A_MEMBER}.`
-            : "That could not be made yours.",
-    });
-  }
+  if (!plan.ok)
+    return timePhase(ctx.request, "render", () => planRefused(ctx, repo, plan.error));
   const p = plan.value;
   const rendering = performance.now();
   const body = html`<div class="narrow-wide">

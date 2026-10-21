@@ -150,10 +150,10 @@ export async function toolbarPage(ctx: Ctx): Promise<Response> {
   const request = ctx.request;
   notePhase(request, "session", takeSessionTime(request));
   const repo = timePhase(request, "repo", () => loadRepo(ctx));
-  if (!repo) return notFoundPage(ctx);
+  if (!repo) return timePhase(request, "render", () => notFoundPage(ctx));
   const where = parseEnv(ctx.url.searchParams.get("env") ?? "production");
   if (where === undefined || timePhase(request, "app-row", () => getAppByRepo(ctx.app.db, repo.id)) === undefined)
-    return notFoundPage(ctx);
+    return timePhase(request, "render", () => notFoundPage(ctx));
   const db = ctx.app.db;
   const user = ctx.auth.user;
   const pull =
@@ -161,11 +161,11 @@ export async function toolbarPage(ctx: Ctx): Promise<Response> {
       ? undefined
       : timePhase(request, "pull", () => getIssue(db, repo.id, where.pull!));
   if (where.pull !== undefined && (!pull || pull.kind !== "pull" || !mayView(db, repo, pull, user)))
-    return notFoundPage(ctx);
+    return timePhase(request, "render", () => notFoundPage(ctx));
   const address = pageAddress(ctx.url.searchParams.get("page") ?? "");
   const base = repoBase(repo);
   const here = html`${repo.name}, ${pull ? html`preview of pull #${pull.number}` : "production"}`;
-  const liveNote = pull ? html`` : await liveLine(ctx, repo, base);
+  const liveNote = pull ? html`` : await timePhaseAsync(request, "live", () => liveLine(ctx, repo, base));
   const home = btn("Home", { href: "/", variant: "ghost" });
   // The issue row carries no head oid; a pull row may be absent (an import in progress).
   const joined = pull ? getPull(db, repo.id, pull.number) : undefined;
