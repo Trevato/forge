@@ -1,6 +1,7 @@
 /**
  * A repository's upstream setting (#3442, layer 1): stored as a row, https
- * or http only, and an admin's to read.
+ * or http only, and an admin's to read. Layer 2: its check — one at a time,
+ * the vetted address, a token only to its exact https origin.
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -13,6 +14,12 @@ import { audienceFilter } from "../src/core/event_audience.ts";
 import { listEvents } from "../src/core/events.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
+import { checkDue, checkUpstream, mayCarryCredential } from "../src/actions/upstream_follow.ts";
+import { createOrigin } from "../src/core/origins.ts";
+import { runGit } from "../src/git/env.ts";
+import { REMOTE_PROTOCOLS } from "../src/git/remote-env.ts";
+import { repoDir } from "../src/git/repos.ts";
+import { MIRROR_REFUSED, provideMirrorOutboundForTest, vettedEnv } from "../src/origins/git-mirror.ts";
 import {
   getFollow,
   listFollowing,
@@ -26,6 +33,8 @@ let app: App;
 let alice: User;
 let guest: User;
 let repo: Repo;
+let target: Repo;
+let dir = "";
 
 const ok = <T>(r: { ok: true; value: T } | { ok: false; error: unknown }): T => {
   if (!r.ok) throw new Error(JSON.stringify(r.error));
@@ -126,5 +135,159 @@ describe("who hears of it", () => {
       JSON.stringify(listEvents(app.db, { repoId: repo.id }).filter(audienceFilter(app.db, viewer)));
     expect(seen(alice)).toContain(secret);
     expect(seen(guest)).not.toContain(secret);
+  });
+});
+
+describe("checking an upstream (layer 2)", () => {
+  beforeAll(async () => {
+    target = ok(await createRepo(app, alice, { name: "checked", visibility: "public" }));
+    dir = repoDir(app.reposRoot, target.ownerName, target.name);
+    provideMirrorOutboundForTest({ allow: ["127.0.0.1"] });
+  });
+  afterAll(() => provideMirrorOutboundForTest({}));
+  /** A server that records every request and answers with `refs` as a dumb-http `info/refs`. */
+  function upstream(refs: () => string, delayMs = 0) {
+    const seen: Request[] = [];
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        seen.push(req);
+        if (delayMs > 0) await Bun.sleep(delayMs);
+        return new URL(req.url).pathname.endsWith("/info/refs")
+          ? new Response(refs(), { headers: { "content-type": "text/plain" } })
+          : new Response("no", { status: 404 });
+      },
+    });
+    return { seen, server, url: `http://127.0.0.1:${server.port}/o/r.git` };
+  }
+
+  const follow = (url: string, originId = "") =>
+    putFollow(app.db, { repoId: target.id, url, branch: "main", enabled: true, byId: alice.id, originId });
+
+  describe("one check at a time", () => {
+    test("a second caller while one runs is refused", async () => {
+      const up = upstream(() => "", 150);
+      try {
+        follow(up.url);
+        const [a, b] = await Promise.all([checkUpstream(app, target), checkUpstream(app, target)]);
+        expect(!b.ok && b.error).toBe("busy");
+        expect(a.ok).toBe(false);
+        expect(!a.ok && a.error).not.toBe("busy");
+        // The claim is let go: the next one runs.
+        const c = await checkUpstream(app, target);
+        expect(!c.ok && c.error).not.toBe("busy");
+      } finally {
+        up.server.stop(true);
+      }
+    });
+  });
+
+  describe("the vetted address", () => {
+    test("is pinned in git's environment, with only https and http", async () => {
+      const env = ok(await vettedEnv("http://127.0.0.1:8123/o/r.git", {}, REMOTE_PROTOCOLS));
+      expect(env["GIT_ALLOW_PROTOCOL"]).toBe("https:http");
+      const entries = Object.entries(env).filter(([, v]) => v === "127.0.0.1:8123:127.0.0.1");
+      expect(entries.length).toBe(1);
+      expect(env[entries[0]![0].replace("VALUE", "KEY")]).toBe("http.curloptResolve");
+    });
+
+    test("a private host is refused unless trusted, and nothing is fetched", async () => {
+      provideMirrorOutboundForTest({});
+      const up = upstream(() => "");
+      try {
+        follow(up.url);
+        const r = await checkUpstream(app, target);
+        expect(!r.ok && r.error).toBe("unreadable");
+        expect(getFollow(app.db, target.id)?.error).toBe(MIRROR_REFUSED);
+        expect(up.seen.length).toBe(0);
+      } finally {
+        provideMirrorOutboundForTest({ allow: ["127.0.0.1"] });
+        up.server.stop(true);
+      }
+    });
+  });
+
+  describe("the credential", () => {
+    test("goes only to the same scheme, host and port, over https", () => {
+      const web = "https://git.example.com";
+      expect(mayCarryCredential("https://git.example.com/a/b.git", web)).toBe(true);
+      expect(mayCarryCredential("http://git.example.com/a/b.git", web)).toBe(false);
+      expect(mayCarryCredential("https://git.example.com:8443/a/b.git", web)).toBe(false);
+      expect(mayCarryCredential("https://evil.example.com/a/b.git", web)).toBe(false);
+      expect(mayCarryCredential("https://git.example.com.evil.com/a", web)).toBe(false);
+      expect(mayCarryCredential("https://git.example.com/a", "http://git.example.com")).toBe(false);
+      expect(mayCarryCredential("not a url", web)).toBe(false);
+    });
+
+    test("an http upstream on a connected host is fetched with no Authorization", async () => {
+      const up = upstream(() => "");
+      try {
+        const origin = ok(
+          createOrigin(app.db, dataDir, {
+            userId: alice.id,
+            kind: "forgejo",
+            apiUrl: `http://127.0.0.1:${up.server.port}/api/v1`,
+            webUrl: `http://127.0.0.1:${up.server.port}`,
+            login: "alice",
+            token: "s3cret-token",
+          }),
+        );
+        follow(up.url, origin.id);
+        await checkUpstream(app, target);
+        expect(up.seen.length).toBeGreaterThan(0);
+        for (const req of up.seen) expect(req.headers.get("authorization")).toBeNull();
+      } finally {
+        up.server.stop(true);
+      }
+    });
+  });
+
+  describe("what a check records", () => {
+    test("the upstream tip and how far behind, without opening anything", async () => {
+      const git = async (args: string[]) => ok(await runGit(args, { cwd: dir, env: ident })).trim();
+      const ident = {
+        GIT_AUTHOR_NAME: "t",
+        GIT_AUTHOR_EMAIL: "t@x",
+        GIT_COMMITTER_NAME: "t",
+        GIT_COMMITTER_EMAIL: "t@x",
+      };
+      const empty = await git(["hash-object", "-t", "tree", "-w", "--stdin"]).catch(() => "");
+      const tree = empty || "4b825dc642cb9eb9a060e54bf8d69288fbee4904";
+      const c1 = await git(["commit-tree", tree, "-m", "one"]);
+      const c2 = await git(["commit-tree", tree, "-p", c1, "-m", "two"]);
+      await git(["update-ref", `refs/heads/${target.defaultBranch}`, c1]);
+      // Already staged, so the check reads the tip and has nothing to fetch.
+      await git(["update-ref", "refs/upstream-follow/main", c2]);
+      const up = upstream(() => `${c2}\trefs/heads/main\n`);
+      try {
+        follow(up.url);
+        const r = ok(await checkUpstream(app, target));
+        expect(r).toEqual({ tip: c2, behind: 1 });
+        const row = getFollow(app.db, target.id)!;
+        expect(row.tip).toBe(c2);
+        expect(row.behind).toBe(1);
+        expect(row.error).toBe("");
+        expect(row.pendingId).toBeNull();
+        expect(row.opened).toBe(0);
+      } finally {
+        up.server.stop(true);
+      }
+    });
+  });
+
+  test("the clock checks a due following once and leaves a fresh one alone", async () => {
+    const up = upstream(() => "");
+    try {
+      follow(up.url);
+      await checkDue(app, Date.now() + 31 * 60_000);
+      const seen = up.seen.length;
+      expect(seen).toBeGreaterThan(0);
+      // Just checked: not due again.
+      await checkDue(app, Date.now());
+      expect(up.seen.length).toBe(seen);
+    } finally {
+      up.server.stop(true);
+    }
   });
 });

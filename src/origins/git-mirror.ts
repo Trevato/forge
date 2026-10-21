@@ -57,9 +57,10 @@ export const MIRROR_UNRESOLVED = "the remote's host could not be resolved";
  * Vet the clone URL's host and return git's environment pinned to the
  * address that passed — or the one sentence that ends the sync.
  */
-async function vettedEnv(
+export async function vettedEnv(
   url: string,
   authEnv: Record<string, string>,
+  protocols?: string,
 ): Promise<Result<Record<string, string>, GitMirrorError>> {
   const host = new URL(url).hostname;
   const vetted = await vetHost(host, { ...outbound, trusted: trustedHosts() });
@@ -67,7 +68,7 @@ async function vettedEnv(
     return err({
       message: vetted.error === "refused" ? MIRROR_REFUSED : MIRROR_UNRESOLVED,
     });
-  return ok(remoteGitEnv(authEnv, pinFor(url, vetted.value[0]!)));
+  return ok(remoteGitEnv(authEnv, pinFor(url, vetted.value[0]!), protocols));
 }
 
 export interface RefSnapshot {

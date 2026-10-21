@@ -27,6 +27,7 @@ import { runDelivery } from "./core/webhooks.ts";
 import { isHookName, runHookClient } from "./git/hooks.ts";
 import { drainStreams } from "./http/sse.ts";
 import { serve } from "./http/server.ts";
+import { checkDue } from "./actions/upstream_follow.ts";
 import { runSync } from "./origins/sync.ts";
 import { startForgeSsh } from "./tui/ssh.ts";
 import { AppsRuntime } from "./apps/runtime.ts";
@@ -491,6 +492,9 @@ const tickAsks = async (): Promise<void> => {
     app.log.warn("degraded history: vitals failed", { error: String(error) });
   }
 };
+// Followed upstreams are read on a slow tick (`actions/upstream_follow.ts`):
+// the tip and how far behind land on the follow row; nothing is opened.
+const followTimer = setInterval(() => void checkDue(app), 60_000);
 const staleTimer = setInterval(() => void tickAsks(), 120_000);
 void tickAsks();
 
@@ -637,6 +641,7 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
   clearInterval(upstreamTimer);
   clearInterval(syncTimer);
   clearInterval(staleTimer);
+  clearInterval(followTimer);
   clearInterval(processTimer);
   clearInterval(leaseTimer);
   // The platform's SIGTERM: the listener stays open while routers learn
