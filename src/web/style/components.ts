@@ -399,6 +399,11 @@ a.sha:hover { color: var(--accent); }
 }
 .row:focus-visible { outline-offset: -2px; }
 a.row:hover, .row[data-nav]:hover { background: var(--muted); color: inherit; }
+.list li[aria-current="true"] > .row { background: var(--muted); }
+/* A tree: the rows under a row hang from a rule, a step in. */
+.row-children { list-style: none; margin: 0 0 0 22px; padding: 0; border-left: 1px solid var(--border); }
+.row-children > li { border-top: 1px solid var(--border); }
+@media (max-width: 719px) { .row-children { margin-left: 12px; } }
 a.row:hover .row-title { color: var(--accent); }
 .row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .row-title {

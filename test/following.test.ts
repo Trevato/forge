@@ -1095,6 +1095,10 @@ describe("an open chain page hears a sever", () => {
     expect(page).toContain('data-live="forge.severed,forge.proposal,forge.follow_mode,forge.upstream,forge.updates_taken"');
     expect(page).toContain('data-live-repo="kid/forge"');
     expect(page).not.toContain("follows nothing since");
+    expect(page).not.toMatch(/lineage(-children|-here)?\b/);
+    expect(page).toContain('aria-label="Forges, root first"');
+    expect(page).toContain("you are here");
+    expect(page).toContain('action="/kid/forge/following/mode"');
   });
 
   test("a sever reaches the viewer's stream with the repo the region filters on, and a refetch shows it", async () => {
@@ -1124,5 +1128,9 @@ describe("an open chain page hears a sever", () => {
     const page = await chainPage();
     expect(page).toContain("follows nothing since");
     expect(page).toContain('id="live-chain"');
+    expect(page).not.toMatch(/lineage(-children|-here)?\b/);
+    expect(page).toContain('aria-label="Forges, root first"');
+    expect(page).toContain("you are here");
+    expect(page).toContain('id="severed"');
   });
 });

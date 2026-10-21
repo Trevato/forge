@@ -17,7 +17,7 @@ import { loadRepo, notFoundPage, pageHead, repoBase, signInFirst } from "../chro
 import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashOrJson, page, redirect } from "../layout.ts";
-import { btn, card } from "../ui.ts";
+import { badge, btn, card, row } from "../ui.ts";
 
 /** The events that change what the chain page says. */
 export const CHAIN_LIVE = "forge.severed,forge.proposal,forge.follow_mode,forge.upstream,forge.updates_taken";
@@ -58,16 +58,12 @@ function lineRow(l: ChainLine, upstream?: string): Html {
           : "the root: follows nothing"
         : MODE_WORDS[l.mode];
   const ahead = l.ahead === null ? "" : l.ahead === 0 ? " · nothing of its own" : ` · ${l.ahead} of its own`;
-  return html`<li>
-    <div class="row">
-      <span class="row-main">
-        <span class="row-title"
-          >${l.repo}${where}${l.here ? html` <span class="lineage-here">you are here</span>` : null}</span
-        >
-        <span class="row-meta">${how}${ahead}${upstream === undefined ? null : ` · ${upstream}`}</span>
-      </span>
-    </div>
-  </li>`;
+  return row({
+    title: `${l.repo}${where}`,
+    meta: html`${how}${ahead}${upstream === undefined ? null : ` · ${upstream}`}`,
+    ...(l.here ? { trail: badge("you are here", { variant: "outline" }) } : {}),
+    current: l.here,
+  });
 }
 
 /** Whether this repository is the forge code a spawned forge carries. */
@@ -138,7 +134,7 @@ export async function chainPage(ctx: Ctx): Promise<Response> {
         data-live-repo="${repo.ownerName}/${repo.name}"
       >
       ${card(
-        html`<ul class="list lineage" aria-label="Forges, root first">
+        html`<ul class="list" aria-label="Forges, root first">
           ${view.lines.map((l) => lineRow(l, l.here && l.mode !== null ? upstreamWords(state) : undefined))}
         </ul>`,
         { pad: false },

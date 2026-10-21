@@ -31,6 +31,7 @@ import { familyScreen } from "../src/tui/screens/family.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import type { Ctx } from "../src/http/context.ts";
 import { familyPage } from "../src/web/pages/family.ts";
+import { row } from "../src/web/ui.ts";
 import { settleApp } from "./helpers/tui.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
@@ -281,6 +282,37 @@ describe("family heartbeats", () => {
     expect(hostileHtml).not.toContain("<b>x</b>");
     expect(await text(ctxOf(false), two)).not.toContain("data-apps");
     expect(await text(ctxOf(true), () => ({ total: 0, running: 0, notRunning: [] }))).not.toContain("data-apps");
+  });
+
+  test("the family page draws §5's row: the old lineage names are gone, the words and links stay", async () => {
+    const ctx: Ctx = {
+      app: parent,
+      request: new Request("http://localhost/family"),
+      url: new URL("http://localhost/family"),
+      params: {},
+      auth: { user: { id: 1, username: "alice", isAdmin: true } as never, scope: undefined, via: "session" },
+      theme: undefined,
+    };
+    const page = await (await familyPage(ctx, two)).text();
+    expect(page).not.toMatch(/lineage(-children|-here)?\b/);
+    expect(page).toContain("you are here");
+    expect(page).toContain('aria-label="Forges, by who sent whom"');
+    expect(page).toContain('class="row"');
+    expect(page).toContain("version ");
+    // The tree stays a tree: what this forge sent is a list inside this forge's row.
+    expect(page).toContain('<ul class="row-children">');
+    expect(page.indexOf('aria-current="true"')).toBeLessThan(page.indexOf("row-children"));
+  });
+
+  test("row() nests children's rows inside its own li, after the row", () => {
+    const grand = row({ title: "grand" });
+    const child = row({ title: "child", children: [grand] });
+    const top = row({ title: "top", children: [child] }).text;
+    expect(top.indexOf("top")).toBeLessThan(top.indexOf("child"));
+    expect(top.indexOf("child")).toBeLessThan(top.indexOf("grand"));
+    expect(top.match(/<ul class="row-children">/g)?.length).toBe(2);
+    expect(row({ title: "x" }).text).not.toContain("row-children");
+    expect(row({ title: "x", children: [] }).text).not.toContain("row-children");
   });
 
   test("appsLine counts what runs and says why the rest does not", () => {

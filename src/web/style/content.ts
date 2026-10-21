@@ -393,19 +393,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .wall-cells li + li { margin-top: 3px; }
 form.inline { display: inline; margin-left: auto; }
 
-/* The family tree: nesting is indentation and a rule, never a scrollbar. */
-.lineage-children {
-  list-style: none; margin: 0 0 0 22px; padding: 0;
-  border-left: 1px solid var(--border);
-}
-.lineage-children .row { padding-left: 12px; }
-.lineage-here {
-  margin-left: 6px; font-family: var(--mono); font-size: var(--fs-min); font-weight: 500;
-  letter-spacing: 0.04em; color: var(--accent);
-}
-.lineage .row[aria-current="page"] { background: var(--muted); }
-@media (max-width: 719px) { .lineage-children { margin-left: 12px; } }
-
 .terminal-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
 
 /* The studio's front door: the public apps, live first, as pictures. */

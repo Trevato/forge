@@ -16,7 +16,7 @@ import { MAX_DEPTH } from "../../spawn/heartbeat.ts";
 import { pageHead } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { card, time } from "../ui.ts";
+import { badge, card, row, time } from "../ui.ts";
 
 interface Node {
   readonly label: string;
@@ -63,28 +63,22 @@ function standingNode(c: FamilyChild): Node {
   };
 }
 
-function row(n: Node, depth: number): Html {
-  const inner = html`<span class="row-main">
-      <span class="row-title"
-        >${n.label}${n.here ? html` <span class="lineage-here">you are here</span>` : null}</span
-      >
-      ${n.meta.length === 0
-        ? null
-        : html`<span class="row-meta"
-            >${n.meta.map((m, i) => html`${i > 0 ? " · " : ""}${m}`)}</span
-          >`}
-    </span>
-    ${n.badge === null ? null : html`<span class="row-trail">${n.badge}</span>`}`;
-  return html`<li>
-    ${n.href === null
-      ? html`<div class="row">${inner}</div>`
-      : html`<a class="row" href="${n.href}" rel="noopener noreferrer">${inner}</a>`}
-    ${n.children.length === 0 || depth + 1 >= MAX_DEPTH
-      ? null
-      : html`<ul class="lineage-children">
-          ${n.children.map((c) => row(c, depth + 1))}
-        </ul>`}
-  </li>`;
+/** The tree as §5 rows: each forge's row holds the rows of the forges it sent. */
+function treeRow(n: Node, depth: number): Html {
+  const trail = [n.here ? badge("you are here", { variant: "outline" }) : null, n.badge].filter(
+    (t): t is Html => t !== null,
+  );
+  const kids = depth + 1 >= MAX_DEPTH ? [] : n.children.map((c) => treeRow(c, depth + 1));
+  return row({
+    title: n.label,
+    ...(n.href === null ? {} : { href: n.href }),
+    ...(n.meta.length === 0
+      ? {}
+      : { meta: html`${n.meta.map((m, i) => html`${i > 0 ? " · " : ""}${m}`)}` }),
+    ...(trail.length === 0 ? {} : { trail: html`${trail}` }),
+    current: n.here === true,
+    children: kids,
+  });
 }
 
 // GET /family
@@ -132,8 +126,8 @@ export async function familyPage(
         sub: "The forge this one came from, and the forges it sent. Children report in; nothing here reaches into one.",
       })}
       ${card(
-        html`<ul class="list lineage" aria-label="Forges, by who sent whom">
-            ${row(root, 0)}
+        html`<ul class="list" aria-label="Forges, by who sent whom">
+            ${treeRow(root, 0)}
           </ul>
           ${kids.more > 0
             ? html`<p class="muted small card-body">

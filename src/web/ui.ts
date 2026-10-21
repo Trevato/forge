@@ -879,6 +879,9 @@ export interface RowOptions {
   data?: Readonly<Record<string, string>>;
   /** The row is the one chosen (`aria-current="true"`). */
   current?: boolean;
+  /** The rows under this one, already drawn (`row()`s): a nested `<ul>` inside
+   * the `<li>`, so a tree stays a tree to assistive tech and with no script. */
+  children?: readonly Html[];
   /** The row folds: it is the `<summary>` of a `<details>` holding `body`,
    * open when `open` says so. Its `lead` is the caret. */
   fold?: { id: string; open: boolean; body: Html };
@@ -916,7 +919,9 @@ export function row(o: RowOptions): Html {
         </details>`
       : o.href !== undefined
       ? html`<a href="${o.href}" ${attrs}>${inner}</a>`
-      : html`<div ${attrs}>${inner}</div>`}
+      : html`<div ${attrs}>${inner}</div>`}${o.children === undefined || o.children.length === 0
+      ? null
+      : html`<ul class="row-children">${[...o.children]}</ul>`}
   </li>`;
 }
 
