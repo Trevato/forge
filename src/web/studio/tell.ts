@@ -37,6 +37,7 @@ import {
   badge,
   btn,
   card,
+  disclosure,
   icon,
   labelCss,
   listCard,
@@ -396,13 +397,14 @@ async function studioTell(
   // and both are one tap away when it is. What it waits for stays in view
   // above them — one of the three questions the page answers — with its
   // form for whoever may change it.
-  const details = html`<details class="quiet-details mt">
-    <summary>Details</summary>
-    ${assigneeCard(ctx, repo, issue, `${thread}/assignee`)}
-    ${labelsCard(ctx, repo, issue, applied, allLabels, `${thread}/labels`)}
-    ${teams}
-    ${sealCard(ctx, repo, issue, `${thread}/seal`)}
-  </details>`;
+  const details = disclosure(
+    "Details",
+    html`${assigneeCard(ctx, repo, issue, `${thread}/assignee`)}
+      ${labelsCard(ctx, repo, issue, applied, allLabels, `${thread}/labels`)}
+      ${teams}
+      ${sealCard(ctx, repo, issue, `${thread}/seal`)}`,
+    { extra: "mt" },
+  );
 
   const body = html`${repoHeader(ctx, repo, "issues", {
       compact: true,

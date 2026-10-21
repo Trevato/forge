@@ -21,7 +21,7 @@ describe("the board's notes", () => {
 
   test("closed by default, one line each, escaped", () => {
     const out = notesRegion([{ key: "k", need: true, line: html`<a>${"<b>"}</a>` }], live).text;
-    expect(out).toContain('<details id="notes-list" class="quiet-details">');
+    expect(out).toContain('<details id="notes-list" class="disclosure">');
     expect(out).not.toMatch(/<details[^>]*open/);
     expect(out).toContain("&lt;b&gt;");
   });

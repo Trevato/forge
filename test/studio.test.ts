@@ -1092,10 +1092,10 @@ describe("the studio", () => {
     expect(studio).not.toContain("?mode=dev");
     // Dev's controls, folded in: closed until asked for, never a mode.
     const details = studio.slice(
-      studio.indexOf('<details class="quiet-details'),
-      studio.indexOf("</details>", studio.indexOf('<details class="quiet-details')),
+      studio.indexOf('<details class="disclosure'),
+      studio.indexOf("</details>", studio.indexOf('<details class="disclosure')),
     );
-    expect(details).toMatch(/^<details class="quiet-details mt">/);
+    expect(details).toMatch(/^<details class="disclosure mt">/);
     expect(details).toContain("<h2>Labels</h2>");
     expect(details).toContain("<h2>Assignee</h2>");
     // What it waits for stays in view, with the form beside it.
@@ -1112,7 +1112,7 @@ describe("the studio", () => {
     ]) {
       const text = await dev.text();
       expect(text).toContain('data-word="working"');
-      expect(text).toContain('<details class="quiet-details mt">');
+      expect(text).toContain('<details class="disclosure mt">');
     }
   });
 

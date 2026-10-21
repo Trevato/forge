@@ -169,19 +169,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .connect-more[open] > summary::before { transform: rotate(90deg); }
 .connect-more > summary:hover { color: var(--accent); }
 .connect-more > p { margin: 6px 0 4px; }
-/* A page's quiet Details: what a person sometimes changes, closed until
-   asked for, the same disclosure as the one above. */
-.quiet-details > summary {
-  cursor: pointer; font-weight: 560; list-style: none; color: var(--muted-fg);
-  display: flex; align-items: center; gap: 6px; padding: 6px 0; min-height: 44px;
-}
-.quiet-details > summary::-webkit-details-marker { display: none; }
-.quiet-details > summary::before {
-  content: "›"; display: inline-block; color: var(--faint);
-  transition: transform 120ms var(--ease);
-}
-.quiet-details[open] > summary::before { transform: rotate(90deg); }
-.quiet-details > summary:hover { color: var(--accent); }
 /* Why an issue closes, beside the button that closes it. */
 .form-actions select[name="reason"] { width: auto; }
 .form-actions input[name="into"] { display: none; width: 7em; }

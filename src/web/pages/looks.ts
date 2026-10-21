@@ -33,7 +33,7 @@ import { notFound } from "../../http/respond.ts";
 import { keepLook } from "../../looks/service.ts";
 import { loadRepo, repoBase } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
-import { card, icon, sha, time } from "../ui.ts";
+import { card, disclosure, icon, sha, time } from "../ui.ts";
 
 /** The newest picture at one width, when there is one. */
 export const pictured = (
@@ -262,13 +262,14 @@ export function lookCard(
         </div>
       </div>
       ${when(darkPhone ?? darkDesktop, () =>
-        html`<details class="quiet-details">
-          <summary class="muted small">In the dark</summary>
-          <div class="looks">
+        disclosure(
+          "In the dark",
+          html`<div class="looks">
             ${when(darkPhone, (l) => picture(l, "phone", page))}
             ${when(darkDesktop, (l) => picture(l, "desktop", page))}
-          </div>
-        </details>`,
+          </div>`,
+          { small: true },
+        ),
       )}
       <p class="muted small">
         at ${sha(shown.commitOid, `${base}/commit/${shown.commitOid}`)} ·

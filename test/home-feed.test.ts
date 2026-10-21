@@ -140,7 +140,7 @@ describe("home is the feed", () => {
     expect(text).toContain("on “Water the tomatoes at dawn”: Mulch them first");
     // Every post's actions sit behind one quiet control, and "because you
     // own" — true of every post here — is not said again and again.
-    expect(text).toContain('class="quiet-details"');
+    expect(text).toContain('class="disclosure"');
     expect(text).not.toContain("because you own alice/garden");
     // Your apps: a narrow column, and a tab on a phone.
     expect(text).toContain('id="live-apps"');

@@ -7,15 +7,16 @@
 import { html, type Html } from "../html.ts";
 import type { Finding } from "../../release/webspec.ts";
 import { findingsWords } from "../../core/preview_findings.ts";
+import { disclosure } from "../ui.ts";
 
 const sectionName = (url: string): string => url.slice(url.indexOf("#") + 1) || url;
 
 export function specFindings(found: readonly Finding[]): Html {
   if (found.length === 0) return html`<p class="muted">Website spec: no findings on the preview.</p>`;
   const words = findingsWords(found);
-  return html`<details class="quiet-details">
-    <summary>${words[0]!.toUpperCase() + words.slice(1)} (report only)</summary>
-    <ul class="list">
+  return disclosure(
+    `${words[0]!.toUpperCase() + words.slice(1)} (report only)`,
+    html`<ul class="list">
       ${found.map(
         (f) =>
           html`<li class="row"><span class="mono">${f.path}</span> ${f.message} —
@@ -23,6 +24,6 @@ export function specFindings(found: readonly Finding[]): Html {
               ? html` <span class="muted">(the edge owns this)</span>`
               : ""}</li>`,
       )}
-    </ul>
-  </details>`;
+    </ul>`,
+  );
 }

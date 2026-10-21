@@ -130,7 +130,7 @@ describe("the studio, continued", () => {
     const at = `/alice/publictell/issues/${told.value.number}`;
     const anon = await (await fetch(`${base}${at}`)).text();
     expect(anon).toContain("Anyone may read");
-    expect(anon).toContain('<details class="quiet-details mt">');
+    expect(anon).toContain('<details class="disclosure mt">');
     for (const verb of ["assignee", "labels", "dependencies", "state", "comments"])
       expect(anon, verb).not.toContain(`action="${at}/${verb}"`);
   });

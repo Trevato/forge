@@ -582,6 +582,19 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
    position-area would keep position: fixed and park the panel at the
    viewport's corner. Absolute-inside-the-details works everywhere. */
 
+/* ---- disclosure: what a person sometimes needs, closed until asked for ---- */
+.disclosure > summary {
+  cursor: pointer; font-weight: 560; list-style: none; color: var(--muted-fg);
+  display: flex; align-items: center; gap: 6px; padding: 6px 0; min-height: 44px;
+}
+.disclosure > summary::-webkit-details-marker { display: none; }
+.disclosure > summary::before {
+  content: "›"; display: inline-block; color: var(--faint);
+  transition: transform 120ms var(--ease);
+}
+.disclosure[open] > summary::before { transform: rotate(90deg); }
+.disclosure > summary:hover { color: var(--accent); }
+
 /* ---- topbar search (always a real form, so JS-off still searches) ---- */
 .topbar-search {
   display: flex; align-items: center; gap: 6px;

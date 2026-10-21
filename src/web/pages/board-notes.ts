@@ -9,7 +9,7 @@
  */
 
 import { html, type Html } from "../html.ts";
-import { dot } from "../ui.ts";
+import { disclosure, dot } from "../ui.ts";
 
 /** One line on the board. */
 export interface Note {
@@ -60,10 +60,13 @@ export function notesRegion(
     return wrap(
       o.fine ? html`<span class="small muted">${dot("success")} All fine</span>` : null,
     );
-  return wrap(html`<details id="notes-list" class="quiet-details">
-    <summary class="small">${summaryLine(notes)}</summary>
-    <ul class="small muted">
-      ${notes.map((n) => html`<li>${n.line}</li>`)}
-    </ul>
-  </details>`);
+  return wrap(
+    disclosure(
+      summaryLine(notes),
+      html`<ul class="small muted">
+        ${notes.map((n) => html`<li>${n.line}</li>`)}
+      </ul>`,
+      { small: true, id: "notes-list" },
+    ),
+  );
 }

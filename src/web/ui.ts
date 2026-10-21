@@ -845,6 +845,25 @@ export function listCard(rows: Html[], o: CardOptions = {}): Html {
   );
 }
 
+export interface DisclosureOptions {
+  /** A small muted summary, for a disclosure tucked under a card or a strip. */
+  small?: boolean;
+  /** The summary's accessible name, when its visible words are shorter. */
+  label?: string;
+  /** Further classes for the `<details>` (a spacing utility such as `mt`). */
+  extra?: string;
+  /** The `<details>`'s id, for a script or a link that finds it. */
+  id?: string;
+}
+
+/** What a person sometimes needs, closed until asked for: a quiet chevron summary over its body. */
+export function disclosure(summary: Html | string, body: Html | string, o: DisclosureOptions = {}): Html {
+  return html`<details${o.id ? html` id="${o.id}"` : null} class="disclosure${o.extra ? ` ${o.extra}` : ""}">
+    <summary${o.small ? html` class="muted small"` : null}${o.label ? html` aria-label="${o.label}"` : null}>${summary}</summary>
+    ${body}
+  </details>`;
+}
+
 export interface RowOptions {
   href?: string;
   title: Html | string;

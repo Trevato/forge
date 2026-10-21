@@ -858,7 +858,7 @@ describe("the look", () => {
     );
     // The dark pair is named, and folded away until asked for.
     expect(darkPage).toMatch(
-      /<details class="quiet-details">\s*<summary class="muted small">In the dark<\/summary>/,
+      /<details class="disclosure">\s*<summary class="muted small">In the dark<\/summary>/,
     );
     // An older head's dark picture never sits under the shown commit's caption.
     const stale = "b".repeat(40);

@@ -578,7 +578,7 @@ describe("the board's forge strip", () => {
       const text = await board("root");
       const top = text.slice(text.indexOf('<div class="board"'), text.indexOf('class="board-grid"'));
       // Closed by default; one summary, counted.
-      expect(top).toMatch(/<details id="notes-list" class="quiet-details">/);
+      expect(top).toMatch(/<details id="notes-list" class="disclosure">/);
       expect(top).not.toMatch(/<details[^>]*\sopen/);
       expect(top).toMatch(/<summary[^>]*>\s*\d+ notes · <span[^>]*>\s*<span\s+class="dot"\s+data-tone="attn"\s*><\/span> \d+ need you<\/span>\s*<\/summary>/);
       expect(top.match(/<li>/g)?.length).toBeGreaterThanOrEqual(8);

@@ -20,7 +20,7 @@ import type { FeedItem } from "../../feed/rank.ts";
 import { html, type Html } from "../html.ts";
 import { fragment } from "../layout.ts";
 import { outboxJs } from "../outbox.ts";
-import { avatar, btn, card, empty, nameMark, timeAgo } from "../ui.ts";
+import { avatar, btn, card, disclosure, empty, nameMark, timeAgo } from "../ui.ts";
 import { writableAppsOf } from "./asks.ts";
 
 /** Events that can change what the feed says. */
@@ -74,17 +74,18 @@ export function feedCard(
       <span class="badge">${KIND_LABEL[item.kind]}</span>`;
   const body = html`<p class="fcard-reason"><a href="${item.link}" data-feed-open>${item.what}</a></p>
     ${saysMore(item) ? html`<p class="fcard-why small muted">${item.reason}</p>` : null}`;
-  const foot = html`<details class="quiet-details">
-      <summary class="small muted" aria-label="${target ? "Steer, dismiss or mute" : "Tell the crew, dismiss or mute"}">${target ? "Steer" : "Tell"} · more</summary>
-      <form method="post" action="${target ?? `/${item.app}/tell`}" class="fcard-form">
+  const foot = disclosure(
+    `${target ? "Steer" : "Tell"} · more`,
+    html`<form method="post" action="${target ?? `/${item.app}/tell`}" class="fcard-form">
         <textarea class="input" name="text" rows="2" maxlength="2000" required aria-label="${target ? "Steer this run" : "Tell the crew"}"></textarea>
         ${btn(target ? "Steer" : "Tell", { size: "sm", variant: "primary" })}
       </form>
       <span class="bar">
         <button type="button" class="btn" data-variant="ghost" data-size="sm" data-feed="dismissed" title="Dismiss (x)">Dismiss</button>
         ${item.kind === "ask" || item.kind === "milestone" || item.kind === "choose" ? null : html`<button type="button" class="btn" data-variant="ghost" data-size="sm" data-feed="muted" title="Mute ${item.app}">Mute app</button>`}
-      </span>
-    </details>`;
+      </span>`,
+    { small: true, label: target ? "Steer, dismiss or mute" : "Tell the crew, dismiss or mute" },
+  );
   return card(body, {
     head,
     foot,
