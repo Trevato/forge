@@ -5381,13 +5381,18 @@ export function apiRoutes(router: Router<Handler>): void {
   // (#3433). Reading takes admin over the repository; changing takes a site
   // admin. The destination is the exact `host:port` forge.json names.
   router.add("GET", "/api/v1/repos/:owner/:name/egress-grants", async (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireScope(ctx, "admin");
     if (denied) return denied;
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const view = await egressView(ctx.app, ctx.auth.user, repo);
+    const view = await timePhaseAsync(ctx.request, "grants", () =>
+      egressView(ctx.app, ctx.auth.user, repo),
+    );
     if (!view.ok) return respondAccess(view.error, 422);
-    return json({ items: view.value.rows, changes: view.value.changes, next_cursor: null });
+    return timePhase(ctx.request, "render", () =>
+      json({ items: view.value.rows, changes: view.value.changes, next_cursor: null }),
+    );
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/egress-grants", async (ctx) => {
