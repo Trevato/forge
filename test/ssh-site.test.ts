@@ -97,3 +97,23 @@ describe("the terminal on the website", () => {
     expect(page).toContain('value="haiku"');
   });
 });
+
+describe("the front page without a terminal", () => {
+  test("prints nothing about it and carries no hero classes", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-ssh-off-"));
+    const app = createApp({ dataDir, port: 0, host: "forge.example" });
+    const servers = await serve(app);
+    try {
+      const page = await fetch(`${servers.url}/`).then((r) => r.text());
+      expect(page).toContain("Apps, live.");
+      expect(page).toContain('href="/signup"');
+      expect(page).not.toContain("terminal-line");
+      expect(page).not.toContain("terminal is off");
+      expect(page).not.toContain("hero-terminal");
+    } finally {
+      servers.stop();
+      app.close();
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+});
