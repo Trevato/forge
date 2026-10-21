@@ -271,6 +271,18 @@ describe("browsing an origin repository on the web", () => {
     expect(html).toContain(`Open on ${new URL(fake.url).host}`);
   });
 
+  test("the About rail is a card: no .about, same words, same mirror form", async () => {
+    const html = await bodyOf(alice, browse);
+    expect(html).not.toMatch(/class="[^"]*\babout\b/);
+    expect(html).not.toContain("<dl");
+    const rail = html.match(/<aside[^>]*>[\s\S]*?<\/aside>/)?.[0] ?? "";
+    expect(rail).toContain("<h2>About</h2>");
+    for (const word of ["Where it lives", "Origin", "Last push", "Visibility", "Default"])
+      expect(rail).toContain(word);
+    expect(rail).toContain(`action="${browse}/mirror"`);
+    expect(rail).toContain("Mirror it");
+  });
+
   test("a live browse never writes to the repository it is reading", async () => {
     for (const path of [
       browse,
