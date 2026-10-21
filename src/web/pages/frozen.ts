@@ -82,21 +82,27 @@ export function frozenBlock(ctx: Ctx, repo: Repo): Html | null {
   // is filled with something discovery takes as it is.
   const forge = URL.parse(d.htmlUrl)?.origin ?? "";
   const connect = `/settings/origins${forge === "" ? "" : `?host=${encodeURIComponent(forge)}`}#connect`;
+  const row = (body: Html): Html =>
+    html`<li class="row"><div class="row-main">${body}</div></li>`;
   const action = !admin
-    ? html`<p class="muted small mt">
-        An admin of this repository can reconnect it.
-      </p>`
+    ? row(
+        html`<p class="muted small">
+          An admin of this repository can reconnect it.
+        </p>`,
+      )
     : origins.length === 0
-      ? html`<p class="small mt">
-          Connect an
-          account${host === "" ? null : html` at ${hostLabel(d.htmlUrl)}`} under
-          <a href="${connect}">Settings → Origins</a>: connecting one reconnects
-          this mirror by itself.
-        </p>`
-      : html`<form
+      ? row(
+          html`<p class="small">
+            Connect an
+            account${host === "" ? null : html` at ${hostLabel(d.htmlUrl)}`}
+            under <a href="${connect}">Settings → Origins</a>: connecting one
+            reconnects this mirror by itself.
+          </p>`,
+        )
+      : row(html`<form
           method="post"
           action="${repoBase(repo)}/settings/origin/reconnect"
-          class="frozen-form"
+          class="field-row"
         >
           ${selectField({
             name: "origin",
@@ -108,11 +114,12 @@ export function frozenBlock(ctx: Ctx, repo: Repo): Html | null {
             })),
           })}
           ${btn("Reconnect", { size: "sm", variant: "primary", icon: "sync" })}
-        </form>`;
+        </form>`);
   return card(
-    html`<p class="frozen-sentence">${frozenSentence(d)}</p>
-      ${action}`,
-    { tone: "attn", id: "frozen", extra: "frozen" },
+    html`<ul class="list">
+      ${row(html`<p>${frozenSentence(d)}</p>`)} ${action}
+    </ul>`,
+    { tone: "attn", id: "frozen", pad: false },
   );
 }
 

@@ -366,6 +366,7 @@ describe("a frozen mirror is said, and reconnected in one click", () => {
     for (const path of ["/alice/widgets", "/alice/widgets/branches"]) {
       const page = await words(await api(path));
       expect(page).toContain('id="frozen"');
+      expect(page).not.toMatch(/class="[^"]*\bfrozen(-form|-sentence)?\b/);
       expect(page).toContain("octo/widgets");
       expect(page).toContain(
         `but that origin was disconnected on <time datetime="`,
@@ -629,6 +630,17 @@ describe("a frozen mirror is said, and reconnected in one click", () => {
     expect((await repoJson()).origin?.detached).toBe(true);
     const again = originRow(octo, octo.url);
     tip = await advanceUpstream("page.txt");
+    const offered = await api("/alice/widgets").then((r) => r.text());
+    expect(offered).toContain("it has been frozen since");
+    expect(offered).toContain(
+      'action="/alice/widgets/settings/origin/reconnect"',
+    );
+    expect(offered).toContain('name="origin"');
+    expect(offered).toContain(`value="${again}"`);
+    expect(offered).toContain("Reconnect through");
+    expect(await words(await api("/alice/widgets"))).toContain("Reconnect");
+    for (const old of ["frozen-form", "frozen-sentence", 'class="card frozen'])
+      expect(offered).not.toContain(old);
     const viaPage = await api("/alice/widgets/settings/origin/reconnect", {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
