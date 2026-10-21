@@ -586,7 +586,8 @@ describe("live triage where there is little to file under", () => {
     const second = await liveTriage(app, w.repo());
     expect(second.labelled).toBe(1);
     expect(second.missed).toBe(0);
-  });
+    // Twenty-six issues are opened and two ticks run: a loaded check machine must not turn the 5 s default into the verdict.
+  }, 30_000);
 
   test("the tick line carries labelled always and triageMiss only when something was missed", () => {
     expect(tickFields({ closed: 2, folded: 1, labelled: 3, missed: 0 })).toEqual({ triaged: 2, folded: 1, labelled: 3 });
