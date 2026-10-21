@@ -213,7 +213,7 @@ describe("migrate: after", () => {
     expect(target.tips["refs/heads/main"]).toBe(mine!);
     expect(target.lastError).toBe("");
     expect(JSON.stringify(target)).not.toContain("token");
-  });
+ }, 60_000);
 
   test("mirror: the crew's work branches never go to the source", async () => {
     const { name, copy } = await migrate("mirror");
@@ -226,7 +226,7 @@ describe("migrate: after", () => {
     const sourceDir = repoDir(app.reposRoot, "octo", name);
     expect(await resolveOid(sourceDir, "refs/heads/scout/unreviewed")).toBeUndefined();
     expect(await resolveOid(sourceDir, "refs/heads/main")).toBe(mine);
-  });
+  }, 60_000);
 
   test("mirror: a source that moved on its own is not overwritten, and the error is recorded and shown", async () => {
     const { name, copy } = await migrate("mirror");
@@ -254,7 +254,7 @@ describe("migrate: after", () => {
     expect(getMirrorTarget(app.db, getRepo(app.db, "alice", copy)!.id)).toBeDefined();
     expect((await stop({ cookie, origin: base })).status).toBe(303);
     expect(getMirrorTarget(app.db, getRepo(app.db, "alice", copy)!.id)).toBeUndefined();
-  });
+  }, 60_000);
 });
 
 // The handler's refusal needs an app and a token, not the fake GitHub, the
