@@ -5271,6 +5271,8 @@ export function apiRoutes(router: Router<Handler>): void {
         ? { visibility: input.visibility }
         : {}),
       ...(typeof input.agent === "string" ? { agent: input.agent } : {}),
+      // Only a real boolean asks; like the other fields, anything else is ignored.
+      ...(input.pick === true ? { pickAgent: true } : {}),
     }, (name, ms) => notePhase(ctx.request, name, ms));
     if (!made.ok) {
       if (made.error === "repository_limit")
@@ -5296,6 +5298,7 @@ export function apiRoutes(router: Router<Handler>): void {
           appsRuntime(ctx.app),
         ),
         issue: made.value.issue ? withLabels(ctx, made.value.issue) : null,
+        plan: made.value.plan ?? null,
       },
       201,
     );

@@ -204,6 +204,12 @@ What a person sees, in order:
 Nothing above required a terminal. Everything above is also reachable from
 one, and from the JSON API, because each step is an action.
 
+`POST /api/v1/apps` takes `name`, `owner`, `description`, `visibility`, `agent`
+and `pick`: `pick: true` turns the description into a checklist and lets the
+plan pick the agent (ignored when `agent` is given or there is no
+description). The 201 answer carries `plan: {agent, summary, confidence}` when
+a pick happened and `plan: null` otherwise, planning being unavailable included.
+
 ## How an app is declared
 
 The repository says how to run itself, in `forge.json` at its root:

@@ -5,6 +5,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { chmodSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -173,6 +174,64 @@ describe("apps, runs and the crew over the API", () => {
     );
     expect(login.status).toBe(401);
   });
+
+  test("POST /apps with pick: true says which agent the plan picked; without a plan, plan is null", async () => {
+    const dir = join(dataDir, "fake-plan");
+    await Bun.write(
+      dir,
+      `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
+printf '%s\\n' '{"is_error":false,"result":"{\\"summary\\":\\"Build it\\",\\"checklist\\":[\\"One\\"],\\"agent\\":\\"bot\\",\\"confidence\\":0.7}"}'
+`,
+    );
+    chmodSync(dir, 0o755);
+    const before = process.env["FORGE_CLAUDE"];
+    try {
+      process.env["FORGE_CLAUDE"] = dir;
+      const picked = await post(
+        "/api/v1/apps",
+        { name: "picked", description: "Keep notes", pick: true },
+        rw,
+      );
+      expect(picked.status).toBe(201);
+      const body = (await picked.json()) as {
+        plan: { agent: string; summary: string; confidence: number } | null;
+        issue: { assigneeName: string } | null;
+      };
+      expect(body.plan).toEqual({ agent: "bot", summary: "Build it", confidence: 0.7 });
+      expect(body.issue?.assigneeName).toBe("bot");
+
+      // No pick asked, or a pick that is not the boolean true: no plan.
+      for (const [name, extra] of [
+        ["nopick", {}],
+        ["strpick", { pick: "true" }],
+        ["withagent", { pick: true, agent: "bot" }],
+      ] as const) {
+        const res = await post(
+          "/api/v1/apps",
+          { name, description: "Keep notes", ...extra },
+          rw,
+        );
+        expect(res.status).toBe(201);
+        expect(((await res.json()) as { plan: unknown }).plan).toBeNull();
+      }
+
+      // Planning unavailable: the app is still made, plan is null.
+      process.env["FORGE_CLAUDE"] = join(dataDir, "no-such-binary");
+      const bare = await post(
+        "/api/v1/apps",
+        { name: "unplanned", description: "Keep notes", pick: true },
+        rw,
+      );
+      expect(bare.status).toBe(201);
+      const bareBody = (await bare.json()) as { app: { slug: string }; plan: unknown };
+      expect(bareBody.app.slug).toBe("unplanned");
+      expect(bareBody.plan).toBeNull();
+    } finally {
+      if (before === undefined) delete process.env["FORGE_CLAUDE"];
+      else process.env["FORGE_CLAUDE"] = before;
+    }
+  }, 60_000);
 
   test("POST /apps makes the app, puts the agent on the crew, assigns the first issue", async () => {
     const made = await post(

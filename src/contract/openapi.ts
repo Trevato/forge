@@ -27,7 +27,7 @@ interface Route {
 const LIST_QUERY = { state: "string", limit: "integer", cursor: "integer", label: "string", author: "string" };
 
 /** What `POST /api/v1/apps` reads from its body, and the refusals it answers. */
-const APP_BODY = { name: "string", owner: "string", description: "string", visibility: "string", agent: "string" };
+const APP_BODY = { name: "string", owner: "string", description: "string", visibility: "string", agent: "string", pick: "boolean" };
 const APP_REFUSALS = {
   unverified: "the account has not verified its email",
   app_limit: "the owner is at the app limit",
