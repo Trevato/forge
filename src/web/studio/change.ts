@@ -115,11 +115,11 @@ export function wallCard(wall: Wall): Html {
           ? "An app built on it does not boot. A person decides this one."
           : "A cell loosened is a decision undone, so the crew leaves this to a person: read the cells, then land or say what is off."}
       </p>
-      <ul class="wall-cells">
+      <div class="stack stack-tight mono">
         ${(wall.unsound ?? wall.loosened.map(wallSentence)).map(
-          (line) => html`<li>${line}</li>`,
+          (line) => html`<div>${line}</div>`,
         )}
-      </ul>`,
+      </div>`,
     {
       tone: "attn",
       extra: "wall mt",

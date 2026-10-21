@@ -237,7 +237,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .frozen-form { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .frozen-form .field { margin: 0; min-width: 0; flex: 1 1 14rem; max-width: 22rem; }
 
-.wall-cells { margin: 8px 0 0; padding-left: 18px; font-family: var(--mono); font-size: 12.5px; }
 /* A subscription's headroom for people: a small number beside its windows. */
 .headroom { display: flex; align-items: center; gap: 6px; }
 .headroom .input { width: 5em; }
@@ -318,7 +317,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .policy-line b { color: var(--fg); font-weight: 600; }
 .policy-line[data-tone="mismatch"] .ico { color: var(--danger); }
 .policy-line[data-tone="ok"] .ico { color: var(--success); }
-.wall-cells li + li { margin-top: 3px; }
 form.inline { display: inline; margin-left: auto; }
 
 /* The studio's front door: the public apps, live first, as pictures. */

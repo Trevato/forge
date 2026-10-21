@@ -245,7 +245,7 @@ describe("a pull at the wall", () => {
     );
     expect(body).toContain("note.create as anon: was no, now yes");
     // The wall is §5's card, its headline in the head: no merge-* class.
-    expect(body).not.toMatch(/\bmerge-(?:box|form|headline|sub)\b/);
+    expect(body).not.toMatch(/\b(?:merge-(?:box|form|headline|sub)|wall-cells)\b/);
     expect(body).toMatch(
       /<div class="card-head">[\s\S]*?<strong\s*>This pull changes the policy: one door opens wider\.<\/strong/,
     );
