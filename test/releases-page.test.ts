@@ -31,14 +31,11 @@ describe("the releases page", () => {
   let servers: Servers;
   const was = process.env["FORGE_COMMIT"];
 
-  const login = async (username: string, password: string) => {
-    const r = await fetch(`${servers.url}/signin`, {
-      method: "POST",
-      headers: { origin: servers.url },
-      body: new URLSearchParams({ username, password }),
-      redirect: "manual",
-    });
-    return (r.headers.get("set-cookie") ?? "").split(";")[0]!;
+  // A session minted directly: the sign-in form's password hash is slow on a loaded
+  // check machine and is not what these tests are about.
+  const login = async (username: string, _password: string) => {
+    const u = app.db.query<{ id: string }, [string]>("SELECT id FROM user WHERE username = ?").get(username)!;
+    return `forge_session=${createSession(app.db, u.id).token}`;
   };
   const post = (path: string, cookie: string, origin: string) =>
     fetch(`${servers.url}${path}`, {
