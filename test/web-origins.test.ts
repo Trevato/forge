@@ -597,7 +597,8 @@ describe("origins on the web", () => {
     const sameBut = (text: string): string =>
       text
         .replaceAll(/nonce="[^"]*"/g, 'nonce="N"')
-        .replaceAll(/here\?path=[^"&\s]*/g, "here?path=");
+        .replaceAll(/here\?path=[^"&\s]*/g, "here?path=")
+        .replaceAll(/next=[^"]*/g, "next=");
     expect(sameBut(await stale.text())).toBe(sameBut(await unknown.text()));
 
     // A finished flow's link dies with it, and the code is not reissued.

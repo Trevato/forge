@@ -66,8 +66,13 @@ export function crumbsFor(repo: Repo): { label: string; href: string }[] {
 }
 
 /** The one 404 in the product: same words for "no such thing" and "not
- * yours to see". */
+ * yours to see". A signed-out GET also gets the way back in, to this very
+ * address; it is offered whether or not the thing exists, so it tells nothing. */
 export function notFoundPage(ctx: Ctx): Response {
+  const back =
+    ctx.auth.user === undefined && ctx.request.method === "GET"
+      ? btn("Sign in", { href: signInHref(ctx) })
+      : undefined;
   return page(
     {
       ctx,
@@ -77,7 +82,9 @@ export function notFoundPage(ctx: Ctx): Response {
           icon: "search",
           title: "Nothing here",
           note: "The page you asked for does not exist, or is not visible to you.",
-          action: btn("Go home", { href: "/", variant: "primary" }),
+          action: back
+            ? html`${btn("Go home", { href: "/", variant: "primary" })} ${back}`
+            : btn("Go home", { href: "/", variant: "primary" }),
         })}`,
     },
     404,

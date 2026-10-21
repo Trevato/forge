@@ -17,6 +17,7 @@ import { createApp, type App } from "../src/app.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { listLabels, labelsFor, getIssue } from "../src/core/issues.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { safeNext } from "../src/web/pages/site.ts";
 import { shellJs } from "../src/web/client.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 import { proveAll } from "./helpers/verified.ts";
@@ -299,8 +300,35 @@ describe("web ui", () => {
     const scrub = (t: string) =>
       t
         .replaceAll(/nonce-?="?[\w-]+/g, "nonce")
-        .replaceAll(/here\?path=[^"&\s]*/g, "here?path=");
+        .replaceAll(/here\?path=[^"&\s]*/g, "here?path=")
+        .replaceAll(/next=[^"]*/g, "next=");
     expect(scrub(await hidden.text())).toBe(scrub(await absent.text()));
+  });
+
+  test("a signed-out 404 offers sign-in back to the same address", async () => {
+    const asked = "/kim/secret?tab=x&y=1";
+    const out = await (await fetch(`${base}${asked}`)).text();
+    expect(out).toContain(
+      `href="/signin?next=${encodeURIComponent(asked).replaceAll("&", "&amp;")}"`,
+    );
+    const hidden = await (await fetch(`${base}/kim/secret`)).text();
+    const absent = await (await fetch(`${base}/kim/nothing`)).text();
+    const scrub = (t: string) =>
+      t.replaceAll(/nonce-?="?[\w-]+/g, "nonce").replaceAll(/here\?path=[^"&\s]*/g, "here?path=").replaceAll(/next=[^"]*/g, "");
+    expect(scrub(hidden)).toBe(scrub(absent));
+
+    const signedIn = await (
+      await fetch(`${base}/kim/nothing`, { headers: { cookie: stranger } })
+    ).text();
+    expect(signedIn).toContain("Nothing here");
+    expect(signedIn).not.toContain("/signin?next=");
+  });
+
+  test("safeNext refuses another origin", () => {
+    expect(safeNext("//evil.example/x")).toBeUndefined();
+    expect(safeNext("https://evil.example")).toBeUndefined();
+    expect(safeNext("/\\evil.example")).toBeUndefined();
+    expect(safeNext("/kim/secret?a=1")).toBe("/kim/secret?a=1");
   });
 
   // ---- ref safety ----
