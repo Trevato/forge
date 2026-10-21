@@ -162,6 +162,13 @@ export function searchLocalRepos(
   return repos.slice(0, limit).map(toRepoHit);
 }
 
+/** The one repository a scoped search is about, when its owner, name or description holds the words. */
+export function matchOneRepo(repo: Repo, query: string): RepoHit[] {
+  const needle = query.trim().toLowerCase();
+  const hay = `${repo.ownerName}/${repo.name} ${repo.description}`.toLowerCase();
+  return needle !== "" && hay.includes(needle) ? [toRepoHit(repo)] : [];
+}
+
 function toRepoHit(repo: Repo): RepoHit {
   return {
     source: "local",

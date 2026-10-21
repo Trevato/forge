@@ -20,6 +20,7 @@ import {
   cleanQuery,
   grepRepos,
   searchLocalIssues,
+  matchOneRepo,
   searchLocalRepos,
   searchOriginRepos,
   MAX_CODE_HITS,
@@ -28,6 +29,7 @@ import {
   type SearchKind,
   type SearchResults,
 } from "../core/search.ts";
+import type { Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { providerForOrigin } from "../origins/credential.ts";
 
@@ -57,6 +59,13 @@ export interface SearchInput {
    * @default true
    */
   withCode?: boolean;
+  /**
+   * Keep to this one repository, which the caller has already been checked
+   * to read. It is the whole scope, not a filter on a capped answer: its
+   * issues and code are searched even when it is not among the first
+   * `MAX_SEARCH_REPOS` visible, and origin repositories are skipped.
+   */
+  repo?: Repo;
   /** Start no new grep after this many ms and report `moreCode`. @default unset: grep every repository */
   codeBudgetMs?: number;
 }
@@ -91,16 +100,20 @@ export async function search(
   // One visibility pass. Issues and code both search "the repos this actor
   // may read", so it is resolved once and shared rather than re-derived.
   const visible =
-    wants("issues") || wants("code")
-      ? listReposVisibleTo(app.db, actor, { limit: MAX_SEARCH_REPOS })
-      : [];
+    input.repo !== undefined
+      ? [input.repo]
+      : wants("issues") || wants("code")
+        ? listReposVisibleTo(app.db, actor, { limit: MAX_SEARCH_REPOS })
+        : [];
 
-  const repos = wants("repos")
-    ? [
-        ...searchLocalRepos(app.db, actor, q, limit),
-        ...(actor ? searchOriginRepos(app.db, actor.id, q, limit) : []),
-      ]
-    : [];
+  const repos = !wants("repos")
+    ? []
+    : input.repo !== undefined
+      ? matchOneRepo(input.repo, q)
+      : [
+          ...searchLocalRepos(app.db, actor, q, limit),
+          ...(actor ? searchOriginRepos(app.db, actor.id, q, limit) : []),
+        ];
 
   const issues: IssueHit[] = wants("issues")
     ? searchLocalIssues(

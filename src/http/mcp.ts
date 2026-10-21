@@ -188,6 +188,7 @@ import {
   exploreLine,
   parseExploreQuery,
 } from "../actions/explore.ts";
+import { search } from "../actions/search.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import { readHealth } from "../actions/health.ts";
 import { noteRead, telemetryReader } from "../actions/telemetry.ts";
@@ -2098,6 +2099,43 @@ const TOOLS: readonly Tool[] = [
         query: exploreLine(query),
         items: await explore(ctx.app, user, query),
       });
+    },
+  },
+  {
+    name: "search",
+    description:
+      "Find issues, pulls, repositories and code you can read, the same results as /search; `q` is the words, `kind` narrows it, `repo` (owner/name) keeps to one repository.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        q: { type: "string", minLength: 1, maxLength: 200 },
+        kind: { type: "string", enum: ["issues", "repos", "code"] },
+        repo: { type: "string", maxLength: 140 },
+      },
+      required: ["q"],
+    },
+    writes: false,
+    async run(ctx, user, args) {
+      const q = args["q"];
+      if (typeof q !== "string" || q.trim() === "" || q.length > 200)
+        return bad("invalid", "`q` is 1 to 200 characters");
+      const kind = args["kind"];
+      if (kind !== undefined && kind !== "issues" && kind !== "repos" && kind !== "code")
+        return bad("invalid", "`kind` is issues, repos or code");
+      let only: Repo | undefined;
+      if (args["repo"] !== undefined) {
+        if (typeof args["repo"] !== "string") return bad("invalid", "`repo` is owner/name");
+        const repo = repoArg(ctx, user, args);
+        if (isAnswer(repo)) return repo;
+        only = repo;
+      }
+      return good(
+        await search(ctx.app, user, {
+          q,
+          ...(kind ? { kind } : {}),
+          ...(only ? { repo: only } : {}),
+        }),
+      );
     },
   },
   {

@@ -218,6 +218,7 @@ describe("the forge over MCP", () => {
       "asked",
       "app_members",
       "explore",
+      "search",
       "feed",
       "feed_chips",
       "make_it_yours",
