@@ -177,6 +177,7 @@ export function headerProblems(h: Headers, https: boolean): Problem[] {
   if ((h.get("x-content-type-options") ?? "").toLowerCase() !== "nosniff") add("nosniff", "X-Content-Type-Options is not nosniff", "nosniff");
   if (!h.get("referrer-policy")) add("referrer-policy", "no Referrer-Policy", "referrer-policy");
   if (!h.get("permissions-policy")) add("permissions-policy", "no Permissions-Policy", "permissions-policy");
+  if (!h.get("cross-origin-opener-policy")) add("coop", "no Cross-Origin-Opener-Policy", "coop", true);
   if (https && !h.get("strict-transport-security")) add("hsts", "no Strict-Transport-Security on an https URL", "hsts", true);
   if (h.has("x-xss-protection")) add("x-xss-protection", "X-XSS-Protection is set; drop it", "x-xss-protection");
   if (/\bimmutable\b/i.test(h.get("cache-control") ?? "")) add("cache-html", "HTML is cached immutable; only hashed assets may be", "caching");

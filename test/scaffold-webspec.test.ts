@@ -17,6 +17,7 @@ const KNOWN: string[] = [];
 let dir: string;
 let child: ReturnType<typeof Bun.spawn> | undefined;
 let findings: Finding[] = [];
+let served: Headers = new Headers();
 
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), "forge-scaffold-webspec-"));
@@ -48,6 +49,7 @@ beforeAll(async () => {
     if (Date.now() > end) throw new Error("the scaffold did not boot");
     await Bun.sleep(50);
   }
+  served = (await fetch(`${base}/`)).headers;
   findings = await webspec(base, ["/"], fetch, { site: true });
 }, 30_000);
 
@@ -60,4 +62,9 @@ afterAll(async () => {
 test("a fresh scaffold's webspec findings are exactly the known gaps", () => {
   const got = [...new Set(findings.map((f) => f.check))].sort();
   expect(got).toEqual([...KNOWN].sort());
+});
+
+test("a fresh scaffold sends Cross-Origin-Opener-Policy: same-origin", () => {
+  expect(findings.map((f) => f.check)).not.toContain("coop");
+  expect(served.get("cross-origin-opener-policy")).toBe("same-origin");
 });

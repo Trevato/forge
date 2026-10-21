@@ -20,6 +20,7 @@ const GOOD_HEADERS: Record<string, string> = {
   "x-content-type-options": "nosniff",
   "referrer-policy": "same-origin",
   "permissions-policy": "camera=()",
+  "cross-origin-opener-policy": "same-origin",
   "strict-transport-security": "max-age=63072000",
   "cache-control": "no-cache",
   etag: '"v1"',
@@ -88,6 +89,11 @@ test("each header check yields exactly its finding", async () => {
 test("style-src unsafe-inline is not a script finding", async () => {
   const csp = "script-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'";
   expect(await checks(undefined, { ...GOOD_HEADERS, "content-security-policy": csp })).toEqual([]);
+});
+
+test("a missing Cross-Origin-Opener-Policy is an edge finding", async () => {
+  const found = await webspec("http://x.test", ["/"], site(GOOD_HTML, without("cross-origin-opener-policy")));
+  expect(found.map((f) => [f.check, f.edge])).toEqual([["coop", true]]);
 });
 
 test("HSTS is an edge finding on https only", async () => {

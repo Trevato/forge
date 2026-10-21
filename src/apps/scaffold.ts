@@ -150,6 +150,10 @@ bun run contract:emit                                   # rewrite contract/opena
 it: the preview comes up the moment the app answers, and says \`live\`, or
 \`serving · tests failed\` the moment the suite disagrees.
 
+Every response carries \`Content-Security-Policy\`, \`X-Content-Type-Options\`,
+\`Referrer-Policy\` and \`Cross-Origin-Opener-Policy: same-origin\` (the last
+cuts a page off from any window that opened it); they are set in \`src/http.ts\`.
+
 ## The shape
 
 One implementation, many doors. \`src/actions.ts\` is every operation as a
@@ -1376,6 +1380,7 @@ export const SECURITY: Record<string, string> = {
     "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
   "x-content-type-options": "nosniff",
   "referrer-policy": "strict-origin-when-cross-origin",
+  "cross-origin-opener-policy": "same-origin",
   "permissions-policy": "camera=(), microphone=(), geolocation=()",
   ...(publicOrigin.startsWith("https:")
     ? { "strict-transport-security": "max-age=31536000; includeSubDomains" }
