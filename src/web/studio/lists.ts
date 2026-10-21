@@ -337,11 +337,13 @@ function listRead(ctx: Ctx, repo: Repo, f: ListFacets) {
 export async function tellsList(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const db = ctx.app.db;
   const base = repoBase(repo);
   const f = readFacets(ctx);
   const { options, record, wordCtx } = listRead(ctx, repo, f);
 
+  let at = performance.now();
   const fetched = listIssues(db, repo.id, {
     ...options,
     kind: "issue",
@@ -349,7 +351,11 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
   }).filter(
     (issue) => issue.id !== repo.directionIssueId,
   );
+  notePhase(ctx.request, "issues", performance.now() - at);
+  at = performance.now();
   const closingPulls = openPullsClosing(db, repo.id);
+  notePhase(ctx.request, "closing", performance.now() - at);
+  at = performance.now();
   const words = await Promise.all(
     fetched.map(
       async (issue) =>
@@ -357,8 +363,12 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
         closedWord(issue),
     ),
   );
+  notePhase(ctx.request, "words", performance.now() - at);
+  at = performance.now();
   const labels = labelsForIssues(db, fetched.map((issue) => issue.id));
   const repoLabels = listLabels(db, repo.id);
+  notePhase(ctx.request, "labels", performance.now() - at);
+  at = performance.now();
   const rows = fetched
     .map((issue, i) => ({ issue, info: words[i]! }))
     .filter((r) => shown(r.info.word, f));
@@ -455,7 +465,7 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
     </div>
     ${liveMount({ repo: base })}`;
 
-  return page({
+  const response = page({
     ctx,
     title: pageTitle("tells", repo, record !== undefined),
     crumbs: crumbsFor(repo),
@@ -464,6 +474,8 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
     styleCss: labelCss([...repoLabels, ...[...labels.values()].flat()]),
     scriptJs: liveClientJs,
   });
+  notePhase(ctx.request, "render", performance.now() - at);
+  return response;
 }
 
 /**
