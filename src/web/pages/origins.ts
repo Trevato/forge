@@ -399,9 +399,7 @@ function githubSection(configured: boolean, callback: string): Html {
   if (!configured) {
     const back =
       callback === "" ? "<your forge>/settings/origins/callback" : callback;
-    return html`<div class="connect-path">
-      <h3>${icon("github")}GitHub, one click</h3>
-      <p class="muted small">
+    return html`<p class="muted small">
         Needs a one-time OAuth app setup: no GitHub application is registered
         for this forge yet, so the device flow has no client id to use. Three
         steps, once, for every user of this forge:
@@ -429,20 +427,16 @@ function githubSection(configured: boolean, callback: string): Html {
       <p class="muted small">
         Until then, a personal access token below works and needs no
         registration anywhere.
-      </p>
-    </div>`;
+      </p>`;
   }
-  return html`<div class="connect-path">
-    <h3>${icon("github")}GitHub, one click</h3>
-    <p class="muted small">
+  return html`<p class="muted small">
       A short code and a URL you type it into — from this machine or from your
       phone. Nothing is typed into this terminal or this page.
     </p>
     <form method="post" action="/settings/origins/oauth">
       <input type="hidden" name="kind" value="github" />
       ${btn("Connect GitHub", { variant: "primary", icon: "github" })}
-    </form>
-  </div>`;
+    </form>`;
 }
 
 function forgejoSection(
@@ -452,16 +446,13 @@ function forgejoSection(
 ): Html {
   const back = callbackUri(ctx);
   if (back === "") {
-    return html`<div class="connect-path">
-      <h3>${icon("forgejo")}Forgejo / Gitea, one click</h3>
-      <p class="error-note">
+    return html`<p class="error-note">
         This forge does not know its own public URL, so it cannot register a
         callback for the code flow. Set
         <span class="mono">FORGE_URL</span> to the base URL people reach it at
         (or <span class="mono">FORGE_HOST</span> to the hostname it is served
         on) and this path lights up. A pasted token works either way.
-      </p>
-    </div>`;
+      </p>`;
   }
   // Two verbs, two endpoints, and HTML forbids nesting one form in another —
   // so the "forget" form sits beside the authorize form and its button joins
@@ -567,9 +558,7 @@ function forgejoSection(
         </div>`
       : null;
 
-  return html`<div class="connect-path">
-    <h3>${icon("forgejo")}Forgejo / Gitea, one click</h3>
-    <p class="muted small">
+  return html`<p class="muted small">
       Needs an app registration on the instance. Name it and this forge works
       out which it is, then sends you there to authorize.
     </p>
@@ -587,8 +576,26 @@ function forgejoSection(
         ${btn("Continue", { variant: registered ? "secondary" : "primary" })}
       </div>
     </form>
-    ${authorize} ${registerForm}
-  </div>`;
+    ${authorize} ${registerForm}`;
+}
+
+/**
+ * One way to connect, drawn as a list row that folds open on its form: the
+ * caret leads (it turns when open), the brand glyph and the name are the
+ * title, and the steps and the form are the body.
+ */
+function connectPath(
+  id: string,
+  glyph: IconName,
+  title: Html | string,
+  open: boolean,
+  body: Html,
+): Html {
+  return row({
+    lead: icon("chevronRight"),
+    title: html`${icon(glyph)}${title}`,
+    fold: { id, open, body: html`<div class="card-body">${body}</div>` },
+  });
 }
 
 /**
@@ -598,12 +605,7 @@ function forgejoSection(
  * environment variable is a page that teaches people the product is fiddly.
  */
 function tokenSection(values: ConnectValues): Html {
-  return html`<div class="connect-path">
-    <h3>
-      ${icon("key")}Personal access token
-      ${badge("recommended", { tone: "success" })}
-    </h3>
-    <p class="muted small">
+  return html`<p class="muted small">
       Nothing to register, anywhere. The token is validated against the forge
       before it is stored, encrypted at rest, and never shown again.
     </p>
@@ -627,8 +629,7 @@ function tokenSection(values: ConnectValues): Html {
         hint: "Needs repository and issue access. It is never displayed after this.",
       })}
       <div class="form-actions">${btn("Connect", { variant: "primary" })}</div>
-    </form>
-  </div>`;
+    </form>`;
 }
 
 /** The admin's list of hosts an origin may reach inside the network. */
@@ -710,20 +711,28 @@ function originsView(
         )
       : null}
     ${card(
-      html`${tokenSection(values)}
-        <details
-          class="connect-more"
-          ${values.mode !== "none" ? raw("open") : null}
-        >
-          <summary>One-click sign-in</summary>
-          <p class="muted small">
-            Both of these are OAuth, and both need somebody to register an
-            application once — for GitHub, per forge; for Forgejo and Gitea, per
-            instance. Worth it if several people use this forge; a token is
-            faster if it is just you.
-          </p>
-          ${githubSection(githubConfigured, callbackUri(ctx))}
-          ${forgejoSection(
+      html`<ul class="list">
+        ${connectPath(
+          "connect-token",
+          "key",
+          html`Personal access token
+            ${badge("recommended", { tone: "success" })}`,
+          true,
+          tokenSection(values),
+        )}
+        ${connectPath(
+          "connect-github",
+          "github",
+          "GitHub, one click",
+          values.mode !== "none",
+          githubSection(githubConfigured, callbackUri(ctx)),
+        )}
+        ${connectPath(
+          "connect-forgejo",
+          "forgejo",
+          "Forgejo / Gitea, one click",
+          values.mode !== "none",
+          forgejoSection(
             ctx,
             values,
             matched === undefined
@@ -733,12 +742,20 @@ function originsView(
                   clientId: matched.clientId,
                   id: matched.id,
                 },
-          )}
-        </details>`,
+          ),
+        )}
+      </ul>`,
       {
         id: "connect",
+        pad: false,
         head: html`${icon("plus")}
           <h2>Connect an origin</h2>`,
+        foot: html`<span class="muted small"
+          ><strong>One-click sign-in.</strong> Both of these are OAuth, and both
+          need somebody to register an application once — for GitHub, per forge; for Forgejo and Gitea,
+          per instance. Worth it if several people use this forge; a token is
+          faster if it is just you.</span
+        >`,
       },
     )}`;
 }
@@ -1199,33 +1216,47 @@ function copyBtn(target: string, label: string): Html {
 function handoff(url: string, shortLink: string, openLabel?: string): Html {
   const payload = shortLink === "" ? url : shortLink;
   const code = qrEncode(payload);
-  return html`<div class="handoff">
-    ${code.ok
-      ? raw(qrSvg(code.value, { title: "Scan to open the link" }))
-      : null}
-    <div class="handoff-links">
+  return html`<div class="bar mt">
+      ${code.ok
+        ? raw(
+            qrSvg(code.value, {
+              title: "Scan to open the link",
+              scale: qrScale(code.value.modules.length),
+            }),
+          )
+        : null}
+    </div>
+    <ul class="list setting-list mt">
       ${shortLink === ""
         ? null
-        : html`<p class="muted small">Or open this on a phone:</p>
-            <div class="bar">
-              <span class="mono" id="flow-short">${shortLink}</span>
-              ${copyBtn("flow-short", "Copy the short link")}
-            </div>`}
-      <p class="muted small mt">The full link:</p>
-      <div class="bar">
-        <span class="mono small break" id="flow-url">${url}</span>
-        ${copyBtn("flow-url", "Copy the link")}
-      </div>
-      <div class="bar mt">
-        ${btn(openLabel ?? "Open the verification page", {
-          href: url,
-          variant: "primary",
-          icon: "external",
-          external: true,
-        })}
-      </div>
-    </div>
-  </div>`;
+        : row({
+            title: "Or open this on a phone:",
+            meta: html`<span class="mono" id="flow-short">${shortLink}</span>`,
+            trail: copyBtn("flow-short", "Copy the short link"),
+          })}
+      ${row({
+        title: "The full link:",
+        meta: html`<span class="mono small" id="flow-url">${url}</span>`,
+        trail: copyBtn("flow-url", "Copy the link"),
+      })}
+    </ul>
+    <div class="bar mt">
+      ${btn(openLabel ?? "Open the verification page", {
+        href: url,
+        variant: "primary",
+        icon: "external",
+        external: true,
+      })}
+    </div>`;
+}
+
+/**
+ * The module size that keeps the code at most 200 px square: the encoder sizes
+ * the SVG from it, so a long URL (more modules) must not make a code wider
+ * than a 360 px phone can hold beside the page's padding.
+ */
+function qrScale(modules: number): number {
+  return Math.max(1, Math.min(4, Math.floor(200 / modules)));
 }
 
 function notFoundNote(): Html {

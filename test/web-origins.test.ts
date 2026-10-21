@@ -25,6 +25,7 @@ import { getRepo } from "../src/core/repos.ts";
 import { getUserByName } from "../src/core/users.ts";
 import { forgetProviders } from "../src/origins/providers/index.ts";
 import { advance, createJob, settled } from "../src/origins/jobs.ts";
+import { icon } from "../src/web/ui.ts";
 import { quietLogs, withoutEnv } from "./helpers/globals.ts";
 import {
   newFakeOAuth,
@@ -203,6 +204,16 @@ describe("origins on the web", () => {
       html.indexOf("One-click sign-in"),
     );
     expect(html).toContain("recommended");
+    // Drawn with §5's rows and buttons, not the page's own classes.
+    for (const gone of ["handoff", "connect-more", "connect-path"]) {
+      expect(html).not.toContain(gone);
+    }
+    expect(html).toContain('id="connect-token"');
+    expect(html).toContain('action="/settings/origins/token"');
+    expect(html).toContain('name="token"');
+    expect(html).toContain('action="/settings/origins/oauth"');
+    expect(html).toContain("GitHub, one click");
+    expect(html).toContain("Needs an app registration on the instance");
     // No GitHub client id is configured yet, so the button is replaced by a
     // hint rather than left there to fail.
     expect(html).toContain("FORGE_GITHUB_CLIENT_ID");
@@ -212,6 +223,37 @@ describe("origins on the web", () => {
   });
 
   // ---- the token path ----
+
+  test("the connect rows lead with the caret, and the one-click folds open only once a form was used", async () => {
+    const fold = (page: string, id: string) => {
+      const m = new RegExp(`<details id="${id}"\\s*(open)?\\s*>\\s*<summary[^>]*>([\\s\\S]*?)</summary>`).exec(page);
+      expect(m).not.toBeNull();
+      return { open: m![1] === "open", summary: m![2]! };
+    };
+    const closed = await (await asUser(alice, "/settings/origins")).text();
+    const used = await (await asUser(alice, "/settings/origins?host=codeberg.org")).text();
+    for (const [id, brand] of [
+      ["connect-token", "key"],
+      ["connect-github", "github"],
+      ["connect-forgejo", "forgejo"],
+    ] as const) {
+      for (const page of [closed, used]) {
+        const { summary } = fold(page, id);
+        // The lead is the caret (it is rotated when open); the brand glyph
+        // is in the title beside the name.
+        const lead = /<span class="row-lead">([\s\S]*?)<\/span>/.exec(summary)![1]!;
+        expect(lead).toBe(icon("chevronRight").text);
+        expect(lead).not.toBe(icon(brand).text);
+        expect(/<span\s+class="row-title"[^>]*>([\s\S]*?)<\/span\s*>/.exec(summary)![1]).toContain(icon(brand).text);
+      }
+    }
+    expect(fold(closed, "connect-token").open).toBe(true);
+    expect(fold(closed, "connect-github").open).toBe(false);
+    expect(fold(closed, "connect-forgejo").open).toBe(false);
+    expect(fold(used, "connect-token").open).toBe(true);
+    expect(fold(used, "connect-github").open).toBe(true);
+    expect(fold(used, "connect-forgejo").open).toBe(true);
+  });
 
   test("connecting with a token stores it and never echoes it", async () => {
     const posted = await asUser(alice, "/settings/origins/token", {
@@ -577,6 +619,28 @@ describe("origins on the web", () => {
     expect(page).toContain('data-copy="device-code"');
     expect(page).toContain('data-copy="flow-short"');
     expect(page).toContain('data-copy="flow-url"');
+    for (const gone of ["handoff", "connect-more", "connect-path"]) {
+      expect(page).not.toContain(gone);
+    }
+    // Values and their copy buttons sit outside the ellipsizing `.row-title`,
+    // in a list whose rows wrap.
+    expect(page).toContain('class="list setting-list');
+    for (const id of ["flow-short", "flow-url"]) {
+      expect(page).toMatch(new RegExp(`row-meta[^>]*>\\s*<span[^>]*id="${id}"`));
+    }
+    const titles = [...page.matchAll(/<span\s+class="row-title"[^>]*>([\s\S]*?)<\/span\s*>/g)];
+    expect(titles.length).toBeGreaterThan(0);
+    for (const t of titles) {
+      expect(t[1]).not.toContain("data-copy");
+      expect(t[1]).not.toContain('id="flow-');
+    }
+    expect(page).toMatch(/row-trail[^>]*>\s*<button[^>]*data-copy="flow-url"/);
+    // The QR is capped: no wider than 200 px.
+    const width = Number(/<svg[^>]*\swidth="(\d+)"/.exec(page)?.[1]);
+    expect(width).toBeLessThanOrEqual(200);
+    expect(page).toContain("Or open this on a phone:");
+    expect(page).toContain("The full link:");
+    expect(page).toContain("Open the verification page");
     // Open leaves the forge safely, and the text stays selectable with no JS.
     expect(page).toContain('rel="noopener noreferrer"');
     expect(page).toContain('target="_blank"');
