@@ -81,6 +81,7 @@ export const SYSTEM_NAMES: readonly string[] = [
   "opensearch.xml",
   "map",
   "mcp",
+  "metrics",
   "contract",
   "migrate",
   "mode",
