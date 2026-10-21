@@ -7,6 +7,8 @@
  * is disjoint and covering, and that one red shard makes the run red.
  */
 
+import { nameUnnamed } from "../src/checks/bun-test.ts";
+
 /**
  * No more than this many `bun test` processes at once, whatever the host:
  * a ceiling for a big shared machine, not the check cell's number. The cell
@@ -389,7 +391,7 @@ export function tally(results: readonly ShardResult[], seconds: number): Tally {
       tests += Number(ran[1]);
       files += Number(ran[2]);
     }
-    const named = result.output.match(FAIL) ?? [];
+    const named = nameUnnamed(result.output.split("\n")).join("\n").match(FAIL) ?? [];
     for (const line of new Set(named)) failing.push(`${line} [shard ${i + 1}]`);
     if (result.code !== 0 && named.length === 0)
       unnamed.push(

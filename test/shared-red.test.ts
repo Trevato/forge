@@ -4,6 +4,9 @@
  * longer ago, is the pull's own; the vitals carry one card per shared test,
  * linked to its flake issue once the sentinel has filed one.
  */
+import { nameUnnamed } from "../src/checks/bun-test.ts";
+import { summariseCheckFailure } from "../src/checks/summary.ts";
+import { tally } from "../scripts/shards.ts";
 import { beforeEach, describe, expect, test } from "bun:test";
 import type { Database } from "bun:sqlite";
 import { Glob } from "bun";
@@ -156,5 +159,52 @@ describe("a red many pulls share", () => {
     expect(id(at) >= idFloor(at)).toBe(true);
     expect(idFloor(at - 1) < idFloor(at)).toBe(true);
     expect(idFloor(at)).toHaveLength(26);
+  });
+});
+
+describe("a failure outside a named test names its file and hook (#4582)", () => {
+  // Captured from bun 1.3.14 (`CI=1 bun test`): a beforeAll with a 50 ms
+  // timeout, an afterAll that throws, then the summary and a headerless
+  // recap such as bun prints when many tests fail.
+  const captured = [
+    "bun test v1.3.14 (0d9b296a)",
+    "",
+    "a.test.ts:",
+    "(fail) (unnamed) [50.82ms]",
+    "  ^ a beforeEach/afterEach hook timed out for this test.",
+    "",
+    "c.test.ts:",
+    '1 | import { afterAll, describe, test } from "bun:test";',
+    "error: late",
+    "      at <anonymous> (c.test.ts:2:62)",
+    "(fail) s > (unnamed) [0.13ms]",
+    "",
+    " 10 pass",
+    " 2 fail",
+    "Ran 12 tests across 2 files. [127.00ms]",
+    "",
+    "2 tests failed:",
+    "(fail) (unnamed) [50.82ms]",
+    "(fail) s > (unnamed) [0.13ms]",
+  ];
+
+  test("summary names the file and the hook, not (unnamed)", () => {
+    const failure = summariseCheckFailure(captured, "check exited with code 1");
+    expect(failure.detail?.names).toEqual([
+      "a.test.ts > beforeEach/afterEach (timeout)",
+      "c.test.ts > s > (unnamed)",
+      "(unnamed)",
+    ]);
+    expect(failure.summary).toContain("a.test.ts > beforeEach/afterEach (timeout)");
+  });
+
+  test("the recap after the summary is not given the last file's name", () => {
+    const named = nameUnnamed(captured);
+    expect(named.slice(-2)).toEqual(captured.slice(-2));
+  });
+
+  test("the sharded tally echoes the named failure", () => {
+    const { lines } = tally([{ files: ["a.test.ts"], code: 1, output: captured.join("\n") }], 1);
+    expect(lines).toContain("(fail) a.test.ts > beforeEach/afterEach (timeout) [50.82ms] [shard 1]");
   });
 });
