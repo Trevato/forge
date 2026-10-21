@@ -262,15 +262,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 
 .fork-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
 
-/* A fork's relationship to what it follows: one sentence, one action. */
-.following { margin-top: 12px; }
-.following-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.following-eyebrow { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: var(--fs-min); font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-fg); }
-.following-eyebrow a { color: var(--fg); text-transform: none; letter-spacing: 0; font-family: var(--font); font-size: 13px; font-weight: 600; }
-.following-sentence { margin: 8px 0 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; text-wrap: balance; }
-.following-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
-.following-foot { margin: 8px 0 0; }
-
 /* A mirror whose origin went: what froze, and the one way back. */
 .frozen { margin-top: 12px; }
 .frozen-sentence { margin: 0; text-wrap: pretty; }
