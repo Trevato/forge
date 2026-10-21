@@ -84,6 +84,17 @@ describe("GET /system", () => {
     expect(body).toContain("40.0 MiB");
   });
 
+  test("the chart pair is drawn with the base .plots grid, not .sys-pair", async () => {
+    recordMemory(app.db, 120 * MiB, 40 * MiB, Date.now());
+    const body = await (await get("alice")).text();
+    expect(body).not.toContain("sys-pair");
+    expect(body).toContain('<div class="plots">');
+    expect(body).toContain("<h2>RSS (MiB, hourly mean)</h2>");
+    expect(body).toContain("<h2>JS heap (MiB, hourly mean)</h2>");
+    expect(body).toContain('aria-label="Forge memory by hour"');
+    expect(body).toContain("Heap max");
+  });
+
   test("a non-admin gets 404 and an anonymous visitor is sent to sign in", async () => {
     expect((await get("bob")).status).toBe(404);
     const anon = await fetch(servers.url + "/system", { redirect: "manual" });
