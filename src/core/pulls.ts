@@ -613,13 +613,24 @@ export async function pullDiff(
   gate?: ReviewGate,
 ): Promise<PullDiff> {
   const status = await pullStatus(dir, pull, gate);
-  const from =
-    (await mergeBase(dir, status.baseOid, status.headOid)) ?? status.baseOid;
-  const result = await diffRange(dir, from, status.headOid);
-  const diff = result.ok
-    ? result.value
-    : { files: [], additions: 0, deletions: 0 };
+  const { from, diff } = await diffBetween(dir, status.baseOid, status.headOid);
   return { status, from, diff };
+}
+
+/**
+ * The diff of a head against its merge base with `baseOid`. `failed` says git
+ * could not produce it, so the empty diff is a stand-in no one should keep.
+ */
+export async function diffBetween(
+  dir: string,
+  baseOid: string,
+  headOid: string,
+): Promise<{ from: string; diff: Diff; failed: boolean }> {
+  const from = (await mergeBase(dir, baseOid, headOid)) ?? baseOid;
+  const result = await diffRange(dir, from, headOid);
+  return result.ok
+    ? { from, diff: result.value, failed: false }
+    : { from, diff: { files: [], additions: 0, deletions: 0 }, failed: true };
 }
 
 /**

@@ -26,7 +26,7 @@ import { getAppByRepo } from "../../core/apps.ts";
 import { labelsFor, listLabels } from "../../core/issues.ts";
 import { marksByName } from "../../core/marks.ts";
 import {
-  pullDiff,
+  diffBetween,
   pullDir,
   pullStatus,
   type MergePullError,
@@ -52,6 +52,7 @@ import {
 import { getUsersByIds } from "../../core/users.ts";
 import { canWrite, getRepoById, type Repo } from "../../core/repos.ts";
 import { resolveOid } from "../../git/merge.ts";
+import { timePhaseAsync } from "../../core/route_timing.ts";
 import { commitLog } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
 import { wallOf } from "../../contract/policy.ts";
@@ -64,6 +65,7 @@ import {
   repoPalette,
   signInFirst,
 } from "../chrome.ts";
+import { diffCacheCounts, diffKey, keptDiff } from "../diff-cache.ts";
 import { diffSyntax } from "../diff-syntax.ts";
 import {
   renderDiff,
@@ -805,11 +807,22 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
 
   // The review gate travels with the status, so the merge box and
   // `mergePull` are answering the same question from the same numbers.
-  const { status, from, diff } = await pullDiff(dir, pull, {
+  const status = await pullStatus(dir, pull, {
     db: ctx.app.db,
     requireReview: repo.requireReview,
   });
-  const syntax = await diffSyntax(dir, diff, from, status.headOid);
+  // The diff and its highlighting depend on two oids and nothing else, so
+  // the next reader of this head gets them from memory (`diff-cache.ts`).
+  const { diff, syntax } = await timePhaseAsync(
+    ctx.request,
+    "diff",
+    () =>
+      keptDiff(diffKey(status.baseOid, status.headOid), async () => {
+        const { from, diff, failed } = await diffBetween(dir, status.baseOid, status.headOid);
+        return { from, diff, failed, syntax: await diffSyntax(dir, diff, from, status.headOid) };
+      }),
+    diffCacheCounts,
+  );
   // A merged or closed pull is history; the wall is a question about landing.
   const wall =
     pull.mergedAt === null && pull.state === "open"
