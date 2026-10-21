@@ -1074,6 +1074,14 @@ describe("the app's page tails the crew's log while it works", () => {
     expect(page).toContain(
       `data-stream="/api/v1/repos/alice/engine/runs/${run.id}/log?follow=1"`,
     );
+    // The retired one-off class is gone from the HTML.
+    expect(page).not.toContain("log-tail-row");
+    // The block-level log box is a sibling <li> padded by §5's .card-body,
+    // never inside a row's ellipsizing, nowrap .row-title, so its lines wrap.
+    expect(page).toMatch(/<li class="card-body">\s*<[^>]*id="app-run-tail"/);
+    expect(page).not.toMatch(
+      /<span\s+class="row-title"[^>]*>(?:(?!<\/span>)[\s\S])*id="app-run-tail"/,
+    );
     // Bounded on the first paint too: only the last handful made it, and
     // the box says so.
     expect(page).not.toContain(">line 0<");

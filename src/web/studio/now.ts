@@ -208,7 +208,7 @@ export async function nowCard(
       }),
     );
     if (activeTail !== undefined && r.id === activeRun?.id)
-      runRows.push(html`<li class="log-tail-row">${activeTail}</li>`);
+      runRows.push(html`<li class="card-body">${activeTail}</li>`);
   }
 
   // An environment the sleep sweep is sparing because it is mid-work:
