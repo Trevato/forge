@@ -159,7 +159,10 @@ describe("GET /api/v1/boards/:slug/panels/:id", () => {
     expect(res.status).toBe(200);
     const out = (await res.json()) as Out;
     expect([out.board, out.panel, out.title, out.step]).toEqual(["usage-test", 0, "Pod CPU", 300]);
-    expect(out.rows.at(-1)!.group).toBe(minute(Math.floor(LAST / 300_000) * 300_000));
+    // The seed minute's bucket, or a later one if the clock crossed a 5-minute mark since the file loaded.
+    const seeded = Math.floor(LAST / 300_000) * 300_000;
+    const nowMark = Math.floor(Date.now() / 300_000) * 300_000;
+    expect([minute(seeded), minute(nowMark)]).toContain(out.rows.at(-1)!.group);
   });
 
   test("step=1m over 24 h is all 1440 minutes; step=5m over an aligned day is 288 buckets", async () => {
@@ -190,10 +193,12 @@ describe("GET /api/v1/boards/:slug/panels/:id", () => {
   });
 
   test("a panel not grouped by time ignores the step; a text cell is never a formula", async () => {
-    const out = (await (await api("/api/v1/boards/usage-test/panels/1?step=5m")).json()) as Out;
+    // The day of points is pinned, so a minute turning over mid-run can't drop the oldest one.
+    const day = `from=${new Date(LAST - 86_400_000).toISOString()}`;
+    const out = (await (await api(`/api/v1/boards/usage-test/panels/1?step=5m&${day}`)).json()) as Out;
     expect(out.step).toBeNull();
     expect(out.rows.map((r) => r.group)).toEqual(['=HYPERLINK("x")', "forge"]);
-    const csv = await (await api("/api/v1/boards/usage-test/panels/1?format=csv")).text();
+    const csv = await (await api(`/api/v1/boards/usage-test/panels/1?format=csv&${day}`)).text();
     expect(csv).toBe(`group,value\r\n"'=HYPERLINK(""x"")",1\r\nforge,1440\r\n`);
   });
 
