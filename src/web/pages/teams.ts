@@ -7,6 +7,7 @@
 import { changeTeam, readTeams, teamChanges, TEAM_SAYS } from "../../actions/teams.ts";
 import { CHARTER_MAX, DIAL_MAX } from "../../core/teams.ts";
 import type { Ctx } from "../../http/context.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { notFoundPage, settingsLayout } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { eventStream } from "../../http/sse.ts";
@@ -19,11 +20,13 @@ const isAdminPerson = (ctx: Ctx): boolean =>
   ctx.auth.user?.isAdmin === true && ctx.auth.user.kind !== "agent";
 
 /** The page's three regions, as HTML text: what the first paint and the stream both send. */
-function regions(ctx: Ctx): Record<string, string> | undefined {
-  const read = readTeams(ctx.app, ctx.auth.user);
+function regions(ctx: Ctx, timed = false): Record<string, string> | undefined {
+  const phase = <T>(name: string, work: () => T): T =>
+    timed ? timePhase(ctx.request, name, work) : work();
+  const read = phase("teams", () => readTeams(ctx.app, ctx.auth.user));
   if (!read.ok) return undefined;
   const { teams, agents } = read.value;
-  const changes = teamChanges(ctx.app, 10);
+  const changes = phase("changes", () => teamChanges(ctx.app, 10));
   const total = teams.reduce((n, t) => n + t.dial, 0);
   const cards = teams.map((t) =>
     card(
@@ -113,10 +116,12 @@ export function teamsStream(ctx: Ctx): Response {
 
 // GET /settings/teams
 export function teamsPage(ctx: Ctx): Response {
-  const r = regions(ctx);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const r = regions(ctx, true);
   if (!r) return notFoundPage(ctx);
+  const rendering = performance.now();
   const at = (id: string): Html => raw(r[id]!);
-  return page({
+  const out = page({
     ctx,
     title: "Teams",
     scriptJs: teamsLiveJs,
@@ -134,6 +139,8 @@ export function teamsPage(ctx: Ctx): Response {
         "Account settings",
       )}`,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return out;
 }
 
 // POST /settings/teams/:slug
