@@ -478,7 +478,9 @@ function passwordView(error?: {
 // GET /settings/password
 export function passwordPage(ctx: Ctx): Response {
   if (!ctx.auth.user) return signInFirst(ctx);
-  return accountShell(ctx, "password", "Password", passwordView());
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const body = passwordView();
+  return timePhase(ctx.request, "render", () => accountShell(ctx, "password", "Password", body));
 }
 
 // POST /settings/password
@@ -584,11 +586,9 @@ export function sessionsCard(
 }
 
 function tokensView(ctx: Ctx): Html {
-  const tokens = listTokens(ctx.app.db, ctx.auth.user!.id);
-  const sessions = listSessions(
-    ctx.app.db,
-    ctx.auth.user!.id,
-    cookieValue(ctx.request, "forge_session"),
+  const tokens = timePhase(ctx.request, "tokens", () => listTokens(ctx.app.db, ctx.auth.user!.id));
+  const sessions = timePhase(ctx.request, "sessions", () =>
+    listSessions(ctx.app.db, ctx.auth.user!.id, cookieValue(ctx.request, "forge_session")),
   );
   return html`<p class="muted small mb">
       Use a token as the password when pushing over HTTPS, or as a
@@ -680,7 +680,9 @@ function tokensView(ctx: Ctx): Html {
 // GET /settings/tokens
 export function tokensPage(ctx: Ctx): Response {
   if (!ctx.auth.user) return signInFirst(ctx);
-  return accountShell(ctx, "tokens", "Personal access tokens", tokensView(ctx));
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const body = tokensView(ctx);
+  return timePhase(ctx.request, "render", () => accountShell(ctx, "tokens", "Personal access tokens", body));
 }
 
 // POST /settings/tokens
@@ -757,7 +759,7 @@ function keysView(
   ctx: Ctx,
   values: { name: string; key: string; error?: string },
 ): Html {
-  const keys = listKeys(ctx.app.db, ctx.auth.user!.id);
+  const keys = timePhase(ctx.request, "keys", () => listKeys(ctx.app.db, ctx.auth.user!.id));
   const ssh = sshCommand(ctx.app);
   return html`${ssh === undefined
       ? html`<p class="mb muted" id="terminal-off">The terminal is off on this forge.</p>`
@@ -848,12 +850,9 @@ function keysView(
 // GET /settings/keys
 export function keysPage(ctx: Ctx): Response {
   if (!ctx.auth.user) return signInFirst(ctx);
-  return accountShell(
-    ctx,
-    "keys",
-    "SSH keys",
-    keysView(ctx, { name: "", key: "" }),
-  );
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const body = keysView(ctx, { name: "", key: "" });
+  return timePhase(ctx.request, "render", () => accountShell(ctx, "keys", "SSH keys", body));
 }
 
 // POST /settings/keys
