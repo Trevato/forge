@@ -64,6 +64,9 @@ export function parseFrom(raw: unknown): string | null | undefined {
 export const FROM_WORDS =
   "from is a path on this forge, like /alice/notes/pulls/3, at most 512 characters";
 
+/** What a client reads after asking for something, on the web and in the terminal. */
+export const SENT_WORDS = "Sent. The agents will pick it up.";
+
 export type TellError =
   | "empty"
   | "bad_from"

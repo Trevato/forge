@@ -12,6 +12,8 @@ import { join } from "node:path";
 import { createRepo } from "../src/actions/repos.ts";
 import { childDirOf, spawnForge } from "../src/actions/spawn.ts";
 import { createApp, type App } from "../src/app.ts";
+import { clientApps } from "../src/web/studio/client_home.ts";
+import type { Ctx } from "../src/http/context.ts";
 import { clientAppRows, cutTitle, doingLine } from "../src/core/client-apps.ts";
 import { addCrew, createAgentRow, setCrewRole } from "../src/core/agents.ts";
 import { moveArchived } from "../src/core/repos.ts";
@@ -176,6 +178,83 @@ describe("a client's first screen", () => {
     for (const gone of ['href="/map"', 'href="/board"', 'href="/audit"', 'href="/settings"'])
       expect(home).not.toContain(gone);
     expect(home).toContain('href="/?all=1"');
+  });
+
+  test("each app offers Ask for something, which opens the tell form for it, and sending lands back here", async () => {
+    const home = main(await page(owner));
+    expect(home).toContain('href="/marias/bakery/tell?from=/&amp;ask=1"');
+    expect(home).toContain("Ask for something");
+    const form = await page(owner, "/marias/bakery/tell?from=/&ask=1");
+    expect(form).toContain('action="/marias/bakery/tell"');
+    expect(form).toContain('name="ask" value="1"');
+    expect(form).not.toContain("From <code>");
+    const sent = await post(owner, "/marias/bakery/tell", { text: "Add a rye loaf", from: "/", ask: "1" });
+    expect(sent.status).toBe(303);
+    expect(new URL(sent.headers.get("location")!, servers.url).pathname).toBe("/");
+    const flash = sent.headers.get("set-cookie")!.split(";")[0]!;
+    expect(await page(`${owner}; ${flash}`)).toContain("Sent. The agents will pick it up.");
+  });
+
+  test("a tell sent from / without asking keeps its routed line", async () => {
+    const sent = await post(owner, "/marias/bakery/tell", { text: "Add a plain loaf", from: "/" });
+    const flash = decodeURIComponent(sent.headers.get("set-cookie")!);
+    expect(flash).not.toContain("Sent. The agents will pick it up.");
+  });
+
+  test("the link keeps the same-origin rule: a tell from another origin is refused", async () => {
+    const res = await fetch(url("/marias/bakery/tell"), {
+      method: "POST",
+      headers: { cookie: owner, origin: "https://evil.test" },
+      body: new URLSearchParams({ text: "x", from: "/" }),
+      redirect: "manual",
+    });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+  });
+
+  test("a viewer who may not tell is offered no link", async () => {
+    const reader = await createUser(child.db, {
+      origin: "seed",
+      trusted: true,
+      username: "lookeronly",
+      email: "lo@x.test",
+      password: PASSWORD,
+    });
+    if (!reader.ok) throw new Error("reader");
+    child.db.query("UPDATE repo SET visibility = 'public' WHERE name = 'bakery'").run();
+    try {
+      const ctx = {
+        app: child,
+        request: new Request("https://x.test/"),
+        auth: { user: reader.value },
+      } as unknown as Ctx;
+      const shown = String(await clientApps(ctx, reader.value));
+      expect(shown).toContain('href="/marias/bakery"');
+      expect(shown).not.toContain("Ask for something");
+      const maria = getUserByName(child.db, "maria")!;
+      expect(String(await clientApps(ctx, maria))).toContain("Ask for something");
+    } finally {
+      child.db.query("UPDATE repo SET visibility = 'private' WHERE name = 'bakery'").run();
+    }
+  });
+
+  test("the terminal's first screen asks for something with t, in the web's words", async () => {
+    const maria = getUserByName(child.db, "maria")!;
+    const terminal = headlessTerminal(120, 30);
+    const { app } = createForgeApp(
+      child,
+      { sshUsername: "maria", remoteAddress: "127.0.0.1", fingerprint: "SHA256:t", user: maria },
+      { terminal, exitHooks: false },
+    );
+    app.start();
+    await settleApp(app);
+    for (const k of ["t", ..."a rye loaf".split(""), "\r"]) {
+      terminal.feed(k);
+      await settleApp(app);
+    }
+    expect(app.screen.toText()).toContain("Sent. The agents will pick it up.");
+    const told = child.db.query("SELECT COUNT(*) AS n FROM issue WHERE title LIKE '%rye loaf%'").get() as { n: number };
+    expect(told.n).toBeGreaterThan(0);
+    app.stop();
   });
 
   test("a running agent turns the line to working", async () => {

@@ -10,9 +10,10 @@ import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../cor
 import { clientAppRows, clientDoings, doingLine } from "../../core/client-apps.ts";
 import type { User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
+import { mayDirectCrew } from "../../crew/direct.ts";
 import { repoBase } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
-import { card } from "../ui.ts";
+import { btn, card } from "../ui.ts";
 
 /** The sentence about the agents, from how many are going and how many are lined up. */
 export function agentsLine(working: number, queued: number): string {
@@ -36,8 +37,15 @@ export async function clientApps(ctx: Ctx, user: User): Promise<Html> {
   const rows = apps.map(({ repo, working, queued }) => {
     const doing = doingLine(doings.get(repo.id), now.getTime());
     const about = repo.description !== "" ? repo.description : "An app of yours.";
+    // The tell form with this app chosen; it sends the person back to `/`.
+    const ask = mayDirectCrew(ctx.app.db, repo, user)
+      ? btn("Ask for something", {
+          href: `${repoBase(repo)}/tell?from=/&ask=1`,
+          variant: "outline",
+        })
+      : null;
     return html`<li class="client-app">
-      <a href="${repoBase(repo)}"><b>${repo.name}</b></a>
+      <a href="${repoBase(repo)}"><b>${repo.name}</b></a> ${ask}
       <span class="client-app-about">${about}</span>
       <span class="client-app-agents muted" data-agents="${working > 0 ? "working" : "waiting"}"
         >${agentsLine(working, queued)}</span

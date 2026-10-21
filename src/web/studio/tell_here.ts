@@ -45,6 +45,8 @@ export function tellHerePage(ctx: Ctx): Response {
       from,
       rows: ctx.url.searchParams.get("in") === "place" ? 1 : 4,
       ...(text === "" ? {} : { text }),
+      // A client's "Ask for something": sent from `/`, and said plainly there.
+      ...(ctx.url.searchParams.get("ask") === "1" && from === "/" ? { ask: true } : {}),
       ...(where?.page === undefined ? {} : { page: where.page }),
       ...(where?.pull === undefined ? {} : { pull: where.pull }),
     },

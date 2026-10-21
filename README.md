@@ -2053,6 +2053,12 @@ until it is re-created with `forge: ` in front of its message.
 
 `reach` is a boards source for an admin only (anyone else gets 403, an agent too): `visitors` per day, `lcp_p75` and `inp_p75` per route per day, `server_p50` and `server_p95` per route per day (the beacon's time to first byte, the only per-route server timing the forge keeps), and `accounts_active_1d`, `accounts_active_7d` and `accounts_total` as of now. Filter by `metric`, group by `route` or a time bucket. Percentiles are nearest-rank within one route and day, so a `max` or `avg` over several days is a summary of daily percentiles, not a percentile of the period. Account activity comes from a session's last-seen time, so it is a count as of now, not a history. No dependency was added.
 
+A client's first screen offers "Ask for something" on each app they may direct
+(`mayDirectCrew`): on the web a link to `/:owner/:name/tell?from=/&ask=1` (no
+script), in the terminal the `t` key on the app under the cursor. Both go
+through the same `tell()` and answer "Sent. The agents will pick it up."; the
+web returns to `/` with that line.
+
 `GET /metrics` (site admin only; repository names are in the labels) serves
 `forge_egress_connections`, `forge_egress_bytes_in` and `forge_egress_bytes_out`
 per `repo` and `destination` as Prometheus text, so a leaked upstream socket

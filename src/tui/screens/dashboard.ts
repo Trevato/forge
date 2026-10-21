@@ -23,6 +23,7 @@ import { coveredByVerdict, forgeVerdict, verdictLine } from "../../kernel/guard_
 import { clientAppRows, clientDoings, doingLine } from "../../core/client-apps.ts";
 import { nextStepsFor } from "../../core/next-steps.ts";
 import { agentsLine } from "../../web/studio/client_home.ts";
+import { askForSomething } from "./tell.ts";
 import { mayView } from "../../core/sealed.ts";
 import { applyFleetIds, previewFleetIds, undoFleetOp } from "../../actions/fleet.ts";
 import { plain } from "./boards.ts";
@@ -163,6 +164,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   let waits: string[] = [];
   /** A client's apps, one sentence each on whether its agents work or wait (#1812). */
   let clientLines: string[] = [];
+  /** The ids of those apps, so the key that asks for something stays on them. */
+  let clientRepoIds = new Set<string>();
   /** The check lane, as the board's strip says it; null when nothing is queued. */
   let lane: string | null = null;
   /** What the decider did today, the board's Today line; null on a quiet day or for a reader. */
@@ -186,6 +189,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     // A client's home never carries the forge-wide figures, on either door.
     figures = [];
     const apps = await clientAppRows(f.app, f.user);
+    clientRepoIds = new Set(apps.map((a) => a.repo.id));
     const now = new Date();
     const doings = clientDoings(f.app.db, apps.map((a) => a.repo.id), now);
     clientLines =
@@ -741,6 +745,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
           disabled: focus !== "machine" || pins.length === 0,
         }),
         binding(["C"], "decider", { disabled: !f.user }),
+        ...(clientLines.length > 0 ? [binding(["t"], "ask for something")] : []),
         binding(["n"], "new repo", { disabled: !f.signedIn }),
         binding(["M"], "migrate", { disabled: !f.signedIn }),
         binding(["A"], "account", { disabled: !f.signedIn }),
@@ -939,6 +944,12 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
           reload();
           ctx.toast(wanted ? "pinned" : "unpinned", "success");
         }
+        return true;
+      }
+      if (e.key === "t" && f.user && clientLines.length > 0) {
+        // A client's apps are the list; the one under the cursor is asked.
+        const repo = shown()[at("repos").index];
+        if (repo && clientRepoIds.has(repo.id)) askForSomething(f, ctx, () => screen, repo);
         return true;
       }
       if (e.key === "n" && f.signedIn) {

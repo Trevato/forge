@@ -11,7 +11,7 @@
 import { mayView } from "../../core/sealed.ts";
 import { holdPull, releasePull } from "../../actions/holds.ts";
 import { addComment } from "../../actions/issues.ts";
-import { parseFrom, tell, toldWords, TOO_LONG_WORDS } from "../../actions/tell.ts";
+import { parseFrom, SENT_WORDS, tell, toldWords, TOO_LONG_WORDS } from "../../actions/tell.ts";
 import { contextNote, parseContext } from "../../actions/tell_context.ts";
 import { keepThought } from "../../actions/thought.ts";
 import { DIRECTION_NOTE } from "../../crew/direct.ts";
@@ -77,6 +77,9 @@ async function tellFrom(
             : "That could not be told.",
     });
   const { routed } = told.value;
+  // A client's "Ask for something" (named by the form, not guessed from `/`):
+  // they asked for something and want nothing more than to know it went.
+  if (from === "/" && field(form, "ask") === "1") return flashOrJson(ctx, back, { message: SENT_WORDS });
   if (routed === undefined)
     return flashOrJson(ctx, back, {
       message: `Opened as an issue. Nobody is on the crew to take it yet — add someone under Settings → Crew.`,

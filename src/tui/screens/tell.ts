@@ -8,7 +8,7 @@
  * the same `parseContext` and `contextNote` the pill's tell and the MCP use.
  */
 
-import { tell, toldWords, TOO_LONG_WORDS, UNVERIFIED_WORDS, type Told, type TellError } from "../../actions/tell.ts";
+import { SENT_WORDS, tell, toldWords, TOO_LONG_WORDS, UNVERIFIED_WORDS, type Told, type TellError } from "../../actions/tell.ts";
 import { contextNote, parseContext } from "../../actions/tell_context.ts";
 import type { Repo } from "../../core/repos.ts";
 import { DIRECTION_NOTE, mayDirectCrew } from "../../crew/direct.ts";
@@ -117,4 +117,24 @@ export async function tellFromPage(
   }
   const answer = tellAnswer(await tell(f.app, f.user, repo, `${said}${contextNote(where)}`));
   ctx.toast(answer.text, answer.tone);
+}
+
+/** A client's "Ask for something" on the first screen: one line to the app's crew, answered in the web's words. */
+export function askForSomething(f: Session, ctx: Ctx, parent: () => Screen, repo: Repo): void {
+  if (!mayDirectCrew(f.db, repo, f.user)) return;
+  ctx.push(
+    promptScreen(ctx, parent(), {
+      title: "Ask for something",
+      label: repo.name,
+      hint: "enter sends",
+      onSubmit: (said) => {
+        if (said === "") return "Say something first.";
+        return (async () => {
+          const told = await tell(f.app, f.user, repo, said, 1, "/");
+          const answer = told.ok ? { text: SENT_WORDS, tone: "success" as const } : tellAnswer(told);
+          ctx.toast(answer.text, answer.tone);
+        })();
+      },
+    }),
+  );
 }

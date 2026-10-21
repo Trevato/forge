@@ -435,7 +435,7 @@ export interface ComposerOptions {
    * the button tells the crew, and `from` (a path on this forge, or null)
    * rides along as a hidden field so the tell remembers the page it was
    * said on (`actions/tell.ts`). `rows` sizes it; one is a single line. */
-  tell?: { from: string | null; rows?: number; page?: string; pull?: number; text?: string };
+  tell?: { from: string | null; rows?: number; page?: string; pull?: number; text?: string; ask?: boolean };
 }
 
 /** The comment box. Close and reopen are their own form, not an `intent`
@@ -520,6 +520,9 @@ export function composer(ctx: Ctx, o: ComposerOptions): Html {
       ${tell?.from
         ? html`<input type="hidden" name="from" value="${tell.from}" />`
         : null}
+      ${tell?.ask
+        ? html`<input type="hidden" name="ask" value="1" />`
+        : null}
       ${tell?.page
         ? html`<input type="hidden" name="page" value="${tell.page}" />`
         : null}
@@ -532,7 +535,7 @@ export function composer(ctx: Ctx, o: ComposerOptions): Html {
       <div class="form-actions">
         <span class="muted small"
           >${tell
-            ? html`${tell.from
+            ? html`${tell.from && !tell.ask
                 ? html`From <code>${tell.from}</code>. `
                 : null}${tell.page
                 ? html`From <code>${tell.page}</code>. `
