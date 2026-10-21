@@ -12,6 +12,10 @@ not an admin, 200 for an admin's `ro` token. It is never cached
 | `forge_egress_bytes_in` | gauge | `repo`, `destination` | Bytes received from the destination over open connections. |
 | `forge_egress_bytes_out` | gauge | `repo`, `destination` | Bytes sent to the destination over open connections. |
 | `forge_http_request_duration_seconds` | histogram | `pattern` (plus `le`) | Seconds taken to answer a request, by the route pattern matched (never the raw path), since the process started. Buckets are `route_timing`'s edges, 1 ms to 2.5 s, in seconds. |
+| `forge_check_duration_seconds` | histogram | (plus `le`) | Seconds a repository check took from start to finish, for checks that ended since the process started. Buckets 5 s to 30 min. |
+| `forge_check_queue_depth` | gauge | none | Checks queued and not yet started. |
+| `forge_crew_runs_total` | counter | `member`, `outcome` | Crew runs that ended, by the member's username and `ok`, `failed` or `cancelled`. |
+| `forge_crew_spend_usd_total` | counter | `member` | US dollars the member's runs spent, from the usage ledger (list-price equivalent on a subscription). |
 | `forge_pulls_merged_total` | counter | `repo` | Pulls merged, from `pull.merged_at`. |
 | `forge_releases_total` | counter | none | Releases that went live, from the `release` table's `ok` rows. |
 | `forge_ask_to_live_seconds` | histogram | none (plus `le`) | Seconds from an issue opening to the first successful release of a pull that closes it. Buckets: 1 m, 5 m, 15 m, 1 h, 4 h, 12 h, 1 d, 3 d, 7 d. |
@@ -25,18 +29,21 @@ never in the body. `env` is `production` or `pull-<n>`. The cell families are
 what the cell watch last read (every few seconds); a cell that is not running
 has no series (a cell keeps the slug it started under, so after a rename its figures return when it restarts), and the forge starts nothing and reads no process to answer.
 
+The duration histograms count every request the process has answered, and
+every check it has seen finish, since it started; their `_bucket`, `_count`
+and `_sum` only grow, so `rate()` and `histogram_quantile()` read them as
+Prometheus expects. A restart starts them at zero again, which Prometheus
+reads as a counter reset. A request counts the moment it is answered; a check
+counts at the first scrape after it finishes. The hourly `route_timing` table,
+which keeps 30 days, is the place to look further back.
+
 The delivery series are read from the `pull`, `release` and `run` tables on
-every scrape, so the scrape cost grows with those tables.
+every scrape, so the scrape cost grows with those tables. The check histogram
+reads only the checks finished since the last scrape, through the
+`run_kind_finished` index; the queue and crew series are small grouped reads.
 
 A public repository's `repo` label is `owner/name`; a private one appears
 under its id only, never its name.
-
-The duration histogram counts every request the process has answered since
-it started; its `_bucket`, `_count` and `_sum` only grow, so `rate()` and
-`histogram_quantile()` read it as Prometheus expects. A restart starts it at
-zero again, which Prometheus reads as a counter reset. A request counts the
-moment it is answered. The hourly `route_timing` table, which keeps 30 days,
-is the place to look further back.
 
 ## Prometheus
 

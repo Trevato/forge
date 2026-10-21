@@ -70,7 +70,8 @@ test("a request without credentials is answered 404, as docs/METRICS.md says", a
 test("every family the route serves is listed in docs/METRICS.md", async () => {
   const text = await read();
   const doc = await readFile(join(import.meta.dir, "..", "docs", "METRICS.md"), "utf8");
-  const families = [...text.matchAll(/^# TYPE (\S+) /gm)].map((m) => m[1]!);
+  // A counter's family is named without `_total`; the doc lists the name it is scraped by.
+  const families = [...text.matchAll(/^# TYPE (\S+) (\S+)/gm)].map((m) => (m[2] === "counter" ? `${m[1]}_total` : m[1]!));
   expect(families).toContain("forge_egress_connections");
   expect(families).toContain("forge_http_request_duration_seconds");
   // A counter's TYPE line names the family without `_total`; the doc names the sample.

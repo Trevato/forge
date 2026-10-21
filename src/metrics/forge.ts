@@ -1,14 +1,16 @@
 /**
- * The forge's own families for `GET /metrics` (#3975, #3752): request duration
- * as a histogram per route pattern, and the apps, up or not, with each cell's
- * CPU and memory as the watch last read them. The duration is read from the
- * totals `route_timing` keeps in memory since the process started, not from
- * the hourly table, so every value only grows (#4013): Prometheus reads a drop
- * as a counter reset, and a restart resets them, which it expects. Nothing is
- * started or shelled out to read a figure. The delivery series (#4057) are
- * read from the tables that hold the facts: `pull`, `release` (successful rows
- * only) and the default branch's `run` rows. The text comes from
- * `openmetrics.ts`.
+ * The forge's own families for `GET /metrics` (#3975, #3752, #3751): request
+ * duration as a histogram per route pattern, the apps, up or not, with each
+ * cell's CPU and memory as the watch last read them, and the checks and the
+ * crew. The duration is read from the totals `route_timing` keeps in memory
+ * since the process started, not from the hourly table, so every value only
+ * grows (#4013): Prometheus reads a drop as a counter reset, and a restart
+ * resets them, which it expects. The check histogram folds newly finished
+ * checks into in-memory totals; the queue and the crew's runs and spend are
+ * small queries, as are the delivery series (#4057), read from `pull`, `release`
+ * (successful rows only) and the default branch's `run` rows. Nothing is started
+ * or shelled out to read a figure. The text
+ * comes from `openmetrics.ts`.
  */
 import type { Database } from "bun:sqlite";
 import type { CellCounter } from "../apps/contain.ts";
@@ -36,6 +38,108 @@ export function durationFamily(db: Database): Family {
     name: DURATION_FAMILY,
     help: "Seconds the forge took to answer a request, by route pattern, since the process started.",
     samples,
+  };
+}
+
+/** Upper bounds, in seconds, of the check duration histogram. */
+export const CHECK_EDGES_S: readonly number[] = [5, 15, 30, 60, 120, 300, 600, 1800];
+
+/** What the check histogram has counted so far, per database: only ever added to. */
+interface CheckTotals {
+  mark: string;
+  seen: Set<string>;
+  counts: number[];
+  count: number;
+  sum: number;
+}
+const STARTED = new Date().toISOString();
+const checkTotals = new WeakMap<Database, CheckTotals>();
+
+/**
+ * Check duration since the process started, started to finished, cumulative.
+ * Each scrape folds in the checks finished since the last one, once each
+ * (`mark` is the newest `finished_at` folded, `seen` its run ids), so nothing
+ * ages out and the series only grows (#4013).
+ */
+export function checkDurationFamily(db: Database): Family {
+  let t = checkTotals.get(db);
+  if (!t) checkTotals.set(db, (t = { mark: STARTED, seen: new Set(), counts: CHECK_EDGES_S.map(() => 0), count: 0, sum: 0 }));
+  const rows = db
+    .query<{ id: string; at: string; s: number }, [string]>(
+      `SELECT id, finished_at AS at, (julianday(finished_at) - julianday(started_at)) * 86400.0 AS s
+         FROM run
+        WHERE kind = 'check' AND state IN ('ok','failed')
+          AND started_at IS NOT NULL AND finished_at >= ?1
+        ORDER BY finished_at, id`,
+    )
+    .all(t.mark);
+  for (const r of rows) {
+    if (r.at > t.mark) {
+      t.mark = r.at;
+      t.seen.clear();
+    }
+    if (t.seen.has(r.id)) continue;
+    t.seen.add(r.id);
+    const secs = Math.max(0, r.s);
+    t.sum += secs;
+    t.count++;
+    CHECK_EDGES_S.forEach((le, i) => {
+      if (secs <= le) t!.counts[i]!++;
+    });
+  }
+  return {
+    type: "histogram",
+    name: "forge_check_duration_seconds",
+    help: "Seconds a repository check took from start to finish, since the process started.",
+    samples: [{ buckets: CHECK_EDGES_S.map((le, i) => ({ le, count: t!.counts[i]! })), count: t.count, sum: t.sum }],
+  };
+}
+
+/** Checks waiting to start: the `queued` runs of kind check. */
+export function checkQueueFamily(db: Database): Family {
+  const row = db
+    .query<{ n: number }, []>(`SELECT COUNT(*) AS n FROM run WHERE kind = 'check' AND state = 'queued'`)
+    .get();
+  return {
+    type: "gauge",
+    name: "forge_check_queue_depth",
+    help: "Checks queued and not yet started.",
+    samples: [{ value: row?.n ?? 0 }],
+  };
+}
+
+/** Finished crew runs by member (the agent's username) and outcome. */
+export function crewRunsFamily(db: Database): Family {
+  const rows = db
+    .query<{ member: string; outcome: string; n: number }, []>(
+      `SELECT u.username AS member, r.state AS outcome, COUNT(*) AS n
+         FROM run r JOIN user u ON u.id = r.actor_id
+        WHERE r.kind = 'agent' AND r.state IN ('ok','failed','cancelled')
+        GROUP BY u.username, r.state ORDER BY u.username, r.state`,
+    )
+    .all();
+  return {
+    type: "counter",
+    name: "forge_crew_runs_total",
+    help: "Crew runs that ended, by member and outcome.",
+    samples: rows.map((r) => ({ labels: { member: r.member, outcome: r.outcome }, value: r.n })),
+  };
+}
+
+/** What each crew member's runs have cost, in US dollars, from the usage ledger. */
+export function crewSpendFamily(db: Database): Family {
+  const rows = db
+    .query<{ member: string; usd: number }, []>(
+      `SELECT u.username AS member, SUM(g.cost_usd) AS usd
+         FROM usage g JOIN user u ON u.id = g.agent_id
+        GROUP BY u.username ORDER BY u.username`,
+    )
+    .all();
+  return {
+    type: "counter",
+    name: "forge_crew_spend_usd_total",
+    help: "US dollars the crew's runs spent, by member, from the usage ledger.",
+    samples: rows.map((r) => ({ labels: { member: r.member }, value: r.usd })),
   };
 }
 
@@ -230,6 +334,10 @@ export function forgeMetrics(
 ): string {
   return openMetrics([
     durationFamily(db),
+    checkDurationFamily(db),
+    checkQueueFamily(db),
+    crewRunsFamily(db),
+    crewSpendFamily(db),
     ...appFamilies(sources),
     pullsMergedFamily(db),
     releasesFamily(db),
