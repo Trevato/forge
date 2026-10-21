@@ -80,7 +80,8 @@ const denied = (ctx: Ctx) => {
 
 // GET /boards
 export async function boardsList(ctx: Ctx): Promise<Response> {
-  const listed = await listAllBoards(ctx.app, ctx.auth.user);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const listed = await timePhaseAsync(ctx.request, "boards", () => listAllBoards(ctx.app, ctx.auth.user));
   if (!listed.ok) return notFoundPage(ctx);
   const make = html`<form method="post" action="/boards/new" class="bform">
     <label class="qf"><span>New board</span><input class="input" name="title" required maxlength="${String(MAX_TITLE)}" placeholder="Title" /></label>
@@ -100,13 +101,17 @@ export async function boardsList(ctx: Ctx): Promise<Response> {
           </ul>`,
           { pad: false },
         );
-  return page({
+  const flow = timePhase(ctx.request, "flow", () => flowPanel(ctx.app, { kind: "owner" }, ctx.url, "/boards"));
+  const rendering = performance.now();
+  const response = page({
     ctx,
     title: "Boards",
     body: html`<div class="page-head"><h1>Boards</h1>
         ${btn("Explore the data", { href: "/boards/data", variant: "ghost" })}</div>
-      ${card(make)} ${body} ${flowPanel(ctx.app, { kind: "owner" }, ctx.url, "/boards")}`,
+      ${card(make)} ${body} ${flow}`,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 function panelForm(slug: string, op: string, p: Panel | undefined, index: number, fields: Html): Html {

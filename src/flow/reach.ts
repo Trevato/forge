@@ -29,20 +29,30 @@ export interface Reach {
 
 export const NO_REACH: Reach = { usersToday: 0, usersTotal: 0, visitorsToday: 0, visitors7d: 0, visitorDays: new Array<number>(DAYS).fill(0), loadP75: null, inpP75: null };
 
-/** The 75th percentile, nearest rank, of a column over the days since `fromDay`. */
-function p75(db: Database, column: "load" | "inp", fromDay: string): number | null {
-  const n = db
-    .query<{ n: number }, [string]>(`SELECT COUNT(${column}) AS n FROM page_vital WHERE day >= ?1`)
-    .get(fromDay)?.n ?? 0;
-  if (n === 0) return null;
-  const rank = Math.ceil(n * 0.75);
-  return (
-    db
-      .query<{ v: number }, [string, number]>(
-        `SELECT ${column} AS v FROM page_vital WHERE day >= ?1 AND ${column} IS NOT NULL ORDER BY ${column} LIMIT 1 OFFSET ?2`,
-      )
-      .get(fromDay, rank - 1)?.v ?? null
-  );
+/** The 75th percentile, nearest rank: the value at rank ⌈0.75·n⌉ of `values` sorted. */
+export function p75(values: number[]): number | null {
+  if (values.length === 0) return null;
+  values.sort((a, b) => a - b);
+  return values[Math.ceil(values.length * 0.75) - 1]!;
+}
+
+/**
+ * Page load and INP over the days since `fromDay`, read in one pass (#3693):
+ * two counts and two sorted OFFSET reads cost home 70 ms on a month of views.
+ */
+function vitals(db: Database, fromDay: string): { load: number[]; inp: number[] } {
+  const load: number[] = [];
+  const inp: number[] = [];
+  // Rows as arrays: a week of views is tens of thousands, and objects cost.
+  for (const [l, i] of db
+    .query<[number | null, number | null], [string]>(
+      "SELECT load, inp FROM page_vital WHERE day >= ?1 AND (load IS NOT NULL OR inp IS NOT NULL)",
+    )
+    .values(fromDay) as [number | null, number | null][]) {
+    if (l !== null) load.push(l);
+    if (i !== null) inp.push(i);
+  }
+  return { load, inp };
 }
 
 export function readReach(db: Database, now: Date): Reach {
@@ -65,13 +75,14 @@ export function readReach(db: Database, now: Date): Reach {
     perDay.get(new Date(now.getTime() - (DAYS - 1 - i) * DAY_MS).toISOString().slice(0, 10)) ?? 0,
   );
   const days = month.filter((d) => d.day >= weekFrom);
+  const week = vitals(db, weekFrom);
   return {
     usersToday: users.today,
     usersTotal: users.total,
     visitorsToday: days.find((d) => d.day === today)?.n ?? 0,
     visitorDays,
     visitors7d: days.reduce((a, d) => a + d.n, 0),
-    loadP75: p75(db, "load", weekFrom),
-    inpP75: p75(db, "inp", weekFrom),
+    loadP75: p75(week.load),
+    inpP75: p75(week.inp),
   };
 }

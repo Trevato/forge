@@ -41,5 +41,9 @@ typesafe-api-key
 # when the default temp directory is read-only (#2706)
 /.bun-tmp/
 
+# a suite whose data would crowd a check cell's 256 MiB /tmp keeps it
+# here, on the checkout's disk (test/helpers/scratch.ts)
+/.test-scratch/
+
 # a sandbox's bun/bunx scratch directory; never source
 /.tmpx/

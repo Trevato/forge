@@ -129,7 +129,7 @@ export interface Layout {
 }
 
 /** One hop of an edge between adjacent levels: the unit `order` sees. */
-interface Seg {
+export interface Seg {
   readonly from: string;
   readonly to: string;
 }
@@ -304,15 +304,55 @@ function cross(
   return top * bottom < 0;
 }
 
-function countCrossings(
+/**
+ * The same count as comparing every pair of hops with `cross`, without
+ * doing so (#3693: 2,266 edges drew 30 s of layout). A hop down one level crosses
+ * another in the same gap exactly when their ends are in opposite order,
+ * so each gap is an inversion count over a Fenwick tree, O(k log k). Hops
+ * that point up or skip levels (only a cycle draws them) keep the pairwise
+ * test against every hop; hops within one level never cross anything.
+ */
+export function countCrossings(
   segs: readonly Seg[],
   level: Map<string, number>,
   pos: Map<string, number>,
 ): number {
+  const gaps = new Map<number, [number, number][]>();
+  const odd: Seg[] = [];
+  const spanning: Seg[] = [];
+  for (const s of segs) {
+    const a = level.get(s.from)!;
+    const b = level.get(s.to)!;
+    if (a === b) continue;
+    spanning.push(s);
+    if (b === a + 1) push(gaps, a, [pos.get(s.from)!, pos.get(s.to)!]);
+    else odd.push(s);
+  }
   let n = 0;
-  for (let i = 0; i < segs.length; i++)
-    for (let j = i + 1; j < segs.length; j++)
-      if (cross(segs[i]!, segs[j]!, level, pos)) n++;
+  for (const hops of gaps.values()) {
+    // Top end ascending, bottom ascending on ties: an equal top or an equal
+    // bottom is a shared card, which meets rather than crosses.
+    hops.sort((x, y) => x[0] - y[0] || x[1] - y[1]);
+    const size = hops.reduce((most, h) => Math.max(most, h[1]), 0) + 2;
+    const tree = new Int32Array(size + 1);
+    let seen = 0;
+    for (const [, bottom] of hops) {
+      // Hops already seen with a bottom strictly right of this one's.
+      let atMost = 0;
+      for (let i = bottom + 1; i > 0; i -= i & -i) atMost += tree[i]!;
+      n += seen - atMost;
+      for (let i = bottom + 1; i <= size; i += i & -i) tree[i]!++;
+      seen++;
+    }
+  }
+  // An odd hop against every hop, each pair of odd hops once.
+  const oddAt = new Map(odd.map((s, i) => [s, i]));
+  odd.forEach((s, i) => {
+    for (const t of spanning) {
+      const j = oddAt.get(t);
+      if ((j === undefined || j > i) && cross(s, t, level, pos)) n++;
+    }
+  });
   return n;
 }
 
@@ -383,8 +423,8 @@ function order(
 
   const touching = new Map<string, Seg[]>();
   for (const s of segs) {
-    touching.set(s.to, [...(touching.get(s.to) ?? []), s]);
-    touching.set(s.from, [...(touching.get(s.from) ?? []), s]);
+    push(touching, s.to, s);
+    push(touching, s.from, s);
   }
   const between = (a: string, b: string): number => {
     let n = 0;
