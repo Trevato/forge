@@ -73,6 +73,8 @@ import {
   setAppMembersThrough,
 } from "../../actions/app_members.ts";
 import { canAdmin, type Repo } from "../../core/repos.ts";
+import { stopMirroring } from "../../actions/mirror_target.ts";
+import { getMirrorTarget, mirrorLine } from "../../core/migrate_mirror.ts";
 import { listWebhooks, recentDeliveries } from "../../core/webhooks.ts";
 import { listRefs } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
@@ -365,12 +367,28 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
     </form>`,
     { head: html`${icon("folder")}<h2>Archive</h2>` },
   );
+  const held = getMirrorTarget(ctx.app.db, repo.id);
+  const mirror =
+    held === undefined
+      ? null
+      : card(
+          html`<form method="post" action="${base}/settings/mirror/stop">
+            <p class="muted" data-mirror-line>${mirrorLine(held)}</p>
+            <p class="muted small">
+              Stopping leaves ${held.fullName} as it is; nothing more is pushed.
+            </p>
+            <div class="form-actions">
+              ${btn("Stop mirroring", { variant: "primary" })}
+            </div>
+          </form>`,
+          { head: html`${icon("branch")}<h2>Mirror</h2>` },
+        );
   return settingsPageResponse(
     ctx,
     repo,
     "general",
     "Settings",
-    html`${lead}<div class="mt">${body}</div><div class="mt">${wave}</div><div class="mt">${archive}</div>${proposals
+    html`${lead}${mirror ? html`<div class="mt">${mirror}</div>` : null}<div class="mt">${body}</div><div class="mt">${wave}</div><div class="mt">${archive}</div>${proposals
       ? html`<div class="mt">${proposals}</div>`
       : null}${secrets
       ? html`<div class="mt">${secrets}</div>`
@@ -453,6 +471,21 @@ export async function archiveSubmit(ctx: Ctx): Promise<Response> {
     updated.ok
       ? { message: archived ? "Archived." : "Awake again." }
       : { tone: "danger", message: "That could not be changed." },
+  );
+}
+
+/** POST /:owner/:name/settings/mirror/stop — stop mirroring to the source. */
+export async function mirrorStop(ctx: Ctx): Promise<Response> {
+  const gate = await adminForm(ctx);
+  if (gate instanceof Response) return gate;
+  const { repo } = gate;
+  const stopped = stopMirroring(ctx.app, ctx.auth.user, repo);
+  return flashTo(
+    ctx,
+    `${repoBase(repo)}/settings`,
+    stopped.ok && stopped.value
+      ? { message: "Stopped mirroring." }
+      : { tone: "danger", message: "This repository is not being mirrored." },
   );
 }
 

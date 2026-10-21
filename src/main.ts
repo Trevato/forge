@@ -34,6 +34,7 @@ import { resolveAppDomain } from "./apps/host.ts";
 import { requeueAbandonedChecks, startChecks } from "./checks/service.ts";
 import { RED_HOLD_MS } from "./checks/red_main.ts";
 import { startLooks } from "./looks/service.ts";
+import { startMirrorOut } from "./origins/mirror-out.ts";
 import { startProbes } from "./contract/probes.ts";
 import { startSnapshots } from "./snapshot/service.ts";
 import { resolveDestination } from "./snapshot/destination.ts";
@@ -349,6 +350,8 @@ const checks =
         // A roll lets running checks finish this long before cutting them off.
         drainMs: positive(process.env.FORGE_CHECKS_DRAIN_S, 300) * 1000,
       });
+// Migrated repositories kept as a read-only mirror push to their source.
+const mirrorOut = startMirrorOut(app);
 // The look: a picture of every environment that comes up green, taken
 // through this forge's own listener.
 const looks = appsOn ? startLooks(app, { localUrl: servers.url }) : undefined;
@@ -648,6 +651,7 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
     // A step leads a process group of its own, so a terminal's Ctrl-C no
     // longer ends it: a person's stop cuts checks off (queued again) at once.
     checks?.stop({ drain: signal === "SIGTERM" }),
+    mirrorOut(),
     looks?.stop(),
     probes?.stop(),
     snapshots.stop(),

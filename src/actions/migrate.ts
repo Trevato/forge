@@ -29,6 +29,7 @@ import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
 import { getAgentByName } from "../core/agents.ts";
 import { storageStale } from "../core/storage.ts";
+import { setMirrorTarget } from "../core/migrate_mirror.ts";
 import { getOriginFor } from "../core/origins.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
@@ -75,6 +76,13 @@ export type MigrateSource =
   | { readonly originId: string; readonly fullName: string }
   | { readonly url: string };
 
+export type AfterMigration = "leave" | "archive" | "mirror";
+
+/** The form's word, or `leave` for anything else. */
+export function afterChoice(raw: string): AfterMigration {
+  return raw === "archive" || raw === "mirror" ? raw : "leave";
+}
+
 export interface MigrateInput {
   readonly source: MigrateSource;
   /** The actor, or an org they can write to. */
@@ -91,6 +99,13 @@ export interface MigrateInput {
   readonly branch?: string;
   /** Put an agent on it: the crew makes it run here. */
   readonly crew?: { readonly agent: string; readonly autonomous: boolean };
+  /**
+   * What happens to the source afterwards, when it is on a connected
+   * origin: left alone (the default), archived there, or kept as a
+   * read-only mirror this forge pushes to after every landing.
+   * @default "leave"
+   */
+  readonly after?: AfterMigration;
   /** Name → addresses, for the private-address check. Tests inject it. */
   readonly resolve?: Resolve;
 }
@@ -189,6 +204,7 @@ export async function migrateRepo(
   void runMigration(app, user.value, repo, source.value, {
     branch: branch === "" ? undefined : branch,
     crew: input.crew,
+    after: input.after ?? "leave",
     jobId: job.id,
   });
   return ok({ repo, job: getJob(job.id) ?? job });
@@ -446,6 +462,7 @@ async function runMigration(
   asked: {
     readonly branch: string | undefined;
     readonly crew: MigrateInput["crew"];
+    readonly after: AfterMigration;
     readonly jobId: string;
   },
 ): Promise<void> {
@@ -547,6 +564,7 @@ async function runMigration(
     let detail = `migrated as ${where} — ${plural(branches.length, "branch", "branches")}, ${plural(refs.size - branches.length, "tag")}${conversations}`;
     if (work !== undefined)
       detail += `. Working on ${work.name}, ${reasonWords(work.reason)}${asked.branch !== undefined && work.reason !== "picked" ? ` (${asked.branch} did not come with the clone)` : ""}`;
+    detail += await afterWords(app, user, current, source, asked.after, refs);
     if (crew !== undefined) {
       advance(jobId, { stage: "crew", detail: `putting ${crew.agent} on it` });
       detail += `. ${await putCrewOn(app, user, current, source, crew, work)}`;
@@ -559,6 +577,41 @@ async function runMigration(
   } catch (error) {
     await fail(redact(String(error))).catch(() => undefined);
   }
+}
+
+/**
+ * The source, after the move, as the person chose. Only a repository read
+ * through a connected origin has a source to touch. Archiving needs admin
+ * there; without it the migration stands and the words say so.
+ */
+async function afterWords(
+  app: App,
+  user: User,
+  repo: Repo,
+  source: Resolved,
+  after: AfterMigration,
+  refs: ReadonlyMap<string, string>,
+): Promise<string> {
+  if (after === "leave" || source.provider === undefined) return "";
+  if (after === "archive") {
+    const done = await source.provider.archiveRepo(source.label);
+    if (done.ok) return `. ${source.label} is archived on its origin`;
+    return done.error.error === "forbidden" ||
+      done.error.error === "unauthorized" ||
+      done.error.error === "not_found"
+      ? `. ${source.label} was not archived: the connected account lacks admin rights there. Archive it on the origin yourself`
+      : `. ${source.label} was not archived: the origin could not be reached`;
+  }
+  const tips: Record<string, string> = {};
+  for (const [ref, oid] of refs) if (ref.startsWith("refs/heads/")) tips[ref] = oid;
+  setMirrorTarget(app.db, {
+    repoId: repo.id,
+    originId: source.originId,
+    fullName: source.label,
+    cloneUrl: source.url,
+    tips,
+  });
+  return `. ${source.label} stays as a read-only mirror: every landing here is pushed to it`;
 }
 
 interface Cloned {

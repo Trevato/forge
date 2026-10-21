@@ -26,7 +26,12 @@
  */
 
 import type { App } from "../app.ts";
-import { detachedMirror, originForRepo } from "../core/origins.ts";
+import { getMirrorTarget, recordMirrorPush } from "../core/migrate_mirror.ts";
+import {
+  detachedMirror,
+  getOriginById,
+  originForRepo,
+} from "../core/origins.ts";
 import type { Repo } from "../core/repos.ts";
 import { FORWARDED_GIT_ENV, type RefUpdate } from "../git/hook-protocol.ts";
 import { fetchInto, resolveOid, writeRef } from "../git/merge.ts";
@@ -34,7 +39,7 @@ import { repoDir } from "../git/repos.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { providerForOrigin } from "./credential.ts";
 import { redact, secretsIn } from "./credentials.ts";
-import { pushToOrigin } from "./git-mirror.ts";
+import { pushToOrigin, snapshotRefs } from "./git-mirror.ts";
 
 /** A push-through must not outlive a pusher's patience. */
 const TIMEOUT_MS = 60_000;
@@ -214,4 +219,62 @@ function quarantineEnv(
     if (value !== undefined && value !== "") env[name] = value;
   }
   return env;
+}
+
+/**
+ * The read-only mirror a migration left behind: after a landing, every
+ * branch the source held at migration that moved goes to it under the credential of
+ * the person who chose it — the same rules as a push through a mirror
+ * (header in env, explicit refspec and lease, `refs/pull/*` never). The
+ * lease is what the target last held, so a target that moved on its own
+ * refuses the push and says so instead of being overwritten. Answers how
+ * many branches went; a failure is recorded on the target, not thrown.
+ */
+export async function pushToMirrorTarget(
+  app: App,
+  repo: Repo,
+): Promise<Result<number, PushThroughRefusal>> {
+  const target = getMirrorTarget(app.db, repo.id);
+  if (!target) return ok(0);
+  const fail = (message: string): Result<number, PushThroughRefusal> => {
+    recordMirrorPush(app.db, repo.id, target.tips, message);
+    return err({ message });
+  };
+  const origin = getOriginById(app.db, target.originId);
+  if (!origin) return fail("the origin was disconnected; reconnect it");
+  const provider = providerForOrigin(app, origin);
+  if (!provider.ok) return fail("the origin needs to be reconnected");
+  const authEnv = await provider.value.gitAuthEnv(target.cloneUrl);
+  if (Object.keys(authEnv).length === 0)
+    return fail("the origin needs to be reconnected");
+
+  const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+  const { refs } = await snapshotRefs(dir);
+  const updates = [...refs]
+    .filter(
+      ([ref, oid]) =>
+        // Only what the source held at migration: the crew's work branches
+        // and pull heads are unreviewed and never leave the forge.
+        Object.hasOwn(target.tips, ref) && target.tips[ref] !== oid,
+    )
+    .map(([ref, newOid]) => ({
+      ref,
+      oldOid: target.tips[ref] ?? ZERO_OID_STRING,
+      newOid,
+    }));
+  if (updates.length === 0) return ok(0);
+  const pushed = await pushToOrigin(dir, target.cloneUrl, updates, authEnv, {
+    timeoutMs: TIMEOUT_MS,
+  });
+  if (!pushed.ok)
+    return fail(
+      redact(
+        `${target.fullName} refused the mirror push: ${pushed.error.message}`,
+        ...secretsIn(authEnv),
+      ),
+    );
+  const tips = { ...target.tips };
+  for (const u of updates) tips[u.ref] = u.newOid;
+  recordMirrorPush(app.db, repo.id, tips, "");
+  return ok(updates.length);
 }

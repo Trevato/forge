@@ -290,6 +290,7 @@ import { listDomains } from "../core/domains.ts";
 import type { Database } from "bun:sqlite";
 import {
   migrateMessage,
+  afterChoice,
   migrateRepo,
   migrationJobFor,
   type MigrateSource,
@@ -5125,6 +5126,17 @@ export function apiRoutes(router: Router<Handler>): void {
       typeof input.crew === "object" && input.crew !== null
         ? (input.crew as Record<string, unknown>)
         : undefined;
+    if (
+      input.after !== undefined &&
+      input.after !== "leave" &&
+      input.after !== "archive" &&
+      input.after !== "mirror"
+    )
+      return apiError(
+        "invalid_after",
+        400,
+        "after is one of leave, archive or mirror",
+      );
     const started = await migrateRepo(ctx.app, ctx.auth.user, {
       source,
       ...(typeof input.owner === "string" ? { owner: input.owner } : {}),
@@ -5136,6 +5148,7 @@ export function apiRoutes(router: Router<Handler>): void {
       ...(crew !== undefined && typeof crew.agent === "string"
         ? { crew: { agent: crew.agent, autonomous: crew.autonomous === true } }
         : {}),
+      after: afterChoice(typeof input.after === "string" ? input.after : ""),
     });
     if (!started.ok)
       return started.error === "unauthorized"

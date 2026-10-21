@@ -304,3 +304,37 @@ describe("migrate from the terminal", () => {
     }
   });
 });
+
+describe("migrate from the terminal: afterwards", () => {
+  test("the form offers leave by default; choosing archive archives the source with one PATCH {archived:true}", async () => {
+    const terminal = headlessTerminal(120, 40);
+    const { app: tui } = createForgeApp(app, identity(alice), { terminal, exitHooks: false });
+    tui.start();
+    try {
+      await settleApp(tui);
+      terminal.feed("M");
+      await settleApp(tui);
+      terminal.feed("/widgets\r"); // filter, then
+      terminal.feed("\r"); // the repository: its branches
+      await settleApp(tui);
+      terminal.feed("\r"); // the suggested branch → form
+      await settleApp(tui);
+      expect(tui.screen.toText()).toContain("afterwards  leave it alone");
+      terminal.feed("\x7f\x7f\x7f\x7f\x7f\x7f\x7f"); // clear the name
+      terminal.feed("archived-copy");
+      terminal.feed("\t\t\t\t\t "); // owner, visibility, agent, autonomy, afterwards → archive
+      await settleApp(tui);
+      expect(tui.screen.toText()).toContain("afterwards  archive it");
+      fake.state.requests.length = 0;
+      terminal.feed("\x04");
+      await until(() => getRepo(app.db, "alice", "archived-copy") !== undefined);
+      await until(() => fake.state.requests.some((r) => r.method === "PATCH"));
+      const writes = fake.state.requests.filter((r) => r.method !== "GET" && r.method !== "HEAD");
+      expect(writes.length).toBe(1);
+      expect(writes[0]!.method).toBe("PATCH");
+      expect(JSON.parse(writes[0]!.body)).toEqual({ archived: true });
+    } finally {
+      tui.stop?.();
+    }
+  }, 60_000);
+});

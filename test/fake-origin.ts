@@ -53,6 +53,8 @@ export interface FakeRepo {
   openPulls?: number;
   /** KiB, as both forges report `size`. */
   sizeKb?: number;
+  /** Set by a successful `PATCH` with `archived: true`. */
+  archived?: boolean;
 }
 
 export interface FakeIssue {
@@ -407,6 +409,12 @@ function route(
     return jsonResponse({ message: "Not Found" }, 404);
   }
 
+  if (tail === "" && method === "PATCH") {
+    if (repo.admin === false)
+      return jsonResponse({ message: "Must have admin rights to Repository." }, 403);
+    if (parse(bodyText).archived === true) repo.archived = true;
+    return jsonResponse(repoJson(state, repo));
+  }
   if (tail === "") return jsonResponse(repoJson(state, repo));
 
   // ---- forking ----

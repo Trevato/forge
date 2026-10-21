@@ -40,6 +40,8 @@ import { createBranch } from "../../actions/branches.ts";
 import { pinRepo, syncRepoNow, unpinRepo } from "../../actions/origins.ts";
 import { isPinned } from "../../core/pins.ts";
 import { setDecisionsBy } from "../../actions/repos.ts";
+import { stopMirroring } from "../../actions/mirror_target.ts";
+import { getMirrorTarget, mirrorLine } from "../../core/migrate_mirror.ts";
 import { canAdmin, DECISIONS_BY, getRepoById, type Repo } from "../../core/repos.ts";
 import type { TreeEntry } from "../../git/read.ts";
 import type { RepoFacts, RepoSource } from "../../view/source.ts";
@@ -1334,6 +1336,11 @@ export function workspaceScreen(
                     }),
                     binding([","], "settings", { disabled: !admin() }),
                   ]),
+              ...(repo !== undefined &&
+              admin() &&
+              getMirrorTarget(f.db, repo.id) !== undefined
+                ? [binding(["U"], "stop mirroring to the source")]
+                : []),
               binding(["r"], "refresh"),
               binding(
                 ["E"],
@@ -1680,6 +1687,21 @@ export function workspaceScreen(
             ctx.toast("synced from the origin", "success");
           }
         });
+        return true;
+      }
+      if (
+        plain &&
+        e.key === "U" &&
+        repo !== undefined &&
+        admin() &&
+        getMirrorTarget(f.db, repo.id) !== undefined
+      ) {
+        const stopped = stopMirroring(f.app, f.user, repo);
+        ctx.toast(
+          stopped.ok && stopped.value ? "stopped mirroring" : "not mirrored",
+          stopped.ok && stopped.value ? "success" : "danger",
+        );
+        ctx.invalidate();
         return true;
       }
       if (plain && e.key === "F" && f.signedIn) {
@@ -2149,8 +2171,11 @@ export function workspaceScreen(
 
     const dirty = tabs.filter((x) => x.modified).length;
     const target = proposal();
+    // A mirror that stopped says so on every frame, not only in settings.
+    const held = repo === undefined ? undefined : getMirrorTarget(f.db, repo.id);
     const parts = [
       ref === "" ? "no ref" : ref,
+      held === undefined ? "" : mirrorLine(held),
       dirty === 0 ? "" : `${dirty} modified`,
       pending.size === 0 ? "" : `${plural(pending.size, "deletion")} pending`,
       // Said on every frame, not only in the dialog: somebody typing into a

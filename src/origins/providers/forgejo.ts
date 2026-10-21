@@ -717,6 +717,18 @@ export class ForgejoProvider implements Provider {
     return succeed(toRepo(result.value.data));
   }
 
+  async archiveRepo(fullName: string): Promise<ProviderResult<void>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const result = await this.api.call({
+      path: `/repos/${seg(named.owner)}/${seg(named.name)}`,
+      method: "PATCH",
+      body: { archived: true },
+    });
+    if (!result.ok) return result;
+    return succeed(undefined);
+  }
+
   /**
    * Git over HTTPS takes the token as a Basic password, with the username
    * ignored — so a personal access token pairs with the login it belongs to,

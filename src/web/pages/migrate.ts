@@ -20,8 +20,10 @@ import { repositoryLimitMessage } from "../../actions/repos.ts";
 import { listAllAgents } from "../../actions/crew.ts";
 import {
   migrateMessage,
+  afterChoice,
   migrateRepo,
   migrationJobFor,
+  type AfterMigration,
   type MigrateSource,
 } from "../../actions/migrate.ts";
 import { listRemoteRepos, listUserOrigins } from "../../actions/origins.ts";
@@ -68,6 +70,7 @@ interface MigrateValues {
   visibility: string;
   agent: string;
   autonomous: boolean;
+  after: AfterMigration;
   /** The branch asked for; "" lets the work-branch rule choose. */
   branch: string;
   /** Draw the picked repository's branches: Branches was pressed, or one was chosen. */
@@ -486,6 +489,29 @@ function migrateForm(
                   >
                 </label>
               </div>`}
+        <h3 class="mb mt">What happens to the GitHub repository</h3>
+        ${selectField({
+          label: "Afterwards",
+          name: "after",
+          hint: "Applies to a repository picked from a connected origin. Archiving needs admin rights there; without them the migration still succeeds and says so.",
+          options: [
+            {
+              value: "leave",
+              label: "Leave it alone",
+              selected: values.after === "leave",
+            },
+            {
+              value: "archive",
+              label: "Archive it on the origin",
+              selected: values.after === "archive",
+            },
+            {
+              value: "mirror",
+              label: "Keep it as a read-only mirror this forge pushes to",
+              selected: values.after === "mirror",
+            },
+          ],
+        })}
         <div class="form-actions">
           ${btn("Migrate", { variant: "primary", icon: "download" })}
           ${btn("Cancel", { href: "/", variant: "ghost" })}
@@ -587,6 +613,7 @@ export async function migratePage(ctx: Ctx): Promise<Response> {
       // unless the link named one; "Nobody" is one choice away.
       agent: linked.agent ?? names[0] ?? "",
       autonomous: false,
+      after: "leave",
       branch: (q.get("branch") ?? "").slice(0, 300),
       showBranches: q.get("branches") === "1" || (q.get("branch") ?? "") !== "",
     },
@@ -612,6 +639,7 @@ export async function migrateSubmit(ctx: Ctx): Promise<Response> {
     visibility: field(form, "visibility") === "public" ? "public" : "private",
     agent: field(form, "agent"),
     autonomous: field(form, "autonomous") !== "",
+    after: afterChoice(field(form, "after")),
     // A branch belongs to the repository its list was drawn for: another
     // row's button migrates that row by the rule, not by this choice.
     branch:
@@ -650,6 +678,7 @@ export async function migrateSubmit(ctx: Ctx): Promise<Response> {
     ...(values.agent === ""
       ? {}
       : { crew: { agent: values.agent, autonomous: values.autonomous } }),
+    after: values.after,
   });
   if (!started.ok) {
     if (started.error === "forbidden_owner" || started.error === "unauthorized")

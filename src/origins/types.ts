@@ -384,6 +384,12 @@ export interface Provider {
    * a caller must poll `getRepo` until it does (`actions/contribute.ts`).
    */
   forkRepo(fullName: string): Promise<ProviderResult<RemoteRepo>>;
+  /**
+   * Archive a repo (`PATCH /repos/{o}/{r}` with `archived: true`): read-only
+   * on the origin from then on. Needs admin there; without it the answer is
+   * `forbidden` and nothing changed.
+   */
+  archiveRepo(fullName: string): Promise<ProviderResult<void>>;
 
   /**
    * What git needs to talk to this origin over HTTPS with the credential,

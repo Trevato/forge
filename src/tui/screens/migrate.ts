@@ -10,6 +10,7 @@
 
 import { listAllAgents } from "../../actions/crew.ts";
 import {
+  type AfterMigration,
   migrateMessage,
   migrateRepo,
   type MigrateSource,
@@ -272,7 +273,14 @@ export function migrateScreen(f: Session, ctx: Ctx): Screen {
   return self;
 }
 
-type Focus = 0 | 1 | 2 | 3 | 4;
+type Focus = 0 | 1 | 2 | 3 | 4 | 5;
+
+/** What becomes of the source afterwards: the web form's three choices. */
+const AFTER: readonly { id: AfterMigration; text: string }[] = [
+  { id: "leave", text: "leave it alone" },
+  { id: "archive", text: "archive it on the origin" },
+  { id: "mirror", text: "keep it as a read-only mirror the forge pushes to" },
+];
 
 /** Step three: where it lands, and who works on it. */
 function migrateFormScreen(
@@ -293,6 +301,7 @@ function migrateFormScreen(
   let visibility: "public" | "private" = "private";
   let agentIndex = 0;
   let autonomous = false;
+  let afterIndex = 0;
   let focus: Focus = 0;
   let error: string | undefined;
   let busy = false;
@@ -308,6 +317,7 @@ function migrateFormScreen(
           owner: owners[ownerIndex] ?? user.username,
           name,
           visibility,
+          after: AFTER[afterIndex]?.id ?? "leave",
           ...(picked.branch === undefined ? {} : { branch: picked.branch }),
           ...(agent === "" ? {} : { crew: { agent, autonomous } }),
         });
@@ -332,6 +342,7 @@ function migrateFormScreen(
     if (focus === 2) visibility = visibility === "private" ? "public" : "private";
     if (focus === 3) agentIndex = (agentIndex + 1) % crew.length;
     if (focus === 4) autonomous = !autonomous;
+    if (focus === 5) afterIndex = (afterIndex + 1) % AFTER.length;
   };
 
   return {
@@ -371,6 +382,7 @@ function migrateFormScreen(
         `visibility  ${visibility}`,
         `agent       ${crew[agentIndex] === "" ? "nobody — just the repository" : crew[agentIndex]}`,
         `autonomy    ${autonomous ? "autonomous — green ships on its own" : "every green change waits for your look"}`,
+        `afterwards  ${AFTER[afterIndex]?.text ?? ""}`,
       ];
       lines.forEach((line, i) =>
         s.text(
@@ -396,7 +408,7 @@ function migrateFormScreen(
         return true;
       }
       if (e.key === "tab") {
-        focus = ((focus + 1) % 5) as Focus;
+        focus = ((focus + 1) % 6) as Focus;
         return true;
       }
       if (focus > 0 && (e.key === " " || e.key === "enter")) {

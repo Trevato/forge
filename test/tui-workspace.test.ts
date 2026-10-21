@@ -21,6 +21,7 @@ import { join } from "node:path";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
 import { audienceFor } from "../src/core/audience.ts";
+import { getMirrorTarget, recordMirrorPush, setMirrorTarget } from "../src/core/migrate_mirror.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
 import { listPulls } from "../src/core/pulls.ts";
 import type { User } from "../src/core/users.ts";
@@ -202,6 +203,30 @@ describe("the terminal workspace", () => {
   afterAll(async () => {
     forge.close();
     await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("a mirror that stopped says why in the status line, and U stops mirroring", async () => {
+    forge.db.run("PRAGMA foreign_keys = OFF");
+    setMirrorTarget(forge.db, {
+      repoId: repo.id,
+      originId: "origin-none",
+      fullName: "octo/lighthouse",
+      cloneUrl: "https://example.test/octo/lighthouse.git",
+      tips: {},
+    });
+    recordMirrorPush(forge.db, repo.id, {}, "octo/lighthouse refused the mirror push: moved");
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h);
+      expect(h.text()).toContain("Mirrored to octo/lighthouse, stopped:");
+      await h.press("U");
+      expect(getMirrorTarget(forge.db, repo.id)).toBeUndefined();
+      expect(h.text()).not.toContain("Mirrored to octo/lighthouse");
+    } finally {
+      h.stop();
+      forge.db.run("PRAGMA foreign_keys = ON");
+    }
   });
 
   // ---- arriving ----

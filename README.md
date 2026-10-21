@@ -279,13 +279,29 @@ ssh -p 2222 localhost                        # the terminal UI
 git clone ssh://localhost:2222/you/hello.git # git, same port
 ```
 
+**After a GitHub migration** you choose what happens to the original: leave it
+alone (the default), archive it, or keep it as a read-only mirror. The choice is
+the "Afterwards" field on `/migrate`, in the terminal's migrate screen, and
+`after` (`leave`, `archive`, `mirror`) on `POST /api/v1/migrate`. Archive marks
+the GitHub repository archived using the account you connected. Mirror leaves
+GitHub untouched at first, then copies later changes on the branches GitHub had
+at migration back to it; branches made afterwards, such as the crew's work
+branches and pull heads, stay on the forge. If someone pushes to GitHub
+meanwhile, the forge stops rather than overwrite them, and the repository's
+settings page (and the terminal's status line) says why it stopped and when it
+last pushed. "Stop mirroring" there, or `U` in the terminal, ends it and leaves
+GitHub as it is. Archiving needs admin
+rights on GitHub: without them the migration still succeeds and says the
+repository was not archived, so you can do it there yourself. Only repositories
+read through a connected origin have an original to change; a pasted URL does not.
+
 **Migrate from the terminal.** Press `M` on the dashboard (or pick "Migrate a
 repository" in the palette, `ctrl+k`). The list is your connected origins'
 repositories, private ones marked; `/` filters it and `u` pastes a URL instead.
 Enter on a repository lists its branches with their last commit, your own
 newest first and marked "(suggested)", so Enter again takes it; a pasted URL
-skips this step. The form asks for name, owner, visibility, agent and autonomy
-(`tab` moves, `space` changes); `ctrl+d` migrates. The job is a checklist of
+skips this step. The form asks for name, owner, visibility, agent, autonomy and afterwards
+(leave the original alone, archive it, or keep it as a mirror; `tab` moves, `space` changes); `ctrl+d` migrates. The job is a checklist of
 stages: `esc` hides it and never cancels, and a toast says when it lands, on the
 new repository. It is the same `migrateRepo` as `/migrate` and
 `POST /api/v1/migrate`: the chosen `branch` becomes the default branch and the

@@ -649,6 +649,18 @@ export class GitHubProvider implements Provider {
     return succeed(toRepo(result.value.data));
   }
 
+  async archiveRepo(fullName: string): Promise<ProviderResult<void>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const result = await this.api.call({
+      path: `/repos/${seg(named.owner)}/${seg(named.name)}`,
+      method: "PATCH",
+      body: { archived: true },
+    });
+    if (!result.ok) return result;
+    return succeed(undefined);
+  }
+
   /**
    * GitHub ignores the username when the password is a valid token;
    * `x-access-token` is the convention its own docs use, and it works for
