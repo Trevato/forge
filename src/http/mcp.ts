@@ -195,7 +195,7 @@ import { resourceMetadataUrl } from "./oauth.ts";
 import { body, boundedBody, json } from "./respond.ts";
 import { sizesView } from "../spawn/sizes.ts";
 import type { Router } from "./router.ts";
-import { mayReadRuns, runForReader } from "../actions/runs.ts";
+import { mayReadRuns, runForReader, runLog } from "../actions/runs.ts";
 import { manifestFor } from "../actions/here.ts";
 import { clientBucket } from "./peer.ts";
 import { listPinned as listPinnedPanels, movePinned, pinPanel, unpinPanel } from "../actions/board-pins.ts";
@@ -2288,6 +2288,53 @@ const TOOLS: readonly Tool[] = [
       return set.ok
         ? good(set.value)
         : bad("forbidden", "only a person watches a milestone");
+    },
+  },
+  {
+    name: "run_log",
+    description:
+      "A run's log, or its last `tail` lines: the same text and the same access as GET /api/v1/repos/:owner/:name/runs/:id/log.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: { ...REPO_ARG, maxLength: 140 },
+        run: { type: "string", maxLength: 80, description: "The run's id." },
+        tail: {
+          type: "integer",
+          minimum: 1,
+          maximum: 2000,
+          description: "Only the last this many lines.",
+        },
+      },
+      required: ["repo", "run"],
+    },
+    writes: false,
+    run(ctx, user, args) {
+      const tail = args["tail"];
+      if (
+        typeof args["run"] !== "string" ||
+        args["run"].length === 0 ||
+        args["run"].length > 80 ||
+        (tail !== undefined &&
+          (typeof tail !== "number" ||
+            !Number.isInteger(tail) ||
+            tail < 1 ||
+            tail > 2000))
+      )
+        return bad("invalid", "`run` is a run id; `tail` is 1 to 2000 lines");
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const found = runLog(ctx.app, user, repo, args["run"]);
+      // A hidden log is not found, as on the REST route.
+      if (!found.ok || found.value.logHidden)
+        return bad("not_found", "no such run here");
+      const all = found.value.lines;
+      const lines = tail === undefined ? all : all.slice(-tail);
+      return good({
+        run: found.value.run.id,
+        lines,
+        truncated: found.value.truncated || lines.length < all.length,
+      });
     },
   },
   {
