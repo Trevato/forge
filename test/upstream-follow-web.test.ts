@@ -76,7 +76,7 @@ beforeAll(async () => {
   base = servers.url;
   alice = await signIn("alice");
   guest = await signIn("guest");
-});
+}, 30_000);
 
 afterAll(async () => {
   servers?.stop();

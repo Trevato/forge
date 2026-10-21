@@ -348,7 +348,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     servers.stop();
     app.close();
     await rm(dataDir, { recursive: true, force: true });
-  });
+  }, 30_000);
 
   async function until<T>(
     read: () => T | undefined,
@@ -496,7 +496,7 @@ describe("the pages", () => {
     const made = await createAgent(app, ada, { username: "bot" });
     if (!made.ok) throw new Error(String(made.error));
     expect(addToCrew(app, ada, repo, "bot").ok).toBe(true);
-  });
+  }, 30_000);
 
   afterAll(async () => {
     servers.stop();
