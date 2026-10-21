@@ -167,7 +167,7 @@ export function composer(ctx: Ctx, user: User): Html {
   })}`;
   const form = html`<form id="composer" class="composer" method="post" action="/tell">
     <textarea class="input" name="text" rows="2" maxlength="2000" required placeholder="Tell the crew what should change" aria-label="Tell the crew">${sharedDraft(ctx.url.searchParams)}</textarea>
-    <div class="composer-bar">
+    <div class="bar">
       ${repos.length === 0
         ? html`<input type="hidden" name="app" value="${FORGE_TARGET}" /><span class="muted small">the forge</span>`
         : html`<select name="app" class="input" aria-label="Send to">

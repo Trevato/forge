@@ -123,6 +123,17 @@ describe("home is the feed", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
+  test("the composer's action bar is §5's bar, not .composer-bar", async () => {
+    const text = await (await get("/", aliceCookie)).text();
+    const form = text.slice(text.indexOf('id="composer"'), text.indexOf("</form>", text.indexOf('id="composer"')));
+    expect(form).not.toContain("composer-bar");
+    expect(form).toContain('<div class="bar">');
+    expect(form).toContain('name="app"');
+    expect(form).toContain("alice/garden");
+    expect(form).toContain("the forge");
+    expect(form).toMatch(/>\s*Post\s*</);
+  });
+
   test("signed in, / is the composer above one timeline; your apps one step away", async () => {
     const text = await (await get("/", aliceCookie)).text();
     const composer = text.indexOf('id="composer"');
