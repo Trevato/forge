@@ -238,7 +238,7 @@ export function changeTabs(
   current: "change" | "files",
 ): Html {
   const base = repoBase(repo);
-  return html`<div class="filters mt">
+  return html`<div class="bar mt mb">
     ${seg([
       {
         label: "Conversation",

@@ -19,3 +19,10 @@ test("the topbar search input is 16px, so iOS does not zoom and the design lint 
 test("avatar initials stay mostly --fg so they hold 4.5:1 on the tint in every theme", () => {
   expect(components).toContain("var(--av-ink) 28%, var(--fg)");
 });
+
+test("a .seg never outgrows its bar: it scrolls inside max-width 100% and tightens its padding on a phone", () => {
+  const seg = components.match(/\n\.seg \{[^}]*\}/)?.[0] ?? "";
+  expect(seg).toContain("max-width: 100%");
+  expect(seg).toContain("overflow-x: auto");
+  expect(components).toMatch(/max-width: 420px\) \{ \.seg > a, \.seg > label \{ padding: 0 8px/);
+});

@@ -545,7 +545,9 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 .seg {
   display: inline-flex; align-items: center; gap: 2px; flex: none;
   padding: 2px; background: var(--muted); border-radius: var(--radius);
+  max-width: 100%; overflow-x: auto; scrollbar-width: none;
 }
+@media (max-width: 420px) { .seg > a, .seg > label { padding: 0 8px; } }
 .seg > a, .seg > label {
   display: inline-flex; align-items: center; gap: 6px;
   min-height: 28px; padding: 0 10px; border-radius: var(--radius-sm);

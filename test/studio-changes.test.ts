@@ -191,6 +191,8 @@ describe("the studio, continued", () => {
     expect(page).not.toContain('name="label"');
     expect(page).not.toContain(`>#${told.value.number} opened`);
     expect(page).toContain(`href="/alice/notes/issues?word=told"`);
+    expect(page).not.toMatch(/class="[^"]*\bfilters\b/);
+    expect(page).toContain("Not started");
 
     const filtered = await (await get("/alice/notes/issues?word=told")).text();
     expect(filtered).toContain("List test: not picked up yet");
@@ -704,6 +706,9 @@ describe("the studio, continued", () => {
     expect(changeHtml).toContain(`action="/alice/notes/pulls/${p}/comments"`);
     expect(changeHtml).toContain(`href="/alice/notes/pulls/${p}/files"`);
     expect(changeHtml).toContain('id="comment-body"');
+    // The tabs are §5's bar, not the retired .filters wrapper.
+    expect(changeHtml).not.toMatch(/class="[^"]*\bfilters\b/);
+    expect(changeHtml).toContain("Conversation");
 
     // The lists, the app page and the search box all hand out the one
     // address, so a person is never given two addresses for one thing.

@@ -132,7 +132,7 @@ function wordFilterBar(
   trail?: Html,
   words: readonly WordFilter[] = WORD_FILTERS,
 ): Html {
-  return html`<div class="filters mb">
+  return html`<div class="bar mb">
     ${seg([
       { label: "Open", href: href(undefined), current: open },
       ...words.map((w) => ({

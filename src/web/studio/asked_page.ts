@@ -207,7 +207,7 @@ export function askedPage(ctx: Ctx): Response {
     <h1 id="asked-sentence">What you asked for</h1>
     <p class="muted">${sentence}</p>
     ${thoughts}
-    <div class="filters bar mb mt">
+    <div class="bar mb mt">
       ${seg([
         {
           label: "Not shipped",

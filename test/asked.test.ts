@@ -267,6 +267,11 @@ describe("what you asked for", () => {
     const page = (await res.text()).replace(/\s+/g, " ");
     expect(page).toContain("What you asked for");
     expect(page).toContain("Plant tomatoes");
+    // The filter bar is §5's bar: the retired .filters is gone, the words stay.
+    expect(page).not.toMatch(/class="[^"]*\bfilters\b/);
+    expect(page).toContain("Not shipped");
+    expect(page).toContain("Nothing built");
+    expect(page).toContain("Show newest first");
     expect(page).toContain("nothing built in 3 days");
     expect(page).not.toContain("Refactor the watering module");
     // The default view is what has nothing merged yet: the shipped ask waits behind "All".
