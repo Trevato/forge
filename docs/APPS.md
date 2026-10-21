@@ -1340,3 +1340,7 @@ ceiling** command, `POST /api/v1/admin/accounts/:name/ceiling`
 that would pass either does not start and its message names the ceiling; one
 under way stops at the day's. Spend is the
 account's own repositories' usage today (UTC); another account's never counts.
+
+### Egress connection caps
+
+A cell may hold at most 8 open connections to one **granted private** destination (a device such as a Pi camera, so a leak cannot saturate it) and at most 64 to one **public** host (a package registry, which an install reaches with many parallel fetches). Past the cap the cell gets `429 Too Many Requests` and the forge logs `egress capped`.
