@@ -433,7 +433,7 @@ function frontControls(ctx: Ctx, front: FrontPage): Html {
           row(`${repo} (hidden)`, act("show", repo, "Show")),
         )}
       </ul>
-      <form method="post" action="/front" class="bar front-pin-any">
+      <form method="post" action="/front" class="bar">
         <input type="hidden" name="action" value="pin" />
         <input
           class="input"
@@ -444,7 +444,7 @@ function frontControls(ctx: Ctx, front: FrontPage): Html {
         />
         ${btn("Pin", { size: "sm" })}
       </form>
-      <form method="post" action="/front" class="front-weights">
+      <form method="post" action="/front" class="bar">
         <input type="hidden" name="action" value="weights" />
         <span class="small muted">What counts, 0 to ${WEIGHT_MAX}:</span>
         ${WEIGHT_NAMES.map(
@@ -535,7 +535,7 @@ export function studioDoor(ctx: Ctx): Response {
     </section>
     ${when(front.featured, (f) => html`<div class="mt">${featuredCard(f)}</div>`)}
     ${tiles.length > 0
-      ? html`<div class="mt app-shelf">${tiles}</div>
+      ? html`<div class="mt stack" data-shelf>${tiles}</div>
           ${when(
             front.total > tiles.length + (front.featured === undefined ? 0 : 1),
             () =>

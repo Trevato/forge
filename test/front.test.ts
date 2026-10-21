@@ -444,7 +444,7 @@ describe("the front page", () => {
     // still links, the picture still links, and the words are there.
     for (const old of ["app-tile", "app-tile-body", "app-tile-desc", "app-tile-look", "app-tile-name"])
       expect(body).not.toContain(old);
-    const shelf = body.slice(body.indexOf('class="mt app-shelf"'));
+    const shelf = body.slice(body.indexOf(' data-shelf'));
     expect(shelf).toMatch(/<div\s+class="card"/);
     expect(shelf).toContain('<a class="look" href="/owner/one"');
     expect(shelf).toMatch(/<a href="\/owner\/one"><strong>one<\/strong><\/a>/);

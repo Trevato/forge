@@ -347,7 +347,7 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 form.inline { display: inline; margin-left: auto; }
 
 /* The studio's front door: the public apps, live first, as pictures. */
-.app-shelf {
+.stack[data-shelf] {
   display: grid; gap: 16px; max-width: 1040px; margin-inline: auto;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
 }
@@ -379,14 +379,14 @@ form.inline { display: inline; margin-left: auto; }
 .front-admin { max-width: 1040px; margin-inline: auto; }
 .front-pick { gap: 8px; }
 .front-pick form.inline { margin-left: 0; }
-.front-pin-any { padding: 12px 16px; flex-wrap: nowrap; }
-.front-weights { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 0 16px 12px; }
-.front-weights .input { width: 4.5em; margin-left: 4px; }
-.front-pin-any .input { flex: 1; min-width: 0; }
+.front-controls .bar { padding: 12px 16px; gap: 8px 12px; }
+.front-controls .bar:has(> [name=repo]) { flex-wrap: nowrap; }
+.front-controls .bar > [name=repo] { flex: 1; min-width: 0; }
+.front-controls label .input { width: 4.5em; margin-left: 4px; }
 .front-controls .small { padding: 0 16px 14px; }
 @media (max-width: 520px) {
   /* Two to a row on a phone: a few live apps in one screen, not a scroll. */
-  .app-shelf { gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stack[data-shelf] { gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 720px) {
   .front-featured { grid-template-columns: 1fr; }
