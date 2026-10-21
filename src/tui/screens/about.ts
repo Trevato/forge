@@ -25,6 +25,16 @@ import { listRefs } from "../../git/read.ts";
 import { updateRepoSettings } from "../../actions/repos.ts";
 import { showProvenance } from "../../actions/provenance.ts";
 import {
+  checkedWords,
+  checkUpstreamNow,
+  FOLLOW_REFUSALS,
+  followShown,
+  setFollowUpstream,
+  standing,
+  upstreamLabel,
+} from "../../actions/upstream_follow.ts";
+import { getFollow } from "../../core/upstream_follow.ts";
+import {
   getProvenance,
   shownTrail,
   sourceLabel,
@@ -72,10 +82,16 @@ export function aboutScreen(
     f.user?.kind !== "agent" &&
     repo !== undefined &&
     getProvenance(f.db, repo.id) !== undefined;
+  // The following card's rule: an admin's, and only while it is on or to be turned on.
+  const mayFollow = (): boolean =>
+    may() && repo !== undefined && repo.origin === null;
+  const checking = (): boolean =>
+    repo !== undefined && followShown(f.app, repo, f.user)?.enabled === true;
   const factRows = (): [string, string][] => [
     ...archivedRow(repo),
     ...aboutFacts(f, src, facts, ref),
     ...trailRows(f, repo),
+    ...upstreamRows(f, repo),
     ...cell,
   ];
   let rows = factRows();
@@ -123,6 +139,12 @@ export function aboutScreen(
                   ? "hide where this came from"
                   : "show where this came from",
               ),
+            ]
+          : []),
+        ...(mayFollow()
+          ? [
+              ...(checking() ? [binding(["u"], "check upstream now")] : []),
+              binding(["f"], checking() ? "stop following upstream" : "follow upstream"),
             ]
           : []),
         // A site admin also reaches the repository's private egress grants.
@@ -244,6 +266,39 @@ export function aboutScreen(
         ctx.invalidate();
         return true;
       }
+      if (e.key === "u" && repo !== undefined && mayFollow() && checking()) {
+        const at = repo;
+        ctx.toast("checking the upstream…", "default");
+        void checkUpstreamNow(f.app, f.user, at)
+          .then((done) => {
+            rows = factRows();
+            if (done.ok) ctx.toast(checkedWords(done.value), "success");
+            else ctx.toast(FOLLOW_REFUSALS[done.error], "danger");
+          })
+          .catch(() => ctx.toast("that could not be checked", "danger"))
+          .finally(() => ctx.invalidate());
+        return true;
+      }
+      if (e.key === "f" && repo !== undefined && mayFollow()) {
+        const on = !checking();
+        const done = setFollowUpstream(f.app, f.user, repo, {
+          url: "",
+          branch: "",
+          enabled: on,
+        });
+        if (done.ok)
+          ctx.toast(on ? `following ${upstreamLabel(done.value.url)}` : "no longer following the upstream", "success");
+        else
+          ctx.toast(
+            done.error === "invalid_url"
+              ? "set the upstream address in the web settings first"
+              : FOLLOW_REFUSALS[done.error],
+            "danger",
+          );
+        rows = factRows();
+        ctx.invalidate();
+        return true;
+      }
       if (e.key === "e" && repo !== undefined && f.user?.isAdmin === true) {
         ctx.push(egressScreen(f, ctx, repo));
         return true;
@@ -277,6 +332,30 @@ export function trailRows(
   return [
     ["migrated from", sourceLabel(trail.sourceUrl)],
     ...trail.parents.map((p): [string, string] => ["fork of", p]),
+  ];
+}
+
+/**
+ * The upstream row, as the web About line has it: for an admin only, with
+ * the address, branch and last check while following is on, and "off" when
+ * it is not.
+ */
+export function upstreamRows(
+  f: Session,
+  repo: Repo | undefined,
+): [string, string][] {
+  if (repo === undefined || repo.origin !== null) return [];
+  if (f.user === undefined || !canAdmin(f.db, repo, f.user)) return [];
+  const follow = getFollow(f.db, repo.id);
+  if (follow === undefined || !follow.enabled)
+    return [["upstream", "off"]];
+  const checked =
+    follow.checkedAt === null ? "" : ` · checked ${ago(follow.checkedAt)}`;
+  return [
+    [
+      "upstream",
+      `${upstreamLabel(follow.url)} ${follow.branch}${checked} · ${standing(follow)}`,
+    ],
   ];
 }
 

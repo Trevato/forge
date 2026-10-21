@@ -1811,8 +1811,13 @@ A repository can follow an outside git branch (`repo_upstream`, https or
 http only, no credentials in the address). The clock checks each following
 repository every 30 minutes (`checkDue`); the result is the follow row:
 upstream tip, commits behind, the pull carrying the last proposal, and
-`error`. There is no button or page for it yet, so that row is where a
-check is seen. A check fetches only when the tip moved, into
+`error`. In the terminal, a repository's About card (`I`) shows an
+`upstream` row (address, branch, last check, standing; `off` when following
+is off) to an admin of the repository and to nobody else. `u` checks now,
+while following is on, through the settings page's own action. `f` turns
+following on or off through `setFollowUpstream`; it keeps the saved address
+and branch, and when none is saved it refuses with "set the upstream address
+in the web settings first" (the address is set on the settings page). A check fetches only when the tip moved, into
 `refs/upstream-follow/<branch>` (not a branch), then:
 
 - **Nothing new:** nothing happens.
