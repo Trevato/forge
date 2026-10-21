@@ -512,7 +512,7 @@ export function studioOriginNote(repo: Repo | undefined): Html | null {
   const at = repo?.origin;
   if (at == null) return null;
   const host = at.htmlUrl === "" ? at.fullName : hostOf(at.htmlUrl);
-  return html`<p class="repo-lineage">
+  return html`<p class="muted small break">
     Reads from
     ${at.htmlUrl === ""
       ? host

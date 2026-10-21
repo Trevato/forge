@@ -583,7 +583,7 @@ describe("migrate", () => {
     const repo = getRepo(app.db, "alice", "arm")!;
     const lineage = async (cookie: string): Promise<string> => {
       const page = await (await browser(cookie, "/alice/arm")).text();
-      return /<p class="repo-lineage" data-lineage>[\s\S]*?<\/p>/.exec(page)?.[0] ?? "";
+      return /<p class="muted small break" data-lineage>[\s\S]*?<\/p>/.exec(page)?.[0] ?? "";
     };
     const shown = await lineage("");
     expect(shown).toContain("Migrated from");

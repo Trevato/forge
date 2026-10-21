@@ -338,7 +338,7 @@ export function scopeHeader(
       // truth for this". This line is the fallback for the one case the
       // strip cannot link: a fork whose origin has been disconnected.
       () =>
-        html`<p class="repo-lineage">
+        html`<p class="muted small break">
           ${icon("fork", 16)}fork of
           <span class="mono">${scope.upstream}</span>
         </p>`,
@@ -381,7 +381,7 @@ export function lineageLine(
     for (const p of shown.parents)
       segments.push(html`fork of ${out(parentUrl(shown.sourceUrl, p), p)}`);
   }
-  return html`<p class="repo-lineage" data-lineage>
+  return html`<p class="muted small break" data-lineage>
     ${segments.map((s, i) => (i === 0 ? s : html` · ${s}`))}
   </p>`;
 }

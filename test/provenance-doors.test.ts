@@ -183,7 +183,7 @@ describe("the trail through the API and MCP", () => {
   test("a fork made here inherits the parent's trail through every door, and loses it when the parent hides it", async () => {
     const page = async (): Promise<string> => {
       const text = await (await fetch(`${servers.url}/reader/arm`)).text();
-      return /<p class="repo-lineage" data-lineage>[\s\S]*?<\/p>/.exec(text)?.[0] ?? "";
+      return /<p class="muted small break" data-lineage>[\s\S]*?<\/p>/.exec(text)?.[0] ?? "";
     };
     const api = async () =>
       ((await (await fetch(`${servers.url}/api/v1/repos/reader/arm`)).json()) as {
