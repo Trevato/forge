@@ -212,7 +212,13 @@ describe("the first login to a spawned forge", () => {
     expect(home).toContain("Your crew has its direction:");
     expect(home).not.toContain("already at work");
     expect(home).toContain("atlas");
-    expect(home).toMatch(/href="\/marias\/bakery\/issues\/\d+"[^>]*>[^<]*Run Maria/);
+    expect(home).toMatch(/href="\/marias\/bakery\/issues\/\d+"[^>]*>[\s\S]*?Run Maria/);
+    for (const old of ["next-step", "next-crew"]) expect(home).not.toContain(`class="${old}`);
+    expect(home).not.toMatch(/class="next-step/);
+    // A pending step's body is a block of its own, never inside the row's
+    // one-line, clipped `.row-meta`.
+    expect(home).not.toContain("row-meta");
+    expect(home).toMatch(/<div class="card-body">\s*<p class="muted small">/);
     // Each app with its way in.
     expect(home).toContain('href="/marias/bakery"');
   });

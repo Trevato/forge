@@ -20,7 +20,7 @@ import { getUserById, type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { html, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
-import { btn, card } from "../ui.ts";
+import { badge, btn, card, row } from "../ui.ts";
 import { tellHref } from "../studio/nouns.ts";
 import { everydayAsk } from "./everyday.ts";
 import { EVERYDAY_WHY } from "../../core/everyday.ts";
@@ -52,32 +52,32 @@ function crewAtWork(
           ? "is about to start on"
           : "has been given";
     lines.push(
-      html`<li>
-        <b>${agent.username}</b> ${doing}
-        <a href="${tellHref(`/${repo.ownerName}/${repo.name}`, issue.number)}"
-          >${issue.title}</a
-        >
-      </li>`,
+      row({
+        href: tellHref(`/${repo.ownerName}/${repo.name}`, issue.number),
+        title: html`<b>${agent.username}</b> ${doing} ${issue.title}`,
+      }),
     );
   }
   return { lines, busy };
 }
 
-function stepRow(step: NextStep, primary: boolean, body: Html | null): Html {
-  return html`<li
-    class="next-step"
-    data-step="${step.key}"
-    data-done="${step.done ? "yes" : "no"}"
-    ${primary ? html`data-primary=""` : null}
-  >
-    <span class="next-step-mark" aria-hidden="true"
-      >${step.done ? icon("check") : icon("issue")}</span
-    >
-    <span class="next-step-main">
-      <span class="next-step-title">${step.title}</span>
-      ${step.done ? null : body}
-    </span>
-  </li>`;
+/** The step's row, then its body below it as a padded block of its own:
+ * `.row-meta` is one clipped line, no place for a form. */
+function stepBlock(step: NextStep, primary: boolean, body: Html | null): Html {
+  const head = row({
+    lead: step.done ? icon("check") : icon("issue"),
+    title: html`${primary ? html`<b>${step.title}</b>` : step.title}`,
+    ...(step.done ? { trail: badge("Done", { tone: "success" }) } : {}),
+    data: {
+      step: step.key,
+      done: step.done ? "yes" : "no",
+      ...(primary ? { primary: "" } : {}),
+    },
+  });
+  return html`<ul class="list">
+      ${head}
+    </ul>
+    ${!step.done && body ? html`<div class="card-body">${body}</div>` : null}`;
 }
 
 /** The card, or nothing: not a spawned forge, not its owner, or every step done. */
@@ -98,7 +98,7 @@ export async function nextStepsCard(
         ? html`<p class="muted small">
             Your apps arrive here as the crew sets them up.
           </p>`
-        : html`<p class="next-step-apps">
+        : html`<p>
             ${repos.map(
               (r) =>
                 html`${btn(r.name, {
@@ -119,19 +119,23 @@ export async function nextStepsCard(
   };
   return card(
     html`${crew.lines.length > 0
-        ? html`<p class="mb">
-              ${crew.busy
-                ? "Your crew is already at work:"
-                : "Your crew has its direction:"}
-            </p>
-            <ul class="next-crew mb">
+        ? html`<div class="card-body">
+              <p>
+                ${crew.busy
+                  ? "Your crew is already at work:"
+                  : "Your crew has its direction:"}
+              </p>
+            </div>
+            <ul class="list">
               ${crew.lines}
             </ul>`
         : null}
-      <ol class="next-steps">
-        ${steps.map((s) => stepRow(s, s.key === primary, bodies[s.key]))}
-      </ol>`,
-    { id: "next-steps", head: html`<h2>Your next steps</h2>` },
+      ${steps.map((s) => stepBlock(s, s.key === primary, bodies[s.key]))}`,
+    {
+      id: "next-steps",
+      head: html`<h2>Your next steps</h2>`,
+      pad: false,
+    },
   );
 }
 
