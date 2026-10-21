@@ -30,7 +30,7 @@ import { mergeable, resolveOid, treeOf } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { CLOSED_NOTE } from "../core/done_on_main.ts";
 import { mergePull } from "../actions/pulls.ts";
-import { isUpstreamPull } from "../core/upstream_follow.ts";
+import { carriesUpstream } from "../actions/upstream_follow.ts";
 import {
   listCrewRoles,
   type Agent,
@@ -1984,6 +1984,28 @@ function gateFor(app: App, repo: Repo): GateCandidate {
 }
 
 /**
+ * How a green pull lands. One carrying upstream's commits lands as a merge:
+ * squashed, their history would never be ours and the next check would
+ * count it again. Every other pull squashes.
+ */
+export async function landingStrategy(
+  app: App,
+  repo: Repo,
+  pull: Pull,
+  baseOid: string,
+): Promise<"merge" | "squash"> {
+  return (await carriesUpstream(
+    app,
+    repo,
+    await pullDir(app.db, app.reposRoot, repo, pull),
+    pull.headOid,
+    baseOid,
+  ))
+    ? "merge"
+    : "squash";
+}
+
+/**
  * Land one gated step of the queue's candidate: only onto the base it was
  * built on, and only as the tree that was gated (`expect`). The new tip of
  * the base, or undefined when it did not land.
@@ -2032,8 +2054,7 @@ async function landGated(
       by: "rule",
       ms: 0,
     });
-  // An upstream's commits are kept, not squashed: they stay ancestors of main.
-  const strategy = isUpstreamPull(app.db, pull) ? "merge" : "squash";
+  const strategy = await landingStrategy(app, repo, pull, expect.baseOid);
   const merged = await mergePull(app, by, repo, pull, strategy, expect);
   if (!merged.ok) {
     const why = mergeWhy(merged.error);

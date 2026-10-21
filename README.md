@@ -1830,7 +1830,10 @@ in the web settings first" (the address is set on the settings page). A check fe
 - **A newer tip while that pull is open:** the pull is moved to
   `upstream/<newtip7>` and its title and body rewritten; the old
   `upstream/<old7>` branch stays, as a person may have built on it.
-- **A conflict:** the row's `error` reads `conflict`; no branch, no pull.
+- **A conflict:** the row's `error` reads `conflict`; no branch, no pull. With
+  autonomy on, the check also opens one issue for that head and queues one
+  converge run for the crew to resolve it; with autonomy off, the note on the
+  row is all there is.
 - **A planted branch:** if `upstream/<tip7>` already exists anywhere but at
   the fetched head, the check fails (`squatted`), says so on the row, opens
   no pull and leaves the branch as it was.

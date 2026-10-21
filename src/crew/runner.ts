@@ -42,6 +42,7 @@ import {
   type Issue,
 } from "../core/issues.ts";
 import { refreshPullHead } from "../core/following.ts";
+import { UPSTREAM_TITLE, upstreamFollowing } from "../actions/upstream_follow.ts";
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
 import {
   canWrite,
@@ -50,7 +51,7 @@ import {
   getRepoById,
   type Repo,
 } from "../core/repos.ts";
-import { getUserById } from "../core/users.ts";
+import { getUserById, type User } from "../core/users.ts";
 import {
   listReviewComments,
   listReviews,
@@ -95,6 +96,7 @@ import {
   wrapUpPrompt,
   type LastTry,
   type RunReason,
+  type TaskInput,
 } from "./brief.ts";
 import { policyBrief } from "../contract/audit.ts";
 import {
@@ -738,6 +740,35 @@ export interface Pause {
   readonly summary?: string | undefined;
 }
 
+/** The file names a conflict or converge run's summary carries, after "main|parent|upstream moved: ". */
+export function conflictFilesOf(summary: string): string[] {
+  return summary
+    .replace(/^(main|parent|upstream) moved: /, "")
+    .split(", ")
+    .filter((f) => f !== "");
+}
+
+/**
+ * What a converge brief says the repository follows: the outside upstream
+ * for an issue titled "Upstream: …", else a forge parent the agent may read.
+ */
+export function convergeFollowing(
+  app: App,
+  repo: Repo,
+  issue: Issue,
+  user: User,
+): TaskInput["following"] {
+  if (issue.title.startsWith(UPSTREAM_TITLE)) {
+    const upstream = upstreamFollowing(app, repo.id);
+    if (upstream !== undefined) return upstream;
+  }
+  // Only a parent the agent may read is put in its brief.
+  const parent = forkParentFor(app.db, repo, user);
+  return parent === undefined
+    ? undefined
+    : { parent: `${parent.ownerName}/${parent.name}`, branch: parent.defaultBranch };
+}
+
 async function work(
   app: App,
   run: Run,
@@ -995,24 +1026,10 @@ async function work(
           : undefined,
       conflictFiles:
         reason === "conflict" || reason === "converge"
-          ? run.summary
-              .replace(/^(main|parent) moved: /, "")
-              .split(", ")
-              .filter((f) => f !== "")
+          ? conflictFilesOf(run.summary)
           : undefined,
       following:
-        reason === "converge"
-          ? (() => {
-              // Only a parent the agent may read is put in its brief.
-              const parent = forkParentFor(app.db, repo, agent.user);
-              return parent === undefined
-                ? undefined
-                : {
-                    parent: `${parent.ownerName}/${parent.name}`,
-                    branch: parent.defaultBranch,
-                  };
-            })()
-          : undefined,
+        reason === "converge" ? convergeFollowing(app, repo, issue, agent.user) : undefined,
       ...(reason === "review" && pull
         ? {
             ...(await reviewInputs(app, repo, pull, record, bare)),

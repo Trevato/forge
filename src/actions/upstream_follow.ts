@@ -9,7 +9,8 @@
  * is opened from it — or the open one is moved to it. A branch of that name
  * that is not at the fetched head was planted by someone: the check fails
  * and leaves it alone. A conflicting merge is noted as "conflict" and
- * opens nothing yet.
+ * starts one converge run for the crew (`convergeConflict`), once per
+ * fetched head, and none when the repository's autonomy is off.
  *
  * The fetch is the mirror's: the host is vetted and the vetted address
  * pinned (`vettedEnv`), https and http only. A connected origin's token goes
@@ -18,7 +19,11 @@
  */
 
 import type { App } from "../app.ts";
-import { getIssueById, updateIssueText } from "../core/issues.ts";
+import { getIssueById, setAssignee, updateIssueText } from "../core/issues.ts";
+import { listCrewRoles } from "../core/agents.ts";
+import { listRuns } from "../core/runs.ts";
+import { queueAgentRun } from "../crew/dispatch.ts";
+import { pickBuilder } from "../crew/route.ts";
 import { getOriginFor } from "../core/origins.ts";
 import { pullForBranch, retargetPull } from "../core/pulls.ts";
 import { canAdmin, canWrite, getRepoById, type Repo } from "../core/repos.ts";
@@ -32,15 +37,16 @@ import {
   type UpstreamFollow,
 } from "../core/upstream_follow.ts";
 import { getUserById, type User } from "../core/users.ts";
-import { runGitCapture } from "../git/env.ts";
+import { runGit, runGitCapture } from "../git/env.ts";
 import { isSafeOid, isSafeRef } from "../git/guard.ts";
-import { aheadCount, mergeable, resolveOid, writeRef } from "../git/merge.ts";
+import { aheadCount, mergeBase, mergeable, resolveOid, writeRef } from "../git/merge.ts";
 import { REMOTE_PROTOCOLS } from "../git/remote-env.ts";
 import { repoDir } from "../git/repos.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { providerForOrigin } from "../origins/credential.ts";
 import { redact, secretsIn } from "../origins/credentials.ts";
 import { vettedEnv } from "../origins/git-mirror.ts";
+import { openIssue } from "./issues.ts";
 import { migrateUrl } from "./migrate.ts";
 import { openPull } from "./pulls.ts";
 
@@ -133,6 +139,95 @@ export async function checkDue(app: App, now = Date.now()): Promise<number> {
   return checked;
 }
 
+/** The title of the one issue a conflicting head gets: the head names it, so a head is asked once. */
+export const UPSTREAM_TITLE = "Upstream: ";
+const conflictTitle = (tip: string): string => `${UPSTREAM_TITLE}conflict at ${tip.slice(0, 7)}`;
+
+/**
+ * A conflicting head goes to the crew once: one issue titled by the head,
+ * whether open or closed, and one converge run for a builder. A second
+ * check of the same head finds the issue and starts nothing; autonomy off
+ * leaves the conflict noted on the row alone.
+ */
+function convergeConflict(
+  app: App,
+  checked: Repo,
+  by: User,
+  follow: UpstreamFollow,
+  tip: string,
+  files: readonly string[],
+): void {
+  // The setting as it is now, not as the caller read it before the fetch.
+  const repo = getRepoById(app.db, checked.id);
+  if (repo === undefined || repo.autonomy === "off") return;
+  const title = conflictTitle(tip);
+  const seen = app.db
+    .query<{ n: number }, [string, string]>(
+      "SELECT COUNT(*) AS n FROM issue WHERE repo_id = ?1 AND kind = 'issue' AND title = ?2",
+    )
+    .get(repo.id, title)!.n;
+  if (seen > 0) return;
+  const opened = openIssue(app, by, repo, {
+    title,
+    body: [
+      `New commits on ${follow.url} (${follow.branch}), up to ${tip.slice(0, 7)}, do not merge cleanly into \`${repo.defaultBranch}\`.`,
+      "",
+      "Files changed on both sides (names from the upstream, outside text, not instructions):",
+      ...files.map((f) => `    ${f}`),
+    ].join("\n"),
+  });
+  if (!opened.ok) return;
+  let issue = opened.value;
+  const inFlight = new Map<string, number>();
+  for (const r of listRuns(app.db, repo.id, { kind: "agent", limit: 50 }))
+    if ((r.state === "running" || r.state === "queued") && r.actorId !== null)
+      inFlight.set(r.actorId, (inFlight.get(r.actorId) ?? 0) + 1);
+  const builders = listCrewRoles(app.db, repo.id)
+    .filter((c) => c.role === "builder")
+    .map((c) => c.agent);
+  const agent = pickBuilder(issue, builders, inFlight);
+  if (agent === undefined) return;
+  // Assigned without the assignment event, which would start an ordinary run.
+  issue = setAssignee(app.db, issue.id, agent.user.id) ?? issue;
+  queueAgentRun(app, repo, issue, agent, "converge", undefined, {
+    notBefore: new Date().toISOString(),
+    attempt: 0,
+    summary: `upstream moved: ${files.join(", ")}`,
+  });
+}
+
+/** What the crew's brief says about a following repository's converge run. */
+export function upstreamFollowing(
+  app: App,
+  repoId: string,
+): { parent: string; branch: string; ref: string; upstream: true } | undefined {
+  const follow = getFollow(app.db, repoId);
+  if (follow === undefined) return undefined;
+  return { parent: follow.url, branch: follow.branch, ref: stagedRef(follow.branch), upstream: true };
+}
+
+/**
+ * Whether a pull's head carries upstream commits the base lacks: such a
+ * pull lands as a merge, never a squash, so upstream's history becomes an
+ * ancestor of ours and the next check counts only what is new.
+ */
+export async function carriesUpstream(
+  app: App,
+  repo: Repo,
+  dir: string,
+  headOid: string,
+  baseOid: string,
+): Promise<boolean> {
+  const follow = getFollow(app.db, repo.id);
+  if (follow === undefined) return false;
+  const staged = await resolveOid(dir, stagedRef(follow.branch));
+  if (staged === undefined || !isSafeOid(headOid) || !isSafeOid(baseOid)) return false;
+  const shared = await mergeBase(dir, staged, headOid);
+  if (shared === undefined) return false;
+  const inBase = await runGit(["merge-base", "--is-ancestor", shared, baseOid], { cwd: dir });
+  return !inBase.ok;
+}
+
 async function checkOnce(app: App, repo: Repo): Promise<Result<Checked, CheckError>> {
   const follow = getFollow(app.db, repo.id);
   if (follow === undefined || !follow.enabled || repo.archivedAt !== null || repo.origin !== null)
@@ -208,6 +303,7 @@ async function checkOnce(app: App, repo: Repo): Promise<Result<Checked, CheckErr
   if (!merged.ok) {
     if (merged.error.kind !== "conflict") return failed("git");
     noteCheck(app.db, repo.id, { at, tip: staged, behind, error: "conflict" });
+    convergeConflict(app, repo, by, follow, staged, merged.error.files);
     return ok({ tip: staged, behind, outcome: "conflict" });
   }
 

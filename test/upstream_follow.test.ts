@@ -9,7 +9,15 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
+import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { createRepo } from "../src/actions/repos.ts";
+import { listRuns } from "../src/core/runs.ts";
+import { updateRepoSettings } from "../src/core/repos.ts";
+import { listIssues } from "../src/core/issues.ts";
+import { openPull } from "../src/actions/pulls.ts";
+import { landingStrategy } from "../src/crew/autonomy.ts";
+import { conflictFilesOf, convergeFollowing } from "../src/crew/runner.ts";
+import { taskPrompt } from "../src/crew/brief.ts";
 import { audienceFilter } from "../src/core/event_audience.ts";
 import { listEvents } from "../src/core/events.ts";
 import { provideChecksForTest, type ChecksHandle } from "../src/checks/service.ts";
@@ -419,6 +427,110 @@ describe("checking an upstream (layer 2)", () => {
         expect(getFollow(app.db, t.r.id)!.opened).toBe(0);
         expect(getFollow(app.db, t.r.id)!.pendingId).toBeNull();
         expect(await t.git(["rev-parse", `refs/heads/${t.branch}`])).toBe(planted);
+      } finally {
+        t.srv.server.stop(true);
+      }
+    });
+
+    /** A conflicting head with a builder on the crew; autonomy as given. */
+    async function clash(name: string, autonomy: "off" | "assisted") {
+      const t = await staged(name, "ours\n", "theirs\n");
+      const bot = ok(await createAgent(app, alice, { username: `bot-${name}`, brief: "Be brief." }));
+      expect(addToCrew(app, alice, getRepoById(app.db, t.r.id)!, `bot-${name}`).ok).toBe(true);
+      updateRepoSettings(app.db, t.r, { autonomy, autonomyBy: alice.id });
+      const runs = () => listRuns(app.db, t.r.id, { kind: "agent", limit: 50 }).filter((r) => r.reason === "converge");
+      return { ...t, bot, runs };
+    }
+
+    test("a conflicting head starts one converge run; a second check of it starts none", async () => {
+      const t = await clash("once", "assisted");
+      try {
+        expect(ok(await checkUpstream(app, t.r)).outcome).toBe("conflict");
+        expect(t.runs().length).toBe(1);
+        const run = t.runs()[0]!;
+        expect(run.summary).toBe("upstream moved: f.txt");
+        const issue = listIssues(app.db, t.r.id, { state: "all" }).filter((i) => i.title.startsWith("Upstream: conflict at "));
+        expect(issue.length).toBe(1);
+        expect(issue[0]!.title).toBe(`Upstream: conflict at ${t.up.slice(0, 7)}`);
+        expect(issue[0]!.body).toContain("f.txt");
+        ok(await checkUpstream(app, t.r));
+        ok(await checkUpstream(app, t.r));
+        expect(t.runs().length).toBe(1);
+        expect(getFollow(app.db, t.r.id)!.error).toBe("conflict");
+        // The builder's brief names the upstream, the staged head and the files.
+        const prompt = taskPrompt({
+          agent: t.bot,
+          repo: getRepoById(app.db, t.r.id)!,
+          issue: issue[0]!,
+          branch: "bot/1-upstream",
+          forgeUrl: "http://forge.test",
+          isApp: false,
+          resuming: false,
+          reason: "converge",
+          comments: [],
+          reviews: [],
+          reviewComments: [],
+          since: issue[0]!.createdAt,
+          conflictFiles: ["f.txt"],
+          following: { parent: t.srv.url, branch: "main", ref: "refs/upstream-follow/main", upstream: true },
+        });
+        expect(prompt).toContain(t.srv.url);
+        expect(prompt).toContain("git fetch origin refs/upstream-follow/main && git merge FETCH_HEAD");
+        expect(prompt).toContain("never rebase, squash or cherry-pick");
+        expect(prompt).toContain('"f.txt"');
+      } finally {
+        t.srv.server.stop(true);
+      }
+    });
+
+    test("the runner picks the upstream brief for an Upstream: issue and strips the summary prefix", async () => {
+      const t = await clash("runner", "assisted");
+      try {
+        ok(await checkUpstream(app, t.r));
+        const repo = getRepoById(app.db, t.r.id)!;
+        const issue = listIssues(app.db, t.r.id, { state: "all" }).find((i) => i.title.startsWith("Upstream: "))!;
+        expect(convergeFollowing(app, repo, issue, t.bot.user)).toEqual({
+          parent: t.srv.url,
+          branch: "main",
+          ref: "refs/upstream-follow/main",
+          upstream: true,
+        });
+        // An ordinary issue on a repository with no forge parent gets no upstream brief.
+        expect(convergeFollowing(app, repo, { ...issue, title: "Fix the thing" }, t.bot.user)).toBeUndefined();
+        expect(conflictFilesOf(t.runs()[0]!.summary)).toEqual(["f.txt"]);
+        expect(conflictFilesOf("upstream moved: a.txt, b/c.txt")).toEqual(["a.txt", "b/c.txt"]);
+        expect(conflictFilesOf("parent moved: x")).toEqual(["x"]);
+        expect(conflictFilesOf("main moved: y")).toEqual(["y"]);
+      } finally {
+        t.srv.server.stop(true);
+      }
+    });
+
+    test("a pull carrying the staged upstream lands as a merge; an ordinary pull squashes", async () => {
+      const t = await staged("landing", "base\n", "new\n");
+      try {
+        const proposed = ok(await checkUpstream(app, t.r));
+        const upstreamPull = getPull(app.db, t.r.id, proposed.pull!)!;
+        expect(await landingStrategy(app, t.r, upstreamPull, t.main)).toBe("merge");
+
+        const blob = await t.git(["hash-object", "-w", "--stdin"], "mine\n");
+        const tree = await t.git(["mktree"], `100644 blob ${blob}\tg.txt\n`);
+        const own = await t.git(["commit-tree", tree, "-p", t.main, "-m", "own"]);
+        await t.git(["update-ref", "refs/heads/own-work", own]);
+        const opened = ok(await openPull(app, alice, t.r, { title: "own", body: "", baseBranch: t.r.defaultBranch, headBranch: "own-work" }));
+        expect(await landingStrategy(app, t.r, opened, t.main)).toBe("squash");
+      } finally {
+        t.srv.server.stop(true);
+      }
+    });
+
+    test("with autonomy off the conflict is only noted on the row", async () => {
+      const t = await clash("quiet", "off");
+      try {
+        expect(ok(await checkUpstream(app, t.r)).outcome).toBe("conflict");
+        expect(getFollow(app.db, t.r.id)!.error).toBe("conflict");
+        expect(t.runs().length).toBe(0);
+        expect(listIssues(app.db, t.r.id, { state: "all" }).length).toBe(0);
       } finally {
         t.srv.server.stop(true);
       }
