@@ -82,7 +82,8 @@ describe("the off-box mirror", () => {
   test("a snapshot lands in both buckets, and the page's facts say so", async () => {
     const svc = startSnapshots(app, src(), { version: "t", nightly: false, mirror: dst() });
     const m = await svc.now();
-    const state = await svc.mirrorNow();
+    // `now()` starts the upload in the background: a pass begun after it has ended is the one that has seen it land.
+    const state = await svc.mirrorFresh();
     expect(state?.reachable).toBe(true);
     expect(state?.failingSince).toBeUndefined();
     const there = await listSnapshots(dst());
@@ -109,13 +110,14 @@ describe("the off-box mirror", () => {
       forgeUrl: "https://forge.example.com",
       now: () => clock,
       send: async (_u, body) => (sent.push(body), true),
-      clockMs: 20,
+      // Never on its own: each wake below is an event the test sends and awaits.
+      clockMs: 3_600_000,
     });
     await n.settled();
     offbox.down = true;
     const svc = startSnapshots(app, src(), { version: "t", nightly: false, mirror: dst() });
     await svc.now();
-    const state = await svc.mirrorNow();
+    const state = await svc.mirrorFresh();
     expect(state?.reachable).toBe(false);
     const line = board(Date.now());
     expect(line).toHaveLength(1);
@@ -127,10 +129,10 @@ describe("the off-box mirror", () => {
     expect(lastMirror(root)!.failingSince).toBe(first);
     expect(board(Date.now())).toHaveLength(1);
 
-    // The clock wakes the notifier a few times: one push, however many ticks.
+    // The notifier is woken a few times: one push, however many wakes.
     for (let i = 0; i < 4; i++) {
       clock += 60_000;
-      await Bun.sleep(40);
+      app.bus.append({ kind: "drill.finished", payload: { verdict: "green" } });
       await n.settled();
     }
     await n.close();
