@@ -91,6 +91,9 @@ After #2716 (same fixture, same machine, `--n 30`, warm; `/` unchanged):
 What is left is rendering the ~1 MB of SVG (25 ms), which rule 3 keeps
 per request.
 
+`/:owner/:name/commits` names `session`, `repo`, `log`, `refs` and `render`
+the same way (#3392).
+
 `/map`'s `Server-Timing` names where that goes (#3159): `app` is the total,
 then `session`, `lanes` (the cache lookups, and the build on a miss, less the
 layout inside it), `layout` (graph layout on a miss) and `render`. Their sum

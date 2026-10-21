@@ -14,7 +14,7 @@ import { diffCommit, type Diff } from "../../git/diff.ts";
 import { isSafeOid, isSafeRef, isSafeTreePath } from "../../git/guard.ts";
 import { commitLog } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
-import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
+import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import type { Commit } from "../../view/source.ts";
 import { loadRepo, notFoundPage, scopeHeader } from "../chrome.ts";
@@ -172,7 +172,8 @@ export const noCommits = (later: boolean): Html =>
 
 // GET /:owner/:name/commits?ref=&path=&page=
 export async function commitsPage(ctx: Ctx): Promise<Response> {
-  const repo = loadRepo(ctx);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const repo = timePhase(ctx.request, "repo", () => loadRepo(ctx));
   if (!repo) return notFoundPage(ctx);
   const scope = localScope(ctx, repo);
   const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
@@ -191,12 +192,13 @@ export async function commitsPage(ctx: Ctx): Promise<Response> {
   // Path filtering and offset paging are things git does and a provider API
   // does not, so the local page keeps its own log read rather than pretending
   // the shared source could answer this.
-  const log = await commitLog(dir, ref, {
+  const log = await timePhaseAsync(ctx.request, "log", () => commitLog(dir, ref, {
     limit: PER_PAGE + 1,
     skip: (num - 1) * PER_PAGE,
     ...(path !== "" ? { path } : {}),
-  });
-  const refs = await refSet(dir);
+  }));
+  const refs = await timePhaseAsync(ctx.request, "refs", () => refSet(dir));
+  const rendering = performance.now();
 
   const query = (n: number) => {
     const params = new URLSearchParams({ ref });
@@ -211,7 +213,7 @@ export async function commitsPage(ctx: Ctx): Promise<Response> {
   });
 
   if (!log.ok || log.value.length === 0) {
-    return page({
+    const response = page({
       ctx,
       title: `Commits · ${repo.name}`,
       crumbs: scope.crumbs,
@@ -220,6 +222,8 @@ export async function commitsPage(ctx: Ctx): Promise<Response> {
       ${noCommits(num > 1)} ${liveMount({ repo: base })}`,
       scriptJs: liveClientJs,
     });
+    notePhase(ctx.request, "render", performance.now() - rendering);
+    return response;
   }
 
   const commits = log.value.slice(0, PER_PAGE);
@@ -233,7 +237,7 @@ export async function commitsPage(ctx: Ctx): Promise<Response> {
     note: `Page ${num}`,
   })}
   ${liveMount({ repo: base })}`;
-  return page({
+  const response = page({
     ctx,
     title: `Commits · ${repo.name}`,
     crumbs: scope.crumbs,
@@ -241,6 +245,8 @@ export async function commitsPage(ctx: Ctx): Promise<Response> {
     body,
     scriptJs: liveClientJs,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 // GET /:owner/:name/commit/:oid — one commit's metadata and its diff.
