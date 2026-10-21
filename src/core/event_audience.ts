@@ -32,6 +32,9 @@ import type { User } from "./users.ts";
 export type EventAudience = "readers" | "admins" | "actor" | "app";
 
 const READER_KINDS: ReadonlySet<string> = new Set([
+  // Whether a repository follows an upstream, never where: the address is
+  // the admins' (`repo.upstream_follow`).
+  "repo.following",
   "issue.labeled",
   "issue.closed",
   "issue.commented",

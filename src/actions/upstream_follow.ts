@@ -294,6 +294,13 @@ export function setFollowUpstream(
     actorId: actor.id,
     payload: { enabled: saved.enabled, branch: saved.branch },
   });
+  // The readers' event: on or off, and nothing that says where.
+  app.bus.append({
+    kind: "repo.following",
+    repoId: repo.id,
+    actorId: actor.id,
+    payload: { enabled: saved.enabled },
+  });
   return ok(saved);
 }
 
