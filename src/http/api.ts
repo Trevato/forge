@@ -4447,19 +4447,24 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/user/origins/:id/repos", async (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireAccount(ctx, { adminToken: true });
     if (denied) return denied;
-    const listed = await listRemoteRepos(
-      ctx.app,
-      ctx.auth.user,
-      ctx.params.id!,
-      ctx.url.searchParams.get("refresh") === "1",
+    const listed = await timePhaseAsync(ctx.request, "origin", () =>
+      listRemoteRepos(
+        ctx.app,
+        ctx.auth.user,
+        ctx.params.id!,
+        ctx.url.searchParams.get("refresh") === "1",
+      ),
     );
     if (!listed.ok)
       return listed.error === "unreachable"
         ? apiError("origin_unreachable", 502, "the origin could not be reached")
         : respondAccess(listed.error, 404);
-    return json(listed.value.map((row) => remoteRepoJson(ctx, row)));
+    return timePhase(ctx.request, "render", () =>
+      json(listed.value.map((row) => remoteRepoJson(ctx, row))),
+    );
   });
 
   // ── browsing an origin, live ─────────────────────────────────────────
