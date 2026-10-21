@@ -1258,7 +1258,15 @@ then switched off rather than faked. To tell which a deployment is in: the
 boot log carries `agent sandbox not available here` with the reason, Settings →
 Crew shows **Unsandboxed** with it, and every agent run's page says
 "Sandboxed" or "Unsandboxed" from what it was actually started with (runs
-from before this record say nothing).
+from before this record say nothing). Claude Code bridges that sandbox with
+two `socat` relays per session, in the session's process group; when a
+session ends, however it ends, whatever is left in that group is killed. A
+`processes` line once a minute counts what runs beside the forge by name
+(`top="socat=… bwrap=…"`), and kills any bridge whose session is gone
+(`reapedBridges=N`). Every start is counted in `boots.json` under the data
+directory: the boot line and every autonomy tick line say `restarts=N`, plus
+`unclean=N` for starts that ended without an orderly exit (a crash or an OOM
+kill, which leave nothing in the log themselves).
 
 `docs/APPS.md` is the contract: the vocabulary, and the rules that are
 mechanical rather than advisory.

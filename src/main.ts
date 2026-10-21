@@ -61,6 +61,10 @@ import { CHECK_EVERY_MS, readNewest, setBehind, watchBehind } from "./release/be
 import { repoDir } from "./git/repos.ts";
 import { snapshotPlace } from "./actions/health.ts";
 import { capacityDefault } from "./core/capacity.ts";
+import { bootCounts, recordBoot, recordCleanExit } from "./kernel/boots.ts";
+import { census, censusWords, processRows } from "./kernel/census.ts";
+import { reapLeftoverBridges } from "./crew/leftovers.ts";
+import { crewRoot } from "./crew/workdir.ts";
 
 // `forge hook <name>` re-enters here from a git hook stub. It relays to the
 // running forge over its socket and exits — it must never boot a server.
@@ -487,7 +491,36 @@ const tickAsks = async (): Promise<void> => {
 const staleTimer = setInterval(() => void tickAsks(), 120_000);
 void tickAsks();
 
-app.log.info("forge is up", { url: servers.url, data: app.config.dataDir });
+// Every start is counted, and one that follows a process that never said
+// goodbye is a crash the log could not record (kernel/boots.ts, #3708).
+const boot = recordBoot(app.config.dataDir);
+app.log.info("forge is up", {
+  url: servers.url,
+  data: app.config.dataDir,
+  restarts: boot.restarts,
+  ...(boot.unclean === 0 ? {} : { unclean: boot.unclean }),
+});
+// What runs beside the forge, by name, once a minute: a helper that leaks
+// (255 socat, #3708) shows on this line long before it costs a crash.
+// Claude Code's sandbox bridges a finished session left behind go here.
+const processTick = (): void => {
+  try {
+    const rows = processRows();
+    const reaped = crew === undefined ? 0 : reapLeftoverBridges(rows, crewRoot(app.config.dataDir));
+    const counts = bootCounts(app.config.dataDir);
+    app.log.info("processes", {
+      count: rows.length,
+      top: censusWords(census(rows)),
+      restarts: counts.restarts,
+      ...(counts.unclean === 0 ? {} : { unclean: counts.unclean }),
+      ...(reaped === 0 ? {} : { reapedBridges: reaped }),
+    });
+  } catch (error) {
+    app.log.warn("process census failed", { error: String(error) });
+  }
+};
+const processTimer = setInterval(processTick, 60_000);
+processTick();
 // A new version proves itself against the public URL once (release/prove.ts).
 void proveRelease({
   dataDir: app.config.dataDir,
@@ -601,6 +634,7 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
   clearInterval(upstreamTimer);
   clearInterval(syncTimer);
   clearInterval(staleTimer);
+  clearInterval(processTimer);
   clearInterval(leaseTimer);
   // The platform's SIGTERM: the listener stays open while routers learn
   // this process is going. A person's Ctrl-C does not wait for routers.
@@ -640,6 +674,7 @@ async function close(): Promise<void> {
   servers.stop();
   clearInterval(flagTimer);
   flushFlagUses(app.db);
+  recordCleanExit(app.config.dataDir);
   app.close();
   process.exit(0);
 }

@@ -409,6 +409,11 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
     ),
     proc.exited,
   ]);
+  // However the session ended, whatever is left in its group goes with it:
+  // Claude Code's sandbox bridges (`socat UNIX-LISTEN:…,fork`, one per
+  // proxy, plus a fork per connection) outlive a session that did not stop
+  // them, and 255 of them were alive in one pod (#3708).
+  reapGroup(proc.pid);
   clearTimeout(timer);
   clearTimeout(idle);
   clearTimeout(settle);
@@ -441,6 +446,22 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
     };
   }
   return { ok, sessionId, result, costUsd, turns, tokensIn, tokensOut, reason };
+}
+
+/**
+ * SIGKILL every process still in the group `pgid` leads. Called once its
+ * leader (a session started `detached`, so its own group) has exited:
+ * anything left is a leftover. Linux keeps a pid from reuse while a group
+ * still carries it, so this never reaches a stranger; an empty group is
+ * ESRCH and nothing happens.
+ */
+export function reapGroup(pgid: number): void {
+  if (!Number.isInteger(pgid) || pgid <= 1 || pgid === process.pid) return;
+  try {
+    process.kill(-pgid, "SIGKILL");
+  } catch {
+    // the group is empty: nothing was left behind
+  }
 }
 
 /**

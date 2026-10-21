@@ -119,6 +119,7 @@ import { approvedOnHead, finishApproved, finishFields } from "./finishing.ts";
 import { moveRequested, tallyRequested, tallyWords } from "./requested.ts";
 import { reviewersOf, sendToReview, sweepReviews } from "./review.ts";
 import { lastWaits, noteWaits, tallyWaits, type Wait, waitWords } from "./waits.ts";
+import { bootCounts } from "../kernel/boots.ts";
 
 const log = createLog("autonomy");
 
@@ -1176,6 +1177,7 @@ export async function autonomyTick(
         listCrewRoles(app.db, current.id),
         activeRuns(app, current.id),
       );
+      const boots = bootCounts(app.config.dataDir);
       log.info("tick", {
         repo: `${repo.ownerName}/${repo.name}`,
         did,
@@ -1202,6 +1204,9 @@ export async function autonomyTick(
         queue: queueWords(current.id),
         spent: `${status.spentTodayUsd.toFixed(2)}/${status.ceilingUsd}`,
         ...(status.paused === null ? {} : { paused: status.paused }),
+        // Starts after the first, and how many followed a crash (#3708).
+        restarts: boots.restarts,
+        ...(boots.unclean === 0 ? {} : { unclean: boots.unclean }),
       });
     } catch (error) {
       log.error("autonomy tick failed", {
