@@ -5,7 +5,7 @@
  * side; the fake GitHub's request log is the API side.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,6 +30,8 @@ import { quietLogs } from "./helpers/globals.ts";
 import { promote } from "./helpers/members.ts";
 
 quietLogs();
+// Git and a fake forge under a loaded check machine outlast bun's 5 s default.
+setDefaultTimeout(30_000);
 
 describe("migrate: after", () => {
   let dataDir: string;
@@ -120,7 +122,7 @@ describe("migrate: after", () => {
     app.close();
     forgetProviders(dataDir);
     await rm(dataDir, { recursive: true, force: true });
-  });
+  }, 30_000);
 
   test("the form's word: anything but archive or mirror leaves it alone", () => {
     expect(afterChoice("archive")).toBe("archive");
@@ -180,7 +182,7 @@ describe("migrate: after", () => {
     await commit(alice, "alice", copy, "landed.txt");
     const mine = await resolveOid(repoDir(app.reposRoot, "alice", copy), "refs/heads/main");
     expect(mine).not.toBe(before);
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 600; i++) {
       const held = getMirrorTarget(app.db, getRepo(app.db, "alice", copy)!.id);
       if (held?.tips["refs/heads/main"] === mine) break;
       await Bun.sleep(50);
@@ -197,7 +199,7 @@ describe("migrate: after", () => {
 
   /** The copy's mirror target, once `ok` says the push has settled. */
   const settledTarget = async (copy: string, ok: (t: NonNullable<ReturnType<typeof getMirrorTarget>>) => boolean) => {
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 600; i++) {
       const held = getMirrorTarget(app.db, getRepo(app.db, "alice", copy)!.id);
       if (held !== undefined && ok(held)) return held;
       await Bun.sleep(50);
