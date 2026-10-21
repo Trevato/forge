@@ -1121,7 +1121,6 @@ export const mapCss = /* css */ `
 .map-canvas.is-view .map-svg { height: 100%; }
 .map-svg text { font-family: var(--font); pointer-events: none; }
 .map-canvas > [role="group"] { position: absolute; top: 8px; right: 8px; gap: 4px; }
-.map-tools { position: absolute; top: 8px; right: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--card); box-shadow: var(--shadow-1); overflow: hidden; }
 .map-tool { min-width: 26px; height: 24px; padding: 0 7px; border: 0; background: transparent; color: var(--muted-fg); font-size: 12.5px; font-weight: 550; line-height: 1; cursor: pointer; }
 .map-tool + .map-tool { border-left: 1px solid var(--border); }
 .map-tool:hover { background: var(--muted); color: var(--fg); }
@@ -1171,23 +1170,11 @@ export const mapCss = /* css */ `
 .map-rule line { stroke: var(--border); stroke-width: 1; }
 .map-rule text { font-size: var(--fs-min); fill: var(--faint); letter-spacing: .02em; }
 
-/* ---- the line under a drawing ---- */
-.map-counts { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 8px 2px 0; font-size: 12.5px; color: var(--muted-fg); }
-.map-counts b { font-weight: 550; color: var(--fg); font-variant-numeric: tabular-nums; }
-.map-counts i { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; background: var(--faint); }
-.map-counts i[data-state="ready"] { background: var(--success); }
-.map-counts i[data-state="working"] { background: var(--accent); }
-.map-counts i[data-state="waiting"] { background: var(--merged); }
-.map-counts i[data-state="parked"] { background: var(--attn); }
-.map-counts i[data-state="held"] { background: var(--attn); }
-.map-counts i[data-state="done"] { background: transparent; border: 1px solid var(--faint); }
-
 /* ---- beside the drawing ---- */
 .map-ask { display: inline; }
 
 /* ---- lanes: §5 list rows that fold ---- */
 #lanes { margin-top: 16px; }
-#lanes .row-meta .map-counts { margin: 0; }
 #lanes li[data-autonomy="autonomous"] .row-title .badge { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 34%, transparent); }
 #lanes li[data-idle] .row-title { color: var(--muted-fg); }
 #lanes details > .card.empty { border: 0; border-top: 1px solid var(--border); border-radius: 0; }
