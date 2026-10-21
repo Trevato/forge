@@ -82,7 +82,9 @@ describe("a subscription's standing", () => {
     const made = await createRepo(app, a.value, { name: "one", visibility: "private" });
     if (!made.ok) throw new Error("repo");
     repo = made.value;
-  });
+    // Hashing the password and creating the repo take as long as the check
+    // machine lets them; the 5 s default made the verdict depend on its load.
+  }, 60_000);
   afterAll(async () => {
     app.close();
     await rm(dataDir, { recursive: true, force: true });
