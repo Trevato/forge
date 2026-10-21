@@ -19,6 +19,7 @@ export type CapacityKey =
   | "crew.concurrency"
   | "checks.concurrency"
   | "checks.shards"
+  | "queue.depth"
   | "children.max"
   | "cells.egress"
   | "guard_new_accounts"
@@ -63,6 +64,13 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
     fallback: "1",
     sized: (cpus) => shardsForCpus(cpus),
     help: "How many parallel shards a check's test run uses (handed to checks and crew shells as FORGE_CHECK_SHARDS). Empty: the pod's CPUs, at most 4 — and, in a check, no more than its cell holds.",
+  },
+  "queue.depth": {
+    label: "Merge queue candidates at once",
+    env: "FORGE_QUEUE_DEPTH",
+    kind: { type: "count", min: 1, max: 4 },
+    fallback: "2",
+    help: "How many merge-queue candidates of one repository gate at once, each on top of the one before: while one gates on main the next gates on it, and lands right after it if both are green. 1 gates one candidate at a time. A gate beyond the first takes a free check slot only, never one of the two kept for pull checks.",
   },
   "children.max": {
     label: "Forges this one may send",
@@ -303,6 +311,11 @@ export function maxChildren(db: Database): number {
 /** The egress mode a cell starts with now. */
 export function egressSetting(db: Database): "enforce" | "report" {
   return capacityValue(db, "cells.egress") === "report" ? "report" : "enforce";
+}
+
+/** How many merge-queue candidates of one repository gate at once (#4053). */
+export function queueDepth(db: Database): number {
+  return Number(capacityValue(db, "queue.depth"));
 }
 
 /** Whether the platform edge's identity is read at all; on every request. */

@@ -1221,8 +1221,17 @@ The log says `[queue] gating N pulls since HH:MM` as a gate starts and
 The full gate runs once on that candidate. Green lands every pull in order,
 and each landing is refused unless main is still where the candidate was
 built and the squash writes the tree that was gated, so main ends at the
-gated tree. Red bisects: the front half is gated by itself, a green half
-lands, and the red pull is handed back with the failing tests named. A red
+gated tree. Red is searched: prefixes of the candidate are gated on main
+— the front half, plus one more cut per free check slot, all at once — the
+longest green prefix lands, the search goes on in the steps up to the first
+red prefix, and the red pull is handed back with the failing tests named.
+While a candidate gates, the next one gates on top of it (`queue.depth`
+under Settings → Capacity, `FORGE_QUEUE_DEPTH`, default 2): when the first
+lands whole the next lands right after it, on the tree it was gated on; when
+it does not, the next is formed again on main. A gate beyond a line's first
+starts only on a free check slot and holds it, and two slots are always kept
+for pull checks (`PULL_RESERVE`); with no slot spare the queue gates one
+candidate at a time and halves a red one, as it always did. A red
 waits for a push or a new main, except once: after 30 minutes with neither
 side moved it is gated again, and lands if green; a red that reproduces
 stays red and is not told twice. A gate cut off by the forge stopping (a
@@ -1231,8 +1240,9 @@ sweep gates it again. So is a gate that has not answered in 15 minutes
 (`GATE_DEADLINE_MS`): it is abandoned and its check aborted, the log says
 `[queue] candidate abandoned`, and the next sweep forms the line again. Pulls
 that turn green while a candidate is gating wait for the next one. Each
-queue's numbers — how many pulls are queued, how many are gating, and how
-many landed in the last hour — show in three places: the flow panel on `/boards`, the
+queue's numbers — how many pulls are queued, how many are gating, how many
+gates are in flight, how many landed in the last hour, and their median
+minutes from approval to landing — show in three places: the flow panel on `/boards`, the
 terminal's Flow command, and the MCP `flow` tool's `queue` field.
 When a repository requires checks, an approved pull that is green only
 against an older main joins the queue as it is: the candidate's full gate
@@ -1241,7 +1251,9 @@ its own would give, and a red candidate bisects as above. So a landing that
 moves main does not send every other approved pull off for a check of its
 own first; the batch lands in one gate. A pull's own check runs again only
 when its head changes. A person's merge, which no candidate gated, still
-refuses a stale green. The autonomy tick line counts the approved pulls the
+refuses a stale green. Each sweep reads every open pull, oldest first, not
+only the newest page, so an older approved pull is batched with the rest
+rather than joining alone on its own event. The autonomy tick line counts the approved pulls the
 last sweep saw and why each waits (`approved="3 approved: queued=2 review=1"`,
 from `src/crew/waits.ts`), and what the queue is doing now
 (`queue="gating 2 pulls since 18:54"`, `queue="1 waiting"` or `queue=idle`,

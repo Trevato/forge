@@ -206,6 +206,49 @@ describe("the merge queue", () => {
     expect(queue.some((l) => l.includes("[queue] gated 2 pulls: green"))).toBe(true);
   });
 
+  test("after a red batch, the good pulls go back into ONE candidate up to the cap, not one gate each (#4053)", async () => {
+    const repo = await autonomousRepo("rebatch");
+    const pulls = [];
+    for (let i = 0; i < 12; i++) pulls.push(await greenPull(repo, i === 1 ? "red-b.ts" : `q${i}.ts`));
+    const said: string[] = [];
+    const info = console.info;
+    console.info = (line: string) => said.push(line);
+    try {
+      expect(await sweepGreen(app, repo)).toBe(11);
+    } finally {
+      console.info = info;
+    }
+    const sizes = said.flatMap((l) => /\[queue\] gating (\d+) pulls? since/.exec(l)?.[1] ?? []).map(Number);
+    // The eight are red; halving finds the culprit (4, 2, 1); then the six
+    // left of the eight and two of the four behind are one candidate.
+    expect(sizes).toEqual([8, 4, 2, 1, 8, 2]);
+    for (const [i, pull] of pulls.entries()) expect(merged(repo, pull)).toBe(i !== 1);
+    expect(latestDecision(app.db, pulls[1]!.id, "land")?.answer).toBe("red");
+  });
+
+  test("the sweep reads every open pull: an approved one older than the newest fifty is queued with the rest (#4053)", async () => {
+    const repo = await autonomousRepo("many-open");
+    const old = await greenPull(repo, "old.ts");
+    // Fifty newer pulls, none of them checked: the sweep passes them by.
+    for (let i = 0; i < 50; i++) {
+      const pushed = await commitToBranch(app, alice, repo, {
+        branch: `feature/n${i}`,
+        base: "main",
+        message: `n${i}`,
+        files: [{ path: `n${i}.ts`, content: `export const n = ${i};\n` }],
+      });
+      if (!pushed.ok) throw new Error(JSON.stringify(pushed.error));
+      const opened = await openPull(app, alice, repo, { title: `n${i}`, baseBranch: "main", headBranch: `feature/n${i}` });
+      if (!opened.ok) throw new Error(String(opened.error));
+    }
+    const fresh = await greenPull(repo, "fresh.ts");
+    expect(await sweepGreen(app, repo)).toBe(2);
+    expect(merged(repo, old)).toBe(true);
+    expect(merged(repo, fresh)).toBe(true);
+    // One candidate carried both.
+    expect(gatesOf(repo)).toHaveLength(1);
+  });
+
   test("one red among four: three land, the culprit is handed back, three gate runs", async () => {
     const repo = await autonomousRepo("one-red");
     const pulls = [];
@@ -347,8 +390,8 @@ describe("the merge queue", () => {
       /data-queue="alice\/on-flow">[\s\S]*?data-queued>2<[\s\S]*?data-gating>1<[\s\S]*?data-landed>0</,
     );
     // The terminal's Flow dialog and the MCP tool say the same.
-    expect(terminalLine(repo)?.split(/\s+/)).toEqual([`alice/${repo.name}`, "2", "1", "0"]);
-    expect(await mcpQueue()).toContainEqual({ repo: `alice/${repo.name}`, queued: 2, gating: 1, landedHour: 0 });
+    expect(terminalLine(repo)?.split(/\s+/)).toEqual([`alice/${repo.name}`, "2", "1", "1", "0", "—"]);
+    expect(await mcpQueue()).toContainEqual({ repo: `alice/${repo.name}`, queued: 2, gating: 1, gates: 1, landedHour: 0, approvedToLanded: null });
     held = undefined;
     release();
     expect(await landing).toBe(true);
@@ -360,8 +403,8 @@ describe("the merge queue", () => {
       gating: 0,
       landedHour: 3,
     });
-    expect(terminalLine(repo)?.split(/\s+/)).toEqual([`alice/${repo.name}`, "0", "0", "3"]);
-    expect(await mcpQueue()).toContainEqual({ repo: `alice/${repo.name}`, queued: 0, gating: 0, landedHour: 3 });
+    expect(terminalLine(repo)?.split(/\s+/)).toEqual([`alice/${repo.name}`, "0", "0", "0", "3", "—"]);
+    expect(await mcpQueue()).toContainEqual({ repo: `alice/${repo.name}`, queued: 0, gating: 0, gates: 0, landedHour: 3, approvedToLanded: null });
   });
 
   /** Ages the pull's newest land decision past the re-gate wait. */

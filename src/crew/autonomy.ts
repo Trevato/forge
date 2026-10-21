@@ -23,7 +23,9 @@ import {
 import type { AccessError } from "../actions/access.ts";
 import { gateCandidate, releaseOnLand } from "../checks/landing.ts";
 import { addLearned } from "../checks/learned.ts";
-import { enqueue, type GateCandidate, type Queued, queueWords } from "../checks/queue.ts";
+import { enqueue, type GateCandidate, type Queued, type QueueOptions, queueWords } from "../checks/queue.ts";
+import { checksFor } from "../checks/service.ts";
+import { queueDepth } from "../core/capacity.ts";
 import { mergeable, resolveOid, treeOf } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { CLOSED_NOTE } from "../core/done_on_main.ts";
@@ -53,6 +55,7 @@ import { wallOf, wallSentence } from "../contract/policy.ts";
 import {
   getIssue,
   getIssueById,
+  LIST_LIMIT_MAX,
   listComments,
   MAX_TITLE,
   type Issue,
@@ -1039,11 +1042,10 @@ export async function sweepGreen(app: App, repo: Repo): Promise<number> {
   if (repo.autonomy !== "autonomous") return 0;
   // Admitted one by one, queued together, oldest first: the green pulls of
   // one sweep are one candidate and one gate (#2036).
-  const open = listPulls(app.db, repo.id, { sealed: true, state: "open", limit: 50 });
   const entries: Queued[] = [];
   // Why each approved pull waits, for the tick line (#3055).
   const waits: Wait[] = [];
-  for (const pull of open.sort((a, b) => a.number - b.number)) {
+  for (const pull of openPulls(app, repo)) {
     const admitted = await admit(app, repo, pull);
     if (admitted.ok) entries.push(admitted.value);
     const seen = reviewSummary(app.db, pull.id, pull.headOid);
@@ -1052,8 +1054,31 @@ export async function sweepGreen(app: App, repo: Repo): Promise<number> {
   }
   noteWaits(repo.id, tallyWaits(waits));
   if (entries.length === 0) return 0;
-  const landed = await enqueue(repo.id, entries, gateFor(app, repo));
+  const landed = await enqueue(repo.id, entries, gateFor(app, repo), queueOptions(app));
   return landed.filter(Boolean).length;
+}
+
+/**
+ * Every open pull of the repository, oldest first. All of them, page by
+ * page: a sweep that read only the newest page never queued an approved
+ * pull older than it, which then joined the line alone, on its own event,
+ * one gate at a time (#4053).
+ */
+function openPulls(app: App, repo: Repo): Pull[] {
+  const all: Pull[] = [];
+  let cursor: number | undefined;
+  for (;;) {
+    const page = listPulls(app.db, repo.id, {
+      sealed: true,
+      state: "open",
+      limit: LIST_LIMIT_MAX,
+      ...(cursor === undefined ? {} : { cursor }),
+    });
+    all.push(...page);
+    if (page.length < LIST_LIMIT_MAX) break;
+    cursor = page.at(-1)!.number;
+  }
+  return all.sort((a, b) => a.number - b.number);
 }
 
 /** The sweep each repository has in flight, by repository id. */
@@ -1644,7 +1669,7 @@ export async function landIfGreen(
 ): Promise<boolean> {
   const admitted = await admit(app, repo, pull);
   if (!admitted.ok) return false;
-  const [landed] = await enqueue(repo.id, [admitted.value], gateFor(app, repo));
+  const [landed] = await enqueue(repo.id, [admitted.value], gateFor(app, repo), queueOptions(app));
   return landed === true;
 }
 
@@ -1855,6 +1880,17 @@ function redAt(told: Decision | undefined, at: string): boolean {
 export function regateDue(red: Decision, now: number): boolean {
   if (redOf(red)?.again === true) return false;
   return now - Date.parse(red.createdAt) >= REGATE_RED_MS;
+}
+
+/**
+ * How the merge queue may use the forge's check slots (#4053): its depth as
+ * an admin set it, and the slots the checks service has spare.
+ */
+function queueOptions(app: App): QueueOptions {
+  return {
+    depth: queueDepth(app.db),
+    room: () => checksFor(app)?.spareSlots?.() ?? 0,
+  };
 }
 
 /** The queue's gate: the full tier on the candidate's tip, asked as its first pull. */

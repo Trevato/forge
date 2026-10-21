@@ -84,6 +84,7 @@ import { summariseCheckFailure } from "./summary.ts";
 import type { Result } from "../kernel/result.ts";
 import { placementFromEnv, type Placement } from "./placement.ts";
 import { JOB_VANISHED, runJobStep } from "./job_step.ts";
+import { extraGates } from "./queue.ts";
 import type { JobOptions } from "../cluster/jobs.ts";
 import type { CheckDetail } from "../core/runs.ts";
 
@@ -158,9 +159,21 @@ export interface ChecksHandle {
    * is false (a person's Ctrl-C): then they are cut off and queued again now.
    */
   stop(options?: { drain?: boolean }): Promise<void>;
+  /**
+   * Check slots free now for a merge-queue gate beyond a line's first
+   * (#4053): what neither a running check nor such a gate holds, less
+   * `PULL_RESERVE` kept for pull checks.
+   */
+  spareSlots(): number;
   /** The gate checks take their turn at; a hosted child's checks share it. */
   readonly lane: Gate;
 }
+
+/**
+ * Check slots the merge queue's extra gates never take (#4053): pull checks
+ * always have at least these, however long the queue.
+ */
+export const PULL_RESERVE = 2;
 
 /**
  * How long main's check after a land waits to start (#4061). The merge queue
@@ -419,7 +432,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     if (stopped) return;
     const limit = capacity();
     if (options.gate === undefined) gate.resize(limit);
-    while (inFlight.size < limit) {
+    // A merge-queue gate beyond a line's first holds a slot (#4053).
+    while (inFlight.size < limit - extraGates()) {
       // A pull's check waits while its main is red (`checks/red_main.ts`).
       const queued = unheld(
         listActive(app.db, "check").filter(
@@ -1180,6 +1194,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         gates.delete(controller);
       }
     },
+    spareSlots: () => Math.max(0, capacity() - PULL_RESERVE - inFlight.size - extraGates()),
     lane: gate,
     stop: async (stopOptions) => {
       stopped = true;

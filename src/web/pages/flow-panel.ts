@@ -172,7 +172,9 @@ function queueCard(rows: readonly QueueRow[]): Html {
     html`<h2>Merge queue</h2>
       <p class="muted small">
         Green, approved pulls join their repository's queue; each candidate
-        is gated once and lands whole, or is bisected to the red one.
+        is gated once and lands whole, or is searched for the red one. Where
+        check slots are free the next candidate gates on top of this one, and
+        a red one's halves gate at once.
       </p>
       ${rows.length === 0
         ? html`<p class="muted">Nothing queued, gating or landed in the last hour.</p>`
@@ -183,7 +185,9 @@ function queueCard(rows: readonly QueueRow[]): Html {
                   <th scope="col">Repository</th>
                   <th scope="col">Queued</th>
                   <th scope="col">Gating</th>
+                  <th scope="col">Gates</th>
                   <th scope="col">Landed, last hour</th>
+                  <th scope="col">Approved to landed</th>
                 </tr>
               </thead>
               <tbody>
@@ -193,7 +197,9 @@ function queueCard(rows: readonly QueueRow[]): Html {
                       <th scope="row"><a href="/${r.repo}/pulls">${r.repo}</a></th>
                       <td class="mono" data-queued>${String(r.queued)}</td>
                       <td class="mono" data-gating>${String(r.gating)}</td>
+                      <td class="mono" data-gates>${String(r.gates)}</td>
                       <td class="mono" data-landed>${String(r.landedHour)}</td>
+                      <td class="mono" data-approved-to-landed>${r.approvedToLanded === null ? "—" : `${r.approvedToLanded} min`}</td>
                     </tr>`,
                 )}
               </tbody>

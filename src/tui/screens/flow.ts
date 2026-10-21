@@ -4,7 +4,8 @@
  * stage of what left it in the last hour and in 24 hours — the numbers of
  * `flow/pipeline.ts` and `flow/throughput.ts`, the same the page and the
  * MCP `flow` tool read. Under them, each repository's merge queue (#2036):
- * queued, gating, landed in the last hour (`flow/queue.ts`); then the
+ * queued, gating, gates in flight, landed in the last hour and the median
+ * minutes from approval to landing (`flow/queue.ts`); then the
  * conflicted pulls, and the pulls with changes requested waiting on a
  * builder and on a reviewer (`flow/requested.ts`, #2172); then each
  * autonomous repository's ready list, startable beside the count per
@@ -60,12 +61,12 @@ export function flowLines(
         `${pad(STAGE_LABEL[s.key], 12)} ${pad(String(s.lastHour), 9, "right")} ${pad(String(s.day), 5, "right")}  ${s.label}`,
     ),
     "",
-    `${pad("Merge queue", 30)} ${pad("queued", 6, "right")} ${pad("gating", 6, "right")} ${pad("landed 1h", 9, "right")}`,
+    `${pad("Merge queue", 15)} ${pad("queued", 6, "right")} ${pad("gating", 6, "right")} ${pad("gates", 5, "right")} ${pad("landed 1h", 9, "right")} ${pad("to land, min", 12, "right")}`,
     ...(queues.length === 0
       ? ["Nothing queued, gating or landed in the last hour."]
       : queues.map(
           (q) =>
-            `${pad(truncate(q.repo, 30), 30)} ${pad(String(q.queued), 6, "right")} ${pad(String(q.gating), 6, "right")} ${pad(String(q.landedHour), 9, "right")}`,
+            `${pad(truncate(q.repo, 15), 15)} ${pad(String(q.queued), 6, "right")} ${pad(String(q.gating), 6, "right")} ${pad(String(q.gates), 5, "right")} ${pad(String(q.landedHour), 9, "right")} ${pad(q.approvedToLanded === null ? "—" : String(q.approvedToLanded), 12, "right")}`,
         )),
     ...(conflicted === null ? [] : ["", ...wrap(conflicted, inner)]),
     ...waits,
