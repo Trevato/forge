@@ -93,11 +93,11 @@ describe("the chain of forges", () => {
   }, 240_000);
 
   afterAll(async () => {
-    servers.stop();
-    grand.close();
-    child.close();
-    root.close();
-    await rm(dir, { recursive: true, force: true });
+    servers?.stop();
+    grand?.close();
+    child?.close();
+    root?.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   test("followMode is validated and defaults to tell-me", () => {

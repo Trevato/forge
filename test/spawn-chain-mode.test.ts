@@ -97,10 +97,10 @@ describe("choosing how a forge follows its parent", () => {
   }, 240_000);
 
   afterAll(async () => {
-    servers.stop();
-    child.close();
-    root.close();
-    await rm(dir, { recursive: true, force: true });
+    servers?.stop();
+    child?.close();
+    root?.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   test("refusals change nothing and say why", async () => {

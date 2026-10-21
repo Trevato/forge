@@ -121,10 +121,10 @@ describe("the chain at the MCP and terminal doors", () => {
   });
 
   afterAll(async () => {
-    servers.stop();
-    child.close();
-    root.close();
-    await rm(dir, { recursive: true, force: true });
+    servers?.stop();
+    child?.close();
+    root?.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   test("MCP following carries the chain, root first", async () => {
