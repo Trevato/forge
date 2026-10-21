@@ -62,6 +62,27 @@ function rowHtml(row: ExploreRow): Html {
   </li>`;
 }
 
+/** Nothing to list: a bare line means nothing is public yet, not a miss. */
+function emptyState(signedIn: boolean, query: ExploreQuery): Html {
+  if (exploreLine(query) !== "")
+    return empty({
+      icon: "search",
+      title: "Nothing matches",
+      note: "Clear the line to see everything you can.",
+    });
+  return empty({
+    icon: "search",
+    title: "Nothing public yet",
+    note: "Make the first app and it shows up here.",
+    action: signedIn
+      ? btn("Make an app", { href: "/apps/new", variant: "primary" })
+      : btn("Sign in to make one", {
+          href: "/signin?next=/apps/new",
+          variant: "primary",
+        }),
+  });
+}
+
 // GET /explore
 export async function explorePage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
@@ -123,11 +144,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
       >
     </div>
     ${rows.length === 0
-      ? empty({
-          icon: "search",
-          title: "Nothing matches",
-          note: "Clear the line to see everything you can.",
-        })
+      ? emptyState(ctx.auth.user !== undefined, query)
       : listCard(rows.map(rowHtml))}`;
   const response = page({ ctx, title: "Explore", body });
   notePhase(ctx.request, "render", performance.now() - rendering);

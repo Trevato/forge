@@ -267,3 +267,58 @@ describe("explore", () => {
     expect(asAlice).not.toContain('href="/alice/loved/make-it-yours"');
   });
 });
+
+describe("explore on a forge with nothing public", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let token: string;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-explore-empty-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    const made = await createUser(app.db, {
+      origin: "seed",
+      username: "lone",
+      email: "lone@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!made.ok) throw new Error(made.error);
+    token = createToken(app.db, made.value.id, "ro", "ro").token;
+  }, 30_000);
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  const get = async (path: string, signedIn: boolean) =>
+    (
+      await fetch(`${servers.url}${path}`, {
+        headers: signedIn ? { authorization: `Bearer ${token}` } : {},
+      })
+    ).text();
+
+  test("no query says nothing is public yet and how to make the first app", async () => {
+    const out = await get("/explore", false);
+    expect(out).toContain("Nothing public yet");
+    expect(out).toContain('href="/signin?next=/apps/new"');
+    expect(out).not.toContain("Clear the line");
+    const mine = await get("/explore", true);
+    expect(mine).toContain("Nothing public yet");
+    expect(mine).toContain('href="/apps/new"');
+    expect(mine).not.toContain("Sign in to make one");
+  });
+
+  test("a query with no hits still says nothing matches", async () => {
+    for (const signedIn of [false, true]) {
+      const out = await get(`/explore?q=${encodeURIComponent("zzz-no-such")}`, signedIn);
+      expect(out).toContain("Nothing matches");
+      expect(out).toContain("Clear the line");
+      expect(out).not.toContain("Nothing public yet");
+    }
+  });
+});
