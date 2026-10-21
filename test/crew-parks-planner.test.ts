@@ -98,6 +98,7 @@ describe("a pull whose review loop is spent is the planner's (#1655)", () => {
   let e: Engine;
   let crew: CrewHandle;
   let promptFile: string;
+  let fakeBinary: string;
 
   beforeAll(async () => {
     e = await engine("forge-spent-pull-");
@@ -118,19 +119,11 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Nothing to
 `,
     );
     chmodSync(fake, 0o755);
-    crew = await startCrew(e.app, {
-      forgeUrl: e.servers.url,
-      localUrl: e.servers.url,
-      binary: fake,
-      concurrency: 1,
-      budgetUsd: 1,
-      runTimeoutMs: 60_000,
-      tickMs: 50,
-    });
+    fakeBinary = fake;
   }, 30_000);
 
   afterAll(async () => {
-    await crew.stop();
+    await crew?.stop();
     await e.close();
   });
 
@@ -164,6 +157,16 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Nothing to
         commitOid: pull.headOid,
       });
     expect(handedOverPulls(e.app.db, e.fresh()).map((h) => h.number)).toEqual([pull.number]);
+    // The crew starts only now: ticking earlier could ask the planner before the pull is spent.
+    crew = await startCrew(e.app, {
+      forgeUrl: e.servers.url,
+      localUrl: e.servers.url,
+      binary: fakeBinary,
+      concurrency: 1,
+      budgetUsd: 1,
+      runTimeoutMs: 60_000,
+      tickMs: 50,
+    });
     // The crew's own tick may ask the planner first; either way it is asked once.
     const asked = await driveRepo(e.app, e.fresh());
     expect(["planned", "idle"]).toContain(asked);
