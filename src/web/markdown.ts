@@ -92,7 +92,43 @@ function cells(line: string, align: string[], tag: "th" | "td"): string {
     .join("");
 }
 
+/**
+ * Rendering is a pure function of the source, and a thread is drawn again on
+ * every visit and every live append, so the last few hundred results are kept.
+ * The value is the same `Html` the first render produced, so output is
+ * byte-identical; only the work is skipped.
+ */
+const MEMO_MAX = 512;
+const MEMO_MAX_SOURCE = 20_000;
+const memo = new Map<string, Html>();
+const counts = { hits: 0, misses: 0 };
+
+/** How often a render was remembered or made; for tests to assert the memo works. */
+export function markdownMemoStats(): { hits: number; misses: number } {
+  return { ...counts };
+}
+
 export function renderMarkdown(source: string): Html {
+  if (source.length > MEMO_MAX_SOURCE) return renderUncached(source);
+  const hit = memo.get(source);
+  if (hit !== undefined) {
+    // Re-insert so the Map's order is recency: the oldest key is the first.
+    memo.delete(source);
+    memo.set(source, hit);
+    counts.hits++;
+    return hit;
+  }
+  counts.misses++;
+  const made = renderUncached(source);
+  if (memo.size >= MEMO_MAX) {
+    const oldest = memo.keys().next();
+    if (!oldest.done) memo.delete(oldest.value);
+  }
+  memo.set(source, made);
+  return made;
+}
+
+function renderUncached(source: string): Html {
   const text = source.replaceAll("\r\n", "\n");
   // Escaping does not move a newline, so the two arrays stay in step: `lines`
   // is what prose is built from, `raws` is what the tokenizer needs.
