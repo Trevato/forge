@@ -46,7 +46,7 @@ import {
 } from "../chrome.ts";
 import { codeJs } from "../client.ts";
 import { highlightBlob } from "../code.ts";
-import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
+import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import { appStrip } from "./apps.ts";
 import { studioApp } from "../studio/app.ts";
@@ -726,11 +726,13 @@ export async function renderCode(
     entries: readonly TreeEntry[];
     extra?: Html;
     rail?: Html;
+    /** The README, when the caller has already read it (and timed the read). */
+    readme?: Html;
   },
 ): Promise<Html> {
   const base = scope.base;
   const { ref, path } = o;
-  const readme = await readmeFor(scope.source, ref, o.entries, path);
+  const readme = o.readme ?? (await readmeFor(scope.source, ref, o.entries, path));
   const historyParams = new URLSearchParams({ ref });
   if (path !== "") historyParams.set("path", path);
   const bar =
@@ -979,11 +981,12 @@ function archivedLine(ctx: Ctx, repo: Repo): Html | null {
 /** The code at a ref: the tree, the README and the About rail — with, in
  * the studio, the offer to make a repository that is not an app one. */
 async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
-  const isApp = getAppByRepo(ctx.app.db, repo.id) !== undefined;
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const isApp = timePhase(ctx.request, "appof", () => getAppByRepo(ctx.app.db, repo.id) !== undefined);
   const noApp = isApp ? null : noAppCard(ctx, repo);
   const scope = localScope(ctx, repo);
   const cloneUrl = `${ctx.url.origin}/${repo.ownerName}/${repo.name}.git`;
-  const refs = await refSetFrom(scope.source);
+  const refs = await timePhaseAsync(ctx.request, "refs", () => refSetFrom(scope.source));
 
   if (refs.branches.length === 0) {
     const body = html`${scopeHeader(ctx, scope, "code")}${archivedLine(ctx, repo)}${noApp}
@@ -1038,12 +1041,16 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
   // the tree read, not after it, because neither waits on the other.
   const parent = forkParent(ctx, repo);
   const [entries, drift] = await Promise.all([
-    scope.source.tree(ref, ""),
+    timePhaseAsync(ctx.request, "tree", () => scope.source.tree(ref, "")),
     parent === undefined ? undefined : forkDrift(ctx.app, repo, parent),
   ]);
   const tree = entries.ok ? entries.value : [];
 
-  const following = await followingOf(ctx, repo);
+  const readme = await timePhaseAsync(ctx.request, "readme", () =>
+    readmeFor(scope.source, ref, tree, ""),
+  );
+  const following = await timePhaseAsync(ctx.request, "following", () => followingOf(ctx, repo));
+  const rendering = performance.now();
   const body = html`${scopeHeader(ctx, scope, "code", {
     branchCount: refs.branches.length,
   })}${archivedLine(ctx, repo)}${noApp}
@@ -1056,10 +1063,11 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
     ref,
     path: "",
     entries: tree,
+    readme,
     rail: aboutCard(ctx, repo, refs, drift),
   })}
   ${codeMount(scope, ref)} ${finderDialog()} ${liveMount({ repo: scope.base })}`;
-  return page({
+  const response = page({
     ctx,
     title: repo.name,
     description: repo.description,
@@ -1073,6 +1081,8 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
     body,
     scriptJs: `${codeJs}\n${liveClientJs}`,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 function knownRef(refs: RefSet, name: string): boolean {
