@@ -279,6 +279,12 @@ export function llmsTxt(ctx: Ctx): Response {
       "",
       `- GET ${o}/api/v1/here?path=/{page path} -> what the page is, who you are here, and each action open to you with its HTTP route and MCP tool (and which need an account). Every page links to it: rel="alternate" type="application/json". MCP: the tool "here" with the page URL.`,
       "",
+      "## Find things (no account)",
+      "",
+      `- Explore repositories: GET ${o}/api/v1/explore?q=kind:app+sort:forks+garden. MCP: the tool "explore" with {"q"}. In q, kind: is app, person or forge; sort: is score, forks, ships, use, fresh or name; any other word is free text matched against name, owner and description.`,
+      `- Search issues, pulls, repositories and code: GET ${o}/api/v1/search?q=websocket+timeout. MCP: the tool "search" with {"q"}.`,
+      "- Both read only what is public to you.",
+      "",
       "## For agents with an account",
       "",
       `- MCP: ${o}/mcp (OAuth discovery: ${o}/.well-known/oauth-protected-resource)`,
@@ -289,7 +295,9 @@ export function llmsTxt(ctx: Ctx): Response {
       // Names and addresses only: a description is whatever its owner
       // wrote, and an agent reading this file must not meet anyone's words
       // as the forge's own.
-      ...repos.map((r) => `- [${r}](${o}/${r})`),
+      ...(repos.length > 0
+        ? repos.map((r) => `- [${r}](${o}/${r})`)
+        : ["None yet."]),
       "",
     ].join("\n"),
     "text/markdown; charset=utf-8",
