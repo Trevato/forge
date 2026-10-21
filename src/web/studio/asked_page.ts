@@ -25,6 +25,7 @@ import {
   type StreamThought,
   type ThoughtState,
 } from "../../core/thought_stream.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase, signInFirst } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
@@ -155,16 +156,18 @@ function askedRow(a: Asked): Html {
  * `flagged` or `all`; oldest first unless `?order=newest`; `?repo=` for one.
  */
 export function askedPage(ctx: Ctx): Response {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   if (!ctx.auth.user) return signInFirst(ctx);
+  const user = ctx.auth.user;
   const q = ctx.url.searchParams;
   const rawShow = q.get("show");
   const show: AskedShow = isAskedShow(rawShow) ? rawShow : "unshipped";
   const rawOrder = q.get("order");
   const order: AskedOrder = isAskedOrder(rawOrder) ? rawOrder : "oldest";
   const repoSpec = q.get("repo");
-  const repos = askedRepos(ctx.app.db, ctx.auth.user, repoSpec);
-  const counts = askedCounts(ctx.app.db, repos);
-  const listed = askedIn(ctx.app.db, repos, { show, order });
+  const repos = timePhase(ctx.request, "repos", () => askedRepos(ctx.app.db, user, repoSpec));
+  const counts = timePhase(ctx.request, "counts", () => askedCounts(ctx.app.db, repos));
+  const listed = timePhase(ctx.request, "asks", () => askedIn(ctx.app.db, repos, { show, order }));
   const href = (s: AskedShow, o: AskedOrder = order) => {
     const parts = [
       s === "unshipped" ? "" : `show=${s}`,
@@ -173,8 +176,9 @@ export function askedPage(ctx: Ctx): Response {
     ].filter(Boolean);
     return `/asked${parts.length > 0 ? `?${parts.join("&")}` : ""}`;
   };
-  const stream = thoughtStream(ctx.app.db, ctx.auth.user, { limit: 50 });
-  const days = flagDays(ctx.app.db, ctx.auth.user.id);
+  const stream = timePhase(ctx.request, "thoughts", () => thoughtStream(ctx.app.db, user, { limit: 50 }));
+  const days = timePhase(ctx.request, "flags", () => flagDays(ctx.app.db, user.id));
+  const rendering = performance.now();
   const next = oldestFlaggedHref(stream);
   const flaggedThoughts = stream.filter((t) => t.flagged).length;
   const thoughts =
@@ -239,5 +243,7 @@ export function askedPage(ctx: Ctx): Response {
               : "Every ask in this view has something built for it.",
         })
       : listCard(listed.map(askedRow))}`;
-  return page({ ctx, title: "What you asked for", body });
+  const response = page({ ctx, title: "What you asked for", body });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
