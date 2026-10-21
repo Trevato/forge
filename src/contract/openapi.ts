@@ -84,6 +84,7 @@ export const ROUTES: readonly Route[] = [
     body: { state: "string", reason: "string", into: "integer" },
   },
   { method: "get", path: `${REPO}/pulls/{number}`, summary: "Read one pull with its diff and review gate (diff=0 leaves the diff out)", auth: false, query: { diff: "string" } },
+  { method: "get", path: `${REPO}/issues/{number}/comments`, summary: "Page through an issue's or pull's comments, oldest first: {comments, next}; limit 1 to 100 (default 50), after a comment id", auth: false, query: { after: "string", limit: "integer" } },
   {
     method: "post",
     path: `${REPO}/issues/{number}/comments`,

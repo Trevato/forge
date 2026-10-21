@@ -633,6 +633,10 @@ export interface ListCommentsOptions {
    * the same remark shows up twice on one page. @default "all"
    */
   kind?: "comment" | "review" | "all";
+  /** Only comments after this id (ids sort oldest first). */
+  after?: string;
+  /** At most this many. */
+  limit?: number;
 }
 
 export function listComments(
@@ -662,9 +666,10 @@ export function listComments(
       `SELECT comment.*, user.username AS author_name, heard.id AS heard_ok
        FROM comment JOIN user ON user.id = comment.author_id
        LEFT JOIN run heard ON heard.id = comment.heard_in AND heard.state = 'ok'
-       WHERE ${where} ORDER BY comment.id`,
+       WHERE ${where}${options.after === undefined ? "" : " AND comment.id > ?2"}
+       ORDER BY comment.id${options.limit === undefined ? "" : ` LIMIT ${Math.trunc(options.limit)}`}`,
     )
-    .all(issueId);
+    .all(...((options.after === undefined ? [issueId] : [issueId, options.after]) as [string]));
   return rows.map((row) => ({
     id: row.id,
     issueId: row.issue_id,
