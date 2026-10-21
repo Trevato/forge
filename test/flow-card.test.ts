@@ -266,6 +266,24 @@ describe("stalled steps on the home", () => {
     guest.tui.stop();
   });
 
+  test("the card's who, reason and unblock are §5's badge, break and bar: no fcard-* class in its markup (#4268)", async () => {
+    const pull = await pullOn();
+    run(pull, "failed");
+    const page = await home();
+    const at = page.indexOf(`data-flow-card="${repo.id}#${pull.number}"`);
+    const end = page.indexOf("</section>", at);
+    const card = page.slice(at, end === -1 ? undefined : end);
+    expect(card).not.toMatch(/fcard-/);
+    expect(card).toContain('class="badge"');
+    expect(card).toContain('class="break"');
+    expect(card).toMatch(/<form[^>]*class="bar"/);
+    expect(card).toContain(`href="/alice/garden/pulls/${pull.number}"`);
+    expect(card).toContain(`action="/alice/garden/pulls/${pull.number}/checks"`);
+    expect(card).toContain('name="next" value="/"');
+    expect(card).toContain("Re-run");
+    expect(card).toContain("Change b1");
+  });
+
   test("every stalled step is a card, past any cap; the button wraps on its own", async () => {
     for (let i = 0; i < 8; i++) run(await pullOn(), "failed");
     const page = await home();
