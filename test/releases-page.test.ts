@@ -81,6 +81,8 @@ describe("the releases page", () => {
     aliceCookie = await login("alice", "a-good-passphrase");
     // Warm the page (the first render imports the kept release's schema module) outside any test's clock.
     await (await fetch(`${servers.url}/releases`, { headers: { cookie: aliceCookie } })).text();
+    // And the rollback route's first call (lazy imports, form parsing), which swaps nothing here.
+    await post(`/releases/${KEPT}/rollback`, aliceCookie, servers.url);
   }, 60_000);
   // The page reads the live commit from the process environment at render time; pin it per test so
   // nothing another suite in this process does to it can unmark the live release.
@@ -151,7 +153,7 @@ describe("the releases page", () => {
   });
 
   test("a writer's POST with swapping off is told so and nothing swaps", async () => {
-    const cookie = await login("alice", "a-good-passphrase");
+    const cookie = aliceCookie;
     const res = await post(`/releases/${KEPT}/rollback`, cookie, servers.url);
     expect(res.status).toBe(303);
     expect(res.headers.get("location")).toBe("/releases");
