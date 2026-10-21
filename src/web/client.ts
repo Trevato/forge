@@ -724,7 +724,7 @@ export const codeJs = /* js */ `
         if (!text) return;
         var holder = doc.createElement('div');
         holder.innerHTML = text;
-        var list = holder.querySelector('ul.ex-list');
+        var list = holder.querySelector('ul');
         if (list && stub.parentNode === d) d.replaceChild(list, stub);
       }, function () { stub.setAttribute('data-stub', ''); });
   }, true);

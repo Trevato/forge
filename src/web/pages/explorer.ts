@@ -119,13 +119,11 @@ function levelList(data: ExplorerData, base: string, at: number): Html {
           ${open ? raw("open") : null}
         >
           <summary ${current ? raw('data-current=""') : null}>
-            <span class="ex-twist" aria-hidden="true"
-              >${icon("chevronRight")}</span
-            ><span class="ex-name">${entry.name}</span>
+            ${icon("chevronRight")}<span class="truncate">${entry.name}</span>
           </summary>
           ${open
             ? levelList(data, base, at + 1)
-            : html`<ul class="ex-list" data-stub>
+            : html`<ul data-stub>
                 <li>
                   <a class="ex-more" href="${`${base}/tree/${encoded}/${path}`}"
                     >${icon("folder")}Open ${entry.name}/</a
@@ -145,13 +143,13 @@ function levelList(data: ExplorerData, base: string, at: number): Html {
         href="${`${base}/blob/${encoded}/${path}`}"
         ${current ? raw('aria-current="page"') : null}
         title="${path}"
-        >${icon("file")}<span class="ex-name">${entry.name}</span></a
+        >${icon("file")}<span class="truncate">${entry.name}</span></a
       >
     </li>`;
   });
-  return html`<ul class="ex-list">
+  return html`<ul>
     ${rows.length === 0
-      ? html`<li><span class="ex-empty">empty</span></li>`
+      ? html`<li><span class="muted small">empty</span></li>`
       : rows}
   </ul>`;
 }
@@ -203,12 +201,12 @@ export function explorerColumn(
 ): Html {
   const base = scope.base;
   return html`<details class="explorer-panel">
-    <summary class="explorer-toggle">
+    <summary>
       ${icon("folder")}<span class="grow">Files</span>
-      <span class="ex-ref mono">${data.ref}</span>
+      <span class="mono muted small">${data.ref}</span>
     </summary>
     <nav class="explorer" aria-label="Files" data-current="${data.current}">
-      <div class="ex-head">
+      <div>
         ${when(o.finder === true, () => finderButton())}${o.actions ?? null}
       </div>
       ${levelList(data, base, 0)}
@@ -239,7 +237,7 @@ export function codeMount(
 /** The control that opens the finder. It needs a script, so it says so. */
 export function finderButton(): Html {
   return html`<button
-    class="btn js-only ex-find"
+    class="btn js-only"
     data-size="sm"
     data-variant="outline"
     type="button"
@@ -297,7 +295,6 @@ export function codeLayout(explorer: Html, content: Html): Html {
   return html`<div class="code-layout">
     ${explorer}
     <div
-      class="code-split"
       role="separator"
       aria-orientation="vertical"
       aria-label="Resize the file tree"
@@ -307,6 +304,6 @@ export function codeLayout(explorer: Html, content: Html): Html {
       title="Drag to resize · double-click to reset"
       data-split
     ></div>
-    <div class="code-main" id="code-main">${content}</div>
+    <div id="code-main">${content}</div>
   </div>`;
 }

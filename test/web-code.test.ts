@@ -226,10 +226,30 @@ describe("the code browser on the web", () => {
     const res = await get("/alice/beacon/tree/main/docs?fragment=explorer");
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('class="ex-list"');
+    expect(html).toMatch(/^\s*<ul[\s>]/);
     expect(html).toContain("keeping.md");
     expect(html).not.toContain("<!doctype html>");
     expect(res.headers.get("content-security-policy")).toContain("sandbox");
+  });
+
+  test("the explorer column is drawn from §5's components, with none of its old classes", async () => {
+    const page = await text("/alice/beacon/blob/main/src/lamp.ts");
+    const fragment = await text("/alice/beacon/tree/main/docs?fragment=explorer");
+    for (const html of [page, fragment]) {
+      for (const old of [
+        "code-main", "code-split", "ex-empty", "ex-find", "ex-head",
+        "ex-list", "ex-name", "ex-ref", "ex-twist", "explorer-toggle",
+      ]) {
+        expect(html).not.toMatch(new RegExp(`class="[^"]*\\b${old}\\b`));
+      }
+    }
+    // What a person reads and the hooks the script and keyboard need stay.
+    expect(page).toContain('<span class="grow">Files</span>');
+    expect(page).toContain('<span class="mono muted small">main</span>');
+    expect(page).toContain('<span class="truncate">lamp.ts</span>');
+    expect(page).toContain('id="code-main"');
+    expect(page).toContain('role="separator"');
+    expect(page).toContain("data-split");
   });
 
   test("the blob fragment is the same pane a full load renders", async () => {
@@ -301,7 +321,7 @@ describe("the code browser on the web", () => {
   test("the finder is offered as an enhancement with the explorer behind it", async () => {
     const html = await text("/alice/beacon/blob/main/src/lamp.ts");
     // The button that needs a script says so, and carries its shortcut.
-    expect(html).toContain('class="btn js-only ex-find"');
+    expect(html).toContain('class="btn js-only"');
     expect(html).toContain('data-shortcut="t"');
     expect(html).toContain('id="finder"');
     // The fallback is a real, populated tree of links in the same page.
