@@ -3,7 +3,15 @@ import { Database } from "bun:sqlite";
 import { reachTables } from "./helpers/reach-tables.ts";
 import { NO_REACH, readReach } from "../src/flow/reach.ts";
 import { describe, expect, test } from "bun:test";
-import { checkTime, kpiLines, sparkText } from "../src/flow/kpi_words.ts";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createApp } from "../src/app.ts";
+import { createRepo as createRepoRow } from "../src/core/repos.ts";
+import { createUser } from "../src/core/users.ts";
+import { serve } from "../src/http/server.ts";
+import { id } from "../src/kernel/id.ts";
+import { checkTime, kpiLines, sparkText, waitingWords } from "../src/flow/kpi_words.ts";
 import { running } from "../src/kernel/version.ts";
 import { components } from "../src/web/style/components.ts";
 import { kpiRowFor, liveNow, sparkline } from "../src/web/studio/kpi_row.ts";
@@ -333,4 +341,60 @@ describe("readReach", () => {
     expect(r.visitorsToday).toBe(1);
     expect([r.usersToday, r.usersTotal]).toEqual([1, 3]);
   });
+});
+
+describe("home waiting line", () => {
+  test("words: absent at zero, count and oldest hours otherwise", () => {
+    const now = new Date("2026-10-21T12:00:00.000Z");
+    expect(waitingWords(0, null, now)).toBeNull();
+    expect(waitingWords(3, "2026-10-19T10:00:00.000Z", now)).toBe("3 waiting on you, oldest 50 h");
+    expect(waitingWords(1, "2026-10-21T11:40:00.000Z", now)).toBe("1 waiting on you, oldest under 1 h");
+  });
+
+  async function homeWith(stale: number[]): Promise<string> {
+    const root = mkdtempSync(join(tmpdir(), "forge-home-wait-"));
+    const app = createApp({ dataDir: root, port: 0 });
+    const servers = await serve(app);
+    try {
+      const made = await createUser(app.db, { username: "alice", email: "alice@forge.test", password: "a-good-passphrase", origin: "seed", trusted: true, adminIfFirst: true });
+      if (!made.ok) throw new Error(made.error);
+      const repo = await createRepoRow(app.db, app.reposRoot, { ownerId: made.value.id, name: "wait", visibility: "public", description: "wait" });
+      if (!repo.ok) throw new Error(repo.error);
+      stale.forEach((h, i) => {
+        const issueId = id();
+        const number = app.db.query<{ issue_seq: number }, [string]>("UPDATE repo SET issue_seq = issue_seq + 1 WHERE id = ?1 RETURNING issue_seq").get(repo.value.id)!.issue_seq;
+        app.db
+          .query(`INSERT INTO issue (id, repo_id, number, kind, title, body, author_id, state, created_at) VALUES (?1, ?2, ?3, 'pull', ?4, '', ?5, 'open', ?6)`)
+          .run(issueId, repo.value.id, number, `Stale ${i}`, made.value.id, new Date(Date.now() - h * 3_600_000).toISOString());
+        app.db
+          .query(`INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, head_repo_id) VALUES (?1, 'main', ?2, ?3, ?3, ?4)`)
+          .run(issueId, `b/${i}`, "0".repeat(40), repo.value.id);
+      });
+      const signin = await fetch(`${servers.url}/signin`, {
+        method: "POST",
+        headers: { origin: servers.url },
+        body: new URLSearchParams({ username: "alice", password: "a-good-passphrase" }),
+        redirect: "manual",
+      });
+      const cookie = (signin.headers.get("set-cookie") ?? "").split(";")[0]!;
+      const review = await (await fetch(`${servers.url}/review`, { headers: { cookie } })).text();
+      expect(review.split("<li").filter((r) => r.includes('class="row"')).length).toBe(stale.length);
+      return await (await fetch(`${servers.url}/`, { headers: { cookie } })).text();
+    } finally {
+      await servers.stop();
+      app.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  test("three asks show one line linking to /review", async () => {
+    const body = await homeWith([30, 40, 50]);
+    expect(body).toMatch(/<p class="small muted"><a href="\/review">3 waiting on you, oldest 5\d h<\/a><\/p>/);
+  }, 30_000);
+
+  test("with none, the line is absent", async () => {
+    const body = await homeWith([]);
+    expect(body).not.toContain("waiting on you");
+    expect(body).not.toContain('href="/review"');
+  }, 30_000);
 });

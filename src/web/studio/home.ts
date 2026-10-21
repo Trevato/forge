@@ -51,7 +51,7 @@ import { writableAppsOf } from "./asks.ts";
 import { needsYouSection } from "./asks_page.ts";
 import { flowCards } from "./flow_card.ts";
 import { composer, feedJs, feedNote, feedRegion } from "./feed.ts";
-import { kpiRow } from "./kpi_row.ts";
+import { kpiRow, waitingLine } from "./kpi_row.ts";
 import { feedCandidateCache } from "../../feed/feed.ts";
 import { notePhase, notePhaseRest, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { kpiCache, panelCache } from "./home_cache.ts";
@@ -250,6 +250,7 @@ export async function studioHome(
     ${ask} ${address} ${figures
       ? timePhase(ctx.request, "kpis", () => kpiRow(ctx.app.db, kpiOpts), () => kpiCache(ctx.app.db))
       : liveLine(ctx)}
+    ${timePhase(ctx.request, "waiting", () => waitingLine(ctx.app.db, user))}
     ${figures
       ? await timePhaseAsync(ctx.request, "panels", () => pinnedPanels(ctx.app, user), () => panelCache(ctx.app.db))
       : null}
@@ -289,7 +290,7 @@ export async function studioHome(
     body,
     scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${feedJs}${ask ? `\n${passkeyJs}` : ""}`,
   });
-  notePhaseRest(ctx.request, "render", rendering, ["kpis", "panels", "feed"]);
+  notePhaseRest(ctx.request, "render", rendering, ["kpis", "waiting", "panels", "feed"]);
   return res;
 }
 

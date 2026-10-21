@@ -8,13 +8,16 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { backupAge, backupFull, backupOverdue, buildersValue, checkTime, reactNote, speedWords, spendFull, spendValue, usersValue, visitorsNote, visitorsValue } from "../../flow/kpi_words.ts";
+import { backupAge, backupFull, backupOverdue, buildersValue, checkTime, reactNote, speedWords, spendFull, spendValue, usersValue, visitorsNote, visitorsValue, waitingWords } from "../../flow/kpi_words.ts";
 import type { Kpis } from "../../flow/kpis.ts";
 import { cachedKpis } from "./home_cache.ts";
 import { escapeHtml, html, raw, type Html } from "../html.ts";
 import { BOOTED } from "../../release/gate.ts";
 import { running } from "../../kernel/version.ts";
 import { sha, stat, time } from "../ui.ts";
+import { listReposVisibleTo } from "../../core/repos.ts";
+import type { User } from "../../core/users.ts";
+import { waitingOn } from "./asks.ts";
 
 const W = 96;
 const H = 24;
@@ -159,4 +162,16 @@ export function kpiRow(db: Database, opts: { ceilingUsd?: number; dataDir?: stri
   const now = opts.now ?? new Date();
   const forge = { ceilingUsd: opts.ceilingUsd ?? null, ...(opts.dataDir === undefined ? {} : { dataDir: opts.dataDir }) };
   return kpiRowFor(cachedKpis(db, now, forge), liveNow(), now);
+}
+
+/**
+ * One `.small .muted` line over `/review`: how many asks wait on the viewer
+ * (the very rows /review lists) and how long the oldest has. Empty at zero.
+ */
+export function waitingLine(db: Database, user: User, now: Date = new Date()): Html {
+  const repos = listReposVisibleTo(db, user, { limit: 200, withoutArchived: true });
+  const asks = waitingOn(db, user, repos);
+  const oldest = asks.reduce<string | null>((o, a) => (o === null || Date.parse(a.since) < Date.parse(o) ? a.since : o), null);
+  const words = waitingWords(asks.length, oldest, now);
+  return words === null ? html`` : html`<p class="small muted"><a href="/review">${words}</a></p>`;
 }
