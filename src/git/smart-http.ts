@@ -16,6 +16,7 @@ import {
   readBounded,
 } from "../http/limits.ts";
 import { gitEnv, transferGate } from "./env.ts";
+import { transferDeadline, type Stall } from "./progress.ts";
 
 export type GitService = "git-upload-pack" | "git-receive-pack";
 
@@ -30,11 +31,45 @@ function pktLine(payload: string): string {
 
 const FLUSH = "0000";
 
+/**
+ * Upload-pack serves partial clones (`git clone --filter=blob:none`) and
+ * the blob fetches they make later, which want an object by id and not a
+ * ref. Protocol v2 already allows any want; this lets v0 clients do the
+ * same. Passed with `-c` so the blanked global and system config
+ * (`gitEnv`) stay blank. A want is still only served after the repository
+ * read check, like every other want. The keep-alive is git's default,
+ * pinned here because `progress.ts` relies on it.
+ */
+const UPLOAD_PACK_CONFIG = [
+  "-c",
+  "uploadpack.allowFilter=true",
+  "-c",
+  "uploadpack.allowAnySHA1InWant=true",
+  "-c",
+  "uploadpack.keepAlive=5",
+] as const;
+
+/** The argv that runs `service`: `git [config] <subcommand> …args`. */
+export function serviceCommand(
+  service: GitService,
+  args: readonly string[],
+): string[] {
+  // "git-upload-pack" the service is "upload-pack" the subcommand.
+  const subcommand = service.slice(4);
+  const config = service === "git-upload-pack" ? UPLOAD_PACK_CONFIG : [];
+  return ["git", ...config, subcommand, ...args];
+}
+
 export interface SmartHttpOptions {
   /** Extra env for the spawned git process (pusher identity for hooks, etc.). */
   env?: Record<string, string>;
-  /** Kill a wedged transfer after this long. @default 600_000 */
+  /**
+   * Kill the transfer after this long, however well it moves. @default
+   * 7_200_000 for a fetch (`progress.ts`), 600_000 for a push
+   */
   timeoutMs?: number;
+  /** End a fetch that moves less than this (`progress.ts`). @default STALL */
+  stall?: Stall;
   /**
    * End a fetch whose request body stops arriving for this long: a client
    * that opens a negotiation and trickles it holds a transfer permit the
@@ -59,14 +94,14 @@ export async function advertiseRefs(
   request: Request,
   options: SmartHttpOptions = {},
 ): Promise<Response> {
-  const proc = await spawnService(repoDir, service, request, options, [
+  const { stdout } = await spawnService(repoDir, service, request, options, [
     "--advertise-refs",
   ]);
 
   const preamble = new TextEncoder().encode(
     pktLine(`# service=${service}\n`) + FLUSH,
   );
-  const body = prepend(preamble, proc.stdout);
+  const body = prepend(preamble, stdout);
 
   return new Response(body, {
     headers: {
@@ -87,12 +122,18 @@ export async function serviceRpc(
   request: Request,
   options: SmartHttpOptions = {},
 ): Promise<Response> {
-  const proc = await spawnService(repoDir, service, request, options, []);
+  const { proc, stdout } = await spawnService(
+    repoDir,
+    service,
+    request,
+    options,
+    [],
+  );
   feedStdin(proc, service, request, options.idleMs ?? FETCH_IDLE_MS).catch(() =>
     proc.kill("SIGKILL"),
   );
 
-  return new Response(proc.stdout, {
+  return new Response(stdout, {
     headers: {
       "content-type": `application/x-${service}-result`,
       "cache-control": "no-cache",
@@ -113,6 +154,9 @@ export async function serviceRpc(
  * holds its permit across the pre-receive hook, and that hook calls back
  * into the forge for a branch-protection check that needs plumbing permits
  * of its own. One shared pool would deadlock the first time pushes filled it.
+ *
+ * A fetch ends when it stops moving, a push on a clock (`progress.ts`);
+ * `stdout` is the stream to answer with, metered for a fetch.
  */
 async function spawnService(
   repoDir: string,
@@ -126,9 +170,6 @@ async function spawnService(
     permit();
     options.release?.();
   };
-  // "git-upload-pack" the service is "upload-pack" the subcommand.
-  const subcommand = service.slice(4);
-
   const env: Record<string, string> = { ...options.env };
   // Forward the client's protocol request, but only within git's own
   // grammar (colon-separated key[=value] tokens) and bounded — never an
@@ -140,7 +181,7 @@ async function spawnService(
   }
 
   const spawn = () =>
-    Bun.spawn(["git", subcommand, "--stateless-rpc", ...extraArgs, repoDir], {
+    Bun.spawn(serviceCommand(service, ["--stateless-rpc", ...extraArgs, repoDir]), {
       env: gitEnv(env),
       stdin: "pipe",
       stdout: "pipe",
@@ -157,25 +198,35 @@ async function spawnService(
     throw error;
   }
 
-  const timer = setTimeout(
-    () => proc.kill("SIGKILL"),
-    options.timeoutMs ?? 600_000,
+  const kill = (): void => {
+    proc.kill("SIGKILL");
+  };
+  const deadline = transferDeadline(
+    service === "git-upload-pack",
+    proc.stdout,
+    options,
+    kill,
   );
   // A transfer under way is the account's, and ends with its standing
   // (\`http/caller.ts\`): a clone does not run on after a suspension.
-  const unhold = holdForCaller(request, () => proc.kill("SIGKILL"));
+  const unhold = holdForCaller(request, kill);
   void proc.exited.finally(() => {
-    clearTimeout(timer);
+    deadline.exited();
     unhold();
     release();
   });
-  request.signal.addEventListener("abort", () => proc.kill("SIGKILL"));
+  // A client that hung up has nothing left to deliver or to watch.
+  const abort = (): void => {
+    kill();
+    deadline.stop();
+  };
+  request.signal.addEventListener("abort", abort);
   // The client may have hung up while this call was queued behind other
   // transfers, in which case the listener above will never fire — nothing
   // is left to abort. Check once, now that there is a process to kill.
-  if (request.signal.aborted) proc.kill("SIGKILL");
+  if (request.signal.aborted) abort();
 
-  return proc;
+  return { proc, stdout: deadline.stdout };
 }
 
 /**

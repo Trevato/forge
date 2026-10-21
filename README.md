@@ -299,6 +299,10 @@ ssh -p 2222 localhost                        # the terminal UI
 git clone ssh://localhost:2222/you/hello.git # git, same port
 ```
 
+A big repository clones over either transport. To skip its large files until a
+checkout needs them, run `git clone --filter=blob:none <url>`. See
+[`docs/GIT.md`](docs/GIT.md).
+
 **After a GitHub migration** you choose what happens to the original: leave it
 alone (the default), archive it, or keep it as a read-only mirror. The choice is
 the "Afterwards" field on `/migrate`, in the terminal's migrate screen, and

@@ -1463,8 +1463,8 @@ export function knownPatterns(): string[] {
 /**
  * A transfer someone signed in makes runs as it always has; a stranger's
  * takes a share of the transfer pool first (`strangers.ts`) — refused with
- * a 429 when its address or every stranger together has none left — and
- * runs on a shorter clock. Called once access is decided, so a private
+ * a 429 when its address or every stranger together has none left. Either
+ * one ends once it stops moving (`git/progress.ts`). Called once access is decided, so a private
  * repository still answers a stranger with the credential challenge.
  */
 async function asStranger(

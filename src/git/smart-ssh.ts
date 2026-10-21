@@ -11,7 +11,8 @@
 
 import { isSafeName } from "./guard.ts";
 import { gitEnv } from "./env.ts";
-import type { GitService } from "./smart-http.ts";
+import { transferDeadline, type Stall } from "./progress.ts";
+import { serviceCommand, type GitService } from "./smart-http.ts";
 
 export type { GitService };
 
@@ -114,8 +115,13 @@ export interface GitChannel {
 export interface GitServiceOptions {
   /** Extra env for the spawned git process (hook identity, GIT_PROTOCOL). */
   env?: Record<string, string>;
-  /** Kill a wedged transfer after this long. @default 600_000 */
+  /**
+   * Kill the transfer after this long, however well it moves. @default
+   * 7_200_000 for a fetch (`progress.ts`), 600_000 for a push
+   */
   timeoutMs?: number;
+  /** End a fetch that moves less than this (`progress.ts`). @default STALL */
+  stall?: Stall;
 }
 
 /**
@@ -123,6 +129,8 @@ export interface GitServiceOptions {
  * Output is written under backpressure: git's stdout can produce a pack far
  * faster than the peer's window drains it, and awaiting `drain()` between
  * chunks is what keeps a clone from buffering the whole pack in memory.
+ * A fetch ends when it stops moving, in either direction (`progress.ts`);
+ * a push keeps a wall clock, as over HTTP.
  */
 export function runGitService(
   dir: string,
@@ -130,20 +138,25 @@ export function runGitService(
   channel: GitChannel,
   options: GitServiceOptions = {},
 ): Promise<number> {
-  // "git-upload-pack" the service is "upload-pack" the subcommand.
-  const proc = Bun.spawn(["git", service.slice(4), dir], {
+  const proc = Bun.spawn(serviceCommand(service, [dir]), {
     env: gitEnv(options.env),
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
   });
 
-  const timer = setTimeout(
-    () => proc.kill("SIGKILL"),
-    options.timeoutMs ?? 600_000,
+  const kill = (): void => {
+    proc.kill("SIGKILL");
+  };
+  const { stdout, moved, stop } = transferDeadline(
+    service === "git-upload-pack",
+    proc.stdout,
+    options,
+    kill,
   );
 
   channel.onData((chunk) => {
+    moved(chunk.length);
     try {
       proc.stdin.write(chunk);
       void proc.stdin.flush();
@@ -164,11 +177,11 @@ export function runGitService(
   });
   // A *close* is different: the peer is gone, so every byte git still has to
   // give has nowhere to go. Without this the child sits in `upload-pack`
-  // writing into a dead channel until the ten-minute timeout reaps it — one
-  // idle git per disconnected clone.
+  // writing into a dead channel until its deadline reaps it — one idle git
+  // per disconnected clone.
   channel.onClose(() => {
-    clearTimeout(timer);
-    proc.kill("SIGKILL");
+    stop();
+    kill();
   });
 
   const pump = async (
@@ -186,11 +199,11 @@ export function runGitService(
 
   return (async () => {
     const [, , code] = await Promise.all([
-      pump(proc.stdout, (data) => channel.write(data)),
+      pump(stdout, (data) => channel.write(data)),
       pump(proc.stderr, (data) => channel.writeStderr(data)),
       proc.exited,
     ]);
-    clearTimeout(timer);
+    stop();
     channel.exit(code);
     return code;
   })();

@@ -37,7 +37,10 @@ export interface StrangerLimits {
    * kept for pushes and signed-in clones. At least one permit.
    */
   readonly transferShare: number;
-  /** A stranger's transfer is killed after this long (a signed-in one: 600 s). */
+  /**
+   * A stranger's fetch is killed after this long, however well it moves.
+   * It is killed sooner once it stalls (`git/progress.ts`), as anyone's is.
+   */
   readonly transferTimeoutMs: number;
   /** A fetch's request body that stops arriving for this long ends the fetch. */
   readonly transferIdleMs: number;
@@ -60,7 +63,7 @@ export const STRANGER_LIMITS: StrangerLimits = {
   forge: { api: 6000, git: 600, code: 60, plan: 60 },
   transfersPerAddress: 4,
   transferShare: 0.5,
-  transferTimeoutMs: 300_000,
+  transferTimeoutMs: 7_200_000,
   transferIdleMs: 30_000,
   codeAtOnce: 1,
   streamsPerAddress: 8,
