@@ -39,7 +39,6 @@ const UNNAMED: Array<[path: string, issue: string]> = [
   ["/alice/forge/tells", "#3322"],
   ["/alice/forge/toolbar", "#3390"],
   ["/apps/open", "#3390"],
-  ["/board", "#3378"],
   ["/claim", "#3390"],
   ["/live/apps", "#3390"],
   ["/live/on-you", "#3390"],

@@ -14,6 +14,7 @@
  * pointer. The old big view (`/big`, every address it had) lands here.
  */
 
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { sentinelNotice } from "../../crew/sentinel.ts";
 import { appsForRepos, type AppRecord } from "../../core/apps.ts";
 import { askMeasure } from "../../core/ask_ledger.ts";
@@ -207,13 +208,17 @@ function boardScope(
 
 /** GET /board — signed in; every app the viewer can see, or `?apps=` some; `?wall` for the wall mode. */
 export function boardPage(ctx: Ctx): Response {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const user = ctx.auth.user;
   if (!user) return signInFirst(ctx);
   const db = ctx.app.db;
-  const visible = listReposVisibleTo(db, user, { limit: 200 });
-  const records = appsForRepos(
-    db,
-    visible.map((r) => r.id),
+  const rq = ctx.request;
+  const visible = timePhase(rq, "repos", () => listReposVisibleTo(db, user, { limit: 200 }));
+  const records = timePhase(rq, "apps", () =>
+    appsForRepos(
+      db,
+      visible.map((r) => r.id),
+    ),
   );
   const wanted = new Set(
     (ctx.url.searchParams.get("apps") ?? "")
@@ -221,18 +226,31 @@ export function boardPage(ctx: Ctx): Response {
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean),
   );
-  const scope = boardScope(
-    ctx,
-    visible.filter(
-      (r) =>
-        wanted.size === 0 ||
-        wanted.has(r.name.toLowerCase()) ||
-        wanted.has(`${r.ownerName}/${r.name}`.toLowerCase()),
+  const scope = timePhase(rq, "scope", () =>
+    boardScope(
+      ctx,
+      visible.filter(
+        (r) =>
+          wanted.size === 0 ||
+          wanted.has(r.name.toLowerCase()) ||
+          wanted.has(`${r.ownerName}/${r.name}`.toLowerCase()),
+      ),
+      records,
     ),
-    records,
   );
   const repos = scope.repos;
   const wall = ctx.url.searchParams.has("wall");
+  const forge = timePhase(rq, "forge", () => forgeNotes(ctx));
+  const declined = timePhase(rq, "declined", () => declinedNotes(ctx, scope));
+  const review = timePhase(rq, "review", () => reviewNotes(ctx, scope));
+  const asks = timePhase(rq, "asks", () => asksStrip(ctx));
+  const returns = timePhase(rq, "returns", () => returnsStrip(ctx, scope));
+  const windows = timePhase(rq, "windows", () => windowsStrip(ctx));
+  const workingNow = timePhase(rq, "working", () => working(ctx, scope));
+  const landedNow = timePhase(rq, "landed", () => landed(ctx, scope));
+  const decidedNow = timePhase(rq, "decided", () => decided(ctx, scope));
+  const spendNow = timePhase(rq, "today", () => today(ctx, scope));
+  const rendering = performance.now();
 
   const body = html`<div class="board" ${wall ? html`data-wall=""` : null}>
     <header class="bar">
@@ -259,18 +277,18 @@ export function boardPage(ctx: Ctx): Response {
       >
       <time class="num small muted" id="board-clock"></time>
     </header>
-    ${boardNotes(ctx, scope)}
+    ${boardNotes(forge, declined, review)}
     <div class="board-grid">
-      ${working(ctx, scope)} ${landed(ctx, scope)} ${decided(ctx, scope)}
-      ${today(ctx, scope)}
+      ${workingNow} ${landedNow} ${decidedNow}
+      ${spendNow}
     </div>
     <div class="stack">
-      ${asksStrip(ctx)}
-      ${returnsStrip(ctx, scope)}
-      ${windowsStrip(ctx)}
+      ${asks}
+      ${returns}
+      ${windows}
     </div>
   </div>`;
-  return page({
+  const res = page({
     ctx,
     title: "Board",
     body,
@@ -278,6 +296,8 @@ export function boardPage(ctx: Ctx): Response {
     theme: "dark",
     scriptJs: `${liveRegionsJs}\n${boardJs}`,
   });
+  notePhase(rq, "render", performance.now() - rendering);
+  return res;
 }
 
 /**
@@ -519,13 +539,12 @@ function declinedNotes(ctx: Ctx, scope: BoardScope): Note[] {
 }
 
 /** Every note for this viewer, as the one live region under the title. */
-function boardNotes(ctx: Ctx, scope: BoardScope): Html {
-  const forge = forgeNotes(ctx);
-  const notes = distinct([
-    ...(forge?.notes ?? []),
-    ...declinedNotes(ctx, scope),
-    ...reviewNotes(ctx, scope),
-  ]);
+function boardNotes(
+  forge: ReturnType<typeof forgeNotes>,
+  declined: readonly Note[],
+  review: readonly Note[],
+): Html {
+  const notes = distinct([...(forge?.notes ?? []), ...declined, ...review]);
   return notesRegion(notes, {
     fine: forge !== null && forge.ok,
     live: "run.queued,run.started,run.finished,issue.*,pull.*,app.*",
