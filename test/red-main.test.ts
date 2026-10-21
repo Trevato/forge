@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { migrations } from "../src/core/schema.ts";
 import { openDb } from "../src/kernel/db.ts";
 import { claimRun, createRun, finishRun, listActive, type Run } from "../src/core/runs.ts";
-import { RED_HOLD_MS, heldChecks, redHref, redMain, redSentence, sharedWithMain, unheld } from "../src/checks/red_main.ts";
+import { RED_HOLD_MS, heldChecks, laneSince, redHref, redMain, redSentence, sharedWithMain, unheld } from "../src/checks/red_main.ts";
 import { coveredByRedFix } from "../src/crew/red_fix.ts";
 import { budgetBreaches, findFaults } from "../src/crew/sentinel.ts";
 import { redLines } from "../src/crew/notify.ts";
@@ -237,6 +237,70 @@ describe("the lane sentence and a red main", () => {
     const causes = read().map((d) => d.cause);
     expect(causes).toContain("red:r1");
     expect(causes).not.toContain("queue:check");
+  });
+
+  // #3946: main went green at 01:52, freeing 14 checks it had held since 01:38;
+  // the lane started them that second and was blamed for their twenty minutes.
+  const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
+  const at = (run: Run, column: "created_at" | "finished_at", min: number) =>
+    db.run(`UPDATE run SET ${column} = ?2 WHERE id = ?1`, [run.id, ago(min)]);
+
+  test("checks a red main held, freed by the green a moment ago: the lane is not blamed", () => {
+    at(main("b", "failed", ["x"]), "finished_at", 18);
+    const held = [pullCheck("1"), pullCheck("2"), pullCheck("3")];
+    held.forEach((r) => at(r, "created_at", 15));
+    main("c", "ok");
+    expect(read().map((d) => d.cause)).not.toContain("queue:check");
+  });
+
+  test("freed checks still waiting long after the green: the lane is a cause, since the green", () => {
+    at(main("b", "failed", ["x"]), "finished_at", 40);
+    const held = [pullCheck("1"), pullCheck("2")];
+    held.forEach((r) => at(r, "created_at", 35));
+    const green = main("c", "ok");
+    at(green, "finished_at", 25);
+    const lane = read().find((d) => d.cause === "queue:check");
+    expect(lane?.since.slice(0, 16)).toBe(ago(25).slice(0, 16));
+    expect(lane?.sentence).toStartWith(`2 checks wait behind one lane; the oldest since ${ago(25).slice(11, 16)};`);
+  });
+
+  test("a check held past the hold waits for the lane from the hold's end, not the green", () => {
+    at(main("b", "failed", ["x"]), "finished_at", 60);
+    at(pullCheck("1"), "created_at", 50);
+    at(main("c", "ok"), "finished_at", 2);
+    const lane = read().find((d) => d.cause === "queue:check");
+    expect(lane?.sentence).toContain(`the oldest since ${ago(50 - HOLD / 60_000).slice(11, 16)};`);
+  });
+
+  test("an asked check, never held, keeps its whole wait after a red and a green", () => {
+    at(main("b", "failed", ["x"]), "finished_at", 18);
+    at(pullCheck("1", "asked"), "created_at", 15);
+    main("c", "ok");
+    expect(read().map((d) => d.cause)).toContain("queue:check");
+  });
+
+  test("a check queued after the green, or long before the red, keeps its queue time", () => {
+    const release = { redAt: "2026-10-21T01:38:00.000Z", greenAt: "2026-10-21T01:52:00.000Z" };
+    const check = (createdAt: string) => ({ issueId: pull, reason: "push", createdAt });
+    expect(laneSince(check("2026-10-21T01:53:00.000Z"), release, HOLD)).toBe("2026-10-21T01:53:00.000Z");
+    expect(laneSince(check("2026-10-21T01:00:00.000Z"), release, HOLD)).toBe("2026-10-21T01:00:00.000Z");
+    expect(laneSince(check("2026-10-21T01:41:00.000Z"), release, HOLD)).toBe(release.greenAt);
+    expect(laneSince({ ...check("2026-10-21T01:41:00.000Z"), issueId: null }, release, HOLD)).toBe(
+      "2026-10-21T01:41:00.000Z",
+    );
+  });
+
+  test("a main green twice, or red by a limit before its green, freed nothing: the wait counts whole", () => {
+    at(main("b", "failed", ["x"]), "finished_at", 18);
+    at(pullCheck("1"), "created_at", 15);
+    main("c", "ok");
+    expect(read().map((d) => d.cause)).not.toContain("queue:check");
+    main("d", "ok");
+    expect(read().map((d) => d.cause)).toContain("queue:check");
+    const stopped = main("e", "failed");
+    db.run("UPDATE run SET summary = 'check failed: budget: check took 61 min, limit 60' WHERE id = ?1", [stopped.id]);
+    main("f", "ok");
+    expect(read().map((d) => d.cause)).toContain("queue:check");
   });
 });
 

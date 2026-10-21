@@ -174,25 +174,104 @@ export function heldChecks(db: Database): { red: RedMain; held: number }[] {
   return out;
 }
 
+/** A main that was red and is green again: when its last red and its green finished. */
+export interface Release {
+  readonly redAt: string;
+  readonly greenAt: string;
+}
+
+/**
+ * The id of `q`'s repository's last finished default-branch check, older
+ * than `below` when given: a constant of this module, never input.
+ */
+const mainBefore = (below: string): string => `(
+  SELECT r.id FROM run r JOIN repo m ON m.id = r.repo_id
+   WHERE r.repo_id = q.repo_id AND r.kind = 'check'
+     AND r.issue_id IS NULL AND r.env = m.default_branch
+     AND r.state IN ('ok', 'failed') ${below}
+   ORDER BY r.id DESC LIMIT 1)`;
+
+/** The last two finished main checks, as `toRelease` reads them. */
+interface ReleaseRow {
+  last_state: string | null;
+  green_at: string | null;
+  prev_state: string | null;
+  prev_summary: string | null;
+  red_at: string | null;
+}
+
+/**
+ * The repository's last turn from red to green: its default branch's last
+ * finished check passed and the one before it failed by a test (a limit
+ * holds nothing, so releases nothing).
+ */
+function toRelease(row: ReleaseRow): Release | undefined {
+  if (
+    row.last_state !== "ok" ||
+    row.prev_state !== "failed" ||
+    LIMIT.test(row.prev_summary ?? "") ||
+    row.green_at === null ||
+    row.red_at === null
+  )
+    return undefined;
+  return { redAt: row.red_at, greenAt: row.green_at };
+}
+
+/**
+ * Since when a queued check has waited for the lane (#3946): its queue time,
+ * unless the last red main held it — then the moment the hold ended, at the
+ * green or at `holdMs` after it was queued, whichever came first. Fourteen
+ * checks a red main held for twenty minutes, freed at once by the green,
+ * have not waited twenty minutes behind the lane.
+ */
+export function laneSince(
+  run: { readonly issueId: string | null; readonly reason: string; readonly createdAt: string },
+  release: Release | undefined,
+  holdMs: number,
+): string {
+  if (release === undefined || run.issueId === null || run.reason === ASKED) return run.createdAt;
+  const queued = Date.parse(run.createdAt);
+  const green = Date.parse(release.greenAt);
+  // Queued after the green, or its hold over before the red: never held.
+  if (queued >= green || queued + holdMs <= Date.parse(release.redAt)) return run.createdAt;
+  return new Date(Math.min(green, queued + holdMs)).toISOString();
+}
+
 /**
  * The queued checks no red main holds (startable now): how many, and the
- * oldest one's queue time. A held check's age says nothing about the lane.
+ * oldest one's `laneSince`. A held check's age says nothing about the lane,
+ * and nor does the time a released one spent held.
  */
 export function freeChecks(
   db: Database,
   redRepoIds: readonly string[],
   now: number,
+  holdMs: number = RED_HOLD_MS,
 ): { n: number; oldest: string | null } {
-  const row = db
-    .query<{ n: number; oldest: string | null }, [string, string]>(
-      `SELECT COUNT(*) AS n, MIN(created_at) AS oldest FROM run
-        WHERE state = 'queued' AND kind = 'check'
-          AND (not_before IS NULL OR not_before <= ?1)
-          AND NOT (issue_id IS NOT NULL AND reason <> '${ASKED}'
-                   AND repo_id IN (SELECT value FROM json_each(?2)))`,
+  const rows = db
+    .query<ReleaseRow & { issue_id: string | null; reason: string; created_at: string }, [string, string]>(
+      `SELECT q.issue_id, q.reason, q.created_at,
+              last.state AS last_state, last.finished_at AS green_at,
+              prev.state AS prev_state, prev.summary AS prev_summary, prev.finished_at AS red_at
+         FROM run q
+         LEFT JOIN run last ON last.id = ${mainBefore("")}
+         LEFT JOIN run prev ON prev.id = ${mainBefore("AND r.id < last.id")}
+        WHERE q.state = 'queued' AND q.kind = 'check'
+          AND (q.not_before IS NULL OR q.not_before <= ?1)
+          AND NOT (q.issue_id IS NOT NULL AND q.reason <> '${ASKED}'
+                   AND q.repo_id IN (SELECT value FROM json_each(?2)))`,
     )
-    .get(new Date(now).toISOString(), JSON.stringify(redRepoIds));
-  return row ?? { n: 0, oldest: null };
+    .all(new Date(now).toISOString(), JSON.stringify(redRepoIds));
+  let oldest: string | null = null;
+  for (const row of rows) {
+    const since = laneSince(
+      { issueId: row.issue_id, reason: row.reason, createdAt: row.created_at },
+      toRelease(row),
+      holdMs,
+    );
+    if (oldest === null || Date.parse(since) < Date.parse(oldest)) oldest = since;
+  }
+  return { n: rows.length, oldest };
 }
 
 /**
