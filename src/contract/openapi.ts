@@ -686,6 +686,53 @@ export const ROUTES: readonly Route[] = [
   },
   {
     method: "post",
+    path: `${REPO}/branches`,
+    summary:
+      "Create a branch (rw scope), from `from` or the default branch; answers 201 with the branch",
+    auth: true,
+    status: 201,
+    body: { name: "string", from: "string" },
+    refusals: {
+      invalid_name: "name is not a branch name",
+      unknown_start: "from names nothing in the repository",
+      exists: "the branch is already there (409)",
+      origin_refused: "a mirror's origin refused the branch",
+    },
+  },
+  {
+    method: "delete",
+    path: `${REPO}/branches/{branch}`,
+    summary:
+      "Delete a branch (rw scope); the name may hold slashes; answers 204 with no body",
+    auth: true,
+    status: 204,
+    refusals: {
+      invalid_name: "not a branch name",
+      default_branch: "the default branch cannot be deleted (409)",
+      unknown_branch: "no such branch (404)",
+      origin_refused: "a mirror's origin refused the deletion",
+    },
+  },
+  {
+    method: "post",
+    path: `${REPO}/contents`,
+    summary:
+      "Commit files to a branch without git (rw scope): files is [{ path, content }]; answers 201 with the commit",
+    auth: true,
+    status: 201,
+    body: { branch: "string", base: "string", message: "string", files: "array" },
+    refusals: {
+      invalid_branch: "branch or base is not a safe ref name",
+      invalid_path: "a file path is not a safe relative path",
+      path_conflict: "a path is a directory in the tree, or an ancestor of it is a file",
+      no_files: "files holds nothing to write",
+      branch_moved: "the branch moved while committing (409)",
+      land_refused: "the commit could not be landed on the branch",
+      git: "git failed while committing",
+    },
+  },
+  {
+    method: "post",
     path: "/api/v1/thoughts",
     summary: "Keep a thought (rw scope); answers 201 with { id }",
     auth: true,

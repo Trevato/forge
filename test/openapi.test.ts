@@ -33,7 +33,7 @@ test("every described route is registered in the router", () => {
   const registered = new Set(
     [...src.matchAll(/"(GET|POST|PATCH|DELETE|PUT)",\s*"([^"]+)"/g)].map((m) => `${m[1]} ${m[2]}`),
   );
-  const shape = (p: string) => p.replace(/\{\w+\}|:\w+/g, ":");
+  const shape = (p: string) => p.replace(/\{\w+\}|[:*]\w+/g, ":");
   const shapes = new Set([...registered].map((r) => shape(r)));
   for (const r of ROUTES) {
     const want = shape(`${r.method.toUpperCase()} ${r.path}`);
@@ -200,4 +200,23 @@ test("an app's routes are described, and env values are never read back", () => 
   expect(doc.paths[`${A}/env/{var}`].put.summary).toContain("never read back");
   expect(doc.paths[`${A}/env`].get.summary).toContain("never read back");
   expect(doc.paths[`${A}/{env}/redeploy`].post.responses["202"]).toBeDefined();
+});
+
+test("a repository's code writes are described: branches and contents", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const R = "/api/v1/repos/{owner}/{name}";
+  expect(doc.paths[`${R}/branches`]?.post).toBeDefined();
+  expect(doc.paths[`${R}/branches/{branch}`]?.delete).toBeDefined();
+  expect(doc.paths[`${R}/contents`]?.post).toBeDefined();
+  expect(doc.paths[`${R}/branches`].post.responses["201"]).toBeDefined();
+  expect(doc.paths[`${R}/branches/{branch}`].delete.responses["204"]).toBeDefined();
+});
+
+test("the contents row names the refusals of its own handler, not /edits'", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const R = "/api/v1/repos/{owner}/{name}";
+  const text = JSON.stringify(doc.paths[`${R}/contents`].post.responses);
+  expect(text).toContain("path_conflict");
+  expect(text).not.toContain("protected_branch");
+  expect(text).not.toContain("file_too_large");
 });
