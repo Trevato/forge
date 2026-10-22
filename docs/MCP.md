@@ -78,6 +78,7 @@ for a tunnel and a forge that sleeps.
 | `runs`         | `{ repo, limit? }`: the repository's recent runs, newest first (id, kind, state, issue or pull number, started, ended), 1–50, default 20; read as the runs page reads them |        |
 | `run_log`      | `{ repo, run, tail? }`: a run's log, or its last `tail` lines (1–2000), with the REST route's access: a hidden log or unreadable repository is not found |        |
 | `review`       | `{ repo, number, verdict, reason? }`: approve a pull (`approve`) or request changes (`changes`, with a `reason`), as the page does; a writer's or the crew's, and never your own pull | yes    |
+| `threads`      | `{ repo, number, anchor?, resolved? }`: a pull's review threads with their comments; with `anchor` (from the list) resolve it (`resolved` true, the default) or reopen it (false), by the API's rules: a writer or someone who commented in the thread | yes    |
 | `usage`        | `{ repo, days? }`: what the crew's runs spent — tokens, cost, wall time — by subscription, agent, issue, and each account's 5-hour and weekly standing; a writer's |        |
 | `labels`       | `{ repo, number, labels }`: set an issue's or a pull's labels to exactly these (`[]` clears); only labels the repository has, by a writer | yes    |
 | `wait_for`     | `{ app, issue, blockedBy, stop? }`: the issue waits for another, or stops with `stop: true`; the page's rules, and the answer carries the issue's URL | yes    |
