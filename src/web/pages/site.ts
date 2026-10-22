@@ -34,7 +34,7 @@ import { SignupSlot, signupWindow } from "../../actions/signup-window.ts";
 import { signinWindow } from "../../core/signin-window.ts";
 import { field, readForm } from "../form.ts";
 import { passkeyJs } from "../passkey-client.ts";
-import { passkeyState } from "../passkey-state.ts";
+import { passkeyNote, passkeyState } from "../passkey-state.ts";
 import { html, when, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
 import { flashTo, page, redirect } from "../layout.ts";
@@ -295,7 +295,7 @@ function authForm(
       ${passkeyState()}
       <div class="stack stack-tight" data-passkey="on" hidden>
       <button type="button" id="passkey-signin" class="btn" data-variant="primary" data-size="lg">Sign in with a passkey</button>
-      <p class="muted small break" id="passkey-signin-note" data-fail="error-note" role="status"></p>
+      ${passkeyNote("passkey-signin-note")}
       </div>
     </div>
     ${when(SIGNUP_SENTENCES[timePhase(ctx.request, "settings", () => getSignup(ctx.app.db))], (said) => html`<p class="muted small mb" id="signup-mode">${said}</p>`)}`,
@@ -359,7 +359,7 @@ function authForm(
           A passkey signs you in with a fingerprint, face or device PIN; there
           is no password to remember.
         </p>
-        <p class="error-note mb" id="passkey-signup-note" role="alert">${errors.password ?? ""}</p>
+        ${passkeyNote("passkey-signup-note", errors.password)}
         <noscript><p class="muted small">Signing up needs JavaScript for the passkey.</p></noscript>`,
       )}
       ${when(
@@ -369,7 +369,7 @@ function authForm(
             Or skip the password: a passkey signs you in with a fingerprint,
             face or device PIN. An email address above is optional.
           </p>
-          <p class="error-note mb" id="passkey-signup-note" role="alert"></p>
+          ${passkeyNote("passkey-signup-note")}
           <button type="button" id="passkey-signup" class="btn" data-variant="outline">Create account with a passkey</button>
         </div>`,
       )}

@@ -29,6 +29,7 @@ import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashTo, redirect } from "../layout.ts";
 import { makeOptions, PASSKEY_WORDS, passkeyFields, readPasskey } from "../passkey-ceremony.ts";
+import { passkeyNote } from "../passkey-state.ts";
 import { btn, card, field as formField } from "../ui.ts";
 import { signOutHere } from "../../actions/signins.ts";
 import { sessionCookie } from "./site.ts";
@@ -108,7 +109,7 @@ function everydayFields(ctx: Ctx, user: User, offerKeep: boolean): Html {
           It signs in with a passkey of its own: a fingerprint, face or
           device PIN. There is no password.
         </p>
-        <p class="muted small" id="passkey-make-note" data-fail="error-note" role="status"></p>
+        ${passkeyNote("passkey-make-note")}
         <noscript><p class="muted small">Making the passkey needs JavaScript.</p></noscript>
         <div class="form-actions">
           <button type="submit" id="passkey-make" class="btn" data-variant="primary" data-options="/settings/everyday/options">Make it with a passkey</button>

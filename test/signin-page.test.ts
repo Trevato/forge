@@ -60,7 +60,7 @@ describe("/signin", () => {
     const page = await signin("open");
     expect(page).toMatch(/<div class="stack stack-tight mb">\s*<span data-passkey-state>[\s\S]*?Passkey off[\s\S]*?<\/span>\s*<div class="stack stack-tight" data-passkey="on" hidden>\s*<button[^>]*id="passkey-signin"/);
     expect(page).not.toMatch(/passkey-lead|passkey-note/);
-    expect(page).toMatch(/<p class="muted small break" id="passkey-signin-note" data-fail="error-note" role="status"><\/p>\s*<\/div>/);
+    expect(page).toMatch(/<span class="muted small" id="passkey-signin-note" data-fail="error" role="status"><\/span><\/div>\s*<\/div>/);
     // Both variants of Sign in, each a named btn() variant picked in markup.
     expect(page).toMatch(/<button\s+type="submit"\s+class="btn"\s+data-variant="outline"\s+data-passkey="on"\s+hidden>\s*Sign in\s*</);
     expect(page).toMatch(/<button\s+type="submit"\s+class="btn"\s+data-variant="primary"\s+data-passkey="off">\s*Sign in\s*</);
@@ -99,7 +99,7 @@ describe("the passkey note", () => {
         add: (c: string) => void classes.add(c),
       },
       setAttribute: (k: string, v: string) => void (attrs[k] = v),
-      getAttribute: (k: string) => (k === "data-fail" ? "error-note" : null),
+      getAttribute: (k: string) => (k === "data-fail" ? "error" : null),
     };
     let click: (e: { preventDefault(): void }) => void = () => {};
     const button = { disabled: false, addEventListener: (_: string, f: typeof click) => void (click = f) };
@@ -122,7 +122,7 @@ describe("the passkey note", () => {
   test("a failure is an alert in the danger style, not muted text", async () => {
     const { note, classes, attrs, button } = await press({ message: "That did not work." });
     expect(note.textContent).toBe("That did not work.");
-    expect(classes.has("error-note")).toBe(true);
+    expect(classes.has("error")).toBe(true);
     expect(classes.has("muted")).toBe(false);
     expect(attrs.role).toBe("alert");
     expect(button.disabled).toBe(false);
@@ -131,7 +131,7 @@ describe("the passkey note", () => {
   test("a cancel stays quiet", async () => {
     const { note, classes, attrs } = await press({ name: "NotAllowedError", message: "x" });
     expect(note.textContent).toBe("Cancelled.");
-    expect(classes.has("error-note")).toBe(false);
+    expect(classes.has("error")).toBe(false);
     expect(classes.has("muted")).toBe(true);
     expect(attrs.role).toBe("status");
   });

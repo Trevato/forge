@@ -32,6 +32,7 @@ import { field, readForm } from "../form.ts";
 import { html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import { passkeyJs } from "../passkey-client.ts";
+import { passkeyNote } from "../passkey-state.ts";
 import { card, empty, confirmAction, time } from "../ui.ts";
 import { accountShell } from "./account.ts";
 import { safeNext, sessionCookie, signinAllowed } from "./site.ts";
@@ -96,7 +97,7 @@ export function passkeysPage(ctx: Ctx): Response {
           <label for="passkey-name">Name</label>
           <input id="passkey-name" name="name" maxlength="${PASSKEY_NAME_MAX}" autocomplete="off" placeholder="Laptop, phone, security key" />
         </div>
-        <p class="error-note" id="passkey-add-note" role="status"></p>
+        ${passkeyNote("passkey-add-note")}
         <noscript><p class="muted small">Adding a passkey needs JavaScript.</p></noscript>
         <div class="form-actions">
           <button type="button" id="passkey-add" class="btn" data-variant="primary">Add a passkey</button>
@@ -261,7 +262,7 @@ export function recoverPage(ctx: Ctx): Response {
       <p class="muted small mb">This signs you in as ${user.username}. Name the device, then follow your browser's prompt.</p>
       <div class="field"><label for="passkey-name">Name</label>
         <input id="passkey-name" name="name" maxlength="${PASSKEY_NAME_MAX}" autocomplete="off" placeholder="Laptop, phone, security key" /></div>
-      <p class="error-note" id="passkey-recover-note" role="status"></p>
+      ${passkeyNote("passkey-recover-note")}
       <noscript><p class="muted small">Registering a passkey needs JavaScript.</p></noscript>
       <div class="form-actions"><button type="button" id="passkey-recover" class="btn" data-variant="primary">Register and sign in</button></div>`,
   }));

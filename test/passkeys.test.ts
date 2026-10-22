@@ -108,6 +108,8 @@ describe("passkeys", () => {
     let page = await (await fetch(`${base}/settings/passkeys`, { headers: { cookie } })).text();
     expect(page).toContain("Laptop");
     expect(page).toContain("<strong>Phone</strong>");
+    expect(page).toContain(`<div class="field"><span class="muted small" id="passkey-add-note" data-fail="error" role="status"></span></div>`);
+    expect(page).not.toContain("error-note");
 
     const id = app.db.query<{ id: string }, []>("SELECT id FROM passkey WHERE name = 'Laptop'").get()!.id;
     const removed = await fetch(`${base}/settings/passkeys/${id}/delete`, { method: "POST", headers: { cookie }, redirect: "manual" });
