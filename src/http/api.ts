@@ -6331,7 +6331,7 @@ export function forgeBaseUrl(
   return vouched ? requestUrl.origin : "";
 }
 
-function connectMessage(code: string): string {
+export function connectMessage(code: string): string {
   if (code === "unknown_host") return "that does not look like a forge host";
   if (code === "private_host")
     return "that address is inside a network, not on the internet";

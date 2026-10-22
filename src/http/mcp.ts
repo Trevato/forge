@@ -229,6 +229,8 @@ import { flowFor, systemFor, welcome } from "../system/telemetry.ts";
 import { running } from "../kernel/version.ts";
 import { parentForgeFor } from "../core/parent_releases.ts";
 import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
+import { deleteOriginApp, listOriginApps, registerOriginApp } from "../actions/origins.ts";
+import { connectMessage } from "./api.ts";
 import { resourceMetadataUrl } from "./oauth.ts";
 import { body, boundedBody, json } from "./respond.ts";
 import { sizesView } from "../spawn/sizes.ts";
@@ -2648,6 +2650,59 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "origin_apps",
+    description:
+      "Your origin OAuth apps: list, add, remove.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string" },
+        id: { type: "string" },
+        host: { type: "string" },
+        kind: { type: "string" },
+        clientId: { type: "string" },
+        clientSecret: { type: "string" },
+      },
+    },
+    writes: true,
+    async run(ctx, user, args) {
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "origin apps need an admin-scope token");
+      const action = args["action"];
+      // Never the secret: an app is shown as `hasSecret`, and errors are codes.
+      const shown = (a: ReturnType<typeof listOriginApps>[number]) => {
+        const { userId: _owner, ...rest } = a;
+        return rest;
+      };
+      if (action === "list")
+        return good({ items: listOriginApps(ctx.app, user).map(shown), next_cursor: null });
+      if (action === "add") {
+        const kind = str(args["kind"]);
+        const clientId = str(args["clientId"]);
+        if (kind !== "" && kind !== "github" && kind !== "forgejo" && kind !== "gitea")
+          return bad("invalid", "kind is github, forgejo or gitea");
+        if (clientId === "") return bad("invalid", "`clientId` is required");
+        const host = str(args["host"]) || kind;
+        if (host === "") return bad("invalid", "`host` or `kind` is required");
+        const secret = args["clientSecret"];
+        const saved = await registerOriginApp(ctx.app, user, {
+          host,
+          ...(kind === "" ? {} : { kind }),
+          clientId,
+          ...(typeof secret === "string" ? { clientSecret: secret } : {}),
+        });
+        return saved.ok ? good(shown(saved.value)) : bad(saved.error, connectMessage(saved.error));
+      }
+      if (action === "remove") {
+        const id = str(args["id"]);
+        if (id === "") return bad("invalid", "`id` is required");
+        const removed = deleteOriginApp(ctx.app, user, id);
+        return removed.ok ? good({}) : bad("not_found", "no such origin app");
+      }
+      return bad("invalid", "`action` is list, add or remove");
+    },
+  },
+  {
     name: "front_page",
     description:
       "The forge's front page as a stranger sees it. A site admin also gets the picks and sets them with `pinned`, `hidden`, `weights`.",
@@ -3554,7 +3609,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "flow",
     description:
-      "The forge's pipeline (forge admin): per stage counts, `oldestWaiting`, `capacity`, the bottleneck, merge `queue`, `reviewing` (reviews in flight per reviewer).",
+      "The forge's pipeline (forge admin): per stage counts, `oldestWaiting`, `capacity`, the bottleneck, merge `queue`, `reviewing` per reviewer.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     run(ctx, user) {
