@@ -66,19 +66,28 @@ function issue(repo: Repo, title: string): Issue {
 
 /** `by`'s run on `issue` ends without a pull, the issue left assigned to them. */
 function stall(issue: Issue, by: User, summary: string): void {
-  // Timestamps tick in milliseconds: a run and the note written just before or
-  // after it can share one on a quick machine, and a tie reads as "no word since".
-  Bun.sleepSync(2);
+  // A later stall must be strictly newer than the note it follows, or the
+  // tick sees no stall since: wait out the millisecond the machine shares.
+  const newest = listComments(app.db, issue.id).at(-1)?.createdAt;
+  while (newest !== undefined && new Date().toISOString() <= newest) Bun.sleepSync(1);
   const active = listRuns(app.db, issue.repoId, { kind: "agent" }).filter(
     (r) => r.issueId === issue.id && (r.state === "queued" || r.state === "running"),
   );
-  const runs =
+  const fresh =
     active.length > 0
-      ? active
+      ? []
       : [createRun(app.db, { repoId: issue.repoId, kind: "agent", issueId: issue.id, actorId: by.id, reason: "assigned" })];
-  for (const run of runs) {
+  for (const run of active.length > 0 ? active : fresh) {
     if (run.state === "queued") claimRun(app.db, run.id);
     finishRun(app.db, run.id, { state: "failed", summary, costUsd: 0.1 });
+  }
+  // A first stall happened a while ago: the tick's park note is then newer by
+  // seconds, never by the millisecond the check machine's speed decides (a
+  // comment counts as "since" only when strictly newer than the run). A later
+  // stall stays after the note it follows.
+  for (const run of listComments(app.db, issue.id).length === 0 ? fresh : []) {
+    const then = new Date(Date.now() - 5_000).toISOString();
+    app.db.query("UPDATE run SET created_at = ?2, finished_at = ?2 WHERE id = ?1").run(run.id, then);
   }
   app.db.query("UPDATE issue SET assignee_id = ?2 WHERE id = ?1").run(issue.id, by.id);
 }
