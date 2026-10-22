@@ -3383,9 +3383,12 @@ export function apiRoutes(router: Router<Handler>): void {
     "GET",
     "/api/v1/repos/:owner/:name/issues/:number/dependencies",
     (ctx) => {
+      notePhase(ctx.request, "session", takeSessionTime(ctx.request));
       const found = loadIssue(ctx);
       if ("error" in found) return found.error;
-      const deps = dependenciesOf(ctx.app.db, found.issue.id);
+      const deps = timePhase(ctx.request, "dependencies", () =>
+        dependenciesOf(ctx.app.db, found.issue.id),
+      );
       const seen = (i: Issue) =>
         mayView(ctx.app.db, found.repo, i, ctx.auth.user);
       const brief = (i: Issue) => ({
@@ -3394,10 +3397,12 @@ export function apiRoutes(router: Router<Handler>): void {
         state: i.state,
         ...(i.closeReason === null ? {} : { closeReason: i.closeReason }),
       });
-      return json({
-        blockedBy: deps.blockedBy.filter(seen).map(brief),
-        blocks: deps.blocks.filter(seen).map(brief),
-      });
+      return timePhase(ctx.request, "render", () =>
+        json({
+          blockedBy: deps.blockedBy.filter(seen).map(brief),
+          blocks: deps.blocks.filter(seen).map(brief),
+        }),
+      );
     },
   );
   router.add(
