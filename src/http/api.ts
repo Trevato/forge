@@ -5282,9 +5282,11 @@ export function apiRoutes(router: Router<Handler>): void {
 
   // The front page (#686): what a stranger is shown, for anyone; a site
   // admin also gets the picks, and sets them — pinned in order, hidden.
-  router.add("GET", "/api/v1/front", (ctx) =>
-    json(frontJson(ctx.app, ctx.auth.user)),
-  );
+  router.add("GET", "/api/v1/front", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const front = timePhase(ctx.request, "front", () => frontJson(ctx.app, ctx.auth.user));
+    return timePhase(ctx.request, "render", () => json(front));
+  });
 
   router.add("PUT", "/api/v1/front", async (ctx) => {
     const input = await body(ctx.request);
