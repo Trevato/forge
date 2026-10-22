@@ -33,6 +33,8 @@ import { changeCapacity, listCapacity } from "../actions/capacity.ts";
 import { changeLimit, listLimits } from "../actions/limits.ts";
 import { ISSUE_TEAMS_SAY, nameTeams } from "../actions/issue_teams.ts";
 import { teamsOfIssue } from "../core/issue_teams.ts";
+import { addTeamMember, createTeam, deleteTeam } from "../actions/orgs.ts";
+import { getOrg, listTeams, type Permission } from "../core/orgs.ts";
 import { changeTeam, planTeam, readTeams, TEAM_SAYS } from "../actions/teams.ts";
 import { readScorecards } from "../actions/scorecard.ts";
 import { createAgent, deleteAgent, updateAgent } from "../actions/crew.ts";
@@ -1319,6 +1321,47 @@ const TOOLS: readonly Tool[] = [
         teams: set.value,
         says: set.value.length === 0 ? `#${issue.number} names no team.` : `#${issue.number} names ${set.value.join(" and ")}.`,
       });
+    },
+  },
+  {
+    name: "org_teams",
+    description: "An organization owner's teams: create one, add a member, or remove a team.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        org: { type: "string", maxLength: 64 },
+        action: { type: "string", enum: ["create", "add_member", "remove"] },
+        team: { type: "string", maxLength: 64 },
+        user: { type: "string", maxLength: 64, description: "add_member" },
+        permission: { type: "string", enum: ["read", "write", "admin"], description: "create" },
+      },
+      required: ["org", "action", "team"],
+    },
+    writes: true,
+    needsAdminScope: true,
+    run(ctx, user, args) {
+      const org = getOrg(ctx.app.db, typeof args["org"] === "string" ? args["org"] : "");
+      if (!org) return bad("not_found", "no such organization");
+      const name = typeof args["team"] === "string" ? args["team"] : "";
+      const action = args["action"];
+      if (action === "create") {
+        const p = args["permission"];
+        const permission: Permission = p === "write" || p === "admin" ? p : "read";
+        const made = createTeam(ctx.app, user, org, name, permission);
+        return made.ok ? good(made.value) : bad(made.error, made.error);
+      }
+      const wanted = name.toLowerCase();
+      const team = listTeams(ctx.app.db, org.id).find((t) => t.name.toLowerCase() === wanted);
+      if (!team) return bad("not_found", "no such team");
+      if (action === "add_member") {
+        const added = addTeamMember(ctx.app, user, org, team, typeof args["user"] === "string" ? args["user"] : "");
+        return added.ok ? good(added.value) : bad(added.error, added.error);
+      }
+      if (action === "remove") {
+        const gone = deleteTeam(ctx.app, user, org, team);
+        return gone.ok ? good({ removed: team.name }) : bad(gone.error, gone.error);
+      }
+      return bad("invalid", "action is create, add_member or remove");
     },
   },
   {
