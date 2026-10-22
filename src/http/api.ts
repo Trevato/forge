@@ -3338,6 +3338,7 @@ export function apiRoutes(router: Router<Handler>): void {
   // A thread, a page at a time: oldest first, `next` is the `after` of the
   // following page (#4150). A pull's number answers the same.
   router.add("GET", "/api/v1/repos/:owner/:name/issues/:number/comments", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const found = loadConversation(ctx);
     if ("error" in found) return found.error;
     const rawLimit = ctx.url.searchParams.get("limit");
@@ -3347,15 +3348,19 @@ export function apiRoutes(router: Router<Handler>): void {
     const after = ctx.url.searchParams.get("after");
     if (after !== null && !/^[A-Za-z0-9_-]{1,64}$/.test(after))
       return apiError("invalid_after", 422, "after is a comment id");
-    const rows = listComments(ctx.app.db, found.issue.id, {
-      limit: limit + 1,
-      ...(after === null ? {} : { after }),
+    const { rows, page } = timePhase(ctx.request, "comments", () => {
+      const read = listComments(ctx.app.db, found.issue.id, {
+        limit: limit + 1,
+        ...(after === null ? {} : { after }),
+      });
+      return { rows: read, page: read.slice(0, limit) };
     });
-    const page = rows.slice(0, limit);
-    return json({
-      comments: readerMarked(ctx, found.repo.id, page),
-      next: rows.length > limit ? page[page.length - 1]!.id : null,
-    });
+    return timePhase(ctx.request, "render", () =>
+      json({
+        comments: readerMarked(ctx, found.repo.id, page),
+        next: rows.length > limit ? page[page.length - 1]!.id : null,
+      }),
+    );
   });
 
   // What an issue waits for, and what waits for it.
