@@ -171,19 +171,46 @@ const idle = (spin(), fastest(5));
 
 const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
 
+/**
+ * How much slower the machine was around one view than at load, from the spin times taken just
+ * before and just after it: the larger of the two, so contention that starts or stops mid-view
+ * still counts (#5000). Never below 1.0, so an idle machine meets the ceilings as written; capped
+ * at 8x so a stalled machine cannot excuse anything.
+ */
+const loadScale = (before: number, after: number, idleMs: number): number =>
+  Math.max(1, Math.min(Math.max(before, after) / idleMs, 8));
+
+/** One view's ms divided by the load around it: what it would have taken on the idle machine. */
+async function idleEquivalent(view: () => Promise<number>): Promise<number> {
+  const before = fastest(2);
+  const ms = await view();
+  return ms / loadScale(before, fastest(2), idle);
+}
+
+test("loadScale: idle is 1.0, the slower side of a view wins, and 8x is the cap", () => {
+  expect(loadScale(10, 10, 10)).toBe(1);
+  // Faster than at load is still 1.0: an idle machine's 105 ms repeat view fails the 100 ms bar.
+  expect(loadScale(8, 9, 10)).toBe(1);
+  expect(105 / loadScale(8, 9, 10)).toBeGreaterThan(100);
+  // Load that arrives after the view started is seen by the after-sample (#5000's 105 ms run).
+  expect(loadScale(10, 15, 10)).toBe(1.5);
+  expect(loadScale(15, 10, 10)).toBe(1.5);
+  expect(105 / loadScale(10, 15, 10)).toBeLessThan(100);
+  expect(loadScale(10, 1000, 10)).toBe(8);
+});
+
 test("the Files page of a 40-file diff: cold median of 3 and repeat median of 5 stay under their ceilings", async () => {
+  // Each view is scaled by the load measured beside it, not once up front: contention that begins
+  // partway through the eight views would otherwise leave the ceilings unstretched (#5000).
   const cold: number[] = [];
-  // How much slower the machine is right now than at load: 1.0 when nothing else is running, so
-  // the 250/100 ms ceilings bind as written; load stretches them, capped at 8x.
-  const scale = Math.max(1, Math.min(fastest(3) / idle, 8));
   for (let i = 0; i < 3; i++) {
     // A new head each time, so nothing rendered before is reused.
     await commitHead(i);
-    cold.push(await filesApp());
+    cold.push(await idleEquivalent(filesApp));
   }
   // The head is unchanged now: every view reuses the rendered diff.
   const repeat: number[] = [];
-  for (let i = 0; i < 5; i++) repeat.push(await filesApp());
-  expect(median(cold)).toBeLessThan(COLD_MS * scale);
-  expect(median(repeat)).toBeLessThan(100 * scale);
+  for (let i = 0; i < 5; i++) repeat.push(await idleEquivalent(filesApp));
+  expect(median(cold)).toBeLessThan(COLD_MS);
+  expect(median(repeat)).toBeLessThan(100);
 });
