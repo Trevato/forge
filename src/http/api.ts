@@ -4814,6 +4814,7 @@ export function apiRoutes(router: Router<Handler>): void {
   // request spends their credential on another forge.
 
   const browse = (ctx: Ctx): RepoSource | Response => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireAccount(ctx, { adminToken: true });
     if (denied) return denied;
     const source = sourceFor(ctx.app, ctx.auth.user, {
@@ -4831,8 +4832,10 @@ export function apiRoutes(router: Router<Handler>): void {
   ): Promise<Response> => {
     const source = browse(ctx);
     if (source instanceof Response) return source;
-    const result = await run(source);
-    return result.ok ? shape(result.value) : sourceFailure(result.error);
+    const result = await timePhaseAsync(ctx.request, "origin", () => run(source));
+    return result.ok
+      ? timePhase(ctx.request, "render", () => shape(result.value))
+      : sourceFailure(result.error);
   };
 
   const BROWSE = "/api/v1/user/origins/:id/browse/:owner/:name";
@@ -4841,19 +4844,20 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", BROWSE, async (ctx) => {
     const source = browse(ctx);
     if (source instanceof Response) return source;
-    const facts = await source.describe();
+    const facts = await timePhaseAsync(ctx.request, "origin", () => source.describe());
     if (!facts.ok) return sourceFailure(facts.error);
-    const [branches, readme] = await Promise.all([
-      source.branches(),
-      source.readme(facts.value.defaultBranch),
-    ]);
-    return json({
-      ...whereJson(source),
-      capabilities: source.capabilities,
-      facts: facts.value,
-      branches: branches.ok ? branches.value : [],
-      readme: readme.ok ? readme.value : null,
-    });
+    const [branches, readme] = await timePhaseAsync(ctx.request, "origin", () =>
+      Promise.all([source.branches(), source.readme(facts.value.defaultBranch)]),
+    );
+    return timePhase(ctx.request, "render", () =>
+      json({
+        ...whereJson(source),
+        capabilities: source.capabilities,
+        facts: facts.value,
+        branches: branches.ok ? branches.value : [],
+        readme: readme.ok ? readme.value : null,
+      }),
+    );
   });
 
   router.add("GET", `${BROWSE}/branches`, (ctx) =>
@@ -4913,14 +4917,16 @@ export function apiRoutes(router: Router<Handler>): void {
     // a live source that question is a request to another forge.
     let ref = ctx.url.searchParams.get("ref") ?? "";
     if (ref === "") {
-      const facts = await source.describe();
+      const facts = await timePhaseAsync(ctx.request, "origin", () => source.describe());
       if (!facts.ok) return sourceFailure(facts.error);
       ref = facts.value.defaultBranch || "HEAD";
     }
     const cursor = ctx.url.searchParams.get("cursor") ?? undefined;
-    const page = await source.commits(ref, cursor);
+    const page = await timePhaseAsync(ctx.request, "origin", () => source.commits(ref, cursor));
     if (!page.ok) return sourceFailure(page.error);
-    return json({ items: page.value.items, next_cursor: page.value.next });
+    return timePhase(ctx.request, "render", () =>
+      json({ items: page.value.items, next_cursor: page.value.next }),
+    );
   });
 
   router.add("GET", `${BROWSE}/commits/:oid`, (ctx) => {
