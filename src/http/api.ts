@@ -6283,13 +6283,15 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/agents/:username", (ctx) => {
-    const agent = getAgentView(
-      ctx.app,
-      ctx.auth.user,
-      ctx.params.username ?? "",
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const agent = timePhase(ctx.request, "agent", () =>
+      getAgentView(ctx.app, ctx.auth.user, ctx.params.username ?? ""),
     );
     if (!agent.ok) return respondAccess(agent.error, 404);
-    return json(agentFor(agent.value, ctx.auth.user));
+    const view = agent.value;
+    return timePhase(ctx.request, "render", () =>
+      json(agentFor(view, ctx.auth.user)),
+    );
   });
 
   router.add("PATCH", "/api/v1/agents/:username", async (ctx) => {
