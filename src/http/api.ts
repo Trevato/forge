@@ -2150,9 +2150,11 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/tokens", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireAccount(ctx);
     if (denied) return denied;
-    return json(listTokens(ctx.app.db, ctx.auth.user!.id));
+    const tokens = timePhase(ctx.request, "tokens", () => listTokens(ctx.app.db, ctx.auth.user!.id));
+    return timePhase(ctx.request, "render", () => json(tokens));
   });
 
   router.add("DELETE", "/api/v1/tokens/:id", (ctx) => {
@@ -4607,9 +4609,11 @@ export function apiRoutes(router: Router<Handler>): void {
     oauthCallbackUri(ctx.url, ctx.app.config.host);
 
   router.add("GET", "/api/v1/user/origins", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireAccount(ctx, { adminToken: true });
     if (denied) return denied;
-    return json(listUserOrigins(ctx.app, ctx.auth.user!).map(originJson));
+    const origins = timePhase(ctx.request, "origins", () => listUserOrigins(ctx.app, ctx.auth.user!).map(originJson));
+    return timePhase(ctx.request, "render", () => json(origins));
   });
 
   router.add("POST", "/api/v1/user/origins", async (ctx) => {
@@ -4681,9 +4685,11 @@ export function apiRoutes(router: Router<Handler>): void {
   // this is a per-user, per-host registration; GitHub can fall back to one
   // the operator configured for the whole forge.
   router.add("GET", "/api/v1/user/origin-apps", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireAccount(ctx, { adminToken: true });
     if (denied) return denied;
-    return json(listOriginApps(ctx.app, ctx.auth.user!));
+    const apps = timePhase(ctx.request, "apps", () => listOriginApps(ctx.app, ctx.auth.user!));
+    return timePhase(ctx.request, "render", () => json(apps));
   });
 
   router.add("POST", "/api/v1/user/origin-apps", async (ctx) => {
