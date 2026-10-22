@@ -1467,13 +1467,15 @@ export function apiRoutes(router: Router<Handler>): void {
   const telemetryRead =
     (what: string, out: (ctx: Ctx, reader: Reader) => unknown) =>
     (ctx: Ctx): Response => {
+      notePhase(ctx.request, "session", takeSessionTime(ctx.request));
       if (!ctx.auth.user) return unauthorized();
       const denied = requireScope(ctx, "ro");
       if (denied) return denied;
       const reader = telemetryReader(ctx.app, ctx.auth.user);
       if (!reader) return forbidden();
       noteRead(ctx.app, ctx.auth.user, reader, what);
-      return json(out(ctx, reader));
+      const body = timePhase(ctx.request, what, () => out(ctx, reader));
+      return timePhase(ctx.request, "render", () => json(body));
     };
   router.add("GET", "/api/v1/telemetry/system", telemetryRead("system", (c, r) => systemFor(c.app, r)));
   router.add("GET", "/api/v1/telemetry/flow", telemetryRead("flow", (c, r) => flowFor(c.app, r)));
