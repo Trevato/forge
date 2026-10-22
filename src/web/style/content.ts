@@ -248,8 +248,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .bt-procs { font-size: 12.5px; }
 .bt-procs th, .bt-procs td { padding: 2px 8px; white-space: nowrap; }
 .bt-group th, .bt-group td { background: var(--muted); font-weight: 600; }
-.sys-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; margin-bottom: 16px; }
-.sys-pair .chart-box { max-width: none; }
 .bgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
 .bp-w2 { grid-column: span 2; }
 .bp-w3 { grid-column: span 3; }
