@@ -73,6 +73,7 @@ for a tunnel and a forge that sleeps.
 | `labels`       | `{ repo, number, labels }`: set an issue's or a pull's labels to exactly these (`[]` clears); only labels the repository has, by a writer | yes    |
 | `wait_for`     | `{ app, issue, blockedBy, stop? }`: the issue waits for another, or stops with `stop: true`; the page's rules, and the answer carries the issue's URL | yes    |
 | `hold`         | `{ app, pull, why?, release?, dryRun? }`: hold a pull so no rule reviews or lands it, or let it go; a person who can write, never an agent; plans unless `dryRun: false` | yes    |
+| `app_env`      | `{ repo, action, name?, value?, scope? }`: `list` an app's variable names and scopes, `set` one, or `unset` it, in `all` (default), `production` or `preview`; the API's rules and errors, an admin of the repository with an admin-scope token; a value is never read back | yes    |
 | `plan`         | `{ app, issues }`: open up to 12 linked issues, all or none (see below)                           | yes    |
 
 Answers are JSON in a text block; most carry a `says` sentence short enough

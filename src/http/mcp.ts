@@ -161,7 +161,12 @@ import {
   OUTSIDERS_NOTE,
 } from "../crew/direct.ts";
 import { setArchived, setCrewOutsiders, setDecisionsBy, repositoryLimitMessage } from "../actions/repos.ts";
-import { newApp } from "../actions/apps.ts";
+import {
+  deleteAppEnvVar,
+  listAppEnv,
+  newApp,
+  setAppEnvVar,
+} from "../actions/apps.ts";
 import { appLimitWords } from "../actions/app_limit.ts";
 import { storageLimitMessage } from "../core/storage.ts";
 import { mapJson, marksFor } from "../web/pages/map.ts";
@@ -3422,6 +3427,51 @@ const TOOLS: readonly Tool[] = [
         says: `${key}: ${changed.value.from} → ${changed.value.to}, from the next use on.`,
         ...changed.value,
       });
+    },
+  },
+  {
+    name: "app_env",
+    description:
+      "An app's environment variables: list names, set or unset one by scope; values are write-only. Admin.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        action: { type: "string", enum: ["list", "set", "unset"] },
+        name: { type: "string" },
+        value: { type: "string" },
+        scope: { type: "string", enum: ["all", "production", "preview"] },
+      },
+      required: ["repo", "action"],
+    },
+    writes: true,
+    async run(ctx, user, args) {
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "an app's environment needs an admin-scope token");
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const action = args["action"];
+      const scope = typeof args["scope"] === "string" ? args["scope"] : "all";
+      const name = typeof args["name"] === "string" ? args["name"] : "";
+      // The API's errors, by code: never the value.
+      const refused = (error: string): Answer =>
+        error === "not_found"
+          ? bad("not_found", "no such app or repository (owner/name)")
+          : bad(error, error);
+      if (action === "list") {
+        const listed = listAppEnv(ctx.app, user, repo);
+        return listed.ok ? good({ items: listed.value, next_cursor: null }) : refused(listed.error);
+      }
+      if (action === "set") {
+        const value = typeof args["value"] === "string" ? args["value"] : "";
+        const set = await setAppEnvVar(ctx.app, user, repo, name, value, scope);
+        return set.ok ? good(set.value) : refused(set.error);
+      }
+      if (action === "unset") {
+        const removed = await deleteAppEnvVar(ctx.app, user, repo, name, scope);
+        return removed.ok ? good({}) : refused(removed.error);
+      }
+      return bad("invalid", "`action` is list, set or unset");
     },
   },
   {
