@@ -36,6 +36,8 @@ import { loadKey } from "../kernel/secret.ts";
 import { previewEnv, type EnvName } from "./data.ts";
 import type { AppsRuntime, EnvStatus } from "./runtime.ts";
 import { crewNow, tellLink } from "./crew.ts";
+import { feedback } from "./feedback.ts";
+import { clientBucket } from "../http/peer.ts";
 import { doorPage } from "./door.ts";
 import { notFound } from "../http/respond.ts";
 import { appMeasure } from "./measure.ts";
@@ -646,6 +648,37 @@ export async function proxyApp(
         headers: { location: report.toString(), "cache-control": "no-store" },
       });
     }
+  }
+  // The forge button's feedback door: notes from visitors, their status, the
+  // owner's moderation. Answered here, never reaching the app.
+  if (url.pathname.startsWith("/__forge/note") && !target.nested) {
+    const cookie = cookieValue(request, grantCookieName(target));
+    const signed =
+      cookie === undefined
+        ? undefined
+        : readGrant(runtime.app.config.dataDir, cookie, target);
+    // A private app or a sealed preview knows only the people it admits, as
+    // /__forge/measure does; a lapsed grant is no grant.
+    const sealed = sealedPull(runtime, target) !== undefined;
+    const viewerId =
+      (sealed || target.app.access === "private") && signed !== undefined && !stillEntitled(runtime, target, signed)
+        ? undefined
+        : signed?.who?.id;
+    const answer = await feedback({
+      app: runtime.app,
+      forgeUrl: runtime.options.forgeUrl,
+      request,
+      url,
+      record: target.app,
+      env: target.env,
+      sealed,
+      viewerId,
+      secure:
+        url.protocol === "https:" ||
+        request.headers.get("x-forwarded-proto") === "https",
+      source: clientBucket(request),
+    });
+    if (answer !== undefined) return answer;
   }
   // The beacon's report: filed against this app, never waking it. A private
   // app (or a sealed pull's preview) admits only the people it admits, so

@@ -197,11 +197,14 @@ describe("the crew line", () => {
 
   test("the script asks once, same-origin, and never reads the page or its cookies", () => {
     expect(toolbarJs).toContain("/__forge/crew");
-    expect(toolbarJs.match(/fetch\(/g)?.length).toBe(1);
+    // The crew line is asked once; the feedback door (#4758) adds the
+    // sender's notes, polled only while the panel is open, and the send.
+    expect(toolbarJs.match(/fetch\(/g)?.length).toBe(3);
+    expect(toolbarJs.match(/setInterval/g)?.length).toBe(1);
     expect(toolbarJs).not.toMatch(
-      /document\.cookie|querySelector|getElementById|setInterval|setTimeout/,
+      /document\.cookie|querySelector|getElementById|setTimeout/,
     );
     expect(toolbarJs).toContain('aria-live", "polite"');
-    expect(toolbarJs.length).toBeLessThan(10 * 1024);
+    expect(toolbarJs.length).toBeLessThan(16 * 1024);
   });
 });

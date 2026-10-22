@@ -114,6 +114,7 @@ import {
   slug,
   openOnWeb,
 } from "./common.ts";
+import { noteCommands } from "./notes.ts";
 import { reportCommands } from "./report.ts";
 import { tellCommands } from "./tell.ts";
 import { workingCommands } from "./working.ts";
@@ -1275,6 +1276,7 @@ export function workspaceScreen(
       ...workingCommands(f, ctx, repo),
       ...tellCommands(f, ctx, () => screen, repo),
       ...reportCommands(f, ctx, () => screen, repo),
+      ...noteCommands(f, ctx, () => screen, repo),
       ...yoursCommands(f, ctx, repo),
     ],
     get title() {

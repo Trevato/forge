@@ -2248,8 +2248,11 @@ export async function serve(app: App): Promise<Servers> {
         // A preview's headers are the app's business: what `proxyApp`
         // carries back leaves exactly as the app wrote it, which is why the
         // floor below sits after this return and not around it.
-        if (target !== undefined && target !== "unknown")
+        if (target !== undefined && target !== "unknown") {
+          // The feedback door limits by client (`apps/feedback.ts`).
+          notePeer(request, server.requestIP(request)?.address, trust);
           return proxyApp(runtime, request, target, server);
+        }
         if (target === "unknown") ownUnknown = true;
       }
       // A hosted child's app (`<app>--<child>--<parentHost>`) is the child's
@@ -2258,8 +2261,10 @@ export async function serve(app: App): Promise<Servers> {
         const hit = await resolveHostedChildApp(app, request);
         if (hit === "unknown")
           return securityFloor(new Response("not found", { status: 404 }));
-        if (hit !== undefined)
+        if (hit !== undefined) {
+          notePeer(request, server.requestIP(request)?.address, trust);
           return proxyApp(hit.runtime, request, hit.target, server);
+        }
       }
       // A hosted child's Host (`<name>--<parentHost>`) is answered by that
       // child's own App before the parent's pages. Ingress routes the label

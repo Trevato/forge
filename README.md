@@ -989,6 +989,42 @@ Under the box, four starter sentences are plain links (no script):
   server-rendered page paints up to 100 ms later (a page sent with a
   `Content-Length`, or one that starts with something other than markup, does
   not wait). Event streams and WebSockets are untouched.
+- **The forge button is a feedback door (#4758).** One tap opens *Tell the
+  builders*: a text box and Send, no account. The note is posted to the app's
+  own host (`POST /__forge/note`, same-origin only) and filed as an issue on
+  its repository, labelled `from-app`, with the page, the viewport and the time,
+  in the owner's name and with the sender's words inside one fence. A visitor
+  is an anonymous `visitor-xxxxxx` (an HttpOnly cookie); a signed-in person is
+  `@name`. Moderation: 3 notes a minute per sender, 6 per source address, 20 per
+  app, a word filter, and the owner's hide or ban, which closes the issue and, for
+  `ban`, refuses that sender. `GET /__forge/notes` gives the sender's own notes with a live
+  status (queued, being built by a member, shipped on a date), polled every 15 s
+  while the panel is open; a public app's note links to its issue. Left out: the
+  optional screenshot and a version name in "shipped".
+  From the terminal, a repository screen that is an app has two palette rows
+  (`:`): *Tell the builders* sends a note as you, and *Notes from the app*
+  lists yours with their status; the repository's admin sees every sender's and
+  may hide a note or ban its sender. The gating is the page's: a guest or a
+  non-reader sees nothing, and a repository that is not an app has no rows.
+  Who may write: anyone on a public app, but a private app, and any sealed
+  pull's preview, take notes only from a person the app admits (the condition
+  `/__forge/measure` uses); a stranger is refused with a 404 before anything is
+  filed. Moderation
+  happens on the forge, not on the app: the app host answers only
+  `POST /__forge/note` and `GET /__forge/notes`, and `/__forge/note/moderate` is
+  a 404 there, because the app's own code (or a preview's) could call it
+  same-origin with a visiting admin's cookie. The terminal screen above is the
+  owner's tool today.
+  Limits count the socket's client (`http/peer.ts`, with its trusted-proxy
+  rule), never a header the client wrote, and all three are checked before any
+  is spent. The request body is read only up to 16 KB. The issue says its text
+  is untrusted data, and the crew's brief says so for any `from-app` issue.
+  A title always opens with `From the app: ` (`saysFromApp`), the label is made
+  before the issue, and a failed labelling closes the issue and refuses the note.
+  Only a note closed as done reads "Shipped"; the other reasons say what they are.
+  Beyond the per-minute limits an app takes 30 notes an hour and 100 a day.
+  The script grew to about 15 KB (cached, immutable); the notes are polled only
+  while the panel is open.
 - **The forge pill acts.** The pill the proxy adds to an app's pages
   (`"toolbar": false` in `forge.json` turns it off; to write it in, the proxy asks the app for the page uncompressed, so a page that carries the pill goes out without gzip) links to a forge page,
   `/:owner/:name/toolbar?env=production|pull-N`, opened in a tab of its own: the
