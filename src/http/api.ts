@@ -178,6 +178,7 @@ import {
   SIGNUP_CLOSED_MESSAGE,
   updateProfile,
 } from "../actions/users.ts";
+import { OFFSET_LIMIT_MAX, offsetPage, offsetQuery } from "./offset_page.ts";
 import { EVENTS_LIMIT_MAX, eventsLimit, eventsPage, validEventsCursor } from "../core/events_page.ts";
 import { audienceFor } from "../core/audience.ts";
 import {
@@ -1044,6 +1045,12 @@ function listQuery(ctx: Ctx) {
   };
 }
 
+function offsetRefused(error: "invalid_limit" | "invalid_cursor"): Response {
+  return error === "invalid_limit"
+    ? apiError(error, 422, `limit is a whole number from 1 to ${OFFSET_LIMIT_MAX}`)
+    : apiError(error, 422, "cursor is the next_cursor of a page before");
+}
+
 /**
  * `?limit=&cursor=` for a list paged by a name: limit 1..200 (default 50),
  * the cursor the last name of the page before. A bad one is a 422.
@@ -1830,8 +1837,10 @@ export function apiRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
+    const query = offsetQuery(ctx.url.searchParams);
+    if ("error" in query) return offsetRefused(query.error);
     const listed = timePhase(ctx.request, "invites", () => listInviteLinks(ctx.app, ctx.auth.user));
-    return listed.ok ? timePhase(ctx.request, "render", () => json({ items: listed.value })) : notFound();
+    return listed.ok ? timePhase(ctx.request, "render", () => json(offsetPage(listed.value, query.limit, query.offset))) : notFound();
   });
 
   router.add("DELETE", "/api/v1/admin/invites/:id", (ctx) => {
@@ -1845,8 +1854,10 @@ export function apiRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
+    const query = offsetQuery(ctx.url.searchParams);
+    if ("error" in query) return offsetRefused(query.error);
     const listed = timePhase(ctx.request, "accounts", () => listAccounts(ctx.app, ctx.auth.user));
-    return listed.ok ? timePhase(ctx.request, "render", () => json({ items: listed.value })) : notFound();
+    return listed.ok ? timePhase(ctx.request, "render", () => json(offsetPage(listed.value, query.limit, query.offset))) : notFound();
   });
 
   router.add("POST", "/api/v1/admin/accounts/:username/suspend", async (ctx) => {
@@ -1887,8 +1898,10 @@ export function apiRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = accountAdmin(ctx, "admin");
     if (denied) return denied;
+    const query = offsetQuery(ctx.url.searchParams);
+    if ("error" in query) return offsetRefused(query.error);
     const people = timePhase(ctx.request, "people", () => listPeople(ctx.app.db));
-    return timePhase(ctx.request, "render", () => json({ people }));
+    return timePhase(ctx.request, "render", () => json(offsetPage(people, query.limit, query.offset)));
   });
 
   // Make a person a member (with an optional starter allowance, dollars a month) or a guest again.

@@ -53,8 +53,9 @@ export const ROUTES: readonly Route[] = [
     method: "get",
     path: "/api/v1/admin/accounts",
     summary:
-      "List every person and agent, newest first (a forge admin's, read scope; anyone else gets 404); answers { items: [{ username, kind, displayName, isAdmin, createdAt, via, signsInThrough, address, repos, apps, spentUsd, suspendedAt, removedAt, verified }] }",
+      "List every person and agent, newest first (a forge admin's, read scope; anyone else gets 404); answers { items: [{ username, kind, displayName, isAdmin, createdAt, via, signsInThrough, address, repos, apps, spentUsd, suspendedAt, removedAt, verified }], next_cursor }; limit 1 to 200 (default 50), cursor from next_cursor; a bad limit or cursor is a 422",
     auth: true,
+    query: { limit: "integer", cursor: "string" },
   },
   {
     method: "delete",
@@ -126,8 +127,9 @@ export const ROUTES: readonly Route[] = [
   {
     method: "get",
     path: "/api/v1/admin/invites",
-    summary: "List invite links without their tokens (an admin's, read scope); answers { items }",
+    summary: "List invite links without their tokens (an admin's, read scope); answers { items, next_cursor }; limit 1 to 200 (default 50), cursor from next_cursor; a bad limit or cursor is a 422",
     auth: true,
+    query: { limit: "integer", cursor: "string" },
   },
   {
     method: "post",
@@ -213,8 +215,9 @@ export const ROUTES: readonly Route[] = [
     method: "get",
     path: "/api/v1/admin/people",
     summary:
-      "List every person and their role (admin scope); answers { people: [{ username, role, usdPerMonth }] }, role being admin, member or guest",
+      "List every person and their role (admin scope); answers { items: [{ username, role, usdPerMonth }], next_cursor }, role being admin, member or guest; limit 1 to 200 (default 50), cursor from next_cursor; a bad limit or cursor is a 422",
     auth: true,
+    query: { limit: "integer", cursor: "string" },
   },
   { method: "get", path: `${REPO}/issues`, summary: "List a repository's issues; fields=brief leaves out bodies and comments, any other fields value is a 422 invalid_fields", auth: false, query: { ...LIST_QUERY, fields: "string" } },
   { method: "get", path: `${REPO}/pulls`, summary: "List a repository's pulls", auth: false, query: LIST_QUERY },

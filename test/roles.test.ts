@@ -159,7 +159,7 @@ describe("roles on /settings/people", () => {
     const ok = await send(tok, "member", 3);
     expect(await ok.json()).toEqual({ username: "bob", role: "member", usdPerMonth: 3 });
     const list = await fetch(`${servers.url}/api/v1/admin/people`, { headers: { authorization: `Bearer ${tok}` } });
-    const people = ((await list.json()) as any).people as { username: string; role: string }[];
+    const people = ((await list.json()) as any).items as { username: string; role: string }[];
     expect(people.find((p) => p.username === "bob")?.role).toBe("member");
     expect(people.find((p) => p.username === "alice")?.role).toBe("admin");
     expect((await send(tok, "guest")).status).toBe(200);
