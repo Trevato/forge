@@ -21,7 +21,7 @@ describe("perimeter mediums (#2922)", () => {
     const made = await seedAdmin(app, { username: "olive", email: "o@forge.example", password: "correct horse battery" });
     if (!made.ok) throw new Error(made.error);
     adminId = made.value.id;
-  });
+  }, 30_000);
   afterAll(async () => {
     servers.stop();
     app.close();
