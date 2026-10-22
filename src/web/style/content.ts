@@ -130,10 +130,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .byline.origin-by { display: inline-flex; align-items: center; gap: 5px; }
 .byline.origin-by .ico { color: var(--faint); }
 
-/* The origins settings page. */
-.origin-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.origin-row .origin-mark .ico { color: var(--muted-fg); }
-.origin-name { display: block; font-weight: 560; }
 /* Why an issue closes, beside the button that closes it. */
 .form-actions select[name="reason"] { width: auto; }
 .form-actions input[name="into"] { display: none; width: 7em; }
@@ -152,8 +148,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
      row needs for "Close issue", and the buttons keep their full height. */
   .comment-form .form-actions .btn .ico { display: none; }
 }
-.mirror-form { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.mirror-form .input { width: 10rem; padding: 4px 8px; font-size: 13px; }
 
 /* A device code is read aloud across a room and typed on a phone: it is the
    one place in the product where type is deliberately large. */
