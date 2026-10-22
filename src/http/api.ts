@@ -1326,16 +1326,16 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/users/:username/repos", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const user = getUserByName(ctx.app.db, ctx.params.username!);
     if (!user || hiddenFrom(user, ctx.auth.user)) return notFound();
     const query = repoQuery(ctx);
-    const items = listReposByOwner(
-      ctx.app.db,
-      user.username,
-      ctx.auth.user,
-      query,
+    const items = timePhase(ctx.request, "repos", () =>
+      listReposByOwner(ctx.app.db, user.username, ctx.auth.user, query),
     );
-    return json(paged(items, query.limit, (r) => r.id));
+    return timePhase(ctx.request, "render", () =>
+      json(paged(items, query.limit, (r) => r.id)),
+    );
   });
 
   router.add("POST", "/api/v1/sessions", async (ctx) => {
