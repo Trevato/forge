@@ -1732,10 +1732,11 @@ export function apiRoutes(router: Router<Handler>): void {
 
   // Crew teams (`core/teams.ts`): a forge admin who is a person; the page's door.
   router.add("GET", "/api/v1/admin/teams", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
-    const read = readTeams(ctx.app, ctx.auth.user);
-    return read.ok ? json({ teams: read.value.teams }) : notFound();
+    const read = timePhase(ctx.request, "teams", () => readTeams(ctx.app, ctx.auth.user));
+    return read.ok ? timePhase(ctx.request, "render", () => json({ teams: read.value.teams })) : notFound();
   });
 
   router.add("PUT", "/api/v1/admin/teams/:slug", async (ctx) => {
@@ -1815,10 +1816,11 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/admin/invites", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
-    const listed = listInviteLinks(ctx.app, ctx.auth.user);
-    return listed.ok ? json({ items: listed.value }) : notFound();
+    const listed = timePhase(ctx.request, "invites", () => listInviteLinks(ctx.app, ctx.auth.user));
+    return listed.ok ? timePhase(ctx.request, "render", () => json({ items: listed.value })) : notFound();
   });
 
   router.add("DELETE", "/api/v1/admin/invites/:id", (ctx) => {
@@ -1829,10 +1831,11 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/admin/accounts", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
-    const listed = listAccounts(ctx.app, ctx.auth.user);
-    return listed.ok ? json({ items: listed.value }) : notFound();
+    const listed = timePhase(ctx.request, "accounts", () => listAccounts(ctx.app, ctx.auth.user));
+    return listed.ok ? timePhase(ctx.request, "render", () => json({ items: listed.value })) : notFound();
   });
 
   router.add("POST", "/api/v1/admin/accounts/:username/suspend", async (ctx) => {
@@ -1870,9 +1873,11 @@ export function apiRoutes(router: Router<Handler>): void {
 
   // Every person and their role.
   router.add("GET", "/api/v1/admin/people", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = accountAdmin(ctx, "admin");
     if (denied) return denied;
-    return json({ people: listPeople(ctx.app.db) });
+    const people = timePhase(ctx.request, "people", () => listPeople(ctx.app.db));
+    return timePhase(ctx.request, "render", () => json({ people }));
   });
 
   // Make a person a member (with an optional starter allowance, dollars a month) or a guest again.
