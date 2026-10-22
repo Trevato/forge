@@ -48,30 +48,6 @@ describe("a pull says its variant group and siblings", () => {
       ...init,
       headers: { ...auth, "content-type": "application/json" },
     })).json() as Promise<any>;
-  const mcp = async (name: string, args: unknown, as?: string) => {
-    const res = await fetch(`${base}/mcp`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-        ...auth,
-        ...(as ? { authorization: `Bearer ${as}` } : {}),
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "tools/call",
-        params: { name, arguments: args },
-      }),
-    });
-    const body = (await res.json()) as any;
-    const text = body.result.content[0].text as string;
-    try {
-      return JSON.parse(text);
-    } catch {
-      return { error: text };
-    }
-  };
   const write = async (text: string, message: string) => {
     await Bun.write(join(dir, "code.txt"), text);
     await gitOk(["commit", "-am", message]);

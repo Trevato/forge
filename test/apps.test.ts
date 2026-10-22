@@ -49,7 +49,6 @@ import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { readRunLog } from "../src/runs/log.ts";
 import { grantedCookie } from "./helpers/identity.ts";
-import { identityKey } from "../src/apps/proxy.ts";
 import {
   APPS_DOMAIN,
   deploySettled,

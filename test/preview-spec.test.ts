@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
-import { checkPreview, previewSpec } from "../src/apps/preview_spec.ts";
+import { previewSpec } from "../src/apps/preview_spec.ts";
 import { newApp } from "../src/actions/apps.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch } from "../src/actions/repos.ts";

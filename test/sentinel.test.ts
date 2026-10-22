@@ -7,7 +7,6 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import keptIsAPersons from "../src/core/migrations/20261016120000-kept-is-a-person-s.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { createApp, type App } from "../src/app.ts";
 import { createRepo } from "../src/actions/repos.ts";
@@ -764,7 +763,6 @@ describe("a degraded incident whose issue closed as done", () => {
 describe("a degraded finding whose cause has stayed closed", () => {
   let hdir: string;
   let happ: App;
-  let hrepo: Repo;
   let halice: User;
   const T0 = Date.parse("2026-10-18T12:00:00.000Z");
   const plant = (cause: string, closedAt: number): void => {
@@ -782,7 +780,6 @@ describe("a degraded finding whose cause has stayed closed", () => {
     halice = a.value;
     const made = await createRepo(happ, halice, { name: "forge", visibility: "private" });
     if (!made.ok) throw new Error(String(made.error));
-    hrepo = made.value;
     // Two incidents, both closed at T0; one will get a person's comment.
     plant("drill", T0);
     plant("disk", T0);

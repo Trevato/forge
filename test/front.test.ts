@@ -569,7 +569,7 @@ describe("the front page", () => {
   });
 
   test("never a letter tile: a pin without a stranger's picture, or one that is down, waits; the sweep wakes a pinned app asleep to picture it", async () => {
-    const bare = await make(admin, "pinned-bare", { picture: false });
+    await make(admin, "pinned-bare", { picture: false });
     const down = await make(admin, "pinned-down");
     states.set(down.record.id, "failed");
     const sleepy = await make(admin, "pinned-sleepy", { picture: false });

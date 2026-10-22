@@ -7,7 +7,7 @@
  * for a named state or a flag file, never a guess at timing.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -25,7 +25,7 @@ import { getRepo, type Repo } from "../src/core/repos.ts";
 import { createRun, listRuns, type Run } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { startCrew } from "../src/crew/dispatch.ts";
-import { serve, type Servers } from "../src/http/server.ts";
+import { serve } from "../src/http/server.ts";
 import { readRunLog } from "../src/runs/log.ts";
 import { QUOTA_KEYS, getQuota, runningLimitSentence, setQuota } from "../src/settings/quotas.ts";
 import { promote } from "./helpers/members.ts";

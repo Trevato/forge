@@ -60,32 +60,9 @@ import {
   runLogListenerCount,
   subscribeRunLog,
 } from "../src/runs/log.ts";
-import { gitClientEnv } from "./helpers/git-client.ts";
 import { portInsteadOfSocket } from "../src/git/hook-address.ts";
 
 const testBySocket = portInsteadOfSocket() ? test.skip : test;
-
-const clientEnv = gitClientEnv({
-  GIT_AUTHOR_NAME: "Agent",
-  GIT_AUTHOR_EMAIL: "agent@forge.local",
-  GIT_COMMITTER_NAME: "Agent",
-  GIT_COMMITTER_EMAIL: "agent@forge.local",
-});
-
-async function sh(args: string[], cwd: string) {
-  const proc = Bun.spawn(args, {
-    cwd,
-    env: clientEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [out, err, code] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-  return { code, out: out.trim(), err: err.trim() };
-}
 
 // ---------------------------------------------------------------------------
 // Pure units: no server, no filesystem beyond what the function itself does.

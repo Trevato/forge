@@ -62,7 +62,6 @@ import {
 import { struckOut } from "../src/crew/parks.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { mapJson, marksFor } from "../src/web/pages/map.ts";
-import { listEvents } from "../src/core/events.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { promote } from "./helpers/members.ts";
 

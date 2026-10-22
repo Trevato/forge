@@ -9,7 +9,7 @@ import { addComment as addRawComment } from "../src/core/issues.ts";
 import { addCrew, createAgentRow, setCrewRole } from "../src/core/agents.ts";
 import { createRepo as createRepoRow } from "../src/core/repos.ts";
 import { submitReview } from "../src/core/reviews.ts";
-import { createUser, getUserByName } from "../src/core/users.ts";
+import { createUser } from "../src/core/users.ts";
 import { BREAKER_NOTE } from "../src/crew/breaker.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { id } from "../src/kernel/id.ts";

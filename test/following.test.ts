@@ -24,7 +24,6 @@ import { mergePull, openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
 import { relationOf, takeUpdates } from "../src/actions/forks.ts";
 import {
-  convergeFork,
   convergeState,
   convergeTitle,
   followDivergence,

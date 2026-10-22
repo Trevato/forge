@@ -4,7 +4,7 @@ import { chord, binding, matches } from "../src/tui/app/keys.ts";
 import { rank, score } from "../src/tui/app/palette.ts";
 import type { KeyEvent } from "../src/tui/term/input.ts";
 import { Screen } from "../src/tui/term/screen.ts";
-import { PLAIN, style, UNDERLINE } from "../src/tui/term/style.ts";
+import { style, UNDERLINE } from "../src/tui/term/style.ts";
 import { renderDiff, renderFileDiff } from "../src/tui/ui/diff.ts";
 import {
   center,

@@ -60,7 +60,7 @@ canAdmin`), token scope (`readForm` floor + `minScope`), and branch
 
 ```sh
 bun test              # full suite — must stay green
-bun x tsc --noEmit    # zero type errors is the standard (strict, exact-optional)
+bun x tsc --noEmit    # zero type errors is the standard (strict, exact-optional; an unused import or local fails it)
 bun run src/main.ts   # boots on :3000, data in ./data
 ```
 

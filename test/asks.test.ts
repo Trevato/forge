@@ -18,15 +18,11 @@ import { createIssue } from "../src/core/issues.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { getUserByName } from "../src/core/users.ts";
-import { markVerified } from "../src/core/verify.ts";
 import type { Ctx } from "../src/http/context.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { setCapacity, storedCapacity } from "../src/core/capacity.ts";
-import { createOrigin } from "../src/core/origins.ts";
-import { hunt } from "../src/crew/sentinel.ts";
 import { decisionsFor } from "../src/web/studio/asks.ts";
 import { quietLogs } from "./helpers/globals.ts";
-import { promote } from "./helpers/members.ts";
 import { adminCookie } from "./helpers/admin.ts";
 
 quietLogs();

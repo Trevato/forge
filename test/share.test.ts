@@ -35,7 +35,6 @@ describe("share", () => {
   let alice: User;
   let bob: User;
   let carol: User;
-  let bot: User;
   let aliceToken: string;
   let open: Repo;
   let secret: Repo;
@@ -71,7 +70,6 @@ describe("share", () => {
     carol = await mk("carol");
     const made = await createAgent(app, root, { username: "bot", brief: "Be brief." });
     if (!made.ok) throw new Error(String(made.error));
-    bot = made.value.user;
     aliceToken = createToken(app.db, alice.id, "t", "rw").token;
     const o = await createRepo(app, alice, { name: "open", visibility: "public" });
     const s = await createRepo(app, alice, { name: "secret", visibility: "private" });

@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
-import { parseAppHost, signGrant, verifyGrant } from "../src/apps/proxy.ts";
+import { signGrant, verifyGrant } from "../src/apps/proxy.ts";
 import { newApp, updateAppSettings, type NewAppResult } from "../src/actions/apps.ts";
 import { listRuns, type Run } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";

@@ -12,13 +12,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { newApp, updateAppSettings } from "../src/actions/apps.ts";
+import { newApp } from "../src/actions/apps.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
-import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import type { Repo } from "../src/core/repos.ts";
-import type { AppRecord } from "../src/core/apps.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -31,8 +28,6 @@ describe("/apps/open sends a grant only to a host that reads one way", () => {
   let servers: Servers;
   let runtime: AppsRuntime;
   let alice: User;
-  let repo: Repo;
-  let record: AppRecord;
   let aliceCookie = "";
 
   const signIn = async (username: string): Promise<string> => {
@@ -72,8 +67,6 @@ describe("/apps/open sends a grant only to a host that reads one way", () => {
       visibility: "public",
     });
     if (!made.ok) throw new Error(String(made.error));
-    repo = made.value.repo;
-    record = made.value.app;
   }, 120_000);
 
   afterAll(async () => {

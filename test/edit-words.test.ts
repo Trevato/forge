@@ -23,7 +23,7 @@ import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import { listEvents } from "../src/core/events.ts";
 import { getIssueById, type Issue } from "../src/core/issues.ts";
-import { getPull, openPullsClosing, type Pull } from "../src/core/pulls.ts";
+import { openPullsClosing, type Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { submitReview } from "../src/core/reviews.ts";
 import { createToken } from "../src/core/tokens.ts";

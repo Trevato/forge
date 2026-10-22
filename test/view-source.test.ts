@@ -15,7 +15,6 @@ import {
 } from "../src/view/cache.ts";
 import { sourceFor, type RepoSource } from "../src/view/source.ts";
 import {
-  mirrorAndWait,
   newFakeState,
   serveFakeForge,
   type FakeForge,

@@ -19,20 +19,17 @@ const PASSWORD = "a-long-family-passphrase";
 const TRIES = 3;
 
 let dir = "";
-let app: App | undefined;
 let servers: Servers | undefined;
 
 afterEach(async () => {
   servers?.stop();
   servers = undefined;
-  app = undefined;
   await rm(dir, { recursive: true, force: true });
 });
 
 async function forge(): Promise<{ app: App; url: string }> {
   dir = await mkdtemp(join(tmpdir(), "signin-doors-"));
   const made = createApp({ dataDir: dir, port: 0 });
-  app = made;
   servers = await serve(made);
   const pat = await seedAdmin(made, { username: "pat", email: "pat@forge.test", password: PASSWORD });
   if (!pat.ok) throw new Error("setup");

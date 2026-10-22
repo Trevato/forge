@@ -57,7 +57,6 @@ import {
 } from "../src/web/studio/words.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { appendRunLog } from "../src/runs/log.ts";
-import { serving } from "./helpers/studio.ts";
 
 describe("the studio's slot count", () => {
   let dataDir: string;

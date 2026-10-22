@@ -11,13 +11,10 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openIssue } from "../src/actions/issues.ts";
-import { openPull } from "../src/actions/pulls.ts";
-import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { createRepo } from "../src/actions/repos.ts";
 import { listCrewRoles, setCrewRole } from "../src/core/agents.ts";
 import { getIssueById } from "../src/core/issues.ts";
-import type { Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
-import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import {
   certain,

@@ -7,7 +7,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { App } from "../src/app.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
-import { seconds } from "../src/apps/timing.ts";
 import { mergePull, openPull } from "../src/actions/pulls.ts";
 import { commitToBranch } from "../src/actions/repos.ts";
 import type { AppRecord } from "../src/core/apps.ts";

@@ -73,8 +73,6 @@ describe("MCP proposes to the parent forge and lists proposals", () => {
     return opened.value;
   };
 
-  const forgeCount = (): number =>
-    child.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM upstream_proposal").get()!.n;
   const parentPull = (number: number) => getPull(parent.db, lib.id, number)!;
 
   beforeAll(async () => {

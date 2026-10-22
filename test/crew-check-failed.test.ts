@@ -7,14 +7,12 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { App } from "../src/app.ts";
-import type { Repo } from "../src/core/repos.ts";
 import type { User } from "../src/core/users.ts";
 import { addToCrew } from "../src/actions/crew.ts";
 import { assignIssue, openIssue } from "../src/actions/issues.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
-import { listRuns, type Run } from "../src/core/runs.ts";
+import { listRuns } from "../src/core/runs.ts";
 import {
-  agentRunSettled,
   startStandInCrew,
   stopStandInCrew,
   type StandInCrew,
@@ -25,15 +23,11 @@ describe("the crew, with a stand-in Claude Code: a failing check", () => {
   let app: App;
   let alice: User;
   let bot: User;
-  let repo: Repo;
   let promptFile: string;
-
-  const settled = (where: (run: Run) => boolean, timeoutMs?: number) =>
-    agentRunSettled(app, repo, where, timeoutMs);
 
   beforeAll(async () => {
     standIn = await startStandInCrew({ tickMs: 50 });
-    ({ app, alice, bot, repo, promptFile } = standIn);
+    ({ app, alice, bot, promptFile } = standIn);
   }, 30_000);
 
   afterAll(() => stopStandInCrew(standIn));
