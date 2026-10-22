@@ -3,6 +3,7 @@
  * sentence when the forge's signup is invite-only or closed (#2882).
  */
 
+import { insideHiddenDiv } from "./helpers/hidden.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -46,14 +47,23 @@ describe("/signin", () => {
     expect(page).toMatch(/<button[^>]*id="passkey-signin"[^>]*data-variant="primary"/);
   });
 
+  test("the passkey state is a badge, and no passkey-on class remains", async () => {
+    const html = await signin("open");
+    expect(html).toContain("Passkey off");
+    expect(html).toMatch(/<span\s+class="badge"\s+data-variant="outline"\s*>\s*Passkey off/);
+    expect(html).not.toContain("passkey-on");
+    expect(html).not.toContain('class="passkey');
+    expect(insideHiddenDiv(html, "data-passkey-state")).toBe(false);
+  });
+
   test("the passkey lead shows only where a passkey can run, and Sign in is primary everywhere else", async () => {
     const page = await signin("open");
-    expect(page).toMatch(/<div class="passkey-on stack stack-tight mb">\s*<button[^>]*id="passkey-signin"/);
+    expect(page).toMatch(/<div class="stack stack-tight mb">\s*<span data-passkey-state>[\s\S]*?Passkey off[\s\S]*?<\/span>\s*<div class="stack stack-tight" data-passkey="on" hidden>\s*<button[^>]*id="passkey-signin"/);
     expect(page).not.toMatch(/passkey-lead|passkey-note/);
     expect(page).toMatch(/<p class="muted small break" id="passkey-signin-note" data-fail="error-note" role="status"><\/p>\s*<\/div>/);
     // Both variants of Sign in, each a named btn() variant picked in markup.
-    expect(page).toMatch(/<button\s+type="submit"\s+class="btn passkey-on"\s+data-variant="outline"[^>]*>\s*Sign in\s*</);
-    expect(page).toMatch(/<button\s+type="submit"\s+class="btn passkey-off"\s+data-variant="primary"[^>]*>\s*Sign in\s*</);
+    expect(page).toMatch(/<button\s+type="submit"\s+class="btn"\s+data-variant="outline"\s+data-passkey="on"\s+hidden>\s*Sign in\s*</);
+    expect(page).toMatch(/<button\s+type="submit"\s+class="btn"\s+data-variant="primary"\s+data-passkey="off">\s*Sign in\s*</);
     // :root.passkey is set only when the browser has WebAuthn.
     expect(passkeyJs).toContain("if (window.PublicKeyCredential && navigator.credentials) doc.documentElement.classList.add('passkey');");
   });

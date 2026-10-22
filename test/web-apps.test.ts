@@ -465,7 +465,8 @@ describe("apps, runs and the crew on the web", () => {
     expect(page).not.toContain("issue-meta");
     // The log is drawn line by line, each by what kind of line it is: the
     // forge's own words ("checking out …") are marked as such.
-    expect(page).toContain('class="ln ln-forge"');
+    expect(page).toContain(`data-line="forge"`);
+    expect(page).not.toMatch(/class="[^"]*\bln-/);
     expect(page).toContain('id="run-elapsed"');
 
     const door = await web(alice, `/runs/${run!.id}`);
@@ -953,8 +954,17 @@ describe("apps, runs and the crew on the web", () => {
     expect(flashOf(refused)).toContain("cannot see this repository");
   });
 
-  test("the app strip says how long the first preview took, once one has served", async () => {
+  // A real preview may still be deploying and stamp `serving_at` after we clear
+  // it: let every run settle first, then clear the stamps.
+  const noPreviewServed = async (): Promise<void> => {
+    const open = () =>
+      app.db.query("SELECT 1 FROM run WHERE state IN ('queued','running') LIMIT 1").get();
+    for (let i = 0; i < 200 && open() !== null; i++) await Bun.sleep(25);
     app.db.query("UPDATE run SET serving_at = NULL WHERE env LIKE 'pull-%'").run();
+  };
+
+  test("the app strip says how long the first preview took, once one has served", async () => {
+    await noPreviewServed();
     expect(await bodyOf(alice, "/alice/hello/files")).not.toContain("after New app");
     app.db
       .query(
@@ -967,7 +977,7 @@ describe("apps, runs and the crew on the web", () => {
   });
 
   test("/apps says the first preview's time beside the name, and nothing without one", async () => {
-    app.db.query("UPDATE run SET serving_at = NULL WHERE env LIKE 'pull-%'").run();
+    await noPreviewServed();
     expect(await bodyOf(alice, "/apps")).not.toContain("first preview");
     app.db
       .query(

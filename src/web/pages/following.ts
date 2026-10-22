@@ -40,7 +40,7 @@ import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
 import { convergeWords, takeOrTell } from "../../actions/follow.ts";
 import { openProposal, proposeUpstream } from "../../actions/upstream.ts";
 import { field, readForm } from "../form.ts";
-import { html, raw, when, type Html } from "../html.ts";
+import { html, when, type Html } from "../html.ts";
 import { flashOrJson } from "../layout.ts";
 import { badge, btn, card, icon, row, type Tone } from "../ui.ts";
 import { disconnectedOn } from "./frozen.ts";
@@ -54,39 +54,23 @@ import { disconnectedOn } from "./frozen.ts";
 export function lineageCard(lineage: Lineage, hereId: string): Html {
   const node = (n: LineageNode, depth: number): Html => {
     const here = n.repo.id === hereId;
-    const name = `${n.repo.ownerName}/${n.repo.name}`;
-    return html`<li>
-      <a
-        href="/${n.repo.ownerName}/${n.repo.name}"
-        class="row"
-        data-nav
-        tabindex="-1"
-        ${here ? raw('aria-current="page"') : null}
-      >
-        <span class="row-lead">${icon(depth === 0 ? "repo" : "fork")}</span>
-        <span class="row-main">
-          <span class="row-title"
-            >${name}${here
-              ? html` <span class="lineage-here">you are here</span>`
-              : null}</span
-          >
-          ${n.repo.description === ""
-            ? null
-            : html`<span class="row-meta">${n.repo.description}</span>`}
-        </span>
-        ${n.relation === undefined
-          ? null
-          : html`<span class="row-trail">${relationBadge(n.relation)}</span>`}
-      </a>
-      ${n.children.length === 0
-        ? null
-        : html`<ul class="lineage-children">
-            ${n.children.map((c) => node(c, depth + 1))}
-          </ul>`}
-    </li>`;
+    const trail = [
+      here ? badge("you are here", { variant: "outline" }) : null,
+      n.relation === undefined ? null : relationBadge(n.relation),
+    ].filter((t): t is Html => t !== null);
+    return row({
+      href: `/${n.repo.ownerName}/${n.repo.name}`,
+      nav: true,
+      current: here,
+      lead: icon(depth === 0 ? "repo" : "fork"),
+      title: `${n.repo.ownerName}/${n.repo.name}`,
+      ...(n.repo.description === "" ? {} : { meta: html`${n.repo.description}` }),
+      ...(trail.length === 0 ? {} : { trail: html`${trail}` }),
+      children: n.children.map((c) => node(c, depth + 1)),
+    });
   };
   return card(
-    html`<ul class="list lineage" aria-label="Forks, by who follows whom">
+    html`<ul class="list" aria-label="Forks, by who follows whom">
         ${node(lineage.root, 0)}
       </ul>
       ${when(

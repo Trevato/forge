@@ -30,7 +30,7 @@ import { highlightToHtml } from "../highlight-html.ts";
 import { loadRepo, notFoundPage, pageHead, signInFirst } from "../chrome.ts";
 import { field as formValue, readForm, type Form } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
-import { flashTo, fragment, page, redirect } from "../layout.ts";
+import { flashTo, fragment, page } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
 import {
   browseBase,

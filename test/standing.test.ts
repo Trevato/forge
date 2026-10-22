@@ -8,9 +8,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
-import type { Repo } from "../src/core/repos.ts";
+import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { createRun } from "../src/core/runs.ts";
 import {
   getHeadroom,
@@ -75,14 +74,18 @@ describe("a subscription's standing", () => {
     const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
-      password: "a-good-passphrase",
       adminIfFirst: true,
     });
     if (!a.ok) throw new Error(a.error);
-    const made = await createRepo(app, a.value, { name: "one", visibility: "private" });
-    if (!made.ok) throw new Error("repo");
-    repo = made.value;
-  });
+    // A bare row: runs only need a repo id, and git init (a child process)
+    // and argon2 hashing made this hook's verdict depend on the check
+    // machine's load. Nothing here clones or signs in.
+    const repoId = "standing-repo";
+    app.db
+      .query("INSERT INTO repo (id, owner_id, name, visibility, description, default_branch) VALUES (?1, ?2, 'one', 'private', '', 'main')")
+      .run(repoId, a.value.id);
+    repo = getRepoById(app.db, repoId)!;
+  }, 60_000);
   afterAll(async () => {
     app.close();
     await rm(dataDir, { recursive: true, force: true });

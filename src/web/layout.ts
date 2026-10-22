@@ -39,7 +39,7 @@ import { notePhase } from "../core/route_timing.ts";
 import { html, raw, when, type Html } from "./html.ts";
 import { noRoom } from "../spawn/door.ts";
 import { icon, iconSprite, inlineIcons, themeGlyph } from "./icons.ts";
-import { btn, kbd, menu, pill, type MenuItem } from "./ui.ts";
+import { btn, copyField, kbd, menu, type MenuItem } from "./ui.ts";
 
 /** One row of the command palette: title, href, category. */
 export interface PaletteItem {
@@ -121,7 +121,7 @@ export interface PageOptions {
 /** The theme choice as a panel section: lives in a menu, never in the bar. */
 function themeForm(active: ThemeName | undefined): Html {
   const option = (value: string, label: string, checked: boolean) =>
-    html`<label class="theme-option">
+    html`<label class="check">
       <input
         type="radio"
         name="theme"
@@ -130,17 +130,16 @@ function themeForm(active: ThemeName | undefined): Html {
       />
       <span class="swatch" data-t="${value}"></span>
       ${label}
-      <span class="tick" aria-hidden="true">${icon("check")}</span>
     </label>`;
   return html`<form class="theme-form" method="post" action="/theme">
-      <span class="menu-title">Theme</span>
-      ${option("system", "System", active === undefined)}
-      ${THEME_NAMES.map((name) =>
-        option(name, THEMES[name].label, active === name),
-      )}
-      <button class="btn theme-apply" data-size="sm" type="submit">
-        Apply
-      </button>
+      <fieldset class="field">
+        <legend>Theme</legend>
+        ${option("system", "System", active === undefined)}
+        ${THEME_NAMES.map((name) =>
+          option(name, THEMES[name].label, active === name),
+        )}
+      </fieldset>
+      ${btn("Apply", { size: "sm" })}
     </form>`;
 }
 
@@ -400,19 +399,7 @@ function flashToast(flash: Flash): Html {
       ${when(
         flash.code,
         (code) =>
-          html`<span class="clone"
-            ><span class="clone-text" id="flash-code">${code}</span>
-            <button
-              class="btn btn-icon"
-              data-size="sm"
-              type="button"
-              data-copy="flash-code"
-              aria-label="Copy"
-              title="Copy"
-            >
-              ${icon("copy")}
-            </button></span
-          >`,
+          copyField("flash-code", code, "Code", "Copy code"),
       )}
     </div>
   </div>`;

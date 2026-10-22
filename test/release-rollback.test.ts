@@ -11,7 +11,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { releaseDir } from "../src/release/checkout.ts";
-import { liveSchema, rollback } from "../src/release/rollback.ts";
+import type { App } from "../src/app.ts";
+import { canRollBackTo } from "../src/release/gate.ts";
+import type { Release } from "../src/release/record.ts";
+import { liveSchema, rollback, schemaCount } from "../src/release/rollback.ts";
 
 const KEPT = "a".repeat(40);
 const OLDER = "b".repeat(40);
@@ -150,6 +153,37 @@ describe("liveSchema", () => {
       ok: false,
       line: `${OLDER} predates schema 4; rolling back would need a down-migration`,
     });
+  });
+});
+
+describe("schemaCount", () => {
+  test("counts schema_migration rows, and falls back to user_version without the table", () => {
+    const db = new Database(":memory:");
+    db.exec("PRAGMA user_version = 4");
+    expect(schemaCount(db)).toBe(4);
+    db.exec("CREATE TABLE schema_migration (id TEXT PRIMARY KEY, position INTEGER, applied_at TEXT)");
+    expect(schemaCount(db)).toBe(0);
+    db.exec("INSERT INTO schema_migration VALUES ('a', 1, 'now'), ('b', 2, 'now')");
+    expect(schemaCount(db)).toBe(2);
+    db.close();
+  });
+});
+
+describe("canRollBackTo", () => {
+  // The open connection is the live database; dataDir/forge.db is left absent, so the old
+  // on-disk read (schema 0) would allow every kept release.
+  test("compares a kept release with the open app.db, not the file in the data dir", async () => {
+    const data = await emptyDir();
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE schema_migration (id TEXT PRIMARY KEY, position INTEGER, applied_at TEXT)");
+    for (let i = 0; i < 3; i++) db.exec(`INSERT INTO schema_migration VALUES ('m${i}', ${i + 1}, 'now')`);
+    const app = { db, config: { dataDir: data } } as unknown as App;
+    const rel = (sha: string): Release => ({ sha, ok: true }) as unknown as Release;
+    keep(data, OLDER, 2);
+    keep(data, KEPT, 3);
+    expect(await canRollBackTo(app, rel(OLDER))).toBe(false);
+    expect(await canRollBackTo(app, rel(KEPT))).toBe(true);
+    db.close();
   });
 });
 

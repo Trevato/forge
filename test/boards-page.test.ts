@@ -11,10 +11,12 @@ import { join } from "node:path";
 import { createApp } from "../src/app.ts";
 import { barChart, drawChart, CHARTS, gridOf, heatStrip, lineChart, numberChart, stackedArea, tableChart } from "../src/boards/chart.ts";
 import { createToken } from "../src/core/tokens.ts";
-import { createUser } from "../src/core/users.ts";
+import { createUser, type User } from "../src/core/users.ts";
+import { makeBoard } from "../src/actions/boards.ts";
 import { serve } from "../src/http/server.ts";
 
 let dir: string;
+let admin: User;
 let app: ReturnType<typeof createApp>;
 let servers: Awaited<ReturnType<typeof serve>>;
 const tok: Record<string, string> = {};
@@ -35,6 +37,7 @@ beforeAll(async () => {
     return r.value;
   };
   const alice = await mk("alice", true);
+  admin = alice;
   const bob = await mk("bob");
   tok.admin = createToken(app.db, alice.id, "t", "admin").token;
   tok.bob = createToken(app.db, bob.id, "t", "admin").token;
@@ -62,6 +65,21 @@ const listed = async (url: string) => {
   const t = await (await get(url, "admin")).text();
   return [...t.matchAll(/<td class="mono">([a-z0-9]+)<\/td>/g)].map((m) => m[1]!).filter((x) => /^m\d$/.test(x)).sort();
 };
+
+describe("/boards forms", () => {
+  test("the chart and pin forms are §5 fields, not .qf", async () => {
+    const made = await makeBoard(app, admin, "Pins");
+    expect(made.ok).toBe(true);
+    const body = await (await get("/boards/data?source=runs&by=day", "admin")).text();
+    expect(body).not.toContain('class="qf');
+    for (const name of ["chart", "source", "aggregate", "column", "by", "series", "from", "to", "fcolumn", "fop", "fvalue"]) {
+      expect(body).toMatch(new RegExp(`<div class="field"[^>]*>\\s*<label for="f-${name}-\\d+">[^]*?name="${name}"`));
+    }
+    expect(body).toMatch(/<span class="hint">Column to aggregate<\/span>/);
+    expect(body).toContain('name="slug"');
+    expect(body).toContain('<label for="f-pin-title">Panel title</label>');
+  });
+});
 
 describe("/boards/data", () => {
   test("the result is drawn with §5's card and table, not .boards-result", async () => {
@@ -184,7 +202,9 @@ describe("every chart type from one seeded query", () => {
   const count = (body: string, re: RegExp) => body.match(re)?.length ?? 0;
 
   test("line draws one point per day, the series set aside", async () => {
-    expect(count(await drawn("line"), /<circle cx="[^"]*" cy="[^"]*" r="4">/g)).toBe(3);
+    const body = await drawn("line");
+    expect(count(body, /<circle cx="[^"]*" cy="[^"]*" r="4">/g)).toBe(3);
+    expect(count(body, /<div class="chart-box"><svg [^>]*class="chart"/g)).toBe(1);
   });
   test("bar draws one bar per day", async () => {
     expect(count(await drawn("bar"), /<rect class="bar"/g)).toBe(3);
@@ -206,6 +226,8 @@ describe("every chart type from one seeded query", () => {
     const table = body.match(/<table class="table chart-table">[\s\S]*?<\/table>/)![0];
     expect(count(table, /<tr>/g)).toBe(1 + 5);
     expect(count(body, /<table/g)).toBe(1);
+    // The panel is chartBox()'s frame, marked as a table (#4282).
+    expect(body).toContain('<div class="chart-box is-table">');
   });
   test("heat strip draws days × kinds cells; each filled cell links to its rows", async () => {
     const body = await drawn("heat");
@@ -220,9 +242,9 @@ describe("every chart type from one seeded query", () => {
   });
   test("the chart is chosen beside the query", async () => {
     const body = await drawn("heat");
-    expect(body).toMatch(/<select class="input" name="chart"[^>]*>/);
-    expect(body).toContain('<option value="heat" selected>heat strip</option>');
-    expect(body).toContain('<option value="kind" selected>split by kind</option>');
+    expect(body).toMatch(/<select class="input" id="f-chart-\d+"\s+name="chart"/);
+    expect(body).toMatch(/<option\s+value="heat"\s+selected\s*>\s*heat strip/);
+    expect(body).toMatch(/<option\s+value="kind"\s+selected\s*>\s*split by kind/);
   });
 });
 

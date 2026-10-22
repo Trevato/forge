@@ -98,7 +98,11 @@ bun run src/main.ts   # boots on :3000, data in ./data
   `EXCLUDED`, so never hand-edit that move. Never add `retry` — fix the
   cause: a shared port, a real clock, order dependence, a leaked server, a
   timeout near the real duration, a wall-clock bound under 200 ms on a
-  request or a spawn (`test/flake.test.ts` refuses one).
+  request or a spawn (`test/flake.test.ts` refuses one). A speed is bounded only
+  with `expectBudget` (`test/helpers/budget.ts`): relative to a same-run
+  baseline, absolute only when `FORGE_TEST_QUIET=1` (set by hand on a quiet machine; no
+  lane sets it yet, so absolute budgets are not enforced anywhere);
+  `test/flake.test.ts` refuses a raw `under N ms` title or bound.
 - **Every non-trivial change ships with a test.** Prefer protocol-level tests
   that boot a real app (`createApp` + `serve`) over unit mocks. Adversarial
   tests (can this be bypassed?) are worth more than happy-path ones.

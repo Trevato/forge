@@ -69,6 +69,8 @@ export interface MirrorJob {
   readonly repo?: Repo;
   /** Set on `failed`: a scrubbed reason, safe to show and to log. */
   readonly error?: string;
+  /** Set on `failed`: the stage the job was on when it stopped. */
+  readonly failedAt?: MirrorStage;
 }
 
 export type JobListener = (job: MirrorJob) => void;
@@ -158,6 +160,7 @@ export function advance(
     ...current,
     ...patch,
     stage,
+    ...(stage === "failed" ? { failedAt: current.stage } : {}),
     ...(terminal(stage) ? { finishedAt: new Date().toISOString() } : {}),
   };
   jobs.set(jobId, next);

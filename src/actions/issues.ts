@@ -18,7 +18,7 @@
  * "mirrored" on the others, which is honest rather than silently wrong.
  */
 
-import { canSeeSealed, mayView, setSealed } from "../core/sealed.ts";
+import { mayView, setSealed } from "../core/sealed.ts";
 import { requireVerified } from "./verify.ts";
 import { requireAbility } from "./roles.ts";
 import type { App } from "../app.ts";

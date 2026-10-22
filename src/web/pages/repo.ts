@@ -25,7 +25,6 @@ import { frozenBlock } from "./frozen.ts";
 import { pinRepo, syncRepoNow, unpinRepo } from "../../actions/origins.ts";
 import {
   canAdmin,
-  canWrite,
   forkParentFor,
   visibleForks,
 } from "../../core/repos.ts";
@@ -68,11 +67,11 @@ import {
   sizeWithTokens,
   tokenCount,
   icon,
-  iconBtn,
   listCard,
   row,
   seg,
   time,
+  copyField,
 } from "../ui.ts";
 
 const MAX_RENDER_BYTES = 1_000_000;
@@ -101,33 +100,6 @@ const forkParent = (ctx: Ctx, repo: Repo): Repo | undefined =>
   forkParentFor(ctx.app.db, repo, ctx.auth.user);
 const forksFor = (ctx: Ctx, repo: Repo): Repo[] =>
   visibleForks(ctx.app.db, repo.id, ctx.auth.user);
-
-/**
- * How far the fork has slipped from its parent, in a phrase. A fork with
- * commits of its own says so: an update would be refused, so the sentence
- * has to explain the missing button.
- */
-function driftNote(drift: ForkDrift | undefined): string | undefined {
-  if (drift === undefined || drift.ahead === null || drift.behind === null)
-    return undefined;
-  const commits = (n: number) => `${n} commit${n === 1 ? "" : "s"}`;
-  const { ahead, behind } = drift;
-  if (ahead === 0)
-    return behind === 0 ? "up to date" : `${commits(behind)} behind`;
-  if (behind === 0) return `${commits(ahead)} of its own`;
-  return `${commits(ahead)} of its own, ${behind} behind — merge by hand`;
-}
-
-/**
- * Offer the update only when it would fast-forward: something to take, and
- * nothing of the fork's own in the way. Unknown drift keeps the button, since
- * the action itself is the thing that decides.
- */
-function updatable(drift: ForkDrift | undefined): boolean {
-  if (drift === undefined || drift.ahead === null || drift.behind === null)
-    return true;
-  return drift.behind > 0 && drift.ahead === 0;
-}
 
 /**
  * GET /:owner/:name/forks — every fork of this repository the viewer may
@@ -663,25 +635,17 @@ function aboutCard(
             </p>`,
         )}
         <p class="mt small muted">Clone over HTTPS</p>
-        <span class="clone"
-          ><span class="clone-text" id="clone-https">${cloneUrl}</span>
-          ${iconBtn("copy", "Copy clone URL", {
-            size: "sm",
-            type: "button",
-            copy: "clone-https",
-          })}</span
-        >
+        ${copyField("clone-https", cloneUrl, "HTTPS clone address", "Copy clone URL")}
         ${when(
           sshPort !== undefined,
           () =>
             html`<p class="mt small muted">Clone over SSH</p>
-              <span class="clone"
-                ><span class="clone-text" id="clone-ssh"
-                  >ssh://git@${ctx.app.config.host ??
-                  ctx.url
-                    .hostname}:${sshPort}/${repo.ownerName}/${repo.name}.git</span
-                ></span
-              >`,
+              ${copyField(
+                  "clone-ssh",
+                  `ssh://git@${ctx.app.config.host ?? ctx.url.hostname}:${sshPort}/${repo.ownerName}/${repo.name}.git`,
+                  "SSH clone address",
+                  "Copy SSH clone URL",
+                )}`,
         )}`,
       { head: html`<h2>About</h2>` },
   )}`;
@@ -746,7 +710,7 @@ export async function renderCode(
           <span class="spacer"></span>
           ${finderButton()}
         </div>`
-      : html`<div class="path-head">
+      : html`<div class="bar mb">
           ${refMenu(
             o.refs,
             ref,
@@ -850,7 +814,7 @@ export function renderBlob(
     o.blob.kind === "too_large" ? "" : sizeWithTokens(o.blob.size, o.path);
   const fileHref = `${base}/blob/${encoded}/${o.path}`;
   return html`<div class="code-pane" id="code-pane" data-path="${o.path}">
-    <div class="path-head">
+    <div class="bar mb">
       ${refMenu(
         o.refs,
         o.ref,
@@ -1015,17 +979,12 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
           note: "Point a local repository at it and push — the first branch you push becomes the code you see here.",
         })}
         ${card(
-          html`<span class="clone"
-            ><span class="clone-text" id="clone-https"
-              >git remote add origin ${cloneUrl} &amp;&amp; git push -u origin
-              ${repo.defaultBranch}</span
-            >
-            ${iconBtn("copy", "Copy", {
-              size: "sm",
-              type: "button",
-              copy: "clone-https",
-            })}</span
-          >`,
+          copyField(
+            "clone-https",
+            `git remote add origin ${cloneUrl} && git push -u origin ${repo.defaultBranch}`,
+            "Get started command",
+            "Copy the get started command",
+          ),
           {
             head: html`${icon("command")}
               <h2>Get started</h2>`,

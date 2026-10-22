@@ -44,7 +44,7 @@ import { repoDir } from "../src/git/repos.ts";
 import { STALE_AFTER_MS } from "../src/runs/lease.ts";
 import { pullWord, servingHistory } from "../src/web/studio/words.ts";
 import { createUser, type User } from "../src/core/users.ts";
-import type { Repo } from "../src/core/repos.ts";
+import { getRepo, type Repo } from "../src/core/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { listEvents } from "../src/core/events.ts";
 import { readRunLog } from "../src/runs/log.ts";
@@ -606,6 +606,50 @@ describe("checks", () => {
       (r) => r.issueId === pull.id && r.commitOid === again.value.commitOid,
     );
     expect(second.state).toBe("ok");
+  }, 60_000);
+
+  test("approving a head whose check is already green queues no second check (#4391)", async () => {
+    const based = await commitToBranch(app, alice, repo, {
+      message: "The base's check passes",
+      files: [{ path: "forge.json", content: checkJson("true") }],
+    });
+    if (!based.ok) throw new Error(JSON.stringify(based.error));
+    // Bob's fork, made by the fork test above when it ran first.
+    const fork =
+      getRepo(app.db, "bob", repo.name) ??
+      (await forkRepo(app, bob, repo).then((f) => (f.ok ? f.value : undefined)));
+    if (fork === undefined) throw new Error("no fork");
+    const committed = await commitToBranch(app, bob, fork, {
+      branch: "green-then-approved",
+      message: "Green before the second look",
+      files: [{ path: "GREEN.md", content: "x\n" }],
+    });
+    if (!committed.ok) throw new Error(JSON.stringify(committed.error));
+    const opened = await openPull(app, bob, repo, {
+      title: "Green before the second look",
+      baseBranch: "main",
+      headBranch: "green-then-approved",
+      headRepo: fork,
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    const mine = (): Run[] =>
+      listRuns(app.db, repo.id, { kind: "check" }).filter(
+        (r) => r.issueId === pull.id && r.commitOid === committed.value.commitOid,
+      );
+    // The first approval is what lets a reader's head run at all.
+    const approved = await submitReview(app, alice, repo, pull, { state: "approved" });
+    if (!approved.ok) throw new Error(String(approved.error));
+    const first = await settled((r) => r.issueId === pull.id);
+    expect(first.state).toBe("ok");
+    // A second approval of the same green head on the same base is nothing new.
+    const again = await submitReview(app, alice, repo, pull, {
+      state: "approved",
+      body: "Still good.",
+    });
+    if (!again.ok) throw new Error(String(again.error));
+    await Bun.sleep(300);
+    expect(mine().map((r) => r.id)).toEqual([first.id]);
   }, 60_000);
 
   test("a commit already proven green is not run again; the re-request answers with the earlier verdict (#1795)", async () => {

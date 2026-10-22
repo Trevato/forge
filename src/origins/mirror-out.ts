@@ -8,11 +8,16 @@
 
 import type { App } from "../app.ts";
 import { getMirrorTarget } from "../core/migrate_mirror.ts";
-import { getRepoById } from "../core/repos.ts";
+import { getRepoById, type Repo } from "../core/repos.ts";
 import { pushToMirrorTarget } from "./push-through.ts";
 
-export function startMirrorOut(app: App): () => void {
+/** Stops listening; the promise settles once pushes already running have ended. */
+export function startMirrorOut(
+  app: App,
+  push: (app: App, repo: Repo) => Promise<unknown> = pushToMirrorTarget,
+): () => Promise<void> {
   const running = new Set<string>();
+  const ending = new Set<Promise<void>>();
   const again = new Set<string>();
 
   async function run(repoId: string): Promise<void> {
@@ -25,7 +30,7 @@ export function startMirrorOut(app: App): () => void {
       do {
         again.delete(repoId);
         const repo = getRepoById(app.db, repoId);
-        if (repo) await pushToMirrorTarget(app, repo);
+        if (repo) await push(app, repo);
       } while (again.has(repoId));
     } catch (error) {
       app.log.error("mirror push failed", { repoId, error: String(error) });
@@ -34,12 +39,18 @@ export function startMirrorOut(app: App): () => void {
     }
   }
 
-  return app.bus.subscribe((event) => {
+  const unsubscribe = app.bus.subscribe((event) => {
     if (event.repoId === null) return;
     if (event.kind !== "pull.merged" && event.kind !== "push") return;
     // The migration's own arrival event: the target already holds that history.
     if (event.payload["via"] === "migrate") return;
     if (!getMirrorTarget(app.db, event.repoId)) return;
-    void run(event.repoId);
+    const p = run(event.repoId).finally(() => ending.delete(p));
+    ending.add(p);
   });
+
+  return async () => {
+    unsubscribe();
+    await Promise.allSettled([...ending]);
+  };
 }

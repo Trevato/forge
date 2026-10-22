@@ -5,7 +5,7 @@
  * side; the fake GitHub's request log is the API side.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,6 +23,7 @@ import { runGitCapture } from "../src/git/env.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { settled } from "../src/origins/jobs.ts";
+import { pushToMirrorTarget } from "../src/origins/push-through.ts";
 import { startMirrorOut } from "../src/origins/mirror-out.ts";
 import { forgetProviders } from "../src/origins/providers/index.ts";
 import { newFakeState, serveFakeForge, type FakeForge } from "./fake-origin.ts";
@@ -30,6 +31,10 @@ import { quietLogs } from "./helpers/globals.ts";
 import { promote } from "./helpers/members.ts";
 
 quietLogs();
+// Git and a fake forge under a loaded check machine outlast bun's 5 s default.
+// The test's own limit sits above the longest wait inside it (`settledTarget`'s
+// deadline), so a slow push is waited for, never cut off as a timeout.
+setDefaultTimeout(120_000);
 
 describe("migrate: after", () => {
   let dataDir: string;
@@ -39,7 +44,7 @@ describe("migrate: after", () => {
   let alice: User;
   let octo: User;
   let originId = "";
-  let stopMirror = () => {};
+  let stopMirror = async () => {};
   let n = 0;
 
   const person = async (username: string): Promise<User> => {
@@ -91,6 +96,9 @@ describe("migrate: after", () => {
     return { name, job, copy: `copy${n}` };
   };
 
+  /** Wakers for whoever waits on a mirror push to end. */
+  const pushEnded = new Set<() => void>();
+
   const writes = () =>
     github.state.requests.filter((r) => r.method !== "GET" && r.method !== "HEAD");
 
@@ -110,17 +118,34 @@ describe("migrate: after", () => {
     });
     if (!connected.ok) throw new Error(connected.error);
     originId = connected.value.id;
-    stopMirror = startMirrorOut(app);
-  }, 30_000);
+    stopMirror = startMirrorOut(app, async (a, repo) => {
+      try {
+        return await pushToMirrorTarget(a, repo);
+      } finally {
+        const waiting = [...pushEnded];
+        pushEnded.clear();
+        for (const wake of waiting) wake();
+      }
+    });
+  }, 120_000);
 
   afterAll(async () => {
-    stopMirror();
+    // Pushes still running read the database and the repositories: let them
+    // end before either goes, whatever the machine's load.
+    await stopMirror();
     github.stop();
     servers.stop();
-    app.close();
+    try {
+      app.close();
+    } catch {
+      // A late write on a closing database is not what these tests judge.
+    }
     forgetProviders(dataDir);
-    await rm(dataDir, { recursive: true, force: true });
-  });
+    // A mirror push or git child may still be writing as the app closes; the
+    // directory goes once they let go. A scratch directory that will not go
+    // is the machine's to sweep, not a verdict on the code under test.
+    await rm(dataDir, { recursive: true, force: true, maxRetries: 40, retryDelay: 100 }).catch(() => {});
+  }, 120_000);
 
   test("the form's word: anything but archive or mirror leaves it alone", () => {
     expect(afterChoice("archive")).toBe("archive");
@@ -169,6 +194,22 @@ describe("migrate: after", () => {
     expect(getRepo(app.db, "alice", copy)).toBeDefined();
   });
 
+  /** The copy's mirror target, once `ok` says a push that has ended left it so. */
+  const settledTarget = async (copy: string, ok: (t: NonNullable<ReturnType<typeof getMirrorTarget>>) => boolean) => {
+    const id = getRepo(app.db, "alice", copy)!.id;
+    const look = () => {
+      const held = getMirrorTarget(app.db, id);
+      return held !== undefined && ok(held) ? held : undefined;
+    };
+    // Wait on the event, not the clock: each push that ends wakes the waiters,
+    // and the test's own timeout is the only bound.
+    for (;;) {
+      const held = look();
+      if (held) return held;
+      await new Promise<void>((resolve) => pushEnded.add(resolve));
+    }
+  };
+
   test("mirror: no write at migration, then one push to GitHub after a landing", async () => {
     const { job, name, copy } = await migrate("mirror");
     expect(job?.stage).toBe("done");
@@ -180,11 +221,7 @@ describe("migrate: after", () => {
     await commit(alice, "alice", copy, "landed.txt");
     const mine = await resolveOid(repoDir(app.reposRoot, "alice", copy), "refs/heads/main");
     expect(mine).not.toBe(before);
-    for (let i = 0; i < 100; i++) {
-      const held = getMirrorTarget(app.db, getRepo(app.db, "alice", copy)!.id);
-      if (held?.tips["refs/heads/main"] === mine) break;
-      await Bun.sleep(50);
-    }
+    await settledTarget(copy, (t) => t.tips["refs/heads/main"] === mine);
     expect(await resolveOid(sourceDir, "refs/heads/main")).toBe(mine);
     // The credential travelled as a header in git's environment: the API
     // log has no write, and the stored target holds no secret.
@@ -194,16 +231,6 @@ describe("migrate: after", () => {
     expect(target.lastError).toBe("");
     expect(JSON.stringify(target)).not.toContain("token");
   });
-
-  /** The copy's mirror target, once `ok` says the push has settled. */
-  const settledTarget = async (copy: string, ok: (t: NonNullable<ReturnType<typeof getMirrorTarget>>) => boolean) => {
-    for (let i = 0; i < 100; i++) {
-      const held = getMirrorTarget(app.db, getRepo(app.db, "alice", copy)!.id);
-      if (held !== undefined && ok(held)) return held;
-      await Bun.sleep(50);
-    }
-    throw new Error("the mirror push did not settle");
-  };
 
   test("mirror: the crew's work branches never go to the source", async () => {
     const { name, copy } = await migrate("mirror");
@@ -245,9 +272,38 @@ describe("migrate: after", () => {
     expect((await stop({ cookie, origin: base })).status).toBe(303);
     expect(getMirrorTarget(app.db, getRepo(app.db, "alice", copy)!.id)).toBeUndefined();
   });
+});
+
+// The handler's refusal needs an app and a token, not the fake GitHub, the
+// mirror loop or any git work: its own small fixture, so a loaded machine
+// slowing the fixture above cannot fail it.
+describe("migrate: after, refused at the boundary", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-migrate-after-400-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+  }, 120_000);
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  }, 120_000);
 
   test("POST /api/v1/migrate with an unknown `after` is a 400 naming the three words", async () => {
-    const token = createToken(app.db, alice.id, "api", "admin").token;
+    const made = await createUser(app.db, {
+      origin: "seed",
+      trusted: true,
+      username: "alice",
+      email: "alice@forge.test",
+      adminIfFirst: true,
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    const token = createToken(app.db, made.value.id, "api", "admin").token;
     const res = await fetch(`http://127.0.0.1:${servers.port}/api/v1/migrate`, {
       method: "POST",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
@@ -258,5 +314,5 @@ describe("migrate: after", () => {
     expect(said).toContain("leave");
     expect(said).toContain("archive");
     expect(said).toContain("mirror");
-  });
+  }, 120_000);
 });

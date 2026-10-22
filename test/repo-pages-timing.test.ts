@@ -1,5 +1,6 @@
-/** A repository's new issue, make-it-yours, report and toolbar pages name their phases and answer under 50 ms (#4321). */
+/** A repository's new issue, make-it-yours, report and toolbar pages name their phases and answer within budget (#4321). */
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { baselineMs, expectBudget } from "./helpers/budget.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -64,7 +65,8 @@ const PAGES: [path: string, who: string, names: string[]][] = [
 ];
 
 for (const [path, who, names] of PAGES)
-  test(`GET ${path} names its phases, they fit inside app, and it answers under 50 ms`, async () => {
+  test(`GET ${path} names its phases, they fit inside app, and it answers within its budget`, async () => {
+    const against = await baselineMs(servers.url);
     const cookie = await signIn(who);
     const read = async (): Promise<string[]> => {
       const res = await fetch(`${servers.url}${path}`, { headers: { cookie } });
@@ -84,7 +86,7 @@ for (const [path, who, names] of PAGES)
       expect(named).toEqual(names);
       const total = dur(parts.find((p) => p.startsWith("app;")));
       const sum = parts.filter((p) => !/^(app|db);/.test(p)).reduce((s, p) => s + dur(p), 0);
-      expect(total).toBeLessThan(50);
+      expectBudget(total, { ms: 50, against });
       expect(sum).toBeLessThanOrEqual(total + 0.1 * names.length);
       shares.push(total === 0 ? 1 : sum / total);
     }

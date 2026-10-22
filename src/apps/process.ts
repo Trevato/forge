@@ -14,6 +14,7 @@ import type { AppManifest } from "./manifest.ts";
 import type { EnvName } from "./data.ts";
 import { envPull } from "./data.ts";
 import { forgeApiUrl } from "./token.ts";
+import { backgroundArgv } from "./background.ts";
 import { isReservedAppEnvName } from "../core/app_env.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { spellings, stripForgeDirs } from "../runs/paths.ts";
@@ -36,6 +37,8 @@ export interface ProcessHandle {
   readonly exited: Promise<number>;
   /** SIGTERM, a grace period, then SIGKILL. Resolves once it is gone. */
   stop(): Promise<void>;
+  /** The cell limit it broke, once it has ended over one (`Cell.breach`). */
+  breach?: () => string | undefined;
 }
 
 export interface StartInput {
@@ -261,9 +264,12 @@ export async function runStep(
   },
 ): Promise<Result<void, string>> {
   options.log(`$ ${command}`);
+  // A step is background work: the forge's own pages outrank it (#3319).
   const cell: Cell | undefined =
-    options.cell === undefined ? undefined : openCell(options.cell, options.log);
-  const proc = Bun.spawn(cell?.argv(command) ?? ["/bin/sh", "-c", command], {
+    options.cell === undefined
+      ? undefined
+      : openCell({ ...options.cell, background: true }, options.log);
+  const proc = Bun.spawn(backgroundArgv(cell?.argv(command) ?? ["/bin/sh", "-c", command]), {
     cwd: options.cwd,
     env: cell?.env(options.env) ?? options.env,
     stdin: "ignore",
@@ -455,7 +461,10 @@ export async function startProcess(
   // The cell's sockets and watch end with the process, however it ends.
   // Without a cell, so does the rest of its group: a child that outlived
   // the app, stopped or crashed, is not left running on its data.
+  // Read before the cell closes: its cgroup's OOM count goes with it.
+  let breach: string | undefined;
   void proc.exited.then(() => {
+    breach = cell?.breach();
     cell?.close();
     if (cell === undefined) signalGroup(proc.pid, "SIGKILL");
   });
@@ -484,6 +493,7 @@ export async function startProcess(
     },
     port,
     exited: proc.exited,
+    breach: () => breach,
     stop: async () => {
       if (proc.exitCode !== null || proc.signalCode !== null) return;
       // In a cell the pid is bubblewrap's, which passes no signal on: the

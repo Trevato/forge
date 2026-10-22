@@ -41,7 +41,7 @@ import { QUOTA_KEYS } from "../settings/quotas.ts";
 import { LIMIT_KEYS } from "../settings/limits.ts";
 import { convergeWords, FOLLOW_MODE_REFUSALS, setFollowMode, severForge, takeForgeCode, takeForgeWords, takeOrTell } from "../actions/follow.ts";
 import { relationOf } from "../actions/forks.ts";
-import { chainOfRepo, FOLLOW_MODES, forgeLinkOf } from "../spawn/chain.ts";
+import { chainOfRepo, FOLLOW_MODES } from "../spawn/chain.ts";
 import { watchMilestone } from "../actions/watches.ts";
 import {
   addCommentThrough,

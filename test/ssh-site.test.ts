@@ -103,10 +103,16 @@ describe("the terminal on the website", () => {
     const page = await fetch(`${base}/settings/crew`, {
       headers: { cookie },
     }).then((r) => r.text());
-    expect(page).toContain('<select class="input" id="f-model" name="model">');
-    expect(page).toContain('value="opus"');
-    expect(page).toContain('value="sonnet"');
-    expect(page).toContain('value="haiku"');
+    const select = page.match(
+      /<select\b[^>]*\bname="model"[^>]*>([\s\S]*?)<\/select>/,
+    );
+    expect(select).not.toBeNull();
+    const values = [...(select?.[1] ?? "").matchAll(/<option\b[^>]*\bvalue="([^"]*)"/g)].map(
+      (m) => m[1],
+    );
+    expect(values).toContain("opus");
+    expect(values).toContain("sonnet");
+    expect(values).toContain("haiku");
   });
 });
 

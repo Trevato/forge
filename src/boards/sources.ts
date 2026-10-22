@@ -206,6 +206,7 @@ export const SOURCES: Readonly<Record<string, Source>> = {
       cpu_cores: "number", cpu_cores_max: "number",
       memory_bytes: "number", memory_bytes_max: "number", load: "number",
       celsius: "number", celsius_max: "number",
+      lag_ms: "number", lag_ms_max: "number", checks: "number", agents: "number",
     },
     docs: {
       target:
@@ -220,6 +221,11 @@ export const SOURCES: Readonly<Record<string, Source>> = {
       load: "node only: the 1-min load average, runnable tasks",
       celsius: "°C, mean over the step: a cpu:<nnn>'s core, a package or a sensor; null for the rest",
       celsius_max: "°C, the highest 15-s point in the step",
+      lag_ms:
+        "forge only: how late its event loop woke, ms, 99th percentile over the 15 s; a 5-min point is the mean of its 15-s points",
+      lag_ms_max: "forge only: ms, the highest 15-s point in the step",
+      checks: "forge only: checks running at the instant; a 5-min point is the mean",
+      agents: "forge only: crew runs running at the instant; a 5-min point is the mean",
     },
   },
   // Who visits and how fast it is (#2712): one row per metric (and route, and
@@ -315,6 +321,28 @@ export const SOURCES: Readonly<Record<string, Source>> = {
       series: "forge (a person's) or drill (the nightly drill's own forge)",
       at: "the day, UTC",
       value: "milliseconds; the budget is 180000 (three minutes)",
+    },
+  },
+  // Every time an app's production process was started again over one that
+  // served (#4496), from its deploy runs: one row per deploy that came to
+  // serve, timed by that instant, with why — the reason a deploy carries,
+  // mapped to four fixed words. A wake from sleep is not a restart: nothing
+  // was serving to be interrupted.
+  restarts: {
+    table: "restart",
+    owner: "repo_id",
+    select:
+      "SELECT repo_id, serving_at AS at, CASE reason WHEN 'boot' THEN 'forge roll' WHEN 'restart' THEN 'crash' " +
+      "WHEN 'oom' THEN 'oom' ELSE 'own deploy' END AS cause FROM run " +
+      "WHERE kind = 'deploy' AND env = 'production' AND serving_at IS NOT NULL AND reason NOT IN ('wake', 'enabled')",
+    time: "at",
+    columns: { repo_id: "text", cause: "text", at: "time" },
+    docs: {
+      cause:
+        "own deploy (a push, a merge, a redeploy), forge roll (the forge itself restarted: a release, " +
+        "and also a crash or eviction of the forge, which its deploys cannot tell apart), " +
+        "crash (the process exited and was started again) or oom (over its memory cap, by its cell's watch or the kernel)",
+      at: "when the new process began serving, UTC",
     },
   },
   // Items entering each stage from issue to live, one row per entry, read

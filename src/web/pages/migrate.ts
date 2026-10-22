@@ -57,6 +57,7 @@ import {
   selectField,
   field as formField,
 } from "../ui.ts";
+import { STAGE_BADGE_JS, stageRow, stageStateFor } from "../stage-row.ts";
 import { prefill, originHost } from "./migrate-prefill.ts";
 import { githubConnectable, hostLabel } from "./origins.ts";
 
@@ -707,23 +708,20 @@ const stagesFor = (job: MirrorJob): typeof STAGES =>
 
 function stageRows(job: MirrorJob): Html {
   const stages = stagesFor(job);
-  const at = stages.findIndex((s) => s.name === job.stage);
-  return html`<ol class="stages">
-    ${stages.map((stage, i) => {
-      const state =
-        job.stage === "failed"
-          ? "todo"
-          : i < at || job.stage === "done"
-            ? "done"
-            : i === at
-              ? "now"
-              : "todo";
-      const glyph = state === "done" ? "●" : state === "now" ? "◐" : "○";
-      return html`<li data-stage-name="${stage.name}" data-state="${state}">
-        <span class="stage-dot" aria-hidden="true">${glyph}</span>
-        <span class="stage-label">${stage.label}</span>
-        <span class="stage-detail">${state === "now" ? job.detail : ""}</span>
-      </li>`;
+  return html`<ol class="list stages" aria-live="polite">
+    ${stages.map((stage) => {
+      const state = stageStateFor(
+        stages.map((s) => s.name),
+        stage.name,
+        job.stage,
+        job.failedAt,
+      );
+      return stageRow({
+        name: stage.name,
+        label: stage.label,
+        state,
+        detail: job.detail,
+      });
     })}
   </ol>`;
 }
@@ -741,6 +739,7 @@ const migrateJobJs = /* js */ `
   var job = box && box.getAttribute('data-job');
   if (!job || typeof EventSource === 'undefined') return;
   var order = ['creating', 'fetching', 'issues', 'pulls', 'crew', 'done'];
+  var badges = ${STAGE_BADGE_JS};
   var source = new EventSource('/api/v1/migrate/' + encodeURIComponent(job) + '/stream');
   function patch(e) {
     var data;
@@ -753,8 +752,11 @@ const migrateJobJs = /* js */ `
       var state = data.stage === 'failed' ? 'todo'
         : data.stage === 'done' || idx < at ? 'done' : idx === at ? 'now' : 'todo';
       row.setAttribute('data-state', state);
-      row.querySelector('.stage-dot').textContent = state === 'done' ? '\\u25cf' : state === 'now' ? '\\u25d0' : '\\u25cb';
-      row.querySelector('.stage-detail').textContent = state === 'now' && data.detail ? data.detail : '';
+      var badge = row.querySelector('.badge');
+      badge.textContent = badges[state][0];
+      badge.setAttribute('data-variant', badges[state][1]);
+      var note = row.querySelector('.row-meta');
+      if (note) note.textContent = state === 'now' && data.detail ? data.detail : '';
     }
     if (data.stage === 'done' || data.stage === 'failed') { source.close(); location.reload(); }
   }

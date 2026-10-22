@@ -286,7 +286,7 @@ describe("a name always says who it is", () => {
     const row = (name: string) =>
       html.match(
         new RegExp(
-          `<li class="row explore-row">[\\s\\S]*?href="/${name}"[\\s\\S]*?</li>`,
+          `<li>\\s*<div class="row"[\\s\\S]*?href="/${name}"[\\s\\S]*?</li>`,
         ),
       )?.[0] ?? "";
     expect(marksIn(row("alice"))).toEqual(["owner"]);

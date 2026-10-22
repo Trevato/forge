@@ -46,7 +46,7 @@ import { spendView } from "./spend.ts";
 import type { HandContext } from "../../crew/handover.ts";
 import { forgeHealth, rolloutLine } from "../../kernel/guard.ts";
 import { coveredByVerdict, forgeVerdict, verdictLine } from "../../kernel/guard_verdict.ts";
-import { laneLine, type Vitals } from "../../kernel/vitals.ts";
+import { laneLine } from "../../kernel/vitals.ts";
 import { getIssue, getIssuesByIds, type Issue } from "../../core/issues.ts";
 import { looksForApps } from "../../core/looks.ts";
 import {
@@ -56,7 +56,7 @@ import {
   pillarView,
   reposWithUmbrellas,
 } from "../../core/pillars.ts";
-import { joinMany, listPulls, mergedPullsForRepos, toldBy, type Pull } from "../../core/pulls.ts";
+import { listPulls, mergedPullsForRepos, toldBy, type Pull } from "../../core/pulls.ts";
 import {
   listReposVisibleTo,
   ownerFactRepoIds,

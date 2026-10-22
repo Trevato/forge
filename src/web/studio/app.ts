@@ -45,7 +45,6 @@ import {
   icon,
   listCard,
   row,
-  time,
   userTag,
 } from "../ui.ts";
 import { changesHref, tellsHref } from "./nouns.ts";

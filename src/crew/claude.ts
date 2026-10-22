@@ -12,6 +12,9 @@
  * settings files of the operator's, a spend budget, and a deadline.
  */
 
+import { BACKGROUND_CPU_WEIGHT, backgroundArgv, crewCpus } from "../apps/background.ts";
+import { cgroupHost, openCellCgroup, tryEnterArgv } from "../apps/cgroup.ts";
+import { join } from "node:path";
 import { watchLabelled } from "../apps/contain.ts";
 import { childEnv, pump } from "../apps/process.ts";
 import { spellings, stripForgeDirs } from "../runs/paths.ts";
@@ -183,7 +186,20 @@ export function claudeArgs(input: ClaudeInput): string[] {
 
 /** Run Claude Code to completion. Never throws; every ending is an outcome. */
 export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
-  const proc = Bun.spawn([input.binary, ...claudeArgs(input)], {
+  // Background work, with everything its shell starts: the forge's own
+  // pages outrank it (#3319, `apps/background.ts`). A binary that is not
+  // there is spawned bare, so it fails as itself (ENOENT, caught by the
+  // caller as a failed run) and not as `nice`'s exit 127. Where the forge
+  // holds a cgroup, the run gets a cell of its own, weighed and held to
+  // `FORGE_CREW_CPUS` cores, so it no longer shares the forge's leaf.
+  const argv = [input.binary, ...claudeArgs(input)];
+  const present = Bun.which(input.binary) !== null;
+  const cgroup = present
+    ? openCellCgroup(undefined, cgroupHost(), { weight: BACKGROUND_CPU_WEIGHT, cpus: crewCpus() })
+    : undefined;
+  const contained = cgroup === undefined ? argv : tryEnterArgv(join(cgroup.dir, "cgroup.procs"), argv);
+  const spawn = (): ReturnType<typeof Bun.spawn<"pipe", "pipe", "pipe">> =>
+    Bun.spawn(present ? backgroundArgv(contained) : argv, {
     cwd: input.cwd,
     env: childEnv({
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
@@ -198,6 +214,15 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
     // to one pid never touches a grandchild holding stdout open.
     detached: true,
   });
+  let proc: ReturnType<typeof spawn>;
+  try {
+    proc = spawn();
+  } catch (error) {
+    cgroup?.remove();
+    throw error;
+  }
+  // The cell goes with the run, and whatever it left running with it.
+  if (cgroup !== undefined) void proc.exited.finally(() => cgroup.remove());
   if (input.label !== undefined) {
     const unwatch = watchLabelled(proc.pid, input.label);
     void proc.exited.finally(unwatch);

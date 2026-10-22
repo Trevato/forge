@@ -35,7 +35,6 @@ import { basicHeader, gitAuthEnv } from "../credentials.ts";
 import {
   ApiClient,
   COMMIT_PAGE,
-  MAX_BLOB_BYTES,
   MAX_DIFF_BYTES,
   anchorFromHunk,
   asArray,
@@ -46,7 +45,6 @@ import {
   asState,
   asString,
   asTime,
-  decodeContent,
   dig,
   fail,
   field,

@@ -27,10 +27,9 @@ import {
 } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
-import { flashTo, page, redirect } from "../layout.ts";
-import { btn, empty, icon, field as formField } from "../ui.ts";
+import { flashTo, page } from "../layout.ts";
+import { btn, empty, field as formField } from "../ui.ts";
 import {
-  conversation,
   originError,
   parseNumber,
   threadContext,

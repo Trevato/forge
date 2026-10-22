@@ -34,11 +34,11 @@ import type { Ctx } from "../../http/context.ts";
 import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
-import { flashTo, page, redirect } from "../layout.ts";
+import { badge } from "../ui.ts";
+import { flashTo, redirect } from "../layout.ts";
 import { runsListPage } from "../studio/lists.ts";
 import { runView } from "../studio/run.ts";
 import {
-  empty,
   icon,
   listCard,
   row,
@@ -153,28 +153,34 @@ export function lineKind(line: string): LineKind {
   return "say";
 }
 
-/** One line of a run's log, as the page draws it. */
+/** One line of a run's log, as the page draws it: §5's row, a badge naming
+ * who or what spoke in the lead, the words as its title. The live script in
+ * `client.ts` builds the same markup. */
 export function logLine(line: string, who = "agent"): Html {
   const kind = lineKind(line);
-  if (kind === "you")
-    return html`<div class="ln ln-you">
-      <span class="who">you</span><span class="txt">${line.slice(5)}</span>
-    </div>`;
   if (kind === "tool") {
     const rest = line.slice(2);
     const at = rest.indexOf(" ");
     const tool = at === -1 ? rest : rest.slice(0, at);
     const args = at === -1 ? "" : rest.slice(at + 1);
-    return html`<div class="ln ln-tool">
-      <span class="who"></span><span class="txt"><b>${tool}</b> ${args}</span>
-    </div>`;
+    return logRow(kind, "tool", html`<b>${tool}</b> ${args}`);
   }
-  if (kind === "forge")
-    return html`<div class="ln ln-forge">
-      <span class="who">forge</span><span class="txt">${line}</span>
-    </div>`;
-  return html`<div class="ln ln-say">
-    <span class="who">${who}</span><span class="txt">${line}</span>
+  if (kind === "you") return logRow(kind, "you", line.slice(5), "secondary");
+  if (kind === "forge") return logRow(kind, "forge", line, "outline");
+  return logRow(kind, who, line);
+}
+
+/** The row itself; also the pulse's, in `studio/log.ts`. */
+export function logRow(
+  kind: string,
+  label: string,
+  body: Html | string | null,
+  variant?: "secondary" | "outline",
+): Html {
+  const lead = variant === undefined ? badge(label) : badge(label, { variant });
+  return html`<div class="row" data-line="${kind}">
+    <span class="row-lead">${lead}</span>
+    <span class="row-main"><span class="row-title">${body}</span></span>
   </div>`;
 }
 

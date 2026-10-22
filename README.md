@@ -299,6 +299,10 @@ ssh -p 2222 localhost                        # the terminal UI
 git clone ssh://localhost:2222/you/hello.git # git, same port
 ```
 
+A big repository clones over either transport. To skip its large files until a
+checkout needs them, run `git clone --filter=blob:none <url>`. See
+[`docs/GIT.md`](docs/GIT.md).
+
 **After a GitHub migration** you choose what happens to the original: leave it
 alone (the default), archive it, or keep it as a read-only mirror. The choice is
 the "Afterwards" field on `/migrate`, in the terminal's migrate screen, and
@@ -443,6 +447,11 @@ thoughts, then the issues you can write to that are not shipped, oldest first
 (`j`/`k` move, `enter` gives the issue's web address, `r` refreshes). It is read
 only, shows a guest nothing, and names nothing of a placement in a repository
 you cannot read.
+
+Review: `/review` lists the asks waiting on you, one row each (title, repository,
+age, why, and the crew's advice or that it has not advised yet), newest first. It only reads; the buttons stay on `/asks`, which links
+to it, and signed out it sends you to sign-in. The terminal has no page of its
+own for it: the same asks are the dashboard's On you card.
 
 A client's forge: `Ctrl+K`, then **New forge** (any signed-in person's, as the
 page is), is `/forges/new` in the terminal — name, for whom, what it is for,
@@ -1167,6 +1176,12 @@ is one, and its review brief holds the change to `docs/DESIGN.md`. A security
 change still goes to the security reviewer; a change only under `src/core/` is
 not a design matter.
 
+**How a reviewer is chosen.** Reviews go to the least-busy reviewer: the one
+with the fewest review runs in flight (queued or running). A tie goes to the
+experience reviewer. A pull about security goes only to a security reviewer
+(the least busy of them). A `src/web/` pull goes to the design reviewer until
+it has 2 review runs in flight, then spills to the least busy reviewer.
+
 **Three rounds, then a person.** When the crew reviewer has asked for
 changes three times on one pull with no approval and no word from a person
 who may direct the crew between, no more feedback runs start on it. The
@@ -1299,7 +1314,9 @@ runs on main's tip with that pull merged, which is the proof a re-check of
 its own would give, and a red candidate bisects as above. So a landing that
 moves main does not send every other approved pull off for a check of its
 own first; the batch lands in one gate. A pull's own check runs again only
-when its head changes. A person's merge, which no candidate gated, still
+when its head changes: an approval checks a head that was never checked,
+and a green one only when main moved since and the repository is not
+autonomous, whose land gates on today's main anyway (`src/checks/approval.ts`). A person's merge, which no candidate gated, still
 refuses a stale green. Each sweep reads every open pull, oldest first, not
 only the newest page, so an older approved pull is batched with the rest
 rather than joining alone on its own event. The autonomy tick line counts the approved pulls the
@@ -1379,7 +1396,7 @@ kill, which leave nothing in the log themselves).
 mechanical rather than advisory.
 
 `docs/FLOW.md` is where every issue stands: `GET /api/v1/repos/:owner/:name/flow` returns each open issue's stage, since, stalled and unblock, plus what went live in the last 24 h.
-Where the whole forge waits is the owner's, on `/boards` (the old `/flow` redirects there, query kept; an agent granted `telemetry:read` reads the same from `/api/v1/telemetry/flow` and the MCP `flow` tool): the flow panel shows each stage from ready to live with what waits, the oldest wait and its capacity, under one sentence naming the bottleneck, and beside each what it let out in the last hour with a 24-hour sparkline, under a line of landings and the median ask→live — every count links to the items it counts. A stalled step is a card on the home (Studio mode) for anyone who can write to the repository: an open pull whose check was never asked for, or is red, past its stage's allowance, with its stage, how long it has been stuck, and one button — Run check or Re-run — that asks for a check at the head and returns to the home. The terminal's **Stalled steps** command (palette) lists the same steps, live, and Enter or `r` does the same re-run; both read `flow/stalled.ts` and act through `flow/unblock.ts`, and neither shows anything to someone who cannot write. A conflicted pull never sits: every tick the crew's open pulls that no longer merge get one bring-up-to-date run each (one in flight per pull); after 2 failed tries in the same conflict, or 24 h since the first, the pull is closed with the conflicting files named and its issue goes back to ready, unassigned, with no strike against the builder. Conflicted pulls are listed oldest first on `/boards`. The terminal's Flow command and the MCP `flow` tool read the same: the sentence, the landings line, and each stage's count out in the last hour and in 24 h.
+Where the whole forge waits is the owner's, on `/boards` (the old `/flow` redirects there, query kept; an agent granted `telemetry:read` reads the same from `/api/v1/telemetry/flow` and the MCP `flow` tool): the flow panel shows each stage from ready to live with what waits, the oldest wait and its capacity, under one sentence naming the bottleneck, and beside each what it let out in the last hour with a 24-hour sparkline, under a line of landings and the median ask→live — every count links to the items it counts. A stalled step is a card on the home (Studio mode) for anyone who can write to the repository: an open pull whose check was never asked for, or is red, past its stage's allowance, with its stage, how long it has been stuck, and one button — Run check or Re-run — that asks for a check at the head and returns to the home. The terminal's **Stalled steps** command (palette) lists the same steps, live, and Enter or `r` does the same re-run; both read `flow/stalled.ts` and act through `flow/unblock.ts`, and neither shows anything to someone who cannot write. A conflicted pull never sits: every tick the crew's open pulls that no longer merge get one bring-up-to-date run each (one in flight per pull), oldest pull first and only as many as the check lane has slots for, since each ends in a push and a check: check slots minus the checks queued and running minus the runs already in flight, with one always allowed (`crew/conflict_room.ts`, #4459); after 2 failed tries in the same conflict, or 24 h since the first, the pull is closed with the conflicting files named and its issue goes back to ready, unassigned, with no strike against the builder. Conflicted pulls are listed oldest first on `/boards`. The terminal's Flow command and the MCP `flow` tool read the same: the sentence, the landings line, and each stage's count out in the last hour and in 24 h.
 
 `/resilience` is a forge admin's too (a guest is sent to sign in, anyone else gets 404): each protection in `docs/THREATS.md` as one line, green, red, untested or "no test yet", judged by the test file it cites in the last full gate of the forge's own repository (`FORGE_REPO`; other repositories' gates never touch it). The terminal's **Resilience** command (palette, admins) lists the same lines.
 
@@ -1917,7 +1934,7 @@ work here.
   - the terminal: on a board's screen `[` `]` mark a panel, `p` pins or unpins it, `<` `>` move a pinned one; the dashboard lists the pinned panels by title;
   - `GET /api/v1/boards/pins` (the list, in order) and `POST /api/v1/boards/pins` with `{"op":"pin|unpin|move","slug":"…","title":"…","by":-1|1}` (`by` for move only);
   - the `board_pins` MCP tool (no `op` lists; `op` pin, unpin or move changes). `pins` is therefore not a board slug.
-  The first boot also writes seven starting boards, **Usage**, **Crew**, **Releases**, **Apps**, **Security**, **Throughput** and **Forges**. Apps' per-app panels show repo ids until a source exposes a safe name; Security (sign-ins, failed sign-ins, tokens by scope, admin actions, from the admin-only `signins`, `tokens` and `adminActions` sources and `usage`) shows no token text, hash, payload or IP; Throughput is items entering each stage from issue to live, per hour, from the `stages` source. Each is written once: `.offered` in that repo records them, so an edit stays and a deletion sticks.
+  The first boot also writes the starting boards, **Usage**, **Serving**, **Crew**, **Releases**, **Apps**, **Security**, **Throughput**, **Reach** and **Forges**; Serving is the forge's event-loop lag p99 beside the checks and crew runs running, so checks' concurrency is raised on numbers. Apps' per-app panels show repo ids until a source exposes a safe name; Security (sign-ins, failed sign-ins, tokens by scope, admin actions, from the admin-only `signins`, `tokens` and `adminActions` sources and `usage`) shows no token text, hash, payload or IP; Throughput is items entering each stage from issue to live, per hour, from the `stages` source. Each is written once: `.offered` in that repo records them, so an edit stays and a deletion sticks.
   A live board (any `refresh` but `off`; the form offers off or on, and `10s` and `1m` are still accepted and mean the same) redraws its grid when a run, pull, check, issue or usage event arrives, through the live-region swap
   (`/boards/:slug/live`, etag'd, one fetch per burst). The same doors are in the API: `GET /api/v1/boards`, `GET|PUT|DELETE /api/v1/boards/:slug`, and each panel's data as JSON or CSV at `GET /api/v1/boards/:slug/panels/:id?from=&to=&step=5m&format=csv`, bucketed in SQL to the step and never cut short (`docs/APPS.md`); each panel's card links `json` and `csv` (a plain download link) beside `explore`
   (an agent or anyone but an admin is 403; a panel whose query cannot run is refused with 422). The same four doors are MCP tools (`boards`, `board_write`, `board_delete`; `boards` with a `slug` reads one, and with a `panel` too that panel's data, with the same `from`, `to` and `step`) and, for the same person, a **Boards** screen in the terminal that lists boards and shows a board's panels as text, each with what its data holds now (a time panel's last bucket and step, another's row count). No dependency was added.

@@ -30,7 +30,8 @@ import { forgetProviders } from "../src/origins/providers/index.ts";
 import { clearViewCache } from "../src/view/cache.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { newFakeState, serveFakeForge, type FakeForge } from "./fake-origin.ts";
-import { codeJs } from "../src/web/client.ts";
+import { codeJs, mirrorJs } from "../src/web/client.ts";
+import { STAGE_BADGE, STAGE_BADGE_JS } from "../src/web/stage-row.ts";
 import { adminCookie, seedAdmin } from "./helpers/admin.ts";
 
 quietLogs();
@@ -475,6 +476,22 @@ describe("browsing an origin repository on the web", () => {
     expect(pull).toContain("Merge on");
   });
 
+  test("a live pull's merge box is §5's card and row, with no merge-* class", async () => {
+    const pull = await bodyOf(alice, `${browse}/pulls/9`);
+    expect(pull).not.toMatch(/\bmerge-(?:box|form|headline|sub)\b/);
+    const box =
+      (pull.match(/<div\s+class="card mt"[^>]*data-tone="attn"[\s\S]*?<\/ul>/)?.[0] ?? "")
+        .replace(/\s+/g, " ");
+    expect(box).toContain('<ul class="list setting-list">');
+    expect(box).toContain(`class="row-title" >Merge on ${new URL(fake.url).host}.</span`);
+    expect(box).toContain(
+      "You are reading this pull request live. Merging, reviewing and commenting all happen where it lives — mirror the repository and comments come back through this forge instead.",
+    );
+    expect(box).toContain('class="row-trail"');
+    expect(box).toContain("Open on the origin");
+    expect(box).not.toContain("<form");
+  });
+
   // ---- the where strip ----
 
   test("a live browse shows origin filled, workbench and machine hollow", async () => {
@@ -531,6 +548,16 @@ describe("browsing an origin repository on the web", () => {
       `data-stream="/api/v1/user/origins/${originId}/mirror/`,
     );
     expect(running).toContain("new EventSource(url)");
+    // Each stage is a §5 row with a state badge, never a bare glyph.
+    expect(running).not.toContain("stage-dot");
+    expect(running).not.toContain("stage-detail");
+    expect(running).toMatch(/<ol\s+class="list stages"\s+aria-live="polite"/);
+    expect(count(running, "<li data-stage-name=")).toBe(7);
+    expect(running).toMatch(/<li data-stage-name="creating" data-state="(?:done|now)">\s*<div class="row"/);
+    expect(running).toMatch(/class="badge"\s+data-variant="(?:success|attn|outline)"\s*>(?:Done|Running|Waiting)</);
+    // The live update is built from the same table the markup is.
+    expect(mirrorJs).toContain(STAGE_BADGE_JS);
+    for (const b of Object.values(STAGE_BADGE)) expect(STAGE_BADGE_JS).toContain(b.text);
     expect(running).toMatch(/<script nonce="[^"]+">/);
     expect(running).not.toMatch(/<script[^>]*src="(?!\/assets\/(?:shell|beacon)-)/);
 

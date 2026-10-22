@@ -75,6 +75,7 @@ import {
   time,
   field as uiField,
   type IconName,
+  copyField,
 } from "../ui.ts";
 
 export type AccountSection =
@@ -506,19 +507,7 @@ function forgejoSection(
             </li>
             <li>
               Set the redirect URI to exactly:
-              <span class="clone"
-                ><span class="clone-text" id="redirect-uri">${back}</span>
-                <button
-                  class="btn btn-icon"
-                  data-size="sm"
-                  type="button"
-                  data-copy="redirect-uri"
-                  aria-label="Copy the redirect URI"
-                  title="Copy"
-                >
-                  ${icon("copy")}
-                </button></span
-              >
+              ${copyField("redirect-uri", back, "Redirect URI", "Copy the redirect URI")}
             </li>
             <li>
               Leave "confidential client" off — a public client is fine, and

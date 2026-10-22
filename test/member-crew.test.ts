@@ -68,12 +68,17 @@ describe("a member and the crew's standing instructions", () => {
     memberToken = createToken(app.db, bob.id, "t", "admin").token;
     adminCookie = `forge_session=${createSession(app.db, olive.id).token}`;
     memberCookie = `forge_session=${createSession(app.db, bob.id).token}`;
-  });
+  }, 60_000);
 
   afterAll(async () => {
-    await servers.stop();
-    await rm(dataDir, { recursive: true, force: true });
-  });
+    // Let a request still in flight finish before the data goes: a late
+    // write into the directory is what fails `rm` with ENOTEMPTY on a loaded
+    // machine, and retrying covers the rest.
+    await servers.stopAccepting(2_000);
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  }, 30_000);
 
   test("a member is refused on the API and the page, and the brief stands", async () => {
     expect(getUserByName(app.db, "olive")!.isAdmin).toBe(true);

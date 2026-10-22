@@ -43,6 +43,7 @@ import { resolveMirror } from "./snapshot/mirror.ts";
 import { releaseOrphans } from "./core/run_secret.ts";
 import { failAbandonedRuns } from "./core/runs.ts";
 import { DRAIN_LINGER_MAX_S, drainLingerMs, startDraining } from "./http/health.ts";
+import { takePresence, warmBehind } from "./apps/presence.ts";
 import { STALE_AFTER_MS } from "./runs/lease.ts";
 import { startCrew } from "./crew/dispatch.ts";
 import { CREW_OFF_IN_PREVIEW, crewOffInPreview } from "./crew/preview.ts";
@@ -334,7 +335,14 @@ const apps = appDomain?.ok
       idlePullMs: nonNegative(process.env.FORGE_PREVIEW_IDLE_DAYS, 3) * 86_400_000,
     })
   : undefined;
+// Which other forge serves this data's apps, read before this one starts its own.
+const presence = apps ? takePresence(app.config.dataDir) : undefined;
 await apps?.start();
+// In a rollout this forge takes no traffic until the apps it just started
+// serve: the one it replaces keeps proxying to its own copies until then,
+// so no request meets an app still starting (#4496). A cold start has no
+// one serving in its place, and is ready at once.
+if (apps && presence) warmBehind(app.log, presence, () => apps.startingCount());
 // What deploys before the record carried, so ask-to-live is not blank for them.
 void backfillCarried(app.db, app.reposRoot).catch((error) =>
   app.log.error("could not backfill what deploys carried", { error: String(error) }),
@@ -382,7 +390,7 @@ const snapshots = startSnapshots(
 // node, every 15 s into a ring the `machine` board source reads.
 const sampler = startSampler(app);
 const memorySampler = startMemorySampler(app);
-// The Usage, Crew, Security and Throughput starting boards, once each (actions/boards.ts).
+// The starting boards, once each (actions/boards.ts).
 void offerStartingBoards(app)
   .then((slugs) => slugs.length > 0 && app.log.info("starting boards offered", { slugs: slugs.join(", ") }))
   .catch((error) => app.log.warn("starting boards not offered", { error: String(error) }));
@@ -653,7 +661,9 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
     prompts.stop(),
     notifier.stop(),
     crew?.stop({ drain: true }),
-    apps?.stop(),
+    // Routers still send this process requests for the linger's length;
+    // its apps answer them, and stop only after (#4496).
+    (linger ?? Promise.resolve()).then(() => apps?.stop()).finally(() => presence?.stop()),
     // A step leads a process group of its own, so a terminal's Ctrl-C no
     // longer ends it: a person's stop cuts checks off (queued again) at once.
     checks?.stop({ drain: signal === "SIGTERM" }),

@@ -33,7 +33,6 @@ import { canWrite, type Repo } from "../../core/repos.ts";
 import { listReviews, type Review } from "../../core/reviews.ts";
 import { wallOf, wallSentence, type Wall } from "../../contract/policy.ts";
 import { checkSummary } from "../../core/runs.ts";
-import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
   crumbsFor,
@@ -110,25 +109,26 @@ export function pullContext(ctx: Ctx): { repo: Repo; pull: Pull } | Response {
  */
 export function wallCard(wall: Wall): Html {
   return card(
-    html`${icon("shield")}
-      <div class="grow">
-        <div class="merge-headline">
-          ${wall.unsound !== undefined
-            ? "This pull's contract does not read."
-            : `This pull changes the policy: ${wall.loosened.length === 1 ? "one door opens" : `${wall.loosened.length} doors open`} wider.`}
-        </div>
-        <p class="merge-sub">
-          ${wall.unsound !== undefined
-            ? "An app built on it does not boot. A person decides this one."
-            : "A cell loosened is a decision undone, so the crew leaves this to a person: read the cells, then land or say what is off."}
-        </p>
-        <ul class="wall-cells">
-          ${(wall.unsound ?? wall.loosened.map(wallSentence)).map(
-            (line) => html`<li>${line}</li>`,
-          )}
-        </ul>
+    html`<p class="muted small">
+        ${wall.unsound !== undefined
+          ? "An app built on it does not boot. A person decides this one."
+          : "A cell loosened is a decision undone, so the crew leaves this to a person: read the cells, then land or say what is off."}
+      </p>
+      <div class="stack stack-tight mono">
+        ${(wall.unsound ?? wall.loosened.map(wallSentence)).map(
+          (line) => html`<div>${line}</div>`,
+        )}
       </div>`,
-    { tone: "attn", extra: "merge-box wall" },
+    {
+      tone: "attn",
+      extra: "wall mt",
+      head: html`${icon("shield")}
+        <strong
+          >${wall.unsound !== undefined
+            ? "This pull's contract does not read."
+            : `This pull changes the policy: ${wall.loosened.length === 1 ? "one door opens" : `${wall.loosened.length} doors open`} wider.`}</strong
+        >`,
+    },
   );
 }
 

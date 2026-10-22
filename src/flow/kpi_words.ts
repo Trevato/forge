@@ -99,6 +99,15 @@ export function reactNote(r: Reach): string {
   return r.inpP75 === null ? "no taps measured yet" : `reacts in ${speedWords(r.inpP75)}`;
 }
 
+/** Home's one line over /review: `3 waiting on you, oldest 50 h`; null at zero, so the line is absent. */
+export function waitingWords(count: number, oldestAt: string | null, now: Date): string | null {
+  if (count <= 0) return null;
+  const t = oldestAt === null ? NaN : Date.parse(oldestAt);
+  if (Number.isNaN(t)) return `${count} waiting on you`;
+  const h = Math.max(0, Math.floor((now.getTime() - t) / 3_600_000));
+  return `${count} waiting on you, oldest ${h < 1 ? "under 1" : h} h`;
+}
+
 /**
  * The terminal's row: the same figures in the same words, as plain
  * lines. Forge-wide like the web's, so the caller shows them to an admin only.

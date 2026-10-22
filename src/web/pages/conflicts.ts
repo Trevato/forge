@@ -32,7 +32,7 @@ import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
-import { btn, card, icon } from "../ui.ts";
+import { btn, card } from "../ui.ts";
 import { changeHead, changeTabs, pullContext } from "../studio/change.ts";
 
 /** More blocks or longer words than this are not a hand's work. */

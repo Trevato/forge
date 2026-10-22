@@ -12,7 +12,7 @@ export class ForgeError extends Error {
   /** Stable machine-readable code, e.g. "git.spawn_failed". */
   readonly code: string;
   override readonly cause?: unknown;
-  private readonly [marker] = true;
+  readonly [marker] = true;
 
   constructor(code: string, message: string, options?: { cause?: unknown }) {
     super(message);

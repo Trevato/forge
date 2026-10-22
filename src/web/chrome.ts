@@ -9,7 +9,6 @@
  */
 
 import { sshCommand } from "../ssh/command.ts";
-import { mayDirectCrew } from "../crew/direct.ts";
 import { mayReadRuns } from "../actions/runs.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import { audienceFacts, audienceOf } from "../core/audience.ts";

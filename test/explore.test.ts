@@ -237,6 +237,14 @@ describe("explore", () => {
     expect(names(told.items)).toEqual(names((await api("kind:app sort:ships", bobToken)).items));
   });
 
+  test("the page draws §5's row and filters, and no explore- class", async () => {
+    const page = await (await fetch(`${base}/explore`)).text();
+    expect(page).toContain('class="row"');
+    expect(page).toContain('class="row-title"');
+    expect(page).toContain('class="filters mb"');
+    expect(page).not.toContain("explore-");
+  });
+
   test("a suspended account's apps and the account itself are offered to nobody", async () => {
     const sus = await user("sus");
     await appOf(sus, "susapp");

@@ -92,10 +92,18 @@ describe("password doors share the sign-in windows", () => {
 
   test("the doors count in one window: tries at /signin close the API door", async () => {
     const { url } = await forge();
-    for (let i = 0; i < TRIES; i++)
-      await fetch(`${url}/signin`, { method: "POST", body: new URLSearchParams({ username: "pat", password: `wrong-${i}` }), redirect: "manual" });
+    // The process-wide hash gate refuses (and does not count) a try made while
+    // other hashes fill it, as a busy check machine can: a counted try answers
+    // 422, so repeat until three have been counted.
+    for (let i = 0; i < TRIES; i++) {
+      for (let attempt = 0; attempt < 50; attempt++) {
+        const res = await fetch(`${url}/signin`, { method: "POST", body: new URLSearchParams({ username: "pat", password: `wrong-${i}` }), redirect: "manual" });
+        if (res.status === 422) break;
+        await Bun.sleep(50);
+      }
+    }
     expect((await post(`${url}/api/v1/sessions`, { username: "pat", password: PASSWORD })).status).toBe(429);
-  });
+  }, 30_000);
 });
 
 describe("no door verifies a password around the windows", () => {

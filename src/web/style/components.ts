@@ -140,24 +140,13 @@ fieldset.field > .check + .check { margin-top: 8px; }
 .field-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; }
 .field-row .field { flex: 1; min-width: 160px; margin-bottom: 0; }
 .form-actions { margin-top: 16px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-/* A passkey ceremony's note slot looks like an error only once it says one. */
-.error-note, .passkey-note:not(:empty) {
+.error-note {
   display: block; color: var(--danger); font-size: 13px; font-weight: 500;
   padding: 8px 12px; margin: 0 0 12px;
   border: 1px solid color-mix(in srgb, var(--danger) 32%, transparent);
   background: color-mix(in srgb, var(--danger) 10%, transparent);
   border-radius: var(--radius-sm);
 }
-/* Where a passkey can run — a script, and a browser with WebAuthn, which
-   passkey-client.ts marks as :root.passkey — .passkey-on shows and
-   .passkey-off hides; everywhere else the other way round. Only ever hides,
-   so each element keeps its own display. */
-:root:not(.passkey) .passkey-on, :root.passkey .passkey-off { display: none; }
-/* /signin's passkey lead: a full-width button whose note takes no room until
-   it says something. */
-.passkey-lead { margin-bottom: 16px; }
-.passkey-lead > .btn { width: 100%; }
-.passkey-lead > .passkey-note:not(:empty) { margin: 8px 0 0; }
 
 /* ---- stat tile ---- fixed heights: a changing value shifts nothing */
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
@@ -453,6 +442,7 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 .setting-list .row { flex-wrap: wrap; align-items: flex-start; }
 .setting-list .row-main { flex: 1 1 18rem; }
 .setting-list .row-title, .setting-list .row-meta { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+.setting-list .record-value { user-select: all; }
 .setting-list .row-trail { flex: 0 1 auto; max-width: 100%; }
 @media (max-width: 640px) { .setting-list .row-trail { flex-basis: 100%; } }
 @media (pointer: coarse) { .row-actions { opacity: 1; } .row { min-height: 44px; } }
@@ -898,15 +888,15 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 @media (min-width: 720px) { .sticky-action { position: static; background: none; padding: 0; } .sticky-action .btn { flex: none; } }
 
 /* ---- live updates ---- */
-.live-pill {
-  position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 25;
-  padding: 0 14px; min-height: 36px; display: inline-flex; align-items: center; gap: 6px;
-  background: var(--primary); color: var(--primary-fg); border-radius: 999px;
-  font-size: 13px; font-weight: 500; box-shadow: var(--shadow-2);
+.live-news {
+  position: fixed; left: 0; right: 0; bottom: 20px; z-index: 25;
+  display: flex; justify-content: center; pointer-events: none;
+}
+.live-news .badge {
+  pointer-events: auto; min-height: 36px; padding: 0 14px; font-size: 13px;
+  background: var(--card); box-shadow: var(--shadow-2);
   animation: pop 200ms var(--ease) both;
 }
-.live-pill:hover { color: var(--primary-fg); opacity: .92; }
-.live-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 
 }
 

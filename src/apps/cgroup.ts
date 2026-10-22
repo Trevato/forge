@@ -16,9 +16,18 @@
  * processes" rule: a cgroup that hands memory to children holds no
  * process of its own):
  *
- *   R/forge/         the forge and everything it starts outside a cell
+ *   R/forge/         the forge and everything it starts outside a cell;
+ *                    cpu.weight and io.weight 1000 against the cells' 100
  *   R/cells/c<n>/    one per cell: memory.max, memory.swap.max = 0,
- *                    memory.oom.group = 1 (the whole cell dies together)
+ *                    memory.oom.group = 1 (the whole cell dies together);
+ *                    a step's cpu.weight and io.weight 10, below an app's
+ *                    100, and cpu.max its declared cores (`apps/background.ts`)
+ *   R/cells/c<n>/    one per crew run, too: no memory cap, weight 10 and
+ *                    cpu.max of `FORGE_CREW_CPUS` cores — out of the
+ *                    forge's own leaf, where only nice told them apart
+ *
+ * The weights are asked for where the cpu and io controllers are
+ * delegated too, and never required: memory is what a cell must have.
  *
  * `FORGE_CELL_CGROUP` names `R` (an absolute path) or turns this `off`;
  * unset, `R` is `/sys/fs/cgroup` when the forge is at the root of its
@@ -50,6 +59,27 @@ export interface CellCgroup {
   readonly oomKills: () => number;
   /** Kill whatever is left and remove the cgroup, retrying while it empties. */
   readonly remove: () => void;
+}
+
+/** The forge's own leaf's `cpu.weight` and `io.weight`: ten times a cell's default 100. */
+export const FORGE_WEIGHT = 1000;
+
+/** A cell's place in the CPU and IO queue: its `cpu.weight` and `io.weight` (1–10000), and at most `cpus` cores (`cpu.max`). */
+export interface CpuShare {
+  readonly weight: number;
+  readonly cpus?: number | undefined;
+}
+
+/** `cpu.max`'s period, µs: the kernel's default (cgroup-v2.rst, "cpu.max ... max 100000"). */
+export const CPU_PERIOD_US = 100_000;
+
+/**
+ * `cpu.max` for `cpus` cores: "$MAX $PERIOD — the group may consume up to
+ * $MAX in each $PERIOD duration" (cgroup-v2.rst), so 2 cores is
+ * `200000 100000`. The kernel refuses a quota under 1 ms; that is the floor.
+ */
+export function cpuMax(cpus: number): string {
+  return `${Math.max(1000, Math.round(cpus * CPU_PERIOD_US))} ${CPU_PERIOD_US}`;
 }
 
 let host: CgroupHost | undefined;
@@ -142,6 +172,20 @@ export function prepare(
     const cells = join(root, "cells");
     mkdirSync(cells, { recursive: true });
     writeFileSync(join(cells, "cgroup.subtree_control"), "+memory");
+    // The forge outweighs every cell, and a step weighs less than an app
+    // (#3319). Asked for, never required: without the controller, nice and
+    // SCHED_BATCH still hold.
+    for (const controller of ["cpu", "io"]) {
+      if (!words(read(join(root, "cgroup.controllers"))).includes(controller)) continue;
+      try {
+        for (const dir of [root, cells])
+          if (!words(read(join(dir, "cgroup.subtree_control"))).includes(controller))
+            writeFileSync(join(dir, "cgroup.subtree_control"), `+${controller}`);
+        writeFileSync(join(root, "forge", `${controller}.weight`), `${controller === "io" ? "default " : ""}${FORGE_WEIGHT}`);
+      } catch {
+        // not delegated here, or the forge's leaf is elsewhere: the memory cap still holds
+      }
+    }
     for (const name of readdirSync(cells)) {
       const owner = /^c\d+-(\d+)$/.exec(name)?.[1];
       if (owner !== undefined && !alive(Number(owner))) removeDir(join(cells, name));
@@ -178,24 +222,50 @@ function removeDir(dir: string, tries = 10): void {
   }
 }
 
-/** A cgroup of its own for one cell, capped at `memoryMiB`; `undefined` where the host has none. */
-export function openCellCgroup(memoryMiB: number, at: CgroupHost = cgroupHost()): CellCgroup | undefined {
+/**
+ * A cgroup of its own for one cell, capped at `memoryMiB` (`undefined`: no
+ * cap, for a crew run); `undefined` where the host has none. `share` is its
+ * `cpu.weight`, `io.weight` and `cpu.max` where those controllers reach it;
+ * unset leaves the defaults, 100 and no quota.
+ */
+export function openCellCgroup(
+  memoryMiB: number | undefined,
+  at: CgroupHost = cgroupHost(),
+  share?: CpuShare,
+): CellCgroup | undefined {
   if (!at.ok) return undefined;
   const dir = join(at.root, "cells", `c${nextCell++}-${process.pid}`);
-  const maxBytes = Math.floor(memoryMiB * 1024 * 1024);
+  const maxBytes = memoryMiB === undefined ? Infinity : Math.floor(memoryMiB * 1024 * 1024);
   try {
     mkdirSync(dir);
-    writeFileSync(join(dir, "memory.max"), String(maxBytes));
+    if (memoryMiB !== undefined) writeFileSync(join(dir, "memory.max"), String(maxBytes));
   } catch {
     removeDir(dir, 1);
     return undefined;
   }
   // Swap would only let a cell outlive its cap slowly; one OOM kills the cell, not a process of it.
-  for (const [file, value] of [["memory.swap.max", "0"], ["memory.oom.group", "1"]] as const) {
-    try {
-      if (existsSync(join(dir, file))) writeFileSync(join(dir, file), value);
-    } catch {
-      // an older kernel: the cap still holds
+  if (memoryMiB !== undefined)
+    for (const [file, value] of [["memory.swap.max", "0"], ["memory.oom.group", "1"]] as const) {
+      try {
+        if (existsSync(join(dir, file))) writeFileSync(join(dir, file), value);
+      } catch {
+        // an older kernel: the cap still holds
+      }
+    }
+  // cgroupfs makes no file it does not have: a controller not delegated is a write refused.
+  if (share !== undefined) {
+    const files: [string, string][] = [
+      ["cpu.weight", String(share.weight)],
+      ["io.weight", `default ${share.weight}`],
+    ];
+    if (share.cpus !== undefined && Number.isFinite(share.cpus) && share.cpus > 0)
+      files.push(["cpu.max", cpuMax(share.cpus)]);
+    for (const [file, value] of files) {
+      try {
+        writeFileSync(join(dir, file), value);
+      } catch {
+        // no cpu or io controller here: nice and SCHED_BATCH still hold
+      }
     }
   }
   return {
@@ -228,4 +298,12 @@ export function enterArgv(procs: string, argv: readonly string[]): string[] {
     procs,
     ...argv,
   ];
+}
+
+/**
+ * Like `enterArgv`, for work that runs either way (a crew run): it enters
+ * the cgroup if it can, and runs as before if it cannot. Arguments only.
+ */
+export function tryEnterArgv(procs: string, argv: readonly string[]): string[] {
+  return ["/bin/sh", "-c", '{ echo $$ > "$1"; } 2>/dev/null; shift; exec "$@"', "cgroup-enter", procs, ...argv];
 }

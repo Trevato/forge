@@ -519,6 +519,12 @@ describe("web pages end to end", () => {
     expect(repoPage).not.toContain("<script>alert"); // and defanged
     expect(repoPage).toContain("src"); // tree listing
     expect(repoPage).toContain("/ada/engine.git"); // clone url
+    // the address is a read-only input (selectable with no JS) beside a copy button
+    expect(repoPage).toMatch(
+      /<input[^>]*class="input[^"]*"[^>]*id="clone-https"[^>]*readonly[^>]*value="[^"]*\/ada\/engine\.git"/,
+    );
+    expect(repoPage).toContain('data-copy="clone-https"');
+    expect(repoPage).not.toContain('class="clone');
 
     const treePage = await (
       await fetch(`${base}/ada/engine/tree/main/src`)
@@ -649,6 +655,15 @@ describe("themes", () => {
     for (const name of THEME_NAMES) {
       expect(text).toContain(`value="${name}"`);
     }
+    // §5: each choice is a labelled radio, the button a plain btn; no bespoke classes.
+    const form = text.slice(text.indexOf('action="/theme"'));
+    const end = form.indexOf("</form>");
+    const panel = form.slice(0, end);
+    expect(panel.match(/<label class="check">/g)?.length).toBe(THEME_NAMES.length + 1);
+    expect(panel.match(/type="radio"/g)?.length).toBe(THEME_NAMES.length + 1);
+    expect(panel).toMatch(/<button\s+type="submit"[\s\S]*class="btn"[\s\S]*Apply/);
+    expect(text).not.toContain("theme-option");
+    expect(text).not.toContain("theme-apply");
     // Critical paint before the stylesheet: system pair (light default + dark
     // media), then a rule per theme so a toggle repaints without a reload.
     const boot = text.match(/<style nonce="[^"]+">([^<]*)<\/style>/)?.[1];

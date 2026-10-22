@@ -21,6 +21,7 @@ import {
   tokenNote,
   type TokenBasis,
 } from "../kernel/tokens-format.ts";
+import { drawChart, type Cell, type Chart } from "../boards/chart.ts";
 import { icon, type IconName } from "./icons.ts";
 import { Html, html, raw, when } from "./html.ts";
 
@@ -220,6 +221,36 @@ export function iconBtn(
     extra: `btn-icon${o.extra ? ` ${o.extra}` : ""}`,
   };
   return btn(icon(name), opts);
+}
+
+/**
+ * A string people copy — a clone address, a redirect URI, a command: a
+ * read-only `.input` beside a copy button. The value is plain text in the
+ * markup, so it selects and copies with no JavaScript; the button is the
+ * shortcut. `id` is what the copy script looks up; `label` names the field
+ * and `copyLabel` the button, each written out so acronyms keep their case.
+ */
+export function copyField(
+  id: string,
+  value: string,
+  label: string,
+  copyLabel: string,
+): Html {
+  return html`<span class="bar"
+    ><input
+      class="input grow mono"
+      id="${id}"
+      type="text"
+      readonly
+      value="${value}"
+      aria-label="${label}"
+      data-size="sm"
+    />${iconBtn("copy", copyLabel, {
+      size: "sm",
+      type: "button",
+      copy: id,
+    })}</span
+  >`;
 }
 
 // ---- badges, labels, pills, dots ----
@@ -724,6 +755,14 @@ export function meter(percent: number, label: string, tone?: "attn"): Html {
   >${value}%</meter>`;
 }
 
+/**
+ * A drawn chart in the box that holds its space: `drawChart`'s svg `.chart`
+ * inside `.chart-box`, which a table panel marks `.is-table`.
+ */
+export function chartBox(chart: Chart, cells: readonly Cell[], title: string): Html {
+  return html`<div class="chart-box${chart === "table" ? " is-table" : ""}">${raw(drawChart(chart, cells, title))}</div>`;
+}
+
 /** A short object id in a monospace chip — always the first 7 characters. */
 export function sha(oid: string, href?: string): Html {
   const short = oid.slice(0, 7);
@@ -879,6 +918,8 @@ export interface RowOptions {
   href?: string;
   title: Html | string;
   meta?: Html;
+  /** Draw `.row-meta` even when `meta` is empty, for a script to write into. */
+  metaSlot?: boolean;
   lead?: Html;
   trail?: Html;
   state?: "open" | "closed" | "merged" | "draft";
@@ -911,7 +952,7 @@ export function row(o: RowOptions): Html {
         ${o.titleAttr ? html`title="${o.titleAttr}"` : null}
         >${o.title}</span
       >
-      ${o.meta ? html`<span class="row-meta">${o.meta}</span>` : null}
+      ${o.meta || o.metaSlot ? html`<span class="row-meta">${o.meta}</span>` : null}
     </span>
     ${o.trail && o.trail.text.trim() !== ""
       ? html`<span class="row-trail">${o.trail}</span>`

@@ -28,7 +28,7 @@ import {
   findOrigin,
   getOriginById,
   getOriginFor,
-  hostOf, siteOf,
+  siteOf,
   linkRepoToOrigin,
   listDetachedMirrors,
   listMirrors,
@@ -94,7 +94,6 @@ import { open } from "../kernel/secret.ts";
 import {
   staticCredential,
   type OriginKind,
-  type Provider,
 } from "../origins/types.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import {

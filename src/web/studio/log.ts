@@ -9,6 +9,7 @@
 import type { RunKind } from "../../core/runs.ts";
 import { logLine } from "../pages/runs.ts";
 import { html, when, type Html } from "../html.ts";
+import { badge } from "../ui.ts";
 import { unnamedRun, voiceFor, type Actor } from "./voice.ts";
 
 /**
@@ -98,9 +99,11 @@ export function logBox(opts: {
     ${when(
       opts.pulse === true,
       () =>
-        html`<div class="ln ln-pulse" id="${opts.id}-pulse">
-          <span class="who">${opts.who}</span
-          ><span class="txt"><i></i><i></i><i></i></span>
+        html`<div class="row" data-line="pulse" id="${opts.id}-pulse">
+          <span class="row-lead">${badge(opts.who, { variant: "outline" })}</span>
+          <span class="row-main"
+            ><span class="row-title"><i></i><i></i><i></i></span></span
+          >
         </div>`,
     )}
     ${opts.extra ?? null}

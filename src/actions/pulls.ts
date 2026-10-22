@@ -33,7 +33,7 @@ import {
 } from "../core/pulls.ts";
 import { isStructural, pillarsOf } from "../core/pillars.ts";
 import type { Repo } from "../core/repos.ts";
-import { canRead, getRepoById } from "../core/repos.ts";
+import { canRead } from "../core/repos.ts";
 import { sealedByNumber } from "../core/sealed.ts";
 import {
   addReviewComment,
@@ -60,7 +60,6 @@ import { grantRun } from "../core/run_grant.ts";
 import { commitIdentity } from "../core/commit_identity.ts";
 import { getUserById, getUserByName, type User } from "../core/users.ts";
 import type { MergeStrategy } from "../git/merge.ts";
-import { fetchInto, resolveOid, writeRef } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { importIssue, importReviewStates } from "../origins/import.ts";
 import { err, ok, type Result } from "../kernel/result.ts";

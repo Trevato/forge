@@ -86,6 +86,7 @@ import {
 } from "./explorer.ts";
 import { accountOnly, hostLabel, originIcon } from "./origins.ts";
 import { refSetFrom } from "./refs.ts";
+import { stageRow, stageStateFor } from "../stage-row.ts";
 import {
   blobView,
   codePage,
@@ -805,30 +806,28 @@ function timelineOf(
 function mergeElsewhere(scope: RepoScope): Html {
   const host =
     scope.origin === undefined ? "the origin" : hostLabel(scope.origin.webUrl);
+  // One §5 row in a toned card: `.setting-list` lets the sentence wrap and
+  // drops the button under it on a phone.
   return card(
-    html`${icon(scope.origin ? originIcon(scope.origin.kind) : "globe")}
-      <div class="grow">
-        <div class="merge-headline">Merge on ${host}.</div>
-        <p class="merge-sub">
-          You are reading this pull request live. Merging, reviewing and
-          commenting all happen where it lives — mirror the repository and
-          comments come back through this forge instead.
-        </p>
-      </div>
-      ${when(
-        scope.originUrl !== "",
-        () =>
+    html`<ul class="list setting-list">
+      ${row({
+        lead: icon(scope.origin ? originIcon(scope.origin.kind) : "globe"),
+        title: `Merge on ${host}.`,
+        meta: html`You are reading this pull request live. Merging, reviewing
+          and commenting all happen where it lives — mirror the repository and
+          comments come back through this forge instead.`,
+        trail: when(scope.originUrl !== "", () =>
           // Outline: the header's Mirror button is this page's one accent.
-          html`<span class="merge-form"
-            >${btn("Open on the origin", {
-              href: scope.originUrl,
-              variant: "outline",
-              icon: "external",
-              external: true,
-            })}</span
-          >`,
-      )}`,
-    { tone: "attn", extra: "merge-box" },
+          btn("Open on the origin", {
+            href: scope.originUrl,
+            variant: "outline",
+            icon: "external",
+            external: true,
+          }),
+        ),
+      })}
+    </ul>`,
+    { tone: "attn", pad: false, extra: "mt" },
   );
 }
 
@@ -1008,28 +1007,11 @@ const STAGES: { name: MirrorStage; label: string }[] = [
 
 const ORDER = STAGES.map((s) => s.name);
 
-/** Where one row stands relative to where the job has got to. */
-function stageState(
-  stage: MirrorStage,
-  at: MirrorStage,
-): "done" | "now" | "todo" {
-  // A failed job no longer remembers which stage it was on — `advance`
-  // overwrites it — so nothing is claimed as done. The scrubbed error under
-  // the list is the honest account, and a checklist that guessed would not be.
-  if (at === "failed") return "todo";
-  const here = ORDER.indexOf(stage);
-  const there = ORDER.indexOf(at);
-  if (here < there) return "done";
-  if (here === there) return at === "done" ? "done" : "now";
-  return "todo";
-}
-
-const GLYPH = { done: "●", now: "◐", todo: "○" } as const;
-
 /** The checklist. Its shape is what `mirrorJs` updates in place. */
 export function stageList(job: MirrorJob, streamUrl: string): Html {
   return html`<ol
-    class="stages"
+    class="list stages"
+    aria-live="polite"
     id="stages"
     data-stream="${streamUrl}"
     data-stage="${job.stage}"
@@ -1038,12 +1020,13 @@ export function stageList(job: MirrorJob, streamUrl: string): Html {
       : `/${job.repo.ownerName}/${job.repo.name}`}"
   >
     ${STAGES.map((stage) => {
-      const state = stageState(stage.name, job.stage);
-      return html`<li data-stage-name="${stage.name}" data-state="${state}">
-        <span class="stage-dot" aria-hidden="true">${GLYPH[state]}</span>
-        <span class="stage-label">${stage.label}</span>
-        <span class="stage-detail">${state === "now" ? job.detail : ""}</span>
-      </li>`;
+      const state = stageStateFor(ORDER, stage.name, job.stage, job.failedAt);
+      return stageRow({
+        name: stage.name,
+        label: stage.label,
+        state,
+        detail: job.detail,
+      });
     })}
   </ol>`;
 }

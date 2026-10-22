@@ -59,7 +59,7 @@ import {
   updateRepoSettings,
 } from "../../actions/repos.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
-import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
+import { nameFrame, notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { appVitals, shiftText, speedText as ms, type AppVitals } from "../../apps/vitals.ts";
 import type { PreviewData } from "../../apps/data.ts";
 import {
@@ -136,6 +136,13 @@ function loadAdminRepo(ctx: Ctx): Repo | undefined {
   const repo = loadRepo(ctx);
   if (!repo || !canAdmin(ctx.app.db, repo, ctx.auth.user)) return undefined;
   return repo;
+}
+
+/** `loadAdminRepo` for a GET page: names the session, then the repo read as `repo`. */
+function timedAdminRepo(ctx: Ctx): Repo | undefined {
+  nameFrame(ctx.request);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  return timePhase(ctx.request, "repo", () => loadAdminRepo(ctx));
 }
 
 function sections(base: string, active: Section) {
@@ -225,31 +232,41 @@ async function adminForm(
  * webhooks, the danger zone — one quiet section over in the same frame.
  */
 export async function settingsPage(ctx: Ctx): Promise<Response> {
-  const readable = loadRepo(ctx);
+  nameFrame(ctx.request);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const [readable, repo] = timePhase(ctx.request, "repo", () => {
+    const r = loadRepo(ctx);
+    return [r, r ? loadAdminRepo(ctx) : undefined] as const;
+  });
   if (!readable) return repoNotFound(ctx);
-  const lead = settingsLead(ctx, readable);
-  const repo = loadAdminRepo(ctx);
+  const lead = timePhase(ctx.request, "lead", () => settingsLead(ctx, readable));
   if (!repo) {
-    const proposals = proposalTokensSection(ctx, readable);
-    return page({
-      ctx,
-      title: pageTitle("settings", readable, true),
-      crumbs: crumbsFor(readable),
-      palette: repoPalette(ctx, readable),
-      body: html`${repoHeader(ctx, readable, "settings", { compact: true })}
+    return timePhase(ctx.request, "render", () => {
+      const proposals = proposalTokensSection(ctx, readable);
+      return page({
+        ctx,
+        title: pageTitle("settings", readable, true),
+        crumbs: crumbsFor(readable),
+        palette: repoPalette(ctx, readable),
+        body: html`${repoHeader(ctx, readable, "settings", { compact: true })}
       ${lead}${proposals ? html`<div class="mt">${proposals}</div>` : null}`,
+      });
     });
   }
   const base = repoBase(repo);
   const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
-  const refs = await listRefs(dir, "refs/heads/");
+  const refs = await timePhaseAsync(ctx.request, "refs", () => listRefs(dir, "refs/heads/"));
+  let renderMs = 0;
+  let since = performance.now();
   const branches = refs.ok
     ? refs.value.map((r) => r.name.replace("refs/heads/", "")).sort()
     : [];
   const tip = refs.ok
     ? refs.value.find((r) => r.name === `refs/heads/${repo.defaultBranch}`)?.oid
     : undefined;
-  const cellMemory = await checkMemoryAt(dir, tip);
+  renderMs += performance.now() - since;
+  const cellMemory = await timePhaseAsync(ctx.request, "check", () => checkMemoryAt(dir, tip));
+  since = performance.now();
   if (!branches.includes(repo.defaultBranch))
     branches.unshift(repo.defaultBranch);
 
@@ -372,7 +389,9 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
     </form>`,
     { head: html`${icon("folder")}<h2>Archive</h2>` },
   );
-  const held = getMirrorTarget(ctx.app.db, repo.id);
+  renderMs += performance.now() - since;
+  const held = timePhase(ctx.request, "mirror", () => getMirrorTarget(ctx.app.db, repo.id));
+  since = performance.now();
   const mirror =
     held === undefined
       ? null
@@ -388,7 +407,7 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
           </form>`,
           { head: html`${icon("branch")}<h2>Mirror</h2>` },
         );
-  return settingsPageResponse(
+  const response = settingsPageResponse(
     ctx,
     repo,
     "general",
@@ -401,6 +420,8 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
       ? html`<div class="mt">${secrets}</div>`
       : null}`,
   );
+  notePhase(ctx.request, "render", renderMs + performance.now() - since);
+  return response;
 }
 
 export async function settingsUpdate(ctx: Ctx): Promise<Response> {
@@ -937,7 +958,7 @@ function appDomainsView(
       ${when(
         rows.length > 0,
         () =>
-          html`<ul class="list">
+          html`<ul class="list setting-list">
             ${rows}
           </ul>`,
       )}
@@ -982,13 +1003,20 @@ function appDomainsView(
 
 /** The records as a person copies them into a zone: type, name, value. */
 function recordsToPublish(records: DnsRecord[]): Html {
-  const width = Math.max(...records.map((r) => r.name.length)) + 2;
-  const lines = records
-    .map((r) => `${r.type.padEnd(6)} ${r.name.padEnd(width)} ${r.value}`)
-    .join("\n");
-  const notes = records.filter((r) => r.note !== undefined);
-  return html`<pre class="domain-records">${lines}</pre>
-    ${notes.map((r) => html`<span class="row-meta">${r.note}</span>`)}`;
+  return html`${records.map(
+    (r) =>
+      html`<span class="row-meta"
+        >${badge(r.type, { variant: "outline" })}
+        <span class="mono">${r.name}</span>
+        <span aria-hidden="true">→</span>
+        <span class="mono record-value" title="${r.value}"
+          >${r.value}</span
+        ></span
+      >`,
+  )}
+  ${records
+    .filter((r) => r.note !== undefined)
+    .map((r) => html`<span class="row-meta">${r.note}</span>`)}`;
 }
 
 const appValues = (repo: Repo, record: AppRecord | undefined): AppValues => ({
@@ -1538,15 +1566,17 @@ function promptsView(base: string, sources: PromptSourceView[]): Html {
 
 // GET /:owner/:name/settings/prompts
 export function promptsSettingsPage(ctx: Ctx): Response {
-  const repo = loadAdminRepo(ctx);
+  const repo = timedAdminRepo(ctx);
   if (!repo) return repoNotFound(ctx);
-  const listed = listPromptSources(ctx.app, ctx.auth.user, repo);
-  return settingsPageResponse(
-    ctx,
-    repo,
-    "prompts",
-    "Prompts",
-    promptsView(repoBase(repo), listed.ok ? listed.value : []),
+  const listed = timePhase(ctx.request, "sources", () => listPromptSources(ctx.app, ctx.auth.user, repo));
+  return timePhase(ctx.request, "render", () =>
+    settingsPageResponse(
+      ctx,
+      repo,
+      "prompts",
+      "Prompts",
+      promptsView(repoBase(repo), listed.ok ? listed.value : []),
+    ),
   );
 }
 
@@ -1739,10 +1769,11 @@ function labelEditor(base: string, label: Label): Html {
 }
 
 export function labelsPage(ctx: Ctx): Response {
-  const repo = loadAdminRepo(ctx);
+  const repo = timedAdminRepo(ctx);
   if (!repo) return repoNotFound(ctx);
+  const labels = timePhase(ctx.request, "labels", () => listLabels(ctx.app.db, repo.id));
+  const rendering = performance.now();
   const base = repoBase(repo);
-  const labels = listLabels(ctx.app.db, repo.id);
 
   const list =
     labels.length === 0
@@ -1775,7 +1806,7 @@ export function labelsPage(ctx: Ctx): Response {
 
   const body = html`${list}
     <div class="mt">${create}</div>`;
-  return settingsPageResponse(
+  const response = settingsPageResponse(
     ctx,
     repo,
     "labels",
@@ -1783,6 +1814,8 @@ export function labelsPage(ctx: Ctx): Response {
     body,
     labelCss(labels),
   );
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 export async function labelCreate(ctx: Ctx): Promise<Response> {
@@ -1862,10 +1895,16 @@ export async function labelDelete(ctx: Ctx): Promise<Response> {
 // ---- webhooks ----
 
 export function hooksPage(ctx: Ctx): Response {
-  const repo = loadAdminRepo(ctx);
+  const repo = timedAdminRepo(ctx);
   if (!repo) return repoNotFound(ctx);
+  const hooks = timePhase(ctx.request, "hooks", () => listWebhooks(ctx.app.db, repo.id));
+  const recent = timePhase(
+    ctx.request,
+    "deliveries",
+    () => new Map(hooks.map((h) => [h.id, recentDeliveries(ctx.app.db, h.id, 10)] as const)),
+  );
+  const rendering = performance.now();
   const base = repoBase(repo);
-  const hooks = listWebhooks(ctx.app.db, repo.id);
 
   const list =
     hooks.length === 0
@@ -1875,7 +1914,7 @@ export function hooksPage(ctx: Ctx): Response {
           note: "Every event this repository produces can be POSTed to a URL you control, signed and retried.",
         })
       : html`${hooks.map((hook) => {
-          const deliveries = recentDeliveries(ctx.app.db, hook.id, 10);
+          const deliveries = recent.get(hook.id) ?? [];
           return card(
             deliveries.length === 0
               ? html`<p class="muted small">No deliveries yet.</p>`
@@ -1972,7 +2011,9 @@ export function hooksPage(ctx: Ctx): Response {
 
   const body = html`${list}
     <div class="mt">${create}</div>`;
-  return settingsPageResponse(ctx, repo, "hooks", "Webhooks", body);
+  const response = settingsPageResponse(ctx, repo, "hooks", "Webhooks", body);
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 export async function webhookCreate(ctx: Ctx): Promise<Response> {
@@ -2021,8 +2062,9 @@ export async function webhookDelete(ctx: Ctx): Promise<Response> {
 // ---- danger zone ----
 
 export function dangerPage(ctx: Ctx): Response {
-  const repo = loadAdminRepo(ctx);
+  const repo = timedAdminRepo(ctx);
   if (!repo) return repoNotFound(ctx);
+  const rendering = performance.now();
   const base = repoBase(repo);
   const full = `${repo.ownerName}/${repo.name}`;
 
@@ -2048,7 +2090,9 @@ export function dangerPage(ctx: Ctx): Response {
         <h2>Delete this repository</h2>`,
     },
   );
-  return settingsPageResponse(ctx, repo, "danger", "Danger zone", body);
+  const response = settingsPageResponse(ctx, repo, "danger", "Danger zone", body);
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 /**

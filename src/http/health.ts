@@ -7,19 +7,67 @@
  *   opens, however slow the moment; the only 503 is a database that will
  *   not answer at all. The liveness probe asks this, and a restart is its
  *   only remedy, so it says no only when a restart could help.
- * - `/readyz` — ready. 503 once the forge is draining — a release's old
- *   process, finishing what it holds while the new one takes everything
- *   new. The readiness probe asks this; it routes, it never restarts.
+ * - `/readyz` — ready. 503 while a new forge's apps are still starting
+ *   (the old one serves them meanwhile, #4496), and 503 once the forge is
+ *   draining — a release's old process, finishing what it holds while the
+ *   new one takes everything new. The readiness probe asks this; it
+ *   routes, it never restarts.
  *
  * Every deliberate 503 is said in the log, once, at the moment it starts.
  */
 
 import type { Log } from "../kernel/log.ts";
 
-export const health: { draining: boolean; drainingSince: number | null } = {
+export const health: {
+  draining: boolean;
+  drainingSince: number | null;
+  /** How many apps this boot is still bringing up, once the apps runtime is on. */
+  starting?: (() => number) | undefined;
+  /** When the wait for them began; past `STARTING_BUDGET_MS` it is ready regardless. */
+  startingSince?: number | undefined;
+} = {
   draining: false,
   drainingSince: null,
 };
+
+/**
+ * How long a new forge's readiness waits for the apps its boot is starting
+ * (#4496): the forge it replaces keeps serving them meanwhile. Bounded, so
+ * one app that never comes up cannot hold a rollout; past it the rest come
+ * up behind a ready forge, as before.
+ */
+export const STARTING_BUDGET_MS = 120_000;
+
+/**
+ * Not ready until `count` apps are up. Said in the log once, when the wait
+ * starts and when it ends. Nothing to wait for says nothing.
+ */
+export function startWarming(log: Log, count: () => number, now = Date.now()): void {
+  const waiting = count();
+  if (waiting === 0) return;
+  health.starting = count;
+  health.startingSince = now;
+  log.info("forge starting its apps: /readyz answers 503 until they serve", {
+    apps: waiting,
+    budgetS: STARTING_BUDGET_MS / 1000,
+  });
+  startedLog = log;
+}
+
+let startedLog: Log | undefined;
+
+/** Whether readiness still waits on the apps, and how many. Ends the wait for good once it is over. */
+function stillStarting(now: number): number {
+  if (health.starting === undefined) return 0;
+  const waiting = health.starting();
+  const over = now - (health.startingSince ?? now) >= STARTING_BUDGET_MS;
+  if (waiting > 0 && !over) return waiting;
+  startedLog?.info("forge ready: its apps serve", over && waiting > 0 ? { stillStarting: waiting } : {});
+  health.starting = undefined;
+  health.startingSince = undefined;
+  startedLog = undefined;
+  return 0;
+}
 
 /** Whether the last liveness answer was a 503, so the log says so once. */
 let databaseDown = false;
@@ -81,9 +129,15 @@ export function drainLingerMs(raw: string | undefined): number | null {
   return seconds <= DRAIN_LINGER_MAX_S ? seconds * 1000 : null;
 }
 
-/** Readiness: 200 while the forge takes new work, 503 once it drains. */
-export function readyResponse(): Response {
-  return health.draining
-    ? new Response("draining", { status: 503 })
+/**
+ * Readiness: 503 while the apps this boot started do not serve yet (within
+ * `STARTING_BUDGET_MS`), 200 while the forge takes new work, 503 once it
+ * drains.
+ */
+export function readyResponse(now = Date.now()): Response {
+  if (health.draining) return new Response("draining", { status: 503 });
+  const waiting = stillStarting(now);
+  return waiting > 0
+    ? new Response(`starting ${waiting} app${waiting === 1 ? "" : "s"}`, { status: 503 })
     : new Response("ok", { status: 200 });
 }

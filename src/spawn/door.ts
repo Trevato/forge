@@ -7,7 +7,7 @@
  */
 
 import { startWatch, probeOf, type Probe } from "./live.ts";
-import { founderClash, listChildren, reissueClaim, spawnForge, type SpawnError } from "../actions/spawn.ts";
+import { founderClash, reissueClaim, spawnForge, type SpawnError } from "../actions/spawn.ts";
 import type { App } from "../app.ts";
 import { maxChildren } from "../core/capacity.ts";
 import { getAgentByName } from "../core/agents.ts";

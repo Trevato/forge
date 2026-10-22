@@ -19,7 +19,6 @@ import {
   type Skipped,
 } from "../../actions/asks_bulk.ts";
 import { getDecision } from "../../core/decisions.ts";
-import { getIssueById } from "../../core/issues.ts";
 import { decideAsk, undoDecideAsk } from "../../actions/asks_decide.ts";
 import type { FleetValue } from "../../core/fleet_ops.ts";
 import { muteRepo, removeMutes } from "../../core/interactions.ts";
@@ -79,9 +78,8 @@ const BULK_KINDS: ReadonlySet<Decision["kind"]> = new Set(["look", "review", "st
 /** A row's box for the bulk form, which sits apart (`form="asks-bulk"`): forms do not nest. */
 const pick = (d: Decision, picked: ReadonlySet<string>): Html | null =>
   BULK_KINDS.has(d.kind)
-    ? html`<label class="ask-pick-hit"><input
+    ? html`<label class="check"><input
         type="checkbox"
-        class="ask-pick"
         name="item"
         value="${d.id}"
         form="asks-bulk"
@@ -163,7 +161,7 @@ const clause = (
   which?: string,
 ): Html =>
   html`<p>
-    ${weight(c, which)}${d === undefined ? null : html`<span class="ask-short">${d.short.charAt(0).toUpperCase()}${d.short.slice(1)}. </span>`}<span class="muted"
+    ${weight(c, which)}${d === undefined ? null : html`${d.short.charAt(0).toUpperCase()}${d.short.slice(1)}. `}<span class="muted"
       >If nobody acts, ${ASK_WORDS[kind].ifNothing}.</span
     >
   </p>`;
@@ -182,22 +180,10 @@ const KIND_LABEL: Readonly<Record<Decision["kind"], string>> = {
   assigned: "Assigned",
 };
 
-/**
- * An ask's actions: the one that decides, then the rest. A wide screen
- * lays them in a line; a phone puts the decider at the trailing edge, 44 px
- * tall, and the rest behind one tap ("More").
- */
+/** An ask's actions in a line: the one that decides, then the rest. */
 function acts(ctx: Ctx, d: Decision): Html {
   const { primary, others } = decisionButtons(ctx, d);
-  return html`<div class="ask-acts">
-    ${primary}
-    ${others.length === 0
-      ? null
-      : html`<details class="ask-more-acts">
-          <summary class="btn" data-size="sm">More</summary>
-          ${others}
-        </details>`}
-  </div>`;
+  return html`<div class="bar mt">${primary}${others}</div>`;
 }
 
 /** What the crew advised on a pull waiting for a person, in one plain line; nothing when it wrote none. */
@@ -237,11 +223,9 @@ function decisionCard(ctx: Ctx, d: Decision, picked: ReadonlySet<string>): Html 
       ${acts(ctx, d)}`,
     {
       id: askAnchor(d.id),
-      extra: "ask-card",
       head: html`${pick(d, picked)}
         <h2>${title}</h2>
-        <span class="ask-meta muted small"
-          ><b class="ask-kind">${KIND_LABEL[d.kind]}</b>${d.repo.ownerName}/${d.repo.name}</span
+        <span class="muted small"><b>${KIND_LABEL[d.kind]}</b> · ${d.repo.ownerName}/${d.repo.name}</span
         >${waitChip(d.waiting)}`,
     },
   );
@@ -249,7 +233,7 @@ function decisionCard(ctx: Ctx, d: Decision, picked: ReadonlySet<string>): Html 
 
 /** What the row waits for and on whom: "ready to land · on you". */
 const waitChip = (w: WaitingFor): Html =>
-  html`<span class="ask-waiting small" data-waiting="${w.word}"
+  html`<span class="badge" data-variant="outline" data-waiting="${w.word}"
     ><span class="sr-only">waiting for </span>${w.word} · on ${w.on}</span
   >`;
 
@@ -290,24 +274,16 @@ function rowCard(ctx: Ctx, r: AskRow<Decision>, picked: ReadonlySet<string>): Ht
         meta: acts(ctx, d),
       });
   });
-  // On a phone a group is its head line, its asks one tap away, so two
-  // groups never push the composer past the fold; a wider screen holds the
-  // details open and shows every line, as before.
   return card(
-    html`<details class="ask-group">
-      <summary>Show all ${r.items.length}</summary>
-      <ul class="list">
-        ${lines}
-      </ul>
-    </details>`,
+    html`<ul class="list">
+      ${lines}
+    </ul>`,
     {
       pad: false,
       id: askAnchor(r.id),
-      extra: "ask-card",
       head: html`${BULK_KINDS.has(r.kind)
-          ? html`<label class="ask-pick-hit"><input
+          ? html`<label class="check"><input
               type="checkbox"
-              class="ask-pick"
               data-select-all
               aria-label="Select all ${r.items.length}"
             /></label>`
@@ -359,7 +335,7 @@ function renderAsks(ctx: Ctx, top: AsksTop | undefined): Response {
   const response = page({
     ctx,
     title: "Asks",
-    body: html`<main class="stack"><h1 class="sr-only">Asks</h1>${onYouRegion(ctx, user, undefined, section.body)}</main>`,
+    body: html`<main class="stack"><h1 class="sr-only">Asks</h1>${onYouRegion(ctx, user, undefined, section.body)}<p class="small muted"><a href="/review">Review: one row per ask</a></p></main>`,
     scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${section.scriptJs}`,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);

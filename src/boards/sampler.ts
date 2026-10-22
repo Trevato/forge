@@ -3,7 +3,9 @@
  * for the `machine` source a board queries:
  *
  * - `forge`: the pod, from its cgroup v2 — `cpu.stat` `usage_usec` as a
- *   rate, and `memory.current`.
+ *   rate, and `memory.current` — and whether it still serves (#3319): its
+ *   event loop's p99 lateness over the step (`kernel/loop_lag.ts`), beside
+ *   the checks and crew runs running at the instant (`run` rows).
  * - `check:<run id>` and `app:<slug>/<env>`: each labelled cell, from the
  *   watch that holds it to its limits (`apps/contain.ts`). A container
  *   cannot make a cgroup per cell, so this is the cell's process tree read
@@ -23,6 +25,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { cellCounters, type CellCounter } from "../apps/contain.ts";
+import { startLoopLag, type LoopLag } from "../kernel/loop_lag.ts";
 import { FINE_MS, record, type Point } from "./ring.ts";
 import { readHwmon, readTopology, temperatures } from "./thermal.ts";
 
@@ -131,23 +134,40 @@ function cores(a: number | null | undefined, b: number | null | undefined, secon
   return (b - a) / 1_000_000 / seconds;
 }
 
+/** What the forge's own serving looked like over one step, for its `forge` point. */
+export type Serving = { lagMs: number | null; checks: number | null; agents: number | null };
+
+/** Checks and crew runs running now: the children that compete with the forge for its CPU. */
+export function runningChildren(db: App["db"]): { checks: number; agents: number } {
+  const rows = db.query<{ kind: string; n: number }, []>(
+    "SELECT kind, COUNT(*) AS n FROM run WHERE state = 'running' AND kind IN ('check', 'agent') GROUP BY kind",
+  ).all();
+  const n = (kind: string) => rows.find((r) => r.kind === kind)?.n ?? 0;
+  return { checks: n("check"), agents: n("agent") };
+}
+
 /**
  * The points between two readings. Without a reading before, CPU is null
  * (a rate needs two). A target with nothing readable has no point at all.
  * A label's cells are summed; a cell new since `prev` adds its memory but
  * not yet its CPU.
  */
-export function pointsOf(prev: Counters | undefined, next: Counters): Point[] {
+export function pointsOf(prev: Counters | undefined, next: Counters, serving?: Serving): Point[] {
   const seconds = prev === undefined ? 0 : (next.at - prev.at) / 1000;
   const out: Point[] = [];
   const push = (p: Point) => {
-    if (p.cpuCores !== null || p.memoryBytes !== null || p.load !== null || p.celsius != null) out.push(p);
+    if (p.cpuCores !== null || p.memoryBytes !== null || p.load !== null || p.celsius != null || p.lagMs != null)
+      out.push(p);
   };
-  push({
+  const forge: Point = {
     at: next.at, target: "forge",
     cpuCores: cores(prev?.forge.cpuUsec, next.forge.cpuUsec, seconds),
     memoryBytes: next.forge.memoryBytes, load: null,
-  });
+  };
+  if (serving?.lagMs != null) forge.lagMs = serving.lagMs;
+  if (serving?.checks != null) forge.checks = serving.checks;
+  if (serving?.agents != null) forge.agents = serving.agents;
+  push(forge);
   const before = new Map((prev?.cells ?? []).map((c) => [c.key, c]));
   const byLabel = new Map<string, Point>();
   for (const c of next.cells) {
@@ -205,15 +225,16 @@ export type Sampler = { tick(now?: number): void; stop(): void };
 /** Sample every 15 s into `app.db` until stopped. A failed tick is logged and the next one tries again. */
 export function startSampler(
   app: App,
-  options: { paths?: Paths; cells?: () => readonly CellCounter[]; everyMs?: number } = {},
+  options: { paths?: Paths; cells?: () => readonly CellCounter[]; everyMs?: number; lag?: LoopLag } = {},
 ): Sampler {
   const paths = options.paths ?? SYSTEM;
   const cells = options.cells ?? cellCounters;
+  const lag = options.lag ?? startLoopLag();
   let prev: Counters | undefined;
   const tick = (now = Date.now()) => {
     try {
       const next = readCounters(paths, cells(), now);
-      record(app.db, pointsOf(prev, next), now);
+      record(app.db, pointsOf(prev, next, { lagMs: lag.take(), ...runningChildren(app.db) }), now);
       prev = next;
     } catch (error) {
       app.log.warn("machine sample failed", { error: String(error) });
@@ -222,5 +243,11 @@ export function startSampler(
   tick();
   const timer = setInterval(tick, options.everyMs ?? FINE_MS);
   timer.unref?.();
-  return { tick, stop: () => clearInterval(timer) };
+  return {
+    tick,
+    stop: () => {
+      clearInterval(timer);
+      lag.stop();
+    },
+  };
 }

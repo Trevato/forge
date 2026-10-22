@@ -43,7 +43,6 @@ import { listRepoRuns, mayReadRunLog } from "../../actions/runs.ts";
 import { previewEnv } from "../../apps/data.ts";
 import { findingsWords, pullPreviewFindings } from "../../core/preview_findings.ts";
 import {
-  appsRuntime,
   type EnvState,
   type EnvStatus, envsFor } from "../../apps/runtime.ts";
 import { proposedByText } from "../../core/proposal_token.ts";
@@ -64,7 +63,6 @@ import { checkSummary, type CheckSummary } from "../../core/runs.ts";
 import { err, ok } from "../../kernel/result.ts";
 import { getUsersByIds } from "../../core/users.ts";
 import {
-  anchorId,
   anchorKey,
   listReviewComments,
   withOutdated,
@@ -102,7 +100,6 @@ import {
   hitScroll,
   errorText,
   live,
-  metaOf,
   openLink,
   plural,
   relTime,

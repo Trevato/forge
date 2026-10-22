@@ -9,7 +9,6 @@
 
 import { getRepoById } from "../../core/repos.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
-import type { User } from "../../core/users.ts";
 import { running } from "../../kernel/version.ts";
 import type { Ctx } from "../../http/context.ts";
 import { listReleases, type Release } from "../../release/record.ts";

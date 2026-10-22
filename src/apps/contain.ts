@@ -37,6 +37,7 @@ import { availableParallelism, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { portInsteadOfSocket } from "../git/hook-address.ts";
 import { relay, startEgress, type Egress } from "./egress.ts";
+import { BACKGROUND_CPU_WEIGHT } from "./background.ts";
 import { cgroupHost, enterArgv, openCellCgroup } from "./cgroup.ts";
 
 /** `ceiling`: a declaration was cut to the machine's maximum; `declared`: forge.json's own; `default`: neither. */
@@ -206,6 +207,12 @@ export interface CellSpec {
    * the same, and never sampled.
    */
   readonly label?: string | undefined;
+  /**
+   * A step, not an app: its cgroup weighs less than an app's and the
+   * forge's, and the kernel holds it to `limits.cpus` cores
+   * (`apps/background.ts`). The step runner sets it.
+   */
+  readonly background?: boolean | undefined;
 }
 
 /**
@@ -407,7 +414,11 @@ export function openCell(
   // small and bounded, and the ones that only exist to hide are read-only.
   const SMALL = String(1 << 20);
 
-  const cgroup = openCellCgroup(spec.limits.memoryMiB);
+  const cgroup = openCellCgroup(
+    spec.limits.memoryMiB,
+    cgroupHost(),
+    spec.background === true ? { weight: BACKGROUND_CPU_WEIGHT, cpus: spec.limits.cpus } : undefined,
+  );
   const argv = (command: string): string[] => {
     const inner = bwrapArgv(command);
     return cgroup === undefined ? inner : enterArgv(join(cgroup.dir, "cgroup.procs"), inner);

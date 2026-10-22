@@ -19,7 +19,7 @@ import { appsRuntime } from "../../apps/runtime.ts";
 import { appsForRepos } from "../../core/apps.ts";
 import { WEIGHT_MAX, WEIGHT_NAMES } from "../../core/front.ts";
 import { LOOK_SIZES } from "../../core/looks.ts";
-import { canRead, getRepo, type Repo } from "../../core/repos.ts";
+import { canRead, getRepo } from "../../core/repos.ts";
 import { type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { activeEdgeToken, edgeLoginUrl, edgeStrangerLogin } from "../../http/edge.ts";
@@ -51,7 +51,7 @@ import { writableAppsOf } from "./asks.ts";
 import { needsYouSection } from "./asks_page.ts";
 import { flowCards } from "./flow_card.ts";
 import { composer, feedJs, feedNote, feedRegion } from "./feed.ts";
-import { kpiRow } from "./kpi_row.ts";
+import { kpiRow, waitingLine } from "./kpi_row.ts";
 import { feedCandidateCache } from "../../feed/feed.ts";
 import { notePhase, notePhaseRest, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { kpiCache, panelCache } from "./home_cache.ts";
@@ -250,6 +250,7 @@ export async function studioHome(
     ${ask} ${address} ${figures
       ? timePhase(ctx.request, "kpis", () => kpiRow(ctx.app.db, kpiOpts), () => kpiCache(ctx.app.db))
       : liveLine(ctx)}
+    ${timePhase(ctx.request, "waiting", () => waitingLine(ctx.app.db, user))}
     ${figures
       ? await timePhaseAsync(ctx.request, "panels", () => pinnedPanels(ctx.app, user), () => panelCache(ctx.app.db))
       : null}
@@ -289,7 +290,7 @@ export async function studioHome(
     body,
     scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${feedJs}${ask ? `\n${passkeyJs}` : ""}`,
   });
-  notePhaseRest(ctx.request, "render", rendering, ["kpis", "panels", "feed"]);
+  notePhaseRest(ctx.request, "render", rendering, ["kpis", "waiting", "panels", "feed"]);
   return res;
 }
 
@@ -357,25 +358,26 @@ function featuredCard(featured: NonNullable<FrontPage["featured"]>): Html {
             }),
           ])
         : null;
-  return html`<section class="front-featured" aria-label="Featured">
-    ${when(
-      picture,
-      (src) =>
-        html`<a class="front-featured-look" href="${base}"
-          ><img
-            src="${src}"
-            width="${LOOK_SIZES.thumb.width}"
-            height="${LOOK_SIZES.thumb.height}"
-            alt="${repo.name} as it looks now"
-        /></a>`,
-    )}
-    <div class="front-featured-body">
-      <span class="small muted">Featured</span>
-      <h2><a href="${base}">${repo.ownerName}/${repo.name}</a></h2>
-      ${when(repo.description, (d) => html`<p>${d}</p>`)} ${work}
-      <div class="bar">${btn("Open", { href: base, variant: "primary" })}</div>
-    </div>
-  </section>`;
+  return card(
+    html`${when(
+        picture,
+        (src) =>
+          html`<a class="look" href="${base}"
+            ><img
+              src="${src}"
+              width="${LOOK_SIZES.thumb.width}"
+              height="${LOOK_SIZES.thumb.height}"
+              alt="${repo.name} as it looks now"
+          /></a>`,
+      )}
+      <div class="card-body stack stack-tight">
+        <span class="small muted">Featured</span>
+        <h2><a href="${base}">${repo.ownerName}/${repo.name}</a></h2>
+        ${when(repo.description, (d) => html`<p class="muted">${d}</p>`)} ${work}
+        <div class="bar">${btn("Open", { href: base, variant: "primary" })}</div>
+      </div>`,
+    { pad: false, attrs: html`role="region" aria-label="Featured"` },
+  );
 }
 
 /** A weight's name as the controls say it. */
@@ -432,7 +434,7 @@ function frontControls(ctx: Ctx, front: FrontPage): Html {
           row(`${repo} (hidden)`, act("show", repo, "Show")),
         )}
       </ul>
-      <form method="post" action="/front" class="bar front-pin-any">
+      <form method="post" action="/front" class="bar">
         <input type="hidden" name="action" value="pin" />
         <input
           class="input"
@@ -443,7 +445,7 @@ function frontControls(ctx: Ctx, front: FrontPage): Html {
         />
         ${btn("Pin", { size: "sm" })}
       </form>
-      <form method="post" action="/front" class="front-weights">
+      <form method="post" action="/front" class="bar">
         <input type="hidden" name="action" value="weights" />
         <span class="small muted">What counts, 0 to ${WEIGHT_MAX}:</span>
         ${WEIGHT_NAMES.map(
@@ -534,7 +536,7 @@ export function studioDoor(ctx: Ctx): Response {
     </section>
     ${when(front.featured, (f) => html`<div class="mt">${featuredCard(f)}</div>`)}
     ${tiles.length > 0
-      ? html`<div class="mt app-shelf">${tiles}</div>
+      ? html`<div class="mt stack" data-shelf>${tiles}</div>
           ${when(
             front.total > tiles.length + (front.featured === undefined ? 0 : 1),
             () =>

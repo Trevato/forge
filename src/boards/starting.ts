@@ -1,5 +1,5 @@
 /**
- * The boards the forge offers a new install: Usage, Crew, Releases, Apps, Security, Throughput, Forges and Reach. They are plain
+ * The boards the forge offers a new install: Usage, Serving, Crew, Releases, Apps, App restarts, Security, Throughput, Forges and Reach. They are plain
  * boards in `forge/boards` once written, so a person edits or deletes them
  * like any other; `.offered` (a JSON list of slugs, committed with the
  * boards) records what was offered so a deletion sticks and an edit is
@@ -55,6 +55,20 @@ export const STARTING_BOARDS: Readonly<Record<string, Board>> = {
       panel("Requests per hour", "bar", { source: "usage", aggregate: "sum", column: "n", groupBy: "hour", series: "status" }, 2),
     ],
   },
+  // Whether the forge still answers while its children work (#3319): the
+  // event loop's lateness beside what competes with it for CPU.
+  serving: {
+    title: "Serving",
+    range: "24h",
+    refresh: "1m",
+    panels: [
+      panel("Event-loop lag p99 (ms)", "line", { ...machine("eq", "forge", "lag_ms_max"), aggregate: "max" }, 2),
+      panel("Checks running", "line", { ...machine("eq", "forge", "checks"), aggregate: "max" }),
+      panel("Crew runs running", "line", { ...machine("eq", "forge", "agents"), aggregate: "max" }),
+      panel("Pod CPU (cores)", "line", machine("eq", "forge", "cpu_cores"), 2),
+      panel("Checks CPU (cores)", "area", { ...machine("starts", "check:", "cpu_cores"), series: "target" }, 2),
+    ],
+  },
   releases: {
     title: "Releases",
     range: "30d",
@@ -80,6 +94,17 @@ export const STARTING_BOARDS: Readonly<Record<string, Board>> = {
       panel("Sleeps per app (by repo id)", "bar", { source: "sleeps", aggregate: "count", groupBy: "repo_id", series: "placement" }, 2),
       panel("Wakes per hour", "line", { source: "wakes", aggregate: "count", groupBy: HOUR }, 2),
       panel("Requests per hour by surface", "bar", { source: "usage", aggregate: "sum", column: "n", groupBy: "hour", series: "surface" }, 2),
+    ],
+  },
+  // Every app restart and its cause (#4496): a forge roll should read zero.
+  restarts: {
+    title: "App restarts",
+    range: "7d",
+    refresh: "1m",
+    panels: [
+      panel("App restarts per day, by cause", "bar", { source: "restarts", aggregate: "count", groupBy: DAY, series: "cause" }, 2),
+      panel("Restarts per app (by repo id), by cause", "bar", { source: "restarts", aggregate: "count", groupBy: "repo_id", series: "cause" }, 2),
+      panel("Restarts by cause", "bar", { source: "restarts", aggregate: "count", groupBy: "cause" }),
     ],
   },
   crew: {

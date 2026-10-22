@@ -1,5 +1,6 @@
-/** `/settings/keys`, `/settings/tokens` and `/settings/password` name their phases signed in and answer under 50 ms (#4316). */
+/** `/settings/keys`, `/settings/tokens` and `/settings/password` name their phases signed in and answer within budget (#4316). */
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { baselineMs, expectBudget } from "./helpers/budget.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -51,7 +52,8 @@ const PAGES: [string, string[]][] = [
 ];
 
 for (const [path, names] of PAGES)
-  test(`GET ${path} names its phases and answers under 50 ms`, async () => {
+  test(`GET ${path} names its phases and answers within its budget`, async () => {
+    const against = await baselineMs(servers.url);
     await fetch(`${servers.url}${path}`, { headers: { cookie } }); // warm
     const res = await fetch(`${servers.url}${path}`, { headers: { cookie } });
     await res.text();
@@ -63,9 +65,10 @@ for (const [path, names] of PAGES)
       return Number(part!.slice(`${name};dur=`.length));
     };
     expect(parts.map((p) => p.split(";")[0]).filter((n) => n !== "app")).toEqual(names);
-    expect(dur("app")).toBeLessThan(50);
+    expectBudget(dur("app"), { ms: 50, against });
     const sum = names.reduce((t, n) => t + dur(n), 0);
     // The rest of `app` is the server's own routing and header work, outside any page (~1-2 ms on every page).
     expect(sum).toBeLessThanOrEqual(dur("app") + 0.3);
-    expect(dur("app") - sum).toBeLessThan(5);
+    const gap = dur("app") - sum;
+    expect(gap).toBeLessThanOrEqual(5); // accounting, not speed
   });

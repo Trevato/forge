@@ -222,7 +222,7 @@ export const utilities = /* css */ `
 }
 
 @media print {
-  .topbar, .foot, .live-pill, .sticky-action, .toast { display: none !important; }
+  .topbar, .foot, .live-news, .sticky-action, .toast { display: none !important; }
   .card { box-shadow: none; }
 }
 }

@@ -222,7 +222,6 @@ import {
 import {
   canAdmin,
   canRead,
-  canSeeOwnerFacts,
   countsForRepos,
   getRepo,
   listReposByOwner,
@@ -297,7 +296,6 @@ import {
   runPromptSource,
 } from "../actions/prompts.ts";
 import { listDomains } from "../core/domains.ts";
-import type { Database } from "bun:sqlite";
 import {
   migrateMessage,
   afterChoice,

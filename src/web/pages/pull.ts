@@ -45,7 +45,6 @@ import {
   isReviewState,
   latestReviewByAuthor,
   listReviewComments,
-  type Review,
   type ReviewState,
   type Side,
 } from "../../core/reviews.ts";
@@ -53,7 +52,6 @@ import { getUsersByIds } from "../../core/users.ts";
 import { canWrite, getRepoById, type Repo } from "../../core/repos.ts";
 import { resolveOid } from "../../git/merge.ts";
 import { commitLog } from "../../git/read.ts";
-import { repoDir } from "../../git/repos.ts";
 import { wallOf } from "../../contract/policy.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -75,7 +73,7 @@ import {
 import { field, readForm } from "../form.ts";
 import { teamVerdicts, type TeamVerdict } from "../../core/issue_teams.ts";
 import { html, raw, when, type Html } from "../html.ts";
-import { flashTo, fragment, page, redirect } from "../layout.ts";
+import { flashTo, fragment, page } from "../layout.ts";
 import { liveRegionsJs } from "../client.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import {
@@ -86,12 +84,13 @@ import {
   icon,
   labelCss,
   queuedPhrase,
+  row,
   sha,
   time,
+  type Tone,
 } from "../ui.ts";
 import {
   assigneeCard,
-  conversation,
   labelsCard,
   originError,
   threadFragment,
@@ -373,6 +372,28 @@ function pullChecksLine(
   return html`${line}${found === null ? "" : specFindings(found)}`;
 }
 
+/** One §5 row in a toned card; `.setting-list` wraps the sentence and drops the action under it on a phone. */
+function box(
+  tone: Tone | undefined,
+  lead: Html,
+  /** A fixed phrase of ours, never a person's text. */
+  title: Html | string,
+  meta: Html,
+  trail: Html | null,
+): Html {
+  return card(
+    html`<ul class="list setting-list">
+      ${row({
+        lead,
+        title: typeof title === "string" ? raw(title) : title,
+        meta,
+        ...(trail ? { trail } : {}),
+      })}
+    </ul>`,
+    { ...(tone ? { tone } : {}), pad: false, extra: "mt" },
+  );
+}
+
 /**
  * Six states, six cards. Every one names the situation, gives the reason,
  * and offers exactly the actions that are actually available.
@@ -399,37 +420,26 @@ function mergeBox(
   </form>`;
 
   if (pull.mergedAt !== null) {
-    return card(
-      html`${icon("merge")}
-        <div class="grow">
-          <div class="merge-headline">Merged.</div>
-          <p class="merge-sub">
-            <span class="mono">${pull.headBranch}</span> was merged into
-            <span class="mono">${pull.baseBranch}</span>${when(
-              pull.mergedOid,
-              (oid) => html` as ${sha(oid, `${repoBase(repo)}/commit/${oid}`)}`,
-            )}.
-          </p>
-        </div>`,
-      { tone: "merged", extra: "merge-box" },
+    return box(
+      "merged",
+      icon("merge"),
+      "Merged.",
+      html`<span class="mono">${pull.headBranch}</span> was merged into
+        <span class="mono">${pull.baseBranch}</span>${when(
+          pull.mergedOid,
+          (oid) => html` as ${sha(oid, `${repoBase(repo)}/commit/${oid}`)}`,
+        )}.`,
+      null,
     );
   }
 
   if (pull.state === "closed") {
-    return card(
-      html`${icon("x")}
-        <div class="grow">
-          <div class="merge-headline">Closed without merging.</div>
-          <p class="merge-sub">
-            Nothing was applied to
-            <span class="mono">${pull.baseBranch}</span>.
-          </p>
-        </div>
-        ${when(
-          ctx.auth.user !== undefined,
-          () => html`<span class="merge-form">${reopen}</span>`,
-        )}`,
-      { extra: "merge-box" },
+    return box(
+      undefined,
+      icon("x"),
+      "Closed without merging.",
+      html`Nothing was applied to <span class="mono">${pull.baseBranch}</span>.`,
+      when(ctx.auth.user !== undefined, () => reopen),
     );
   }
 
@@ -439,31 +449,23 @@ function mergeBox(
   // required checks exactly. So the box says where the button is instead.
   if (repo.origin !== null || pull.originHeadRepo !== null) {
     const at = repo.origin;
-    return card(
-      html`${icon(at?.kind ?? "globe")}
-        <div class="grow">
-          <div class="merge-headline">Merge on the origin.</div>
-          <p class="merge-sub">
-            This repository mirrors
-            ${at === null || at.fullName === ""
-              ? html`another forge`
-              : html`<span class="mono">${at.fullName}</span>`},
-            which is truth for it. Merge there and the next sync brings back the
-            merge commit it actually made.
-          </p>
-        </div>
-        ${when(
-          pull.originUrl,
-          (url) =>
-            html`<span class="merge-form"
-              >${btn("Open on the origin", {
-                href: url,
-                variant: "primary",
-                icon: "external",
-              })}</span
-            >`,
-        )}`,
-      { tone: "attn", extra: "merge-box" },
+    return box(
+      "attn",
+      icon(at?.kind ?? "globe"),
+      "Merge on the origin.",
+      html`This repository mirrors
+        ${at === null || at.fullName === ""
+          ? html`another forge`
+          : html`<span class="mono">${at.fullName}</span>`},
+        which is truth for it. Merge there and the next sync brings back the
+        merge commit it actually made.`,
+      when(pull.originUrl, (url) =>
+        btn("Open on the origin", {
+          href: url,
+          variant: "primary",
+          icon: "external",
+        }),
+      ),
     );
   }
 
@@ -483,14 +485,12 @@ function mergeBox(
                 ? html` <a href="${thread}/resolve">Resolve</a> it here.`
                 : ""}`
           : html`This branch cannot be applied automatically.`;
-    return card(
-      html`${icon("alert")}
-        <div class="grow">
-          <div class="merge-headline">Can't merge.</div>
-          <p class="merge-sub">${reason}</p>
-          ${reviewsChip(status.reviews, by)} ${checks}
-        </div>`,
-      { tone: "danger", extra: "merge-box" },
+    return box(
+      "danger",
+      icon("alert"),
+      "Can't merge.",
+      html`${reason} ${reviewsChip(status.reviews, by)} ${checks}`,
+      null,
     );
   }
 
@@ -509,26 +509,19 @@ function mergeBox(
         : html`This repository requires an approving review of the commit that
           is head right now. A verdict passed before the latest push does not
           count.`;
-    return card(
-      html`${icon("eye")}
-        <div class="grow">
-          <div class="merge-headline">Waiting on review.</div>
-          <p class="merge-sub">${why}</p>
-          ${reviewsChip(status.reviews, by)} ${checks}
-        </div>
-        ${when(
-          mayMerge,
-          () =>
-            html`<span class="merge-form"
-              >${btn("Merge pull request", {
-                variant: "primary",
-                icon: "merge",
-                disabled: true,
-                title: "An approving review of this head is required first",
-              })}</span
-            >`,
-        )}`,
-      { tone: "attn", extra: "merge-box" },
+    return box(
+      "attn",
+      icon("eye"),
+      "Waiting on review.",
+      html`${why} ${reviewsChip(status.reviews, by)} ${checks}`,
+      when(mayMerge, () =>
+        btn("Merge pull request", {
+          variant: "primary",
+          icon: "merge",
+          disabled: true,
+          title: "An approving review of this head is required first",
+        }),
+      ),
     );
   }
 
@@ -552,60 +545,43 @@ function mergeBox(
               or push again.`
             : html`There is no deploy of this head yet. Nothing merges until one
               passes.`;
-    return card(
-      html`${icon("loader")}
-        <div class="grow">
-          <div class="merge-headline">Waiting on checks.</div>
-          <p class="merge-sub">${why}</p>
-          ${reviewsChip(status.reviews, by)} ${checks}
-        </div>
-        ${when(
-          mayMerge,
-          () =>
-            html`<span class="merge-form"
-              >${btn("Merge pull request", {
-                variant: "primary",
-                icon: "merge",
-                disabled: true,
-                title: "A passing deploy of this head is required first",
-              })}</span
-            >`,
-        )}`,
-      { tone: "attn", extra: "merge-box" },
+    return box(
+      "attn",
+      icon("loader"),
+      "Waiting on checks.",
+      html`${why} ${reviewsChip(status.reviews, by)} ${checks}`,
+      when(mayMerge, () =>
+        btn("Merge pull request", {
+          variant: "primary",
+          icon: "merge",
+          disabled: true,
+          title: "A passing deploy of this head is required first",
+        }),
+      ),
     );
   }
 
-  return card(
-    html`${icon("check")}
-      <div class="grow">
-        <div class="merge-headline">
-          Ready to merge — no conflicts with
-          <span class="mono">${pull.baseBranch}</span>.
-        </div>
-        <p class="merge-sub">
-          ${status.ahead} commit${status.ahead === 1 ? "" : "s"} will land on
-          <span class="mono">${pull.baseBranch}</span>.
-        </p>
-        ${reviewsChip(status.reviews, by)} ${checks}
-      </div>
-      ${mayMerge
-        ? html`<span class="merge-form">
-            <form method="post" action="${thread}/merge" class="merge-form">
-              <label class="sr-only" for="strategy">Merge strategy</label>
-              <select class="input" id="strategy" name="strategy">
-                <option value="merge">Merge commit</option>
-                <option value="squash">Squash and merge</option>
-              </select>
-              ${btn("Merge pull request", {
-                variant: "primary",
-                icon: "merge",
-              })}
-            </form>
-          </span>`
-        : html`<span class="muted small"
-            >You need write access to merge.</span
-          >`}`,
-    { tone: "success", extra: "merge-box" },
+  return box(
+    "success",
+    icon("check"),
+    html`Ready to merge — no conflicts with
+      <span class="mono">${pull.baseBranch}</span>.`,
+    html`${status.ahead} commit${status.ahead === 1 ? "" : "s"} will land on
+      <span class="mono">${pull.baseBranch}</span>. ${reviewsChip(status.reviews, by)}
+      ${checks}`,
+    mayMerge
+      ? html`<form method="post" action="${thread}/merge" class="row-fields">
+          <label class="sr-only" for="strategy">Merge strategy</label>
+          <select class="input" id="strategy" name="strategy">
+            <option value="merge">Merge commit</option>
+            <option value="squash">Squash and merge</option>
+          </select>
+          ${btn("Merge pull request", {
+            variant: "primary",
+            icon: "merge",
+          })}
+        </form>`
+      : html`<span class="muted small">You need write access to merge.</span>`,
   );
 }
 

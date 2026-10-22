@@ -26,7 +26,6 @@ import { metaThemeColor } from "../design/themes.ts";
 import { BODY_MAX, TITLE_MAX } from "../core/reports.ts";
 import { llmsRepos, sitemapRepos } from "../core/listings.ts";
 import { canRead, getRepo } from "../core/repos.ts";
-import type { App } from "../app.ts";
 import type { Ctx } from "../http/context.ts";
 import { notFound } from "../http/respond.ts";
 

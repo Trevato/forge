@@ -900,9 +900,6 @@ const chunked = <T>(items: readonly T[]): T[][] => {
   return out;
 };
 
-const placeholders = (n: number): string =>
-  Array.from({ length: n }, (_, i) => `?${i + 1}`).join(",");
-
 /**
  * Open and closed counts for one repo and kind, in a single pass over the
  * covering index — the pair every list page shows above its tabs, which was

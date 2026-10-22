@@ -51,7 +51,7 @@ import type { Issue } from "../core/issues.ts";
 import { getPull } from "../core/pulls.ts";
 import { canAdmin, canEnterApp, canWrite, getRepo, type Repo } from "../core/repos.ts";
 import type { Run } from "../core/runs.ts";
-import { getUserByName, type User } from "../core/users.ts";
+import { type User } from "../core/users.ts";
 import { resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { err, ok, type Result } from "../kernel/result.ts";

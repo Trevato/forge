@@ -256,6 +256,7 @@ import { familyPage } from "../web/pages/family.ts";
 import { forgeLinkSubmit, forgesPage } from "../web/pages/forges.ts";
 import { newForgePage, newForgeSubmit } from "../web/pages/new-forge.ts";
 import { askedPage } from "../web/studio/asked_page.ts";
+import { reviewPage } from "../web/studio/review_page.ts";
 import {
   asksBulkSubmit,
   asksBulkUndo,
@@ -469,6 +470,9 @@ import {
   createRouteTiming,
   noteDbTime,
   noteSessionTime,
+  notePhase,
+  namesFrame,
+  noteStart,
   takePhases,
   serverTiming,
   takeDbTime,
@@ -737,6 +741,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/asks/decide/:id/undo", asksDecideUndo);
   // What people asked of the crew, and what became of it (core/asked.ts).
   router.add("GET", "/asked", askedPage);
+  router.add("GET", "/review", reviewPage);
   // The big view, folded into the board: every old address lands on its wall mode.
   router.add("GET", "/big", bigRedirect);
   router.add("GET", "/search", searchPage);
@@ -1458,8 +1463,8 @@ export function knownPatterns(): string[] {
 /**
  * A transfer someone signed in makes runs as it always has; a stranger's
  * takes a share of the transfer pool first (`strangers.ts`) — refused with
- * a 429 when its address or every stranger together has none left — and
- * runs on a shorter clock. Called once access is decided, so a private
+ * a 429 when its address or every stranger together has none left. Either
+ * one ends once it stops moving (`git/progress.ts`). Called once access is decided, so a private
  * repository still answers a stranger with the credential challenge.
  */
 async function asStranger(
@@ -2207,7 +2212,12 @@ export async function serve(app: App): Promise<Servers> {
     if (request.signal.aborted) onAbort();
     else request.signal.addEventListener("abort", onAbort, { once: true });
     const work = run().then(
-      (response) => compress(request, response).then(securityFloor),
+      async (response) => {
+        const compressing = performance.now();
+        const done = await compress(request, response).then(securityFloor);
+        if (namesFrame(request)) notePhase(request, "compress", performance.now() - compressing);
+        return done;
+      },
       (error) => failure(owner, error),
     );
     try {
@@ -2225,6 +2235,7 @@ export async function serve(app: App): Promise<Servers> {
     server: Bun.Server<AppSocket>,
   ): Promise<Response | undefined> => {
       const started = performance.now();
+      noteStart(request, started);
       // An app's hostname is answered before any route: `hello.<domain>` is
       // the app, whatever its path, and the forge's own routes never apply.
       const runtime = appsRuntime(app);

@@ -12,7 +12,7 @@
 
 import { strangerCodeSearch } from "../../http/strangers.ts";
 import { search } from "../../actions/search.ts";
-import { appsRuntime, envsFor } from "../../apps/runtime.ts";
+import { envsFor } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { getPull } from "../../core/pulls.ts";
 import { canWrite, enterableApps, getRepo } from "../../core/repos.ts";
@@ -357,7 +357,7 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
   };
 
   const form = html`<form
-    class="filters"
+    class="bar mb"
     method="get"
     action="/search"
     role="search"
@@ -473,7 +473,7 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
   );
 
   const body = html`${pageHead(html`Results for “${a.query}”`)} ${form}
-  <div class="filters">${chips}</div>
+  <div class="bar mb">${chips}</div>
   ${liveToggle}
   ${when(
     busy !== undefined,

@@ -280,6 +280,8 @@ describe("live triage", () => {
     const direction = () => getIssueById(app.db, fresh().directionIssueId!)!;
     const lines = () => listComments(app.db, direction().id).map((c) => c.body);
     const outsider = async () => {
+      const existing = getUserByName(app.db, "carol");
+      if (existing) return existing;
       const made = await createUser(app.db, {
         origin: "seed",
         trusted: true,
@@ -381,6 +383,9 @@ describe("live triage", () => {
   });
 });
 
+/** The one clock the filing tests age issues from and tick at, so no second read of the time can disagree. */
+const CLOCK = new Date("2026-01-01T12:00:00.000Z");
+
 describe("live triage files unplaced issues", () => {
   let dir: string;
   let app: App;
@@ -394,7 +399,7 @@ describe("live triage files unplaced issues", () => {
     if (!opened.ok) throw new Error(String(opened.error));
     app.db
       .query(`UPDATE issue SET created_at = ?2 WHERE id = ?1`)
-      .run(opened.value.id, new Date(Date.now() - age).toISOString());
+      .run(opened.value.id, new Date(CLOCK.getTime() - age).toISOString());
     return getIssueById(app.db, opened.value.id)!;
   };
   const waitsFor = (a: Issue, b: Issue) =>
@@ -442,7 +447,7 @@ describe("live triage files unplaced issues", () => {
 
   test("an issue whose title names a pillar is filed under it, and counted", async () => {
     const work = open("Harden P0 sessions");
-    const did = await liveTriage(app, fresh());
+    const did = await liveTriage(app, fresh(), CLOCK);
     expect(did.labelled).toBe(1);
     expect(waitsFor(umbrella, work)).toBe(true);
     expect(labelsFor(app.db, work.id).map((l) => l.name)).toContain("P0 Trust");
@@ -451,32 +456,32 @@ describe("live triage files unplaced issues", () => {
 
   test("a pillar named only in the body files it", async () => {
     const work = open("Sessions", "This serves p0 trust.");
-    await liveTriage(app, fresh());
+    await liveTriage(app, fresh(), CLOCK);
     expect(waitsFor(umbrella, work)).toBe(true);
   });
 
   test("the title wins when title and body name different pillars", async () => {
     const other = open("P1 Speed: be quick");
     const work = open("Cache P1 pages", "Also touches P0.");
-    await liveTriage(app, fresh());
+    await liveTriage(app, fresh(), CLOCK);
     expect(waitsFor(other, work)).toBe(true);
     expect(waitsFor(umbrella, work)).toBe(false);
   });
 
   test("a bare pillar name in passing does not file it: it goes to Later", async () => {
     const work = open("Tell the story of trust", "A story about trust, in passing.");
-    await liveTriage(app, fresh());
+    await liveTriage(app, fresh(), CLOCK);
     expect(waitsFor(umbrella, work)).toBe(false);
     expect(waitsFor(work, gate)).toBe(true);
   });
 
   test("an issue naming none goes behind the Later gate with a comment, once", async () => {
     const work = open("Add a colour picker");
-    await liveTriage(app, fresh());
+    await liveTriage(app, fresh(), CLOCK);
     expect(waitsFor(work, gate)).toBe(true);
     expect(labelsFor(app.db, work.id).map((l) => l.name)).toContain("Later");
     expect(notes(work)[0]!.body).toContain("Later gate");
-    const again = await liveTriage(app, fresh());
+    const again = await liveTriage(app, fresh(), CLOCK);
     expect(again.labelled).toBe(0);
     expect(again.missed).toBe(0);
     expect(notes(work)).toHaveLength(1);
@@ -486,7 +491,7 @@ describe("live triage files unplaced issues", () => {
     const young = open("Brand new idea", "", 60_000);
     const placed = open("Already placed");
     link(placed);
-    await liveTriage(app, fresh());
+    await liveTriage(app, fresh(), CLOCK);
     expect(waitsFor(young, gate)).toBe(false);
     expect(notes(young)).toHaveLength(0);
     expect(notes(placed)).toHaveLength(0);
@@ -497,7 +502,7 @@ describe("live triage files unplaced issues", () => {
   test("directions, umbrellas and the gate are skipped", async () => {
     const direction = open("Direction: keep it small");
     app.db.query(`UPDATE repo SET direction_issue_id = ?2 WHERE id = ?1`).run(repo.id, direction.id);
-    await liveTriage(app, fresh());
+    await liveTriage(app, fresh(), CLOCK);
     for (const furniture of [direction, umbrella, gate]) expect(notes(furniture)).toHaveLength(0);
     expect(waitsFor(direction, gate)).toBe(false);
     expect(waitsFor(gate, gate)).toBe(false);
@@ -505,9 +510,9 @@ describe("live triage files unplaced issues", () => {
 
   test("a person who unlinks the gate is not overruled", async () => {
     const work = open("Needs thought");
-    await liveTriage(app, fresh());
+    await liveTriage(app, fresh(), CLOCK);
     app.db.query(`DELETE FROM issue_dependency WHERE issue_id = ?1`).run(work.id);
-    const did = await liveTriage(app, fresh());
+    const did = await liveTriage(app, fresh(), CLOCK);
     expect(waitsFor(work, gate)).toBe(false);
     expect(did.labelled).toBe(0);
     expect(did.missed).toBe(0);
@@ -531,7 +536,7 @@ describe("live triage where there is little to file under", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-  });
+  }, 30_000);
   afterAll(async () => {
     app.close();
     await rm(dir, { recursive: true, force: true });
@@ -549,7 +554,7 @@ describe("live triage where there is little to file under", () => {
     });
     if (!set.ok) throw new Error(JSON.stringify(set.error));
     const repo = () => getRepoById(app.db, made.value.id)!;
-    const old = new Date(Date.now() - 2 * FILE_AFTER_MS).toISOString();
+    const old = new Date(CLOCK.getTime() - 2 * FILE_AFTER_MS).toISOString();
     const open = (title: string): Issue => {
       const o = openIssue(app, alice, repo(), { title });
       if (!o.ok) throw new Error(String(o.error));
@@ -564,29 +569,35 @@ describe("live triage where there is little to file under", () => {
 
   test("pillars but no gate: an unnamed issue is left alone and counted as missed", async () => {
     const w = await world("nogate", ["P0 Trust: be safe"], 1);
-    const did = await liveTriage(app, w.repo());
+    const did = await liveTriage(app, w.repo(), CLOCK);
     expect(did.labelled).toBe(0);
     expect(did.missed).toBe(1);
     expect(comments(w.work[0]!)).toBe(0);
     expect(labelsFor(app.db, w.work[0]!.id)).toHaveLength(0);
-    expect(app.db.query<{ n: number }, []>(`SELECT COUNT(*) AS n FROM issue_dependency`).get()!.n).toBe(0);
+    const links = app.db
+      .query<{ n: number }, [string]>(
+        `SELECT COUNT(*) AS n FROM issue_dependency d JOIN issue i ON i.id = d.issue_id WHERE i.repo_id = ?1`,
+      )
+      .get(w.repo().id)!.n;
+    expect(links).toBe(0);
   });
 
   test("neither pillars nor gate: nothing is filed, counted or written", async () => {
     const w = await world("plain", [], 2);
-    expect(await liveTriage(app, w.repo())).toEqual({ closed: 0, folded: 0, labelled: 0, missed: 0 });
+    expect(await liveTriage(app, w.repo(), CLOCK)).toEqual({ closed: 0, folded: 0, labelled: 0, missed: 0 });
     for (const issue of w.work) expect(comments(issue)).toBe(0);
   });
 
   test("at most 25 issues are filed per tick; the rest are missed, then filed", async () => {
     const w = await world("many", ["Later gate: not yet"], MOST_CHANGES + 1);
-    const first = await liveTriage(app, w.repo());
+    const first = await liveTriage(app, w.repo(), CLOCK);
     expect(first.labelled).toBe(MOST_CHANGES);
     expect(first.missed).toBe(1);
-    const second = await liveTriage(app, w.repo());
+    const second = await liveTriage(app, w.repo(), CLOCK);
     expect(second.labelled).toBe(1);
     expect(second.missed).toBe(0);
-  });
+    // Twenty-six issues are opened and two ticks run: a loaded check machine must not turn the 5 s default into the verdict.
+  }, 30_000);
 
   test("the tick line carries labelled always and triageMiss only when something was missed", () => {
     expect(tickFields({ closed: 2, folded: 1, labelled: 3, missed: 0 })).toEqual({ triaged: 2, folded: 1, labelled: 3 });

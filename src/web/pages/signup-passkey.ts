@@ -11,7 +11,6 @@ import { givenEmail, signUpWithPasskey, signupClosed, HUMAN_CHECK_MESSAGE, SIGNU
 import { createSession } from "../../core/sessions.ts";
 import { getUserByName } from "../../core/users.ts";
 import { isSafeName } from "../../git/guard.ts";
-import { edgeStrangerLogin } from "../../http/edge.ts";
 import { crossOrigin, type Ctx } from "../../http/context.ts";
 import { STRANGER_MAX } from "../../http/limits.ts";
 import { clientAddress, clientBucket } from "../../http/peer.ts";

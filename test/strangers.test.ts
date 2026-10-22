@@ -19,7 +19,9 @@ import type { User } from "../src/core/users.ts";
 import { transferGate } from "../src/git/env.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import {
+  heldChanged,
   heldNow,
+  setStrangerClock,
   setStrangerLimits,
   STRANGER_LIMITS,
   strangerCodeSearch,
@@ -82,6 +84,9 @@ describe("strangers at every door", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-strangers-"));
     app = createApp({ dataDir, port: 0 });
+    // The windows stand still: a slow request on a loaded machine never
+    // slides one, so a count is the same count however long the test takes.
+    setStrangerClock(app, () => 1_000_000);
     servers = await serve(app);
     base = servers.url;
     port = servers.port;
@@ -97,12 +102,14 @@ describe("strangers at every door", () => {
       const repo = await createRepo(app, owner.value, { name, visibility: "public" });
       if (!repo.ok) throw new Error(repo.error);
     }
-  });
+    // Hashing a password and making two repositories outrun bun's 5 s hook
+    // default on a loaded check machine, which fails the suite unnamed.
+  }, 60_000);
   afterAll(async () => {
     servers.stop();
     app.close();
     await rm(dataDir, { recursive: true, force: true });
-  });
+  }, 30_000);
 
   const from = (ip: string, extra: Record<string, string> = {}) => ({
     "x-forwarded-for": ip,
@@ -113,12 +120,10 @@ describe("strangers at every door", () => {
     await res.arrayBuffer();
     return res.status;
   };
-  const until = async (done: () => boolean, ms = 10_000): Promise<boolean> => {
-    const end = Date.now() + ms;
-    while (!done()) {
-      if (Date.now() > end) return false;
-      await Bun.sleep(25);
-    }
+  // Waits on the event it means: every hold or release wakes it to look again.
+  // No deadline of its own: the test's timeout is the only bound.
+  const until = async (done: () => boolean): Promise<boolean> => {
+    while (!done()) await heldChanged(app);
     return true;
   };
 
@@ -171,6 +176,25 @@ describe("strangers at every door", () => {
         await status("/api/v1/repos", from(a, { authorization: `Bearer ${token}` })),
       ).toBe(200);
     } finally {
+      setStrangerLimits(app, STRANGER_LIMITS);
+    }
+  });
+
+  test("a window slides with the clock it is given, never with the time a request took", async () => {
+    let at = 5_000_000;
+    setStrangerClock(app, () => at);
+    setStrangerLimits(app, { perAddress: { ...STRANGER_LIMITS.perAddress, api: 2 } });
+    try {
+      const ip = address();
+      expect(await status("/api/v1/repos", from(ip))).toBe(200);
+      expect(await status("/api/v1/repos", from(ip))).toBe(200);
+      expect(await status("/api/v1/repos", from(ip))).toBe(429);
+      at += 59_999;
+      expect(await status("/api/v1/repos", from(ip))).toBe(429);
+      at += 1;
+      expect(await status("/api/v1/repos", from(ip))).toBe(200);
+    } finally {
+      setStrangerClock(app, () => 1_000_000);
       setStrangerLimits(app, STRANGER_LIMITS);
     }
   });
@@ -402,7 +426,7 @@ describe("strangers at every door", () => {
     expect(res.status).toBe(200);
     await res.arrayBuffer();
     // The GET's stream behind the HEAD is cancelled, not left holding a slot.
-    expect(await until(() => heldNow(app, "stream:*") === 0, 2_000)).toBe(true);
+    expect(await until(() => heldNow(app, "stream:*") === 0)).toBe(true);
   });
 
   test("the audit card is made once in its while, however many ask", async () => {

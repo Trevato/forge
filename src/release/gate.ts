@@ -15,7 +15,7 @@ import { lacks } from "../core/roles.ts";
 import type { User } from "../core/users.ts";
 import { releaseDir } from "./checkout.ts";
 import type { Release } from "./record.ts";
-import { liveSchema, releaseSchema, rollback } from "./rollback.ts";
+import { releaseSchema, rollback, schemaCount } from "./rollback.ts";
 import { beginSwap, endSwap, handover } from "./swap.ts";
 
 /** When this process began serving: "healthy since" for the release it runs. */
@@ -50,7 +50,7 @@ export async function canRollBackTo(app: App, r: Release): Promise<boolean> {
   const dir = releaseDir(dataDir, r.sha);
   if (!r.ok || !/^[0-9a-f]{40}$/.test(r.sha) || !existsSync(dir)) return false;
   const known = await releaseSchema(dir);
-  return known !== undefined && known >= liveSchema(dataDir);
+  return known !== undefined && known >= schemaCount(app.db);
 }
 
 export type RolledBack = { ok: true } | { ok: false; line: string };

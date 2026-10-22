@@ -39,6 +39,7 @@ import { crewNow, tellLink } from "./crew.ts";
 import { doorPage } from "./door.ts";
 import { notFound } from "../http/respond.ts";
 import { appMeasure } from "./measure.ts";
+import { holdPortRequest, holdPortSocket } from "./handoff.ts";
 import { htmlAnswer, readPage, rewritable, withToolbar, type PillWhere } from "./toolbar.ts";
 
 export interface AppTarget {
@@ -705,7 +706,14 @@ export async function proxyApp(
   }
 
   // Held from here until the answer begins: a slow answer is not idle.
-  const answered = runtime.holdRequest(target.app, target.env);
+  // And held against this deployment's port, so one being replaced
+  // answers it before it is stopped (`apps/handoff.ts`).
+  const envAnswered = runtime.holdRequest(target.app, target.env);
+  const portAnswered = holdPortRequest(port);
+  const answered = (): void => {
+    envAnswered();
+    portAnswered();
+  };
   let response: Response;
   try {
     response = await fetch(upstream, {
@@ -859,6 +867,8 @@ export interface AppSocket {
   readonly userId: string | undefined;
   /** The forge the socket is held open on. */
   readonly db: Database;
+  /** The deployment's loopback port, which a handoff drains (`apps/handoff.ts`). */
+  readonly port: number;
 }
 
 /**
@@ -867,6 +877,9 @@ export interface AppSocket {
  * from the database, closes it.
  */
 const heldSockets = new WeakMap<Bun.ServerWebSocket<AppSocket>, () => void>();
+
+/** Each proxied socket's place among its deployment's, released when it closes. */
+const portSockets = new WeakMap<Bun.ServerWebSocket<AppSocket>, () => void>();
 
 /**
  * The most one frame may carry, in either direction. The browser's side is
@@ -936,7 +949,7 @@ async function proxyWebSocket(
     runtime.holdStream(target.app, target.env),
   );
   const upgraded = server.upgrade(request, {
-    data: { upstream, userId: who?.id, db: runtime.app.db },
+    data: { upstream, userId: who?.id, db: runtime.app.db, port: Number(url.port) },
     // The app's choice of subprotocol is what the browser hears; without
     // one Bun echoes the first the browser offered, which is what the app
     // itself would have done on Bun.
@@ -1018,7 +1031,8 @@ export const appWebSocket: Bun.WebSocketHandler<AppSocket> = {
   idleTimeout: WS_IDLE_SECONDS,
 
   open(ws) {
-    const { upstream, userId, db } = ws.data;
+    const { upstream, userId, db, port } = ws.data;
+    portSockets.set(ws, holdPortSocket(port, ws));
     if (userId !== undefined)
       heldSockets.set(
         ws,
@@ -1078,6 +1092,8 @@ export const appWebSocket: Bun.WebSocketHandler<AppSocket> = {
     const { upstream } = ws.data;
     heldSockets.get(ws)?.();
     heldSockets.delete(ws);
+    portSockets.get(ws)?.();
+    portSockets.delete(ws);
     if (upstream.readyState === WebSocket.CLOSED) return;
     // 1006 here is the browser gone without a close frame.
     if (code === 1006) upstream.close(1001, "the browser went away");

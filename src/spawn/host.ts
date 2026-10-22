@@ -9,7 +9,7 @@ import { childDirOf } from "../actions/spawn.ts";
 import { createApp, type App } from "../app.ts";
 import { appsRuntime, type AppsRuntime } from "../apps/runtime.ts";
 import { resolveAppHost, type AppTarget } from "../apps/proxy.ts";
-import { childAppsSummary, startChildApps, stopChildApps, type ChildAppsSummary } from "./child-apps.ts";
+import { childAppsSummary, startChildApps, stopChildApps } from "./child-apps.ts";
 import { childHost } from "./door.ts";
 import { firstBoot } from "./first-boot.ts";
 import {

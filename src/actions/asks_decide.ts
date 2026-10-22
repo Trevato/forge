@@ -7,7 +7,7 @@
  */
 
 import type { App } from "../app.ts";
-import { getDecision, latestDecision } from "../core/decisions.ts";
+import { getDecision } from "../core/decisions.ts";
 import { getIssueById } from "../core/issues.ts";
 import { getRepoById } from "../core/repos.ts";
 import type { User } from "../core/users.ts";

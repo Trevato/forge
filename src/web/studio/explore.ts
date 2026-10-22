@@ -16,9 +16,9 @@ import {
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { pageHead } from "../chrome.ts";
-import { html, when, type Html } from "../html.ts";
+import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { btn, empty, listCard, nameMark, seg, timeAgo } from "../ui.ts";
+import { btn, empty, listCard, nameMark, row as rowOf, seg, timeAgo } from "../ui.ts";
 
 const href = (query: ExploreQuery): string => {
   const line = exploreLine(query);
@@ -40,26 +40,20 @@ function numbers(row: ExploreRow): string {
 
 function rowHtml(row: ExploreRow): Html {
   const said = numbers(row);
-  return html`<li class="row explore-row">
-    <span class="explore-main">
-      <a class="explore-name" href="${row.url}">${row.name}</a
-      >${nameMark(row.mark)}
-      ${when(
-        row.description,
-        (d) => html`<span class="muted small truncate">${d}</span>`,
-      )}
-      ${when(said, (s) => html`<span class="muted small">${s}</span>`)}
-    </span>
-    ${when(
-      row.copyable === true ? row.repo : undefined,
-      (repo) =>
-        btn("Make it yours", {
-          href: `/${repo.owner}/${repo.name}/make-it-yours`,
-          size: "sm",
-          icon: "fork",
-        }),
-    )}
-  </li>`;
+  const meta = [row.description, said].filter((p) => p !== "" && p !== undefined);
+  return rowOf({
+    title: html`<a href="${row.url}">${row.name}</a>${nameMark(row.mark)}`,
+    ...(meta.length === 0 ? {} : { meta: html`${meta.join(" · ")}` }),
+    ...(row.copyable === true && row.repo !== undefined
+      ? {
+          trail: btn("Make it yours", {
+            href: `/${row.repo.owner}/${row.repo.name}/make-it-yours`,
+            size: "sm",
+            icon: "fork",
+          }),
+        }
+      : {}),
+  });
 }
 
 /** Nothing to list: a bare line means nothing is public yet, not a miss. */
@@ -109,9 +103,9 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
   const body = html`${pageHead("Explore", {
       sub: "Apps and their makers, ranked by forks, ships, use and how lately — the numbers on every row.",
     })}
-    <form method="get" action="/explore" class="bar mb explore-line">
+    <form method="get" action="/explore" class="bar mb">
       <input
-        class="input mono"
+        class="input mono search"
         name="q"
         value="${exploreLine(query)}"
         placeholder="kind:app sort:forks garden"
@@ -121,7 +115,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
       />
       ${btn("Go", { size: "sm" })}
     </form>
-    <div class="filters mb explore-filters">
+    <div class="filters mb">
       ${seg(
         kinds.map((k) => ({
           label: k.label,
