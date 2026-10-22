@@ -5017,16 +5017,16 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/user/origins/:id/mirror/:job", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireAccount(ctx, { adminToken: true });
     if (denied) return denied;
-    const job = mirrorJobFor(
-      ctx.app,
-      ctx.auth.user,
-      ctx.params.id!,
-      ctx.params.job!,
+    const job = timePhase(ctx.request, "job", () =>
+      mirrorJobFor(ctx.app, ctx.auth.user, ctx.params.id!, ctx.params.job!),
     );
     if (!job.ok) return respondAccess(job.error, 404);
-    return json({ job: jobJson(ctx, job.value) });
+    return timePhase(ctx.request, "render", () =>
+      json({ job: jobJson(ctx, job.value) }),
+    );
   });
 
   // The same job as a live stream, so a mirror can be watched rather than
@@ -5527,9 +5527,14 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/migrate/:job", (ctx) => {
-    const found = migrationJobFor(ctx.auth.user, ctx.params.job!);
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const found = timePhase(ctx.request, "job", () =>
+      migrationJobFor(ctx.auth.user, ctx.params.job!),
+    );
     if (!found.ok) return respondAccess(found.error, 404);
-    return json({ job: migrationJson(ctx, found.value) });
+    return timePhase(ctx.request, "render", () =>
+      json({ job: migrationJson(ctx, found.value) }),
+    );
   });
 
   router.add("GET", "/api/v1/migrate/:job/stream", (ctx) => {
