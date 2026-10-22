@@ -757,7 +757,7 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 }
 .toast[data-tone="attn"] .ico { color: var(--attn); }
 .toast .toast-body { flex: 1; min-width: 0; }
-.toast code, .toast .clone { display: block; margin-top: 6px; }
+.toast code { display: block; margin-top: 6px; }
 
 /* ---- tooltip ---- */
 [data-tip] { position: relative; }
@@ -863,19 +863,6 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
     top: calc(var(--topbar-h) + 16px); align-self: start;
   }
 }
-
-/* ---- clone strip ---- */
-.clone {
-  display: flex; align-items: center; gap: 6px;
-  font-family: var(--mono); font-size: 12.5px;
-  padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm);
-  background: var(--muted); min-width: 0;
-}
-.clone > .clone-text {
-  flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap;
-  scrollbar-width: none; user-select: all;
-}
-.clone > .clone-text::-webkit-scrollbar { display: none; }
 
 /* ---- sticky primary action (thumb reach on a phone) ---- */
 .sticky-action {
