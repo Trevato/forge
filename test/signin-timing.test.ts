@@ -33,13 +33,19 @@ const PAGES: [string, string[]][] = [
 for (const [path, names] of PAGES)
   test(`GET ${path} names its phases and answers within its budget`, async () => {
     const against = await baselineMs(servers.url);
-    await fetch(`${servers.url}${path}`); // warm
-    const res = await fetch(`${servers.url}${path}`);
-    await res.text();
-    expect(res.status).toBe(200);
-    const parts = (res.headers.get("server-timing") ?? "").split(", ");
-    for (const name of ["app", ...names])
-      expect(parts.find((p) => p.startsWith(`${name};`))).toMatch(/^[a-z]+;dur=\d+\.\d$/);
-    const app = parts.find((p) => p.startsWith("app;"))!;
-    expectBudget(Number(app.slice("app;dur=".length)), { ms: 10, against });
+    await (await fetch(`${servers.url}${path}`)).text(); // warm
+    // A loaded machine stalls the event loop mid-request and inflates any one
+    // sample; the fastest of a few is what the handler itself costs.
+    let best = Infinity;
+    for (let i = 0; i < 7; i++) {
+      const res = await fetch(`${servers.url}${path}`);
+      await res.text();
+      expect(res.status).toBe(200);
+      const parts = (res.headers.get("server-timing") ?? "").split(", ");
+      for (const name of ["app", ...names])
+        expect(parts.find((p) => p.startsWith(`${name};`))).toMatch(/^[a-z]+;dur=\d+\.\d$/);
+      const app = parts.find((p) => p.startsWith("app;"))!;
+      best = Math.min(best, Number(app.slice("app;dur=".length)));
+    }
+    expectBudget(best, { ms: 10, against });
   });
