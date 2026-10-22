@@ -75,6 +75,7 @@ export function fleetGraphPage(ctx: Ctx): Response {
             label: "Repositories",
             name: "repo",
             id: "fleet-repos",
+            ...(asked.ok ? {} : { error: asked.error }),
             value: names,
             placeholder:
               "owner/name owner/name — empty is everything you can write that spent",
@@ -84,11 +85,7 @@ export function fleetGraphPage(ctx: Ctx): Response {
           })}
           ${btn("Draw", { type: "submit", variant: "secondary" })}
         </form>
-        ${graph === undefined
-          ? html`<p class="error-note" role="alert">
-              ${asked.ok ? "" : asked.error}
-            </p>`
-          : fleetGraphSection(graph)}`,
+        ${graph === undefined ? null : fleetGraphSection(graph)}`,
       scriptJs: fleetGraphClientJs,
     },
     graph === undefined ? 422 : 200,

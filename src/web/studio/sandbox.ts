@@ -8,6 +8,7 @@
 import type { Run } from "../../core/runs.ts";
 import { placementWords } from "../../checks/placement.ts";
 import { html, type Html } from "../html.ts";
+import { badge } from "../ui.ts";
 
 /** Where a check ran, when that was a cluster job; nothing for the default. */
 export function placementLine(run: Run): Html | null {
@@ -24,11 +25,11 @@ export function sandboxLine(run: Run): Html | null {
         ? "Sandboxed: the shell was held to the policy."
         : "Contained: the repository's code ran in a cell of its own, with limits."}
     </p>`;
-  return html`<p class="error-note" id="run-sandbox">
+  return html`<p class="small" id="run-sandbox">
+    ${badge(agent ? "Unsandboxed" : "Uncontained", { tone: "danger" })}
     ${agent
-      ? "Unsandboxed: the shell ran unrestricted"
-      : "Uncontained: the repository's code ran unrestricted"}${run.sandboxNote ===
-    ""
+      ? "The shell ran unrestricted"
+      : "The repository's code ran unrestricted"}${run.sandboxNote === ""
       ? ""
       : html` (${run.sandboxNote})`}.
   </p>`;

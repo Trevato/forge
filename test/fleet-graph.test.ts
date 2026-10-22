@@ -349,6 +349,8 @@ describe("the graph", () => {
       const body = await res.text();
       expect(body).not.toContain("<script>x</script>");
       expect(body).toContain("&lt;script&gt;");
+      expect(body).not.toContain("error-note");
+      expect(body).toMatch(/id="fleet-repos"[^>]*aria-invalid="true"[\s\S]*?id="fleet-repos-err"/);
     });
 
     test("the API answers the same numbers, and refuses a bad name", async () => {
