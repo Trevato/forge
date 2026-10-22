@@ -4222,27 +4222,33 @@ export function apiRoutes(router: Router<Handler>): void {
     "GET",
     "/api/v1/repos/:owner/:name/pulls/:number/reviews",
     async (ctx) => {
+      notePhase(ctx.request, "session", takeSessionTime(ctx.request));
       const found = loadPull(ctx);
       if ("error" in found) return found.error;
-      const { diff } = await pullDiff(
-        await pullDirOf(ctx, found.repo, found.pull),
-        found.pull,
-      );
-      return json(
-        withOutdated(
+      const marked = await timePhaseAsync(ctx.request, "reviews", async () => {
+        const { diff } = await pullDiff(
+          await pullDirOf(ctx, found.repo, found.pull),
+          found.pull,
+        );
+        return withOutdated(
           readerMarked(
             ctx,
             found.repo.id,
             listReviewComments(ctx.app.db, found.pull.id),
           ),
           diff,
-        ).map(
-          // The thread this comment belongs to, so a client can resolve it
-          // without reassembling the key itself.
-          (comment) => ({
-            ...comment,
-            anchor: anchorId(comment.path, comment.side, comment.line),
-          }),
+        );
+      });
+      return timePhase(ctx.request, "render", () =>
+        json(
+          marked.map(
+            // The thread this comment belongs to, so a client can resolve it
+            // without reassembling the key itself.
+            (comment) => ({
+              ...comment,
+              anchor: anchorId(comment.path, comment.side, comment.line),
+            }),
+          ),
         ),
       );
     },
