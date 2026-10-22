@@ -2551,9 +2551,11 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/forks", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    return json(visibleForks(ctx.app.db, repo.id, ctx.auth.user));
+    const forks = timePhase(ctx.request, "forks", () => visibleForks(ctx.app.db, repo.id, ctx.auth.user));
+    return timePhase(ctx.request, "render", () => json(forks));
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/forks", async (ctx) => {
