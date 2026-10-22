@@ -59,7 +59,11 @@ test("tools/list stays under 40 KB, with 3 KB of headroom (37,000 bytes)", async
   const tools = (JSON.parse(text) as any).result.tools as {
     name: string;
     description: string;
+    annotations?: { readOnlyHint?: boolean };
   }[];
+  // readOnlyHint defaults to false; spelling the default out on every write
+  // tool cost 2 KB, so only a read tool carries annotations.
+  expect(tools.filter((t) => t.annotations?.readOnlyHint === false).map((t) => t.name)).toEqual([]);
   const longest = tools
     .map((t) => `${t.name} (${Buffer.byteLength(t.description)} bytes)`)
     .sort(

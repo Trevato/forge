@@ -396,7 +396,7 @@ async function archiveMany(ctx: Ctx, user: User, args: Args): Promise<Answer> {
   });
 }
 
-// tools/list is held under 40 KB (test/mcp-pulls.test.ts). The server checks
+// tools/list is held under 40 KB (test/mcp-size.test.ts). The server checks
 // every length at the boundary, so the listing leaves the maxLength hints out.
 function lean(schema: unknown): unknown {
   if (Array.isArray(schema)) return schema.map(lean);
@@ -4090,7 +4090,9 @@ function rpcOne(
             name: t.name,
             description: t.description,
             inputSchema: lean(t.inputSchema),
-            annotations: { readOnlyHint: !t.writes },
+            // readOnlyHint defaults to false (MCP tool annotations), so only a
+            // read says so: 57 copies of the default were 2 KB of the 40 KB.
+            ...(t.writes ? {} : { annotations: { readOnlyHint: true } }),
             ...(CARD_OF_TOOL[t.name] === undefined
               ? {}
               : {
@@ -4179,7 +4181,6 @@ const REPORT_TOOL = {
     },
     required: ["repo", "title"],
   },
-  annotations: { readOnlyHint: false },
 } as const;
 
 /** The JSON-RPC answer to a `report` call, or undefined for any other message. */

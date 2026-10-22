@@ -186,7 +186,7 @@ describe("MCP proposes to the parent forge and lists proposals", () => {
     });
     const tools = ((await res.json()) as any).result.tools as { name: string; annotations: any }[];
     const by = (n: string) => tools.find((t) => t.name === n);
-    expect(by("propose_to_parent_forge")?.annotations.readOnlyHint).toBe(false);
+    expect(by("propose_to_parent_forge")?.annotations).toBeUndefined();
     expect(by("forge_proposals")?.annotations.readOnlyHint).toBe(true);
   });
 

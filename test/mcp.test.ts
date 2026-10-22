@@ -272,7 +272,8 @@ describe("the forge over MCP", () => {
     const byName = new Map<string, any>(
       listed.body.result.tools.map((t: any) => [t.name, t]),
     );
-    expect(byName.get("tell").annotations.readOnlyHint).toBe(false);
+    // A write leaves readOnlyHint to its default, false.
+    expect(byName.get("tell").annotations).toBeUndefined();
     // The signup tool says what the setting does today, not that nothing reads it.
     const signup: string = byName.get("signup").description;
     expect(signup).not.toContain("Nothing reads it yet");
@@ -670,7 +671,7 @@ describe("the forge over MCP", () => {
     const hints = Object.fromEntries(
       listed.body.result.tools.map((t: any) => [
         t.name,
-        t.annotations.readOnlyHint,
+        t.annotations?.readOnlyHint ?? false,
       ]),
     );
     expect(hints["probe"]).toBe(true);
@@ -817,7 +818,7 @@ describe("the forge over MCP", () => {
     const hints = Object.fromEntries(
       listed.body.result.tools.map((t: any) => [
         t.name,
-        t.annotations.readOnlyHint,
+        t.annotations?.readOnlyHint ?? false,
       ]),
     );
     expect([hints.map, hints.wait_for]).toEqual([true, false]);

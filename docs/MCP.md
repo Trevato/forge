@@ -18,7 +18,7 @@ for a tunnel and a forge that sleeps.
 - **A token, never a cookie.** `Authorization: Bearer <forge token>`. A
   browser session is refused even when signed in: a cookie is what a
   cross-site page could ride, and this door has no page. An `ro` token reads;
-  an `rw` token acts; the tools say which they are (`readOnlyHint`).
+  an `rw` token acts; a reading tool says so (`readOnlyHint: true`), and a tool without it writes, by MCP's default.
 - **What you may not do on a page you may not do here.** A private app is
   "no such app" to someone who cannot write its repository; stopping a run, and knocking
   on an app with `probe`, are a writer's.
