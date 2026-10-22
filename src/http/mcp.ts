@@ -3355,7 +3355,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "flow",
     description:
-      "The forge's pipeline (forge admin): per stage counts, `oldestWaiting`, `capacity`, the bottleneck, merge `queue`.",
+      "The forge's pipeline (forge admin): per stage counts, `oldestWaiting`, `capacity`, the bottleneck, merge `queue`, `reviewing` (reviews in flight per reviewer).",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     run(ctx, user) {

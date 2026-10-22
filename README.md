@@ -1204,6 +1204,8 @@ other. The tick log names each pull it moved, or why it did not, and
 The flow panel on `/boards`, the terminal's Flow dialog and the MCP `flow` tool list the pulls
 waiting on a builder and those waiting on a reviewer, oldest first.
 
+The same three also say, per reviewer, how many review runs are in flight (queued or running): `3 reviews in flight: quill 2, sage 1.`, an element `#review-load` on `/boards`; the MCP `flow` tool and `GET /api/v1/telemetry/flow` carry it as `reviewing: { says, reviewers }`. It is `reviewLoad` from `src/crew/review.ts`, the count routing reads (`flow/reviewing.ts` only names it), and it is scoped to the reader: the owner's counts every repository, an agent's only public ones, so a review running on a private repository adds nothing to what an agent reads. No dependency was added.
+
 **Already done.** A builder that finds its issue already built on the base
 branch declines with `DECLINED: already done on main in <commit>`, naming the
 full or abbreviated id of each commit that did it (at most five). The forge
