@@ -264,21 +264,6 @@ form.inline { display: inline; margin-left: auto; }
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
 }
 
-/* The featured repository: its picture and its crew at work, side by side
-   on a desk, stacked on a phone. */
-.front-featured {
-  display: grid; gap: 0; max-width: 1040px; margin-inline: auto;
-  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-  border: 1px solid var(--border); border-radius: var(--radius);
-  overflow: hidden; background: var(--card);
-}
-.front-featured-look img { display: block; width: 100%; height: auto; background: var(--muted); }
-.front-featured-body { display: grid; align-content: center; gap: 8px; padding: 20px 24px; min-width: 0; }
-.front-featured-body > * { min-width: 0; }
-.front-featured-body h2 { font-size: 20px; letter-spacing: -0.02em; }
-.front-featured-body h2 a { color: inherit; text-decoration: none; }
-.front-featured-body p { color: var(--muted-fg); text-wrap: pretty; }
-.front-featured:not(:has(.front-featured-look)) { grid-template-columns: 1fr; }
 .front-crew { display: flex; align-items: center; gap: 8px; font-size: 14px; }
 .front-live {
   width: 8px; height: 8px; border-radius: 50%; background: var(--success);
@@ -299,10 +284,6 @@ form.inline { display: inline; margin-left: auto; }
 @media (max-width: 520px) {
   /* Two to a row on a phone: a few live apps in one screen, not a scroll. */
   .stack[data-shelf] { gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-@media (max-width: 720px) {
-  .front-featured { grid-template-columns: 1fr; }
-  .front-featured-body { padding: 16px; }
 }
 
 /* Every page grid, in one rule: a grid item's automatic minimum size is its

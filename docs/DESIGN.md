@@ -500,9 +500,6 @@ the same line (#4888).
   - `.filters`
   - `.front-admin`
   - `.front-crew`
-  - `.front-featured`
-  - `.front-featured-body`
-  - `.front-featured-look`
   - `.front-issues`
   - `.front-live`
   - `.front-more`
