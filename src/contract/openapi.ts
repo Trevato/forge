@@ -263,6 +263,18 @@ export const ROUTES: readonly Route[] = [
     refusals: { not_found: "the scope's owner is unknown", invalid_scope: "the scope is not one the forge keeps secrets for" },
   },
   {
+    method: "put",
+    path: "/api/v1/secrets/{scope}/{name}",
+    summary: "Set a secret by name (admin scope, a site admin's); the value is write-only, the read never returns it; `ref` names an org or `owner/name`; answers the name and timestamps, never the value",
+    auth: true,
+    body: { value: "string", ref: "string" },
+    refusals: {
+      invalid_name: "`name` is not an acceptable secret name (422)",
+      invalid_value: "`value` is not acceptable (422)",
+      invalid_scope: "the scope is not one the forge keeps secrets for (422)",
+    },
+  },
+  {
     method: "delete",
     path: "/api/v1/secrets/{scope}/{name}",
     summary: "Remove a secret by name (admin scope token); a value is never read back; answers {}",
@@ -348,6 +360,17 @@ export const ROUTES: readonly Route[] = [
     body: { title: "string", head: "string", headRepo: "string" },
   },
   { method: "get", path: `${REPO}/crew`, summary: "List the repository's crew; answers { items, next_cursor } (names and roles for every reader, brief, model and budget for writers)", auth: false },
+  {
+    method: "put",
+    path: `${REPO}/crew/{username}`,
+    summary: "Put an agent on the repository's crew (admin scope, a repository admin's); answers the agent",
+    auth: true,
+    refusals: {
+      no_such_agent: "`username` names no one (422)",
+      not_an_agent: "`username` is a person, not an agent (422)",
+      unverified: "the caller's email is unproven (403)",
+    },
+  },
   {
     method: "delete",
     path: `${REPO}/crew/{username}`,
@@ -823,11 +846,25 @@ export const ROUTES: readonly Route[] = [
   },
   { method: "get", path: "/api/v1/here", summary: "The manifest of what you can do at `path` (default /), given who you are: { here, you, actions, mcp, docs }; never cached", auth: false, query: { path: "string" }, refusals: { not_found: "404: the path names no page you can read" } },
   {
+    method: "get",
+    path: `${REPO}/issues/{number}/dependencies`,
+    summary: "What the issue waits for and what waits for it: { blockedBy, blocks }, each a list of { number, title, state, closeReason? }; issues the caller cannot see are left out",
+    auth: false,
+  },
+  {
     method: "post",
     path: `${REPO}/issues/{number}/dependencies`,
-    summary: "Make an issue wait for another",
+    summary: "Make an issue wait for another (rw scope); answers 201 with { issue, blockedBy }",
     auth: true,
+    status: 201,
     body: { blockedBy: "integer" },
+    refusals: {
+      no_such_issue: "`blockedBy` names no issue in this repository (422)",
+      self: "an issue cannot wait for itself (422)",
+      cycle: "that would make a loop (422)",
+      cross_repo: "dependencies stay inside one repository (422)",
+      not_an_issue: "only issues can depend on issues (422)",
+    },
   },
   {
     method: "delete",
@@ -901,6 +938,14 @@ export const ROUTES: readonly Route[] = [
   },
   { method: "post", path: "/api/v1/fleet/ops/{id}/undo", summary: "Undo a fleet operation (admin scope); answers 201 with the undoing operation", auth: true, status: 201 },
   { method: "get", path: "/api/v1/front", summary: "The front page a stranger is shown: { featured, apps, total }, each entry { repo, description, url, state, picture, pinned, score, signals }; a site admin also gets `picks`", auth: false },
+  {
+    method: "put",
+    path: "/api/v1/front",
+    summary: "Set the front page's picks (a site admin's, rw scope): `pinned` and `hidden` are arrays of owner/name, `weights` an object of forks, ships, use, fresh; answers the picks",
+    auth: true,
+    body: { pinned: "array", hidden: "array", weights: "object" },
+    refusals: { invalid: "the picks are malformed or name no repository (422)", forbidden: "the front page is a site admin's to set (403)" },
+  },
   {
     method: "get",
     path: "/api/v1/health",
