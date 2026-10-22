@@ -1316,10 +1316,13 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/users/:username", (ctx) => {
-    const user = getUserByName(ctx.app.db, ctx.params.username!);
-    return user && !hiddenFrom(user, ctx.auth.user)
-      ? json(publicProfile(user))
-      : notFound();
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const user = timePhase(ctx.request, "person", () => {
+      const found = getUserByName(ctx.app.db, ctx.params.username!);
+      return found && !hiddenFrom(found, ctx.auth.user) ? found : null;
+    });
+    if (!user) return notFound();
+    return timePhase(ctx.request, "render", () => json(publicProfile(user)));
   });
 
   router.add("GET", "/api/v1/users/:username/repos", (ctx) => {
