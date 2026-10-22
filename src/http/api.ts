@@ -2166,16 +2166,21 @@ export function apiRoutes(router: Router<Handler>): void {
   // Where an account is signed in: its person, or the forge's owner for any
   // person (`actions/signins.ts`). Anyone else finds no such account.
   router.add("GET", "/api/v1/users/:username/signins", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireAccount(ctx, { adminToken: true });
     if (denied) return denied;
-    const seen = accountSignIns(
-      ctx.app,
-      ctx.auth.user,
-      ctx.params.username!,
-      cookieValue(ctx.request, "forge_session"),
+    const seen = timePhase(ctx.request, "signins", () =>
+      accountSignIns(
+        ctx.app,
+        ctx.auth.user,
+        ctx.params.username!,
+        cookieValue(ctx.request, "forge_session"),
+      ),
     );
     if (!seen.ok) return notFound();
-    return json({ tokens: seen.value.tokens, sessions: seen.value.sessions });
+    return timePhase(ctx.request, "render", () =>
+      json({ tokens: seen.value.tokens, sessions: seen.value.sessions }),
+    );
   });
 
   router.add("DELETE", "/api/v1/users/:username/sessions/:id", (ctx) => {
@@ -5796,16 +5801,19 @@ export function apiRoutes(router: Router<Handler>): void {
   // value. `ref` names the owner: an org's name, or a repository's
   // `owner/name`; the forge scope takes none.
   router.add("GET", "/api/v1/secrets/:scope", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireScope(ctx, "admin");
     if (denied) return denied;
-    const listed = listSecrets(
-      ctx.app,
-      ctx.auth.user,
-      ctx.params.scope ?? "",
-      ctx.url.searchParams.get("ref") ?? "",
+    const listed = timePhase(ctx.request, "secrets", () =>
+      listSecrets(
+        ctx.app,
+        ctx.auth.user,
+        ctx.params.scope ?? "",
+        ctx.url.searchParams.get("ref") ?? "",
+      ),
     );
     if (!listed.ok) return respondAccess(listed.error, 422);
-    return json({ items: listed.value, next_cursor: null });
+    return timePhase(ctx.request, "render", () => json({ items: listed.value, next_cursor: null }));
   });
 
   router.add("PUT", "/api/v1/secrets/:scope/:name", async (ctx) => {
