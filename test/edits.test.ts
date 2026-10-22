@@ -209,10 +209,10 @@ describe("edits: files, branches and a pull in one call", () => {
     expect(edited.pull).toMatchObject({ title: "Add new.txt" });
 
     // The branch exists, carries the file, and main does not.
-    const branches = await read<{ name: string }[]>(
+    const branches = await read<{ items: { name: string }[] }>(
       await api("/api/v1/repos/alice/app/branches"),
     );
-    expect(branches.map((b) => b.name)).toContain("feat/edit");
+    expect(branches.items.map((b) => b.name)).toContain("feat/edit");
     expect((await fileAt("alice/app", "new.txt", "feat/edit")).status).toBe(
       200,
     );
@@ -454,9 +454,7 @@ describe("edits on a mirror land upstream first", () => {
     expect(response.status).toBe(201);
     const edited = await read<EditResponse>(response);
 
-    const upstreamMain = await read<{ name: string; oid: string }[]>(
-      await fetch(`${originServers.url}/api/v1/repos/octo/gears/branches`),
-    );
+    const upstreamMain = await (await read<{ items: { name: string; oid: string }[] }>(await fetch(`${originServers.url}/api/v1/repos/octo/gears/branches`))).items;
     expect(upstreamMain.find((b) => b.name === "main")?.oid).toBe(
       edited.commit.commitOid,
     );
@@ -482,9 +480,7 @@ describe("edits on a mirror land upstream first", () => {
     expect(response.status).toBe(201);
     const edited = await read<EditResponse>(response);
 
-    const branches = await read<{ name: string; oid: string }[]>(
-      await fetch(`${originServers.url}/api/v1/repos/octo/gears/branches`),
-    );
+    const branches = await (await read<{ items: { name: string; oid: string }[] }>(await fetch(`${originServers.url}/api/v1/repos/octo/gears/branches`))).items;
     expect(branches.find((b) => b.name === "feat/mirror")?.oid).toBe(
       edited.commit.commitOid,
     );

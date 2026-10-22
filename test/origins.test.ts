@@ -403,9 +403,11 @@ describe("origins: connecting, mirroring, writing through", () => {
     expect(repo.pinned).toBe(false);
 
     // The git objects really arrived.
-    const branches = (await (
-      await api("/api/v1/repos/alice/widgets/branches")
-    ).json()) as { name: string }[];
+    const branches = (
+      (await (await api("/api/v1/repos/alice/widgets/branches")).json()) as {
+        items: { name: string }[];
+      }
+    ).items;
     expect(branches.map((b) => b.name)).toEqual(["main"]);
     const readme = (await (
       await api("/api/v1/repos/alice/widgets/contents/README.md")
@@ -581,9 +583,11 @@ describe("origins: connecting, mirroring, writing through", () => {
     });
     if (!committed.ok) throw new Error(JSON.stringify(committed.error));
     const branchesOf = async (): Promise<Map<string, string>> => {
-      const listed = (await (
-        await fetch(`${originServers.url}/api/v1/repos/octo/widgets/branches`)
-      ).json()) as { name: string; oid: string }[];
+      const listed = (
+        (await (
+          await fetch(`${originServers.url}/api/v1/repos/octo/widgets/branches`)
+        ).json()) as { items: { name: string; oid: string }[] }
+      ).items;
       return new Map(listed.map((b) => [b.name, b.oid]));
     };
     const before = await branchesOf();

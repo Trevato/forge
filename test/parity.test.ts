@@ -342,7 +342,7 @@ describe("parity: full control through actions and the API", () => {
     const dir = join(app.reposRoot, "alice", "pub.git");
     expect(await git(["symbolic-ref", "HEAD"], dir)).toBe("refs/heads/feature");
     const branches = await call("GET", "/api/v1/repos/alice/pub/branches");
-    expect(branches.list.find((b) => b.isDefault)?.name).toBe("feature");
+    expect((branches.json.items as Json[]).find((b) => b.isDefault)?.name).toBe("feature");
     const back = await call("PATCH", "/api/v1/repos/alice/pub", {
       token: aliceAdmin,
       body: { defaultBranch: "main" },

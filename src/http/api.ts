@@ -2834,21 +2834,34 @@ export function apiRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
+    const q = ctx.url.searchParams;
+    const limit = eventsLimit(q.get("limit") ?? undefined);
+    if (limit === undefined)
+      return apiError("invalid_limit", 422, "limit is a whole number from 1 to 200");
+    const cursor = q.get("cursor");
+    if (cursor !== null && (cursor === "" || cursor.length > 255))
+      return apiError("invalid_cursor", 422, "cursor is the next_cursor of a page before");
     const listed = await timePhaseAsync(ctx.request, "git", () =>
       listBranches(dirOf(ctx, repo), repo.defaultBranch),
     );
-    if (!listed.ok) return timePhase(ctx.request, "render", () => json([]));
-    return timePhase(ctx.request, "render", () =>
-      json(
-        listed.value.branches.map((b) => ({
+    const rows = listed.ok
+      ? listed.value.branches.map((b) => ({
           name: b.name,
           oid: b.oid,
           isDefault: b.isDefault,
           ahead: b.ahead,
           behind: b.behind,
           protected: b.isDefault && repo.protectDefault,
-        })),
-      ),
+        }))
+      : [];
+    // The cursor is the name of the last branch of the page before.
+    const start = cursor === null ? 0 : rows.findIndex((r) => r.name === cursor) + 1;
+    if (start === 0 && cursor !== null)
+      return apiError("invalid_cursor", 422, "cursor is the next_cursor of a page before");
+    const items = rows.slice(start, start + limit);
+    const more = start + limit < rows.length;
+    return timePhase(ctx.request, "render", () =>
+      json({ items, next_cursor: more ? items[items.length - 1]!.name : null }),
     );
   });
 

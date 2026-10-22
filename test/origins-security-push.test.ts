@@ -361,10 +361,10 @@ describe("push-through, adversarially", () => {
   };
 
   const localMain = async (): Promise<string> => {
-    const branches = await read<{ name: string; oid: string }[]>(
+    const branches = await read<{ items: { name: string; oid: string }[] }>(
       await api("/api/v1/repos/alice/gears/branches"),
     );
-    return branches.find((b) => b.name === "main")?.oid ?? "";
+    return branches.items.find((b) => b.name === "main")?.oid ?? "";
   };
   const originRef = async (ref: string): Promise<string> =>
     (await git(["rev-parse", "--verify", "--quiet", ref], origin.dir)).out;

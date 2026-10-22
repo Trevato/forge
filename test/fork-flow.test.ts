@@ -344,11 +344,7 @@ describe("the fork flow", () => {
     expect(result.pull?.local).toBeNull();
 
     // The branch really landed on the fork's git, at the commit we made.
-    const branches = await read<{ name: string; oid: string }[]>(
-      await fetch(
-        `${originServers.url}/api/v1/repos/${ORIGIN_LOGIN}/gears/branches`,
-      ),
-    );
+    const branches = await (await read<{ items: { name: string; oid: string }[] }>(await fetch(`${originServers.url}/api/v1/repos/${ORIGIN_LOGIN}/gears/branches`))).items;
     const landed = branches.find((b) => b.name === "fix-typo");
     expect(landed?.oid).toBe(result.commit.commitOid);
 
@@ -437,11 +433,7 @@ describe("the fork flow", () => {
     expect(after).toBe(before);
 
     // The branch is on the upstream's own git.
-    const branches = await read<{ name: string; oid: string }[]>(
-      await fetch(
-        `${originServers.url}/api/v1/repos/${ORIGIN_LOGIN}/own/branches`,
-      ),
-    );
+    const branches = await (await read<{ items: { name: string; oid: string }[] }>(await fetch(`${originServers.url}/api/v1/repos/${ORIGIN_LOGIN}/own/branches`))).items;
     expect(branches.find((b) => b.name === "direct")?.oid).toBe(
       result.commit.commitOid,
     );
@@ -482,11 +474,7 @@ describe("the fork flow", () => {
     }>(response);
     expect(result.via).toBe("fork");
 
-    const branches = await read<{ name: string; oid: string }[]>(
-      await fetch(
-        `${originServers.url}/api/v1/repos/${ORIGIN_LOGIN}/widgets/branches`,
-      ),
-    );
+    const branches = await (await read<{ items: { name: string; oid: string }[] }>(await fetch(`${originServers.url}/api/v1/repos/${ORIGIN_LOGIN}/widgets/branches`))).items;
     expect(branches.find((b) => b.name === "gh-fix")?.oid).toBe(
       result.commit.commitOid,
     );
@@ -745,11 +733,7 @@ describe("the fork flow", () => {
     const pull = await read<{ number: number }>(proposed);
 
     // The branch is on the upstream's own git, at bob's commit…
-    const branches = await read<{ name: string; oid: string }[]>(
-      await fetch(
-        `${originServers.url}/api/v1/repos/${ORIGIN_LOGIN}/own/branches`,
-      ),
-    );
+    const branches = await (await read<{ items: { name: string; oid: string }[] }>(await fetch(`${originServers.url}/api/v1/repos/${ORIGIN_LOGIN}/own/branches`))).items;
     expect(branches.find((b) => b.name === "refined")?.oid).toBe(commitOid);
     // …the pull was opened there from it, as a bare branch…
     const opened = forgejo.state.requests.filter(
@@ -760,10 +744,10 @@ describe("the fork flow", () => {
     expect(sent.head).toBe("refined");
     expect(sent.base).toBe("main");
     // …and the mirror shows both the branch and the pull.
-    const local = await read<{ name: string; oid: string }[]>(
+    const local = await read<{ items: { name: string; oid: string }[] }>(
       await api(`/api/v1/repos/${mirror.ownerName}/${mirror.name}/branches`),
     );
-    expect(local.find((b) => b.name === "refined")?.oid).toBe(commitOid);
+    expect(local.items.find((b) => b.name === "refined")?.oid).toBe(commitOid);
     const listed = await read<{ items: { number: number }[] }>(
       await api(`/api/v1/repos/${mirror.ownerName}/${mirror.name}/pulls`),
     );
@@ -814,10 +798,10 @@ describe("the fork flow", () => {
     expect(seeded).toBe(1);
     expect(job?.stage).toBe("done");
     expect(job?.repo?.name).toBe("late");
-    const branches = await read<{ name: string }[]>(
+    const branches = await read<{ items: { name: string }[] }>(
       await api(`/api/v1/repos/${job!.repo!.ownerName}/late/branches`),
     );
-    expect(branches.map((b) => b.name)).toContain("main");
+    expect(branches.items.map((b) => b.name)).toContain("main");
   }, 60_000);
 
   test("a native repo has no upstream to contribute to", async () => {

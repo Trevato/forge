@@ -392,9 +392,11 @@ describe("fork at the origin, and propose a change through it", () => {
     expect(flash).toContain("octo/gears#1");
 
     // The branch really landed on the fork's git.
-    const branches = (await (
-      await fetch(`${upServers.url}/api/v1/repos/me/gears/branches`)
-    ).json()) as { name: string }[];
+    const branches = (
+      (await (
+        await fetch(`${upServers.url}/api/v1/repos/me/gears/branches`)
+      ).json()) as { items: { name: string }[] }
+    ).items;
     expect(branches.map((b) => b.name)).toContain("alice/fix-typo");
 
     // And the pull went upstream with the cross-repository head form.
