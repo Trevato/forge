@@ -1371,14 +1371,13 @@ export function apiRoutes(router: Router<Handler>): void {
     });
   });
 
-  router.add("GET", "/api/v1/user", (ctx) =>
-    ctx.auth.user
-      ? json({
-          ...publicUser(ctx.auth.user),
-          emailVerified: emailVerified(ctx.app.db, ctx.auth.user.id),
-        })
-      : unauthorized(),
-  );
+  router.add("GET", "/api/v1/user", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const me = ctx.auth.user;
+    if (!me) return unauthorized();
+    const verified = timePhase(ctx.request, "user", () => emailVerified(ctx.app.db, me.id));
+    return timePhase(ctx.request, "render", () => json({ ...publicUser(me), emailVerified: verified }));
+  });
 
   // Another verification link for the signed-in account; rate limited.
   router.add("POST", "/api/v1/user/email/verify", async (ctx) => {
