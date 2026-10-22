@@ -2338,9 +2338,10 @@ export function apiRoutes(router: Router<Handler>): void {
   // ── repositories ─────────────────────────────────────────────────────
 
   router.add("GET", "/api/v1/repos", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const query = repoQuery(ctx);
-    const items = listReposVisibleTo(ctx.app.db, ctx.auth.user, query);
-    return json(paged(items, query.limit, (r) => r.id));
+    const items = timePhase(ctx.request, "repos", () => listReposVisibleTo(ctx.app.db, ctx.auth.user, query));
+    return timePhase(ctx.request, "render", () => json(paged(items, query.limit, (r) => r.id)));
   });
 
   router.add("POST", "/api/v1/repos", async (ctx) => {
