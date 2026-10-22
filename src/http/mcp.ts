@@ -152,7 +152,7 @@ import { repoGraph } from "../core/dependencies.ts";
 import { pillarView } from "../core/pillars.ts";
 import { createBranch, deleteBranch } from "../actions/branches.ts";
 import { listBranches } from "../git/branches.ts";
-import { commitLog } from "../git/read.ts";
+import { commitLog, listRefs } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
 import { runGit } from "../git/env.ts";
 import { isSafeRef, isSafeTreePath } from "../git/guard.ts";
@@ -2123,14 +2123,37 @@ const TOOLS: readonly Tool[] = [
         name: { type: "string", maxLength: 255 },
         action: { type: "string", enum: ["create", "delete"] },
         from: { type: "string", maxLength: 255 },
+        kind: { type: "string", enum: ["branches", "tags"], description: "tags: newest first" },
       },
       required: ["repo"],
     },
     writes: true,
     readsWithout: "name",
     async run(ctx, user, args) {
+      const kind = args["kind"] ?? "branches";
+      if (kind !== "branches" && kind !== "tags") return bad("invalid", "`kind` is branches or tags");
+      if (kind === "tags" && (args["name"] !== undefined || args["action"] !== undefined))
+        return bad("invalid", "`kind: tags` only lists; leave out `name` and `action`");
       const repo = repoArg(ctx, user, args);
       if (isAnswer(repo)) return repo;
+      if (kind === "tags") {
+        const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
+        const refs = await listRefs(dir, "refs/tags/");
+        if (!refs.ok) return good({ tags: [] });
+        const order = await runGit(
+          ["for-each-ref", "--sort=-creatordate", "--format=%(refname)", "--", "refs/tags/"],
+          { cwd: dir },
+        );
+        const rank = new Map((order.ok ? order.value.split("\n") : []).map((n, i) => [n, i]));
+        refs.value.sort((a, b) => (rank.get(a.name) ?? 0) - (rank.get(b.name) ?? 0));
+        return good({
+          tags: refs.value.map((r) => ({
+            name: r.name.replace("refs/tags/", ""),
+            oid: r.oid,
+            commit: r.peeled ?? r.oid,
+          })),
+        });
+      }
       const base = `/${repo.ownerName}/${repo.name}/branches`;
       if (args["name"] === undefined) {
         const listed = await listBranches(
