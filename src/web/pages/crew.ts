@@ -100,27 +100,37 @@ function shell(ctx: Ctx, title: string, body: Html, status = 200): Response {
 export function crewReadiness(ctx: Ctx): Html {
   const crew = crewFor(ctx.app);
   if (crew === undefined)
-    return html`<p class="error-note mb">
-      ${icon("alert")} No crew runner is up on this forge, so assigned issues
-      will wait. Start the forge with apps on (the default) and Claude Code on
-      <span class="mono">PATH</span> or at
-      <span class="mono">FORGE_CLAUDE</span>.
-    </p>`;
+    return card(
+      html`<p>
+        ${icon("alert")} No crew runner is up on this forge, so assigned issues
+        will wait. Start the forge with apps on (the default) and Claude Code
+        on <span class="mono">PATH</span> or at
+        <span class="mono">FORGE_CLAUDE</span>.
+      </p>`,
+      { tone: "danger", extra: "mb" },
+    );
   if (!crew.ready)
-    return html`<p class="error-note mb">
-      ${icon("alert")} The crew cannot run: ${crew.detail}. Agents can be
-      created, but nothing picks up their work until this is fixed.
-    </p>`;
+    return card(
+      html`<p>
+        ${icon("alert")} The crew cannot run: ${crew.detail}. Agents can be
+        created, but nothing picks up their work until this is fixed.
+      </p>`,
+      { tone: "danger", extra: "mb" },
+    );
   return html`<p class="muted small mb">
     ${icon("check")} ${crew.detail} is ready to run the crew.
   </p>
   ${when(
     !crew.sandbox.enforced,
-    () => html`<p class="error-note mb" id="crew-unsandboxed">
-      ${icon("alert")} Unsandboxed: agents' shells run unrestricted here
-      (${crew.sandbox.reason}). They can read this forge's data and reach any
-      host.
-    </p>`,
+    () =>
+      card(
+        html`<p>
+          ${icon("alert")} Unsandboxed: agents' shells run unrestricted here
+          (${crew.sandbox.reason}). They can read this forge's data and reach
+          any host.
+        </p>`,
+        { tone: "danger", extra: "mb", id: "crew-unsandboxed" },
+      ),
   )}`;
 }
 
