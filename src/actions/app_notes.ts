@@ -6,7 +6,7 @@
  * both go through here, so the limits and the gating are one set.
  */
 import type { App } from "../app.ts";
-import { banVisitor, markSender, getNote, hideNote, insertNote, isBanned, notesOf, notesOfApp, type AppNote } from "../core/app_notes.ts";
+import { banVisitor, bannedNotes, unbanVisitor, markSender, getNote, hideNote, insertNote, isBanned, notesOf, notesOfApp, type AppNote } from "../core/app_notes.ts";
 import type { AppRecord } from "../core/apps.ts";
 import { createLabel, getIssue, getLabel } from "../core/issues.ts";
 import { RateLimiter } from "../core/ratelimit.ts";
@@ -257,5 +257,53 @@ export async function moderateNote(
   }
   hideNote(app.db, note.id);
   if (action === "ban") banVisitor(app.db, record.id, note.visitor);
+  return ok(true);
+}
+
+/** What the owner's list shows of one note: the sender, the words, the page. */
+export interface OwnerNote {
+  readonly id: string;
+  readonly by: string;
+  readonly person: boolean;
+  readonly text: string;
+  readonly page: string;
+  readonly at: string;
+  readonly banned: boolean;
+}
+
+/** The page a note was sent from, read back from the fenced line the issue holds. */
+function pageOf(body: string): string {
+  const m = /^- Page: `([^`\n]*)`/m.exec(body);
+  return m?.[1] ?? "";
+}
+
+function ownerView(app: App, repo: Repo, n: AppNote, banned: boolean): OwnerNote | undefined {
+  const issue = getIssue(app.db, repo.id, n.issueNumber);
+  if (issue === undefined) return undefined;
+  return {
+    id: n.id,
+    by: n.name,
+    person: n.visitor.startsWith("u:"),
+    text: issue.title.startsWith(FROM_APP_TITLE) ? issue.title.slice(FROM_APP_TITLE.length) : issue.title,
+    page: pageOf(issue.body),
+    at: n.createdAt,
+    banned,
+  };
+}
+
+/** The owner's screen: the latest notes still shown, and each banned sender once. Writers only. */
+export function ownerNotes(app: App, record: AppRecord, repo: Repo, actor: User | undefined): { notes: OwnerNote[]; banned: OwnerNote[] } | undefined {
+  if (actor === undefined || !canAdmin(app.db, repo, actor)) return undefined;
+  const pick = (rows: AppNote[], banned: boolean) =>
+    rows.map((n) => ownerView(app, repo, n, banned)).filter((n): n is OwnerNote => n !== undefined);
+  return { notes: pick(notesOfApp(app.db, record.id), false), banned: pick(bannedNotes(app.db, record.id), true) };
+}
+
+/** The owner's: let the sender of a note write again. */
+export function unbanSender(app: App, record: AppRecord, repo: Repo, actor: User | undefined, noteId: string): Result<true, "forbidden" | "not_found"> {
+  if (actor === undefined || !canAdmin(app.db, repo, actor)) return err("forbidden");
+  const note = getNote(app.db, record.id, noteId);
+  if (note === undefined) return err("not_found");
+  unbanVisitor(app.db, record.id, note.visitor);
   return ok(true);
 }

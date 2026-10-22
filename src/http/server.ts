@@ -226,6 +226,7 @@ import {
   newIssuePage,
   newIssueSubmit,
 } from "../web/pages/issues.ts";
+import { noteModerate } from "../web/studio/notes.ts";
 import { tellPage } from "../web/studio/tell.ts";
 import { tellHerePage } from "../web/studio/tell_here.ts";
 import { globalMapPage, mapPage } from "../web/pages/map.ts";
@@ -1234,6 +1235,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/app/:env/open", appOpen);
   // Where a private app sends a person who arrived by its link.
   router.add("GET", "/apps/open", appsOpen);
+  router.add("POST", "/:owner/:name/app/notes", noteModerate);
   router.add("POST", "/:owner/:name/app/:env/redeploy", appRedeploy);
   router.add("POST", "/:owner/:name/app/:env/stop", appStop);
   router.add("GET", "/:owner/:name/runs", runsList);

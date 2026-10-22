@@ -3,11 +3,11 @@
  * the terminal's door to what the button does on an app's page, with the
  * page's gating. A signed-in person who reads the repository may send a note
  * and see their own with its status; the repository's admin sees every
- * sender's and may hide a note or ban its sender. A repository that is not
+ * sender's and may hide a note or ban its sender, see the banned senders and unban them. A repository that is not
  * an app, or a guest, gets no rows.
  */
 
-import { moderateNote, notesFor, sendNote, type Sender } from "../../actions/app_notes.ts";
+import { moderateNote, notesFor, ownerNotes, sendNote, unbanSender, type Sender } from "../../actions/app_notes.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { canAdmin, canEnterApp, canRead, type Repo } from "../../core/repos.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -24,6 +24,40 @@ export function noteCommands(f: Session, ctx: Ctx, parent: () => Screen, repo: R
   const name = `${repo.ownerName}/${repo.name}`;
   const sender: Sender = { key: `u:${user.id}`, name: `@${user.username}`, person: true };
   const admin = canAdmin(f.app.db, repo, user);
+  const unban: Command[] = [];
+  if (admin) {
+    unban.push({
+      id: "banned",
+      title: `${name} — Banned senders`,
+      hint: "unban a sender",
+      run: () => {
+        const banned = ownerNotes(f.app, record, repo, user)?.banned ?? [];
+        if (banned.length === 0) return ctx.toast("No one is banned.");
+        ctx.push(
+          pickerScreen(ctx, parent(), {
+            title: "Banned senders",
+            items: banned.map((n) => ({ id: n.id, label: n.by, hint: n.text })),
+            onPick: ([id]) => {
+              const picked = banned.find((n) => n.id === id);
+              if (picked === undefined) return;
+              ctx.push(
+                confirmScreen(ctx, parent(), {
+                  title: "Unban this sender",
+                  body: [picked.by, picked.text],
+                  actions: [{ label: "Keep banned", variant: "ghost" }, { label: "Unban" }],
+                  onChoose: (i) => {
+                    if (i < 1) return;
+                    const done = unbanSender(f.app, record, repo, user, picked.id);
+                    ctx.toast(done.ok ? "Sender unbanned." : "That could not be done.", done.ok ? "success" : "danger");
+                  },
+                }),
+              );
+            },
+          }),
+        );
+      },
+    });
+  }
   return [
     {
       id: "note",
@@ -77,5 +111,6 @@ export function noteCommands(f: Session, ctx: Ctx, parent: () => Screen, repo: R
         );
       },
     },
+    ...unban,
   ];
 }

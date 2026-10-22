@@ -15,7 +15,7 @@ import { toolbarJs } from "../src/apps/toolbar.ts";
 import { filtered, moderateNote, noteClock, PER_APP_DAY, PER_SENDER, PER_SOURCE, saysFromApp } from "../src/actions/app_notes.ts";
 import { feedback, REQUEST_MAX } from "../src/apps/feedback.ts";
 import { getAppBySlug } from "../src/core/apps.ts";
-import { getNote } from "../src/core/app_notes.ts";
+import { getNote, isBanned } from "../src/core/app_notes.ts";
 import { grantedCookie } from "./helpers/identity.ts";
 import { getIssue, labelsFor, setIssueState } from "../src/core/issues.ts";
 import { getRepo } from "../src/core/repos.ts";
@@ -310,6 +310,111 @@ describe("the forge button takes notes from anyone", () => {
     expect(mine.notes.length).toBe(1);
     expect(mine.admin).toBe(true);
     expect((await at("diary", "/__forge/notes")).status).toBe(404);
+  });
+
+  test("the studio page lists the notes; a writer hides one, bans a sender and unbans them; a stranger sees and can do nothing", async () => {
+    // The minute's bounds are spent by the tests before; this one starts a later minute.
+    const start = Date.now() + 120_000;
+    noteClock.now = () => start;
+    const signin = await fetch(`${servers.url}/signin`, {
+      method: "POST",
+      headers: { origin: servers.url },
+      body: new URLSearchParams({ username: "alice", password: "a-good-passphrase" }),
+      redirect: "manual",
+    });
+    const me = (signin.headers.get("set-cookie") ?? "").split(";")[0]!;
+    const forge = (path: string, init: RequestInit = {}, cookie = me) =>
+      fetch(`${servers.url}${path}`, {
+        ...init,
+        headers: { origin: servers.url, ...(cookie ? { cookie } : {}), ...(init.headers as Record<string, string>) },
+        redirect: "manual",
+      });
+    const form = (body: Record<string, string>, cookie = me) =>
+      forge("/alice/notes/app/notes", { method: "POST", body: new URLSearchParams(body) }, cookie);
+    const first = await post("studio words one", "", "10.7.0.1");
+    const cookie = cookieOf(first);
+    const sent = (await first.json()) as { note: { id: string; url: string }; name: string };
+    const number = Number(sent.note.url.split("/").pop());
+    const repo = getRepo(app.db, "alice", "notes")!;
+
+    const page = await (await forge("/alice/notes")).text();
+    expect(page).toContain("studio words one");
+    expect(page).toContain(sent.name);
+    expect(page).toContain("anonymous");
+    expect(page).toContain("/lists");
+    expect(page).toContain("Hide");
+    expect(page).toContain("Ban sender");
+    // a stranger reads no list and the post is refused
+    const stranger = await (await forge("/alice/notes", {}, "")).text();
+    expect(stranger).not.toContain("Ban sender");
+    expect(stranger).not.toContain('id="app-notes"');
+    const refused = await form({ id: sent.note.id, action: "hide" }, "");
+    expect(refused.status).toBe(303);
+    expect(refused.headers.get("location") ?? "").toContain("/signin");
+    expect(getIssue(app.db, repo.id, number)!.state).toBe("open");
+    // same-origin is checked
+    const cross = await forge("/alice/notes/app/notes", { method: "POST", headers: { origin: "http://evil.example" }, body: new URLSearchParams({ id: sent.note.id, action: "hide" }) });
+    expect(cross.status).toBe(403);
+    expect((await form({ id: sent.note.id, action: "nuke" })).status).toBe(400);
+
+    // hide: the issue closes and the row goes
+    expect((await form({ id: sent.note.id, action: "hide" })).status).toBe(303);
+    expect(getIssue(app.db, repo.id, number)!.state).toBe("closed");
+    expect(await (await forge("/alice/notes")).text()).not.toContain(`value="${sent.note.id}"`);
+
+    // ban: the sender's next note is refused and they are listed once with Unban
+    const second = await post("studio words two", cookie, "10.7.0.1");
+    expect(second.status).toBe(201);
+    const secondId = ((await second.json()) as { note: { id: string } }).note.id;
+    expect((await form({ id: secondId, action: "ban" })).status).toBe(303);
+    expect((await post("again", cookie, "10.7.0.1")).status).toBe(403);
+    const banned = await (await forge("/alice/notes")).text();
+    expect(banned).toContain("Banned senders");
+    expect(banned.split(`value="${secondId}"`).length - 1).toBe(1);
+    // a signed-in reader who is not an admin sees no card and can do nothing
+    const bobMade = await createUser(app.db, { origin: "seed", trusted: true, username: "bob", email: "bob@forge.local", password: "a-good-passphrase" });
+    if (!bobMade.ok) throw new Error(bobMade.error);
+    const bobIn = await fetch(`${servers.url}/signin`, {
+      method: "POST",
+      headers: { origin: servers.url },
+      body: new URLSearchParams({ username: "bob", password: "a-good-passphrase" }),
+      redirect: "manual",
+    });
+    const bob = (bobIn.headers.get("set-cookie") ?? "").split(";")[0]!;
+    expect(bob).not.toBe("");
+    const record = getAppBySlug(app.db, "notes")!;
+    const bobPage = await (await forge("/alice/notes", {}, bob)).text();
+    expect(bobPage).not.toContain('id="app-notes"');
+    expect(bobPage).not.toContain("studio words two");
+    expect(bobPage).not.toContain(sent.name);
+    const bannedBefore = isBanned(app.db, record.id, getNote(app.db, record.id, secondId)!.visitor);
+    expect(bannedBefore).toBe(true);
+    const third = await post("studio words three", "", "10.7.0.9");
+    const thirdNote = ((await third.json()) as { note: { id: string; url: string } }).note;
+    const thirdId = thirdNote.id;
+    const thirdNumber = Number(thirdNote.url.split("/").pop());
+    for (const action of ["hide", "ban", "unban"]) {
+      for (const id of [action === "unban" ? secondId : thirdId]) {
+        const refused = await form({ id, action }, bob);
+        expect(refused.status).toBe(303);
+        const flashed = await forge("/alice/notes", {}, `${bob}; ${(refused.headers.get("set-cookie") ?? "").split(";")[0]}`);
+        expect(await flashed.text()).toContain("You need admin access to do that.");
+      }
+    }
+    expect(getIssue(app.db, repo.id, thirdNumber)!.state).toBe("open");
+    expect(isBanned(app.db, record.id, getNote(app.db, record.id, thirdId)!.visitor)).toBe(false);
+    expect(isBanned(app.db, record.id, getNote(app.db, record.id, secondId)!.visitor)).toBe(true);
+    // unban
+    expect((await form({ id: secondId, action: "unban" })).status).toBe(303);
+    expect((await post("back again", cookie, "10.7.0.1")).status).toBe(201);
+    expect(await (await forge("/alice/notes")).text()).not.toContain(`value="${secondId}"`);
+    // the app host answers 404 for moderation, and for the forge's own path too
+    for (const path of ["/__forge/note/moderate", "/app/notes"])
+      expect((await at("notes", path, { method: "POST", body: JSON.stringify({ id: secondId, action: "ban" }) }, "")).status).toBe(404);
+  });
+
+  test("the clock is the real one again", () => {
+    noteClock.now = () => Date.now();
   });
 
   test("the panel fits a phone and a desktop, and says no forge words first", () => {

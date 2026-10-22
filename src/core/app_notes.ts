@@ -100,6 +100,29 @@ export function banVisitor(db: Database, appId: string, visitor: string): void {
   db.query("UPDATE app_note SET hidden = 1 WHERE app_id = ?1 AND visitor = ?2").run(appId, visitor);
 }
 
+/** Let a banned sender write again; the notes hidden with the ban stay hidden. */
+export function unbanVisitor(db: Database, appId: string, visitor: string): void {
+  db.query("DELETE FROM app_note_ban WHERE app_id = ?1 AND visitor = ?2").run(appId, visitor);
+}
+
+/**
+ * Each banned sender once, newest ban first, as their latest note (hidden or
+ * not): the note's id is how the owner names them, never the visitor key.
+ */
+export function bannedNotes(db: Database, appId: string, limit = 50): AppNote[] {
+  return db
+    .query<Row, [string, number]>(
+      `SELECT n.* FROM app_note_ban b
+         JOIN app_note n ON n.app_id = b.app_id AND n.visitor = b.visitor
+        WHERE b.app_id = ?1
+          AND n.id = (SELECT m.id FROM app_note m WHERE m.app_id = b.app_id AND m.visitor = b.visitor
+                      ORDER BY m.created_at DESC, m.id DESC LIMIT 1)
+        ORDER BY b.created_at DESC, n.id DESC LIMIT ?2`,
+    )
+    .all(appId, limit)
+    .map(fromRow);
+}
+
 export function isBanned(db: Database, appId: string, visitor: string): boolean {
   return (
     db

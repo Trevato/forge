@@ -51,6 +51,7 @@ import { changesHref, tellsHref } from "./nouns.ts";
 import { answersRegion } from "./answers.ts";
 import { nowCard, nowRegion } from "./now.ts";
 import { repoAsks } from "./asks.ts";
+import { notesCard } from "./notes.ts";
 import { appPanels } from "./previews.ts";
 import { noCrewLine, servingHistory, type WordCtx } from "./words.ts";
 import { crewKeyNote } from "./crew.ts";
@@ -500,6 +501,7 @@ export async function studioApp(
         ${ownerFacts && ctx.auth.user ? answersRegion(ctx, repo, ctx.auth.user) : null}
         <div id="app-previews">${previews}</div>
         ${nowRegion(repo, now)}
+        ${notesCard(ctx, repo, record)}
       </div>
       <aside class="stack">
         ${crewCard} ${weekCard} ${ownCard} ${more}

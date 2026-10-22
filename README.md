@@ -1004,7 +1004,8 @@ Under the box, four starter sentences are plain links (no script):
   From the terminal, a repository screen that is an app has two palette rows
   (`:`): *Tell the builders* sends a note as you, and *Notes from the app*
   lists yours with their status; the repository's admin sees every sender's and
-  may hide a note or ban its sender. The gating is the page's: a guest or a
+  may hide a note, ban its sender, list the banned senders (*Banned senders*)
+  and unban one. The gating is the page's: a guest or a
   non-reader sees nothing, and a repository that is not an app has no rows.
   Who may write: anyone on a public app, but a private app, and any sealed
   pull's preview, take notes only from a person the app admits (the condition
@@ -1013,8 +1014,11 @@ Under the box, four starter sentences are plain links (no script):
   happens on the forge, not on the app: the app host answers only
   `POST /__forge/note` and `GET /__forge/notes`, and `/__forge/note/moderate` is
   a 404 there, because the app's own code (or a preview's) could call it
-  same-origin with a visiting admin's cookie. The terminal screen above is the
-  owner's tool today.
+  same-origin with a visiting admin's cookie. The terminal screen above and the
+  app's studio page are the owner's tools: the page lists the latest notes
+  (sender, words, page, when) for those who may admin the repository, each with
+  Hide and Ban sender, and every banned sender once with Unban, posting to
+  `POST /:owner/:name/app/notes` on the forge's origin (`web/studio/notes.ts`).
   Limits count the socket's client (`http/peer.ts`, with its trusted-proxy
   rule), never a header the client wrote, and all three are checked before any
   is spent. The request body is read only up to 16 KB. The issue says its text

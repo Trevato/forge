@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { newApp } from "../src/actions/apps.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
+import { sendNote, type Sender } from "../src/actions/app_notes.ts";
 import { isBanned } from "../src/core/app_notes.ts";
 import { getAppBySlug } from "../src/core/apps.ts";
 import { getIssue, labelsFor } from "../src/core/issues.ts";
@@ -105,5 +106,20 @@ describe("notes from the app, in the terminal", () => {
     await palette(alice, notes, [":", "Notes from", "\r", "\r", "\x1b[C", "\x1b[C", "\r"]);
     const record = getAppBySlug(app.db, "notes")!;
     expect(isBanned(app.db, record.id, `u:${bob.id}`)).toBe(true);
+  });
+
+  test("the admin lists the banned senders and unbans one; a reader has no such row", async () => {
+    const record = getAppBySlug(app.db, "notes")!;
+    expect(isBanned(app.db, record.id, `u:${bob.id}`)).toBe(true);
+    expect(await palette(bob, notes, [":"])).not.toContain("Banned senders");
+    const listed = await palette(alice, notes, [":", "Banned", "\r"]);
+    expect(listed).toContain("@bob");
+    expect(await palette(bob, notes, [":", "Banned", "\r"])).not.toContain("Unban");
+    await palette(alice, notes, [":", "Banned", "\r", "\r", "\x1b[C", "\r"]);
+    expect(isBanned(app.db, record.id, `u:${bob.id}`)).toBe(false);
+    const sender: Sender = { key: `u:${bob.id}`, name: "@bob", person: true };
+    const again = await sendNote(app, record, notes, "production", undefined, sender, { text: "back again", page: "", viewport: "unknown" }, "ssh:again");
+    expect(again.ok).toBe(true);
+    expect(await palette(alice, notes, [":", "Banned", "\r"])).not.toContain("Unban this sender");
   });
 });
