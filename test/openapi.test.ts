@@ -29,7 +29,9 @@ test("every http route the manifest names is described", () => {
 test("every described route is registered in the router", () => {
   const src = ["src/http/server.ts", "src/http/api.ts", "src/http/mcp.ts"]
     .map((f) => readFileSync(f, "utf8"))
-    .join("\n");
+    .join("\n")
+    // A route registered in a loop over issues and pulls is two routes.
+    .replace(/"(PUT)",\s*`([^`]*)\$\{kind\}([^`]*)`/g, (_, m, a, b) => `"${m}", "${a}issues${b}"\n"${m}", "${a}pulls${b}"`);
   const registered = new Set(
     [...src.matchAll(/"(GET|POST|PATCH|DELETE|PUT)",\s*"([^"]+)"/g)].map((m) => `${m[1]} ${m[2]}`),
   );
