@@ -6246,12 +6246,14 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/agents", (ctx) => {
-    const agents = listAllAgents(ctx.app, ctx.auth.user);
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const agents = timePhase(ctx.request, "agents", () => listAllAgents(ctx.app, ctx.auth.user));
     if (!agents.ok) return respondAccess(agents.error, 401);
-    return json({
-      items: agents.value.map((a) => agentFor(a, ctx.auth.user)),
-      next_cursor: null,
-    });
+    return timePhase(ctx.request, "render", () =>
+      json({
+        items: agents.value.map((a) => agentFor(a, ctx.auth.user)),
+        next_cursor: null,
+      }));
   });
 
   router.add("POST", "/api/v1/agents", async (ctx) => {
