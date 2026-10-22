@@ -121,6 +121,24 @@ test("making and listing apps is described with every field the route reads", ()
     expect(post.responses.default.description).toContain(`\`${code}\``);
 });
 
+test("no method and path is described twice, so no row is dead", () => {
+  const seen = new Set<string>();
+  for (const r of ROUTES) {
+    const key = `${r.method} ${r.path}`;
+    expect(seen.has(key), `duplicate ${key}`).toBe(false);
+    seen.add(key);
+  }
+});
+
+test("the front reads say what they answer and refuse", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  expect(JSON.stringify(doc.paths["/api/v1/here"].get)).toContain("not_found");
+  expect(JSON.stringify(doc.paths["/api/v1/forge"].get)).toContain("not_found");
+  expect(doc.paths["/api/v1/forge"].get.summary).toContain("lastActivityAt");
+  expect(doc.paths["/api/v1/front"].get.summary).toContain("featured");
+  expect(doc.paths["/api/v1/contribute"].get.summary).toContain("welcomeLabel");
+});
+
 test("signing up, signing in and the first admin are described", () => {
   const doc = openapi("https://f.test", "1") as any;
   const want: [string, string, number][] = [

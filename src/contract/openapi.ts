@@ -277,21 +277,6 @@ export const ROUTES: readonly Route[] = [
     status: 204,
     refusals: { forbidden: "the caller holds a bearer token, which cannot manage tokens" },
   },
-  {
-    method: "post",
-    path: "/api/v1/sessions",
-    summary: "Sign in with a username and password; sets the HttpOnly session cookie and answers 201 with the user; same-origin only, throttled; not for a bearer token",
-    auth: false,
-    status: 201,
-    body: { username: "string", password: "string" },
-    refusals: { too_large: "the body is over the limit", too_many_attempts: "sign-in is throttled; retry-after says when" },
-  },
-  {
-    method: "delete",
-    path: "/api/v1/sessions",
-    summary: "Sign out the browser session and clear its cookie; same-origin only; a bearer token has no session to end; answers {}",
-    auth: false,
-  },
   { method: "get", path: "/api/v1/telemetry/system", summary: "Read the forge's system view; the owner or an agent holding telemetry:read, with a ro token; every agent read is logged", auth: true },
   { method: "get", path: "/api/v1/telemetry/flow", summary: "Read the forge's flow view; the owner or an agent holding telemetry:read, with a ro token; every agent read is logged", auth: true },
   { method: "get", path: "/api/v1/telemetry/sources", summary: "List telemetry sources; answers { sources }; the owner or an agent holding telemetry:read", auth: true },
@@ -395,8 +380,6 @@ export const ROUTES: readonly Route[] = [
     auth: false,
     query: { kind: "string" },
   },
-  { method: "get", path: `${REPO}/events`, summary: "Read the repository's event outbox, as this reader may see it; answers an array of events", auth: false },
-  { method: "get", path: `${REPO}/flow`, summary: "Read the repository's flow over the last day", auth: false },
   {
     method: "post",
     path: `${REPO}/pulls/{number}/reviews`,
@@ -678,7 +661,7 @@ export const ROUTES: readonly Route[] = [
     status: 201,
     body: { user: "string" },
   },
-  { method: "get", path: "/api/v1/contribute", summary: "How to contribute to a mirrored repository: the welcome for an arriving agent", auth: false },
+  { method: "get", path: "/api/v1/contribute", summary: "What an agent that arrives should know: { forge, bottleneck, welcomeLabel, issues, propose, telemetry }; issues are the open welcome-labelled ones in public repositories", auth: false },
   {
     method: "post",
     path: `${REPO}/contribute`,
@@ -723,8 +706,7 @@ export const ROUTES: readonly Route[] = [
     query: { repo: "string", days: "integer" },
     refusals: { invalid_days: "days is not a whole number in range" },
   },
-  { method: "get", path: "/api/v1/here", summary: "The manifest of what you can do at `path`, given who you are; never cached", auth: false, query: { path: "string" } },
-  { method: "get", path: "/api/v1/crew/scorecard", summary: "The crew's scorecard (ro scope, a forge admin's to read)", auth: true, refusals: { forbidden: "not a forge admin" } },
+  { method: "get", path: "/api/v1/here", summary: "The manifest of what you can do at `path` (default /), given who you are: { here, you, actions, mcp, docs }; never cached", auth: false, query: { path: "string" }, refusals: { not_found: "404: the path names no page you can read" } },
   {
     method: "post",
     path: `${REPO}/issues/{number}/dependencies`,
@@ -776,7 +758,7 @@ export const ROUTES: readonly Route[] = [
     status: 201,
     refusals: { not_found: "no child forge has this name", forbidden: "the caller is not a site admin", claimed: "the forge is already claimed" },
   },
-  { method: "get", path: "/api/v1/forge", summary: "A spawned forge's word about itself: claimed or not, to anyone; when anything last happened, only to its parent; not_found when it was not spawned", auth: false },
+  { method: "get", path: "/api/v1/forge", summary: "A spawned forge's word about itself: { claimed, lastActivityAt }; lastActivityAt is null unless the parent's secret is sent", auth: false, refusals: { not_found: "404: this forge was not spawned" } },
   {
     method: "get",
     path: "/api/v1/fleet/graph",
@@ -803,7 +785,7 @@ export const ROUTES: readonly Route[] = [
     body: { query: "string", action: "object", dryRun: "boolean" },
   },
   { method: "post", path: "/api/v1/fleet/ops/{id}/undo", summary: "Undo a fleet operation (admin scope); answers 201 with the undoing operation", auth: true, status: 201 },
-  { method: "get", path: "/api/v1/front", summary: "The front page: what a stranger is shown; a site admin also gets the picks", auth: false },
+  { method: "get", path: "/api/v1/front", summary: "The front page a stranger is shown: { featured, apps, total }, each entry { repo, description, url, state, picture, pinned, score, signals }; a site admin also gets `picks`", auth: false },
   {
     method: "get",
     path: "/api/v1/health",
