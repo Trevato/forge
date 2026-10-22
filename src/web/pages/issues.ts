@@ -26,7 +26,7 @@ import {
   signInHref,
 } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
-import { html, raw, when, type Html } from "../html.ts";
+import { html, raw, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import { btn, empty, field as formField } from "../ui.ts";
 import {
@@ -88,7 +88,6 @@ function newIssueForm(
 ): Html {
   return html`<div class="narrow-wide mt">
     <form method="post" action="${repoBase(repo)}/issues/new">
-      ${when(error, (message) => html`<p class="error-note">${message}</p>`)}
       ${formField({
         label: "Title",
         name: "title",

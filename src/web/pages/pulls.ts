@@ -67,7 +67,6 @@ function composeForm(
   const cross = parent !== undefined;
   return html`<form method="post" action="${repoBase(repo)}/pulls/new">
     <input type="hidden" name="baseRepo" value="${cross ? "parent" : "self"}" />
-    ${when(error, (message) => html`<p class="error-note">${message}</p>`)}
     ${card(
       html`<div class="field-row">
         <div class="field">
@@ -102,6 +101,7 @@ function composeForm(
         value: values.title,
         required: true,
         autofocus: true,
+        ...(error ? { error } : {}),
       })}
       ${formField({
         label: "Description",
