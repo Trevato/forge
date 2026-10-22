@@ -557,9 +557,10 @@ function labelBreach(app: App, repo: Repo, actor: User, issue: Issue): void {
 }
 
 /**
- * A degraded incident whose issue was closed as done and which goes on (same
- * cause, same first-open time) is told to that issue, not filed again: the
- * fix is likely merged but not live. At most one comment a day. True when
+ * A degraded incident whose issue was closed as done or split and which goes
+ * on (same cause, same first-open time) is told to that issue, not filed
+ * again: the fix is likely merged but not live. At most one comment a day.
+ * One closed as dropped stays silent. True when
  * the incident is that one: the comments made (0 or 1), else undefined.
  */
 function continuesDone(app: App, repo: Repo, actor: User, f: Finding, evidence: string, at: string, now: number): 0 | 1 | undefined {
@@ -572,7 +573,9 @@ function continuesDone(app: App, repo: Repo, actor: User, f: Finding, evidence: 
     .get(f.key, f.incident ?? "");
   if (prior === null) return undefined;
   const issue = getIssueById(app.db, prior.issue_id);
-  if (issue === undefined || issue.closeReason !== "done") return undefined;
+  if (issue === undefined) return undefined;
+  if (issue.closeReason === "dropped") return 0;
+  if (issue.closeReason !== "done" && issue.closeReason !== "split") return undefined;
   if (prior.commented_at !== null && now - Date.parse(prior.commented_at) < DAY_MS) return 0;
   const minutes = f.evidence.find((e) => e.startsWith("total: "));
   const said = addComment(
@@ -580,7 +583,7 @@ function continuesDone(app: App, repo: Repo, actor: User, f: Finding, evidence: 
     actor,
     repo,
     issue,
-    `Still degraded after the fix; the fix may not be live yet. At ${at}${minutes === undefined ? "" : `, ${minutes.slice(7)}`}; evidence now:\n${f.evidence.map((e) => `- ${e}`).join("\n")}`,
+    `Still degraded${issue.closeReason === "split" ? "; the work was split into other issues" : " after the fix; the fix may not be live yet"}. At ${at}${minutes === undefined ? "" : `, ${minutes.slice(7)}`}; evidence now:\n${f.evidence.map((e) => `- ${e}`).join("\n")}`,
   );
   if (!said.ok) {
     log.warn("sentinel could not comment", { key: f.key, error: String(said.error) });

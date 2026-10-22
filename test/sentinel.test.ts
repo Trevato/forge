@@ -747,14 +747,42 @@ describe("a degraded incident whose issue closed as done", () => {
     expect(issues("open").length).toBe(1);
   });
 
-  test("a finding closed as dropped that returns is refiled", () => {
+  test("a finding closed as dropped stays silent while the incident goes on", () => {
     const t = T0 + 10 * DAY;
     span("disk", t - 2 * HOUR, 30);
     expect(hunt(iapp, "alice/forge", t).filed).toBe(1);
     iapp.db.query("UPDATE issue SET state = 'closed', close_reason = 'dropped', closed_at = ?1 WHERE state = 'open'").run(new Date(t).toISOString());
     const r = hunt(iapp, "alice/forge", t + 30 * D_MIN);
-    expect(r.filed).toBe(1);
+    expect(r.filed).toBe(0);
     expect(r.commented).toBe(0);
+    expect(issues("open").length).toBe(0);
+  });
+
+  test("a finding closed as split is commented once a day, not refiled", () => {
+    const t = T0 + 20 * DAY;
+    span("queue", t - 2 * HOUR, 30);
+    expect(hunt(iapp, "alice/forge", t).filed).toBe(1);
+    iapp.db.query("UPDATE issue SET state = 'closed', close_reason = 'split', closed_at = ?1 WHERE state = 'open'").run(new Date(t).toISOString());
+    const again = hunt(iapp, "alice/forge", t + 30 * D_MIN);
+    expect(again.filed).toBe(0);
+    expect(again.commented).toBe(1);
+    const third = hunt(iapp, "alice/forge", t + 2 * HOUR);
+    expect(third.filed).toBe(0);
+    expect(third.commented).toBe(0);
+    expect(issues("open").length).toBe(0);
+  });
+
+  test("a new incident after a split close is refiled", () => {
+    const t = T0 + 30 * DAY;
+    span("cache", t - 2 * HOUR, 30);
+    expect(hunt(iapp, "alice/forge", t).filed).toBe(1);
+    iapp.db.query("UPDATE issue SET state = 'closed', close_reason = 'split', closed_at = ?1 WHERE state = 'open'").run(new Date(t).toISOString());
+    // The incident ends; a fresh one opens later, with another first-open time.
+    const later = t + 2 * DAY;
+    span("cache", later - HOUR, 20);
+    const r = hunt(iapp, "alice/forge", later);
+    expect(r.filed).toBe(1);
+    expect(issues("open").length).toBe(1);
   });
 });
 
