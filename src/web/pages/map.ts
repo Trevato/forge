@@ -1121,10 +1121,6 @@ export const mapCss = /* css */ `
 .map-canvas.is-view .map-svg { height: 100%; }
 .map-svg text { font-family: var(--font); pointer-events: none; }
 .map-canvas > [role="group"] { position: absolute; top: 8px; right: 8px; gap: 4px; }
-.map-tool { min-width: 26px; height: 24px; padding: 0 7px; border: 0; background: transparent; color: var(--muted-fg); font-size: 12.5px; font-weight: 550; line-height: 1; cursor: pointer; }
-.map-tool + .map-tool { border-left: 1px solid var(--border); }
-.map-tool:hover { background: var(--muted); color: var(--fg); }
-.map-tool:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* ---- cards ---- */
 .map-node { cursor: pointer; outline: none; }
@@ -1183,7 +1179,6 @@ export const mapCss = /* css */ `
   .map-card, .map-title { transition: none; }
 }
 @media (forced-colors: active) {
-  .map-tool:focus-visible { outline: 2px solid Highlight; }
   .map-node:focus-visible .map-card { stroke: Highlight; stroke-width: 3; }
 }
 `;

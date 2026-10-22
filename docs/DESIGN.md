@@ -573,7 +573,6 @@ the same line (#4888).
   - `.map-rule`
   - `.map-svg`
   - `.map-title`
-  - `.map-tool`
   - `.map-who`
   - `.map-who-i`
   - `.map-who-n`
