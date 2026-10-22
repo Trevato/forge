@@ -89,6 +89,23 @@ describe("settings → flags", () => {
     expect(reg.flag("alpha")).toBe(false);
   });
 
+  test("each flag's form is §5d's row-fields, posting its own name and fields (#4891)", async () => {
+    const cookie = await login("alice");
+    const text = await (await fetch(`${servers.url}/settings/flags`, { headers: { cookie } })).text();
+    expect(text).not.toContain("flag-form");
+    const forms = text.match(/<form class="row-fields" method="post" action="\/settings\/flags">[\s\S]*?<\/form>/g) ?? [];
+    expect(forms.length).toBe(Object.keys(reg.decls).length);
+    const form = forms[0]!;
+    expect(form).toContain('<input type="hidden" name="name" value="alpha" />');
+    for (const field of ['name="forge"', 'name="users"', 'name="roles"', 'name="percent"', 'name="clear"'])
+      expect(form).toContain(field);
+
+    expect((await post(cookie, { name: "alpha", forge: "off", percent: "5" })).status).toBe(303);
+    expect(reg.value("alpha")).toEqual({ forge: false, percent: 5 });
+    await post(cookie, { name: "alpha", clear: "1" });
+    expect(reg.value("alpha")).toBeUndefined();
+  });
+
   test("a bad value, an unknown flag and a foreign origin change nothing", async () => {
     const cookie = await login("alice");
     await post(cookie, { name: "alpha", percent: "101" });

@@ -498,7 +498,6 @@ the same line (#4888).
   - `.fg-s6`
   - `.fg-s7`
   - `.filters`
-  - `.flag-form`
   - `.front-admin`
   - `.front-crew`
   - `.front-featured`

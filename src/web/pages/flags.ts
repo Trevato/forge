@@ -88,7 +88,7 @@ export function flagsPage(ctx: Ctx): Response {
         <span class="mono">${decl.default ? "on" : "off"}</span> · owner
         ${issueLink(repo, decl.issue)} ·
         live: ${summary(v)}<br /><span class="mono">${usesLine(week, month)}</span>`,
-      trail: html`<form class="row-fields flag-form" method="post" action="/settings/flags">
+      trail: html`<form class="row-fields" method="post" action="/settings/flags">
         <input type="hidden" name="name" value="${name}" />
         <select class="input" name="forge" aria-label="${name} for the forge">
           <option value="" ${v?.forge === undefined ? "selected" : ""}>forge: default</option>
