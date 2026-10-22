@@ -209,6 +209,7 @@ import {
   type Permission,
   type Team,
   soleOwnedOrgs,
+  lastOwnerSays,
 } from "../core/orgs.ts";
 import {
   getPull,
@@ -1835,18 +1836,12 @@ export function apiRoutes(router: Router<Handler>): void {
     const done = await suspendAccount(ctx.app, ctx.auth.user, ctx.params.username!, {
       confirmed: input.confirm === true,
     });
-    if (!done.ok && done.error === "last_owner") {
-      const user = getUserByName(ctx.app.db, ctx.params.username!);
-      const orgs =
-        user === undefined
-          ? []
-          : soleOwnedOrgs(ctx.app.db, user.id).map((o) => o.username);
+    if (!done.ok && done.error === "last_owner")
       return apiError(
         "last_owner",
         409,
-        `${ctx.params.username} is the only active person owning ${orgs.join(", ")}: suspending leaves no one to administer it. Make someone else an owner first, or send {"confirm": true} to suspend anyway`,
+        `${lastOwnerSays(ctx.app.db, ctx.params.username!)}, or send {"confirm": true} to suspend anyway`,
       );
-    }
     return done.ok ? json({ username: done.value.username, suspendedAt: done.value.suspendedAt }) : accountError(done.error);
   });
 

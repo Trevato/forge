@@ -81,6 +81,7 @@ for a tunnel and a forge that sleeps.
 | `app_env`      | `{ repo, action, name?, value?, scope? }`: `list` an app's variable names and scopes, `set` one, or `unset` it, in `all` (default), `production` or `preview`; the API's rules and errors, an admin of the repository with an admin-scope token; a value is never read back | yes    |
 | `plan`         | `{ app, issues }`: open up to 12 linked issues, all or none (see below)                           | yes    |
 | `prompts`      | `{ repo, action, kind?, token?, at?, id? }`: list, add, run or remove an app's prompt sources (Instagram), as the `…/prompts` API does; the token goes in once and is never shown; listed only for an admin-scope token, and only the repository's admin may use it | yes    |
+| `account_suspend` | `{ username, suspended }`: suspend a person's account, or unsuspend it with `false`; their sessions and tokens stop at once; the API's rules (not yourself, another admin or an agent; not the only owner of an organization); an admin token | yes    |
 
 Answers are JSON in a text block; most carry a `says` sentence short enough
 to relay as it is.

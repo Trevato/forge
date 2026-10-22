@@ -86,6 +86,7 @@ import {
 } from "../web/studio/cards.ts";
 import { setAccountCeilings, setAccountGrant } from "../actions/model_grant.ts";
 import { inviteLink, mint as mintInviteLink } from "../actions/invites.ts";
+import { suspendAccount, unsuspendAccount } from "../actions/accounts.ts";
 import { setRole } from "../actions/roles.ts";
 import { ABILITIES, roleOf, rowOf } from "../core/roles.ts";
 import { keepThought } from "../actions/thought.ts";
@@ -160,6 +161,7 @@ import { plannerDeclines } from "../crew/autonomy.ts";
 import { checkStale } from "../checks/stale.ts";
 import { checkSummary, listActiveRuns } from "../core/runs.ts";
 import { scopeAllows } from "../core/tokens.ts";
+import { lastOwnerSays } from "../core/orgs.ts";
 import { getUserByName, getUsersByIds, type User } from "../core/users.ts";
 import { chipsOf, isKindChip, setChip } from "../core/feed_chips.ts";
 import { openapi } from "../contract/openapi.ts";
@@ -1601,6 +1603,31 @@ const TOOLS: readonly Tool[] = [
             : "no such person, or not one a role is for",
         );
       return good(set.value);
+    },
+  },
+  {
+    name: "account_suspend",
+    description: "Suspend a person's account, or unsuspend it with `suspended: false`.",
+    inputSchema: {
+      type: "object",
+      properties: { username: { type: "string" }, suspended: { type: "boolean" } },
+      required: ["username", "suspended"],
+    },
+    writes: true,
+    async run(ctx, user, args) {
+      const { username, suspended } = args;
+      if (typeof username !== "string" || typeof suspended !== "boolean")
+        return bad("invalid", "send a username and suspended, true or false");
+      if (!mayBoards(user)) return bad("forbidden", "an account is a forge admin's to suspend");
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "suspending needs an admin token");
+      const done = suspended
+        ? await suspendAccount(ctx.app, user, username)
+        : unsuspendAccount(ctx.app, user, username);
+      if (done.ok) return good({ username: done.value.username, suspendedAt: done.value.suspendedAt });
+      if (done.error === "not_found") return bad("not_found", "no such person");
+      if (done.error === "last_owner") return bad("last_owner", lastOwnerSays(ctx.app.db, username));
+      return bad("not_allowed", "an admin cannot suspend or remove themselves, another admin, or an agent");
     },
   },
   {
