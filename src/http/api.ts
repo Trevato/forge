@@ -1720,10 +1720,12 @@ export function apiRoutes(router: Router<Handler>): void {
   // The crew's scorecard (`core/scorecard.ts`): a read, so any scope of a
   // forge admin's token, as the MCP tool; 401 without one, 403 for anyone else.
   router.add("GET", "/api/v1/crew/scorecard", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireScope(ctx, "ro");
     if (denied) return denied;
-    const card = readScorecards(ctx.app, ctx.auth.user);
-    return card ? json(card) : apiError("forbidden", 403, "the crew's scorecard is a forge admin's to read");
+    const card = timePhase(ctx.request, "scorecard", () => readScorecards(ctx.app, ctx.auth.user));
+    if (!card) return apiError("forbidden", 403, "the crew's scorecard is a forge admin's to read");
+    return timePhase(ctx.request, "render", () => json(card));
   });
 
   // Crew teams (`core/teams.ts`): a forge admin who is a person; the page's door.
