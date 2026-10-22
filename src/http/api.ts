@@ -4273,11 +4273,13 @@ export function apiRoutes(router: Router<Handler>): void {
     "GET",
     "/api/v1/repos/:owner/:name/pulls/:number/review-states",
     (ctx) => {
+      notePhase(ctx.request, "session", takeSessionTime(ctx.request));
       const found = loadPull(ctx);
       if ("error" in found) return found.error;
-      return json(
+      const reviews = timePhase(ctx.request, "reviews", () =>
         readerMarked(ctx, found.repo.id, listReviews(ctx.app.db, found.pull.id)),
       );
+      return timePhase(ctx.request, "render", () => json(reviews));
     },
   );
 
