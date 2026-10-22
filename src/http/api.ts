@@ -3686,6 +3686,7 @@ export function apiRoutes(router: Router<Handler>): void {
   // What people asked of the crew in the repositories the caller can write —
   // by default what has nothing merged yet, oldest first — and what became of each (core/asked.ts, the /asked page).
   router.add("GET", "/api/v1/asked", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireScope(ctx, "ro");
     if (denied) return denied;
     const raw = ctx.url.searchParams.get("show");
@@ -3694,14 +3695,19 @@ export function apiRoutes(router: Router<Handler>): void {
     const order = ctx.url.searchParams.get("order");
     if (order !== null && !isAskedOrder(order))
       return apiError("invalid_order", 422, "order is oldest or newest");
-    const repos = askedRepos(ctx.app.db, ctx.auth.user, ctx.url.searchParams.get("repo"));
-    return json({
-      asked: askedIn(ctx.app.db, repos, {
-        show: raw ?? "unshipped",
-        order: order ?? "oldest",
-      }).map(askedJson),
-      thoughts: ctx.auth.user ? thoughtStream(ctx.app.db, ctx.auth.user).map(streamJson) : [],
+    const read = timePhase(ctx.request, "asked", () => {
+      const repos = askedRepos(ctx.app.db, ctx.auth.user, ctx.url.searchParams.get("repo"));
+      return {
+        asked: askedIn(ctx.app.db, repos, {
+          show: raw ?? "unshipped",
+          order: order ?? "oldest",
+        }),
+        thoughts: ctx.auth.user ? thoughtStream(ctx.app.db, ctx.auth.user) : [],
+      };
     });
+    return timePhase(ctx.request, "render", () =>
+      json({ asked: read.asked.map(askedJson), thoughts: read.thoughts.map(streamJson) }),
+    );
   });
   // Every repository the caller can see, one entry each: the global map.
   router.add("GET", "/api/v1/map", (ctx) =>
