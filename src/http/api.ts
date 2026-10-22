@@ -2380,13 +2380,16 @@ export function apiRoutes(router: Router<Handler>): void {
 
   // Following an outside upstream (#3442): an admin reads, sets and checks.
   router.add("GET", "/api/v1/repos/:owner/:name/upstream", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireScope(ctx, "ro");
     if (denied) return denied;
-    const repo = loadRepo(ctx);
-    if (!repo) return notFound();
-    if (!canAdmin(ctx.app.db, repo, ctx.auth.user)) return notFound();
-    const follow = getFollow(ctx.app.db, repo.id);
-    return json({ following: follow === undefined ? null : followJson(follow) });
+    const read = timePhase(ctx.request, "upstream", () => {
+      const repo = loadRepo(ctx);
+      if (!repo || !canAdmin(ctx.app.db, repo, ctx.auth.user)) return undefined;
+      return getFollow(ctx.app.db, repo.id) ?? null;
+    });
+    if (read === undefined) return notFound();
+    return timePhase(ctx.request, "render", () => json({ following: read === null ? null : followJson(read) }));
   });
 
   router.add("PUT", "/api/v1/repos/:owner/:name/upstream", async (ctx) => {
