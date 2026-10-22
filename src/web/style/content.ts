@@ -206,13 +206,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
   color: var(--muted-fg); margin: 8px 0 4px;
 }
 
-
-/* A mirror whose origin went: what froze, and the one way back. */
-.frozen { margin-top: 12px; }
-.frozen-sentence { margin: 0; text-wrap: pretty; }
-.frozen-form { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
-.frozen-form .field { margin: 0; min-width: 0; flex: 1 1 14rem; max-width: 22rem; }
-
 /* A subscription's headroom for people: a small number beside its windows. */
 .headroom { display: flex; align-items: center; gap: 6px; }
 .headroom .input { width: 5em; }
