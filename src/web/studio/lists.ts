@@ -154,11 +154,6 @@ const PLAIN_FILTERS: readonly WordFilter[] = ["working", "shipped", "stopped"];
 
 const LIST_PAGE = 25;
 
-/** `?word=` carried onto a `cursor` link, so paging keeps the filter. */
-function pagedHref(base: string, filter: WordFilter | undefined, cursor: string): string {
-  return `${base}?${filter ? `word=${filter}&` : ""}cursor=${cursor}`;
-}
-
 /**
  * What a list of tells or changes is narrowed by, read once from the
  * address: the word, and the narrowings that are not words — a label, who

@@ -15,7 +15,7 @@ import { binding, type Binding } from "./app/keys.ts";
 import type { Command } from "./app/palette.ts";
 import type { KeyEvent } from "./term/input.ts";
 import { G, Screen as Surface, type Rect } from "./term/screen.ts";
-import { BOLD, style } from "./term/style.ts";
+import { style } from "./term/style.ts";
 import { headlessTerminal, stdioTerminal } from "./term/terminal.ts";
 import { renderFileDiff } from "./ui/diff.ts";
 import { fill, len, split, inset } from "./ui/layout.ts";

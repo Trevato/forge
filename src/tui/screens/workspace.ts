@@ -127,7 +127,6 @@ import { pullScreen } from "./pull.ts";
 import { branchesScreen } from "./refs.ts";
 import { wavesScreen } from "./waves.ts";
 import {
-  hostOf,
   knownDefaultRef,
   liveOrigin,
   local,

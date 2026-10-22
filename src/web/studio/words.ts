@@ -381,18 +381,6 @@ export function productionFact(
   return failed ?? shipped;
 }
 
-const WORD_ICON: Record<Word, Parameters<typeof icon>[0]> = {
-  working: "loader",
-  look: "eye",
-  shipped: "check",
-  stopped: "alert",
-  waiting: "clock",
-  planned: "map",
-  told: "clock",
-  done: "check",
-  cancelled: "ban",
-};
-
 /** One of the five (or six) studio words, as a badge. An id names the one a
  * live script repaints as a run finishes (`studioRunJs`). `cancelled` draws
  * the same quiet, secondary look as `waiting` and `planned` — a restart is

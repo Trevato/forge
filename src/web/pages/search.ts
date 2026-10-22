@@ -12,7 +12,7 @@
 
 import { strangerCodeSearch } from "../../http/strangers.ts";
 import { search } from "../../actions/search.ts";
-import { appsRuntime, envsFor } from "../../apps/runtime.ts";
+import { envsFor } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { getPull } from "../../core/pulls.ts";
 import { canWrite, enterableApps, getRepo } from "../../core/repos.ts";

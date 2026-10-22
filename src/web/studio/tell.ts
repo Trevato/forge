@@ -62,7 +62,7 @@ import {
   originGlyph,
   threadContext,
 } from "../pages/thread.ts";
-import { changeHref, tellHref } from "./nouns.ts";
+import { changeHref } from "./nouns.ts";
 import {
   pullWord,
   runWord,
@@ -323,8 +323,6 @@ async function studioTell(
     history: servingHistory(),
     viewer: ctx.auth.user,
   };
-  // A repository that is not an app speaks of issues, not tells.
-  const plain = wordCtx.record === undefined;
   // Closing is the author's or a writer's (`setIssueState`); nobody else is
   // shown a button the server would only refuse.
   const user = ctx.auth.user;

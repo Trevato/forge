@@ -33,7 +33,6 @@ import { canWrite, type Repo } from "../../core/repos.ts";
 import { listReviews, type Review } from "../../core/reviews.ts";
 import { wallOf, wallSentence, type Wall } from "../../contract/policy.ts";
 import { checkSummary } from "../../core/runs.ts";
-import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
   crumbsFor,

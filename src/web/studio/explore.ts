@@ -16,7 +16,7 @@ import {
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { pageHead } from "../chrome.ts";
-import { html, when, type Html } from "../html.ts";
+import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { btn, empty, listCard, nameMark, row as rowOf, seg, timeAgo } from "../ui.ts";
 

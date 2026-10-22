@@ -45,7 +45,6 @@ import {
   isReviewState,
   latestReviewByAuthor,
   listReviewComments,
-  type Review,
   type ReviewState,
   type Side,
 } from "../../core/reviews.ts";
@@ -53,7 +52,6 @@ import { getUsersByIds } from "../../core/users.ts";
 import { canWrite, getRepoById, type Repo } from "../../core/repos.ts";
 import { resolveOid } from "../../git/merge.ts";
 import { commitLog } from "../../git/read.ts";
-import { repoDir } from "../../git/repos.ts";
 import { wallOf } from "../../contract/policy.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -75,7 +73,7 @@ import {
 import { field, readForm } from "../form.ts";
 import { teamVerdicts, type TeamVerdict } from "../../core/issue_teams.ts";
 import { html, raw, when, type Html } from "../html.ts";
-import { flashTo, fragment, page, redirect } from "../layout.ts";
+import { flashTo, fragment, page } from "../layout.ts";
 import { liveRegionsJs } from "../client.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import {
@@ -93,7 +91,6 @@ import {
 } from "../ui.ts";
 import {
   assigneeCard,
-  conversation,
   labelsCard,
   originError,
   threadFragment,

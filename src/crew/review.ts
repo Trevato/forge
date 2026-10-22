@@ -28,7 +28,6 @@ import { teamsOfPull, teamVerdicts } from "../core/issue_teams.ts";
 import { reviewSummariesFor, reviewSummary } from "../core/reviews.ts";
 import { checksForHead } from "../core/runs.ts";
 import { getTeam } from "../core/teams.ts";
-import { repoDir } from "../git/repos.ts";
 import { createLog } from "../kernel/log.ts";
 import { queueAgentRun } from "./dispatch.ts";
 import { type Handover, handoverOf, handoversOf } from "./guard.ts";

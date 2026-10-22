@@ -62,9 +62,9 @@ import { reviewWaitsFor, type ReviewWait } from "../../crew/review.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
-import { btn, card, icon, row } from "../ui.ts";
+import { btn, row } from "../ui.ts";
 import { lookUrl } from "../../core/looks.ts";
-import { lookThumb, thumbLook } from "../pages/looks.ts";
+import { thumbLook } from "../pages/looks.ts";
 import { changeHref } from "./nouns.ts";
 import { testsClause } from "./words.ts";
 

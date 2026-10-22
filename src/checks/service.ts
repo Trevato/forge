@@ -54,7 +54,6 @@ import { MAX_FILED, clearedFiles, fileOrderDependent } from "./order_dependent.t
 import { ASKED, redMain, unheld } from "./red_main.ts";
 import { IMPACT_FILE, keepImpact, seedImpact } from "./impact-store.ts";
 import { getIssueById } from "../core/issues.ts";
-import { repoDir } from "../git/repos.ts";
 import { BUDGETS, budgetSummary } from "../kernel/budgets.ts";
 import { transact } from "../kernel/db.ts";
 import { createLog } from "../kernel/log.ts";

@@ -7,7 +7,6 @@
 import type { App } from "../app.ts";
 import {
   addOwnSubscription,
-  ownSubscription,
   setModelGrant,
   validGrant,
 } from "../core/model_grant.ts";

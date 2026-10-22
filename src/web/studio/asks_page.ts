@@ -19,7 +19,6 @@ import {
   type Skipped,
 } from "../../actions/asks_bulk.ts";
 import { getDecision } from "../../core/decisions.ts";
-import { getIssueById } from "../../core/issues.ts";
 import { decideAsk, undoDecideAsk } from "../../actions/asks_decide.ts";
 import type { FleetValue } from "../../core/fleet_ops.ts";
 import { muteRepo, removeMutes } from "../../core/interactions.ts";

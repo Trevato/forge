@@ -28,7 +28,6 @@ import { checksFor } from "../checks/service.ts";
 import { queueDepth } from "../core/capacity.ts";
 import { readConflictRoom } from "./conflict_room.ts";
 import { mergeable, resolveOid, treeOf } from "../git/merge.ts";
-import { repoDir } from "../git/repos.ts";
 import { CLOSED_NOTE } from "../core/done_on_main.ts";
 import { mergePull } from "../actions/pulls.ts";
 import { carriesUpstream } from "../actions/upstream_follow.ts";
@@ -360,8 +359,6 @@ export async function driveRepo(
   const by = getUserById(app.db, repo.autonomyBy!);
   if (!by) return "paused";
   const crew = listCrewRoles(app.db, repo.id);
-  const builders = crew.filter((c) => c.role === "builder").map((c) => c.agent);
-  const planner = crew.find((c) => c.role === "planner")?.agent;
   const active = activeRuns(app, repo.id);
   const slotted = slottedRuns(active, crew);
   // Slots follow the subscriptions' remaining windows, never past the

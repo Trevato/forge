@@ -7,7 +7,7 @@
  * narrowed to that point's window and listed by the source's first column.
  * Anyone else gets the not-found page.
  */
-import { CHART_NAMES, CHARTS, usesSeries, type Cell, type Chart } from "../../boards/chart.ts";
+import { CHART_NAMES, CHARTS, type Cell, type Chart } from "../../boards/chart.ts";
 import { runFor } from "../../boards/panel_data.ts";
 import { runQuery, type Query, type Row } from "../../boards/query.ts";
 import { gaps, SYSTEM } from "../../boards/sampler.ts";
@@ -16,7 +16,7 @@ import { listAllBoards } from "../../actions/boards.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { notFoundPage } from "../chrome.ts";
-import { html, raw, when } from "../html.ts";
+import { html, when } from "../html.ts";
 import { page } from "../layout.ts";
 import { btn, card, chartBox, empty, field, selectField } from "../ui.ts";
 
@@ -132,9 +132,6 @@ export function machineLinks(now: number): { label: string; href: string }[] {
     },
   ];
 }
-
-const option = (value: string, label: string, selected: boolean) =>
-  html`<option value="${value}" ${selected ? raw("selected") : null}>${label}</option>`;
 
 /** The inputs that say a query, filled from `p`; the page's form and a panel's share them. */
 let fieldSeq = 0;

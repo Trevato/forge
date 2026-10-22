@@ -19,7 +19,7 @@ import { appsRuntime } from "../../apps/runtime.ts";
 import { appsForRepos } from "../../core/apps.ts";
 import { WEIGHT_MAX, WEIGHT_NAMES } from "../../core/front.ts";
 import { LOOK_SIZES } from "../../core/looks.ts";
-import { canRead, getRepo, type Repo } from "../../core/repos.ts";
+import { canRead, getRepo } from "../../core/repos.ts";
 import { type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { activeEdgeToken, edgeLoginUrl, edgeStrangerLogin } from "../../http/edge.ts";

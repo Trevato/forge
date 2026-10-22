@@ -39,7 +39,7 @@ import { notePhase } from "../core/route_timing.ts";
 import { html, raw, when, type Html } from "./html.ts";
 import { noRoom } from "../spawn/door.ts";
 import { icon, iconSprite, inlineIcons, themeGlyph } from "./icons.ts";
-import { btn, copyField, kbd, menu, pill, type MenuItem } from "./ui.ts";
+import { btn, copyField, kbd, menu, type MenuItem } from "./ui.ts";
 
 /** One row of the command palette: title, href, category. */
 export interface PaletteItem {

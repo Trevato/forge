@@ -41,7 +41,7 @@ import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase } from "../chrome.ts";
 import { escapeHtml, html, raw, type Html } from "../html.ts";
-import { dot, envPhrase, envTone, pill, row, time } from "../ui.ts";
+import { dot, envPhrase, envTone, row, time } from "../ui.ts";
 import {
   productionFact,
   pullWord,
