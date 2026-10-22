@@ -473,7 +473,7 @@ function frontControls(ctx: Ctx, front: FrontPage): Html {
     {
       head: html`${icon("settings")}
         <h2>The front page</h2>`,
-      extra: "front-controls",
+      attrs: html`data-front-settings`,
     },
   );
 }
