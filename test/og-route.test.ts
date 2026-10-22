@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +11,9 @@ import { getIssue, createIssue } from "../src/core/issues.ts";
 import { cancelRun, claimRun, createRun, finishRun, markServing } from "../src/core/runs.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+
+// Setup creates repos on disk; a loaded check machine must not turn that into a failure.
+setDefaultTimeout(30_000);
 
 describe("og cards", () => {
   let dataDir: string;
