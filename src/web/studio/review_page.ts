@@ -6,14 +6,24 @@
  */
 
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
+import { previewEnv } from "../../apps/data.ts";
 import { recommendationsFor } from "../../core/pull_wait.ts";
+import { appsForRepos } from "../../core/apps.ts";
+import { latestRunsForIssues, type Run } from "../../core/runs.ts";
 import { listReposVisibleTo } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase, signInFirst } from "../chrome.ts";
-import { html } from "../html.ts";
+import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { empty, listCard, row, time } from "../ui.ts";
+import { badge, empty, listCard, row, runStateBadge, time } from "../ui.ts";
 import { waitingOn } from "./asks.ts";
+
+/** The check on a pull's head, as the pull page wears it; only a run of this very head counts. */
+function verdict(run: Run | undefined, headOid: string): Html {
+  return run === undefined || run.commitOid !== headOid
+    ? badge("No check", { variant: "outline" })
+    : runStateBadge(run.state, "check");
+}
 
 export function reviewPage(ctx: Ctx): Response {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
@@ -31,6 +41,12 @@ export function reviewPage(ctx: Ctx): Response {
       return id === undefined ? [] : [id];
     }),
   );
+  const checks = latestRunsForIssues(
+    ctx.app.db,
+    asks.flatMap((a) => (a.pull === undefined ? [] : [a.pull.id])),
+    ["check"],
+  );
+  const apps = appsForRepos(ctx.app.db, asks.map((a) => a.repo.id));
   const rows = asks.map((a) => {
     const base = repoBase(a.repo);
     const href =
@@ -50,6 +66,12 @@ export function reviewPage(ctx: Ctx): Response {
       title: a.pull?.title ?? a.issue?.title ?? a.proposal?.title ?? `${a.repo.name} is waiting on you`,
       titleAttr: `${a.repo.ownerName}/${a.repo.name}: ${a.why ?? a.consequence.why}`,
       meta: html`${a.repo.ownerName}/${a.repo.name} · ${time(a.since)} · ${a.why ?? a.consequence.why} · ${advised}`,
+      // The trail survives the meta line's ellipsis: the verdict is the fact this row gives.
+      ...(a.pull === undefined ? {} : { trail: verdict(checks.get(a.pull.id), a.pull.headOid) }),
+      // A sibling of the row's link, never inside it: a link in a link is not a link.
+      ...(a.pull !== undefined && apps.has(a.repo.id)
+        ? { children: [row({ href: `${base}/app/${previewEnv(a.pull.number)}/open`, title: "Open the preview", nav: true })] }
+        : {}),
     });
   });
   const body = html`<h1>Review</h1>

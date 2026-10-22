@@ -7,6 +7,7 @@ import { createApp, type App } from "../src/app.ts";
 import { addComment, openIssue } from "../src/actions/issues.ts";
 import { addComment as addRawComment } from "../src/core/issues.ts";
 import { addCrew, createAgentRow, setCrewRole } from "../src/core/agents.ts";
+import { createApp as createAppRow } from "../src/core/apps.ts";
 import { createRepo as createRepoRow } from "../src/core/repos.ts";
 import { submitReview } from "../src/core/reviews.ts";
 import { createUser } from "../src/core/users.ts";
@@ -79,6 +80,16 @@ beforeAll(async () => {
     submitReview(app.db, { issueId: handed, authorId: reviewer.id, state: "changes_requested", body: `Round ${r}.`, commitOid: ZERO });
   const stale = pull(alice.id, "Stale pull", 30);
   addRawComment(app.db, { issueId: stale, authorId: reviewer.id, body: "Recommendation: change — rename the <flag>." });
+  app.db
+    .query(`INSERT INTO run (id, repo_id, kind, issue_id, commit_oid, state) VALUES (?1, ?2, 'check', ?3, ?4, 'running')`)
+    .run(id(), repo.id, handed, ZERO);
+  for (const state of ["ok", "failed", "cancelled"]) {
+    const fresh = pull(alice.id, `Fresh ${state} pull`, 30);
+    app.db
+      .query(`INSERT INTO run (id, repo_id, kind, issue_id, commit_oid, state) VALUES (?1, ?2, 'check', ?3, ?4, ?5)`)
+      .run(id(), repo.id, fresh, ZERO, state);
+  }
+  createAppRow(app.db, { repoId: repo.id, slug: "wait", access: "public" });
   pull(builder.id, "Young crew pull", 2);
   const issue = openIssue(app, alice, repo, { title: "Crew asked about this" });
   if (!issue.ok) throw new Error(String(issue.error));
@@ -98,12 +109,12 @@ afterAll(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-test("lists exactly the three asks, each with title, repository and why", async () => {
+test("lists exactly the six asks, each with title, repository and why", async () => {
   const res = await fetch(`${servers.url}/review`, { headers: { cookie } });
   const body = await res.text();
   expect(res.status).toBe(200);
-  const rows = body.split('<li').filter((r) => r.includes('class="row"'));
-  expect(rows.length).toBe(3);
+  const rows = body.split('<li').filter((r) => r.includes('class="row"') && !r.includes("Open the preview"));
+  expect(rows.length).toBe(6);
   const find = (t: string) => rows.find((r) => r.includes(t))!;
   expect(find("Handed over pull")).toContain("three reviews asked for changes");
   expect(find("Stale pull")).toContain("waiting 30 hours");
@@ -134,4 +145,30 @@ test("each row says what the crew advises and why, or that it has not advised ye
   expect(find("Stale pull")).toContain("The crew advises: change — rename the &lt;flag&gt;.");
   expect(find("Handed over pull")).toContain("The crew has not advised yet");
   expect(find("Crew asked about this")).toContain("The crew has not advised yet");
+});
+
+test("a pull's row shows its check verdict; one with no check says none", async () => {
+  const body = await (await fetch(`${servers.url}/review`, { headers: { cookie } })).text();
+  const rows = body.split("<li").filter((r) => r.includes('class="row"'));
+  const find = (t: string) => rows.find((r) => r.includes(t))!;
+  expect(find("Handed over pull")).toContain("Running");
+  expect(find("Stale pull")).toContain("No check");
+  expect(find("Fresh ok pull")).toContain("Passed");
+  expect(find("Fresh failed pull")).toContain("Failed");
+  expect(find("Fresh cancelled pull")).toContain("Cancelled");
+  expect(find("Fresh cancelled pull")).not.toContain("No check");
+});
+
+test("a pull of an app links its preview beside the row, not inside it; an issue row has neither", async () => {
+  const body = await (await fetch(`${servers.url}/review`, { headers: { cookie } })).text();
+  const rows = body.split("<li").filter((r) => r.includes('class="row"'));
+  const find = (t: string) => rows.find((r) => r.includes(t))!;
+  const at = body.indexOf("Stale pull");
+  const link = body.indexOf("/alice/wait/app/pull-", at);
+  expect(link).toBeGreaterThan(at);
+  expect(body.slice(at, link)).toContain("</a>");
+  const issue = find("Crew asked about this");
+  expect(issue).not.toContain("/app/pull-");
+  expect(issue).not.toContain("badge");
+  expect(issue).not.toContain("No check");
 });
