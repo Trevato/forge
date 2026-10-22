@@ -5090,35 +5090,42 @@ export function apiRoutes(router: Router<Handler>): void {
   // clone needs: both URLs and where the repo came from.
   router.add("GET", "/api/v1/user/pins", (ctx) => {
     if (!ctx.auth.user) return unauthorized();
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const host = ctx.app.config.host ?? ctx.url.hostname;
     const sshPort = ctx.app.config.sshPort;
-    const pins = listPinned(ctx.app, ctx.auth.user);
-    // One query for every pinned repo, not one per pin.
-    const repos = getReposByIds(
-      ctx.app.db,
-      pins.map((pin) => pin.repoId),
-    );
-    const items = pins.flatMap((pin) => {
-      const repo = repos.get(pin.repoId);
-      if (!repo) return [];
-      const path = `${encodeURIComponent(repo.ownerName)}/${encodeURIComponent(repo.name)}`;
-      return [
-        {
-          repoId: repo.id,
-          owner: repo.ownerName,
-          name: repo.name,
-          defaultBranch: repo.defaultBranch,
-          cloneUrl: `${ctx.url.origin}/${path}.git`,
-          sshUrl:
-            sshPort !== undefined && sshPort > 0
-              ? `ssh://git@${host}:${sshPort}/${path}.git`
-              : null,
-          origin: originFacts(repo),
-          pinnedAt: pin.createdAt,
-        },
-      ];
+    const user = ctx.auth.user;
+    const { pins, repos } = timePhase(ctx.request, "pins", () => {
+      const pins = listPinned(ctx.app, user);
+      // One query for every pinned repo, not one per pin.
+      const repos = getReposByIds(
+        ctx.app.db,
+        pins.map((pin) => pin.repoId),
+      );
+      return { pins, repos };
     });
-    return json(items);
+    return timePhase(ctx.request, "render", () => {
+      const items = pins.flatMap((pin) => {
+        const repo = repos.get(pin.repoId);
+        if (!repo) return [];
+        const path = `${encodeURIComponent(repo.ownerName)}/${encodeURIComponent(repo.name)}`;
+        return [
+          {
+            repoId: repo.id,
+            owner: repo.ownerName,
+            name: repo.name,
+            defaultBranch: repo.defaultBranch,
+            cloneUrl: `${ctx.url.origin}/${path}.git`,
+            sshUrl:
+              sshPort !== undefined && sshPort > 0
+                ? `ssh://git@${host}:${sshPort}/${path}.git`
+                : null,
+            origin: originFacts(repo),
+            pinnedAt: pin.createdAt,
+          },
+        ];
+      });
+      return json(items);
+    });
   });
 
   router.add("PUT", "/api/v1/user/pins/:owner/:name", (ctx) => {
