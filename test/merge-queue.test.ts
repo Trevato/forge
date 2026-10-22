@@ -28,6 +28,9 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { flowLines } from "../src/tui/screens/flow.ts";
 
+/** Ten pulls are twenty git pushes before the gate runs: a loaded check machine must not decide the verdict. */
+const SLOW = 60_000;
+
 describe("the merge queue", () => {
   let dataDir: string;
   let app: App;
@@ -204,7 +207,7 @@ describe("the merge queue", () => {
     expect(queue.some((l) => /\[queue\] gating 8 pulls since \d\d:\d\d .*waiting=2/.test(l))).toBe(true);
     expect(queue.some((l) => l.includes("[queue] gated 8 pulls: green"))).toBe(true);
     expect(queue.some((l) => l.includes("[queue] gated 2 pulls: green"))).toBe(true);
-  });
+  }, SLOW);
 
   test("after a red batch, the good pulls go back into ONE candidate up to the cap, not one gate each (#4053)", async () => {
     const repo = await autonomousRepo("rebatch");
@@ -224,7 +227,7 @@ describe("the merge queue", () => {
     expect(sizes).toEqual([8, 4, 2, 1, 8, 2]);
     for (const [i, pull] of pulls.entries()) expect(merged(repo, pull)).toBe(i !== 1);
     expect(latestDecision(app.db, pulls[1]!.id, "land")?.answer).toBe("red");
-  });
+  }, SLOW);
 
   test("the sweep reads every open pull: an approved one older than the newest fifty is queued with the rest (#4053)", async () => {
     const repo = await autonomousRepo("many-open");
@@ -247,7 +250,7 @@ describe("the merge queue", () => {
     expect(merged(repo, fresh)).toBe(true);
     // One candidate carried both.
     expect(gatesOf(repo)).toHaveLength(1);
-  });
+  }, SLOW);
 
   test("one red among four: three land, the culprit is handed back, three gate runs", async () => {
     const repo = await autonomousRepo("one-red");
