@@ -5176,13 +5176,15 @@ export function apiRoutes(router: Router<Handler>): void {
   // How the forge is: anyone may ask (a monitor has no account), a stranger
   // is told little, the release machinery's probe and a site admin the
   // whole of it (`actions/health.ts`).
-  router.add("GET", "/api/v1/health", (ctx) =>
-    json(
+  router.add("GET", "/api/v1/health", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const body = timePhase(ctx.request, "health", () =>
       readHealth(ctx.app, ctx.auth.user, isProbe(ctx.request, ctx.app.config.dataDir)),
-      200,
-      { "cache-control": "no-store", vary: "authorization, cookie, x-forge-probe" },
-    ),
-  );
+    );
+    return timePhase(ctx.request, "render", () =>
+      json(body, 200, { "cache-control": "no-store", vary: "authorization, cookie, x-forge-probe" }),
+    );
+  });
 
   // Open egress connections per app and destination, as Prometheus text
   // (#3719). Repository names are in the labels, so a site admin only.
