@@ -1070,7 +1070,7 @@ export async function pullReviewSubmit(ctx: Ctx): Promise<Response> {
  * or lifecycle code, or git's own structured `MergeError` — both are answers
  * the person pressing the button deserves to see.
  */
-function mergeFailure(error: AccessError | MergePullError): string {
+export function mergeFailure(error: AccessError | MergePullError): string {
   if (typeof error !== "string") {
     if (error.kind === "conflict")
       return `The branches conflict in ${error.files.length} file${error.files.length === 1 ? "" : "s"} — merge the base branch in and push again.`;

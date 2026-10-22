@@ -925,6 +925,8 @@ export interface RowOptions {
   state?: "open" | "closed" | "merged" | "draft";
   /** The row joins `j`/`k` keyboard traversal. */
   nav?: boolean;
+  /** An anchor for the row's `<li>`, so a redirect can land on it. */
+  id?: string;
   titleAttr?: string;
   /** `data-*` hooks on the row's `<li>` (a script's filter, a test's
    * handle). Keys are lower-case words and dashes; others are dropped. */
@@ -963,7 +965,7 @@ export function row(o: RowOptions): Html {
   const data = Object.entries(o.data ?? {})
     .filter(([key]) => /^[a-z][a-z-]*$/.test(key))
     .map(([key, value]) => html` data-${raw(key)}="${value}"`);
-  return html`<li${data}${o.current ? raw(' aria-current="true"') : null}>
+  return html`<li${o.id === undefined ? null : html` id="${o.id}"`}${data}${o.current ? raw(' aria-current="true"') : null}>
     ${o.fold !== undefined
       ? html`<details id="${o.fold.id}" ${o.fold.open ? raw("open") : null}>
           <summary ${attrs}>${inner}</summary>
