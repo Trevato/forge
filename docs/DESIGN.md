@@ -529,7 +529,6 @@ the same line (#4888).
   - `.tok-meta`
   - `.tok-number`
   - `.tok-operator`
-  - `.tok-plain`
   - `.tok-property`
   - `.tok-punctuation`
   - `.tok-regex`

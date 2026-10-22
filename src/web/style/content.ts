@@ -326,7 +326,6 @@ form.inline { display: inline; margin-left: auto; }
 .tok-type { color: var(--tok-type); }
 .tok-constant { color: var(--tok-constant); }
 .tok-meta { color: var(--tok-meta); }
-.tok-plain { color: inherit; }
 /* Punctuation and operators sit *below* the text colour on purpose: they are
    the scaffolding of a line, and colouring them loudly makes code shout. */
 .tok-operator { color: var(--tok-operator); }

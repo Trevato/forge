@@ -28,7 +28,7 @@ import {
   type Language,
   type Token,
 } from "../src/web/highlight.ts";
-import { renderTokens, tokenClasses } from "../src/web/highlight-html.ts";
+import { highlightToLines, renderTokens, tokenClasses } from "../src/web/highlight-html.ts";
 import { THEMES, THEME_NAMES } from "../src/design/themes.ts";
 import { css } from "../src/web/style.ts";
 
@@ -797,6 +797,13 @@ describe("token vocabulary", () => {
         emitted.add(`tok-${t.cls}`);
         if (t.kind) emitted.add(`tok-${t.kind}`);
       }
+
+  test("plain text gets no tok-plain class and the stylesheet has no rule for it", () => {
+    const html = highlightToLines("foo bar", "ts").join("\n");
+    expect(html).toContain("foo");
+    expect(html).not.toContain("tok-plain");
+    expect(css).not.toContain(".tok-plain");
+  });
 
   test("every class the fixtures emit has a stylesheet rule", () => {
     for (const name of emitted) {
