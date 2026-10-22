@@ -1,6 +1,11 @@
 /** The OpenAPI document names every route the manifest names. */
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createApp } from "../src/app.ts";
+import { serve } from "../src/http/server.ts";
 import { openapi, ROUTES } from "../src/contract/openapi.ts";
 
 test("every http route the manifest names is described", () => {
@@ -114,6 +119,46 @@ test("making and listing apps is described with every field the route reads", ()
   for (const field of described) expect([...read], `described ${field}`).toContain(field);
   for (const code of ["unverified", "app_limit", "no_such_agent", "name_taken"])
     expect(post.responses.default.description).toContain(`\`${code}\``);
+});
+
+test("signing up, signing in and the first admin are described", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const want: [string, string, number][] = [
+    ["post", "/api/v1/users", 201],
+    ["post", "/api/v1/sessions", 201],
+    ["delete", "/api/v1/sessions", 200],
+    ["post", "/api/v1/first-admin", 201],
+    ["post", "/api/v1/first-admin/recover", 201],
+  ];
+  for (const [method, path, status] of want) {
+    const op = doc.paths[path]?.[method];
+    expect(op, `${method} ${path}`).toBeDefined();
+    expect(op.responses[String(status)], `${method} ${path} ${status}`).toBeDefined();
+    expect(op.security, `${method} ${path}`).toBeUndefined();
+  }
+  const props = (p: string) => doc.paths[p].post.requestBody.content["application/json"].schema.properties;
+  expect(props("/api/v1/users").password.type).toBe("string");
+  expect(props("/api/v1/first-admin").expiresIn.type).toBe("integer");
+});
+
+test("the served document carries the sign-up and sign-in routes", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "forge-openapi-"));
+  const app = createApp({ dataDir: dir, port: 0 });
+  const servers = await serve(app);
+  try {
+    const res = await fetch(`${servers.url}/contract/openapi.json`);
+    expect(res.status).toBe(200);
+    const doc = (await res.json()) as any;
+    expect(doc.paths["/api/v1/users"].post).toBeDefined();
+    expect(doc.paths["/api/v1/sessions"].post).toBeDefined();
+    expect(doc.paths["/api/v1/sessions"].delete).toBeDefined();
+    expect(doc.paths["/api/v1/first-admin"].post).toBeDefined();
+    expect(doc.paths["/api/v1/first-admin/recover"].post).toBeDefined();
+  } finally {
+    servers.stop();
+    app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("an app's routes are described, and env values are never read back", () => {
