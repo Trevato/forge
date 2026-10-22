@@ -118,13 +118,14 @@ describe("the studio", () => {
     const scout = await createAgent(app, alice, { username: "scout" });
     if (!scout.ok) throw new Error(String(scout.error));
     repo = await makeApp("notes", "a place for notes");
-  });
+  }, 60_000);
 
   afterAll(async () => {
     servers.stop();
     app.close();
-    await rm(dataDir, { recursive: true, force: true });
-  });
+    // Git children may still be writing as the suite ends on a loaded machine.
+    await rm(dataDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  }, 60_000);
 
   test("there is one forge (#603): no mode toggle, no POST /mode, and a ?mode= address is the same page without it, the old cookie let go", async () => {
     const plainResponse = await fetch(`${base}/`, { headers: { cookie } });
