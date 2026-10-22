@@ -209,13 +209,16 @@ describe("a sleeping preview woken at the limit", () => {
     const dataDir = await mkdtemp(join(tmpdir(), "forge-qrun-wake-"));
     const app = createApp({ dataDir, port: 0 });
     const servers = await serve(app);
+    // Read at every sweep: raised once both are asleep, so the one woken
+    // cannot rest again (freeing the slot) however slow the machine is.
+    const sleepAfter = { production: 3_600_000, preview: 2_500 };
     const runtime = new AppsRuntime(app, {
       domain: "apps.test",
       scheme: "http",
       publicPort: servers.port,
       forgeUrl: servers.url,
       // Previews rest after a few seconds unasked; production is left alone.
-      sleepAfterMs: { production: 3_600_000, preview: 2_500 },
+      sleepAfterMs: sleepAfter,
       sweepEveryMs: 100,
     });
     await runtime.start();
@@ -244,6 +247,7 @@ describe("a sleeping preview woken at the limit", () => {
       const status = (env: EnvName) => runtime.status(record).find((e) => e.env === env);
       // No limit yet: both come up, then both rest, unasked.
       for (const env of envs) await until(() => (status(env)?.state === "asleep" ? true : undefined));
+      sleepAfter.preview = 3_600_000;
       // The limit is set only now, so the two asleep are the whole story: one wake fits, the next does not.
       setQuota(app.db, "previews", 1, alice.id);
       expect(await runtime.wake(record, envs[0]!)).toBeDefined();
