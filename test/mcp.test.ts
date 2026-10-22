@@ -204,6 +204,7 @@ describe("the forge over MCP", () => {
       "account_role",
       "account_suspend",
       "model_ceiling",
+      "account_verify",
       "outsiders",
       "origins",
       "decisions_by",
