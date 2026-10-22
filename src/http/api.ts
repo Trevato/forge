@@ -5508,15 +5508,21 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/app", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const view = appView(ctx.app, ctx.auth.user, repo);
-    if (!view.ok) return notFound();
-    const vitals = appVisitors(ctx.app, ctx.auth.user, repo);
-    return json({
-      ...appJson(ctx, view.value.app, repo, appsRuntime(ctx.app)),
-      ...(vitals === undefined ? {} : { vitals }),
+    const read = timePhase(ctx.request, "app", () => {
+      const view = appView(ctx.app, ctx.auth.user, repo);
+      if (!view.ok) return null;
+      return { view: view.value, vitals: appVisitors(ctx.app, ctx.auth.user, repo) };
     });
+    if (!read) return notFound();
+    return timePhase(ctx.request, "render", () =>
+      json({
+        ...appJson(ctx, read.view.app, repo, appsRuntime(ctx.app)),
+        ...(read.vitals === undefined ? {} : { vitals: read.vitals }),
+      }),
+    );
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/app", async (ctx) => {
@@ -5567,11 +5573,13 @@ export function apiRoutes(router: Router<Handler>): void {
   // previews, nothing else. Read and changed by people who can write the
   // repository, never an agent; a change is planned unless dryRun is false.
   router.add("GET", "/api/v1/repos/:owner/:name/app/members", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireScope(ctx, "ro");
     if (denied) return denied;
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    return membersAnswer(readAppMembers(ctx.app, ctx.auth.user, repo));
+    const read = timePhase(ctx.request, "members", () => readAppMembers(ctx.app, ctx.auth.user, repo));
+    return timePhase(ctx.request, "render", () => membersAnswer(read));
   });
 
   router.add("PUT", "/api/v1/repos/:owner/:name/app/members", async (ctx) => {
@@ -5595,13 +5603,14 @@ export function apiRoutes(router: Router<Handler>): void {
   // and admin over the repository, like the environment below; `:host` is
   // one path segment, dots included.
   router.add("GET", "/api/v1/repos/:owner/:name/app/domains", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireScope(ctx, "admin");
     if (denied) return denied;
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const listed = listAppDomains(ctx.app, ctx.auth.user, repo);
+    const listed = timePhase(ctx.request, "domains", () => listAppDomains(ctx.app, ctx.auth.user, repo));
     if (!listed.ok) return respondAccess(listed.error, 422);
-    return json({ items: listed.value, next_cursor: null });
+    return timePhase(ctx.request, "render", () => json({ items: listed.value, next_cursor: null }));
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/app/domains", async (ctx) => {
@@ -5816,13 +5825,14 @@ export function apiRoutes(router: Router<Handler>): void {
   // The app's environment: names in, names out, and never a value back.
   // `:var`, not `:name` — `:name` is the repository's.
   router.add("GET", "/api/v1/repos/:owner/:name/app/env", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireScope(ctx, "admin");
     if (denied) return denied;
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const listed = listAppEnv(ctx.app, ctx.auth.user, repo);
+    const listed = timePhase(ctx.request, "env", () => listAppEnv(ctx.app, ctx.auth.user, repo));
     if (!listed.ok) return notFound();
-    return json({ items: listed.value, next_cursor: null });
+    return timePhase(ctx.request, "render", () => json({ items: listed.value, next_cursor: null }));
   });
 
   router.add("PUT", "/api/v1/repos/:owner/:name/app/env/:var", async (ctx) => {
