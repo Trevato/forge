@@ -1481,7 +1481,7 @@ export function apiRoutes(router: Router<Handler>): void {
       const reader = telemetryReader(ctx.app, ctx.auth.user);
       if (!reader) return forbidden();
       noteRead(ctx.app, ctx.auth.user, reader, what);
-      const body = timePhase(ctx.request, what, () => out(ctx, reader));
+      const body = timePhase(ctx.request, "read", () => out(ctx, reader));
       return timePhase(ctx.request, "render", () => json(body));
     };
   router.add("GET", "/api/v1/telemetry/system", telemetryRead("system", (c, r) => systemFor(c.app, r)));

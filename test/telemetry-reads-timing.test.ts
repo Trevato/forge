@@ -1,4 +1,4 @@
-/** The /api/v1/telemetry reads name their phases in Server-Timing. */
+/** The /api/v1/telemetry reads name their phases in Server-Timing: session, read, render. */
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -33,11 +33,11 @@ const phases = (res: Response) =>
   (res.headers.get("server-timing") ?? "").split(", ").map((p) => p.split(";")[0]!).filter((n) => n && n !== "app");
 
 for (const what of ["system", "history", "flow", "sources"]) {
-  test(`telemetry/${what} names session, ${what}, render in order`, async () => {
+  test(`telemetry/${what} names session, read, render in order`, async () => {
     const res = await fetch(`${servers.url}/api/v1/telemetry/${what}`, { headers: { authorization: `Bearer ${bearer}` } });
     await res.arrayBuffer();
     expect(res.status).toBe(200);
-    expect(phases(res)).toEqual(["session", what, "render"]);
+    expect(phases(res)).toEqual(["session", "read", "render"]);
   });
 }
 
