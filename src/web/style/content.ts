@@ -152,8 +152,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
      row needs for "Close issue", and the buttons keep their full height. */
   .comment-form .form-actions .btn .ico { display: none; }
 }
-.steps { margin: 8px 0 12px 18px; padding: 0; color: var(--muted-fg); }
-.steps li + li { margin-top: 6px; }
 .mirror-form { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .mirror-form .input { width: 10rem; padding: 4px 8px; font-size: 13px; }
 

@@ -205,6 +205,7 @@ describe("the first login to a spawned forge", () => {
     expect(home).toContain("Open your apps");
     expect(home).toContain("Tell the crew something");
     expect(steps(home)).toEqual({ everyday: "no", apps: "no", tell: "no" });
+    expect(home).not.toMatch(/class="[^"]*\bsteps\b/);
     // One card for the everyday account, not two: the steps card carries it.
     expect(home.split("Make your everyday account").length - 1).toBe(1);
     // The planner and the direction it was given, under the studio's noun.
