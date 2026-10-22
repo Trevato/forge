@@ -241,7 +241,8 @@ describe("explore", () => {
     const page = await (await fetch(`${base}/explore`)).text();
     expect(page).toContain('class="row"');
     expect(page).toContain('class="row-title"');
-    expect(page).toContain('class="filters mb"');
+    expect(page).toContain(`<div class="bar mb">`);
+    expect(page).not.toMatch(/class="[^"]*\bfilters\b/);
     expect(page).not.toContain("explore-");
   });
 
