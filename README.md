@@ -1315,6 +1315,13 @@ gated tree. Red is searched: prefixes of the candidate are gated on main
 — the front half, plus one more cut per free check slot, all at once — the
 longest green prefix lands, the search goes on in the steps up to the first
 red prefix, and the red pull is handed back with the failing tests named.
+A red batch is never formed again around the same head: with a check slot
+free, the head of a red batch of three or more is gated alone beside the
+line (`[queue] red batch: its head is gated alone`) while the rest gates
+without it, stacked as deep as `queue.depth` goes, so the good pulls land
+while the suspect is judged. A pull in two red batches is never in a third:
+it waits for a gate of its own. Red alone, it is handed back (`[queue] red
+alone`); green alone, it rides at the tail of a later batch, never its head.
 While a candidate gates, the next one gates on top of it (`queue.depth`
 under Settings → Capacity, `FORGE_QUEUE_DEPTH`, default 2): when the first
 lands whole the next lands right after it, on the tree it was gated on; when

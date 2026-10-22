@@ -151,7 +151,7 @@ describe("the merge queue in parallel", () => {
     expect(git(repo, "rev-list", "--count", "refs/heads/main")).toBe("17");
   });
 
-  test("ten pulls, one red: the culprit is found in one wave of prefixes, and the nine land by the third gate-time", async () => {
+  test("ten pulls, one red: the head is gated alone, the culprit is found in one wave of prefixes, and the nine land by the fourth gate-time", async () => {
     const repo = await autonomousRepo("ten-one-red");
     const pulls = [];
     for (let i = 0; i < 10; i++) pulls.push(await greenPull(repo, i === 4 ? `red-${i}.ts` : `p${i}.ts`));
@@ -159,14 +159,17 @@ describe("the merge queue in parallel", () => {
     const sweep = sweepGreen(app, repo);
     // Wave one: eight on main, the other two on top of them.
     await letGo(2);
-    // Wave two: the eight are red; the two on top are re-formed, and seven
-    // prefixes of the eight gate at once: four green, the fifth red.
+    // Wave two: the eight are red, so their head is gated alone (#4999),
+    // beside the other seven and the next on main and the last on top.
+    await letGo(3);
+    // Wave three: the head was green alone; the eight without it are red
+    // again, and seven prefixes of them gate at once: three green, the fourth red.
     await letGo(7);
-    // Wave three: the culprit is handed back without a gate of its own;
-    // the three after it and the two re-formed are one candidate.
+    // Wave four: the culprit is handed back without a gate of its own; the
+    // four after it, the last and the head (at the tail) are one candidate.
     await letGo(1);
     expect(await sweep).toBe(9);
-    expect(wave - first).toBe(3);
+    expect(wave - first).toBe(4);
     const red = pulls[4]!;
     for (const pull of pulls) expect(merged(repo, pull)).toBe(pull !== red);
     expect(latestDecision(app.db, red.id, "land")?.answer).toBe("red");
