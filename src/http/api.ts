@@ -5309,19 +5309,23 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/apps", (ctx) => {
-    const records = listApps(ctx.app.db);
-    const repos = getReposByIds(
-      ctx.app.db,
-      records.map((a) => a.repoId),
-    );
-    const runtime = appsRuntime(ctx.app);
-    const items = [];
-    for (const record of records) {
-      const repo = repos.get(record.repoId);
-      if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) continue;
-      items.push(appJson(ctx, record, repo, runtime));
-    }
-    return json({ items, next_cursor: null });
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const items = timePhase(ctx.request, "apps", () => {
+      const records = listApps(ctx.app.db);
+      const repos = getReposByIds(
+        ctx.app.db,
+        records.map((a) => a.repoId),
+      );
+      const runtime = appsRuntime(ctx.app);
+      const out = [];
+      for (const record of records) {
+        const repo = repos.get(record.repoId);
+        if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) continue;
+        out.push(appJson(ctx, record, repo, runtime));
+      }
+      return out;
+    });
+    return timePhase(ctx.request, "render", () => json({ items, next_cursor: null }));
   });
 
   router.add("POST", "/api/v1/apps", async (ctx) => {
