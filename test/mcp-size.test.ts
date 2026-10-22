@@ -20,7 +20,12 @@ import { serve, type Servers } from "../src/http/server.ts";
 
 const CEILING = 40_000;
 // Headroom: a new tool should fit without another round of cuts.
-const HEADROOM_CEILING = 37_500;
+// #4990 raised it to 37,500 to fit `threads`; the tool descriptions were cut
+// instead (#5105), so it is 37,000 again: raising it is how the lane went red.
+const HEADROOM_CEILING = 37_000;
+// One sentence a tool: past this, a description is a paragraph and belongs in
+// docs/MCP.md, which keeps the detail.
+const DESCRIPTION_CEILING = 120;
 
 let dataDir: string;
 let app: App;
@@ -50,7 +55,7 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-test("tools/list stays under 40 KB, with 3 KB of headroom (37,500 bytes)", async () => {
+test("tools/list stays under 40 KB, with 3 KB of headroom (37,000 bytes)", async () => {
   const res = await fetch(`${servers.url}/mcp`, {
     method: "POST",
     headers: {
@@ -85,4 +90,10 @@ test("tools/list stays under 40 KB, with 3 KB of headroom (37,500 bytes)", async
     bytes,
     `tools/list is ${bytes} bytes, ${bytes - HEADROOM_CEILING} over the ${HEADROOM_CEILING} headroom (${CEILING - bytes} left under the ceiling); the five longest descriptions: ${longest.join(", ")}`,
   ).toBeLessThanOrEqual(HEADROOM_CEILING);
+  expect(
+    tools
+      .filter((t) => Buffer.byteLength(t.description) > DESCRIPTION_CEILING)
+      .map((t) => `${t.name} (${Buffer.byteLength(t.description)} bytes)`),
+    `tool descriptions over ${DESCRIPTION_CEILING} bytes`,
+  ).toEqual([]);
 });
