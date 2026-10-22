@@ -367,9 +367,16 @@ export function lookNow(ctx: Ctx, repo: Repo, record: AppRecord): Html {
   </a>`;
 }
 
-/** A small picture as a thumbnail that opens the pull. */
-export function lookThumb(href: string, src: string): Html {
-  return html`<a class="look" data-slot="thumb" href="${href}"
+/** A small picture as a thumbnail that opens the pull; `label` names the link for a screen reader. */
+export function lookThumb(href: string, src: string, label?: string): Html {
+  return html`<a class="look" data-slot="thumb" href="${href}" ${label === undefined ? html`` : html`aria-label="${label}"`}
     ><img src="${src}" width="30" height="40" alt="" loading="lazy"
   /></a>`;
+}
+
+/** A small picture that is only a picture: named, not a link. */
+export function lookThumbPlain(src: string, label: string): Html {
+  return html`<span class="look" data-slot="thumb"
+    ><img src="${src}" width="30" height="40" alt="${label}" loading="lazy"
+  /></span>`;
 }

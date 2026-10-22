@@ -9,6 +9,7 @@ import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.t
 import { previewEnv } from "../../apps/data.ts";
 import { recommendationsFor } from "../../core/pull_wait.ts";
 import { appsForRepos } from "../../core/apps.ts";
+import { lookUrl, looksForApps } from "../../core/looks.ts";
 import { latestRunsForIssues, type Run } from "../../core/runs.ts";
 import { listReposVisibleTo } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -16,6 +17,7 @@ import { repoBase, signInFirst } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { badge, empty, listCard, row, runStateBadge, time } from "../ui.ts";
+import { lookThumb, lookThumbPlain, thumbLook } from "../pages/looks.ts";
 import { waitingOn } from "./asks.ts";
 import { diffStatFor, sizeLine } from "./review_evidence.ts";
 
@@ -48,8 +50,22 @@ export function reviewPage(ctx: Ctx): Response {
     ["check"],
   );
   const apps = appsForRepos(ctx.app.db, asks.map((a) => a.repo.id));
+  const looks = looksForApps(ctx.app.db, [...apps.values()].map((r) => r.id));
+  /** Production beside the pull's preview, each only if this viewer may fetch it. */
+  const lookOf = (a: (typeof asks)[number], base: string): Html | undefined => {
+    const record = a.pull === undefined ? undefined : apps.get(a.repo.id);
+    if (a.pull === undefined || record === undefined) return undefined;
+    const lookIn = (env: string) => thumbLook(ctx, a.repo, record, looks.filter((l) => l.appId === record.id && l.env === env));
+    const after = lookIn(previewEnv(a.pull.number));
+    if (after === undefined) return undefined;
+    const before = lookIn("production");
+    // Only the after picture links (to the pull); the before one is a named picture, so
+    // a keyboard user meets one stop, not two to the same place.
+    return html`<li data-look><div class="looks">${before === undefined ? "" : lookThumbPlain(lookUrl(base, before), "Production look, before")}${lookThumb(`${base}/pulls/${a.pull.number}`, lookUrl(base, after), "Preview look, after: opens the pull")}</div></li>`;
+  };
   const rows = asks.map((a) => {
     const base = repoBase(a.repo);
+    const look = lookOf(a, base);
     const href =
       a.pull !== undefined
         ? `${base}/pulls/${a.pull.number}`
@@ -82,7 +98,12 @@ export function reviewPage(ctx: Ctx): Response {
           }),
       // A sibling of the row's link, never inside it: a link in a link is not a link.
       ...(a.pull !== undefined && apps.has(a.repo.id)
-        ? { children: [row({ href: `${base}/app/${previewEnv(a.pull.number)}/open`, title: "Open the preview", nav: true })] }
+        ? {
+            children: [
+              row({ href: `${base}/app/${previewEnv(a.pull.number)}/open`, title: "Open the preview", nav: true }),
+              ...(look === undefined ? [] : [look]),
+            ],
+          }
         : {}),
     });
   });

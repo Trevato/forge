@@ -7,6 +7,8 @@ import { createApp, type App } from "../src/app.ts";
 import { addComment, openIssue } from "../src/actions/issues.ts";
 import { addComment as addRawComment } from "../src/core/issues.ts";
 import { addCrew, createAgentRow, setCrewRole } from "../src/core/agents.ts";
+import { recordLook } from "../src/core/looks.ts";
+import { previewEnv } from "../src/apps/data.ts";
 import { createApp as createAppRow } from "../src/core/apps.ts";
 import { createRepo as createRepoRow } from "../src/core/repos.ts";
 import { submitReview } from "../src/core/reviews.ts";
@@ -26,6 +28,7 @@ let root = "";
 let app: App;
 let servers: Servers;
 let cookie = "";
+let bobCookie = "";
 
 beforeAll(async () => {
   root = mkdtempSync(join(tmpdir(), "forge-review-"));
@@ -90,7 +93,19 @@ beforeAll(async () => {
       .query(`INSERT INTO run (id, repo_id, kind, issue_id, commit_oid, state) VALUES (?1, ?2, 'check', ?3, ?4, ?5)`)
       .run(id(), repo.id, fresh, ZERO, state);
   }
-  createAppRow(app.db, { repoId: repo.id, slug: "wait", access: "public" });
+  const made2 = createAppRow(app.db, { repoId: repo.id, slug: "wait", access: "public" });
+  if (!made2.ok) throw new Error(String(made2.error));
+  const record = made2.value;
+  const numberOf = (issueId: string) =>
+    app.db.query<{ number: number }, [string]>("SELECT number FROM issue WHERE id = ?1").get(issueId)!.number;
+  const shot = (issueId: string, commitOid: string, takenAs: "owner" | "nobody") =>
+    recordLook(app.db, { appId: record.id, env: previewEnv(numberOf(issueId)), commitOid, kind: "thumb", path: "looks/x.png", takenAs });
+  shot(stale, ZERO, "nobody");
+  recordLook(app.db, { appId: record.id, env: "production", commitOid: "1".repeat(40), kind: "thumb", path: "looks/m.png", takenAs: "nobody" });
+  const bob = await mk("bob", false);
+  const mine = pull(builder.id, "Assigned to bob", 2);
+  app.db.query("UPDATE issue SET assignee_id = ?2 WHERE id = ?1").run(mine, bob.id);
+  shot(mine, ZERO, "owner");
   pull(builder.id, "Young crew pull", 2);
   const issue = openIssue(app, alice, repo, { title: "Crew asked about this" });
   if (!issue.ok) throw new Error(String(issue.error));
@@ -102,6 +117,13 @@ beforeAll(async () => {
     redirect: "manual",
   });
   cookie = (signin.headers.get("set-cookie") ?? "").split(";")[0]!;
+  const bobIn = await fetch(`${servers.url}/signin`, {
+    method: "POST",
+    headers: { origin: servers.url },
+    body: new URLSearchParams({ username: "bob", password: "a-good-passphrase" }),
+    redirect: "manual",
+  });
+  bobCookie = (bobIn.headers.get("set-cookie") ?? "").split(";")[0]!;
 }, 30_000);
 
 afterAll(async () => {
@@ -172,6 +194,33 @@ test("a pull of an app links its preview beside the row, not inside it; an issue
   expect(issue).not.toContain("/app/pull-");
   expect(issue).not.toContain("badge");
   expect(issue).not.toContain("No check");
+});
+
+test("a pull with a look shows production beside its preview, outside the row's link; one without shows nothing", async () => {
+  const body = await (await fetch(`${servers.url}/review`, { headers: { cookie } })).text();
+  const block = (t: string) => {
+    const at = body.indexOf(t);
+    return body.slice(at, body.indexOf("</ul>", at));
+  };
+  const stale = block("Stale pull");
+  expect(stale.match(/data-slot="thumb"/g)?.length).toBe(2);
+  expect(stale).toContain('alt="Production look, before"');
+  expect(stale).toContain('aria-label="Preview look, after: opens the pull"');
+  expect(stale.match(/<a /g)?.length).toBe(2); // the preview link and the after thumb; the before one is no link
+  expect(stale).toContain("/alice/wait/looks/production/");
+  expect(stale).toContain('width="30" height="40"');
+  expect(stale).toContain('loading="lazy"');
+  expect(stale.indexOf('data-slot="thumb"')).toBeGreaterThan(stale.indexOf("</a>"));
+  expect(block("Fresh ok pull")).not.toContain("data-slot");
+});
+
+test("a viewer who may not fetch the look sees no image and no link to it", async () => {
+  const mineBody = await (await fetch(`${servers.url}/review`, { headers: { cookie: bobCookie } })).text();
+  expect(mineBody).toContain("Assigned to bob");
+  expect(mineBody).not.toContain("/looks/");
+  expect(mineBody).not.toContain("data-slot");
+  const owner = await (await fetch(`${servers.url}/review`, { headers: { cookie } })).text();
+  expect(owner).not.toContain("Assigned to bob");
 });
 
 test("a pull's row says its diff is loading or unavailable, and unavailable once git failed; an issue row says neither", async () => {

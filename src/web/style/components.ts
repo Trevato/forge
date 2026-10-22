@@ -375,7 +375,7 @@ a.sha:hover { color: var(--accent); }
 .looks[data-compare] { gap: 20px; }
 .looks[data-compare] > * { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 @media (max-width: 640px) {
-  .looks:not([data-compare]) { flex-direction: column; }
+  .looks:not([data-compare]):not([data-look] .looks) { flex-direction: column; }
   .looks > [data-slot="phone"] { flex-basis: auto; width: 200px; }
 }
 
@@ -393,6 +393,11 @@ a.row:hover, .row[data-nav]:hover { background: var(--muted); color: inherit; }
 .row-children { list-style: none; margin: 0 0 0 22px; padding: 0; border-left: 1px solid var(--border); }
 .row-children > li { border-top: 1px solid var(--border); }
 @media (max-width: 719px) { .row-children { margin-left: 12px; } }
+/* A row's look thumbs (/review): inset like a row, side by side at any width; the link's hit area grows to 44px. */
+.row-children > [data-look] { padding: 8px 14px; }
+[data-look] .looks { flex-wrap: nowrap; gap: 10px; align-items: center; }
+[data-look] a.look { position: relative; overflow: visible; }
+[data-look] a.look::after { content: ""; position: absolute; inset: -7px; }
 a.row:hover .row-title { color: var(--accent); }
 .row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .row-title {
