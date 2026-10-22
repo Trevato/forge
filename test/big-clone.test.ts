@@ -179,6 +179,17 @@ function pausing(
   );
 }
 
+/**
+ * What a test that is not about stalls serves with: the verdict is the
+ * clone's, never the check machine's speed. A loaded machine that takes
+ * longer than a default window to start a pack is slow, not stalled.
+ */
+const PATIENT: SmartHttpOptions = {
+  stall: { windowMs: 120_000, minBytes: 1 },
+  timeoutMs: 300_000,
+  idleMs: 120_000,
+};
+
 describe("a big repository over smart http", () => {
   const stall: Stall = { windowMs: 1_000, minBytes: 16 * 1024 };
   const BIG = 4 * 1024 * 1024;
@@ -188,7 +199,7 @@ describe("a big repository over smart http", () => {
   let base: string;
   let big: Uint8Array;
   /** How this test's fetch is answered: its options and its link. */
-  let fetchOptions: SmartHttpOptions = {};
+  let fetchOptions: SmartHttpOptions = PATIENT;
   let link = (body: ReadableStream<Uint8Array>) => body;
 
   beforeAll(async () => {
@@ -245,7 +256,7 @@ describe("a big repository over smart http", () => {
       expect(got.length).toBe(BIG);
       expect(Bun.hash(got)).toBe(Bun.hash(big));
     } finally {
-      fetchOptions = {};
+      fetchOptions = PATIENT;
       link = (body) => body;
     }
   }, 60_000);
@@ -257,7 +268,7 @@ describe("a big repository over smart http", () => {
       const run = await git(["clone", "-q", base, "clocked"], work);
       expect(run.code).not.toBe(0);
     } finally {
-      fetchOptions = {};
+      fetchOptions = PATIENT;
       link = (body) => body;
     }
   }, 60_000);
@@ -270,7 +281,7 @@ describe("a big repository over smart http", () => {
       expect(run.code).not.toBe(0);
       expect(run.err).toContain("early EOF");
     } finally {
-      fetchOptions = {};
+      fetchOptions = PATIENT;
       link = (body) => body;
     }
   }, 60_000);
@@ -282,7 +293,7 @@ describe("a big repository over smart http", () => {
       const run = await git(["clone", "-q", base, "paused"], work);
       expect(run.code).toBe(0);
     } finally {
-      fetchOptions = {};
+      fetchOptions = PATIENT;
       link = (body) => body;
     }
   }, 60_000);
@@ -307,7 +318,7 @@ describe("a big repository over smart http", () => {
       expect(await missing(clone)).toEqual([]);
       const got = new Uint8Array(await Bun.file(join(clone, "base.step")).arrayBuffer());
       expect(Bun.hash(got)).toBe(Bun.hash(big));
-    }, 60_000);
+    }, 180_000);
 
     test(`--filter=blob:none over protocol v${version} clones and checks out`, async () => {
       const dir = `none-v${version}`;
@@ -319,7 +330,7 @@ describe("a big repository over smart http", () => {
       expect(run.code).toBe(0);
       expect(await Bun.file(join(work, dir, "README.md")).text()).toBe("# arm\n");
       expect((await Bun.file(join(work, dir, "base.step")).arrayBuffer()).byteLength).toBe(BIG);
-    }, 60_000);
+    }, 180_000);
   }
 });
 
