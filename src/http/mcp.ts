@@ -50,6 +50,8 @@ import { changeSignup, readSignup } from "../actions/signup.ts";
 import { SIGNUP_MODES } from "../settings/signup.ts";
 import { QUOTA_KEYS } from "../settings/quotas.ts";
 import { LIMIT_KEYS } from "../settings/limits.ts";
+import { checkUpstreamNow, FOLLOW_REFUSALS, followJson, setFollowUpstream } from "../actions/upstream_follow.ts";
+import { getFollow } from "../core/upstream_follow.ts";
 import { convergeWords, FOLLOW_MODE_REFUSALS, setFollowMode, severForge, takeForgeCode, takeForgeWords, takeOrTell } from "../actions/follow.ts";
 import { relationOf } from "../actions/forks.ts";
 import { chainOfRepo, FOLLOW_MODES } from "../spawn/chain.ts";
@@ -793,7 +795,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "issue",
     description:
-      "Read one issue with its comments, `blockedBy` and `blocks`. A crew agent sees `untrusted: true` on text by non-writers.",
+      "One issue with comments, `blockedBy` and `blocks`. A crew agent sees `untrusted: true` on text by non-writers.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1334,7 +1336,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "issue_teams",
     description:
-      "Name the crew teams (design, data-science, security, platform) on an issue: at most two; each reviews the closing pull.",
+      "Name crew teams (design, data-science, security, platform) on an issue: at most two; each reviews the closing pull.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1863,7 +1865,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "decisions_by",
     description:
-      "The standing rule for a repository's parked hand-over cards: `me`, `decider`, or `decider_tell`. Without `by`, reads it.",
+      "The standing rule for a repository's parked hand-over cards: `me`, `decider`, `decider_tell`. Without `by`, reads it.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2391,7 +2393,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "claim_link",
     description:
-      "A new claim link for an unclaimed child forge, only with `reveal: true`; the old one then stops at once. Nothing changes without it.",
+      "A new claim link for an unclaimed child forge, only with `reveal: true`; the old one stops. Nothing changes without.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2502,6 +2504,49 @@ const TOOLS: readonly Tool[] = [
       const set = await setFollowMode(ctx.app, user, repo, args["mode"]);
       if (set.ok) return good({ says: `Now following in ${set.value} mode.`, mode: set.value });
       return bad(set.error, FOLLOW_MODE_REFUSALS[set.error].message);
+    },
+  },
+  {
+    name: "upstream",
+    description:
+      "Read, set (`enabled`) or `check` the upstream a repository follows.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        enabled: { type: "boolean" },
+        url: { type: "string" },
+        branch: { type: "string" },
+        check: { type: "boolean" },
+      },
+      required: ["repo"],
+    },
+    writes: true,
+    readsWithout: "enabled",
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const gone = bad("not_found", FOLLOW_REFUSALS.not_found);
+      const refuse = (e: string) => (e === "not_found" || e === "unauthorized" || e === "forbidden" ? gone : bad(e, FOLLOW_REFUSALS[e as keyof typeof FOLLOW_REFUSALS]));
+      const acts = args["check"] === true || args["enabled"] !== undefined;
+      if (!acts) {
+        if (!canAdmin(ctx.app.db, repo, user)) return gone;
+        const follow = getFollow(ctx.app.db, repo.id);
+        return good({ following: follow === undefined ? null : followJson(follow) });
+      }
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "following an upstream needs an admin token");
+      if (args["check"] === true) {
+        if (args["enabled"] !== undefined) return bad("invalid", "check or set, not both");
+        const checked = await checkUpstreamNow(ctx.app, user, repo);
+        return checked.ok ? good(checked.value) : refuse(checked.error);
+      }
+      const { enabled, url, branch } = args;
+      if (typeof enabled !== "boolean") return bad("bad_enabled", "enabled is true or false");
+      if ((url !== undefined && typeof url !== "string") || (branch !== undefined && typeof branch !== "string"))
+        return bad("invalid", "url and branch are text");
+      const saved = setFollowUpstream(ctx.app, user, repo, { url: str(url), branch: str(branch), enabled });
+      return saved.ok ? good({ following: followJson(saved.value) }) : refuse(saved.error);
     },
   },
   {
@@ -2958,7 +3003,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "front_page",
     description:
-      "The forge's front page as a stranger sees it. A site admin also gets the picks and sets them with `pinned`, `hidden`, `weights`.",
+      "The front page as a stranger sees it. A site admin also gets the picks and sets them with `pinned`, `hidden`, `weights`.",
     inputSchema: {
       type: "object",
       properties: {
@@ -3207,20 +3252,9 @@ const TOOLS: readonly Tool[] = [
           minimum: 1,
         },
         action: { type: "string", enum: ["defer", "resume", "close", "raise", "lower", "replan", "takeback", "undo"] },
-        reason: {
-          type: "string",
-          description: "For close: why it is not being done, in one sentence.",
-        },
-        pillar: {
-          type: "string",
-          description:
-            "For resume: the pillar to return it under.",
-        },
-        under: {
-          type: "string",
-          description:
-            "For raise and lower: `top` or a milestone number; only when the limb sits in several places.",
-        },
+        reason: { type: "string" },
+        pillar: { type: "string" },
+        under: { type: "string" },
         operation: {
           type: "string",
         },
@@ -3845,7 +3879,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "access",
     description:
-      "What outside agents tried: the redacted log of non-browser requests to public paths, newest first, max 500. Forge admin.",
+      "What outside agents tried: the redacted log of non-browser requests to public paths, newest first. Forge admin.",
     inputSchema: {
       type: "object",
       properties: {
@@ -4162,7 +4196,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "quotas",
     description:
-      "Per-account repository and app quotas (number or null; not enforced yet). With `key` and `value` (\"\" clears), plans.",
+      "Per-account repository and app quotas (number or null; not enforced yet). With `key`, `value` (\"\" clears), plans.",
     inputSchema: {
       type: "object",
       properties: {

@@ -222,6 +222,7 @@ describe("the forge over MCP", () => {
       "take_updates",
       "sever",
       "follow_mode",
+      "upstream",
       "propose_to_parent_forge",
       "forge_proposals",
       "converge",
