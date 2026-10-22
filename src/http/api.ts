@@ -1482,7 +1482,11 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/telemetry/sources", telemetryRead("sources", () => ({ sources: sourcesOut() })));
   router.add("GET", "/api/v1/telemetry/history", telemetryRead("history", (c) => ({ points: historyFor(c.app) })));
   // The funnel: what any agent that arrives should know. Open to all.
-  router.add("GET", "/api/v1/contribute", (ctx) => json(welcome(ctx.app)));
+  router.add("GET", "/api/v1/contribute", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const body = timePhase(ctx.request, "welcome", () => welcome(ctx.app));
+    return timePhase(ctx.request, "render", () => json(body));
+  });
 
   router.add("GET", "/api/v1/boards/sources", (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
