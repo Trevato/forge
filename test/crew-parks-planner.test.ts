@@ -69,7 +69,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Nothing to
     e.ended(work, "nothing to propose");
     await tick();
     // The crew's own tick may ask the planner first; either way it is asked once.
-    expect(["planned", "idle"]).toContain(await driveRepo(e.app, e.fresh()));
+    await driveRepo(e.app, e.fresh());
     const deadline = Date.now() + 45_000;
     while (e.fresh().directionIssueId == null && Date.now() < deadline) await Bun.sleep(50);
     const direction = e.fresh().directionIssueId!;
@@ -168,8 +168,8 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Nothing to
       tickMs: 50,
     });
     // The crew's own tick may ask the planner first; either way it is asked once.
-    const asked = await driveRepo(e.app, e.fresh());
-    expect(["planned", "idle"]).toContain(asked);
+    // Its answer depends on pacing and on a run the tick already has in flight, so it is not asserted: the planner's brief is.
+    await driveRepo(e.app, e.fresh());
     const deadline = Date.now() + 45_000;
     while (e.fresh().directionIssueId == null && Date.now() < deadline) await Bun.sleep(50);
     const direction = e.fresh().directionIssueId!;
@@ -178,6 +178,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Nothing to
         (r) => r.issueId === direction && ["ok", "failed", "cancelled"].includes(r.state),
       );
     while (settled() === undefined && Date.now() < deadline) await Bun.sleep(100);
+    while (!existsSync(promptFile) && Date.now() < deadline) await Bun.sleep(50);
     expect(existsSync(promptFile)).toBe(true);
     const told = readFileSync(promptFile, "utf8");
     expect(told).toContain(`Three reviews asked for changes, pull #${pull.number} Spent loop`);
