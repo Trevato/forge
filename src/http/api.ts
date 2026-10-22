@@ -1992,10 +1992,13 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/user/orgs", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     if (!ctx.auth.user) return unauthorized();
-    return json(
-      listOrgsForUser(ctx.app.db, ctx.auth.user.id).map(publicProfile),
+    const user = ctx.auth.user;
+    const orgs = timePhase(ctx.request, "orgs", () =>
+      listOrgsForUser(ctx.app.db, user.id).map(publicProfile),
     );
+    return timePhase(ctx.request, "render", () => json(orgs));
   });
 
   // SSH keys — what the SSH listener authenticates against. Public keys are
@@ -2230,22 +2233,28 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/orgs/:org", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const org = getOrg(ctx.app.db, ctx.params.org!);
     if (!org) return notFound();
-    return json({
-      id: org.id,
-      ...publicProfile(org),
-      teams: listTeamsVisibleTo(ctx.app.db, org.id, ctx.auth.user),
-    });
+    const teams = timePhase(ctx.request, "org", () =>
+      listTeamsVisibleTo(ctx.app.db, org.id, ctx.auth.user),
+    );
+    return timePhase(ctx.request, "render", () =>
+      json({ id: org.id, ...publicProfile(org), teams }),
+    );
   });
 
   router.add("GET", "/api/v1/orgs/:org/teams", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const org = getOrg(ctx.app.db, ctx.params.org!);
     if (!org) return notFound();
     const window = keyedWindow(ctx);
     if (window instanceof Response) return window;
-    return json(
-      keyedPage(listTeamsVisibleTo(ctx.app.db, org.id, ctx.auth.user), (t) => t.name, window),
+    const teams = timePhase(ctx.request, "teams", () =>
+      listTeamsVisibleTo(ctx.app.db, org.id, ctx.auth.user),
+    );
+    return timePhase(ctx.request, "render", () =>
+      json(keyedPage(teams, (t) => t.name, window)),
     );
   });
 
@@ -2277,13 +2286,17 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/orgs/:org/teams/:team/members", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const found = loadTeam(ctx);
     if ("error" in found) return found.error;
     if (!teamVisible(ctx, found.org, found.team)) return notFound();
     const window = keyedWindow(ctx);
     if (window instanceof Response) return window;
-    return json(
-      keyedPage(listTeamMembers(ctx.app.db, found.team.id).map(publicProfile), (u) => u.username, window),
+    const members = timePhase(ctx.request, "members", () =>
+      listTeamMembers(ctx.app.db, found.team.id).map(publicProfile),
+    );
+    return timePhase(ctx.request, "render", () =>
+      json(keyedPage(members, (u) => u.username, window)),
     );
   });
 
