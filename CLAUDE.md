@@ -242,7 +242,8 @@ flag exists only in the stdio dev runner and is never reachable over SSH.
   scope floor (`requireScope`, or `requireAccount` for account-level changes),
   call the action, and map its Result with `respondAccess(error, status)` —
   access errors have fixed shapes, anything else is a 422 code. Lists are
-  `{ items, next_cursor }` via `paged(...)`. Web forms follow the same shape
+  `{ items, next_cursor }` via `paged(...)`, never a bare array
+  (`test/api-list-shape.test.ts` fails on one). Web forms follow the same shape
   via `readForm(ctx, scope)`.
 - **Add a TUI screen:** one file under `tui/screens/`, exporting
   `(f: Session, ctx: Ctx, …) => Screen`. Compose `ui/widgets`; take navigation
