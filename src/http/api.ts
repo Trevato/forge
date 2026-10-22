@@ -1666,10 +1666,11 @@ export function apiRoutes(router: Router<Handler>): void {
   // The forge's capacity (`core/capacity.ts`): read and changed live by an
   // admin, never by an agent; anyone else is told the door is not there.
   router.add("GET", "/api/v1/admin/capacity", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
-    const listed = listCapacity(ctx.app, ctx.auth.user);
-    return listed.ok ? json(listed.value) : notFound();
+    const listed = timePhase(ctx.request, "capacity", () => listCapacity(ctx.app, ctx.auth.user));
+    return timePhase(ctx.request, "render", () => (listed.ok ? json(listed.value) : notFound()));
   });
 
   router.add("PUT", "/api/v1/admin/capacity/:key", async (ctx) => {
@@ -1691,10 +1692,11 @@ export function apiRoutes(router: Router<Handler>): void {
 
   // The forge's limits (`settings/limits.ts`): the same door as capacity.
   router.add("GET", "/api/v1/admin/limits", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
-    const listed = listLimits(ctx.app, ctx.auth.user);
-    return listed.ok ? json(listed.value) : notFound();
+    const listed = timePhase(ctx.request, "limits", () => listLimits(ctx.app, ctx.auth.user));
+    return timePhase(ctx.request, "render", () => (listed.ok ? json(listed.value) : notFound()));
   });
 
   router.add("PUT", "/api/v1/admin/limits/:key", async (ctx) => {
@@ -1764,11 +1766,15 @@ export function apiRoutes(router: Router<Handler>): void {
   // Per-account quotas (`core/quotas.ts`): null is no limit. Nothing
   // enforces them yet.
   router.add("GET", "/api/v1/admin/settings", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
-    const read = readQuotas(ctx.app, ctx.auth.user);
-    const signup = readSignup(ctx.app, ctx.auth.user);
-    return read.ok && signup.ok ? json({ ...read.value, ...signup.value, signupChanges: signup.value.changes, changes: read.value.changes }) : notFound();
+    const { read, signup } = timePhase(ctx.request, "settings", () => ({
+      read: readQuotas(ctx.app, ctx.auth.user),
+      signup: readSignup(ctx.app, ctx.auth.user),
+    }));
+    return timePhase(ctx.request, "render", () =>
+      read.ok && signup.ok ? json({ ...read.value, ...signup.value, signupChanges: signup.value.changes, changes: read.value.changes }) : notFound());
   });
 
   router.add("PATCH", "/api/v1/admin/settings", async (ctx) => {
