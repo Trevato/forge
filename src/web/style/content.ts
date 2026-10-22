@@ -172,14 +172,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
   .repo-layout > aside { position: sticky; top: calc(var(--topbar-h) + 16px); }
 }
 
-.issue-head { margin: 20px 0 14px; }
-.issue-head h1 { font-size: clamp(20px, 1rem + 1.4vw, 26px); letter-spacing: -0.025em; }
-.issue-head h1 .number { font-weight: 400; color: var(--muted-fg); }
-.issue-meta {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  margin-top: 8px; font-size: 13px; color: var(--muted-fg);
-}
-
 .tok { white-space: nowrap; }
 
 .filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }

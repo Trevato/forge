@@ -509,9 +509,6 @@ the same line (#4888).
   - `.front-more`
   - `.front-pick`
   - `.headroom`
-  - `.issue-head`
-  - `.issue-meta`
-  - `.number`
   - `.owner`
   - `.page-head`
   - `.policy-line`
