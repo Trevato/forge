@@ -3681,11 +3681,12 @@ export function apiRoutes(router: Router<Handler>): void {
   // The decision ledger: what the crew's decider answered and what came of
   // it, newest first, with the week summed up per kind.
   router.add("GET", "/api/v1/repos/:owner/:name/decisions", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const kind = ctx.url.searchParams.get("kind");
     const week = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString();
-    return json({
+    const read = timePhase(ctx.request, "decisions", () => ({
       decisions: listDecisions(ctx.app.db, repo.id, {
         kind:
           kind === "next" ||
@@ -3703,7 +3704,8 @@ export function apiRoutes(router: Router<Handler>): void {
         // A hand-over's state carries its tapper's private preferences.
         .map((d) => forReader(d, ctx.auth.user)),
       week: decisionStats(ctx.app.db, repo.id, week),
-    });
+    }));
+    return timePhase(ctx.request, "render", () => json(read));
   });
 
   router.add(
