@@ -84,6 +84,7 @@ for a tunnel and a forge that sleeps.
 | `usage`        | `{ repo, days? }`: what the crew's runs spent — tokens, cost, wall time — by subscription, agent, issue, and each account's 5-hour and weekly standing; a writer's |        |
 | `labels`       | `{ repo, number, labels }`: set an issue's or a pull's labels to exactly these (`[]` clears); only labels the repository has, by a writer | yes    |
 | `wait_for`     | `{ app, issue, blockedBy, stop? }`: the issue waits for another, or stops with `stop: true`; the page's rules, and the answer carries the issue's URL | yes    |
+| `confirm_wait`  | `{ app, issue, blocker }`: a person says `issue` may go ahead although `blocker` closed as dropped or split; the API's confirm action, so writers only and never the crew | yes    |
 | `hold`         | `{ app, pull, why?, release?, dryRun? }`: hold a pull so no rule reviews or lands it, or let it go; a person who can write, never an agent; plans unless `dryRun: false` | yes    |
 | `app_env`      | `{ repo, action, name?, value?, scope? }`: `list` an app's variable names and scopes, `set` one, or `unset` it, in `all` (default), `production` or `preview`; the API's rules and errors, an admin of the repository with an admin-scope token; a value is never read back | yes    |
 | `email_verify` | no input: send the caller a new verification email, with the API's rate limit and errors; the answer never carries the link | yes    |

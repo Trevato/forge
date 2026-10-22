@@ -66,6 +66,7 @@ import {
   TAKEN_UP,
 } from "../actions/issues.ts";
 import {
+  confirmIssue,
   dependencyWords,
   linkIssue,
   unlinkIssue,
@@ -3616,6 +3617,39 @@ const TOOLS: readonly Tool[] = [
         );
       return good({
         says: `#${issue.number} ${stop ? "no longer waits" : "waits"} for #${blocker.number}.`,
+        url: `${ctx.url.origin}/${repo.ownerName}/${repo.name}/issues/${issue.number}`,
+      });
+    },
+  },
+  {
+    name: "confirm_wait",
+    description:
+      "Let an issue go ahead though its blocker closed dropped or split.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        app: APP_ARG,
+        issue: { type: "integer" },
+        blocker: { type: "integer" },
+      },
+      required: ["app", "issue", "blocker"],
+    },
+    writes: true,
+    run(ctx, user, args) {
+      const repo = planRepo(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const issue = issueArg(ctx, repo, args, "issue");
+      if ("ok" in issue) return issue;
+      const blocker = issueArg(ctx, repo, args, "blocker");
+      if ("ok" in blocker) return blocker;
+      const done = confirmIssue(ctx.app, user, repo, issue, blocker);
+      if (!done.ok)
+        return bad(
+          done.error,
+          "You need write access, and not a place on the crew, to confirm a wait.",
+        );
+      return good({
+        says: `#${issue.number} may go ahead without #${blocker.number}.`,
         url: `${ctx.url.origin}/${repo.ownerName}/${repo.name}/issues/${issue.number}`,
       });
     },
