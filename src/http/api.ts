@@ -6238,25 +6238,29 @@ export function apiRoutes(router: Router<Handler>): void {
 
   // What is on the caller: open issues and pulls assigned to them, anywhere.
   router.add("GET", "/api/v1/user/assigned", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireScope(ctx, "ro");
     if (denied) return denied;
     const user = ctx.auth.user!;
-    const issues = listAssignedTo(ctx.app.db, user.id);
-    const repos = getReposByIds(
-      ctx.app.db,
-      issues.map((i) => i.repoId),
-    );
-    const items = [];
-    for (const issue of issues) {
-      const repo = repos.get(issue.repoId);
-      if (!repo || !canRead(ctx.app.db, repo, user)) continue;
-      if (!mayView(ctx.app.db, repo, issue, user)) continue;
-      items.push({
-        ...issue,
-        repo: { owner: repo.ownerName, name: repo.name },
-      });
-    }
-    return json({ items, next_cursor: null });
+    const items = timePhase(ctx.request, "assigned", () => {
+      const issues = listAssignedTo(ctx.app.db, user.id);
+      const repos = getReposByIds(
+        ctx.app.db,
+        issues.map((i) => i.repoId),
+      );
+      const out = [];
+      for (const issue of issues) {
+        const repo = repos.get(issue.repoId);
+        if (!repo || !canRead(ctx.app.db, repo, user)) continue;
+        if (!mayView(ctx.app.db, repo, issue, user)) continue;
+        out.push({
+          ...issue,
+          repo: { owner: repo.ownerName, name: repo.name },
+        });
+      }
+      return out;
+    });
+    return timePhase(ctx.request, "render", () => json({ items, next_cursor: null }));
   });
 
   router.add("GET", "/api/v1/agents", (ctx) => {
