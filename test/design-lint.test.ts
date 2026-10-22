@@ -72,6 +72,35 @@ describe("design check: nothing added outside the system (#2678)", () => {
     expect(documentedClasses("## 4. Space\n`.a`")).toEqual([]);
   });
 
+  test("§5d's one-class-per-line sub-list reads as the same set as the inline run (#4888)", () => {
+    const inline = [
+      "## 5. The component vocabulary",
+      "### 5d. Page-local classes",
+      "- **`style/base.ts`** — the shell: `.bar` `.bare` `.foot`",
+      "  A `.field` inside a `.bar` drops its margin",
+      "- **`pages/x.ts`** — the x page. Classes: `.x-card` `.x-row`",
+      "## 6. Keyboard",
+    ].join("\n");
+    const listed = [
+      "## 5. The component vocabulary",
+      "### 5d. Page-local classes",
+      "- **`style/base.ts`** — the shell:",
+      "  - `.bar`",
+      "  - `.bare`",
+      "  - `.foot`",
+      "",
+      "  A `.field` inside a `.bar` drops its margin",
+      "- **`pages/x.ts`** — the x page. Classes:",
+      "  - `.x-card`",
+      "  - `.x-row`",
+      "## 6. Keyboard",
+    ].join("\n");
+    const fixed = ["bar", "bare", "field", "foot", "x-card", "x-row"];
+    expect(registeredClasses(inline)).toEqual(fixed);
+    expect(registeredClasses(listed)).toEqual(fixed);
+    expect(documentedClasses(listed)).toEqual(fixed);
+  });
+
   test("fails a pull that adds a colour, a size or a component", () => {
     const base = { files: { "src/web/x.ts": { colour: 1, size: 1 } } };
     const now = { ...base, classes: ["btn", "run-log", "x-card", "x-row", "x-wrapped"] };
