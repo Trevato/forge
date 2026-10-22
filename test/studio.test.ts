@@ -271,6 +271,16 @@ describe("the studio", () => {
     expect(studio).toContain('class="card comment-form"');
   });
 
+  test("the home and an app's page lay main and rail with .split's wide rail; no dash class is left (#4748)", async () => {
+    for (const path of ["/", "/alice/notes"]) {
+      const page = await (await get(path)).text();
+      expect(page).not.toMatch(/class="[^"]*\bdash(?:-main|-rail)?\b/);
+      expect(page).toContain('<div class="split" data-rail="wide">');
+    }
+    const css = await (await fetch(`${base}${stylesheetAsset().path}`)).text();
+    expect(css).not.toMatch(/\.dash\b/);
+  });
+
   test("telling the crew opens an issue and hands it to a builder", async () => {
     const told = await post("/alice/notes/tell", {
       text: "Make the notes page load in under a second on my phone.\n\nIt takes three seconds now.",

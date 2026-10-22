@@ -333,7 +333,7 @@ form.inline { display: inline; margin-left: auto; }
    *content*, so a column with a long unbreakable line pushes the page wider
    than the phone rather than letting its own ellipsis do the work. A zero
    min-width is what makes truncation inside a grid actually truncate. */
-.dash > *, .split > *, .repo-layout > * { min-width: 0; }
+.split > *, .repo-layout > * { min-width: 0; }
 
 /* The generic two-column page: content, then a sidebar that sticks. */
 .split { display: grid; gap: 16px; margin-top: 16px; align-items: start; }
@@ -342,8 +342,14 @@ form.inline { display: inline; margin-left: auto; }
   .split > aside { position: sticky; top: calc(var(--topbar-h) + 16px); }
 }
 
-.dash { display: grid; gap: 16px; align-items: start; }
-@media (min-width: 900px) { .dash { grid-template-columns: minmax(0, 1fr) 320px; gap: 24px; } }
+/* The studio's wide rail (home, an app): a column of cards that runs taller
+   than a screen, so it scrolls with the page instead of sticking, sits flush
+   under the tabs or header, and takes its two columns from 900px. */
+.split[data-rail="wide"] { margin-top: 0; }
+@media (min-width: 900px) {
+  .split[data-rail="wide"] { grid-template-columns: minmax(0, 1fr) 320px; gap: 24px; }
+  .split[data-rail="wide"] > aside { position: static; }
+}
 
 /* ---- code view ---- */
 .code { overflow-x: auto; scrollbar-width: thin; }

@@ -261,8 +261,8 @@ export async function studioHome(
       </p>`,
     )}
     ${homeTabs("feed")}
-    <div class="dash">
-      <div class="dash-main stack">
+    <div class="split" data-rail="wide">
+      <div class="stack">
         ${composer(ctx, user)}
         <div class="bar feed-head">
           <span class="spacer"></span>
@@ -272,7 +272,7 @@ export async function studioHome(
         ${feedNote()}
         ${timePhase(ctx.request, "feed", () => feedRegion(user, ctx), () => feedCandidateCache(ctx.app.db))}
       </div>
-      <aside class="dash-rail stack">
+      <aside class="stack">
         ${
           // The crew's missing key is the owner's to fix, not the first
           // thing above every post: beside the timeline on a desk, after it
