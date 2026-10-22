@@ -20,6 +20,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { rawResponse } from "../src/web/pages/repo.ts";
 import { safeNext } from "../src/web/pages/site.ts";
 import { shellJs } from "../src/web/client.ts";
+import { copyField } from "../src/web/ui.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 import { proveAll } from "./helpers/verified.ts";
 import { adminCookie } from "./helpers/admin.ts";
@@ -1054,5 +1055,22 @@ describe("the issue close form's styles", () => {
     );
     expect(css).not.toContain("close-reason");
     expect(css).not.toContain("close-into");
+  });
+});
+
+describe("copyField", () => {
+  test("a readonly input beside a copy button, with acronyms kept in the button's name", () => {
+    const out = copyField("clone-ssh", 'ssh://git@h:22/a/b.git"><x', "SSH clone address", "Copy SSH clone URL").text;
+    expect(out).toMatch(/<input[^>]*\bid="clone-ssh"/);
+    expect(out).toMatch(/<input[^>]*\breadonly\b/);
+    expect(out).toContain('aria-label="SSH clone address"');
+    expect(out).toContain('value="ssh://git@h:22/a/b.git&quot;&gt;&lt;x"'); // escaped
+    expect(out).toContain('data-copy="clone-ssh"');
+    expect(out).toContain('aria-label="Copy SSH clone URL"');
+  });
+
+  test("the copy script reads an input's value and selects it in place", () => {
+    expect(shellJs).toContain("src.value !== undefined ? src.value : src.textContent");
+    expect(shellJs).toContain("if (el.select) { el.focus(); el.select(); return true; }");
   });
 });

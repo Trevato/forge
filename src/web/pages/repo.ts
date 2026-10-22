@@ -73,6 +73,7 @@ import {
   row,
   seg,
   time,
+  copyField,
 } from "../ui.ts";
 
 const MAX_RENDER_BYTES = 1_000_000;
@@ -663,25 +664,17 @@ function aboutCard(
             </p>`,
         )}
         <p class="mt small muted">Clone over HTTPS</p>
-        <span class="clone"
-          ><span class="clone-text" id="clone-https">${cloneUrl}</span>
-          ${iconBtn("copy", "Copy clone URL", {
-            size: "sm",
-            type: "button",
-            copy: "clone-https",
-          })}</span
-        >
+        ${copyField("clone-https", cloneUrl, "HTTPS clone address", "Copy clone URL")}
         ${when(
           sshPort !== undefined,
           () =>
             html`<p class="mt small muted">Clone over SSH</p>
-              <span class="clone"
-                ><span class="clone-text" id="clone-ssh"
-                  >ssh://git@${ctx.app.config.host ??
-                  ctx.url
-                    .hostname}:${sshPort}/${repo.ownerName}/${repo.name}.git</span
-                ></span
-              >`,
+              ${copyField(
+                  "clone-ssh",
+                  `ssh://git@${ctx.app.config.host ?? ctx.url.hostname}:${sshPort}/${repo.ownerName}/${repo.name}.git`,
+                  "SSH clone address",
+                  "Copy SSH clone URL",
+                )}`,
         )}`,
       { head: html`<h2>About</h2>` },
   )}`;
@@ -1015,17 +1008,12 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
           note: "Point a local repository at it and push — the first branch you push becomes the code you see here.",
         })}
         ${card(
-          html`<span class="clone"
-            ><span class="clone-text" id="clone-https"
-              >git remote add origin ${cloneUrl} &amp;&amp; git push -u origin
-              ${repo.defaultBranch}</span
-            >
-            ${iconBtn("copy", "Copy", {
-              size: "sm",
-              type: "button",
-              copy: "clone-https",
-            })}</span
-          >`,
+          copyField(
+            "clone-https",
+            `git remote add origin ${cloneUrl} && git push -u origin ${repo.defaultBranch}`,
+            "Get started command",
+            "Copy the get started command",
+          ),
           {
             head: html`${icon("command")}
               <h2>Get started</h2>`,

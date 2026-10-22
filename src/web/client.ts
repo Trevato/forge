@@ -1345,6 +1345,7 @@ export const shellJs = /* js */ `
   // retype, and the button never does nothing.
   function selectText(el) {
     try {
+      if (el.select) { el.focus(); el.select(); return true; }
       var range = doc.createRange();
       range.selectNodeContents(el);
       var sel = window.getSelection();
@@ -1368,7 +1369,7 @@ export const shellJs = /* js */ `
       done(selectText(src) ? 'Selected — press Ctrl/Cmd+C' : 'Copy it by hand');
     }
     if (!navigator.clipboard) { fallback(); return; }
-    navigator.clipboard.writeText(src.textContent.trim()).then(function () {
+    navigator.clipboard.writeText((src.value !== undefined ? src.value : src.textContent).trim()).then(function () {
       done('Copied');
     }, fallback);
   });

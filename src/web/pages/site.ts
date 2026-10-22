@@ -47,6 +47,7 @@ import {
   row,
   selectField,
   terminalCommand,
+  copyField,
 } from "../ui.ts";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -151,14 +152,7 @@ export function downloadsCard(ctx: Ctx, user: User): Html {
       html`<li>
         <div class="row">
           <span class="row-main">
-            <span class="clone"
-              ><span class="clone-text" id="forge-sync">forge sync</span>
-              ${iconBtn("copy", "Copy the sync command", {
-                size: "sm",
-                type: "button",
-                copy: "forge-sync",
-              })}</span
-            >
+            ${copyField("forge-sync", "forge sync", "Sync command", "Copy the sync command")}
             <span class="row-meta"
               >Clones what is missing, fetches the rest, and reports
               ahead/behind/dirty. See "Origins" in the README.</span

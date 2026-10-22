@@ -223,6 +223,36 @@ export function iconBtn(
   return btn(icon(name), opts);
 }
 
+/**
+ * A string people copy — a clone address, a redirect URI, a command: a
+ * read-only `.input` beside a copy button. The value is plain text in the
+ * markup, so it selects and copies with no JavaScript; the button is the
+ * shortcut. `id` is what the copy script looks up; `label` names the field
+ * and `copyLabel` the button, each written out so acronyms keep their case.
+ */
+export function copyField(
+  id: string,
+  value: string,
+  label: string,
+  copyLabel: string,
+): Html {
+  return html`<span class="bar"
+    ><input
+      class="input grow mono"
+      id="${id}"
+      type="text"
+      readonly
+      value="${value}"
+      aria-label="${label}"
+      data-size="sm"
+    />${iconBtn("copy", copyLabel, {
+      size: "sm",
+      type: "button",
+      copy: id,
+    })}</span
+  >`;
+}
+
 // ---- badges, labels, pills, dots ----
 
 export function badge(

@@ -39,7 +39,7 @@ import { notePhase } from "../core/route_timing.ts";
 import { html, raw, when, type Html } from "./html.ts";
 import { noRoom } from "../spawn/door.ts";
 import { icon, iconSprite, inlineIcons, themeGlyph } from "./icons.ts";
-import { btn, kbd, menu, pill, type MenuItem } from "./ui.ts";
+import { btn, copyField, kbd, menu, pill, type MenuItem } from "./ui.ts";
 
 /** One row of the command palette: title, href, category. */
 export interface PaletteItem {
@@ -400,19 +400,7 @@ function flashToast(flash: Flash): Html {
       ${when(
         flash.code,
         (code) =>
-          html`<span class="clone"
-            ><span class="clone-text" id="flash-code">${code}</span>
-            <button
-              class="btn btn-icon"
-              data-size="sm"
-              type="button"
-              data-copy="flash-code"
-              aria-label="Copy"
-              title="Copy"
-            >
-              ${icon("copy")}
-            </button></span
-          >`,
+          copyField("flash-code", code, "Code", "Copy code"),
       )}
     </div>
   </div>`;
