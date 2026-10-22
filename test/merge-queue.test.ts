@@ -24,6 +24,7 @@ import { landIfGreen, REGATE_RED_MS, regateDue, sweepGreen } from "../src/crew/a
 import { listComments } from "../src/core/issues.ts";
 import { readQueues } from "../src/flow/queue.ts";
 import { repoDir } from "../src/git/repos.ts";
+import { logLevel, setLogLevel } from "../src/kernel/log.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { flowLines } from "../src/tui/screens/flow.ts";
@@ -193,11 +194,15 @@ describe("the merge queue", () => {
     for (let i = 0; i < 10; i++) pulls.push(await greenPull(repo, `p${i}.ts`));
     const said: string[] = [];
     const info = console.info;
+    // The log floor is process-wide: the verdict must not hang on what ran before.
+    const floor = logLevel();
+    setLogLevel("info");
     console.info = (line: string) => said.push(line);
     try {
       expect(await sweepGreen(app, repo)).toBe(10);
     } finally {
       console.info = info;
+      setLogLevel(floor);
     }
     expect(MAX_CANDIDATE).toBe(8);
     expect(gatesOf(repo)).toHaveLength(2);
@@ -215,11 +220,15 @@ describe("the merge queue", () => {
     for (let i = 0; i < 12; i++) pulls.push(await greenPull(repo, i === 1 ? "red-b.ts" : `q${i}.ts`));
     const said: string[] = [];
     const info = console.info;
+    // The log floor is process-wide: the verdict must not hang on what ran before.
+    const floor = logLevel();
+    setLogLevel("info");
     console.info = (line: string) => said.push(line);
     try {
       expect(await sweepGreen(app, repo)).toBe(11);
     } finally {
       console.info = info;
+      setLogLevel(floor);
     }
     const sizes = said.flatMap((l) => /\[queue\] gating (\d+) pulls? since/.exec(l)?.[1] ?? []).map(Number);
     // The eight are red; halving finds the culprit (4, 2, 1); then the six
