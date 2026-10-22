@@ -407,19 +407,49 @@ describe("apps: production, previews, data, gates", () => {
     expect(status?.state).toBe("running");
     expect(status?.error).toContain("tests failed");
 
-    const fixed = await commitToBranch(app, alice, repo, {
-      branch: "broken",
-      message: "Fix the test",
-      files: [
-        {
-          path: "src/server.test.ts",
-          content:
-            'import { expect, test } from "bun:test";\ntest("passes", () => { expect(1).toBe(1); });\n',
-        },
-      ],
-    });
-    expect(fixed.ok).toBe(true);
-    if (!fixed.ok) return;
+    // Hold every deploy permit, so the fixed head's deploy cannot finish
+    // between this push and the merge attempt: the hold is asserted while the
+    // deploy is provably unfinished, then the deploy is let go.
+    const permits = await Promise.all(
+      Array.from({ length: runtime.lane.limit }, () => runtime.lane.acquire()),
+    );
+    const release = () => permits.forEach((r) => r());
+    let fixed: Awaited<ReturnType<typeof commitToBranch>>;
+    try {
+      fixed = await commitToBranch(app, alice, repo, {
+        branch: "broken",
+        message: "Fix the test",
+        files: [
+          {
+            path: "src/server.test.ts",
+            content:
+              'import { expect, test } from "bun:test";\ntest("passes", () => { expect(1).toBe(1); });\n',
+          },
+        ],
+      });
+      expect(fixed.ok).toBe(true);
+      if (!fixed.ok) return;
+      const fixedOid = fixed.value.commitOid;
+      const queuedFor = () =>
+        listRuns(app.db, repo.id, { kind: "deploy", limit: 50 }).find(
+          (r) =>
+            r.env === `pull-${opened.value.number}` &&
+            r.commitOid === fixedOid,
+        );
+      while (queuedFor() === undefined) await Bun.sleep(20);
+      expect(queuedFor()?.state).not.toBe("ok");
+      const held = await mergePull(
+        app,
+        alice,
+        repo,
+        getPull(app.db, repo.id, opened.value.number)!,
+        "merge",
+      );
+      expect(held.ok).toBe(false);
+      if (!held.ok) expect(held.error).toBe("checks_required");
+    } finally {
+      release();
+    }
     const green = await settled(
       (r) =>
         r.env === `pull-${opened.value.number}` &&
