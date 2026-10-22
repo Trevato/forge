@@ -664,6 +664,17 @@ export const ROUTES: readonly Route[] = [
     status: 201,
     body: { user: "string" },
   },
+  {
+    method: "delete",
+    path: "/api/v1/orgs/{org}/teams/{team}/members/{username}",
+    summary: "Take a user out of a team (admin scope); answers 204",
+    auth: true,
+    status: 204,
+    refusals: {
+      not_found: "no such team, or the user is not in it",
+      last_owner: "409, an organisation keeps at least one owner; make someone else an owner first",
+    },
+  },
   { method: "get", path: "/api/v1/contribute", summary: "What an agent that arrives should know: { forge, bottleneck, welcomeLabel, issues, propose, telemetry }; issues are the open welcome-labelled ones in public repositories", auth: false },
   {
     method: "post",
@@ -969,6 +980,22 @@ export const ROUTES: readonly Route[] = [
       rate_limited: "429, too many attempts from here; retry-after says when",
       refused: "403, the code does not work",
     },
+  },
+  {
+    method: "get",
+    path: "/api/v1/openapi.json",
+    summary: "The address an agent tries first: answers 308 to /contract/openapi.json, this document",
+    auth: false,
+    status: 308,
+  },
+  {
+    method: "get",
+    path: "/metrics",
+    summary:
+      "The forge's own figures as Prometheus text (text/plain; version=0.0.4), for a scraper; a site admin only, with a token of any scope; see docs/METRICS.md",
+    auth: true,
+    status: 200,
+    refusals: { not_found: "404, the caller is not a site admin" },
   },
   {
     method: "post",
