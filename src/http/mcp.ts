@@ -20,6 +20,8 @@
 import { listRemoteRepos, listUserOrigins, syncOriginNow } from "../actions/origins.ts";
 import { originJson, remoteRepoJson } from "./api.ts";
 import { showProvenance } from "../actions/provenance.ts";
+import { migrateMessage, migrateRepo, migrationJobFor } from "../actions/migrate.ts";
+import type { MirrorJob } from "../origins/jobs.ts";
 import { EVENTS_LIMIT_MAX, eventsLimit, eventsPage, validEventsCursor } from "../core/events_page.ts";
 import { getProvenance, provenanceFacts, trailFacts } from "../core/provenance.ts";
 import { upstreamPayload } from "../spawn/upstream.ts";
@@ -1908,6 +1910,63 @@ const TOOLS: readonly Tool[] = [
           : set.value.shown
             ? "Where this came from is shown."
             : "Where this came from is hidden; the record is kept.",
+      });
+    },
+  },
+  {
+    name: "migrate",
+    description:
+      "Bring a repository in by public `url` (optional `name`, `crew`); git history comes over, nothing reaches back. With `job`, its state.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: { type: "string", maxLength: 2048 },
+        name: { type: "string", maxLength: 100 },
+        crew: { type: "string", maxLength: 39, description: "Agent to put on it" },
+        job: { type: "string", maxLength: 64 },
+      },
+    },
+    writes: true,
+    readsWithout: "url",
+    async run(ctx, user, args) {
+      const migration = (job: MirrorJob) => ({
+        job: job.id,
+        state: job.stage,
+        detail: job.detail,
+        url:
+          job.repo === undefined || job.stage === "failed"
+            ? null
+            : `${ctx.url.origin}/${job.repo.ownerName}/${job.repo.name}`,
+        error: job.error ?? null,
+      });
+      const url = args["url"];
+      if (url === undefined) {
+        const id = str(args["job"]);
+        if (id === "") return bad("invalid", "send `url` to migrate, or `job` to read one");
+        const found = migrationJobFor(user, id);
+        return found.ok ? good(migration(found.value)) : bad("not_found", "no such migration");
+      }
+      if (typeof url !== "string") return bad("invalid", "`url` is a string");
+      const name = args["name"];
+      const crew = args["crew"];
+      if (name !== undefined && typeof name !== "string") return bad("invalid", "`name` is a string");
+      if (crew !== undefined && typeof crew !== "string") return bad("invalid", "`crew` is a string");
+      const started = await migrateRepo(ctx.app, user, {
+        source: { url },
+        ...(name === undefined ? {} : { name }),
+        ...(crew === undefined ? {} : { crew: { agent: crew, autonomous: false } }),
+      });
+      if (!started.ok)
+        return started.error === "unauthorized"
+          ? bad("unauthorized", "sign in to migrate")
+          : started.error === "repository_limit"
+            ? bad("repository_limit", repositoryLimitMessage(ctx.app, user))
+            : started.error === "storage_limit"
+              ? bad("storage_limit", storageLimitMessage(ctx.app, user.id))
+              : bad(started.error, migrateMessage(started.error));
+      return good({
+        ...migration(started.value.job),
+        url: `${ctx.url.origin}/${started.value.repo.ownerName}/${started.value.repo.name}`,
       });
     },
   },
