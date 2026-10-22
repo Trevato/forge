@@ -2,6 +2,12 @@
  * Every harness session pays for `tools/list` before it does anything, so
  * the answer has a ceiling: past it, the longest descriptions are named so
  * the next cut is obvious.
+ *
+ * Measure locally with `bun test test/mcp-size.test.ts`. A failure says how
+ * many bytes the answer is, how many it is over, and the longest
+ * descriptions. Before adding a tool, extend an existing one with an
+ * `action` or `kind` (docs/MCP.md, "Room for a new tool"). The ceilings are
+ * the owner's: do not raise them in a feature pull.
  */
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -73,10 +79,10 @@ test("tools/list stays under 40 KB, with 3 KB of headroom (37,500 bytes)", async
     .slice(0, 5);
   expect(
     bytes,
-    `tools/list is ${bytes} bytes, over ${CEILING}; the five longest descriptions: ${longest.join(", ")}`,
+    `tools/list is ${bytes} bytes, ${bytes - CEILING} over the ${CEILING} ceiling; the five longest descriptions: ${longest.join(", ")}`,
   ).toBeLessThanOrEqual(CEILING);
   expect(
     bytes,
-    `tools/list is ${bytes} bytes, over the ${HEADROOM_CEILING} headroom; the five longest descriptions: ${longest.join(", ")}`,
+    `tools/list is ${bytes} bytes, ${bytes - HEADROOM_CEILING} over the ${HEADROOM_CEILING} headroom (${CEILING - bytes} left under the ceiling); the five longest descriptions: ${longest.join(", ")}`,
   ).toBeLessThanOrEqual(HEADROOM_CEILING);
 });

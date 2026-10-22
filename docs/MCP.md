@@ -90,6 +90,18 @@ for a tunnel and a forge that sleeps.
 | `prompts`      | `{ repo, action, kind?, token?, at?, id? }`: list, add, run or remove an app's prompt sources (Instagram), as the `…/prompts` API does; the token goes in once and is never shown; listed only for an admin-scope token, and only the repository's admin may use it | yes    |
 | `account_suspend` | `{ username, suspended }`: suspend a person's account, or unsuspend it with `false`; their sessions and tokens stop at once; the API's rules (not yourself, another admin or an agent; not the only owner of an organization); an admin token | yes    |
 
+### Room for a new tool
+
+Every session pays for `tools/list` first, so `test/mcp-size.test.ts` holds it
+to a 40,000-byte ceiling and a 37,000-byte headroom (the answer an admin gets,
+the largest). Measure before you push with `bun test test/mcp-size.test.ts`;
+a failure names the bytes over and the longest descriptions.
+
+- A new door is an `action` or `kind` on the tool that already owns the
+  resource before it is a new tool.
+- A new tool's description is one sentence.
+- The ceiling is the owner's: never raise it in a feature pull.
+
 Answers are JSON in a text block; most carry a `says` sentence short enough
 to relay as it is.
 
