@@ -6114,18 +6114,23 @@ export function apiRoutes(router: Router<Handler>): void {
     "GET",
     "/api/v1/repos/:owner/:name/pulls/:number/checks",
     async (ctx) => {
+      notePhase(ctx.request, "session", takeSessionTime(ctx.request));
       const found = loadPull(ctx);
       if ("error" in found) return found.error;
-      const head = await pullHeadOid(ctx, found.repo, found.pull);
-      const runs = checksForHead(ctx.app.db, found.pull.id, head);
-      const latest = runs[0];
-      return json({
-        head,
-        state: latest?.state ?? "none",
-        required: found.repo.requireChecks,
-        run: latest ?? null,
-        runs,
+      const { head, runs } = await timePhaseAsync(ctx.request, "checks", async () => {
+        const oid = await pullHeadOid(ctx, found.repo, found.pull);
+        return { head: oid, runs: checksForHead(ctx.app.db, found.pull.id, oid) };
       });
+      const latest = runs[0];
+      return timePhase(ctx.request, "render", () =>
+        json({
+          head,
+          state: latest?.state ?? "none",
+          required: found.repo.requireChecks,
+          run: latest ?? null,
+          runs,
+        }),
+      );
     },
   );
 
