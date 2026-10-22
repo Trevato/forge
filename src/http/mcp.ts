@@ -119,6 +119,7 @@ import {
   getIssue,
   getIssueById,
   labelsFor,
+  listAssignedTo,
   listComments,
   listOpenAgentPullsVisibleTo,
 } from "../core/issues.ts";
@@ -150,6 +151,7 @@ import {
   canWrite,
   forkParentFor,
   getRepo,
+  getReposByIds,
   isDecisionsBy,
   ownerFactRepoIds,
   type Repo,
@@ -2401,6 +2403,30 @@ const TOOLS: readonly Tool[] = [
         asked: askedIn(ctx.app.db, repos, { show, order }).map(askedJson),
         thoughts: thoughtStream(ctx.app.db, user).map(streamJson),
       });
+    },
+  },
+  {
+    name: "assigned",
+    description: "The open issues and pulls assigned to you in every repository you can read.",
+    inputSchema: {
+      type: "object",
+      properties: { limit: { type: "integer", minimum: 1, maximum: 50 } },
+    },
+    writes: false,
+    run(ctx, user, args) {
+      const limit = args["limit"] ?? 50;
+      if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1 || limit > 50)
+        return bad("invalid", "`limit` is a whole number from 1 to 50");
+      const db = ctx.app.db;
+      const issues = listAssignedTo(db, user.id, limit);
+      const repos = getReposByIds(db, issues.map((i) => i.repoId));
+      const items = [];
+      for (const issue of issues) {
+        const repo = repos.get(issue.repoId);
+        if (!repo || !canRead(db, repo, user) || !mayView(db, repo, issue, user)) continue;
+        items.push({ ...issue, repo: { owner: repo.ownerName, name: repo.name } });
+      }
+      return good({ items, next_cursor: null });
     },
   },
   {

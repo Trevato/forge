@@ -59,6 +59,7 @@ for a tunnel and a forge that sleeps.
 | `take_updates` | a fork takes its parent's updates when git can do it alone; a conflict is refused. On a spawned forge's code repository it opens the one `forge/take-updates` pull and never moves the default branch | yes    |
 | `converge`     | the fork's crew merges where both sides changed the same files; comes back as a pull              | yes    |
 | `asked`        | `{ repo?, show?, order? }`: what people asked the crew for, by default nothing merged yet and oldest first: who and when, the pulls that close it, the crew's last activity, waiting/building/shipped/closed, stale when not shipped in three days and flagged when stale with nothing built; repositories you can write |        |
+| `assigned`     | `{ limit? }`: the open issues and pulls assigned to you in every repository you can still read (repository, number, title, kind, state), as `GET /api/v1/user/assigned` |        |
 | `app_members`  | `{ repo, members?, dryRun? }`: the people a private app names, who may enter it and its previews and nothing else; a writer (never an agent) changes the list with an admin-scope token | yes    |
 | `explore`      | `{ query? }`: the apps and people you can see, ranked by forks, ships, use and freshness, with their numbers; `kind:` `sort:` and words in one line |        |
 | `search`       | `{ q, kind?, repo? }`: issues, pulls, repositories and code you can read, the same results as /search; `repo` keeps to one | |
