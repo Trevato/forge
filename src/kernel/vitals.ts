@@ -31,6 +31,7 @@ import { proofNeed } from "../release/prove.ts";
 import { rollbackNeed } from "../release/launch.ts";
 import { behindStanding } from "../release/behind.ts";
 import { newestDrills } from "../core/domain_drills.ts";
+import { capacityValue } from "../core/capacity.ts";
 import { DOMAINS } from "./domains.ts";
 import { domainDrillNeeds } from "./domain_drill.ts";
 import { freeChecks, heldChecks, redHref, redSentence } from "../checks/red_main.ts";
@@ -245,28 +246,47 @@ function readLane(
   };
 }
 
+/** One check running now: its pull (null when it has none) and when it began. */
+export interface LaneRun {
+  readonly pull: number | null;
+  readonly since: string;
+}
+
 /**
  * The lane's one sentence, with its cause: how many wait, since when, and
- * what the lane is doing — "22 checks wait behind one lane; the oldest since
- * 04:13; the lane runs #1212 for 31 min (limit 60)".
+ * what runs. With one slot: "22 checks wait behind one lane; the oldest since
+ * 04:13; the lane runs #1212 for 31 min (limit 60)". With several: "11 checks
+ * wait for 7 slots, all busy; the oldest since 01:04; the longest running is
+ * #4656 at 5 min (limit 60)".
  */
 export function laneSentence(
   queued: number,
   oldest: string,
-  lane: Lane,
+  runs: readonly LaneRun[],
+  slots: number,
   now: number,
   held = 0,
 ): string {
   const since = new Date(oldest).toISOString().slice(11, 16);
-  const head = `${queued} check${queued === 1 ? "" : "s"} ${queued === 1 ? "waits" : "wait"} behind one lane; the oldest since ${since}`;
+  const plural = `check${queued === 1 ? "" : "s"} ${queued === 1 ? "waits" : "wait"}`;
   const more = held > 0 ? `; ${held} more held by a red main` : "";
-  if (lane.running === null) return `${head}; the lane runs nothing${more}.`;
-  const age = Math.max(
-    0,
-    Math.round((now - new Date(lane.running.since).getTime()) / 60_000),
+  const minutes = (r: LaneRun) =>
+    Math.max(0, Math.round((now - new Date(r.since).getTime()) / 60_000));
+  const longest = runs.reduce<LaneRun | null>(
+    (a, r) => (a === null || r.since < a.since ? r : a),
+    null,
   );
-  const what = lane.running.pull === null ? "a check" : `#${lane.running.pull}`;
-  return `${head}; the lane runs ${what} for ${age} min (limit ${BUDGETS.gate / 60_000})${more}.`;
+  const name = (r: LaneRun) => (r.pull === null ? "a check" : `#${r.pull}`);
+  if (slots <= 1) {
+    const head = `${queued} ${plural} behind one lane; the oldest since ${since}`;
+    if (longest === null) return `${head}; the lane runs nothing${more}.`;
+    return `${head}; the lane runs ${name(longest)} for ${minutes(longest)} min (limit ${BUDGETS.gate / 60_000})${more}.`;
+  }
+  const busy =
+    runs.length === 0 ? "none busy" : runs.length >= slots ? "all busy" : `${runs.length} busy`;
+  const head = `${queued} ${plural} for ${slots} slots, ${busy}; the oldest since ${since}`;
+  if (longest === null) return `${head}; nothing runs${more}.`;
+  return `${head}; the longest running is ${name(longest)} at ${minutes(longest)} min (limit ${BUDGETS.gate / 60_000})${more}.`;
 }
 
 export function vitals(input: VitalsInput): Vitals {
@@ -314,6 +334,9 @@ export function vitals(input: VitalsInput): Vitals {
 
   const running = listRunning(input.db);
   const lane = readLane(input.db, running, now);
+  const checkRuns: LaneRun[] = running
+    .filter((r) => r.run.kind === "check" && !leaseLapsed(r.run, STALE_AFTER_MS, now))
+    .map((r) => ({ pull: r.issue, since: r.run.startedAt ?? r.run.createdAt }));
   const queue: Record<string, number> = {};
   const reds = heldChecks(input.db);
   const held = reds.reduce((n, r) => n + r.held, 0);
@@ -326,7 +349,14 @@ export function vitals(input: VitalsInput): Vitals {
       if (free.oldest !== null && now - new Date(free.oldest).getTime() > BUDGETS.laneWait)
         need(
           "queue:check",
-          laneSentence(free.n, free.oldest, lane, now, Math.min(held, row.queued)),
+          laneSentence(
+            free.n,
+            free.oldest,
+            checkRuns,
+            Number(capacityValue(input.db, "checks.concurrency")),
+            now,
+            Math.min(held, row.queued),
+          ),
           new Date(free.oldest).toISOString(),
           "/settings/capacity",
         );
