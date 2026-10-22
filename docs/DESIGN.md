@@ -403,7 +403,7 @@ gone, so this list only shrinks.
 - **`style/content.ts`, apps, runs, and the crew** — run pages, their logs and checks (a pull's look is §5's **look**).
 - **`pages/board.ts`** — the board itself is §5's **board**; the spend tables `spend.ts` draws wear §5's `.table` and `.stack`, no class of their own
 - **`pages/map.ts`** — the map of what waits for what: `.map-ask` `.map-breath` `.map-canvas` `.map-card` `.map-dot` `.map-edge` `.map-edge-crit` `.map-edge-done` `.map-main` `.map-meta` `.map-node` `.map-rule` `.map-svg` `.map-title` `.map-tool` `.map-who` `.map-who-i` `.map-who-n` `.map-word` `.map-wrap`
-- **`studio/feed_style.ts`** — the home feed's cards and its composer (the apps rail is §5's card, row and btn; an admin's tick boxes and Archive are always shown, deliberately, with no Select toggle): `.composer` `.feed` `.feed-head`
+- **`studio/feed_style.ts`** — the home feed's cards and its composer (the apps rail is §5's card, row and btn; an admin's tick boxes and Archive are always shown, deliberately, with no Select toggle): `.feed` `.feed-head`
 ---
 
 ## 6. Keyboard

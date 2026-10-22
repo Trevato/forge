@@ -6,9 +6,6 @@ export const feedCss = /* css */ `
 .feed > .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .feed > .card[hidden] { display: none; }
 .feed .card-foot > details { flex: 1 1 100%; }
-/* The composer: the home's one primary action, on top of the timeline. */
-.composer { display: grid; gap: 8px; border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; background: var(--card, var(--bg)); }
-.composer textarea { width: 100%; min-height: 64px; resize: vertical; }
 /* Your apps: a narrow column on a desk, a tab away on a phone. */
 /* An admin's tick boxes are always shown (no Select toggle); 24 px to tap. */
 #live-apps input[type="checkbox"] { width: 24px; height: 24px; }

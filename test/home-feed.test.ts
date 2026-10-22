@@ -123,6 +123,12 @@ describe("home is the feed", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
+  test("the composer is a §5 card, and no .composer class remains", async () => {
+    const text = await (await get("/", aliceCookie)).text();
+    expect(text).toMatch(/<form id="composer" class="card" method="post" action="\/tell">\s*<div class="card-body/);
+    expect(text).not.toContain('class="composer');
+  });
+
   test("the composer's action bar is §5's bar, not .composer-bar", async () => {
     const text = await (await get("/", aliceCookie)).text();
     const form = text.slice(text.indexOf('id="composer"'), text.indexOf("</form>", text.indexOf('id="composer"')));
