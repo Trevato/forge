@@ -1059,7 +1059,10 @@ export function mirrorJobPage(ctx: Ctx): Response {
 
   const foot =
     job.stage === "failed"
-      ? html`<p class="error-note">${job.error ?? "The mirror failed."}</p>
+      ? html`<div class="toast" data-tone="danger" role="alert">
+            ${icon("alert")}
+            <div class="toast-body">${job.error ?? "The mirror failed."}</div>
+          </div>
           <div class="bar mt">
             <form
               method="post"

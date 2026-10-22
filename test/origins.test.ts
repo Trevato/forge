@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { commitToBranch, forkRepo } from "../src/actions/repos.ts";
+import { recordFetch } from "../src/core/origins.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { getUserByName } from "../src/core/users.ts";
 import { settled } from "../src/origins/jobs.ts";
@@ -569,6 +570,24 @@ describe("origins: connecting, mirroring, writing through", () => {
       .find((i) => i.number === pull.number);
     expect(upstream?.title).toBe("Loosen the bolt");
     expect(upstream?.pull?.head).toBe("loosen");
+  });
+
+  test("a mirror's fetch error is drawn in the danger notice, not .error-note", async () => {
+    const mirror = getRepo(app.db, "alice", "widgets")!;
+    recordFetch(app.db, mirror.id, {
+      at: "2026-01-01T00:00:00.000Z",
+      error: "fetch failed <b>badly</b>",
+    });
+    try {
+      const text = await (await api("/alice/widgets")).text();
+      expect(text).toContain(
+        '<div class="toast" data-tone="danger" role="status">',
+      );
+      expect(text).toContain("fetch failed &lt;b&gt;badly&lt;/b&gt;");
+      expect(text).not.toContain("error-note");
+    } finally {
+      recordFetch(app.db, mirror.id, { at: "2026-01-01T00:00:00.000Z" });
+    }
   });
 
   test("a fork proposing its main upstream travels under its owner's name, never onto the origin's main", async () => {

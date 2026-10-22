@@ -557,7 +557,10 @@ function aboutCard(
         </ul>
         ${when(
           o.fetchError !== "",
-          () => html`<p class="error-note mt">${o.fetchError}</p>`,
+          () => html`<div class="toast" data-tone="danger" role="status">
+            ${icon("alert")}
+            <div class="toast-body">${o.fetchError}</div>
+          </div>`,
         )}
         ${when(
           admin,
