@@ -188,16 +188,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 
 .tok { white-space: nowrap; }
 
-/* The file's location stays on screen while its contents scroll past. Opaque
-   on purpose: code sliding under a blur is noise, not depth. */
-.path-head {
-  position: sticky; top: calc(var(--topbar-h) - 1px); z-index: 6;
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  margin: 12px 0; padding: 8px 10px;
-  background: var(--card); border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-}
-
 .filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .filters form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .filters .search { min-width: 180px; flex: 1; max-width: 320px; }
