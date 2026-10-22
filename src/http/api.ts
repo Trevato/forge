@@ -5898,13 +5898,19 @@ export function apiRoutes(router: Router<Handler>): void {
   // What the tokens bought (`actions/returns.ts`): owner facts only, over
   // every repository the viewer holds them for, or `?repo=owner/name`.
   router.add("GET", "/api/v1/returns", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const q = ctx.url.searchParams;
     const raw = q.get("days");
-    const read = readReturns(ctx.app, ctx.auth.user, {
-      repo: q.get("repo"),
-      ...(raw === null ? {} : { days: Number(raw) }),
-    });
-    if (read.ok) return json(read.value, 200, { "cache-control": "private, no-store" });
+    const read = timePhase(ctx.request, "returns", () =>
+      readReturns(ctx.app, ctx.auth.user, {
+        repo: q.get("repo"),
+        ...(raw === null ? {} : { days: Number(raw) }),
+      }),
+    );
+    if (read.ok)
+      return timePhase(ctx.request, "render", () =>
+        json(read.value, 200, { "cache-control": "private, no-store" }),
+      );
     if (read.error === "unauthorized") return unauthorized();
     if (read.error === "bad_days")
       return apiError("invalid_days", 422, `days is a whole number from 1 to ${RETURNS_DAYS.max}`);
