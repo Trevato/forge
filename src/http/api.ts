@@ -3740,9 +3740,13 @@ export function apiRoutes(router: Router<Handler>): void {
     );
   });
   // Every repository the caller can see, one entry each: the global map.
-  router.add("GET", "/api/v1/map", (ctx) =>
-    json(globalMapJson(ctx.app, ctx.auth.user)),
-  );
+  router.add("GET", "/api/v1/map", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const graph = timePhase(ctx.request, "graph", () =>
+      globalMapJson(ctx.app, ctx.auth.user),
+    );
+    return timePhase(ctx.request, "render", () => json(graph));
+  });
 
   // The decision ledger: what the crew's decider answered and what came of
   // it, newest first, with the week summed up per kind.
