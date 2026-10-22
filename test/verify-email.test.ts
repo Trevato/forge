@@ -41,11 +41,12 @@ describe("verified email", () => {
     servers = await serve(app);
     setLimit(app.db, "signup.per_source", 1000, "setup");
     base = servers.url;
-    // The owner is the admin, made proven as the operator's is.
+    // The owner is the admin, made proven as the operator's is. No password:
+    // nothing here signs in as the owner, and hashing one is the slow part of
+    // setup, which a loaded machine stretched past the hook's 5 s.
     const owner = await seedAdmin(app, {
       username: "olive",
       email: "olive@f.dev",
-      password: "owner-passphrase",
     });
     if (!owner.ok) throw new Error(owner.error);
   });
