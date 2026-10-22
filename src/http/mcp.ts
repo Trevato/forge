@@ -18,6 +18,7 @@
  */
 
 import { showProvenance } from "../actions/provenance.ts";
+import { EVENTS_LIMIT_MAX, eventsLimit, eventsPage, validEventsCursor } from "../core/events_page.ts";
 import { getProvenance, provenanceFacts, trailFacts } from "../core/provenance.ts";
 import { upstreamPayload } from "../spawn/upstream.ts";
 import { NOT_A_MEMBER } from "../core/roles.ts";
@@ -491,11 +492,11 @@ const TOOLS: readonly Tool[] = [
       type: "object",
       properties: {
         name: { type: "string", maxLength: 100 },
-        description: { type: "string", maxLength: 4000, description: "What it should become; opens the first issue." },
+        description: { type: "string", maxLength: 4000, description: "What it should become; the first issue." },
         owner: { type: "string", maxLength: 39 },
         visibility: { type: "string", enum: ["public", "private"], description: "Private unless you say public." },
         agent: { type: "string", maxLength: 39, description: "Agent for the crew and first issue." },
-        pick: { type: "boolean", description: "Pick the agent from the description when `agent` is not given." },
+        pick: { type: "boolean", description: "Pick the agent from the text." },
       },
       required: ["name"],
     },
@@ -598,7 +599,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "tell",
     description:
-      "Tell an app's crew what should change (first line is the title). Without `repo` it is only kept, answering a thought id.",
+      "Tell an app's crew what should change (first line is the title). Without `repo` it is only kept; answers a thought id.",
     inputSchema: {
       type: "object",
       properties: {
@@ -977,7 +978,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "close",
     description:
-      "Close an issue or pull, or reopen it (`state` open); the PATCH route's refusals apply. `reason`: done, dropped, or split (with `into`).",
+      "Close an issue or pull, or reopen it (`state` open); PATCH refusals apply. `reason`: done, dropped, split (`into`).",
     inputSchema: {
       type: "object",
       properties: {
@@ -1089,7 +1090,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "asks_act",
     description:
-      "Decide many asks at once: dismiss, decline, ship (never undone), close (`reason`), mute, replan. `items`: ids from `asks`, or `issue:<id>`.",
+      "Decide many asks: dismiss, decline, ship (never undone), close (`reason`), mute, replan. `items`: ids from `asks`, or `issue:<id>`.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1599,7 +1600,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "model_ceiling",
     description:
-      "Set an account's daily and per-run model spend ceilings in dollars; a run that would pass either does not start.",
+      "Set an account's daily and per-run model spend ceilings in dollars; a run past either does not start.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1816,6 +1817,30 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "events",
+    description: "A repository's events, paged.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        limit: { type: "integer" },
+        cursor: { type: "string" },
+      },
+      required: ["repo"],
+    },
+    writes: false,
+    run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const limit = eventsLimit(args["limit"]);
+      if (limit === undefined) return bad("invalid", `limit is 1 to ${EVENTS_LIMIT_MAX}`);
+      const given = args["cursor"];
+      if (given !== undefined && (typeof given !== "string" || !validEventsCursor(given)))
+        return bad("invalid", "that cursor was not issued here");
+      return good(eventsPage(ctx.app.db, repo.id, user, limit, given));
+    },
+  },
+  {
     name: "branches",
     description:
       "List a repository's branches, or with `name` and `action` create (from `from`) or delete one; never the default.",
@@ -1973,7 +1998,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "spawn",
     description:
-      "Spawn a child forge with the named apps and the crew's briefs. Plans first (dryRun false makes it).",
+      "Spawn a child forge with the named apps and the crew's briefs. Plans first (dryRun false spawns).",
     inputSchema: {
       type: "object",
       properties: {
@@ -1991,18 +2016,18 @@ const TOOLS: readonly Tool[] = [
         direction: {
           type: "string",
           description:
-            "What the child is for (max 2000 chars); its planner's first issue.",
+            "What the child is for; its first issue.",
         },
         fresh: {
           type: "string",
           description:
-            "One line (max 200 chars): a fresh app to start beside the copied ones.",
+            "A fresh app beside the copied ones.",
         },
         followMode: {
           type: "string",
           enum: ["tell-me", "take-updates"],
           description:
-            "tell-me (default) says when the parent moved; take-updates takes it.",
+            "tell-me (default) or take-updates.",
         },
         size: {
           type: "string",
@@ -2013,7 +2038,7 @@ const TOOLS: readonly Tool[] = [
         keepAccess: {
           type: "boolean",
           description:
-            "Stay an owner after the child is claimed (default false).",
+            "Stay an owner once claimed.",
         },
         dryRun: {
           type: "boolean",
@@ -2972,7 +2997,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "spend",
     description:
-      "Report what your session spent on an app's work the forge did not run: who, model, tokens and/or dollars, issue or pull.",
+      "Report what your session spent on work the forge did not run: who, model, tokens or dollars, issue or pull.",
     inputSchema: {
       type: "object",
       properties: {
@@ -3088,7 +3113,7 @@ const TOOLS: readonly Tool[] = [
   },
   {
     name: "wait_for",
-    description: "Make an issue wait for another in the same app, or stop waiting with `stop: true`.",
+    description: "Make an issue wait for another; `stop: true` ends it.",
     inputSchema: {
       type: "object",
       properties: {
@@ -3256,7 +3281,7 @@ const TOOLS: readonly Tool[] = [
   },
   {
     name: "plan",
-    description: `Open and link several small issues, all or none (max ${PLAN_MAX}). With pillars, each has \`pillar\` or \`later: true\` with \`why\`.`,
+    description: `Open and link small issues, all or none (max ${PLAN_MAX}); each has \`pillar\` or \`later: true\` with \`why\`.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -3388,7 +3413,7 @@ const TOOLS: readonly Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        since: { type: "string", maxLength: 40, description: "ISO time; default last day, max 14 days." },
+        since: { type: "string", maxLength: 40, description: "ISO time; default a day, max 14 days." },
         ua: { type: "string", maxLength: 100, description: "Part of the user agent." },
         path: { type: "string", maxLength: 200, description: "Path prefix." },
       },
@@ -3777,7 +3802,7 @@ const TOOLS: readonly Tool[] = [
       type: "object",
       properties: {
         slug: { type: "string", maxLength: 40 },
-        panel: { type: "integer", minimum: 0, maximum: 23, description: "One panel's data, by place from 0." },
+        panel: { type: "integer", minimum: 0, maximum: 23, description: "One panel, by place from 0." },
         from: { type: "string", maxLength: 64 },
         to: { type: "string", maxLength: 64 },
         step: { type: "string", maxLength: 16, description: "With panel: seconds per bucket, or a count of s, m, h or d." },

@@ -186,10 +186,9 @@ describe("the forge, end to end", () => {
     await shOk(["git", "push", "origin", "main"], dir);
 
     const events = await api("/api/v1/repos/alice/app/events");
-    const list = (await events.json()) as {
-      kind: string;
-      payload: { updates?: { ref: string }[] };
-    }[];
+    const list = ((await events.json()) as {
+      items: { kind: string; payload: { updates?: { ref: string }[] } }[];
+    }).items;
     const push = list.find((e) => e.kind === "push");
     expect(push).toBeDefined();
     expect(push?.payload.updates?.[0]?.ref).toBe("refs/heads/main");

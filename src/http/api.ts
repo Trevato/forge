@@ -178,9 +178,8 @@ import {
   SIGNUP_CLOSED_MESSAGE,
   updateProfile,
 } from "../actions/users.ts";
-import { listEvents } from "../core/events.ts";
+import { EVENTS_LIMIT_MAX, eventsLimit, eventsPage, validEventsCursor } from "../core/events_page.ts";
 import { audienceFor } from "../core/audience.ts";
-import { audienceFilter, eventForReader } from "../core/event_audience.ts";
 import {
   forkParentFor,
   getReposByIds,
@@ -2478,11 +2477,14 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!repo) return notFound();
     // The outbox, as this reader is meant to see it: a webhook's URL and an
     // app's variable names are the admins', not every reader's.
-    return json(
-      listEvents(ctx.app.db, { repoId: repo.id }).filter(
-        audienceFilter(ctx.app.db, ctx.auth.user),
-      ).map(eventForReader(ctx.app.db, ctx.auth.user)),
-    );
+    const q = ctx.url.searchParams;
+    const limit = eventsLimit(q.get("limit"));
+    if (limit === undefined)
+      return apiError("invalid_limit", 422, `limit is a whole number from 1 to ${EVENTS_LIMIT_MAX}`);
+    const cursor = q.get("cursor");
+    if (cursor !== null && !validEventsCursor(cursor))
+      return apiError("invalid_cursor", 422, "cursor is the next_cursor of a page before");
+    return json(eventsPage(ctx.app.db, repo.id, ctx.auth.user, limit, cursor ?? undefined));
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/forks", (ctx) => {

@@ -207,6 +207,7 @@ describe("the forge over MCP", () => {
       "decisions_by",
       "archive",
       "trail",
+      "events",
       "branches",
       "commits",
       "probe",
