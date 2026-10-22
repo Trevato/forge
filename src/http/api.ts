@@ -5651,13 +5651,14 @@ export function apiRoutes(router: Router<Handler>): void {
   // (docs/APPS.md, "Prompts from Instagram"). Admin scope and admin over
   // the repository; the token goes in once and never comes back out.
   router.add("GET", "/api/v1/repos/:owner/:name/prompts", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireScope(ctx, "admin");
     if (denied) return denied;
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const listed = listPromptSources(ctx.app, ctx.auth.user, repo);
+    const listed = timePhase(ctx.request, "prompts", () => listPromptSources(ctx.app, ctx.auth.user, repo));
     if (!listed.ok) return respondAccess(listed.error, 422);
-    return json({ items: listed.value, next_cursor: null });
+    return timePhase(ctx.request, "render", () => json({ items: listed.value, next_cursor: null }));
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/prompts", async (ctx) => {
