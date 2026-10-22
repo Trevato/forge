@@ -5079,23 +5079,22 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/fleet/ops", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     if (!ctx.auth.user) return unauthorized();
     const q = ctx.url.searchParams;
     const limit = pageLimit(q.has("limit") ? Number(q.get("limit")) : undefined);
-    const ops = listFleetOps(
-      ctx.app,
-      ctx.auth.user,
-      limit,
-      q.get("cursor") ?? undefined,
+    const ops = timePhase(ctx.request, "ops", () =>
+      listFleetOps(ctx.app, ctx.auth.user!, limit, q.get("cursor") ?? undefined),
     );
     if (!ops.ok) return respondFleet(ops.error);
-    return json(paged(ops.value, limit, (op) => op.id));
+    return timePhase(ctx.request, "render", () => json(paged(ops.value, limit, (op) => op.id)));
   });
 
   router.add("GET", "/api/v1/fleet/ops/:id", (ctx) => {
-    const op = getFleetOp(ctx.app, ctx.auth.user, ctx.params.id!);
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const op = timePhase(ctx.request, "op", () => getFleetOp(ctx.app, ctx.auth.user, ctx.params.id!));
     if (!op.ok) return respondFleet(op.error);
-    return json(op.value);
+    return timePhase(ctx.request, "render", () => json(op.value));
   });
 
   router.add("POST", "/api/v1/fleet/ops/:id/undo", async (ctx) => {
@@ -5302,11 +5301,14 @@ export function apiRoutes(router: Router<Handler>): void {
 
   // What small, medium and large mean: public, and cacheable by ETag.
   router.add("GET", "/api/v1/forges/sizes", (ctx) => {
-    const text = JSON.stringify(sizesView());
-    const etag = weakEtag(text);
-    const headers = { etag, "cache-control": "public, max-age=300" };
-    if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
-    return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const text = timePhase(ctx.request, "sizes", () => JSON.stringify(sizesView()));
+    return timePhase(ctx.request, "render", () => {
+      const etag = weakEtag(text);
+      const headers = { etag, "cache-control": "public, max-age=300" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+      return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+    });
   });
 
   // A forge's children (docs/SPAWN.md): an admin's, planned before made.
@@ -5987,10 +5989,12 @@ export function apiRoutes(router: Router<Handler>): void {
   // per repository by UTC hour (24 h) and day (14 d), for `?repo=owner/name`
   // repeated, or every repository the caller may write that spent lately.
   router.add("GET", "/api/v1/fleet/graph", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     if (!ctx.auth.user) return unauthorized();
     const asked = fleetSelection(ctx.url.searchParams.getAll("repo"));
     if (!asked.ok) return apiError("invalid_selection", 422, asked.error);
-    return json(readFleetGraph(ctx.app, ctx.auth.user, asked.value));
+    const graph = timePhase(ctx.request, "graph", () => readFleetGraph(ctx.app, ctx.auth.user!, asked.value));
+    return timePhase(ctx.request, "render", () => json(graph));
   });
 
   // The address an agent tries first.
