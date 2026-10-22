@@ -6268,13 +6268,14 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/crew", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     // Names and roles for every reader; the brief, model and budget for
     // writers and the crew (`crewAsSeen`, #946).
-    const crew = crewAsSeen(ctx.app, ctx.auth.user, repo);
+    const crew = timePhase(ctx.request, "crew", () => crewAsSeen(ctx.app, ctx.auth.user, repo));
     if (!crew.ok) return notFound();
-    return json({ items: crew.value, next_cursor: null });
+    return timePhase(ctx.request, "render", () => json({ items: crew.value, next_cursor: null }));
   });
 
   router.add("PUT", "/api/v1/repos/:owner/:name/crew/:username", (ctx) => {
