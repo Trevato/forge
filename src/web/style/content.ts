@@ -555,28 +555,15 @@ form.inline { display: inline; margin-left: auto; }
 }
 .dn-comment:hover { color: var(--accent-fg); background: var(--accent); border-radius: 4px; }
 /* review comments ride under their line, full width */
-.dl-review .dc-review {
+.dc-review {
   padding: 8px 12px; background: var(--muted);
   border-left: 3px solid var(--accent); white-space: normal; font-family: var(--font);
 }
-.dl-review .comment { margin-bottom: 8px; }
-.dl-review .comment-form { margin-top: 0; }
+.dc-review .card + .card, .dc-review .comment { margin-bottom: 8px; }
+.dc-review .comment-form { margin-top: 0; }
 /* A settled thread is one line plus a disclosure: the point of resolving is
    to get an answered question out of the way of the unanswered ones. */
-.rc-resolved { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.rc-resolved .muted { display: inline-flex; align-items: center; gap: 6px; }
-.rc-resolved .ico { width: 14px; height: 14px; color: var(--success); }
-.rc-hidden { flex-basis: 100%; }
-.rc-hidden > summary {
-  cursor: pointer; font-size: 13px; color: var(--muted-fg);
-  padding: 2px 0; list-style: none;
-}
-.rc-hidden > summary::-webkit-details-marker { display: none; }
-.rc-hidden > summary::before { content: "▸ "; }
-.rc-hidden[open] > summary::before { content: "▾ "; }
-.rc-hidden > summary:hover { color: var(--fg); }
-.rc-hidden[open] { margin-top: 6px; }
-.rc-resolve { display: inline-flex; margin-left: auto; }
+.dc-review .card-body > .muted .ico { width: 14px; height: 14px; color: var(--success); }
 
 /* ---- review verdicts ---- */
 /* A verdict passed before the latest push is history, not a position: it

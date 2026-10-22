@@ -64,3 +64,44 @@ describe("inline review comments use the comment component", () => {
     expect(out).toContain("data-submit-key"); // Ctrl-Enter sends it
   });
 });
+
+describe("a review thread is a card and its resolve control a button", () => {
+  const anchor = anchorKey("a.txt", "new", 1);
+  const render = (resolvedAt: string | null) =>
+    renderDiff(diff, {
+      reviewBase: "/o/r/pulls/1",
+      comments: new Map([[anchor, [comment(1, "a point", "alpha")]]]),
+      threads: new Map([
+        [anchor, { anchor: "x", resolvedAt, resolvedBy: resolvedAt ? "bob" : null, mayResolve: true }],
+      ]),
+    }).toString();
+
+  test("an open thread is a card with a Resolve button", () => {
+    const out = render(null);
+    expect(out).toContain('action="/o/r/pulls/1/threads/x/resolve"');
+    expect(out).toMatch(/<button[^>]*class="btn"[^>]*>\s*Resolve\s*<\/button>/);
+    expect(out).toContain('class="card-foot"');
+  });
+
+  test("a resolved thread is one line with an Unresolve button", () => {
+    const out = render("2026-01-02T00:00:00Z");
+    expect(out).toContain("resolved by");
+    expect(out).toContain("resolved");
+    expect(out).toContain('action="/o/r/pulls/1/threads/x/unresolve"');
+    expect(out).toMatch(/<button[^>]*class="btn"[^>]*>\s*Unresolve\s*<\/button>/);
+  });
+
+  test("a resolved thread hides its conversation in a small disclosure", () => {
+    const out = render("2026-01-02T00:00:00Z");
+    expect(out).toContain('<details class="disclosure">');
+    expect(out).toMatch(/<summary class="muted small">\s*Show 1\s+comment\s*<\/summary>/);
+    expect(render(null)).not.toContain("disclosure");
+  });
+
+  test("neither state carries the retired names", () => {
+    for (const out of [render(null), render("2026-01-02T00:00:00Z")]) {
+      expect(out).not.toContain("dl-review");
+      expect(out).not.toContain("rc-resolve");
+    }
+  });
+});
