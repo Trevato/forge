@@ -162,6 +162,60 @@ export const ROUTES: readonly Route[] = [
     auth: false,
     body: { title: "string", body: "string", page: "string" },
   },
+  {
+    method: "get",
+    path: "/api/v1/admin/settings",
+    summary:
+      "Read the forge's signup mode and account quotas (a person admin's token, any scope); answers { quotas, signup, signupChanges, changes }",
+    auth: true,
+    refusals: { not_found: "the token is not a person who administers the forge" },
+  },
+  {
+    method: "patch",
+    path: "/api/v1/admin/settings",
+    summary:
+      "Change the signup mode (open, invite or closed) or the account quotas, one of the two per call (a person admin's token, admin scope); answers { signup } or { quotas }; a quota is a positive whole number, or null for no limit",
+    auth: true,
+    body: { signup: "string", quotas: "object" },
+    refusals: {
+      invalid_body: "neither signup nor quotas was sent, or both were",
+      invalid_signup: "signup is not open, invite or closed",
+      no_such_quota: "a quota key is unknown",
+      invalid_quota: "a quota is not a positive whole number or null",
+      not_found: "the token is not a person who administers the forge",
+    },
+  },
+  {
+    method: "get",
+    path: "/api/v1/admin/limits",
+    summary:
+      "Read the forge's limits (a person admin's token, any scope); answers { limits: [{ key, value, isSet, defaultValue, ... }], changes }",
+    auth: true,
+    refusals: { not_found: "the token is not a person who administers the forge" },
+  },
+  {
+    method: "get",
+    path: "/api/v1/admin/capacity",
+    summary:
+      "Read the forge's capacity settings (a person admin's token, any scope); answers { settings: [{ key, label, help, value, source, default, env, changed? }], changes }",
+    auth: true,
+    refusals: { not_found: "the token is not a person who administers the forge" },
+  },
+  {
+    method: "get",
+    path: "/api/v1/admin/teams",
+    summary:
+      "Read the crew's teams (a person admin's token, any scope); answers { teams: [{ slug, charter, dial, members, ... }] }",
+    auth: true,
+    refusals: { not_found: "the token is not a person who administers the forge" },
+  },
+  {
+    method: "get",
+    path: "/api/v1/admin/people",
+    summary:
+      "List every person and their role (admin scope); answers { people: [{ username, role, usdPerMonth }] }, role being admin, member or guest",
+    auth: true,
+  },
   { method: "get", path: `${REPO}/issues`, summary: "List a repository's issues; fields=brief leaves out bodies and comments, any other fields value is a 422 invalid_fields", auth: false, query: { ...LIST_QUERY, fields: "string" } },
   { method: "get", path: `${REPO}/pulls`, summary: "List a repository's pulls", auth: false, query: LIST_QUERY },
   {
