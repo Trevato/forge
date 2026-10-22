@@ -1485,16 +1485,17 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/contribute", (ctx) => json(welcome(ctx.app)));
 
   router.add("GET", "/api/v1/boards/sources", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = boardsAdmin(ctx);
     if (denied) return denied;
-    return json({
-      sources: Object.entries(SOURCES).map(([name, s]) => ({
+    const sources = timePhase(ctx.request, "sources", () =>
+      Object.entries(SOURCES).map(([name, s]) => ({
         name,
         time: s.time,
         columns: s.columns,
         ...(s.docs ? { docs: s.docs } : {}),
-      })),
-    });
+      })));
+    return timePhase(ctx.request, "render", () => json({ sources }));
   });
 
   // A domain drill and its verdict (`kernel/domain_drill.ts`): an admin
