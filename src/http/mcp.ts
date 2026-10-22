@@ -61,6 +61,12 @@ import { submitReview } from "../actions/pulls.ts";
 import { originError } from "../web/pages/thread.ts";
 import { holdPull, releasePull } from "../actions/holds.ts";
 import { openPlan, parsePlan, PLAN_MAX, proposePlan } from "../actions/plan.ts";
+import {
+  addPromptSource,
+  listPromptSources,
+  removePromptSource,
+  runPromptSource,
+} from "../actions/prompts.ts";
 import { cancelRepoRun, listRepoRuns } from "../actions/runs.ts";
 import { familyView } from "../spawn/family.ts";
 import { clientRows } from "../spawn/clients.ts";
@@ -267,12 +273,19 @@ interface Tool {
   readonly writes: boolean;
   /** Listed, and callable, for a forge admin only. */
   readonly adminOnly?: true;
+  /** Listed, and callable, only with a token of this scope. */
+  readonly needsAdminScope?: true;
   /** With this argument absent the tool only reads, whatever the token. */
   readonly readsWithout?: string;
   /** A write that only plans (`dryRun` not false) is a read: `ro` may ask. */
   readonly dryByDefault?: true;
   run(ctx: Ctx, user: User, args: Args): Promise<Answer> | Answer;
 }
+
+/** Whether this caller is shown the tool and may call it: one rule for the manifest and dispatch. */
+const visible = (tool: Tool, ctx: Ctx, user: User): boolean =>
+  (tool.adminOnly !== true || user.isAdmin) &&
+  (tool.needsAdminScope !== true || scopeAllows(ctx.auth.scope ?? "ro", "admin"));
 
 const CHIP_ARGS = {
   hide_kinds: {
@@ -3279,6 +3292,56 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "prompts",
+    description:
+      "An app's prompt sources (Instagram): list, add (`kind`, `token`, `at`), run or remove (`id`). Repository admin token.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        action: { type: "string", enum: ["list", "add", "run", "remove"] },
+        kind: { type: "string", description: "add: instagram" },
+        token: { type: "string", description: "add: sealed, never shown again" },
+        at: { type: "string", description: "add: HH:MM UTC" },
+        id: { type: "string", description: "run, remove" },
+      },
+      required: ["repo", "action"],
+    },
+    writes: true,
+    needsAdminScope: true,
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const refuse = (error: string) =>
+        error === "not_found"
+          ? bad("not_found", "no such app or repository (owner/name)")
+          : bad(error, error.replaceAll("_", " "));
+      const action = args["action"];
+      if (action === "list") {
+        const listed = listPromptSources(ctx.app, user, repo);
+        return listed.ok ? good({ items: listed.value }) : refuse(listed.error);
+      }
+      if (action === "add") {
+        const added = addPromptSource(ctx.app, user, repo, {
+          kind: str(args["kind"]),
+          token: str(args["token"]),
+          at: str(args["at"]),
+        });
+        return added.ok ? good(added.value) : refuse(added.error);
+      }
+      const id = str(args["id"]);
+      if (action === "run") {
+        const ran = await runPromptSource(ctx.app, user, repo, id);
+        return ran.ok ? good(ran.value) : refuse(ran.error);
+      }
+      if (action === "remove") {
+        const removed = removePromptSource(ctx.app, user, repo, id);
+        return removed.ok ? good({ removed: true }) : refuse(removed.error);
+      }
+      return bad("bad_action", "`action` is list, add, run or remove");
+    },
+  },
+  {
     name: "access",
     description:
       "What outside agents tried: the redacted log of non-browser requests to public paths, newest first, max 500. Forge admin.",
@@ -3837,7 +3900,7 @@ function rpcOne(
     case "tools/list":
       return reply({
         tools: [
-          ...TOOLS.filter((t) => t.adminOnly !== true || user.isAdmin).map((t) => ({
+          ...TOOLS.filter((t) => visible(t, ctx, user)).map((t) => ({
             name: t.name,
             description: t.description,
             inputSchema: lean(t.inputSchema),
@@ -3871,7 +3934,7 @@ function rpcOne(
     }
     case "tools/call": {
       const tool = TOOLS.find((t) => t.name === params["name"]);
-      if (tool === undefined || (tool.adminOnly === true && !user.isAdmin))
+      if (tool === undefined || !visible(tool, ctx, user))
         return refuse(-32602, `no tool named ${String(params["name"])}`);
       const args =
         typeof params["arguments"] === "object" && params["arguments"] !== null

@@ -75,6 +75,7 @@ for a tunnel and a forge that sleeps.
 | `hold`         | `{ app, pull, why?, release?, dryRun? }`: hold a pull so no rule reviews or lands it, or let it go; a person who can write, never an agent; plans unless `dryRun: false` | yes    |
 | `app_env`      | `{ repo, action, name?, value?, scope? }`: `list` an app's variable names and scopes, `set` one, or `unset` it, in `all` (default), `production` or `preview`; the API's rules and errors, an admin of the repository with an admin-scope token; a value is never read back | yes    |
 | `plan`         | `{ app, issues }`: open up to 12 linked issues, all or none (see below)                           | yes    |
+| `prompts`      | `{ repo, action, kind?, token?, at?, id? }`: list, add, run or remove an app's prompt sources (Instagram), as the `…/prompts` API does; the token goes in once and is never shown; listed only for an admin-scope token, and only the repository's admin may use it | yes    |
 
 Answers are JSON in a text block; most carry a `says` sentence short enough
 to relay as it is.
