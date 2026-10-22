@@ -3222,15 +3222,18 @@ export function apiRoutes(router: Router<Handler>): void {
   // Reading the words is a writer's act, so a read-only token — the one an
   // app process holds for its owner — cannot fetch them.
   router.add("GET", "/api/v1/repos/:owner/:name/reports", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireScope(ctx, "rw");
     if (denied) return denied;
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const waiting = waitingReports(ctx.app, ctx.auth.user, repo);
+    const waiting = timePhase(ctx.request, "reports", () =>
+      waitingReports(ctx.app, ctx.auth.user, repo),
+    );
     if (!waiting.ok) return respondAccess(waiting.error, 403);
-    return json({
-      items: waiting.value.map((r) => ({ ...r, from: "outside" })),
-    });
+    return timePhase(ctx.request, "render", () =>
+      json({ items: waiting.value.map((r) => ({ ...r, from: "outside" })) }),
+    );
   });
 
   router.add(
