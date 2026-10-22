@@ -1176,6 +1176,12 @@ is one, and its review brief holds the change to `docs/DESIGN.md`. A security
 change still goes to the security reviewer; a change only under `src/core/` is
 not a design matter.
 
+**How a reviewer is chosen.** Reviews go to the least-busy reviewer: the one
+with the fewest review runs in flight (queued or running). A tie goes to the
+experience reviewer. A pull about security goes only to a security reviewer
+(the least busy of them). A `src/web/` pull goes to the design reviewer until
+it has 2 review runs in flight, then spills to the least busy reviewer.
+
 **Three rounds, then a person.** When the crew reviewer has asked for
 changes three times on one pull with no approval and no word from a person
 who may direct the crew between, no more feedback runs start on it. The

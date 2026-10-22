@@ -53,27 +53,59 @@ const focusOf = (brief: string): string =>
 export const watchesSecurity = (agent: Agent): boolean =>
   /\bsecurity\b/i.test(focusOf(agent.brief));
 
+/** Review runs a design reviewer holds in flight before a `src/web/` pull spills to the least busy. */
+export const REVIEW_DESIGN_INFLIGHT = 2;
+
+/** Review runs in flight (queued or running) per reviewer, by user id; an idle reviewer is absent. */
+export function reviewLoad(db: Database): Map<string, number> {
+  const load = new Map<string, number>();
+  for (const r of db
+    .query<{ actor_id: string; n: number }, []>(
+      `SELECT actor_id, COUNT(*) AS n FROM run
+        WHERE kind = 'agent' AND reason = 'review' AND actor_id IS NOT NULL
+          AND state IN ('queued','running')
+        GROUP BY actor_id`,
+    )
+    .all())
+    load.set(r.actor_id, r.n);
+  return load;
+}
+
 /**
- * The reviewer for a change to these paths: the security reviewer when
- * the change touches what it watches, the experience reviewer otherwise,
- * and whichever reviewer there is when the crew has only one kind. A
- * change to `src/web/` that is not security's goes to a reviewer on the
- * design team (`design`, user ids) when the crew has one, and its brief
- * holds it to docs/DESIGN.md (`touchesDesign`).
+ * The reviewer for a change to these paths, the least busy by `load`
+ * (`reviewLoad`). A security change goes only to a security reviewer
+ * (least busy among them) when the crew has one. Any other goes to the
+ * least busy reviewer, a tie to the experience reviewer, then crew order.
+ * A change to `src/web/` that is not security's goes first to a reviewer
+ * on the design team (`design`, user ids) while it has fewer than
+ * `REVIEW_DESIGN_INFLIGHT` in flight, then spills to the least busy.
  */
 export function pickReviewer(
   reviewers: readonly Agent[],
   paths: readonly string[],
   design: readonly string[] = [],
+  load: ReadonlyMap<string, number> = new Map(),
 ): Agent | undefined {
-  if (touchesDesign(paths) && !touchesSecurity(paths)) {
-    const member = reviewers.find((r) => design.includes(r.user.id));
+  const busy = (r: Agent) => load.get(r.user.id) ?? 0;
+  const leastBusy = (from: readonly Agent[]): Agent | undefined =>
+    from.reduce<Agent | undefined>(
+      (best, r) =>
+        best === undefined ||
+        busy(r) < busy(best) ||
+        (busy(r) === busy(best) && watchesSecurity(best) && !watchesSecurity(r))
+          ? r
+          : best,
+      undefined,
+    );
+  const security = reviewers.filter(watchesSecurity);
+  if (touchesSecurity(paths)) return leastBusy(security) ?? leastBusy(reviewers);
+  if (touchesDesign(paths)) {
+    const member = leastBusy(
+      reviewers.filter((r) => design.includes(r.user.id) && busy(r) < REVIEW_DESIGN_INFLIGHT),
+    );
     if (member !== undefined) return member;
   }
-  const security = reviewers.filter(watchesSecurity);
-  const experience = reviewers.filter((r) => !watchesSecurity(r));
-  const preferred = touchesSecurity(paths) ? security : experience;
-  return preferred[0] ?? reviewers[0];
+  return leastBusy(reviewers);
 }
 
 /** The crew's reviewers on a repository. */
@@ -431,6 +463,7 @@ export async function sendToReview(
     others.length > 0 ? others : reviewers,
     diff.files.map((f) => f.path),
     getTeam(app.db, "design")?.members,
+    reviewLoad(app.db),
   );
   if (reviewer === undefined) return "wait";
   if (queueAgentRun(app, repo, issue, reviewer, "review") === undefined)

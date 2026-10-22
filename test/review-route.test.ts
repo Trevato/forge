@@ -22,6 +22,7 @@ import { claimRun, createRun, finishRun, listRuns } from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import {
   pickReviewer,
+  reviewLoad,
   REVIEW_LAPSE_MS,
   REVIEW_WAIT_MS,
   reviewStage,
@@ -289,5 +290,53 @@ describe("the design team reviews a change to a page", () => {
     const crew = [sentinel, designer];
     expect(pickReviewer(crew, ["src/web/auth.ts"], team)).toBe(sentinel);
     expect(pickReviewer([juniper], ["src/web/pages/x.ts"], team)).toBe(juniper);
+  });
+});
+
+describe("the least-busy reviewer", () => {
+  const exp = { user: { id: "e1" }, brief: `I am Exp. I read for the experience.\n\n${SHARED}` } as unknown as Agent;
+  const exp2 = { user: { id: "e2" }, brief: `I am Exp2. I read for the experience.\n\n${SHARED}` } as unknown as Agent;
+  const sec = { user: { id: "s1" }, brief: `I am Sec. I read for security.\n\n${SHARED}` } as unknown as Agent;
+  const des = { user: { id: "d1" }, brief: `I am Des. I review the look.\n\n${SHARED}` } as unknown as Agent;
+  const load = (o: Record<string, number>) => new Map(Object.entries(o));
+
+  test("the least busy wins, and a tie goes to the experience reviewer", () => {
+    expect(pickReviewer([exp, exp2], ["README.md"], [], load({ e1: 3, e2: 1 }))).toBe(exp2);
+    expect(pickReviewer([sec, exp], ["README.md"], [], load({ s1: 1, e1: 1 }))).toBe(exp);
+    expect(pickReviewer([sec, exp], ["README.md"], [], load({ s1: 0, e1: 2 }))).toBe(sec);
+  });
+
+  test("a security pull stays with security, least busy among them", () => {
+    const sec2 = { ...sec, user: { id: "s2" } } as Agent;
+    expect(pickReviewer([exp, sec], ["src/core/tokens.ts"], [], load({ s1: 9 }))).toBe(sec);
+    expect(pickReviewer([sec, sec2, exp], ["src/core/tokens.ts"], [], load({ s1: 4, s2: 1 }))).toBe(sec2);
+  });
+
+  test("design takes src/web/ until 2 are in flight, then it spills", () => {
+    const crew = [exp, des];
+    const p = ["src/web/pages/x.ts"];
+    expect(pickReviewer(crew, p, ["d1"], load({ d1: 1 }))).toBe(des);
+    expect(pickReviewer(crew, p, ["d1"], load({ d1: 2 }))).toBe(exp);
+    expect(pickReviewer(crew, p, ["d1"], load({ d1: 2, e1: 5 }))).toBe(des);
+  });
+
+  test("reviewLoad counts only review runs still in flight, per reviewer", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-load-"));
+    const app = createApp({ dataDir: dir, port: 0 });
+    try {
+      expect(reviewLoad(app.db).size).toBe(0);
+      app.db.run("PRAGMA foreign_keys = OFF");
+      const ins = app.db.prepare(
+        "INSERT INTO run (id, repo_id, kind, state, reason, actor_id) VALUES (?, 'r', 'agent', ?, ?, ?)",
+      );
+      ins.run("a", "queued", "review", "e1");
+      ins.run("b", "running", "review", "e1");
+      ins.run("c", "ok", "review", "e1");
+      ins.run("d", "running", "feedback", "e1");
+      ins.run("e", "queued", "review", "s1");
+      expect(Object.fromEntries(reviewLoad(app.db))).toEqual({ e1: 2, s1: 1 });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
