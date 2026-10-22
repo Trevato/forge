@@ -4413,9 +4413,11 @@ export function apiRoutes(router: Router<Handler>): void {
     "GET",
     "/api/v1/repos/:owner/:name/pulls/:number/threads",
     (ctx) => {
+      notePhase(ctx.request, "session", takeSessionTime(ctx.request));
       const found = loadPull(ctx);
       if ("error" in found) return found.error;
-      return json(pullThreads(ctx.app, found.pull));
+      const threads = timePhase(ctx.request, "threads", () => pullThreads(ctx.app, found.pull));
+      return timePhase(ctx.request, "render", () => json(threads));
     },
   );
 
