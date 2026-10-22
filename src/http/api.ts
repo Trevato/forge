@@ -2532,6 +2532,7 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/events", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     // The outbox, as this reader is meant to see it: a webhook's URL and an
@@ -2543,7 +2544,10 @@ export function apiRoutes(router: Router<Handler>): void {
     const cursor = q.get("cursor");
     if (cursor !== null && !validEventsCursor(cursor))
       return apiError("invalid_cursor", 422, "cursor is the next_cursor of a page before");
-    return json(eventsPage(ctx.app.db, repo.id, ctx.auth.user, limit, cursor ?? undefined));
+    const page = timePhase(ctx.request, "events", () =>
+      eventsPage(ctx.app.db, repo.id, ctx.auth.user, limit, cursor ?? undefined),
+    );
+    return timePhase(ctx.request, "render", () => json(page));
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/forks", (ctx) => {
@@ -3069,9 +3073,11 @@ export function apiRoutes(router: Router<Handler>): void {
   // ── labels ───────────────────────────────────────────────────────────
 
   router.add("GET", "/api/v1/repos/:owner/:name/labels", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    return json(listLabels(ctx.app.db, repo.id));
+    const labels = timePhase(ctx.request, "labels", () => listLabels(ctx.app.db, repo.id));
+    return timePhase(ctx.request, "render", () => json(labels));
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/labels", async (ctx) => {
@@ -3136,9 +3142,11 @@ export function apiRoutes(router: Router<Handler>): void {
   // Name up to two crew teams on an issue: the pull that closes it is
   // reviewed by each (`core/issue_teams.ts`).
   router.add("GET", "/api/v1/repos/:owner/:name/issues/:number/teams", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const found = loadIssue(ctx);
     if ("error" in found) return found.error;
-    return json({ teams: teamsOfIssue(ctx.app.db, found.issue.id) });
+    const teams = timePhase(ctx.request, "teams", () => teamsOfIssue(ctx.app.db, found.issue.id));
+    return timePhase(ctx.request, "render", () => json({ teams }));
   });
   router.add("PUT", "/api/v1/repos/:owner/:name/issues/:number/teams", async (ctx) => {
     const denied = requireScope(ctx, "rw");
@@ -4543,11 +4551,13 @@ export function apiRoutes(router: Router<Handler>): void {
   // ── webhooks — admin-scoped, since a webhook exfiltrates repo events ──
 
   router.add("GET", "/api/v1/repos/:owner/:name/hooks", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireScope(ctx, "admin");
     if (denied) return denied;
     const repo = loadRepo(ctx);
     if (!repo || !canAdmin(ctx.app.db, repo, ctx.auth.user)) return notFound();
-    return json(listWebhooks(ctx.app.db, repo.id));
+    const hooks = timePhase(ctx.request, "hooks", () => listWebhooks(ctx.app.db, repo.id));
+    return timePhase(ctx.request, "render", () => json(hooks));
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/hooks", async (ctx) => {
