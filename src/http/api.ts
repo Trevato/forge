@@ -1682,7 +1682,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
     const listed = timePhase(ctx.request, "capacity", () => listCapacity(ctx.app, ctx.auth.user));
-    return timePhase(ctx.request, "render", () => (listed.ok ? json(listed.value) : notFound()));
+    return timePhase(ctx.request, "render", () => (listed.ok ? json({ items: listed.value.settings, changes: listed.value.changes, next_cursor: null }) : notFound()));
   });
 
   router.add("PUT", "/api/v1/admin/capacity/:key", async (ctx) => {
