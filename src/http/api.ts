@@ -5935,22 +5935,25 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/runs", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const q = ctx.url.searchParams;
     const kind = q.get("kind");
     const env = q.get("env");
     const limit = Math.min(Math.max(Number(q.get("limit")) || 50, 1), 200);
-    const runs = listRepoRuns(ctx.app, ctx.auth.user, repo, {
-      ...(kind === "deploy" || kind === "agent" ? { kind } : {}),
-      ...(env !== null && isEnvName(env) ? { env } : {}),
-      ...(q.get("cursor") ? { cursor: q.get("cursor")! } : {}),
-      limit,
-    });
+    const runs = timePhase(ctx.request, "runs", () =>
+      listRepoRuns(ctx.app, ctx.auth.user, repo, {
+        ...(kind === "deploy" || kind === "agent" ? { kind } : {}),
+        ...(env !== null && isEnvName(env) ? { env } : {}),
+        ...(q.get("cursor") ? { cursor: q.get("cursor")! } : {}),
+        limit,
+      }),
+    );
     if (!runs.ok) return notFound();
     // Already as this reader may see them (`runForReader`): a stranger's
     // runs carry no cost, turns, agent session or node.
-    return json(paged(runs.value, limit, (r) => r.id));
+    return timePhase(ctx.request, "render", () => json(paged(runs.value, limit, (r) => r.id)));
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/runs/:id", (ctx) => {
