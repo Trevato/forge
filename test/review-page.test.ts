@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { addComment, openIssue } from "../src/actions/issues.ts";
+import { addComment as addRawComment } from "../src/core/issues.ts";
 import { addCrew, createAgentRow, setCrewRole } from "../src/core/agents.ts";
 import { createRepo as createRepoRow } from "../src/core/repos.ts";
 import { submitReview } from "../src/core/reviews.ts";
@@ -76,7 +77,8 @@ beforeAll(async () => {
   const handed = pull(builder.id, "Handed over pull", 3);
   for (let r = 0; r < 3; r++)
     submitReview(app.db, { issueId: handed, authorId: reviewer.id, state: "changes_requested", body: `Round ${r}.`, commitOid: ZERO });
-  pull(alice.id, "Stale pull", 30);
+  const stale = pull(alice.id, "Stale pull", 30);
+  addRawComment(app.db, { issueId: stale, authorId: reviewer.id, body: "Recommendation: change — rename the <flag>." });
   pull(builder.id, "Young crew pull", 2);
   const issue = openIssue(app, alice, repo, { title: "Crew asked about this" });
   if (!issue.ok) throw new Error(String(issue.error));
@@ -123,4 +125,13 @@ test("signed out, /review sends to sign-in", async () => {
 test("the asks page links to /review", async () => {
   const res = await fetch(`${servers.url}/asks`, { headers: { cookie } });
   expect(await res.text()).toContain('href="/review"');
+});
+
+test("each row says what the crew advises and why, or that it has not advised yet", async () => {
+  const body = await (await fetch(`${servers.url}/review`, { headers: { cookie } })).text();
+  const rows = body.split("<li").filter((r) => r.includes('class="row"'));
+  const find = (t: string) => rows.find((r) => r.includes(t))!;
+  expect(find("Stale pull")).toContain("The crew advises: change — rename the &lt;flag&gt;.");
+  expect(find("Handed over pull")).toContain("The crew has not advised yet");
+  expect(find("Crew asked about this")).toContain("The crew has not advised yet");
 });
