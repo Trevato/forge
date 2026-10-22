@@ -79,7 +79,7 @@ afterAll(async () => {
 test("a burst of errors: the board says so, one page, no more; clear for five minutes: one Recovered, all fine", async () => {
   expect(await board()).toContain("All fine");
 
-  for (let i = 0; i < ERROR_BURST; i++) app.signals.errors.record("test", "boom", Date.now());
+  for (let i = 0; i < ERROR_BURST; i++) app.signals.errors.record("test", "boom", clock);
   await at(0);
   const burst = await board();
   expect(burst).toMatch(/data-ok="no"/);
