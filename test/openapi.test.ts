@@ -115,3 +115,26 @@ test("making and listing apps is described with every field the route reads", ()
   for (const code of ["unverified", "app_limit", "no_such_agent", "name_taken"])
     expect(post.responses.default.description).toContain(`\`${code}\``);
 });
+
+test("an app's routes are described, and env values are never read back", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const A = "/api/v1/repos/{owner}/{name}/app";
+  const want: Record<string, string[]> = {
+    [A]: ["get", "post", "patch", "delete"],
+    [`${A}/members`]: ["get", "put"],
+    [`${A}/domains`]: ["get", "post"],
+    [`${A}/domains/{host}`]: ["delete"],
+    [`${A}/domains/{host}/check`]: ["post"],
+    [`${A}/env`]: ["get"],
+    [`${A}/env/{var}`]: ["put", "delete"],
+    [`${A}/{env}/redeploy`]: ["post"],
+    [`${A}/{env}/stop`]: ["post"],
+  };
+  for (const [path, methods] of Object.entries(want))
+    for (const m of methods) expect(doc.paths[path]?.[m], `${m} ${path}`).toBeDefined();
+  for (const m of ["post", "patch"])
+    expect(Object.keys(doc.paths[A][m].requestBody.content["application/json"].schema.properties)).toEqual(["slug", "access", "previewData"]);
+  expect(doc.paths[`${A}/env/{var}`].put.summary).toContain("never read back");
+  expect(doc.paths[`${A}/env`].get.summary).toContain("never read back");
+  expect(doc.paths[`${A}/{env}/redeploy`].post.responses["202"]).toBeDefined();
+});

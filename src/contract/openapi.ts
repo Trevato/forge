@@ -8,7 +8,7 @@
  */
 
 interface Route {
-  readonly method: "get" | "post" | "patch" | "delete";
+  readonly method: "get" | "post" | "put" | "patch" | "delete";
   readonly path: string;
   readonly summary: string;
   /** Whether it needs a token; reads of public things do not. */
@@ -123,6 +123,67 @@ export const ROUTES: readonly Route[] = [
     },
   },
   { method: "get", path: `${REPO}/app/production/open`, summary: "Open the running app", auth: false },
+  { method: "get", path: `${REPO}/app`, summary: "Read the repository's app: its settings, environments and state", auth: false },
+  {
+    method: "post",
+    path: `${REPO}/app`,
+    summary: "Turn the repository into an app (admin scope); `access` is public or private, `previewData` is copy or empty; answers 201 with the app",
+    auth: true,
+    body: { slug: "string", access: "string", previewData: "string" },
+    status: 201,
+    refusals: { app_limit: "the owner is at the app limit" },
+  },
+  {
+    method: "patch",
+    path: `${REPO}/app`,
+    summary: "Change the app's settings (admin scope); `access` is public or private, `previewData` is copy or empty",
+    auth: true,
+    body: { slug: "string", access: "string", previewData: "string" },
+  },
+  { method: "delete", path: `${REPO}/app`, summary: "Turn the app off (admin scope); answers {}", auth: true },
+  { method: "get", path: `${REPO}/app/members`, summary: "Read the people a private app names; answers the members", auth: true },
+  {
+    method: "put",
+    path: `${REPO}/app/members`,
+    summary: "Set the people a private app names (admin scope, a person's, never an agent's); a plan unless dryRun is false",
+    auth: true,
+    body: { members: "array", dryRun: "boolean" },
+    refusals: { invalid: "`members` is not a list of usernames" },
+  },
+  { method: "get", path: `${REPO}/app/domains`, summary: "List the app's own domains (admin scope); answers { items, next_cursor }", auth: true },
+  {
+    method: "post",
+    path: `${REPO}/app/domains`,
+    summary: "Add a domain of your own to the app (admin scope); answers 201 with the domain",
+    auth: true,
+    body: { host: "string" },
+    status: 201,
+  },
+  { method: "delete", path: `${REPO}/app/domains/{host}`, summary: "Remove a domain from the app (admin scope); answers {}", auth: true },
+  { method: "post", path: `${REPO}/app/domains/{host}/check`, summary: "Check that a domain points at the forge (admin scope); answers the domain", auth: true },
+  { method: "get", path: `${REPO}/app/env`, summary: "List the names of the app's environment variables (admin scope); a value is written and never read back; answers { items, next_cursor }", auth: true },
+  {
+    method: "put",
+    path: `${REPO}/app/env/{var}`,
+    summary: "Set an environment variable (admin scope); the value is written and never read back; scope is all (default), production or preview",
+    auth: true,
+    body: { value: "string", scope: "string" },
+  },
+  {
+    method: "delete",
+    path: `${REPO}/app/env/{var}`,
+    summary: "Unset an environment variable (admin scope); scope is all (default), production or preview; answers {}",
+    auth: true,
+    query: { scope: "string" },
+  },
+  {
+    method: "post",
+    path: `${REPO}/app/{env}/redeploy`,
+    summary: "Redeploy an environment (rw scope); answers 202 with { run }",
+    auth: true,
+    status: 202,
+  },
+  { method: "post", path: `${REPO}/app/{env}/stop`, summary: "Stop an environment (rw scope); answers {}", auth: true },
   { method: "get", path: `${REPO}/map`, summary: "Read the plan: issues, their dependency edges and pillars", auth: false },
   {
     method: "post",
