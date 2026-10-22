@@ -3423,14 +3423,16 @@ export function apiRoutes(router: Router<Handler>): void {
   // Which stage of the one flow each open issue is in, and what went live in
   // the last day (src/flow).
   router.add("GET", "/api/v1/repos/:owner/:name/flow", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    return json(
+    const flow = timePhase(ctx.request, "flow", () =>
       readFlow(ctx.app.db, repo, {
         now: new Date(),
         scope: sealedScope(ctx.app.db, repo, ctx.auth.user),
       }),
     );
+    return timePhase(ctx.request, "render", () => json(flow));
   });
   // A plan, all or nothing: the same action as the MCP `plan` tool, so the
   // same items and the same refusals (docs/PLANNING.md).
