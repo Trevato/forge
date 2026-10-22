@@ -118,6 +118,20 @@ test("a webspec that cannot finish is one finding, and is stored", async () => {
   expect(slow[0]!.message).toContain("timed out");
 });
 
+test("a page that misses its first request is asked once more", async () => {
+  let calls = 0;
+  const flaky = Bun.serve({
+    port: 0,
+    fetch: () => (++calls === 1
+      ? new Response("busy", { status: 503 })
+      : new Response("<!doctype html><html lang=en><title>t</title><p>hi", { headers: { "content-type": "text/html" } })),
+  });
+  const found = await previewSpec(`http://127.0.0.1:${flaky.port}`, ["/"], 5_000);
+  flaky.stop(true);
+  expect(found.some((f) => f.check === "fetch")).toBe(false);
+  expect(found.some((f) => f.check === "etag")).toBe(true);
+});
+
 test("the terminal's checks row carries the count, edge findings apart", () => {
   const found = [
     { path: "/", check: "etag", message: "m", section: "https://specification.website/#caching" },
