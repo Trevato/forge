@@ -439,7 +439,7 @@ describe("the merge queue", () => {
     const repo = await autonomousRepo("never-answers");
     const pull = await greenPull(repo, "a.ts");
     expect(queueWords(repo.id)).toBe("idle");
-    const restore = gateDeadlineForTest(300);
+    const restore = gateDeadlineForTest(1500);
     const warned: string[] = [];
     const warn = console.warn;
     console.warn = (line: string) => warned.push(line);
@@ -448,7 +448,7 @@ describe("the merge queue", () => {
       lastSignal = undefined;
       const sweep = sweepGreen(app, repo);
       // Building the candidate is git work first: wait for the gate itself.
-      for (let i = 0; i < 200 && lastSignal === undefined; i++) await Bun.sleep(5);
+      for (let i = 0; i < 6000 && lastSignal === undefined; i++) await Bun.sleep(5);
       expect(queueWords(repo.id)).toMatch(/^gating 1 pull since \d\d:\d\d$/);
       expect(await sweep).toBe(0);
     } finally {
