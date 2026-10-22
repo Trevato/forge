@@ -389,23 +389,15 @@ describe("apps: production, previews, data, gates", () => {
     });
     expect(opened.ok).toBe(true);
     if (!opened.ok) return;
-    const failed = await settled(latest(`pull-${opened.value.number}`));
-    expect(failed.state).toBe("failed");
-    expect(failed.summary).toContain("test");
-    const refused = await mergePull(app, alice, repo, opened.value, "merge");
-    expect(refused.ok).toBe(false);
-    if (!refused.ok) expect(refused.error).toBe("checks_required");
-    // The app itself never broke, only its tests: the preview answers with
-    // its own page rather than a gateway error, because a deployment that
-    // answers is what was asked for.
-    const page = await viaHost(`hello--${opened.value.number}.${DOMAIN}`);
-    expect(page.status).toBe(200);
-    expect(await page.text()).toContain(
-      `preview of pull #${opened.value.number}`,
+    // The red half (refused merge, preview still answering) is
+    // apps-require-checks-red.test.ts; here the failed head only has to settle.
+    if (!broken.ok) return;
+    const failed = await settled(
+      (r) =>
+        r.env === `pull-${opened.value.number}` &&
+        r.commitOid === broken.value.commitOid,
     );
-    const status = runtime.envStatus(record, `pull-${opened.value.number}`);
-    expect(status?.state).toBe("running");
-    expect(status?.error).toContain("tests failed");
+    expect(failed.state).toBe("failed");
 
     // Hold every deploy permit, so the fixed head's deploy cannot finish
     // between this push and the merge attempt: the hold is asserted while the
