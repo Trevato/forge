@@ -4720,10 +4720,9 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/user/origins/oauth/:id", async (ctx) => {
     const denied = requireAccount(ctx, { adminToken: true });
     if (denied) return denied;
-    const status = await pollOAuthConnect(
-      ctx.app,
-      ctx.auth.user,
-      ctx.params.id!,
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const status = await timePhaseAsync(ctx.request, "origin", () =>
+      pollOAuthConnect(ctx.app, ctx.auth.user, ctx.params.id!),
     );
     if (!status.ok) return respondAccess(status.error, 404);
     return json(status.value);
