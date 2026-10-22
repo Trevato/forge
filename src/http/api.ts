@@ -5881,6 +5881,7 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/usage", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const days = usageDays(ctx.url.searchParams.get("days"));
@@ -5890,9 +5891,9 @@ export function apiRoutes(router: Router<Handler>): void {
         422,
         `days is a whole number from 1 to ${USAGE_DAYS_MAX}`,
       );
-    const report = readUsage(ctx.app, ctx.auth.user, repo, days);
+    const report = timePhase(ctx.request, "usage", () => readUsage(ctx.app, ctx.auth.user, repo, days));
     if (!report.ok) return forbidden();
-    return json(report.value);
+    return timePhase(ctx.request, "render", () => json(report.value));
   });
 
   // The fleet graph's numbers (`actions/fleet-graph.ts`): spend and runs
