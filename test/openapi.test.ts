@@ -204,6 +204,20 @@ test("an app's routes are described, and env values are never read back", () => 
   expect(doc.paths[`${A}/{env}/redeploy`].post.responses["202"]).toBeDefined();
 });
 
+test("a person's sign-ins and ending one are described, with no session secret", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const list = doc.paths["/api/v1/users/{username}/signins"]?.get;
+  const end = doc.paths["/api/v1/users/{username}/sessions/{id}"]?.delete;
+  expect(list).toBeDefined();
+  expect(end).toBeDefined();
+  expect(list.security).toBeDefined();
+  expect(list.summary).toContain("admin-scope");
+  expect(end.responses["204"]).toBeDefined();
+  expect(end.responses.default.description).toContain("not_found");
+  expect(list.responses.default.description).toContain("unauthorized");
+  expect(list.responses.default.description).toContain("forbidden");
+});
+
 test("a repository's code writes are described: branches and contents", () => {
   const doc = openapi("https://f.test", "1") as any;
   const R = "/api/v1/repos/{owner}/{name}";
