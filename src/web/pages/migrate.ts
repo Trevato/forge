@@ -791,9 +791,11 @@ export function migrationJobPage(ctx: Ctx): Response {
             <h2>${job.fullName}</h2>`,
         })}
         ${failed
-          ? html`<p class="error-note">
-                ${job.error ?? "The migration failed."}
-              </p>
+          ? html`<div class="field" data-invalid>
+                <span class="error" role="alert" id="migrate-job-err"
+                  >${job.error ?? "The migration failed."}</span
+                >
+              </div>
               <div class="bar mt">
                 ${btn("Try again", {
                   href: `/migrate?${new URLSearchParams(
