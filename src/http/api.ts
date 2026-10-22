@@ -647,7 +647,7 @@ function originFacts(repo: Repo) {
 }
 
 /** An origin as the API returns it: everything except the credential. */
-function originJson(origin: Origin) {
+export function originJson(origin: Origin) {
   return {
     id: origin.id,
     kind: origin.kind,
@@ -727,7 +727,7 @@ function migrationJson(ctx: Ctx, job: MirrorJob) {
  * client can navigate to out here — the picker's whole job is to say
  * "already here" or "not yet".
  */
-function remoteRepoJson(ctx: Ctx, row: OriginRepoRow) {
+export function remoteRepoJson(ctx: Ctx, row: OriginRepoRow) {
   const mirror =
     row.mirroredAs === null
       ? undefined

@@ -17,6 +17,8 @@
  * no page. `ro` tokens read; `rw` tokens act.
  */
 
+import { listRemoteRepos, listUserOrigins, syncOriginNow } from "../actions/origins.ts";
+import { originJson, remoteRepoJson } from "./api.ts";
 import { showProvenance } from "../actions/provenance.ts";
 import { EVENTS_LIMIT_MAX, eventsLimit, eventsPage, validEventsCursor } from "../core/events_page.ts";
 import { getProvenance, provenanceFacts, trailFacts } from "../core/provenance.ts";
@@ -1676,6 +1678,44 @@ const TOOLS: readonly Tool[] = [
             ? OUTSIDERS_NOTE
             : DIRECTION_NOTE,
       });
+    },
+  },
+  {
+    name: "origins",
+    description:
+      "Your connected origins: list, repos of one, or sync it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["list", "repos", "sync"] },
+        id: { type: "string" },
+      },
+      required: ["action"],
+    },
+    writes: true,
+    readsWithout: "id",
+    async run(ctx, user, args) {
+      const action = args["action"];
+      const id = args["id"];
+      if (action !== "list" && action !== "repos" && action !== "sync")
+        return bad("bad_action", "`action` is list, repos or sync");
+      if (action !== "list" && (typeof id !== "string" || id === ""))
+        return bad("invalid", "send the origin's `id`, from list");
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "origins spend your credential elsewhere and need an admin token");
+      if (action === "list")
+        return good(listUserOrigins(ctx.app, user).map(originJson));
+      const origin = id as string;
+      if (action === "sync") {
+        const synced = await syncOriginNow(ctx.app, user, origin);
+        return synced.ok ? good(synced.value) : bad("not_found", "no such origin");
+      }
+      const listed = await listRemoteRepos(ctx.app, user, origin);
+      if (!listed.ok)
+        return listed.error === "unreachable"
+          ? bad("origin_unreachable", "the origin could not be reached")
+          : bad("not_found", "no such origin");
+      return good(listed.value.map((row) => remoteRepoJson(ctx, row)));
     },
   },
   {

@@ -204,6 +204,7 @@ describe("the forge over MCP", () => {
       "account_role",
       "model_ceiling",
       "outsiders",
+      "origins",
       "decisions_by",
       "archive",
       "trail",
