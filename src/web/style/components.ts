@@ -477,7 +477,6 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 .color-field input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
 .color-field input[type="color"]::-webkit-color-swatch { border: 1px solid var(--border-strong); border-radius: 999px; }
 .color-field input[type="color"]::-moz-color-swatch { border: 1px solid var(--border-strong); border-radius: 999px; }
-.color-field .hex { font-family: var(--mono); font-size: 12.5px; color: var(--muted-fg); }
 @media (pointer: coarse) { .color-field { min-height: 44px; } }
 @media (max-width: 719px) {
   .edit-row { align-items: stretch; }

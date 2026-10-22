@@ -1871,7 +1871,7 @@ export const shellJs = /* js */ `
 
   // ---- colour pickers show the hex they are about to submit ----
   doc.querySelectorAll('.color-field input[type="color"]').forEach(function (i) {
-    var out = i.parentNode.querySelector('.hex');
+    var out = i.parentNode.querySelector('[data-hex]');
     if (!out) return;
     i.addEventListener('input', function () { out.textContent = i.value; });
   });

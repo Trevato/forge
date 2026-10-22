@@ -435,7 +435,6 @@ the same line (#4888).
   - `.error-note`
   - `.field-row`
   - `.form-actions`
-  - `.hex`
   - `.ico`
   - `.ico-loader`
   - `.list`

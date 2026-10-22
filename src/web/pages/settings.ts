@@ -1737,7 +1737,7 @@ function colorField(value: string, label: string): Html {
       name="color"
       value="#${value}"
       aria-label="${label}"
-    /><span class="hex">#${value}</span></span
+    /><span class="mono muted" data-hex>#${value}</span></span
   >`;
 }
 
