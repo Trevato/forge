@@ -74,6 +74,23 @@ describe("which runs were interrupted", () => {
     expect(interruptionOf("the check stayed red")).toBe(undefined);
   });
 
+  test("a clone the forge could not make is an interruption; a decline that mentions one is not", () => {
+    expect(
+      interruptionOf("clone failed: fatal: unable to parse commit abc123"),
+    ).toBe("clone");
+    expect(interruptionOf("declined: the clone failed: is not my doing")).toBe(
+      undefined,
+    );
+    expect(interruptionOf("no changes pushed: DECLINED: clone failed: x")).toBe(
+      undefined,
+    );
+    const said = interruptedSummary("clone failed: fatal: unable to parse commit x");
+    expect(said).toBe(
+      "interrupted: clone, resumes on the next pass — clone failed: fatal: unable to parse commit x",
+    );
+    expect(interruptionOf(said)).toBe("clone");
+  });
+
   test("the summary says the cause and when it resumes", () => {
     const said = interruptedSummary(
       "every subscription this repository may use is resting (weekly limit)",
@@ -115,6 +132,7 @@ describe("an interrupted run is not a park", () => {
       "every subscription this repository may use is resting (You've hit your weekly limit)",
       "the run failed: TypeError: fetch failed",
       "cancelled",
+      "clone failed: fatal: unable to parse commit abc123",
     ]) {
       expect(ended(work, summary)).toBe(false);
       await tick();

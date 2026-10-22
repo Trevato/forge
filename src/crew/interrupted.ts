@@ -10,7 +10,7 @@ import type { Database } from "bun:sqlite";
 import { whenText } from "./limits.ts";
 import { NETWORK as NETWORK_ERROR } from "./network.ts";
 
-export type Interruption = "provider limit" | "network error" | "restart";
+export type Interruption = "provider limit" | "network error" | "restart" | "clone";
 
 /** What every interrupted run's summary starts with. */
 export const INTERRUPTED = "interrupted: ";
@@ -21,6 +21,8 @@ const PROVIDER =
 const NETWORK = new RegExp(`${NETWORK_ERROR.source}|could not reach|unreachable`, "i");
 const RESTART =
   /^cancelled$|interrupted by a restart|stopped for a restart|the forge stopped/i;
+// The runner's own words when the forge could not clone or check out.
+const CLONE = /^clone failed:/i;
 
 /**
  * Why a run that ended without a pull was cut short, read from its summary
@@ -34,9 +36,11 @@ export function interruptionOf(summary: string): Interruption | undefined {
     const cause = s.slice(INTERRUPTED.length);
     if (cause.startsWith("provider limit")) return "provider limit";
     if (cause.startsWith("network error")) return "network error";
+    if (cause.startsWith("clone")) return "clone";
     return "restart";
   }
   if (/^declined\b/i.test(s)) return undefined;
+  if (CLONE.test(s)) return "clone";
   if (RESTART.test(s)) return "restart";
   if (NETWORK.test(s)) return "network error";
   if (PROVIDER.test(s)) return "provider limit";
