@@ -514,7 +514,6 @@ the same line (#4888).
   - `.policy-line`
   - `.qf`
   - `.repo-actions`
-  - `.repo-audience`
   - `.repo-desc`
   - `.repo-layout`
   - `.repo-lineage`

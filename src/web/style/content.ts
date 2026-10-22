@@ -25,15 +25,9 @@ export const content = /* css */ `
 }
 .repo-title .owner { font-weight: 400; color: var(--muted-fg); }
 .repo-title .slash { color: var(--faint); font-weight: 400; }
-.repo-audience {
-  flex: 1 1 16ch; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 13px; font-weight: 400; letter-spacing: 0; color: var(--muted-fg);
-}
-a.repo-audience:hover { color: var(--fg); }
-/* A phone has no hover for the title: the whole sentence, on its own line. */
+/* A phone has no hover: the settings link is a full 44px line. */
 @media (max-width: 640px) {
-  .repo-audience { flex-basis: 100%; white-space: normal; text-overflow: clip; }
-  a.repo-audience { display: block; padding: 12px 0; min-height: 44px; box-sizing: border-box; }
+  .repo-head .repo-desc a { display: block; padding: 12px 0; min-height: 44px; box-sizing: border-box; }
 }
 .repo-desc { margin-top: 4px; color: var(--muted-fg); font-size: 13px; text-wrap: pretty; }
 .repo-lineage { margin-top: 3px; font-size: 12.5px; color: var(--faint); }
