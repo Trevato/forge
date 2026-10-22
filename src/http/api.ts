@@ -6027,19 +6027,24 @@ export function apiRoutes(router: Router<Handler>): void {
   // What the caller can do on a forge page, as who they are (#604): the
   // manifest every page links to. It differs by caller, so it is never cached.
   router.add("GET", "/api/v1/here", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const path = ctx.url.searchParams.get("path") ?? "/";
-    const found = manifestFor(
-      ctx.app,
-      ctx.auth.user,
-      ctx.auth.via === "token" ? ctx.auth.scope : undefined,
-      ctx.url.origin,
-      path.startsWith("/") ? path : `/${path}`,
+    const found = timePhase(ctx.request, "here", () =>
+      manifestFor(
+        ctx.app,
+        ctx.auth.user,
+        ctx.auth.via === "token" ? ctx.auth.scope : undefined,
+        ctx.url.origin,
+        path.startsWith("/") ? path : `/${path}`,
+      ),
     );
     if (!found.ok) return notFound();
-    return json(found.value, 200, {
-      "cache-control": "no-store",
-      vary: "cookie, authorization",
-    });
+    return timePhase(ctx.request, "render", () =>
+      json(found.value, 200, {
+        "cache-control": "no-store",
+        vary: "cookie, authorization",
+      }),
+    );
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/runs", (ctx) => {
