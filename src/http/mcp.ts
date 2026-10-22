@@ -100,7 +100,7 @@ import {
 } from "../web/studio/cards.ts";
 import { verifyAccount } from "../actions/accounts.ts";
 import { setAccountCeilings, setAccountGrant } from "../actions/model_grant.ts";
-import { inviteLink, mint as mintInviteLink } from "../actions/invites.ts";
+import { inviteLink, list as listInviteLinks, mint as mintInviteLink, revoke as revokeInviteLink } from "../actions/invites.ts";
 import { suspendAccount, unsuspendAccount } from "../actions/accounts.ts";
 import { setRole } from "../actions/roles.ts";
 import { ABILITIES, roleOf, rowOf } from "../core/roles.ts";
@@ -1649,6 +1649,36 @@ const TOOLS: readonly Tool[] = [
       if (!made.ok) return bad("invalid", "days is a whole number from 1 to 30");
       const origin = ctx.app.config.url ?? ctx.url.origin;
       return good({ ...made.value.invite, link: inviteLink(origin, made.value.token) });
+    },
+  },
+  {
+    name: "invites",
+    description: "List open invites, or revoke one by `id`. Person admins only.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["list", "revoke"] },
+        id: { type: "string" },
+      },
+      required: ["action"],
+    },
+    writes: true,
+    run(ctx, user, args) {
+      if (!mayBoards(user)) return bad("forbidden", "invites are a forge admin's");
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "invites need an admin token");
+      const action = args["action"];
+      if (action === "list") {
+        const listed = listInviteLinks(ctx.app, user);
+        return listed.ok ? good({ items: listed.value }) : bad("forbidden", "invites are a forge admin's");
+      }
+      if (action === "revoke") {
+        const id = args["id"];
+        if (typeof id !== "string" || id === "") return bad("invalid", "revoke needs an invite id");
+        const done = revokeInviteLink(ctx.app, user, id);
+        return done.ok ? good(done.value) : bad("not_found", "no such open invite");
+      }
+      return bad("invalid", 'action is "list" or "revoke"');
     },
   },
   {
