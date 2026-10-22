@@ -17,6 +17,7 @@ import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { badge, empty, listCard, row, runStateBadge, time } from "../ui.ts";
 import { waitingOn } from "./asks.ts";
+import { diffStatFor, sizeLine } from "./review_evidence.ts";
 
 /** The check on a pull's head, as the pull page wears it; only a run of this very head counts. */
 function verdict(run: Run | undefined, headOid: string): Html {
@@ -60,14 +61,25 @@ export function reviewPage(ctx: Ctx): Response {
       rec === undefined
         ? "The crew has not advised yet"
         : html`The crew advises: ${rec.verdict}${rec.reason === "" ? "" : html` — ${rec.reason}`}`;
+    const stat = a.pull === undefined ? undefined : diffStatFor(ctx.app, a.repo, a.pull);
+    const pending =
+      stat === "loading"
+        ? " · Diff loading — reload for the size"
+        : stat === "failed"
+        ? " · Diff size unavailable — open the pull to see it"
+        : "";
     return row({
       href,
       nav: true,
       title: a.pull?.title ?? a.issue?.title ?? a.proposal?.title ?? `${a.repo.name} is waiting on you`,
       titleAttr: `${a.repo.ownerName}/${a.repo.name}: ${a.why ?? a.consequence.why}`,
-      meta: html`${a.repo.ownerName}/${a.repo.name} · ${time(a.since)} · ${a.why ?? a.consequence.why} · ${advised}`,
-      // The trail survives the meta line's ellipsis: the verdict is the fact this row gives.
-      ...(a.pull === undefined ? {} : { trail: verdict(checks.get(a.pull.id), a.pull.headOid) }),
+      meta: html`${a.repo.ownerName}/${a.repo.name} · ${time(a.since)} · ${a.why ?? a.consequence.why} · ${advised}${pending}`,
+      // The trail survives the meta line's ellipsis: the verdict and the size are the facts this row gives.
+      ...(a.pull === undefined
+        ? {}
+        : {
+            trail: html`${typeof stat === "object" ? html`<span class="small muted">${sizeLine(stat)}</span> ` : ""}${verdict(checks.get(a.pull.id), a.pull.headOid)}`,
+          }),
       // A sibling of the row's link, never inside it: a link in a link is not a link.
       ...(a.pull !== undefined && apps.has(a.repo.id)
         ? { children: [row({ href: `${base}/app/${previewEnv(a.pull.number)}/open`, title: "Open the preview", nav: true })] }

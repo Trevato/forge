@@ -14,6 +14,7 @@ import { createUser } from "../src/core/users.ts";
 import { BREAKER_NOTE } from "../src/crew/breaker.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { id } from "../src/kernel/id.ts";
+import { rememberStat, settled } from "../src/web/studio/review_evidence.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -171,4 +172,37 @@ test("a pull of an app links its preview beside the row, not inside it; an issue
   expect(issue).not.toContain("/app/pull-");
   expect(issue).not.toContain("badge");
   expect(issue).not.toContain("No check");
+});
+
+test("a pull's row says its diff is loading or unavailable, and unavailable once git failed; an issue row says neither", async () => {
+  const rowsOf = async () =>
+    (await (await fetch(`${servers.url}/review`, { headers: { cookie } })).text())
+      .split("<li")
+      .filter((r) => r.includes('class="row"'));
+  const first = await rowsOf();
+  // Earlier tests in this file may already have asked git; either way the page answered at once.
+  expect(first.find((r) => r.includes("Stale pull"))!).toMatch(/Diff (loading — reload for the size|size unavailable)/);
+  await settled(app);
+  const second = await rowsOf();
+  // The fixture pulls point at the zero oid, which git cannot diff.
+  expect(second.find((r) => r.includes("Stale pull"))!).toContain("Diff size unavailable");
+  expect(second.find((r) => r.includes("Stale pull"))!).not.toContain("Diff loading");
+  expect(second.find((r) => r.includes("Crew asked about this"))!).not.toContain("Diff");
+});
+
+test("a kept stat is the sentence in the row's trail, singular for one file", async () => {
+  const rowsOf = async () =>
+    (await (await fetch(`${servers.url}/review`, { headers: { cookie } })).text())
+      .split("<li")
+      .filter((r) => r.includes('class="row"'));
+  rememberStat(app, ZERO, ZERO, { files: 3, additions: 40, deletions: 7 });
+  const many = (await rowsOf()).find((r) => r.includes("Stale pull"))!;
+  expect(many).toContain("3 files changed, +40 −7");
+  expect(many.slice(many.indexOf("row-trail"))).toContain("3 files changed, +40 −7");
+  expect(many).not.toContain("Diff size unavailable");
+  rememberStat(app, ZERO, ZERO, { files: 1, additions: 2, deletions: 0 });
+  const one = (await rowsOf()).find((r) => r.includes("Stale pull"))!;
+  expect(one).toContain("1 file changed, +2 −0");
+  expect(one).not.toContain("1 files");
+  expect((await rowsOf()).find((r) => r.includes("Crew asked about this"))!).not.toContain("changed");
 });
