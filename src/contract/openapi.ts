@@ -843,6 +843,20 @@ export const ROUTES: readonly Route[] = [
   },
   { method: "get", path: "/api/v1/migrate/{job}", summary: "Read a migration job's stage", auth: true },
   {
+    method: "get",
+    path: `${REPO}/flow`,
+    summary: "Read how work moves through a repository: { open, live }, where open lists each open issue (and merged ones production has not yet served) as { number, title, stage, since, stalled, unblock, pull } and live lists what went live in the last 24 hours, newest first, the same with liveAt; sealed rows only for those who may see them",
+    auth: false,
+    refusals: { not_found: "no such repository, or it is not readable by the caller" },
+  },
+  {
+    method: "get",
+    path: "/api/v1/crew/scorecard",
+    summary: "Read the crew's scorecard (a forge admin's, any token scope): { agents: [{ username, all, recent, splits }] }, where all and recent are { opened, landed, reviewRounds, redCheckRate, reverts, meanLandMs } or null, and each split adds model, prompt and its own recent",
+    auth: true,
+    refusals: { unauthorized: "no valid credentials were sent", forbidden: "the caller is not a forge admin" },
+  },
+  {
     method: "post",
     path: "/api/v1/users",
     summary:
