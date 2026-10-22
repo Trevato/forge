@@ -193,6 +193,8 @@ import {
   listComments,
   listIssues,
   listLabels,
+  LIST_LIMIT,
+  LIST_LIMIT_MAX,
   pageLimit,
   type Issue,
   type IssueState,
@@ -1038,6 +1040,37 @@ function listQuery(ctx: Ctx) {
       : {}),
     ...(label ? { label } : {}),
     ...(author ? { author } : {}),
+  };
+}
+
+/**
+ * `?limit=&cursor=` for a list paged by a name: limit 1..200 (default 50),
+ * the cursor the last name of the page before. A bad one is a 422.
+ */
+function keyedWindow(ctx: Ctx): { limit: number; cursor: string | null } | Response {
+  const q = ctx.url.searchParams;
+  const rawLimit = q.get("limit");
+  const limit = rawLimit === null ? LIST_LIMIT : /^\d{1,4}$/.test(rawLimit) ? Number(rawLimit) : 0;
+  if (limit < 1 || limit > LIST_LIMIT_MAX)
+    return apiError("invalid_limit", 422, `limit is a whole number from 1 to ${LIST_LIMIT_MAX}`);
+  const cursor = q.get("cursor");
+  if (cursor !== null && (cursor.length < 1 || cursor.length > 100))
+    return apiError("invalid_cursor", 422, "cursor is the next_cursor of a previous page");
+  return { limit, cursor };
+}
+
+/** The page of `rows` (sorted by name) after the cursor: `{ items, next_cursor }`. */
+function keyedPage<T>(
+  rows: T[],
+  keyOf: (row: T) => string,
+  window: { limit: number; cursor: string | null },
+) {
+  const sorted = [...rows].sort((a, b) => (keyOf(a) < keyOf(b) ? -1 : keyOf(a) > keyOf(b) ? 1 : 0));
+  const after = window.cursor === null ? sorted : sorted.filter((r) => keyOf(r) > window.cursor!);
+  const items = after.slice(0, window.limit);
+  return {
+    items,
+    next_cursor: after.length > window.limit ? keyOf(items[items.length - 1]!) : null,
   };
 }
 
@@ -2170,7 +2203,11 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/orgs/:org/teams", (ctx) => {
     const org = getOrg(ctx.app.db, ctx.params.org!);
     if (!org) return notFound();
-    return json(listTeamsVisibleTo(ctx.app.db, org.id, ctx.auth.user));
+    const window = keyedWindow(ctx);
+    if (window instanceof Response) return window;
+    return json(
+      keyedPage(listTeamsVisibleTo(ctx.app.db, org.id, ctx.auth.user), (t) => t.name, window),
+    );
   });
 
   router.add("POST", "/api/v1/orgs/:org/teams", async (ctx) => {
@@ -2204,7 +2241,11 @@ export function apiRoutes(router: Router<Handler>): void {
     const found = loadTeam(ctx);
     if ("error" in found) return found.error;
     if (!teamVisible(ctx, found.org, found.team)) return notFound();
-    return json(listTeamMembers(ctx.app.db, found.team.id).map(publicProfile));
+    const window = keyedWindow(ctx);
+    if (window instanceof Response) return window;
+    return json(
+      keyedPage(listTeamMembers(ctx.app.db, found.team.id).map(publicProfile), (u) => u.username, window),
+    );
   });
 
   router.add("POST", "/api/v1/orgs/:org/teams/:team/members", async (ctx) => {
