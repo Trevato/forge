@@ -192,6 +192,7 @@ describe("the forge over MCP", () => {
       "proposal_tokens",
       "asks_undecide",
       "seal",
+      "secrets",
       "issue_teams",
       "now",
       "stop",
