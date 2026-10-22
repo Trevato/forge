@@ -42,6 +42,8 @@ import { usesByVendor, type VendorUse } from "../cloud/declared.ts";
 import { cloudOverview } from "../cloud/overview.ts";
 import { PROVIDERS } from "../cloud/providers.ts";
 import { changeQuotas, readQuotas } from "../actions/quotas.ts";
+import { resendVerification } from "../actions/verify.ts";
+import { CAPPED_WORDS } from "../actions/mail.ts";
 import { changeSignup, readSignup } from "../actions/signup.ts";
 import { SIGNUP_MODES } from "../settings/signup.ts";
 import { QUOTA_KEYS } from "../settings/quotas.ts";
@@ -4081,6 +4083,27 @@ const TOOLS: readonly Tool[] = [
         says: `signup: ${read.value.signup} → ${changed.value}.`,
         signup: changed.value,
       });
+    },
+  },
+  {
+    name: "email_verify",
+    description: "Send the caller a new email-verification link; same limits as the API.",
+    inputSchema: { type: "object", properties: {} },
+    writes: true,
+    async run(ctx, user) {
+      const sent = await resendVerification(ctx.app, user);
+      if (sent.ok)
+        return good({
+          outcome: sent.value,
+          says: sent.value === "sent" ? "A new verification email is on its way." : "Your email is already verified.",
+        });
+      if (sent.error === "too_soon")
+        return bad("too_soon", "a link was sent a moment ago; check your inbox, or try again in a few minutes");
+      if (sent.error === "no_mail")
+        return bad("no_mail", "this forge sends no mail yet; ask its owner to verify you");
+      if (sent.error === "capped") return bad("capped", CAPPED_WORDS);
+      if (sent.error === "unauthorized") return bad("unauthorized", "sign in first");
+      return bad("failed", "the link could not be sent; try again");
     },
   },
   {

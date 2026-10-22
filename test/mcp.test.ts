@@ -266,6 +266,7 @@ describe("the forge over MCP", () => {
       "cloud_account",
       "quotas",
       "signup",
+      "email_verify",
       "boards",
       "board_write",
       "board_pins",
