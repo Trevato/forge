@@ -370,7 +370,18 @@ warm:
   `test/flake.test.ts` allows a request; the 50 ms is read off the bench.
 - **`/`: p95 ≤ 50 ms on the bench, and a statement count that does not
   grow with the feed's candidates** (the `test/counts.test.ts` pattern).
-  The test's wall-clock bound is 200 ms, for the same reason.
+  The 50 ms is read off the bench, end to end. `test/home-cache.test.ts`
+  bounds what the KPI and panel caches spend, not the page's wall clock: it
+  first records the statements a miss of both runs that a warm page does not
+  (the KPI reads and the pinned panel's query), then requires that in 30 warm
+  requests every `kpis` and `panels` phase is a `desc="hit"` and runs none
+  of them. A request that a write came near (the route-timing flush, a
+  session's last-seen) misses rightly and is not judged; at least 20 of the
+  30 must be. Its earlier bound, 200 ms p95 on `/`, timed the feed (most of
+  the page) and the machine's load, and went red on loaded check machines
+  (#5237). The two phases take about 1.5 ms warm, but under load a hit and
+  a miss both take from under a millisecond to tens of milliseconds, so no
+  time bound can tell them apart.
 
 ## Max ages, at a glance
 
