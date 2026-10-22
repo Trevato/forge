@@ -32,6 +32,10 @@ import { unwrap } from "../src/kernel/result.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 
+/**
+ * One git client run. A clone expected to succeed is matched whole
+ * (`toMatchObject({ code: 0 })`), so a red prints git's stderr, not a bare 128.
+ */
 interface Run {
   code: number;
   out: string;
@@ -291,7 +295,7 @@ describe("a big repository over smart http", () => {
     link = (body) => pausing(body, 64 * 1024, stall.windowMs / 3);
     try {
       const run = await git(["clone", "-q", base, "paused"], work);
-      expect(run.code).toBe(0);
+      expect(run).toMatchObject({ code: 0 });
     } finally {
       fetchOptions = PATIENT;
       link = (body) => body;
@@ -306,7 +310,7 @@ describe("a big repository over smart http", () => {
         work,
       );
       expect(run.err).not.toContain("filtering not recognized");
-      expect(run.code).toBe(0);
+      expect(run).toMatchObject({ code: 0 });
       const clone = join(work, dir);
       const bigOid = await ok(["rev-parse", "HEAD:base.step"], clone);
       const readmeOid = await ok(["rev-parse", "HEAD:README.md"], clone);
@@ -327,7 +331,7 @@ describe("a big repository over smart http", () => {
         work,
       );
       expect(run.err).not.toContain("filtering not recognized");
-      expect(run.code).toBe(0);
+      expect(run).toMatchObject({ code: 0 });
       expect(await Bun.file(join(work, dir, "README.md")).text()).toBe("# arm\n");
       expect((await Bun.file(join(work, dir, "base.step")).arrayBuffer()).byteLength).toBe(BIG);
     }, 180_000);
