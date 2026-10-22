@@ -1967,11 +1967,13 @@ export function apiRoutes(router: Router<Handler>): void {
 
   // SSH keys — what the SSH listener authenticates against. Public keys are
   // public, so the list returns them whole.
-  router.add("GET", "/api/v1/user/keys", (ctx) =>
-    ctx.auth.user
-      ? json(listKeys(ctx.app.db, ctx.auth.user.id).map(publicKey))
-      : unauthorized(),
-  );
+  router.add("GET", "/api/v1/user/keys", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const user = ctx.auth.user;
+    if (!user) return unauthorized();
+    const keys = timePhase(ctx.request, "keys", () => listKeys(ctx.app.db, user.id));
+    return timePhase(ctx.request, "render", () => json(keys.map(publicKey)));
+  });
   router.add("POST", "/api/v1/user/keys", async (ctx) => {
     const denied = requireScope(ctx, "rw");
     if (denied) return denied;
