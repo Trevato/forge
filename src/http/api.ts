@@ -2895,11 +2895,16 @@ export function apiRoutes(router: Router<Handler>): void {
   // The default branch's check covering a full commit id: what a release
   // waits on before it builds (#2794, #3966). Never cached: `pending` turns.
   router.add("GET", "/api/v1/repos/:owner/:name/commits/:oid/check", async (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const found = await checkOfCommit(ctx.app, ctx.auth.user, repo, ctx.params.oid ?? "");
+    const found = await timePhaseAsync(ctx.request, "check", () =>
+      checkOfCommit(ctx.app, ctx.auth.user, repo, ctx.params.oid ?? ""),
+    );
     if (!found.ok) return notFound();
-    return json(found.value, 200, { "cache-control": "no-store" });
+    return timePhase(ctx.request, "render", () =>
+      json(found.value, 200, { "cache-control": "no-store" }),
+    );
   });
 
   // The path is optional: no path lists the root tree; a directory lists its
