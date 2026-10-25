@@ -121,6 +121,7 @@ import { secretsSection } from "./secrets.ts";
 import { checkMemoryAt } from "../../apps/check-memory.ts";
 import { followUpstreamCard } from "./upstream-follow.ts";
 import { saveGrants } from "./subscriptions.ts";
+import { LABEL_WORDS } from "../../actions/label_words.ts";
 
 type Section =
   | "general"
@@ -1839,7 +1840,7 @@ export async function labelCreate(ctx: Ctx): Promise<Response> {
           message:
             created.error === "taken"
               ? "This repository already has a label by that name."
-              : "A label needs a name and a six-digit hex color.",
+              : LABEL_WORDS.shape,
         },
   );
 }
@@ -1868,7 +1869,7 @@ export async function labelUpdate(ctx: Ctx): Promise<Response> {
               ? "This repository already has a label by that name."
               : updated.error === "not_found"
                 ? "That label no longer exists."
-                : "A label needs a name and a six-digit hex color.",
+                : LABEL_WORDS.shape,
         },
   );
 }

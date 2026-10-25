@@ -197,6 +197,7 @@ import {
   OUTSIDERS_NOTE,
 } from "../crew/direct.ts";
 import { createLabel, deleteLabel, setArchived, setCrewOutsiders, updateRepoSettings, setDecisionsBy, repositoryLimitMessage } from "../actions/repos.ts";
+import { LABEL_WORDS } from "../actions/label_words.ts";
 import {
   appView,
   deleteAppEnvVar,
@@ -3795,7 +3796,7 @@ const TOOLS: readonly Tool[] = [
             made.error === "taken"
               ? "A label with that name already exists."
               : made.error === "invalid"
-                ? "A label needs a name and a six-digit hex color."
+                ? LABEL_WORDS.shape
                 : "no such app or repository (owner/name)",
           );
         return good({ says: `Created the label ${made.value.name}.`, label: made.value });
