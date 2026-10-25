@@ -6014,9 +6014,12 @@ export function apiRoutes(router: Router<Handler>): void {
   // The URL to open an environment at. For a private app it carries a
   // grant, so the answer is for the caller alone and is not cached.
   router.add("GET", "/api/v1/repos/:owner/:name/app/:env/open", (ctx) => {
-    const repo = loadRepo(ctx);
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const repo = timePhase(ctx.request, "repo", () => loadRepo(ctx));
     if (!repo) return notFound();
-    const link = openEnvUrl(ctx.app, ctx.auth.user, repo, ctx.params.env ?? "");
+    const link = timePhase(ctx.request, "open", () =>
+      openEnvUrl(ctx.app, ctx.auth.user, repo, ctx.params.env ?? ""),
+    );
     if (!link.ok) return respondAccess(link.error, 422);
     return json({ url: link.value });
   });
