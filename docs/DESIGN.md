@@ -447,7 +447,6 @@ the same line (#4888).
   - `.sprite`
   - `.swatch`
   - `.table-scroll`
-  - `.tell-here`
   - `.theme-apply`
   - `.theme-option`
   - `.tick`
