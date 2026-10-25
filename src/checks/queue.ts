@@ -119,6 +119,10 @@ export const GATE_DEADLINE_MS = 15 * 60_000;
 
 let deadlineMs = GATE_DEADLINE_MS;
 
+/** What arms the deadline; tests swap in a clock they fire themselves. */
+type Schedule = (fire: () => void, ms: number) => ReturnType<typeof setTimeout>;
+let schedule: Schedule = setTimeout;
+
 /**
  * The most pulls one candidate carries (#3430): eight keep a gate near one
  * full tier and a red's bisection three gates deep. The rest of the line
@@ -140,11 +144,17 @@ export interface QueueOptions {
   readonly room?: () => number;
 }
 
-/** Tests shorten the deadline; the answer puts it back. */
-export function gateDeadlineForTest(ms: number): () => void {
+/**
+ * Tests shorten the deadline, or hand `arm` the timer to fire themselves (a
+ * wall-clock deadline races the gate's setup on a loaded machine); the answer
+ * puts both back.
+ */
+export function gateDeadlineForTest(ms: number, arm?: Schedule): () => void {
   deadlineMs = ms;
+  if (arm !== undefined) schedule = arm;
   return () => {
     deadlineMs = GATE_DEADLINE_MS;
+    schedule = setTimeout;
   };
 }
 
@@ -424,7 +434,7 @@ function counted(line: Line, gate: GateCandidate): Gated {
     // A gate that never answers is abandoned at the deadline: no verdict,
     // and the next sweep forms the line again (#3430).
     const cut = new Promise<LandVerdict>((resolve) => {
-      timer = setTimeout(() => {
+      timer = schedule(() => {
         log.warn("candidate abandoned", {
           repo: line.repoId,
           pulls,

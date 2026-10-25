@@ -468,7 +468,13 @@ describe("the merge queue", () => {
     const repo = await autonomousRepo("never-answers");
     const pull = await greenPull(repo, "a.ts");
     expect(queueWords(repo.id)).toBe("idle");
-    const restore = gateDeadlineForTest(1500);
+    // The deadline is fired by hand once the gate is reached: a wall clock
+    // would race the gate's setup on a loaded machine.
+    let fire: (() => void) | undefined;
+    const restore = gateDeadlineForTest(1500, (f) => {
+      fire = f;
+      return setTimeout(() => {}, 0);
+    });
     const warned: string[] = [];
     const warn = console.warn;
     console.warn = (line: string) => warned.push(line);
@@ -476,7 +482,10 @@ describe("the merge queue", () => {
     let words = "";
     try {
       lastSignal = undefined;
-      atGate = () => (words = queueWords(repo.id));
+      atGate = () => {
+        words = queueWords(repo.id);
+        fire?.();
+      };
       const sweep = sweepGreen(app, repo);
       expect(await sweep).toBe(0);
     } finally {
