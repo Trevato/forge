@@ -32,13 +32,14 @@ const SUITE_BUDGET_MS = 3_000;
 const run = async (
   cwd: string,
   argv: string[],
+  temp = process.env.TMPDIR ?? tmpdir(),
 ): Promise<{ code: number; out: string }> => {
   const child = Bun.spawn(argv, {
     cwd,
     env: {
       PATH: process.env.PATH ?? "/usr/bin:/bin",
       HOME: process.env.HOME ?? cwd,
-      TMPDIR: process.env.TMPDIR ?? tmpdir(),
+      TMPDIR: temp,
     },
     stdout: "pipe",
     stderr: "pipe",
@@ -74,12 +75,18 @@ describe("a scaffolded app, written out and run on its own", () => {
   test("its own suite is green, inside its 3 s budget", async () => {
     // Every deploy and every pull on the app waits on this suite, so it is
     // held to a budget (docs/APPS.md, "What a new app starts as").
+    const temp = await mkdtemp(join(tmpdir(), "forge-scaffold-tmp-"));
     const started = performance.now();
-    const { code, out } = await run(dir, [process.execPath, "test"]);
+    const { code, out } = await run(dir, [process.execPath, "test"], temp);
     const ms = Math.round(performance.now() - started);
     console.log(`the scaffold's own suite ran in ${ms} ms (budget ${SUITE_BUDGET_MS} ms)`);
     expect([code, out.includes(" 0 fail")]).toEqual([0, true]);
     expect(ms).toBeLessThanOrEqual(SUITE_BUDGET_MS);
+    // It leaves its temporary directory as it found it: a check cell's /tmp
+    // is a small tmpfs every scaffolded suite in the forge's own check shares
+    // (#5326), and every app's own check cell has one too.
+    expect(await readdir(temp)).toEqual([]);
+    await rm(temp, { recursive: true, force: true });
     // Each guarantee has its own file of tests in the suite.
     for (const name of [
       "design.test.ts",
