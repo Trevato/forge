@@ -214,7 +214,7 @@ export async function boardsPage(ctx: Ctx): Promise<Response> {
   );
 
   const form = card(
-    html`<form method="get" action="/boards/data" class="bform">
+    html`<form method="get" action="/boards/data" class="bar">
       ${queryFields(p)}
       ${btn("Draw", { variant: "primary" })}
     </form>`,
@@ -257,7 +257,7 @@ export async function boardsPage(ctx: Ctx): Promise<Response> {
     boards.length === 0 || !answer.ok
       ? null
       : card(
-          html`<form method="post" action="/boards/pin" class="bform">
+          html`<form method="post" action="/boards/pin" class="bar">
             ${PANEL_FIELDS.map(
               (k) => html`<input type="hidden" name="${k}" value="${p[k as keyof Params]}" />`,
             )}
