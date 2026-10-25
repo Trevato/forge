@@ -421,9 +421,6 @@ the same line (#4888).
   - `.ico-loader`
   - `.list`
   - `.menu-item`
-  - `.menu-panel`
-  - `.menu-sep`
-  - `.menu-title`
   - `.palette-foot`
   - `.palette-input`
   - `.palette-list`
