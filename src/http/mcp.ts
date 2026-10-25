@@ -162,6 +162,7 @@ import { blobForRender, listTree } from "../git/read.ts";
 import { CREATE_ERRORS, DELETE_ERRORS } from "../web/pages/branches.ts";
 import { askToLiveFor } from "../web/ask_to_live.ts";
 import { getAppByRepo } from "../core/apps.ts";
+import { previewEnv } from "../apps/data.ts";
 import {
   ARCHIVED_WHY,
   canAdmin,
@@ -193,6 +194,7 @@ import {
 } from "../crew/direct.ts";
 import { createLabel, deleteLabel, setArchived, setCrewOutsiders, updateRepoSettings, setDecisionsBy, repositoryLimitMessage } from "../actions/repos.ts";
 import {
+  appView,
   deleteAppEnvVar,
   listAppEnv,
   newApp,
@@ -272,7 +274,8 @@ const server = () => ({ name: "forge", version: running().version });
 
 type Args = Record<string, unknown>;
 type Answer =
-  { ok: true; value: unknown } | { ok: false; error: string; message: string };
+  | { ok: true; value: unknown; card?: Record<string, unknown> }
+  | { ok: false; error: string; message: string };
 
 const good = (value: unknown): Answer => ({ ok: true, value });
 const attachWords = (error: string): string =>
@@ -896,7 +899,7 @@ const TOOLS: readonly Tool[] = [
         pull.state === "open" &&
         pull.mergedAt === null &&
         checkStale(check.run, await resolveOid(dir, `refs/heads/${pull.baseBranch}`));
-      return good({
+      const answer = good({
         number: pull.number,
         title: pull.title,
         state: pull.mergedAt !== null ? "merged" : pull.state,
@@ -907,6 +910,20 @@ const TOOLS: readonly Tool[] = [
         checkStale: stale,
         ...(state ?? {}),
       });
+      // What the card needs and the text does not say: where the pull lives
+      // and its preview, only when that environment exists — the pull page's
+      // door, `previewCard`, reads the same `appView`.
+      const view = appView(ctx.app, user, repo);
+      const env = view.ok
+        ? view.value.environments.find((e) => e.env === previewEnv(pull.number))
+        : undefined;
+      return {
+        ...answer,
+        card: {
+          repo: `${repo.ownerName}/${repo.name}`,
+          ...(env === undefined ? {} : { preview: env.url }),
+        },
+      };
     },
   },
   {
@@ -1153,7 +1170,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "asks_act",
     description:
-      "Decide asks (`items`: `asks` ids, `issue:<id>`): dismiss, decline, ship (never undone), close (`reason`), mute, replan.",
+      "Decide asks (`items`: `asks` ids, `issue:<id>`): dismiss, decline, ship (final), close (`reason`), mute, replan.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2692,7 +2709,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "propose_to_parent_forge",
     description:
-      "Offer this forge's landed change to its parent as a pull on `child/<name>/…`; the same tip answers that pull.",
+      "Offer this forge's landed change to its parent as a pull on `child/<name>/…`; the same tip answers it.",
     inputSchema: {
       type: "object",
       properties: { repo: REPO_ARG },
@@ -4119,7 +4136,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "access",
     description:
-      "What outside agents tried: redacted log of non-browser requests to public paths, newest first, max 500. Forge admin.",
+      "Outside agents' non-browser requests to public paths: redacted, newest first, max 500. Forge admin.",
     inputSchema: {
       type: "object",
       properties: {
@@ -4198,7 +4215,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "flow",
     description:
-      "The pipeline (forge admin): per-stage counts, `oldestWaiting`, `capacity`, bottleneck, `queue`, `reviewing` by reviewer.",
+      "The pipeline (forge admin): stage counts, `oldestWaiting`, `capacity`, bottleneck, `queue`, `reviewing`.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     run(ctx, user) {
@@ -4436,7 +4453,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "quotas",
     description:
-      "Per-account repository and app quotas (number or null; not enforced yet). With `key`, `value` (\"\" clears), plans.",
+      "Per-account repo and app quotas (number or null; not enforced yet). With `key`, `value` (\"\" clears), plans.",
     inputSchema: {
       type: "object",
       properties: {
@@ -4650,8 +4667,13 @@ function adminNote(ctx: Ctx, user: User): string {
 }
 
 /** A card's model beside the text, for a host that draws `ui://` resources. */
-function cardResult(name: string, value: unknown, origin: string): Record<string, unknown> {
-  const card = cardFor(name, value, origin);
+function cardResult(
+  name: string,
+  value: unknown,
+  origin: string,
+  extra?: Record<string, unknown>,
+): Record<string, unknown> {
+  const card = cardFor(name, value, origin, extra);
   return card === undefined ? {} : { structuredContent: { card } };
 }
 
@@ -4754,7 +4776,7 @@ function rpcOne(
           answer.ok
             ? {
                 content: [{ type: "text", text: JSON.stringify(answer.value) }],
-                ...cardResult(String(params["name"]), answer.value, ctx.url.origin),
+                ...cardResult(String(params["name"]), answer.value, ctx.url.origin, answer.card),
               }
             : {
                 content: [

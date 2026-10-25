@@ -1105,6 +1105,7 @@ describe("the forge over MCP", () => {
       "ui://forge/decision",
       "ui://forge/feed",
       "ui://forge/map",
+      "ui://forge/pull",
       "ui://forge/run",
       "ui://forge/wave",
     ]);
@@ -1124,6 +1125,77 @@ describe("the forge over MCP", () => {
     expect(meta("milestones")).toBe("ui://forge/wave");
     expect(meta("map")).toBe("ui://forge/map");
     expect(meta("feed")).toBe("ui://forge/feed");
+    expect(meta("pull")).toBe("ui://forge/pull");
+  });
+
+  test("tools/call pull carries the card beside an unchanged text answer", async () => {
+    const branched = await commitToBranch(app, alice, game, {
+      branch: "card-wire",
+      message: "a change",
+      files: [{ path: "card.txt", content: "c\n" }],
+    });
+    if (!branched.ok) throw new Error(JSON.stringify(branched.error));
+    const opened = await openPull(app, alice, game, {
+      title: "Card wire",
+      baseBranch: "main",
+      headBranch: "card-wire",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const n = opened.value.number;
+    const { body } = await call(rw, "tools/call", { name: "pull", arguments: { repo: "alice/game", number: n } });
+    const card = body.result.structuredContent.card;
+    expect(card.kind).toBe("pull");
+    expect(card.title).toBe(`#${n} Card wire`);
+    const branches = card.rows.find((r: any) => r.label === "Branches");
+    expect(branches.value).toBe("card-wire → main");
+    expect(branches.link).toBe(`${base}/alice/game/pulls/${n}`);
+    // No environment for this pull in the test runtime, so no preview to link.
+    expect(card.rows.some((r: any) => r.label === "Preview")).toBe(false);
+    const text = JSON.parse(body.result.content[0].text);
+    expect(text.title).toBe("Card wire");
+    expect("card" in text).toBe(false);
+  });
+
+  test("the pull card shows title, state, check, branches and the preview; a merged pull has no check or preview", async () => {
+    const { cardFor } = await import("../src/web/studio/cards.ts");
+    const origin = "https://forge.test";
+    const open = cardFor(
+      "pull",
+      {
+        number: 7,
+        title: "<b>Add</b> a thing",
+        state: "open",
+        base: "main",
+        head: "scout/7",
+        check: { state: "ok" },
+        mergeable: false,
+        conflicts: ["a.ts"],
+      },
+      origin,
+      { repo: "alice/game", preview: "https://p.example/" },
+    )!;
+    expect(open.kind).toBe("pull");
+    expect(open.title).toBe("#7 <b>Add</b> a thing");
+    expect(open.status).toBe("open · check green · conflicts");
+    expect(open.rows.find((r) => r.label === "Branches")).toMatchObject({
+      value: "scout/7 → main",
+      link: "https://forge.test/alice/game/pulls/7",
+    });
+    expect(open.rows.find((r) => r.label === "Preview")?.link).toBe("https://p.example/");
+    const merged = cardFor(
+      "pull",
+      { number: 8, title: "Done", state: "merged", base: "main", head: "x", check: { state: "ok" } },
+      origin,
+      { repo: "alice/game" },
+    )!;
+    expect(merged.status).toBe("merged");
+    expect(merged.rows.some((r) => r.label === "Preview")).toBe(false);
+    const hostile = cardFor("pull", { number: 1, state: "open", check: { state: "running" } }, origin, {
+      repo: "a/b",
+      preview: "javascript:alert(1)",
+    })!;
+    expect(hostile.status).toBe("open · check running");
+    expect(hostile.rows.some((r) => r.label === "Preview")).toBe(false);
   });
 
   test("the feed card draws one linked row per item, ten at most, escaped as text", async () => {

@@ -10,7 +10,7 @@
 import { html, raw } from "../html.ts";
 import { timeAgo } from "../ui.ts";
 
-export type CardKind = "app" | "run" | "decision" | "wave" | "map" | "feed";
+export type CardKind = "app" | "run" | "decision" | "wave" | "map" | "feed" | "pull";
 
 export interface CardRow {
   readonly label: string;
@@ -36,7 +36,7 @@ export interface Card {
 
 export const CARD_MIME = "text/html;profile=mcp-app";
 export const CARD_URI = (kind: CardKind): string => `ui://forge/${kind}`;
-export const CARD_KINDS: readonly CardKind[] = ["app", "run", "decision", "wave", "map", "feed"];
+export const CARD_KINDS: readonly CardKind[] = ["app", "run", "decision", "wave", "map", "feed", "pull"];
 
 /** The tool whose answer each card draws. */
 export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
@@ -47,6 +47,7 @@ export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   map: "map",
   feed: "feed",
   new_app: "app",
+  pull: "pull",
 };
 
 const CARD_TITLE: Readonly<Record<CardKind, string>> = {
@@ -56,6 +57,7 @@ const CARD_TITLE: Readonly<Record<CardKind, string>> = {
   wave: "Wave",
   map: "Plan",
   feed: "Feed",
+  pull: "Pull",
 };
 
 type Obj = Record<string, unknown>;
@@ -68,7 +70,12 @@ const LIMIT = 12;
 const FEED_LIMIT = 10;
 
 /** The card for a tool's answer, or nothing when the answer has no card. */
-export function cardFor(tool: string, value: unknown, origin = ""): Card | undefined {
+export function cardFor(
+  tool: string,
+  value: unknown,
+  origin = "",
+  extra: Record<string, unknown> = {},
+): Card | undefined {
   const kind = CARD_OF_TOOL[tool];
   if (kind === undefined) return undefined;
   const rows: CardRow[] = [];
@@ -87,6 +94,40 @@ export function cardFor(tool: string, value: unknown, origin = ""): Card | undef
     if (repo !== "")
       actions.push({ label: `Tell ${repo}`, tool: "tell", args: { repo, context: {} }, words: true });
     return { kind, title: "New app", status, rows, actions };
+  }
+  if (kind === "pull") {
+    const p = obj(value);
+    const web = (u: string): boolean => /^https?:\/\//.test(u);
+    const state = text(p["state"]);
+    const check = text(obj(p["check"])["state"]);
+    const checkWord =
+      check === "ok" ? "check green"
+      : check === "failed" ? "check red"
+      : check === "queued" || check === "running" ? "check running"
+      : check === "cancelled" ? "check cancelled"
+      : "";
+    const conflicts = list(p["conflicts"]).map(text).filter((c) => c !== "");
+    status = [
+      state,
+      state === "open" ? checkWord : "",
+      state === "open" && conflicts.length > 0 ? "conflicts" : "",
+    ]
+      .filter((w) => w !== "")
+      .join(" · ");
+    const number = text(p["number"]);
+    const slug = text(extra["repo"]);
+    rows.push({
+      label: "Branches",
+      value: `${text(p["head"])} → ${text(p["base"])}`,
+      ...(web(origin) && /^[^/]+\/[^/]+$/.test(slug) && number !== ""
+        ? { link: `${origin}/${slug}/pulls/${number}` }
+        : {}),
+    });
+    if (conflicts.length > 0)
+      rows.push({ label: "Conflicts", value: conflicts.slice(0, LIMIT).join(", ") });
+    const preview = text(extra["preview"]);
+    if (web(preview)) rows.push({ label: "Preview", value: preview, link: preview });
+    return { kind, title: `#${number} ${text(p["title"])}`.trim(), status, rows, actions };
   }
   if (kind === "app") {
     const apps = list(value).map(obj);

@@ -35,7 +35,7 @@ for a tunnel and a forge that sleeps.
 | `thought` | `{ id }`: where one of your thoughts went (its id comes from `tell` without a repo): the placement, and the earlier thoughts it repeats or takes back and the later ones that did the same; not yours and not there answer alike, `not_found` |  |
 | `say`          | speak on an issue or a pull; a working builder hears it as its next step                          | yes    |
 | `issue`        | `{ repo, number }`: one issue's title, state, closeReason, body, labels, assignee, comments (author, authorIsAgent, body, at) and blockedBy/blocks, as `GET …/issues/:number`; a sealed one you cannot see is not found |        |
-| `pull`         | `{ repo, number }`: a pull's title, state, head and base, and for an open pull whether it merges into the base's current head (`mergeable`) and the paths that stop it (`conflicts`), and `check: { state, baseOid }`: the latest check's state and the base tip it was merged with (empty when it merged nothing); `mergeable` and `conflicts` are the same fields as `GET …/pulls/:number`, `check` is `state` and `run.baseOid` from `GET …/pulls/:number/checks` |        |
+| `pull`         | `{ repo, number }`: a pull's title, state, head and base, and for an open pull whether it merges into the base's current head (`mergeable`) and the paths that stop it (`conflicts`), and `check: { state, baseOid }`: the latest check's state and the base tip it was merged with (empty when it merged nothing); `mergeable` and `conflicts` are the same fields as `GET …/pulls/:number`, `check` is `state` and `run.baseOid` from `GET …/pulls/:number/checks`; draws the `ui://forge/pull` card: `#N title`, state with check and conflicts while open, `head → base` linked to the pull, and the preview link when the pull has an environment |        |
 | `edit`         | a new title or body for an issue or a pull: its author's, or a writer's; an agent edits only what it wrote | yes    |
 | `close`        | `{ repo, number, state?, reason?, into? }`: close an issue or a pull (`state` closed by default) or reopen it (`open`); the same rules and refusals as `PATCH …/issues/:number`: an agent closes only what the rules give it and reopens nothing; answers `state` and `closeReason` | yes    |
 | `pulls`        | `{ repo, state?, limit? }`: a repository's pulls, newest first, one brief line each: `number`, `title`, `author`, `head`, `check` (state), `approvals`, `changesRequested`, `mergeable` (null once closed); `state` open (default) or closed, `limit` 1-50 (default 20); no bodies, no diffs | no     |
@@ -250,9 +250,9 @@ answers
 
 ## Cards, the contract and the plugins (#1116)
 
-- **Cards.** `apps`, `new_app`, `now`, `asks`, `milestones`, `map` and `feed` name a `ui://` resource in
+- **Cards.** `apps`, `new_app`, `now`, `asks`, `milestones`, `map`, `feed` and `pull` name a `ui://` resource in
   `_meta.ui.resourceUri` (MCP Apps, SEP-1865): `ui://forge/app`, `run`,
-  `decision`, `wave`, `map`, `feed`. The Plan card (`map`) shows one row per pillar with
+  `decision`, `wave`, `map`, `feed`, `pull`. The Plan card (`map`) shows one row per pillar with
   its ready, working and waiting counts, and the first five ready issues linked
   to their pages; it has no actions. `resources/list` and `resources/read` serve one small
   sandboxed page, which draws the `structuredContent.card` model that the
