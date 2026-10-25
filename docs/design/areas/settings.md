@@ -1,3 +1,21 @@
 # Settings page
 
+## Settings rows
+
+A list whose rows are settings — each row a name, its current value, and a control to change it (limits, capacity,
+flags, telemetry, cloud, people, crew roles, subscription headroom and budget) — is §5's list row in a list that lets
+the text wrap and gives the control a place that is always visible. Use `.row-actions` only for secondary actions
+(delete, wake, pin, revoke).
+
+- `.setting-list` — the `<ul class="list setting-list">` around such rows: title and meta wrap instead of ellipsizing,
+  and a row's trail takes its own line under 640px. Written by the settings pages, e.g. `appDomainsView()` and
+  `appEgressView()` in `src/web/pages/settings.ts`, `limitsPage()` in `src/web/pages/admin-limits.ts`, `capacityPage()` in
+  `src/web/pages/capacity.ts`, `flagsPage()` in `src/web/pages/flags.ts`, and by lists of the same shape in
+  `src/web/pages/repo.ts`, `src/web/pages/pull.ts`, `src/web/pages/map.ts` and `src/web/studio/make_it_yours.ts`.
+  Styled in `src/web/style/components.ts`.
+- `.row-fields` — the form in a settings row's trail (input, Save, Default): always visible, never hover-gated,
+  wrapping under the text before it would clip. Written in the trail of `row()` by `src/web/pages/flags.ts`,
+  `src/web/pages/telemetry.ts`, `src/web/pages/cloud.ts`, `src/web/pages/people.ts`, `src/web/pages/admin-limits.ts`,
+  `src/web/pages/capacity.ts`, `src/web/pages/subscriptions.ts` and `src/web/studio/crew.ts`. Styled in
+  `src/web/style/components.ts`.
 - `.record-value` — a DNS record's value on an app's domain row (`.setting-list` row meta): monospace, wraps instead of ellipsizing, and `user-select: all` so one click selects the whole value to copy.
