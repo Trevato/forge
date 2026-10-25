@@ -33,7 +33,7 @@ import {
   type Ranked,
 } from "../../core/dependencies.ts";
 import type { Issue } from "../../core/issues.ts";
-import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { cachedLane, cachedLayout, repoHeads, scopeKey } from "../map_cache.ts";
 import { holdsFor } from "../../core/holds.ts";
 import {
@@ -1351,24 +1351,31 @@ const studioEmpty = (base: string): MapEmpty => ({
 
 /** GET /:owner/:name/map */
 export async function mapPage(ctx: Ctx): Promise<Response> {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
   const db = ctx.app.db;
   const studio = studioRecord(ctx, repo) !== undefined;
-  const graph = repoGraph(db, repo.id, {
-    ...sealedScope(db, repo, ctx.auth.user),
-  });
-  const ready = readyNow(graph);
-  const blocked = blockedOn(graph);
-  const critical = criticalPath(graph);
-  const placed = cachedLayout(graph, layout);
-  const marks = marksFor(db, repo.id, graph, listActiveRuns(db, [repo.id]));
-  const readySet = new Set(ready.map((r) => r.issue.id));
-  const counts = countWords(
-    graph.issues.map((i) => wordFor(i, readySet, marks)),
-  );
-  const pillars = pillarView(db, repo);
-  const ask = askToLiveFor(ctx.app, repo, pillars, ctx.auth.user);
+  // The read: graph, marks and pillars, one phase; `render` is the page's own.
+  const { graph, ready, blocked, critical, placed, marks, readySet, counts, pillars, ask } =
+    timePhase(ctx.request, "map", () => {
+      const graph = repoGraph(db, repo.id, {
+        ...sealedScope(db, repo, ctx.auth.user),
+      });
+      const ready = readyNow(graph);
+      const blocked = blockedOn(graph);
+      const critical = criticalPath(graph);
+      const placed = cachedLayout(graph, layout);
+      const marks = marksFor(db, repo.id, graph, listActiveRuns(db, [repo.id]));
+      const readySet = new Set(ready.map((r) => r.issue.id));
+      const counts = countWords(
+        graph.issues.map((i) => wordFor(i, readySet, marks)),
+      );
+      const pillars = pillarView(db, repo);
+      const ask = askToLiveFor(ctx.app, repo, pillars, ctx.auth.user);
+      return { graph, ready, blocked, critical, placed, marks, readySet, counts, pillars, ask };
+    });
+  const rendering = performance.now();
   const body = html`${repoHeader(ctx, repo, "map")}
     <div class="page-head mt">
       <h1>Map</h1>
@@ -1423,7 +1430,7 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
         )}
       </aside>
     </div>`;
-  return page({
+  const response = page({
     ctx,
     title: `Map · ${repo.name}`,
     crumbs: crumbsFor(repo),
@@ -1436,6 +1443,8 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
     styleCss: mapCss,
     scriptJs: `${liveRegionsJs}\n${mapViewJs}`,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 /**
