@@ -238,13 +238,17 @@ describe("the merge queue", () => {
     }
     const sizes = said.flatMap((l) => /\[queue\] gating (\d+) pulls? since/.exec(l)?.[1] ?? []).map(Number);
     // The first eight are red and halving finds the culprit; the rest go back
-    // together. How many speculative gates overlap is the machine's call, so
-    // the verdict is the shape: the cap holds, only the culprit is gated
-    // alone, and eleven good pulls are not eleven gates.
+    // together. With a check slot free the search splits (#4999): the head of
+    // a red batch is gated alone beside the line, so besides the culprit one
+    // more lone gate is the search's own. How many gates overlap is the
+    // machine's call, so the verdict is the shape: the cap holds, eleven good
+    // pulls are not eleven gates, and once the first eight are red the four
+    // fresh pulls behind them are one candidate, not four.
     expect(Math.max(...sizes)).toBeLessThanOrEqual(MAX_CANDIDATE);
-    expect(sizes.filter((n) => n === 1).length).toBeLessThanOrEqual(1);
-    expect(sizes.filter((n) => n >= 2).length).toBeGreaterThanOrEqual(2);
+    expect(sizes.filter((n) => n === 1).length).toBeLessThanOrEqual(2);
     expect(sizes.length).toBeLessThan(11);
+    const after = sizes.slice(sizes.indexOf(MAX_CANDIDATE) + 1);
+    expect(after.some((n) => n >= 4)).toBe(true);
     for (const [i, pull] of pulls.entries()) expect(merged(repo, pull)).toBe(i !== 1);
     expect(latestDecision(app.db, pulls[1]!.id, "land")?.answer).toBe("red");
   }, SLOW);
