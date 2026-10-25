@@ -6157,15 +6157,19 @@ export function apiRoutes(router: Router<Handler>): void {
   // an `Accept: text/event-stream`). Lines already written come first,
   // then each new one as it lands; `done` carries the finished run.
   router.add("GET", "/api/v1/repos/:owner/:name/runs/:id/log", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const found = runLog(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "");
+    const found = timePhase(ctx.request, "log", () =>
+      runLog(ctx.app, ctx.auth.user, repo, ctx.params.id ?? ""),
+    );
     if (!found.ok || found.value.logHidden) return notFound();
     const follow =
       ctx.url.searchParams.get("follow") === "1" ||
       (ctx.request.headers.get("accept") ?? "").includes("text/event-stream");
     if (!follow) {
-      return new Response(`${found.value.lines.join("\n")}\n`, {
+      const body = timePhase(ctx.request, "render", () => `${found.value.lines.join("\n")}\n`);
+      return new Response(body, {
         headers: {
           "content-type": "text/plain; charset=utf-8",
           "cache-control": "no-store",
