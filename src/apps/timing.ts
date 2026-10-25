@@ -38,10 +38,14 @@ export class Stopwatch {
   /**
    * `timing: <what> 0.4s after the deploy started — turn 0.0s · checkout
    * 0.3s · …`, every lap so far in the order it was taken. `since` names
-   * the start in the line's words; a run says "the run started".
+   * the start in the line's words; a run says "the run started". `running`
+   * names a step not yet over, shown with the time it has taken so far.
    */
-  line(what: string, since = "the deploy started"): string {
-    const steps = this.laps.map((l) => `${l.name} ${seconds(l.ms)}`).join(" · ");
+  line(what: string, since = "the deploy started", running?: string): string {
+    const laps = [...this.laps];
+    // The step still going, counted to now without taking its lap.
+    if (running !== undefined) laps.push({ name: running, ms: this.now() - this.last });
+    const steps = laps.map((l) => `${l.name} ${seconds(l.ms)}`).join(" · ");
     return `timing: ${what} ${seconds(this.elapsed())} after ${since}${steps === "" ? "" : ` — ${steps}`}`;
   }
 }

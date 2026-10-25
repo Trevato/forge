@@ -1342,6 +1342,8 @@ async function work(
         write,
         variantGroup: run.variantGroup,
         continuing: pullStands,
+        onOpened: () =>
+          write(watch.line("first push", "the run started", "harness to first push")),
       });
     let result = await invoke(
       prompt,

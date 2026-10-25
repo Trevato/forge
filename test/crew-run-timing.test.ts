@@ -5,9 +5,10 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { assignIssue, openIssue } from "../src/actions/issues.ts";
+import { listPulls } from "../src/core/pulls.ts";
 import { getAgent } from "../src/core/agents.ts";
 import { workdirFor } from "../src/crew/runner.ts";
 import { readRunLog } from "../src/runs/log.ts";
@@ -60,6 +61,32 @@ describe("an agent run's timing line", () => {
       /^timing: run ended \d+\.\ds after the run started — clone \d+\.\ds · brief \d+\.\ds · harness \d+\.\ds$/,
     );
   }, 30_000);
+
+  test("a pull opened at the first push gets its line before the end line", async () => {
+    rmSync(join(standIn.dataDir, "release"), { force: true });
+    // The stand-in lingers after its push; release it once the pull is open.
+    const releasing = (async () => {
+      const deadline = Date.now() + 30_000;
+      while (Date.now() < deadline) {
+        const open = listPulls(standIn.app.db, standIn.repo.id, {
+          state: "open",
+          limit: 50,
+        });
+        if (open.some((p) => p.title === "Sow the beans")) break;
+        await Bun.sleep(100);
+      }
+      writeFileSync(join(standIn.dataDir, "release"), "");
+    })();
+    const { run, lines, timing } = await runOn("Sow the beans", undefined, "LINGER-ME");
+    await releasing;
+    expect(run.state).toBe("ok");
+    expect(timing).toHaveLength(2);
+    expect(timing[0]).toMatch(
+      /^timing: first push \d+\.\ds after the run started — clone \d+\.\ds · brief \d+\.\ds · harness to first push \d+\.\ds$/,
+    );
+    expect(lines.indexOf(timing[0]!)).toBeLessThan(lines.indexOf(timing[1]!));
+    expect(lines.at(-1)).toBe(timing[1]!);
+  }, 60_000);
 
   test("a run whose clone cannot be prepared still ends with the line", async () => {
     const { run, lines, timing } = await runOn("Prune the roses", (number) => {
