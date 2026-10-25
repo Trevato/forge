@@ -168,7 +168,7 @@ export async function shelfRows(
     db,
     repos.map((r) => r.id),
   );
-  // A tell nobody can pick up (no builder on the crew) is stuck, not quiet —
+  // A tell nobody can pick up (the crew has no builder) is stuck, not quiet —
   // both reads batched across the whole shelf, never once per row.
   const repoIds = repos.map((r) => r.id);
   const withBuilder = reposWithBuilder(db, repoIds);

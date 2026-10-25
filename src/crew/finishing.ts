@@ -44,6 +44,7 @@ import { readConflictRoom } from "./conflict_room.ts";
 import { CHECK_FAILED_LIMIT, lastHumanWord, queueAgentRun } from "./dispatch.ts";
 import { HANDOVER_NOTE } from "./guard.ts";
 import { pickBuilder } from "./route.ts";
+import { NO_BUILDER_ON_CREW, WAITS_FOR_BUILDER_SLOT } from "./words.ts";
 
 const log = createLog("crew");
 
@@ -145,9 +146,9 @@ function finishOne(
     builders.find((b) => b.user.id === issue.assigneeId) ??
     builders.find((b) => b.user.id === issue.authorId) ??
     pickBuilder(issue, builders, new Map());
-  if (builder === undefined) return not("no builder on the crew");
+  if (builder === undefined) return not(NO_BUILDER_ON_CREW);
   if (failedUpdates(app, issue, builder) >= CHECK_FAILED_LIMIT) return handOver(app, repo, pull, issue, files);
-  if (slots <= 0) return not("waits for a builder slot");
+  if (slots <= 0) return not(WAITS_FOR_BUILDER_SLOT);
   if (room <= 0) return not("waits for room in the check lane");
   const run = queueAgentRun(app, repo, issue, builder, "conflict", undefined, {
     notBefore: new Date().toISOString(),
