@@ -16,7 +16,7 @@ export const content = /* css */ `
   margin: 20px 0 14px;
 }
 .page-head h1 { min-width: 0; }
-.page-head .sub { flex-basis: 100%; color: var(--muted-fg); font-size: 13px; margin-top: -4px; }
+.page-head > .page-head-sub { flex-basis: 100%; margin-top: -4px; }
 
 .repo-head { margin: 18px 0 0; view-transition-name: repo-head; }
 .repo-title {

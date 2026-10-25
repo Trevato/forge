@@ -715,7 +715,7 @@ async function browseThread(
         ${detail.issue.title}
         <span class="number">#${detail.issue.number}</span>
       </h1>
-      <div class="sub bar">
+      <div class="page-head-sub bar muted small">
         ${stateBadge(state)}
         <span
           >${detail.issue.originAuthor ?? detail.issue.authorName} opened this

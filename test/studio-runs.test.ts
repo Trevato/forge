@@ -508,7 +508,8 @@ describe("working: a run's own page in the studio", () => {
       expect(page).not.toContain("issue-head");
       expect(page).not.toContain("issue-meta");
       expect(page).toContain('class="page-head"');
-      expect(page).toContain('class="sub bar"');
+      expect(page).toContain('class="page-head-sub bar muted small"');
+      expect(page).not.toContain('class="sub');
     }
   });
 

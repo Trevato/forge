@@ -455,7 +455,7 @@ export function pageHead(
     ${o.lead ?? null}
     <h1>${title}</h1>
     ${o.actions ? html`<span class="spacer"></span>${o.actions}` : null}
-    ${o.sub ? html`<span class="sub">${o.sub}</span>` : null}
+    ${o.sub ? html`<span class="page-head-sub muted small">${o.sub}</span>` : null}
   </div>`;
 }
 

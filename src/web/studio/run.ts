@@ -152,7 +152,7 @@ export async function runView(
       : null}
   >
     <h1>${title}</h1>
-    <div class="sub bar">
+    <div class="page-head-sub bar muted small">
       ${wordBadge(word, "run-word")}
       ${when(
         issue,

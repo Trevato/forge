@@ -364,7 +364,7 @@ async function studioTell(
   const marks = marksByName(db, [issue.authorName, issue.assigneeName ?? ""]);
   const head = html`<div class="page-head">
     <h1>${issue.title} <span class="number">#${issue.number}</span></h1>
-    <div class="sub bar">
+    <div class="page-head-sub bar muted small">
       ${direction
         ? html`<span class="muted small"
             >${icon("map")} the repository's standing direction — always

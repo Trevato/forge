@@ -442,7 +442,6 @@ the same line (#4888).
   - `.repo-desc`
   - `.repo-title`
   - `.slash`
-  - `.sub`
   - `.tok`
 - **`style/content.ts`, code view** — the source view and the syntax-highlight token classes `highlight-html.ts` builds as `tok-${kind}`:
   - `.tok-deleted`
