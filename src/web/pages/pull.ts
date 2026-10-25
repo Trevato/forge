@@ -11,6 +11,7 @@
 import { askCheck } from "../../checks/again.ts";
 import { addCommentThrough } from "../../actions/issues.ts";
 import type { AccessError } from "../../actions/access.ts";
+import { NO_WRITE_ACCESS, PULL_GONE } from "../../actions/pull_words.ts";
 import {
   addReview,
   mergePull,
@@ -1092,8 +1093,8 @@ export function mergeFailure(error: AccessError | MergePullError): string {
   if (error === "checks_required")
     return "This pull request needs a passing deploy of its current head, and does not have one yet. Nothing was merged.";
   if (error === "forbidden" || error === "unauthorized")
-    return "You do not have write access to this repository.";
-  return "That pull request is no longer here.";
+    return NO_WRITE_ACCESS;
+  return PULL_GONE;
 }
 
 // ---- verdicts and threads ----
@@ -1165,7 +1166,7 @@ export async function pullApproveHereSubmit(ctx: Ctx): Promise<Response> {
               ? "That pull request is closed."
               : done.error === "not_foreign"
                 ? "That pull request needs no approval to run."
-                : "That pull request is no longer here.",
+                : PULL_GONE,
     });
   return flashTo(ctx, dest, {
     message: isProposed(ctx.app.db, found.pull)

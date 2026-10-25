@@ -19,6 +19,7 @@
 
 import { editFiles, MAX_FILE_BYTES } from "../../actions/contents.ts";
 import { contribute } from "../../actions/contribute.ts";
+import { NO_WRITE_ACCESS } from "../../actions/pull_words.ts";
 import { canAdmin, getRepoById } from "../../core/repos.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { isSafeRef, isSafeTreePath } from "../../git/guard.ts";
@@ -116,7 +117,7 @@ export function suggestBranch(username: string, path: string): string {
 export function editErrorText(error: unknown): string {
   if (typeof error === "string") {
     if (error === "forbidden" || error === "unauthorized")
-      return "You do not have write access to this repository.";
+      return NO_WRITE_ACCESS;
     if (error === "origin_owner_only")
       return "This repository mirrors an origin, and only the account that connected it can write through to it.";
     if (error === "origin_unreachable")
