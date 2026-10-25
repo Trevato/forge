@@ -231,6 +231,27 @@ test("an app's routes are described, and env values are never read back", () => 
   expect(doc.paths[`${A}/{env}/redeploy`].post.responses["202"]).toBeDefined();
 });
 
+test("mirroring and forking from an origin, its job and stream, and origin apps are described", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const want: [string, string][] = [
+    ["/api/v1/user/origins/{id}/mirror", "post"],
+    ["/api/v1/user/origins/{id}/fork", "post"],
+    ["/api/v1/user/origins/{id}/mirror/{job}", "get"],
+    ["/api/v1/user/origins/{id}/mirror/{job}/stream", "get"],
+    ["/api/v1/migrate/{job}/stream", "get"],
+    ["/api/v1/user/origin-apps", "get"],
+    ["/api/v1/user/origin-apps", "post"],
+    ["/api/v1/user/origin-apps/{id}", "delete"],
+  ];
+  for (const [path, method] of want) {
+    expect(doc.paths[path]?.[method]).toBeDefined();
+    expect(doc.paths[path][method].security).toBeDefined();
+  }
+  const row = ROUTES.find((r: any) => r.path === "/api/v1/user/origins/{id}/mirror/{job}/stream") as any;
+  expect(row.summary).toContain("text/event-stream");
+  expect(row.summary).toContain("mirror.done");
+});
+
 test("the admin's writes are described: a capacity setting, a limit and a team", () => {
   const doc = openapi("https://f.test", "1") as any;
   for (const path of ["capacity/{key}", "limits/{key}", "teams/{slug}"]) {
