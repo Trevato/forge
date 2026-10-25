@@ -27,6 +27,8 @@ import { adminCookie } from "./helpers/admin.ts";
 
 quietLogs();
 
+const roomy = () => ({ freeBytes: 95, totalBytes: 100 });
+
 const PASSWORD = "a-long-asks-passphrase";
 
 describe("the asks page", () => {
@@ -74,7 +76,8 @@ describe("the asks page", () => {
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-asks-"));
-    app = createApp({ dataDir, port: 0 });
+    // The disk is the host's, not the case's: a loaded check machine near full would ask for room.
+    app = createApp({ dataDir, port: 0, disk: roomy });
     servers = await serve(app);
     alice = `${await adminCookie(app, { username: "alice", email: "alice@forge.test", password: PASSWORD })}; forge_mode=studio`;
     bob = await signUp("bob");
