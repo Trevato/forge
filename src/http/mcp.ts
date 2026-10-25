@@ -154,6 +154,7 @@ import { pillarView } from "../core/pillars.ts";
 import { createBranch, deleteBranch } from "../actions/branches.ts";
 import { listBranches } from "../git/branches.ts";
 import { commitLog, listRefs } from "../git/read.ts";
+import { diffCommit } from "../git/diff.ts";
 import { repoDir } from "../git/repos.ts";
 import { runGit } from "../git/env.ts";
 import { isSafeRef, isSafeTreePath } from "../git/guard.ts";
@@ -253,7 +254,7 @@ import { resourceMetadataUrl } from "./oauth.ts";
 import { body, boundedBody, json } from "./respond.ts";
 import { sizesView } from "../spawn/sizes.ts";
 import type { Router } from "./router.ts";
-import { mayReadRuns, runForReader, runLog } from "../actions/runs.ts";
+import { checkOfCommit, mayReadRuns, runForReader, runLog } from "../actions/runs.ts";
 import { manifestFor } from "../actions/here.ts";
 import { clientBucket } from "./peer.ts";
 import { listPinned as listPinnedPanels, movePinned, pinPanel, unpinPanel } from "../actions/board-pins.ts";
@@ -2260,13 +2261,14 @@ const TOOLS: readonly Tool[] = [
   {
     name: "commits",
     description:
-      "List a branch's recent commits (newest first), as GET /api/v1/repos/:owner/:name/commits does.",
+      "Recent commits; `oid`: one commit, diff and check.",
     inputSchema: {
       type: "object",
       properties: {
         repo: REPO_ARG,
         ref: { type: "string", maxLength: 255, description: "Branch, tag or commit; default branch." },
         limit: { type: "integer", minimum: 1, maximum: 100 },
+        oid: { type: "string", minLength: 4, maxLength: 64, },
       },
       required: ["repo"],
     },
@@ -2274,6 +2276,24 @@ const TOOLS: readonly Tool[] = [
     async run(ctx, user, args) {
       const repo = repoArg(ctx, user, args);
       if (isAnswer(repo)) return repo;
+      const oid = args["oid"];
+      if (oid !== undefined) {
+        if (typeof oid !== "string" || !/^[0-9a-fA-F]{4,64}$/.test(oid))
+          return bad("invalid", "`oid` is 4 to 64 hex digits");
+        const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
+        const log = await commitLog(dir, oid, { limit: 1 });
+        const commit = log.ok ? log.value[0] : undefined;
+        if (!commit) return bad("not_found", "no such commit");
+        const diff = await diffCommit(dir, commit.oid);
+        const check = await checkOfCommit(ctx.app, user, repo, commit.oid);
+        const files = diff.ok ? diff.value : { files: [], additions: 0, deletions: 0 };
+        return good({
+          says: `${commit.oid.slice(0, 7)} ${commit.subject}: ${files.files.length} file(s) changed.`,
+          ...commit,
+          diff: files,
+          check: check.ok ? check.value : null,
+        });
+      }
       const ref = args["ref"] ?? repo.defaultBranch;
       if (typeof ref !== "string" || ref.length > 255 || !isSafeRef(ref))
         return bad("invalid", "`ref` is a branch, tag or commit");
