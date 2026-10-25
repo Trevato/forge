@@ -9,6 +9,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { CREW_WORKING } from "../../actions/ask_state_words.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { listComments, listIssues, type Issue } from "../../core/issues.ts";
 import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
@@ -93,7 +94,7 @@ export function answersRegion(
     return html`<li class="answer" data-tell="${issue.number}">
       <a href="${tellHref(base, issue.number)}" class="answer-tell">${issue.title}</a>
       ${said === undefined
-        ? html`<p class="muted small answer-wait">${working ? "The crew is working on it." : "Waiting for the crew."}</p>`
+        ? html`<p class="muted small answer-wait">${working ? CREW_WORKING : "Waiting for the crew."}</p>`
         : html`<p class="answer-said"><b>${said.who}</b> ${time(said.at)}<br />${text}</p>`}
     </li>`;
   });
