@@ -21,6 +21,11 @@ import { listRemoteRepos, listUserOrigins, syncOriginNow } from "../actions/orig
 import { originJson, remoteRepoJson } from "./api.ts";
 import { FAMILY_WORDS } from "../actions/family_words.ts";
 import { showProvenance } from "../actions/provenance.ts";
+import {
+  APP_ALREADY_YOURS,
+  ORIGIN_UNREACHABLE,
+  REPORT_ALREADY_DECIDED,
+} from "../actions/origin_app_words.ts";
 import { migrateMessage, migrateRepo, migrationJobFor } from "../actions/migrate.ts";
 import type { MirrorJob } from "../origins/jobs.ts";
 import { EVENTS_LIMIT_MAX, eventsLimit, eventsPage, validEventsCursor } from "../core/events_page.ts";
@@ -1920,7 +1925,7 @@ const TOOLS: readonly Tool[] = [
       const listed = await listRemoteRepos(ctx.app, user, origin);
       if (!listed.ok)
         return listed.error === "unreachable"
-          ? bad("origin_unreachable", "the origin could not be reached")
+          ? bad("origin_unreachable", ORIGIN_UNREACHABLE)
           : bad("not_found", "no such origin");
       return good(listed.value.map((row) => remoteRepoJson(ctx, row)));
     },
@@ -2170,7 +2175,7 @@ const TOOLS: readonly Tool[] = [
         return bad("invalid", "give both `id` and `action`, or neither to list");
       const denied = (error: string): Answer =>
         error === "decided"
-          ? bad("decided", "this report was already decided")
+          ? bad("decided", REPORT_ALREADY_DECIDED)
           : error === "not_found"
             ? bad("not_found", "no such report here")
             : bad(
@@ -3148,7 +3153,7 @@ const TOOLS: readonly Tool[] = [
           : made.error.kind === "invalid"
           ? bad("invalid", made.error.message)
           : made.error.kind === "own"
-            ? bad("own", "this app is already yours")
+            ? bad("own", APP_ALREADY_YOURS)
             : made.error.kind === "not_member"
               ? bad("not_member", NOT_A_MEMBER)
             : made.error.kind === "unverified"

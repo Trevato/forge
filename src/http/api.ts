@@ -17,6 +17,11 @@ import {
 import { getFollow } from "../core/upstream_follow.ts";
 import { FAMILY_WORDS } from "../actions/family_words.ts";
 import { showProvenance } from "../actions/provenance.ts";
+import {
+  APP_ALREADY_YOURS,
+  ORIGIN_UNREACHABLE,
+  REPORT_ALREADY_DECIDED,
+} from "../actions/origin_app_words.ts";
 import { getProvenance, provenanceFacts } from "../core/provenance.ts";
 import { goldenPath } from "../apps/golden_path.ts";
 import { upstreamPayload } from "../spawn/upstream.ts";
@@ -778,7 +783,7 @@ function sourceFailure(error: SourceError): Response {
       return apiError(
         "origin_unreachable",
         502,
-        "the origin could not be reached",
+        ORIGIN_UNREACHABLE,
       );
   }
 }
@@ -812,7 +817,7 @@ function originAware(error: string, status = 422): Response {
     return apiError(
       "origin_unreachable",
       502,
-      "the origin could not be reached; nothing was changed",
+      `${ORIGIN_UNREACHABLE}; nothing was changed`,
     );
   if (error === "origin_refused")
     return apiError(
@@ -3337,7 +3342,7 @@ export function apiRoutes(router: Router<Handler>): void {
       );
       if (!accepted.ok)
         return accepted.error === "decided"
-          ? apiError("decided", 409, "this report was already decided")
+          ? apiError("decided", 409, REPORT_ALREADY_DECIDED)
           : originAware(accepted.error);
       return json(withLabels(ctx, accepted.value), 201);
     },
@@ -3359,7 +3364,7 @@ export function apiRoutes(router: Router<Handler>): void {
       );
       if (!dismissed.ok)
         return dismissed.error === "decided"
-          ? apiError("decided", 409, "this report was already decided")
+          ? apiError("decided", 409, REPORT_ALREADY_DECIDED)
           : respondAccess(dismissed.error, 403);
       return json({ id: ctx.params.id, state: "dismissed" });
     },
@@ -4790,7 +4795,7 @@ export function apiRoutes(router: Router<Handler>): void {
     );
     if (!listed.ok)
       return listed.error === "unreachable"
-        ? apiError("origin_unreachable", 502, "the origin could not be reached")
+        ? apiError("origin_unreachable", 502, ORIGIN_UNREACHABLE)
         : respondAccess(listed.error, 404);
     return timePhase(ctx.request, "render", () =>
       json(listed.value.map((row) => remoteRepoJson(ctx, row))),
@@ -5306,7 +5311,7 @@ export function apiRoutes(router: Router<Handler>): void {
         : made.error.kind === "invalid"
         ? apiError("invalid", 422, made.error.message)
         : made.error.kind === "own"
-          ? apiError("own", 409, "this app is already yours")
+          ? apiError("own", 409, APP_ALREADY_YOURS)
           : made.error.kind === "unverified"
             ? apiError("unverified", 403, "prove your email first")
             : made.error.kind === "unauthorized"
