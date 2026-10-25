@@ -8,6 +8,7 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { homeTruth } from "../system/home_truth.ts";
 import {
   checkUpstreamNow,
   FOLLOW_REFUSALS,
@@ -1474,6 +1475,7 @@ export function apiRoutes(router: Router<Handler>): void {
     };
   router.add("GET", "/api/v1/telemetry/system", telemetryRead("system", (c, r) => systemFor(c.app, r)));
   router.add("GET", "/api/v1/telemetry/flow", telemetryRead("flow", (c, r) => flowFor(c.app, r)));
+  router.add("GET", "/api/v1/telemetry/home", telemetryRead("home", (c) => homeTruth(c.app, c.auth.user!)));
   router.add("GET", "/api/v1/telemetry/sources", telemetryRead("sources", () => ({ sources: sourcesOut() })));
   router.add("GET", "/api/v1/telemetry/history", telemetryRead("history", (c) => ({ points: historyFor(c.app) })));
   // The funnel: what any agent that arrives should know. Open to all.

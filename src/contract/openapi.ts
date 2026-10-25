@@ -442,6 +442,7 @@ export const ROUTES: readonly Route[] = [
   },
   { method: "get", path: "/api/v1/telemetry/system", summary: "Read the forge's system view; the owner or an agent holding telemetry:read, with a ro token; every agent read is logged", auth: true },
   { method: "get", path: "/api/v1/telemetry/flow", summary: "Read the forge's flow view; the owner or an agent holding telemetry:read, with a ro token; every agent read is logged", auth: true },
+  { method: "get", path: "/api/v1/telemetry/home", summary: "Read the figures the home is scored against: landed in 24 h, live version, builders and why idle, spend against the ceiling, what waits on the caller; the owner or an agent holding telemetry:read, with a ro token; every agent read is logged", auth: true },
   { method: "get", path: "/api/v1/telemetry/sources", summary: "List telemetry sources; answers { sources }; the owner or an agent holding telemetry:read", auth: true },
   { method: "get", path: "/api/v1/telemetry/history", summary: "Read telemetry history; answers { points }; the owner or an agent holding telemetry:read", auth: true },
   { method: "get", path: `${REPO}/pulls/{number}`, summary: "Read one pull with its diff and review gate (diff=0 leaves the diff out)", auth: false, query: { diff: "string" } },
