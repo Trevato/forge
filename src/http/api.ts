@@ -384,6 +384,7 @@ import { carriedBy } from "../core/carried.ts";
 import { readRunLog, subscribeRunLog } from "../runs/log.ts";
 import { blobForRender, commitLog, listRefs, listTree } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
+import { readWave, readWaves } from "../story/waves.ts";
 import type { Result } from "../kernel/result.ts";
 import { sizesView } from "../spawn/sizes.ts";
 import { holds, weakEtag } from "./etag.ts";
@@ -3644,6 +3645,53 @@ export function apiRoutes(router: Router<Handler>): void {
       return timePhase(ctx.request, "render", () => json(data));
     },
   );
+  // Waves as data (#5363): what shipped, newest first, read through the same
+  // functions as the page and the feed. A file that is not a wave is left out.
+  router.add("GET", "/api/v1/repos/:owner/:name/waves", async (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const entries = await timePhaseAsync(ctx.request, "waves", () =>
+      readWaves(repoDir(ctx.app.reposRoot, repo.ownerName, repo.name), repo.defaultBranch),
+    );
+    return timePhase(ctx.request, "render", () =>
+      json({
+        items: entries.flatMap((e) =>
+          e.ok ? [{ version: e.wave.version, date: e.wave.date, headline: e.wave.headline }] : [],
+        ),
+        next_cursor: null,
+      }),
+    );
+  });
+  router.add("GET", "/api/v1/repos/:owner/:name/waves/:version", async (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const entry = await timePhaseAsync(ctx.request, "wave", () =>
+      readWave(
+        repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
+        repo.defaultBranch,
+        ctx.params.version ?? "",
+      ),
+    );
+    if (!entry?.ok) return notFound();
+    const w = entry.wave;
+    // A pull line is `#12 Title` linking to the pull; the number is whichever
+    // of the two names it, or null.
+    const number = (p: { title: string; url: string }): number | null => {
+      const m = /^#(\d+)\b/.exec(p.title) ?? /\/pulls\/(\d+)\/?$/.exec(p.url);
+      return m ? Number(m[1]) : null;
+    };
+    return timePhase(ctx.request, "render", () =>
+      json({
+        version: w.version,
+        date: w.date,
+        headline: w.headline,
+        highlights: w.highlights,
+        pulls: w.pulls.map((p) => ({ number: number(p), title: p.title, url: p.url })),
+      }),
+    );
+  });
   // Keep a thought exactly as typed (#1658): append-only, never edited.
   router.add("POST", "/api/v1/thoughts", async (ctx) => {
     const denied = requireScope(ctx, "rw");
