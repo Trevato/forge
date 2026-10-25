@@ -440,7 +440,6 @@ the same line (#4888).
   - `.policy-line`
   - `.repo-actions`
   - `.repo-desc`
-  - `.repo-layout`
   - `.repo-title`
   - `.slash`
   - `.sub`

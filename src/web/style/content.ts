@@ -157,12 +157,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 
 .repo-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 
-.repo-layout { display: grid; gap: 16px; margin-top: 16px; align-items: start; }
-@media (min-width: 960px) {
-  .repo-layout { grid-template-columns: minmax(0, 1fr) 280px; gap: 24px; }
-  .repo-layout > aside { position: sticky; top: calc(var(--topbar-h) + 16px); }
-}
-
 .tok { white-space: nowrap; }
 
 .filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
@@ -249,7 +243,7 @@ form.inline { display: inline; margin-left: auto; }
    *content*, so a column with a long unbreakable line pushes the page wider
    than the phone rather than letting its own ellipsis do the work. A zero
    min-width is what makes truncation inside a grid actually truncate. */
-.split > *, .repo-layout > * { min-width: 0; }
+.split > * { min-width: 0; }
 
 /* The generic two-column page: content, then a sidebar that sticks. */
 .split { display: grid; gap: 16px; margin-top: 16px; align-items: start; }

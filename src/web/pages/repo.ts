@@ -734,7 +734,7 @@ export async function renderCode(
     <div class="mt">${readme}</div>`;
   return o.rail === undefined
     ? main
-    : html`<div class="repo-layout">
+    : html`<div class="split">
         <div>${main}</div>
         <aside aria-label="About">${o.rail}</aside>
       </div>`;
