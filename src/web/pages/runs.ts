@@ -11,6 +11,7 @@
  * id, so the redirect itself says nothing about what exists.
  */
 
+import { SAY_SOMETHING_WORDS } from "../../actions/tell_words.ts";
 import { readLooks } from "../../checks/looks.ts";
 import type { Database } from "bun:sqlite";
 import {
@@ -346,7 +347,7 @@ export async function runSteer(ctx: Ctx): Promise<Response> {
       tone: "danger",
       message:
         steered.error === "empty"
-          ? "Say something first."
+          ? SAY_SOMETHING_WORDS
           : steered.error === "not_agent"
             ? "Only an agent's run can be steered."
             : "You need write access to steer a run.",

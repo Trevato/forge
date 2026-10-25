@@ -13,6 +13,7 @@ import { holdPull, releasePull } from "../../actions/holds.ts";
 import { addComment } from "../../actions/issues.ts";
 import { parseFrom, SENT_WORDS, tell, toldWords, TOO_LONG_WORDS } from "../../actions/tell.ts";
 import { contextNote, parseContext } from "../../actions/tell_context.ts";
+import { NOT_TOLD_FROM_WORDS, NOT_TOLD_WORDS, SAY_SOMETHING_WORDS } from "../../actions/tell_words.ts";
 import { keepThought } from "../../actions/thought.ts";
 import { DIRECTION_NOTE } from "../../crew/direct.ts";
 import { mergePull } from "../../actions/pulls.ts";
@@ -58,7 +59,7 @@ async function tellFrom(
   if (text === "")
     return flashOrJson(ctx, back, {
       tone: "danger",
-      message: "Say something first.",
+      message: SAY_SOMETHING_WORDS,
     });
   const told = await tell(ctx.app, ctx.auth.user, repo, text, 1, from);
   if (!told.ok && told.error === "body_too_long")
@@ -74,7 +75,7 @@ async function tellFrom(
           ? DIRECTION_NOTE
           : told.error === "unverified"
             ? "Verify your email first."
-            : "That could not be told.",
+            : NOT_TOLD_WORDS,
     });
   const { routed } = told.value;
   // A client's "Ask for something" (named by the form, not guessed from `/`):
@@ -119,9 +120,9 @@ async function tellFromPage(ctx: Ctx, repo: Repo, form: Form): Promise<Response>
   if (where?.pull !== undefined) keep.set("pull", String(where.pull));
   const back = `${repoBase(repo)}/tell?${keep}`;
   if (where === null || where === undefined)
-    return flashTo(ctx, back, { tone: "danger", message: "That page could not be told from." });
+    return flashTo(ctx, back, { tone: "danger", message: NOT_TOLD_FROM_WORDS });
   const text = field(form, "text").trim();
-  if (text === "") return flashTo(ctx, back, { tone: "danger", message: "Say something first." });
+  if (text === "") return flashTo(ctx, back, { tone: "danger", message: SAY_SOMETHING_WORDS });
   const told = await tell(ctx.app, ctx.auth.user, repo, `${text}${contextNote(where)}`);
   if (!told.ok)
     return flashTo(ctx, back, {
@@ -133,7 +134,7 @@ async function tellFromPage(ctx: Ctx, repo: Repo, form: Form): Promise<Response>
             ? "Verify your email first."
             : told.error === "body_too_long"
               ? TOO_LONG_WORDS
-              : "That could not be told.",
+              : NOT_TOLD_WORDS,
     });
   const issue = `${repoBase(repo)}/issues/${told.value.issue.number}`;
   return page({
@@ -309,7 +310,7 @@ export async function saySubmit(ctx: Ctx): Promise<Response> {
   if (text === "")
     return flashTo(ctx, base, {
       tone: "danger",
-      message: "Say something first.",
+      message: SAY_SOMETHING_WORDS,
     });
   const said = addComment(ctx.app, ctx.auth.user, repo, pull, text);
   return flashOrJson(ctx, base, {

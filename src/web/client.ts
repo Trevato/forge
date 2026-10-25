@@ -12,6 +12,7 @@
 
 import { STAGE_BADGE_JS } from "./stage-row.ts";
 import { paletteHelpersJs } from "./palette.ts";
+import { NOT_TOLD_WORDS } from "../actions/tell_words.ts";
 
 /**
  * A native `<dialog>` opened as a modal that owns its Escape. Shared by the
@@ -1661,7 +1662,7 @@ export const shellJs = /* js */ `
           if (note) note.textContent = d.ok ? d.flash : d.error;
           if (d.ok) { ta.value = ''; window.setTimeout(function () { box.remove(); }, 2500); }
         }).catch(function () {
-          if (note) note.textContent = 'That could not be told.';
+          if (note) note.textContent = '${NOT_TOLD_WORDS}';
         }).then(function () { sending = false; });
       }
       form.addEventListener('submit', function (e) { e.preventDefault(); send(); });

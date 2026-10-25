@@ -18,6 +18,7 @@
 import { addCommentThrough, openIssueThrough } from "../../actions/issues.ts";
 import { COMMENT_EMPTY, COMMENT_NOT_POSTED } from "../../actions/comment_words.ts";
 import { reportTitle } from "../../actions/page-report.ts";
+import { NOT_SENT_WORDS } from "../../actions/tell_words.ts";
 import { NOTE_TOO_LONG } from "../../apps/note_words.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { getIssue, MAX_BODY } from "../../core/issues.ts";
@@ -318,7 +319,7 @@ export async function toolbarComment(ctx: Ctx): Promise<Response> {
       originError(opened.error) ??
         (opened.error === "body_too_long"
           ? NOTE_TOO_LONG
-          : "That could not be sent."),
+          : NOT_SENT_WORDS),
       opened.error === "body_too_long" ? 422 : opened.error === "not_found" ? 404 : 403,
     );
   }
