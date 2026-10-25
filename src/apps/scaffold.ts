@@ -15,6 +15,7 @@
 import { readFileSync } from "node:fs";
 import type { FileWrite } from "../git/write.ts";
 import { beaconJs } from "../web/beacon.ts";
+import { SIGNIN_EXPIRED, SIGNIN_NOT_THIS_BROWSER } from "../kernel/signin_words.ts";
 
 /**
  * The evaluator an app decides with is the forge's own, carried as text:
@@ -667,14 +668,14 @@ export async function finish(
   const state = url.searchParams.get("state") ?? "";
   const code = url.searchParams.get("code") ?? "";
   if (state === "" || code === "" || state !== cookieOf(request, LOGIN_COOKIE))
-    return refuse("This sign-in did not start in this browser.");
+    return refuse(${JSON.stringify(SIGNIN_NOT_THIS_BROWSER)});
   const row = db
     .query<{ verifier: string; nonce: string; expires_at: number }, [string]>(
       "DELETE FROM login WHERE state = ?1 RETURNING verifier, nonce, expires_at",
     )
     .get(hash(state));
   if (row === null || row.expires_at <= now)
-    return refuse("This sign-in took too long or was already used.");
+    return refuse(${JSON.stringify(SIGNIN_EXPIRED)});
   try {
     const res = await fetcher(s)(\`\${issuer(s)}/oauth/token\`, {
       method: "POST",
