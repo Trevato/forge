@@ -19,6 +19,7 @@
 
 import { listRemoteRepos, listUserOrigins, syncOriginNow } from "../actions/origins.ts";
 import { originJson, remoteRepoJson } from "./api.ts";
+import { FAMILY_WORDS } from "../actions/family_words.ts";
 import { showProvenance } from "../actions/provenance.ts";
 import { migrateMessage, migrateRepo, migrationJobFor } from "../actions/migrate.ts";
 import type { MirrorJob } from "../origins/jobs.ts";
@@ -2043,7 +2044,7 @@ const TOOLS: readonly Tool[] = [
       const set = showProvenance(ctx.app, user, repo, shown, dryRun);
       if (!set.ok)
         return set.error === "no_provenance"
-          ? bad("no_provenance", "this repository was not migrated here")
+          ? bad("no_provenance", FAMILY_WORDS.no_provenance)
           : bad("forbidden", "only an admin of this repository shows or hides its trail");
       return good({
         ...set.value,
@@ -2590,7 +2591,7 @@ const TOOLS: readonly Tool[] = [
         const across = await takeForgeCode(ctx.app, user, repo);
         if (across.ok) return good({ ...across.value, ...takeForgeWords(across.value) });
         return across.error === "not_following"
-          ? bad("not_following", "this repository follows nothing across forges")
+          ? bad("not_following", FAMILY_WORDS.not_following)
           : bad(across.error, "only this repository's admin can take the parent forge's code");
       }
       const took = await takeOrTell(ctx.app, user, repo);
@@ -2641,7 +2642,7 @@ const TOOLS: readonly Tool[] = [
       if (cut.ok) return good({ says: `Severed: following nothing since ${cut.value.slice(0, 10)}.`, severedAt: cut.value });
       return bad(
         cut.error,
-        cut.error === "not_following" ? "this repository follows nothing across forges" : "only this forge's owner can sever it",
+        cut.error === "not_following" ? FAMILY_WORDS.not_following : "only this forge's owner can sever it",
       );
     },
   },
@@ -2733,7 +2734,7 @@ const TOOLS: readonly Tool[] = [
         });
       const e = made.error;
       if (e === "no_parent_forge") return bad(e, "this forge has no parent forge to propose to");
-      if (e === "nothing_to_propose") return bad(e, "nothing here is ahead of the parent forge");
+      if (e === "nothing_to_propose") return bad(e, FAMILY_WORDS.nothing_to_propose);
       if (typeof e === "string") return bad(e, "you need write access to propose from here");
       return e.kind === "unreachable"
         ? bad("parent_unreachable", "parent unreachable: nothing was proposed")

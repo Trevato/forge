@@ -15,6 +15,7 @@ import {
   setFollowUpstream,
 } from "../actions/upstream_follow.ts";
 import { getFollow } from "../core/upstream_follow.ts";
+import { FAMILY_WORDS } from "../actions/family_words.ts";
 import { showProvenance } from "../actions/provenance.ts";
 import { getProvenance, provenanceFacts } from "../core/provenance.ts";
 import { goldenPath } from "../apps/golden_path.ts";
@@ -2502,7 +2503,7 @@ export function apiRoutes(router: Router<Handler>): void {
       if (ctx.auth.user?.kind === "agent" || !canAdmin(ctx.app.db, repo, ctx.auth.user))
         return respondAccess("not_found", 422);
       if (getProvenance(ctx.app.db, repo.id) === undefined)
-        return apiError("no_provenance", 422, "this repository was not migrated here");
+        return apiError("no_provenance", 422, FAMILY_WORDS.no_provenance);
     }
     const updated = await updateRepoSettings(ctx.app, ctx.auth.user, repo, {
       ...(input.visibility === "public" || input.visibility === "private"
@@ -2686,7 +2687,7 @@ export function apiRoutes(router: Router<Handler>): void {
       const took = await takeForgeCode(ctx.app, ctx.auth.user, repo);
       if (!took.ok)
         return took.error === "not_following"
-          ? apiError("not_following", 404, "this repository follows nothing across forges")
+          ? apiError("not_following", 404, FAMILY_WORDS.not_following)
           : respondAccess(took.error, 403);
       return json({ ...took.value, ...takeForgeWords(took.value) });
     },
@@ -2703,7 +2704,7 @@ export function apiRoutes(router: Router<Handler>): void {
       const cut = await severForge(ctx.app, ctx.auth.user, repo);
       if (!cut.ok)
         return cut.error === "not_following"
-          ? apiError("not_following", 404, "this repository follows nothing across forges")
+          ? apiError("not_following", 404, FAMILY_WORDS.not_following)
           : respondAccess(cut.error, 403);
       return json({ severedAt: cut.value });
     },
@@ -2767,7 +2768,7 @@ export function apiRoutes(router: Router<Handler>): void {
         if (e === "no_parent_forge")
           return apiError("no_parent_forge", 404, "this repository has no parent forge to propose to");
         if (e === "nothing_to_propose")
-          return apiError("nothing_to_propose", 409, "nothing here is ahead of the parent forge");
+          return apiError("nothing_to_propose", 409, FAMILY_WORDS.nothing_to_propose);
         if (typeof e === "string") return respondAccess(e, 403);
         return e.kind === "unreachable"
           ? apiError("parent_unreachable", 502, "parent unreachable")

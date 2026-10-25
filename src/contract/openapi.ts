@@ -8,6 +8,7 @@
  */
 
 import { CAPACITY_KEYS } from "../core/capacity.ts";
+import { FAMILY_WORDS } from "../actions/family_words.ts";
 import { LIMIT_KEYS } from "../settings/limits.ts";
 
 interface Route {
@@ -629,7 +630,7 @@ export const ROUTES: readonly Route[] = [
       bad_decisions_by: "422: decisionsBy is me, decider or decider_tell",
       bad_plans_need_nod: "422: plansNeedNod is true or false",
       bad_show_provenance: "422: showProvenance is true or false",
-      no_provenance: "422: this repository was not migrated here",
+      no_provenance: `422: ${FAMILY_WORDS.no_provenance}`,
       forbidden: "403: only an admin archives or wakes",
       not_found: "404: no such repository, or it is not readable by the caller",
     },
@@ -685,7 +686,7 @@ export const ROUTES: readonly Route[] = [
     auth: true,
     refusals: {
       no_parent_forge: "404: this repository has no parent forge to propose to",
-      nothing_to_propose: "409: nothing here is ahead of the parent forge",
+      nothing_to_propose: `409: ${FAMILY_WORDS.nothing_to_propose}`,
       parent_unreachable: "502: the parent forge did not answer",
       refused: "409: the parent forge refused, with the reason",
     },
@@ -695,7 +696,7 @@ export const ROUTES: readonly Route[] = [
     path: `${REPO}/following/sever`,
     summary: "Stop following the parent forge; answers { severedAt }",
     auth: true,
-    refusals: { not_following: "404: this repository follows nothing across forges" },
+    refusals: { not_following: `404: ${FAMILY_WORDS.not_following}` },
   },
   {
     method: "post",
@@ -705,7 +706,7 @@ export const ROUTES: readonly Route[] = [
     auth: true,
     refusals: {
       not_a_fork: "404: this repository follows nothing",
-      not_following: "404: this repository follows nothing across forges",
+      not_following: `404: ${FAMILY_WORDS.not_following}`,
       conflict: "409: both sides changed these files; the crew was told; { files, converge, issue }",
       moved: "409: something moved while this was read; try again",
     },
@@ -717,7 +718,7 @@ export const ROUTES: readonly Route[] = [
     auth: true,
     body: { mode: "string" },
     refusals: {
-      not_following: "404: this repository follows nothing across forges",
+      not_following: `404: ${FAMILY_WORDS.not_following}`,
       forbidden: "403: only this forge's owner can change how it follows",
       invalid_mode: "422: mode is not one the forge knows",
       severed: "409: this forge is severed and follows nothing",
