@@ -8,6 +8,7 @@
 import { FOLLOW_MODE_REFUSALS, setFollowMode, severForge, takeForgeCode, takeForgeWords } from "../../actions/follow.ts";
 import { FOLLOWS_NOTHING, PROPOSE_NEEDS_WRITE } from "../../actions/follow_words.ts";
 import { forgeProposals, proposeToParentForge, type ForgeProposal } from "../../actions/upstream.ts";
+import { SEVER_CONFIRM } from "../../actions/sever_invite_words.ts";
 import { canAdmin, canWrite } from "../../core/repos.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -192,7 +193,7 @@ export async function severSubmit(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
   const to = `${repoBase(repo)}/following`;
   if (field(form, "confirm") !== "sever")
-    return flashOrJson(ctx, to, { tone: "danger", message: "Type sever to confirm." });
+    return flashOrJson(ctx, to, { tone: "danger", message: SEVER_CONFIRM });
   const cut = await severForge(ctx.app, ctx.auth.user, repo);
   if (!cut.ok)
     return flashOrJson(ctx, to, {
