@@ -236,15 +236,6 @@ form.inline { display: inline; margin-left: auto; }
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
 }
 
-.front-crew { display: flex; align-items: center; gap: 8px; font-size: 14px; }
-.front-live {
-  width: 8px; height: 8px; border-radius: 50%; background: var(--success);
-  animation: run-pulse 1.6s ease-in-out infinite;
-}
-.front-issues { display: grid; gap: 4px; font-size: 14px; list-style: none; padding: 0; margin: 0; }
-.front-issues li { min-width: 0; }
-.front-issues a { color: inherit; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.front-more { text-align: center; }
 .front-admin { max-width: 1040px; margin-inline: auto; }
 .front-pick { gap: 8px; }
 .front-pick form.inline { margin-left: 0; }
@@ -856,7 +847,7 @@ textarea.editor:focus-visible { outline: none; }
 /* Reduced motion: the pulses hold still at a legible level, the scroll-tied
    fade stays at its resting width, and these transitions land at once. */
 @media (prefers-reduced-motion: reduce) {
-  .front-live, .run-log [data-line="pulse"] i { animation: none; }
+  .run-log [data-line="pulse"] i { animation: none; }
   .run-log [data-line="pulse"] i { opacity: .6; }
   .ex-dir > summary > .ico, .code-layout > #code-main[aria-busy="true"], .code-layout > [data-split]::after { transition: none; }
 }
