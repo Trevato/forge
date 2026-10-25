@@ -1026,6 +1026,25 @@ export function closesFromBody(body: string): number[] {
 }
 
 /**
+ * The newest merged pull whose description closes issue `number`: the pull
+ * that shipped it. Undefined when it was closed by hand.
+ */
+export function mergedPullClosing(db: Database, repoId: string, number: number): Pull | undefined {
+  const rows = db
+    .query<{ number: number }, [string, string]>(
+      `SELECT issue.number AS number FROM pull JOIN issue ON issue.id = pull.issue_id
+       WHERE issue.repo_id = ?1 AND pull.merged_at IS NOT NULL AND issue.body LIKE ?2
+       ORDER BY pull.merged_at DESC LIMIT 50`,
+    )
+    .all(repoId, `%#${number}%`);
+  for (const row of rows) {
+    const pull = getPull(db, repoId, row.number);
+    if (pull !== undefined && closesFromBody(pull.body).includes(number)) return pull;
+  }
+  return undefined;
+}
+
+/**
  * Open pulls of a repository by the issue number each would close: the
  * work that is proposed and not yet landed, which is neither ready nor
  * done.

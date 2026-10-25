@@ -18,7 +18,8 @@ import { feedback, REQUEST_MAX } from "../src/apps/feedback.ts";
 import { getAppBySlug } from "../src/core/apps.ts";
 import { getNote, isBanned } from "../src/core/app_notes.ts";
 import { grantedCookie } from "./helpers/identity.ts";
-import { getIssue, labelsFor, setIssueState } from "../src/core/issues.ts";
+import { recordRelease } from "../src/release/record.ts";
+import { createIssue, getIssue, labelsFor, setIssueState } from "../src/core/issues.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -278,6 +279,31 @@ describe("the forge button takes notes from anyone", () => {
     let ok = PER_SENDER;
     for (; ok < PER_SOURCE; ok++) expect((await post(`fresh${ok}`, "", source)).status).toBe(201);
     expect((await post("one more", "", source)).status).toBe(429);
+  });
+
+  test("a note's fix says the release it is in, or the date it merged", async () => {
+    const made = await newApp(app, alice, { name: "shipping", description: "Words", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    const repo = getRepo(app.db, "alice", "shipping")!;
+    const land = (n: number, mergedAt: string) => {
+      const pr = createIssue(app.db, { repoId: repo.id, authorId: alice.id, title: `fix ${n}`, body: `Closes #${n}`, kind: "pull" });
+      if (!pr.ok) throw new Error("pull");
+      app.db.query(`INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, merged_at) VALUES (?1, 'main', 'fix', 'a', 'b', ?2)`).run(pr.value.id, mergedAt);
+      return pr.value.number;
+    };
+    const label = async (text: string, ip: string, mergedAt: string, released: boolean) => {
+      const first = await post(text, "", ip, "shipping");
+      const cookie = cookieOf(first);
+      const n = Number(((await first.json()) as { note: { url: string } }).note.url.split("/").pop());
+      const pull = land(n, mergedAt);
+      if (released) recordRelease(app.db, { sha: "c0ffee".repeat(6), repoId: repo.id, pullNumber: pull, ok: true, line: "ok" });
+      setIssueState(app.db, getIssue(app.db, repo.id, n)!.id, "closed", "done");
+      const [note] = ((await (await at("shipping", "/__forge/notes", {}, cookie)).json()) as { notes: { status: { state: string; label: string } }[] }).notes;
+      expect(note!.status.state).toBe("shipped");
+      return note!.status.label;
+    };
+    expect(await label("released fix", "10.7.0.1", "2026-03-04T10:00:00Z", true)).toBe("Shipped in c0ffeec0ffee");
+    expect(await label("merged fix", "10.7.0.2", "2026-03-04T10:00:00Z", false)).toBe("Shipped on 2026-03-04");
   });
 
   test("a body is read only up to the cap, whatever it declares", async () => {

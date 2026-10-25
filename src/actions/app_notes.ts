@@ -9,6 +9,8 @@ import type { App } from "../app.ts";
 import { banVisitor, bannedNotes, unbanVisitor, markSender, getNote, hideNote, insertNote, isBanned, notesOf, notesOfApp, type AppNote } from "../core/app_notes.ts";
 import type { AppRecord } from "../core/apps.ts";
 import { createLabel, getIssue, getLabel } from "../core/issues.ts";
+import { mergedPullClosing } from "../core/pulls.ts";
+import { releaseName, releaseOfPull } from "../release/record.ts";
 import { RateLimiter } from "../core/ratelimit.ts";
 import { canAdmin, type Repo } from "../core/repos.ts";
 import { plainText } from "../core/reports.ts";
@@ -102,8 +104,13 @@ export function statusOf(app: App, repo: Repo, number: number): { status: NoteSt
   if (issue.state === "closed") {
     const when = (issue.closedAt ?? issue.updatedAt).slice(0, 10);
     // Only "done" is a promise kept; the other reasons say what they are.
-    if (issue.closeReason === "done" || issue.closeReason === null)
-      return { title: issue.title, status: { state: "shipped", label: `Shipped on ${when}` } };
+    if (issue.closeReason === "done" || issue.closeReason === null) {
+      const pull = mergedPullClosing(app.db, repo.id, number);
+      const release = pull === undefined ? undefined : releaseOfPull(app.db, repo.id, pull.number);
+      const label =
+        release !== undefined ? `Shipped in ${releaseName(release)}` : `Shipped on ${(pull?.mergedAt ?? issue.closedAt ?? issue.updatedAt).slice(0, 10)}`;
+      return { title: issue.title, status: { state: "shipped", label } };
+    }
     const label = issue.closeReason === "parked" ? "Set aside for now" : issue.closeReason === "split" ? "Split into smaller pieces" : "Closed without a change";
     return { title: issue.title, status: { state: "closed", label: `${label} (${when})` } };
   }

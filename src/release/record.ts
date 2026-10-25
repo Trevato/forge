@@ -52,3 +52,16 @@ export function listReleases(db: Database, limit = 20): Release[] {
     .all(limit)
     .map(toRelease);
 }
+
+/** The newest healthy release a pull landed in; undefined while it is in none. */
+export function releaseOfPull(db: Database, repoId: string, pullNumber: number): Release | undefined {
+  const row = db
+    .query<Row, [string, number]>(
+      `SELECT * FROM release WHERE repo_id = ?1 AND pull_number = ?2 AND ok = 1 ORDER BY id DESC LIMIT 1`,
+    )
+    .get(repoId, pullNumber);
+  return row === null ? undefined : toRelease(row);
+}
+
+/** What a release is called where people read it: the landed commit, short. */
+export const releaseName = (r: Release): string => r.sha.slice(0, 12);
