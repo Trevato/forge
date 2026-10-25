@@ -62,7 +62,7 @@ import { SIGNUP_MODES } from "../settings/signup.ts";
 import { QUOTA_KEYS } from "../settings/quotas.ts";
 import { LIMIT_KEYS, limitValue } from "../settings/limits.ts";
 import { budgetsOf, setBudget } from "../core/subscriptions.ts";
-import { checkUpstreamNow, FOLLOW_REFUSALS, followJson, setFollowUpstream } from "../actions/upstream_follow.ts";
+import { checkUpstreamNow, FOLLOW_REFUSALS, followJson, setFollowUpstream, upstreamFacts } from "../actions/upstream_follow.ts";
 import { getFollow } from "../core/upstream_follow.ts";
 import { convergeWords, FOLLOW_MODE_REFUSALS, setFollowMode, severForge, takeForgeCode, takeForgeWords, takeOrTell } from "../actions/follow.ts";
 import { relationOf } from "../actions/forks.ts";
@@ -678,6 +678,7 @@ const TOOLS: readonly Tool[] = [
           repo,
           forkParentFor(ctx.app.db, repo, user),
         ),
+        upstream: upstreamFacts(ctx.app.db, repo, user),
       });
     },
   },

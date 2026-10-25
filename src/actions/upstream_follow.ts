@@ -18,6 +18,7 @@
  * repository at a time, whoever asks.
  */
 
+import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import { getIssueById, setAssignee, updateIssueText } from "../core/issues.ts";
 import { listCrewRoles } from "../core/agents.ts";
@@ -423,6 +424,31 @@ export function followJson(f: UpstreamFollow): Record<string, unknown> {
     pending_id: f.pendingId,
     opened: f.opened,
   };
+}
+
+/**
+ * What a repository's stored follow check says, for the repository read
+ * (API and MCP alike): the upstream, how far behind, when last checked, and
+ * whether the last check found a conflict. Null for one that follows nothing,
+ * and for anyone who may not administer it: the follow is an admin's to see.
+ */
+export function upstreamFacts(db: Database, repo: Repo, user: User | undefined): UpstreamFacts | null {
+  if (!canAdmin(db, repo, user)) return null;
+  const f = getFollow(db, repo.id);
+  if (f === undefined || !f.enabled) return null;
+  return {
+    repo: upstreamLabel(f.url),
+    behind: f.behind,
+    checkedAt: f.checkedAt,
+    conflict: f.error === "conflict",
+  };
+}
+
+export interface UpstreamFacts {
+  readonly repo: string;
+  readonly behind: number;
+  readonly checkedAt: string | null;
+  readonly conflict: boolean;
 }
 
 /** `host/path` of an upstream, for a line of prose. */

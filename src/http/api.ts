@@ -12,6 +12,7 @@ import {
   checkUpstreamNow,
   FOLLOW_REFUSALS,
   followJson,
+  upstreamFacts,
   setFollowUpstream,
 } from "../actions/upstream_follow.ts";
 import { getFollow } from "../core/upstream_follow.ts";
@@ -2422,7 +2423,8 @@ export function apiRoutes(router: Router<Handler>): void {
     const facts = timePhase(ctx.request, "counts", () => repoJson(ctx, repo));
     const audience = timePhase(ctx.request, "audience", () => audienceFor(ctx.app.db, repo, ctx.auth.user));
     const rendering = performance.now();
-    const res = json({ ...facts, audience });
+    const upstream = upstreamFacts(ctx.app.db, repo, ctx.auth.user);
+    const res = json({ ...facts, audience, upstream });
     notePhase(ctx.request, "render", performance.now() - rendering);
     return res;
   });
