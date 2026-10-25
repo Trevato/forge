@@ -126,6 +126,7 @@ import { issuesScreen } from "./issues.ts";
 import { liveBindings, liveKey } from "./mirror.ts";
 import { forkScreen } from "./newrepo.ts";
 import { pullScreen } from "./pull.ts";
+import { forksScreen } from "./forks.ts";
 import { branchesScreen } from "./refs.ts";
 import { wavesScreen } from "./waves.ts";
 import {
@@ -1298,6 +1299,7 @@ export function workspaceScreen(
                 disabled: !editable(),
               }),
               binding(["b", "B"], "switch ref / new branch"),
+              ...(repo === undefined ? [] : [binding(["f"], "forks, most work first")]),
               binding(["t", "ctrl+p"], "find file"),
               binding(["y"], "copy path"),
               binding(["i", "p", "C"], "issues / pulls / commits"),
@@ -1593,6 +1595,10 @@ export function workspaceScreen(
         ctx.push(
           branchesScreen(f, ctx, src, { current: ref, onPick: switchRef }),
         );
+        return true;
+      }
+      if (plain && e.key === "f" && repo !== undefined) {
+        ctx.push(forksScreen(f, ctx, repo));
         return true;
       }
       if (plain && e.key === "B") {

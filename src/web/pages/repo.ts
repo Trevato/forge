@@ -13,7 +13,17 @@ import { NOT_A_MEMBER } from "../../core/roles.ts";
 import { storageLimitMessage } from "../../core/storage.ts";
 import { canRead, listForks, type Repo } from "../../core/repos.ts";
 import { FORKS_PER_DAY, forkRepo, repositoryLimitMessage } from "../../actions/repos.ts";
-import { forkDrift, takeUpdates, type ForkDrift } from "../../actions/forks.ts";
+import {
+  type RankedFork,
+  forkDrift,
+  driftWords,
+  nothingNewHeading,
+  rankedForksOf,
+  MAX_RANKED_FORKS,
+  type ForkRanking,
+  takeUpdates,
+  type ForkDrift,
+} from "../../actions/forks.ts";
 import { lineageOf } from "../../core/following.ts";
 import {
   followingCard,
@@ -125,6 +135,9 @@ export async function forksPage(ctx: Ctx): Promise<Response> {
   );
   notePhase(ctx.request, "lineage", performance.now() - t);
   t = performance.now();
+  const ranked = await rankedForksOf(ctx.app, repo, forks);
+  notePhase(ctx.request, "drift", performance.now() - t);
+  t = performance.now();
   const body = html`${repoHeader(ctx, repo, "forks")}
     <div class="page-head mt">
       <h2>${forks.length} fork${forks.length === 1 ? "" : "s"}</h2>
@@ -135,7 +148,9 @@ export async function forksPage(ctx: Ctx): Promise<Response> {
           title: "No forks yet",
           note: "A fork is a copy under another name that can propose changes back here, and follows this one until it has work of its own.",
         })
-      : lineageCard(lineage, repo.id)}`;
+      : html`${forkRanking(ranked)}
+          <h3 class="mt">The family, by who follows whom</h3>
+          ${lineageCard(lineage, repo.id)}`}`;
   const res = page({
     ctx,
     title: `Forks · ${repo.ownerName}/${repo.name}`,
@@ -143,6 +158,45 @@ export async function forksPage(ctx: Ctx): Promise<Response> {
   });
   notePhase(ctx.request, "render", performance.now() - t);
   return res;
+}
+
+/**
+ * The forks with work to offer, best first, each linking to the compare
+ * view that proposes it upstream; then those with nothing new, counted.
+ */
+function forkRanking(ranked: ForkRanking): Html {
+  const line = (f: RankedFork, offer: boolean): Html =>
+    row({
+      lead: icon("fork"),
+      title: html`<a href="/${f.fork.ownerName}/${f.fork.name}"
+        >${f.fork.ownerName}/${f.fork.name}</a
+      >`,
+      meta: html`${driftWords(f.drift)}${f.pushedAt === null
+        ? html``
+        : html` · pushed ${time(f.pushedAt)}`}`,
+      ...(offer
+        ? {
+            trail: btn("Compare", {
+              href: `/${f.fork.ownerName}/${f.fork.name}/pulls/new`,
+              size: "sm",
+              icon: "merge",
+            }),
+          }
+        : {}),
+    });
+  const { offering, nothingNew } = ranked;
+  return html`${ranked.truncated
+      ? html`<p class="muted small">
+          Ranking the first ${MAX_RANKED_FORKS} of ${ranked.total} forks.
+        </p>`
+      : html``}
+    ${offering.length === 0
+      ? html``
+      : listCard(offering.map((f) => line(f, true)))}
+    ${nothingNew.length === 0
+      ? html``
+      : html`<h3 class="mt">${nothingNewHeading(nothingNew.length)}</h3>
+          ${listCard(nothingNew.map((f) => line(f, false)))}`}`;
 }
 
 /** The "forked from …" lineage line and a Fork button, for the repo home. */

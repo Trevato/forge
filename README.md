@@ -1923,6 +1923,20 @@ in the web settings first" (the address is set on the settings page). A check fe
   the fetched head, the check fails (`squatted`), says so on the row, opens
   no pull and leaves the branch as it was.
 
+## Ranked forks
+
+`/:owner/:name/forks` and the terminal's forks screen (`f` in a repository)
+list a repository's direct forks the same way, so the best of a fork tree
+rises. Order: commits ahead of the parent's default branch (most first),
+then fewest behind, then the newest tip commit. Each row reads `N ahead · M
+behind` and when the fork last moved; a fork that is ahead has a **Compare**
+button (on the page) to its `/pulls/new`, which proposes it to the parent.
+Forks with nothing ahead (or whose standing git cannot read) follow under
+`N forks with nothing new`. At most 60 forks are ranked per view; past that
+the page says `Ranking the first 60 of N forks`. A fork's standing is cached
+by the pair of tips (`actions/forks.ts`), so a view of forks that have not
+moved costs one `git log` per fork.
+
 ## Shape
 
 ```
