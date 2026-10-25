@@ -398,7 +398,6 @@ the same line (#4888).
   - `.bare`
   - `.foot`
   - `.grow`
-  - `.hide-lg`
   - `.hide-sm`
   - `.js-only`
   - `.mark`
@@ -410,7 +409,6 @@ the same line (#4888).
   - `.num`
   - `.reduced`
   - `.shell`
-  - `.shell-wide`
   - `.skip`
   - `.small`
   - `.spacer`
@@ -418,7 +416,6 @@ the same line (#4888).
   - `.stack`
   - `.stack-tight`
   - `.topbar`
-  - `.topbar-tools`
   - `.truncate`
   - `.wordmark`
 
@@ -457,7 +454,6 @@ the same line (#4888).
   - `.timeline`
   - `.tl-dot`
   - `.toast-body`
-  - `.topbar-search`
 
   `.split` is the one two-column page: main, then an `<aside>` rail of 260px that sticks from 960px. `data-rail="wide"` on it (the studio's home and an app's page) widens the rail to 320px from 900px, drops the top margin, and lets the rail scroll with the page, since a column of cards runs taller than a screen
 - **`style/components.ts`, settings rows** — a list whose rows are settings (limits, capacity): the `<ul class="list setting-list">` lets title and meta wrap instead of ellipsizing, and a row's controls take their own line under 640px. `.row-fields` is the form in that row's trail (input, Save, Default): always visible, never hover-gated, wrapping under the text before it would clip. Use both for any page whose rows show a name, a current value, and a control to change it; use `.row-actions` only for secondary actions (delete, wake, pin, revoke). Flags, telemetry, cloud, people, crew roles and subscription headroom/budget use `.row-fields`. Classes:
