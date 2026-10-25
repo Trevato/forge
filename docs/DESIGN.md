@@ -454,7 +454,6 @@ the same line (#4888).
   - `.tok`
   - `.where-sep`
 - **`style/content.ts`, code view** — the source view and the syntax-highlight token classes `highlight-html.ts` builds as `tok-${kind}`:
-  - `.ln`
   - `.tok-deleted`
   - `.tok-inserted`
 - **`style/content.ts`, prose (markdown)** — table cell alignment, built by `markdown.ts` as `ta-${align}`:
