@@ -15,6 +15,7 @@ import { plainText } from "../core/reports.ts";
 import { workingAgentRuns } from "../core/runs.ts";
 import { getUserById, isActive, type User } from "../core/users.ts";
 import { unadoptedAmong } from "../crew/direct.ts";
+import { NOTE_EMPTY } from "../apps/note_words.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { openIssueThrough, setIssueLabelsThrough, setIssueStateThrough } from "./issues.ts";
 
@@ -185,7 +186,7 @@ export async function sendNote(
   source: string,
 ): Promise<Result<NoteView, Refusal>> {
   const text = plainText(input.text).trim();
-  if (text === "") return err({ error: "empty", message: "Write a few words first." });
+  if (text === "") return err({ error: "empty", message: NOTE_EMPTY });
   if (text.length > TEXT_MAX) return err({ error: "too_long", message: "That is a bit long. Keep it under 2,000 characters." });
   if (isBanned(app.db, record.id, sender.key)) return err({ error: "banned", message: "Notes from here are paused." });
   if (filtered(text)) return err({ error: "filtered", message: "Please put that in other words." });

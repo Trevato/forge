@@ -13,6 +13,7 @@
 
 import { staticResponse } from "../web/asset.ts";
 import { sha256 } from "../kernel/hash.ts";
+import { NOTE_EMPTY, NOTE_FAILED } from "./note_words.ts";
 
 /** The client, as plain source: no `eval`, no inline handlers. */
 export const toolbarJs = `(function () {
@@ -153,7 +154,7 @@ export const toolbarJs = `(function () {
   tellBox.addEventListener("submit", function (e) {
     e.preventDefault();
     var text = tellText.value.trim();
-    if (!text) { tellSay.textContent = "Write a few words first."; return; }
+    if (!text) { tellSay.textContent = ${JSON.stringify(NOTE_EMPTY)}; return; }
     if (tellGo.disabled) return;
     tellGo.disabled = true;
     tellGo.setAttribute("aria-busy", "true");
@@ -169,9 +170,9 @@ export const toolbarJs = `(function () {
       .then(function (a) {
         idle();
         if (a.ok) { tellText.value = ""; tellSay.textContent = "Sent. The builders will see it."; refresh(true); }
-        else tellSay.textContent = a.j && a.j.message ? a.j.message : "That did not go through. Try again.";
+        else tellSay.textContent = a.j && a.j.message ? a.j.message : ${JSON.stringify(NOTE_FAILED)};
       })
-      .catch(function () { idle(); tellSay.textContent = "That did not go through. Try again."; });
+      .catch(function () { idle(); tellSay.textContent = ${JSON.stringify(NOTE_FAILED)}; });
   });
   var poll = 0;
   function watch(open) {

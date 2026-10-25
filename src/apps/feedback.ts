@@ -19,6 +19,7 @@ import type { AppRecord } from "../core/apps.ts";
 import { canAdmin, canRead, getRepoById, type Repo } from "../core/repos.ts";
 import { getUserById, isActive, type User } from "../core/users.ts";
 import { sha256 } from "../kernel/hash.ts";
+import { NOTE_FAILED } from "./note_words.ts";
 
 export const REQUEST_MAX = 16 * 1024;
 export const VISITOR_COOKIE = "forge_visitor";
@@ -127,7 +128,7 @@ async function readJson(request: Request): Promise<Record<string, unknown> | und
 async function send(ask: FeedbackAsk, door: Door): Promise<Response> {
   const { request } = ask;
   const body = await readJson(request);
-  if (body === undefined) return json(400, { error: "bad_request", message: "That did not go through. Try again." });
+  if (body === undefined) return json(400, { error: "bad_request", message: NOTE_FAILED });
   const { sender, fresh } = senderOf(ask, door);
   const cookies = fresh === undefined ? {} : { "set-cookie": visitorCookie(fresh, ask.secure) };
   let page = "";

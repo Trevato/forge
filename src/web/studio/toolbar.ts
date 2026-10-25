@@ -18,6 +18,7 @@
 import { addCommentThrough, openIssueThrough } from "../../actions/issues.ts";
 import { COMMENT_EMPTY, COMMENT_NOT_POSTED } from "../../actions/comment_words.ts";
 import { reportTitle } from "../../actions/page-report.ts";
+import { NOTE_TOO_LONG } from "../../apps/note_words.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { getIssue, MAX_BODY } from "../../core/issues.ts";
 import { diffBetween, getPull, pullDir, type Pull } from "../../core/pulls.ts";
@@ -276,7 +277,7 @@ export async function toolbarComment(ctx: Ctx): Promise<Response> {
     );
   if (text === "") return refuse(COMMENT_EMPTY);
   const said = address === "" ? text : `${text}\n\nPage: <${address}>`;
-  if (said.length > MAX_BODY) return refuse("That is too long to send in one go.");
+  if (said.length > MAX_BODY) return refuse(NOTE_TOO_LONG);
   const target = pull ? `pull #${pull.number}` : "an issue on this app";
 
   if (field(form, "step") !== "post") {
@@ -316,7 +317,7 @@ export async function toolbarComment(ctx: Ctx): Promise<Response> {
     return refuse(
       originError(opened.error) ??
         (opened.error === "body_too_long"
-          ? "That is too long to send in one go."
+          ? NOTE_TOO_LONG
           : "That could not be sent."),
       opened.error === "body_too_long" ? 422 : opened.error === "not_found" ? 404 : 403,
     );
