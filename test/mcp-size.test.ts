@@ -89,7 +89,8 @@ test("tools/list stays under 40 KB, with 3 KB of headroom (37,000 bytes)", async
   for (const t of tools) walk(t.name, t.inputSchema, "");
   expect(long, `property descriptions over ${PROPERTY_MAX} bytes`).toEqual([]);
   expect(bytes, "the argument descriptions were cut by 1,000 bytes").toBeLessThanOrEqual(
-    36_700,
+    // 36,700 before `ssh_keys` (#4795), which costs about 210 bytes.
+    36_950,
   );
   // readOnlyHint defaults to false; spelling the default out on every write
   // tool cost 2 KB, so only a read tool carries annotations.

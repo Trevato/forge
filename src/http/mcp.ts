@@ -193,6 +193,8 @@ import { plannerDeclines } from "../crew/autonomy.ts";
 import { checkStale } from "../checks/stale.ts";
 import { checkSummary, listActiveRuns } from "../core/runs.ts";
 import { scopeAllows } from "../core/tokens.ts";
+import { addSshKey, deleteSshKey } from "../actions/users.ts";
+import { listKeys, publicKey } from "../core/keys.ts";
 import { lastOwnerSays } from "../core/orgs.ts";
 import { LAST_WAY_IN, parentIssuerOf, unlinkParent } from "../core/federation.ts";
 import { getUserByName, getUsersByIds, type User } from "../core/users.ts";
@@ -318,6 +320,13 @@ const bad = (error: string, message: string): Answer => ({
   error,
   message,
 });
+
+const keyWords = (error: string): string =>
+  ({
+    invalid_key: "not a public key in authorized_keys form",
+    key_exists: "that key is already registered",
+    not_found: "no such key of yours",
+  })[error] ?? error;
 
 interface Tool {
   readonly name: string;
@@ -4791,6 +4800,37 @@ const TOOLS: readonly Tool[] = [
         says: `signup: ${read.value.signup} → ${changed.value}.`,
         signup: changed.value,
       });
+    },
+  },
+  {
+    name: "ssh_keys",
+    description: "Your SSH keys; add: key, remove: id.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["list", "add", "remove"] },
+        title: { type: "string" },
+        key: { type: "string" },
+        id: { type: "string" },
+      },
+    },
+    writes: true,
+    readsWhen: (args) => (args["action"] ?? "list") === "list",
+    run(ctx, user, args) {
+      const action = args["action"] ?? "list";
+      if (action === "list") return good(listKeys(ctx.app.db, user.id).map(publicKey));
+      if (action === "add") {
+        if (typeof args["key"] !== "string")
+          return bad("invalid_key", "key is an authorized_keys line");
+        const title = typeof args["title"] === "string" ? args["title"] : "";
+        const added = addSshKey(ctx.app, user, { name: title, key: args["key"] });
+        return added.ok ? good(publicKey(added.value)) : bad(added.error, keyWords(added.error));
+      }
+      if (action === "remove") {
+        const removed = deleteSshKey(ctx.app, user, typeof args["id"] === "string" ? args["id"] : "");
+        return removed.ok ? good({ removed: args["id"] }) : bad(removed.error, keyWords(removed.error));
+      }
+      return bad("invalid_action", "action is list, add or remove");
     },
   },
   {

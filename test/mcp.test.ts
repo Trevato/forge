@@ -274,6 +274,7 @@ describe("the forge over MCP", () => {
       "cloud_account",
       "quotas",
       "signup",
+      "ssh_keys",
       "email_verify",
       "parent_unlink",
       "boards",

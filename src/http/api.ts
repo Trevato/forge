@@ -211,7 +211,7 @@ import {
   type Issue,
   type IssueState,
 } from "../core/issues.ts";
-import { listKeys, type UserKey } from "../core/keys.ts";
+import { listKeys, publicKey } from "../core/keys.ts";
 import {
   getOrg,
   listOrgsForUser,
@@ -524,18 +524,6 @@ function respondFleet(error: FleetError): Response {
     error.code === "forbidden" ? 403 : error.code === "already_undone" || error.code === "expired" ? 409 : 422,
     error.message,
   );
-}
-
-function publicKey(key: UserKey) {
-  return {
-    id: key.id,
-    name: key.name,
-    algo: key.algo,
-    fingerprint: key.fingerprint,
-    key: key.key,
-    createdAt: key.createdAt,
-    lastUsedAt: key.lastUsedAt,
-  };
 }
 
 function withLabels<T extends Issue>(ctx: Ctx, issue: T) {

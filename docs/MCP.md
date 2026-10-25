@@ -102,6 +102,7 @@ for a tunnel and a forge that sleeps.
 | `review`       | `{ repo, number, verdict, reason? }`: approve a pull (`approve`) or request changes (`changes`, with a `reason`), as the page does; a writer's or the crew's, and never your own pull | yes    |
 | `threads`      | `{ repo, number, anchor?, resolved? }`: a pull's review threads with their comments; with `anchor` (from the list) resolve it (`resolved` true, the default) or reopen it (false), by the API's rules: a writer or someone who commented in the thread | yes    |
 | `usage`        | `{ repo, days? }`: what the crew's runs spent — tokens, cost, wall time — by subscription, agent, issue, and each account's 5-hour and weekly standing; a writer's |        |
+| `ssh_keys`     | `{ action?, title?, key?, id? }`: list your own SSH keys (default), add one (`key` is an authorized_keys line, `title` optional) or remove one by `id`; the API's rules and errors, add and remove need an `rw` token | yes    |
 | `boards`       | `{ slug?, panel?, from?, to?, step? }` (person admins): without `slug`, lists the forge's boards (slug, title, range, refresh, panels); with `slug`, that board; with `panel` (place from 0, up to 23), that panel's data over the `from`/`to` window and `step` |        |
 | `board_write`  | `{ slug, board }` (person admins): write a whole board under a slug, made or replaced: `{ title, range, refresh, panels: [{ title, chart, query, w, h }] }` | yes    |
 | `board_delete` | `{ slug }` (person admins): delete a board by slug; its history keeps it                          | yes    |
