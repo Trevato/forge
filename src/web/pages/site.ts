@@ -17,6 +17,7 @@ import { clientAddress } from "../../http/peer.ts";
 import { verifyEmail } from "../../actions/verify.ts";
 import { STRANGER_MAX } from "../../http/limits.ts";
 import { createRepo, repositoryLimitMessage, resolveOwner } from "../../actions/repos.ts";
+import { REPO_INIT_FAILED, REPO_NAME_RULES } from "../../actions/repo_words.ts";
 import { HUMAN_CHECK_MESSAGE, INVITE_SPENT_MESSAGE, PASSKEY_REQUIRED_MESSAGE, SIGNUP_CLOSED_MESSAGE, signUp, signupClosed } from "../../actions/users.ts";
 import { accessAllows, listOrgsForUser, orgAccess } from "../../core/orgs.ts";
 import { listPins } from "../../core/pins.ts";
@@ -842,8 +843,8 @@ export async function newRepoSubmit(ctx: Ctx): Promise<Response> {
       repository_limit: `Not made: ${repositoryLimitMessage(ctx.app, ctx.auth.user)}.`,
       storage_limit: `Not made: ${storageLimitMessage(ctx.app, resolveOwner(ctx.app, ctx.auth.user, values.owner) ?? ctx.auth.user.id)}.`,
       name_taken: "That owner already has a repository by that name.",
-      invalid_name: "Names start with a letter or digit; no spaces, no .git.",
-      git_init_failed: "The repository could not be initialised on disk.",
+      invalid_name: REPO_NAME_RULES,
+      git_init_failed: REPO_INIT_FAILED,
     };
     return page(
       {
