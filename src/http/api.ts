@@ -350,6 +350,7 @@ import { askToLiveFor } from "../web/ask_to_live.ts";
 import { decisionStats, listDecisions } from "../core/decisions.ts";
 import { forReader } from "../crew/handover.ts";
 import { globalMapJson, mapJson, marksFor } from "../web/pages/map.ts";
+import { cachedMap } from "../web/map_snapshot.ts";
 import {
   milestoneData,
   milestonesJson,
@@ -3804,21 +3805,31 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!repo) return notFound();
     const { request } = ctx;
     notePhase(request, "session", takeSessionTime(request));
-    const graph = timePhase(request, "graph", () =>
-      repoGraph(ctx.app.db, repo.id, {
-        ...sealedScope(ctx.app.db, repo, ctx.auth.user),
-      }),
+    const scope = sealedScope(ctx.app.db, repo, ctx.auth.user);
+    let built = false;
+    const { value, hit } = cachedMap(
+      ctx.app.db,
+      { repoId: repo.id, scope, now: new Date() },
+      () => {
+        built = true;
+        const graph = timePhase(request, "graph", () =>
+          repoGraph(ctx.app.db, repo.id, { ...scope }),
+        );
+        const marks = timePhase(request, "marks", () =>
+          marksFor(ctx.app.db, repo.id, graph, listActiveRuns(ctx.app.db, [repo.id])),
+        );
+        const pillars = timePhase(request, "pillars", () => pillarView(ctx.app.db, repo));
+        const ask = timePhase(request, "asktolive", () =>
+          askToLiveFor(ctx.app, repo, pillars, ctx.auth.user),
+        );
+        return timePhase(request, "render", () => mapJson(repo, graph, marks, pillars, ask));
+      },
     );
-    const marks = timePhase(request, "marks", () =>
-      marksFor(ctx.app.db, repo.id, graph, listActiveRuns(ctx.app.db, [repo.id])),
-    );
-    const pillars = timePhase(request, "pillars", () => pillarView(ctx.app.db, repo));
-    const ask = timePhase(request, "asktolive", () =>
-      askToLiveFor(ctx.app, repo, pillars, ctx.auth.user),
-    );
-    return timePhase(request, "render", () =>
-      json(mapJson(repo, graph, marks, pillars, ask)),
-    );
+    // A snapshot skips the phases; they are still named, as hits at no cost.
+    if (!built)
+      for (const name of ["graph", "marks", "pillars", "asktolive", "render"])
+        notePhase(request, name, 0, hit);
+    return json(value);
   });
   // What people asked of the crew in the repositories the caller can write —
   // by default what has nothing merged yet, oldest first — and what became of each (core/asked.ts, the /asked page).

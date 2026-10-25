@@ -183,6 +183,10 @@ and rounds to 0.0):
   event on the repository (see "Gaps") and spend reported by another
   process.
 
+### 2b. The API map: the finished answer, by the write clock (#3321)
+
+`GET /api/v1/repos/:owner/:name/map` keeps its whole answer in `web/map_snapshot.ts`, keyed by repository, the viewer's sealed scope and the UTC minute (the week's merge window slides with time) and valid only under the forge's write clock, so a plan, or any write, drops it before the next read. A hit still names the five phases, flagged as hits. Test: `test/map-seed-timing.test.ts`.
+
 ## Home (`/`)
 
 ### 3. The feed's first page: per viewer
