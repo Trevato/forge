@@ -76,7 +76,10 @@ beforeAll(async () => {
   if (!made.ok) throw new Error(String(made.error));
   repo = made.value;
 });
+const keptSentinelRepo = process.env.FORGE_SENTINEL_REPO;
 afterAll(async () => {
+  if (keptSentinelRepo === undefined) delete process.env.FORGE_SENTINEL_REPO;
+  else process.env.FORGE_SENTINEL_REPO = keptSentinelRepo;
   app.db.close();
   await rm(dataDir, { recursive: true, force: true });
 });
@@ -164,6 +167,41 @@ describe("a push blocked on the network is still a push fault", () => {
   });
 });
 
+describe("a gate never green", () => {
+  const gateKeys = (): string[] =>
+    findFaults(app.db, NOW).map((f) => f.key).filter((k) => k.startsWith("gate:"));
+  const plant = (repoId: string): void => {
+    for (let n = 0; n < 15; n++) {
+      const run = createRun(app.db, { repoId, kind: "check" });
+      app.db
+        .query("UPDATE run SET state = 'failed', summary = 'no check.run', created_at = ?2 WHERE id = ?1")
+        .run(run.id, ago((40 + n) * HOUR));
+    }
+  };
+
+  test("in another repository files nothing", async () => {
+    const made = await createRepo(app, alice, { name: "elsewhere", visibility: "private" });
+    if (!made.ok) throw new Error(String(made.error));
+    process.env.FORGE_SENTINEL_REPO = "alice/forge";
+    try {
+      plant(made.value.id);
+      expect(gateKeys()).not.toContain(`gate:${made.value.id}`);
+    } finally {
+      app.db.query("DELETE FROM run WHERE repo_id = ?1").run(made.value.id);
+    }
+  });
+
+  test("in the sentinel's own repository still files", () => {
+    process.env.FORGE_SENTINEL_REPO = "alice/forge";
+    try {
+      plant(repo.id);
+      expect(gateKeys()).toContain(`gate:${repo.id}`);
+    } finally {
+      app.db.query("DELETE FROM run WHERE repo_id = ?1 AND summary = 'no check.run'").run(repo.id);
+    }
+  });
+});
+
 describe("a failed push that pushed nothing", () => {
   test("still raises the push fault", async () => {
     const made = await createRepo(app, alice, { name: "blocked", visibility: "private" });
@@ -183,6 +221,7 @@ describe("a failed push that pushed nothing", () => {
 describe("the faults of the day", () => {
   let queuedId = "";
   beforeAll(() => {
+    process.env.FORGE_SENTINEL_REPO = "alice/forge";
     // 1. a slot held by a finished run: work waits, nothing runs.
     plantRun("check", "cancelled", "cancelled", ago(3 * HOUR));
     queuedId = createRun(app.db, { repoId: repo.id, kind: "check" }).id;
@@ -266,13 +305,16 @@ describe("the faults of the day", () => {
 describe("the schedule", () => {
   test("a new fault is a signal inside the hour; a known one waits for the hour", () => {
     const last = new Date(sentinelStanding(app.db).lastHuntAt!).getTime();
-    expect(sentinelTick(app, last + 5 * 60_000)).toBeNull();
-    expect(sentinelTick(app, last + 20 * 60_000)).toBeNull();
-    process.env.FORGE_SENTINEL_REPO = "alice/forge";
+    const kept = process.env.FORGE_SENTINEL_REPO;
+    delete process.env.FORGE_SENTINEL_REPO;
     try {
+      expect(sentinelTick(app, last + 5 * 60_000)).toBeNull();
+      expect(sentinelTick(app, last + 20 * 60_000)).toBeNull();
+      process.env.FORGE_SENTINEL_REPO = "alice/forge";
       expect(sentinelTick(app, last + HOUR + 1)).not.toBeNull();
     } finally {
-      delete process.env.FORGE_SENTINEL_REPO;
+      if (kept === undefined) delete process.env.FORGE_SENTINEL_REPO;
+      else process.env.FORGE_SENTINEL_REPO = kept;
     }
   });
 });

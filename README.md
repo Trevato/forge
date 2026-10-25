@@ -1561,6 +1561,8 @@ its evidence, filed in `FORGE_SENTINEL_REPO` (default `trevato/forge`) as the
 credential-shaped before it is filed. Other findings (`held`, `ledger`, `red`)
 are filed anew when they return.
 
+A check that has never been green is filed only for the sentinel's own repository. In any other repository it stays on that repository's checks and the degraded list.
+
 A capacity setting away from its default is not a finding: the sentinel files
 nothing for it (#3269). On `/settings/capacity` the row of each such setting
 carries one muted line, "changed from X N days ago by who", and its **Put back**

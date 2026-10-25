@@ -257,9 +257,17 @@ interface SummaryRow {
   summary: string;
 }
 
+let warnedUnresolved = false;
+
 /** The last runs per repository: a check never green, or pushes that cannot land. */
 export function runStreaks(db: Database): Finding[] {
   const out: Finding[] = [];
+  const [ownerName = "", repoName = ""] = sentinelRepoPath().split("/");
+  const ownId = getRepo(db, ownerName, repoName)?.id;
+  if (ownId === undefined && !warnedUnresolved) {
+    warnedUnresolved = true;
+    log.warn("sentinel repository does not resolve; never-green checks are not filed", { repo: sentinelRepoPath() });
+  }
   const rows = db
     .query<SummaryRow, [number]>(
       `SELECT id, repo_id, kind, state, summary FROM (
@@ -278,6 +286,9 @@ export function runStreaks(db: Database): Finding[] {
     const [repoId = "", kind = ""] = k.split("\u0000");
     const failed = runs.filter((r) => r.state === "failed");
     if (kind === "check") {
+      // Another repository's gate is its owner's to fix: a builder here cannot
+      // read or change it. It stays on that repository's checks and the degraded list.
+      if (repoId !== ownId) continue;
       if (runs.some((r) => r.state === "ok")) continue;
       const same = new Map<string, SummaryRow[]>();
       for (const r of failed)
