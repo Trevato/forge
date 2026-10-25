@@ -14,6 +14,7 @@ quietLogs();
 /**
  * Tools that answer in tools/list and have no row yet. This list only shrinks:
  * document a tool, then delete its line. One name per line, so two pulls never edit the same line.
+ * The test fails until a documented tool's line is deleted here.
  */
 const undocumented = new Set<string>([
   "sizes",
@@ -112,7 +113,13 @@ test("every row in docs/MCP.md names a tool that exists", async () => {
   expect((await documented()).filter((n) => !live.has(n))).toEqual([]);
 });
 
-test("the allowlist names only undocumented tools", async () => {
+test("no undocumented name has a row in docs/MCP.md: delete each stale line", async () => {
   const rows = new Set(await documented());
-  expect([...undocumented].filter((n) => rows.has(n) || !served.includes(n))).toEqual([]);
+  const stale = [...undocumented].filter((n) => rows.has(n));
+  expect(stale.map((n) => `${n}: documented, delete it from the undocumented set`)).toEqual([]);
+});
+
+test("every undocumented name is a tool tools/list answers", () => {
+  const unknown = [...undocumented].filter((n) => !served.includes(n));
+  expect(unknown.map((n) => `${n}: not in tools/list, delete it from the undocumented set`)).toEqual([]);
 });
