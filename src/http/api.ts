@@ -30,6 +30,7 @@ import { parentForgeFor } from "../core/parent_releases.ts";
 import { readFlow } from "../flow/read.ts";
 import { listPinned as listPinnedPanels, movePinned, pinPanel, unpinPanel, type PinError } from "../actions/board-pins.ts";
 import { deleteBoard, listAllBoards, showBoard, writeBoard, type BoardError } from "../actions/boards.ts";
+import { BOARD_NOT_SAVED, MILESTONE_WATCH_PERSON_ONLY, VOTE_NOT_RECORDED } from "../actions/board_words.ts";
 import { panelData, parseWindow, rowsCsv } from "../boards/panel_data.ts";
 import { runQuery } from "../boards/query.ts";
 import { recordDrill } from "../core/domain_drills.ts";
@@ -1546,7 +1547,7 @@ export function apiRoutes(router: Router<Handler>): void {
   const boardFailed = (e: BoardError): Response => {
     if (e === "not_found") return notFound();
     if (typeof e === "object") return apiError("refused", 422, e.refused);
-    return apiError(e, e === "exists" || e === "branch_moved" ? 409 : 422, "that board could not be saved");
+    return apiError(e, e === "exists" || e === "branch_moved" ? 409 : 422, BOARD_NOT_SAVED);
   };
 
   router.add("GET", "/api/v1/boards", async (ctx) => {
@@ -3676,7 +3677,7 @@ export function apiRoutes(router: Router<Handler>): void {
           ? notFound()
           : set.error === "unauthorized"
             ? unauthorized()
-            : apiError("forbidden", 403, "only a person watches a milestone");
+            : apiError("forbidden", 403, MILESTONE_WATCH_PERSON_ONLY);
       },
     );
   // One action on a whole limb (#733): defer, resume, or close as not
@@ -4470,7 +4471,7 @@ export function apiRoutes(router: Router<Handler>): void {
       if (!voted.ok) {
         if (voted.error === "forbidden" || voted.error === "unauthorized")
           return respondAccess(voted.error, 422);
-        return apiError(voted.error, 422, "that vote could not be recorded");
+        return apiError(voted.error, 422, VOTE_NOT_RECORDED);
       }
       return json({ answer, closed: voted.value.closed }, 201);
     },

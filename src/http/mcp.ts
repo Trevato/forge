@@ -271,6 +271,7 @@ import { manifestFor } from "../actions/here.ts";
 import { clientBucket } from "./peer.ts";
 import { listPinned as listPinnedPanels, movePinned, pinPanel, unpinPanel } from "../actions/board-pins.ts";
 import { deleteBoard, listAllBoards, showBoard, writeBoard, type BoardError } from "../actions/boards.ts";
+import { BOARD_NOT_SAVED, MILESTONE_WATCH_PERSON_ONLY, VOTE_NOT_RECORDED } from "../actions/board_words.ts";
 import { panelData, parseWindow } from "../boards/panel_data.ts";
 import { acceptReport, dismissReport, fileReport, waitingReports } from "../actions/reports.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
@@ -481,7 +482,7 @@ const mayBoards = (user: User): boolean => user.isAdmin && user.kind !== "agent"
 function boardFailed(e: BoardError): Answer {
   if (e === "not_found") return bad("not_found", "no such board");
   if (typeof e === "object") return bad("refused", e.refused);
-  return bad(e, "that board could not be saved");
+  return bad(e, BOARD_NOT_SAVED);
 }
 
 const TOOLS: readonly Tool[] = [
@@ -1018,7 +1019,7 @@ const TOOLS: readonly Tool[] = [
       );
       return voted.ok
         ? good({ answer, closed: voted.value.closed })
-        : bad(voted.error, "that vote could not be recorded");
+        : bad(voted.error, VOTE_NOT_RECORDED);
     },
   },
   {
@@ -3363,7 +3364,7 @@ const TOOLS: readonly Tool[] = [
         );
       return set.ok
         ? good(set.value)
-        : bad("forbidden", "only a person watches a milestone");
+        : bad("forbidden", MILESTONE_WATCH_PERSON_ONLY);
     },
   },
   {
