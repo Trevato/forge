@@ -37,6 +37,7 @@
 import { editFiles } from "../../actions/contents.ts";
 import { err, ok } from "../../kernel/result.ts";
 import { createBranch } from "../../actions/branches.ts";
+import { NAME_THE_BRANCH } from "../../actions/branch_words.ts";
 import { pinRepo, syncRepoNow, unpinRepo } from "../../actions/origins.ts";
 import { isPinned } from "../../core/pins.ts";
 import { setDecisionsBy } from "../../actions/repos.ts";
@@ -997,7 +998,7 @@ export function workspaceScreen(
             ? "created here, and the workspace switches to it"
             : `created on ${repo.origin.fullName} first, then here`,
         onSubmit: (name) => {
-          if (name === "") return "give the branch a name";
+          if (name === "") return NAME_THE_BRANCH;
           return (async () => {
             const made = await createBranch(f.app, f.user, repo, {
               name,

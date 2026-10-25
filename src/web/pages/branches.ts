@@ -41,6 +41,7 @@ import {
   sha,
   time,
 } from "../ui.ts";
+import { BRANCH_NOT_CREATED, BRANCH_NOT_DELETED } from "../../actions/branch_words.ts";
 import { frozenBlock } from "./frozen.ts";
 import { refSetFrom } from "./refs.ts";
 
@@ -337,7 +338,7 @@ export async function branchCreate(ctx: Ctx): Promise<Response> {
   if (!created.ok) {
     return flashTo(ctx, base, {
       tone: "danger",
-      message: CREATE_ERRORS[created.error] ?? "That branch was not created.",
+      message: CREATE_ERRORS[created.error] ?? BRANCH_NOT_CREATED,
     });
   }
   return flashTo(ctx, base, {
@@ -368,7 +369,7 @@ export async function branchDelete(ctx: Ctx): Promise<Response> {
   if (!deleted.ok) {
     return flashTo(ctx, base, {
       tone: "danger",
-      message: DELETE_ERRORS[deleted.error] ?? "That branch was not deleted.",
+      message: DELETE_ERRORS[deleted.error] ?? BRANCH_NOT_DELETED,
     });
   }
   return flashTo(ctx, base, { message: `Deleted ${deleted.value.name}.` });

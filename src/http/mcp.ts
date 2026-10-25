@@ -175,6 +175,7 @@ import { runGit } from "../git/env.ts";
 import { isSafeRef, isSafeTreePath } from "../git/guard.ts";
 import { blobForRender, listTree } from "../git/read.ts";
 import { CREATE_ERRORS, DELETE_ERRORS } from "../web/pages/branches.ts";
+import { BRANCH_NOT_CREATED, BRANCH_NOT_DELETED } from "../actions/branch_words.ts";
 import { askToLiveFor } from "../web/ask_to_live.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import { previewEnv } from "../apps/data.ts";
@@ -2408,12 +2409,12 @@ const TOOLS: readonly Tool[] = [
           ...(from === undefined || from === "" ? {} : { from }),
         });
         if (!made.ok)
-          return bad(made.error, CREATE_ERRORS[made.error] ?? "That branch was not created.");
+          return bad(made.error, CREATE_ERRORS[made.error] ?? BRANCH_NOT_CREATED);
         return good({ says: `Created ${made.value.name} at ${made.value.oid.slice(0, 7)}.`, url: base });
       }
       const gone = await deleteBranch(ctx.app, user, repo, name);
       if (!gone.ok)
-        return bad(gone.error, DELETE_ERRORS[gone.error] ?? "That branch was not deleted.");
+        return bad(gone.error, DELETE_ERRORS[gone.error] ?? BRANCH_NOT_DELETED);
       return good({ says: `Deleted ${gone.value.name}.`, url: base });
     },
   },
