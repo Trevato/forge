@@ -91,7 +91,15 @@ describe("a pull says its variant group and siblings", () => {
     await gitOk(["add", "."]);
     await gitOk(["commit", "-m", "base"]);
     await gitOk(["push", "origin", "main"]);
-  });
+    // The branches are cut here, in one push, so the test below spends its
+    // own time on the pulls it is about, not on git processes (a loaded
+    // machine ran its dozen spawns past the 5 s test timeout).
+    for (const name of ["a", "b", "c"]) {
+      await gitOk(["checkout", "-B", name, "main"]);
+      await write(`alpha\n${name}\ngamma\n`, `try ${name}`);
+    }
+    await gitOk(["push", "origin", "a", "b", "c"]);
+  }, 30_000);
 
   afterAll(async () => {
     servers.stop();
@@ -102,9 +110,6 @@ describe("a pull says its variant group and siblings", () => {
 
   test("pulls sharing a group name each other; an ordinary pull has null and []", async () => {
     for (const name of ["a", "b", "c"]) {
-      await gitOk(["checkout", "-B", name, "main"]);
-      await write(`alpha\n${name}\ngamma\n`, `try ${name}`);
-      await gitOk(["push", "origin", name]);
       const made = await api("/pulls", {
         method: "POST",
         body: JSON.stringify({ base: "main", head: name, title: name }),
