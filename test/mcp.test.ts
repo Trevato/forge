@@ -275,6 +275,7 @@ describe("the forge over MCP", () => {
       "quotas",
       "signup",
       "email_verify",
+      "parent_unlink",
       "boards",
       "board_write",
       "board_pins",

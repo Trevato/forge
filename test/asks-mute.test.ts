@@ -24,7 +24,7 @@ import { createToken } from "../src/core/tokens.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { mcpTool } from "./helpers/mcp.ts";
-import { askCountFor, askLinesFor, repoAsks } from "../src/web/studio/asks.ts";
+import { askCountFor, askLinesFor, forgeNeedsFor, repoAsks } from "../src/web/studio/asks.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -152,7 +152,9 @@ describe("muting a repository's asks", () => {
     expect(await onYou()).not.toContain("Muted work");
     expect(await apiAsks()).toHaveLength(0);
     expect(askLinesFor(app.db, alice)).toHaveLength(0);
-    expect(askCountFor({ app, auth: { user: alice } } as never, alice)).toBe(0);
+    // The count also carries the forge's own needs, which an admin has and muting does not touch.
+    const ctx = { app, auth: { user: alice } } as never;
+    expect(askCountFor(ctx, alice)).toBe(forgeNeedsFor(ctx, alice).length);
     // Said, never silent: the home names what it is holding back.
     const muted = await home();
     expect(muted).not.toContain('action="/asks/mute"');

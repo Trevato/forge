@@ -193,6 +193,7 @@ import { checkStale } from "../checks/stale.ts";
 import { checkSummary, listActiveRuns } from "../core/runs.ts";
 import { scopeAllows } from "../core/tokens.ts";
 import { lastOwnerSays } from "../core/orgs.ts";
+import { LAST_WAY_IN, parentIssuerOf, unlinkParent } from "../core/federation.ts";
 import { getUserByName, getUsersByIds, type User } from "../core/users.ts";
 import { chipsOf, isKindChip, setChip } from "../core/feed_chips.ts";
 import { openapi } from "../contract/openapi.ts";
@@ -856,7 +857,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "issue",
     description:
-      "One issue with comments, `blockedBy`, `blocks`; a crew agent sees `untrusted: true` on text by non-writers.",
+      "One issue with comments, `blockedBy`, `blocks`; crew agents see `untrusted: true` on non-writers' text.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1211,7 +1212,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "asks",
     description:
-      "What waits on you, most consequential first: decision, options, cost of inaction; your saved filter applies.",
+      "What waits on you, most consequential first: decision, options, cost of inaction; your saved filter applies",
     inputSchema: { type: "object", properties: { ...CHIP_ARGS } },
     writes: false,
     run(ctx, user, args) {
@@ -1223,7 +1224,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "asks_act",
     description:
-      "Decide asks (`items`: `asks` ids, `issue:<id>`): dismiss, decline, ship (final), close (`reason`), mute, replan.",
+      "Decide asks (`items`: ask ids, `issue:<id>`): dismiss, decline, ship (final), close (`reason`), mute, replan",
     inputSchema: {
       type: "object",
       properties: {
@@ -2805,7 +2806,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "propose_to_parent_forge",
     description:
-      "Offer this forge's landed change to its parent as a pull on `child/<name>/…`; the same tip answers it.",
+      "Offer this forge's landed change to its parent as a pull on `child/<name>/…`",
     inputSchema: {
       type: "object",
       properties: { repo: REPO_ARG },
@@ -3540,7 +3541,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "limb",
     description:
-      "Act on a plan limb: `defer`, `resume`, `close` (`reason`), `raise`, `lower`, `replan`, `takeback`, `undo`.",
+      "Act on a limb: `defer`, `resume`, `close` (`reason`), `raise`, `lower`, `replan`, `takeback`, `undo`",
     inputSchema: {
       type: "object",
       properties: {
@@ -4313,7 +4314,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "access",
     description:
-      "Outside agents' non-browser requests to public paths: redacted, newest first, max 500. Forge admin.",
+      "Non-browser public-path requests, redacted, newest first (max 500). Forge admin.",
     inputSchema: {
       type: "object",
       properties: {
@@ -4392,7 +4393,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "flow",
     description:
-      "The pipeline (forge admin): stage counts, `oldestWaiting`, `capacity`, bottleneck, `queue`, `reviewing`.",
+      "Pipeline (forge admin): stage counts, `oldestWaiting`, `capacity`, bottleneck, `queue`, `reviewing`.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     run(ctx, user) {
@@ -4602,7 +4603,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "cloud_account",
     description:
-      "Change a cloud account (admin token): `verb` attach, verify, rotate, rename, remove, allow_writes, audit.",
+      "Change a cloud account (admin token): `verb` attach, verify, rotate, rename, remove, allow_writes, audit",
     inputSchema: {
       type: "object",
       properties: {
@@ -4657,7 +4658,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "quotas",
     description:
-      "Per-account repo and app quotas (number or null; not enforced yet). With `key`, `value` (\"\" clears), plans.",
+      "Per-account repo and app quotas (number or null; not enforced yet). With `key`, `value` (\"\" clears).",
     inputSchema: {
       type: "object",
       properties: {
@@ -4695,7 +4696,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "signup",
     description:
-      "Sign-ups: open (default); invite lets in only a person with an open invite link; closed refuses every new account.",
+      "Sign-ups: open (default); invite lets in only a person with an open invite link; closed refuses every new account",
     inputSchema: {
       type: "object",
       properties: {
@@ -4744,6 +4745,21 @@ const TOOLS: readonly Tool[] = [
       if (sent.error === "capped") return bad("capped", CAPPED_WORDS);
       if (sent.error === "unauthorized") return bad("unauthorized", "sign in first");
       return bad("failed", "the link could not be sent; try again");
+    },
+  },
+  {
+    name: "parent_unlink",
+    description: "Unlink parent-forge sign-in.",
+    inputSchema: { type: "object", properties: {} },
+    writes: true,
+    run(ctx, user) {
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin")) return bad("forbidden", "unlinking needs an admin token");
+      const issuer = parentIssuerOf(ctx.app.config);
+      const done = issuer === undefined ? undefined : unlinkParent(ctx.app.db, user.id, issuer);
+      if (done === undefined || (done.ok && done.value === "none")) return good({ says: "Nothing to unlink." });
+      if (!done.ok) return bad("last_way_in", LAST_WAY_IN);
+      ctx.app.bus.append({ kind: "account.parent_unlinked", actorId: user.id });
+      return good({ says: "Unlinked." });
     },
   },
   {
