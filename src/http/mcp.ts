@@ -138,6 +138,7 @@ import {
 } from "../feed/feed.ts";
 import { share } from "../feed/share.ts";
 import { parseTargets } from "./feed.ts";
+import { redeployEnv, stopEnv } from "../actions/apps.ts";
 import { appsRuntime, envsFor } from "../apps/runtime.ts";
 import {
   CLOSE_REASONS,
@@ -528,6 +529,39 @@ const TOOLS: readonly Tool[] = [
           };
         }),
       );
+    },
+  },
+  {
+    name: "app_deploy",
+    description:
+      "Redeploy or stop production or a pull-N preview.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        env: { type: "string" },
+        action: { type: "string", enum: ["redeploy", "stop"] },
+      },
+      required: ["repo", "env", "action"],
+    },
+    writes: true,
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const env = str(args["env"]);
+      const action = str(args["action"]);
+      if (action !== "redeploy" && action !== "stop")
+        return bad("invalid_action", "action is redeploy or stop");
+      if (action === "stop") {
+        const stopped = await stopEnv(ctx.app, user, repo, env);
+        return stopped.ok
+          ? good({ stopped: true })
+          : bad(stopped.error, `refused: ${stopped.error}`);
+      }
+      const queued = await redeployEnv(ctx.app, user, repo, env);
+      return queued.ok
+        ? good({ queued: true, run: queued.value?.id ?? null })
+        : bad(queued.error, `refused: ${queued.error}`);
     },
   },
   {

@@ -172,6 +172,7 @@ describe("the forge over MCP", () => {
     expect(names).toEqual([
       "sizes",
       "apps",
+      "app_deploy",
       "new_app",
       "repo",
       "here",
