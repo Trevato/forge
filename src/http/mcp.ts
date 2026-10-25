@@ -117,6 +117,7 @@ import { inviteLink, list as listInviteLinks, mint as mintInviteLink, revoke as 
 import { suspendAccount, unsuspendAccount } from "../actions/accounts.ts";
 import { setRole } from "../actions/roles.ts";
 import { ABILITIES, roleOf, rowOf } from "../core/roles.ts";
+import { listPasskeys } from "../core/passkeys.ts";
 import { keepThought } from "../actions/thought.ts";
 import {
   FROM_WORDS,
@@ -745,7 +746,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "tell",
     description:
-      "Tell an app's crew what should change (first line is the title). No `repo`: kept, answers a thought id.",
+      "Tell an app's crew what should change (first line is the title). No `repo`: kept; answers a thought id.",
     inputSchema: {
       type: "object",
       properties: {
@@ -883,7 +884,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "issue",
     description:
-      "One issue with comments, `blockedBy`, `blocks`; crew agents see `untrusted: true` on non-writers' text.",
+      "One issue with comments, `blockedBy`, `blocks`; crew agents get `untrusted: true` on non-writers' text.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1053,7 +1054,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "variant",
     description:
-      "Like or dislike one pull among its variants; a later vote replaces it; a dislike closes it (`reason`).",
+      "Like or dislike a pull among its variants; a later vote replaces it; dislike closes it (`reason`).",
     inputSchema: {
       type: "object",
       properties: {
@@ -1238,7 +1239,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "asks",
     description:
-      "What waits on you, most consequential first: decision, options, cost of inaction; your saved filter applies",
+      "What waits on you, most important first: decision, options, cost of inaction; saved filter applies",
     inputSchema: { type: "object", properties: { ...CHIP_ARGS } },
     writes: false,
     run(ctx, user, args) {
@@ -1766,10 +1767,28 @@ const TOOLS: readonly Tool[] = [
   {
     name: "whoami_can",
     description:
-      "What you can do here: your role and its row of the roles table, each ability yes or no.",
-    inputSchema: { type: "object", properties: {} },
+      "What you can do: your role and its roles-table row, yes or no each.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        kind: { type: "string", enum: ["role", "passkeys"] },
+      },
+    },
     writes: false,
-    run: (ctx, user) => {
+    run: (ctx, user, args) => {
+      const kind = args["kind"] ?? "role";
+      if (kind === "passkeys") {
+        if (user.kind === "agent") return bad("forbidden", "an agent has no passkeys");
+        return good({
+          items: listPasskeys(ctx.app.db, user.id).map((k) => ({
+            id: k.id,
+            name: k.name,
+            created: k.createdAt,
+            lastUsed: k.lastUsedAt,
+          })),
+        });
+      }
+      if (kind !== "role") return bad("invalid", "kind is one of: role, passkeys");
       const role = roleOf(ctx.app.db, user);
       return good({ username: user.username, role, can: rowOf(role), abilities: ABILITIES });
     },
@@ -3658,7 +3677,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "returns",
     description:
-      "What the crew's tokens bought over `days` (1–90, default 7): dollars, runs, landed, cost per change.",
+      "What crew tokens bought over `days` (1–90, default 7): dollars, runs, landed, cost/change.",
     inputSchema: {
       type: "object",
       properties: {
@@ -4734,7 +4753,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "quotas",
     description:
-      "Per-account repo and app quotas (number or null; not enforced yet). With `key`, `value` (\"\" clears).",
+      "Per-account repo and app quotas (number or null; unenforced). With `key`, `value` (\"\" clears).",
     inputSchema: {
       type: "object",
       properties: {

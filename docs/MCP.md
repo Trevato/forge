@@ -124,7 +124,7 @@ for a tunnel and a forge that sleeps.
 | `mint_invite`  | `{ days? }`: mint a single-use invite link that expires in `days` (1–30, default 7) and is shown once; a person admin's, with an admin token | yes    |
 | `signup`       | `{ mode?, dryRun? }`: who may sign up: `open` (default), `invite` (only a person with an open invite link) or `closed` (no new accounts); without `mode` it reads the setting, with `mode` it plans first (`dryRun` is true unless `false`), and applying needs an admin token | yes    |
 | `access`       | `{ since?, ua?, path? }`: what outside agents tried: the redacted log of non-browser requests to public paths, newest first; `since` an ISO time (default a day, at most 14 days), `ua` part of the user agent, `path` a prefix; a forge admin's | yes    |
-| `whoami_can`   | no input: your role and that role's row of the roles table, each ability yes or no                |        |
+| `whoami_can`   | `{ kind? }`: your role and that role's row of the roles table, each ability yes or no; `kind: "passkeys"` lists your own passkeys (`{ items }`: id, name, created, lastUsed), people only |        |
 
 ### Room for a new tool
 
