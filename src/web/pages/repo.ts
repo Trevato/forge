@@ -974,6 +974,7 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
   const refs = await timePhaseAsync(ctx.request, "refs", () => refSetFrom(scope.source));
 
   if (refs.branches.length === 0) {
+    const emptyRendering = performance.now();
     const body = html`${scopeHeader(ctx, scope, "code")}${archivedLine(ctx, repo)}${noApp}
       <div class="mt">
         ${empty({
@@ -994,7 +995,7 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
           },
         )}
       </div>`;
-    return page({
+    const emptyResponse = page({
       ctx,
       title: repo.name,
       description: repo.description,
@@ -1007,6 +1008,8 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
       palette: scope.palette,
       body,
     });
+    notePhase(ctx.request, "render", performance.now() - emptyRendering);
+    return emptyResponse;
   }
 
   const wanted = ctx.url.searchParams.get("ref");
