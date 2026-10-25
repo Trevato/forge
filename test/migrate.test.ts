@@ -1246,6 +1246,10 @@ describe("migrate", () => {
       await browser(aliceCookie, `/migrate/jobs/${bad.job.id}`)
     ).text();
     expect(stands).toContain("clone went wrong");
+    expect(stands).not.toContain("error-note");
+    expect(stands).toMatch(
+      /<div class="field" data-invalid>\s*<span class="error" role="alert"[^>]*>clone went wrong/,
+    );
     expect(stands).not.toContain("EventSource");
     expect(stands).not.toContain('http-equiv="refresh"');
   });

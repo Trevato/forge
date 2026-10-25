@@ -1090,9 +1090,11 @@ describe("authorization across origins, mirrors, pins and disconnect", () => {
     // Carol sees none of Alice's pins, cannot remove them, and cannot pin a
     // repo she cannot see — which does not exist for her.
     expect(
-      await read<unknown[]>(
-        await seen(await api("/api/v1/user/pins", { as: "carol" })),
-      ),
+      (
+        await read<{ items: unknown[] }>(
+          await seen(await api("/api/v1/user/pins", { as: "carol" })),
+        )
+      ).items,
     ).toEqual([]);
     expect(
       (
@@ -1119,12 +1121,16 @@ describe("authorization across origins, mirrors, pins and disconnect", () => {
       ).status,
     ).toBe(404);
     expect(
-      await read<unknown[]>(await api("/api/v1/user/pins", { as: "bob" })),
+      (
+        await read<{ items: unknown[] }>(
+          await api("/api/v1/user/pins", { as: "bob" }),
+        )
+      ).items,
     ).toEqual([]);
-    const mine = await read<{ name: string }[]>(
+    const mine = await read<{ items: { name: string }[] }>(
       await seen(await api("/api/v1/user/pins")),
     );
-    expect(mine.map((p) => p.name).sort()).toEqual(["secret", "widgets"]);
+    expect(mine.items.map((p) => p.name).sort()).toEqual(["secret", "widgets"]);
     expect(
       app.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM pin").get()!.n,
     ).toBe(2);

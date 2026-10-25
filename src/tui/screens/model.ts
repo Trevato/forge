@@ -13,6 +13,7 @@ import {
   setAccountCeilings,
   setAccountGrant,
 } from "../../actions/model_grant.ts";
+import { AMOUNT_REFUSED, SUBSCRIPTION_ADDED } from "../../actions/model_words.ts";
 import { getAccountCeiling } from "../../core/account_ceiling.ts";
 import { getUserByName } from "../../core/users.ts";
 import { budgetLine, ownSubscription } from "../../core/model_grant.ts";
@@ -57,7 +58,7 @@ export function modelScreen(f: Session, ctx: Ctx): Screen {
                 onSubmit: (apiBase) => {
                   const added = addOwnModel(f.app, f.user, { token: token.trim(), apiBase: apiBase.trim() });
                   if (!added.ok) return ADD_MESSAGES[added.error];
-                  note = "Your subscription is added, for your own repositories.";
+                  note = SUBSCRIPTION_ADDED;
                   return undefined;
                 },
               }),
@@ -85,7 +86,7 @@ export function modelGrantPrompt(f: Session, ctx: Ctx, parent: Screen): Screen {
             const usd = text === "none" || text === "0" ? null : Number(text);
             if (usd !== null && !Number.isFinite(usd)) return "Dollars a month, like 20 — or none.";
             const done = setAccountGrant(f.app, f.user, name.trim(), usd);
-            if (!done.ok) return done.error === "invalid_amount" ? "That amount will not do." : "No such account.";
+            if (!done.ok) return done.error === "invalid_amount" ? AMOUNT_REFUSED : "No such account.";
             ctx.toast(usd === null ? `${name.trim()}: grant taken back.` : `${name.trim()}: $${usd.toFixed(2)} a month.`);
             return undefined;
           },
@@ -122,7 +123,7 @@ export function modelCeilingPrompt(f: Session, ctx: Ctx, parent: Screen): Screen
             if (daily === undefined || perRun === undefined || rest.length > 0)
               return "Two amounts, like 20 5.";
             const done = setAccountCeilings(f.app, f.user, name.trim(), daily, perRun);
-            if (!done.ok) return done.error === "invalid_amount" ? "That amount will not do." : "No such account.";
+            if (!done.ok) return done.error === "invalid_amount" ? AMOUNT_REFUSED : "No such account.";
             ctx.toast(`${name.trim()}: $${done.value.dailyUsd?.toFixed(2)} a day, $${done.value.perRunUsd?.toFixed(2)} a run.`);
             return undefined;
           },

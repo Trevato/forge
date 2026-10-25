@@ -735,7 +735,13 @@ describe("apps, runs and the crew on the web", () => {
       form: { username: "bot", budgetUsd: "-4" },
     });
     expect(bad.status).toBe(422);
-    expect(words(await bad.text())).toContain("A budget is a number");
+    const badPage = words(await bad.text());
+    expect(badPage).toContain("A budget is a number");
+    // The error sits beside its field (§5), not in an .error-note.
+    expect(badPage).toMatch(
+      /<div class="field" data-invalid>\s*<label for="f-budgetUsd">.*?<span class="error" id="f-budgetUsd-err">A budget is a number/,
+    );
+    expect(badPage).not.toContain("error-note");
     expect(getAgentByName(app.db, "bot")).toBeUndefined();
 
     const made = await web(alice, "/settings/crew", {
@@ -763,6 +769,17 @@ describe("apps, runs and the crew on the web", () => {
     });
     expect(updated.status).toBe(303);
     expect(getAgentByName(app.db, "bot")?.model).toBe("sonnet");
+    expect(getAgentByName(app.db, "bot")?.budgetUsd).toBe(3);
+    // A refused edit shows the error beside its field.
+    const refused = await web(alice, "/settings/crew/bot", {
+      form: { model: "sonnet", brief: "Be brief.", budgetUsd: "-4" },
+    });
+    expect(refused.status).toBe(422);
+    const refusedPage = words(await refused.text());
+    expect(refusedPage).toMatch(
+      /<div class="field" data-invalid>\s*<label for="f-budgetUsd">.*?<span class="error" id="f-budgetUsd-err">A budget is a number/,
+    );
+    expect(refusedPage).not.toContain("error-note");
     expect(getAgentByName(app.db, "bot")?.budgetUsd).toBe(3);
     // A non-admin cannot touch any of it, whatever the form says.
     const forged = await web(bob, "/settings/crew/bot", {

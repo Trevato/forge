@@ -49,13 +49,6 @@ describe("the studio, continued", () => {
       headers: { cookie: `${cookie}; forge_mode=studio`, ...extra },
       redirect: "manual",
     });
-  const post = (path: string, body: Record<string, string>, extra = "") =>
-    fetch(`${base}${path}`, {
-      method: "POST",
-      headers: { cookie: `${cookie}${extra}`, origin: base },
-      body: new URLSearchParams(body),
-      redirect: "manual",
-    });
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-studio-"));

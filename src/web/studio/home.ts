@@ -77,8 +77,8 @@ const RAIL_APPS = 8;
  * name and how production is — and the verbs that were the shelf's head.
  * The apps' full rows are `/apps`.
  */
-function yourApps(ctx: Ctx, user: User): Html {
-  const { repos } = writableAppsOf(ctx, user);
+function yourApps(ctx: Ctx, user: User, apps = writableAppsOf(ctx, user)): Html {
+  const { repos } = apps;
   const runtime = appsRuntime(ctx.app);
   const records = appsForRepos(
     ctx.app.db,
@@ -144,9 +144,9 @@ function yourApps(ctx: Ctx, user: User): Html {
  * so an event fetches that region — your apps, or what is on you — and not
  * the page; the fragment answers with the same element, id and all.
  */
-const appsRegion = (ctx: Ctx, user: User): Html =>
+const appsRegion = (ctx: Ctx, user: User, apps?: ReturnType<typeof writableAppsOf>): Html =>
   html`<div id="live-apps" data-live="${APPS_LIVE}" data-live-src="/live/apps">
-    ${yourApps(ctx, user)}
+    ${yourApps(ctx, user, apps)}
   </div>`;
 
 export const onYouRegion = (
@@ -168,7 +168,12 @@ export const onYouRegion = (
 export function liveAppsFragment(ctx: Ctx): Response {
   const user = ctx.auth.user;
   if (!user) return fragment(html``, { status: 404 });
-  return fragment(appsRegion(ctx, user), { request: ctx.request });
+  const rendering = performance.now();
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const apps = timePhase(ctx.request, "apps", () => writableAppsOf(ctx, user));
+  const body = fragment(appsRegion(ctx, user, apps), { request: ctx.request });
+  notePhaseRest(ctx.request, "render", rendering, ["apps"]);
+  return body;
 }
 
 /**
@@ -183,7 +188,11 @@ export function onYouAnswer(ctx: Ctx, user: User, note?: string): Response {
 export function liveOnYouFragment(ctx: Ctx): Response {
   const user = ctx.auth.user;
   if (!user) return fragment(html``, { status: 404 });
-  return fragment(onYouRegion(ctx, user), { request: ctx.request });
+  const rendering = performance.now();
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const body = fragment(onYouRegion(ctx, user), { request: ctx.request }); // needsYouSection times "asks"
+  notePhaseRest(ctx.request, "render", rendering, ["asks"]);
+  return body;
 }
 
 /**
@@ -261,8 +270,8 @@ export async function studioHome(
       </p>`,
     )}
     ${homeTabs("feed")}
-    <div class="dash">
-      <div class="dash-main stack">
+    <div class="split" data-rail="wide">
+      <div class="stack">
         ${composer(ctx, user)}
         <div class="bar feed-head">
           <span class="spacer"></span>
@@ -272,7 +281,7 @@ export async function studioHome(
         ${feedNote()}
         ${timePhase(ctx.request, "feed", () => feedRegion(user, ctx), () => feedCandidateCache(ctx.app.db))}
       </div>
-      <aside class="dash-rail stack">
+      <aside class="stack">
         ${
           // The crew's missing key is the owner's to fix, not the first
           // thing above every post: beside the timeline on a desk, after it
@@ -473,7 +482,7 @@ function frontControls(ctx: Ctx, front: FrontPage): Html {
     {
       head: html`${icon("settings")}
         <h2>The front page</h2>`,
-      extra: "front-controls",
+      attrs: html`data-front-settings`,
     },
   );
 }

@@ -195,7 +195,6 @@ describe("a forge booted from a relative data dir still accepts pushes", () => {
   let app: App;
   let servers: Servers;
   let port = 0;
-  let cookie = "";
 
   async function git(args: string[], cwd: string): Promise<number> {
     const p = Bun.spawn(["git", ...args], {
@@ -218,7 +217,7 @@ describe("a forge booted from a relative data dir still accepts pushes", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     port = servers.port;
-    cookie = await adminCookie(app, {
+    await adminCookie(app, {
       username: "rel",
       email: "r@f.dev",
       password: "rel-secret",

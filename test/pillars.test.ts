@@ -424,18 +424,25 @@ describe("pillars", () => {
     await land("composer", composer);
     await land("readme", loose);
     await land("nothing", null);
-    // Merged, but ten days ago: outside the week.
     const old = await land("verdict", parts[1]!);
-    app.db
-      .query("UPDATE pull SET merged_at = ?1 WHERE issue_id = ?2")
-      .run(new Date(Date.now() - 10 * 86_400_000).toISOString(), old);
+    // One instant for the whole case: the merges happened a minute before it
+    // however long they took, and the odd one out ten days before, outside
+    // the week. The view is read at that instant, not at whatever the clock
+    // says by the time the assertions run.
+    const T = Date.now();
+    const pin = (ago: number, where: string, ...args: string[]) =>
+      app.db
+        .query(`UPDATE pull SET merged_at = ?1 WHERE ${where}`)
+        .run(new Date(T - ago).toISOString(), ...args);
+    pin(60_000, "merged_at IS NOT NULL AND issue_id != ?2", old);
+    pin(10 * 86_400_000, "issue_id = ?2", old);
     const want = [
       { pillar: "P0 Trust", merged: 2 },
       { pillar: "P1 Feed", merged: 1 },
       { pillar: "Later", merged: 0 },
       { pillar: null, merged: 2 },
     ];
-    expect(pillarView(app.db, fresh())!.merged).toEqual(want);
+    expect(pillarView(app.db, fresh(), new Date(T))!.merged).toEqual(want);
     const data = await api("/api/v1/repos/alice/engine/map");
     // Nothing has gone live yet, so each pillar's ask-to-live is null: a dash.
     expect(data.mergedByPillar).toEqual({

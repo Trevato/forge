@@ -9,7 +9,7 @@
  * refused while any admin can still sign in.
  */
 
-import { afterAll, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, describe, expect, setDefaultTimeout, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,17 +24,25 @@ import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
 
+// Each test boots a database and, for the HTTP ones, a listener. That is tens of
+// milliseconds alone but passed 5 s on a check machine running many suites at once
+// (seen: "timed out after 5000ms"), so the budget is for the boot, not the code.
+setDefaultTimeout(30_000);
+
 const dirs: string[] = [];
 afterAll(async () => {
   for (const d of dirs) await rm(d, { recursive: true, force: true });
 });
 
-const past = () => new Date(Date.now() - 86_400_000).toISOString();
-const future = () => new Date(Date.now() + 3_600_000).toISOString();
+// One instant for the file: expiries are built from it and the CLI is asked at it,
+// so a slow machine cannot move a "future" expiry into the past between the two.
+const NOW = Date.now();
+const past = () => new Date(NOW - 86_400_000).toISOString();
+const future = () => new Date(NOW + 3_600_000).toISOString();
 const CODE = /"code": "([A-Za-z0-9_-]{43})"|#([A-Za-z0-9_-]{43})|\b([A-Za-z0-9_-]{43})\b/;
 
 /** A forge with one admin and no credential at all: the shape a lapsed headless admin leaves. */
-async function stranded(name = "opsbot"): Promise<{ dir: string; app: App; servers: Servers; userId: string }> {
+async function stranded(name = "opsbot", listen = true): Promise<{ dir: string; app: App; servers: Servers; userId: string }> {
   const dir = await mkdtemp(join(tmpdir(), "forge-first-admin-recovery-"));
   dirs.push(dir);
   const app = createApp({ dataDir: dir, port: 0, passkeyOnlySignup: true });
@@ -42,7 +50,9 @@ async function stranded(name = "opsbot"): Promise<{ dir: string; app: App; serve
   if (!made.ok) throw new Error("user");
   // Its token from the first-admin redemption, lapsed.
   createToken(app.db, made.value.id, "first-admin", "admin", { expiresAt: past() });
-  return { dir, app, servers: await serve(app), userId: made.value.id };
+  // The CLI reads the database file alone; only the HTTP tests need a listener.
+  const servers = listen ? await serve(app) : { url: "", stop: () => {} };
+  return { dir, app, servers: servers as Servers, userId: made.value.id };
 }
 
 const post = (base: string, path: string, body: Record<string, unknown>, headers: Record<string, string> = {}) =>
@@ -259,20 +269,20 @@ describe("refused while any admin has a working credential", () => {
 
   for (const [what, give] of Object.entries(credentials)) {
     test(`the stranded admin itself, or another admin, has ${what}`, async () => {
-      const { dir, app, servers, userId } = await stranded();
+      const { dir, app, servers, userId } = await stranded("opsbot", false);
       try {
         give(app, userId);
-        expect(firstAdminCli([], { FORGE_DATA: dir }).exit).toBe(1);
+        expect(firstAdminCli([], { FORGE_DATA: dir }, NOW).exit).toBe(1);
       } finally {
         servers.stop();
         app.close();
       }
-      const other = await stranded();
+      const other = await stranded("opsbot", false);
       try {
         const second = await createUser(other.app.db, { origin: "seed", trusted: true, username: "second", email: "s@x.test", isAdmin: true });
         if (!second.ok) throw new Error("second");
         give(other.app, second.value.id);
-        const refused = firstAdminCli([], { FORGE_DATA: other.dir });
+        const refused = firstAdminCli([], { FORGE_DATA: other.dir }, NOW);
         expect(refused.exit).toBe(1);
         expect(refused.out).toHaveLength(0);
       } finally {
@@ -283,12 +293,12 @@ describe("refused while any admin has a working credential", () => {
   }
 
   test("an expired session and an expired token are not working credentials", async () => {
-    const { dir, app, servers, userId } = await stranded();
+    const { dir, app, servers, userId } = await stranded("opsbot", false);
     try {
       app.db
         .query("INSERT INTO session (token_hash, user_id, expires_at, id) VALUES (?1, ?2, ?3, ?4)")
         .run(sha256("old"), userId, past(), "sess-old");
-      expect(firstAdminCli([], { FORGE_DATA: dir }).exit).toBe(0);
+      expect(firstAdminCli([], { FORGE_DATA: dir }, NOW).exit).toBe(0);
     } finally {
       servers.stop();
       app.close();
@@ -298,7 +308,7 @@ describe("refused while any admin has a working credential", () => {
   test("a credential that appears after the code is minted kills it", async () => {
     const { dir, app, servers, userId } = await stranded();
     try {
-      const code = codeOf(firstAdminCli([], { FORGE_DATA: dir }).out);
+      const code = codeOf(firstAdminCli([], { FORGE_DATA: dir }, NOW).out);
       credentials["a passkey"]!(app, userId);
       expect((await recover(servers.url, { code, scope: "rw" })).status).toBe(403);
     } finally {
@@ -315,7 +325,7 @@ describe("which admin is recovered", () => {
       const b = await createUser(app.db, { origin: "seed", trusted: true, username: "builder", email: "b@x.test", isAdmin: true });
       const plain = await createUser(app.db, { origin: "seed", trusted: true, username: "plain", email: "p@x.test" });
       if (!b.ok || !plain.ok) throw new Error("users");
-      const ambiguous = firstAdminCli([], { FORGE_DATA: dir });
+      const ambiguous = firstAdminCli([], { FORGE_DATA: dir }, NOW);
       expect(ambiguous.exit).toBe(1);
       expect(ambiguous.err.join("\n")).toContain("--user");
       expect(firstAdminCli(["--user", "plain"], { FORGE_DATA: dir }).exit).toBe(1);
@@ -334,7 +344,7 @@ describe("which admin is recovered", () => {
     const { dir, app, servers, userId } = await stranded();
     try {
       app.db.query("UPDATE user SET suspended_at = ?1 WHERE id = ?2").run(new Date().toISOString(), userId);
-      expect(firstAdminCli([], { FORGE_DATA: dir }).exit).toBe(1);
+      expect(firstAdminCli([], { FORGE_DATA: dir }, NOW).exit).toBe(1);
     } finally {
       servers.stop();
       app.close();

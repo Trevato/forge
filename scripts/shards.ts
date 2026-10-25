@@ -445,7 +445,8 @@ export function sliceFiles(
 
 /**
  * Parses `--shard N/M` (or the same shape from env). Empty / undefined means
- * no matrix slice — run every named file.
+ * no matrix slice — run every named file. Four digits a side: the gate
+ * passed 999 files, and a slice per file must still be nameable.
  */
 export function parseShardSpec(
   spec: string | undefined,
@@ -454,7 +455,7 @@ export function parseShardSpec(
   | { ok: true; none: true }
   | { ok: false; error: string } {
   if (spec === undefined || spec.trim() === "") return { ok: true, none: true };
-  const m = /^([1-9][0-9]{0,2})\/([1-9][0-9]{0,2})$/.exec(spec.trim());
+  const m = /^([1-9][0-9]{0,3})\/([1-9][0-9]{0,3})$/.exec(spec.trim());
   if (!m)
     return {
       ok: false,

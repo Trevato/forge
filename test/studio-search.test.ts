@@ -37,7 +37,6 @@ import {
 } from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { serving } from "./helpers/studio.ts";
 import { promote } from "./helpers/members.ts";
 
 describe("finding things in the studio: /search", () => {

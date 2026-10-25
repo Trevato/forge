@@ -13,6 +13,7 @@ import { ARCHIVED_WHY, canAdmin, canWrite, forkParentFor, type Repo } from "../c
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { chainOfRepo, forgeLinkOf, FOLLOW_MODES, isFollowMode, setChainMode, severChain, type FollowMode } from "../spawn/chain.ts";
+import { FAMILY_WORDS } from "./family_words.ts";
 import { requireUser } from "./access.ts";
 import { takeFromParent, type Taken } from "../spawn/take.ts";
 import { takeUpdates, type ForkSync, type TakeUpdatesError } from "./forks.ts";
@@ -102,7 +103,7 @@ export type FollowModeError = SeverError | "invalid_mode" | "severed";
 export const FOLLOW_MODE_REFUSALS: Record<FollowModeError, { status: number; message: string }> = {
   unauthorized: { status: 401, message: "sign in to change how this forge follows its parent" },
   forbidden: { status: 403, message: "only this forge's owner can change how it follows" },
-  not_following: { status: 404, message: "this repository follows nothing across forges" },
+  not_following: { status: 404, message: FAMILY_WORDS.not_following },
   invalid_mode: { status: 422, message: `mode is one of: ${FOLLOW_MODES.join(", ")}` },
   severed: { status: 409, message: "this forge is severed and follows nothing; there is no mode to change" },
 };

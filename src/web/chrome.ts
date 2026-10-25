@@ -316,7 +316,6 @@ export function scopeHeader(
     ${facts.visibility === "private"
       ? badge("Private", { icon: "lock", variant: "secondary" })
       : badge("Public", { variant: "secondary" })}
-    ${repo === undefined ? null : audienceLine(ctx, repo, admin, base)}
     ${actions.text.trim() !== ""
       ? html`<span class="repo-actions">${actions}</span>`
       : null}`;
@@ -325,6 +324,7 @@ export function scopeHeader(
     ${options.ownTitle
       ? html`<div class="repo-title">${title}</div>`
       : html`<h1 class="repo-title">${title}</h1>`}
+    ${repo === undefined ? null : audienceLine(ctx, repo, admin, base)}
     ${when(
       !options.compact && facts.description !== "",
       () => html`<p class="repo-desc">${facts.description}</p>`,
@@ -386,17 +386,18 @@ export function lineageLine(
 }
 
 /**
- * Who can see this repository, in the one sentence `audienceOf` gives, beside
- * the badge. A link to the settings for whoever can open them, plain text for
- * everyone else. One line: CSS truncates it, `title` keeps all of it.
+ * Who can see this repository, in the one sentence `audienceOf` gives, on a
+ * line under the title. The Public/Private badge in the title says the code's
+ * visibility; a Split repository (public code, private app) is the case it
+ * cannot say, so only then does a badge lead the sentence. The sentence is the
+ * link to the settings for whoever can open them.
  */
 function audienceLine(ctx: Ctx, repo: Repo, admin: boolean, base: string): Html {
-  const { sentence } = audienceOf(audienceFacts(ctx.app.db, repo, ctx.auth.user));
-  return admin
-    ? html`<a class="repo-audience" href="${base}/settings" title="${sentence}"
-        >${sentence}</a
-      >`
-    : html`<span class="repo-audience" title="${sentence}">${sentence}</span>`;
+  const { level, sentence } = audienceOf(audienceFacts(ctx.app.db, repo, ctx.auth.user));
+  const split = level === "split" ? html`${badge("Split", { tone: "attn" })} ` : null;
+  return html`<p class="repo-desc">
+    ${split}${admin ? html`<a href="${base}/settings">${sentence}</a>` : sentence}
+  </p>`;
 }
 
 export { hostOf };

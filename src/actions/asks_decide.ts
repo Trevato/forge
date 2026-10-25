@@ -14,7 +14,9 @@ import type { User } from "../core/users.ts";
 import { guardedHand, letDeciderHandle, undoHandled } from "../crew/handover.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { askTargetsFor } from "../web/studio/asks.ts";
+import { NO_LONGER_ASKS } from "./asks_words.ts";
 import type { FleetError } from "./fleet.ts";
+import { SIGN_IN_TO_ACT } from "./asks_words.ts";
 
 export { HAND_COOLDOWN_MS } from "../crew/handover.ts";
 
@@ -57,7 +59,7 @@ export async function decideAsk(
   item: unknown,
   now = Date.now(),
 ): Promise<Result<HandAnswer, FleetError>> {
-  if (!actor) return fail("unauthorized", "sign in to act on your asks");
+  if (!actor) return fail("unauthorized", SIGN_IN_TO_ACT);
   if (typeof item !== "string" || !ASK_ID.test(item))
     return fail("bad_action", "only a hand-over can be handed to the decider");
   if (app.config.decider === undefined)
@@ -68,7 +70,7 @@ export async function decideAsk(
   const issue = issueIds[0] === undefined ? undefined : getIssueById(app.db, issueIds[0]);
   const repo = issue === undefined ? undefined : getRepoById(app.db, issue.repoId);
   if (issue === undefined || repo === undefined)
-    return fail("not_found", "it no longer asks you");
+    return fail("not_found", NO_LONGER_ASKS);
   const handed = await guardedHand(app, issue.id, now, () =>
     letDeciderHandle(app, actor, repo, issue, repo.decisionsBy),
   );
@@ -86,7 +88,7 @@ export function undoDecideAsk(
   actor: User | undefined,
   decisionId: unknown,
 ): Result<HandAnswer, FleetError> {
-  if (!actor) return fail("unauthorized", "sign in to act on your asks");
+  if (!actor) return fail("unauthorized", SIGN_IN_TO_ACT);
   if (typeof decisionId !== "string" || decisionId === "")
     return fail("not_found", "no such decision");
   const undone = undoHandled(app, actor, decisionId);

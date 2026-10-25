@@ -208,7 +208,7 @@ runs no check and no preview until a writer approves its head or lets it run
 (**Let it run here**, which is not a review; a new push waits again), and a bare push to `child/…` starts none. A pull
 opened with it says "proposed by child … from …" on every tab of the pull's
 page, in the terminal's pull view, and as `proposal` in the pull's JSON
-(`GET …/pulls/:number`, and MCP's `pull` tool). `GET …/pulls/:number?diff=0` reads the pull without its diff (and skips computing it); `diff` is `0` or `1`, default `1`, and anything else answers 422. `GET …/issues?fields=brief` lists issues with only number, kind, title, state, labels, assignee, author, originAuthor, authorIsAgent, createdAt and updatedAt (and `untrusted` where it applies); no bodies or comments. `fields` is `brief` or left out, and anything else answers 422 `invalid_fields`.
+(`GET …/pulls/:number`, and MCP's `pull` tool). `GET …/pulls/:number?diff=0` reads the pull without its diff (and skips computing it); `diff` is `0` or `1`, default `1`, and anything else answers 422. `GET …/issues?fields=brief` lists issues with only number, kind, title, state, labels, assignee, author, originAuthor, authorIsAgent, createdAt and updatedAt (and `untrusted` where it applies); no bodies or comments. `fields` is `brief` or left out, and anything else answers 422 `invalid_fields`. `GET …/repos/:owner/:name/events` answers `{ items, next_cursor }`, newest first, `limit` 1 to 200 (default 50) and `cursor` from `next_cursor` (anything else is a 422); it used to answer a bare array of every event, so a client that read the array reads `items` now. A request reads at most 1,000 events, so when most of them are hidden from the reader a page can come back short with a `next_cursor`: keep following it until it is null. MCP's `events` tool answers the same. `GET …/repos/:owner/:name/branches` answers `{ items, next_cursor }` in the order it always had, `limit` 1 to 200 (default 50) and `cursor` the `next_cursor` of the page before (the name of the last branch on it); anything else is a 422, and a cursor naming a branch deleted between two requests is `invalid_cursor`, so start over. It used to answer a bare array, so a client that read the array reads `items` now.
 
 ### Proposing to a parent forge
 
@@ -346,6 +346,8 @@ or the last change landed in the past 7 days ("Last change: …, 3 days ago");
 a quiet app says nothing more. The terminal's first screen opens with the same
 lines, from the same queries (`src/core/client-apps.ts`).
 
+**Reading the home as the eye does (#5735, step 1).** `bun scripts/home-read.ts <url>` fetches a page and prints its visible text, then one line: `chars N · words N · fetched in N ms`. Set `FORGE_COOKIE` (for example `forge_session=…; forge_mode=studio`) to read it as the owner; the cookie is sent and never printed. It exits non-zero on any status but 200. The conversion is `pageText` in `src/web/page_text.ts`: scripts, styles, templates, the head and anything `hidden` or `aria-hidden="true"` are dropped, link text stays, blocks sit on their own lines, entities are decoded. The method then continues: (2) a fresh agent with no context reads only that text and answers in at most 150 words, (3) the steward scores it against ground truth on coverage of the 5 things that mattered, errors, and seconds, (4) repeat after every feed change. The steward runs steps 2–4 and logs them on #5735.
+
 Home shows nine figures first, from `src/flow/kpis.ts`: shipped per hour (with
 a 24 h sparkline), the live version and since when, the median check time, the crew builders
 running of their slots, and the crew's spend today of the forge's daily
@@ -449,16 +451,16 @@ only, shows a guest nothing, and names nothing of a placement in a repository
 you cannot read.
 
 Review: `/review` lists the asks waiting on you, one row each (title, repository,
-age, why, and the crew's advice or that it has not advised yet), newest first. It only reads; the buttons stay on `/asks`, which links
-to it, and signed out it sends you to sign-in. The terminal has no page of its
+age, why, and the crew's advice or that it has not advised yet), newest first. A pull's row also carries the check verdict for its head (the pull page's badge: passed, failed, running, cancelled, or none) in the row's trail, and, when its repository is an app, an "Open the preview" link under it (shown for any app, even before a preview is deployed); and, when the pull has a look the viewer may fetch, its preview thumbnail beside production's under that (sized, lazy, never inside the row's link; the pull's is the only link, named for a screen reader, and production's is a named picture; a viewer who may not fetch it sees none); all of it comes from the database, never git. The row's trail also says the pull's size (`3 files changed, +40 −7`), kept per base and head commit (`src/web/studio/review_evidence.ts`); a request never waits on git: until the stat is kept the row says "Diff loading — reload for the size" while the app computes it in the background (at most 4 at once, stopped by closing the app), and a failed stat says "Diff size unavailable" and is not asked again for a minute, so a bad pull cannot spawn git on every visit. Visits while a stat is running share it. Each row also carries its actions under it, as plain form POSTs to `/review/act` (same-origin checked, `rw` scope): on a pull **Merge** (through the same landing gate as anywhere, so a red or unreviewed head is refused with the gate's sentence), **Close**, **Request changes** (with a text box) and **Reply** (with a text box); on an issue **Close** and **Reply**. After an action the page answers 303 to `/review#<the next ask>` (the first that followed it and still waits, else the first left, else `/review`), and the acted ask is gone; a refusal comes back to the same row with its reason. Keys: `j`/`k` move between rows, and on the focused row `m` merges, `c` closes and `r` jumps to the Request-changes box; keys are ignored while a text box has focus, and `?` lists them. `/asks` links to it, and signed out it sends you to sign-in. The terminal has no page of its
+own for it: the same asks are the dashboard's On you card (acting from the terminal is tracked in #5189). The terminal has no page of its
 own for it: the same asks are the dashboard's On you card.
 
 A client's forge: `Ctrl+K`, then **New forge** (any signed-in person's, as the
 page is), is `/forges/new` in the terminal — name, for whom, what it is for,
 apps to fork (`owner/name`, comma-separated), a fresh one-line app, model key
-(hidden as typed), API base URL and budget, through the same `spawnDoor` as the
+(hidden as typed), API base URL, budget, how it follows the code and a size (`small` by default, not sent; `medium` or `large` is; left, right or space choose), through the same `spawnDoor` as the
 page, `POST /api/v1/forges` and the MCP `spawn`. `Ctrl+P` shows the plan and
-makes nothing; `enter` on the plan spawns, and the claim link is shown once, in
+makes nothing (it shows a Size line when one is chosen); `enter` on the plan spawns, and the claim link is shown once, in
 a dialog, never kept.
 
 The family across forges: `:` → Family in the terminal, `/family` on the web,
@@ -603,7 +605,7 @@ forge can be a parent. The terminal shows the count, not the release names.
 
 A spawned forge's own code is a fork of its parent's (`<org>/forge`, chosen
 `followMode` `tell-me` or `take-updates`; in `take-updates` the hourly check puts what the parent gained in a pull.
-A spawn may also name a `size`: `small`, `medium` or `large` (`src/spawn/sizes.ts` maps each to CPU, memory and disk). It is recorded in the plan only when given, so a plan without one hashes as it always did, and an unknown size is a 422 on `size`. Nothing enforces the limits yet, and the table's numbers are provisional. `GET /api/v1/forges/sizes` (no sign-in, ETag, cached for 5 minutes) and the MCP tool `sizes` give the same answer — each size's CPU, memory and disk, read from that table, and one sentence on what it is for — so a page or an agent offering a size reads it there.
+A spawn may also name a `size`: `small`, `medium` or `large` (`src/spawn/sizes.ts` maps each to CPU, memory and disk). It is recorded in the plan only when given, so a plan without one hashes as it always did, and an unknown size is a 422 on `size`. The New forge page and the terminal form both offer it, small preselected and not sent; the page shows a refusal beside the select, linked with `aria-describedby`. Nothing enforces the limits yet, and the table's numbers are provisional. `GET /api/v1/forges/sizes` (no sign-in, ETag, cached for 5 minutes) and the MCP tool `sizes` give the same answer — each size's CPU, memory and disk, read from that table, and one sentence on what it is for — so a page or an agent offering a size reads it there.
  Once an hour, and
 on demand, a forge that follows and has not severed fetches its parent's code into
 `refs/upstream/*` of its own `<org>/forge` (no branch of the fork moves) and keeps
@@ -989,6 +991,57 @@ Under the box, four starter sentences are plain links (no script):
   server-rendered page paints up to 100 ms later (a page sent with a
   `Content-Length`, or one that starts with something other than markup, does
   not wait). Event streams and WebSockets are untouched.
+- **A signed-in note needs the panel's one-use proof (#5612).** The grant
+  cookie alone no longer makes a note `@name`: the forge puts a one-use token in
+  the panel's script tag on a signed-in page load, the panel sends it as
+  `x-forge-proof` and each answer carries the next. Without it, a reused one or
+  one for another grant or host, the sender is a visitor and `admin` is false.
+  This stops an app's code that merely holds the cookie (a `fetch` from its
+  page). It does **not** stop app code that runs in the same page and watches
+  for the tag or patches `fetch` before the panel runs: the token reaches the
+  panel through the page, so that code can read it. Closing that needs the
+  panel in a cross-origin frame, which is not built. If a call fails the panel
+  asks for a reload, since the chain is then spent.
+- **The forge button is a feedback door (#4758).** One tap opens *Tell the
+  builders*: a text box and Send, no account. The note is posted to the app's
+  own host (`POST /__forge/note`, same-origin only) and filed as an issue on
+  its repository, labelled `from-app`, with the page, the viewport and the time,
+  in the owner's name and with the sender's words inside one fence. A visitor
+  is an anonymous `visitor-xxxxxx` (an HttpOnly cookie); a signed-in person is
+  `@name`. Moderation: 3 notes a minute per sender, 6 per source address, 20 per
+  app, a word filter, and the owner's hide or ban, which closes the issue and, for
+  `ban`, refuses that sender. `GET /__forge/notes` gives the sender's own notes with a live
+  status (queued, being built by a member, shipped on a date), polled every 15 s
+  while the panel is open; a public app's note links to its issue. Left out: the
+  optional screenshot and a version name in "shipped".
+  From the terminal, a repository screen that is an app has two palette rows
+  (`:`): *Tell the builders* sends a note as you, and *Notes from the app*
+  lists yours with their status; the repository's admin sees every sender's and
+  may hide a note, ban its sender, list the banned senders (*Banned senders*)
+  and unban one. The gating is the page's: a guest or a
+  non-reader sees nothing, and a repository that is not an app has no rows.
+  Who may write: anyone on a public app, but a private app, and any sealed
+  pull's preview, take notes only from a person the app admits (the condition
+  `/__forge/measure` uses); a stranger is refused with a 404 before anything is
+  filed. Moderation
+  happens on the forge, not on the app: the app host answers only
+  `POST /__forge/note` and `GET /__forge/notes`, and `/__forge/note/moderate` is
+  a 404 there, because the app's own code (or a preview's) could call it
+  same-origin with a visiting admin's cookie. The terminal screen above and the
+  app's studio page are the owner's tools: the page lists the latest notes
+  (sender, words, page, when) for those who may admin the repository, each with
+  Hide and Ban sender, and every banned sender once with Unban, posting to
+  `POST /:owner/:name/app/notes` on the forge's origin (`web/studio/notes.ts`).
+  Limits count the socket's client (`http/peer.ts`, with its trusted-proxy
+  rule), never a header the client wrote, and all three are checked before any
+  is spent. The request body is read only up to 16 KB. The issue says its text
+  is untrusted data, and the crew's brief says so for any `from-app` issue.
+  A title always opens with `From the app: ` (`saysFromApp`), the label is made
+  before the issue, and a failed labelling closes the issue and refuses the note.
+  Only a note closed as done reads "Shipped"; the other reasons say what they are.
+  Beyond the per-minute limits an app takes 30 notes an hour and 100 a day.
+  The script grew to about 15 KB (cached, immutable); the notes are polled only
+  while the panel is open.
 - **The forge pill acts.** The pill the proxy adds to an app's pages
   (`"toolbar": false` in `forge.json` turns it off; to write it in, the proxy asks the app for the page uncompressed, so a page that carries the pill goes out without gzip) links to a forge page,
   `/:owner/:name/toolbar?env=production|pull-N`, opened in a tab of its own: the
@@ -1204,6 +1257,8 @@ other. The tick log names each pull it moved, or why it did not, and
 The flow panel on `/boards`, the terminal's Flow dialog and the MCP `flow` tool list the pulls
 waiting on a builder and those waiting on a reviewer, oldest first.
 
+The same three also say, per reviewer, how many review runs are in flight (queued or running): `3 reviews in flight: quill 2, sage 1.`, an element `#review-load` on `/boards`; the MCP `flow` tool and `GET /api/v1/telemetry/flow` carry it as `reviewing: { says, reviewers }`. It is `reviewLoad` from `src/crew/review.ts`, the count routing reads (`flow/reviewing.ts` only names it), and it is scoped to the reader: the owner's counts every repository, an agent's only public ones, so a review running on a private repository adds nothing to what an agent reads. No dependency was added.
+
 **Already done.** A builder that finds its issue already built on the base
 branch declines with `DECLINED: already done on main in <commit>`, naming the
 full or abbreviated id of each commit that did it (at most five). The forge
@@ -1277,6 +1332,13 @@ gated tree. Red is searched: prefixes of the candidate are gated on main
 — the front half, plus one more cut per free check slot, all at once — the
 longest green prefix lands, the search goes on in the steps up to the first
 red prefix, and the red pull is handed back with the failing tests named.
+A red batch is never formed again around the same head: with a check slot
+free, the head of a red batch of three or more is gated alone beside the
+line (`[queue] red batch: its head is gated alone`) while the rest gates
+without it, stacked as deep as `queue.depth` goes, so the good pulls land
+while the suspect is judged. A pull in two red batches is never in a third:
+it waits for a gate of its own. Red alone, it is handed back (`[queue] red
+alone`); green alone, it rides at the tail of a later batch, never its head.
 While a candidate gates, the next one gates on top of it (`queue.depth`
 under Settings → Capacity, `FORGE_QUEUE_DEPTH`, default 2): when the first
 lands whole the next lands right after it, on the tree it was gated on; when
@@ -1364,9 +1426,9 @@ the work repositories and nothing else. Two on one grant take turns, and
 one the provider rests hands its runs to the other until the reset.
 **Model budget.** A new account has none: its repositories' crew does not run, spends nothing, and says "This repository has no model account". A person adds their own subscription at Settings → Model (or the terminal's **Model budget** command, `a`); it is sealed, granted to their own repositories only, and one per account. A forge admin who is a person gives an account a capped grant, in dollars a month spent on the forge's own credential, from the account's page, the terminal's **Model grant** command, `POST /api/v1/admin/accounts/:name/model-grant` (`{"usdPerMonth": 20}`, `null` takes it back) or the MCP `model_grant` tool; each change is in the audit. The cap is the UTC month's spend in the usage ledger, checked when a run starts and on every spend tick: a run past it stops, and its page says the grant is spent. Two runs that start together each begin with the whole remainder; the tick check ends both once the sum crosses the cap, so the overshoot is at most what they spend between ticks.
 
-**Roles.** An account is a guest, a member or an admin (`docs/ROLES.md` has the table of what each can do; `src/core/roles.ts` holds it). Admin is the admin flag, a member is promoted, everyone else is a guest. A guest is refused creating or forking a repository, making an app their own and starting a crew run, in the words "the owner has not made this account a member" (after the older refusals: unverified, suspended, agent, private); nothing switches it off. A forge admin who is a person lists everyone with their role at Settings → People (`/settings/people`) and promotes a guest to member with one button, with an optional starter model allowance in dollars a month (none by default, given as a model grant and audited as one), or demotes a member (the allowance stays until taken back on the account's page). In the terminal it is the **People** command (`r` changes a role: `member 5`, or `guest`); over the API, `GET /api/v1/admin/people` and `POST /api/v1/admin/accounts/:name/role` (`{"role": "member", "usdPerMonth": 5}`); over MCP, the `account_role` tool (a plan unless `dryRun: false`, with an admin token). Anyone signed in sees their own role and its row of the table: the account page (`/settings`) shows "What you can do here"; over MCP, `whoami_can` returns `{username, role, can, abilities}` with any token; in the terminal it is the **What I can do** command (read only, agents included).
+**Roles.** An account is a guest, a member or an admin (`docs/ROLES.md` has the table of what each can do; `src/core/roles.ts` holds it). Admin is the admin flag, a member is promoted, everyone else is a guest. A guest is refused creating or forking a repository, making an app their own and starting a crew run, in the words "the owner has not made this account a member" (after the older refusals: unverified, suspended, agent, private); nothing switches it off. A forge admin who is a person lists everyone with their role at Settings → People (`/settings/people`) and promotes a guest to member with one button, with an optional starter model allowance in dollars a month (none by default, given as a model grant and audited as one), or demotes a member (the allowance stays until taken back on the account's page). In the terminal it is the **People** command (`r` changes a role: `member 5`, or `guest`); over the API, `GET /api/v1/admin/people` (`{ items, next_cursor }`, as `/admin/accounts` and `/admin/invites` answer, with `limit` 1-200, 50 by default, and `cursor`) and `POST /api/v1/admin/accounts/:name/role` (`{"role": "member", "usdPerMonth": 5}`); over MCP, the `account_role` tool (a plan unless `dryRun: false`, with an admin token). Anyone signed in sees their own role and its row of the table: the account page (`/settings`) shows "What you can do here"; over MCP, `whoami_can` returns `{username, role, can, abilities}` with any token; in the terminal it is the **What I can do** command (read only, agents included).
 
-**Invites.** A forge admin who is a person mints a single-use invite link with `POST /api/v1/admin/invites` (`{"days": 14}`, 1 to 30, 7 by default); the response carries the link once and only its hash is kept. `GET /api/v1/admin/invites` lists them (open, used, revoked, expired) without tokens, and `DELETE /api/v1/admin/invites/:id` revokes one. Minting, revoking and using a link are events (`invite.minted`, `invite.revoked`, `invite.used`; the last names the invite and the account it let in, never the token). The same is the **Invite links** card on `/admin/limits` (a form with expiry days, 1 to 30; the new link is shown once, with a copy button; an open link has a Revoke button) and the terminal's **Invite links** command (`m` makes one and prints the link once, `x` revokes the selected open one). Over MCP, the `mint_invite` tool (`{days?}`, an admin token, a forge admin who is a person) answers with the same link. While signup is `invite`, the link opens the door once: `/signup?invite=…` (the form and the passkey door) or `invite` in the `POST /api/v1/users` body. In the terminal, with signup = invite the create-account screen has a fourth, masked **Invite** field that takes the token (not the whole link); a blank one is asked for, and a bad one is refused with the same sentence as `/signup`. The account and the invite's use are one write, so two sign-ups with one link make one account; a used, revoked or expired link, or any link while signup is `closed`, makes none. While signup is `open`, a link is not spent.
+**Invites.** A forge admin who is a person mints a single-use invite link with `POST /api/v1/admin/invites` (`{"days": 14}`, 1 to 30, 7 by default); the response carries the link once and only its hash is kept. `GET /api/v1/admin/invites` lists them (open, used, revoked, expired) without tokens, and `DELETE /api/v1/admin/invites/:id` revokes one. Minting, revoking and using a link are events (`invite.minted`, `invite.revoked`, `invite.used`; the last names the invite and the account it let in, never the token). The same is the **Invite links** card on `/admin/limits` (a form with expiry days, 1 to 30; the new link is shown once, with a copy button; an open link has a Revoke button) and the terminal's **Invite links** command (`m` makes one and prints the link once, `x` revokes the selected open one). Over MCP, the `mint_invite` tool (`{days?}`, an admin token, a forge admin who is a person) answers with the same link, and the `invites` tool (`{action: "list"|"revoke", id?}`, the same person admin and admin token, for both actions) lists them without links or revokes one. While signup is `invite`, the link opens the door once: `/signup?invite=…` (the form and the passkey door) or `invite` in the `POST /api/v1/users` body. In the terminal, with signup = invite the create-account screen has a fourth, masked **Invite** field that takes the token (not the whole link); a blank one is asked for, and a bad one is refused with the same sentence as `/signup`. The account and the invite's use are one write, so two sign-ups with one link make one account; a used, revoked or expired link, or any link while signup is `closed`, makes none. While signup is `open`, a link is not spent.
 
 **Spend ceilings.** Apart from the grant, a forge admin who is a person may set any account's — a person's, an agent's or an organization's — daily (UTC) and per-run ceilings in dollars: on the account's page (`/settings/accounts/<name>`, an organization's too, by that address; an agent and an admin's own account have no such page), the terminal's **Model ceiling** command, `POST /api/v1/admin/accounts/:name/ceiling` (`{"dailyUsd": 20, "perRunUsd": 5}`) or the MCP `model_ceiling` tool; each change is in the audit. Both empty on the page, `none` in the terminal (its prompt shows the current ceilings, and an empty answer changes nothing), or `null` for both on the API and MCP takes them back. An organization's page is linked from its own page for an admin. An account has no ceiling until one is set, so this forge's own crew is never stopped by a default nobody chose. A run on an account with a ceiling does not start when the day's is spent or the per-run one is too small, is capped at the smaller of the per-run ceiling and what is left of the day, and stops mid-run when the day's is spent.
 **Sandbox.** An agent's shell is held to a policy — the network is the forge
@@ -1511,6 +1573,8 @@ its evidence, filed in `FORGE_SENTINEL_REPO` (default `trevato/forge`) as the
 `sentinel` agent, else the first admin. Evidence is scrubbed of anything
 credential-shaped before it is filed. Other findings (`held`, `ledger`, `red`)
 are filed anew when they return.
+
+A check that has never been green is filed only for the sentinel's own repository. In any other repository it stays on that repository's checks and the degraded list.
 
 A capacity setting away from its default is not a finding: the sentinel files
 nothing for it (#3269). On `/settings/capacity` the row of each such setting

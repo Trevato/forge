@@ -1,6 +1,11 @@
 /** The OpenAPI document names every route the manifest names. */
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createApp } from "../src/app.ts";
+import { serve } from "../src/http/server.ts";
 import { openapi, ROUTES } from "../src/contract/openapi.ts";
 
 test("every http route the manifest names is described", () => {
@@ -22,13 +27,20 @@ test("every http route the manifest names is described", () => {
 });
 
 test("every described route is registered in the router", () => {
-  const src = ["src/http/server.ts", "src/http/api.ts", "src/http/mcp.ts"]
+  const src = ["src/http/server.ts", "src/http/api.ts", "src/http/mcp.ts", "src/http/passport_edge.ts", "src/http/feed.ts"]
     .map((f) => readFileSync(f, "utf8"))
-    .join("\n");
+    .join("\n")
+    // A route registered in a loop over issues and pulls is two routes.
+    // So is the one over PUT and DELETE of a milestone's watch.
+    .replace(/\bmethod,\s*("[^"]*\/milestones\/:number\/watch")/g, '"PUT", $1\n"DELETE", $1')
+    .replace(/"(PUT)",\s*`([^`]*)\$\{kind\}([^`]*)`/g, (_, m, a, b) => `"${m}", "${a}issues${b}"\n"${m}", "${a}pulls${b}"`);
+  const browse = /const BROWSE = "([^"]+)"/.exec(src)![1]!;
   const registered = new Set(
-    [...src.matchAll(/"(GET|POST|PATCH|DELETE|PUT)",\s*"([^"]+)"/g)].map((m) => `${m[1]} ${m[2]}`),
+    [...src.matchAll(/"(GET|POST|PATCH|DELETE|PUT)",\s*(?:"([^"]+)"|`\$\{BROWSE\}([^`]*)`)/g)].map(
+      (m) => `${m[1]} ${m[2] ?? browse + m[3]}`,
+    ),
   );
-  const shape = (p: string) => p.replace(/\{\w+\}|:\w+/g, ":");
+  const shape = (p: string) => p.replace(/\{\w+\}|[:*]\w+/g, ":");
   const shapes = new Set([...registered].map((r) => shape(r)));
   for (const r of ROUTES) {
     const want = shape(`${r.method.toUpperCase()} ${r.path}`);
@@ -114,4 +126,188 @@ test("making and listing apps is described with every field the route reads", ()
   for (const field of described) expect([...read], `described ${field}`).toContain(field);
   for (const code of ["unverified", "app_limit", "no_such_agent", "name_taken"])
     expect(post.responses.default.description).toContain(`\`${code}\``);
+});
+
+test("a repository's reads are described: branches, commits, contents, labels, milestones", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const R = "/api/v1/repos/{owner}/{name}";
+  for (const path of ["branches", "commits", "commits/{oid}", "contents", "labels", "milestones", "milestones/{number}"])
+    expect(doc.paths[`${R}/${path}`]?.get, path).toBeDefined();
+  const contents = doc.paths[`${R}/contents`].get.parameters.map((p: any) => p.name);
+  expect(contents).toEqual(expect.arrayContaining(["path", "ref"]));
+  const commits = doc.paths[`${R}/commits`].get.parameters.map((p: any) => p.name);
+  expect(commits).toEqual(expect.arrayContaining(["ref", "limit"]));
+});
+
+test("an issue's teams and labels, a pull's labels and an issue's private repository are described", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const R = "/api/v1/repos/{owner}/{name}";
+  for (const [method, path] of [
+    ["get", `${R}/issues/{number}/teams`],
+    ["put", `${R}/issues/{number}/teams`],
+    ["put", `${R}/issues/{number}/labels`],
+    ["put", `${R}/pulls/{number}/labels`],
+    ["post", `${R}/issues/{number}/private`],
+  ] as const) expect(doc.paths[path]?.[method], `${method} ${path}`).toBeDefined();
+  expect(doc.paths[`${R}/issues/{number}/teams`].put.requestBody.content["application/json"].schema.properties.teams.type).toBe("array");
+  expect(doc.paths[`${R}/issues/{number}/private`].post.responses["201"]).toBeDefined();
+  expect(doc.paths[`${R}/issues/{number}/teams`].get.security).toBeUndefined();
+  expect(doc.paths[`${R}/pulls/{number}/labels`].put.security).toBeDefined();
+});
+
+test("no method and path is described twice, so no row is dead", () => {
+  const seen = new Set<string>();
+  for (const r of ROUTES) {
+    const key = `${r.method} ${r.path}`;
+    expect(seen.has(key), `duplicate ${key}`).toBe(false);
+    seen.add(key);
+  }
+});
+
+test("the front reads say what they answer and refuse", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  expect(JSON.stringify(doc.paths["/api/v1/here"].get)).toContain("not_found");
+  expect(JSON.stringify(doc.paths["/api/v1/forge"].get)).toContain("not_found");
+  expect(doc.paths["/api/v1/forge"].get.summary).toContain("lastActivityAt");
+  expect(doc.paths["/api/v1/front"].get.summary).toContain("featured");
+  expect(doc.paths["/api/v1/contribute"].get.summary).toContain("welcomeLabel");
+});
+
+test("signing up, signing in and the first admin are described", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const want: [string, string, number][] = [
+    ["post", "/api/v1/users", 201],
+    ["post", "/api/v1/sessions", 201],
+    ["delete", "/api/v1/sessions", 200],
+    ["post", "/api/v1/first-admin", 201],
+    ["post", "/api/v1/first-admin/recover", 201],
+  ];
+  for (const [method, path, status] of want) {
+    const op = doc.paths[path]?.[method];
+    expect(op, `${method} ${path}`).toBeDefined();
+    expect(op.responses[String(status)], `${method} ${path} ${status}`).toBeDefined();
+    expect(op.security, `${method} ${path}`).toBeUndefined();
+  }
+  const props = (p: string) => doc.paths[p].post.requestBody.content["application/json"].schema.properties;
+  expect(props("/api/v1/users").password.type).toBe("string");
+  expect(props("/api/v1/first-admin").expiresIn.type).toBe("integer");
+});
+
+test("the served document carries the sign-up and sign-in routes", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "forge-openapi-"));
+  const app = createApp({ dataDir: dir, port: 0 });
+  const servers = await serve(app);
+  try {
+    const res = await fetch(`${servers.url}/contract/openapi.json`);
+    expect(res.status).toBe(200);
+    const doc = (await res.json()) as any;
+    expect(doc.paths["/api/v1/users"].post).toBeDefined();
+    expect(doc.paths["/api/v1/sessions"].post).toBeDefined();
+    expect(doc.paths["/api/v1/sessions"].delete).toBeDefined();
+    expect(doc.paths["/api/v1/first-admin"].post).toBeDefined();
+    expect(doc.paths["/api/v1/first-admin/recover"].post).toBeDefined();
+  } finally {
+    servers.stop();
+    app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("an app's routes are described, and env values are never read back", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const A = "/api/v1/repos/{owner}/{name}/app";
+  const want: Record<string, string[]> = {
+    [A]: ["get", "post", "patch", "delete"],
+    [`${A}/members`]: ["get", "put"],
+    [`${A}/domains`]: ["get", "post"],
+    [`${A}/domains/{host}`]: ["delete"],
+    [`${A}/domains/{host}/check`]: ["post"],
+    [`${A}/env`]: ["get"],
+    [`${A}/env/{var}`]: ["put", "delete"],
+    [`${A}/{env}/redeploy`]: ["post"],
+    [`${A}/{env}/stop`]: ["post"],
+  };
+  for (const [path, methods] of Object.entries(want))
+    for (const m of methods) expect(doc.paths[path]?.[m], `${m} ${path}`).toBeDefined();
+  for (const m of ["post", "patch"])
+    expect(Object.keys(doc.paths[A][m].requestBody.content["application/json"].schema.properties)).toEqual(["slug", "access", "previewData"]);
+  expect(doc.paths[`${A}/env/{var}`].put.summary).toContain("never read back");
+  expect(doc.paths[`${A}/env`].get.summary).toContain("never read back");
+  expect(doc.paths[`${A}/{env}/redeploy`].post.responses["202"]).toBeDefined();
+});
+
+test("mirroring and forking from an origin, its job and stream, and origin apps are described", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const want: [string, string][] = [
+    ["/api/v1/user/origins/{id}/mirror", "post"],
+    ["/api/v1/user/origins/{id}/fork", "post"],
+    ["/api/v1/user/origins/{id}/mirror/{job}", "get"],
+    ["/api/v1/user/origins/{id}/mirror/{job}/stream", "get"],
+    ["/api/v1/migrate/{job}/stream", "get"],
+    ["/api/v1/user/origin-apps", "get"],
+    ["/api/v1/user/origin-apps", "post"],
+    ["/api/v1/user/origin-apps/{id}", "delete"],
+  ];
+  for (const [path, method] of want) {
+    expect(doc.paths[path]?.[method]).toBeDefined();
+    expect(doc.paths[path][method].security).toBeDefined();
+  }
+  const row = ROUTES.find((r: any) => r.path === "/api/v1/user/origins/{id}/mirror/{job}/stream") as any;
+  expect(row.summary).toContain("text/event-stream");
+  expect(row.summary).toContain("mirror.done");
+});
+
+test("the admin's writes are described: a capacity setting, a limit and a team", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  for (const path of ["capacity/{key}", "limits/{key}", "teams/{slug}"]) {
+    const put = doc.paths[`/api/v1/admin/${path}`]?.put;
+    expect(put, path).toBeDefined();
+    expect(put.security).toBeDefined();
+    expect(put.requestBody).toBeDefined();
+  }
+  expect(doc.paths["/api/v1/admin/capacity/{key}"].put.summary).toContain("egress");
+  expect(doc.paths["/api/v1/admin/limits/{key}"].put.summary).toContain("api.anonymous_per_source");
+});
+
+test("a person's sign-ins and ending one are described, with no session secret", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const list = doc.paths["/api/v1/users/{username}/signins"]?.get;
+  const end = doc.paths["/api/v1/users/{username}/sessions/{id}"]?.delete;
+  expect(list).toBeDefined();
+  expect(end).toBeDefined();
+  expect(list.security).toBeDefined();
+  expect(list.summary).toContain("admin-scope");
+  expect(end.responses["204"]).toBeDefined();
+  expect(end.responses.default.description).toContain("not_found");
+  expect(list.responses.default.description).toContain("unauthorized");
+  expect(list.responses.default.description).toContain("forbidden");
+});
+
+test("a repository's code writes are described: branches and contents", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const R = "/api/v1/repos/{owner}/{name}";
+  expect(doc.paths[`${R}/branches`]?.post).toBeDefined();
+  expect(doc.paths[`${R}/branches/{branch}`]?.delete).toBeDefined();
+  expect(doc.paths[`${R}/contents`]?.post).toBeDefined();
+  expect(doc.paths[`${R}/branches`].post.responses["201"]).toBeDefined();
+  expect(doc.paths[`${R}/branches/{branch}`].delete.responses["204"]).toBeDefined();
+});
+
+test("the contents row names the refusals of its own handler, protection and size caps included", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const R = "/api/v1/repos/{owner}/{name}";
+  const text = JSON.stringify(doc.paths[`${R}/contents`].post.responses);
+  expect(text).toContain("path_conflict");
+  expect(text).toContain("protected_branch");
+  expect(text).toContain("file_too_large");
+});
+
+test("the tell row names its body, its answer and the refusals of its handler", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const op = doc.paths["/api/v1/feed/tells"]?.post;
+  expect(op).toBeDefined();
+  expect(op.responses["201"]).toBeDefined();
+  const text = JSON.stringify(op);
+  for (const w of ["app", "text", "variants", "from", "invalid_text", "invalid_variants", "invalid_from", "unverified", "forbidden"])
+    expect(text).toContain(w);
 });

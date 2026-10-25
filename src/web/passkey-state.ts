@@ -11,3 +11,13 @@ import { badge } from "./ui.ts";
 export function passkeyState(): Html {
   return html`<span data-passkey-state>${badge("Passkey off", { variant: "outline" })}</span>`;
 }
+
+/**
+ * The line a passkey control reports to, in §5's field shape: quiet muted text
+ * until a failure, then `.error` in a `.field`. `passkey-client.ts` toggles the
+ * class named by `data-fail`; a page that re-rendered with a failure writes
+ * the same shape itself.
+ */
+export function passkeyNote(id: string, error?: string): Html {
+  return html`<div class="field"><span class="${error ? "error" : "muted small"}" id="${id}" data-fail="error" role="${error ? "alert" : "status"}">${error ?? ""}</span></div>`;
+}

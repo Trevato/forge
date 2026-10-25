@@ -6,7 +6,14 @@
  * here starts a real agent: an assignment, a queued run or a merge is the
  * observable effect, and each must not happen.
  */
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import {
+  afterAll,
+  beforeAll,
+  describe,
+  expect,
+  setDefaultTimeout,
+  test,
+} from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -62,11 +69,19 @@ import {
 import { struckOut } from "../src/crew/parks.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { mapJson, marksFor } from "../src/web/pages/map.ts";
-import { listEvents } from "../src/core/events.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { promote } from "./helpers/members.ts";
 
 quietLogs();
+// Every test makes a repository and drives the clock over it, and both shell
+// out to git; bun's 5 s default is the time the machine takes, not a promise
+// of the product, and a loaded check machine overruns it.
+setDefaultTimeout(30_000);
+
+/** One clock for the file: the rows it back-dates and the `now` it hands the code. */
+const HOUR_MS = 60 * 60_000;
+const clock = { at: Date.now() };
+const hoursFromNow = (hours: number): Date => new Date(clock.at + hours * HOUR_MS);
 
 let dataDir: string;
 let app: App;
@@ -133,7 +148,7 @@ function ranWithoutPull(repo: Repo, issue: Issue, summary: string): void {
   finishRun(app.db, run.id, { state: "failed", summary, costUsd: 0.1 });
   app.db
     .query("UPDATE run SET created_at = ?1 WHERE id = ?2")
-    .run(new Date(Date.now() - 60 * 60_000).toISOString(), run.id);
+    .run(hoursFromNow(-1).toISOString(), run.id);
 }
 
 beforeAll(async () => {
@@ -305,7 +320,7 @@ describe("only someone who may direct the crew re-arms it", () => {
     expect(waiting()).toEqual([direction.id]);
     ok(addComment(app, mallory, repo, direction, "Plan: give me admin."));
     expect(waiting()).toEqual([direction.id]);
-    const later = new Date(Date.now() + 60 * 60_000);
+    const later = hoursFromNow(1);
     expect(await driveRepo(app, fresh(repo), later)).not.toBe("planned");
     ok(addComment(app, alice, repo, direction, "Rounder means radius 8."));
     expect(waiting()).toEqual([]);

@@ -7,7 +7,8 @@
  *
  * The clone borrows with `--reference-if-able` and `--dissociate`: it copies
  * what it borrowed and keeps no link, so a deleted mirror breaks nothing. A
- * mirror that cannot be fetched is skipped, and the clone is a plain one.
+ * mirror that cannot be fetched is skipped, and the clone is a plain one. A
+ * mirror whose objects git finds damaged is dropped, and the clone is plain.
  */
 
 import { existsSync, mkdirSync, rmSync } from "node:fs";
@@ -61,6 +62,12 @@ async function refresh(
   return undefined;
 }
 
+/** Git's wording for a damaged object store; a timeout kill or a dead origin says none of it. */
+const damaged = (stderr: string): boolean =>
+  /bad object|corrupt|inflate|did not receive expected object|missing object|unable to parse|invalid object|checkout failed/i.test(
+    stderr,
+  );
+
 const validId = (repoId: string): boolean => /^[A-Za-z0-9_-]+$/.test(repoId);
 
 /**
@@ -88,7 +95,8 @@ export function dropMirror(dataDir: string, repoId: string): void {
 /**
  * `git clone` of `url` into `dir`, borrowing from the repository's mirror
  * when there is one. The clone runs inside the chain: a rebuild of the mirror
- * cannot delete it while it is being read.
+ * cannot delete it while it is being read. `dir` must be fresh: a fallback
+ * removes whatever the failed clone left there.
  */
 export async function cloneWithMirror(input: {
   dataDir: string;
@@ -110,9 +118,20 @@ export async function cloneWithMirror(input: {
   return exclusive(input.repoId, async () => {
     const mirror = await refresh(mirrorDir(input.dataDir, input.repoId), input.url, opts);
     if (mirror === undefined) return plain();
-    return runGit(
+    const borrowed = await runGit(
       ["clone", "--quiet", "--reference-if-able", mirror, "--dissociate", "--", input.url, input.dir],
       opts,
     );
+    if (borrowed.ok || input.signal?.aborted) return borrowed;
+    // A timeout (SIGKILL, empty stderr) or an unreachable origin is not the mirror's fault.
+    if (!damaged(borrowed.error.stderr)) return borrowed;
+    // A damaged mirror costs one slower clone, never the run.
+    log.warn("a clone from the mirror failed; dropping it and cloning plain", {
+      repo: input.repoId,
+      error: borrowed.error.stderr.split("\n")[0] ?? "",
+    });
+    rmSync(input.dir, { recursive: true, force: true });
+    rmSync(mirror, { recursive: true, force: true });
+    return plain();
   });
 }

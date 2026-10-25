@@ -185,11 +185,11 @@ describe("a wave proposal is one inbox card", () => {
       });
       return { status: res.status, body: (await res.json()) as any };
     };
-    const mcp = async (token: string, args: unknown) => {
+    const mcp = async (token: string, args: unknown, name = "asks_proposal") => {
       const res = await fetch(`${servers.url}/mcp`, {
         method: "POST",
         headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${token}` },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "asks_proposal", arguments: args } }),
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
       });
       const body = (await res.json()) as any;
       return { error: body.result.isError === true, text: body.result.content[0].text as string };
@@ -225,6 +225,17 @@ describe("a wave proposal is one inbox card", () => {
       expect(row).toBeDefined();
       expect((await mcp(rw, { id, verb: "redirect", words: "Smaller, please" })).error).toBe(false);
       expect(getProposal(app.db, id)!.state).toBe("redirected");
+    });
+
+    test("MCP: the id /forge plan passes, the asks row's proposal.id, acts; the row id does not", async () => {
+      const id = propose("Plan wave");
+      const asks = await mcp(rw, {}, "asks");
+      const row = JSON.parse(asks.text).rows?.find?.((r: any) => r.kind === "proposal" && r.proposal?.id === id);
+      expect(row).toBeDefined();
+      expect(row.id).toBe(`proposal:${id}`);
+      expect((await mcp(rw, { id: row.id, verb: "later" })).error).toBe(true);
+      expect((await mcp(rw, { id: row.proposal.id, verb: "later" })).error).toBe(false);
+      expect(getProposal(app.db, id)!.state).toBe("later");
     });
 
     test("terminal: a wave is a row on the On you card; y approves, l puts aside, B brings back", async () => {

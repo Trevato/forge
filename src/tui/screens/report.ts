@@ -7,6 +7,8 @@
 
 import { openIssueThrough } from "../../actions/issues.ts";
 import { reportTitle } from "../../actions/page-report.ts";
+import { NOT_SENT_WORDS, SAY_SOMETHING_WORDS } from "../../actions/tell_words.ts";
+import { NOTE_TOO_LONG } from "../../apps/note_words.ts";
 import { MAX_BODY } from "../../core/issues.ts";
 import type { Repo } from "../../core/repos.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -31,12 +33,12 @@ export function reportCommands(f: Session, ctx: Ctx, parent: () => Screen, repo:
             hint: "enter sends",
             onSubmit: (said) => {
               const text = said.trim();
-              if (text === "") return "Say something first.";
-              if (text.length > MAX_BODY) return "That is too long to send in one go.";
+              if (text === "") return SAY_SOMETHING_WORDS;
+              if (text.length > MAX_BODY) return NOTE_TOO_LONG;
               return (async () => {
                 const opened = await openIssueThrough(f.app, f.user, repo, { title: reportTitle(text), body: text });
                 if (opened.ok) ctx.toast(`Issue #${opened.value.number} opened.`, "success");
-                else ctx.toast("That could not be sent.", "danger");
+                else ctx.toast(NOT_SENT_WORDS, "danger");
               })();
             },
           }),

@@ -418,7 +418,10 @@ describe("the map, per app and across the forge", () => {
     const page = await (
       await fetch(`${base}/alice/engine/map`, { headers: { cookie } })
     ).text();
-    // The stylesheet still holds the old rules (#4239 removes them); the markup must not.
+    // Neither the markup nor the stylesheet holds the old names (#5251 retired the rules).
+    const styles = (page.match(/<style[\s\S]*?<\/style>/g) ?? []).join("");
+    expect(styles).toContain(".map-canvas");
+    expect(styles).not.toMatch(/\.map-tools?\b/);
     const markup = page.replace(/<style[\s\S]*?<\/style>/g, "").replace(/<script[\s\S]*?<\/script>/g, "");
     expect(markup).not.toMatch(/class="[^"]*\bmap-tools?\b/);
     const group = markup.match(/<div[^>]*role="group"[^>]*aria-label="Zoom"[^>]*>/)?.[0] ?? "";

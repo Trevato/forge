@@ -6,7 +6,7 @@ import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { listEvents, type ForgeEvent } from "../src/core/events.ts";
 import { getCursor, getOriginById } from "../src/core/origins.ts";
-import { dueOrigins, syncOrigin } from "../src/origins/sync.ts";
+import { dueOrigins, syncOrigin, syncsSettled } from "../src/origins/sync.ts";
 import {
   mirrorAndWait,
   newFakeState,
@@ -306,11 +306,18 @@ describe("origin sync: incremental, event-shaped, and polite", () => {
         "DELETE FROM origin_cursor WHERE key IN ('paused_until','next_sync_at')",
       )
       .run();
+    // syncOrigin joins a run already in flight (the mirror import and earlier
+    // tests chain syncs), and a joined run began before ETags were on — so it
+    // would cache no validator and the next sweep would be a plain 200. Let
+    // every earlier run finish, then drive exactly one sync per step.
+    await syncsSettled();
     fake.state.etagsEnabled = true;
     const origin = getOriginById(app.db, originId)!;
     await syncOrigin(app, origin);
+    await syncsSettled();
     const hitsBefore = fake.state.conditionalHits;
     await syncOrigin(app, origin);
+    await syncsSettled();
     fake.state.etagsEnabled = false;
 
     // The second sweep sent If-None-Match and got a 304 back — and the labels

@@ -13,6 +13,8 @@ import {
 import type { Issue } from "../../core/issues.ts";
 import { canRead, type Repo } from "../../core/repos.ts";
 import { privateRepoForSealed } from "../../actions/repos.ts";
+import { BODY_TOO_LONG, TITLE_TOO_LONG } from "../../actions/thread_limits_words.ts";
+import { COMMENT_EMPTY, COMMENT_NOT_POSTED } from "../../actions/comment_words.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -26,7 +28,7 @@ import {
   signInHref,
 } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
-import { html, raw, when, type Html } from "../html.ts";
+import { html, raw, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import { btn, empty, field as formField } from "../ui.ts";
 import {
@@ -88,7 +90,6 @@ function newIssueForm(
 ): Html {
   return html`<div class="narrow-wide mt">
     <form method="post" action="${repoBase(repo)}/issues/new">
-      ${when(error, (message) => html`<p class="error-note">${message}</p>`)}
       ${formField({
         label: "Title",
         name: "title",
@@ -196,9 +197,9 @@ export async function newIssueSubmit(ctx: Ctx): Promise<Response> {
       (created.error === "empty_title"
         ? "An issue needs a title."
         : created.error === "title_too_long"
-          ? "That title is too long (256 characters at most)."
+          ? TITLE_TOO_LONG
           : created.error === "body_too_long"
-            ? "That description is too long (64 KB at most)."
+            ? BODY_TOO_LONG
             : "You cannot open an issue here.");
     return composePage(ctx, repo, values, message);
   }
@@ -288,7 +289,7 @@ export async function issueCommentSubmit(ctx: Ctx): Promise<Response> {
   if (body.trim() === "")
     return flashTo(ctx, dest, {
       tone: "danger",
-      message: "A comment needs something in it.",
+      message: COMMENT_EMPTY,
     });
   const added = await addCommentThrough(
     ctx.app,
@@ -300,7 +301,7 @@ export async function issueCommentSubmit(ctx: Ctx): Promise<Response> {
   if (!added.ok)
     return flashTo(ctx, dest, {
       tone: "danger",
-      message: originError(added.error) ?? "That comment could not be posted.",
+      message: originError(added.error) ?? COMMENT_NOT_POSTED,
     });
   return back === undefined
     ? flashTo(ctx, `${dest}#conversation`, { message: "Comment posted." })

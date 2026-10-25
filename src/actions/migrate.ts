@@ -64,6 +64,7 @@ import {
 } from "../origins/jobs.ts";
 import type { Provider } from "../origins/types.ts";
 import { requireUser } from "./access.ts";
+import { REPO_INIT_FAILED, REPO_NAME_RULES } from "./repo_words.ts";
 import { enableApp } from "./apps.ts";
 import { addToCrew } from "./crew.ts";
 import {
@@ -271,9 +272,9 @@ export function migrateMessage(error: MigrateError, limit = "at the repositories
     case "name_taken":
       return "That owner already has a repository by that name. Pick another name.";
     case "invalid_name":
-      return "Names start with a letter or digit; no spaces, no .git.";
+      return REPO_NAME_RULES;
     case "git_init_failed":
-      return "The repository could not be initialised on disk.";
+      return REPO_INIT_FAILED;
     case "forbidden_owner":
       return "You cannot create repositories for that owner.";
     case "unauthorized":

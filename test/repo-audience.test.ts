@@ -19,6 +19,7 @@ quietLogs();
 let dataDir: string;
 let app: App;
 let servers: Servers;
+let olive: Parameters<typeof createRepo>[1];
 
 const signIn = async (username: string): Promise<string> => {
   const r = await fetch(`${servers.url}/signin`, {
@@ -57,6 +58,7 @@ beforeAll(async () => {
   }
   const promoted = setRole(app, users[0]!, "olive", "member");
   if (!promoted.ok) throw new Error(promoted.error);
+  olive = users[1]!;
   const r = await createRepo(app, users[1]!, { name: "yard", visibility: "public" });
   if (!r.ok) throw new Error(String(r.error));
 });
@@ -69,18 +71,30 @@ afterAll(async () => {
 test("a writer sees the sentence as a link to the settings", async () => {
   const h = await head("/olive/yard", await signIn("olive"));
   expect(h).toMatch(
-    /<a class="repo-audience" href="\/olive\/yard\/settings" title="Public: anyone can read this; 1 person can change it\."\s*>Public: anyone can read this; 1 person can change it\.<\/a\s*>/,
+    /<a href="\/olive\/yard\/settings"\s*>Public: anyone can read this; 1 person can change it\.<\/a\s*>/,
   );
 });
 
 test("a reader sees the same sentence as plain text", async () => {
   const h = await head("/olive/yard", await signIn("ravi"));
-  expect(h).toContain('<span class="repo-audience" title="Public: anyone');
+  expect(h).toContain("Public: anyone can read this; 1 person can change it.");
   expect(h).not.toContain('href="/olive/yard/settings"');
 });
 
 test("somebody not signed in sees the public sentence", async () => {
   const h = await head("/olive/yard");
   expect(h).toContain("Public: anyone can read this; 1 person can change it.");
-  expect(h).toContain('<span class="repo-audience"');
+  expect(h).not.toContain("repo-audience");
+});
+
+test("the title says Public or Private once; the audience line adds no second badge", async () => {
+  const cookie = await signIn("olive");
+  const made = await createRepo(app, olive, { name: "vault", visibility: "private" });
+  if (!made.ok) throw new Error(String(made.error));
+  const priv = await head("/olive/vault", cookie);
+  expect(priv.match(/class="badge"/g)?.length).toBe(1);
+  expect(priv).toContain(">Private</span");
+  const pub = await head("/olive/yard", cookie);
+  expect(pub.match(/class="badge"/g)?.length).toBe(1);
+  expect(pub).toContain(">Public</span");
 });

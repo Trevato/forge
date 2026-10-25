@@ -169,7 +169,8 @@ export function composer(ctx: Ctx, user: User): Html {
     action: html`${btn("New app", { href: "/apps/new", variant: "primary" })}
       ${btn("Repositories", { href: `/${user.username}` })}`,
   })}`;
-  const form = html`<form id="composer" class="composer" method="post" action="/tell">
+  const form = html`<form id="composer" class="card" method="post" action="/tell">
+    <div class="card-body stack">
     <textarea class="input" name="text" rows="2" maxlength="2000" required placeholder="Tell the crew what should change" aria-label="Tell the crew">${sharedDraft(ctx.url.searchParams)}</textarea>
     <div class="bar">
       ${repos.length === 0
@@ -180,6 +181,7 @@ export function composer(ctx: Ctx, user: User): Html {
       </select>`}
       <span class="spacer"></span>
       ${btn("Post", { variant: "primary" })}
+    </div>
     </div>
   </form>`;
   return repos.length === 0 ? html`${form}${noApps}` : form;

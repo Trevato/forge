@@ -10,7 +10,9 @@
 
 import { askCheck } from "../../checks/again.ts";
 import { addCommentThrough } from "../../actions/issues.ts";
+import { COMMENT_EMPTY, COMMENT_NOT_POSTED } from "../../actions/comment_words.ts";
 import type { AccessError } from "../../actions/access.ts";
+import { NO_WRITE_ACCESS, PULL_GONE } from "../../actions/pull_words.ts";
 import {
   addReview,
   mergePull,
@@ -19,6 +21,8 @@ import {
   submitReview,
   approveToRun,
 } from "../../actions/pulls.ts";
+import { CHECK_ASKED } from "../../actions/pull_ask_words.ts";
+import { reviewWords } from "../../actions/review_words.ts";
 import { readFileAt } from "../../apps/checkout.ts";
 import { parseCheck } from "../../apps/manifest.ts";
 import { tierLine, type TierState } from "../../checks/tiers.ts";
@@ -738,15 +742,14 @@ function reviewCard(ctx: Ctx, repo: Repo, pull: Pull, action: string): Html {
           isAuthor,
           () =>
             html`<span class="muted small"
-              >${icon("alert")} You cannot approve your own pull request.</span
+              >${icon("alert")} ${reviewWords.selfReview}</span
             >`,
         )}
         ${when(
           !writer,
           () =>
             html`<span class="muted small"
-              >${icon("alert")} A verdict that gates a merge needs write
-              access.</span
+              >${icon("alert")} ${reviewWords.forbidden}</span
             >`,
         )}
         <span class="spacer"></span>
@@ -991,7 +994,7 @@ export async function pullCommentSubmit(ctx: Ctx): Promise<Response> {
   if (bodyText.trim() === "")
     return flashTo(ctx, dest, {
       tone: "danger",
-      message: "A comment needs something in it.",
+      message: COMMENT_EMPTY,
     });
   const added = await addCommentThrough(
     ctx.app,
@@ -1003,7 +1006,7 @@ export async function pullCommentSubmit(ctx: Ctx): Promise<Response> {
   if (!added.ok)
     return flashTo(ctx, dest, {
       tone: "danger",
-      message: originError(added.error) ?? "That comment could not be posted.",
+      message: originError(added.error) ?? COMMENT_NOT_POSTED,
     });
   return flashTo(ctx, `${dest}#conversation`, { message: "Comment posted." });
 }
@@ -1070,7 +1073,7 @@ export async function pullReviewSubmit(ctx: Ctx): Promise<Response> {
  * or lifecycle code, or git's own structured `MergeError` — both are answers
  * the person pressing the button deserves to see.
  */
-function mergeFailure(error: AccessError | MergePullError): string {
+export function mergeFailure(error: AccessError | MergePullError): string {
   if (typeof error !== "string") {
     if (error.kind === "conflict")
       return `The branches conflict in ${error.files.length} file${error.files.length === 1 ? "" : "s"} — merge the base branch in and push again.`;
@@ -1092,8 +1095,8 @@ function mergeFailure(error: AccessError | MergePullError): string {
   if (error === "checks_required")
     return "This pull request needs a passing deploy of its current head, and does not have one yet. Nothing was merged.";
   if (error === "forbidden" || error === "unauthorized")
-    return "You do not have write access to this repository.";
-  return "That pull request is no longer here.";
+    return NO_WRITE_ACCESS;
+  return PULL_GONE;
 }
 
 // ---- verdicts and threads ----
@@ -1160,12 +1163,12 @@ export async function pullApproveHereSubmit(ctx: Ctx): Promise<Response> {
         done.error === "forbidden" || done.error === "unauthorized"
           ? "Only a person with write access can approve code to run here."
           : done.error === "self_review"
-            ? "You cannot approve your own pull request."
+            ? reviewWords.selfReview
             : done.error === "not_open"
               ? "That pull request is closed."
               : done.error === "not_foreign"
                 ? "That pull request needs no approval to run."
-                : "That pull request is no longer here.",
+                : PULL_GONE,
     });
   return flashTo(ctx, dest, {
     message: isProposed(ctx.app.db, found.pull)
@@ -1215,11 +1218,11 @@ export async function pullReviewStateSubmit(ctx: Ctx): Promise<Response> {
       message:
         originError(error) ??
         (error === "self_review"
-          ? "You cannot approve your own pull request."
+          ? reviewWords.selfReview
           : error === "forbidden"
-            ? "A verdict that gates a merge needs write access. You can still leave a comment."
+            ? `${reviewWords.forbidden} You can still leave a comment.`
             : error === "body_too_long"
-              ? "That review is too long (64 KB at most)."
+              ? reviewWords.tooLong
               : error === "invalid_state"
                 ? "That is not a verdict this forge knows."
                 : "That review could not be recorded."),
@@ -1289,7 +1292,7 @@ export async function pullChecksSubmit(ctx: Ctx): Promise<Response> {
     ctx,
     dest,
     asked.ok
-      ? { message: "Check asked for at the current head." }
+      ? { message: CHECK_ASKED }
       : { tone: "danger", message: `No check was asked for: ${asked.message}.` },
   );
 }

@@ -22,7 +22,13 @@ let app: App;
 let owner: User;
 const DAY = 86_400_000;
 
-beforeAll(async () => {
+// The setup is one promise the teardown waits for: when a hook gives up on a
+// slow machine, the loop still running must not write into a closed database
+// and escape every test as an unhandled error (#5667).
+let setup: Promise<void> = Promise.resolve();
+let stopped = false;
+
+async function seed(): Promise<void> {
   dataDir = await mkdtemp(join(tmpdir(), "forge-explore-rank-"));
   app = createApp({ dataDir, port: 0 });
   const made = await createUser(app.db, {
@@ -37,7 +43,7 @@ beforeAll(async () => {
   promote(app.db, made.value);
   owner = made.value;
   const now = Date.now();
-  for (let i = 0; i < 500; i++) {
+  for (let i = 0; i < 500 && !stopped; i++) {
     const repo = await createRepo(app, owner, {
       name: `app-${i}`,
       visibility: i === 7 ? "private" : "public",
@@ -77,9 +83,15 @@ beforeAll(async () => {
           new Date(now - (i % 6) * DAY).toISOString(),
         );
   }
+}
+beforeAll(() => {
+  setup = seed();
+  return setup;
 }, 300_000);
 afterAll(async () => {
-  app.close();
+  stopped = true;
+  await setup.catch(() => {});
+  if (app !== undefined) app.close();
   await rm(dataDir, { recursive: true, force: true });
 });
 

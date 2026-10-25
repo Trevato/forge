@@ -1,7 +1,7 @@
 {
   "name": "forge",
   "version": "0.1.0",
-  "description": "Your forge inside Claude Code: its MCP server and a /forge command (tell, status, decide).",
+  "description": "Your forge inside Claude Code: its MCP server and a /forge command (tell, status, decide, plan).",
   "mcpServers": {
     "forge": {
       "type": "http",

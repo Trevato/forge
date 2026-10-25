@@ -218,16 +218,14 @@ describe("push-through: the origin gets the last word", () => {
     expect(pushed.code).toBe(0);
 
     // The origin's ref actually moved — this is the whole feature.
-    const upstreamBranches = await read<{ name: string; oid: string }[]>(
-      await fetch(`${originServers.url}/api/v1/repos/octo/gears/branches`),
-    );
+    const upstreamBranches = await (await read<{ items: { name: string; oid: string }[] }>(await fetch(`${originServers.url}/api/v1/repos/octo/gears/branches`))).items;
     expect(upstreamBranches.find((b) => b.name === "main")?.oid).toBe(local);
 
     // And the local ref moved too, so the mirror is not behind its origin.
-    const localBranches = await read<{ name: string; oid: string }[]>(
+    const localBranches = await read<{ items: { name: string; oid: string }[] }>(
       await api("/api/v1/repos/alice/gears/branches"),
     );
-    expect(localBranches.find((b) => b.name === "main")?.oid).toBe(local);
+    expect(localBranches.items.find((b) => b.name === "main")?.oid).toBe(local);
   });
 
   // ---- the refusal path ----
@@ -263,13 +261,11 @@ describe("push-through: the origin gets the last word", () => {
 
     // Nothing moved on either side: the local ref is still the old commit,
     // which is exactly what "the origin is truth" has to mean.
-    const localBranches = await read<{ name: string; oid: string }[]>(
+    const localBranches = await read<{ items: { name: string; oid: string }[] }>(
       await api("/api/v1/repos/alice/gears/branches"),
     );
-    expect(localBranches.find((b) => b.name === "main")?.oid).toBe(before);
-    const upstreamBranches = await read<{ name: string; oid: string }[]>(
-      await fetch(`${originServers.url}/api/v1/repos/octo/gears/branches`),
-    );
+    expect(localBranches.items.find((b) => b.name === "main")?.oid).toBe(before);
+    const upstreamBranches = await (await read<{ items: { name: string; oid: string }[] }>(await fetch(`${originServers.url}/api/v1/repos/octo/gears/branches`))).items;
     expect(upstreamBranches.find((b) => b.name === "main")?.oid).toBe(before);
 
     await upstream("/api/v1/repos/octo/gears", {
@@ -287,15 +283,11 @@ describe("push-through: the origin gets the last word", () => {
     const tip = (await git(["rev-parse", "HEAD"], clone)).out;
 
     expect((await git(["push", "-q", "origin", "topic"], clone)).code).toBe(0);
-    let upstreamBranches = await read<{ name: string; oid: string }[]>(
-      await fetch(`${originServers.url}/api/v1/repos/octo/gears/branches`),
-    );
+    let upstreamBranches = await (await read<{ items: { name: string; oid: string }[] }>(await fetch(`${originServers.url}/api/v1/repos/octo/gears/branches`))).items;
     expect(upstreamBranches.find((b) => b.name === "topic")?.oid).toBe(tip);
 
     expect((await git(["push", "-q", "origin", ":topic"], clone)).code).toBe(0);
-    upstreamBranches = await read<{ name: string; oid: string }[]>(
-      await fetch(`${originServers.url}/api/v1/repos/octo/gears/branches`),
-    );
+    upstreamBranches = await (await read<{ items: { name: string; oid: string }[] }>(await fetch(`${originServers.url}/api/v1/repos/octo/gears/branches`))).items;
     expect(upstreamBranches.map((b) => b.name)).not.toContain("topic");
   });
 

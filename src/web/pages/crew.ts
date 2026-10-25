@@ -61,6 +61,7 @@ import {
 import { accountSections } from "./origins.ts";
 import { markOf } from "../../core/marks.ts";
 import { limitValue } from "../../settings/limits.ts";
+import { USERNAME_TAKEN } from "../../actions/signup_words.ts";
 
 /** The admin, or the response that turns everyone else away. */
 function requireAdmin(ctx: Ctx): Response | undefined {
@@ -100,27 +101,37 @@ function shell(ctx: Ctx, title: string, body: Html, status = 200): Response {
 export function crewReadiness(ctx: Ctx): Html {
   const crew = crewFor(ctx.app);
   if (crew === undefined)
-    return html`<p class="error-note mb">
-      ${icon("alert")} No crew runner is up on this forge, so assigned issues
-      will wait. Start the forge with apps on (the default) and Claude Code on
-      <span class="mono">PATH</span> or at
-      <span class="mono">FORGE_CLAUDE</span>.
-    </p>`;
+    return card(
+      html`<p>
+        ${icon("alert")} No crew runner is up on this forge, so assigned issues
+        will wait. Start the forge with apps on (the default) and Claude Code
+        on <span class="mono">PATH</span> or at
+        <span class="mono">FORGE_CLAUDE</span>.
+      </p>`,
+      { tone: "danger", extra: "mb" },
+    );
   if (!crew.ready)
-    return html`<p class="error-note mb">
-      ${icon("alert")} The crew cannot run: ${crew.detail}. Agents can be
-      created, but nothing picks up their work until this is fixed.
-    </p>`;
+    return card(
+      html`<p>
+        ${icon("alert")} The crew cannot run: ${crew.detail}. Agents can be
+        created, but nothing picks up their work until this is fixed.
+      </p>`,
+      { tone: "danger", extra: "mb" },
+    );
   return html`<p class="muted small mb">
     ${icon("check")} ${crew.detail} is ready to run the crew.
   </p>
   ${when(
     !crew.sandbox.enforced,
-    () => html`<p class="error-note mb" id="crew-unsandboxed">
-      ${icon("alert")} Unsandboxed: agents' shells run unrestricted here
-      (${crew.sandbox.reason}). They can read this forge's data and reach any
-      host.
-    </p>`,
+    () =>
+      card(
+        html`<p>
+          ${icon("alert")} Unsandboxed: agents' shells run unrestricted here
+          (${crew.sandbox.reason}). They can read this forge's data and reach
+          any host.
+        </p>`,
+        { tone: "danger", extra: "mb", id: "crew-unsandboxed" },
+      ),
   )}`;
 }
 
@@ -136,8 +147,8 @@ interface AgentValues {
 
 const agentErrors = (ctx: Ctx): Record<string, string> => ({
   invalid_username: "Usernames are letters, digits, dots, dashes.",
-  username_taken: "That username is taken.",
-  email_taken: "That username is taken.",
+  username_taken: USERNAME_TAKEN,
+  email_taken: USERNAME_TAKEN,
   invalid_model: `A model is up to ${MODEL_MAX} characters with no spaces.`,
   brief_too_long: `A brief is at most ${BRIEF_MAX} characters.`,
   invalid_budget: `A budget is a number of dollars between 0 and ${limitValue(ctx.app.db, "agent.budget_max_usd")}.`,

@@ -55,15 +55,22 @@ export const watchesSecurity = (agent: Agent): boolean =>
 /** Review runs a design reviewer holds in flight before a `src/web/` pull spills to the least busy. */
 export const REVIEW_DESIGN_INFLIGHT = 2;
 
-/** Review runs in flight (queued or running) per reviewer, by user id; an idle reviewer is absent. */
-export function reviewLoad(db: Database): Map<string, number> {
+/**
+ * Review runs in flight (queued or running) per reviewer, by user id; an idle
+ * reviewer is absent. `publicOnly` counts only runs on public repositories,
+ * for a reader who must not learn what runs on a private one; routing leaves
+ * it off.
+ */
+export function reviewLoad(db: Database, publicOnly = false): Map<string, number> {
   const load = new Map<string, number>();
   for (const r of db
     .query<{ actor_id: string; n: number }, []>(
-      `SELECT actor_id, COUNT(*) AS n FROM run
-        WHERE kind = 'agent' AND reason = 'review' AND actor_id IS NOT NULL
-          AND state IN ('queued','running')
-        GROUP BY actor_id`,
+      `SELECT run.actor_id, COUNT(*) AS n FROM run
+        ${publicOnly ? "JOIN issue ON issue.id = run.issue_id JOIN repo ON repo.id = issue.repo_id" : ""}
+        WHERE run.kind = 'agent' AND run.reason = 'review' AND run.actor_id IS NOT NULL
+          AND run.state IN ('queued','running')
+          ${publicOnly ? "AND repo.visibility = 'public'" : ""}
+        GROUP BY run.actor_id`,
     )
     .all())
     load.set(r.actor_id, r.n);

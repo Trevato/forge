@@ -22,6 +22,7 @@ import { NOT_A_MEMBER } from "../core/roles.ts";
 import { requireAbility } from "./roles.ts";
 import { assignIssue, addComment } from "./issues.ts";
 import { openPlan, parsePlan, type Planned } from "./plan.ts";
+import { SIGN_IN_TO_ACT } from "./asks_words.ts";
 
 export interface ProposalError {
   readonly code: "unauthorized" | "not_found" | "forbidden" | "invalid" | "conflict";
@@ -45,7 +46,7 @@ function mine(
   id: unknown,
   states: readonly ProposalState[],
 ): Result<{ proposal: Proposal; repo: Repo; actor: User }, ProposalError> {
-  if (!actor) return fail("unauthorized", "sign in to act on your asks");
+  if (!actor) return fail("unauthorized", SIGN_IN_TO_ACT);
   const proposal = typeof id === "string" ? getProposal(app.db, id) : undefined;
   const repo = proposal ? getRepoById(app.db, proposal.repoId) : undefined;
   if (!proposal || !repo || !canRead(app.db, repo, actor))

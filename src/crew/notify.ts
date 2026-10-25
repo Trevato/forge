@@ -34,6 +34,9 @@ import { err, ok, type Result } from "../kernel/result.ts";
 import { lastMirror, mirrorNeed } from "../snapshot/mirror.ts";
 import { markRollbackPaged, rollbackNeed, rolledBack } from "../release/launch.ts";
 import { drillNeed, firstSeen, lastVerdict } from "../snapshot/verdict.ts";
+import { domainDrillNeeds } from "../kernel/domain_drill.ts";
+import { DOMAINS } from "../kernel/domains.ts";
+import { newestDrills } from "../core/domain_drills.ts";
 import { health } from "../http/health.ts";
 import { forgeVitals } from "../actions/health.ts";
 import { RECOVERED, drainIncident, nextPage, observe, recoveredLine, type Watch } from "./incidents.ts";
@@ -177,6 +180,31 @@ export function drillLines(
   return [{ id, line: need.sentence, items: [id] }];
 }
 
+/**
+ * The forge's admin hears of a domain drill that is red, stale or never run,
+ * with the command that runs it. The needs are the vitals' own
+ * (`domainDrillNeeds`); the id is the cause and its `since`, so a repeat tick
+ * is not news and a later red is.
+ */
+export function domainDrillLines(
+  app: App,
+  user: User,
+  now = Date.now(),
+  forgeUrl = "http://localhost",
+): { id: string; line: string; items: readonly string[] }[] {
+  if (!user.isAdmin || user.kind !== "user") return [];
+  return domainDrillNeeds(
+    newestDrills(app.db),
+    now,
+    firstSeen(app.config.dataDir),
+    forgeUrl,
+    DOMAINS,
+  ).map((need) => {
+    const id = `${need.cause}@${need.since}`;
+    return { id, line: need.sentence, items: [id] };
+  });
+}
+
 /** The admin hears of a snapshot that did not land off the box, or a stale mirror, once per cause. */
 export function mirrorLines(
   app: App,
@@ -237,9 +265,11 @@ export interface NotifyOptions {
   causes?: () => readonly { cause: string; sentence: string }[];
 }
 
+/** Long enough for a domain drill line to keep every command it names. */
+const LINE_MAX = 600;
 const oneLine = (s: string): string =>
   // eslint-disable-next-line no-control-regex
-  s.replace(/[\u0000-\u001f\u007f]+/g, " ").slice(0, 160);
+  s.replace(/[\u0000-\u001f\u007f]+/g, " ").slice(0, LINE_MAX);
 
 export function startNotifier(app: App, options: NotifyOptions): Notifier {
   const send = options.send ?? post;
@@ -391,6 +421,7 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
       ...landedLines(app.db, user, now()),
       ...mailCeilingLines(app, user, now()),
       ...drillLines(app, user, now()),
+      ...domainDrillLines(app, user, now(), options.forgeUrl),
       ...mirrorLines(app, user, now()),
       ...redLines(app, user, now()),
     ];

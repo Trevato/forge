@@ -33,7 +33,7 @@ import {
   type Ranked,
 } from "../../core/dependencies.ts";
 import type { Issue } from "../../core/issues.ts";
-import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { cachedLane, cachedLayout, repoHeads, scopeKey } from "../map_cache.ts";
 import { holdsFor } from "../../core/holds.ts";
 import {
@@ -1121,10 +1121,6 @@ export const mapCss = /* css */ `
 .map-canvas.is-view .map-svg { height: 100%; }
 .map-svg text { font-family: var(--font); pointer-events: none; }
 .map-canvas > [role="group"] { position: absolute; top: 8px; right: 8px; gap: 4px; }
-.map-tool { min-width: 26px; height: 24px; padding: 0 7px; border: 0; background: transparent; color: var(--muted-fg); font-size: 12.5px; font-weight: 550; line-height: 1; cursor: pointer; }
-.map-tool + .map-tool { border-left: 1px solid var(--border); }
-.map-tool:hover { background: var(--muted); color: var(--fg); }
-.map-tool:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* ---- cards ---- */
 .map-node { cursor: pointer; outline: none; }
@@ -1183,7 +1179,6 @@ export const mapCss = /* css */ `
   .map-card, .map-title { transition: none; }
 }
 @media (forced-colors: active) {
-  .map-tool:focus-visible { outline: 2px solid Highlight; }
   .map-node:focus-visible .map-card { stroke: Highlight; stroke-width: 3; }
 }
 `;
@@ -1356,24 +1351,31 @@ const studioEmpty = (base: string): MapEmpty => ({
 
 /** GET /:owner/:name/map */
 export async function mapPage(ctx: Ctx): Promise<Response> {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
   const db = ctx.app.db;
   const studio = studioRecord(ctx, repo) !== undefined;
-  const graph = repoGraph(db, repo.id, {
-    ...sealedScope(db, repo, ctx.auth.user),
-  });
-  const ready = readyNow(graph);
-  const blocked = blockedOn(graph);
-  const critical = criticalPath(graph);
-  const placed = cachedLayout(graph, layout);
-  const marks = marksFor(db, repo.id, graph, listActiveRuns(db, [repo.id]));
-  const readySet = new Set(ready.map((r) => r.issue.id));
-  const counts = countWords(
-    graph.issues.map((i) => wordFor(i, readySet, marks)),
-  );
-  const pillars = pillarView(db, repo);
-  const ask = askToLiveFor(ctx.app, repo, pillars, ctx.auth.user);
+  // The read: graph, marks and pillars, one phase; `render` is the page's own.
+  const { graph, ready, blocked, critical, placed, marks, readySet, counts, pillars, ask } =
+    timePhase(ctx.request, "map", () => {
+      const graph = repoGraph(db, repo.id, {
+        ...sealedScope(db, repo, ctx.auth.user),
+      });
+      const ready = readyNow(graph);
+      const blocked = blockedOn(graph);
+      const critical = criticalPath(graph);
+      const placed = cachedLayout(graph, layout);
+      const marks = marksFor(db, repo.id, graph, listActiveRuns(db, [repo.id]));
+      const readySet = new Set(ready.map((r) => r.issue.id));
+      const counts = countWords(
+        graph.issues.map((i) => wordFor(i, readySet, marks)),
+      );
+      const pillars = pillarView(db, repo);
+      const ask = askToLiveFor(ctx.app, repo, pillars, ctx.auth.user);
+      return { graph, ready, blocked, critical, placed, marks, readySet, counts, pillars, ask };
+    });
+  const rendering = performance.now();
   const body = html`${repoHeader(ctx, repo, "map")}
     <div class="page-head mt">
       <h1>Map</h1>
@@ -1428,7 +1430,7 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
         )}
       </aside>
     </div>`;
-  return page({
+  const response = page({
     ctx,
     title: `Map · ${repo.name}`,
     crumbs: crumbsFor(repo),
@@ -1441,6 +1443,8 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
     styleCss: mapCss,
     scriptJs: `${liveRegionsJs}\n${mapViewJs}`,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 /**
@@ -1638,7 +1642,7 @@ export function globalLanes(
   const db = app.db;
   const now = new Date();
   // Access first, every request, and into the key (docs/CACHING.md rule 1).
-  const repos = listReposVisibleTo(db, viewer, { limit: 200 });
+  const repos = listReposVisibleTo(db, viewer, { limit: 200, withoutArchived: true });
   const heads = repoHeads(
     db,
     repos.map((r) => r.id),

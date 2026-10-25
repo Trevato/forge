@@ -55,7 +55,7 @@ const figureRow = (name: string, figure: string, data: Record<string, string> = 
 const KIND_ORDER = ["forge", "crew", "check", "app", "host"] as const;
 function procTable(v: SystemView): Html {
   const groups = KIND_ORDER.flatMap((k) => v.groups.filter((g) => g.kind === k));
-  return html`<div class="table-wrap"><table class="table" data-dense aria-label="Processes by what launched them">
+  return html`<div class="table-scroll"><table class="table" data-dense aria-label="Processes by what launched them">
     <thead><tr><th scope="col">pid</th><th scope="col">command</th><th scope="col" class="num">cpu</th><th scope="col" class="num">mem</th><th scope="col" class="num">age</th></tr></thead>
     ${groups.map(
       (g) => html`<tbody data-kind="${g.kind}" data-cpu="${String(g.cpuCores ?? 0)}" data-mem="${String(g.rssBytes)}">

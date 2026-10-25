@@ -9,6 +9,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { NOT_PLACED_YET } from "../../actions/ask_state_words.ts";
 import { askedIn, askedRepos, type Asked } from "../../core/asked.ts";
 import { thoughtStream, type StreamThought } from "../../core/thought_stream.ts";
 import type { User } from "../../core/users.ts";
@@ -54,7 +55,7 @@ function thoughtLine(t: StreamThought): AskedLine {
     title: plain(t.text),
     ...toneOf(t.flagged, t.state),
     hollow: t.state === "unplaced" || t.state === "superseded",
-    secondary: plain(where.length > 0 ? where.join(" · ") : (t.reply ?? "the planner has not placed it yet")),
+    secondary: plain(where.length > 0 ? where.join(" · ") : (t.reply ?? NOT_PLACED_YET)),
     meta: metaOf(t.flagged ? "nothing built" : THOUGHT_WORD[t.state], relTime(t.receivedAt)),
   };
 }

@@ -37,6 +37,7 @@ import {
   previewAsksBulk,
 } from "../actions/asks_bulk.ts";
 import type { FleetError } from "../actions/fleet.ts";
+import { notePhase, takeSessionTime, timePhase } from "../core/route_timing.ts";
 import type { Handler } from "./context.ts";
 import type { Router } from "./router.ts";
 import {
@@ -51,6 +52,7 @@ import {
 
 export function feedRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/feed", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const viewer = ctx.auth.user;
     if (!viewer) return unauthorized();
     const q = ctx.url.searchParams;
@@ -65,13 +67,14 @@ export function feedRoutes(router: Router<Handler>): void {
     const cursor = rawCursor === null ? undefined : parseCursor(rawCursor);
     if (rawCursor !== null && cursor === undefined)
       return apiError("invalid_cursor", 422, "that cursor was not issued here");
-    return json(
+    const page = timePhase(ctx.request, "feed", () =>
       readFeed(ctx.app.db, viewer, {
         ...(limit === undefined ? {} : { limit }),
         ...(cursor === undefined ? {} : { cursor }),
       }),
-      200,
-      { "cache-control": "private, no-store" },
+    );
+    return timePhase(ctx.request, "render", () =>
+      json(page, 200, { "cache-control": "private, no-store" }),
     );
   });
 
@@ -87,8 +90,12 @@ export function feedRoutes(router: Router<Handler>): void {
     };
   };
   router.add("GET", "/api/v1/feed/chips", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     if (!ctx.auth.user) return unauthorized();
-    return json(chipsAnswer(ctx), 200, { "cache-control": "private, no-store" });
+    const answer = timePhase(ctx.request, "chips", () => chipsAnswer(ctx));
+    return timePhase(ctx.request, "render", () =>
+      json(answer, 200, { "cache-control": "private, no-store" }),
+    );
   });
   router.add("POST", "/api/v1/feed/chips", async (ctx) => {
     const denied = requireScope(ctx, "rw");
@@ -111,11 +118,13 @@ export function feedRoutes(router: Router<Handler>): void {
 
   // What asks the viewer, ranked, with the week's measure (`asksAnswer`).
   router.add("GET", "/api/v1/asks", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const viewer = ctx.auth.user;
     if (!viewer) return unauthorized();
-    return json(asksAnswer(ctx, viewer), 200, {
-      "cache-control": "private, no-store",
-    });
+    const answer = timePhase(ctx.request, "asks", () => asksAnswer(ctx, viewer));
+    return timePhase(ctx.request, "render", () =>
+      json(answer, 200, { "cache-control": "private, no-store" }),
+    );
   });
 
   // Many asks, one action (`actions/asks_bulk.ts`): a preview by default,

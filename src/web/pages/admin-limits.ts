@@ -5,9 +5,11 @@
  * who, when, from what to what. Anyone else gets the not-found page.
  */
 
+import { QUOTA_INVALID } from "../../actions/admin_limits_words.ts";
 import { changeLimit, listLimits } from "../../actions/limits.ts";
 import { changeQuotas, readQuotas } from "../../actions/quotas.ts";
 import { inviteLink, list as listInviteLinks, mint as mintInviteLink, revoke as revokeInviteLink } from "../../actions/invites.ts";
+import { INVITE_NOT_OPEN } from "../../actions/sever_invite_words.ts";
 import { DEFAULT_DAYS, MAX_DAYS } from "../../core/invites.ts";
 import { changeSignup, readSignup } from "../../actions/signup.ts";
 import { SIGNUP_MODES } from "../../settings/signup.ts";
@@ -297,7 +299,7 @@ export async function quotasSet(ctx: Ctx): Promise<Response> {
     "/admin/limits",
     changed.ok
       ? { message: "Quotas saved." }
-      : { tone: "danger", message: "A quota is a positive whole number, or empty for no limit." },
+      : { tone: "danger", message: QUOTA_INVALID },
   );
 }
 
@@ -350,6 +352,6 @@ export async function inviteRevoke(ctx: Ctx): Promise<Response> {
     "/admin/limits",
     done.ok
       ? { message: "Invite link revoked." }
-      : { tone: "danger", message: "That link is not open." },
+      : { tone: "danger", message: INVITE_NOT_OPEN },
   );
 }

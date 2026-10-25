@@ -226,6 +226,7 @@ import {
   newIssuePage,
   newIssueSubmit,
 } from "../web/pages/issues.ts";
+import { noteModerate } from "../web/studio/notes.ts";
 import { tellPage } from "../web/studio/tell.ts";
 import { tellHerePage } from "../web/studio/tell_here.ts";
 import { globalMapPage, mapPage } from "../web/pages/map.ts";
@@ -257,6 +258,7 @@ import { forgeLinkSubmit, forgesPage } from "../web/pages/forges.ts";
 import { newForgePage, newForgeSubmit } from "../web/pages/new-forge.ts";
 import { askedPage } from "../web/studio/asked_page.ts";
 import { reviewPage } from "../web/studio/review_page.ts";
+import { reviewAct } from "../web/studio/review_act.ts";
 import {
   asksBulkSubmit,
   asksBulkUndo,
@@ -742,6 +744,7 @@ export function buildRouter(): Router<Handler> {
   // What people asked of the crew, and what became of it (core/asked.ts).
   router.add("GET", "/asked", askedPage);
   router.add("GET", "/review", reviewPage);
+  router.add("POST", "/review/act", reviewAct);
   // The big view, folded into the board: every old address lands on its wall mode.
   router.add("GET", "/big", bigRedirect);
   router.add("GET", "/search", searchPage);
@@ -1234,6 +1237,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/app/:env/open", appOpen);
   // Where a private app sends a person who arrived by its link.
   router.add("GET", "/apps/open", appsOpen);
+  router.add("POST", "/:owner/:name/app/notes", noteModerate);
   router.add("POST", "/:owner/:name/app/:env/redeploy", appRedeploy);
   router.add("POST", "/:owner/:name/app/:env/stop", appStop);
   router.add("GET", "/:owner/:name/runs", runsList);
@@ -2248,8 +2252,11 @@ export async function serve(app: App): Promise<Servers> {
         // A preview's headers are the app's business: what `proxyApp`
         // carries back leaves exactly as the app wrote it, which is why the
         // floor below sits after this return and not around it.
-        if (target !== undefined && target !== "unknown")
+        if (target !== undefined && target !== "unknown") {
+          // The feedback door limits by client (`apps/feedback.ts`).
+          notePeer(request, server.requestIP(request)?.address, trust);
           return proxyApp(runtime, request, target, server);
+        }
         if (target === "unknown") ownUnknown = true;
       }
       // A hosted child's app (`<app>--<child>--<parentHost>`) is the child's
@@ -2258,8 +2265,10 @@ export async function serve(app: App): Promise<Servers> {
         const hit = await resolveHostedChildApp(app, request);
         if (hit === "unknown")
           return securityFloor(new Response("not found", { status: 404 }));
-        if (hit !== undefined)
+        if (hit !== undefined) {
+          notePeer(request, server.requestIP(request)?.address, trust);
           return proxyApp(hit.runtime, request, hit.target, server);
+        }
       }
       // A hosted child's Host (`<name>--<parentHost>`) is answered by that
       // child's own App before the parent's pages. Ingress routes the label

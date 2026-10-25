@@ -458,7 +458,9 @@ describe("checks", () => {
     expect(failed.summary).toBe("check failed: check exited with code 1");
     // `test -f` is not `bun test`: its output is not this shape, so nothing
     // is guessed at it.
-    expect(failed.checkDetail).toBeNull();
+    // ... but the disk's free share is recorded on every red (#5453).
+    expect(failed.checkDetail?.names).toEqual([]);
+    expect(typeof failed.checkDetail?.diskFree).toBe("number");
     // The check names the base tip it merged with; a default-branch push
     // merged nothing and records none (#1810).
     expect(failed.baseOid).toBe(gate.value.commitOid);
@@ -541,7 +543,7 @@ describe("checks", () => {
       (r) => r.issueId === pull.id && r.commitOid === branched.value.commitOid,
     );
     expect(failed.state).toBe("failed");
-    expect(failed.checkDetail).toEqual({
+    expect(failed.checkDetail).toMatchObject({
       passed: 1,
       failed: 2,
       names: ["first failing test", "second failing test"],

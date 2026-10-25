@@ -225,7 +225,7 @@ describe("the claim link in the fragment, and its re-issue", () => {
     const takenPage = await taken.text();
     expect(takenPage).toContain("That passkey is already registered.");
     expect(takenPage).not.toContain("passkey-note");
-    expect(takenPage).toMatch(/<p class="error-note mb" id="passkey-make-note" data-fail="error-note" role="alert">That passkey is already registered\./);
+    expect(takenPage).toMatch(/<div class="field"><span class="error" id="passkey-make-note" data-fail="error" role="alert">That passkey is already registered\./);
     expect(getUserByName(child.db, "taker")).toBeUndefined();
     expect(listPasskeys(child.db, holder.value.id)).toHaveLength(1);
     // Still unspent: the link gives a challenge yet.

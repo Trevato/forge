@@ -21,7 +21,7 @@ test("a child writing 200 MB stays blocked while nobody reads, and memory stays 
   expect(total).toBe(200 * MB);
   expect(await proc.exited).toBe(0);
   expect(process.memoryUsage.rss() - before).toBeLessThan(64 * MB);
-});
+}, 30_000);
 
 test("a reader that takes one chunk and stalls holds git blocked, memory bounded", async () => {
   const before = process.memoryUsage.rss();
@@ -62,17 +62,30 @@ test("cancelling the stream tells the caller to stop the writer and closes the p
   expect(proc.signalCode).toBe("SIGKILL");
 });
 
-test("a quiet writer costs almost no CPU while the reader waits", async () => {
-  const pipe = await pullPipe();
-  const proc = Bun.spawn(["sleep", "2"], {
-    stdin: "ignore",
-    stdout: pipe.writeFd,
-    stderr: "ignore",
-  });
-  pipe.sealed();
-  const before = process.cpuUsage();
-  for await (const _ of pipe.stream) void _;
-  const used = process.cpuUsage(before);
-  expect(await proc.exited).toBe(0);
-  expect((used.user + used.system) / 1000).toBeLessThan(100);
+test("a quiet writer costs almost no wakeups while the reader waits", async () => {
+  // Process CPU time also counts every other thing a loaded machine runs, so
+  // count what the pipe itself does: each poll of a quiet writer is one
+  // Bun.sleep. Backing off to 100 ms makes that ~25 over 2 s; a busy poll
+  // would make hundreds.
+  const realSleep = Bun.sleep;
+  let sleeps = 0;
+  Bun.sleep = ((ms: Parameters<typeof Bun.sleep>[0]) => {
+    sleeps++;
+    return realSleep(ms);
+  }) as typeof Bun.sleep;
+  try {
+    const pipe = await pullPipe();
+    const proc = Bun.spawn(["sleep", "2"], {
+      stdin: "ignore",
+      stdout: pipe.writeFd,
+      stderr: "ignore",
+    });
+    pipe.sealed();
+    for await (const _ of pipe.stream) void _;
+    expect(await proc.exited).toBe(0);
+  } finally {
+    Bun.sleep = realSleep;
+  }
+  expect(sleeps).toBeGreaterThan(0);
+  expect(sleeps).toBeLessThan(40);
 });

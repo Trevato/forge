@@ -41,6 +41,8 @@ export interface CheckDetail {
   readonly passed: number;
   readonly failed: number;
   readonly names: readonly string[];
+  /** The check machine's free disk share (0..1) when a red finished (#5453). */
+  readonly diskFree?: number;
 }
 
 export interface Run {
@@ -459,6 +461,9 @@ export const REQUEUED_SUMMARY = "interrupted by a restart; queued again";
 /** What a check whose cluster Job vanished says as it is queued again. */
 export const VANISHED_SUMMARY = "interrupted: its cluster job vanished; queued again";
 
+/** What a check whose install the machine failed twice says as it is queued again (#5093). */
+export const INFRA_SUMMARY = "failed: infrastructure — the install failed twice on a transient error; queued again";
+
 /**
  * How many times one check may be cut off by its forge going away and be
  * queued again. Past it the check fails once, saying so: a check that kills
@@ -519,6 +524,11 @@ export function overranBefore(db: Database, run: Run): boolean {
 /** Whether the attempt just before this one lost its cluster Job: it is queued again once. */
 export function vanishedBefore(db: Database, run: Run): boolean {
   return cutOffBefore(db, run, VANISHED_SUMMARY);
+}
+
+/** Whether the attempt just before this one failed on infrastructure: it is queued again once. */
+export function infraBefore(db: Database, run: Run): boolean {
+  return cutOffBefore(db, run, INFRA_SUMMARY);
 }
 
 function cutOffBefore(db: Database, run: Run, prefix: string): boolean {

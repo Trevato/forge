@@ -48,30 +48,6 @@ describe("a pull says its variant group and siblings", () => {
       ...init,
       headers: { ...auth, "content-type": "application/json" },
     })).json() as Promise<any>;
-  const mcp = async (name: string, args: unknown, as?: string) => {
-    const res = await fetch(`${base}/mcp`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-        ...auth,
-        ...(as ? { authorization: `Bearer ${as}` } : {}),
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "tools/call",
-        params: { name, arguments: args },
-      }),
-    });
-    const body = (await res.json()) as any;
-    const text = body.result.content[0].text as string;
-    try {
-      return JSON.parse(text);
-    } catch {
-      return { error: text };
-    }
-  };
   const write = async (text: string, message: string) => {
     await Bun.write(join(dir, "code.txt"), text);
     await gitOk(["commit", "-am", message]);
@@ -115,7 +91,15 @@ describe("a pull says its variant group and siblings", () => {
     await gitOk(["add", "."]);
     await gitOk(["commit", "-m", "base"]);
     await gitOk(["push", "origin", "main"]);
-  });
+    // The branches are cut here, in one push, so the test below spends its
+    // own time on the pulls it is about, not on git processes (a loaded
+    // machine ran its dozen spawns past the 5 s test timeout).
+    for (const name of ["a", "b", "c"]) {
+      await gitOk(["checkout", "-B", name, "main"]);
+      await write(`alpha\n${name}\ngamma\n`, `try ${name}`);
+    }
+    await gitOk(["push", "origin", "a", "b", "c"]);
+  }, 30_000);
 
   afterAll(async () => {
     servers.stop();
@@ -126,9 +110,6 @@ describe("a pull says its variant group and siblings", () => {
 
   test("pulls sharing a group name each other; an ordinary pull has null and []", async () => {
     for (const name of ["a", "b", "c"]) {
-      await gitOk(["checkout", "-B", name, "main"]);
-      await write(`alpha\n${name}\ngamma\n`, `try ${name}`);
-      await gitOk(["push", "origin", name]);
       const made = await api("/pulls", {
         method: "POST",
         body: JSON.stringify({ base: "main", head: name, title: name }),

@@ -7,6 +7,7 @@
  * action's: an admin who is not an agent; anyone else sees nothing and sets nothing.
  */
 
+import { QUOTA_INVALID } from "../../actions/admin_limits_words.ts";
 import { changeQuotas, readQuotas } from "../../actions/quotas.ts";
 import { QUOTA_KEYS, type QuotaChange } from "../../settings/quotas.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -36,7 +37,7 @@ export function quotasScreen(f: Session, ctx: Ctx): Screen {
       return undefined;
     }
     return made.error === "invalid_quota"
-      ? "A quota is a positive whole number, or empty for no limit."
+      ? QUOTA_INVALID
       : "You cannot change quotas.";
   };
 

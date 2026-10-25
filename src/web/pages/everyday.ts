@@ -29,9 +29,11 @@ import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashTo, redirect } from "../layout.ts";
 import { makeOptions, PASSKEY_WORDS, passkeyFields, readPasskey } from "../passkey-ceremony.ts";
+import { passkeyNote } from "../passkey-state.ts";
 import { btn, card, field as formField } from "../ui.ts";
 import { signOutHere } from "../../actions/signins.ts";
 import { sessionCookie } from "./site.ts";
+import { EMAIL_TAKEN_MESSAGE, EMAIL_WANTED, USERNAME_TAKEN } from "../../actions/signup_words.ts";
 
 const USERNAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,38}$/;
 
@@ -108,7 +110,7 @@ function everydayFields(ctx: Ctx, user: User, offerKeep: boolean): Html {
           It signs in with a passkey of its own: a fingerprint, face or
           device PIN. There is no password.
         </p>
-        <p class="muted small" id="passkey-make-note" data-fail="error-note" role="status"></p>
+        ${passkeyNote("passkey-make-note")}
         <noscript><p class="muted small">Making the passkey needs JavaScript.</p></noscript>
         <div class="form-actions">
           <button type="submit" id="passkey-make" class="btn" data-variant="primary" data-options="/settings/everyday/options">Make it with a passkey</button>
@@ -131,7 +133,7 @@ function everydayFields(ctx: Ctx, user: User, offerKeep: boolean): Html {
 /** Why `username` cannot be the everyday account's name, or undefined. */
 function nameProblem(ctx: Ctx, username: string): string | undefined {
   if (!USERNAME.test(username)) return "Usernames are letters, digits, dots, dashes.";
-  if (getUserByName(ctx.app.db, username)) return "That username is taken.";
+  if (getUserByName(ctx.app.db, username)) return USERNAME_TAKEN;
   return undefined;
 }
 
@@ -150,7 +152,7 @@ export async function everydayOptions(ctx: Ctx): Promise<Response> {
   const data = await boundedBody(ctx.request, STRANGER_MAX);
   if (data === "too_large") return refuse(413, "payload too large");
   const username = str(data.username).trim();
-  const bad = nameProblem(ctx, username) ?? (str(data.email).includes("@") ? undefined : "An email address, please.");
+  const bad = nameProblem(ctx, username) ?? (str(data.email).includes("@") ? undefined : EMAIL_WANTED);
   if (bad !== undefined) return refuse(422, bad);
   return json(makeOptions(ctx, "everyday", username));
 }
@@ -190,9 +192,9 @@ export async function everydayCreate(ctx: Ctx): Promise<Response> {
   if (!made.ok)
     return say(
       made.error === "username_taken"
-        ? "That username is taken."
+        ? USERNAME_TAKEN
         : made.error === "email_taken"
-          ? "That email already has an account."
+          ? EMAIL_TAKEN_MESSAGE
           : made.error === "username_reserved"
             ? "That name is taken by the forge itself; pick another."
             : "That account could not be made.",

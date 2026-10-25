@@ -66,6 +66,7 @@ import { btn, row } from "../ui.ts";
 import { lookUrl } from "../../core/looks.ts";
 import { thumbLook } from "../pages/looks.ts";
 import { changeHref } from "./nouns.ts";
+import { NO_LONGER_ASKS } from "../../actions/asks_words.ts";
 import { testsClause } from "./words.ts";
 
 /** Repos narrowed to those with an app record, with the records — the one
@@ -1506,7 +1507,7 @@ export function askTargetsFor(
     const ask = asks.get(item);
     const mine = assigned.get(item);
     if (mine !== undefined) issueIds.push(mine.id);
-    else if (ask === undefined) refused.push({ item, reason: "it no longer asks you" });
+    else if (ask === undefined) refused.push({ item, reason: NO_LONGER_ASKS });
     else if (ask.kind === "paused")
       refused.push({ item, reason: "a ceiling is raised in the app's settings" });
     else if (ask.kind === "proposal")

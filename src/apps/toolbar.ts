@@ -13,6 +13,7 @@
 
 import { staticResponse } from "../web/asset.ts";
 import { sha256 } from "../kernel/hash.ts";
+import { NOTE_EMPTY, NOTE_FAILED, PROOF_LOST } from "./note_words.ts";
 
 /** The client, as plain source: no `eval`, no inline handlers. */
 export const toolbarJs = `(function () {
@@ -30,6 +31,34 @@ export const toolbarJs = `(function () {
   var pill = document.createElement("button");
   pill.type = "button";
   var d = me.dataset || {};
+  // The one-use proof the forge put on this page load: taken, then gone from the page.
+  var proof = d.proof || "";
+  if (me.removeAttribute) me.removeAttribute("data-proof");
+  var queue = Promise.resolve();
+  var lost = false;
+  // The chain broke (a failed call, or an answer with no next proof): say so once, in the panel.
+  function broke() {
+    proof = "";
+    lost = true;
+    if (typeof tellSay !== "undefined") tellSay.textContent = ${JSON.stringify(PROOF_LOST)};
+  }
+  // One call at a time, each carrying the proof the last answer left.
+  function call(url, init) {
+    var run = function () {
+      init.headers = Object.assign({}, init.headers);
+      var sent = proof;
+      if (sent) init.headers["x-forge-proof"] = sent;
+      return fetch(url, init).then(function (r) {
+        var next = r.headers.get("x-forge-proof");
+        if (next) proof = next;
+        else if (sent) broke();
+        return r;
+      }, function (e) { if (sent) broke(); throw e; });
+    };
+    var p = queue.then(run, run);
+    queue = p.catch(function () {});
+    return p;
+  }
   var where = d.env === "production" ? "production" : d.pull ? "preview of pull #" + d.pull : "";
   pill.setAttribute("aria-label", [d.app, where].filter(Boolean).join(", ") || "Forge");
   pill.setAttribute("aria-expanded", "false");
@@ -40,7 +69,7 @@ export const toolbarJs = `(function () {
   panel.setAttribute("role", "region");
   panel.setAttribute("aria-label", "Where you are");
   panel.tabIndex = -1;
-  panel.style.cssText = "outline:none;background:#1f2328;color:#fff;padding:8px 12px;border-radius:14px;box-shadow:0 1px 4px rgba(0,0,0,.4);max-width:min(280px,calc(100vw - 64px));max-height:calc(100vh - 88px);overflow:auto;flex-direction:column;gap:2px;display:none";
+  panel.style.cssText = "outline:none;background:#1f2328;color:#fff;padding:8px 12px;border-radius:14px;box-shadow:0 1px 4px rgba(0,0,0,.4);max-width:min(320px,calc(100vw - 64px));max-height:min(70vh,calc(100vh - 88px));overflow:auto;flex-direction:column;gap:2px;display:none";
   function line(text, bold) {
     var el = document.createElement("div");
     el.textContent = text;
@@ -59,6 +88,129 @@ export const toolbarJs = `(function () {
     var target = new URL(home);
     if (target.origin === new URL(me.src).origin) link.href = target.href;
   } catch (e) {}
+  // Tell the builders: one box, one button, no account. The note goes to
+  // this app's own host (same-origin, so the sender's cookie goes along) and
+  // the answer is a live status the panel keeps fresh while it is open.
+  var forgeOrigin = "";
+  try { forgeOrigin = new URL(me.src).origin; } catch (e) {}
+  var tellBox = document.createElement("form");
+  tellBox.setAttribute("aria-label", "Tell the builders");
+  tellBox.style.cssText = "display:flex;flex-direction:column;gap:6px;margin:6px 0";
+  var tellHead = document.createElement("div");
+  tellHead.textContent = "Tell the builders";
+  tellHead.style.cssText = "font-weight:600;font-size:15px";
+  var tellHint = document.createElement("label");
+  tellHint.textContent = "What should be better here? The people who build this will read it.";
+  tellHint.style.cssText = "opacity:.85";
+  var tellText = document.createElement("textarea");
+  tellText.maxLength = 2000;
+  tellText.rows = 3;
+  tellText.required = true;
+  tellText.setAttribute("aria-label", "Your note to the builders");
+  tellText.style.cssText = "box-sizing:border-box;width:100%;font:16px/1.3 system-ui,sans-serif;padding:8px;border-radius:8px;border:1px solid #57606a;background:#0d1117;color:#fff;resize:vertical";
+  var tellGo = document.createElement("button");
+  tellGo.type = "submit";
+  tellGo.textContent = "Send";
+  tellGo.style.cssText = "all:unset;box-sizing:border-box;cursor:pointer;min-height:44px;text-align:center;line-height:44px;border-radius:8px;background:#238636;color:#fff;font-weight:600";
+  var tellSay = document.createElement("div");
+  tellSay.setAttribute("aria-live", "polite");
+  tellSay.style.cssText = "overflow-wrap:anywhere";
+  var mine = document.createElement("div");
+  mine.style.cssText = "display:flex;flex-direction:column;gap:6px";
+  ring(tellGo);
+  ring(tellText);
+  tellBox.appendChild(tellHead);
+  tellBox.appendChild(tellHint);
+  tellBox.appendChild(tellText);
+  tellBox.appendChild(tellGo);
+  tellBox.appendChild(tellSay);
+  tellBox.appendChild(mine);
+  var what = document.createElement("div");
+  what.style.cssText = "opacity:.85;font-size:12px";
+  var whatText = document.createElement("span");
+  whatText.textContent = "What is this? This is the forge, where this app is made. ";
+  what.appendChild(whatText);
+  var whatLink = document.createElement("a");
+  whatLink.textContent = "Visit it";
+  whatLink.target = "_blank";
+  whatLink.rel = "noopener";
+  whatLink.style.cssText = "color:#8ab4ff";
+  if (forgeOrigin) { whatLink.href = forgeOrigin + "/"; what.appendChild(whatLink); }
+  function show(notes) {
+    mine.textContent = "";
+    if (!notes.length) return;
+    var h = document.createElement("div");
+    h.textContent = "Your notes";
+    h.style.cssText = "font-weight:600;margin-top:4px";
+    mine.appendChild(h);
+    notes.forEach(function (n) {
+      var row = document.createElement("div");
+      row.style.cssText = "border-top:1px solid #444c56;padding-top:4px;overflow-wrap:anywhere";
+      var t = document.createElement("div");
+      t.textContent = n.text;
+      var st = document.createElement("div");
+      st.textContent = n.status && n.status.label ? n.status.label : "";
+      st.style.cssText = "opacity:.85";
+      row.appendChild(t);
+      row.appendChild(st);
+      try {
+        var u = new URL(n.url);
+        if (u.origin === forgeOrigin) {
+          var al = document.createElement("a");
+          al.textContent = "See it";
+          al.href = u.href;
+          al.target = "_blank";
+          al.rel = "noopener";
+          al.style.cssText = "color:#8ab4ff";
+          row.appendChild(al);
+        }
+      } catch (e) {}
+      mine.appendChild(row);
+    });
+  }
+  function refresh(sent) {
+    call("/__forge/notes", { credentials: "same-origin", cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        if (!j || !Array.isArray(j.notes)) return;
+        show(j.notes);
+        // A browser that keeps no cookie cannot be told which notes are its own.
+        if (sent === true && !j.notes.length) tellSay.textContent = "Sent. Your browser is not keeping cookies, so your notes will not be listed here.";
+      })
+      .catch(function () {});
+  }
+  tellBox.addEventListener("submit", function (e) {
+    e.preventDefault();
+    var text = tellText.value.trim();
+    if (!text) { tellSay.textContent = ${JSON.stringify(NOTE_EMPTY)}; return; }
+    if (tellGo.disabled) return;
+    tellGo.disabled = true;
+    tellGo.setAttribute("aria-busy", "true");
+    tellGo.style.opacity = ".6";
+    function idle() { tellGo.disabled = false; tellGo.removeAttribute("aria-busy"); tellGo.style.opacity = "1"; }
+    call("/__forge/note", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: text, page: location.href, viewport: window.innerWidth + "x" + window.innerHeight })
+    })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (a) {
+        idle();
+        if (a.ok) { tellText.value = ""; tellSay.textContent = "Sent. The builders will see it."; refresh(true); }
+        else tellSay.textContent = a.j && a.j.message ? a.j.message : ${JSON.stringify(NOTE_FAILED)};
+      })
+      .catch(function () { idle(); tellSay.textContent = ${JSON.stringify(NOTE_FAILED)}; });
+  });
+  var poll = 0;
+  function watch(open) {
+    if (poll) { clearInterval(poll); poll = 0; }
+    if (!open) return;
+    refresh();
+    poll = setInterval(refresh, 15000);
+  }
+  panel.appendChild(tellBox);
+  panel.appendChild(what);
   // The crew line arrives late, so it lands in a polite live region.
   var crew = document.createElement("div");
   crew.setAttribute("aria-live", "polite");
@@ -202,6 +354,7 @@ export const toolbarJs = `(function () {
     panel.style.display = open ? "flex" : "none";
     pill.setAttribute("aria-expanded", open ? "true" : "false");
     pill.style.opacity = open ? "1" : ".85";
+    watch(open);
     if (open) panel.focus();
   }
   pill.addEventListener("click", function () {
@@ -296,7 +449,7 @@ export function escapeAttr(text: string): string {
 }
 
 /** The script tag, with where-you-are as escaped data attributes. */
-export function toolbarTag(forgeUrl: string, where?: PillWhere): string {
+export function toolbarTag(forgeUrl: string, where?: PillWhere, proof?: string): string {
   const data =
     where === undefined
       ? ""
@@ -310,7 +463,8 @@ export function toolbarTag(forgeUrl: string, where?: PillWhere): string {
           .filter((pair): pair is [string, string] => pair[1] !== undefined)
           .map(([k, v]) => ` data-${k}="${escapeAttr(v)}"`)
           .join("");
-  return `<script src="${new URL(TOOLBAR_PATH, forgeUrl).href}"${data} defer></script>`;
+  const token = proof === undefined ? "" : ` data-proof="${escapeAttr(proof)}"`;
+  return `<script src="${new URL(TOOLBAR_PATH, forgeUrl).href}"${data}${token} defer></script>`;
 }
 
 /** `bytes` with the pill's tag before the last `</body>`, or at the end. */
@@ -318,8 +472,9 @@ export function withToolbar(
   bytes: Uint8Array,
   forgeUrl: string,
   where?: PillWhere,
+  proof?: string,
 ): Uint8Array<ArrayBuffer> {
-  const tag = Buffer.from(toolbarTag(forgeUrl, where));
+  const tag = Buffer.from(toolbarTag(forgeUrl, where, proof));
   const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   // latin1 is one character per byte, so an index in it is a byte offset.
   const at = buffer.toString("latin1").toLowerCase().lastIndexOf("</body");

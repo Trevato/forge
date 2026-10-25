@@ -75,7 +75,7 @@ class Connection {
   constructor(
     private readonly socket: Socket,
     private readonly options: SshServerOptions,
-    private readonly hostKey: ReturnType<typeof loadOrCreateHostKey>,
+    hostKey: ReturnType<typeof loadOrCreateHostKey>,
     private readonly onGone: (connection: Connection) => void,
   ) {
     const log = options.log;

@@ -607,7 +607,7 @@ POST   /api/v1/repos/:o/:n/sync                sync this mirror now; on a fork, 
 POST   /api/v1/repos/:o/:n/origin/reconnect    {originId} → repo JSON; re-attach a
                                                detached mirror (admin token, repo
                                                admin, own origin; else 404/422 code)
-GET    /api/v1/user/pins  PUT/DELETE /api/v1/user/pins/:owner/:name
+GET    /api/v1/user/pins  ({items, next_cursor}; ?limit=1..200, ?cursor=)  PUT/DELETE /api/v1/user/pins/:owner/:name
 
 POST   /api/v1/migrate                         {source: {url} | {originId, fullName},
                                                 owner?, name?, visibility?,

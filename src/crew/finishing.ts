@@ -12,6 +12,10 @@
  *   base, resolve keeping both intents, re-run the check) is queued for
  *   its builder — the agent on it, else its author, else any builder —
  *   and it takes that slot.
+ * - Its push is a check, so it also waits for room in the check lane, as
+ *   the conflict sweep's runs do (`conflict_room.ts`): a landing that
+ *   conflicts ten approved pulls at once must not put ten checks in the
+ *   lane together (#4784).
  * - After two such runs ended without a push (the head still carries the
  *   approval, so neither pushed), it is handed to a person: assigned to
  *   whoever turned autonomy on, so it is on their review list, with the
@@ -36,9 +40,11 @@ import { activeRunFor } from "../core/runs.ts";
 import { getUserById } from "../core/users.ts";
 import { mergeable, resolveOid } from "../git/merge.ts";
 import { createLog } from "../kernel/log.ts";
+import { readConflictRoom } from "./conflict_room.ts";
 import { CHECK_FAILED_LIMIT, lastHumanWord, queueAgentRun } from "./dispatch.ts";
 import { HANDOVER_NOTE } from "./guard.ts";
 import { pickBuilder } from "./route.ts";
+import { NO_BUILDER_ON_CREW, WAITS_FOR_BUILDER_SLOT } from "./words.ts";
 
 const log = createLog("crew");
 
@@ -101,6 +107,7 @@ export async function finishApproved(app: App, repo: Repo, free: number): Promis
   const ids = new Set(open.map((p) => p.id));
   for (const id of read.keys()) if (!ids.has(id)) read.delete(id);
   let slots = free;
+  let room = readConflictRoom(app.db);
   for (const pull of open.sort((a, b) => a.number - b.number)) {
     if (!pull.authorIsAgent || pull.mergedAt !== null) continue;
     if (getHold(app.db, pull.id) !== undefined) continue;
@@ -109,8 +116,11 @@ export async function finishApproved(app: App, repo: Repo, free: number): Promis
     if (files === undefined) continue;
     const issue = getIssueById(app.db, pull.id);
     if (!issue || issue.state !== "open") continue;
-    const move = finishOne(app, repo, pull, issue, files, builders, slots);
-    if (move.did === "queued update") slots--;
+    const move = finishOne(app, repo, pull, issue, files, builders, slots, room);
+    if (move.did === "queued update") {
+      slots--;
+      room--;
+    }
     moves.push(move);
     say(repo, pull, move);
   }
@@ -125,6 +135,7 @@ function finishOne(
   files: readonly string[],
   builders: readonly Agent[],
   slots: number,
+  room: number,
 ): FinishMove {
   const not = (why: string): FinishMove => ({ pull: pull.number, did: "not moved", why });
   if (activeRunFor(app.db, "agent", pull.id) !== undefined) return { pull: pull.number, did: "in flight" };
@@ -135,9 +146,10 @@ function finishOne(
     builders.find((b) => b.user.id === issue.assigneeId) ??
     builders.find((b) => b.user.id === issue.authorId) ??
     pickBuilder(issue, builders, new Map());
-  if (builder === undefined) return not("no builder on the crew");
+  if (builder === undefined) return not(NO_BUILDER_ON_CREW);
   if (failedUpdates(app, issue, builder) >= CHECK_FAILED_LIMIT) return handOver(app, repo, pull, issue, files);
-  if (slots <= 0) return not("waits for a builder slot");
+  if (slots <= 0) return not(WAITS_FOR_BUILDER_SLOT);
+  if (room <= 0) return not("waits for room in the check lane");
   const run = queueAgentRun(app, repo, issue, builder, "conflict", undefined, {
     notBefore: new Date().toISOString(),
     attempt: 0,

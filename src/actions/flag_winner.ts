@@ -7,7 +7,7 @@
  */
 
 import type { App } from "../app.ts";
-import { flagRegistry, mayManageFlags, winnerOffer } from "../core/flags.ts";
+import { FLAGS_ADMIN_ONLY, flagRegistry, mayManageFlags, winnerOffer } from "../core/flags.ts";
 import type { Issue } from "../core/issues.ts";
 import { getRepo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
@@ -19,7 +19,7 @@ export function makeWinnerDefault(
   name: string,
   winner: "on" | "off",
 ): { ok: true; issue: Issue } | { ok: false; message: string } {
-  if (!mayManageFlags(actor)) return { ok: false, message: "Flags are set by a forge admin." };
+  if (!mayManageFlags(actor)) return { ok: false, message: FLAGS_ADMIN_ONLY };
   const registry = flagRegistry();
   const decl = (registry.decls as Record<string, { why: string; issue: number }>)[name];
   if (!Object.hasOwn(registry.decls, name) || decl === undefined)

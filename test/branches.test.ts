@@ -120,7 +120,9 @@ describe("branches on a native repo", () => {
   });
 
   const branches = async (): Promise<BranchRow[]> =>
-    read<BranchRow[]>(await api("/api/v1/repos/alice/app/branches"));
+    (
+      await read<{ items: BranchRow[] }>(await api("/api/v1/repos/alice/app/branches"))
+    ).items;
 
   const create = (payload: unknown) =>
     api("/api/v1/repos/alice/app/branches", {
@@ -205,6 +207,39 @@ describe("branches on a native repo", () => {
     });
     // The default sorts first, so a list renders it without re-sorting.
     expect(rows[0]!.isDefault).toBe(true);
+  });
+
+  test("the list is { items, next_cursor }, pages with limit to the end, and refuses bad input", async () => {
+    const all = await branches();
+    expect(all.length).toBeGreaterThanOrEqual(2);
+    const whole = await read<{ items: unknown[]; next_cursor: string | null }>(
+      await api("/api/v1/repos/alice/app/branches"),
+    );
+    expect(Object.keys(whole).sort()).toEqual(["items", "next_cursor"]);
+    expect(whole.next_cursor).toBeNull();
+
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    for (let i = 0; i < all.length + 1; i++) {
+      const q: string = `limit=1${cursor === null ? "" : `&cursor=${encodeURIComponent(cursor)}`}`;
+      const page = await read<{ items: BranchRow[]; next_cursor: string | null }>(
+        await api(`/api/v1/repos/alice/app/branches?${q}`),
+      );
+      expect(page.items.length).toBe(1);
+      seen.push(page.items[0]!.name);
+      cursor = page.next_cursor;
+      if (cursor === null) break;
+    }
+    expect(seen).toEqual(all.map((b) => b.name));
+
+    for (const bad of ["0", "201", "x", "-1", "1.5"]) {
+      const r = await api(`/api/v1/repos/alice/app/branches?limit=${bad}`);
+      expect(r.status).toBe(422);
+      expect((await read<{ error: string }>(r)).error).toBe("invalid_limit");
+    }
+    const r = await api("/api/v1/repos/alice/app/branches?cursor=no-such-branch");
+    expect(r.status).toBe(422);
+    expect((await read<{ error: string }>(r)).error).toBe("invalid_cursor");
   });
 
   test("protection is reported per branch, on the default only", async () => {
@@ -384,12 +419,12 @@ describe("branches on a mirror go through the origin", () => {
   });
 
   const localBranches = async (): Promise<BranchRow[]> =>
-    read<BranchRow[]>(await api("/api/v1/repos/alice/gears/branches"));
+    (
+      await read<{ items: BranchRow[] }>(await api("/api/v1/repos/alice/gears/branches"))
+    ).items;
 
   const upstreamBranches = async (): Promise<{ name: string }[]> =>
-    read<{ name: string }[]>(
-      await fetch(`${originServers.url}/api/v1/repos/octo/gears/branches`),
-    );
+    (await read<{ items: { name: string }[] }>(await fetch(`${originServers.url}/api/v1/repos/octo/gears/branches`))).items;
 
   test("creating a branch lands it upstream, then here", async () => {
     const created = await api("/api/v1/repos/alice/gears/branches", {

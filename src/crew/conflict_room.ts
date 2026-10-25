@@ -15,6 +15,11 @@
  * run in flight is always allowed, so a busy lane slows the sweep but
  * never stops it. A pull left out waits for a later tick, and if main
  * moves meanwhile, one merge brings it past both landings.
+ *
+ * The finishing pass (`finishing.ts`) asks the same room for approved
+ * pulls: it queues before the sweep, and the sweep counts its runs as in
+ * flight, so between them a tick never starts more than the lane holds
+ * (#4784).
  */
 
 import type { Database } from "bun:sqlite";

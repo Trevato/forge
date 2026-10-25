@@ -4,10 +4,10 @@
  * does not start — a preview's run fails, a run or check stays queued — and
  * its words name the limit and the count ("1 of 1 live previews"). The
  * owner's own (admin) account starts the same things freely. Every wait is
- * for a named state or a flag file, never a guess at timing.
+ * for a named state or a flag file, never a guess at timing, and each wait outlasts a check machine running the whole suite at once.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -25,19 +25,19 @@ import { getRepo, type Repo } from "../src/core/repos.ts";
 import { createRun, listRuns, type Run } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { startCrew } from "../src/crew/dispatch.ts";
-import { serve, type Servers } from "../src/http/server.ts";
+import { serve } from "../src/http/server.ts";
 import { readRunLog } from "../src/runs/log.ts";
 import { QUOTA_KEYS, getQuota, runningLimitSentence, setQuota } from "../src/settings/quotas.ts";
 import { promote } from "./helpers/members.ts";
 
-async function until<T>(read: () => T | undefined, ms = 60_000): Promise<T> {
+async function until<T>(read: () => T | undefined, ms = 120_000, what = "the awaited state"): Promise<T> {
   const deadline = Date.now() + ms;
   while (Date.now() < deadline) {
     const value = read();
     if (value !== undefined) return value;
     await Bun.sleep(50);
   }
-  throw new Error("did not happen in time");
+  throw new Error(`did not happen in time: ${what}`);
 }
 
 async function twoUsers(app: App): Promise<{ alice: User; bob: User }> {
@@ -142,7 +142,7 @@ describe("live previews", () => {
       app.close();
       await rm(dataDir, { recursive: true, force: true });
     }
-  }, 180_000);
+  }, 600_000);
 });
 
 describe("two previews deploying together", () => {
@@ -201,7 +201,7 @@ describe("two previews deploying together", () => {
       app.close();
       await rm(dataDir, { recursive: true, force: true });
     }
-  }, 180_000);
+  }, 600_000);
 });
 
 describe("a sleeping preview woken at the limit", () => {
@@ -209,13 +209,16 @@ describe("a sleeping preview woken at the limit", () => {
     const dataDir = await mkdtemp(join(tmpdir(), "forge-qrun-wake-"));
     const app = createApp({ dataDir, port: 0 });
     const servers = await serve(app);
+    // Read at every sweep: raised once both are asleep, so the one woken
+    // cannot rest again (freeing the slot) however slow the machine is.
+    const sleepAfter = { production: 3_600_000, preview: 2_500 };
     const runtime = new AppsRuntime(app, {
       domain: "apps.test",
       scheme: "http",
       publicPort: servers.port,
       forgeUrl: servers.url,
       // Previews rest after a few seconds unasked; production is left alone.
-      sleepAfterMs: { production: 3_600_000, preview: 2_500 },
+      sleepAfterMs: sleepAfter,
       sweepEveryMs: 100,
     });
     await runtime.start();
@@ -244,6 +247,7 @@ describe("a sleeping preview woken at the limit", () => {
       const status = (env: EnvName) => runtime.status(record).find((e) => e.env === env);
       // No limit yet: both come up, then both rest, unasked.
       for (const env of envs) await until(() => (status(env)?.state === "asleep" ? true : undefined));
+      sleepAfter.preview = 3_600_000;
       // The limit is set only now, so the two asleep are the whole story: one wake fits, the next does not.
       setQuota(app.db, "previews", 1, alice.id);
       expect(await runtime.wake(record, envs[0]!)).toBeDefined();
@@ -264,7 +268,7 @@ describe("a sleeping preview woken at the limit", () => {
       app.close();
       await rm(dataDir, { recursive: true, force: true });
     }
-  }, 180_000);
+  }, 600_000);
 });
 
 describe("concurrent checks", () => {
@@ -318,7 +322,7 @@ describe("concurrent checks", () => {
       app.close();
       await rm(dataDir, { recursive: true, force: true });
     }
-  }, 180_000);
+  }, 600_000);
 
   test("a fresh account's second check waits queued, naming the count; the owner's two run at once; a freed slot starts the waiter", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "forge-qrun-checks-"));
@@ -351,27 +355,27 @@ describe("concurrent checks", () => {
       const stateOf = (repo: Repo) => checkOf(repo)?.state;
 
       const b1 = await push(bob, "b1");
-      await until(() => (stateOf(b1) === "running" ? true : undefined));
+      await until(() => (stateOf(b1) === "running" ? true : undefined), 120_000, "b1 running");
       const b2 = await push(bob, "b2");
       const waiting = await until(() => {
         const run = checkOf(b2);
         return run !== undefined && readRunLog(dataDir, run.id).lines.join("\n").includes("1 of 1 concurrent checks")
           ? run
           : undefined;
-      });
+      }, 120_000, "b2 queued with its count in the log");
       expect(stateOf(b2)).toBe("queued");
       expect(waiting.state).toBe("queued");
 
       const a1 = await push(alice, "a1");
       const a2 = await push(alice, "a2");
-      await until(() => (stateOf(a1) === "running" && stateOf(a2) === "running" ? true : undefined));
+      await until(() => (stateOf(a1) === "running" && stateOf(a2) === "running" ? true : undefined), 120_000, "a1 and a2 running");
 
       // The slot frees: bob's waiter is started, never dropped.
       writeFileSync(flag("b1"), "");
-      await until(() => (stateOf(b1) === "ok" ? true : undefined));
-      await until(() => (stateOf(b2) === "running" ? true : undefined));
+      await until(() => (stateOf(b1) === "ok" ? true : undefined), 120_000, "b1 ok");
+      await until(() => (stateOf(b2) === "running" ? true : undefined), 120_000, "b2 running once b1 freed its slot");
       for (const name of ["b2", "a1", "a2"]) writeFileSync(flag(name), "");
-      await until(() => ([b2, a1, a2].every((r) => stateOf(r) === "ok") ? true : undefined));
+      await until(() => ([b2, a1, a2].every((r) => stateOf(r) === "ok") ? true : undefined), 120_000, "b2, a1, a2 ok");
       expect(existsSync(flag("b2"))).toBe(true);
     } finally {
       await checks.stop();
@@ -379,7 +383,7 @@ describe("concurrent checks", () => {
       app.close();
       await rm(dataDir, { recursive: true, force: true });
     }
-  }, 180_000);
+  }, 600_000);
 });
 
 describe("concurrent runs", () => {
@@ -453,5 +457,5 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok","total
       app.close();
       await rm(dataDir, { recursive: true, force: true });
     }
-  }, 180_000);
+  }, 600_000);
 });

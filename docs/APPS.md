@@ -420,6 +420,18 @@ A `check` that is present and wrong fails with the reason, so a commit is
 never silently unchecked. A check under way when the forge restarts is
 queued again, and the forge that carries on runs it from the start.
 
+**An install failure is not a test failure** (`src/checks/install.ts`,
+#5093). An install that fails with `Fail extracting tarball`, `EINTEGRITY`
+or `ECONNRESET` is tried once more after 2 s. If it fails that way again,
+the check is `failed: infrastructure`. It is queued again, and the merge
+queue counts it as cut off, not red. If the re-run fails the same way, it
+fails and says `infrastructure`. A check in a cell installs into its own
+home, so its bun cache is shared with nothing. An uncontained check uses
+its repository's cache (`<data>/check-install/<repo>/bun`), and installs
+into it take turns under a lock file, so two never extract one package
+into the same directory. A `job` check installs in its own pod and is not
+retried.
+
 **Placement.** `FORGE_CHECKS_PLACEMENT=process` (the default) runs a check
 in a cell on the forge's machine. `job` runs install and check as one
 Kubernetes Job (`src/cluster/jobs.ts`) instead: `FORGE_CHECKS_IMAGE` is its

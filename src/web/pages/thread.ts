@@ -9,7 +9,9 @@
  */
 
 import { mayView } from "../../core/sealed.ts";
+import { THREAD_SAYS } from "../../actions/thread_words.ts";
 import { ISSUE_TEAMS_SAY, nameTeams } from "../../actions/issue_teams.ts";
+import { MIRRORED_DO_IT_THERE } from "../../actions/mirror_words.ts";
 import { teamsOfIssue, TEAMS_MAX } from "../../core/issue_teams.ts";
 import { listTeams } from "../../core/teams.ts";
 import { listCrew } from "../../actions/crew.ts";
@@ -54,6 +56,7 @@ import type { Ctx } from "../../http/context.ts";
 import { commentCard } from "../comments.ts";
 import { backTo, field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
+import { NOT_CHANGED } from "../edit_words.ts";
 import { flashOrJson, flashTo } from "../layout.ts";
 import {
   btn,
@@ -81,8 +84,7 @@ import { interruptionsOn } from "../../crew/interrupted.ts";
  */
 export function originError(error: string): string | undefined {
   const words: Record<string, string> = {
-    mirrored:
-      "This repository mirrors an origin — do it there, and the next sync brings it back.",
+    mirrored: MIRRORED_DO_IT_THERE,
     origin_owner_only:
       "Only the person who connected this origin can write through it. Your comment would otherwise appear upstream under their name.",
     origin_refused: "The origin refused that. Nothing was changed here either.",
@@ -820,7 +822,7 @@ export async function stateSubmit(
         ? merged
         : changed.error === "forbidden"
           ? "Only the author or someone with write access can do that."
-          : "That could not be changed.");
+          : NOT_CHANGED);
     return flashOrJson(ctx, dest, { tone: "danger", message });
   }
   return flashOrJson(ctx, dest, {
@@ -857,7 +859,7 @@ export async function wordsSubmit(
             ? `A title is at most ${MAX_TITLE} characters.`
             : edited.error === "body_too_long"
               ? "That description is too long."
-              : "That could not be changed.");
+              : NOT_CHANGED);
     return flashOrJson(ctx, dest, { tone: "danger", message });
   }
   return flashOrJson(ctx, dest, { message: "Saved." });
@@ -891,8 +893,8 @@ export async function labelsSubmit(
       message:
         originError(applied.error) ??
         (applied.error === "unknown_label"
-          ? "One of those labels no longer exists."
-          : "You need write access to change labels."),
+          ? THREAD_SAYS.unknownLabel
+          : THREAD_SAYS.labelsForbidden),
     });
   }
   return flashTo(ctx, dest, {
@@ -946,7 +948,7 @@ export async function teamsSubmit(ctx: Ctx): Promise<Response> {
   const chosen = form.getAll("teams").filter((v): v is string => typeof v === "string");
   const set = nameTeams(ctx.app, ctx.auth.user, found.repo, found.issue, chosen);
   if (!set.ok)
-    return flashTo(ctx, dest, { tone: "danger", message: ISSUE_TEAMS_SAY[set.error] ?? "That could not be changed." });
+    return flashTo(ctx, dest, { tone: "danger", message: ISSUE_TEAMS_SAY[set.error] ?? NOT_CHANGED });
   return flashTo(ctx, dest, {
     message: set.value.length === 0 ? "Teams cleared." : `Teams set to ${set.value.join(", ")}.`,
   });
@@ -1095,7 +1097,7 @@ export async function dependencySubmit(ctx: Ctx): Promise<Response> {
       cycle: `#${other.number} already waits for this one, directly or through others; linking would make a loop.`,
       cross_repo: "Dependencies stay inside one repository.",
       not_an_issue: "Only issues can depend on issues.",
-      forbidden: "You need write access, or a place on the crew, to plan here.",
+      forbidden: THREAD_SAYS.planForbidden,
     };
     return flashTo(ctx, dest, {
       tone: "danger",

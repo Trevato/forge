@@ -17,7 +17,7 @@ import { listEvents } from "../src/core/events.ts";
 import type { Repo } from "../src/core/repos.ts";
 import type { Run } from "../src/core/runs.ts";
 import type { User } from "../src/core/users.ts";
-import { serve, type Servers } from "../src/http/server.ts";
+import type { Servers } from "../src/http/server.ts";
 
 import { identityKey } from "../src/apps/proxy.ts";
 /** The scaffold's suites that boot its real `serve`: a test that swaps in a toy server drops them. */

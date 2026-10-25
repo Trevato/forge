@@ -28,6 +28,7 @@ import { llmsRepos, sitemapRepos } from "../core/listings.ts";
 import { canRead, getRepo } from "../core/repos.ts";
 import type { Ctx } from "../http/context.ts";
 import { notFound } from "../http/respond.ts";
+import { timePhase } from "../core/route_timing.ts";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -165,18 +166,19 @@ function xml(s: string): string {
 export function sitemapXml(ctx: Ctx): Response {
   // Kept without an origin, and the origin is put on per answer, so a
   // caller who varies `Host` cannot make the forge read the rows again.
-  const paths = sitemapRepos(ctx.app.db).map((r) => xml(`/${r}`));
+  const repos = timePhase(ctx.request, "repos", () => sitemapRepos(ctx.app.db));
   // Escaping is per character, so the escaped origin and the escaped path
   // join into the escaped URL.
-  const origin = xml(ctx.url.origin);
-  const urls = [
-    `<url><loc>${origin}/</loc></url>`,
-    ...paths.map((path) => `<url><loc>${origin}${path}</loc></url>`),
-  ];
-  return text(
-    `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join("\n")}\n</urlset>\n`,
-    "application/xml; charset=utf-8",
-  );
+  const body = timePhase(ctx.request, "render", () => {
+    const origin = xml(ctx.url.origin);
+    const urls = [
+      `<url><loc>${origin}/</loc></url>`,
+      `<url><loc>${origin}/explore</loc></url>`,
+      ...repos.map((r) => `<url><loc>${origin}${xml(`/${r}`)}</loc></url>`),
+    ];
+    return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join("\n")}\n</urlset>\n`;
+  });
+  return text(body, "application/xml; charset=utf-8");
 }
 
 /** GET /manifest.webmanifest — the forge as an app on a home screen. */
@@ -256,8 +258,8 @@ export function iconPng(ctx: Ctx): Response {
  */
 export function llmsTxt(ctx: Ctx): Response {
   const o = ctx.url.origin;
-  const repos = llmsRepos(ctx.app.db);
-  return text(
+  const repos = timePhase(ctx.request, "repos", () => llmsRepos(ctx.app.db));
+  return timePhase(ctx.request, "render", () => text(
     [
       `# forge at ${ctx.url.host}`,
       "",
@@ -301,7 +303,7 @@ export function llmsTxt(ctx: Ctx): Response {
       "",
     ].join("\n"),
     "text/markdown; charset=utf-8",
-  );
+  ));
 }
 
 export interface PageLink {

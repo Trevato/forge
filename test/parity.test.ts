@@ -342,7 +342,7 @@ describe("parity: full control through actions and the API", () => {
     const dir = join(app.reposRoot, "alice", "pub.git");
     expect(await git(["symbolic-ref", "HEAD"], dir)).toBe("refs/heads/feature");
     const branches = await call("GET", "/api/v1/repos/alice/pub/branches");
-    expect(branches.list.find((b) => b.isDefault)?.name).toBe("feature");
+    expect((branches.json.items as Json[]).find((b) => b.isDefault)?.name).toBe("feature");
     const back = await call("PATCH", "/api/v1/repos/alice/pub", {
       token: aliceAdmin,
       body: { defaultBranch: "main" },
@@ -782,15 +782,19 @@ describe("parity: full control through actions and the API", () => {
     const asBob = await call("GET", "/api/v1/orgs/acme/teams", {
       token: bobRw,
     });
-    expect(asBob.list.map((t) => t.name)).toEqual(["devs"]);
-    expect((await call("GET", "/api/v1/orgs/acme/teams")).list).toEqual([]);
+    expect((asBob.json.items as Json[]).map((t) => t.name)).toEqual(["devs"]);
+    expect(asBob.json.next_cursor).toBeNull();
+    expect((await call("GET", "/api/v1/orgs/acme/teams")).json).toEqual({
+      items: [],
+      next_cursor: null,
+    });
     expect((await call("GET", "/api/v1/orgs/alice")).status).toBe(404);
 
     // Members are visible to those who can see the team.
     const members = await call("GET", "/api/v1/orgs/acme/teams/devs/members", {
       token: bobRw,
     });
-    expect(members.list.map((m) => m.username)).toEqual(["bob"]);
+    expect((members.json.items as Json[]).map((m) => m.username)).toEqual(["bob"]);
     expect(
       (
         await call("GET", "/api/v1/orgs/acme/teams/ops/members", {
@@ -846,9 +850,11 @@ describe("parity: full control through actions and the API", () => {
     ).toBe(204);
 
     const myOrgs = await call("GET", "/api/v1/user/orgs", { token: aliceRo });
-    expect(myOrgs.list.map((o) => o.username)).toEqual(["acme"]);
+    const orgItems = (r: { json: Json }) => (r.json.items ?? []) as Json[];
+    expect(orgItems(myOrgs).map((o) => o.username)).toEqual(["acme"]);
+    expect(myOrgs.json.next_cursor).toBeNull();
     expect(
-      (await call("GET", "/api/v1/user/orgs", { token: bobRw })).list,
+      orgItems(await call("GET", "/api/v1/user/orgs", { token: bobRw })),
     ).toEqual([]);
     for (const kind of [
       "team.created",
@@ -857,6 +863,98 @@ describe("parity: full control through actions and the API", () => {
       "team.member_removed",
     ])
       expect(kinds()).toContain(kind);
+  });
+
+  test("teams and members page as { items, next_cursor }", async () => {
+    await call("POST", "/api/v1/orgs/acme/teams", {
+      token: aliceAdmin,
+      body: { name: "zeta", permission: "read" },
+    });
+    const all = await call("GET", "/api/v1/orgs/acme/teams", { token: aliceAdmin });
+    const names = (all.json.items as Json[]).map((t) => t.name as string);
+    expect(names.length).toBeGreaterThanOrEqual(3);
+    expect(all.json.next_cursor).toBeNull();
+    const first = await call("GET", "/api/v1/orgs/acme/teams?limit=2", { token: aliceAdmin });
+    expect((first.json.items as Json[]).map((t) => t.name)).toEqual(names.slice(0, 2));
+    expect(first.json.next_cursor).toBe(names[1]!);
+    const second = await call(
+      "GET",
+      `/api/v1/orgs/acme/teams?limit=200&cursor=${names[1]}`,
+      { token: aliceAdmin },
+    );
+    expect((second.json.items as Json[]).map((t) => t.name)).toEqual(names.slice(2));
+    expect(second.json.next_cursor).toBeNull();
+
+    for (const user of ["bob", "carol"])
+      await call("POST", "/api/v1/orgs/acme/teams/devs/members", {
+        token: aliceAdmin,
+        body: { user },
+      });
+    const m1 = await call("GET", "/api/v1/orgs/acme/teams/devs/members?limit=1", {
+      token: aliceAdmin,
+    });
+    expect((m1.json.items as Json[]).map((m) => m.username)).toEqual(["bob"]);
+    expect(m1.json.next_cursor).toBe("bob");
+    const m2 = await call("GET", "/api/v1/orgs/acme/teams/devs/members?limit=1&cursor=bob", {
+      token: aliceAdmin,
+    });
+    expect((m2.json.items as Json[]).map((m) => m.username)).toEqual(["carol"]);
+    expect(m2.json.next_cursor).toBeNull();
+
+    // A member of a private team is not shown to an outsider.
+    const outsider = await call("GET", "/api/v1/orgs/acme/teams/zeta/members", { token: bobRw });
+    expect(outsider.status).toBe(404);
+    expect(outsider.json.items).toBeUndefined();
+
+    for (const path of ["teams", "teams/devs/members"])
+      for (const bad of ["0", "201", "-1", "abc", "1.5"]) {
+        const res = await call("GET", `/api/v1/orgs/acme/${path}?limit=${bad}`, {
+          token: aliceAdmin,
+        });
+        expect(res.status).toBe(422);
+        expect(res.json.error).toBe("invalid_limit");
+      }
+
+    // The cursor is only compared: any 1..160 characters, nothing else.
+    for (const path of ["teams", "teams/devs/members"])
+      for (const bad of ["", "x".repeat(161)]) {
+        const res = await call("GET", `/api/v1/orgs/acme/${path}?cursor=${bad}`, {
+          token: aliceAdmin,
+        });
+        expect(res.status).toBe(422);
+        expect(res.json.error).toBe("invalid_cursor");
+      }
+
+    // A name with a control character pages on: its own cursor is accepted.
+    const odd = await call("POST", "/api/v1/orgs/acme/teams", {
+      token: aliceAdmin,
+      body: { name: "a\u0001b", permission: "read" },
+    });
+    expect(odd.status).toBe(201);
+    {
+      const list = await call("GET", "/api/v1/orgs/acme/teams", { token: aliceAdmin });
+      const at = (list.json.items as Json[]).findIndex((t) => t.name === "a\u0001b");
+      const page = await call("GET", `/api/v1/orgs/acme/teams?limit=${at + 1}`, {
+        token: aliceAdmin,
+      });
+      expect(page.json.next_cursor).toBe("a\u0001b");
+      const next = await call(
+        "GET",
+        `/api/v1/orgs/acme/teams?cursor=${encodeURIComponent("a\u0001b")}`,
+        { token: aliceAdmin },
+      );
+      expect(next.status).toBe(200);
+    }
+
+    // The default page is 50.
+    for (let i = 0; i < 50; i++)
+      await call("POST", "/api/v1/orgs/acme/teams", {
+        token: aliceAdmin,
+        body: { name: `p${String(i).padStart(2, "0")}`, permission: "read" },
+      });
+    const dflt = await call("GET", "/api/v1/orgs/acme/teams", { token: aliceAdmin });
+    expect((dflt.json.items as Json[]).length).toBe(50);
+    expect(dflt.json.next_cursor).not.toBeNull();
   });
 
   test("a team member sees the org's private repos in listings", async () => {

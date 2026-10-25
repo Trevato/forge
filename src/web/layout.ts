@@ -51,6 +51,11 @@ export interface PaletteItem {
 export interface PageOptions {
   /** The request: user, theme and flash all come from here. */
   ctx: Ctx;
+  /**
+   * A flash for this response itself, for a form that re-renders instead of
+   * redirecting. It stands in for the cookie's, so a page never shows two.
+   */
+  flash?: Flash;
   title: string;
   /**
    * One sentence for the places that show a page before it is opened: a
@@ -511,7 +516,8 @@ export function page(options: PageOptions, status = 200): Response {
   const placeholder = secret();
   const { ctx } = options;
   const theme = ctx.theme ?? options.theme;
-  const flash = readFlash(ctx.request);
+  const cookieFlash = readFlash(ctx.request);
+  const flash = options.flash ?? cookieFlash;
   const links = pageLinks(ctx);
 
   // The body's markup, built before the document so the icons it used can be
@@ -669,7 +675,7 @@ export function page(options: PageOptions, status = 200): Response {
     link: linkHeader(links),
   });
   // A flash is shown exactly once: rendering it is also what clears it.
-  if (flash) headers.append("set-cookie", clearFlashCookie(ctx.url));
+  if (cookieFlash) headers.append("set-cookie", clearFlashCookie(ctx.url));
   if (tagged) {
     const etag = weakEtag(text);
     headers.set("etag", etag);

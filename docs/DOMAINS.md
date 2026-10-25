@@ -17,7 +17,7 @@ keeps a drill's verdict for any domain here (see the README).
 | The edge (tunnel and DNS) | The forge runs but nobody outside can reach it. | nothing yet | 10 | Restart the tunnel; check the DNS record. | none: Cutting the tunnel cuts every person and agent off the forge. |
 | Identity | Sign-in fails; sessions and tokens already issued may still work. | nothing yet | 15 | Restore the sign-in provider's settings; sign in with the admin password. | none: Breaking sign-in locks the owner out of the forge that would fix it. |
 | The model credential | Agents cannot start work; everything else runs. | nothing yet | 5 | Set a fresh credential in the settings. | expire-token |
-| The runner | Checks and runs queue behind a lane that is not moving. | "wait behind one lane; the oldest since"; "is stuck: no heartbeat for" | 10 | Cancel the stuck run; restart the runner if the lane stays empty. | lose-runner |
+| The runner | Checks and runs queue behind a lane that is not moving. | "the oldest since"; "is stuck: no heartbeat for" | 10 | Cancel the stuck run; restart the runner if the lane stays empty. | lose-runner |
 
 ## Shared by accident
 

@@ -173,7 +173,7 @@ specification.
 | **breadcrumb** `crumbs()`                     | `.crumbs`                                                                                              | `.mono`                                                                                                                                  | `aria-current` on the last                                                                                                                                                                                                                         | `a / b / c`                                                           |
 | **pagination** `pager()`                      | `.pager`                                                                                               | —                                                                                                                                        | cursor links, absent ends                                                                                                                                                                                                                          | `‹ Newer  Page 2  Older ›`                                            |
 | **timeline item** `tlEvent()` / `tlComment()` | `.tl-item`                                                                                             | `data-kind=comment\|event`, `data-tone`                                                                                                  | —                                                                                                                                                                                                                                                  | a card, or one dim line with a glyph                                  |
-| **empty state** `empty()`                     | `.card.empty`                                                                                          | —                                                                                                                                        | icon, one title, one sentence, **exactly one** action                                                                                                                                                                                              | the same three lines, centered                                        |
+| **empty state** `empty()`                     | `.card.empty`, title `.empty-title`                                                                    | —                                                                                                                                        | icon, one title, one sentence, **exactly one** action                                                                                                                                                                                              | the same three lines, centered                                        |
 | **diff file**                                 | `.diff-file`                                                                                           | `data-status`, `<details open>`, `.diff-viewed`                                                                                          | collapsed, viewed                                                                                                                                                                                                                                  | a foldable file section                                               |
 | **code block**                                | `.code`                                                                                                | `:target` / `[data-hl]` line highlight                                                                                                   | —                                                                                                                                                                                                                                                  | a numbered gutter                                                     |
 | **prose**                                     | `.prose`                                                                                               | —                                                                                                                                        | 15px, 72ch measure                                                                                                                                                                                                                                 | wrapped markdown                                                      |
@@ -211,7 +211,7 @@ specification.
 | **look** (`pages/looks.ts`)                  | `.look` in a `.looks` strip                                                                            | `.look[data-slot=phone\|desktop\|thumb\|now]` sizes the frame; `.looks[data-compare]` sets two sides (before · main, then after · the pull) beside each other | a picture always carries its own `width`/`height`, so nothing shifts when it loads; a phone keeps 200px, a desktop takes the rest up to its own size, and under 640px a strip stacks; an attached picture is a `figure` in the strip with its line under it | the picture in the terminal (§6·0c)                                   |
 | **board** (`pages/board.ts`)                  | `.board` (`.board-grid`, `.board-region`)                                                              | `data-wall` (across the room: no keys, no pointer, larger), `data-focus=working\|landed\|decided\|today`                               | the one whole-screen layout: four live regions fill a second monitor ≥1100px and each list scrolls on its own, one column below; above the panels only a collapsed one-line `#notes` (`<details>`: closed by default, an open list stays open across live swaps), the strips below them; inside, only §5 parts (list card rows, badges, meters, `kbd`); a swapped region's heading wears `data-fresh` for a moment | four panes, one focused by its number                                 |
 | **stacked bar chart** `windowSvg()` (`fleet-graph.ts`) | `.plots`, `.plot` (`.plot-name`), `.plot-legend` | bars wear `fg-sN`, the `--series-N` token | server-drawn SVG with `width`/`height` set, so it holds its box before the stylesheet; gridlines `--border`, figures `--muted-fg` in mono, panel names `--faint`; `role="img"` with an `aria-label` totalling it, a `<title>` per bar, and a table of the same numbers beside it | a table of the same numbers |
-| **chart** `chartBox()` (`ui.ts`) | `.chart-box` wrapping `drawChart`'s svg `.chart` (`.big` for the headline figure) | `.is-table` for a table panel | one query or series drawn on the server: the svg carries its own `width`/`height` and the box holds its space, so nothing shifts; `role="img"` with an `aria-label` of its title. Reach for it wherever a page draws a `boards/chart.ts` chart — `/system`'s memory pair and every board panel — and size it from the page (`.bp-*`, `.sys-pair`, `.bgrid`), never inside the frame | the same numbers as a table |
+| **chart** `chartBox()` (`ui.ts`) | `.chart-box` wrapping `drawChart`'s svg `.chart` (`.big` for the headline figure) | `.is-table` for a table panel | one query or series drawn on the server: the svg carries its own `width`/`height` and the box holds its space, so nothing shifts; `role="img"` with an `aria-label` of its title. Reach for it wherever a page draws a `boards/chart.ts` chart — `/system`'s memory pair and every board panel — and size it from the page (`.bp-*`, `.plots`, `.bgrid`), never inside the frame | the same numbers as a table |
 
 Two things are deliberately **not** in the vocabulary: skeleton loaders (the
 server renders whole pages — there is nothing to skeletonise) and a custom
@@ -389,20 +389,76 @@ listed under, and a new page reaches for §5's components instead of
 borrowing one. The plan (`docs/design/plan.md`) retires them page by page —
 onto a §5 component, or into the table when a page-local thing turns out to
 be a component — and the check fails a name kept here after its last rule is
-gone, so this list only shrinks.
+gone, so this list only shrinks. Each class sits on its own line, so to
+retire a class, delete its line: two pulls retiring two classes never edit
+the same line (#4888).
 
-- **`style/base.ts`** — the page shell (topbar, main, footer) and the layout and text utilities every page leans on: `.bar` `.bare` `.foot` `.grow` `.hide-lg` `.hide-sm` `.js-only` `.mark` `.mb` `.mt` `.muted` `.narrow` `.narrow-wide` `.num` `.reduced` `.shell` `.shell-wide` `.skip` `.small` `.spacer` `.sr-only` `.stack` `.stack-tight` `.topbar` `.topbar-tools` `.truncate` `.wordmark`
+- **`style/base.ts`** — the page shell (topbar, main, footer) and the layout and text utilities every page leans on:
+  - `.bar`
+  - `.bare`
+  - `.foot`
+  - `.hide-sm`
+  - `.js-only`
+  - `.reduced`
+  - `.shell`
+  - `.skip`
+  - `.topbar`
+  - `.wordmark`
+
   A `.field` directly inside a `.bar` drops its bottom margin and the bar aligns to the end, so a labelled input and its button share a baseline
-- **`style/components.ts`** — parts of the §5 components that the table does not spell out — the palette's list, the menu's items, a dialog's head and foot, comments, the theme picker — and a few small helpers beside them: `.cat` `.clone` `.clone-text` `.comment` `.comment-body` `.comment-form` `.dash` `.dialog-body` `.dialog-foot` `.dialog-head` `.empty-title` `.error-note` `.field-row` `.form-actions` `.hex` `.ico` `.ico-loader` `.list` `.menu-item` `.menu-panel` `.menu-sep` `.menu-title` `.palette-empty` `.palette-foot` `.palette-group` `.palette-heading` `.palette-input` `.palette-item` `.palette-list` `.preview` `.sep` `.split` `.sprite` `.swatch` `.table-scroll` `.tell-here` `.theme-apply` `.theme-option` `.tick` `.timeline` `.tl-dot` `.toast-body` `.topbar-search`
-- **`style/components.ts`, settings rows** — a list whose rows are settings (limits, capacity): the `<ul class="list setting-list">` lets title and meta wrap instead of ellipsizing, and a row's controls take their own line under 640px. `.row-fields` is the form in that row's trail (input, Save, Default): always visible, never hover-gated, wrapping under the text before it would clip. Use both for any page whose rows show a name, a current value, and a control to change it; use `.row-actions` only for secondary actions (delete, wake, pin, revoke). Flags, telemetry, cloud, people, crew roles and subscription headroom/budget use `.row-fields`. Classes: `.row-fields` `.setting-list`
-- **`style/content.ts`, page furniture** — what frames a page's content: page and repo heads, the front page and its tiles, explore, backups, boards, the fleet chart's series colours, lineage: `.bform` `.bgrid` `.bmanage` `.bp-h2` `.bp-h3` `.bp-w2` `.bp-w3` `.break` `.bt-bar` `.bt-grid` `.bt-group` `.bt-hist` `.bt-name` `.bt-procs` `.bt-row` `.bt-val` `.commit-body` `.commit-head` `.domain-records` `.fg-s0` `.fg-s1` `.fg-s2` `.fg-s3` `.fg-s4` `.fg-s5` `.fg-s6` `.fg-s7` `.filters` `.flag-form` `.front-admin` `.front-controls` `.front-crew` `.front-featured` `.front-featured-body` `.front-featured-look` `.front-issues` `.front-live` `.front-more` `.front-pick` `.frozen` `.frozen-form` `.frozen-sentence` `.headroom` `.issue-head` `.issue-meta` `.mirror-form` `.number` `.origin-mark` `.origin-name` `.origin-row` `.owner` `.page-head` `.policy-line` `.qf` `.repo-actions` `.repo-audience` `.repo-desc` `.repo-layout` `.repo-lineage` `.repo-title` `.search` `.slash` `.sub` `.sys-pair` `.table-wrap` `.tok` `.where-sep`
-- **`style/content.ts`, code view** — the source view and the syntax-highlight token classes `highlight-html.ts` builds as `tok-${kind}`: `.blob-view` `.ln` `.tok-attribute` `.tok-comment` `.tok-constant` `.tok-decorator` `.tok-deleted` `.tok-emphasis` `.tok-function` `.tok-heading` `.tok-inserted` `.tok-keyword` `.tok-link` `.tok-meta` `.tok-number` `.tok-operator` `.tok-plain` `.tok-property` `.tok-punctuation` `.tok-regex` `.tok-string` `.tok-tag` `.tok-type` `.tok-variable`
-- **`style/content.ts`, prose (markdown)** — table cell alignment, built by `markdown.ts` as `ta-${align}`: `.ta-c` `.ta-r`
-- **`style/content.ts`, diff viewer** — the diff table: its gutters, line kinds, file head and inline review comments: `.add` `.del` `.dh` `.diff` `.diff-body` `.diff-head` `.diff-note` `.diff-path` `.diff-stat` `.diff-stub` `.diff-summary` `.diff-table` `.dl` `.dn` `.dn-comment` `.nonl` `.wd`
+- **`style/components.ts`** — parts of the §5 components that the table does not spell out — the palette's list, the menu's items, a dialog's head and foot, comments, the theme picker — and a few small helpers beside them:
+  - `.cat`
+  - `.error-note`
+  - `.list`
+  - `.menu-item`
+  - `.palette-foot`
+  - `.palette-input`
+  - `.palette-list`
+  - `.preview`
+  - `.sep`
+  - `.split`
+  - `.swatch`
+  - `.theme-apply`
+  - `.theme-option`
+  - `.tick`
+
+  `.split` is the one two-column page: main, then an `<aside>` rail of 260px that sticks from 960px. `data-rail="wide"` on it (the studio's home and an app's page) widens the rail to 320px from 900px, drops the top margin, and lets the rail scroll with the page, since a column of cards runs taller than a screen
+- **`style/content.ts`, page furniture** — what frames a page's content: page and repo heads, the front page and its tiles, explore, backups, boards, the fleet chart's series colours, lineage:
+  - `.bgrid`
+  - `.bp-h2`
+  - `.bp-h3`
+  - `.bp-w2`
+  - `.bp-w3`
+  - `.break`
+  - `.commit-body`
+  - `.commit-head`
+  - `.filters`
+  - `.front-admin`
+  - `.front-pick`
+  - `.owner`
+  - `.page-head`
+  - `.policy-line`
+  - `.repo-actions`
+  - `.repo-desc`
+  - `.repo-layout`
+  - `.repo-title`
+  - `.slash`
+  - `.sub`
+  - `.tok`
+- **`style/content.ts`, code view** — the source view and the syntax-highlight token classes `highlight-html.ts` builds as `tok-${kind}`:
+  - `.tok-deleted`
+  - `.tok-inserted`
+- **`style/content.ts`, diff viewer** — the diff table: its gutters, line kinds, file head and inline review comments:
+  - `.add`
+  - `.del`
+  - `.dh`
+  - `.diff`
+  - `.dl`
+  - `.dn`
+  - `.wd`
 - **`style/content.ts`, apps, runs, and the crew** — run pages, their logs and checks (a pull's look is §5's **look**).
 - **`pages/board.ts`** — the board itself is §5's **board**; the spend tables `spend.ts` draws wear §5's `.table` and `.stack`, no class of their own
-- **`pages/map.ts`** — the map of what waits for what: `.map-ask` `.map-breath` `.map-canvas` `.map-card` `.map-dot` `.map-edge` `.map-edge-crit` `.map-edge-done` `.map-main` `.map-meta` `.map-node` `.map-rule` `.map-svg` `.map-title` `.map-tool` `.map-who` `.map-who-i` `.map-who-n` `.map-word` `.map-wrap`
-- **`studio/feed_style.ts`** — the home feed's cards and its composer (the apps rail is §5's card, row and btn; an admin's tick boxes and Archive are always shown, deliberately, with no Select toggle): `.composer` `.feed` `.feed-head`
+- **`studio/feed_style.ts`** — the home feed's cards and its composer (the apps rail is §5's card, row and btn; an admin's tick boxes and Archive are always shown, deliberately, with no Select toggle):
 ---
 
 ## 6. Keyboard

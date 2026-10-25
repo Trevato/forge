@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
+import { clearErrors, createLog } from "../src/kernel/log.ts";
 import { hunt } from "../src/crew/sentinel.ts";
 import { forgeCommands, Session } from "../src/tui/forge.ts";
 import type { Ctx } from "../src/tui/app/app.ts";
@@ -54,7 +55,7 @@ beforeAll(async () => {
   member = await mk("bob", false);
 });
 afterAll(async () => {
-  app.db.close();
+  app.close();
   await rm(dataDir, { recursive: true, force: true });
 });
 
@@ -68,6 +69,12 @@ describe("the sentinel command", () => {
     if (!made.ok) throw new Error(String(made.error));
     process.env["FORGE_SENTINEL_REPO"] = "alice/none";
     try {
+      // The hunt reads the process's error log, which every other suite in
+      // this process writes to; a loaded machine fills it with the same
+      // ERROR line three times and the hunt files a finding. Empty it for
+      // the read, so the hunt sees only this test's database.
+      for (let i = 0; i < 3; i++) createLog("noise").error(`other suite failed ${i}`);
+      clearErrors();
       hunt(app, "alice/none", Date.parse("2026-10-13T12:00:00.000Z"));
       found!.run();
     } finally {

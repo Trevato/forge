@@ -2,12 +2,12 @@
  * Apps, end to end (docs/APPS.md): a new app runs in production seconds
  * after it exists; a pull gets a preview with a copy of production's data;
  * a push moves the preview; closing the pull removes it; a private app
- * answers only through a grant; `require_checks` holds the merge until the
- * head's deploy is green.
+ * answers only through a grant.
  *
  * The rest of the first suite is split by what it needs, each on a forge of
- * its own (#1798): `apps-slow-test`, `apps-identity`, `apps-crew`; the New
- * app form is `apps-new`. The forge they share is `helpers/apps-forge.ts`.
+ * its own (#1798): `apps-slow-test`, `apps-identity`, `apps-crew`,
+ * `apps-require-checks-green`, `apps-require-checks-red`; the New app form is
+ * `apps-new`. The forge they share is `helpers/apps-forge.ts`.
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -35,7 +35,7 @@ import {
 } from "../src/actions/repos.ts";
 import type { AppRecord } from "../src/core/apps.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
-import { getRepoById, type Repo } from "../src/core/repos.ts";
+import { type Repo } from "../src/core/repos.ts";
 import { repoDir } from "../src/git/repos.ts";
 import {
   getRun,
@@ -49,7 +49,6 @@ import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { readRunLog } from "../src/runs/log.ts";
 import { grantedCookie } from "./helpers/identity.ts";
-import { identityKey } from "../src/apps/proxy.ts";
 import {
   APPS_DOMAIN,
   deploySettled,
@@ -363,79 +362,6 @@ describe("apps: production, previews, data, gates", () => {
     expect(back.searchParams.get("to")).toBe("/notes?x=1");
     updateAppSettings(app, alice, repo, { access: "public" });
   });
-
-  test("require_checks holds the merge until the head's deploy is green", async () => {
-    const settings = await updateRepoSettings(app, alice, repo, {
-      requireChecks: true,
-    });
-    expect(settings.ok).toBe(true);
-    repo = getRepoById(app.db, repo.id)!;
-    const broken = await commitToBranch(app, alice, repo, {
-      branch: "broken",
-      base: repo.defaultBranch,
-      message: "Break the test",
-      files: [
-        {
-          path: "src/server.test.ts",
-          content:
-            'import { expect, test } from "bun:test";\ntest("fails", () => { expect(1).toBe(2); });\n',
-        },
-      ],
-    });
-    expect(broken.ok).toBe(true);
-    const opened = await openPull(app, alice, repo, {
-      title: "Broken",
-      baseBranch: repo.defaultBranch,
-      headBranch: "broken",
-    });
-    expect(opened.ok).toBe(true);
-    if (!opened.ok) return;
-    const failed = await settled(latest(`pull-${opened.value.number}`));
-    expect(failed.state).toBe("failed");
-    expect(failed.summary).toContain("test");
-    const refused = await mergePull(app, alice, repo, opened.value, "merge");
-    expect(refused.ok).toBe(false);
-    if (!refused.ok) expect(refused.error).toBe("checks_required");
-    // The app itself never broke, only its tests: the preview answers with
-    // its own page rather than a gateway error, because a deployment that
-    // answers is what was asked for.
-    const page = await viaHost(`hello--${opened.value.number}.${DOMAIN}`);
-    expect(page.status).toBe(200);
-    expect(await page.text()).toContain(
-      `preview of pull #${opened.value.number}`,
-    );
-    const status = runtime.envStatus(record, `pull-${opened.value.number}`);
-    expect(status?.state).toBe("running");
-    expect(status?.error).toContain("tests failed");
-
-    const fixed = await commitToBranch(app, alice, repo, {
-      branch: "broken",
-      message: "Fix the test",
-      files: [
-        {
-          path: "src/server.test.ts",
-          content:
-            'import { expect, test } from "bun:test";\ntest("passes", () => { expect(1).toBe(1); });\n',
-        },
-      ],
-    });
-    expect(fixed.ok).toBe(true);
-    if (!fixed.ok) return;
-    const green = await settled(
-      (r) =>
-        r.env === `pull-${opened.value.number}` &&
-        r.commitOid === fixed.value.commitOid,
-    );
-    expect(green.state).toBe("ok");
-    const merged = await mergePull(
-      app,
-      alice,
-      repo,
-      getPull(app.db, repo.id, opened.value.number)!,
-      "merge",
-    );
-    expect(merged.ok).toBe(true);
-  }, 120_000);
 
   test("archiving stops the app, keeps its data, and its URL says it is archived", async () => {
     expect(runtime.envStatus(record, "production")?.state).toBe("running");

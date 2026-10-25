@@ -78,7 +78,7 @@ export const DOMAINS: readonly Domain[] = [
     key: "runner",
     name: "The runner",
     breaks: "Checks and runs queue behind a lane that is not moving.",
-    says: ["wait behind one lane; the oldest since", "is stuck: no heartbeat for"],
+    says: ["the oldest since", "is stuck: no heartbeat for"],
     backMinutes: 10,
     owner: "Cancel the stuck run; restart the runner if the lane stays empty.",
     drill: { name: "lose-runner" },

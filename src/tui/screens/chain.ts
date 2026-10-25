@@ -7,6 +7,7 @@
 
 import type { App as Forge } from "../../app.ts";
 import { FOLLOW_MODE_REFUSALS, setFollowMode, severForge, takeForgeCode, takeForgeWords } from "../../actions/follow.ts";
+import { SEVER_CONFIRM } from "../../actions/sever_invite_words.ts";
 import { forgeProposalLine, forgeProposals, proposeToParentForge } from "../../actions/upstream.ts";
 import { checkUpstream, upstreamState, upstreamWords } from "../../spawn/upstream.ts";
 import { parentCredential } from "../../spawn/parent_credential.ts";
@@ -117,7 +118,7 @@ export async function chainScreen(app: Forge, user: User | undefined, ctx: Ctx):
             title: "Sever from the parent forge",
             label: "type sever to confirm",
             onSubmit: (word) => {
-              if (word.trim() !== "sever") return "Type sever to confirm.";
+              if (word.trim() !== "sever") return SEVER_CONFIRM;
               return severForge(app, user, repo).then((cut) => {
                 if (!cut.ok) return ctx.toast(`Not severed: ${cut.error}`, "danger");
                 ctx.pop();

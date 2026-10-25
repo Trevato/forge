@@ -73,6 +73,8 @@ export interface EarlyInput {
   /** A pull already stands for this work: nothing to open. */
   continuing: boolean;
   intervalMs?: number;
+  /** Called once when this watcher opens the pull; a throw is logged, not raised. */
+  onOpened?: () => void;
 }
 
 /**
@@ -135,6 +137,13 @@ export function watchForPull(input: EarlyInput): EarlyPull {
         ? `opened pull #${opened.value.number} at the first push, in progress`
         : `could not open the pull early: ${JSON.stringify(opened.error)}`,
     );
+    if (opened.ok && input.onOpened !== undefined) {
+      try {
+        input.onOpened();
+      } catch (err) {
+        input.write(`could not write the first-push timing: ${String(err)}`);
+      }
+    }
   };
   const every = input.intervalMs ?? WATCH_MS;
   let looks = 0;

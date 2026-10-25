@@ -167,6 +167,19 @@ describe("issue pages end to end", () => {
     expect(detail).not.toContain('data-state="closed"');
   });
 
+  test("an empty issue title is refused in the title field", async () => {
+    const res = await fetch(`${base}/mel/proj/issues/new`, {
+      method: "POST",
+      headers: { cookie },
+      body: form({ title: "", body: "" }),
+      redirect: "manual",
+    });
+    expect(res.status).toBe(422);
+    const page = await res.text();
+    expect(page).not.toContain("error-note");
+    expect(page).toMatch(/<div class="field" data-invalid>[\s\S]*?id="f-title"[^>]*aria-invalid="true"[\s\S]*?class="error"/);
+  });
+
   test("cross-origin issue post is refused (CSRF)", async () => {
     const res = await fetch(`${base}/mel/proj/issues/new`, {
       method: "POST",

@@ -111,3 +111,22 @@ test("bad arguments are refused", async () => {
   expect((await mcp(o, { repo: "ada/svc", ref: "--upload-pack=x" })).error).toContain("invalid");
   expect((await mcp(o, { repo: "ada/svc", ref: 7 })).error).toContain("invalid");
 });
+
+test("oid opens one commit with its files changed and its check", async () => {
+  const [head] = (await mcp(tok["owner"]!, { repo: "ada/svc" })).value.commits;
+  const r = (await mcp(tok["stranger"]!, { repo: "ada/svc", oid: head.oid.slice(0, 8) })).value;
+  expect(r.oid).toBe(head.oid);
+  expect(r.says).toContain("second");
+  expect(r.diff.files.length).toBe(1);
+  expect(r.check).toBeTruthy();
+});
+
+test("oid: a bad or unknown one is refused, and a private repository stays hidden", async () => {
+  const o = tok["owner"]!;
+  expect((await mcp(o, { repo: "ada/svc", oid: "xyz" })).error).toContain("invalid");
+  expect((await mcp(o, { repo: "ada/svc", oid: "--all" })).error).toContain("invalid");
+  expect((await mcp(o, { repo: "ada/svc", oid: 5 })).error).toContain("invalid");
+  expect((await mcp(o, { repo: "ada/svc", oid: "deadbeef" })).error).toContain("not_found");
+  const [head] = (await mcp(o, { repo: "ada/secret" })).value.commits;
+  expect((await mcp(tok["stranger"]!, { repo: "ada/secret", oid: head.oid })).error).toContain("not_found");
+});

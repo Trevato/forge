@@ -19,6 +19,7 @@
 
 import { editFiles, MAX_FILE_BYTES } from "../../actions/contents.ts";
 import { contribute } from "../../actions/contribute.ts";
+import { NO_WRITE_ACCESS } from "../../actions/pull_words.ts";
 import { canAdmin, getRepoById } from "../../core/repos.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { isSafeRef, isSafeTreePath } from "../../git/guard.ts";
@@ -30,6 +31,7 @@ import { highlightToHtml } from "../highlight-html.ts";
 import { loadRepo, notFoundPage, pageHead, signInFirst } from "../chrome.ts";
 import { field as formValue, readForm, type Form } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
+import { TOO_LARGE_TO_EDIT } from "../edit_words.ts";
 import { flashTo, fragment, page } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
 import {
@@ -64,6 +66,11 @@ export interface Draft {
    */
   propose?: ProposeTarget;
   error?: string;
+  /**
+   * The field an error is about. Without it the error is the form's own (not
+   * allowed, branch moved) and is the page's flash.
+   */
+  errorOn?: "path" | "message" | "branch";
 }
 
 /**
@@ -111,7 +118,7 @@ export function suggestBranch(username: string, path: string): string {
 export function editErrorText(error: unknown): string {
   if (typeof error === "string") {
     if (error === "forbidden" || error === "unauthorized")
-      return "You do not have write access to this repository.";
+      return NO_WRITE_ACCESS;
     if (error === "origin_owner_only")
       return "This repository mirrors an origin, and only the account that connected it can write through to it.";
     if (error === "origin_unreachable")
@@ -161,6 +168,10 @@ function editorForm(
   const encoded = encodeURIComponent(draft.ref);
   const suggestion =
     draft.branch !== "" ? draft.branch : suggestBranch(username, draft.path);
+  const pathError =
+    draft.error !== undefined && draft.errorOn === "path" && draft.creating
+      ? draft.error
+      : undefined;
 
   return html`<form
     method="post"
@@ -185,6 +196,9 @@ function editorForm(
             autocomplete="off"
             spellcheck="false"
             required
+            ${pathError
+              ? raw('aria-invalid="true" aria-describedby="f-path-err"')
+              : null}
           />`,
       )}
       ${when(!draft.creating, () =>
@@ -232,6 +246,13 @@ function editorForm(
       )}
     </div>
 
+    ${when(
+      pathError,
+      (message) =>
+        html`<div class="field" data-invalid>
+          <span class="error" id="f-path-err">${message}</span>
+        </div>`,
+    )}
     <div
       class="editor-wrap"
       id="editor-write"
@@ -277,6 +298,9 @@ ${draft.content}</textarea
             ? `Create ${draft.path || "a file"}`
             : `Update ${draft.path}`,
           required: true,
+          ...(draft.error && draft.errorOn === "message"
+            ? { error: draft.error }
+            : {}),
         })}
         ${field({
           label: "Extended description",
@@ -410,6 +434,10 @@ function proposeBlock(
   propose: ProposeTarget,
   suggestion: string,
 ): Html {
+  const branchError =
+    draft.error !== undefined && draft.errorOn === "branch"
+      ? draft.error
+      : undefined;
   return html`<fieldset class="editor-target propose">
     <legend>${icon("fork")}Propose a change</legend>
     <p class="propose-line">
@@ -437,7 +465,15 @@ function proposeBlock(
         autocomplete="off"
         spellcheck="false"
         required
+        ${branchError
+          ? raw('aria-invalid="true" aria-describedby="f-branch-err"')
+          : null}
       />
+      ${when(
+        branchError,
+        (message) =>
+          html`<span class="error" id="f-branch-err">${message}</span>`,
+      )}
       <span class="hint"
         >The pull's head, as
         <span class="mono">${propose.fork.split("/")[0]}:${suggestion}</span
@@ -467,11 +503,22 @@ export async function editorPage(
 ): Promise<Response> {
   const username = ctx.auth.user?.username ?? "edit";
   const shape = mirrorFor(draft.path, draft.content);
+  // An error with no field of its own is the form's: a flash, as everywhere.
+  const formLevel =
+    draft.error !== undefined &&
+    (draft.errorOn === undefined ||
+      (draft.errorOn === "path" && !draft.creating) ||
+      (draft.errorOn === "branch" && draft.propose === undefined))
+      ? draft.error
+      : undefined;
   // Only an editor that will actually use the tokenizer pays for it — and
   // only that page relaxes the script CSP to admit a file from this origin.
   const asset = shape.mirror ? await highlightAsset() : null;
   return page({
     ctx,
+    ...(formLevel !== undefined
+      ? { flash: { tone: "danger" as const, message: formLevel } }
+      : {}),
     title: `${draft.creating ? "New file" : draft.path} · ${scope.facts.name}`,
     crumbs: scope.crumbs,
     palette: scope.palette,
@@ -490,13 +537,6 @@ export async function editorPage(
           ? "New file"
           : "Editing a file"}`,
       { sub: html`in <span class="mono">${scope.fullName}</span>` },
-    )}
-    ${when(
-      draft.error,
-      (message) =>
-        html`<p class="error-note" role="alert">
-          ${icon("alert")}<span>${message}</span>
-        </p>`,
     )}
     ${editorForm(scope, draft, username, {
       lang: shape.lang,
@@ -578,7 +618,7 @@ export async function editPage(ctx: Ctx): Promise<Response> {
         message:
           blob.value.kind === "binary"
             ? "That file is binary — edit it with git, not a textarea."
-            : "That file is too large to edit here.",
+            : TOO_LARGE_TO_EDIT,
       },
     );
   }
@@ -715,15 +755,22 @@ export async function runContribute(
   form: Form,
 ): Promise<Response> {
   const draft = proposeDraft(form, propose);
-  const refuse = (message: string): Promise<Response> =>
-    editorPage(ctx, scope, { ...draft, error: message });
+  const refuse = (
+    message: string,
+    errorOn?: Draft["errorOn"],
+  ): Promise<Response> =>
+    editorPage(ctx, scope, {
+      ...draft,
+      error: message,
+      ...(errorOn ? { errorOn } : {}),
+    });
 
   if (!isSafeRef(draft.ref)) return notFoundPage(ctx);
   if (draft.path === "" || !isSafeTreePath(draft.path))
-    return refuse("Give the file a path this repository can hold.");
-  if (draft.subject === "") return refuse("A commit needs a message.");
+    return refuse("Give the file a path this repository can hold.", "path");
+  if (draft.subject === "") return refuse("A commit needs a message.", "message");
   if (draft.branch === "")
-    return refuse("Give the branch on your fork a name.");
+    return refuse("Give the branch on your fork a name.", "branch");
 
   const message =
     draft.body === "" ? draft.subject : `${draft.subject}\n\n${draft.body}`;
@@ -830,13 +877,20 @@ export async function editSubmit(ctx: Ctx): Promise<Response> {
     creating,
     mustBranch,
   };
-  const refuse = (message: string): Promise<Response> =>
-    editorPage(ctx, scope, { ...draft, error: message });
+  const refuse = (
+    message: string,
+    errorOn?: Draft["errorOn"],
+  ): Promise<Response> =>
+    editorPage(ctx, scope, {
+      ...draft,
+      error: message,
+      ...(errorOn ? { errorOn } : {}),
+    });
 
   if (!isSafeRef(ref)) return notFoundPage(ctx);
   if (path === "" || !isSafeTreePath(path))
-    return refuse("Give the file a path this repository can hold.");
-  if (subject === "") return refuse("A commit needs a message.");
+    return refuse("Give the file a path this repository can hold.", "path");
+  if (subject === "") return refuse("A commit needs a message.", "message");
 
   const message = description === "" ? subject : `${subject}\n\n${description}`;
   const written = await editFiles(ctx.app, ctx.auth.user, repo, {

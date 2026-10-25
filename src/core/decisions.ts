@@ -432,11 +432,6 @@ export function deciderCounts(
   return out;
 }
 
-/** The sentence for the counts, in plain words: "closed 4, deferred 2, asked you about 1". */
-export function deciderWords(n: Record<DeciderPile, number>): string {
-  return `closed ${n.closed}, deferred ${n.deferred}, asked you about ${n.asked}`;
-}
-
 /** What an empty pile says, for a person. */
 export const PILE_EMPTY: Record<DeciderPile, string> = {
   closed: "The decider has closed nothing today.",

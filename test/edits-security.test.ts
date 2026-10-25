@@ -363,9 +363,11 @@ describe("edits: refusals that must leave nothing behind", () => {
       expect(b.ahead).toBeNull();
       expect(b.behind).toBeNull();
     }
-    const rows = await read<{ ahead: number | null }[]>(
-      await api("/api/v1/repos/alice/app/branches"),
-    );
+    const rows = (
+      await read<{ items: { ahead: number | null }[] }>(
+        await api("/api/v1/repos/alice/app/branches"),
+      )
+    ).items;
     expect(rows.every((b) => b.ahead === null)).toBe(true);
   });
 });
@@ -411,9 +413,13 @@ describe("edits on a mirror: the origin's refusal is final", () => {
       .split("\n")
       .filter((r) => r !== "");
   const upstreamBranches = async (): Promise<string[]> =>
-    read<{ name: string }[]>(
-      await fetch(`${originServers.url}/api/v1/repos/octo/gears/branches`),
-    ).then((rows) => rows.map((b) => b.name).sort());
+    (
+      await read<{ items: { name: string }[] }>(
+        await fetch(`${originServers.url}/api/v1/repos/octo/gears/branches`),
+      )
+    ).items
+      .map((b) => b.name)
+      .sort();
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-mr-"));

@@ -8,7 +8,9 @@
  * thing that files.
  *
  * Left to a person, on purpose: the ingress routes at the edge are not in
- * this database, and a fix is not opened as a pull by the sentinel — each
+ * this database, a `drill:` cause is cleared by a person running
+ * `scripts/drills/run.ts` against production (the vitals card still shows
+ * it, and no issue is filed), and a fix is not opened as a pull by the sentinel — each
  * finding that has a mechanical fix says what it is, and a run of the crew
  * picks the issue up like any other.
  */
@@ -255,9 +257,17 @@ interface SummaryRow {
   summary: string;
 }
 
+let warnedUnresolved = false;
+
 /** The last runs per repository: a check never green, or pushes that cannot land. */
 export function runStreaks(db: Database): Finding[] {
   const out: Finding[] = [];
+  const [ownerName = "", repoName = ""] = sentinelRepoPath().split("/");
+  const ownId = getRepo(db, ownerName, repoName)?.id;
+  if (ownId === undefined && !warnedUnresolved) {
+    warnedUnresolved = true;
+    log.warn("sentinel repository does not resolve; never-green checks are not filed", { repo: sentinelRepoPath() });
+  }
   const rows = db
     .query<SummaryRow, [number]>(
       `SELECT id, repo_id, kind, state, summary FROM (
@@ -276,6 +286,9 @@ export function runStreaks(db: Database): Finding[] {
     const [repoId = "", kind = ""] = k.split("\u0000");
     const failed = runs.filter((r) => r.state === "failed");
     if (kind === "check") {
+      // Another repository's gate is its owner's to fix: a builder here cannot
+      // read or change it. It stays on that repository's checks and the degraded list.
+      if (repoId !== ownId) continue;
       if (runs.some((r) => r.state === "ok")) continue;
       const same = new Map<string, SummaryRow[]>();
       for (const r of failed)
@@ -406,6 +419,8 @@ const BREACH_CAUSE = /^(queue:check|stuck:|budget:|red:|shared:)/;
  * `forgeRepoId` unset means no repository is known and nothing is dropped.
  */
 export function ownCause(cause: string, forgeRepoId: string | undefined): boolean {
+  // A drill is run against production by a person (#5367): no builder can, so no issue.
+  if (cause.startsWith("drill:")) return false;
   if (forgeRepoId === undefined) return true;
   if (cause.startsWith("red:")) return cause === `red:${forgeRepoId}`;
   if (cause.startsWith("shared:")) return cause.split(":")[1] === forgeRepoId;
@@ -557,9 +572,10 @@ function labelBreach(app: App, repo: Repo, actor: User, issue: Issue): void {
 }
 
 /**
- * A degraded incident whose issue was closed as done and which goes on (same
- * cause, same first-open time) is told to that issue, not filed again: the
- * fix is likely merged but not live. At most one comment a day. True when
+ * A degraded incident whose issue was closed as done or split and which goes
+ * on (same cause, same first-open time) is told to that issue, not filed
+ * again: the fix is likely merged but not live. At most one comment a day.
+ * One closed as dropped stays silent. True when
  * the incident is that one: the comments made (0 or 1), else undefined.
  */
 function continuesDone(app: App, repo: Repo, actor: User, f: Finding, evidence: string, at: string, now: number): 0 | 1 | undefined {
@@ -572,7 +588,9 @@ function continuesDone(app: App, repo: Repo, actor: User, f: Finding, evidence: 
     .get(f.key, f.incident ?? "");
   if (prior === null) return undefined;
   const issue = getIssueById(app.db, prior.issue_id);
-  if (issue === undefined || issue.closeReason !== "done") return undefined;
+  if (issue === undefined) return undefined;
+  if (issue.closeReason === "dropped") return 0;
+  if (issue.closeReason !== "done" && issue.closeReason !== "split") return undefined;
   if (prior.commented_at !== null && now - Date.parse(prior.commented_at) < DAY_MS) return 0;
   const minutes = f.evidence.find((e) => e.startsWith("total: "));
   const said = addComment(
@@ -580,7 +598,7 @@ function continuesDone(app: App, repo: Repo, actor: User, f: Finding, evidence: 
     actor,
     repo,
     issue,
-    `Still degraded after the fix; the fix may not be live yet. At ${at}${minutes === undefined ? "" : `, ${minutes.slice(7)}`}; evidence now:\n${f.evidence.map((e) => `- ${e}`).join("\n")}`,
+    `Still degraded${issue.closeReason === "split" ? "; the work was split into other issues" : " after the fix; the fix may not be live yet"}. At ${at}${minutes === undefined ? "" : `, ${minutes.slice(7)}`}; evidence now:\n${f.evidence.map((e) => `- ${e}`).join("\n")}`,
   );
   if (!said.ok) {
     log.warn("sentinel could not comment", { key: f.key, error: String(said.error) });

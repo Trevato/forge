@@ -925,6 +925,8 @@ export interface RowOptions {
   state?: "open" | "closed" | "merged" | "draft";
   /** The row joins `j`/`k` keyboard traversal. */
   nav?: boolean;
+  /** An anchor for the row's `<li>`, so a redirect can land on it. */
+  id?: string;
   titleAttr?: string;
   /** `data-*` hooks on the row's `<li>` (a script's filter, a test's
    * handle). Keys are lower-case words and dashes; others are dropped. */
@@ -963,7 +965,7 @@ export function row(o: RowOptions): Html {
   const data = Object.entries(o.data ?? {})
     .filter(([key]) => /^[a-z][a-z-]*$/.test(key))
     .map(([key, value]) => html` data-${raw(key)}="${value}"`);
-  return html`<li${data}${o.current ? raw(' aria-current="true"') : null}>
+  return html`<li${o.id === undefined ? null : html` id="${o.id}"`}${data}${o.current ? raw(' aria-current="true"') : null}>
     ${o.fold !== undefined
       ? html`<details id="${o.fold.id}" ${o.fold.open ? raw("open") : null}>
           <summary ${attrs}>${inner}</summary>
@@ -1196,16 +1198,22 @@ ${o.value ?? ""}</textarea
   </div>`;
 }
 
-/** A `<select>` with the same anatomy as `field`. */
+/** A `<select>` with the same anatomy as `field`: hint and error are linked and marked. */
 export function selectField(
   o: Omit<FieldOptions, "type"> & {
     options: { value: string; label: string; selected?: boolean }[];
   },
 ): Html {
   const id = o.id ?? `f-${o.name}`;
-  return html`<div class="field">
+  const described = [o.hint ? `${id}-hint` : "", o.error ? `${id}-err` : ""]
+    .filter(Boolean)
+    .join(" ");
+  return html`<div class="field" ${o.error ? raw("data-invalid") : null}>
     <label for="${id}">${o.label}</label>
-    <select class="input" id="${id}" name="${o.name}">
+    <select class="input" id="${id}" name="${o.name}"
+      ${described !== "" ? html`aria-describedby="${described}"` : null}
+      ${o.error ? raw('aria-invalid="true"') : null}
+    >
       ${o.options.map(
         (opt) =>
           html`<option
@@ -1216,7 +1224,10 @@ export function selectField(
           </option>`,
       )}
     </select>
-    ${o.hint ? html`<span class="hint">${o.hint}</span>` : null}
+    ${o.hint ? html`<span class="hint" id="${id}-hint">${o.hint}</span>` : null}
+    ${o.error
+      ? html`<span class="error" id="${id}-err">${o.error}</span>`
+      : null}
   </div>`;
 }
 

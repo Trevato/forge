@@ -33,9 +33,11 @@ import {
   type CreateRepoError,
   type DecisionsBy,
   type ForkRepoError,
+  canAdmin,
   type Repo,
   type RepoSettings,
 } from "../core/repos.ts";
+import { MAX_COMMIT_BYTES, MAX_FILE_BYTES } from "./contents.ts";
 import { commitIdentity } from "../core/commit_identity.ts";
 import type { User } from "../core/users.ts";
 import {
@@ -629,6 +631,13 @@ export function deleteWebhook(
   return ok();
 }
 
+export type CommitToBranchError =
+  | AccessError
+  | CommitFilesError
+  | { kind: "protected_branch"; branch: string }
+  | { kind: "file_too_large"; path: string; bytes: number }
+  | { kind: "commit_too_large"; bytes: number };
+
 export interface CommitToBranchInput {
   /** @default the repo's default branch */
   branch?: string;
@@ -649,10 +658,31 @@ export async function commitToBranch(
   actor: User | undefined,
   repo: Repo,
   input: CommitToBranchInput,
-): Promise<Result<CommitResult, AccessError | CommitFilesError>> {
+): Promise<Result<CommitResult, CommitToBranchError>> {
   const writer = requireWriter(app, actor, repo);
   if (!writer.ok) return writer;
   const branch = input.branch || repo.defaultBranch;
+  // The same mechanical rules `editFiles` applies: a protected default takes
+  // commits from repo admins only, and no file or commit is unbounded.
+  if (
+    branch === repo.defaultBranch &&
+    repo.protectDefault &&
+    !canAdmin(app.db, repo, writer.value)
+  )
+    return err({ kind: "protected_branch", branch });
+  let total = 0;
+  for (const file of input.files) {
+    if (file.content === null) continue;
+    const bytes =
+      typeof file.content === "string"
+        ? Buffer.byteLength(file.content, "utf8")
+        : file.content.length;
+    if (bytes > MAX_FILE_BYTES)
+      return err({ kind: "file_too_large", path: file.path, bytes });
+    total += bytes;
+  }
+  if (total > MAX_COMMIT_BYTES)
+    return err({ kind: "commit_too_large", bytes: total });
   const startPoint = input.base || repo.defaultBranch;
   const committed = await commitFiles(
     repoDir(app.reposRoot, repo.ownerName, repo.name),

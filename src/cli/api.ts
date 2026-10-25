@@ -111,10 +111,29 @@ export class ForgeApi {
    * pin, so the client is useful against an older workbench.
    */
   async pins(): Promise<ApiResult<Pin[]>> {
-    const out = await this.call<unknown>("/api/v1/user/pins");
-    if (out.ok) return ok(this.toPins(out.value));
-    if (out.error.status !== 404 && out.error.status !== 501) return out;
-    this.pinsUnavailable = true;
+    const pins: Pin[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 50; page++) {
+      const query = cursor === undefined ? "" : `?cursor=${cursor}`;
+      const out = await this.call<unknown>(`/api/v1/user/pins${query}`);
+      if (!out.ok) {
+        if (out.error.status !== 404 && out.error.status !== 501) return out;
+        this.pinsUnavailable = true;
+        return this.ownedRepos();
+      }
+      // An older forge answers the whole list as a bare array.
+      if (Array.isArray(out.value)) return ok(this.toPins(out.value));
+      const body = (out.value ?? {}) as { items?: unknown; next_cursor?: unknown };
+      pins.push(...this.toPins(body.items));
+      if (typeof body.next_cursor !== "string" || body.next_cursor === "")
+        return ok(pins);
+      cursor = encodeURIComponent(body.next_cursor);
+    }
+    return ok(pins);
+  }
+
+  /** The fallback for a forge with no pins endpoint: every repo you own. */
+  private async ownedRepos(): Promise<ApiResult<Pin[]>> {
     const me = await this.whoami();
     if (!me.ok) return me;
     const repos = await this.repos();

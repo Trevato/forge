@@ -32,6 +32,15 @@
  * stacked on, so a red re-check cuts off no batch of fresh pulls. It is
  * forgotten when it lands or its head changes.
  *
+ * A red batch is never formed again around the same head (#4999). With a
+ * check slot free, the head of a red batch of three or more — the pull
+ * every prefix of it holds — is a suspect, gated alone beside the line,
+ * while the rest of the batch goes back to the front of the line and gates
+ * without it, stacked as deep as the line goes. A pull in two red batches
+ * is a suspect too, never in a third. A suspect red alone is handed back;
+ * green alone it rides at the tail of a batch, never at its head, and the
+ * search finds it there if it is red on top of others.
+ *
  * What is queued is not stored: it is the pulls `landIfGreen` admitted, and
  * every sweep admits them again. The queue only orders them and remembers
  * what is at the gate and what its searches found, for the tick line and
@@ -110,6 +119,10 @@ export const GATE_DEADLINE_MS = 15 * 60_000;
 
 let deadlineMs = GATE_DEADLINE_MS;
 
+/** What arms the deadline; tests swap in a clock they fire themselves. */
+type Schedule = (fire: () => void, ms: number) => ReturnType<typeof setTimeout>;
+let schedule: Schedule = setTimeout;
+
 /**
  * The most pulls one candidate carries (#3430): eight keep a gate near one
  * full tier and a red's bisection three gates deep. The rest of the line
@@ -131,11 +144,17 @@ export interface QueueOptions {
   readonly room?: () => number;
 }
 
-/** Tests shorten the deadline; the answer puts it back. */
-export function gateDeadlineForTest(ms: number): () => void {
+/**
+ * Tests shorten the deadline, or hand `arm` the timer to fire themselves (a
+ * wall-clock deadline races the gate's setup on a loaded machine); the answer
+ * puts both back.
+ */
+export function gateDeadlineForTest(ms: number, arm?: Schedule): () => void {
   deadlineMs = ms;
+  if (arm !== undefined) schedule = arm;
   return () => {
     deadlineMs = GATE_DEADLINE_MS;
+    schedule = setTimeout;
   };
 }
 
@@ -157,6 +176,17 @@ interface Remembered {
   readonly head: string;
   /** The pulls its red tree held besides it: a clash when there are any. */
   readonly together: readonly number[];
+}
+
+/** A pull in red batches at this head (#4999): gated alone once it is a suspect. */
+interface Suspect {
+  readonly head: string;
+  /** Red batches it was in, less the ones a culprit found since explains. */
+  readonly reds: number;
+  /** Waits for a verdict of its own, gated alone beside the line. */
+  readonly alone: boolean;
+  /** Green alone at this head: never at the head of a batch again. */
+  readonly cleared: boolean;
 }
 
 /** A first candidate's verdict, for the red-batch rate. */
@@ -182,6 +212,8 @@ interface Line {
   gates: number;
   /** Pulls handed back red, by pull id: re-checked alone if they join again. */
   readonly reds: Map<string, Remembered>;
+  /** Pulls in red batches, by pull id, while their head is the same (#4999). */
+  readonly suspects: Map<string, Suspect>;
   /** The last hour's candidate verdicts, search prefixes and re-checks not counted. */
   batches: BatchVerdict[];
   draining: boolean;
@@ -236,6 +268,7 @@ function lineOf(repoId: string): Line {
       flights: new Set(),
       gates: 0,
       reds: new Map(),
+      suspects: new Map(),
       batches: [],
       draining: false,
       wake: undefined,
@@ -263,13 +296,17 @@ export function enqueue(
     const red = line.reds.get(entry.pull.id);
     if (red !== undefined && red.head !== entry.pull.headOid) line.reds.delete(entry.pull.id);
     const recheck = red !== undefined && red.head === entry.pull.headOid;
+    if (line.suspects.get(entry.pull.id)?.head !== entry.pull.headOid) line.suspects.delete(entry.pull.id);
     return new Promise<boolean>((resolve) =>
       line.waiting.push({
         entry,
         recheck,
         settle: (landed) => {
           line.holds.delete(entry.pull.id);
-          if (landed) line.reds.delete(entry.pull.id);
+          if (landed) {
+            line.reds.delete(entry.pull.id);
+            line.suspects.delete(entry.pull.id);
+          }
           resolve(landed);
         },
       }),
@@ -397,7 +434,7 @@ function counted(line: Line, gate: GateCandidate): Gated {
     // A gate that never answers is abandoned at the deadline: no verdict,
     // and the next sweep forms the line again (#3430).
     const cut = new Promise<LandVerdict>((resolve) => {
-      timer = setTimeout(() => {
+      timer = schedule(() => {
         log.warn("candidate abandoned", {
           repo: line.repoId,
           pulls,
@@ -441,7 +478,9 @@ const ARRIVED = Symbol("arrived");
  * one place and one base branch; a sealed pull whose objects live
  * elsewhere is a batch of its own, and is not stacked on another. A batch
  * carries at most `MAX_CANDIDATE` pulls. A gate beyond the line's first
- * starts only on a free check slot (`room`).
+ * starts only on a free check slot (`room`). A suspect is gated alone,
+ * beside the line and first (#4999); the line's first gate waits for a
+ * free slot while one is.
  */
 async function drain(line: Line, gate: GateCandidate, options: QueueOptions): Promise<void> {
   line.draining = true;
@@ -449,19 +488,41 @@ async function drain(line: Line, gate: GateCandidate, options: QueueOptions): Pr
   const depth = Math.max(1, Math.floor(options.depth ?? DEFAULT_DEPTH));
   const room: Room = options.room ?? (() => 0);
   const ahead: Flight[] = [];
+  const solos = new Set<Promise<void>>();
   try {
-    while (line.waiting.length > 0 || ahead.length > 0) {
-      while (ahead.length < depth && line.waiting.length > 0 && (ahead.length === 0 || room() > 0)) {
+    while (line.waiting.length > 0 || ahead.length > 0 || solos.size > 0) {
+      for (const w of line.waiting.filter((w) => suspectOf(line, w)?.alone === true)) {
+        if (line.flights.size > 0 && room() <= 0) break;
+        line.waiting = line.waiting.filter((x) => x !== w);
+        const started = await solo(line, gated, w);
+        if (started === undefined) continue;
+        const done: Promise<void> = started.done.finally(() => {
+          solos.delete(done);
+          line.wake?.();
+          line.wake = undefined;
+        });
+        solos.add(done);
+      }
+      while (
+        ahead.length < depth &&
+        line.waiting.some((w) => suspectOf(line, w)?.alone !== true) &&
+        ((ahead.length === 0 && solos.size === 0) || room() > 0)
+      ) {
         const flight = await launch(line, gated, ahead.at(-1));
         if (flight === "apart") break;
         if (flight !== undefined) ahead.push(flight);
       }
       const head = ahead[0];
-      if (head === undefined) continue;
       const arrived =
-        ahead.length < depth && line.waiting.length === 0
+        head === undefined || ahead.length < depth || solos.size > 0
           ? new Promise<typeof ARRIVED>((resolve) => (line.wake = () => resolve(ARRIVED)))
           : undefined;
+      if (head === undefined) {
+        // Only suspects at the gate, or waiting on a slot: wait for one to come back.
+        if (solos.size > 0) await arrived;
+        line.wake = undefined;
+        continue;
+      }
       const verdict = arrived === undefined ? await head.verdict : await Promise.race([head.verdict, arrived]);
       line.wake = undefined;
       if (verdict === ARRIVED) continue;
@@ -482,23 +543,104 @@ async function drain(line: Line, gate: GateCandidate, options: QueueOptions): Pr
   }
 }
 
+/** What the line knows of a waiting pull's red batches, at its head. */
+function suspectOf(line: Line, w: Waiting): Suspect | undefined {
+  const s = line.suspects.get(w.entry.pull.id);
+  return s?.head === w.entry.pull.headOid ? s : undefined;
+}
+
+/**
+ * Start a suspect's gate alone on the base's tip, beside the line (#4999):
+ * its answer is when the verdict is acted on. Red alone, it is handed back
+ * and the pulls of its batch are cleared of that red; green alone, it goes
+ * back to the line to ride at a batch's tail. Undefined when there is
+ * nothing to gate — it conflicts, or is already in — and the next sweep
+ * brings it up to date or closes it.
+ */
+async function solo(line: Line, gated: Gated, w: Waiting): Promise<{ readonly done: Promise<void> } | undefined> {
+  const settled = (error: unknown): void => {
+    log.warn("merge queue round failed", { error: String(error) });
+    w.settle(false);
+  };
+  let candidate: Candidate | undefined;
+  try {
+    candidate = await build([w]);
+  } catch (error) {
+    settled(error);
+    return undefined;
+  }
+  if (candidate === undefined || candidate.steps.length === 0) {
+    w.settle(false);
+    return undefined;
+  }
+  const on = candidate;
+  const done = gated(on)
+    .then((verdict) => {
+      const pull = w.entry.pull;
+      if (verdict.lands) {
+        line.suspects.set(pull.id, { head: pull.headOid, reds: 0, alone: false, cleared: true });
+        line.waiting.unshift(w);
+        return;
+      }
+      if ("interrupted" in verdict) {
+        w.settle(false);
+        return;
+      }
+      line.suspects.delete(pull.id);
+      line.reds.set(pull.id, { head: pull.headOid, together: [] });
+      log.info("red alone", { repo: line.repoId, pull: pull.number });
+      w.entry.handBack(verdict, on.baseOid, []);
+      w.settle(false);
+    })
+    .catch(settled);
+  return { done };
+}
+
+/**
+ * Every pull of a red batch was in one more red batch (#4999). Its head is
+ * the suspect when `split`; a pull in two red batches is one too, unless it
+ * was green alone at this head.
+ */
+function suspected(line: Line, steps: readonly Waiting[], split: boolean): void {
+  for (const [i, w] of steps.entries()) {
+    const was = suspectOf(line, w);
+    const reds = (was?.reds ?? 0) + 1;
+    const cleared = was?.cleared ?? false;
+    const alone = !cleared && (reds >= 2 || (split && i === 0));
+    line.suspects.set(w.entry.pull.id, { head: w.entry.pull.headOid, reds, alone, cleared });
+  }
+}
+
+/** A culprit found among `steps` explains the red batch they were in: one red each is forgiven. */
+function explained(line: Line, steps: readonly Waiting[]): void {
+  for (const w of steps) {
+    const was = suspectOf(line, w);
+    if (was === undefined) continue;
+    const reds = Math.max(0, was.reds - 1);
+    line.suspects.set(w.entry.pull.id, { ...was, reds, alone: !was.cleared && reds >= 2 });
+  }
+}
+
 /**
  * Take the next batch from the front of the line, build it — on `on`'s tip
  * when there is a flight to stack on — and start its gate. Fresh pulls go
- * first; a re-check is a batch of one, once no fresh pull waits. `apart`
+ * first, a pull green alone after a red batch at their tail; a re-check is
+ * a batch of one, once no fresh pull waits. A suspect is never in a batch:
+ * it is gated alone (`solo`). `apart`
  * when the front of the line cannot stack on `on`, or `on` is a re-check;
  * undefined when nothing of the batch could be built.
  */
 async function launch(line: Line, gated: Gated, on: Flight | undefined): Promise<Flight | undefined | "apart"> {
-  const front = line.waiting.find((w) => !w.recheck) ?? line.waiting[0]!;
+  const cleared = (w: Waiting): boolean => suspectOf(line, w)?.cleared === true;
+  const open = line.waiting.filter((w) => suspectOf(line, w)?.alone !== true);
+  const front = open.find((w) => !w.recheck && !cleared(w)) ?? open.find((w) => !w.recheck) ?? open[0]!;
   const first = front.entry;
   const branch = first.pull.baseBranch;
   if (on !== undefined && (on.recheck || first.dir !== on.candidate.dir || branch !== on.branch)) return "apart";
+  const same = open.filter((w) => !w.recheck && w.entry.dir === first.dir && w.entry.pull.baseBranch === branch);
   const batch = front.recheck
     ? [front]
-    : line.waiting
-        .filter((w) => !w.recheck && w.entry.dir === first.dir && w.entry.pull.baseBranch === branch)
-        .slice(0, MAX_CANDIDATE);
+    : [...same.filter((w) => !cleared(w)), ...same.filter(cleared)].slice(0, MAX_CANDIDATE);
   line.waiting = line.waiting.filter((w) => !batch.includes(w));
   let candidate: Candidate | undefined;
   try {
@@ -560,7 +702,24 @@ async function settleHead(search: Search, head: Flight, verdict: LandVerdict, ah
     for (const w of head.steps) w.settle(false);
     return behind;
   }
-  return [...(await judged(search, candidate, head.steps, verdict, [])), ...behind];
+  // A red batch is not formed again around its head (#4999): with a slot
+  // free, the head is gated alone beside the line while the rest gate
+  // without it. Two steps are the search's own split: the head alone.
+  const { line } = search;
+  const split =
+    !head.recheck && head.steps.length > 2 && suspectOf(line, head.steps[0]!) === undefined && search.room() > 0;
+  suspected(line, head.steps, split);
+  if (split) {
+    log.info("red batch: its head is gated alone", {
+      repo: line.repoId,
+      pull: head.steps[0]!.entry.pull.number,
+      rest: head.steps.length - 1,
+    });
+    return [...head.steps, ...behind];
+  }
+  const left = await judged(search, candidate, head.steps, verdict, []);
+  if (head.steps.some((w) => line.reds.get(w.entry.pull.id)?.head === w.entry.pull.headOid)) explained(line, head.steps);
+  return [...left, ...behind];
 }
 
 /**
@@ -654,6 +813,7 @@ async function judged(
     // them to tell which. Remembered with them either way (#4235).
     const together = landed.map((q) => q.pull.number);
     search.line.reds.set(culprit.pull.id, { head: culprit.pull.headOid, together });
+    search.line.suspects.delete(culprit.pull.id);
     log.info(together.length === 0 ? "red on its own merge" : "red on top of its candidate", {
       repo: search.line.repoId,
       pull: culprit.pull.number,

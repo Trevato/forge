@@ -157,7 +157,7 @@ describe("moving the pill", () => {
   });
 
   test("the panel is bounded to the screen", () => {
-    expect(toolbarJs).toContain("max-width:min(280px,calc(100vw - 64px))");
-    expect(toolbarJs).toContain("max-height:calc(100vh - 88px)");
+    expect(toolbarJs).toContain("max-width:min(320px,calc(100vw - 64px))");
+    expect(toolbarJs).toContain("max-height:min(70vh,calc(100vh - 88px))");
   });
 });

@@ -47,14 +47,13 @@ describe("a hosted child's apps run in the parent", () => {
     return (await proxyApp(hit.runtime, request, hit.target, {} as never))!;
   };
 
-  const get = async (host: string): Promise<Response> => {
-    const until = Date.now() + 45_000;
-    for (;;) {
-      const res = await ask(host);
-      if (res.status === 200 || Date.now() > until) return res;
-      await res.text();
-      await Bun.sleep(300);
-    }
+  /** Wait until the child's boot deploys have settled, then say what they came to. */
+  const deployed = async (name: string): Promise<void> => {
+    const child = childRuntime(parent, name)!;
+    const until = Date.now() + 150_000;
+    while (child.startingCount() > 0 && Date.now() < until) await Bun.sleep(100);
+    const summary = hostedChildApps(parent, name)!;
+    if (summary.running !== summary.total) throw new Error(`${name}: ${JSON.stringify(summary.notRunning)}`);
   };
 
   beforeAll(async () => {
@@ -99,6 +98,7 @@ describe("a hosted child's apps run in the parent", () => {
     if (!spawned.ok) throw new Error(JSON.stringify(spawned.error));
     childDir = childDirOf(parent, spawned.value.bodyId);
     await bootHostedChild(parent, "maria");
+    await deployed("maria");
     // A child named like a pull number, with the same app as the parent's.
     const numbered = await spawnForge(
       parent,
@@ -114,8 +114,9 @@ describe("a hosted child's apps run in the parent", () => {
     if (!numbered.ok) throw new Error(JSON.stringify(numbered.error));
     numberedDir = childDirOf(parent, numbered.value.bodyId);
     await bootHostedChild(parent, "12");
+    await deployed("12");
     servers = await serve(parent);
-  }, 120_000);
+  }, 200_000);
 
   afterAll(async () => {
     await checks?.stop();
@@ -126,13 +127,13 @@ describe("a hosted child's apps run in the parent", () => {
   });
 
   test("<app>--<child>--<parent> answers from the child's app, on the child's own data", async () => {
-    const res = await get("bakery--maria--forge.test");
+    const res = await ask("bakery--maria--forge.test");
     expect(res.status).toBe(200);
     const data = await res.text();
     // The child's directory, never the parent's or another child's.
     expect(data.startsWith(join(childDir, "apps"))).toBe(true);
     expect(data.startsWith(join(dir, "apps"))).toBe(false);
-  }, 60_000);
+  });
 
   test("it is one more tenant of the parent's lanes, and /forges can say it runs", async () => {
     const child = childRuntime(parent, "maria")!;
@@ -169,11 +170,11 @@ describe("a hosted child's apps run in the parent", () => {
   test("the parent's own preview host wins over a child named like its pull number", async () => {
     if (servers === undefined) throw new Error("the parent's listener did not start");
     // The child's app is up and would answer this very host if it were asked.
-    expect((await get("bakery--12--forge.test")).status).toBe(200);
+    expect((await ask("bakery--12--forge.test")).status).toBe(200);
     const res = await fetch(servers.url + "/", { headers: { host: "bakery--12--forge.test" } });
     expect(res.status).not.toBe(200);
     const body = await res.text();
     expect(body.startsWith(join(numberedDir, "apps"))).toBe(false);
     expect(body.startsWith(join(childDir, "apps"))).toBe(false);
-  }, 60_000);
+  });
 });

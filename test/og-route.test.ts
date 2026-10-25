@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +11,10 @@ import { getIssue, createIssue } from "../src/core/issues.ts";
 import { cancelRun, claimRun, createRun, finishRun, markServing } from "../src/core/runs.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+
+// Setup creates repos on disk; a loaded check machine must not turn that into a failure.
+// Hooks take their own timeout, so beforeAll and afterAll name theirs too.
+setDefaultTimeout(30_000);
 
 describe("og cards", () => {
   let dataDir: string;
@@ -98,12 +102,12 @@ describe("og cards", () => {
     runId = run("shown");
     privateRunId = run("hidden");
     quietRunId = run("quiet");
-  });
+  }, 60_000);
 
   afterAll(async () => {
     await servers.stop();
     await rm(dataDir, { recursive: true, force: true });
-  });
+  }, 30_000);
 
   const get = (path: string, headers: Record<string, string> = {}) =>
     fetch(base + path, { headers });

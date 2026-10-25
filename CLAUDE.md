@@ -4,6 +4,12 @@ Orientation for an agent editing forge. Read this first, then `README.md` (what
 it is) and `docs/ARCHITECTURE.md` (why it's shaped this way). This file is the
 rulebook: the invariants you must not break, and how to work here.
 
+**Read docs/VISION.md first: it says what the forge is for and the order of work.**
+
+**Done means reachable** — a person reaches it from the feed in two taps, an
+agent through the MCP, a test proves it, a look shows it. A function nobody can
+call is not done.
+
 The whole point of forge is that **one person can hold it in their head**. Every
 change should leave it that way. When something fights you, step up and
 understand the system before adding code — a workaround usually means the system
@@ -60,7 +66,7 @@ canAdmin`), token scope (`readForm` floor + `minScope`), and branch
 
 ```sh
 bun test              # full suite — must stay green
-bun x tsc --noEmit    # zero type errors is the standard (strict, exact-optional)
+bun x tsc --noEmit    # zero type errors is the standard (strict, exact-optional; an unused import or local fails it)
 bun run src/main.ts   # boots on :3000, data in ./data
 ```
 
@@ -242,7 +248,8 @@ flag exists only in the stdio dev runner and is never reachable over SSH.
   scope floor (`requireScope`, or `requireAccount` for account-level changes),
   call the action, and map its Result with `respondAccess(error, status)` —
   access errors have fixed shapes, anything else is a 422 code. Lists are
-  `{ items, next_cursor }` via `paged(...)`. Web forms follow the same shape
+  `{ items, next_cursor }` via `paged(...)`, never a bare array
+  (`test/api-list-shape.test.ts` fails on one). Web forms follow the same shape
   via `readForm(ctx, scope)`.
 - **Add a TUI screen:** one file under `tui/screens/`, exporting
   `(f: Session, ctx: Ctx, …) => Screen`. Compose `ui/widgets`; take navigation

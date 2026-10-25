@@ -57,9 +57,10 @@ import { html, type Html } from "../html.ts";
 import { page, redirect } from "../layout.ts";
 import { makeOptions, PASSKEY_WORDS, passkeyFields, readPasskey } from "../passkey-ceremony.ts";
 import { passkeyJs } from "../passkey-client.ts";
-import { passkeyState } from "../passkey-state.ts";
+import { passkeyNote, passkeyState } from "../passkey-state.ts";
 import { btn, card, field as formField } from "../ui.ts";
 import { sessionCookie, signinAllowed } from "./site.ts";
+import { EMAIL_TAKEN_MESSAGE, NAME_RESERVED, USERNAME_TAKEN } from "../../actions/signup_words.ts";
 
 const USERNAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,38}$/;
 
@@ -215,7 +216,7 @@ function claimForm(
               Or skip the password: a passkey signs you in with a fingerprint,
               face or device PIN. It needs an email address above.
             </p>
-            <p class="${errors.passkey ? "error-note" : "muted small"} mb" id="passkey-make-note" data-fail="error-note" role="${errors.passkey ? "alert" : "status"}">${errors.passkey ?? ""}</p>
+            ${passkeyNote("passkey-make-note", errors.passkey)}
             <button type="button" id="passkey-make" class="btn" data-variant="outline" data-options="/claim/options" data-needs-email>Claim with a passkey instead</button>
             </div>
           </div>
@@ -278,7 +279,7 @@ function problems(
   // The spawn-made founder holds the spawner's own name; the claim may take
   // it over (`founderToTake`), so it is not "taken" to the claimant.
   else if (getUserByName(ctx.app.db, username) && founderToTake(ctx.app, spawned, username) === undefined)
-    errors.username = "That username is taken.";
+    errors.username = USERNAME_TAKEN;
   if (email !== "" ? !givenEmail(email) : needEmail)
     errors.email = "That does not look like an email address.";
   return errors;
@@ -370,8 +371,8 @@ export async function claimSubmit(ctx: Ctx): Promise<Response> {
       unburnClaim(ctx.app.db, orgId, token);
       return again(
         taken === "email_taken"
-          ? { email: "That email already has an account." }
-          : { username: "That username is taken." },
+          ? { email: EMAIL_TAKEN_MESSAGE }
+          : { username: USERNAME_TAKEN },
       );
     }
     return claimed(ctx, spawned, founder);
@@ -389,10 +390,10 @@ export async function claimSubmit(ctx: Ctx): Promise<Response> {
     unburnClaim(ctx.app.db, orgId, token);
     return again(
       made.error === "email_taken"
-        ? { email: "That email already has an account." }
+        ? { email: EMAIL_TAKEN_MESSAGE }
         : made.error === "username_reserved"
-          ? { username: "That name is reserved." }
-          : { username: "That username is taken." },
+          ? { username: NAME_RESERVED }
+          : { username: USERNAME_TAKEN },
     );
   }
   if (credential !== undefined && !addPasskey(ctx.app.db, made.value.id, "Passkey", credential).ok) {

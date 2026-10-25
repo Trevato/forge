@@ -99,8 +99,12 @@ describe("what the open web expects", () => {
     // A child reads the newest MAX_RELEASES; the record itself keeps every release,
     // and every entry, past those too, is in the child's shape.
     expect(read!.length).toBe(Math.min(doc.releases.length, MAX_RELEASES));
-    const rest = doc.releases.slice(MAX_RELEASES);
-    expect(parseReleases({ releases: rest }, true)!.length).toBe(rest.length);
+    // Read past the newest in pages, as a child would: one page holds at most
+    // MAX_RELEASES, and the record outgrows two pages as releases ship.
+    for (let at = MAX_RELEASES; at < doc.releases.length; at += MAX_RELEASES) {
+      const page = doc.releases.slice(at, at + MAX_RELEASES);
+      expect(parseReleases({ releases: page }, true)!.length).toBe(page.length);
+    }
     expect(read![0]!.name).toBe(releasesFile.releases[0]!.version);
     expect(read![0]!.url).toStartWith(`${base}/releases.json#`);
   });

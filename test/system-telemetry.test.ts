@@ -382,7 +382,7 @@ describe("telemetry:read: the owner grants it, an agent reads with it, nobody el
     app.db.query("UPDATE user SET is_admin = 1 WHERE id = ?1").run(made.value.user.id);
     const adminbot = getUserByName(app.db, "zadminbot")!;
     expect(adminbot.isAdmin).toBe(true);
-    const token = createToken(app.db, adminbot.id, "t", "admin").token;
+    createToken(app.db, adminbot.id, "t", "admin");
     const flowCommand = () => {
       const ctx = { push: () => {}, pop: () => {}, toast: () => {} } as unknown as Ctx;
       const session = new Session(app, { sshUsername: "zadminbot", remoteAddress: "127.0.0.1", fingerprint: "SHA256:t", user: adminbot });

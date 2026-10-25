@@ -12,6 +12,7 @@
     "exactOptionalPropertyTypes": true,
     "noFallthroughCasesInSwitch": true,
     "noImplicitOverride": true,
+    "noUnusedLocals": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
     "noEmit": true

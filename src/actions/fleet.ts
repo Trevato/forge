@@ -57,6 +57,7 @@ import {
   type FleetKind,
 } from "../fleet/selection.ts";
 import { VERBS, type Target, type Verb } from "../fleet/verbs.ts";
+import { NO_SUCH_OPERATION } from "./asks_words.ts";
 
 export interface FleetError {
   readonly code:
@@ -599,7 +600,7 @@ export async function undoFleetOp(
     op.actorId !== person.value.id &&
     (verb.personal || !parseQuery(op.query).ok)
   )
-    return fail("not_found", "no such operation here");
+    return fail("not_found", NO_SUCH_OPERATION);
   // The day is the same on every door: the card, the API, MCP.
   if (keepsADay(op) && Date.now() - Date.parse(op.createdAt) > UNDO_WINDOW_MS)
     return fail("expired", "an undo is kept for a day, and this one's day is over");
@@ -661,7 +662,7 @@ export function getFleetOp(
 ): Result<Operation, FleetError> {
   const op = getOperation(app.db, operationId);
   if (!op || !actor || (op.actorId !== actor.id && !actor.isAdmin))
-    return fail("not_found", "no such operation here");
+    return fail("not_found", NO_SUCH_OPERATION);
   return ok(op);
 }
 

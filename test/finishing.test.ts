@@ -16,7 +16,7 @@ import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { setCrewRole } from "../src/core/agents.ts";
 import { getIssueById, listComments, type Issue } from "../src/core/issues.ts";
 import type { Pull } from "../src/core/pulls.ts";
-import { getRepoById, type Repo } from "../src/core/repos.ts";
+import type { Repo } from "../src/core/repos.ts";
 import { submitReview } from "../src/core/reviews.ts";
 import { claimRun, finishRun, listRuns } from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
@@ -33,7 +33,6 @@ let mason: User;
 let repo: Repo;
 let pull: Pull;
 let ready: Issue;
-const fresh = () => getRepoById(app.db, repo.id)!;
 const conflicts = () =>
   listRuns(app.db, repo.id, { kind: "agent" }).filter((r) => r.issueId === pull.id && r.reason === "conflict");
 const picked = () => listRuns(app.db, repo.id, { kind: "agent" }).filter((r) => r.issueId === ready.id);

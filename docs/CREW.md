@@ -36,6 +36,10 @@ Nesting a sandbox is not possible there, so `test/crew-sandbox.test.ts` checks
 the settings that enforce it (`allowLocalBinding` on, `allowAllUnixSockets` off,
 the `denyRead` list) and not the boundary itself.
 
+## Where a run's time went
+
+Every run that started ends its log with one `timing: run ended …s after the run started — clone … · brief … · harness …` line (plus `wrap-up` when the reserve was used), whatever way it ended; `src/apps/timing.ts` draws it.
+
 ## The sentinel (#1131)
 
 The forge hunts its own faults. `src/crew/sentinel.ts` runs on the autonomy

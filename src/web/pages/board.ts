@@ -32,6 +32,7 @@ import {
   type Decision,
   type DecisionKind,
 } from "../../core/decisions.ts";
+import { deciderSentence } from "../../story/words.ts";
 import { efficiencyForRepos } from "../../core/efficiency.ts";
 import { reviewStats, type ReviewStats } from "../../core/review-stats.ts";
 import { standings, WINDOW_MS } from "../../core/standing.ts";
@@ -924,15 +925,14 @@ function boardHref(ctx: Ctx, pile: DeciderPile | null): string {
   return s === "" ? "/board" : `/board?${s}`;
 }
 
-/** "The decider closed 4, deferred 2, asked you about 1", each count a link to its ledger rows; null on a quiet day. */
+/** `deciderSentence` with today's counts, each count a link to its ledger rows; null on a quiet day. */
 function deciderLine(ctx: Ctx, scope: BoardScope, since: string): Html | null {
   const n = deciderCounts(ctx.app.db, [...scope.ownerFacts], since);
   if (n.closed + n.deferred + n.asked === 0) return null;
   const link = (pile: DeciderPile) =>
     html`<a href="${boardHref(ctx, pile)}#decided">${n[pile]}</a>`;
   return html`<p class="muted small" id="decider-day">
-    The decider closed ${link("closed")}, deferred ${link("deferred")}, asked
-    you about ${link("asked")}.
+    ${deciderSentence(link)}
   </p>`;
 }
 

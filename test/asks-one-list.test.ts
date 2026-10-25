@@ -37,7 +37,11 @@ describe("one list", () => {
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-asks-one-list-"));
-    app = createApp({ dataDir, port: 0 });
+    // The viewer is the admin, so the machine's own free disk is one of the
+    // forge's asks, and on a busy check machine it crosses the 10% line
+    // between one door's read and the next. These tests are about assigned
+    // rows, so the disk is a fixed, roomy one.
+    app = createApp({ dataDir, port: 0, disk: () => ({ freeBytes: 95, totalBytes: 100 }) });
     servers = await serve(app);
     const made = await createUser(app.db, {
       origin: "seed",

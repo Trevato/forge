@@ -30,6 +30,7 @@ import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { notFoundPage, pageHead } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
+import { DELETE_REPO, STOP_APP } from "../danger_words.ts";
 import { icon } from "../icons.ts";
 import { page } from "../layout.ts";
 import { browseBase } from "../scope.ts";
@@ -518,7 +519,7 @@ const DESTRUCTIVE: {
   {
     pattern: /^\/([^/]+)\/([^/]+)\/settings\/delete$/,
     describe: (m) => ({
-      verb: "Delete this repository",
+      verb: DELETE_REPO,
       title: `Delete ${m[1]}/${m[2]}?`,
       detail:
         "Every issue, pull request, comment and webhook goes with it, and the git objects are removed from disk. Forks are detached first and keep working. This cannot be undone.",
@@ -638,7 +639,7 @@ const DESTRUCTIVE: {
   {
     pattern: /^\/([^/]+)\/([^/]+)\/settings\/app\/disable$/,
     describe: (m) => ({
-      verb: "Stop running as an app",
+      verb: STOP_APP,
       title: `Stop running ${m[1]}/${m[2]} as an app?`,
       detail:
         "Production and every preview stop, and their data directories and checkouts are removed from disk. The repository and its code are untouched. Run it as an app again later and it starts from empty data.",

@@ -86,7 +86,8 @@ describe("a green agent pull and its reviewer", () => {
     }
     setCrewRole(app.db, repo.id, getUserByName(app.db, "rev")!.id, "reviewer");
     pull = await greenPull(1);
-  }, 30_000);
+    await home(); // warm the first render so no test pays for it under load
+  }, 60_000);
 
   afterAll(async () => {
     await servers.stop();
@@ -101,7 +102,7 @@ describe("a green agent pull and its reviewer", () => {
       word: "waiting",
       note: "waiting for rev's review",
     });
-  });
+  }, 30_000);
 
   test("an approval moves it to the owner", async () => {
     submitReview(app.db, {
@@ -112,7 +113,7 @@ describe("a green agent pull and its reviewer", () => {
     });
     expect(await home()).toContain(`id="ask-look:${pull.id}"`);
     expect((await pullWord(wordCtx(), pull)).word).toBe("look");
-  });
+  }, 30_000);
 
   test("a reviewer's decline moves it to the owner too", async () => {
     const other = await greenPull(2);
@@ -124,5 +125,5 @@ describe("a green agent pull and its reviewer", () => {
       commitOid: other.headOid,
     });
     expect(await home()).toContain(`id="ask-look:${other.id}"`);
-  });
+  }, 30_000);
 });

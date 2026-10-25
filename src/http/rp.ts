@@ -28,6 +28,7 @@ import { readCapped } from "../origins/providers/http.ts";
 import { clientAddress } from "./peer.ts";
 import { signinAllowed } from "../web/pages/site.ts";
 import { createSession } from "../core/sessions.ts";
+import { SIGNIN_EXPIRED, SIGNIN_NOT_THIS_BROWSER } from "../kernel/signin_words.ts";
 import { verifyJwt } from "../kernel/jwt.ts";
 import { html } from "../web/html.ts";
 import { flashTo, page, redirect } from "../web/layout.ts";
@@ -177,7 +178,7 @@ export async function parentCallback(ctx: Ctx): Promise<Response> {
   const code = q.get("code") ?? "";
   // The cookie is the browser that began; without it nothing is fetched or spent.
   if (state === "" || state !== cookieValue(ctx.request, STATE_COOKIE))
-    return failure(ctx, "This sign-in did not start in this browser.", 400);
+    return failure(ctx, SIGNIN_NOT_THIS_BROWSER, 400);
   const login = takeLogin(ctx.app.db, state);
   const clear = cookieHeader("", 0, ctx.url, ctx.app.config.url);
   const refuse = (message: string, status = 400): Response => {
@@ -186,7 +187,7 @@ export async function parentCallback(ctx: Ctx): Promise<Response> {
     return response;
   };
   if (login === undefined || login.issuer !== parentIssuer(ctx.app) || login.redirectUri !== redirectUriOf(ctx))
-    return refuse("This sign-in took too long or was already used.");
+    return refuse(SIGNIN_EXPIRED);
   if (q.has("error") || code === "" || code.length > 512)
     return refuse("The parent forge did not sign you in.");
   try {

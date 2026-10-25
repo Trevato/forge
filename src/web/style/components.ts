@@ -337,7 +337,7 @@ a.sha:hover { color: var(--accent); }
 /* Cards stacked in normal flow space themselves. Inside a container that
    already manages its own spacing with gap, that margin would double it. */
 .card + .card { margin-top: 12px; }
-:is(.stack, .dash, .split, .timeline) > .card + .card { margin-top: 0; }
+:is(.stack, .split, .timeline) > .card + .card { margin-top: 0; }
 .card-head {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--muted);
@@ -375,7 +375,7 @@ a.sha:hover { color: var(--accent); }
 .looks[data-compare] { gap: 20px; }
 .looks[data-compare] > * { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 @media (max-width: 640px) {
-  .looks:not([data-compare]) { flex-direction: column; }
+  .looks:not([data-compare]):not([data-look] .looks) { flex-direction: column; }
   .looks > [data-slot="phone"] { flex-basis: auto; width: 200px; }
 }
 
@@ -393,6 +393,11 @@ a.row:hover, .row[data-nav]:hover { background: var(--muted); color: inherit; }
 .row-children { list-style: none; margin: 0 0 0 22px; padding: 0; border-left: 1px solid var(--border); }
 .row-children > li { border-top: 1px solid var(--border); }
 @media (max-width: 719px) { .row-children { margin-left: 12px; } }
+/* A row's look thumbs (/review): inset like a row, side by side at any width; the link's hit area grows to 44px. */
+.row-children > [data-look] { padding: 8px 14px; }
+[data-look] .looks { flex-wrap: nowrap; gap: 10px; align-items: center; }
+[data-look] a.look { position: relative; overflow: visible; }
+[data-look] a.look::after { content: ""; position: absolute; inset: -7px; }
 a.row:hover .row-title { color: var(--accent); }
 .row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .row-title {
@@ -472,7 +477,6 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 .color-field input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
 .color-field input[type="color"]::-webkit-color-swatch { border: 1px solid var(--border-strong); border-radius: 999px; }
 .color-field input[type="color"]::-moz-color-swatch { border: 1px solid var(--border-strong); border-radius: 999px; }
-.color-field .hex { font-family: var(--mono); font-size: 12.5px; color: var(--muted-fg); }
 @media (pointer: coarse) { .color-field { min-height: 44px; } }
 @media (max-width: 719px) {
   .edit-row { align-items: stretch; }
@@ -757,7 +761,7 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 }
 .toast[data-tone="attn"] .ico { color: var(--attn); }
 .toast .toast-body { flex: 1; min-width: 0; }
-.toast code, .toast .clone { display: block; margin-top: 6px; }
+.toast code { display: block; margin-top: 6px; }
 
 /* ---- tooltip ---- */
 [data-tip] { position: relative; }
@@ -863,19 +867,6 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
     top: calc(var(--topbar-h) + 16px); align-self: start;
   }
 }
-
-/* ---- clone strip ---- */
-.clone {
-  display: flex; align-items: center; gap: 6px;
-  font-family: var(--mono); font-size: 12.5px;
-  padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm);
-  background: var(--muted); min-width: 0;
-}
-.clone > .clone-text {
-  flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap;
-  scrollbar-width: none; user-select: all;
-}
-.clone > .clone-text::-webkit-scrollbar { display: none; }
 
 /* ---- sticky primary action (thumb reach on a phone) ---- */
 .sticky-action {

@@ -19,20 +19,17 @@ const PASSWORD = "a-long-family-passphrase";
 const TRIES = 3;
 
 let dir = "";
-let app: App | undefined;
 let servers: Servers | undefined;
 
 afterEach(async () => {
   servers?.stop();
   servers = undefined;
-  app = undefined;
   await rm(dir, { recursive: true, force: true });
 });
 
 async function forge(): Promise<{ app: App; url: string }> {
   dir = await mkdtemp(join(tmpdir(), "signin-doors-"));
   const made = createApp({ dataDir: dir, port: 0 });
-  app = made;
   servers = await serve(made);
   const pat = await seedAdmin(made, { username: "pat", email: "pat@forge.test", password: PASSWORD });
   if (!pat.ok) throw new Error("setup");
@@ -83,7 +80,14 @@ describe("password doors share the sign-in windows", () => {
     const made = (await forge()).app;
     const session = new Session(made, { sshUsername: "pat", remoteAddress: "203.0.113.9" });
     for (let i = 0; i < TRIES; i++) {
-      const wrong = await session.signIn("pat", `wrong-${i}`);
+      // The hash gate is process-wide: a busy machine, or a hash another
+      // suite left running, can turn a guess away unhashed (and uncounted).
+      // That is not the window under test, so ask again until it is checked.
+      let wrong = await session.signIn("pat", `wrong-${i}`);
+      for (let again = 0; !wrong.ok && wrong.error === "throttled" && again < 50; again++) {
+        await Bun.sleep(100);
+        wrong = await session.signIn("pat", `wrong-${i}`);
+      }
       expect(wrong.ok ? "signed in" : wrong.error).toBe("bad_credentials");
     }
     const right = await session.signIn("pat", PASSWORD);

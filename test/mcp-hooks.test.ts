@@ -1,0 +1,110 @@
+/** The `hooks` tool is `…/hooks` over MCP: the same actions, the same gate. */
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createApp, type App } from "../src/app.ts";
+import { createRepo } from "../src/actions/repos.ts";
+import { createToken } from "../src/core/tokens.ts";
+import { createUser } from "../src/core/users.ts";
+import { serve, type Servers } from "../src/http/server.ts";
+import { promote } from "./helpers/members.ts";
+
+describe("MCP hooks", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let aliceAdmin: string;
+  let aliceRw: string;
+  let bobAdmin: string;
+  let id = 1;
+
+  const rpc = async (token: string, method: string, params: unknown) => {
+    const res = await fetch(`${servers.url}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: id++, method, params }),
+    });
+    return (await res.json()) as any;
+  };
+  const tool = async (token: string, args: unknown) => {
+    const body = await rpc(token, "tools/call", { name: "hooks", arguments: args });
+    const text: string = body.result.content[0].text;
+    return body.result.isError === true ? { error: text } : { value: JSON.parse(text) };
+  };
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-mcp-hooks-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    const a = await createUser(app.db, { origin: "seed", trusted: true, username: "alice", email: "alice@forge.local", password: "a-good-passphrase", adminIfFirst: true });
+    if (!a.ok) throw new Error(a.error);
+    const b = await createUser(app.db, { origin: "seed", trusted: true, username: "bob", email: "bob@forge.local", password: "a-good-passphrase" });
+    if (!b.ok) throw new Error(b.error);
+    promote(app.db, b.value);
+    aliceAdmin = createToken(app.db, a.value.id, "a", "admin").token;
+    aliceRw = createToken(app.db, a.value.id, "rw", "rw").token;
+    bobAdmin = createToken(app.db, b.value.id, "b", "admin").token;
+    const made = await createRepo(app, a.value, { name: "game", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+  }, 30_000);
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("an admin adds, lists and removes a hook, and its secret is never echoed", async () => {
+    const added = await tool(aliceAdmin, { repo: "alice/game", action: "add", url: "https://example.com/h", secret: "s3cret-value-long-enough" });
+    expect(added.value.url).toBe("https://example.com/h");
+    expect(added.value.kinds).toBe("*");
+    expect(JSON.stringify(added)).not.toContain("s3cret-value-long-enough");
+    const listed = await tool(aliceAdmin, { repo: "alice/game", action: "list" });
+    expect(listed.value.map((h: any) => h.id)).toEqual([added.value.id]);
+    expect(JSON.stringify(listed)).not.toContain("s3cret-value-long-enough");
+    expect((await tool(aliceAdmin, { repo: "alice/game", action: "remove", id: added.value.id })).value).toEqual({});
+    expect((await tool(aliceAdmin, { repo: "alice/game", action: "list" })).value).toEqual([]);
+    expect((await tool(aliceAdmin, { repo: "alice/game", action: "remove", id: added.value.id })).error).toContain("not_found");
+  });
+
+  test("a reader is refused and nothing is added", async () => {
+    for (const args of [
+      { repo: "alice/game", action: "add", url: "https://example.com/x", secret: "0123456789abcdef" },
+      { repo: "alice/game", action: "list" },
+    ])
+      expect((await tool(bobAdmin, args)).error).toContain("not_found");
+    expect((await tool(aliceAdmin, { repo: "alice/game", action: "list" })).value).toEqual([]);
+  });
+
+  test("an invalid URL is refused with the API's error", async () => {
+    for (const url of ["http://example.com/h", "nonsense", ""])
+      expect((await tool(aliceAdmin, { repo: "alice/game", action: "add", url, secret: "0123456789abcdef" })).error).toContain("invalid_url");
+    expect((await tool(aliceAdmin, { repo: "alice/game", action: "nope" })).error).toContain("action is list");
+  });
+
+  test("lengths are enforced, and a secret of 16 or more is required", async () => {
+    const base = { repo: "alice/game", action: "add", secret: "0123456789abcdef" };
+    const long = await tool(aliceAdmin, { ...base, url: "https://example.com/" + "a".repeat(2048) });
+    expect(long.error).toContain("url is text of at most 2048");
+    const kinds = await tool(aliceAdmin, { ...base, url: "https://example.com/h", kinds: "k".repeat(201) });
+    expect(kinds.error).toContain("kinds is text of at most 200");
+    expect((await tool(aliceAdmin, { ...base, url: "https://example.com/h", secret: "x".repeat(201) })).error).toContain("secret is text");
+    expect((await tool(aliceAdmin, { repo: "alice/game", action: "remove", id: "i".repeat(65) })).error).toContain("id is text");
+    for (const secret of [undefined, "short"])
+      expect((await tool(aliceAdmin, { repo: "alice/game", action: "add", url: "https://example.com/h", secret })).error).toContain("secret is required");
+    expect((await tool(aliceAdmin, { repo: "alice/game", action: "list" })).value).toEqual([]);
+  });
+
+  test("it is listed, and callable, only with an admin-scope token", async () => {
+    const names = async (t: string) => (await rpc(t, "tools/list", {})).result.tools.map((x: any) => x.name);
+    expect(await names(aliceAdmin)).toContain("hooks");
+    expect(await names(aliceRw)).not.toContain("hooks");
+    const called = await rpc(aliceRw, "tools/call", { name: "hooks", arguments: { repo: "alice/game", action: "list" } });
+    expect(called.error.message).toContain("no tool named hooks");
+  });
+});

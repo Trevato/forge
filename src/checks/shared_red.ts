@@ -88,7 +88,7 @@ const PULLS_PER_TEST = `
    WHERE run.id >= ?1 AND run.finished_at >= ?2
      AND run.kind = 'check' AND run.issue_id IS NOT NULL AND run.state = 'failed'
      AND (?3 IS NULL OR run.repo_id = ?3)
-     AND n.type = 'text' AND n.value <> ?4
+     AND n.type = 'text' AND instr(n.value, ?4) = 0
    GROUP BY run.repo_id, n.value`;
 
 function pullsPerTest(db: Database, now: number, repoId: string | null): Row[] {

@@ -115,7 +115,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
       />
       ${btn("Go", { size: "sm" })}
     </form>
-    <div class="filters mb">
+    <div class="bar mb">
       ${seg(
         kinds.map((k) => ({
           label: k.label,

@@ -50,7 +50,7 @@ beforeAll(async () => {
   if (!log.ok) throw new Error("no commit");
   oid = log.value[0]!.oid;
   subject = log.value[0]!.subject;
-});
+}, 60_000);
 afterAll(() => {
   servers.stop();
   app.close();

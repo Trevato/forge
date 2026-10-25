@@ -5,6 +5,7 @@
  * Anyone else is told 403, and an agent is never an admin here.
  */
 
+import { USAGE_ADMIN_ONLY } from "../../actions/admin_limits_words.ts";
 import { mayManageFlags } from "../../core/flags.ts";
 import { ROLES, SURFACES } from "../../core/usage_count.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
@@ -33,7 +34,7 @@ export function usagePage(ctx: Ctx, patterns: () => readonly string[]): Response
           ${empty({
             icon: "lock",
             title: "Admins only",
-            note: "Usage is read by a forge admin.",
+            note: USAGE_ADMIN_ONLY,
             action: btn("Go home", { href: "/", variant: "primary" }),
           })}`,
       },

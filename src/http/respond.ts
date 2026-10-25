@@ -34,6 +34,11 @@ export const apiError = (
   message: string,
 ): Response => json({ error: code, message }, status);
 
+/** The API's own words for a resource that is missing or not visible to you. */
+export const NOT_FOUND_WORDS = "no such resource here, or it is not visible to you";
+/** The API's own words for a request that carries no credential. */
+export const UNAUTHORIZED_WORDS = "authenticate with a bearer token or account credentials";
+
 // `not_found` deliberately conflates "no such resource" with "not visible to
 // you" so a private repo never leaks its existence — the message keeps that
 // ambiguity intact.
@@ -41,13 +46,13 @@ export const notFound = () =>
   apiError(
     "not_found",
     404,
-    "no such resource here, or it is not visible to you",
+    NOT_FOUND_WORDS,
   );
 export const unauthorized = () =>
   apiError(
     "unauthorized",
     401,
-    "authenticate with a bearer token or account credentials",
+    UNAUTHORIZED_WORDS,
   );
 // A password door past the sign-in windows (`core/signin-window.ts`).
 export const tooManyAttempts = (retryAfter: number) =>
@@ -59,8 +64,8 @@ export const tooManyAttempts = (retryAfter: number) =>
     429,
     { "retry-after": String(retryAfter) },
   );
-export const forbidden = () =>
-  apiError("forbidden", 403, "your credentials lack the scope for this action");
+export const FORBIDDEN_MESSAGE = "your credentials lack the scope for this action";
+export const forbidden = () => apiError("forbidden", 403, FORBIDDEN_MESSAGE);
 // A path matching no route at all — distinct from a missing resource, so a
 // client can tell a typo'd URL from a resource that genuinely isn't there.
 // The message survives into the HTML 404 too (`src/web/chrome.ts`), as a

@@ -10,6 +10,7 @@
 import type { Reader } from "../../actions/telemetry.ts";
 import { queuesFor, systemFor } from "../../system/telemetry.ts";
 import { conflictedPulls, conflictedSays } from "../../flow/conflicted.ts";
+import { reviewersBusy, reviewingSays } from "../../flow/reviewing.ts";
 import { requestedSays, requestedWaits } from "../../flow/requested.ts";
 import {
   bottleneck,
@@ -93,6 +94,7 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
   const requested = requestedWaits(app.db, reader.kind === "agent");
   const onBuilder = requestedSays(requested.builder, "builder", now);
   const onReviewer = requestedSays(requested.reviewer, "reviewer", now);
+  const reviewing = reviewingSays(reviewersBusy(app.db, reader.kind === "agent"));
   const listed = asked(url);
   const shown = listed === null ? undefined : out.get(listed.key);
   return html`${card(
@@ -102,6 +104,7 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
     ${conflicted === null ? "" : html`<p id="conflicted">${conflicted}</p>`}
     ${onBuilder === null ? "" : html`<p id="requested-builder">${onBuilder}</p>`}
     ${onReviewer === null ? "" : html`<p id="requested-reviewer">${onReviewer}</p>`}
+    ${reviewing === null ? "" : html`<p id="review-load">${reviewing}</p>`}
     <p id="throughput">
       landed
       <a href="${outHref(base, "approved", 0)}" data-landed-hour>${String(landed?.hours[0] ?? 0)}</a>

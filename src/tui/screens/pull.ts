@@ -109,6 +109,7 @@ import { assignPicker, assignedText } from "./assign.ts";
 import { DiffView, type DiffAnchor, type DiffNote } from "./commits.ts";
 import { liveBindings, liveKey } from "./mirror.ts";
 import { pullConflicts } from "../../actions/conflicts.ts";
+import { RESOLUTION_ASKED } from "../../actions/pull_ask_words.ts";
 import { FINISH_REFUSALS, finishConflicts } from "../../actions/finish-conflicts.ts";
 import { PROPOSE_WHY, proposalOf, proposeResolution } from "../../crew/proposal.ts";
 import { conflictScreen } from "./conflicts.ts";
@@ -737,7 +738,7 @@ export function pullScreen(
             const fresh = getPull(f.db, target.id, number) ?? row;
             const made = await proposeResolution(f.app, f.user, target, fresh);
             return made.ok
-              ? { ok: true, message: "Asked: the crew is resolving it on the pull's own branch." }
+              ? { ok: true, message: RESOLUTION_ASKED }
               : { ok: false, message: PROPOSE_WHY[made.error] };
           },
         }),

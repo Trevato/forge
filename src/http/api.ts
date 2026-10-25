@@ -15,7 +15,13 @@ import {
   setFollowUpstream,
 } from "../actions/upstream_follow.ts";
 import { getFollow } from "../core/upstream_follow.ts";
+import { FAMILY_WORDS } from "../actions/family_words.ts";
 import { showProvenance } from "../actions/provenance.ts";
+import {
+  APP_ALREADY_YOURS,
+  ORIGIN_UNREACHABLE,
+  REPORT_ALREADY_DECIDED,
+} from "../actions/origin_app_words.ts";
 import { getProvenance, provenanceFacts } from "../core/provenance.ts";
 import { goldenPath } from "../apps/golden_path.ts";
 import { upstreamPayload } from "../spawn/upstream.ts";
@@ -29,6 +35,7 @@ import { parentForgeFor } from "../core/parent_releases.ts";
 import { readFlow } from "../flow/read.ts";
 import { listPinned as listPinnedPanels, movePinned, pinPanel, unpinPanel, type PinError } from "../actions/board-pins.ts";
 import { deleteBoard, listAllBoards, showBoard, writeBoard, type BoardError } from "../actions/boards.ts";
+import { BOARD_NOT_SAVED, MILESTONE_WATCH_PERSON_ONLY, VOTE_NOT_RECORDED } from "../actions/board_words.ts";
 import { panelData, parseWindow, rowsCsv } from "../boards/panel_data.ts";
 import { runQuery } from "../boards/query.ts";
 import { recordDrill } from "../core/domain_drills.ts";
@@ -71,9 +78,12 @@ import {
 } from "../actions/accounts.ts";
 import { resendVerification } from "../actions/verify.ts";
 import { CAPPED_WORDS } from "../actions/mail.ts";
+import { VERIFY_WORDS } from "../actions/verify_words.ts";
+import { editMessage } from "../actions/edit_words.ts";
 import { emailVerified } from "../core/verify.ts";
 import { readHealth } from "../actions/health.ts";
 import { isProbe } from "../kernel/probe.ts";
+import { PRIVATE_ADDRESS_REFUSED } from "../kernel/address_words.ts";
 import { listChildren } from "../actions/spawn.ts";
 import { forgeState, PARENT_HEADER } from "../spawn/clients.ts";
 import { familyView } from "../spawn/family.ts";
@@ -120,6 +130,7 @@ import {
   syncOriginNow,
   syncRepoNow,
   unpinRepo,
+  ORIGIN_ALREADY_CONNECTED,
 } from "../actions/origins.ts";
 import {
   createBranch,
@@ -178,9 +189,9 @@ import {
   SIGNUP_CLOSED_MESSAGE,
   updateProfile,
 } from "../actions/users.ts";
-import { listEvents } from "../core/events.ts";
+import { OFFSET_LIMIT_MAX, offsetPage, offsetQuery } from "./offset_page.ts";
+import { EVENTS_LIMIT_MAX, eventsLimit, eventsPage, validEventsCursor } from "../core/events_page.ts";
 import { audienceFor } from "../core/audience.ts";
-import { audienceFilter, eventForReader } from "../core/event_audience.ts";
 import {
   forkParentFor,
   getReposByIds,
@@ -194,6 +205,8 @@ import {
   listComments,
   listIssues,
   listLabels,
+  LIST_LIMIT,
+  LIST_LIMIT_MAX,
   pageLimit,
   type Issue,
   type IssueState,
@@ -208,6 +221,7 @@ import {
   type Permission,
   type Team,
   soleOwnedOrgs,
+  lastOwnerSays,
 } from "../core/orgs.ts";
 import {
   getPull,
@@ -371,6 +385,7 @@ import { carriedBy } from "../core/carried.ts";
 import { readRunLog, subscribeRunLog } from "../runs/log.ts";
 import { blobForRender, commitLog, listRefs, listTree } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
+import { readWave, readWaves } from "../story/waves.ts";
 import type { Result } from "../kernel/result.ts";
 import { sizesView } from "../spawn/sizes.ts";
 import { holds, weakEtag } from "./etag.ts";
@@ -446,6 +461,8 @@ import {
   waitingReports,
 } from "../actions/reports.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
+import { ADMIN_WORDS } from "../actions/admin_words.ts";
+import { SPEND_WORDS } from "../actions/spend_words.ts";
 
 /** Take the parent's updates for `repo` and answer as the API does, for every route that asks. */
 async function respondTake(ctx: Ctx, repo: Repo): Promise<Response> {
@@ -648,7 +665,7 @@ function originFacts(repo: Repo) {
 }
 
 /** An origin as the API returns it: everything except the credential. */
-function originJson(origin: Origin) {
+export function originJson(origin: Origin) {
   return {
     id: origin.id,
     kind: origin.kind,
@@ -728,7 +745,7 @@ function migrationJson(ctx: Ctx, job: MirrorJob) {
  * client can navigate to out here — the picker's whole job is to say
  * "already here" or "not yet".
  */
-function remoteRepoJson(ctx: Ctx, row: OriginRepoRow) {
+export function remoteRepoJson(ctx: Ctx, row: OriginRepoRow) {
   const mirror =
     row.mirroredAs === null
       ? undefined
@@ -769,7 +786,7 @@ function sourceFailure(error: SourceError): Response {
       return apiError(
         "origin_unreachable",
         502,
-        "the origin could not be reached",
+        ORIGIN_UNREACHABLE,
       );
   }
 }
@@ -803,7 +820,7 @@ function originAware(error: string, status = 422): Response {
     return apiError(
       "origin_unreachable",
       502,
-      "the origin could not be reached; nothing was changed",
+      `${ORIGIN_UNREACHABLE}; nothing was changed`,
     );
   if (error === "origin_refused")
     return apiError(
@@ -1001,25 +1018,6 @@ function contributeFailure(error: unknown): Response {
   return originAware(code, 422);
 }
 
-function editMessage(kind: string): string {
-  switch (kind) {
-    case "protected_branch":
-      return "the default branch is protected; only a repo admin may commit to it directly";
-    case "file_too_large":
-      return "that file is larger than an edit may carry; push it instead";
-    case "commit_too_large":
-      return "the edit is larger than one commit may carry; push it instead";
-    case "branch_moved":
-      return "the branch moved while this edit was being written; re-read and retry";
-    case "land_refused":
-      return "the origin refused this commit; nothing was changed here either";
-    case "pull_failed":
-      return "the commit landed, but the pull request could not be opened";
-    default:
-      return "this edit could not be applied";
-  }
-}
-
 // ---- query parsing ----
 
 /** `?state=&label=&author=&limit=&cursor=` for issue and pull lists. */
@@ -1039,6 +1037,46 @@ function listQuery(ctx: Ctx) {
       : {}),
     ...(label ? { label } : {}),
     ...(author ? { author } : {}),
+  };
+}
+
+/** Room for the longest key: a pin's `owner/name` (up to ~40 + 1 + 100 characters). */
+const KEYED_CURSOR_MAX = 160;
+
+function offsetRefused(error: "invalid_limit" | "invalid_cursor"): Response {
+  return error === "invalid_limit"
+    ? apiError(error, 422, `limit is a whole number from 1 to ${OFFSET_LIMIT_MAX}`)
+    : apiError(error, 422, "cursor is the next_cursor of a page before");
+}
+
+/**
+ * `?limit=&cursor=` for a list paged by a name: limit 1..200 (default 50),
+ * the cursor the last name of the page before. A bad one is a 422.
+ */
+function keyedWindow(ctx: Ctx): { limit: number; cursor: string | null } | Response {
+  const q = ctx.url.searchParams;
+  const rawLimit = q.get("limit");
+  const limit = rawLimit === null ? LIST_LIMIT : /^\d{1,4}$/.test(rawLimit) ? Number(rawLimit) : 0;
+  if (limit < 1 || limit > LIST_LIMIT_MAX)
+    return apiError("invalid_limit", 422, `limit is a whole number from 1 to ${LIST_LIMIT_MAX}`);
+  const cursor = q.get("cursor");
+  if (cursor !== null && (cursor.length < 1 || cursor.length > KEYED_CURSOR_MAX))
+    return apiError("invalid_cursor", 422, "cursor is the next_cursor of a previous page");
+  return { limit, cursor };
+}
+
+/** The page of `rows` (sorted by name) after the cursor: `{ items, next_cursor }`. */
+function keyedPage<T>(
+  rows: T[],
+  keyOf: (row: T) => string,
+  window: { limit: number; cursor: string | null },
+) {
+  const sorted = [...rows].sort((a, b) => (keyOf(a) < keyOf(b) ? -1 : keyOf(a) > keyOf(b) ? 1 : 0));
+  const after = window.cursor === null ? sorted : sorted.filter((r) => keyOf(r) > window.cursor!);
+  const items = after.slice(0, window.limit);
+  return {
+    items,
+    next_cursor: after.length > window.limit ? keyOf(items[items.length - 1]!) : null,
   };
 }
 
@@ -1283,23 +1321,26 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/users/:username", (ctx) => {
-    const user = getUserByName(ctx.app.db, ctx.params.username!);
-    return user && !hiddenFrom(user, ctx.auth.user)
-      ? json(publicProfile(user))
-      : notFound();
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const user = timePhase(ctx.request, "person", () => {
+      const found = getUserByName(ctx.app.db, ctx.params.username!);
+      return found && !hiddenFrom(found, ctx.auth.user) ? found : null;
+    });
+    if (!user) return notFound();
+    return timePhase(ctx.request, "render", () => json(publicProfile(user)));
   });
 
   router.add("GET", "/api/v1/users/:username/repos", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const user = getUserByName(ctx.app.db, ctx.params.username!);
     if (!user || hiddenFrom(user, ctx.auth.user)) return notFound();
     const query = repoQuery(ctx);
-    const items = listReposByOwner(
-      ctx.app.db,
-      user.username,
-      ctx.auth.user,
-      query,
+    const items = timePhase(ctx.request, "repos", () =>
+      listReposByOwner(ctx.app.db, user.username, ctx.auth.user, query),
     );
-    return json(paged(items, query.limit, (r) => r.id));
+    return timePhase(ctx.request, "render", () =>
+      json(paged(items, query.limit, (r) => r.id)),
+    );
   });
 
   router.add("POST", "/api/v1/sessions", async (ctx) => {
@@ -1335,14 +1376,13 @@ export function apiRoutes(router: Router<Handler>): void {
     });
   });
 
-  router.add("GET", "/api/v1/user", (ctx) =>
-    ctx.auth.user
-      ? json({
-          ...publicUser(ctx.auth.user),
-          emailVerified: emailVerified(ctx.app.db, ctx.auth.user.id),
-        })
-      : unauthorized(),
-  );
+  router.add("GET", "/api/v1/user", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const me = ctx.auth.user;
+    if (!me) return unauthorized();
+    const verified = timePhase(ctx.request, "user", () => emailVerified(ctx.app.db, me.id));
+    return timePhase(ctx.request, "render", () => json({ ...publicUser(me), emailVerified: verified }));
+  });
 
   // Another verification link for the signed-in account; rate limited.
   router.add("POST", "/api/v1/user/email/verify", async (ctx) => {
@@ -1352,12 +1392,12 @@ export function apiRoutes(router: Router<Handler>): void {
       return json({ outcome: sent.value }, sent.value === "sent" ? 202 : 200);
     if (sent.error === "unauthorized") return unauthorized();
     if (sent.error === "too_soon")
-      return apiError("too_soon", 429, "a link was sent a moment ago; check your inbox, or try again in a few minutes");
+      return apiError("too_soon", 429, VERIFY_WORDS.too_soon);
     if (sent.error === "no_mail")
-      return apiError("no_mail", 503, "this forge sends no mail yet; ask its owner to verify you");
+      return apiError("no_mail", 503, VERIFY_WORDS.no_mail);
     if (sent.error === "capped")
       return apiError("capped", 429, CAPPED_WORDS);
-    return apiError("failed", 502, "the link could not be sent; try again");
+    return apiError("failed", 502, VERIFY_WORDS.failed);
   });
 
   router.add("PATCH", "/api/v1/user", async (ctx) => {
@@ -1413,7 +1453,7 @@ export function apiRoutes(router: Router<Handler>): void {
         ? apiError(
             "not_allowed",
             422,
-            "an admin cannot suspend or remove themselves, another admin, or an agent",
+            ADMIN_WORDS.selfSuspend,
           )
         : apiError(error, 500, "the account could not be removed");
   const accountAdmin = (ctx: Ctx, scope: "ro" | "admin"): Response | undefined =>
@@ -1432,32 +1472,39 @@ export function apiRoutes(router: Router<Handler>): void {
   const telemetryRead =
     (what: string, out: (ctx: Ctx, reader: Reader) => unknown) =>
     (ctx: Ctx): Response => {
+      notePhase(ctx.request, "session", takeSessionTime(ctx.request));
       if (!ctx.auth.user) return unauthorized();
       const denied = requireScope(ctx, "ro");
       if (denied) return denied;
       const reader = telemetryReader(ctx.app, ctx.auth.user);
       if (!reader) return forbidden();
       noteRead(ctx.app, ctx.auth.user, reader, what);
-      return json(out(ctx, reader));
+      const body = timePhase(ctx.request, "read", () => out(ctx, reader));
+      return timePhase(ctx.request, "render", () => json(body));
     };
   router.add("GET", "/api/v1/telemetry/system", telemetryRead("system", (c, r) => systemFor(c.app, r)));
   router.add("GET", "/api/v1/telemetry/flow", telemetryRead("flow", (c, r) => flowFor(c.app, r)));
   router.add("GET", "/api/v1/telemetry/sources", telemetryRead("sources", () => ({ sources: sourcesOut() })));
   router.add("GET", "/api/v1/telemetry/history", telemetryRead("history", (c) => ({ points: historyFor(c.app) })));
   // The funnel: what any agent that arrives should know. Open to all.
-  router.add("GET", "/api/v1/contribute", (ctx) => json(welcome(ctx.app)));
+  router.add("GET", "/api/v1/contribute", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const body = timePhase(ctx.request, "welcome", () => welcome(ctx.app));
+    return timePhase(ctx.request, "render", () => json(body));
+  });
 
   router.add("GET", "/api/v1/boards/sources", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = boardsAdmin(ctx);
     if (denied) return denied;
-    return json({
-      sources: Object.entries(SOURCES).map(([name, s]) => ({
+    const sources = timePhase(ctx.request, "sources", () =>
+      Object.entries(SOURCES).map(([name, s]) => ({
         name,
         time: s.time,
         columns: s.columns,
         ...(s.docs ? { docs: s.docs } : {}),
-      })),
-    });
+      })));
+    return timePhase(ctx.request, "render", () => json({ sources }));
   });
 
   // A domain drill and its verdict (`kernel/domain_drill.ts`): an admin
@@ -1508,7 +1555,7 @@ export function apiRoutes(router: Router<Handler>): void {
   const boardFailed = (e: BoardError): Response => {
     if (e === "not_found") return notFound();
     if (typeof e === "object") return apiError("refused", 422, e.refused);
-    return apiError(e, e === "exists" || e === "branch_moved" ? 409 : 422, "that board could not be saved");
+    return apiError(e, e === "exists" || e === "branch_moved" ? 409 : 422, BOARD_NOT_SAVED);
   };
 
   router.add("GET", "/api/v1/boards", async (ctx) => {
@@ -1629,10 +1676,11 @@ export function apiRoutes(router: Router<Handler>): void {
   // The forge's capacity (`core/capacity.ts`): read and changed live by an
   // admin, never by an agent; anyone else is told the door is not there.
   router.add("GET", "/api/v1/admin/capacity", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
-    const listed = listCapacity(ctx.app, ctx.auth.user);
-    return listed.ok ? json(listed.value) : notFound();
+    const listed = timePhase(ctx.request, "capacity", () => listCapacity(ctx.app, ctx.auth.user));
+    return timePhase(ctx.request, "render", () => (listed.ok ? json({ items: listed.value.settings, changes: listed.value.changes, next_cursor: null }) : notFound()));
   });
 
   router.add("PUT", "/api/v1/admin/capacity/:key", async (ctx) => {
@@ -1654,10 +1702,11 @@ export function apiRoutes(router: Router<Handler>): void {
 
   // The forge's limits (`settings/limits.ts`): the same door as capacity.
   router.add("GET", "/api/v1/admin/limits", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
-    const listed = listLimits(ctx.app, ctx.auth.user);
-    return listed.ok ? json(listed.value) : notFound();
+    const listed = timePhase(ctx.request, "limits", () => listLimits(ctx.app, ctx.auth.user));
+    return timePhase(ctx.request, "render", () => (listed.ok ? json({ items: listed.value.limits, changes: listed.value.changes, next_cursor: null }) : notFound()));
   });
 
   router.add("PUT", "/api/v1/admin/limits/:key", async (ctx) => {
@@ -1685,18 +1734,21 @@ export function apiRoutes(router: Router<Handler>): void {
   // The crew's scorecard (`core/scorecard.ts`): a read, so any scope of a
   // forge admin's token, as the MCP tool; 401 without one, 403 for anyone else.
   router.add("GET", "/api/v1/crew/scorecard", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireScope(ctx, "ro");
     if (denied) return denied;
-    const card = readScorecards(ctx.app, ctx.auth.user);
-    return card ? json(card) : apiError("forbidden", 403, "the crew's scorecard is a forge admin's to read");
+    const card = timePhase(ctx.request, "scorecard", () => readScorecards(ctx.app, ctx.auth.user));
+    if (!card) return apiError("forbidden", 403, ADMIN_WORDS.scorecard);
+    return timePhase(ctx.request, "render", () => json(card));
   });
 
   // Crew teams (`core/teams.ts`): a forge admin who is a person; the page's door.
   router.add("GET", "/api/v1/admin/teams", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
-    const read = readTeams(ctx.app, ctx.auth.user);
-    return read.ok ? json({ teams: read.value.teams }) : notFound();
+    const read = timePhase(ctx.request, "teams", () => readTeams(ctx.app, ctx.auth.user));
+    return read.ok ? timePhase(ctx.request, "render", () => json({ teams: read.value.teams })) : notFound();
   });
 
   router.add("PUT", "/api/v1/admin/teams/:slug", async (ctx) => {
@@ -1724,11 +1776,15 @@ export function apiRoutes(router: Router<Handler>): void {
   // Per-account quotas (`core/quotas.ts`): null is no limit. Nothing
   // enforces them yet.
   router.add("GET", "/api/v1/admin/settings", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
-    const read = readQuotas(ctx.app, ctx.auth.user);
-    const signup = readSignup(ctx.app, ctx.auth.user);
-    return read.ok && signup.ok ? json({ ...read.value, ...signup.value, signupChanges: signup.value.changes, changes: read.value.changes }) : notFound();
+    const { read, signup } = timePhase(ctx.request, "settings", () => ({
+      read: readQuotas(ctx.app, ctx.auth.user),
+      signup: readSignup(ctx.app, ctx.auth.user),
+    }));
+    return timePhase(ctx.request, "render", () =>
+      read.ok && signup.ok ? json({ ...read.value, ...signup.value, signupChanges: signup.value.changes, changes: read.value.changes }) : notFound());
   });
 
   router.add("PATCH", "/api/v1/admin/settings", async (ctx) => {
@@ -1766,7 +1822,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const made = mintInviteLink(ctx.app, ctx.auth.user, input.days);
     if (!made.ok)
       return made.error === "invalid_days"
-        ? apiError("invalid", 422, "days is a whole number from 1 to 30")
+        ? apiError("invalid", 422, SPEND_WORDS.inviteDays)
         : notFound();
     const origin = ctx.app.config.url ?? ctx.url.origin;
     return json(
@@ -1776,10 +1832,13 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/admin/invites", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
-    const listed = listInviteLinks(ctx.app, ctx.auth.user);
-    return listed.ok ? json({ items: listed.value }) : notFound();
+    const query = offsetQuery(ctx.url.searchParams);
+    if ("error" in query) return offsetRefused(query.error);
+    const listed = timePhase(ctx.request, "invites", () => listInviteLinks(ctx.app, ctx.auth.user));
+    return listed.ok ? timePhase(ctx.request, "render", () => json(offsetPage(listed.value, query.limit, query.offset))) : notFound();
   });
 
   router.add("DELETE", "/api/v1/admin/invites/:id", (ctx) => {
@@ -1790,10 +1849,13 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/admin/accounts", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
-    const listed = listAccounts(ctx.app, ctx.auth.user);
-    return listed.ok ? json({ items: listed.value }) : notFound();
+    const query = offsetQuery(ctx.url.searchParams);
+    if ("error" in query) return offsetRefused(query.error);
+    const listed = timePhase(ctx.request, "accounts", () => listAccounts(ctx.app, ctx.auth.user));
+    return listed.ok ? timePhase(ctx.request, "render", () => json(offsetPage(listed.value, query.limit, query.offset))) : notFound();
   });
 
   router.add("POST", "/api/v1/admin/accounts/:username/suspend", async (ctx) => {
@@ -1803,18 +1865,12 @@ export function apiRoutes(router: Router<Handler>): void {
     const done = await suspendAccount(ctx.app, ctx.auth.user, ctx.params.username!, {
       confirmed: input.confirm === true,
     });
-    if (!done.ok && done.error === "last_owner") {
-      const user = getUserByName(ctx.app.db, ctx.params.username!);
-      const orgs =
-        user === undefined
-          ? []
-          : soleOwnedOrgs(ctx.app.db, user.id).map((o) => o.username);
+    if (!done.ok && done.error === "last_owner")
       return apiError(
         "last_owner",
         409,
-        `${ctx.params.username} is the only active person owning ${orgs.join(", ")}: suspending leaves no one to administer it. Make someone else an owner first, or send {"confirm": true} to suspend anyway`,
+        `${lastOwnerSays(ctx.app.db, ctx.params.username!)}, or send {"confirm": true} to suspend anyway`,
       );
-    }
     return done.ok ? json({ username: done.value.username, suspendedAt: done.value.suspendedAt }) : accountError(done.error);
   });
 
@@ -1829,7 +1885,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const done = setAccountGrant(ctx.app, ctx.auth.user, ctx.params.username!, raw === 0 ? null : raw);
     if (done.ok) return json(done.value);
     return done.error === "invalid_amount"
-      ? apiError("invalid", 422, "usdPerMonth is from 0.01 to 10000 dollars")
+      ? apiError("invalid", 422, SPEND_WORDS.usdPerMonth)
       : done.error === "not_allowed"
         ? apiError("not_allowed", 422, "a grant is for a person who is not an admin")
         : notFound();
@@ -1837,9 +1893,13 @@ export function apiRoutes(router: Router<Handler>): void {
 
   // Every person and their role.
   router.add("GET", "/api/v1/admin/people", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = accountAdmin(ctx, "admin");
     if (denied) return denied;
-    return json({ people: listPeople(ctx.app.db) });
+    const query = offsetQuery(ctx.url.searchParams);
+    if ("error" in query) return offsetRefused(query.error);
+    const people = timePhase(ctx.request, "people", () => listPeople(ctx.app.db));
+    return timePhase(ctx.request, "render", () => json(offsetPage(people, query.limit, query.offset)));
   });
 
   // Make a person a member (with an optional starter allowance, dollars a month) or a guest again.
@@ -1853,7 +1913,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const done = setRole(ctx.app, ctx.auth.user, ctx.params.username!, role, typeof usdPerMonth === "number" ? usdPerMonth : null);
     if (done.ok) return json(done.value);
     return done.error === "invalid_amount"
-      ? apiError("invalid", 422, "usdPerMonth is from 0.01 to 10000 dollars")
+      ? apiError("invalid", 422, SPEND_WORDS.usdPerMonth)
       : done.error === "not_allowed"
         ? apiError("not_allowed", 422, "a role is for a person who is not an admin")
         : notFound();
@@ -1872,7 +1932,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const done = setAccountCeilings(ctx.app, ctx.auth.user, ctx.params.username!, dailyUsd, perRunUsd);
     if (done.ok) return json(done.value);
     return done.error === "invalid_amount"
-      ? apiError("invalid", 422, "dailyUsd and perRunUsd are each from 0.01 to 10000 dollars, or both null")
+      ? apiError("invalid", 422, SPEND_WORDS.ceilings)
       : notFound();
   });
 
@@ -1930,19 +1990,28 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/user/orgs", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     if (!ctx.auth.user) return unauthorized();
-    return json(
-      listOrgsForUser(ctx.app.db, ctx.auth.user.id).map(publicProfile),
+    const user = ctx.auth.user;
+    const window = keyedWindow(ctx);
+    if (window instanceof Response) return window;
+    const orgs = timePhase(ctx.request, "orgs", () =>
+      listOrgsForUser(ctx.app.db, user.id).map(publicProfile),
     );
+    return timePhase(ctx.request, "render", () => json(keyedPage(orgs, (o) => o.username, window)));
   });
 
   // SSH keys — what the SSH listener authenticates against. Public keys are
   // public, so the list returns them whole.
-  router.add("GET", "/api/v1/user/keys", (ctx) =>
-    ctx.auth.user
-      ? json(listKeys(ctx.app.db, ctx.auth.user.id).map(publicKey))
-      : unauthorized(),
-  );
+  router.add("GET", "/api/v1/user/keys", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const user = ctx.auth.user;
+    if (!user) return unauthorized();
+    const window = keyedWindow(ctx);
+    if (window instanceof Response) return window;
+    const keys = timePhase(ctx.request, "keys", () => listKeys(ctx.app.db, user.id));
+    return timePhase(ctx.request, "render", () => json(keyedPage(keys.map(publicKey), (k) => k.id, window)));
+  });
   router.add("POST", "/api/v1/user/keys", async (ctx) => {
     const denied = requireScope(ctx, "rw");
     if (denied) return denied;
@@ -2104,9 +2173,11 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/tokens", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireAccount(ctx);
     if (denied) return denied;
-    return json(listTokens(ctx.app.db, ctx.auth.user!.id));
+    const tokens = timePhase(ctx.request, "tokens", () => listTokens(ctx.app.db, ctx.auth.user!.id));
+    return timePhase(ctx.request, "render", () => json(tokens));
   });
 
   router.add("DELETE", "/api/v1/tokens/:id", (ctx) => {
@@ -2120,16 +2191,21 @@ export function apiRoutes(router: Router<Handler>): void {
   // Where an account is signed in: its person, or the forge's owner for any
   // person (`actions/signins.ts`). Anyone else finds no such account.
   router.add("GET", "/api/v1/users/:username/signins", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireAccount(ctx, { adminToken: true });
     if (denied) return denied;
-    const seen = accountSignIns(
-      ctx.app,
-      ctx.auth.user,
-      ctx.params.username!,
-      cookieValue(ctx.request, "forge_session"),
+    const seen = timePhase(ctx.request, "signins", () =>
+      accountSignIns(
+        ctx.app,
+        ctx.auth.user,
+        ctx.params.username!,
+        cookieValue(ctx.request, "forge_session"),
+      ),
     );
     if (!seen.ok) return notFound();
-    return json({ tokens: seen.value.tokens, sessions: seen.value.sessions });
+    return timePhase(ctx.request, "render", () =>
+      json({ tokens: seen.value.tokens, sessions: seen.value.sessions }),
+    );
   });
 
   router.add("DELETE", "/api/v1/users/:username/sessions/:id", (ctx) => {
@@ -2159,19 +2235,29 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/orgs/:org", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const org = getOrg(ctx.app.db, ctx.params.org!);
     if (!org) return notFound();
-    return json({
-      id: org.id,
-      ...publicProfile(org),
-      teams: listTeamsVisibleTo(ctx.app.db, org.id, ctx.auth.user),
-    });
+    const teams = timePhase(ctx.request, "org", () =>
+      listTeamsVisibleTo(ctx.app.db, org.id, ctx.auth.user),
+    );
+    return timePhase(ctx.request, "render", () =>
+      json({ id: org.id, ...publicProfile(org), teams }),
+    );
   });
 
   router.add("GET", "/api/v1/orgs/:org/teams", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const org = getOrg(ctx.app.db, ctx.params.org!);
     if (!org) return notFound();
-    return json(listTeamsVisibleTo(ctx.app.db, org.id, ctx.auth.user));
+    const window = keyedWindow(ctx);
+    if (window instanceof Response) return window;
+    const teams = timePhase(ctx.request, "teams", () =>
+      listTeamsVisibleTo(ctx.app.db, org.id, ctx.auth.user),
+    );
+    return timePhase(ctx.request, "render", () =>
+      json(keyedPage(teams, (t) => t.name, window)),
+    );
   });
 
   router.add("POST", "/api/v1/orgs/:org/teams", async (ctx) => {
@@ -2202,10 +2288,18 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/orgs/:org/teams/:team/members", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const found = loadTeam(ctx);
     if ("error" in found) return found.error;
     if (!teamVisible(ctx, found.org, found.team)) return notFound();
-    return json(listTeamMembers(ctx.app.db, found.team.id).map(publicProfile));
+    const window = keyedWindow(ctx);
+    if (window instanceof Response) return window;
+    const members = timePhase(ctx.request, "members", () =>
+      listTeamMembers(ctx.app.db, found.team.id).map(publicProfile),
+    );
+    return timePhase(ctx.request, "render", () =>
+      json(keyedPage(members, (u) => u.username, window)),
+    );
   });
 
   router.add("POST", "/api/v1/orgs/:org/teams/:team/members", async (ctx) => {
@@ -2299,9 +2393,10 @@ export function apiRoutes(router: Router<Handler>): void {
   // ── repositories ─────────────────────────────────────────────────────
 
   router.add("GET", "/api/v1/repos", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const query = repoQuery(ctx);
-    const items = listReposVisibleTo(ctx.app.db, ctx.auth.user, query);
-    return json(paged(items, query.limit, (r) => r.id));
+    const items = timePhase(ctx.request, "repos", () => listReposVisibleTo(ctx.app.db, ctx.auth.user, query));
+    return timePhase(ctx.request, "render", () => json(paged(items, query.limit, (r) => r.id)));
   });
 
   router.add("POST", "/api/v1/repos", async (ctx) => {
@@ -2345,13 +2440,16 @@ export function apiRoutes(router: Router<Handler>): void {
 
   // Following an outside upstream (#3442): an admin reads, sets and checks.
   router.add("GET", "/api/v1/repos/:owner/:name/upstream", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireScope(ctx, "ro");
     if (denied) return denied;
-    const repo = loadRepo(ctx);
-    if (!repo) return notFound();
-    if (!canAdmin(ctx.app.db, repo, ctx.auth.user)) return notFound();
-    const follow = getFollow(ctx.app.db, repo.id);
-    return json({ following: follow === undefined ? null : followJson(follow) });
+    const read = timePhase(ctx.request, "upstream", () => {
+      const repo = loadRepo(ctx);
+      if (!repo || !canAdmin(ctx.app.db, repo, ctx.auth.user)) return undefined;
+      return getFollow(ctx.app.db, repo.id) ?? null;
+    });
+    if (read === undefined) return notFound();
+    return timePhase(ctx.request, "render", () => json({ following: read === null ? null : followJson(read) }));
   });
 
   router.add("PUT", "/api/v1/repos/:owner/:name/upstream", async (ctx) => {
@@ -2416,7 +2514,7 @@ export function apiRoutes(router: Router<Handler>): void {
       if (ctx.auth.user?.kind === "agent" || !canAdmin(ctx.app.db, repo, ctx.auth.user))
         return respondAccess("not_found", 422);
       if (getProvenance(ctx.app.db, repo.id) === undefined)
-        return apiError("no_provenance", 422, "this repository was not migrated here");
+        return apiError("no_provenance", 422, FAMILY_WORDS.no_provenance);
     }
     const updated = await updateRepoSettings(ctx.app, ctx.auth.user, repo, {
       ...(input.visibility === "public" || input.visibility === "private"
@@ -2474,21 +2572,30 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/events", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     // The outbox, as this reader is meant to see it: a webhook's URL and an
     // app's variable names are the admins', not every reader's.
-    return json(
-      listEvents(ctx.app.db, { repoId: repo.id }).filter(
-        audienceFilter(ctx.app.db, ctx.auth.user),
-      ).map(eventForReader(ctx.app.db, ctx.auth.user)),
+    const q = ctx.url.searchParams;
+    const limit = eventsLimit(q.get("limit"));
+    if (limit === undefined)
+      return apiError("invalid_limit", 422, `limit is a whole number from 1 to ${EVENTS_LIMIT_MAX}`);
+    const cursor = q.get("cursor");
+    if (cursor !== null && !validEventsCursor(cursor))
+      return apiError("invalid_cursor", 422, "cursor is the next_cursor of a page before");
+    const page = timePhase(ctx.request, "events", () =>
+      eventsPage(ctx.app.db, repo.id, ctx.auth.user, limit, cursor ?? undefined),
     );
+    return timePhase(ctx.request, "render", () => json(page));
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/forks", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    return json(visibleForks(ctx.app.db, repo.id, ctx.auth.user));
+    const forks = timePhase(ctx.request, "forks", () => visibleForks(ctx.app.db, repo.id, ctx.auth.user));
+    return timePhase(ctx.request, "render", () => json(forks));
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/forks", async (ctx) => {
@@ -2591,7 +2698,7 @@ export function apiRoutes(router: Router<Handler>): void {
       const took = await takeForgeCode(ctx.app, ctx.auth.user, repo);
       if (!took.ok)
         return took.error === "not_following"
-          ? apiError("not_following", 404, "this repository follows nothing across forges")
+          ? apiError("not_following", 404, FAMILY_WORDS.not_following)
           : respondAccess(took.error, 403);
       return json({ ...took.value, ...takeForgeWords(took.value) });
     },
@@ -2608,7 +2715,7 @@ export function apiRoutes(router: Router<Handler>): void {
       const cut = await severForge(ctx.app, ctx.auth.user, repo);
       if (!cut.ok)
         return cut.error === "not_following"
-          ? apiError("not_following", 404, "this repository follows nothing across forges")
+          ? apiError("not_following", 404, FAMILY_WORDS.not_following)
           : respondAccess(cut.error, 403);
       return json({ severedAt: cut.value });
     },
@@ -2672,7 +2779,7 @@ export function apiRoutes(router: Router<Handler>): void {
         if (e === "no_parent_forge")
           return apiError("no_parent_forge", 404, "this repository has no parent forge to propose to");
         if (e === "nothing_to_propose")
-          return apiError("nothing_to_propose", 409, "nothing here is ahead of the parent forge");
+          return apiError("nothing_to_propose", 409, FAMILY_WORDS.nothing_to_propose);
         if (typeof e === "string") return respondAccess(e, 403);
         return e.kind === "unreachable"
           ? apiError("parent_unreachable", 502, "parent unreachable")
@@ -2742,21 +2849,34 @@ export function apiRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
+    const q = ctx.url.searchParams;
+    const limit = eventsLimit(q.get("limit") ?? undefined);
+    if (limit === undefined)
+      return apiError("invalid_limit", 422, "limit is a whole number from 1 to 200");
+    const cursor = q.get("cursor");
+    if (cursor !== null && (cursor === "" || cursor.length > 255))
+      return apiError("invalid_cursor", 422, "cursor is the next_cursor of a page before");
     const listed = await timePhaseAsync(ctx.request, "git", () =>
       listBranches(dirOf(ctx, repo), repo.defaultBranch),
     );
-    if (!listed.ok) return timePhase(ctx.request, "render", () => json([]));
-    return timePhase(ctx.request, "render", () =>
-      json(
-        listed.value.branches.map((b) => ({
+    const rows = listed.ok
+      ? listed.value.branches.map((b) => ({
           name: b.name,
           oid: b.oid,
           isDefault: b.isDefault,
           ahead: b.ahead,
           behind: b.behind,
           protected: b.isDefault && repo.protectDefault,
-        })),
-      ),
+        }))
+      : [];
+    // The cursor is the name of the last branch of the page before.
+    const start = cursor === null ? 0 : rows.findIndex((r) => r.name === cursor) + 1;
+    if (start === 0 && cursor !== null)
+      return apiError("invalid_cursor", 422, "cursor is the next_cursor of a page before");
+    const items = rows.slice(start, start + limit);
+    const more = start + limit < rows.length;
+    return timePhase(ctx.request, "render", () =>
+      json({ items, next_cursor: more ? items[items.length - 1]!.name : null }),
     );
   });
 
@@ -2857,16 +2977,22 @@ export function apiRoutes(router: Router<Handler>): void {
   // The default branch's check covering a full commit id: what a release
   // waits on before it builds (#2794, #3966). Never cached: `pending` turns.
   router.add("GET", "/api/v1/repos/:owner/:name/commits/:oid/check", async (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const found = await checkOfCommit(ctx.app, ctx.auth.user, repo, ctx.params.oid ?? "");
+    const found = await timePhaseAsync(ctx.request, "check", () =>
+      checkOfCommit(ctx.app, ctx.auth.user, repo, ctx.params.oid ?? ""),
+    );
     if (!found.ok) return notFound();
-    return json(found.value, 200, { "cache-control": "no-store" });
+    return timePhase(ctx.request, "render", () =>
+      json(found.value, 200, { "cache-control": "no-store" }),
+    );
   });
 
   // The path is optional: no path lists the root tree; a directory lists its
   // entries; a file returns its content (utf-8, or base64 for binary).
   const contentsHandler = async (ctx: Ctx): Promise<Response> => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const dir = dirOf(ctx, repo);
@@ -2875,31 +3001,58 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!isSafeRef(ref) || (path !== "" && !isSafeTreePath(path)))
       return notFound();
 
+    // `git` adds up the probe and the read; `render` is encoding and JSON.
+    let gitMs = 0;
+    const git = async <T>(work: () => Promise<T>): Promise<T> => {
+      const started = performance.now();
+      try {
+        return await work();
+      } finally {
+        gitMs += performance.now() - started;
+      }
+    };
+    const done = (response: Response, since: number): Response => {
+      notePhase(ctx.request, "git", gitMs);
+      notePhase(ctx.request, "render", performance.now() - since);
+      return response;
+    };
+
     const spec = path === "" ? ref : `${ref}:${path}`;
-    const type = await runGit(["cat-file", "-t", spec], { cwd: dir });
+    const type = await git(() => runGit(["cat-file", "-t", spec], { cwd: dir }));
     // A ref (no path) or a directory resolves to a tree → list it.
     if (path === "" || (type.ok && type.value === "tree")) {
-      const tree = await listTree(dir, ref, path);
-      if (!tree.ok) return notFound();
-      return json({ type: "dir", ref, path, entries: tree.value });
+      const tree = await git(() => listTree(dir, ref, path));
+      if (!tree.ok) {
+        notePhase(ctx.request, "git", gitMs);
+        return notFound();
+      }
+      const rendering = performance.now();
+      return done(json({ type: "dir", ref, path, entries: tree.value }), rendering);
     }
-    const blob = await blobForRender(dir, ref, path, 5_000_000);
-    if (blob.kind === "missing") return notFound();
+    const blob = await git(() => blobForRender(dir, ref, path, 5_000_000));
+    if (blob.kind === "missing") {
+      notePhase(ctx.request, "git", gitMs);
+      return notFound();
+    }
+    const rendering = performance.now();
     if (blob.kind === "too_large")
-      return json({ type: "file", tooLarge: true, size: blob.size }, 413);
+      return done(json({ type: "file", tooLarge: true, size: blob.size }, 413), rendering);
     const encoding = blob.kind === "binary" ? "base64" : "utf-8";
     const content =
       blob.kind === "binary"
         ? Buffer.from(blob.body).toString("base64")
         : new TextDecoder().decode(blob.body);
-    return json({
-      type: "file",
-      ref,
-      path,
-      size: blob.size,
-      encoding,
-      content,
-    });
+    return done(
+      json({
+        type: "file",
+        ref,
+        path,
+        size: blob.size,
+        encoding,
+        content,
+      }),
+      rendering,
+    );
   };
   router.add("GET", "/api/v1/repos/:owner/:name/contents", contentsHandler);
   router.add(
@@ -2937,8 +3090,7 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!committed.ok) {
       if (typeof committed.error === "string")
         return respondAccess(committed.error, 422);
-      const kind = committed.error.kind;
-      return json({ error: kind }, kind === "branch_moved" ? 409 : 422);
+      return editFailure(committed.error);
     }
     return json(committed.value, 201);
   });
@@ -3003,9 +3155,11 @@ export function apiRoutes(router: Router<Handler>): void {
   // ── labels ───────────────────────────────────────────────────────────
 
   router.add("GET", "/api/v1/repos/:owner/:name/labels", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    return json(listLabels(ctx.app.db, repo.id));
+    const labels = timePhase(ctx.request, "labels", () => listLabels(ctx.app.db, repo.id));
+    return timePhase(ctx.request, "render", () => json(labels));
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/labels", async (ctx) => {
@@ -3070,9 +3224,11 @@ export function apiRoutes(router: Router<Handler>): void {
   // Name up to two crew teams on an issue: the pull that closes it is
   // reviewed by each (`core/issue_teams.ts`).
   router.add("GET", "/api/v1/repos/:owner/:name/issues/:number/teams", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const found = loadIssue(ctx);
     if ("error" in found) return found.error;
-    return json({ teams: teamsOfIssue(ctx.app.db, found.issue.id) });
+    const teams = timePhase(ctx.request, "teams", () => teamsOfIssue(ctx.app.db, found.issue.id));
+    return timePhase(ctx.request, "render", () => json({ teams }));
   });
   router.add("PUT", "/api/v1/repos/:owner/:name/issues/:number/teams", async (ctx) => {
     const denied = requireScope(ctx, "rw");
@@ -3184,15 +3340,18 @@ export function apiRoutes(router: Router<Handler>): void {
   // Reading the words is a writer's act, so a read-only token — the one an
   // app process holds for its owner — cannot fetch them.
   router.add("GET", "/api/v1/repos/:owner/:name/reports", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireScope(ctx, "rw");
     if (denied) return denied;
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const waiting = waitingReports(ctx.app, ctx.auth.user, repo);
+    const waiting = timePhase(ctx.request, "reports", () =>
+      waitingReports(ctx.app, ctx.auth.user, repo),
+    );
     if (!waiting.ok) return respondAccess(waiting.error, 403);
-    return json({
-      items: waiting.value.map((r) => ({ ...r, from: "outside" })),
-    });
+    return timePhase(ctx.request, "render", () =>
+      json({ items: waiting.value.map((r) => ({ ...r, from: "outside" })) }),
+    );
   });
 
   router.add(
@@ -3214,7 +3373,7 @@ export function apiRoutes(router: Router<Handler>): void {
       );
       if (!accepted.ok)
         return accepted.error === "decided"
-          ? apiError("decided", 409, "this report was already decided")
+          ? apiError("decided", 409, REPORT_ALREADY_DECIDED)
           : originAware(accepted.error);
       return json(withLabels(ctx, accepted.value), 201);
     },
@@ -3236,7 +3395,7 @@ export function apiRoutes(router: Router<Handler>): void {
       );
       if (!dismissed.ok)
         return dismissed.error === "decided"
-          ? apiError("decided", 409, "this report was already decided")
+          ? apiError("decided", 409, REPORT_ALREADY_DECIDED)
           : respondAccess(dismissed.error, 403);
       return json({ id: ctx.params.id, state: "dismissed" });
     },
@@ -3286,6 +3445,7 @@ export function apiRoutes(router: Router<Handler>): void {
   // A thread, a page at a time: oldest first, `next` is the `after` of the
   // following page (#4150). A pull's number answers the same.
   router.add("GET", "/api/v1/repos/:owner/:name/issues/:number/comments", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const found = loadConversation(ctx);
     if ("error" in found) return found.error;
     const rawLimit = ctx.url.searchParams.get("limit");
@@ -3295,15 +3455,19 @@ export function apiRoutes(router: Router<Handler>): void {
     const after = ctx.url.searchParams.get("after");
     if (after !== null && !/^[A-Za-z0-9_-]{1,64}$/.test(after))
       return apiError("invalid_after", 422, "after is a comment id");
-    const rows = listComments(ctx.app.db, found.issue.id, {
-      limit: limit + 1,
-      ...(after === null ? {} : { after }),
+    const { rows, page } = timePhase(ctx.request, "comments", () => {
+      const read = listComments(ctx.app.db, found.issue.id, {
+        limit: limit + 1,
+        ...(after === null ? {} : { after }),
+      });
+      return { rows: read, page: read.slice(0, limit) };
     });
-    const page = rows.slice(0, limit);
-    return json({
-      comments: readerMarked(ctx, found.repo.id, page),
-      next: rows.length > limit ? page[page.length - 1]!.id : null,
-    });
+    return timePhase(ctx.request, "render", () =>
+      json({
+        comments: readerMarked(ctx, found.repo.id, page),
+        next: rows.length > limit ? page[page.length - 1]!.id : null,
+      }),
+    );
   });
 
   // What an issue waits for, and what waits for it.
@@ -3326,9 +3490,12 @@ export function apiRoutes(router: Router<Handler>): void {
     "GET",
     "/api/v1/repos/:owner/:name/issues/:number/dependencies",
     (ctx) => {
+      notePhase(ctx.request, "session", takeSessionTime(ctx.request));
       const found = loadIssue(ctx);
       if ("error" in found) return found.error;
-      const deps = dependenciesOf(ctx.app.db, found.issue.id);
+      const deps = timePhase(ctx.request, "dependencies", () =>
+        dependenciesOf(ctx.app.db, found.issue.id),
+      );
       const seen = (i: Issue) =>
         mayView(ctx.app.db, found.repo, i, ctx.auth.user);
       const brief = (i: Issue) => ({
@@ -3337,10 +3504,12 @@ export function apiRoutes(router: Router<Handler>): void {
         state: i.state,
         ...(i.closeReason === null ? {} : { closeReason: i.closeReason }),
       });
-      return json({
-        blockedBy: deps.blockedBy.filter(seen).map(brief),
-        blocks: deps.blocks.filter(seen).map(brief),
-      });
+      return timePhase(ctx.request, "render", () =>
+        json({
+          blockedBy: deps.blockedBy.filter(seen).map(brief),
+          blocks: deps.blocks.filter(seen).map(brief),
+        }),
+      );
     },
   );
   router.add(
@@ -3385,14 +3554,16 @@ export function apiRoutes(router: Router<Handler>): void {
   // Which stage of the one flow each open issue is in, and what went live in
   // the last day (src/flow).
   router.add("GET", "/api/v1/repos/:owner/:name/flow", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    return json(
+    const flow = timePhase(ctx.request, "flow", () =>
       readFlow(ctx.app.db, repo, {
         now: new Date(),
         scope: sealedScope(ctx.app.db, repo, ctx.auth.user),
       }),
     );
+    return timePhase(ctx.request, "render", () => json(flow));
   });
   // A plan, all or nothing: the same action as the MCP `plan` tool, so the
   // same items and the same refusals (docs/PLANNING.md).
@@ -3504,6 +3675,53 @@ export function apiRoutes(router: Router<Handler>): void {
       return timePhase(ctx.request, "render", () => json(data));
     },
   );
+  // Waves as data (#5363): what shipped, newest first, read through the same
+  // functions as the page and the feed. A file that is not a wave is left out.
+  router.add("GET", "/api/v1/repos/:owner/:name/waves", async (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const entries = await timePhaseAsync(ctx.request, "waves", () =>
+      readWaves(repoDir(ctx.app.reposRoot, repo.ownerName, repo.name), repo.defaultBranch),
+    );
+    return timePhase(ctx.request, "render", () =>
+      json({
+        items: entries.flatMap((e) =>
+          e.ok ? [{ version: e.wave.version, date: e.wave.date, headline: e.wave.headline }] : [],
+        ),
+        next_cursor: null,
+      }),
+    );
+  });
+  router.add("GET", "/api/v1/repos/:owner/:name/waves/:version", async (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const entry = await timePhaseAsync(ctx.request, "wave", () =>
+      readWave(
+        repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
+        repo.defaultBranch,
+        ctx.params.version ?? "",
+      ),
+    );
+    if (!entry?.ok) return notFound();
+    const w = entry.wave;
+    // A pull line is `#12 Title` linking to the pull; the number is whichever
+    // of the two names it, or null.
+    const number = (p: { title: string; url: string }): number | null => {
+      const m = /^#(\d+)\b/.exec(p.title) ?? /\/pulls\/(\d+)\/?$/.exec(p.url);
+      return m ? Number(m[1]) : null;
+    };
+    return timePhase(ctx.request, "render", () =>
+      json({
+        version: w.version,
+        date: w.date,
+        headline: w.headline,
+        highlights: w.highlights,
+        pulls: w.pulls.map((p) => ({ number: number(p), title: p.title, url: p.url })),
+      }),
+    );
+  });
   // Keep a thought exactly as typed (#1658): append-only, never edited.
   router.add("POST", "/api/v1/thoughts", async (ctx) => {
     const denied = requireScope(ctx, "rw");
@@ -3542,7 +3760,7 @@ export function apiRoutes(router: Router<Handler>): void {
           ? notFound()
           : set.error === "unauthorized"
             ? unauthorized()
-            : apiError("forbidden", 403, "only a person watches a milestone");
+            : apiError("forbidden", 403, MILESTONE_WATCH_PERSON_ONLY);
       },
     );
   // One action on a whole limb (#733): defer, resume, or close as not
@@ -3596,28 +3814,28 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/repos/:owner/:name/map", async (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const graph = repoGraph(ctx.app.db, repo.id, {
-      ...sealedScope(ctx.app.db, repo, ctx.auth.user),
-    });
-    const pillars = pillarView(ctx.app.db, repo);
-    return json(
-      mapJson(
-        repo,
-        graph,
-        marksFor(
-          ctx.app.db,
-          repo.id,
-          graph,
-          listActiveRuns(ctx.app.db, [repo.id]),
-        ),
-        pillars,
-        askToLiveFor(ctx.app, repo, pillars, ctx.auth.user),
-      ),
+    const { request } = ctx;
+    notePhase(request, "session", takeSessionTime(request));
+    const graph = timePhase(request, "graph", () =>
+      repoGraph(ctx.app.db, repo.id, {
+        ...sealedScope(ctx.app.db, repo, ctx.auth.user),
+      }),
+    );
+    const marks = timePhase(request, "marks", () =>
+      marksFor(ctx.app.db, repo.id, graph, listActiveRuns(ctx.app.db, [repo.id])),
+    );
+    const pillars = timePhase(request, "pillars", () => pillarView(ctx.app.db, repo));
+    const ask = timePhase(request, "asktolive", () =>
+      askToLiveFor(ctx.app, repo, pillars, ctx.auth.user),
+    );
+    return timePhase(request, "render", () =>
+      json(mapJson(repo, graph, marks, pillars, ask)),
     );
   });
   // What people asked of the crew in the repositories the caller can write —
   // by default what has nothing merged yet, oldest first — and what became of each (core/asked.ts, the /asked page).
   router.add("GET", "/api/v1/asked", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireScope(ctx, "ro");
     if (denied) return denied;
     const raw = ctx.url.searchParams.get("show");
@@ -3626,28 +3844,38 @@ export function apiRoutes(router: Router<Handler>): void {
     const order = ctx.url.searchParams.get("order");
     if (order !== null && !isAskedOrder(order))
       return apiError("invalid_order", 422, "order is oldest or newest");
-    const repos = askedRepos(ctx.app.db, ctx.auth.user, ctx.url.searchParams.get("repo"));
-    return json({
-      asked: askedIn(ctx.app.db, repos, {
-        show: raw ?? "unshipped",
-        order: order ?? "oldest",
-      }).map(askedJson),
-      thoughts: ctx.auth.user ? thoughtStream(ctx.app.db, ctx.auth.user).map(streamJson) : [],
+    const read = timePhase(ctx.request, "asked", () => {
+      const repos = askedRepos(ctx.app.db, ctx.auth.user, ctx.url.searchParams.get("repo"));
+      return {
+        asked: askedIn(ctx.app.db, repos, {
+          show: raw ?? "unshipped",
+          order: order ?? "oldest",
+        }),
+        thoughts: ctx.auth.user ? thoughtStream(ctx.app.db, ctx.auth.user) : [],
+      };
     });
+    return timePhase(ctx.request, "render", () =>
+      json({ asked: read.asked.map(askedJson), thoughts: read.thoughts.map(streamJson) }),
+    );
   });
   // Every repository the caller can see, one entry each: the global map.
-  router.add("GET", "/api/v1/map", (ctx) =>
-    json(globalMapJson(ctx.app, ctx.auth.user)),
-  );
+  router.add("GET", "/api/v1/map", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const graph = timePhase(ctx.request, "graph", () =>
+      globalMapJson(ctx.app, ctx.auth.user),
+    );
+    return timePhase(ctx.request, "render", () => json(graph));
+  });
 
   // The decision ledger: what the crew's decider answered and what came of
   // it, newest first, with the week summed up per kind.
   router.add("GET", "/api/v1/repos/:owner/:name/decisions", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const kind = ctx.url.searchParams.get("kind");
     const week = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString();
-    return json({
+    const read = timePhase(ctx.request, "decisions", () => ({
       decisions: listDecisions(ctx.app.db, repo.id, {
         kind:
           kind === "next" ||
@@ -3665,7 +3893,8 @@ export function apiRoutes(router: Router<Handler>): void {
         // A hand-over's state carries its tapper's private preferences.
         .map((d) => forReader(d, ctx.auth.user)),
       week: decisionStats(ctx.app.db, repo.id, week),
-    });
+    }));
+    return timePhase(ctx.request, "render", () => json(read));
   });
 
   router.add(
@@ -4156,27 +4385,33 @@ export function apiRoutes(router: Router<Handler>): void {
     "GET",
     "/api/v1/repos/:owner/:name/pulls/:number/reviews",
     async (ctx) => {
+      notePhase(ctx.request, "session", takeSessionTime(ctx.request));
       const found = loadPull(ctx);
       if ("error" in found) return found.error;
-      const { diff } = await pullDiff(
-        await pullDirOf(ctx, found.repo, found.pull),
-        found.pull,
-      );
-      return json(
-        withOutdated(
+      const marked = await timePhaseAsync(ctx.request, "reviews", async () => {
+        const { diff } = await pullDiff(
+          await pullDirOf(ctx, found.repo, found.pull),
+          found.pull,
+        );
+        return withOutdated(
           readerMarked(
             ctx,
             found.repo.id,
             listReviewComments(ctx.app.db, found.pull.id),
           ),
           diff,
-        ).map(
-          // The thread this comment belongs to, so a client can resolve it
-          // without reassembling the key itself.
-          (comment) => ({
-            ...comment,
-            anchor: anchorId(comment.path, comment.side, comment.line),
-          }),
+        );
+      });
+      return timePhase(ctx.request, "render", () =>
+        json(
+          marked.map(
+            // The thread this comment belongs to, so a client can resolve it
+            // without reassembling the key itself.
+            (comment) => ({
+              ...comment,
+              anchor: anchorId(comment.path, comment.side, comment.line),
+            }),
+          ),
         ),
       );
     },
@@ -4228,11 +4463,13 @@ export function apiRoutes(router: Router<Handler>): void {
     "GET",
     "/api/v1/repos/:owner/:name/pulls/:number/review-states",
     (ctx) => {
+      notePhase(ctx.request, "session", takeSessionTime(ctx.request));
       const found = loadPull(ctx);
       if ("error" in found) return found.error;
-      return json(
+      const reviews = timePhase(ctx.request, "reviews", () =>
         readerMarked(ctx, found.repo.id, listReviews(ctx.app.db, found.pull.id)),
       );
+      return timePhase(ctx.request, "render", () => json(reviews));
     },
   );
 
@@ -4316,7 +4553,7 @@ export function apiRoutes(router: Router<Handler>): void {
       if (!voted.ok) {
         if (voted.error === "forbidden" || voted.error === "unauthorized")
           return respondAccess(voted.error, 422);
-        return apiError(voted.error, 422, "that vote could not be recorded");
+        return apiError(voted.error, 422, VOTE_NOT_RECORDED);
       }
       return json({ answer, closed: voted.value.closed }, 201);
     },
@@ -4368,9 +4605,11 @@ export function apiRoutes(router: Router<Handler>): void {
     "GET",
     "/api/v1/repos/:owner/:name/pulls/:number/threads",
     (ctx) => {
+      notePhase(ctx.request, "session", takeSessionTime(ctx.request));
       const found = loadPull(ctx);
       if ("error" in found) return found.error;
-      return json(pullThreads(ctx.app, found.pull));
+      const threads = timePhase(ctx.request, "threads", () => pullThreads(ctx.app, found.pull));
+      return timePhase(ctx.request, "render", () => json(threads));
     },
   );
 
@@ -4444,11 +4683,13 @@ export function apiRoutes(router: Router<Handler>): void {
   // ── webhooks — admin-scoped, since a webhook exfiltrates repo events ──
 
   router.add("GET", "/api/v1/repos/:owner/:name/hooks", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireScope(ctx, "admin");
     if (denied) return denied;
     const repo = loadRepo(ctx);
     if (!repo || !canAdmin(ctx.app.db, repo, ctx.auth.user)) return notFound();
-    return json(listWebhooks(ctx.app.db, repo.id));
+    const hooks = timePhase(ctx.request, "hooks", () => listWebhooks(ctx.app.db, repo.id));
+    return timePhase(ctx.request, "render", () => json(hooks));
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/hooks", async (ctx) => {
@@ -4491,9 +4732,11 @@ export function apiRoutes(router: Router<Handler>): void {
     oauthCallbackUri(ctx.url, ctx.app.config.host);
 
   router.add("GET", "/api/v1/user/origins", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireAccount(ctx, { adminToken: true });
     if (denied) return denied;
-    return json(listUserOrigins(ctx.app, ctx.auth.user!).map(originJson));
+    const origins = timePhase(ctx.request, "origins", () => listUserOrigins(ctx.app, ctx.auth.user!).map(originJson));
+    return timePhase(ctx.request, "render", () => json(origins));
   });
 
   router.add("POST", "/api/v1/user/origins", async (ctx) => {
@@ -4552,10 +4795,9 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/user/origins/oauth/:id", async (ctx) => {
     const denied = requireAccount(ctx, { adminToken: true });
     if (denied) return denied;
-    const status = await pollOAuthConnect(
-      ctx.app,
-      ctx.auth.user,
-      ctx.params.id!,
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const status = await timePhaseAsync(ctx.request, "origin", () =>
+      pollOAuthConnect(ctx.app, ctx.auth.user, ctx.params.id!),
     );
     if (!status.ok) return respondAccess(status.error, 404);
     return json(status.value);
@@ -4565,9 +4807,11 @@ export function apiRoutes(router: Router<Handler>): void {
   // this is a per-user, per-host registration; GitHub can fall back to one
   // the operator configured for the whole forge.
   router.add("GET", "/api/v1/user/origin-apps", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireAccount(ctx, { adminToken: true });
     if (denied) return denied;
-    return json(listOriginApps(ctx.app, ctx.auth.user!));
+    const apps = timePhase(ctx.request, "apps", () => listOriginApps(ctx.app, ctx.auth.user!));
+    return timePhase(ctx.request, "render", () => json(apps));
   });
 
   router.add("POST", "/api/v1/user/origin-apps", async (ctx) => {
@@ -4628,7 +4872,7 @@ export function apiRoutes(router: Router<Handler>): void {
     );
     if (!listed.ok)
       return listed.error === "unreachable"
-        ? apiError("origin_unreachable", 502, "the origin could not be reached")
+        ? apiError("origin_unreachable", 502, ORIGIN_UNREACHABLE)
         : respondAccess(listed.error, 404);
     return timePhase(ctx.request, "render", () =>
       json(listed.value.map((row) => remoteRepoJson(ctx, row))),
@@ -4644,6 +4888,7 @@ export function apiRoutes(router: Router<Handler>): void {
   // request spends their credential on another forge.
 
   const browse = (ctx: Ctx): RepoSource | Response => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireAccount(ctx, { adminToken: true });
     if (denied) return denied;
     const source = sourceFor(ctx.app, ctx.auth.user, {
@@ -4661,8 +4906,10 @@ export function apiRoutes(router: Router<Handler>): void {
   ): Promise<Response> => {
     const source = browse(ctx);
     if (source instanceof Response) return source;
-    const result = await run(source);
-    return result.ok ? shape(result.value) : sourceFailure(result.error);
+    const result = await timePhaseAsync(ctx.request, "origin", () => run(source));
+    return result.ok
+      ? timePhase(ctx.request, "render", () => shape(result.value))
+      : sourceFailure(result.error);
   };
 
   const BROWSE = "/api/v1/user/origins/:id/browse/:owner/:name";
@@ -4671,19 +4918,20 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", BROWSE, async (ctx) => {
     const source = browse(ctx);
     if (source instanceof Response) return source;
-    const facts = await source.describe();
+    const facts = await timePhaseAsync(ctx.request, "origin", () => source.describe());
     if (!facts.ok) return sourceFailure(facts.error);
-    const [branches, readme] = await Promise.all([
-      source.branches(),
-      source.readme(facts.value.defaultBranch),
-    ]);
-    return json({
-      ...whereJson(source),
-      capabilities: source.capabilities,
-      facts: facts.value,
-      branches: branches.ok ? branches.value : [],
-      readme: readme.ok ? readme.value : null,
-    });
+    const [branches, readme] = await timePhaseAsync(ctx.request, "origin", () =>
+      Promise.all([source.branches(), source.readme(facts.value.defaultBranch)]),
+    );
+    return timePhase(ctx.request, "render", () =>
+      json({
+        ...whereJson(source),
+        capabilities: source.capabilities,
+        facts: facts.value,
+        branches: branches.ok ? branches.value : [],
+        readme: readme.ok ? readme.value : null,
+      }),
+    );
   });
 
   router.add("GET", `${BROWSE}/branches`, (ctx) =>
@@ -4743,14 +4991,16 @@ export function apiRoutes(router: Router<Handler>): void {
     // a live source that question is a request to another forge.
     let ref = ctx.url.searchParams.get("ref") ?? "";
     if (ref === "") {
-      const facts = await source.describe();
+      const facts = await timePhaseAsync(ctx.request, "origin", () => source.describe());
       if (!facts.ok) return sourceFailure(facts.error);
       ref = facts.value.defaultBranch || "HEAD";
     }
     const cursor = ctx.url.searchParams.get("cursor") ?? undefined;
-    const page = await source.commits(ref, cursor);
+    const page = await timePhaseAsync(ctx.request, "origin", () => source.commits(ref, cursor));
     if (!page.ok) return sourceFailure(page.error);
-    return json({ items: page.value.items, next_cursor: page.value.next });
+    return timePhase(ctx.request, "render", () =>
+      json({ items: page.value.items, next_cursor: page.value.next }),
+    );
   });
 
   router.add("GET", `${BROWSE}/commits/:oid`, (ctx) => {
@@ -4886,16 +5136,16 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/user/origins/:id/mirror/:job", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireAccount(ctx, { adminToken: true });
     if (denied) return denied;
-    const job = mirrorJobFor(
-      ctx.app,
-      ctx.auth.user,
-      ctx.params.id!,
-      ctx.params.job!,
+    const job = timePhase(ctx.request, "job", () =>
+      mirrorJobFor(ctx.app, ctx.auth.user, ctx.params.id!, ctx.params.job!),
     );
     if (!job.ok) return respondAccess(job.error, 404);
-    return json({ job: jobJson(ctx, job.value) });
+    return timePhase(ctx.request, "render", () =>
+      json({ job: jobJson(ctx, job.value) }),
+    );
   });
 
   // The same job as a live stream, so a mirror can be watched rather than
@@ -4980,23 +5230,22 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/fleet/ops", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     if (!ctx.auth.user) return unauthorized();
     const q = ctx.url.searchParams;
     const limit = pageLimit(q.has("limit") ? Number(q.get("limit")) : undefined);
-    const ops = listFleetOps(
-      ctx.app,
-      ctx.auth.user,
-      limit,
-      q.get("cursor") ?? undefined,
+    const ops = timePhase(ctx.request, "ops", () =>
+      listFleetOps(ctx.app, ctx.auth.user!, limit, q.get("cursor") ?? undefined),
     );
     if (!ops.ok) return respondFleet(ops.error);
-    return json(paged(ops.value, limit, (op) => op.id));
+    return timePhase(ctx.request, "render", () => json(paged(ops.value, limit, (op) => op.id)));
   });
 
   router.add("GET", "/api/v1/fleet/ops/:id", (ctx) => {
-    const op = getFleetOp(ctx.app, ctx.auth.user, ctx.params.id!);
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const op = timePhase(ctx.request, "op", () => getFleetOp(ctx.app, ctx.auth.user, ctx.params.id!));
     if (!op.ok) return respondFleet(op.error);
-    return json(op.value);
+    return timePhase(ctx.request, "render", () => json(op.value));
   });
 
   router.add("POST", "/api/v1/fleet/ops/:id/undo", async (ctx) => {
@@ -5013,35 +5262,44 @@ export function apiRoutes(router: Router<Handler>): void {
   // clone needs: both URLs and where the repo came from.
   router.add("GET", "/api/v1/user/pins", (ctx) => {
     if (!ctx.auth.user) return unauthorized();
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const window = keyedWindow(ctx);
+    if (window instanceof Response) return window;
     const host = ctx.app.config.host ?? ctx.url.hostname;
     const sshPort = ctx.app.config.sshPort;
-    const pins = listPinned(ctx.app, ctx.auth.user);
-    // One query for every pinned repo, not one per pin.
-    const repos = getReposByIds(
-      ctx.app.db,
-      pins.map((pin) => pin.repoId),
-    );
-    const items = pins.flatMap((pin) => {
-      const repo = repos.get(pin.repoId);
-      if (!repo) return [];
-      const path = `${encodeURIComponent(repo.ownerName)}/${encodeURIComponent(repo.name)}`;
-      return [
-        {
-          repoId: repo.id,
-          owner: repo.ownerName,
-          name: repo.name,
-          defaultBranch: repo.defaultBranch,
-          cloneUrl: `${ctx.url.origin}/${path}.git`,
-          sshUrl:
-            sshPort !== undefined && sshPort > 0
-              ? `ssh://git@${host}:${sshPort}/${path}.git`
-              : null,
-          origin: originFacts(repo),
-          pinnedAt: pin.createdAt,
-        },
-      ];
+    const user = ctx.auth.user;
+    const { pins, repos } = timePhase(ctx.request, "pins", () => {
+      const pins = listPinned(ctx.app, user);
+      // One query for every pinned repo, not one per pin.
+      const repos = getReposByIds(
+        ctx.app.db,
+        pins.map((pin) => pin.repoId),
+      );
+      return { pins, repos };
     });
-    return json(items);
+    return timePhase(ctx.request, "render", () => {
+      const items = pins.flatMap((pin) => {
+        const repo = repos.get(pin.repoId);
+        if (!repo) return [];
+        const path = `${encodeURIComponent(repo.ownerName)}/${encodeURIComponent(repo.name)}`;
+        return [
+          {
+            repoId: repo.id,
+            owner: repo.ownerName,
+            name: repo.name,
+            defaultBranch: repo.defaultBranch,
+            cloneUrl: `${ctx.url.origin}/${path}.git`,
+            sshUrl:
+              sshPort !== undefined && sshPort > 0
+                ? `ssh://git@${host}:${sshPort}/${path}.git`
+                : null,
+            origin: originFacts(repo),
+            pinnedAt: pin.createdAt,
+          },
+        ];
+      });
+      return json(keyedPage(items, (p) => `${p.owner}/${p.name}`, window));
+    });
   });
 
   router.add("PUT", "/api/v1/user/pins/:owner/:name", (ctx) => {
@@ -5059,13 +5317,15 @@ export function apiRoutes(router: Router<Handler>): void {
   // How the forge is: anyone may ask (a monitor has no account), a stranger
   // is told little, the release machinery's probe and a site admin the
   // whole of it (`actions/health.ts`).
-  router.add("GET", "/api/v1/health", (ctx) =>
-    json(
+  router.add("GET", "/api/v1/health", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const body = timePhase(ctx.request, "health", () =>
       readHealth(ctx.app, ctx.auth.user, isProbe(ctx.request, ctx.app.config.dataDir)),
-      200,
-      { "cache-control": "no-store", vary: "authorization, cookie, x-forge-probe" },
-    ),
-  );
+    );
+    return timePhase(ctx.request, "render", () =>
+      json(body, 200, { "cache-control": "no-store", vary: "authorization, cookie, x-forge-probe" }),
+    );
+  });
 
   // Open egress connections per app and destination, as Prometheus text
   // (#3719). Repository names are in the labels, so a site admin only.
@@ -5128,7 +5388,7 @@ export function apiRoutes(router: Router<Handler>): void {
         : made.error.kind === "invalid"
         ? apiError("invalid", 422, made.error.message)
         : made.error.kind === "own"
-          ? apiError("own", 409, "this app is already yours")
+          ? apiError("own", 409, APP_ALREADY_YOURS)
           : made.error.kind === "unverified"
             ? apiError("unverified", 403, "prove your email first")
             : made.error.kind === "unauthorized"
@@ -5143,9 +5403,11 @@ export function apiRoutes(router: Router<Handler>): void {
 
   // The front page (#686): what a stranger is shown, for anyone; a site
   // admin also gets the picks, and sets them — pinned in order, hidden.
-  router.add("GET", "/api/v1/front", (ctx) =>
-    json(frontJson(ctx.app, ctx.auth.user)),
-  );
+  router.add("GET", "/api/v1/front", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const front = timePhase(ctx.request, "front", () => frontJson(ctx.app, ctx.auth.user));
+    return timePhase(ctx.request, "render", () => json(front));
+  });
 
   router.add("PUT", "/api/v1/front", async (ctx) => {
     const input = await body(ctx.request);
@@ -5157,7 +5419,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const set = setFront(ctx.app, ctx.auth.user, picks);
     if (!set.ok)
       return set.error.kind === "forbidden"
-        ? apiError("forbidden", 403, "the front page is a site admin's to set")
+        ? apiError("forbidden", 403, ADMIN_WORDS.frontPage)
         : apiError("invalid", 422, set.error.message);
     return json(set.value);
   });
@@ -5196,11 +5458,14 @@ export function apiRoutes(router: Router<Handler>): void {
 
   // What small, medium and large mean: public, and cacheable by ETag.
   router.add("GET", "/api/v1/forges/sizes", (ctx) => {
-    const text = JSON.stringify(sizesView());
-    const etag = weakEtag(text);
-    const headers = { etag, "cache-control": "public, max-age=300" };
-    if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
-    return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const text = timePhase(ctx.request, "sizes", () => JSON.stringify(sizesView()));
+    return timePhase(ctx.request, "render", () => {
+      const etag = weakEtag(text);
+      const headers = { etag, "cache-control": "public, max-age=300" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+      return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+    });
   });
 
   // A forge's children (docs/SPAWN.md): an admin's, planned before made.
@@ -5239,19 +5504,23 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/apps", (ctx) => {
-    const records = listApps(ctx.app.db);
-    const repos = getReposByIds(
-      ctx.app.db,
-      records.map((a) => a.repoId),
-    );
-    const runtime = appsRuntime(ctx.app);
-    const items = [];
-    for (const record of records) {
-      const repo = repos.get(record.repoId);
-      if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) continue;
-      items.push(appJson(ctx, record, repo, runtime));
-    }
-    return json({ items, next_cursor: null });
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const items = timePhase(ctx.request, "apps", () => {
+      const records = listApps(ctx.app.db);
+      const repos = getReposByIds(
+        ctx.app.db,
+        records.map((a) => a.repoId),
+      );
+      const runtime = appsRuntime(ctx.app);
+      const out = [];
+      for (const record of records) {
+        const repo = repos.get(record.repoId);
+        if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) continue;
+        out.push(appJson(ctx, record, repo, runtime));
+      }
+      return out;
+    });
+    return timePhase(ctx.request, "render", () => json({ items, next_cursor: null }));
   });
 
   router.add("POST", "/api/v1/apps", async (ctx) => {
@@ -5381,9 +5650,14 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/migrate/:job", (ctx) => {
-    const found = migrationJobFor(ctx.auth.user, ctx.params.job!);
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const found = timePhase(ctx.request, "job", () =>
+      migrationJobFor(ctx.auth.user, ctx.params.job!),
+    );
     if (!found.ok) return respondAccess(found.error, 404);
-    return json({ job: migrationJson(ctx, found.value) });
+    return timePhase(ctx.request, "render", () =>
+      json({ job: migrationJson(ctx, found.value) }),
+    );
   });
 
   router.add("GET", "/api/v1/migrate/:job/stream", (ctx) => {
@@ -5398,15 +5672,21 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/app", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const view = appView(ctx.app, ctx.auth.user, repo);
-    if (!view.ok) return notFound();
-    const vitals = appVisitors(ctx.app, ctx.auth.user, repo);
-    return json({
-      ...appJson(ctx, view.value.app, repo, appsRuntime(ctx.app)),
-      ...(vitals === undefined ? {} : { vitals }),
+    const read = timePhase(ctx.request, "app", () => {
+      const view = appView(ctx.app, ctx.auth.user, repo);
+      if (!view.ok) return null;
+      return { view: view.value, vitals: appVisitors(ctx.app, ctx.auth.user, repo) };
     });
+    if (!read) return notFound();
+    return timePhase(ctx.request, "render", () =>
+      json({
+        ...appJson(ctx, read.view.app, repo, appsRuntime(ctx.app)),
+        ...(read.vitals === undefined ? {} : { vitals: read.vitals }),
+      }),
+    );
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/app", async (ctx) => {
@@ -5457,11 +5737,13 @@ export function apiRoutes(router: Router<Handler>): void {
   // previews, nothing else. Read and changed by people who can write the
   // repository, never an agent; a change is planned unless dryRun is false.
   router.add("GET", "/api/v1/repos/:owner/:name/app/members", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireScope(ctx, "ro");
     if (denied) return denied;
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    return membersAnswer(readAppMembers(ctx.app, ctx.auth.user, repo));
+    const read = timePhase(ctx.request, "members", () => readAppMembers(ctx.app, ctx.auth.user, repo));
+    return timePhase(ctx.request, "render", () => membersAnswer(read));
   });
 
   router.add("PUT", "/api/v1/repos/:owner/:name/app/members", async (ctx) => {
@@ -5485,13 +5767,14 @@ export function apiRoutes(router: Router<Handler>): void {
   // and admin over the repository, like the environment below; `:host` is
   // one path segment, dots included.
   router.add("GET", "/api/v1/repos/:owner/:name/app/domains", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireScope(ctx, "admin");
     if (denied) return denied;
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const listed = listAppDomains(ctx.app, ctx.auth.user, repo);
+    const listed = timePhase(ctx.request, "domains", () => listAppDomains(ctx.app, ctx.auth.user, repo));
     if (!listed.ok) return respondAccess(listed.error, 422);
-    return json({ items: listed.value, next_cursor: null });
+    return timePhase(ctx.request, "render", () => json({ items: listed.value, next_cursor: null }));
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/app/domains", async (ctx) => {
@@ -5597,13 +5880,14 @@ export function apiRoutes(router: Router<Handler>): void {
   // (docs/APPS.md, "Prompts from Instagram"). Admin scope and admin over
   // the repository; the token goes in once and never comes back out.
   router.add("GET", "/api/v1/repos/:owner/:name/prompts", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireScope(ctx, "admin");
     if (denied) return denied;
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const listed = listPromptSources(ctx.app, ctx.auth.user, repo);
+    const listed = timePhase(ctx.request, "prompts", () => listPromptSources(ctx.app, ctx.auth.user, repo));
     if (!listed.ok) return respondAccess(listed.error, 422);
-    return json({ items: listed.value, next_cursor: null });
+    return timePhase(ctx.request, "render", () => json({ items: listed.value, next_cursor: null }));
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/prompts", async (ctx) => {
@@ -5660,16 +5944,19 @@ export function apiRoutes(router: Router<Handler>): void {
   // value. `ref` names the owner: an org's name, or a repository's
   // `owner/name`; the forge scope takes none.
   router.add("GET", "/api/v1/secrets/:scope", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireScope(ctx, "admin");
     if (denied) return denied;
-    const listed = listSecrets(
-      ctx.app,
-      ctx.auth.user,
-      ctx.params.scope ?? "",
-      ctx.url.searchParams.get("ref") ?? "",
+    const listed = timePhase(ctx.request, "secrets", () =>
+      listSecrets(
+        ctx.app,
+        ctx.auth.user,
+        ctx.params.scope ?? "",
+        ctx.url.searchParams.get("ref") ?? "",
+      ),
     );
     if (!listed.ok) return respondAccess(listed.error, 422);
-    return json({ items: listed.value, next_cursor: null });
+    return timePhase(ctx.request, "render", () => json({ items: listed.value, next_cursor: null }));
   });
 
   router.add("PUT", "/api/v1/secrets/:scope/:name", async (ctx) => {
@@ -5705,13 +5992,14 @@ export function apiRoutes(router: Router<Handler>): void {
   // The app's environment: names in, names out, and never a value back.
   // `:var`, not `:name` — `:name` is the repository's.
   router.add("GET", "/api/v1/repos/:owner/:name/app/env", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireScope(ctx, "admin");
     if (denied) return denied;
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const listed = listAppEnv(ctx.app, ctx.auth.user, repo);
+    const listed = timePhase(ctx.request, "env", () => listAppEnv(ctx.app, ctx.auth.user, repo));
     if (!listed.ok) return notFound();
-    return json({ items: listed.value, next_cursor: null });
+    return timePhase(ctx.request, "render", () => json({ items: listed.value, next_cursor: null }));
   });
 
   router.add("PUT", "/api/v1/repos/:owner/:name/app/env/:var", async (ctx) => {
@@ -5795,9 +6083,12 @@ export function apiRoutes(router: Router<Handler>): void {
   // The URL to open an environment at. For a private app it carries a
   // grant, so the answer is for the caller alone and is not cached.
   router.add("GET", "/api/v1/repos/:owner/:name/app/:env/open", (ctx) => {
-    const repo = loadRepo(ctx);
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const repo = timePhase(ctx.request, "repo", () => loadRepo(ctx));
     if (!repo) return notFound();
-    const link = openEnvUrl(ctx.app, ctx.auth.user, repo, ctx.params.env ?? "");
+    const link = timePhase(ctx.request, "open", () =>
+      openEnvUrl(ctx.app, ctx.auth.user, repo, ctx.params.env ?? ""),
+    );
     if (!link.ok) return respondAccess(link.error, 422);
     return json({ url: link.value });
   });
@@ -5808,13 +6099,19 @@ export function apiRoutes(router: Router<Handler>): void {
   // What the tokens bought (`actions/returns.ts`): owner facts only, over
   // every repository the viewer holds them for, or `?repo=owner/name`.
   router.add("GET", "/api/v1/returns", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const q = ctx.url.searchParams;
     const raw = q.get("days");
-    const read = readReturns(ctx.app, ctx.auth.user, {
-      repo: q.get("repo"),
-      ...(raw === null ? {} : { days: Number(raw) }),
-    });
-    if (read.ok) return json(read.value, 200, { "cache-control": "private, no-store" });
+    const read = timePhase(ctx.request, "returns", () =>
+      readReturns(ctx.app, ctx.auth.user, {
+        repo: q.get("repo"),
+        ...(raw === null ? {} : { days: Number(raw) }),
+      }),
+    );
+    if (read.ok)
+      return timePhase(ctx.request, "render", () =>
+        json(read.value, 200, { "cache-control": "private, no-store" }),
+      );
     if (read.error === "unauthorized") return unauthorized();
     if (read.error === "bad_days")
       return apiError("invalid_days", 422, `days is a whole number from 1 to ${RETURNS_DAYS.max}`);
@@ -5841,6 +6138,7 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/usage", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const days = usageDays(ctx.url.searchParams.get("days"));
@@ -5850,19 +6148,21 @@ export function apiRoutes(router: Router<Handler>): void {
         422,
         `days is a whole number from 1 to ${USAGE_DAYS_MAX}`,
       );
-    const report = readUsage(ctx.app, ctx.auth.user, repo, days);
+    const report = timePhase(ctx.request, "usage", () => readUsage(ctx.app, ctx.auth.user, repo, days));
     if (!report.ok) return forbidden();
-    return json(report.value);
+    return timePhase(ctx.request, "render", () => json(report.value));
   });
 
   // The fleet graph's numbers (`actions/fleet-graph.ts`): spend and runs
   // per repository by UTC hour (24 h) and day (14 d), for `?repo=owner/name`
   // repeated, or every repository the caller may write that spent lately.
   router.add("GET", "/api/v1/fleet/graph", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     if (!ctx.auth.user) return unauthorized();
     const asked = fleetSelection(ctx.url.searchParams.getAll("repo"));
     if (!asked.ok) return apiError("invalid_selection", 422, asked.error);
-    return json(readFleetGraph(ctx.app, ctx.auth.user, asked.value));
+    const graph = timePhase(ctx.request, "graph", () => readFleetGraph(ctx.app, ctx.auth.user!, asked.value));
+    return timePhase(ctx.request, "render", () => json(graph));
   });
 
   // The address an agent tries first.
@@ -5881,65 +6181,78 @@ export function apiRoutes(router: Router<Handler>): void {
   // What the caller can do on a forge page, as who they are (#604): the
   // manifest every page links to. It differs by caller, so it is never cached.
   router.add("GET", "/api/v1/here", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const path = ctx.url.searchParams.get("path") ?? "/";
-    const found = manifestFor(
-      ctx.app,
-      ctx.auth.user,
-      ctx.auth.via === "token" ? ctx.auth.scope : undefined,
-      ctx.url.origin,
-      path.startsWith("/") ? path : `/${path}`,
+    const found = timePhase(ctx.request, "here", () =>
+      manifestFor(
+        ctx.app,
+        ctx.auth.user,
+        ctx.auth.via === "token" ? ctx.auth.scope : undefined,
+        ctx.url.origin,
+        path.startsWith("/") ? path : `/${path}`,
+      ),
     );
     if (!found.ok) return notFound();
-    return json(found.value, 200, {
-      "cache-control": "no-store",
-      vary: "cookie, authorization",
-    });
+    return timePhase(ctx.request, "render", () =>
+      json(found.value, 200, {
+        "cache-control": "no-store",
+        vary: "cookie, authorization",
+      }),
+    );
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/runs", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const q = ctx.url.searchParams;
     const kind = q.get("kind");
     const env = q.get("env");
     const limit = Math.min(Math.max(Number(q.get("limit")) || 50, 1), 200);
-    const runs = listRepoRuns(ctx.app, ctx.auth.user, repo, {
-      ...(kind === "deploy" || kind === "agent" ? { kind } : {}),
-      ...(env !== null && isEnvName(env) ? { env } : {}),
-      ...(q.get("cursor") ? { cursor: q.get("cursor")! } : {}),
-      limit,
-    });
+    const runs = timePhase(ctx.request, "runs", () =>
+      listRepoRuns(ctx.app, ctx.auth.user, repo, {
+        ...(kind === "deploy" || kind === "agent" ? { kind } : {}),
+        ...(env !== null && isEnvName(env) ? { env } : {}),
+        ...(q.get("cursor") ? { cursor: q.get("cursor")! } : {}),
+        limit,
+      }),
+    );
     if (!runs.ok) return notFound();
     // Already as this reader may see them (`runForReader`): a stranger's
     // runs carry no cost, turns, agent session or node.
-    return json(paged(runs.value, limit, (r) => r.id));
+    return timePhase(ctx.request, "render", () => json(paged(runs.value, limit, (r) => r.id)));
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/runs/:id", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const run = getRepoRun(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "");
-    if (!run.ok) return notFound();
-    // The merged pulls a finished production deploy carries (`core/carried.ts`).
-    return json({
-      ...run.value,
-      carries: carriedBy(ctx.app.db, run.value.id),
+    const found = timePhase(ctx.request, "run", () => {
+      const run = getRepoRun(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "");
+      // The merged pulls a finished production deploy carries (`core/carried.ts`).
+      return run.ok ? { ...run.value, carries: carriedBy(ctx.app.db, run.value.id) } : null;
     });
+    if (!found) return notFound();
+    return timePhase(ctx.request, "render", () => json(found));
   });
 
   // The log: text, or a live tail as server-sent events (`?follow=1`, or
   // an `Accept: text/event-stream`). Lines already written come first,
   // then each new one as it lands; `done` carries the finished run.
   router.add("GET", "/api/v1/repos/:owner/:name/runs/:id/log", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const found = runLog(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "");
+    const found = timePhase(ctx.request, "log", () =>
+      runLog(ctx.app, ctx.auth.user, repo, ctx.params.id ?? ""),
+    );
     if (!found.ok || found.value.logHidden) return notFound();
     const follow =
       ctx.url.searchParams.get("follow") === "1" ||
       (ctx.request.headers.get("accept") ?? "").includes("text/event-stream");
     if (!follow) {
-      return new Response(`${found.value.lines.join("\n")}\n`, {
+      const body = timePhase(ctx.request, "render", () => `${found.value.lines.join("\n")}\n`);
+      return new Response(body, {
         headers: {
           "content-type": "text/plain; charset=utf-8",
           "cache-control": "no-store",
@@ -6065,18 +6378,23 @@ export function apiRoutes(router: Router<Handler>): void {
     "GET",
     "/api/v1/repos/:owner/:name/pulls/:number/checks",
     async (ctx) => {
+      notePhase(ctx.request, "session", takeSessionTime(ctx.request));
       const found = loadPull(ctx);
       if ("error" in found) return found.error;
-      const head = await pullHeadOid(ctx, found.repo, found.pull);
-      const runs = checksForHead(ctx.app.db, found.pull.id, head);
-      const latest = runs[0];
-      return json({
-        head,
-        state: latest?.state ?? "none",
-        required: found.repo.requireChecks,
-        run: latest ?? null,
-        runs,
+      const { head, runs } = await timePhaseAsync(ctx.request, "checks", async () => {
+        const oid = await pullHeadOid(ctx, found.repo, found.pull);
+        return { head: oid, runs: checksForHead(ctx.app.db, found.pull.id, oid) };
       });
+      const latest = runs[0];
+      return timePhase(ctx.request, "render", () =>
+        json({
+          head,
+          state: latest?.state ?? "none",
+          required: found.repo.requireChecks,
+          run: latest ?? null,
+          runs,
+        }),
+      );
     },
   );
 
@@ -6133,34 +6451,40 @@ export function apiRoutes(router: Router<Handler>): void {
 
   // What is on the caller: open issues and pulls assigned to them, anywhere.
   router.add("GET", "/api/v1/user/assigned", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireScope(ctx, "ro");
     if (denied) return denied;
     const user = ctx.auth.user!;
-    const issues = listAssignedTo(ctx.app.db, user.id);
-    const repos = getReposByIds(
-      ctx.app.db,
-      issues.map((i) => i.repoId),
-    );
-    const items = [];
-    for (const issue of issues) {
-      const repo = repos.get(issue.repoId);
-      if (!repo || !canRead(ctx.app.db, repo, user)) continue;
-      if (!mayView(ctx.app.db, repo, issue, user)) continue;
-      items.push({
-        ...issue,
-        repo: { owner: repo.ownerName, name: repo.name },
-      });
-    }
-    return json({ items, next_cursor: null });
+    const items = timePhase(ctx.request, "assigned", () => {
+      const issues = listAssignedTo(ctx.app.db, user.id);
+      const repos = getReposByIds(
+        ctx.app.db,
+        issues.map((i) => i.repoId),
+      );
+      const out = [];
+      for (const issue of issues) {
+        const repo = repos.get(issue.repoId);
+        if (!repo || !canRead(ctx.app.db, repo, user)) continue;
+        if (!mayView(ctx.app.db, repo, issue, user)) continue;
+        out.push({
+          ...issue,
+          repo: { owner: repo.ownerName, name: repo.name },
+        });
+      }
+      return out;
+    });
+    return timePhase(ctx.request, "render", () => json({ items, next_cursor: null }));
   });
 
   router.add("GET", "/api/v1/agents", (ctx) => {
-    const agents = listAllAgents(ctx.app, ctx.auth.user);
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const agents = timePhase(ctx.request, "agents", () => listAllAgents(ctx.app, ctx.auth.user));
     if (!agents.ok) return respondAccess(agents.error, 401);
-    return json({
-      items: agents.value.map((a) => agentFor(a, ctx.auth.user)),
-      next_cursor: null,
-    });
+    return timePhase(ctx.request, "render", () =>
+      json({
+        items: agents.value.map((a) => agentFor(a, ctx.auth.user)),
+        next_cursor: null,
+      }));
   });
 
   router.add("POST", "/api/v1/agents", async (ctx) => {
@@ -6183,13 +6507,15 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/agents/:username", (ctx) => {
-    const agent = getAgentView(
-      ctx.app,
-      ctx.auth.user,
-      ctx.params.username ?? "",
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const agent = timePhase(ctx.request, "agent", () =>
+      getAgentView(ctx.app, ctx.auth.user, ctx.params.username ?? ""),
     );
     if (!agent.ok) return respondAccess(agent.error, 404);
-    return json(agentFor(agent.value, ctx.auth.user));
+    const view = agent.value;
+    return timePhase(ctx.request, "render", () =>
+      json(agentFor(view, ctx.auth.user)),
+    );
   });
 
   router.add("PATCH", "/api/v1/agents/:username", async (ctx) => {
@@ -6225,13 +6551,14 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/crew", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     // Names and roles for every reader; the brief, model and budget for
     // writers and the crew (`crewAsSeen`, #946).
-    const crew = crewAsSeen(ctx.app, ctx.auth.user, repo);
+    const crew = timePhase(ctx.request, "crew", () => crewAsSeen(ctx.app, ctx.auth.user, repo));
     if (!crew.ok) return notFound();
-    return json({ items: crew.value, next_cursor: null });
+    return timePhase(ctx.request, "render", () => json({ items: crew.value, next_cursor: null }));
   });
 
   router.add("PUT", "/api/v1/repos/:owner/:name/crew/:username", (ctx) => {
@@ -6329,14 +6656,14 @@ export function forgeBaseUrl(
   return vouched ? requestUrl.origin : "";
 }
 
-function connectMessage(code: string): string {
+export function connectMessage(code: string): string {
   if (code === "unknown_host") return "that does not look like a forge host";
   if (code === "private_host")
-    return "that address is inside a network, not on the internet";
+    return PRIVATE_ADDRESS_REFUSED;
   if (code === "unreachable") return "that host could not be reached";
   if (code === "bad_token") return "the origin rejected that token";
   if (code === "already_connected")
-    return "that account is already connected here";
+    return `${ORIGIN_ALREADY_CONNECTED} here`;
   if (code === "rate_limited")
     return "too many connect attempts; wait a minute";
   return "that origin could not be connected";

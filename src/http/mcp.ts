@@ -17,7 +17,18 @@
  * no page. `ro` tokens read; `rw` tokens act.
  */
 
+import { listRemoteRepos, listUserOrigins, syncOriginNow } from "../actions/origins.ts";
+import { originJson, remoteRepoJson } from "./api.ts";
+import { FAMILY_WORDS } from "../actions/family_words.ts";
 import { showProvenance } from "../actions/provenance.ts";
+import {
+  APP_ALREADY_YOURS,
+  ORIGIN_UNREACHABLE,
+  REPORT_ALREADY_DECIDED,
+} from "../actions/origin_app_words.ts";
+import { migrateMessage, migrateRepo, migrationJobFor } from "../actions/migrate.ts";
+import type { MirrorJob } from "../origins/jobs.ts";
+import { EVENTS_LIMIT_MAX, eventsLimit, eventsPage, validEventsCursor } from "../core/events_page.ts";
 import { getProvenance, provenanceFacts, trailFacts } from "../core/provenance.ts";
 import { upstreamPayload } from "../spawn/upstream.ts";
 import { NOT_A_MEMBER } from "../core/roles.ts";
@@ -26,19 +37,33 @@ import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
 import { listAccess } from "../actions/access_log.ts";
 import { changeCapacity, listCapacity } from "../actions/capacity.ts";
 import { changeLimit, listLimits } from "../actions/limits.ts";
+import { THREAD_SAYS } from "../actions/thread_words.ts";
 import { ISSUE_TEAMS_SAY, nameTeams } from "../actions/issue_teams.ts";
 import { teamsOfIssue } from "../core/issue_teams.ts";
+import { addTeamMember, createTeam, deleteTeam } from "../actions/orgs.ts";
+import { getOrg, listTeams, type Permission } from "../core/orgs.ts";
 import { changeTeam, planTeam, readTeams, TEAM_SAYS } from "../actions/teams.ts";
 import { readScorecards } from "../actions/scorecard.ts";
+import { createAgent, deleteAgent, updateAgent } from "../actions/crew.ts";
+import { forgetMirror, saveMirror } from "../actions/mirror.ts";
+import { snapshotsOf } from "../snapshot/service.ts";
+import { listSecrets, putSecret, removeSecret } from "../actions/secrets.ts";
 import { addAccount, allowWrite, auditAccount, removeAccount, renameAccount, reverify, rotateAccount } from "../actions/cloud.ts";
 import { usesByVendor, type VendorUse } from "../cloud/declared.ts";
 import { cloudOverview } from "../cloud/overview.ts";
 import { PROVIDERS } from "../cloud/providers.ts";
 import { changeQuotas, readQuotas } from "../actions/quotas.ts";
+import { resendVerification } from "../actions/verify.ts";
+import { CAPPED_WORDS } from "../actions/mail.ts";
+import { VERIFY_WORDS } from "../actions/verify_words.ts";
+import { SPEND_WORDS } from "../actions/spend_words.ts";
 import { changeSignup, readSignup } from "../actions/signup.ts";
 import { SIGNUP_MODES } from "../settings/signup.ts";
 import { QUOTA_KEYS } from "../settings/quotas.ts";
-import { LIMIT_KEYS } from "../settings/limits.ts";
+import { LIMIT_KEYS, limitValue } from "../settings/limits.ts";
+import { budgetsOf, setBudget } from "../core/subscriptions.ts";
+import { checkUpstreamNow, FOLLOW_REFUSALS, followJson, setFollowUpstream } from "../actions/upstream_follow.ts";
+import { getFollow } from "../core/upstream_follow.ts";
 import { convergeWords, FOLLOW_MODE_REFUSALS, setFollowMode, severForge, takeForgeCode, takeForgeWords, takeOrTell } from "../actions/follow.ts";
 import { relationOf } from "../actions/forks.ts";
 import { chainOfRepo, FOLLOW_MODES } from "../spawn/chain.ts";
@@ -53,14 +78,26 @@ import {
   TAKEN_UP,
 } from "../actions/issues.ts";
 import {
+  confirmIssue,
   dependencyWords,
   linkIssue,
   unlinkIssue,
 } from "../actions/dependencies.ts";
-import { submitReview } from "../actions/pulls.ts";
+import {
+  pullThreads,
+  resolveReviewThread,
+  submitReview,
+} from "../actions/pulls.ts";
 import { originError } from "../web/pages/thread.ts";
+import { reviewWords } from "../actions/review_words.ts";
 import { holdPull, releasePull } from "../actions/holds.ts";
 import { openPlan, parsePlan, PLAN_MAX, proposePlan } from "../actions/plan.ts";
+import {
+  addPromptSource,
+  listPromptSources,
+  removePromptSource,
+  runPromptSource,
+} from "../actions/prompts.ts";
 import { cancelRepoRun, listRepoRuns } from "../actions/runs.ts";
 import { familyView } from "../spawn/family.ts";
 import { clientRows } from "../spawn/clients.ts";
@@ -74,8 +111,10 @@ import {
   CARD_URI,
   cardFor,
 } from "../web/studio/cards.ts";
+import { verifyAccount } from "../actions/accounts.ts";
 import { setAccountCeilings, setAccountGrant } from "../actions/model_grant.ts";
-import { inviteLink, mint as mintInviteLink } from "../actions/invites.ts";
+import { inviteLink, list as listInviteLinks, mint as mintInviteLink, revoke as revokeInviteLink } from "../actions/invites.ts";
+import { suspendAccount, unsuspendAccount } from "../actions/accounts.ts";
 import { setRole } from "../actions/roles.ts";
 import { ABILITIES, roleOf, rowOf } from "../core/roles.ts";
 import { keepThought } from "../actions/thought.ts";
@@ -103,16 +142,19 @@ import {
 } from "../feed/feed.ts";
 import { share } from "../feed/share.ts";
 import { parseTargets } from "./feed.ts";
+import { redeployEnv, stopEnv } from "../actions/apps.ts";
 import { appsRuntime, envsFor } from "../apps/runtime.ts";
 import {
   CLOSE_REASONS,
   getIssue,
   getIssueById,
   labelsFor,
+  listAssignedTo,
   listComments,
   listOpenAgentPullsVisibleTo,
+  listLabels,
 } from "../core/issues.ts";
-import { isCrew } from "../core/agents.ts";
+import { isCrew, type Agent } from "../core/agents.ts";
 import { dependenciesOf } from "../core/dependencies.ts";
 import { waitsForPerson } from "../crew/review.ts";
 import { attachLook } from "../actions/attach_look.ts";
@@ -125,7 +167,8 @@ import { repoGraph } from "../core/dependencies.ts";
 import { pillarView } from "../core/pillars.ts";
 import { createBranch, deleteBranch } from "../actions/branches.ts";
 import { listBranches } from "../git/branches.ts";
-import { commitLog } from "../git/read.ts";
+import { commitLog, listRefs } from "../git/read.ts";
+import { diffCommit } from "../git/diff.ts";
 import { repoDir } from "../git/repos.ts";
 import { runGit } from "../git/env.ts";
 import { isSafeRef, isSafeTreePath } from "../git/guard.ts";
@@ -133,6 +176,7 @@ import { blobForRender, listTree } from "../git/read.ts";
 import { CREATE_ERRORS, DELETE_ERRORS } from "../web/pages/branches.ts";
 import { askToLiveFor } from "../web/ask_to_live.ts";
 import { getAppByRepo } from "../core/apps.ts";
+import { previewEnv } from "../apps/data.ts";
 import {
   ARCHIVED_WHY,
   canAdmin,
@@ -140,6 +184,7 @@ import {
   canWrite,
   forkParentFor,
   getRepo,
+  getReposByIds,
   isDecisionsBy,
   ownerFactRepoIds,
   type Repo,
@@ -148,6 +193,8 @@ import { plannerDeclines } from "../crew/autonomy.ts";
 import { checkStale } from "../checks/stale.ts";
 import { checkSummary, listActiveRuns } from "../core/runs.ts";
 import { scopeAllows } from "../core/tokens.ts";
+import { lastOwnerSays } from "../core/orgs.ts";
+import { LAST_WAY_IN, parentIssuerOf, unlinkParent } from "../core/federation.ts";
 import { getUserByName, getUsersByIds, type User } from "../core/users.ts";
 import { chipsOf, isKindChip, setChip } from "../core/feed_chips.ts";
 import { openapi } from "../contract/openapi.ts";
@@ -160,8 +207,16 @@ import {
   directionNote,
   OUTSIDERS_NOTE,
 } from "../crew/direct.ts";
-import { setArchived, setCrewOutsiders, setDecisionsBy, repositoryLimitMessage } from "../actions/repos.ts";
-import { newApp } from "../actions/apps.ts";
+import { createLabel, deleteLabel, createWebhook, deleteWebhook, setArchived, setCrewOutsiders, updateRepoSettings, setDecisionsBy, repositoryLimitMessage } from "../actions/repos.ts";
+import { listWebhooks } from "../core/webhooks.ts";
+import { LABEL_WORDS } from "../actions/label_words.ts";
+import {
+  appView,
+  deleteAppEnvVar,
+  listAppEnv,
+  newApp,
+  setAppEnvVar,
+} from "../actions/apps.ts";
 import { appLimitWords } from "../actions/app_limit.ts";
 import { storageLimitMessage } from "../core/storage.ts";
 import { mapJson, marksFor } from "../web/pages/map.ts";
@@ -200,6 +255,11 @@ import {
   setAppMembersThrough,
 } from "../actions/app_members.ts";
 import {
+  egressView,
+  grantAppEgress,
+  revokeAppEgress,
+} from "../actions/egress_grants.ts";
+import {
   explore,
   exploreLine,
   parseExploreQuery,
@@ -207,26 +267,30 @@ import {
 import { search } from "../actions/search.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import { readHealth } from "../actions/health.ts";
-import { noteRead, telemetryReader } from "../actions/telemetry.ts";
+import { noteRead, setTelemetryGrant, telemetryReader } from "../actions/telemetry.ts";
 import { flowFor, systemFor, welcome } from "../system/telemetry.ts";
 import { running } from "../kernel/version.ts";
 import { parentForgeFor } from "../core/parent_releases.ts";
 import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
+import { deleteOriginApp, listOriginApps, registerOriginApp } from "../actions/origins.ts";
+import { connectMessage } from "./api.ts";
 import { resourceMetadataUrl } from "./oauth.ts";
-import { body, boundedBody, json } from "./respond.ts";
+import { body, boundedBody, FORBIDDEN_MESSAGE, json } from "./respond.ts";
 import { sizesView } from "../spawn/sizes.ts";
 import type { Router } from "./router.ts";
-import { mayReadRuns, runForReader, runLog } from "../actions/runs.ts";
+import { checkOfCommit, mayReadRuns, runForReader, runLog } from "../actions/runs.ts";
 import { manifestFor } from "../actions/here.ts";
 import { clientBucket } from "./peer.ts";
 import { listPinned as listPinnedPanels, movePinned, pinPanel, unpinPanel } from "../actions/board-pins.ts";
 import { deleteBoard, listAllBoards, showBoard, writeBoard, type BoardError } from "../actions/boards.ts";
+import { BOARD_NOT_SAVED, MILESTONE_WATCH_PERSON_ONLY, VOTE_NOT_RECORDED } from "../actions/board_words.ts";
 import { panelData, parseWindow } from "../boards/panel_data.ts";
-import { fileReport } from "../actions/reports.ts";
+import { acceptReport, dismissReport, fileReport, waitingReports } from "../actions/reports.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
 import { placementWords } from "../checks/placement.ts";
 import { everydayOf } from "../core/everyday.ts";
 import { nextStepsFor } from "../core/next-steps.ts";
+import { ADMIN_WORDS } from "../actions/admin_words.ts";
 
 const PROTOCOLS = ["2025-06-18", "2025-03-26", "2024-11-05"] as const;
 /** Who answers: the forge, at the version its build stamped. */
@@ -234,7 +298,8 @@ const server = () => ({ name: "forge", version: running().version });
 
 type Args = Record<string, unknown>;
 type Answer =
-  { ok: true; value: unknown } | { ok: false; error: string; message: string };
+  | { ok: true; value: unknown; card?: Record<string, unknown> }
+  | { ok: false; error: string; message: string };
 
 const good = (value: unknown): Answer => ({ ok: true, value });
 const attachWords = (error: string): string =>
@@ -262,25 +327,34 @@ interface Tool {
   readonly writes: boolean;
   /** Listed, and callable, for a forge admin only. */
   readonly adminOnly?: true;
+  /** Listed, and callable, only with a token of this scope. */
+  readonly needsAdminScope?: true;
   /** With this argument absent the tool only reads, whatever the token. */
   readonly readsWithout?: string;
+  /** A call this accepts only reads, whatever the token. */
+  readonly readsWhen?: (args: Args) => boolean;
   /** A write that only plans (`dryRun` not false) is a read: `ro` may ask. */
   readonly dryByDefault?: true;
   run(ctx: Ctx, user: User, args: Args): Promise<Answer> | Answer;
 }
+
+/** Whether this caller is shown the tool and may call it: one rule for the manifest and dispatch. */
+const visible = (tool: Tool, ctx: Ctx, user: User): boolean =>
+  (tool.adminOnly !== true || user.isAdmin) &&
+  (tool.needsAdminScope !== true || scopeAllows(ctx.auth.scope ?? "ro", "admin"));
 
 const CHIP_ARGS = {
   hide_kinds: {
     type: "array",
     items: { type: "string", enum: [...KIND_CHIPS] },
     maxItems: 50,
-    description: "Kinds to leave out; replaces your saved filter.",
+    description: "Kinds to hide.",
   },
   hide_people: {
     type: "array",
     items: { type: "string", maxLength: 39 },
     maxItems: 50,
-    description: "Usernames to leave out; replaces your saved filter.",
+    description: "Usernames to hide.",
   },
 } as const;
 
@@ -295,6 +369,20 @@ function chipArgs(ctx: Ctx, args: Record<string, unknown>) {
 const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
 
 const REPO_ARG = { type: "string" } as const;
+
+const HOOK_LIMITS = { url: 2048, kinds: 200, secret: 200, id: 64 } as const;
+
+/** The refusal for a `hooks` argument that is not text or is over its declared length. */
+function hookTooLong(args: Args): Answer | undefined {
+  for (const [key, max] of Object.entries(HOOK_LIMITS)) {
+    const v = args[key];
+    if (v !== undefined && (typeof v !== "string" || v.length > max))
+      return bad("invalid", `${key} is text of at most ${max} characters`);
+  }
+  return undefined;
+}
+
+const notAdmin = (): Answer => bad("not_found", "no such app or repository, or you do not administer it");
 
 /** A repository the caller may read, by `owner/name`; a wrong one is answered with that form. */
 function repoArg(ctx: Ctx, user: User, args: Args): Repo | Answer {
@@ -370,7 +458,7 @@ async function archiveMany(ctx: Ctx, user: User, args: Args): Promise<Answer> {
   });
 }
 
-// tools/list is held under 40 KB (test/mcp-pulls.test.ts). The server checks
+// tools/list is held under 40 KB (test/mcp-size.test.ts). The server checks
 // every length at the boundary, so the listing leaves the maxLength hints out.
 function lean(schema: unknown): unknown {
   if (Array.isArray(schema)) return schema.map(lean);
@@ -389,7 +477,7 @@ const APP_ARG = { type: "string" } as const;
 const REVEAL_ARG = {
   type: "boolean",
   description:
-    "Put the live claim link here (default false); only when its person reads it.",
+    "true puts the secret claim link here, for its person only.",
 } as const;
 const LINK_KEPT =
   "The claim link is a secret, so it is not in this conversation: a person admin of this forge gets a fresh one on /forges (Send a fresh link) and hands it to the child's person. Send reveal: true only to have it here on purpose.";
@@ -421,7 +509,7 @@ const mayBoards = (user: User): boolean => user.isAdmin && user.kind !== "agent"
 function boardFailed(e: BoardError): Answer {
   if (e === "not_found") return bad("not_found", "no such board");
   if (typeof e === "object") return bad("refused", e.refused);
-  return bad(e, "that board could not be saved");
+  return bad(e, BOARD_NOT_SAVED);
 }
 
 const TOOLS: readonly Tool[] = [
@@ -436,7 +524,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "apps",
     description:
-      "The apps on this forge you can see: live or not, where served, how each runs itself, what is working.",
+      "The apps here you can see: live or not, where served, how each runs, what is working.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     async run(ctx, user) {
@@ -465,18 +553,51 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "app_deploy",
+    description:
+      "Redeploy or stop production or a pull-N preview.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        env: { type: "string" },
+        action: { type: "string", enum: ["redeploy", "stop"] },
+      },
+      required: ["repo", "env", "action"],
+    },
+    writes: true,
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const env = str(args["env"]);
+      const action = str(args["action"]);
+      if (action !== "redeploy" && action !== "stop")
+        return bad("invalid_action", "action is redeploy or stop");
+      if (action === "stop") {
+        const stopped = await stopEnv(ctx.app, user, repo, env);
+        return stopped.ok
+          ? good({ stopped: true })
+          : bad(stopped.error, `refused: ${stopped.error}`);
+      }
+      const queued = await redeployEnv(ctx.app, user, repo, env);
+      return queued.ok
+        ? good({ queued: true, run: queued.value?.id ?? null })
+        : bad(queued.error, `refused: ${queued.error}`);
+    },
+  },
+  {
     name: "new_app",
     description:
-      "Make an app from a sentence: a repository, production started, and with `description` the first issue.",
+      "Make an app from a sentence: a repository, production started, and with `description` a first issue.",
     inputSchema: {
       type: "object",
       properties: {
         name: { type: "string", maxLength: 100 },
-        description: { type: "string", maxLength: 4000, description: "What it should become; opens the first issue." },
+        description: { type: "string", maxLength: 4000, description: "The first issue." },
         owner: { type: "string", maxLength: 39 },
-        visibility: { type: "string", enum: ["public", "private"], description: "Private unless you say public." },
-        agent: { type: "string", maxLength: 39, description: "Agent for the crew and first issue." },
-        pick: { type: "boolean", description: "Pick the agent from the description when `agent` is not given." },
+        visibility: { type: "string", enum: ["public", "private"], description: "Default private." },
+        agent: { type: "string", maxLength: 39, description: "Agent for the first issue." },
+        pick: { type: "boolean", description: "Pick the agent from the text." },
       },
       required: ["name"],
     },
@@ -550,6 +671,42 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "repo_settings",
+    description:
+      "Change a repository's description or visibility, as PATCH /api/v1/repos/:owner/:name (admin token).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        description: { type: "string", maxLength: 2000 },
+        visibility: { type: "string", enum: ["public", "private"] },
+      },
+      required: ["repo"],
+    },
+    writes: true,
+    needsAdminScope: true,
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const { description, visibility } = args;
+      if (description !== undefined && typeof description !== "string")
+        return bad("invalid", "description is text");
+      if (visibility !== undefined && visibility !== "public" && visibility !== "private")
+        return bad("invalid", "visibility is public or private");
+      const updated = await updateRepoSettings(ctx.app, user, repo, {
+        ...(visibility !== undefined ? { visibility } : {}),
+        ...(description !== undefined ? { description } : {}),
+      });
+      if (!updated.ok)
+        return bad(updated.error === "not_found" ? "not_found" : "forbidden", updated.error);
+      return good({
+        repo: `${updated.value.ownerName}/${updated.value.name}`,
+        description: updated.value.description,
+        visibility: updated.value.visibility,
+      });
+    },
+  },
+  {
     name: "here",
     description:
       "What you can do on a forge page, as who you are: each open action with its HTTP route and MCP tool.",
@@ -579,7 +736,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "tell",
     description:
-      "Tell an app's crew what should change (first line is the title). Without `repo` it is only kept, answering a thought id.",
+      "Tell an app's crew what should change (first line is the title). No `repo`: kept, answers a thought id.",
     inputSchema: {
       type: "object",
       properties: {
@@ -589,12 +746,12 @@ const TOOLS: readonly Tool[] = [
           type: "string",
           maxLength: 512,
           description:
-            "A path on this forge the issue links to, like /alice/notes/pulls/3.",
+            "Forge path to link, as /a/b/pulls/3.",
         },
         context: {
           type: "object",
           description:
-            "Where this was told from, for the builder.",
+            "Where it was told.",
           properties: {
             page: { type: "string" },
             pull: { type: "integer", minimum: 1 },
@@ -658,7 +815,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "share",
     description:
-      "Share a feed item. With no `to` it goes to the app's crew and owners, else to its followers; daily budget each.",
+      "Share a feed item: no `to` tells the app's crew and owners, else its followers; daily budget each.",
     inputSchema: {
       type: "object",
       properties: {
@@ -685,7 +842,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "say",
     description:
-      "Say something on an issue or a pull. A working builder hears it next; otherwise it is feedback for the next run.",
+      "Say something on an issue or pull. A working builder hears it next; otherwise the next run does.",
     inputSchema: {
       type: "object",
       properties: {
@@ -717,7 +874,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "issue",
     description:
-      "Read one issue with its comments, `blockedBy` and `blocks`. A crew agent sees `untrusted: true` on text by non-writers.",
+      "One issue with comments, `blockedBy`, `blocks`; crew agents see `untrusted: true` on non-writers' text.",
     inputSchema: {
       type: "object",
       properties: {
@@ -786,7 +943,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "pull",
     description:
-      "Read a pull: title, state, head, base, and when open `mergeable`, `conflicts`, `proposal`, `checkStale`, `check`.",
+      "Read a pull: title, state, head, base; open: `mergeable`, `conflicts`, `proposal`, `checkStale`, `check`.",
     inputSchema: {
       type: "object",
       properties: {
@@ -813,7 +970,7 @@ const TOOLS: readonly Tool[] = [
         pull.state === "open" &&
         pull.mergedAt === null &&
         checkStale(check.run, await resolveOid(dir, `refs/heads/${pull.baseBranch}`));
-      return good({
+      const answer = good({
         number: pull.number,
         title: pull.title,
         state: pull.mergedAt !== null ? "merged" : pull.state,
@@ -824,12 +981,26 @@ const TOOLS: readonly Tool[] = [
         checkStale: stale,
         ...(state ?? {}),
       });
+      // What the card needs and the text does not say: where the pull lives
+      // and its preview, only when that environment exists — the pull page's
+      // door, `previewCard`, reads the same `appView`.
+      const view = appView(ctx.app, user, repo);
+      const env = view.ok
+        ? view.value.environments.find((e) => e.env === previewEnv(pull.number))
+        : undefined;
+      return {
+        ...answer,
+        card: {
+          repo: `${repo.ownerName}/${repo.name}`,
+          ...(env === undefined ? {} : { preview: env.url }),
+        },
+      };
     },
   },
   {
     name: "pulls",
     description:
-      "A repository's pulls, newest first, briefly. `state` open (default) or closed; `limit` 1-50 (default 20).",
+      "A repository's pulls, newest first. `state` open (default) or closed; `limit` 1-50 (default 20).",
     inputSchema: {
       type: "object",
       properties: {
@@ -873,7 +1044,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "variant",
     description:
-      "Like or dislike one pull among its variants; a later vote replaces it. A dislike closes it with `reason`.",
+      "Like or dislike one pull among its variants; a later vote replaces it; a dislike closes it (`reason`).",
     inputSchema: {
       type: "object",
       properties: {
@@ -908,13 +1079,13 @@ const TOOLS: readonly Tool[] = [
       );
       return voted.ok
         ? good({ answer, closed: voted.value.closed })
-        : bad(voted.error, "that vote could not be recorded");
+        : bad(voted.error, VOTE_NOT_RECORDED);
     },
   },
   {
     name: "edit",
     description:
-      "Give an issue or a pull a new title or body: your own, or anyone's where you write; an agent edits only its own.",
+      "Retitle or rewrite an issue or pull: yours, or any where you write; an agent edits only its own.",
     inputSchema: {
       type: "object",
       properties: {
@@ -958,7 +1129,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "close",
     description:
-      "Close an issue or pull, or reopen it (`state` open); the PATCH route's refusals apply. `reason`: done, dropped, or split (with `into`).",
+      "Close or reopen (`state` open) an issue or pull. `reason`: done, dropped, split (`into`).",
     inputSchema: {
       type: "object",
       properties: {
@@ -1006,7 +1177,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "read_file",
     description:
-      "Read a file, or list a directory, of a repository at a ref (default branch); over 5 MB answers tooLarge.",
+      "Read a file or list a directory at a ref (default branch); over 5 MB answers tooLarge.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1058,7 +1229,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "asks",
     description:
-      "What waits on you, most consequential first: decision, options, cost of inaction. Your saved filter applies.",
+      "What waits on you, most consequential first: decision, options, cost of inaction; your saved filter applies",
     inputSchema: { type: "object", properties: { ...CHIP_ARGS } },
     writes: false,
     run(ctx, user, args) {
@@ -1070,7 +1241,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "asks_act",
     description:
-      "Decide many asks at once: dismiss, decline, ship (never undone), close (`reason`), mute, replan. `items`: ids from `asks`, or `issue:<id>`.",
+      "Decide asks (`items`: ask ids, `issue:<id>`): dismiss, decline, ship (final), close (`reason`), mute, replan",
     inputSchema: {
       type: "object",
       properties: {
@@ -1094,7 +1265,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "asks_decide",
     description:
-      "Let the decider answer a hand-over (`item` is the row's `parked:<id>`). Only a sure set_aside (70%+) clears the card.",
+      "Let the decider answer a hand-over (`item`: `parked:<id>`); only a sure set_aside (70%+) clears it.",
     inputSchema: {
       type: "object",
       properties: { item: { type: "string", maxLength: 80 } },
@@ -1109,7 +1280,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "asks_proposal",
     description:
-      "Act on a wave proposal (an `asks` row): `approve`, `redirect` (`words`), or `later` (until `again`). Owner only.",
+      "Act on a wave proposal (`asks` row): `approve`, `redirect` (`words`), `later` (`again`). Owner.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1130,7 +1301,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "proposal_tokens",
     description:
-      "Give a child a propose-only credential: `mint` (`child`, `origin`), `list`, `revoke` (`id`). Writers only.",
+      "A child's propose-only credential: `mint` (`child`, `origin`), `list`, `revoke` (`id`). Writers.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1217,9 +1388,91 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "secrets",
+    description: "Admin: list|set|remove sealed secrets.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        scope: { type: "string" },
+        ref: { type: "string" },
+        action: { type: "string" },
+        name: { type: "string" },
+        value: { type: "string" },
+      },
+    },
+    writes: true,
+    adminOnly: true,
+    run(ctx, user, args) {
+      // The API asks for an admin token on all three routes; so does this.
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "secrets need an admin token");
+      const str = (v: unknown): string => (typeof v === "string" ? v : "");
+      const scope = str(args["scope"]);
+      const ref = str(args["ref"]);
+      const name = str(args["name"]);
+      const action = args["action"];
+      if (action === "list") {
+        const listed = listSecrets(ctx.app, user, scope, ref);
+        return listed.ok ? good({ items: listed.value }) : bad(listed.error, listed.error);
+      }
+      if (action === "set") {
+        const set = putSecret(ctx.app, user, scope, ref, name, str(args["value"]));
+        return set.ok ? good(set.value) : bad(set.error, set.error);
+      }
+      if (action === "remove") {
+        const gone = removeSecret(ctx.app, user, scope, ref, name);
+        return gone.ok ? good({ removed: name }) : bad(gone.error, gone.error);
+      }
+      return bad("invalid", "action is list, set or remove");
+    },
+  },
+  {
+    name: "mirror_set",
+    description: "Admin: set or forget the off-box snapshot mirror.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string" },
+        endpoint: { type: "string" },
+        bucket: { type: "string" },
+        region: { type: "string" },
+        accessKey: { type: "string" },
+        secretKey: { type: "string" },
+      },
+    },
+    writes: true,
+    adminOnly: true,
+    needsAdminScope: true,
+    run(ctx, user, args) {
+      const place = (): string | null => snapshotsOf(ctx.app)?.mirror?.where ?? null;
+      if (args["action"] === "forget") {
+        const gone = forgetMirror(ctx.app, user);
+        if (!gone.ok) return bad("not_found", "not found");
+        return good({ place: place(), says: "The sealed mirror is cleared." });
+      }
+      if (args["action"] !== "set") return bad("invalid", "action is set or forget");
+      const field = (k: string): string | undefined => {
+        const v = args[k];
+        return v === undefined ? "" : typeof v === "string" ? v.trim() : undefined;
+      };
+      const input = {
+        endpoint: field("endpoint"),
+        bucket: field("bucket"),
+        region: field("region"),
+        accessKey: field("accessKey"),
+        secretKey: field("secretKey"),
+      };
+      if (Object.values(input).some((v) => v === undefined))
+        return bad("invalid", "the fields are strings");
+      const saved = saveMirror(ctx.app, user, input as Record<keyof typeof input, string>);
+      if (!saved.ok) return bad(saved.error === "not_found" ? "not_found" : "invalid", saved.error);
+      return good({ place: place(), says: saved.value });
+    },
+  },
+  {
     name: "issue_teams",
     description:
-      "Name the crew teams (design, data-science, security, platform) on an issue: at most two; each reviews the closing pull.",
+      "Name up to two crew teams (design, data-science, security, platform) to review an issue's pull.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1249,9 +1502,50 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "org_teams",
+    description: "An organization's teams: create, add a member, remove.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        org: { type: "string", maxLength: 64 },
+        action: { type: "string", enum: ["create", "add_member", "remove"] },
+        team: { type: "string", maxLength: 64 },
+        user: { type: "string", maxLength: 64, description: "add_member" },
+        permission: { type: "string", enum: ["read", "write", "admin"], description: "create" },
+      },
+      required: ["org", "action", "team"],
+    },
+    writes: true,
+    needsAdminScope: true,
+    run(ctx, user, args) {
+      const org = getOrg(ctx.app.db, typeof args["org"] === "string" ? args["org"] : "");
+      if (!org) return bad("not_found", "no such organization");
+      const name = typeof args["team"] === "string" ? args["team"] : "";
+      const action = args["action"];
+      if (action === "create") {
+        const p = args["permission"];
+        const permission: Permission = p === "write" || p === "admin" ? p : "read";
+        const made = createTeam(ctx.app, user, org, name, permission);
+        return made.ok ? good(made.value) : bad(made.error, made.error);
+      }
+      const wanted = name.toLowerCase();
+      const team = listTeams(ctx.app.db, org.id).find((t) => t.name.toLowerCase() === wanted);
+      if (!team) return bad("not_found", "no such team");
+      if (action === "add_member") {
+        const added = addTeamMember(ctx.app, user, org, team, typeof args["user"] === "string" ? args["user"] : "");
+        return added.ok ? good(added.value) : bad(added.error, added.error);
+      }
+      if (action === "remove") {
+        const gone = deleteTeam(ctx.app, user, org, team);
+        return gone.ok ? good({ removed: team.name }) : bad(gone.error, gone.error);
+      }
+      return bad("invalid", "action is create, add_member or remove");
+    },
+  },
+  {
     name: "now",
     description:
-      "What the crew is doing now across your apps: who, on what, since when, cost so far; what waits on your review first.",
+      "What the crew is doing across your apps: who, on what, since when, cost; what waits on your review.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     run(ctx, user) {
@@ -1374,14 +1668,14 @@ const TOOLS: readonly Tool[] = [
   {
     name: "audit",
     description:
-      "Who can do what across every app you can see, from each contract.json: resource × verb answered yes, own or no.",
+      "Who can do what in every app you can see, from each contract.json: resource × verb, yes, own or no.",
     inputSchema: {
       type: "object",
       properties: {
         repo: {
           ...REPO_ARG,
           description:
-            "One app, as owner/name; every app you can see when absent.",
+            "owner/name; all when absent.",
         },
       },
     },
@@ -1422,12 +1716,12 @@ const TOOLS: readonly Tool[] = [
   {
     name: "model_grant",
     description:
-      "Give a person's account a capped monthly model grant in dollars (`usdPerMonth` 0 takes it back). Person admins only.",
+      "Give a person a capped monthly model grant (`usdPerMonth`, 0 takes it back). Person admins.",
     inputSchema: {
       type: "object",
       properties: {
         username: { type: "string" },
-        usdPerMonth: { type: "number", description: "0.01 to 10000; 0 takes it back." },
+        usdPerMonth: { type: "number", description: "0.01–10000; 0 revokes." },
         dryRun: { type: "boolean", description: "false to apply" },
       },
       required: ["username", "usdPerMonth"],
@@ -1454,7 +1748,7 @@ const TOOLS: readonly Tool[] = [
         return bad(
           set.error === "invalid_amount" ? "invalid" : "forbidden",
           set.error === "invalid_amount"
-            ? "usdPerMonth is from 0.01 to 10000 dollars"
+            ? SPEND_WORDS.usdPerMonth
             : "no such person, or not one a grant is for",
         );
       return good(set.value);
@@ -1463,7 +1757,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "whoami_can",
     description:
-      "What you can do here as you: your role and that role's row of the roles table, each ability yes or no.",
+      "What you can do here: your role and its row of the roles table, each ability yes or no.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     run: (ctx, user) => {
@@ -1474,7 +1768,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "mint_invite",
     description:
-      "Mint a single-use invite link; it expires in `days` (1–30, default 7) and is shown once. Person admins only.",
+      "Mint a single-use invite link, shown once, expiring in `days` (1–30, default 7). Person admins.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1487,21 +1781,51 @@ const TOOLS: readonly Tool[] = [
       if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
         return bad("forbidden", "an invite needs an admin token");
       const made = mintInviteLink(ctx.app, user, args["days"]);
-      if (!made.ok) return bad("invalid", "days is a whole number from 1 to 30");
+      if (!made.ok) return bad("invalid", SPEND_WORDS.inviteDays);
       const origin = ctx.app.config.url ?? ctx.url.origin;
       return good({ ...made.value.invite, link: inviteLink(origin, made.value.token) });
     },
   },
   {
+    name: "invites",
+    description: "List open invites, or revoke one by `id`.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["list", "revoke"] },
+        id: { type: "string" },
+      },
+      required: ["action"],
+    },
+    writes: true,
+    run(ctx, user, args) {
+      if (!mayBoards(user)) return bad("forbidden", "invites are a forge admin's");
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "invites need an admin token");
+      const action = args["action"];
+      if (action === "list") {
+        const listed = listInviteLinks(ctx.app, user);
+        return listed.ok ? good({ items: listed.value }) : bad("forbidden", "invites are a forge admin's");
+      }
+      if (action === "revoke") {
+        const id = args["id"];
+        if (typeof id !== "string" || id === "") return bad("invalid", "revoke needs an invite id");
+        const done = revokeInviteLink(ctx.app, user, id);
+        return done.ok ? good(done.value) : bad("not_found", "no such open invite");
+      }
+      return bad("invalid", 'action is "list" or "revoke"');
+    },
+  },
+  {
     name: "account_role",
     description:
-      "Make a person a member, or a guest again, with an optional starter allowance (`usdPerMonth`, promoting only).",
+      "Make a person a member, or a guest again; promoting may give a monthly `usdPerMonth` allowance.",
     inputSchema: {
       type: "object",
       properties: {
         username: { type: "string" },
         role: { type: "string", enum: ["member", "guest"] },
-        usdPerMonth: { type: ["number", "null"], description: "0.01 to 10000; omit or null for none." },
+        usdPerMonth: { type: ["number", "null"], description: "0.01–10000 or none." },
         dryRun: { type: "boolean", description: "false to apply" },
       },
       required: ["username", "role"],
@@ -1532,22 +1856,47 @@ const TOOLS: readonly Tool[] = [
         return bad(
           set.error === "invalid_amount" ? "invalid" : "forbidden",
           set.error === "invalid_amount"
-            ? "usdPerMonth is from 0.01 to 10000 dollars"
+            ? SPEND_WORDS.usdPerMonth
             : "no such person, or not one a role is for",
         );
       return good(set.value);
     },
   },
   {
+    name: "account_suspend",
+    description: "Suspend an account, or `suspended: false` to lift it.",
+    inputSchema: {
+      type: "object",
+      properties: { username: { type: "string" }, suspended: { type: "boolean" } },
+      required: ["username", "suspended"],
+    },
+    writes: true,
+    async run(ctx, user, args) {
+      const { username, suspended } = args;
+      if (typeof username !== "string" || typeof suspended !== "boolean")
+        return bad("invalid", "send a username and suspended, true or false");
+      if (!mayBoards(user)) return bad("forbidden", "an account is a forge admin's to suspend");
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "suspending needs an admin token");
+      const done = suspended
+        ? await suspendAccount(ctx.app, user, username)
+        : unsuspendAccount(ctx.app, user, username);
+      if (done.ok) return good({ username: done.value.username, suspendedAt: done.value.suspendedAt });
+      if (done.error === "not_found") return bad("not_found", "no such person");
+      if (done.error === "last_owner") return bad("last_owner", lastOwnerSays(ctx.app.db, username));
+      return bad("not_allowed", ADMIN_WORDS.selfSuspend);
+    },
+  },
+  {
     name: "model_ceiling",
     description:
-      "Set an account's daily and per-run model spend ceilings in dollars; a run that would pass either does not start.",
+      "Set an account's daily and per-run model spend ceilings in dollars; a run past one does not start.",
     inputSchema: {
       type: "object",
       properties: {
         username: { type: "string" },
-        dailyUsd: { type: ["number", "null"], description: "0.01–10000; null with perRunUsd null clears." },
-        perRunUsd: { type: ["number", "null"], description: "0.01–10000; null with dailyUsd null clears." },
+        dailyUsd: { type: ["number", "null"], description: "0.01–10000; null clears." },
+        perRunUsd: { type: ["number", "null"], description: "0.01–10000; null clears." },
         dryRun: { type: "boolean", description: "false to apply" },
       },
       required: ["username", "dailyUsd", "perRunUsd"],
@@ -1575,15 +1924,37 @@ const TOOLS: readonly Tool[] = [
       const set = setAccountCeilings(ctx.app, user, username, dailyUsd, perRunUsd);
       if (!set.ok)
         return set.error === "invalid_amount"
-          ? bad("invalid", "dailyUsd and perRunUsd are each from 0.01 to 10000 dollars, or both null")
+          ? bad("invalid", SPEND_WORDS.ceilings)
           : bad("forbidden", "no such account");
       return good(set.value);
     },
   },
   {
+    name: "account_verify",
+    description: "Mark a person's email verified (admin).",
+    inputSchema: {
+      type: "object",
+      properties: { username: { type: "string" } },
+      required: ["username"],
+    },
+    writes: true,
+    run(ctx, user, args) {
+      const { username } = args;
+      if (typeof username !== "string") return bad("invalid", "send a username");
+      if (!mayBoards(user)) return bad("forbidden", "verifying a person is a forge admin's call");
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "verifying a person needs an admin token");
+      const done = verifyAccount(ctx.app, user, username);
+      if (done.ok) return good({ username: done.value.username, verified: true });
+      return done.error === "not_found"
+        ? bad("not_found", "no such account")
+        : bad("invalid", "an agent or a removed account has no email to verify");
+    },
+  },
+  {
     name: "outsiders",
     description:
-      "Whether people who cannot write an app may direct its crew (off by default). Without `on`, says which.",
+      "Whether people who cannot write an app may direct its crew (off by default). No `on` reads it.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1620,9 +1991,47 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "origins",
+    description:
+      "Your connected origins: list, repos of one, or sync it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["list", "repos", "sync"] },
+        id: { type: "string" },
+      },
+      required: ["action"],
+    },
+    writes: true,
+    readsWithout: "id",
+    async run(ctx, user, args) {
+      const action = args["action"];
+      const id = args["id"];
+      if (action !== "list" && action !== "repos" && action !== "sync")
+        return bad("bad_action", "`action` is list, repos or sync");
+      if (action !== "list" && (typeof id !== "string" || id === ""))
+        return bad("invalid", "send the origin's `id`, from list");
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "origins spend your credential elsewhere and need an admin token");
+      if (action === "list")
+        return good(listUserOrigins(ctx.app, user).map(originJson));
+      const origin = id as string;
+      if (action === "sync") {
+        const synced = await syncOriginNow(ctx.app, user, origin);
+        return synced.ok ? good(synced.value) : bad("not_found", "no such origin");
+      }
+      const listed = await listRemoteRepos(ctx.app, user, origin);
+      if (!listed.ok)
+        return listed.error === "unreachable"
+          ? bad("origin_unreachable", ORIGIN_UNREACHABLE)
+          : bad("not_found", "no such origin");
+      return good(listed.value.map((row) => remoteRepoJson(ctx, row)));
+    },
+  },
+  {
     name: "decisions_by",
     description:
-      "The standing rule for a repository's parked hand-over cards: `me`, `decider`, or `decider_tell`. Without `by`, reads it.",
+      "Who decides a repository's parked hand-over cards: `me`, `decider`, `decider_tell`. No `by` reads it.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1661,7 +2070,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "archive",
     description:
-      "Archive a repository or wake it (`archived` true/false); nothing is deleted. Plans first; repository admin token.",
+      "Archive a repository or wake it (`archived` true/false); deletes nothing. Plans first; admin token.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1670,7 +2079,7 @@ const TOOLS: readonly Tool[] = [
           type: "array",
           items: { type: "string" },
           maxItems: MAX_ARCHIVE_REPOS,
-          description: "Several repositories, as owner/name, to archive in one operation.",
+          description: "owner/name list, one operation.",
         },
         archived: { type: "boolean" },
         dryRun: {
@@ -1745,7 +2154,7 @@ const TOOLS: readonly Tool[] = [
       const set = showProvenance(ctx.app, user, repo, shown, dryRun);
       if (!set.ok)
         return set.error === "no_provenance"
-          ? bad("no_provenance", "this repository was not migrated here")
+          ? bad("no_provenance", FAMILY_WORDS.no_provenance)
           : bad("forbidden", "only an admin of this repository shows or hides its trail");
       return good({
         ...set.value,
@@ -1758,9 +2167,153 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "migrate",
+    description:
+      "Bring a repository in by public `url` (`name`, `crew`), history and all. With `job`, its state.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: { type: "string", maxLength: 2048 },
+        name: { type: "string", maxLength: 100 },
+        crew: { type: "string", maxLength: 39, description: "Agent to put on it" },
+        job: { type: "string", maxLength: 64 },
+      },
+    },
+    writes: true,
+    readsWithout: "url",
+    async run(ctx, user, args) {
+      const migration = (job: MirrorJob) => ({
+        job: job.id,
+        state: job.stage,
+        detail: job.detail,
+        url:
+          job.repo === undefined || job.stage === "failed"
+            ? null
+            : `${ctx.url.origin}/${job.repo.ownerName}/${job.repo.name}`,
+        error: job.error ?? null,
+      });
+      const url = args["url"];
+      if (url === undefined) {
+        const id = str(args["job"]);
+        if (id === "") return bad("invalid", "send `url` to migrate, or `job` to read one");
+        const found = migrationJobFor(user, id);
+        return found.ok ? good(migration(found.value)) : bad("not_found", "no such migration");
+      }
+      if (typeof url !== "string") return bad("invalid", "`url` is a string");
+      const name = args["name"];
+      const crew = args["crew"];
+      if (name !== undefined && typeof name !== "string") return bad("invalid", "`name` is a string");
+      if (crew !== undefined && typeof crew !== "string") return bad("invalid", "`crew` is a string");
+      const started = await migrateRepo(ctx.app, user, {
+        source: { url },
+        ...(name === undefined ? {} : { name }),
+        ...(crew === undefined ? {} : { crew: { agent: crew, autonomous: false } }),
+      });
+      if (!started.ok)
+        return started.error === "unauthorized"
+          ? bad("unauthorized", "sign in to migrate")
+          : started.error === "repository_limit"
+            ? bad("repository_limit", repositoryLimitMessage(ctx.app, user))
+            : started.error === "storage_limit"
+              ? bad("storage_limit", storageLimitMessage(ctx.app, user.id))
+              : bad(started.error, migrateMessage(started.error));
+      return good({
+        ...migration(started.value.job),
+        url: `${ctx.url.origin}/${started.value.repo.ownerName}/${started.value.repo.name}`,
+      });
+    },
+  },
+  {
+    name: "events",
+    description: "Repository events.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        limit: { type: "integer" },
+        cursor: { type: "string" },
+      },
+      required: ["repo"],
+    },
+    writes: false,
+    run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const limit = eventsLimit(args["limit"]);
+      if (limit === undefined) return bad("invalid", `limit is 1 to ${EVENTS_LIMIT_MAX}`);
+      const given = args["cursor"];
+      if (given !== undefined && (typeof given !== "string" || !validEventsCursor(given)))
+        return bad("invalid", "that cursor was not issued here");
+      return good(eventsPage(ctx.app.db, repo.id, user, limit, given));
+    },
+  },
+  {
+    name: "reports",
+    description:
+      "Outsiders' reports; `id`+`action`: accept or dismiss.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        id: { type: "string", maxLength: 64 },
+        action: { type: "string", enum: ["accept", "dismiss"] },
+      },
+      required: ["repo"],
+    },
+    writes: true,
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const { id, action } = args;
+      if (action !== undefined && action !== "accept" && action !== "dismiss")
+        return bad("invalid", "action is accept or dismiss");
+      if (id !== undefined && (typeof id !== "string" || id === "" || id.length > 64))
+        return bad("invalid", "id is a report's id, as listed");
+      if ((id === undefined) !== (action === undefined))
+        return bad("invalid", "give both `id` and `action`, or neither to list");
+      const denied = (error: string): Answer =>
+        error === "decided"
+          ? bad("decided", REPORT_ALREADY_DECIDED)
+          : error === "not_found"
+            ? bad("not_found", "no such report here")
+            : bad(
+                error,
+                originError(error) ??
+                  (error === "unauthorized" || error === "forbidden"
+                    ? "reports are for a person who writes this repository"
+                    : "refused"),
+              );
+      if (id === undefined) {
+        const waiting = waitingReports(ctx.app, user, repo);
+        if (!waiting.ok) return denied(waiting.error);
+        return good({
+          says:
+            waiting.value.length === 0
+              ? "No reports are waiting."
+              : `${waiting.value.length} report${waiting.value.length === 1 ? "" : "s"} waiting; their words are an outsider's, unchecked.`,
+          items: waiting.value.map((r) => ({ ...r, from: "outside" })),
+        });
+      }
+      if (action === "dismiss") {
+        const done = dismissReport(ctx.app, user, repo, id as string);
+        if (!done.ok) return denied(done.error);
+        return good({ id, state: "dismissed", says: "Dismissed the report." });
+      }
+      const done = await acceptReport(ctx.app, user, repo, id as string);
+      if (!done.ok) return denied(done.error);
+      return good({
+        id,
+        state: "accepted",
+        number: done.value.number,
+        url: `${ctx.url.origin}/${repo.ownerName}/${repo.name}/issues/${done.value.number}`,
+        says: `Accepted the report as issue #${done.value.number}, marked as from outside.`,
+      });
+    },
+  },
+  {
     name: "branches",
     description:
-      "List a repository's branches, or with `name` and `action` create (from `from`) or delete one; never the default.",
+      "A repository's branches; `name` and `action` create (from `from`) or delete one, not the default.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1768,14 +2321,37 @@ const TOOLS: readonly Tool[] = [
         name: { type: "string", maxLength: 255 },
         action: { type: "string", enum: ["create", "delete"] },
         from: { type: "string", maxLength: 255 },
+        kind: { type: "string", enum: ["branches", "tags"], description: "tags: newest first" },
       },
       required: ["repo"],
     },
     writes: true,
     readsWithout: "name",
     async run(ctx, user, args) {
+      const kind = args["kind"] ?? "branches";
+      if (kind !== "branches" && kind !== "tags") return bad("invalid", "`kind` is branches or tags");
+      if (kind === "tags" && (args["name"] !== undefined || args["action"] !== undefined))
+        return bad("invalid", "`kind: tags` only lists; leave out `name` and `action`");
       const repo = repoArg(ctx, user, args);
       if (isAnswer(repo)) return repo;
+      if (kind === "tags") {
+        const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
+        const refs = await listRefs(dir, "refs/tags/");
+        if (!refs.ok) return good({ tags: [] });
+        const order = await runGit(
+          ["for-each-ref", "--sort=-creatordate", "--format=%(refname)", "--", "refs/tags/"],
+          { cwd: dir },
+        );
+        const rank = new Map((order.ok ? order.value.split("\n") : []).map((n, i) => [n, i]));
+        refs.value.sort((a, b) => (rank.get(a.name) ?? 0) - (rank.get(b.name) ?? 0));
+        return good({
+          tags: refs.value.map((r) => ({
+            name: r.name.replace("refs/tags/", ""),
+            oid: r.oid,
+            commit: r.peeled ?? r.oid,
+          })),
+        });
+      }
       const base = `/${repo.ownerName}/${repo.name}/branches`;
       if (args["name"] === undefined) {
         const listed = await listBranches(
@@ -1816,13 +2392,14 @@ const TOOLS: readonly Tool[] = [
   {
     name: "commits",
     description:
-      "List a branch's recent commits (newest first), as GET /api/v1/repos/:owner/:name/commits does.",
+      "Recent commits; `oid`: one commit, diff and check.",
     inputSchema: {
       type: "object",
       properties: {
         repo: REPO_ARG,
-        ref: { type: "string", maxLength: 255, description: "Branch, tag or commit; default branch." },
+        ref: { type: "string", maxLength: 255, description: "Branch, tag or commit." },
         limit: { type: "integer", minimum: 1, maximum: 100 },
+        oid: { type: "string", minLength: 4, maxLength: 64, },
       },
       required: ["repo"],
     },
@@ -1830,6 +2407,24 @@ const TOOLS: readonly Tool[] = [
     async run(ctx, user, args) {
       const repo = repoArg(ctx, user, args);
       if (isAnswer(repo)) return repo;
+      const oid = args["oid"];
+      if (oid !== undefined) {
+        if (typeof oid !== "string" || !/^[0-9a-fA-F]{4,64}$/.test(oid))
+          return bad("invalid", "`oid` is 4 to 64 hex digits");
+        const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
+        const log = await commitLog(dir, oid, { limit: 1 });
+        const commit = log.ok ? log.value[0] : undefined;
+        if (!commit) return bad("not_found", "no such commit");
+        const diff = await diffCommit(dir, commit.oid);
+        const check = await checkOfCommit(ctx.app, user, repo, commit.oid);
+        const files = diff.ok ? diff.value : { files: [], additions: 0, deletions: 0 };
+        return good({
+          says: `${commit.oid.slice(0, 7)} ${commit.subject}: ${files.files.length} file(s) changed.`,
+          ...commit,
+          diff: files,
+          check: check.ok ? check.value : null,
+        });
+      }
       const ref = args["ref"] ?? repo.defaultBranch;
       if (typeof ref !== "string" || ref.length > 255 || !isSafeRef(ref))
         return bad("invalid", "`ref` is a branch, tag or commit");
@@ -1843,7 +2438,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "probe",
     description:
-      "Try every door of a running app as nobody, a user and an admin against its contract.json. Writes nothing.",
+      "Try every door of a running app as nobody, a user and an admin against its contract.json; read-only.",
     inputSchema: {
       type: "object",
       properties: { repo: REPO_ARG },
@@ -1877,7 +2472,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "following",
     description:
-      "Where a fork stands against what it follows: in step, behind, ahead or diverged, and files needing a decision.",
+      "Where a fork stands against what it follows: in step, behind, ahead, diverged; files to decide.",
     inputSchema: {
       type: "object",
       properties: { repo: REPO_ARG },
@@ -1915,7 +2510,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "spawn",
     description:
-      "Spawn a child forge with the named apps and the crew's briefs. Plans first (dryRun false makes it).",
+      "Spawn a child forge with the named apps and the crew's briefs. Plans first (dryRun false spawns).",
     inputSchema: {
       type: "object",
       properties: {
@@ -1933,29 +2528,29 @@ const TOOLS: readonly Tool[] = [
         direction: {
           type: "string",
           description:
-            "What the child is for (max 2000 chars); its planner's first issue.",
+            "Its purpose; first issue.",
         },
         fresh: {
           type: "string",
           description:
-            "One line (max 200 chars): a fresh app to start beside the copied ones.",
+            "A fresh app too.",
         },
         followMode: {
           type: "string",
           enum: ["tell-me", "take-updates"],
           description:
-            "tell-me (default) says when the parent moved; take-updates takes it.",
+            "tell-me or take-updates.",
         },
         size: {
           type: "string",
           enum: ["small", "medium", "large"],
           description:
-            "Recorded only; not enforced.",
+            "Recorded only.",
         },
         keepAccess: {
           type: "boolean",
           description:
-            "Stay an owner after the child is claimed (default false).",
+            "Stay an owner.",
         },
         dryRun: {
           type: "boolean",
@@ -1990,9 +2585,67 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "agent",
+    description: "Admin: create|update|remove an agent.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string" },
+        username: { type: "string" },
+        displayName: { type: "string" },
+        model: { type: "string" },
+        brief: { type: "string" },
+        budgetUsd: { type: "number" },
+      },
+      required: ["action", "username"],
+    },
+    writes: true,
+    adminOnly: true,
+    needsAdminScope: true,
+    async run(ctx, user, args) {
+      const username = str(args["username"]);
+      const model = args["model"];
+      const brief = args["brief"];
+      const budgetUsd = args["budgetUsd"];
+      const fields = {
+        ...(typeof model === "string" ? { model } : {}),
+        ...(typeof brief === "string" ? { brief } : {}),
+        ...(typeof budgetUsd === "number" ? { budgetUsd } : {}),
+      };
+      const shown = (a: Agent) => ({
+        username: a.user.username,
+        displayName: a.user.displayName,
+        model: a.model,
+        brief: a.brief,
+        budgetUsd: a.budgetUsd,
+        createdAt: a.createdAt,
+      });
+      const action = args["action"];
+      if (action === "create") {
+        const made = await createAgent(ctx.app, user, {
+          username,
+          ...(typeof args["displayName"] === "string"
+            ? { displayName: args["displayName"] }
+            : {}),
+          ...fields,
+        });
+        return made.ok ? good(shown(made.value)) : bad(made.error, made.error);
+      }
+      if (action === "update") {
+        const done = updateAgent(ctx.app, user, username, fields);
+        return done.ok ? good(shown(done.value)) : bad(done.error, done.error);
+      }
+      if (action === "remove") {
+        const gone = deleteAgent(ctx.app, user, username);
+        return gone.ok ? good({ removed: username }) : bad(gone.error, gone.error);
+      }
+      return bad("invalid", "action is create, update or remove");
+    },
+  },
+  {
     name: "forges",
     description:
-      "The forges you sent from here (an admin's list): name, address, whom for, apps, claimed or not, last activity.",
+      "The forges sent from here (admin): name, address, whom for, apps, claimed or not, last activity.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     async run(ctx, user) {
@@ -2011,7 +2664,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "claim_link",
     description:
-      "A new claim link for an unclaimed child forge, only with `reveal: true`; the old one then stops at once. Nothing changes without it.",
+      "A new claim link for an unclaimed child forge, only with `reveal: true`; the old one stops at once.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2033,7 +2686,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "take_updates",
     description:
-      "Take the parent forge's updates into a fork: one pull on a spawned forge; otherwise a fast-forward or clean merge.",
+      "Take the parent forge's updates into a fork: a pull on a spawned forge, else a merge.",
     inputSchema: {
       type: "object",
       properties: { repo: REPO_ARG },
@@ -2048,7 +2701,7 @@ const TOOLS: readonly Tool[] = [
         const across = await takeForgeCode(ctx.app, user, repo);
         if (across.ok) return good({ ...across.value, ...takeForgeWords(across.value) });
         return across.error === "not_following"
-          ? bad("not_following", "this repository follows nothing across forges")
+          ? bad("not_following", FAMILY_WORDS.not_following)
           : bad(across.error, "only this repository's admin can take the parent forge's code");
       }
       const took = await takeOrTell(ctx.app, user, repo);
@@ -2085,7 +2738,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "sever",
     description:
-      "Cut a spawned forge's link to the forge its code came from (its `forge` repository's owner only). Deletes nothing.",
+      "Cut a spawned forge's link to its parent (its `forge` repository's owner only). Deletes nothing.",
     inputSchema: {
       type: "object",
       properties: { repo: REPO_ARG },
@@ -2099,14 +2752,14 @@ const TOOLS: readonly Tool[] = [
       if (cut.ok) return good({ says: `Severed: following nothing since ${cut.value.slice(0, 10)}.`, severedAt: cut.value });
       return bad(
         cut.error,
-        cut.error === "not_following" ? "this repository follows nothing across forges" : "only this forge's owner can sever it",
+        cut.error === "not_following" ? FAMILY_WORDS.not_following : "only this forge's owner can sever it",
       );
     },
   },
   {
     name: "follow_mode",
     description:
-      "Choose how a spawned forge follows its parent: `tell-me` or `take-updates` (its `forge` repository's admin only).",
+      "How a spawned forge follows its parent: `tell-me` or `take-updates`. Its `forge` repository's admin.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2125,9 +2778,52 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "upstream",
+    description:
+      "Read, set (`enabled`) or `check` the upstream a repository follows.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        enabled: { type: "boolean" },
+        url: { type: "string" },
+        branch: { type: "string" },
+        check: { type: "boolean" },
+      },
+      required: ["repo"],
+    },
+    writes: true,
+    readsWithout: "enabled",
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const gone = bad("not_found", FOLLOW_REFUSALS.not_found);
+      const refuse = (e: string) => (e === "not_found" || e === "unauthorized" || e === "forbidden" ? gone : bad(e, FOLLOW_REFUSALS[e as keyof typeof FOLLOW_REFUSALS]));
+      const acts = args["check"] === true || args["enabled"] !== undefined;
+      if (!acts) {
+        if (!canAdmin(ctx.app.db, repo, user)) return gone;
+        const follow = getFollow(ctx.app.db, repo.id);
+        return good({ following: follow === undefined ? null : followJson(follow) });
+      }
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "following an upstream needs an admin token");
+      if (args["check"] === true) {
+        if (args["enabled"] !== undefined) return bad("invalid", "check or set, not both");
+        const checked = await checkUpstreamNow(ctx.app, user, repo);
+        return checked.ok ? good(checked.value) : refuse(checked.error);
+      }
+      const { enabled, url, branch } = args;
+      if (typeof enabled !== "boolean") return bad("bad_enabled", "enabled is true or false");
+      if ((url !== undefined && typeof url !== "string") || (branch !== undefined && typeof branch !== "string"))
+        return bad("invalid", "url and branch are text");
+      const saved = setFollowUpstream(ctx.app, user, repo, { url: str(url), branch: str(branch), enabled });
+      return saved.ok ? good({ following: followJson(saved.value) }) : refuse(saved.error);
+    },
+  },
+  {
     name: "propose_to_parent_forge",
     description:
-      "Offer this forge's landed change to its parent as a pull on `child/<name>/…`; the same tip answers with that pull.",
+      "Offer this forge's landed change to its parent as a pull on `child/<name>/…`",
     inputSchema: {
       type: "object",
       properties: { repo: REPO_ARG },
@@ -2148,7 +2844,7 @@ const TOOLS: readonly Tool[] = [
         });
       const e = made.error;
       if (e === "no_parent_forge") return bad(e, "this forge has no parent forge to propose to");
-      if (e === "nothing_to_propose") return bad(e, "nothing here is ahead of the parent forge");
+      if (e === "nothing_to_propose") return bad(e, FAMILY_WORDS.nothing_to_propose);
       if (typeof e === "string") return bad(e, "you need write access to propose from here");
       return e.kind === "unreachable"
         ? bad("parent_unreachable", "parent unreachable: nothing was proposed")
@@ -2158,7 +2854,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "forge_proposals",
     description:
-      "What this forge proposed to its parent, newest first. `reachable` is false if the parent did not answer.",
+      "What this forge proposed to its parent, newest first; `reachable` false if it did not answer.",
     inputSchema: {
       type: "object",
       properties: { repo: REPO_ARG },
@@ -2175,7 +2871,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "converge",
     description:
-      "Have a fork's crew merge the parent's updates where both sides changed the same files, as a pull on the fork.",
+      "Have a fork's crew merge the parent's updates where both changed the same files, as a pull.",
     inputSchema: {
       type: "object",
       properties: { repo: REPO_ARG },
@@ -2202,7 +2898,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "family",
     description:
-      "The forge's family: the forge that sent this one and, for a site admin, those it sent, with state and version.",
+      "The forge that sent this one and, for a site admin, those it sent, with state and version.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     async run(ctx, user) {
@@ -2212,7 +2908,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "next_steps",
     description:
-      "On a spawned forge, your first three steps and whether each is done. Empty elsewhere or for anyone but its owner.",
+      "On a spawned forge, its owner's first three steps and whether each is done. Empty elsewhere.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     async run(ctx, user) {
@@ -2223,7 +2919,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "thought",
     description:
-      "Where one of your thoughts went: its id (from `tell` without a repo) answers with the placement and reply.",
+      "Where one of your thoughts went: its id (from `tell` without a repo) answers placement and reply.",
     inputSchema: {
       type: "object",
       properties: { id: { type: "string", maxLength: 64 } },
@@ -2253,7 +2949,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "asked",
     description:
-      "What people asked the crew for, in repositories you can write: by default what has nothing merged yet, oldest first.",
+      "What people asked the crew for where you write: by default nothing merged yet, oldest first.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2281,9 +2977,33 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "assigned",
+    description: "Open issues and pulls assigned to you.",
+    inputSchema: {
+      type: "object",
+      properties: { limit: { type: "integer", minimum: 1, maximum: 50 } },
+    },
+    writes: false,
+    run(ctx, user, args) {
+      const limit = args["limit"] ?? 50;
+      if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1 || limit > 50)
+        return bad("invalid", "`limit` is a whole number from 1 to 50");
+      const db = ctx.app.db;
+      const issues = listAssignedTo(db, user.id, limit);
+      const repos = getReposByIds(db, issues.map((i) => i.repoId));
+      const items = [];
+      for (const issue of issues) {
+        const repo = repos.get(issue.repoId);
+        if (!repo || !canRead(db, repo, user) || !mayView(db, repo, issue, user)) continue;
+        items.push({ ...issue, repo: { owner: repo.ownerName, name: repo.name } });
+      }
+      return good({ items, next_cursor: null });
+    },
+  },
+  {
     name: "app_members",
     description:
-      "The people a private app names, who may enter it and its previews. Without `members`, the list; with it, plans.",
+      "The people a private app names, who may enter it and its previews. With `members`, plans.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2319,6 +3039,51 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "egress_grants",
+    description:
+      "An app's private destinations and their grants: list, grant or revoke (site admin). See docs/MCP.md.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        op: { type: "string", enum: ["list", "grant", "revoke"] },
+        destination: { type: "string" },
+      },
+      required: ["repo"],
+    },
+    writes: true,
+    readsWithout: "op",
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const op = args["op"] === undefined ? "list" : str(args["op"]);
+      if (op !== "list" && op !== "grant" && op !== "revoke")
+        return bad("invalid", "op is list, grant or revoke");
+      // The API's rule: reading or changing grants takes an admin-scope token.
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "egress grants need an admin-scope token");
+      const refused = (error: string): Answer => {
+        if (error === "not_found")
+          return bad("not_found", "no such app or repository (owner/name)");
+        if (error === "forbidden") return bad("forbidden", FORBIDDEN_MESSAGE);
+        return bad(error, error);
+      };
+      if (op === "list") {
+        const view = await egressView(ctx.app, user, repo);
+        return view.ok
+          ? good({ items: view.value.rows, changes: view.value.changes })
+          : refused(view.error);
+      }
+      const destination = str(args["destination"]);
+      if (op === "grant") {
+        const granted = await grantAppEgress(ctx.app, user, repo, destination);
+        return granted.ok ? good(granted.value) : refused(granted.error);
+      }
+      const revoked = revokeAppEgress(ctx.app, user, repo, destination);
+      return revoked.ok ? good({ revoked: revoked.value }) : refused(revoked.error);
+    },
+  },
+  {
     name: "explore",
     description:
       "The apps, people (and for a site admin, spawned forges) you can see, ranked.",
@@ -2328,7 +3093,7 @@ const TOOLS: readonly Tool[] = [
         query: {
           type: "string",
           maxLength: 200,
-          description: "Words, plus kind:app|person|forge and sort:score|forks|ships|use|fresh|name.",
+          description: "Words; kind:, sort: filters.",
         },
       },
     },
@@ -2344,7 +3109,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "search",
     description:
-      "Find issues, pulls, repositories and code you can read, as /search; `kind` narrows, `repo` keeps to one repository.",
+      "Find issues, pulls, repositories and code you can read; `kind` narrows, `repo` keeps to one.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2381,7 +3146,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "feed",
     description:
-      "Your ranked home timeline across visible apps. `cursor` pages. Your saved filter (`feed_chips`) applies.",
+      "Your ranked home timeline across visible apps; `cursor` pages; saved filter (`feed_chips`) applies.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2414,7 +3179,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "feed_chips",
     description:
-      "The feed chips you switched off, left out of `feed` and `asks`. With `kind`, `value` and `hidden` it sets one.",
+      "Feed chips you switched off in `feed` and `asks`. With `kind`, `value` and `hidden`, sets one.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2451,7 +3216,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "make_it_yours",
     description:
-      "Make an app you can see yours: a fork of its code and history, following the original; nothing else is copied.",
+      "Fork an app you can see: its code and history, following the original; nothing else is copied.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2486,7 +3251,7 @@ const TOOLS: readonly Tool[] = [
           : made.error.kind === "invalid"
           ? bad("invalid", made.error.message)
           : made.error.kind === "own"
-            ? bad("own", "this app is already yours")
+            ? bad("own", APP_ALREADY_YOURS)
             : made.error.kind === "not_member"
               ? bad("not_member", NOT_A_MEMBER)
             : made.error.kind === "unverified"
@@ -2499,9 +3264,62 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "origin_apps",
+    description:
+      "Your origin OAuth apps: list, add, remove.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string" },
+        id: { type: "string" },
+        host: { type: "string" },
+        kind: { type: "string" },
+        clientId: { type: "string" },
+        clientSecret: { type: "string" },
+      },
+    },
+    writes: true,
+    async run(ctx, user, args) {
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "origin apps need an admin-scope token");
+      const action = args["action"];
+      // Never the secret: an app is shown as `hasSecret`, and errors are codes.
+      const shown = (a: ReturnType<typeof listOriginApps>[number]) => {
+        const { userId: _owner, ...rest } = a;
+        return rest;
+      };
+      if (action === "list")
+        return good({ items: listOriginApps(ctx.app, user).map(shown), next_cursor: null });
+      if (action === "add") {
+        const kind = str(args["kind"]);
+        const clientId = str(args["clientId"]);
+        if (kind !== "" && kind !== "github" && kind !== "forgejo" && kind !== "gitea")
+          return bad("invalid", "kind is github, forgejo or gitea");
+        if (clientId === "") return bad("invalid", "`clientId` is required");
+        const host = str(args["host"]) || kind;
+        if (host === "") return bad("invalid", "`host` or `kind` is required");
+        const secret = args["clientSecret"];
+        const saved = await registerOriginApp(ctx.app, user, {
+          host,
+          ...(kind === "" ? {} : { kind }),
+          clientId,
+          ...(typeof secret === "string" ? { clientSecret: secret } : {}),
+        });
+        return saved.ok ? good(shown(saved.value)) : bad(saved.error, connectMessage(saved.error));
+      }
+      if (action === "remove") {
+        const id = str(args["id"]);
+        if (id === "") return bad("invalid", "`id` is required");
+        const removed = deleteOriginApp(ctx.app, user, id);
+        return removed.ok ? good({}) : bad("not_found", "no such origin app");
+      }
+      return bad("invalid", "`action` is list, add or remove");
+    },
+  },
+  {
     name: "front_page",
     description:
-      "The forge's front page as a stranger sees it. A site admin also gets the picks and sets them with `pinned`, `hidden`, `weights`.",
+      "The front page as a stranger sees it; a site admin also gets and sets `pinned`, `hidden`, `weights`.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2509,7 +3327,7 @@ const TOOLS: readonly Tool[] = [
         hidden: { type: "array", items: { type: "string" } },
         weights: {
           type: "object",
-          description: "Each 0 to 10: forks, ships, use, fresh.",
+          description: "0–10 each.",
           properties: {
             forks: { type: "number", minimum: 0, maximum: 10 },
             ships: { type: "number", minimum: 0, maximum: 10 },
@@ -2535,7 +3353,7 @@ const TOOLS: readonly Tool[] = [
       const set = setFront(ctx.app, user, picks, args["dryRun"] !== false);
       if (!set.ok)
         return set.error.kind === "forbidden"
-          ? bad("forbidden", "the front page is a site admin's to set")
+          ? bad("forbidden", ADMIN_WORDS.frontPage)
           : bad("invalid", set.error.message);
       return good({
         dryRun: args["dryRun"] !== false,
@@ -2547,7 +3365,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "map",
     description:
-      "An app's plan: open issues ready or waiting, critical path, every edge, where the crew is, `parkedTwice` issues.",
+      "An app's plan: open issues ready or waiting, critical path, edges, where the crew is, `parkedTwice`.",
     inputSchema: {
       type: "object",
       properties: { app: APP_ARG },
@@ -2580,7 +3398,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "milestones",
     description:
-      "How far each thing asked for is. With `app`: the plan's top-level limbs with done/total, building and recent merges.",
+      "How far each thing asked for is. With `app`: top-level limbs, done/total, building, recent merges.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2589,7 +3407,7 @@ const TOOLS: readonly Tool[] = [
           type: "integer",
           minimum: 1,
           description:
-            "The number of an issue that waits for others; the limbs when absent.",
+            "Issue number; limbs if absent.",
         },
       },
       required: ["app"],
@@ -2616,7 +3434,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "watch",
     description:
-      "Watch a milestone, or stop (`watch: false`): progress is one feed item; your phone is told once, when it lands.",
+      "Watch a milestone, or stop (`watch: false`): one feed item; your phone is told once when it lands.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2624,11 +3442,11 @@ const TOOLS: readonly Tool[] = [
         issue: {
           type: "integer",
           minimum: 1,
-          description: "The number of an issue that waits for others.",
+          description: "Issue number.",
         },
         watch: {
           type: "boolean",
-          description: "false to stop watching; anything else watches.",
+          description: "false to stop.",
         },
       },
       required: ["app", "issue"],
@@ -2649,7 +3467,7 @@ const TOOLS: readonly Tool[] = [
         );
       return set.ok
         ? good(set.value)
-        : bad("forbidden", "only a person watches a milestone");
+        : bad("forbidden", MILESTONE_WATCH_PERSON_ONLY);
     },
   },
   {
@@ -2664,7 +3482,7 @@ const TOOLS: readonly Tool[] = [
           type: "integer",
           minimum: 1,
           maximum: 50,
-          description: "How many, 1 to 50; 20 when absent.",
+          description: "1–50, default 20.",
         },
       },
       required: ["repo"],
@@ -2740,7 +3558,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "limb",
     description:
-      "One action on a plan limb: `defer`, `resume` (`pillar`), `close` (`reason`), `raise`/`lower` (`under`), `replan`, `takeback`, `undo`.",
+      "Act on a limb: `defer`, `resume`, `close` (`reason`), `raise`, `lower`, `replan`, `takeback`, `undo`",
     inputSchema: {
       type: "object",
       properties: {
@@ -2752,24 +3570,24 @@ const TOOLS: readonly Tool[] = [
         action: { type: "string", enum: ["defer", "resume", "close", "raise", "lower", "replan", "takeback", "undo"] },
         reason: {
           type: "string",
-          description: "For close: why it is not being done, in one sentence.",
+          description: "For close: why.",
         },
         pillar: {
           type: "string",
           description:
-            "For resume: the pillar to return it under.",
+            "For resume.",
         },
         under: {
           type: "string",
           description:
-            "For raise and lower: `top` or a milestone number; only when the limb sits in several places.",
+            "`top` or a milestone number.",
         },
         operation: {
           type: "string",
         },
         dryRun: {
           type: "boolean",
-          description: "false to apply; anything else plans and changes nothing.",
+          description: "false to apply",
         },
       },
       required: ["app", "action"],
@@ -2833,7 +3651,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "returns",
     description:
-      "What the crew's tokens bought over the last days (1–90, default 7): dollars, runs, changes landed, cost per change.",
+      "What the crew's tokens bought over `days` (1–90, default 7): dollars, runs, landed, cost per change.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2897,11 +3715,11 @@ const TOOLS: readonly Tool[] = [
           "refused",
           originError(error) ??
             (error === "self_review"
-              ? "You cannot approve your own pull request."
+              ? reviewWords.selfReview
               : error === "forbidden"
-                ? "A verdict that gates a merge needs write access."
+                ? reviewWords.forbidden
                 : error === "body_too_long"
-                  ? "That review is too long (64 KB at most)."
+                  ? reviewWords.tooLong
                   : "That review could not be recorded."),
         );
       }
@@ -2912,9 +3730,71 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "threads",
+    description:
+      "A pull's review threads; with `anchor`, resolve one or reopen it (`resolved` false).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        number: { type: "integer", minimum: 1 },
+        anchor: { type: "string", maxLength: 16 },
+        resolved: { type: "boolean" },
+      },
+      required: ["repo", "number"],
+    },
+    writes: true,
+    readsWithout: "anchor",
+    run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const n = args["number"];
+      const anchor = args["anchor"];
+      const resolved = args["resolved"];
+      if (anchor !== undefined && (typeof anchor !== "string" || !/^[0-9a-f]{16}$/.test(anchor)))
+        return bad("invalid", "`anchor` is a thread's anchor, as the list gives it");
+      if (resolved !== undefined && typeof resolved !== "boolean")
+        return bad("invalid", "`resolved` is true or false");
+      if (anchor === undefined && resolved !== undefined)
+        return bad("invalid", "`resolved` needs an `anchor`");
+      const pull =
+        typeof n === "number" && Number.isInteger(n) && n > 0
+          ? getPull(ctx.app.db, repo.id, n)
+          : undefined;
+      if (pull === undefined || !mayView(ctx.app.db, repo, pull, user))
+        return bad("no_such_pull", `no pull #${String(n)}`);
+      const url = `/${repo.ownerName}/${repo.name}/pulls/${pull.number}`;
+      if (anchor === undefined) {
+        const threads = pullThreads(ctx.app, pull);
+        const open = threads.filter((t) => t.resolvedAt === null).length;
+        return good({
+          threads,
+          url,
+          says: `${threads.length} thread${threads.length === 1 ? "" : "s"}, ${open} open.`,
+        });
+      }
+      const want = resolved !== false;
+      const done = resolveReviewThread(ctx.app, user, repo, pull, anchor, want);
+      if (!done.ok)
+        return bad(
+          done.error === "not_found" ? "no_such_thread" : "refused",
+          done.error === "not_found"
+            ? "No such thread on this pull."
+            : done.error === "forbidden"
+              ? "Only a writer or someone in the thread may settle it."
+              : "You may not settle this thread.",
+        );
+      return good({
+        ...done.value,
+        url,
+        says: want ? "Thread resolved." : "Thread reopened.",
+      });
+    },
+  },
+  {
     name: "spend",
     description:
-      "Report what your session spent on an app's work the forge did not run: who, model, tokens and/or dollars, issue or pull.",
+      "Report what your session spent on work the forge did not run: who, model, tokens or dollars, issue.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2943,7 +3823,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "usage",
     description:
-      "What the crew's runs on an app spent over the last days (1–90, default 7), by agent and issue. Writers only.",
+      "What the crew's runs on an app spent over `days` (1–90, default 7), by agent and issue. Writers.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2974,7 +3854,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "labels",
     description:
-      "Set the labels of an issue or a pull to exactly these (none clears): only the repository's labels; writers only.",
+      "Set an issue's or pull's labels to exactly these (none clears), from the repository's. Writers.",
     inputSchema: {
       type: "object",
       properties: {
@@ -3014,8 +3894,8 @@ const TOOLS: readonly Tool[] = [
           applied.error,
           originError(applied.error) ??
             (applied.error === "unknown_label"
-              ? "One of those labels no longer exists."
-              : "You need write access to change labels."),
+              ? THREAD_SAYS.unknownLabel
+              : THREAD_SAYS.labelsForbidden),
         );
       const names = applied.value.map((l) => l.name);
       return good({
@@ -3029,8 +3909,152 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "repo_labels",
+    description:
+      "Repo labels: list (default), create, remove (admin token).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        action: { type: "string" },
+        name: { type: "string" },
+        color: { type: "string" },
+        id: { type: "string" },
+      },
+      required: ["repo"],
+    },
+    writes: true,
+    // Listing, named or by default, is a read: a read-only token may.
+    readsWhen: (args) => args["action"] === undefined || args["action"] === "list",
+    run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const action = args["action"] ?? "list";
+      if (action === "list") return good({ items: listLabels(ctx.app.db, repo.id) });
+      if (action !== "create" && action !== "remove")
+        return bad("invalid", "action is list, create or remove");
+      // The API asks for an admin token on both routes; so does this.
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "changing labels needs an admin token");
+      if (action === "create") {
+        const name = args["name"];
+        const color = args["color"] ?? "6b7280";
+        if (typeof name !== "string" || name.trim() === "" || name.length > 64)
+          return bad("invalid", "name is one to 64 characters");
+        if (typeof color !== "string" || !/^[0-9a-fA-F]{6}$/.test(color))
+          return bad("invalid", "color is six hex digits, like 6b7280");
+        const made = createLabel(ctx.app, user, repo, name, color);
+        if (!made.ok)
+          return bad(
+            made.error,
+            made.error === "taken"
+              ? "A label with that name already exists."
+              : made.error === "invalid"
+                ? LABEL_WORDS.shape
+                : "no such app or repository (owner/name)",
+          );
+        return good({ says: `Created the label ${made.value.name}.`, label: made.value });
+      }
+      const id = args["id"];
+      if (typeof id !== "string" || id === "" || id.length > 64)
+        return bad("invalid", "id is the label's id, from list");
+      const gone = deleteLabel(ctx.app, user, repo, id);
+      return gone.ok
+        ? good({ says: "Removed the label.", removed: id })
+        : bad("not_found", "no such label, or you are not this repository's admin");
+    },
+  },
+  {
+    name: "hooks",
+    description: "List, add (`url`, `secret`, `kinds`) or remove (`id`) a repository's webhooks; admins only, a secret is never shown.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        action: { type: "string", enum: ["list", "add", "remove"] },
+        url: { type: "string", maxLength: 2048 },
+        kinds: { type: "string", maxLength: 200 },
+        secret: { type: "string", maxLength: 200 },
+        id: { type: "string", maxLength: 64 },
+      },
+      required: ["repo", "action"],
+    },
+    writes: true,
+    needsAdminScope: true,
+    run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const action = args["action"];
+      if (action === "list") {
+        if (!canAdmin(ctx.app.db, repo, user)) return notAdmin();
+        return good(listWebhooks(ctx.app.db, repo.id));
+      }
+      if (action === "add") {
+        const long = hookTooLong(args);
+        if (long !== undefined) return long;
+        const secret = args["secret"];
+        if (typeof secret !== "string" || secret.length < 16)
+          return bad("invalid", "secret is required: 16 to 200 characters, the key deliveries are signed with");
+        const created = createWebhook(ctx.app, user, repo, {
+          url: str(args["url"]),
+          kinds: str(args["kinds"]) || "*",
+          secret,
+        });
+        if (!created.ok)
+          return created.error === "invalid_url"
+            ? bad("invalid_url", "a webhook url is https://…")
+            : notAdmin();
+        // Unlike the API's one-time reveal, the secret is never echoed here.
+        return good(created.value.webhook);
+      }
+      if (action === "remove") {
+        const long = hookTooLong(args);
+        if (long !== undefined) return long;
+        const removed = deleteWebhook(ctx.app, user, repo, str(args["id"]));
+        return removed.ok ? good({}) : bad("not_found", "no such webhook here");
+      }
+      return bad("invalid", "action is list, add or remove");
+    },
+  },
+  {
+    name: "subscription_budget",
+    description: "Admin: set an account's whole-life budget in dollars, or null to clear.",
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string" }, usd: { type: ["number", "null"] } },
+      required: ["id", "usd"],
+    },
+    writes: true,
+    adminOnly: true,
+    needsAdminScope: true,
+    run(ctx, _user, args) {
+      const id = args["id"];
+      const usd = args["usd"];
+      if (typeof id !== "string" || id === "" || id.length > 64)
+        return bad("invalid", "id is the account's id");
+      if (usd !== null && (typeof usd !== "number" || !Number.isFinite(usd)))
+        return bad("invalid", "usd is a number of dollars, or null to clear");
+      const held = budgetsOf(ctx.app.db).get(id);
+      if (!held) return bad("not_found", "no such account");
+      if (held.locked && (usd === null || !(usd < (held.budgetUsd ?? 0))))
+        return bad(
+          "locked",
+          "This budget was set by whoever made this forge: it can be lowered, never raised or cleared.",
+        );
+      const max = limitValue(ctx.app.db, "subscription.budget_max_usd");
+      if (!setBudget(ctx.app.db, id, usd))
+        return bad("invalid", `A budget is dollars from 1 to ${max}, or null for none.`);
+      const budgetUsd = usd === null ? null : Math.round(usd * 100) / 100;
+      return good({
+        id,
+        budgetUsd,
+        says: budgetUsd === null ? "No budget: this account spends until you stop it." : `Budget set: $${budgetUsd} in all.`,
+      });
+    },
+  },
+  {
     name: "wait_for",
-    description: "Make an issue wait for another in the same app, or stop waiting with `stop: true`.",
+    description: "Make an issue wait for another; `stop` ends it.",
     inputSchema: {
       type: "object",
       properties: {
@@ -3059,7 +4083,7 @@ const TOOLS: readonly Tool[] = [
         return bad(
           done.error,
           dependencyWords[done.error] ??
-            "You need write access, or a place on the crew, to plan here.",
+            THREAD_SAYS.planForbidden,
         );
       return good({
         says: `#${issue.number} ${stop ? "no longer waits" : "waits"} for #${blocker.number}.`,
@@ -3068,9 +4092,42 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "confirm_wait",
+    description:
+      "Let an issue go ahead though its blocker closed dropped or split.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        app: APP_ARG,
+        issue: { type: "integer" },
+        blocker: { type: "integer" },
+      },
+      required: ["app", "issue", "blocker"],
+    },
+    writes: true,
+    run(ctx, user, args) {
+      const repo = planRepo(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const issue = issueArg(ctx, repo, args, "issue");
+      if ("ok" in issue) return issue;
+      const blocker = issueArg(ctx, repo, args, "blocker");
+      if ("ok" in blocker) return blocker;
+      const done = confirmIssue(ctx.app, user, repo, issue, blocker);
+      if (!done.ok)
+        return bad(
+          done.error,
+          "You need write access, and not a place on the crew, to confirm a wait.",
+        );
+      return good({
+        says: `#${issue.number} may go ahead without #${blocker.number}.`,
+        url: `${ctx.url.origin}/${repo.ownerName}/${repo.name}/issues/${issue.number}`,
+      });
+    },
+  },
+  {
     name: "attach_look",
     description:
-      "Attach a look to an open pull: PNG or JPEG (max 5 MB, base64 in `image`), `phone` or `desktop`, one line in `says`.",
+      "Attach a PNG or JPEG (base64 `image`, max 5 MB) to an open pull: `phone` or `desktop`, `says`.",
     inputSchema: {
       type: "object",
       properties: {
@@ -3124,7 +4181,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "hold",
     description:
-      "Hold a pull (`why`) or let it go (`release: true`): while held, nothing reviews or lands it. Writers only.",
+      "Hold a pull (`why`) or let it go (`release: true`): while held nothing reviews or lands it. Writers.",
     inputSchema: {
       type: "object",
       properties: {
@@ -3132,7 +4189,7 @@ const TOOLS: readonly Tool[] = [
         pull: { type: "integer" },
         why: {
           type: "string",
-          description: "To hold: why, in one line. It shows on the pull.",
+          description: "Why, one line.",
         },
         release: {
           type: "boolean",
@@ -3198,7 +4255,7 @@ const TOOLS: readonly Tool[] = [
   },
   {
     name: "plan",
-    description: `Open and link several small issues, all or none (max ${PLAN_MAX}). With pillars, each has \`pillar\` or \`later: true\` with \`why\`.`,
+    description: `Open and link small issues, all or none (max ${PLAN_MAX}); each has \`pillar\` or \`later: true\` with \`why\`.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -3223,11 +4280,11 @@ const TOOLS: readonly Tool[] = [
               },
               pillar: {
                 type: "string",
-                description: 'Pillar served: "P0" or "P0 Trust".',
+                description: 'Pillar, "P0".',
               },
               later: {
                 type: "boolean",
-                description: "No pillar: needs why.",
+                description: "No pillar; needs why.",
               },
               why: {
                 type: "string",
@@ -3274,14 +4331,64 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
-    name: "access",
+    name: "prompts",
     description:
-      "What outside agents tried: the redacted log of non-browser requests to public paths, newest first, max 500. Forge admin.",
+      "An app's prompt sources (Instagram): list, add (`kind`, `token`, `at`), run or remove (`id`). Repository admin token.",
     inputSchema: {
       type: "object",
       properties: {
-        since: { type: "string", maxLength: 40, description: "ISO time; default last day, max 14 days." },
-        ua: { type: "string", maxLength: 100, description: "Part of the user agent." },
+        repo: REPO_ARG,
+        action: { type: "string", enum: ["list", "add", "run", "remove"] },
+        kind: { type: "string", description: "add: instagram" },
+        token: { type: "string", description: "add: sealed, never shown again" },
+        at: { type: "string", description: "add: HH:MM UTC" },
+        id: { type: "string", description: "run, remove" },
+      },
+      required: ["repo", "action"],
+    },
+    writes: true,
+    needsAdminScope: true,
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const refuse = (error: string) =>
+        error === "not_found"
+          ? bad("not_found", "no such app or repository (owner/name)")
+          : bad(error, error.replaceAll("_", " "));
+      const action = args["action"];
+      if (action === "list") {
+        const listed = listPromptSources(ctx.app, user, repo);
+        return listed.ok ? good({ items: listed.value }) : refuse(listed.error);
+      }
+      if (action === "add") {
+        const added = addPromptSource(ctx.app, user, repo, {
+          kind: str(args["kind"]),
+          token: str(args["token"]),
+          at: str(args["at"]),
+        });
+        return added.ok ? good(added.value) : refuse(added.error);
+      }
+      const id = str(args["id"]);
+      if (action === "run") {
+        const ran = await runPromptSource(ctx.app, user, repo, id);
+        return ran.ok ? good(ran.value) : refuse(ran.error);
+      }
+      if (action === "remove") {
+        const removed = removePromptSource(ctx.app, user, repo, id);
+        return removed.ok ? good({ removed: true }) : refuse(removed.error);
+      }
+      return bad("bad_action", "`action` is list, add, run or remove");
+    },
+  },
+  {
+    name: "access",
+    description:
+      "Non-browser public-path requests, redacted, newest first (max 500). Forge admin.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        since: { type: "string", maxLength: 40, description: "ISO time." },
+        ua: { type: "string", maxLength: 100, description: "User agent part." },
         path: { type: "string", maxLength: 200, description: "Path prefix." },
       },
     },
@@ -3343,19 +4450,19 @@ const TOOLS: readonly Tool[] = [
   {
     name: "scorecard",
     description:
-      "Crew scorecard (forge admin): per agent, all time and 30 days (landed, review rounds, red rate, reverts).",
+      "Crew scorecard (forge admin): per agent, all time and 30 days: landed, rounds, red rate, reverts.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     adminOnly: true,
     run(ctx, user) {
       const card = readScorecards(ctx.app, user);
-      return card ? good(card) : bad("forbidden", "the crew's scorecard is a forge admin's to read");
+      return card ? good(card) : bad("forbidden", ADMIN_WORDS.scorecard);
     },
   },
   {
     name: "flow",
     description:
-      "The forge's pipeline (forge admin): per stage counts, `oldestWaiting`, `capacity`, the bottleneck, merge `queue`.",
+      "Pipeline (forge admin): stage counts, `oldestWaiting`, `capacity`, bottleneck, `queue`, `reviewing`.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     run(ctx, user) {
@@ -3369,7 +4476,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "system",
     description:
-      "The machine the forge runs on, now: CPU, load, memory, disk, network, processes. Forge admin or telemetry:read.",
+      "The forge's machine now: CPU, load, memory, disk, network, processes. Forge admin or telemetry:read.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     run(ctx, user) {
@@ -3381,9 +4488,36 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "telemetry_grant",
+    description: "Grant an agent telemetry:read, or take it back with `on: false`.",
+    inputSchema: {
+      type: "object",
+      properties: { agent: { type: "string" }, on: { type: "boolean" } },
+      required: ["agent", "on"],
+    },
+    writes: true,
+    adminOnly: true,
+    needsAdminScope: true,
+    run(ctx, user, args) {
+      const { agent, on } = args;
+      if (typeof agent !== "string" || typeof on !== "boolean")
+        return bad("invalid", "send an agent name and on, true or false");
+      if (!mayBoards(user)) return bad("forbidden", "telemetry:read is a forge admin's to grant");
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "granting needs an admin token");
+      const set = setTelemetryGrant(ctx.app, user, agent, on);
+      if (!set.ok)
+        return set.error === "not_an_agent"
+          ? bad("invalid", "Only an agent account can be granted telemetry:read.")
+          : bad("not_found", "no such account");
+      const { username } = set.value;
+      return good({ agent: username, on, says: `${username} ${on ? "may now read" : "no longer reads"} telemetry.` });
+    },
+  },
+  {
     name: "contribute",
     description:
-      "For any arriving agent: what this forge is, its bottleneck, open “help wanted” issues, how to propose.",
+      "For an arriving agent: what this forge is, its bottleneck, “help wanted” issues, how to propose.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     run: (ctx) => good(welcome(ctx.app)),
@@ -3391,7 +4525,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "limits",
     description:
-      "Every limit the forge's owner can hit, with value, bounds. With `key` and `value` (\"\" restores default), plans.",
+      "Every limit the forge's owner can hit, value and bounds. `key` and `value` (\"\" restores) plan.",
     inputSchema: {
       type: "object",
       properties: {
@@ -3422,6 +4556,51 @@ const TOOLS: readonly Tool[] = [
         says: `${key}: ${changed.value.from} → ${changed.value.to}, from the next use on.`,
         ...changed.value,
       });
+    },
+  },
+  {
+    name: "app_env",
+    description:
+      "An app's environment variables: list names, set or unset one by scope; values are write-only. Admin.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        action: { type: "string", enum: ["list", "set", "unset"] },
+        name: { type: "string" },
+        value: { type: "string" },
+        scope: { type: "string", enum: ["all", "production", "preview"] },
+      },
+      required: ["repo", "action"],
+    },
+    writes: true,
+    async run(ctx, user, args) {
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "an app's environment needs an admin-scope token");
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const action = args["action"];
+      const scope = typeof args["scope"] === "string" ? args["scope"] : "all";
+      const name = typeof args["name"] === "string" ? args["name"] : "";
+      // The API's errors, by code: never the value.
+      const refused = (error: string): Answer =>
+        error === "not_found"
+          ? bad("not_found", "no such app or repository (owner/name)")
+          : bad(error, error);
+      if (action === "list") {
+        const listed = listAppEnv(ctx.app, user, repo);
+        return listed.ok ? good({ items: listed.value, next_cursor: null }) : refused(listed.error);
+      }
+      if (action === "set") {
+        const value = typeof args["value"] === "string" ? args["value"] : "";
+        const set = await setAppEnvVar(ctx.app, user, repo, name, value, scope);
+        return set.ok ? good(set.value) : refused(set.error);
+      }
+      if (action === "unset") {
+        const removed = await deleteAppEnvVar(ctx.app, user, repo, name, scope);
+        return removed.ok ? good({}) : refused(removed.error);
+      }
+      return bad("invalid", "`action` is list, set or unset");
     },
   },
   {
@@ -3477,7 +4656,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "cloud_accounts",
     description:
-      "Cloud accounts (forge admin): each attached provider token with use, verification, write permission, today's calls.",
+      "Cloud accounts (forge admin): each provider token's use, verification, write permission, calls today.",
     inputSchema: { type: "object", properties: {} },
     // A read, but marked a write so a `ro` token never lists the accounts; it
     // is a forge admin's and the audit rows name every vendor call.
@@ -3493,17 +4672,17 @@ const TOOLS: readonly Tool[] = [
   {
     name: "cloud_account",
     description:
-      "Change a cloud account (admin-scope token). `verb`: attach, verify, rotate, rename, remove, allow_writes, audit.",
+      "Change a cloud account (admin token): `verb` attach, verify, rotate, rename, remove, allow_writes, audit",
     inputSchema: {
       type: "object",
       properties: {
         verb: { type: "string", enum: ["attach", "verify", "rotate", "rename", "remove", "allow_writes", "audit"] },
         provider: { type: "string", enum: [...PROVIDERS] },
         name: { type: "string", maxLength: 32 },
-        value: { type: "string", maxLength: 4096, description: "Token, for attach and rotate." },
+        value: { type: "string", maxLength: 4096, description: "For attach, rotate." },
         to: { type: "string", maxLength: 32 },
         allowed: { type: "boolean", description: "For allow_writes." },
-        repo: { type: "string", maxLength: 200, description: "For audit: owner/name." },
+        repo: { type: "string", maxLength: 200, description: "For audit." },
       },
       required: ["verb", "provider", "name"],
     },
@@ -3548,7 +4727,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "quotas",
     description:
-      "Per-account repository and app quotas (number or null; not enforced yet). With `key` and `value` (\"\" clears), plans.",
+      "Per-account repo and app quotas (number or null; not enforced yet). With `key`, `value` (\"\" clears).",
     inputSchema: {
       type: "object",
       properties: {
@@ -3586,7 +4765,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "signup",
     description:
-      "Who may sign up: open (default); invite lets in only a person with an open invite link; closed refuses every new account. With `mode`, plans.",
+      "Sign-ups: open (default); invite lets in only a person with an open invite link; closed refuses every new account",
     inputSchema: {
       type: "object",
       properties: {
@@ -3617,6 +4796,42 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "email_verify",
+    description: "Send yourself a new verification link.",
+    inputSchema: { type: "object", properties: {} },
+    writes: true,
+    async run(ctx, user) {
+      const sent = await resendVerification(ctx.app, user);
+      if (sent.ok)
+        return good({
+          outcome: sent.value,
+          says: sent.value === "sent" ? "A new verification email is on its way." : "Your email is already verified.",
+        });
+      if (sent.error === "too_soon")
+        return bad("too_soon", VERIFY_WORDS.too_soon);
+      if (sent.error === "no_mail")
+        return bad("no_mail", VERIFY_WORDS.no_mail);
+      if (sent.error === "capped") return bad("capped", CAPPED_WORDS);
+      if (sent.error === "unauthorized") return bad("unauthorized", "sign in first");
+      return bad("failed", VERIFY_WORDS.failed);
+    },
+  },
+  {
+    name: "parent_unlink",
+    description: "Unlink parent-forge sign-in.",
+    inputSchema: { type: "object", properties: {} },
+    writes: true,
+    run(ctx, user) {
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin")) return bad("forbidden", "unlinking needs an admin token");
+      const issuer = parentIssuerOf(ctx.app.config);
+      const done = issuer === undefined ? undefined : unlinkParent(ctx.app.db, user.id, issuer);
+      if (done === undefined || (done.ok && done.value === "none")) return good({ says: "Nothing to unlink." });
+      if (!done.ok) return bad("last_way_in", LAST_WAY_IN);
+      ctx.app.bus.append({ kind: "account.parent_unlinked", actorId: user.id });
+      return good({ says: "Unlinked." });
+    },
+  },
+  {
     name: "boards",
     description:
       "The forge's boards for person admins: slug, title, range, refresh and panels.",
@@ -3624,10 +4839,10 @@ const TOOLS: readonly Tool[] = [
       type: "object",
       properties: {
         slug: { type: "string", maxLength: 40 },
-        panel: { type: "integer", minimum: 0, maximum: 23, description: "One panel's data, by place from 0." },
+        panel: { type: "integer", minimum: 0, maximum: 23, description: "One panel, from 0." },
         from: { type: "string", maxLength: 64 },
         to: { type: "string", maxLength: 64 },
-        step: { type: "string", maxLength: 16, description: "With panel: seconds per bucket, or a count of s, m, h or d." },
+        step: { type: "string", maxLength: 16, description: "With panel: seconds per bucket, or 5m." },
       },
     },
     writes: false,
@@ -3661,7 +4876,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "board_write",
     description:
-      "Write a whole board under a slug (made or replaced): {title, range, refresh, panels: [{title, chart, query, w, h}]}.",
+      "Write a whole board under a slug: {title, range, refresh, panels: [{title, chart, query, w, h}]}.",
     inputSchema: {
       type: "object",
       properties: {
@@ -3741,8 +4956,13 @@ function adminNote(ctx: Ctx, user: User): string {
 }
 
 /** A card's model beside the text, for a host that draws `ui://` resources. */
-function cardResult(name: string, value: unknown, origin: string): Record<string, unknown> {
-  const card = cardFor(name, value, origin);
+function cardResult(
+  name: string,
+  value: unknown,
+  origin: string,
+  extra?: Record<string, unknown>,
+): Record<string, unknown> {
+  const card = cardFor(name, value, origin, extra);
   return card === undefined ? {} : { structuredContent: { card } };
 }
 
@@ -3787,11 +5007,13 @@ function rpcOne(
     case "tools/list":
       return reply({
         tools: [
-          ...TOOLS.filter((t) => t.adminOnly !== true || user.isAdmin).map((t) => ({
+          ...TOOLS.filter((t) => visible(t, ctx, user)).map((t) => ({
             name: t.name,
             description: t.description,
             inputSchema: lean(t.inputSchema),
-            annotations: { readOnlyHint: !t.writes },
+            // readOnlyHint defaults to false (MCP tool annotations), so only a
+            // read says so: 57 copies of the default were 2 KB of the 40 KB.
+            ...(t.writes ? {} : { annotations: { readOnlyHint: true } }),
             ...(CARD_OF_TOOL[t.name] === undefined
               ? {}
               : {
@@ -3821,7 +5043,7 @@ function rpcOne(
     }
     case "tools/call": {
       const tool = TOOLS.find((t) => t.name === params["name"]);
-      if (tool === undefined || (tool.adminOnly === true && !user.isAdmin))
+      if (tool === undefined || !visible(tool, ctx, user))
         return refuse(-32602, `no tool named ${String(params["name"])}`);
       const args =
         typeof params["arguments"] === "object" && params["arguments"] !== null
@@ -3829,7 +5051,8 @@ function rpcOne(
           : {};
       const plansOnly =
         (tool.dryByDefault === true && args["dryRun"] !== false) ||
-        (tool.readsWithout !== undefined && args[tool.readsWithout] === undefined);
+        (tool.readsWithout !== undefined && args[tool.readsWithout] === undefined) ||
+        tool.readsWhen?.(args) === true;
       if (tool.writes && !plansOnly && !scopeAllows(ctx.auth.scope ?? "ro", "rw"))
         return reply({
           content: [
@@ -3842,7 +5065,7 @@ function rpcOne(
           answer.ok
             ? {
                 content: [{ type: "text", text: JSON.stringify(answer.value) }],
-                ...cardResult(String(params["name"]), answer.value, ctx.url.origin),
+                ...cardResult(String(params["name"]), answer.value, ctx.url.origin, answer.card),
               }
             : {
                 content: [
@@ -3875,12 +5098,11 @@ const REPORT_TOOL = {
       body: { type: "string", maxLength: BODY_MAX },
       page: {
         type: "string",
-        description: "The http(s) address where the problem was seen.",
+        description: "Address where seen.",
       },
     },
     required: ["repo", "title"],
   },
-  annotations: { readOnlyHint: false },
 } as const;
 
 /** The JSON-RPC answer to a `report` call, or undefined for any other message. */

@@ -16,8 +16,26 @@ export const PREVIEW_SPEC_TIMEOUT_MS = 30_000;
 
 const SECTION = "https://specification.website/";
 
-/** `webspec()` over `paths` at `base`, with a clock; never throws. */
+/** A finding that says the page never answered, not that it answered badly. */
+const unanswered = (f: Finding) => f.check === "fetch" || f.check === "webspec";
+
+/**
+ * `webspec()` over `paths` at `base`, with a clock; never throws. A page that
+ * did not answer is asked once more: a preview just swapped in on a busy
+ * machine can miss its first request, and that is not a finding about it.
+ */
 export async function previewSpec(
+  base: string,
+  paths: readonly string[],
+  timeoutMs = PREVIEW_SPEC_TIMEOUT_MS,
+): Promise<Finding[]> {
+  const first = await previewSpecOnce(base, paths, timeoutMs);
+  if (!first.some(unanswered)) return first;
+  const again = await previewSpecOnce(base, paths, timeoutMs);
+  return again.filter(unanswered).length <= first.filter(unanswered).length ? again : first;
+}
+
+async function previewSpecOnce(
   base: string,
   paths: readonly string[],
   timeoutMs = PREVIEW_SPEC_TIMEOUT_MS,

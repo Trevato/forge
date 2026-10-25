@@ -69,12 +69,11 @@ describe("read-back API (contents, branches, commits)", () => {
   });
 
   test("branches lists heads with the default flagged", async () => {
-    const branches = (await (
-      await api("/api/v1/repos/dev/lib/branches")
-    ).json()) as {
-      name: string;
-      isDefault: boolean;
-    }[];
+    const branches = (
+      (await (await api("/api/v1/repos/dev/lib/branches")).json()) as {
+        items: { name: string; isDefault: boolean }[];
+      }
+    ).items;
     const names = branches.map((b) => b.name).sort();
     expect(names).toEqual(["feature", "main"]);
     expect(branches.find((b) => b.name === "main")?.isDefault).toBe(true);

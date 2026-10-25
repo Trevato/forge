@@ -10,6 +10,7 @@
 
 import { SENT_WORDS, tell, toldWords, TOO_LONG_WORDS, UNVERIFIED_WORDS, type Told, type TellError } from "../../actions/tell.ts";
 import { contextNote, parseContext } from "../../actions/tell_context.ts";
+import { NOT_TOLD_FROM_WORDS, NOT_TOLD_WORDS, SAY_SOMETHING_WORDS } from "../../actions/tell_words.ts";
 import type { Repo } from "../../core/repos.ts";
 import { DIRECTION_NOTE, mayDirectCrew } from "../../crew/direct.ts";
 import type { Result } from "../../kernel/result.ts";
@@ -30,7 +31,7 @@ export function tellAnswer(told: Result<Told, TellError>): { text: string; tone:
           ? UNVERIFIED_WORDS
           : told.error === "body_too_long"
             ? TOO_LONG_WORDS
-            : "That could not be told.",
+            : NOT_TOLD_WORDS,
   };
 }
 
@@ -50,7 +51,7 @@ export function tellCommands(f: Session, ctx: Ctx, parent: () => Screen, repo: R
             label: name,
             hint: "enter sends",
             onSubmit: (said) => {
-              if (said === "") return "Say something first.";
+              if (said === "") return SAY_SOMETHING_WORDS;
               return (async () => {
                 const answer = tellAnswer(await tell(f.app, f.user, repo, said));
                 ctx.toast(answer.text, answer.tone);
@@ -86,7 +87,7 @@ export function tellCommands(f: Session, ctx: Ctx, parent: () => Screen, repo: R
                         label: name,
                         hint: "enter sends",
                         onSubmit: (said) => {
-                          if (said === "") return "Say something first.";
+                          if (said === "") return SAY_SOMETHING_WORDS;
                           return tellFromPage(f, ctx, repo, said, page, number);
                         },
                       }),
@@ -112,7 +113,7 @@ export async function tellFromPage(
 ): Promise<void> {
   const where = parseContext({ page, ...(pull === undefined ? {} : { pull }) });
   if (where === null || where === undefined) {
-    ctx.toast("That page could not be told from.", "danger");
+    ctx.toast(NOT_TOLD_FROM_WORDS, "danger");
     return;
   }
   const answer = tellAnswer(await tell(f.app, f.user, repo, `${said}${contextNote(where)}`));
@@ -128,7 +129,7 @@ export function askForSomething(f: Session, ctx: Ctx, parent: () => Screen, repo
       label: repo.name,
       hint: "enter sends",
       onSubmit: (said) => {
-        if (said === "") return "Say something first.";
+        if (said === "") return SAY_SOMETHING_WORDS;
         return (async () => {
           const told = await tell(f.app, f.user, repo, said, 1, "/");
           const answer = told.ok ? { text: SENT_WORDS, tone: "success" as const } : tellAnswer(told);

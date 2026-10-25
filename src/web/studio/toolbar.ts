@@ -16,7 +16,10 @@
  */
 
 import { addCommentThrough, openIssueThrough } from "../../actions/issues.ts";
+import { COMMENT_EMPTY, COMMENT_NOT_POSTED } from "../../actions/comment_words.ts";
 import { reportTitle } from "../../actions/page-report.ts";
+import { NOT_SENT_WORDS } from "../../actions/tell_words.ts";
+import { NOTE_TOO_LONG } from "../../apps/note_words.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { getIssue, MAX_BODY } from "../../core/issues.ts";
 import { diffBetween, getPull, pullDir, type Pull } from "../../core/pulls.ts";
@@ -273,9 +276,9 @@ export async function toolbarComment(ctx: Ctx): Promise<Response> {
       },
       status,
     );
-  if (text === "") return refuse("A comment needs something in it.");
+  if (text === "") return refuse(COMMENT_EMPTY);
   const said = address === "" ? text : `${text}\n\nPage: <${address}>`;
-  if (said.length > MAX_BODY) return refuse("That is too long to send in one go.");
+  if (said.length > MAX_BODY) return refuse(NOTE_TOO_LONG);
   const target = pull ? `pull #${pull.number}` : "an issue on this app";
 
   if (field(form, "step") !== "post") {
@@ -302,7 +305,7 @@ export async function toolbarComment(ctx: Ctx): Promise<Response> {
   if (pull) {
     const added = await addCommentThrough(ctx.app, user, repo, pull, said);
     if (!added.ok)
-      return refuse(originError(added.error) ?? "That comment could not be posted.", 403);
+      return refuse(originError(added.error) ?? COMMENT_NOT_POSTED, 403);
     return receipt(`${base}/pulls/${pull.number}#conversation`, "Comment posted");
   }
   // The `…Through` twin, as every door that opens an issue: on a mirror the
@@ -315,8 +318,8 @@ export async function toolbarComment(ctx: Ctx): Promise<Response> {
     return refuse(
       originError(opened.error) ??
         (opened.error === "body_too_long"
-          ? "That is too long to send in one go."
-          : "That could not be sent."),
+          ? NOTE_TOO_LONG
+          : NOT_SENT_WORDS),
       opened.error === "body_too_long" ? 422 : opened.error === "not_found" ? 404 : 403,
     );
   }

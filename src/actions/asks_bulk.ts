@@ -12,6 +12,7 @@ import type { App } from "../app.ts";
 import { listOperations, type Operation } from "../core/fleet_ops.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { NO_SUCH_OPERATION } from "./asks_words.ts";
 import { askTargetsFor } from "../web/studio/asks.ts";
 import {
   applyFleetIds,
@@ -23,6 +24,7 @@ import {
   type FleetError,
   type Plan,
 } from "./fleet.ts";
+import { SIGN_IN_TO_ACT } from "./asks_words.ts";
 
 /**
  * What a bulk action on asks may be: the fleet verb each one is. Decline is
@@ -59,7 +61,7 @@ function resolve(
   if (!actor)
     return err({
       code: "unauthorized",
-      message: "sign in to act on your asks",
+      message: SIGN_IN_TO_ACT,
     });
   const verb =
     typeof action === "string" && Object.hasOwn(ASK_ACTIONS, action)
@@ -190,6 +192,6 @@ export async function undoAsksBulk(
 ): Promise<Result<Operation, FleetError>> {
   const op = ownAsksOperation(app, actor, operationId);
   if (op === undefined)
-    return err({ code: "not_found", message: "no such operation here" });
+    return err({ code: "not_found", message: NO_SUCH_OPERATION });
   return undoFleetOp(app, actor, op.id);
 }

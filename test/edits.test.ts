@@ -209,10 +209,10 @@ describe("edits: files, branches and a pull in one call", () => {
     expect(edited.pull).toMatchObject({ title: "Add new.txt" });
 
     // The branch exists, carries the file, and main does not.
-    const branches = await read<{ name: string }[]>(
+    const branches = await read<{ items: { name: string }[] }>(
       await api("/api/v1/repos/alice/app/branches"),
     );
-    expect(branches.map((b) => b.name)).toContain("feat/edit");
+    expect(branches.items.map((b) => b.name)).toContain("feat/edit");
     expect((await fileAt("alice/app", "new.txt", "feat/edit")).status).toBe(
       200,
     );
@@ -275,6 +275,45 @@ describe("edits: files, branches and a pull in one call", () => {
       await api("/api/v1/repos/alice/app/contents?ref=main"),
     );
     expect(tree.entries.map((e) => e.name).sort()).toEqual(["a.txt"]);
+  });
+
+  test("POST /contents honours protection and the size caps", async () => {
+    const send = (token: string, files: unknown[]) =>
+      api(
+        "/api/v1/repos/acme/widget/contents",
+        {
+          method: "POST",
+          body: JSON.stringify({ branch: "main", message: "x", files }),
+        },
+        token,
+      );
+    const refused = await send(bobToken, [{ path: "c.txt", content: "no\n" }]);
+    expect(refused.status).toBe(403);
+    expect(await read<{ error: string }>(refused)).toMatchObject({
+      error: "protected_branch",
+    });
+    const big = await send(admin, [
+      { path: "big.txt", content: "x".repeat(2 * 1024 * 1024 + 1) },
+    ]);
+    expect(big.status).toBe(413);
+    expect(await read<{ error: string }>(big)).toMatchObject({
+      error: "file_too_large",
+      path: "big.txt",
+    });
+    const many = await send(
+      admin,
+      Array.from({ length: 6 }, (_, i) => ({
+        path: `m${i}.txt`,
+        content: "x".repeat(1_900_000),
+      })),
+    );
+    expect(many.status).toBe(413);
+    expect(await read<{ error: string }>(many)).toMatchObject({
+      error: "commit_too_large",
+    });
+    expect((await send(admin, [{ path: "ok.txt", content: "ok\n" }])).status).toBe(
+      201,
+    );
   });
 
   test("a protected default refuses a writer and accepts an admin", async () => {
@@ -454,9 +493,7 @@ describe("edits on a mirror land upstream first", () => {
     expect(response.status).toBe(201);
     const edited = await read<EditResponse>(response);
 
-    const upstreamMain = await read<{ name: string; oid: string }[]>(
-      await fetch(`${originServers.url}/api/v1/repos/octo/gears/branches`),
-    );
+    const upstreamMain = await (await read<{ items: { name: string; oid: string }[] }>(await fetch(`${originServers.url}/api/v1/repos/octo/gears/branches`))).items;
     expect(upstreamMain.find((b) => b.name === "main")?.oid).toBe(
       edited.commit.commitOid,
     );
@@ -482,9 +519,7 @@ describe("edits on a mirror land upstream first", () => {
     expect(response.status).toBe(201);
     const edited = await read<EditResponse>(response);
 
-    const branches = await read<{ name: string; oid: string }[]>(
-      await fetch(`${originServers.url}/api/v1/repos/octo/gears/branches`),
-    );
+    const branches = await (await read<{ items: { name: string; oid: string }[] }>(await fetch(`${originServers.url}/api/v1/repos/octo/gears/branches`))).items;
     expect(branches.find((b) => b.name === "feat/mirror")?.oid).toBe(
       edited.commit.commitOid,
     );
