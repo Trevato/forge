@@ -38,10 +38,6 @@ const undocumented = new Set<string>([
   "limits",
   "teams",
   "quotas",
-  "boards",
-  "board_write",
-  "board_pins",
-  "board_delete",
   "report",
 ]);
 
