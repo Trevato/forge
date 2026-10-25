@@ -824,6 +824,7 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 .empty .ico { color: var(--faint); width: 20px; height: 20px; }
 .empty h2, .empty .empty-title {
   font-size: 15px; font-weight: 600; color: var(--fg); text-wrap: balance; margin: 0;
+  overflow-wrap: anywhere;
 }
 .empty p { font-size: 13px; max-width: 320px; text-wrap: pretty; margin: 0; }
 .empty .btn { margin-top: 8px; }

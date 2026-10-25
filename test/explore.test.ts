@@ -326,8 +326,34 @@ describe("explore on a forge with nothing public", () => {
     for (const signedIn of [false, true]) {
       const out = await get(`/explore?q=${encodeURIComponent("zzz-no-such")}`, signedIn);
       expect(out).toContain("Nothing matches");
-      expect(out).toContain("Clear the line");
+      expect(out).toContain("Nothing matches zzz-no-such");
+      expect(out).toContain("Clear all");
       expect(out).not.toContain("Nothing public yet");
     }
+  });
+
+  test("a miss names the line and offers each term as a link that drops it", async () => {
+    const out = await get(`/explore?q=${encodeURIComponent("kind:app zzz-no-such")}`, false);
+    expect(out).toContain("Nothing matches kind:app zzz-no-such");
+    expect(out).toContain(`href="/explore?q=${encodeURIComponent("zzz-no-such")}"`);
+    expect(out).toContain(`href="/explore?q=${encodeURIComponent("kind:app")}"`);
+    expect(out).toContain('href="/explore"');
+  });
+
+  test("many words and a long one sit in a wrapping group, not a list row", async () => {
+    const words = Array.from({ length: 10 }, (_, i) => `w${i}`).join(" ");
+    const long = "x".repeat(60);
+    const out = await get(`/explore?q=${encodeURIComponent(`${words} ${long}`)}`, false);
+    const group = out.slice(out.indexOf("Drop a term"));
+    expect(group).toContain('class="form-actions"');
+    expect(group.slice(0, group.indexOf("Clear all"))).not.toContain('class="row"');
+    expect(group).toContain(`>${"x".repeat(23)}…</a`);
+    expect(group).toContain(`title="Drop ${long}"`);
+  });
+
+  test("a hostile word is escaped in the title and the links", async () => {
+    const out = await get(`/explore?q=${encodeURIComponent("<script>x</script>")}`, false);
+    expect(out).not.toContain("<script>x");
+    expect(out).toContain("Nothing matches &lt;script&gt;x&lt;/script&gt;");
   });
 });

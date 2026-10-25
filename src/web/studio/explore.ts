@@ -56,13 +56,43 @@ function rowHtml(row: ExploreRow): Html {
   });
 }
 
+/** A button label that cannot push the page wider; the whole term is its title. */
+const shorten = (term: string): string =>
+  term.length > 24 ? `${term.slice(0, 23)}…` : term;
+
+/** Each term of a missed line, with the query that is the line without it. */
+function terms(query: ExploreQuery): { term: string; without: ExploreQuery }[] {
+  const out: { term: string; without: ExploreQuery }[] = [];
+  if (query.kind !== "all")
+    out.push({ term: `kind:${query.kind}`, without: { ...query, kind: "all" } });
+  if (query.sort !== "score")
+    out.push({ term: `sort:${query.sort}`, without: { ...query, sort: "score" } });
+  if (query.archived)
+    out.push({ term: "archived:yes", without: { ...query, archived: false } });
+  const words = query.text.split(/\s+/).filter((w) => w !== "");
+  words.forEach((word, i) =>
+    out.push({
+      term: word,
+      without: { ...query, text: words.filter((_, j) => j !== i).join(" ") },
+    }),
+  );
+  return out;
+}
+
 /** Nothing to list: a bare line means nothing is public yet, not a miss. */
 function emptyState(signedIn: boolean, query: ExploreQuery): Html {
-  if (exploreLine(query) !== "")
+  const line = exploreLine(query);
+  if (line !== "")
     return empty({
       icon: "search",
-      title: "Nothing matches",
-      note: "Clear the line to see everything you can.",
+      title: `Nothing matches ${line}`,
+      note: "Drop a term to step back:",
+      action: html`<div class="form-actions">
+        ${terms(query).map(
+          (t) => btn(shorten(t.term), { href: href(t.without), size: "sm", title: `Drop ${t.term}` }),
+        )}
+        ${btn("Clear all", { href: "/explore", size: "sm" })}
+      </div>`,
     });
   return empty({
     icon: "search",
