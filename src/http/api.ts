@@ -3784,23 +3784,22 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/repos/:owner/:name/map", async (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const graph = repoGraph(ctx.app.db, repo.id, {
-      ...sealedScope(ctx.app.db, repo, ctx.auth.user),
-    });
-    const pillars = pillarView(ctx.app.db, repo);
-    return json(
-      mapJson(
-        repo,
-        graph,
-        marksFor(
-          ctx.app.db,
-          repo.id,
-          graph,
-          listActiveRuns(ctx.app.db, [repo.id]),
-        ),
-        pillars,
-        askToLiveFor(ctx.app, repo, pillars, ctx.auth.user),
-      ),
+    const { request } = ctx;
+    notePhase(request, "session", takeSessionTime(request));
+    const graph = timePhase(request, "graph", () =>
+      repoGraph(ctx.app.db, repo.id, {
+        ...sealedScope(ctx.app.db, repo, ctx.auth.user),
+      }),
+    );
+    const marks = timePhase(request, "marks", () =>
+      marksFor(ctx.app.db, repo.id, graph, listActiveRuns(ctx.app.db, [repo.id])),
+    );
+    const pillars = timePhase(request, "pillars", () => pillarView(ctx.app.db, repo));
+    const ask = timePhase(request, "asktolive", () =>
+      askToLiveFor(ctx.app, repo, pillars, ctx.auth.user),
+    );
+    return timePhase(request, "render", () =>
+      json(mapJson(repo, graph, marks, pillars, ask)),
     );
   });
   // What people asked of the crew in the repositories the caller can write —

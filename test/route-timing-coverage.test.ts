@@ -19,7 +19,6 @@ import { seedAdmin } from "./helpers/admin.ts";
 
 /** Routes that answer 200 without a `session` phase → why. */
 const UNTIMED: Record<string, string> = {
-  "/api/v1/repos/:owner/:name/map": "untimed read today: answers without a session phase",
   "/metrics": "Prometheus text exposition, scraped by token; not a page read",
 };
 
