@@ -27,7 +27,7 @@ test("every http route the manifest names is described", () => {
 });
 
 test("every described route is registered in the router", () => {
-  const src = ["src/http/server.ts", "src/http/api.ts", "src/http/mcp.ts", "src/http/passport_edge.ts"]
+  const src = ["src/http/server.ts", "src/http/api.ts", "src/http/mcp.ts", "src/http/passport_edge.ts", "src/http/feed.ts"]
     .map((f) => readFileSync(f, "utf8"))
     .join("\n")
     // A route registered in a loop over issues and pulls is two routes.
@@ -274,4 +274,14 @@ test("the contents row names the refusals of its own handler, protection and siz
   expect(text).toContain("path_conflict");
   expect(text).toContain("protected_branch");
   expect(text).toContain("file_too_large");
+});
+
+test("the tell row names its body, its answer and the refusals of its handler", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const op = doc.paths["/api/v1/feed/tells"]?.post;
+  expect(op).toBeDefined();
+  expect(op.responses["201"]).toBeDefined();
+  const text = JSON.stringify(op);
+  for (const w of ["app", "text", "variants", "from", "invalid_text", "invalid_variants", "invalid_from", "unverified", "forbidden"])
+    expect(text).toContain(w);
 });

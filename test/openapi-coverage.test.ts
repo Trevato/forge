@@ -89,7 +89,6 @@ const NOT_YET_DESCRIBED: readonly string[] = [
   "POST /api/v1/boards/query",
   "POST /api/v1/feed/chips",
   "POST /api/v1/feed/interactions",
-  "POST /api/v1/feed/tells",
   "POST /api/v1/repos",
   "POST /api/v1/repos/{}/{}/branches",
   "POST /api/v1/repos/{}/{}/contents",
