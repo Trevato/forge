@@ -31,6 +31,8 @@ test("every described route is registered in the router", () => {
     .map((f) => readFileSync(f, "utf8"))
     .join("\n")
     // A route registered in a loop over issues and pulls is two routes.
+    // So is the one over PUT and DELETE of a milestone's watch.
+    .replace(/\bmethod,\s*("[^"]*\/milestones\/:number\/watch")/g, '"PUT", $1\n"DELETE", $1')
     .replace(/"(PUT)",\s*`([^`]*)\$\{kind\}([^`]*)`/g, (_, m, a, b) => `"${m}", "${a}issues${b}"\n"${m}", "${a}pulls${b}"`);
   const browse = /const BROWSE = "([^"]+)"/.exec(src)![1]!;
   const registered = new Set(

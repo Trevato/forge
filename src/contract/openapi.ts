@@ -1341,6 +1341,28 @@ export const ROUTES: readonly Route[] = [
     refusals: LABEL_REFUSALS,
   },
   {
+    method: "put",
+    path: `${REPO}/milestones/{number}/watch`,
+    summary: "Watch a milestone: the caller's own watch, so a write token and nothing more (a person's; an agent is refused); answers { watching }",
+    auth: true,
+    refusals: {
+      unauthorized: "401: no signed-in account",
+      forbidden: "403: only a person watches a milestone",
+      not_found: "404: no such repository, or it is not readable, or the number is no milestone",
+    },
+  },
+  {
+    method: "delete",
+    path: `${REPO}/milestones/{number}/watch`,
+    summary: "Stop watching a milestone: the caller's own watch, so a write token and nothing more (a person's; an agent is refused); answers { watching }",
+    auth: true,
+    refusals: {
+      unauthorized: "401: no signed-in account",
+      forbidden: "403: only a person watches a milestone",
+      not_found: "404: no such repository, or it is not readable, or the number is no milestone",
+    },
+  },
+  {
     method: "post",
     path: `${REPO}/issues/{number}/private`,
     summary: "Make, or find, the private repository where a sealed report is fixed by hand; answers 201 { repo, clone }: `owner/name` and its clone URL",
