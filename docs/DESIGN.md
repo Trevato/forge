@@ -476,7 +476,6 @@ the same line (#4888).
   - `.repo-layout`
   - `.repo-lineage`
   - `.repo-title`
-  - `.search`
   - `.slash`
   - `.sub`
   - `.table-wrap`
