@@ -31,6 +31,7 @@ import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
 import { listAccess } from "../actions/access_log.ts";
 import { changeCapacity, listCapacity } from "../actions/capacity.ts";
 import { changeLimit, listLimits } from "../actions/limits.ts";
+import { THREAD_SAYS } from "../actions/thread_words.ts";
 import { ISSUE_TEAMS_SAY, nameTeams } from "../actions/issue_teams.ts";
 import { teamsOfIssue } from "../core/issue_teams.ts";
 import { addTeamMember, createTeam, deleteTeam } from "../actions/orgs.ts";
@@ -3737,8 +3738,8 @@ const TOOLS: readonly Tool[] = [
           applied.error,
           originError(applied.error) ??
             (applied.error === "unknown_label"
-              ? "One of those labels no longer exists."
-              : "You need write access to change labels."),
+              ? THREAD_SAYS.unknownLabel
+              : THREAD_SAYS.labelsForbidden),
         );
       const names = applied.value.map((l) => l.name);
       return good({
@@ -3838,7 +3839,7 @@ const TOOLS: readonly Tool[] = [
         return bad(
           done.error,
           dependencyWords[done.error] ??
-            "You need write access, or a place on the crew, to plan here.",
+            THREAD_SAYS.planForbidden,
         );
       return good({
         says: `#${issue.number} ${stop ? "no longer waits" : "waits"} for #${blocker.number}.`,

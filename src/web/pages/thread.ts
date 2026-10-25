@@ -9,6 +9,7 @@
  */
 
 import { mayView } from "../../core/sealed.ts";
+import { THREAD_SAYS } from "../../actions/thread_words.ts";
 import { ISSUE_TEAMS_SAY, nameTeams } from "../../actions/issue_teams.ts";
 import { teamsOfIssue, TEAMS_MAX } from "../../core/issue_teams.ts";
 import { listTeams } from "../../core/teams.ts";
@@ -891,8 +892,8 @@ export async function labelsSubmit(
       message:
         originError(applied.error) ??
         (applied.error === "unknown_label"
-          ? "One of those labels no longer exists."
-          : "You need write access to change labels."),
+          ? THREAD_SAYS.unknownLabel
+          : THREAD_SAYS.labelsForbidden),
     });
   }
   return flashTo(ctx, dest, {
@@ -1095,7 +1096,7 @@ export async function dependencySubmit(ctx: Ctx): Promise<Response> {
       cycle: `#${other.number} already waits for this one, directly or through others; linking would make a loop.`,
       cross_repo: "Dependencies stay inside one repository.",
       not_an_issue: "Only issues can depend on issues.",
-      forbidden: "You need write access, or a place on the crew, to plan here.",
+      forbidden: THREAD_SAYS.planForbidden,
     };
     return flashTo(ctx, dest, {
       tone: "danger",
