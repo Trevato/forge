@@ -121,11 +121,21 @@ describe("the card lists the parent's commits", () => {
   let parent = "";
   let work = "";
   let ownerId = "";
-  const commit = async (n: number, subject: string) => {
+  // Each commit has its own fixed time, so no clock or load can tie or reorder them.
+  const commitOnly = async (n: number, subject: string) => {
+    const when = `${1_700_000_000 + n * 86_400} +0000`;
     await Bun.write(join(work, `g${n}.txt`), String(n));
-    await git(work, "add", ".");
-    await git(work, "commit", "-q", "-m", subject);
-    await git(work, "push", "-q", parent, "HEAD:refs/heads/main");
+    const env = { GIT_AUTHOR_DATE: when, GIT_COMMITTER_DATE: when };
+    const ident = ["-c", "user.name=t", "-c", "user.email=t@x.invalid"];
+    for (const args of [["add", "."], ["commit", "-q", "-m", subject]]) {
+      const r = await runGit([...ident, ...args], { cwd: work, env });
+      if (!r.ok) throw new Error(r.error.stderr);
+    }
+  };
+  const publish = () => git(work, "push", "-q", parent, "HEAD:refs/heads/main");
+  const commit = async (n: number, subject: string) => {
+    await commitOnly(n, subject);
+    await publish();
   };
   const setup = async (name: string) => {
     dir = await mkdtemp(join(tmpdir(), "forge-uplist-"));
@@ -156,7 +166,8 @@ describe("the card lists the parent's commits", () => {
 
   test("3 commits, newest first", async () => {
     await setup("three");
-    for (const n of [1, 2, 3]) await commit(n, `subject ${n}`);
+    for (const n of [1, 2, 3]) await commitOnly(n, `subject ${n}`);
+    await publish();
     await checkUpstream(app, { remote: parent });
     const b = body();
     expect(b.indexOf("subject 3")).toBeGreaterThan(0);
@@ -168,7 +179,8 @@ describe("the card lists the parent's commits", () => {
 
   test("12 commits show 10 and 'and 2 more'", async () => {
     await setup("twelve");
-    for (let n = 1; n <= 12; n++) await commit(n, `subject ${n}`);
+    for (let n = 1; n <= 12; n++) await commitOnly(n, `subject ${n}`);
+    await publish();
     await checkUpstream(app, { remote: parent });
     const b = body();
     expect(b.match(/ subject \d+\n/g)).toHaveLength(10);
