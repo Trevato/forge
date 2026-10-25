@@ -100,8 +100,10 @@ import { given, pendingReplans } from "../core/limb_replan.ts";
 import { handedOverPulls, SKIP_SUMMARY, skipsReplan } from "./guard.ts";
 import { atRunCap, type Held, heldBy, heldWords, replannable } from "./held.ts";
 import { NO_PULL, shunnedBy, stallReason, unstickOwed } from "./stalls.ts";
-import { BY_CREW, DONE_LIKE } from "../core/done_on_main.ts";
+import { alreadyDone, BY_CREW, DONE_LIKE } from "../core/done_on_main.ts";
+import { repoDir } from "../git/repos.ts";
 import { ALREADY_NOTE, alreadyDoneOids } from "./already.ts";
+import { removedBy, retiredNames } from "./retired.ts";
 import { interruptionOf } from "./interrupted.ts";
 import {
   PARK_NOTE,
@@ -388,7 +390,13 @@ export async function driveRepo(
     const shunned = shunnedBy(app.db, repo, issue.id, now);
     return crew.filter((c) => c.role !== "builder" || !shunned.has(c.agent.user.id));
   };
-  const pickable = ready.filter((r) => crewFor(r.issue).some((c) => c.role === "builder"));
+  const pickable = (
+    await withoutRetired(
+      app,
+      repo,
+      ready.filter((r) => crewFor(r.issue).some((c) => c.role === "builder")),
+    )
+  );
   const next = await nextOf(app, repo, pickable);
   if (next !== undefined) {
     const routed = await routeIssue(app, repo, next.issue, crewFor(next.issue), inFlight);
@@ -1365,6 +1373,34 @@ export function readyState(
             : { untrusted: issue.untrusted }),
         },
   );
+}
+
+/**
+ * The ready issues, less those that retire names already gone from the base
+ * (`retired.ts`): each gets the already-done note, once, and is not handed out.
+ */
+async function withoutRetired(
+  app: App,
+  repo: Repo,
+  ready: readonly Ranked[],
+): Promise<Ranked[]> {
+  const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+  const kept: Ranked[] = [];
+  for (const r of ready) {
+    const names = retiredNames(r.issue);
+    if (names.length === 0) {
+      kept.push(r);
+      continue;
+    }
+    const oids = await removedBy(dir, repo.defaultBranch, names);
+    if (oids.length === 0) {
+      kept.push(r);
+      continue;
+    }
+    if (!alreadyDone(app.db, [r.issue.id]).has(r.issue.id))
+      noteAlreadyDone(app, repo, r.issue, oids);
+  }
+  return kept;
 }
 
 async function nextOf(
