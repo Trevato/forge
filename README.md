@@ -456,9 +456,9 @@ own for it: the same asks are the dashboard's On you card.
 A client's forge: `Ctrl+K`, then **New forge** (any signed-in person's, as the
 page is), is `/forges/new` in the terminal — name, for whom, what it is for,
 apps to fork (`owner/name`, comma-separated), a fresh one-line app, model key
-(hidden as typed), API base URL, budget, how it follows the code and a size (`small` by default, not sent; `medium` or `large` is), through the same `spawnDoor` as the
+(hidden as typed), API base URL, budget, how it follows the code and a size (`small` by default, not sent; `medium` or `large` is; left, right or space choose), through the same `spawnDoor` as the
 page, `POST /api/v1/forges` and the MCP `spawn`. `Ctrl+P` shows the plan and
-makes nothing; `enter` on the plan spawns, and the claim link is shown once, in
+makes nothing (it shows a Size line when one is chosen); `enter` on the plan spawns, and the claim link is shown once, in
 a dialog, never kept.
 
 The family across forges: `:` → Family in the terminal, `/family` on the web,
