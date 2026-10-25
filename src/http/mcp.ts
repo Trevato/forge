@@ -55,6 +55,7 @@ import { PROVIDERS } from "../cloud/providers.ts";
 import { changeQuotas, readQuotas } from "../actions/quotas.ts";
 import { resendVerification } from "../actions/verify.ts";
 import { CAPPED_WORDS } from "../actions/mail.ts";
+import { VERIFY_WORDS } from "../actions/verify_words.ts";
 import { SPEND_WORDS } from "../actions/spend_words.ts";
 import { changeSignup, readSignup } from "../actions/signup.ts";
 import { SIGNUP_MODES } from "../settings/signup.ts";
@@ -4739,12 +4740,12 @@ const TOOLS: readonly Tool[] = [
           says: sent.value === "sent" ? "A new verification email is on its way." : "Your email is already verified.",
         });
       if (sent.error === "too_soon")
-        return bad("too_soon", "a link was sent a moment ago; check your inbox, or try again in a few minutes");
+        return bad("too_soon", VERIFY_WORDS.too_soon);
       if (sent.error === "no_mail")
-        return bad("no_mail", "this forge sends no mail yet; ask its owner to verify you");
+        return bad("no_mail", VERIFY_WORDS.no_mail);
       if (sent.error === "capped") return bad("capped", CAPPED_WORDS);
       if (sent.error === "unauthorized") return bad("unauthorized", "sign in first");
-      return bad("failed", "the link could not be sent; try again");
+      return bad("failed", VERIFY_WORDS.failed);
     },
   },
   {

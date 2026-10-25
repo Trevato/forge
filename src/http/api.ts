@@ -78,6 +78,7 @@ import {
 } from "../actions/accounts.ts";
 import { resendVerification } from "../actions/verify.ts";
 import { CAPPED_WORDS } from "../actions/mail.ts";
+import { VERIFY_WORDS } from "../actions/verify_words.ts";
 import { editMessage } from "../actions/edit_words.ts";
 import { emailVerified } from "../core/verify.ts";
 import { readHealth } from "../actions/health.ts";
@@ -1390,12 +1391,12 @@ export function apiRoutes(router: Router<Handler>): void {
       return json({ outcome: sent.value }, sent.value === "sent" ? 202 : 200);
     if (sent.error === "unauthorized") return unauthorized();
     if (sent.error === "too_soon")
-      return apiError("too_soon", 429, "a link was sent a moment ago; check your inbox, or try again in a few minutes");
+      return apiError("too_soon", 429, VERIFY_WORDS.too_soon);
     if (sent.error === "no_mail")
-      return apiError("no_mail", 503, "this forge sends no mail yet; ask its owner to verify you");
+      return apiError("no_mail", 503, VERIFY_WORDS.no_mail);
     if (sent.error === "capped")
       return apiError("capped", 429, CAPPED_WORDS);
-    return apiError("failed", 502, "the link could not be sent; try again");
+    return apiError("failed", 502, VERIFY_WORDS.failed);
   });
 
   router.add("PATCH", "/api/v1/user", async (ctx) => {
