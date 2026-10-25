@@ -43,6 +43,7 @@ for a tunnel and a forge that sleeps.
 | `read_file`    | a file (utf-8, or base64 for binary) or a directory listing at a ref, as GET …/contents | no     |
 | `seal`         | `{ repo, number, sealed }`: seal a security report (and the pull that fixes it) so only writers and the crew see it, or unseal it for every reader; a writer's, recorded | yes    |
 | `secrets`      | `{ scope, ref?, action, name?, value? }` (forge admin): `list` the names and timestamps of the forge's sealed secrets, `set` or `remove` one; `scope` is forge, org or repo, `ref` the org or `owner/name`; a value is never read back | yes    |
+| `mirror_set`   | `{ action, endpoint?, bucket?, region?, accessKey?, secretKey? }` (forge admin, admin-scope token): `set` seals the off-box snapshot mirror, `forget` clears it; the Backups page's rules and refusals, a blank field keeps what was sealed; answers `{ place, says }`, never a key | yes    |
 | `org_teams`    | `{ org, action, team, user?, permission? }` (admin-scope token, an org owner): `create` a team (`permission` read, write or admin; read by default), `add_member` a `user`, or `remove` the team; the same as POST/DELETE `/api/v1/orgs/:org/teams` | yes    |
 | `now`          | what the crew is doing right now: who, on what, since when, at what cost; a planner that declined the direction and waits for you comes first (`run: null`, its words in `says`) |        |
 | `next_steps` | on a spawned forge, your first three steps and whether each is done; empty elsewhere or for anyone but its owner |  |

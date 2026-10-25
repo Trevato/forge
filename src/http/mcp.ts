@@ -45,6 +45,8 @@ import { getOrg, listTeams, type Permission } from "../core/orgs.ts";
 import { changeTeam, planTeam, readTeams, TEAM_SAYS } from "../actions/teams.ts";
 import { readScorecards } from "../actions/scorecard.ts";
 import { createAgent, deleteAgent, updateAgent } from "../actions/crew.ts";
+import { forgetMirror, saveMirror } from "../actions/mirror.ts";
+import { snapshotsOf } from "../snapshot/service.ts";
 import { listSecrets, putSecret, removeSecret } from "../actions/secrets.ts";
 import { addAccount, allowWrite, auditAccount, removeAccount, renameAccount, reverify, rotateAccount } from "../actions/cloud.ts";
 import { usesByVendor, type VendorUse } from "../cloud/declared.ts";
@@ -1404,6 +1406,49 @@ const TOOLS: readonly Tool[] = [
         return gone.ok ? good({ removed: name }) : bad(gone.error, gone.error);
       }
       return bad("invalid", "action is list, set or remove");
+    },
+  },
+  {
+    name: "mirror_set",
+    description: "Admin: set or forget the off-box snapshot mirror.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string" },
+        endpoint: { type: "string" },
+        bucket: { type: "string" },
+        region: { type: "string" },
+        accessKey: { type: "string" },
+        secretKey: { type: "string" },
+      },
+    },
+    writes: true,
+    adminOnly: true,
+    needsAdminScope: true,
+    run(ctx, user, args) {
+      const place = (): string | null => snapshotsOf(ctx.app)?.mirror?.where ?? null;
+      if (args["action"] === "forget") {
+        const gone = forgetMirror(ctx.app, user);
+        if (!gone.ok) return bad("not_found", "not found");
+        return good({ place: place(), says: "The sealed mirror is cleared." });
+      }
+      if (args["action"] !== "set") return bad("invalid", "action is set or forget");
+      const field = (k: string): string | undefined => {
+        const v = args[k];
+        return v === undefined ? "" : typeof v === "string" ? v.trim() : undefined;
+      };
+      const input = {
+        endpoint: field("endpoint"),
+        bucket: field("bucket"),
+        region: field("region"),
+        accessKey: field("accessKey"),
+        secretKey: field("secretKey"),
+      };
+      if (Object.values(input).some((v) => v === undefined))
+        return bad("invalid", "the fields are strings");
+      const saved = saveMirror(ctx.app, user, input as Record<keyof typeof input, string>);
+      if (!saved.ok) return bad(saved.error === "not_found" ? "not_found" : "invalid", saved.error);
+      return good({ place: place(), says: saved.value });
     },
   },
   {
