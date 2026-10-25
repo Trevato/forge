@@ -678,7 +678,7 @@ describe("the gate audit before any shard", () => {
     const got = await run(["test/zz-new.test.ts"], ["--gate", "--shard", "1/1"], [], false, "matrix slice");
     expect(got.err).not.toContain("EXCLUDED");
     expect(got.out).toContain(`matrix slice 1/1 (${all} of ${all} files)`);
-    const explicit = await run(["test/zz-new.test.ts"], ["test/zz-new.test.ts"], [listed[0]!], false, "matrix slice");
+    const explicit = await run(["test/zz-new.test.ts"], ["test/zz-new.test.ts"], [listed[0]!], false, "test-shards: 1 files");
     expect(explicit.err).not.toContain("EXCLUDED");
   }, 30_000);
 
