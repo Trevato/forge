@@ -55,7 +55,7 @@ beforeAll(async () => {
   member = await mk("bob", false);
 });
 afterAll(async () => {
-  app.db.close();
+  app.close();
   await rm(dataDir, { recursive: true, force: true });
 });
 
