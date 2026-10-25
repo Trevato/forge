@@ -13,6 +13,7 @@ import {
 import type { Issue } from "../../core/issues.ts";
 import { canRead, type Repo } from "../../core/repos.ts";
 import { privateRepoForSealed } from "../../actions/repos.ts";
+import { COMMENT_EMPTY, COMMENT_NOT_POSTED } from "../../actions/comment_words.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -287,7 +288,7 @@ export async function issueCommentSubmit(ctx: Ctx): Promise<Response> {
   if (body.trim() === "")
     return flashTo(ctx, dest, {
       tone: "danger",
-      message: "A comment needs something in it.",
+      message: COMMENT_EMPTY,
     });
   const added = await addCommentThrough(
     ctx.app,
@@ -299,7 +300,7 @@ export async function issueCommentSubmit(ctx: Ctx): Promise<Response> {
   if (!added.ok)
     return flashTo(ctx, dest, {
       tone: "danger",
-      message: originError(added.error) ?? "That comment could not be posted.",
+      message: originError(added.error) ?? COMMENT_NOT_POSTED,
     });
   return back === undefined
     ? flashTo(ctx, `${dest}#conversation`, { message: "Comment posted." })
