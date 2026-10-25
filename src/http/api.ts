@@ -3060,8 +3060,7 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!committed.ok) {
       if (typeof committed.error === "string")
         return respondAccess(committed.error, 422);
-      const kind = committed.error.kind;
-      return json({ error: kind }, kind === "branch_moved" ? 409 : 422);
+      return editFailure(committed.error);
     }
     return json(committed.value, 201);
   });

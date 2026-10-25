@@ -277,6 +277,45 @@ describe("edits: files, branches and a pull in one call", () => {
     expect(tree.entries.map((e) => e.name).sort()).toEqual(["a.txt"]);
   });
 
+  test("POST /contents honours protection and the size caps", async () => {
+    const send = (token: string, files: unknown[]) =>
+      api(
+        "/api/v1/repos/acme/widget/contents",
+        {
+          method: "POST",
+          body: JSON.stringify({ branch: "main", message: "x", files }),
+        },
+        token,
+      );
+    const refused = await send(bobToken, [{ path: "c.txt", content: "no\n" }]);
+    expect(refused.status).toBe(403);
+    expect(await read<{ error: string }>(refused)).toMatchObject({
+      error: "protected_branch",
+    });
+    const big = await send(admin, [
+      { path: "big.txt", content: "x".repeat(2 * 1024 * 1024 + 1) },
+    ]);
+    expect(big.status).toBe(413);
+    expect(await read<{ error: string }>(big)).toMatchObject({
+      error: "file_too_large",
+      path: "big.txt",
+    });
+    const many = await send(
+      admin,
+      Array.from({ length: 6 }, (_, i) => ({
+        path: `m${i}.txt`,
+        content: "x".repeat(1_900_000),
+      })),
+    );
+    expect(many.status).toBe(413);
+    expect(await read<{ error: string }>(many)).toMatchObject({
+      error: "commit_too_large",
+    });
+    expect((await send(admin, [{ path: "ok.txt", content: "ok\n" }])).status).toBe(
+      201,
+    );
+  });
+
   test("a protected default refuses a writer and accepts an admin", async () => {
     const refused = await edit(
       "acme/widget",

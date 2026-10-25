@@ -228,11 +228,11 @@ test("a repository's code writes are described: branches and contents", () => {
   expect(doc.paths[`${R}/branches/{branch}`].delete.responses["204"]).toBeDefined();
 });
 
-test("the contents row names the refusals of its own handler, not /edits'", () => {
+test("the contents row names the refusals of its own handler, protection and size caps included", () => {
   const doc = openapi("https://f.test", "1") as any;
   const R = "/api/v1/repos/{owner}/{name}";
   const text = JSON.stringify(doc.paths[`${R}/contents`].post.responses);
   expect(text).toContain("path_conflict");
-  expect(text).not.toContain("protected_branch");
-  expect(text).not.toContain("file_too_large");
+  expect(text).toContain("protected_branch");
+  expect(text).toContain("file_too_large");
 });
