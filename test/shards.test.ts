@@ -506,6 +506,8 @@ describe("parseShardSpec", () => {
   test("empty means no matrix slice", () => {
     expect(parseShardSpec(undefined)).toEqual({ ok: true, none: true });
     expect(parseShardSpec("")).toEqual({ ok: true, none: true });
+    // The gate passed 999 files; a slice past that is still a slice.
+    expect(parseShardSpec("1000/1000")).toEqual({ ok: true, index: 1000, total: 1000 });
     expect(parseShardSpec("  ")).toEqual({ ok: true, none: true });
   });
 
