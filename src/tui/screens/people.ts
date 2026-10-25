@@ -6,6 +6,7 @@
  */
 
 import { setRole } from "../../actions/roles.ts";
+import { AMOUNT_REFUSED } from "../../actions/model_words.ts";
 import { listPeople } from "../../core/roles.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -45,7 +46,7 @@ export function peopleScreen(f: Session, ctx: Ctx): Screen {
                   const usd = amount === undefined ? null : Number(amount);
                   if (usd !== null && !Number.isFinite(usd)) return "Dollars a month, like 5.";
                   const done = setRole(f.app, f.user, name.trim(), role, usd);
-                  if (!done.ok) return done.error === "invalid_amount" ? "That amount will not do." : "No such account, or not one a role is for.";
+                  if (!done.ok) return done.error === "invalid_amount" ? AMOUNT_REFUSED : "No such account, or not one a role is for.";
                   ctx.toast(`${name.trim()} is a ${role}.`);
                   return undefined;
                 },
