@@ -470,7 +470,6 @@ the same line (#4888).
   - `.owner`
   - `.page-head`
   - `.policy-line`
-  - `.qf`
   - `.repo-actions`
   - `.repo-desc`
   - `.repo-layout`

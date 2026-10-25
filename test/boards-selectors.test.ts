@@ -66,7 +66,7 @@ test("every query selector has a visible label and sits outside .row-actions", a
 
 test("the selector styles never hide or collapse a control", () => {
   const css = components + content;
-  const rules = [...css.matchAll(/(^|\})\s*([^{}]*\.(?:bform|qf)[^{}]*)\{([^}]*)\}/g)].map((m) => m[3]!);
+  const rules = [...css.matchAll(/(^|\})\s*([^{}]*\.bform[^{}]*)\{([^}]*)\}/g)].map((m) => m[3]!);
   expect(rules.length).toBeGreaterThan(0);
   for (const body of rules) {
     expect(body).not.toMatch(/opacity:\s*0\b|display:\s*none|visibility:\s*hidden|height:\s*0\b/);

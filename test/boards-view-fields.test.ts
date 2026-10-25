@@ -1,7 +1,6 @@
 /**
  * A board's view and its forms draw their fields as `.field` with a real
- * `<label for>`, not the `.qf` wrapper. (The query fields in boards.ts keep
- * `.qf` until their own issue, so those are left out of the check.)
+ * `<label for>`.
  */
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -46,7 +45,6 @@ const LABELS = ["New board", "Panel title", "Width", "Height", "Board title", "R
 
 function check(html: string, labels: string[]) {
   for (const text of labels) {
-    expect(html, text).not.toContain(`<label class="qf"><span>${text}</span>`);
     const m = html.match(new RegExp(`<div class="field"[^>]*>\\s*<label for="([^"]+)">${text}</label>`));
     expect(m, text).not.toBeNull();
     expect(html.match(new RegExp(`id="${m![1]}"`, "g"))?.length, `${text} id is unique`).toBe(1);

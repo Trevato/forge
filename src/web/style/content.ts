@@ -203,8 +203,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .bp-h2 .chart-box.is-table { height: 400px; }
 .bp-h3 .chart-box.is-table { height: 540px; }
 .bform { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 12px; margin-bottom: 8px; }
-.bform .qf { display: flex; flex-direction: column; gap: 4px; flex: 1 1 140px; min-width: 0; }
-.bform .qf > span { font-size: 12.5px; font-weight: 600; color: var(--fg); }
 .bform .field { margin: 0; flex: 1 1 140px; min-width: 0; }
 .bform .btn { flex: none; }
 .table-wrap { overflow-x: auto; max-width: 100%; }
