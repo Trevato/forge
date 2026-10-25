@@ -445,6 +445,8 @@ export const ROUTES: readonly Route[] = [
       invalid_state: "`state` is neither open nor closed (422)",
       invalid_reason: "`reason` or `into` is given; a pull has none (422)",
       nothing_to_change: "none of `title`, `body` and `state` is given (422)",
+      taken_up: "someone who directs the crew has acted on the words, so an agent may not edit them (403)",
+      forbidden: "you may not open or close this pull (403); a planner may close only an agent's pull whose issue is closed",
     },
   },
   { method: "get", path: `${REPO}/issues/{number}/comments`, summary: "Page through an issue's or pull's comments, oldest first: {comments, next}; limit 1 to 100 (default 50), after a comment id", auth: false, query: { after: "string", limit: "integer" } },
