@@ -477,7 +477,7 @@ const APP_ARG = { type: "string" } as const;
 const REVEAL_ARG = {
   type: "boolean",
   description:
-    "true puts the secret claim link here, for its person only.",
+    "true: show the secret link.",
 } as const;
 const LINK_KEPT =
   "The claim link is a secret, so it is not in this conversation: a person admin of this forge gets a fresh one on /forges (Send a fresh link) and hands it to the child's person. Send reveal: true only to have it here on purpose.";
@@ -2538,8 +2538,6 @@ const TOOLS: readonly Tool[] = [
         followMode: {
           type: "string",
           enum: ["tell-me", "take-updates"],
-          description:
-            "tell-me or take-updates.",
         },
         size: {
           type: "string",
@@ -3558,7 +3556,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "limb",
     description:
-      "Act on a limb: `defer`, `resume`, `close` (`reason`), `raise`, `lower`, `replan`, `takeback`, `undo`",
+      "Act on a limb by `action`; `close` takes `reason`.",
     inputSchema: {
       type: "object",
       properties: {
@@ -4672,7 +4670,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "cloud_account",
     description:
-      "Change a cloud account (admin token): `verb` attach, verify, rotate, rename, remove, allow_writes, audit",
+      "Change a cloud account (admin token) by `verb`.",
     inputSchema: {
       type: "object",
       properties: {
