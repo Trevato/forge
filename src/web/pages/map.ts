@@ -1633,7 +1633,7 @@ export function globalLanes(
   const db = app.db;
   const now = new Date();
   // Access first, every request, and into the key (docs/CACHING.md rule 1).
-  const repos = listReposVisibleTo(db, viewer, { limit: 200 });
+  const repos = listReposVisibleTo(db, viewer, { limit: 200, withoutArchived: true });
   const heads = repoHeads(
     db,
     repos.map((r) => r.id),
