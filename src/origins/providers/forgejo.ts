@@ -44,6 +44,13 @@ import type {
   RemoteTreeEntry,
 } from "../types.ts";
 import {
+  NO_ACCOUNT,
+  NO_REVIEW,
+  NOT_A_PATH,
+  PATH_IS_DIRECTORY,
+  PATH_IS_FILE,
+} from "../words.ts";
+import {
   ApiClient,
   COMMIT_PAGE,
   MAX_DIFF_BYTES,
@@ -74,7 +81,6 @@ import {
   toCommit,
   toTreeEntry,
 } from "./http.ts";
-import { PATH_IS_DIRECTORY, PATH_IS_FILE } from "../words.ts";
 
 /** What we ask for before the instance tells us its own ceiling. */
 const DEFAULT_LIMIT = 50;
@@ -126,7 +132,7 @@ export class ForgejoProvider implements Provider {
     if (!result.ok) return result;
     const login = asString(field(result.value.data, "login"));
     if (login === "")
-      return fail("invalid_response", "the origin named no account");
+      return fail("invalid_response", NO_ACCOUNT);
     this.uid = asId(field(result.value.data, "id")) || undefined;
     return succeed({
       login,
@@ -241,7 +247,7 @@ export class ForgejoProvider implements Provider {
     const named = splitFullName(fullName);
     if (!named) return fail("not_found", `not a repository name: ${fullName}`);
     if (!isSafeRemoteRef(ref) || !isSafeRemotePath(path))
-      return fail("not_found", "not a path in a repository");
+      return fail("not_found", NOT_A_PATH);
     const result = await this.api.call({
       path:
         `/repos/${seg(named.owner)}/${seg(named.name)}/contents` +
@@ -265,7 +271,7 @@ export class ForgejoProvider implements Provider {
     const named = splitFullName(fullName);
     if (!named) return fail("not_found", `not a repository name: ${fullName}`);
     if (!isSafeRemoteRef(ref) || path === "" || !isSafeRemotePath(path))
-      return fail("not_found", "not a path in a repository");
+      return fail("not_found", NOT_A_PATH);
     const result = await this.api.call({
       path: `/repos/${seg(named.owner)}/${seg(named.name)}/contents/${pathSegments(path)}`,
       query: { ref },
@@ -595,7 +601,7 @@ export class ForgejoProvider implements Provider {
     if (!result.ok) return result;
     const state = toReviewState(result.value.data);
     return state === undefined
-      ? fail("invalid_response", "the origin returned no review")
+      ? fail("invalid_response", NO_REVIEW)
       : succeed(state);
   }
 

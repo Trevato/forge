@@ -1,7 +1,17 @@
 /**
- * The sentences origin browsing answers with when a path names the wrong
- * kind of thing, said from one place so every provider reads the same.
+ * The sentences an origin's providers say when the origin fails them, or when
+ * a path names the wrong kind of thing, said from one place so every door
+ * that shows them (page, API, MCP, terminal) reads the same words.
  */
+
+/** The origin answered who the credential is, but named no account. */
+export const NO_ACCOUNT = "the origin named no account";
+
+/** The path asked for is not a file or directory in the repository. */
+export const NOT_A_PATH = "not a path in a repository";
+
+/** The origin accepted a review but returned none. */
+export const NO_REVIEW = "the origin returned no review";
 
 /** A directory listing was asked of a path that is a file. */
 export const PATH_IS_FILE = "that path is a file, not a directory";
