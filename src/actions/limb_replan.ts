@@ -22,6 +22,7 @@ import { canAdmin, canRead, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { getIssueById } from "../core/issues.ts";
+import { NO_SUCH_MILESTONE } from "./asks_words.ts";
 import type { FleetError } from "./fleet.ts";
 import type { LimbIssue } from "./limbs.ts";
 import { IN_HAND } from "./plan_words.ts";
@@ -64,10 +65,10 @@ function find(
   number: number,
 ): Result<ReplanPreview, FleetError> {
   if (!actor) return fail("unauthorized", "sign in to hand a limb to the planner");
-  if (!canRead(app.db, repo, actor)) return fail("not_found", "no such milestone here");
+  if (!canRead(app.db, repo, actor)) return fail("not_found", NO_SUCH_MILESTONE);
   const issues = openBeneath(app.db, repo, number);
   const limb = issues.find((i) => i.number === number);
-  if (limb === undefined) return fail("not_found", "no such milestone here");
+  if (limb === undefined) return fail("not_found", NO_SUCH_MILESTONE);
   const pending = pendingFor(app.db, repo, limb.id);
   const blocked =
     mayAct(app, actor, repo)?.message ??

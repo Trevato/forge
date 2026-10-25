@@ -34,6 +34,7 @@ import { parseSeat, seating } from "../core/limb_seats.ts";
 import { readPlan } from "../core/milestones.ts";
 import { isStructural, pillarsOf } from "../core/pillars.ts";
 import { canRead, type Repo } from "../core/repos.ts";
+import { NO_SUCH_MILESTONE } from "./asks_words.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import {
@@ -165,11 +166,11 @@ function shape(
   if (!actor) return fail("unauthorized", "sign in to act on a limb");
   // One answer for no such repository and not yours to see.
   if (!canRead(app.db, repo, actor))
-    return fail("not_found", "no such milestone here");
+    return fail("not_found", NO_SUCH_MILESTONE);
   const plan = readPlan(app.db, repo);
   const rows = plan.limb(number);
   if (rows === undefined || rows.own[0] === undefined)
-    return fail("not_found", "no such milestone here");
+    return fail("not_found", NO_SUCH_MILESTONE);
   const limb = brief(rows.own[0]);
   const where = `issue repo:${repo.ownerName}/${repo.name}`;
   if (request.action === "raise" || request.action === "lower")

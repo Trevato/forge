@@ -14,6 +14,7 @@ import type { User } from "../core/users.ts";
 import { guardedHand, letDeciderHandle, undoHandled } from "../crew/handover.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { askTargetsFor } from "../web/studio/asks.ts";
+import { NO_LONGER_ASKS } from "./asks_words.ts";
 import type { FleetError } from "./fleet.ts";
 import { SIGN_IN_TO_ACT } from "./asks_words.ts";
 
@@ -69,7 +70,7 @@ export async function decideAsk(
   const issue = issueIds[0] === undefined ? undefined : getIssueById(app.db, issueIds[0]);
   const repo = issue === undefined ? undefined : getRepoById(app.db, issue.repoId);
   if (issue === undefined || repo === undefined)
-    return fail("not_found", "it no longer asks you");
+    return fail("not_found", NO_LONGER_ASKS);
   const handed = await guardedHand(app, issue.id, now, () =>
     letDeciderHandle(app, actor, repo, issue, repo.decisionsBy),
   );

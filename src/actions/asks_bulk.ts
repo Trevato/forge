@@ -12,6 +12,7 @@ import type { App } from "../app.ts";
 import { listOperations, type Operation } from "../core/fleet_ops.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { NO_SUCH_OPERATION } from "./asks_words.ts";
 import { askTargetsFor } from "../web/studio/asks.ts";
 import {
   applyFleetIds,
@@ -191,6 +192,6 @@ export async function undoAsksBulk(
 ): Promise<Result<Operation, FleetError>> {
   const op = ownAsksOperation(app, actor, operationId);
   if (op === undefined)
-    return err({ code: "not_found", message: "no such operation here" });
+    return err({ code: "not_found", message: NO_SUCH_OPERATION });
   return undoFleetOp(app, actor, op.id);
 }
