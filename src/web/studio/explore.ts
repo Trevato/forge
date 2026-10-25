@@ -26,24 +26,34 @@ const href = (query: ExploreQuery): string => {
 };
 
 /** A row's numbers as a person reads them; nothing that is zero. */
-function numbers(row: ExploreRow): string {
+function numbers(row: ExploreRow): { apps: string; rest: string } {
   const n = row.numbers;
-  const parts = [
-    row.kind === "person" ? `${n.apps} app${n.apps === 1 ? "" : "s"}` : "",
+  const rest = [
     n.forks > 0 ? `${n.forks} fork${n.forks === 1 ? "" : "s"}` : "",
     n.ships > 0 ? `${n.ships} shipped this month` : "",
     n.awakeHours > 0 ? `${n.awakeHours} h in use` : "",
     row.shippedAt !== null ? `last shipped ${timeAgo(row.shippedAt)}` : "",
   ];
-  return parts.filter((p) => p !== "").join(" · ");
+  return {
+    apps: row.kind === "person" ? `${n.apps} app${n.apps === 1 ? "" : "s"}` : "",
+    rest: rest.filter((p) => p !== "").join(" · "),
+  };
 }
 
 function rowHtml(row: ExploreRow): Html {
-  const said = numbers(row);
-  const meta = [row.description, said].filter((p) => p !== "" && p !== undefined);
+  const { apps, rest } = numbers(row);
+  // One tap from a person to their apps; with none, the count is plain text.
+  const theirs = href({ kind: "app", sort: "score", text: "", archived: false, owner: row.name });
+  const count = apps === "" ? html`` : row.numbers.apps > 0 ? html`<a href="${theirs}">${apps}</a>` : html`${apps}`;
+  const parts = [
+    row.description === "" ? html`` : html`${row.description}`,
+    count,
+    rest === "" ? html`` : html`${rest}`,
+  ].filter((p) => p.toString() !== "");
+  const metaHtml = parts.reduce((all, p, i) => (i === 0 ? p : html`${all} · ${p}`), html``);
   return rowOf({
     title: html`<a href="${row.url}">${row.name}</a>${nameMark(row.mark)}`,
-    ...(meta.length === 0 ? {} : { meta: html`${meta.join(" · ")}` }),
+    ...(parts.length === 0 ? {} : { meta: metaHtml }),
     ...(row.copyable === true && row.repo !== undefined
       ? {
           trail: btn("Make it yours", {

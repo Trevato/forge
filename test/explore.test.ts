@@ -54,6 +54,18 @@ describe("the one line", () => {
   });
 });
 
+describe("owner:", () => {
+  test("is parsed as a username, written back, and ignored when hostile", () => {
+    const q = parseExploreQuery("kind:app owner:alice garden");
+    expect(q.owner).toBe("alice");
+    expect(q.text).toBe("garden");
+    expect(exploreLine(q)).toBe("kind:app owner:alice garden");
+    for (const bad of ["owner:", "owner:../x", "owner:<script>", "owner:a/b"]) {
+      expect(parseExploreQuery(bad).owner).toBeUndefined();
+    }
+  });
+});
+
 describe("explore", () => {
   let dataDir: string;
   let app: App;
@@ -235,6 +247,21 @@ describe("explore", () => {
     });
     const told = JSON.parse(((await res.json()) as any).result.content[0].text);
     expect(names(told.items)).toEqual(names((await api("kind:app sort:ships", bobToken)).items));
+  });
+
+  test("owner: keeps one account's apps; a person row links its apps there", async () => {
+    expect(names((await api("kind:app owner:alice")).items).sort()).toEqual(["alice/gated", "alice/loved", "alice/quiet"]);
+    expect(names((await api("kind:app owner:bob")).items)).toEqual(["bob/busy"]);
+    expect(names((await api("owner:bob")).items).sort()).toEqual(["bob", "bob/busy"]);
+    expect((await api("kind:app owner:..")).items).toEqual([]);
+    const page = await (await fetch(`${base}/explore?q=kind:person`)).text();
+    expect(page).toContain(`href="/explore?q=${encodeURIComponent("kind:app owner:bob")}">1 app</a>`);
+  });
+
+  test("a hostile owner stays escaped text on the page", async () => {
+    const page = await (await fetch(`${base}/explore?q=${encodeURIComponent("owner:<script>alert(1)</script>")}`)).text();
+    expect(page).not.toContain("<script>alert(1)");
+    expect(page).toContain("&lt;script&gt;alert(1)");
   });
 
   test("the page draws §5's row and filters, and no explore- class", async () => {

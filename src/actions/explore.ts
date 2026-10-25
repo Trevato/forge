@@ -25,6 +25,7 @@ import {
   frontWeights,
   type FrontSignals,
 } from "../core/front.ts";
+import { isSafeName } from "../git/guard.ts";
 import { canEnterApp, listReposVisibleTo, type Repo } from "../core/repos.ts";
 import { getUsersByIds, isActive, type User } from "../core/users.ts";
 import { writeStamp } from "../core/write_clock.ts";
@@ -47,6 +48,8 @@ export interface ExploreQuery {
   readonly text: string;
   /** `archived:yes` — put-away repositories are in the list; off, they are not. */
   readonly archived: boolean;
+  /** `owner:<name>` — only this account's apps, and the person themself. */
+  readonly owner?: string;
 }
 
 const KINDS: Record<string, ExploreKind> = {
@@ -79,6 +82,7 @@ export function parseExploreQuery(line: string): ExploreQuery {
   let kind: ExploreKind | "all" = "all";
   let sort: ExploreSort = "score";
   let archived = false;
+  let owner: string | undefined;
   const words: string[] = [];
   for (const word of line
     .trim()
@@ -94,10 +98,17 @@ export function parseExploreQuery(line: string): ExploreQuery {
       sort = value.toLowerCase() as ExploreSort;
     else if (k === "archived" && ["yes", "no"].includes(value.toLowerCase()))
       archived = value.toLowerCase() === "yes";
+    else if (k === "owner" && isSafeName(value)) owner = value;
     else if (k === "q" && value !== "") words.push(value);
     else words.push(word);
   }
-  return { kind, sort, text: words.join(" ").slice(0, 100), archived };
+  return {
+    kind,
+    sort,
+    text: words.join(" ").slice(0, 100),
+    archived,
+    ...(owner === undefined ? {} : { owner }),
+  };
 }
 
 /** The line a query reads as, for links and the query box. */
@@ -106,6 +117,7 @@ export function exploreLine(query: ExploreQuery): string {
     query.kind === "all" ? "" : `kind:${query.kind}`,
     query.sort === "score" ? "" : `sort:${query.sort}`,
     query.archived ? "archived:yes" : "",
+    query.owner === undefined ? "" : `owner:${query.owner}`,
     query.text,
   ]
     .filter((p) => p !== "")
@@ -172,7 +184,7 @@ export async function explore(
 
 /** The forges this forge spawned, for a site admin asking for them. */
 async function forges(app: App, viewer: User | undefined, query: ExploreQuery): Promise<ExploreRow[]> {
-  if (viewer?.isAdmin !== true || (query.kind !== "all" && query.kind !== "forge")) return [];
+  if (query.owner !== undefined || viewer?.isAdmin !== true || (query.kind !== "all" && query.kind !== "forge")) return [];
   return (await listChildren(app)).map((child) => ({
     kind: "forge",
     name: child.name,
@@ -292,6 +304,7 @@ function rank(
   });
 
   const text = query.text.toLowerCase();
+  const only = query.owner?.toLowerCase();
   // Kept rows are shared by every request that reads them: none may change.
   const freeze = (row: ExploreRow): ExploreRow => {
     Object.freeze(row.numbers);
@@ -301,6 +314,7 @@ function rank(
     [...appRows, ...people.values()].map(freeze).filter(
       (row) =>
         (query.kind === "all" || row.kind === query.kind) &&
+        (only === undefined || (row.repo?.owner ?? row.name).toLowerCase() === only) &&
         (text === "" || `${row.name} ${row.description}`.toLowerCase().includes(text)),
     ),
     query,

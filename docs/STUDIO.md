@@ -463,6 +463,8 @@ page's signals (`core/front.ts`: forks by people, pulls merged this month,
 hours in use, how lately it shipped) with the numbers on each row, and — for
 a site admin — the forges this one spawned. One line narrows it and stays in
 the URL: `kind:app|person|forge`, `sort:score|forks|ships|use|fresh|name`,
+`owner:<username>` (one account's apps and the person; each person row's
+count of apps links there), `archived:yes` (put-away repositories too),
 and words to match. An agent's working fork is how the crew builds, not a
 find, and is left out; a private app's hours are told only to those who may
 enter it. Every app row offers **Make it yours** (a fork) to someone signed
