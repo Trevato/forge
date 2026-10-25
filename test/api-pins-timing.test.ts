@@ -57,5 +57,5 @@ test("the pins list names session, pins, render in order", async () => {
   const got = await phases("/api/v1/user/pins");
   expect(got.status).toBe(200);
   expect(got.names).toEqual(["session", "pins", "render"]);
-  expect(Array.isArray(JSON.parse(got.body))).toBe(true);
+  expect(Array.isArray(JSON.parse(got.body).items)).toBe(true);
 });

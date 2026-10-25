@@ -850,9 +850,11 @@ describe("parity: full control through actions and the API", () => {
     ).toBe(204);
 
     const myOrgs = await call("GET", "/api/v1/user/orgs", { token: aliceRo });
-    expect(myOrgs.list.map((o) => o.username)).toEqual(["acme"]);
+    const orgItems = (r: { json: Json }) => (r.json.items ?? []) as Json[];
+    expect(orgItems(myOrgs).map((o) => o.username)).toEqual(["acme"]);
+    expect(myOrgs.json.next_cursor).toBeNull();
     expect(
-      (await call("GET", "/api/v1/user/orgs", { token: bobRw })).list,
+      orgItems(await call("GET", "/api/v1/user/orgs", { token: bobRw })),
     ).toEqual([]);
     for (const kind of [
       "team.created",
@@ -913,9 +915,9 @@ describe("parity: full control through actions and the API", () => {
         expect(res.json.error).toBe("invalid_limit");
       }
 
-    // The cursor is only compared: any 1..100 characters, nothing else.
+    // The cursor is only compared: any 1..160 characters, nothing else.
     for (const path of ["teams", "teams/devs/members"])
-      for (const bad of ["", "x".repeat(101)]) {
+      for (const bad of ["", "x".repeat(161)]) {
         const res = await call("GET", `/api/v1/orgs/acme/${path}?cursor=${bad}`, {
           token: aliceAdmin,
         });

@@ -1045,6 +1045,9 @@ function listQuery(ctx: Ctx) {
   };
 }
 
+/** Room for the longest key: a pin's `owner/name` (up to ~40 + 1 + 100 characters). */
+const KEYED_CURSOR_MAX = 160;
+
 function offsetRefused(error: "invalid_limit" | "invalid_cursor"): Response {
   return error === "invalid_limit"
     ? apiError(error, 422, `limit is a whole number from 1 to ${OFFSET_LIMIT_MAX}`)
@@ -1062,7 +1065,7 @@ function keyedWindow(ctx: Ctx): { limit: number; cursor: string | null } | Respo
   if (limit < 1 || limit > LIST_LIMIT_MAX)
     return apiError("invalid_limit", 422, `limit is a whole number from 1 to ${LIST_LIMIT_MAX}`);
   const cursor = q.get("cursor");
-  if (cursor !== null && (cursor.length < 1 || cursor.length > 100))
+  if (cursor !== null && (cursor.length < 1 || cursor.length > KEYED_CURSOR_MAX))
     return apiError("invalid_cursor", 422, "cursor is the next_cursor of a previous page");
   return { limit, cursor };
 }
@@ -1995,10 +1998,12 @@ export function apiRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     if (!ctx.auth.user) return unauthorized();
     const user = ctx.auth.user;
+    const window = keyedWindow(ctx);
+    if (window instanceof Response) return window;
     const orgs = timePhase(ctx.request, "orgs", () =>
       listOrgsForUser(ctx.app.db, user.id).map(publicProfile),
     );
-    return timePhase(ctx.request, "render", () => json(orgs));
+    return timePhase(ctx.request, "render", () => json(keyedPage(orgs, (o) => o.username, window)));
   });
 
   // SSH keys — what the SSH listener authenticates against. Public keys are
@@ -2007,8 +2012,10 @@ export function apiRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const user = ctx.auth.user;
     if (!user) return unauthorized();
+    const window = keyedWindow(ctx);
+    if (window instanceof Response) return window;
     const keys = timePhase(ctx.request, "keys", () => listKeys(ctx.app.db, user.id));
-    return timePhase(ctx.request, "render", () => json(keys.map(publicKey)));
+    return timePhase(ctx.request, "render", () => json(keyedPage(keys.map(publicKey), (k) => k.id, window)));
   });
   router.add("POST", "/api/v1/user/keys", async (ctx) => {
     const denied = requireScope(ctx, "rw");
@@ -5187,6 +5194,8 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/user/pins", (ctx) => {
     if (!ctx.auth.user) return unauthorized();
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const window = keyedWindow(ctx);
+    if (window instanceof Response) return window;
     const host = ctx.app.config.host ?? ctx.url.hostname;
     const sshPort = ctx.app.config.sshPort;
     const user = ctx.auth.user;
@@ -5220,7 +5229,7 @@ export function apiRoutes(router: Router<Handler>): void {
           },
         ];
       });
-      return json(items);
+      return json(keyedPage(items, (p) => `${p.owner}/${p.name}`, window));
     });
   });
 

@@ -253,7 +253,7 @@ describe.skipIf(NO_KEYGEN)("ssh keys", () => {
     const listed = await fetch(`${base}/api/v1/user/keys`, {
       headers: headers(ro),
     });
-    const keys = (await listed.json()) as { id: string }[];
+    const keys = ((await listed.json()) as { items: { id: string }[] }).items;
     expect(keys.map((k) => k.id)).toEqual([key.id]);
 
     expect((await fetch(`${base}/api/v1/user/keys`)).status).toBe(401);

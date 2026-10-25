@@ -700,11 +700,13 @@ describe("origins: connecting, mirroring, writing through", () => {
     expect(
       (await api("/api/v1/user/pins/alice/widgets", { method: "PUT" })).status,
     ).toBe(200);
-    const pins = (await (await api("/api/v1/user/pins")).json()) as {
-      owner: string;
-      name: string;
-      cloneUrl: string;
-    }[];
+    const { items: pins, next_cursor } = (await (
+      await api("/api/v1/user/pins")
+    ).json()) as {
+      items: { owner: string; name: string; cloneUrl: string }[];
+      next_cursor: string | null;
+    };
+    expect(next_cursor).toBeNull();
     expect(pins).toHaveLength(1);
     expect(pins[0]).toMatchObject({ owner: "alice", name: "widgets" });
     expect(pins[0]!.cloneUrl.endsWith("/alice/widgets.git")).toBe(true);
@@ -730,7 +732,8 @@ describe("origins: connecting, mirroring, writing through", () => {
         .status,
     ).toBe(204);
     expect(
-      ((await (await api("/api/v1/user/pins")).json()) as unknown[]).length,
+      ((await (await api("/api/v1/user/pins")).json()) as { items: unknown[] })
+        .items.length,
     ).toBe(0);
   });
 
