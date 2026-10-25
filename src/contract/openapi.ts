@@ -1025,6 +1025,14 @@ export const ROUTES: readonly Route[] = [
     summary: "How the forge is, uncached; anyone may ask, a stranger is told little, the release probe and a site admin the whole of it",
     auth: false,
   },
+  {
+    method: "get",
+    path: "/api/v1/passport/health",
+    summary:
+      "The forge's public health, for a caller holding a passport (`Authorization: Passport <token>`, audience `forge`, scope `health:read`) rather than a token; answers the same body as the anonymous health, uncached",
+    auth: false,
+    refusals: { unauthorized: "the passport is missing, malformed, expired, or not for this audience and scope (always 401)" },
+  },
   { method: "get", path: "/api/v1/map", summary: "The global map: every repository the caller can see, with its issues and dependency edges", auth: false },
   {
     method: "post",

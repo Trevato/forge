@@ -34,7 +34,6 @@ const NOT_YET_DESCRIBED: readonly string[] = [
   "GET /api/v1/orgs/{}",
   "GET /api/v1/orgs/{}/teams",
   "GET /api/v1/orgs/{}/teams/{}/members",
-  "GET /api/v1/passport/health",
   "GET /api/v1/repos/{}/{}/app/{}/open",
   "GET /api/v1/repos/{}/{}/branches",
   "GET /api/v1/repos/{}/{}/commits",

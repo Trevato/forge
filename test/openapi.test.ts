@@ -27,7 +27,7 @@ test("every http route the manifest names is described", () => {
 });
 
 test("every described route is registered in the router", () => {
-  const src = ["src/http/server.ts", "src/http/api.ts", "src/http/mcp.ts"]
+  const src = ["src/http/server.ts", "src/http/api.ts", "src/http/mcp.ts", "src/http/passport_edge.ts"]
     .map((f) => readFileSync(f, "utf8"))
     .join("\n")
     // A route registered in a loop over issues and pulls is two routes.
