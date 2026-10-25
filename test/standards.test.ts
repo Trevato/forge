@@ -107,7 +107,9 @@ describe("what the open web expects", () => {
     }
     expect(read![0]!.name).toBe(releasesFile.releases[0]!.version);
     expect(read![0]!.url).toStartWith(`${base}/releases.json#`);
-  });
+    // The verdict is the document's shape, not the machine's speed: a loaded
+    // check machine gets a generous bound rather than a red lane (#5966).
+  }, 30_000);
 
   test("releases.json carries a strong ETag, and a matching If-None-Match is a 304 with no body", async () => {
     const res = await fetch(`${base}/releases.json`);
