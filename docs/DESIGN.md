@@ -397,19 +397,11 @@ the same line (#4888).
   - `.bar`
   - `.bare`
   - `.foot`
-  - `.grow`
   - `.hide-sm`
   - `.js-only`
-  - `.mb`
-  - `.mt`
-  - `.narrow`
-  - `.narrow-wide`
   - `.reduced`
   - `.shell`
   - `.skip`
-  - `.spacer`
-  - `.stack`
-  - `.stack-tight`
   - `.topbar`
   - `.wordmark`
 
