@@ -25,6 +25,10 @@ import {
   type Subscription,
 } from "../../core/subscriptions.ts";
 import {
+  addRefusal,
+  SUBSCRIPTION_WORDS,
+} from "../../core/subscriptions_words.ts";
+import {
   HEADROOM_MAX,
   headroomPct,
   setHeadroom,
@@ -417,17 +421,9 @@ export async function subscriptionAdd(ctx: Ctx): Promise<Response> {
     createdBy: ctx.auth.user!.id,
   });
   if (!added.ok) {
-    const messages = {
-      invalid_name: `A name is a word or two, up to ${NAME_MAX} characters.`,
-      name_taken: `There is already a subscription called ${name.trim()}.`,
-      invalid_token:
-        "That is not a model token: one line, no spaces. One from `claude setup-token` begins sk-ant-oat; anything else is taken as an API key (sk-ant-api…, sk-ant-usr…, sk-or-v1-…, or a gateway's own with its base URL).",
-      invalid_api_base:
-        "The API base URL must be https, with no credentials, query, or hash. For OpenRouter use https://openrouter.ai/api (a Claude subscription token cannot use a gateway).",
-    };
     return flashTo(ctx, POOL, {
       tone: "danger",
-      message: messages[added.error],
+      message: addRefusal(added.error, name),
     });
   }
   return flashTo(ctx, POOL, {
@@ -450,7 +446,7 @@ export async function subscriptionDelete(ctx: Ctx): Promise<Response> {
           message:
             "Removed, with its grants. Runs it paid for keep it in their history.",
         }
-      : { tone: "danger", message: "No such subscription." },
+      : { tone: "danger", message: SUBSCRIPTION_WORDS.not_found },
   );
 }
 
@@ -502,7 +498,7 @@ export async function subscriptionHeadroom(ctx: Ctx): Promise<Response> {
   if (pct === undefined)
     return flashTo(ctx, POOL, {
       tone: "danger",
-      message: `Headroom is a whole percent from 0 to ${HEADROOM_MAX}.`,
+      message: SUBSCRIPTION_WORDS.headroom_range,
     });
   const saved = setHeadroom(ctx.app.db, ctx.params.id ?? "", pct);
   return flashTo(
@@ -512,7 +508,7 @@ export async function subscriptionHeadroom(ctx: Ctx): Promise<Response> {
       ? {
           message: `The crew now leaves ${pct}% of each window for people.`,
         }
-      : { tone: "danger", message: "No such subscription." },
+      : { tone: "danger", message: SUBSCRIPTION_WORDS.not_found },
   );
 }
 
