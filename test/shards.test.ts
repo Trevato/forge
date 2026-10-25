@@ -513,6 +513,7 @@ describe("parseShardSpec", () => {
     expect(parseShardSpec("1/3")).toEqual({ ok: true, index: 1, total: 3 });
     expect(parseShardSpec("3/3")).toEqual({ ok: true, index: 3, total: 3 });
     expect(parseShardSpec(" 2/4 ")).toEqual({ ok: true, index: 2, total: 4 });
+    expect(parseShardSpec("1000/1000")).toEqual({ ok: true, index: 1000, total: 1000 });
     for (const bad of ["0/3", "1/0", "4/3", "1", "1-3", "a/b", "1/3/5"])
       expect(parseShardSpec(bad).ok).toBe(false);
   });

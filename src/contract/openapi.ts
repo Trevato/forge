@@ -22,6 +22,8 @@ interface Route {
   readonly query?: Readonly<Record<string, string>>;
   /** The success status, when it is not 200. */
   readonly status?: number;
+  /** The success body's fields, by name and type, when it is worth a schema. */
+  readonly reply?: Readonly<Record<string, string>>;
   /** The refusals it answers, by stable `error` code. */
   readonly refusals?: Readonly<Record<string, string>>;
 }
@@ -548,6 +550,27 @@ export const ROUTES: readonly Route[] = [
     refusals: { bad_anchor: "`path`, `line` and `side` (old or new) name no line of the pull's current diff (422)" },
   },
   { method: "post", path: `${REPO}/pulls/{number}/merge`, summary: "Merge a pull (a person's)", auth: true },
+  {
+    method: "get",
+    path: `${REPO}/pulls/{number}/checks`,
+    summary: "A pull's checks at its current head; answers { head, state, required, run, runs } with state `none` when no run exists",
+    auth: false,
+    reply: { head: "string", state: "string", required: "boolean", run: "object", runs: "array" },
+  },
+  {
+    method: "post",
+    path: `${REPO}/pulls/{number}/checks`,
+    summary: "Ask for a check again at the pull's head as it is now (rw scope, a writer's); answers 202 with { run }",
+    auth: true,
+    status: 202,
+    reply: { run: "object" },
+    refusals: {
+      forbidden: "only a writer can ask for a check (403)",
+      not_open: "only an open pull is checked (409)",
+      no_checks: "this forge runs no checks (409)",
+      no_check_declared: "this head declares no check, or waits for a writer's approval (409)",
+    },
+  },
   {
     method: "post",
     path: `${REPO}/pulls/{number}/approve-here`,
@@ -1495,7 +1518,21 @@ export function openapi(origin: string, version: string): Record<string, unknown
           }),
       ...(r.auth ? { security: [{ token: [] }] } : {}),
       responses: {
-        [String(r.status ?? 200)]: { description: "Done" },
+        [String(r.status ?? 200)]: {
+          description: "Done",
+          ...(r.reply === undefined
+            ? {}
+            : {
+                content: {
+                  "application/json": {
+                    schema: {
+                      type: "object",
+                      properties: Object.fromEntries(Object.entries(r.reply).map(([k, t]) => [k, schema(t)])),
+                    },
+                  },
+                },
+              }),
+        },
         default: {
           description:
             "An error: { error, message }; `error` is a stable code" +

@@ -454,7 +454,7 @@ export function parseShardSpec(
   | { ok: true; none: true }
   | { ok: false; error: string } {
   if (spec === undefined || spec.trim() === "") return { ok: true, none: true };
-  const m = /^([1-9][0-9]{0,2})\/([1-9][0-9]{0,2})$/.exec(spec.trim());
+  const m = /^([1-9][0-9]{0,3})\/([1-9][0-9]{0,3})$/.exec(spec.trim());
   if (!m)
     return {
       ok: false,
