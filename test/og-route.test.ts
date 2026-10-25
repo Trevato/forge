@@ -13,6 +13,7 @@ import { createUser, getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
 // Setup creates repos on disk; a loaded check machine must not turn that into a failure.
+// Hooks take their own timeout, so beforeAll and afterAll name theirs too.
 setDefaultTimeout(30_000);
 
 describe("og cards", () => {
@@ -101,12 +102,12 @@ describe("og cards", () => {
     runId = run("shown");
     privateRunId = run("hidden");
     quietRunId = run("quiet");
-  });
+  }, 60_000);
 
   afterAll(async () => {
     await servers.stop();
     await rm(dataDir, { recursive: true, force: true });
-  });
+  }, 30_000);
 
   const get = (path: string, headers: Record<string, string> = {}) =>
     fetch(base + path, { headers });
