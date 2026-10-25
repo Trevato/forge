@@ -68,6 +68,13 @@ describe("a red many pulls share", () => {
     expect(sharedTests(db)).toEqual([]);
   });
 
+  test("a named (unnamed) failure, with the error it threw, is no test either (#5727)", () => {
+    const name = "a.test.ts > (unnamed): error: x";
+    for (const i of ["i1", "i2", "i3"]) red(i, [name]);
+    expect(shared(red("i4", [name]))).toBe(false);
+    expect(sharedTests(db)).toEqual([]);
+  });
+
   test("a gate on the tree is each pull's own red, however many trip it (#2868)", () => {
     const gate = "design check: nothing added outside the system (#2678) > the tree is no worse than its baseline";
     for (const i of ["i1", "i2", "i3"]) red(i, [gate]);
@@ -192,7 +199,7 @@ describe("a failure outside a named test names its file and hook (#4582)", () =>
     const failure = summariseCheckFailure(captured, "check exited with code 1");
     expect(failure.detail?.names).toEqual([
       "a.test.ts > beforeEach/afterEach (timeout)",
-      "c.test.ts > s > (unnamed)",
+      "c.test.ts > s > (unnamed): error: late",
       "(unnamed)",
     ]);
     expect(failure.summary).toContain("a.test.ts > beforeEach/afterEach (timeout)");
@@ -206,5 +213,40 @@ describe("a failure outside a named test names its file and hook (#4582)", () =>
   test("the sharded tally echoes the named failure", () => {
     const { lines } = tally([{ files: ["a.test.ts"], code: 1, output: captured.join("\n") }], 1);
     expect(lines).toContain("(fail) a.test.ts > beforeEach/afterEach (timeout) [50.82ms] [shard 1]");
+  });
+});
+
+const one = (body: string[]) => nameUnnamed(["a.test.ts:", ...body]).at(-1);
+
+describe("a failure outside a test names what it threw (#5727)", () => {
+  test("a thrown error is appended", () => {
+    expect(
+      one(["error: database is closed", "      at x (a.test.ts:1:1)", "(fail) (unnamed) [1.00ms]"]),
+    ).toBe("(fail) a.test.ts > (unnamed): error: database is closed [1.00ms]");
+  });
+
+  test("a hook timeout is named as before", () => {
+    const lines = nameUnnamed([
+      "a.test.ts:",
+      "error: late",
+      "(fail) (unnamed) [50ms]",
+      "  ^ a beforeAll hook timed out for this test.",
+    ]);
+    expect(lines[2]).toBe("(fail) a.test.ts > beforeAll (timeout) [50ms]");
+  });
+
+  test("no error line keeps today's name; an earlier test's error is not borrowed", () => {
+    expect(one(["(fail) (unnamed) [1ms]"])).toBe("(fail) a.test.ts > (unnamed) [1ms]");
+    expect(
+      one(["error: other", "(fail) t [1ms]", "(fail) s > (unnamed) [1ms]"]),
+    ).toBe("(fail) a.test.ts > s > (unnamed) [1ms]");
+  });
+
+  test("a long error is cut at 120, control characters and paths dropped", () => {
+    const got = one([`error: ${"x".repeat(200)}`, "(fail) (unnamed)"])!;
+    expect(got).toBe(`(fail) a.test.ts > (unnamed): error: ${"x".repeat(113)}`);
+    expect(one(["error: bad\u001b /home/u/proj/f.ts", "(fail) (unnamed)"])).toBe(
+      "(fail) a.test.ts > (unnamed): error: bad f.ts",
+    );
   });
 });
