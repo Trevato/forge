@@ -197,9 +197,10 @@ describe("the crew line", () => {
 
   test("the script asks once, same-origin, and never reads the page or its cookies", () => {
     expect(toolbarJs).toContain("/__forge/crew");
-    // The crew line is asked once; the feedback door (#4758) adds the
-    // sender's notes, polled only while the panel is open, and the send.
-    expect(toolbarJs.match(/fetch\(/g)?.length).toBe(3);
+    // One fetch is the crew line; the other is `call`, the feedback door's
+    // single path (#4758): the sender's notes, polled only while the panel
+    // is open, and the send, each carrying the proof header in and out.
+    expect(toolbarJs.match(/fetch\(/g)?.length).toBe(2);
     expect(toolbarJs.match(/setInterval/g)?.length).toBe(1);
     expect(toolbarJs).not.toMatch(
       /document\.cookie|querySelector|getElementById|setTimeout/,

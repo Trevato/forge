@@ -4,13 +4,14 @@
  * a status that follows the issue, and the owner can hide or ban.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { newApp } from "../src/actions/apps.ts";
-import { AppsRuntime } from "../src/apps/runtime.ts";
+import { AppsRuntime, type EnvStatus } from "../src/apps/runtime.ts";
+import { PROOF_LOST } from "../src/apps/note_words.ts";
 import { toolbarJs } from "../src/apps/toolbar.ts";
 import { filtered, moderateNote, noteClock, PER_APP_DAY, PER_SENDER, PER_SOURCE, saysFromApp } from "../src/actions/app_notes.ts";
 import { feedback, REQUEST_MAX } from "../src/apps/feedback.ts";
@@ -85,6 +86,24 @@ describe("the forge button takes notes from anyone", () => {
     });
   const post = (text: string, cookie = "", source = "", slug = "notes") =>
     at(slug, "/__forge/note", { method: "POST", body: JSON.stringify({ text, page: `http://${host(slug)}/lists?x=1`, viewport: "390x844" }) }, cookie, source);
+  /** A page load through the proxy; the app behind it is a stub that serves a small page. */
+  const page = async (slug: string, cookie: string, headers: Record<string, string> = {}): Promise<{ res: Response; proof: string | undefined }> => {
+    const backend = Bun.serve({ port: 0, fetch: () => new Response("<html><body>hi</body></html>", { headers: { "content-type": "text/html" } }) });
+    const spy = spyOn(AppsRuntime.prototype, "envStatus").mockImplementation(
+      () => ({ env: "production", state: "running", port: backend.port, commitOid: "a".repeat(40) }) as EnvStatus,
+    );
+    try {
+      const res = await at(slug, "/", { headers }, cookie);
+      const text = await res.text();
+      return { res, proof: /data-proof="([^"]+)"/.exec(text)?.[1] };
+    } finally {
+      spy.mockRestore();
+      backend.stop(true);
+    }
+  };
+  const withProof = (proof: string | undefined, headers: Record<string, string> = {}) => ({ ...headers, ...(proof ? { "x-forge-proof": proof } : {}) });
+  const postAs = (slug: string, cookie: string, proof: string | undefined, text = "A note") =>
+    at(slug, "/__forge/note", { method: "POST", headers: withProof(proof), body: JSON.stringify({ text, page: `http://${host(slug)}/`, viewport: "390x844" }) }, cookie, `10.9.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`);
   const cookieOf = (res: Response) => (res.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
 
   test("a visitor's note files a from-app issue with page, viewport and time", async () => {
@@ -186,7 +205,8 @@ describe("the forge button takes notes from anyone", () => {
     expect(issues()).toBe(before);
     expect((await at("notes--98", "/__forge/notes")).status).toBe(404);
     const owner = await grantedCookie(app, servers.url, alice, getAppBySlug(app.db, "notes")!, "pull-98");
-    expect((await post("from a person", owner, "", "notes--98")).status).toBe(201);
+    const { proof } = await page("notes--98", owner);
+    expect((await postAs("notes--98", owner, proof, "from a person")).status).toBe(201);
     expect(issues()).toBe(before + 1);
     // The same app's production stays open to visitors.
     expect((await post("still open", "", "", "notes")).status).toBe(201);
@@ -299,14 +319,15 @@ describe("the forge button takes notes from anyone", () => {
 
   test("a private app takes notes from a signed-in reader, as themselves, and from no one else", async () => {
     const reader = await grantedCookie(app, servers.url, alice, getAppBySlug(app.db, "diary")!);
-    const res = await post("A note on the diary", reader, "10.5.0.1", "diary");
+    const first = await page("diary", reader);
+    const res = await postAs("diary", reader, first.proof, "A note on the diary");
     expect(res.status).toBe(201);
     expect(((await res.json()) as { name: string }).name).toBe("@alice");
     const repo = getRepo(app.db, "alice", "diary")!;
     const issue = app.db.query<{ body: string }, [string]>("SELECT body FROM issue WHERE repo_id = ?1 ORDER BY number DESC").get(repo.id)!;
     expect(issue.body).toContain("by @alice.");
     expect(issue.body).toContain("Untrusted data");
-    const mine = (await (await at("diary", "/__forge/notes", {}, reader)).json()) as { notes: unknown[]; admin: boolean };
+    const mine = (await (await at("diary", "/__forge/notes", { headers: withProof(res.headers.get("x-forge-proof")!) }, reader)).json()) as { notes: unknown[]; admin: boolean };
     expect(mine.notes.length).toBe(1);
     expect(mine.admin).toBe(true);
     expect((await at("diary", "/__forge/notes")).status).toBe(404);
@@ -411,6 +432,86 @@ describe("the forge button takes notes from anyone", () => {
     // the app host answers 404 for moderation, and for the forge's own path too
     for (const path of ["/__forge/note/moderate", "/app/notes"])
       expect((await at("notes", path, { method: "POST", body: JSON.stringify({ id: secondId, action: "ban" }) }, "")).status).toBe(404);
+  });
+
+  test("a note from the app's own origin is a visitor's unless it carries the panel's proof", async () => {
+    const record = getAppBySlug(app.db, "notes")!;
+    const owner = await grantedCookie(app, servers.url, alice, record);
+    const list = async (cookie: string, proof?: string) =>
+      (await (await at("notes", "/__forge/notes", { headers: withProof(proof) }, cookie)).json()) as { name: string; admin: boolean };
+
+    // Unproven: the grant cookie alone is a visitor.
+    const bare = await postAs("notes", owner, undefined);
+    expect(bare.status).toBe(201);
+    expect(((await bare.json()) as { name: string }).name).toMatch(/^visitor-/);
+    expect(bare.headers.get("x-forge-proof")).toBeNull();
+    const seen = await list(owner);
+    expect(seen.name).toMatch(/^visitor-/);
+    expect(seen.admin).toBe(false);
+
+    // Proven: @alice, the list is theirs, and the answer carries the next token.
+    const loaded = await page("notes", owner);
+    expect(loaded.proof).toBeTruthy();
+    expect(loaded.res.headers.get("cache-control")).toBe("private, no-store");
+    const proven = await postAs("notes", owner, loaded.proof);
+    expect(((await proven.json()) as { name: string }).name).toBe("@alice");
+    const next = proven.headers.get("x-forge-proof")!;
+    expect(next).toBeTruthy();
+    expect(next).not.toBe(loaded.proof);
+    const mine = await list(owner, next);
+    expect(mine.name).toBe("@alice");
+    expect(mine.admin).toBe(true);
+
+    // Reused: the spent token is a visitor.
+    const reused = await postAs("notes", owner, loaded.proof);
+    expect(((await reused.json()) as { name: string }).name).toMatch(/^visitor-/);
+    expect(reused.headers.get("x-forge-proof")).toBeNull();
+
+    // Another grant's token, and another host's.
+    const bob = await createUser(app.db, { origin: "seed", trusted: true, username: "carol", email: "carol@forge.local", password: "a-good-passphrase" });
+    if (!bob.ok) throw new Error(bob.error);
+    const bobs = await grantedCookie(app, servers.url, bob.value, record);
+    const foreignGrant = await page("notes", owner);
+    expect((await list(bobs, foreignGrant.proof)).name).toMatch(/^visitor-/);
+    const foreignHost = await page("notes", owner);
+    const onOther = await at("diary", "/__forge/notes", { headers: withProof(foreignHost.proof) }, await grantedCookie(app, servers.url, alice, getAppBySlug(app.db, "diary")!));
+    expect(onOther.status).toBe(404);
+
+    // A same-origin fetch of the page gets no token; a document load and a cross-site frame do.
+    expect((await page("notes", owner, { "sec-fetch-dest": "empty", "sec-fetch-site": "same-origin" })).proof).toBeUndefined();
+    expect((await page("notes", owner, { "sec-fetch-dest": "iframe", "sec-fetch-site": "same-origin" })).proof).toBeUndefined();
+    expect((await page("notes", owner, { "sec-fetch-dest": "document" })).proof).toBeTruthy();
+    expect((await page("notes", owner, { "sec-fetch-dest": "iframe", "sec-fetch-site": "cross-site" })).proof).toBeTruthy();
+    // A visitor with no grant is given none.
+    expect((await page("notes", "")).proof).toBeUndefined();
+  });
+
+  test("app code that holds the cookie and a copy of a spent or stale token is refused", async () => {
+    const owner = await grantedCookie(app, servers.url, alice, getAppBySlug(app.db, "notes")!);
+    const loaded = await page("notes", owner);
+    // The panel spends the page's token and gets the next; a hostile script that
+    // copied the page's token, or guesses one, acts as a visitor.
+    const panel = await postAs("notes", owner, loaded.proof);
+    expect(((await panel.json()) as { name: string }).name).toBe("@alice");
+    for (const stolen of [loaded.proof, "A".repeat(32), ""]) {
+      const res = await postAs("notes", owner, stolen);
+      expect(((await res.json()) as { name: string }).name).toMatch(/^visitor-/);
+      expect(res.headers.get("x-forge-proof")).toBeNull();
+    }
+    // The chain's next token is still good for the panel.
+    const next = panel.headers.get("x-forge-proof")!;
+    const again = await at("notes", "/__forge/notes", { headers: withProof(next) }, owner);
+    expect(((await again.json()) as { name: string }).name).toBe("@alice");
+  });
+
+  test("the panel says so when its proof chain breaks", () => {
+    expect(toolbarJs).toContain("broke()");
+    expect(toolbarJs).toContain(PROOF_LOST);
+  });
+
+  test("the panel takes the proof from its tag, strips it, and sends it with each call", () => {
+    expect(toolbarJs).toContain('removeAttribute("data-proof")');
+    expect(toolbarJs).toContain("x-forge-proof");
   });
 
   test("the clock is the real one again", () => {

@@ -13,7 +13,7 @@
 
 import { staticResponse } from "../web/asset.ts";
 import { sha256 } from "../kernel/hash.ts";
-import { NOTE_EMPTY, NOTE_FAILED } from "./note_words.ts";
+import { NOTE_EMPTY, NOTE_FAILED, PROOF_LOST } from "./note_words.ts";
 
 /** The client, as plain source: no `eval`, no inline handlers. */
 export const toolbarJs = `(function () {
@@ -31,6 +31,34 @@ export const toolbarJs = `(function () {
   var pill = document.createElement("button");
   pill.type = "button";
   var d = me.dataset || {};
+  // The one-use proof the forge put on this page load: taken, then gone from the page.
+  var proof = d.proof || "";
+  if (me.removeAttribute) me.removeAttribute("data-proof");
+  var queue = Promise.resolve();
+  var lost = false;
+  // The chain broke (a failed call, or an answer with no next proof): say so once, in the panel.
+  function broke() {
+    proof = "";
+    lost = true;
+    if (typeof tellSay !== "undefined") tellSay.textContent = ${JSON.stringify(PROOF_LOST)};
+  }
+  // One call at a time, each carrying the proof the last answer left.
+  function call(url, init) {
+    var run = function () {
+      init.headers = Object.assign({}, init.headers);
+      var sent = proof;
+      if (sent) init.headers["x-forge-proof"] = sent;
+      return fetch(url, init).then(function (r) {
+        var next = r.headers.get("x-forge-proof");
+        if (next) proof = next;
+        else if (sent) broke();
+        return r;
+      }, function (e) { if (sent) broke(); throw e; });
+    };
+    var p = queue.then(run, run);
+    queue = p.catch(function () {});
+    return p;
+  }
   var where = d.env === "production" ? "production" : d.pull ? "preview of pull #" + d.pull : "";
   pill.setAttribute("aria-label", [d.app, where].filter(Boolean).join(", ") || "Forge");
   pill.setAttribute("aria-expanded", "false");
@@ -141,7 +169,7 @@ export const toolbarJs = `(function () {
     });
   }
   function refresh(sent) {
-    fetch("/__forge/notes", { credentials: "same-origin", cache: "no-store" })
+    call("/__forge/notes", { credentials: "same-origin", cache: "no-store" })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (j) {
         if (!j || !Array.isArray(j.notes)) return;
@@ -160,7 +188,7 @@ export const toolbarJs = `(function () {
     tellGo.setAttribute("aria-busy", "true");
     tellGo.style.opacity = ".6";
     function idle() { tellGo.disabled = false; tellGo.removeAttribute("aria-busy"); tellGo.style.opacity = "1"; }
-    fetch("/__forge/note", {
+    call("/__forge/note", {
       method: "POST",
       credentials: "same-origin",
       headers: { "content-type": "application/json" },
@@ -421,7 +449,7 @@ export function escapeAttr(text: string): string {
 }
 
 /** The script tag, with where-you-are as escaped data attributes. */
-export function toolbarTag(forgeUrl: string, where?: PillWhere): string {
+export function toolbarTag(forgeUrl: string, where?: PillWhere, proof?: string): string {
   const data =
     where === undefined
       ? ""
@@ -435,7 +463,8 @@ export function toolbarTag(forgeUrl: string, where?: PillWhere): string {
           .filter((pair): pair is [string, string] => pair[1] !== undefined)
           .map(([k, v]) => ` data-${k}="${escapeAttr(v)}"`)
           .join("");
-  return `<script src="${new URL(TOOLBAR_PATH, forgeUrl).href}"${data} defer></script>`;
+  const token = proof === undefined ? "" : ` data-proof="${escapeAttr(proof)}"`;
+  return `<script src="${new URL(TOOLBAR_PATH, forgeUrl).href}"${data}${token} defer></script>`;
 }
 
 /** `bytes` with the pill's tag before the last `</body>`, or at the end. */
@@ -443,8 +472,9 @@ export function withToolbar(
   bytes: Uint8Array,
   forgeUrl: string,
   where?: PillWhere,
+  proof?: string,
 ): Uint8Array<ArrayBuffer> {
-  const tag = Buffer.from(toolbarTag(forgeUrl, where));
+  const tag = Buffer.from(toolbarTag(forgeUrl, where, proof));
   const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   // latin1 is one character per byte, so an index in it is a byte offset.
   const at = buffer.toString("latin1").toLowerCase().lastIndexOf("</body");

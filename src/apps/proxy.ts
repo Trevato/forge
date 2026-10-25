@@ -36,7 +36,7 @@ import { loadKey } from "../kernel/secret.ts";
 import { previewEnv, type EnvName } from "./data.ts";
 import type { AppsRuntime, EnvStatus } from "./runtime.ts";
 import { crewNow, tellLink } from "./crew.ts";
-import { feedback } from "./feedback.ts";
+import { feedback, mintProof } from "./feedback.ts";
 import { clientBucket } from "../http/peer.ts";
 import { doorPage } from "./door.ts";
 import { notFound } from "../http/respond.ts";
@@ -673,6 +673,7 @@ export async function proxyApp(
       env: target.env,
       sealed,
       viewerId,
+      grantCookie: cookie,
       secure:
         url.protocol === "https:" ||
         request.headers.get("x-forwarded-proto") === "https",
@@ -811,10 +812,20 @@ export async function proxyApp(
     } catch {
       return unavailable(runtime, target, status, "the app stopped answering");
     }
+    // A signed-in person's page load gets the panel's one-use proof, and so
+    // is theirs alone: never stored or shared. A page the app's own script
+    // fetched (dest "empty", or a same-origin frame) gets none.
+    const grantCookie = cookieValue(request, grantCookieName(target));
+    const proof =
+      vouched?.who !== undefined && grantCookie !== undefined && proofWanted(request)
+        ? mintProof(grantCookie, request.headers.get("host") ?? "")
+        : undefined;
+    if (proof !== undefined) out.set("cache-control", "private, no-store");
     const page = withToolbar(
       bytes,
       runtime.options.forgeUrl,
       pillWhere(runtime, target, vouched?.who),
+      proof,
     );
     let sent = page;
     // Whether it is gzipped depends on the client, so every copy says so.
@@ -845,6 +856,13 @@ export async function proxyApp(
       headers: out,
     },
   );
+}
+
+/** Whether a request is a page load the panel may be proved on (see `mintProof`). */
+export function proofWanted(request: Request): boolean {
+  const dest = request.headers.get("sec-fetch-dest");
+  if (dest === null || dest === "document") return true;
+  return dest === "iframe" && request.headers.get("sec-fetch-site") === "cross-site";
 }
 
 /**

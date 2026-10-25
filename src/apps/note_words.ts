@@ -14,3 +14,6 @@ export const NOTE_FAILED = "That did not go through. Try again.";
 
 /** A note longer than one issue body may be. */
 export const NOTE_TOO_LONG = "That is too long to send in one go.";
+
+/** The panel's proof chain broke: the page must be loaded again to be known as its signed-in person. */
+export const PROOF_LOST = "Reload this page to send as yourself; until then notes go as a visitor.";

@@ -35,6 +35,8 @@ export interface FeedbackAsk {
   readonly sealed: boolean;
   /** The person the app's grant names, if any. */
   readonly viewerId: string | undefined;
+  /** The grant cookie's value, which the panel's proof is bound to. */
+  readonly grantCookie?: string | undefined;
   readonly secure: boolean;
   /** The client's limit key, from the socket (`clientBucket`). */
   readonly source: string;
@@ -83,6 +85,39 @@ function doorFor(ask: FeedbackAsk): Door | undefined {
   if (viewer !== undefined && canRead(ask.app.db, repo, viewer)) return { repo, viewer };
   if (!ask.sealed && ask.record.access === "public" && canRead(ask.app.db, repo, undefined)) return { repo, viewer: undefined };
   return undefined;
+}
+
+// ---- the panel's one-use proof ----
+//
+// The app's own code runs on this origin and can send the person's grant
+// cookie with a fetch, so a cookie alone does not say the forge panel asked.
+// The panel's script tag carries a token the forge minted for that page load;
+// each answer to a request that spent one carries the next in `x-forge-proof`.
+// Held in memory, as the process is one: a restart makes everyone a visitor
+// until the next page load.
+
+export const PROOF_HEADER = "x-forge-proof";
+const PROOF_TTL_MS = 24 * 3_600_000;
+const PROOF_MAX = 20_000;
+const proofs = new Map<string, { bind: string; expires: number }>();
+
+const bindOf = (grantCookie: string, host: string): string => sha256(`${host}\n${grantCookie}`);
+
+/** A fresh token for this grant cookie on this host. Never put it in a URL. */
+export function mintProof(grantCookie: string, host: string, now = Date.now()): string {
+  while (proofs.size >= PROOF_MAX) proofs.delete(proofs.keys().next().value!);
+  const token = randomBytes(24).toString("base64url");
+  proofs.set(token, { bind: bindOf(grantCookie, host), expires: now + PROOF_TTL_MS });
+  return token;
+}
+
+/** Spend a token: true once, for the grant and host it was minted for. */
+function spendProof(token: string | null, grantCookie: string | undefined, host: string | null, now = Date.now()): boolean {
+  if (token === null || grantCookie === undefined || host === null) return false;
+  const held = proofs.get(token);
+  if (held === undefined) return false;
+  proofs.delete(token);
+  return held.expires > now && held.bind === bindOf(grantCookie, host);
 }
 
 /** The sender: a person's key and name, or the anonymous cookie's. */
@@ -155,12 +190,12 @@ async function send(ask: FeedbackAsk, door: Door): Promise<Response> {
   return json(201, { note: sent.value, name: sender.name }, cookies);
 }
 
-function list(ask: FeedbackAsk, door: Door): Response {
+function list(ask: FeedbackAsk, door: Door, proven: boolean): Response {
   const { sender, fresh } = senderOf(ask, door);
   const notes = notesFor(ask.app, ask.record, door.repo, ask.forgeUrl, sender);
   return json(
     200,
-    { name: sender.name, notes, admin: door.viewer !== undefined && canAdmin(ask.app.db, door.repo, door.viewer) },
+    { name: sender.name, notes, admin: proven && door.viewer !== undefined && canAdmin(ask.app.db, door.repo, door.viewer) },
     fresh === undefined ? {} : { "set-cookie": visitorCookie(fresh, ask.secure) },
   );
 }
@@ -171,11 +206,19 @@ export async function feedback(ask: FeedbackAsk): Promise<Response | undefined> 
   const method = ask.request.method;
   if (path === "/__forge/note/moderate") return json(404, { error: "not_found" });
   if (path !== "/__forge/note" && path !== "/__forge/notes") return undefined;
+  const host = ask.request.headers.get("host");
+  const proven = spendProof(ask.request.headers.get(PROOF_HEADER), ask.grantCookie, host);
+  const answer = await answerNote(proven ? ask : { ...ask, viewerId: undefined }, path, method, proven);
+  if (proven) answer.headers.set(PROOF_HEADER, mintProof(ask.grantCookie!, host!));
+  return answer;
+}
+
+async function answerNote(ask: FeedbackAsk, path: string, method: string, proven: boolean): Promise<Response> {
   const door = doorFor(ask);
   if (door === undefined) return json(404, { error: "not_found" });
   if (path === "/__forge/notes") {
     if (method !== "GET") return json(405, { error: "method" }, { allow: "GET" });
-    return list(ask, door);
+    return list(ask, door, proven);
   }
   if (method !== "POST") return json(405, { error: "method" }, { allow: "POST" });
   if (!sameOrigin(ask.request)) return json(403, { error: "cross_origin" });

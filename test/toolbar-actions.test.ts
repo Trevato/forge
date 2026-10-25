@@ -90,9 +90,9 @@ describe("toolbar actions", () => {
     expect(toolbarJs).toContain('"/toolbar"');
     // Its requests are all to the app's own origin: the crew line (#2233) and,
     // for the feedback door (#4758), the sender's notes and their status.
-    expect(toolbarJs.match(/fetch\(/g)?.length).toBe(3);
+    expect(toolbarJs.match(/fetch\(/g)?.length).toBe(2);
     expect(toolbarJs).toContain('fetch("/__forge/crew"');
-    expect(toolbarJs).toContain('fetch("/__forge/note"');
+    expect(toolbarJs).toContain('call("/__forge/note"');
     expect(toolbarJs).not.toMatch(/FormData|\.send\(/);
     expect(toolbarJs).not.toContain("XMLHttpRequest");
     expect(toolbarJs).not.toContain("document.cookie");

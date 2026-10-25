@@ -989,6 +989,17 @@ Under the box, four starter sentences are plain links (no script):
   server-rendered page paints up to 100 ms later (a page sent with a
   `Content-Length`, or one that starts with something other than markup, does
   not wait). Event streams and WebSockets are untouched.
+- **A signed-in note needs the panel's one-use proof (#5612).** The grant
+  cookie alone no longer makes a note `@name`: the forge puts a one-use token in
+  the panel's script tag on a signed-in page load, the panel sends it as
+  `x-forge-proof` and each answer carries the next. Without it, a reused one or
+  one for another grant or host, the sender is a visitor and `admin` is false.
+  This stops an app's code that merely holds the cookie (a `fetch` from its
+  page). It does **not** stop app code that runs in the same page and watches
+  for the tag or patches `fetch` before the panel runs: the token reaches the
+  panel through the page, so that code can read it. Closing that needs the
+  panel in a cross-origin frame, which is not built. If a call fails the panel
+  asks for a reload, since the chain is then spent.
 - **The forge button is a feedback door (#4758).** One tap opens *Tell the
   builders*: a text box and Send, no account. The note is posted to the app's
   own host (`POST /__forge/note`, same-origin only) and filed as an issue on
