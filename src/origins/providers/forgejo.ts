@@ -74,6 +74,7 @@ import {
   toCommit,
   toTreeEntry,
 } from "./http.ts";
+import { PATH_IS_DIRECTORY, PATH_IS_FILE } from "../words.ts";
 
 /** What we ask for before the instance tells us its own ceiling. */
 const DEFAULT_LIMIT = 50;
@@ -250,7 +251,7 @@ export class ForgejoProvider implements Provider {
     });
     if (!result.ok) return result;
     if (!Array.isArray(result.value.data))
-      return fail("not_found", "that path is a file, not a directory");
+      return fail("not_found", PATH_IS_FILE);
     return succeed(
       sortEntries(result.value.data.map((r) => toTreeEntry(r, path))),
     );
@@ -271,7 +272,7 @@ export class ForgejoProvider implements Provider {
     });
     if (!result.ok) return result;
     if (Array.isArray(result.value.data))
-      return fail("not_found", "that path is a directory, not a file");
+      return fail("not_found", PATH_IS_DIRECTORY);
     return succeed(toBlob(result.value.data));
   }
 

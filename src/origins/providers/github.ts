@@ -62,6 +62,7 @@ import {
   toCommit,
   toTreeEntry,
 } from "./http.ts";
+import { PATH_IS_DIRECTORY, PATH_IS_FILE } from "../words.ts";
 
 const PER_PAGE = 100;
 /** A page walk we drive ourselves (labels, reviews) stops here regardless. */
@@ -194,7 +195,7 @@ export class GitHubProvider implements Provider {
     });
     if (!result.ok) return result;
     if (!Array.isArray(result.value.data))
-      return fail("not_found", "that path is a file, not a directory");
+      return fail("not_found", PATH_IS_FILE);
     return succeed(
       sortEntries(result.value.data.map((r) => toTreeEntry(r, path))),
     );
@@ -215,7 +216,7 @@ export class GitHubProvider implements Provider {
     });
     if (!result.ok) return result;
     if (Array.isArray(result.value.data))
-      return fail("not_found", "that path is a directory, not a file");
+      return fail("not_found", PATH_IS_DIRECTORY);
     return succeed(toBlob(result.value.data));
   }
 
