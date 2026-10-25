@@ -258,8 +258,8 @@ export function iconPng(ctx: Ctx): Response {
  */
 export function llmsTxt(ctx: Ctx): Response {
   const o = ctx.url.origin;
-  const repos = llmsRepos(ctx.app.db);
-  return text(
+  const repos = timePhase(ctx.request, "repos", () => llmsRepos(ctx.app.db));
+  return timePhase(ctx.request, "render", () => text(
     [
       `# forge at ${ctx.url.host}`,
       "",
@@ -303,7 +303,7 @@ export function llmsTxt(ctx: Ctx): Response {
       "",
     ].join("\n"),
     "text/markdown; charset=utf-8",
-  );
+  ));
 }
 
 export interface PageLink {
