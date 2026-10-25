@@ -46,6 +46,7 @@ import { PROVIDERS } from "../cloud/providers.ts";
 import { changeQuotas, readQuotas } from "../actions/quotas.ts";
 import { resendVerification } from "../actions/verify.ts";
 import { CAPPED_WORDS } from "../actions/mail.ts";
+import { SPEND_WORDS } from "../actions/spend_words.ts";
 import { changeSignup, readSignup } from "../actions/signup.ts";
 import { SIGNUP_MODES } from "../settings/signup.ts";
 import { QUOTA_KEYS } from "../settings/quotas.ts";
@@ -1635,7 +1636,7 @@ const TOOLS: readonly Tool[] = [
         return bad(
           set.error === "invalid_amount" ? "invalid" : "forbidden",
           set.error === "invalid_amount"
-            ? "usdPerMonth is from 0.01 to 10000 dollars"
+            ? SPEND_WORDS.usdPerMonth
             : "no such person, or not one a grant is for",
         );
       return good(set.value);
@@ -1668,7 +1669,7 @@ const TOOLS: readonly Tool[] = [
       if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
         return bad("forbidden", "an invite needs an admin token");
       const made = mintInviteLink(ctx.app, user, args["days"]);
-      if (!made.ok) return bad("invalid", "days is a whole number from 1 to 30");
+      if (!made.ok) return bad("invalid", SPEND_WORDS.inviteDays);
       const origin = ctx.app.config.url ?? ctx.url.origin;
       return good({ ...made.value.invite, link: inviteLink(origin, made.value.token) });
     },
@@ -1743,7 +1744,7 @@ const TOOLS: readonly Tool[] = [
         return bad(
           set.error === "invalid_amount" ? "invalid" : "forbidden",
           set.error === "invalid_amount"
-            ? "usdPerMonth is from 0.01 to 10000 dollars"
+            ? SPEND_WORDS.usdPerMonth
             : "no such person, or not one a role is for",
         );
       return good(set.value);
@@ -1811,7 +1812,7 @@ const TOOLS: readonly Tool[] = [
       const set = setAccountCeilings(ctx.app, user, username, dailyUsd, perRunUsd);
       if (!set.ok)
         return set.error === "invalid_amount"
-          ? bad("invalid", "dailyUsd and perRunUsd are each from 0.01 to 10000 dollars, or both null")
+          ? bad("invalid", SPEND_WORDS.ceilings)
           : bad("forbidden", "no such account");
       return good(set.value);
     },

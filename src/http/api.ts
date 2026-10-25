@@ -450,6 +450,7 @@ import {
   waitingReports,
 } from "../actions/reports.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
+import { SPEND_WORDS } from "../actions/spend_words.ts";
 
 /** Take the parent's updates for `repo` and answer as the API does, for every route that asks. */
 async function respondTake(ctx: Ctx, repo: Repo): Promise<Response> {
@@ -1809,7 +1810,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const made = mintInviteLink(ctx.app, ctx.auth.user, input.days);
     if (!made.ok)
       return made.error === "invalid_days"
-        ? apiError("invalid", 422, "days is a whole number from 1 to 30")
+        ? apiError("invalid", 422, SPEND_WORDS.inviteDays)
         : notFound();
     const origin = ctx.app.config.url ?? ctx.url.origin;
     return json(
@@ -1872,7 +1873,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const done = setAccountGrant(ctx.app, ctx.auth.user, ctx.params.username!, raw === 0 ? null : raw);
     if (done.ok) return json(done.value);
     return done.error === "invalid_amount"
-      ? apiError("invalid", 422, "usdPerMonth is from 0.01 to 10000 dollars")
+      ? apiError("invalid", 422, SPEND_WORDS.usdPerMonth)
       : done.error === "not_allowed"
         ? apiError("not_allowed", 422, "a grant is for a person who is not an admin")
         : notFound();
@@ -1900,7 +1901,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const done = setRole(ctx.app, ctx.auth.user, ctx.params.username!, role, typeof usdPerMonth === "number" ? usdPerMonth : null);
     if (done.ok) return json(done.value);
     return done.error === "invalid_amount"
-      ? apiError("invalid", 422, "usdPerMonth is from 0.01 to 10000 dollars")
+      ? apiError("invalid", 422, SPEND_WORDS.usdPerMonth)
       : done.error === "not_allowed"
         ? apiError("not_allowed", 422, "a role is for a person who is not an admin")
         : notFound();
@@ -1919,7 +1920,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const done = setAccountCeilings(ctx.app, ctx.auth.user, ctx.params.username!, dailyUsd, perRunUsd);
     if (done.ok) return json(done.value);
     return done.error === "invalid_amount"
-      ? apiError("invalid", 422, "dailyUsd and perRunUsd are each from 0.01 to 10000 dollars, or both null")
+      ? apiError("invalid", 422, SPEND_WORDS.ceilings)
       : notFound();
   });
 
