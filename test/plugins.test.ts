@@ -19,7 +19,7 @@ const opencodeText = (): string => {
 const backticked = (text: string): string[] => [...text.matchAll(/`([a-z][a-z0-9_]*)`/g)].map((m) => m[1]!);
 
 /** Backticked words that are the server or an argument, not a tool. */
-const NOT_TOOLS = new Set(["forge", "repo", "text", "context", "page", "run", "commit", "said", "action", "ship", "close", "status"]);
+const NOT_TOOLS = new Set(["forge", "repo", "text", "context", "page", "run", "commit", "said", "action", "ship", "close", "status", "words", "id", "verb", "proposal", "approve", "later"]);
 
 /** Tools the command text tells the agent to call: every backticked name that is not an argument. */
 const toolsNamed = (text: string): string[] => [...new Set(backticked(text))].filter((n) => !NOT_TOOLS.has(n));
@@ -40,4 +40,13 @@ for (const [label, text] of [
 test("a renamed tool is caught", () => {
   expect(toolsNamed("call `tell_renamed` with `repo`").filter((n) => !tools.has(n))).toEqual(["tell_renamed"]);
   expect(backticked("`a_b` and `C`")).toEqual(["a_b"]);
+});
+
+test("the Claude Code command names plan's tools, and the forge lists them", () => {
+  const named = toolsNamed(claudeText());
+  for (const tool of ["asks", "asks_proposal"]) {
+    expect(named).toContain(tool);
+    expect(tools.has(tool)).toBe(true);
+  }
+  expect(claudeText()).toContain("`proposal.id`");
 });
