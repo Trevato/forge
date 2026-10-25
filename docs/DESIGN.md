@@ -411,9 +411,6 @@ the same line (#4888).
   - `.error-note`
   - `.list`
   - `.menu-item`
-  - `.palette-foot`
-  - `.palette-input`
-  - `.palette-list`
   - `.preview`
   - `.sep`
   - `.split`
