@@ -13,18 +13,19 @@ import { running } from "../../kernel/version.ts";
 import type { Ctx } from "../../http/context.ts";
 import { listReleases, type Release } from "../../release/record.ts";
 import { BOOTED, canRollBackTo, mayRead, mayRollBack, rollBackTo } from "../../release/gate.ts";
+import { liveSince, NO_RELEASES_YET } from "../../release/words.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
 import { readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import { badge, btn, card, empty, sha, time } from "../ui.ts";
 
-/** "live: <sha> since <time>" for the home, or nothing when no release is known to be live. */
+/** The live line (`liveSince`) for the home, or nothing when no release is known to be live. */
 export function liveLine(ctx: Ctx): Html | undefined {
   const live = running().commit;
   if (live === null || !mayRead(ctx.app, ctx.auth.user)) return undefined;
   return html`<p class="small muted" id="live-release">
-    <a href="/releases">live: <span class="sha">${live.slice(0, 7)}</span> since ${time(BOOTED)}</a>
+    <a href="/releases">${liveSince(html, html`<span class="sha">${live.slice(0, 7)}</span>`, time(BOOTED))}</a>
   </p>`;
 }
 
@@ -69,7 +70,7 @@ export async function releasesPage(ctx: Ctx): Promise<Response> {
   }
   const body =
     rows.length === 0
-      ? empty({ icon: "clock", title: "No releases yet", note: "A pull landed on the forge's own repository is recorded here." })
+      ? empty({ icon: "clock", title: "No releases yet", note: NO_RELEASES_YET })
       : card(html`<table class="table">
           <thead><tr><th>Release</th><th>Pull</th><th>Landed</th><th>Healthy</th><th></th></tr></thead>
           <tbody>${rows}</tbody>
