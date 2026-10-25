@@ -234,6 +234,7 @@ describe("the forge over MCP", () => {
       "asked",
       "assigned",
       "app_members",
+      "egress_grants",
       "explore",
       "search",
       "feed",
@@ -1002,6 +1003,62 @@ describe("the forge over MCP", () => {
     expect(done.value).toMatchObject({ key, from: before, to: 13 });
     expect(limitValue(app.db, key)).toBe(13);
     expect(limitChanges(app.db)[0]).toMatchObject({ key });
+  });
+
+  test("egress_grants: list, grant and revoke for a site admin; a non-admin is refused as the API refuses", async () => {
+    const dest = "100.89.95.68:8101";
+    const committed = await commitToBranch(app, alice, game, {
+      message: "Ask for the arm",
+      files: [{ path: "forge.json", content: JSON.stringify({ app: { run: "bun run src/server.ts" }, egress: [dest] }) }],
+    });
+    if (!committed.ok) throw new Error(JSON.stringify(committed.error));
+    const admin = createToken(app.db, alice.id, "admin", "admin").token;
+    const bobAdmin = createToken(app.db, bob.id, "bobadmin", "admin").token;
+    const repo = "alice/game";
+
+    const listed = await tool(admin, "egress_grants", { repo });
+    expect(listed.value.items).toEqual([
+      { destination: dest, asked: true, granted: false, grantedBy: null, grantedAt: null },
+    ]);
+
+    // Bob is no admin of the repository: told nothing of it.
+    expect((await tool(bobAdmin, "egress_grants", { repo })).error).toContain("not_found");
+    // A token below admin scope may not read or change.
+    expect((await tool(ro, "egress_grants", { repo })).error).toContain("forbidden");
+    expect((await tool(rw, "egress_grants", { repo, op: "grant", destination: dest })).error).toContain("forbidden");
+
+    const granted = await tool(admin, "egress_grants", { repo, op: "grant", destination: dest });
+    expect(granted.value).toMatchObject({ destination: dest, granted: true, grantedBy: "alice" });
+    expect((await tool(admin, "egress_grants", { repo, op: "grant", destination: "10.0.0.1:1" })).error).toContain("not_asked");
+
+    // The same words the API gives a repository admin who is no site admin.
+    const arm = await createRepo(app, bob, { name: "arm", visibility: "public", description: "" });
+    if (!arm.ok) throw new Error(String(arm.error));
+    await commitToBranch(app, bob, arm.value, {
+      message: "Ask for the arm",
+      files: [{ path: "forge.json", content: JSON.stringify({ app: { run: "bun run src/server.ts" }, egress: [dest] }) }],
+    });
+    const refused = await tool(bobAdmin, "egress_grants", { repo: "bob/arm", op: "grant", destination: dest });
+    const api = await fetch(`${base}/api/v1/repos/bob/arm/egress-grants`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${bobAdmin}`, "content-type": "application/json" },
+      body: JSON.stringify({ destination: dest }),
+    });
+    expect(api.status).toBe(403);
+    expect(refused.error).toBe(`forbidden: ${((await api.json()) as any).message}`);
+
+    // An agent, even one marked site admin, may not change a grant.
+    const bot = await createAgent(app, alice, { username: "egressbot", brief: "x" });
+    if (!bot.ok) throw new Error(String(bot.error));
+    app.db.query("UPDATE user SET is_admin = 1 WHERE id = ?1").run(bot.value.user.id);
+    const botToken = createToken(app.db, bot.value.user.id, "bot", "admin").token;
+    const botGrant = await tool(botToken, "egress_grants", { repo: "bob/arm", op: "grant", destination: dest });
+    expect(botGrant.error).toContain("forbidden");
+
+    const revoked = await tool(admin, "egress_grants", { repo, op: "revoke", destination: dest });
+    expect(revoked.value).toEqual({ revoked: dest });
+    expect((await tool(admin, "egress_grants", { repo, op: "revoke", destination: dest })).error).toContain("no_such_grant");
+    expect((await tool(admin, "egress_grants", { repo })).value.items[0].granted).toBe(false);
   });
 
   test("board_pins: list, pin, move, unpin for an admin person; an agent and a non-admin are refused", async () => {

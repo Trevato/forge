@@ -64,8 +64,8 @@ export const tooManyAttempts = (retryAfter: number) =>
     429,
     { "retry-after": String(retryAfter) },
   );
-export const forbidden = () =>
-  apiError("forbidden", 403, "your credentials lack the scope for this action");
+export const FORBIDDEN_MESSAGE = "your credentials lack the scope for this action";
+export const forbidden = () => apiError("forbidden", 403, FORBIDDEN_MESSAGE);
 // A path matching no route at all — distinct from a missing resource, so a
 // client can tell a typo'd URL from a resource that genuinely isn't there.
 // The message survives into the HTML 404 too (`src/web/chrome.ts`), as a

@@ -243,6 +243,11 @@ import {
   setAppMembersThrough,
 } from "../actions/app_members.ts";
 import {
+  egressView,
+  grantAppEgress,
+  revokeAppEgress,
+} from "../actions/egress_grants.ts";
+import {
   explore,
   exploreLine,
   parseExploreQuery,
@@ -258,7 +263,7 @@ import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
 import { deleteOriginApp, listOriginApps, registerOriginApp } from "../actions/origins.ts";
 import { connectMessage } from "./api.ts";
 import { resourceMetadataUrl } from "./oauth.ts";
-import { body, boundedBody, json } from "./respond.ts";
+import { body, boundedBody, FORBIDDEN_MESSAGE, json } from "./respond.ts";
 import { sizesView } from "../spawn/sizes.ts";
 import type { Router } from "./router.ts";
 import { checkOfCommit, mayReadRuns, runForReader, runLog } from "../actions/runs.ts";
@@ -527,10 +532,10 @@ const TOOLS: readonly Tool[] = [
       type: "object",
       properties: {
         name: { type: "string", maxLength: 100 },
-        description: { type: "string", maxLength: 4000, description: "What it should become: the first issue." },
+        description: { type: "string", maxLength: 4000, description: "The first issue." },
         owner: { type: "string", maxLength: 39 },
-        visibility: { type: "string", enum: ["public", "private"], description: "Private unless public." },
-        agent: { type: "string", maxLength: 39, description: "Agent for the crew and first issue." },
+        visibility: { type: "string", enum: ["public", "private"], description: "Default private." },
+        agent: { type: "string", maxLength: 39, description: "Agent for the first issue." },
         pick: { type: "boolean", description: "Pick the agent from the text." },
       },
       required: ["name"],
@@ -1323,7 +1328,7 @@ const TOOLS: readonly Tool[] = [
   },
   {
     name: "secrets",
-    description: "Admin: list|set|remove sealed secrets; values are write-only.",
+    description: "Admin: list|set|remove sealed secrets.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1394,7 +1399,7 @@ const TOOLS: readonly Tool[] = [
   },
   {
     name: "org_teams",
-    description: "An organization owner's teams: create one, add a member, or remove a team.",
+    description: "An organization's teams: create, add a member, remove.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1679,7 +1684,7 @@ const TOOLS: readonly Tool[] = [
   },
   {
     name: "invites",
-    description: "List open invites, or revoke one by `id`. Person admins only.",
+    description: "List open invites, or revoke one by `id`.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1755,7 +1760,7 @@ const TOOLS: readonly Tool[] = [
   },
   {
     name: "account_suspend",
-    description: "Suspend a person's account, or unsuspend it with `suspended: false`.",
+    description: "Suspend an account, or `suspended: false` to lift it.",
     inputSchema: {
       type: "object",
       properties: { username: { type: "string" }, suspended: { type: "boolean" } },
@@ -1786,8 +1791,8 @@ const TOOLS: readonly Tool[] = [
       type: "object",
       properties: {
         username: { type: "string" },
-        dailyUsd: { type: ["number", "null"], description: "0.01–10000; null clears (with perRunUsd null)." },
-        perRunUsd: { type: ["number", "null"], description: "0.01–10000; null clears (with dailyUsd null)." },
+        dailyUsd: { type: ["number", "null"], description: "0.01–10000; null clears." },
+        perRunUsd: { type: ["number", "null"], description: "0.01–10000; null clears." },
         dryRun: { type: "boolean", description: "false to apply" },
       },
       required: ["username", "dailyUsd", "perRunUsd"],
@@ -1822,7 +1827,7 @@ const TOOLS: readonly Tool[] = [
   },
   {
     name: "account_verify",
-    description: "Mark a person's email verified, as an admin who knows them.",
+    description: "Mark a person's email verified (admin).",
     inputSchema: {
       type: "object",
       properties: { username: { type: "string" } },
@@ -2116,7 +2121,7 @@ const TOOLS: readonly Tool[] = [
   },
   {
     name: "events",
-    description: "A repository's events, paged.",
+    description: "Repository events.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2288,7 +2293,7 @@ const TOOLS: readonly Tool[] = [
       type: "object",
       properties: {
         repo: REPO_ARG,
-        ref: { type: "string", maxLength: 255, description: "Branch, tag or commit; default branch." },
+        ref: { type: "string", maxLength: 255, description: "Branch, tag or commit." },
         limit: { type: "integer", minimum: 1, maximum: 100 },
         oid: { type: "string", minLength: 4, maxLength: 64, },
       },
@@ -2477,7 +2482,7 @@ const TOOLS: readonly Tool[] = [
   },
   {
     name: "agent",
-    description: "Admin: create|update|remove a crew agent.",
+    description: "Admin: create|update|remove an agent.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2869,7 +2874,7 @@ const TOOLS: readonly Tool[] = [
   },
   {
     name: "assigned",
-    description: "The open issues and pulls assigned to you in every repository you can read.",
+    description: "Open issues and pulls assigned to you.",
     inputSchema: {
       type: "object",
       properties: { limit: { type: "integer", minimum: 1, maximum: 50 } },
@@ -2927,6 +2932,51 @@ const TOOLS: readonly Tool[] = [
       if (!dryRun && !scopeAllows(ctx.auth.scope ?? "ro", "admin"))
         return bad("forbidden", "changing who may enter an app needs an admin-scope token");
       return answer(setAppMembersThrough(ctx.app, user, repo, { members, dryRun }));
+    },
+  },
+  {
+    name: "egress_grants",
+    description:
+      "An app's private destinations and their grants: list, grant or revoke (site admin). See docs/MCP.md.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        op: { type: "string", enum: ["list", "grant", "revoke"] },
+        destination: { type: "string" },
+      },
+      required: ["repo"],
+    },
+    writes: true,
+    readsWithout: "op",
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const op = args["op"] === undefined ? "list" : str(args["op"]);
+      if (op !== "list" && op !== "grant" && op !== "revoke")
+        return bad("invalid", "op is list, grant or revoke");
+      // The API's rule: reading or changing grants takes an admin-scope token.
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "egress grants need an admin-scope token");
+      const refused = (error: string): Answer => {
+        if (error === "not_found")
+          return bad("not_found", "no such app or repository (owner/name)");
+        if (error === "forbidden") return bad("forbidden", FORBIDDEN_MESSAGE);
+        return bad(error, error);
+      };
+      if (op === "list") {
+        const view = await egressView(ctx.app, user, repo);
+        return view.ok
+          ? good({ items: view.value.rows, changes: view.value.changes })
+          : refused(view.error);
+      }
+      const destination = str(args["destination"]);
+      if (op === "grant") {
+        const granted = await grantAppEgress(ctx.app, user, repo, destination);
+        return granted.ok ? good(granted.value) : refused(granted.error);
+      }
+      const revoked = revokeAppEgress(ctx.app, user, repo, destination);
+      return revoked.ok ? good({ revoked: revoked.value }) : refused(revoked.error);
     },
   },
   {
@@ -3173,7 +3223,7 @@ const TOOLS: readonly Tool[] = [
         hidden: { type: "array", items: { type: "string" } },
         weights: {
           type: "object",
-          description: "0–10: forks, ships, use, fresh.",
+          description: "0–10 each.",
           properties: {
             forks: { type: "number", minimum: 0, maximum: 10 },
             ships: { type: "number", minimum: 0, maximum: 10 },
@@ -3812,7 +3862,7 @@ const TOOLS: readonly Tool[] = [
   },
   {
     name: "wait_for",
-    description: "Make an issue wait for another; `stop: true` ends it.",
+    description: "Make an issue wait for another; `stop` ends it.",
     inputSchema: {
       type: "object",
       properties: {
@@ -4145,7 +4195,7 @@ const TOOLS: readonly Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        since: { type: "string", maxLength: 40, description: "ISO time; max 14 days." },
+        since: { type: "string", maxLength: 40, description: "ISO time." },
         ua: { type: "string", maxLength: 100, description: "User agent part." },
         path: { type: "string", maxLength: 200, description: "Path prefix." },
       },
@@ -4528,7 +4578,7 @@ const TOOLS: readonly Tool[] = [
   },
   {
     name: "email_verify",
-    description: "Send the caller a new email-verification link; same limits as the API.",
+    description: "Send yourself a new verification link.",
     inputSchema: { type: "object", properties: {} },
     writes: true,
     async run(ctx, user) {
@@ -4558,7 +4608,7 @@ const TOOLS: readonly Tool[] = [
         panel: { type: "integer", minimum: 0, maximum: 23, description: "One panel, from 0." },
         from: { type: "string", maxLength: 64 },
         to: { type: "string", maxLength: 64 },
-        step: { type: "string", maxLength: 16, description: "With panel: seconds per bucket, or a count of s/m/h/d." },
+        step: { type: "string", maxLength: 16, description: "With panel: seconds per bucket, or 5m." },
       },
     },
     writes: false,
