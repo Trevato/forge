@@ -10,6 +10,7 @@
 import { CAPACITY_KEYS } from "../core/capacity.ts";
 import { FAMILY_WORDS } from "../actions/family_words.ts";
 import { LIMIT_KEYS } from "../settings/limits.ts";
+import { ADMIN_WORDS } from "../actions/admin_words.ts";
 import { SELF_WAIT } from "../actions/plan_words.ts";
 
 interface Route {
@@ -1227,7 +1228,7 @@ export const ROUTES: readonly Route[] = [
     summary: "Set the front page's picks (a site admin's, rw scope): `pinned` and `hidden` are arrays of owner/name, `weights` an object of forks, ships, use, fresh; answers the picks",
     auth: true,
     body: { pinned: "array", hidden: "array", weights: "object" },
-    refusals: { invalid: "the picks are malformed or name no repository (422)", forbidden: "the front page is a site admin's to set (403)" },
+    refusals: { invalid: "the picks are malformed or name no repository (422)", forbidden: `${ADMIN_WORDS.frontPage} (403)` },
   },
   {
     method: "get",

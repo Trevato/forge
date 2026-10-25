@@ -289,6 +289,7 @@ import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
 import { placementWords } from "../checks/placement.ts";
 import { everydayOf } from "../core/everyday.ts";
 import { nextStepsFor } from "../core/next-steps.ts";
+import { ADMIN_WORDS } from "../actions/admin_words.ts";
 
 const PROTOCOLS = ["2025-06-18", "2025-03-26", "2024-11-05"] as const;
 /** Who answers: the forge, at the version its build stamped. */
@@ -1868,7 +1869,7 @@ const TOOLS: readonly Tool[] = [
       if (done.ok) return good({ username: done.value.username, suspendedAt: done.value.suspendedAt });
       if (done.error === "not_found") return bad("not_found", "no such person");
       if (done.error === "last_owner") return bad("last_owner", lastOwnerSays(ctx.app.db, username));
-      return bad("not_allowed", "an admin cannot suspend or remove themselves, another admin, or an agent");
+      return bad("not_allowed", ADMIN_WORDS.selfSuspend);
     },
   },
   {
@@ -3337,7 +3338,7 @@ const TOOLS: readonly Tool[] = [
       const set = setFront(ctx.app, user, picks, args["dryRun"] !== false);
       if (!set.ok)
         return set.error.kind === "forbidden"
-          ? bad("forbidden", "the front page is a site admin's to set")
+          ? bad("forbidden", ADMIN_WORDS.frontPage)
           : bad("invalid", set.error.message);
       return good({
         dryRun: args["dryRun"] !== false,
@@ -4388,7 +4389,7 @@ const TOOLS: readonly Tool[] = [
     adminOnly: true,
     run(ctx, user) {
       const card = readScorecards(ctx.app, user);
-      return card ? good(card) : bad("forbidden", "the crew's scorecard is a forge admin's to read");
+      return card ? good(card) : bad("forbidden", ADMIN_WORDS.scorecard);
     },
   },
   {

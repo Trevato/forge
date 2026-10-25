@@ -461,6 +461,7 @@ import {
   waitingReports,
 } from "../actions/reports.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
+import { ADMIN_WORDS } from "../actions/admin_words.ts";
 import { SPEND_WORDS } from "../actions/spend_words.ts";
 
 /** Take the parent's updates for `repo` and answer as the API does, for every route that asks. */
@@ -1452,7 +1453,7 @@ export function apiRoutes(router: Router<Handler>): void {
         ? apiError(
             "not_allowed",
             422,
-            "an admin cannot suspend or remove themselves, another admin, or an agent",
+            ADMIN_WORDS.selfSuspend,
           )
         : apiError(error, 500, "the account could not be removed");
   const accountAdmin = (ctx: Ctx, scope: "ro" | "admin"): Response | undefined =>
@@ -1737,7 +1738,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const denied = requireScope(ctx, "ro");
     if (denied) return denied;
     const card = timePhase(ctx.request, "scorecard", () => readScorecards(ctx.app, ctx.auth.user));
-    if (!card) return apiError("forbidden", 403, "the crew's scorecard is a forge admin's to read");
+    if (!card) return apiError("forbidden", 403, ADMIN_WORDS.scorecard);
     return timePhase(ctx.request, "render", () => json(card));
   });
 
@@ -5418,7 +5419,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const set = setFront(ctx.app, ctx.auth.user, picks);
     if (!set.ok)
       return set.error.kind === "forbidden"
-        ? apiError("forbidden", 403, "the front page is a site admin's to set")
+        ? apiError("forbidden", 403, ADMIN_WORDS.frontPage)
         : apiError("invalid", 422, set.error.message);
     return json(set.value);
   });
