@@ -1222,6 +1222,15 @@ describe("the forge over MCP", () => {
     expect(doc.openapi).toBe("3.1.0");
     expect(doc.paths["/mcp"].post).toBeDefined();
   });
+  test("GET /contract/openapi.json serves the triage routes", async () => {
+    const doc = (await (await fetch(`${base}/contract/openapi.json`)).json()) as any;
+    const R = "/api/v1/repos/{owner}/{name}";
+    expect(doc.paths[`${R}/issues/{number}/teams`].get).toBeDefined();
+    expect(doc.paths[`${R}/issues/{number}/teams`].put).toBeDefined();
+    expect(doc.paths[`${R}/issues/{number}/labels`].put).toBeDefined();
+    expect(doc.paths[`${R}/pulls/{number}/labels`].put).toBeDefined();
+    expect(doc.paths[`${R}/issues/{number}/private`].post.responses["201"]).toBeDefined();
+  });
   test("GET /api/v1/openapi.json redirects to the document", async () => {
     const res = await fetch(`${base}/api/v1/openapi.json`, { redirect: "manual" });
     expect(res.status).toBe(308);

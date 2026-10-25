@@ -36,6 +36,16 @@ const APP_REFUSALS = {
   name_taken: "the owner already has a repository of this name",
 };
 
+/** What the label routes for issues and pulls refuse by stable `error` code. */
+const LABEL_REFUSALS = {
+  unknown_label: "a name or id in the set names no label of the repository",
+  forbidden: "the caller cannot write to the repository",
+  mirrored: "the repository mirrors an origin; do it there",
+  origin_owner_only: "only the person who connected the origin can write through it",
+  origin_unreachable: "the origin could not be reached (502)",
+  origin_refused: "the origin refused the change (409)",
+};
+
 const REPO = "/api/v1/repos/{owner}/{name}";
 
 export const ROUTES: readonly Route[] = [
@@ -1110,6 +1120,56 @@ export const ROUTES: readonly Route[] = [
       "Watch a migration job as an event stream (text/event-stream, not JSON): one `migrate.<stage>` event per stage with the job as data, closing after done or failed",
     auth: true,
     refusals: { unauthorized: "401: no signed-in account", not_found: "404: no such job, or not the caller's" },
+  },
+  {
+    method: "get",
+    path: `${REPO}/issues/{number}/teams`,
+    summary: "Read the crew teams named on an issue; answers { teams }, a list of team slugs",
+    auth: false,
+  },
+  {
+    method: "put",
+    path: `${REPO}/issues/{number}/teams`,
+    summary: "Replace the crew teams named on an issue (at most two); the pull that closes it is reviewed by each; answers { teams }, the slugs now named. A body without a list of slug strings is a 400",
+    auth: true,
+    body: { teams: "array" },
+    refusals: {
+      too_many: "more teams than an issue may name",
+      no_such_team: "a slug names no team",
+      mirrored: "the repository mirrors an origin; do it there",
+      forbidden: "the caller cannot write to the repository",
+    },
+  },
+  {
+    method: "put",
+    path: `${REPO}/issues/{number}/labels`,
+    summary: "Replace the label set of an issue (names or ids; the set is all or nothing); answers the labels it now carries as a JSON array",
+    auth: true,
+    body: { labels: "array" },
+    refusals: LABEL_REFUSALS,
+  },
+  {
+    method: "put",
+    path: `${REPO}/pulls/{number}/labels`,
+    summary: "Replace the label set of a pull (names or ids; the set is all or nothing); answers the labels it now carries as a JSON array",
+    auth: true,
+    body: { labels: "array" },
+    refusals: LABEL_REFUSALS,
+  },
+  {
+    method: "post",
+    path: `${REPO}/issues/{number}/private`,
+    summary: "Make, or find, the private repository where a sealed report is fixed by hand; answers 201 { repo, clone }: `owner/name` and its clone URL",
+    auth: true,
+    status: 201,
+    refusals: {
+      not_found: "no such issue, or sealed reports are not the caller's to see",
+      not_sealed: "the issue is not sealed, so it has nothing to hide",
+      unverified: "the account has not verified its email",
+      name_taken: "the owner already has a repository of the private name",
+      limit: "the owner is at the daily fork limit",
+      fork_failed: "the private repository could not be made",
+    },
   },
   {
     method: "get",

@@ -123,6 +123,22 @@ test("making and listing apps is described with every field the route reads", ()
     expect(post.responses.default.description).toContain(`\`${code}\``);
 });
 
+test("an issue's teams and labels, a pull's labels and an issue's private repository are described", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const R = "/api/v1/repos/{owner}/{name}";
+  for (const [method, path] of [
+    ["get", `${R}/issues/{number}/teams`],
+    ["put", `${R}/issues/{number}/teams`],
+    ["put", `${R}/issues/{number}/labels`],
+    ["put", `${R}/pulls/{number}/labels`],
+    ["post", `${R}/issues/{number}/private`],
+  ] as const) expect(doc.paths[path]?.[method], `${method} ${path}`).toBeDefined();
+  expect(doc.paths[`${R}/issues/{number}/teams`].put.requestBody.content["application/json"].schema.properties.teams.type).toBe("array");
+  expect(doc.paths[`${R}/issues/{number}/private`].post.responses["201"]).toBeDefined();
+  expect(doc.paths[`${R}/issues/{number}/teams`].get.security).toBeUndefined();
+  expect(doc.paths[`${R}/pulls/{number}/labels`].put.security).toBeDefined();
+});
+
 test("no method and path is described twice, so no row is dead", () => {
   const seen = new Set<string>();
   for (const r of ROUTES) {
