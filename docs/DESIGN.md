@@ -417,8 +417,6 @@ the same line (#4888).
 - **`style/components.ts`** — parts of the §5 components that the table does not spell out — the palette's list, the menu's items, a dialog's head and foot, comments, the theme picker — and a few small helpers beside them:
   - `.cat`
   - `.error-note`
-  - `.ico`
-  - `.ico-loader`
   - `.list`
   - `.menu-item`
   - `.palette-foot`
@@ -427,7 +425,6 @@ the same line (#4888).
   - `.preview`
   - `.sep`
   - `.split`
-  - `.sprite`
   - `.swatch`
   - `.table-scroll`
   - `.theme-apply`
