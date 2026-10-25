@@ -36,6 +36,7 @@ import { passkeyNote } from "../passkey-state.ts";
 import { card, empty, confirmAction, time } from "../ui.ts";
 import { accountShell } from "./account.ts";
 import { safeNext, sessionCookie, signinAllowed } from "./site.ts";
+import { PASSKEY_EXPIRED, PASSKEY_REJECTED, PASSKEY_TAKEN } from "../passkey-words.ts";
 
 /** One-time challenges, one store per ceremony per forge. */
 const stores = new WeakMap<App, { add: ReturnType<typeof challenges>; signin: ReturnType<typeof challenges>; recover: ReturnType<typeof challenges>; signup: ReturnType<typeof challenges>; claim: ReturnType<typeof challenges>; everyday: ReturnType<typeof challenges>; firstAdmin: ReturnType<typeof challenges> }>();
@@ -135,18 +136,18 @@ export async function passkeyAdd(ctx: Ctx): Promise<Response> {
   if (data === "too_large") return refuse(413, "payload too large");
   const challenge = str(data.challenge);
   if (!store(ctx.app).add.consume(challenge))
-    return refuse(400, "That request expired. Try again.");
+    return refuse(400, PASSKEY_EXPIRED);
   const made = await verifyRegistration(
     { clientDataJSON: str(data.clientDataJSON), attestationObject: str(data.attestationObject) },
     { challenge, ...relying(ctx) },
   );
-  if (!made.ok) return refuse(400, "That passkey was not accepted.");
+  if (!made.ok) return refuse(400, PASSKEY_REJECTED);
   const name = str(data.name).replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, PASSKEY_NAME_MAX) || "Passkey";
   const added = addPasskey(ctx.app.db, ctx.auth.user!.id, name, made);
   if (!added.ok)
     return refuse(
       409,
-      added.error === "too_many" ? "That is as many passkeys as an account keeps." : "That passkey is already registered.",
+      added.error === "too_many" ? "That is as many passkeys as an account keeps." : PASSKEY_TAKEN,
     );
   return json({ ok: true });
 }
@@ -182,7 +183,7 @@ export async function signinPasskey(ctx: Ctx): Promise<Response> {
   const data = await boundedBody(ctx.request, STRANGER_MAX);
   if (data === "too_large") return refuse(413, "payload too large");
   const challenge = str(data.challenge);
-  const no = () => refuse(401, "That passkey was not accepted.");
+  const no = () => refuse(401, PASSKEY_REJECTED);
   if (!store(ctx.app).signin.consume(challenge)) return no();
   const found = findPasskey(ctx.app.db, str(data.id));
   if (!found) return no();
@@ -315,19 +316,19 @@ export async function recoverFinish(ctx: Ctx): Promise<Response> {
   if (data === "too_large") return refuse(413, "payload too large");
   const token = str(data.token);
   const challenge = str(data.challenge);
-  if (!store(ctx.app).recover.consume(challenge)) return refuse(400, "That request expired. Try again.");
+  if (!store(ctx.app).recover.consume(challenge)) return refuse(400, PASSKEY_EXPIRED);
   const who = recoveryAccount(ctx.app, token);
   if (who === undefined) return refuse(400, NOT_VALID);
   const made = await verifyRegistration(
     { clientDataJSON: str(data.clientDataJSON), attestationObject: str(data.attestationObject) },
     { challenge, ...relying(ctx) },
   );
-  if (!made.ok) return refuse(400, "That passkey was not accepted.");
+  if (!made.ok) return refuse(400, PASSKEY_REJECTED);
   // Refuse before spending: a link that cannot add its passkey stays usable.
   const room = passkeyRoom(ctx.app.db, who.id, made.id);
   if (!room.ok && room.error === "too_many")
     return refuse(409, "That is as many passkeys as an account keeps. Ask for a new link after removing one, or sign in another way.");
-  if (!room.ok) return refuse(409, "That passkey is already registered.");
+  if (!room.ok) return refuse(409, PASSKEY_TAKEN);
   const spent = spendRecoveryLink(ctx.app, token);
   if (!spent.ok) return refuse(400, NOT_VALID);
   const name = str(data.name).replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, PASSKEY_NAME_MAX) || "Passkey";
