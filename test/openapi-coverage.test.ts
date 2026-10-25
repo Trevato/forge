@@ -99,16 +99,11 @@ const NOT_YET_DESCRIBED: readonly string[] = [
   "POST /api/v1/user/origins/{}/fork",
   "POST /api/v1/user/origins/{}/mirror",
   "POST /api/v1/user/origins/{}/sync",
-  "PUT /api/v1/admin/capacity/{}",
-  "PUT /api/v1/admin/limits/{}",
-  "PUT /api/v1/admin/teams/{}",
   "PUT /api/v1/boards/{}",
   "PUT /api/v1/front",
   "PUT /api/v1/repos/{}/{}/crew/{}",
   "PUT /api/v1/repos/{}/{}/pulls/{}/hold",
   "PUT /api/v1/repos/{}/{}/pulls/{}/labels",
-  "PUT /api/v1/repos/{}/{}/upstream",
-  "PUT /api/v1/secrets/{}/{}",
   "PUT /api/v1/user/pins/{}/{}",
 ];
 
