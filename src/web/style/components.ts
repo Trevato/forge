@@ -634,29 +634,13 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 }
 .topbar-search kbd { flex: none; }
 
-/* ---- theme switcher ---- */
-.theme-option {
-  display: flex; align-items: center; gap: 10px;
-  padding: 6px 10px; margin: 0; border-radius: var(--radius-sm);
-  font-size: 14px; font-weight: 400; cursor: pointer;
-  transition: background-color 100ms var(--ease);
-}
-.theme-option:hover { background: var(--muted); }
-.theme-option input { position: absolute; opacity: 0; pointer-events: none; }
-.theme-option .tick {
-  margin-left: auto; color: var(--accent); opacity: 0;
-  transition: opacity 140ms var(--ease);
-}
-.theme-option:has(input:checked) { background: color-mix(in srgb, var(--accent) 10%, transparent); }
-.theme-option:has(input:checked) .tick { opacity: 1; }
-.theme-option:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* ---- theme swatch: the colour chip beside each theme in the menu's picker ---- */
 .swatch {
   display: inline-block; flex: none; position: relative;
   width: 20px; height: 20px; border-radius: 999px;
   border: 1px solid var(--border-strong);
 }
 .swatch::after { content: ""; position: absolute; inset: 6px; border-radius: 999px; }
-.theme-apply { margin: 6px 10px 8px; }
 
 /* ---- dialog (progressive: every dialog has a real page behind it) ---- */
 .dialog {
