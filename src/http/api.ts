@@ -2990,6 +2990,7 @@ export function apiRoutes(router: Router<Handler>): void {
   // The path is optional: no path lists the root tree; a directory lists its
   // entries; a file returns its content (utf-8, or base64 for binary).
   const contentsHandler = async (ctx: Ctx): Promise<Response> => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const dir = dirOf(ctx, repo);
@@ -2998,31 +2999,58 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!isSafeRef(ref) || (path !== "" && !isSafeTreePath(path)))
       return notFound();
 
+    // `git` adds up the probe and the read; `render` is encoding and JSON.
+    let gitMs = 0;
+    const git = async <T>(work: () => Promise<T>): Promise<T> => {
+      const started = performance.now();
+      try {
+        return await work();
+      } finally {
+        gitMs += performance.now() - started;
+      }
+    };
+    const done = (response: Response, since: number): Response => {
+      notePhase(ctx.request, "git", gitMs);
+      notePhase(ctx.request, "render", performance.now() - since);
+      return response;
+    };
+
     const spec = path === "" ? ref : `${ref}:${path}`;
-    const type = await runGit(["cat-file", "-t", spec], { cwd: dir });
+    const type = await git(() => runGit(["cat-file", "-t", spec], { cwd: dir }));
     // A ref (no path) or a directory resolves to a tree → list it.
     if (path === "" || (type.ok && type.value === "tree")) {
-      const tree = await listTree(dir, ref, path);
-      if (!tree.ok) return notFound();
-      return json({ type: "dir", ref, path, entries: tree.value });
+      const tree = await git(() => listTree(dir, ref, path));
+      if (!tree.ok) {
+        notePhase(ctx.request, "git", gitMs);
+        return notFound();
+      }
+      const rendering = performance.now();
+      return done(json({ type: "dir", ref, path, entries: tree.value }), rendering);
     }
-    const blob = await blobForRender(dir, ref, path, 5_000_000);
-    if (blob.kind === "missing") return notFound();
+    const blob = await git(() => blobForRender(dir, ref, path, 5_000_000));
+    if (blob.kind === "missing") {
+      notePhase(ctx.request, "git", gitMs);
+      return notFound();
+    }
+    const rendering = performance.now();
     if (blob.kind === "too_large")
-      return json({ type: "file", tooLarge: true, size: blob.size }, 413);
+      return done(json({ type: "file", tooLarge: true, size: blob.size }, 413), rendering);
     const encoding = blob.kind === "binary" ? "base64" : "utf-8";
     const content =
       blob.kind === "binary"
         ? Buffer.from(blob.body).toString("base64")
         : new TextDecoder().decode(blob.body);
-    return json({
-      type: "file",
-      ref,
-      path,
-      size: blob.size,
-      encoding,
-      content,
-    });
+    return done(
+      json({
+        type: "file",
+        ref,
+        path,
+        size: blob.size,
+        encoding,
+        content,
+      }),
+      rendering,
+    );
   };
   router.add("GET", "/api/v1/repos/:owner/:name/contents", contentsHandler);
   router.add(
