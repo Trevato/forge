@@ -346,6 +346,8 @@ or the last change landed in the past 7 days ("Last change: …, 3 days ago");
 a quiet app says nothing more. The terminal's first screen opens with the same
 lines, from the same queries (`src/core/client-apps.ts`).
 
+**Reading the home as the eye does (#5735, step 1).** `bun scripts/home-read.ts <url>` fetches a page and prints its visible text, then one line: `chars N · words N · fetched in N ms`. Set `FORGE_COOKIE` (for example `forge_session=…; forge_mode=studio`) to read it as the owner; the cookie is sent and never printed. It exits non-zero on any status but 200. The conversion is `pageText` in `src/web/page_text.ts`: scripts, styles, templates, the head and anything `hidden` or `aria-hidden="true"` are dropped, link text stays, blocks sit on their own lines, entities are decoded. The method then continues: (2) a fresh agent with no context reads only that text and answers in at most 150 words, (3) the steward scores it against ground truth on coverage of the 5 things that mattered, errors, and seconds, (4) repeat after every feed change. The steward runs steps 2–4 and logs them on #5735.
+
 Home shows nine figures first, from `src/flow/kpis.ts`: shipped per hour (with
 a 24 h sparkline), the live version and since when, the median check time, the crew builders
 running of their slots, and the crew's spend today of the forge's daily
