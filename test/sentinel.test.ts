@@ -576,6 +576,16 @@ describe("degraded causes", () => {
     plantSpan("disk", day - 3 * 3_600_000, 6);
     expect(degradedCauses(dapp.db, day).map((f) => f.key)).toEqual(["degraded:disk"]);
   });
+
+  test("a drill cause is a person's: no issue, but a shared one of the forge's own still is", () => {
+    const day = D_NIGHT + 10 * D_DAY;
+    plantSpan("drill:never", day - 5 * 3_600_000, 30);
+    plantSpan("drill:compute", day - 3 * 3_600_000, 30);
+    expect(degradedCauses(dapp.db, day, drepo.id)).toEqual([]);
+    expect(degradedCauses(dapp.db, day)).toEqual([]);
+    plantSpan(`shared:${drepo.id}:abc`, day - 2 * 3_600_000, 30);
+    expect(degradedCauses(dapp.db, day, drepo.id).map((f) => f.key).length).toBe(1);
+  });
 });
 
 // ---- budget breaches (#1270) ----

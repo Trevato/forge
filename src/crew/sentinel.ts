@@ -8,7 +8,9 @@
  * thing that files.
  *
  * Left to a person, on purpose: the ingress routes at the edge are not in
- * this database, and a fix is not opened as a pull by the sentinel — each
+ * this database, a `drill:` cause is cleared by a person running
+ * `scripts/drills/run.ts` against production (the vitals card still shows
+ * it, and no issue is filed), and a fix is not opened as a pull by the sentinel — each
  * finding that has a mechanical fix says what it is, and a run of the crew
  * picks the issue up like any other.
  */
@@ -406,6 +408,8 @@ const BREACH_CAUSE = /^(queue:check|stuck:|budget:|red:|shared:)/;
  * `forgeRepoId` unset means no repository is known and nothing is dropped.
  */
 export function ownCause(cause: string, forgeRepoId: string | undefined): boolean {
+  // A drill is run against production by a person (#5367): no builder can, so no issue.
+  if (cause.startsWith("drill:")) return false;
   if (forgeRepoId === undefined) return true;
   if (cause.startsWith("red:")) return cause === `red:${forgeRepoId}`;
   if (cause.startsWith("shared:")) return cause.split(":")[1] === forgeRepoId;
