@@ -1,5 +1,5 @@
 /** The thin plugins name only MCP tools the forge lists, so a rename there fails here. */
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { toolNames } from "../src/http/mcp.ts";
 
@@ -49,4 +49,39 @@ test("the Claude Code command names plan's tools, and the forge lists them", () 
     expect(tools.has(tool)).toBe(true);
   }
   expect(claudeText()).toContain("`proposal.id`");
+});
+
+describe("the OpenCode plan command", () => {
+  test("steers the planner's wave through asks_proposal, after a yes", () => {
+    const text = opencodeText();
+    expect(text).toContain("plan [approve|redirect <words>|later]");
+    expect(toolsNamed(text)).toContain("asks_proposal");
+    expect(tools.has("asks_proposal")).toBe(true);
+    expect(text).toMatch(/only after the person says yes/);
+  });
+});
+
+describe("the OpenCode plugin module", () => {
+  test("loads and registers a forge command whose template has plan", async () => {
+    const saved = { url: process.env["FORGE_URL"], token: process.env["FORGE_TOKEN"] };
+    process.env["FORGE_URL"] = "https://forge.example";
+    process.env["FORGE_TOKEN"] = "t";
+    try {
+      // A computed specifier: the plugin's type-only import of OpenCode's package is not a dependency here, so tsc must not follow it.
+      const file = "../plugins/opencode/forge.ts";
+      const { Forge } = await import(file);
+      const config: Record<string, any> = {};
+      const hooks: any = await (Forge as any)({});
+      await hooks.config(config);
+      const template: string = config["command"].forge.template;
+      expect(template).toContain("plan [approve|redirect <words>|later]");
+      expect(template).toContain("`asks_proposal`");
+      expect(template).toEndWith("a person lands changes.");
+    } finally {
+      for (const [k, v] of [["FORGE_URL", saved.url], ["FORGE_TOKEN", saved.token]] as const) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
 });
