@@ -34,6 +34,11 @@ export const apiError = (
   message: string,
 ): Response => json({ error: code, message }, status);
 
+/** The API's own words for a resource that is missing or not visible to you. */
+export const NOT_FOUND_WORDS = "no such resource here, or it is not visible to you";
+/** The API's own words for a request that carries no credential. */
+export const UNAUTHORIZED_WORDS = "authenticate with a bearer token or account credentials";
+
 // `not_found` deliberately conflates "no such resource" with "not visible to
 // you" so a private repo never leaks its existence — the message keeps that
 // ambiguity intact.
@@ -41,13 +46,13 @@ export const notFound = () =>
   apiError(
     "not_found",
     404,
-    "no such resource here, or it is not visible to you",
+    NOT_FOUND_WORDS,
   );
 export const unauthorized = () =>
   apiError(
     "unauthorized",
     401,
-    "authenticate with a bearer token or account credentials",
+    UNAUTHORIZED_WORDS,
   );
 // A password door past the sign-in windows (`core/signin-window.ts`).
 export const tooManyAttempts = (retryAfter: number) =>
