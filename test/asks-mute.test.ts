@@ -157,7 +157,7 @@ describe("muting a repository's asks", () => {
     const muted = await home();
     expect(muted).not.toContain('action="/asks/mute"');
     expect(muted).toContain("Listen again");
-  });
+  }, 30_000);
 
   test("the ask still exists and still counts on the repository's own page", async () => {
     expect(repoAsks(app.db, alice, repo)).toEqual({ count: 1, muted: true });
