@@ -693,6 +693,19 @@ export const ROUTES: readonly Route[] = [
     auth: false,
   },
   { method: "get", path: `${REPO}/app/production/open`, summary: "Open the running app", auth: false },
+  {
+    method: "get",
+    path: `${REPO}/app/{env}/open`,
+    summary:
+      "The URL to open an environment at, as { url }; for a private app it carries a grant for the caller alone and is not cached",
+    auth: false,
+    refusals: {
+      not_found: "404: no such repository or app, or not the caller's to see",
+      no_such_env: "422: `env` is not an environment name",
+      no_runtime: "422: this forge runs no apps",
+      unauthorized: "401: a private app and no signed-in account",
+    },
+  },
   { method: "get", path: `${REPO}/app`, summary: "Read the repository's app: its settings, environments and state", auth: false },
   {
     method: "post",
@@ -1060,11 +1073,41 @@ export const ROUTES: readonly Route[] = [
   {
     method: "post",
     path: "/api/v1/migrate",
-    summary: "Migrate a repository here: source is { url } (needs rw scope) or { originId, fullName } (needs admin scope); after is leave, archive or mirror; answers 202 with the repo and its clone job",
+    summary:
+      "Migrate a repository here: source is { url } (needs rw scope) or { originId, fullName } (needs admin scope); after is leave, archive or mirror; branch defaults to the one with the newest commits; crew is { agent, autonomous }; answers 202 with { repo, job }, the clone job watched at /api/v1/migrate/{job}",
     auth: true,
+    status: 202,
     body: { source: "object", owner: "string", name: "string", visibility: "string", branch: "string", after: "string", crew: "object" },
+    refusals: {
+      unauthorized: "401: no signed-in account",
+      invalid_source: "422: source is neither { url } nor { originId, fullName }",
+      invalid_after: "400: `after` is not leave, archive or mirror",
+      unverified: "403: the account has not verified its email",
+      repository_limit: "403: the owner is at the repository limit",
+      storage_limit: "403: the owner is at the storage limit",
+      invalid_url: "422: the URL is not one this forge will clone from",
+      private_host: "422: the URL is inside the network",
+      no_such_origin: "422: the origin is not the caller's, or has no such repository",
+      unreachable: "422: the source could not be reached",
+      invalid_branch: "422: the branch is not in the source",
+      no_such_agent: "422: `crew.agent` names no one on the crew",
+    },
   },
-  { method: "get", path: "/api/v1/migrate/{job}", summary: "Read a migration job's stage", auth: true },
+  {
+    method: "get",
+    path: "/api/v1/migrate/{job}",
+    summary: "Read a migration job's stage as { job }; only the account that started it can",
+    auth: true,
+    refusals: { unauthorized: "401: no signed-in account", not_found: "404: no such job, or not the caller's" },
+  },
+  {
+    method: "get",
+    path: "/api/v1/migrate/{job}/stream",
+    summary:
+      "Watch a migration job as an event stream (text/event-stream, not JSON): one `migrate.<stage>` event per stage with the job as data, closing after done or failed",
+    auth: true,
+    refusals: { unauthorized: "401: no signed-in account", not_found: "404: no such job, or not the caller's" },
+  },
   {
     method: "get",
     path: `${REPO}/flow`,
