@@ -107,7 +107,7 @@ describe("docs/CACHING.md", () => {
 
   test("each cache says what, key, invalidated by and max age", () => {
     const caches = doc.split(/^### \d\. /m).slice(1);
-    expect(caches.length).toBe(5);
+    expect(caches.length).toBe(6);
     for (const cache of caches)
       for (const part of ["**What:**", "**Key:**", "**Invalidated by:**", "**Max age:**"])
         expect(cache).toContain(part);

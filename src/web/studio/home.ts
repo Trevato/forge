@@ -54,7 +54,7 @@ import { composer, feedJs, feedNote, feedRegion } from "./feed.ts";
 import { kpiRow, waitingLine } from "./kpi_row.ts";
 import { feedCandidateCache } from "../../feed/feed.ts";
 import { notePhase, notePhaseRest, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
-import { kpiCache, panelCache } from "./home_cache.ts";
+import { kpiCache, panelCache, waitingCache } from "./home_cache.ts";
 import { pinnedPanels } from "./pinned.ts";
 import { homeTabs } from "./home_tabs.ts";
 import { crewKeyNote } from "./crew.ts";
@@ -259,7 +259,7 @@ export async function studioHome(
     ${ask} ${address} ${figures
       ? timePhase(ctx.request, "kpis", () => kpiRow(ctx.app.db, kpiOpts), () => kpiCache(ctx.app.db))
       : liveLine(ctx)}
-    ${timePhase(ctx.request, "waiting", () => waitingLine(ctx.app.db, user))}
+    ${timePhase(ctx.request, "waiting", () => waitingLine(ctx.app.db, user), () => waitingCache(ctx.app.db))}
     ${figures
       ? await timePhaseAsync(ctx.request, "panels", () => pinnedPanels(ctx.app, user), () => panelCache(ctx.app.db))
       : null}

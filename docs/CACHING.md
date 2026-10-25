@@ -271,6 +271,21 @@ fixture; all three caches hit):
 | `panels`      |       0.1 |       0.1 |
 | `feed`        |       7.1 |      10.0 |
 
+### 6. The waiting line: per viewer (#5806)
+
+- **What:** how many asks wait on the viewer and the oldest's time (the
+  `waitingOn` scan over up to 200 repositories); the words are made fresh
+  for each request.
+- **Key:** `waiting:{viewerId}`, read for the signed-in viewer only, so no
+  one reads another's count. `waiting` in `Server-Timing` carries `desc="hit"`.
+- **Invalidated by:** every write, through the write clock (dismissals,
+  assignments, pulls, holds), as the KPI row is.
+- **Max age:** 30 seconds.
+- **Measured** (`test/home-200.test.ts`: 200 repositories, 100 assigned asks,
+  owner, second look): the miss cost `waiting` 7.5 ms, the largest read after
+  `feed`; a hit is under 0.1 ms. Every phase over 20 ms is named in the
+  test's output; none is over 20 ms in the sandbox.
+
 ### Not cached on home
 
 The anonymous door (1.5 ms, 10 statements), the app shelf, and the

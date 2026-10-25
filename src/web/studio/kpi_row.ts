@@ -10,7 +10,7 @@
 import type { Database } from "bun:sqlite";
 import { backupAge, backupFull, backupOverdue, buildersValue, checkTime, reactNote, speedWords, spendFull, spendValue, usersValue, visitorsNote, visitorsValue, waitingWords } from "../../flow/kpi_words.ts";
 import type { Kpis } from "../../flow/kpis.ts";
-import { cachedKpis } from "./home_cache.ts";
+import { cachedKpis, cachedWaiting } from "./home_cache.ts";
 import { escapeHtml, html, raw, type Html } from "../html.ts";
 import { BOOTED } from "../../release/gate.ts";
 import { running } from "../../kernel/version.ts";
@@ -169,9 +169,14 @@ export function kpiRow(db: Database, opts: { ceilingUsd?: number; dataDir?: stri
  * (the very rows /review lists) and how long the oldest has. Empty at zero.
  */
 export function waitingLine(db: Database, user: User, now: Date = new Date()): Html {
-  const repos = listReposVisibleTo(db, user, { limit: 200, withoutArchived: true });
-  const asks = waitingOn(db, user, repos);
-  const oldest = asks.reduce<string | null>((o, a) => (o === null || Date.parse(a.since) < Date.parse(o) ? a.since : o), null);
-  const words = waitingWords(asks.length, oldest, now);
+  const { count, oldest } = cachedWaiting(db, user.id, () => {
+    const repos = listReposVisibleTo(db, user, { limit: 200, withoutArchived: true });
+    const asks = waitingOn(db, user, repos);
+    return {
+      count: asks.length,
+      oldest: asks.reduce<string | null>((o, a) => (o === null || Date.parse(a.since) < Date.parse(o) ? a.since : o), null),
+    };
+  });
+  const words = waitingWords(count, oldest, now);
   return words === null ? html`` : html`<p class="small muted"><a href="/review">${words}</a></p>`;
 }

@@ -17,6 +17,13 @@ export const HOME_MAX_AGE_MS = 30_000;
 
 const kpiCaches = new WeakMap<Database, Stamped<Kpis>>();
 const panelCaches = new WeakMap<Database, Stamped<Answer>>();
+const waitingCaches = new WeakMap<Database, Stamped<Waiting>>();
+
+/** What the waiting line keeps of the viewer's asks: how many, and the oldest's time. */
+export interface Waiting {
+  readonly count: number;
+  readonly oldest: string | null;
+}
 
 function cacheOf<V>(into: WeakMap<Database, Stamped<V>>, db: Database, maxEntries: number): Stamped<V> {
   let cache = into.get(db);
@@ -31,6 +38,19 @@ function cacheOf<V>(into: WeakMap<Database, Stamped<V>>, db: Database, maxEntrie
 export const kpiCache = (db: Database): Stamped<Kpis> => cacheOf(kpiCaches, db, 8);
 /** The pinned-panel cache of `db`: for tests, which count its hits. */
 export const panelCache = (db: Database): Stamped<Answer> => cacheOf(panelCaches, db, 64);
+
+/** The waiting-line cache of `db`: for tests, which count its hits. */
+export const waitingCache = (db: Database): Stamped<Waiting> => cacheOf(waitingCaches, db, 64);
+
+/**
+ * The viewer's own asks, counted: keyed by viewer id, so no one reads another's.
+ * Valid while the write clock holds, 30 seconds at most (asks also change with time).
+ */
+export function cachedWaiting(db: Database, viewerId: string, compute: () => Waiting): Waiting {
+  const stamp = writeStamp(db);
+  if (stamp === undefined) return compute();
+  return waitingCache(db).get(`waiting:${viewerId}`, stamp, compute);
+}
 
 /** Admin only: the caller has checked. Keyed by UTC hour, ceiling and data directory. */
 export function cachedKpis(
