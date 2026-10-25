@@ -423,8 +423,12 @@ export function vitals(input: VitalsInput): Vitals {
   for (const shared of sharedTests(input.db, now))
     need(sharedCause(shared), sharedSentence(shared) + foreignNote(shared.repo), shared.since, flakeHref(input.db, shared));
 
-  // Checks that failed on a full disk are one card, not a park per pull.
-  const full = diskReds(input.db, now);
+  // Checks that failed on a full disk are one card, not a park per pull, and
+  // only while the disk is still under the floor: once it is back the machine
+  // is well, and the hour's reds are history, not a degraded state.
+  const diskStillFull =
+    disk.totalBytes > 0 && disk.freeBytes / disk.totalBytes < (input.diskFreeMin ?? DISK_FREE_MIN);
+  const full = diskStillFull ? diskReds(input.db, now) : undefined;
   if (full !== undefined) need("disk-red", diskRedSentence(full), full.since, "/settings/capacity");
 
   // A red restore drill, or none in eight days, is a card until a drill passes.

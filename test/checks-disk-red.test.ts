@@ -83,11 +83,11 @@ describe("a red on a full check machine", () => {
     })!;
   };
   const open = (pull: Pull) => getIssueById(app.db, pull.id)?.state === "open";
-  const cards = () =>
+  const cards = (freeNow = 30) =>
     vitals({
       db: app.db,
       dataDir: app.config.dataDir,
-      disk: reading(500),
+      disk: reading(freeNow),
       signals: { errors: new ErrorLedger(), refused: new RefusedLedger() },
     }).degraded.filter((d) => d.cause === "disk-red");
 
@@ -116,6 +116,11 @@ describe("a red on a full check machine", () => {
     expect(requested.map((r) => r[4]).sort()).toEqual(pulls.map((p) => p.id).sort());
     recheckForDisk(app);
     expect(requested).toHaveLength(3);
+  });
+
+  test("the card ends when the disk is back above the floor, not an hour later", () => {
+    expect(cards(30)).toHaveLength(1);
+    expect(cards(500)).toHaveLength(0);
   });
 
   test("above the floor: a red is the pull's own, parked as ever, and no card", async () => {
