@@ -53,6 +53,7 @@ import { giveHistory } from "./history.ts";
 import { readLearned } from "./learned.ts";
 import { keepCache, restoreCache } from "./cache.ts";
 import { MAX_FILED, clearedFiles, fileOrderDependent } from "./order_dependent.ts";
+import { withDisk } from "./disk_red.ts";
 import { ASKED, redMain, unheld } from "./red_main.ts";
 import { IMPACT_FILE, keepImpact, seedImpact } from "./impact-store.ts";
 import { getIssueById } from "../core/issues.ts";
@@ -617,9 +618,9 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
             ? `check passed in ${seconds}s`
             : `already proven green by ${outcome.proven}`
           : `check failed: ${outcome.error}`,
-        ...(outcome.ok || outcome.detail === undefined
+        ...(outcome.ok
           ? {}
-          : { checkDetail: outcome.detail }),
+          : { checkDetail: withDisk(outcome.detail, app.config.dataDir) }),
       });
       write(outcome.ok ? `passed in ${seconds}s` : `failed: ${outcome.error}`);
       if (done) announceRun(app, done);

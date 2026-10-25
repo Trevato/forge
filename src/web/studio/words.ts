@@ -186,7 +186,7 @@ function checkRunWord(check: CheckSummary): { word: Word; note: string } {
     const detail = check.run?.checkDetail;
     return {
       word: "stopped",
-      note: detail ? `${base} — ${detailNote(detail)}` : base,
+      note: detail && detail.names.length > 0 ? `${base} — ${detailNote(detail)}` : base,
     };
   }
   if (check.state === "running")

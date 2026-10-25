@@ -88,6 +88,7 @@ import {
 } from "./autonomy.ts";
 import { checksFor } from "../checks/service.ts";
 import { redMain, sharedWithMain } from "../checks/red_main.ts";
+import { diskRecovered, diskRed } from "../checks/disk_red.ts";
 import { sharedWithPulls } from "../checks/shared_red.ts";
 import { certain } from "./decide.ts";
 import { readRunLog } from "../runs/log.ts";
@@ -207,6 +208,7 @@ export async function startCrew(
   const timer = setInterval(() => {
     if (stopped) return;
     requeueInterrupted(app);
+    recheckForDisk(app);
     if (Date.now() - lastAutonomy >= AUTONOMY_TICK_MS) {
       lastAutonomy = Date.now();
       settleAll(app).catch((error) =>
@@ -731,6 +733,18 @@ function waitOnMain(
   const { runId, commitOid, env } = payload;
   if (payload["kind"] !== "check" || typeof runId !== "string") return false;
   const run = getRun(app.db, runId);
+  // The check machine's disk was full when it failed (#5453): the machine's red.
+  if (diskRed(run)) {
+    if (typeof commitOid === "string" && typeof env === "string") {
+      const waiting = waitingOnDisk.get(repo.id) ?? new Map();
+      waiting.set(issue.id, { env, commitOid, repo });
+      waitingOnDisk.set(repo.id, waiting);
+    }
+    log.info("check failed while the check machine's disk was full; waiting for the disk", {
+      issue: issue.number,
+    });
+    return true;
+  }
   const main = sharedWithMain(redMain(app.db, repo.id), run);
   if (!main && !sharedWithPulls(app.db, run)) return false;
   if (typeof commitOid === "string" && typeof env === "string") {
@@ -745,6 +759,29 @@ function waitOnMain(
     { issue: issue.number },
   );
   return true;
+}
+
+/** Pulls whose check failed on a full disk, per repository; memory only, like {@link waitingOnMain}. */
+const waitingOnDisk = new Map<string, Map<string, { env: string; commitOid: string; repo: Repo }>>();
+
+/** Once the disk is back above its floor, the pulls that waited for it are checked again. */
+export function recheckForDisk(app: App): void {
+  if (waitingOnDisk.size === 0 || !diskRecovered(app.config.dataDir)) return;
+  const checks = checksFor(app);
+  if (checks === undefined) return;
+  const all = [...waitingOnDisk.values()];
+  waitingOnDisk.clear();
+  for (const waiting of all)
+    for (const [issueId, head] of waiting) {
+      const issue = getIssueById(app.db, issueId);
+      const pull = issue ? getPull(app.db, head.repo.id, issue.number) : undefined;
+      if (!pull || pull.state !== "open" || pull.headOid !== head.commitOid) continue;
+      void checks
+        .request(head.repo, head.env, head.commitOid, "retry", issueId)
+        .catch((error) =>
+          log.warn("a pull waiting for the disk could not be checked again", { issue: issue?.number, error: String(error) }),
+        );
+    }
 }
 
 /** Main's check finished: when it passed, the pulls that waited are checked again. */

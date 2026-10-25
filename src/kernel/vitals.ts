@@ -35,6 +35,7 @@ import { capacityValue } from "../core/capacity.ts";
 import { DOMAINS } from "./domains.ts";
 import { domainDrillNeeds } from "./domain_drill.ts";
 import { freeChecks, heldChecks, redHref, redSentence } from "../checks/red_main.ts";
+import { diskRedSentence, diskReds } from "../checks/disk_red.ts";
 import { flakeHref, sharedCause, sharedSentence, sharedTests } from "../checks/shared_red.ts";
 
 /** A red in a repository other than the forge's own is not fixable from here: say so, so it reads as known. */
@@ -421,6 +422,10 @@ export function vitals(input: VitalsInput): Vitals {
   // A test failing on many pulls in the hour is one card, not a park per pull.
   for (const shared of sharedTests(input.db, now))
     need(sharedCause(shared), sharedSentence(shared) + foreignNote(shared.repo), shared.since, flakeHref(input.db, shared));
+
+  // Checks that failed on a full disk are one card, not a park per pull.
+  const full = diskReds(input.db, now);
+  if (full !== undefined) need("disk-red", diskRedSentence(full), full.since, "/settings/capacity");
 
   // A red restore drill, or none in eight days, is a card until a drill passes.
   const drill = lastVerdict(input.dataDir);
