@@ -22,3 +22,13 @@ test("the invite row says the link is shown once", () => {
   expect(doc.paths["/api/v1/admin/invites"].post.summary).toContain("shown once");
   expect(doc.paths["/api/v1/admin/invites"].post.security).toBeDefined();
 });
+
+test("the password and email-verify rows carry their bodies and refusals", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const password = doc.paths["/api/v1/user/password"]?.post;
+  const verify = doc.paths["/api/v1/user/email/verify"]?.post;
+  expect(Object.keys(password.requestBody.content["application/json"].schema.properties).sort()).toEqual(["current", "next"]);
+  for (const code of ["bad_credentials", "throttled", "weak_password", "password_too_long"]) expect(JSON.stringify(password.responses)).toContain(code);
+  for (const code of ["too_soon", "capped", "no_mail", "failed"]) expect(JSON.stringify(verify.responses)).toContain(code);
+  expect(verify.responses["202"]).toBeDefined();
+});
