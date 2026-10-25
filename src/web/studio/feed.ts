@@ -20,7 +20,7 @@ import type { FeedItem } from "../../feed/rank.ts";
 import { html, type Html } from "../html.ts";
 import { fragment } from "../layout.ts";
 import { outboxJs } from "../outbox.ts";
-import { avatar, btn, card, disclosure, empty, nameMark, timeAgo } from "../ui.ts";
+import { avatar, btn, card, disclosure, empty, nameMark, stateBadge, timeAgo } from "../ui.ts";
 import { writableAppsOf } from "./asks.ts";
 
 /** Events that can change what the feed says. */
@@ -55,6 +55,12 @@ const saysMore = (item: FeedItem): boolean =>
   !item.reason.startsWith(item.what) &&
   !/^because you (own|work on|pinned) /.test(item.reason);
 
+/** How a pull or an issue ended, as the quiet word beside a post's time. */
+function settledBadge(settled: FeedItem["settled"]): Html | null {
+  if (settled === undefined) return null;
+  return stateBadge(settled === "merged" ? "merged" : "closed", settled === "parked");
+}
+
 /**
  * One post: who, where and when; what it says, as a link into the thing;
  * why, when that is news; and one quiet control for the rest — say
@@ -70,6 +76,7 @@ export function feedCard(
       <strong>${item.actor ?? item.app}</strong
       >${nameMark(item.actor === null ? undefined : marks.get(item.actor))}
       <span class="muted small">${item.app} · ${timeAgo(item.at)}</span>
+      ${settledBadge(item.settled)}
       <span class="spacer"></span>
       <span class="badge">${KIND_LABEL[item.kind]}</span>`;
   const body = html`<p class="break"><a href="${item.link}" data-feed-open>${item.what}</a></p>
@@ -242,7 +249,11 @@ function chipsBar(user: User, ctx: Ctx, items: readonly FeedItem[]): Html {
 function readRegion(user: User, ctx: Ctx) {
   // What needs you is pinned above the timeline (`needsYouSection`), so an
   // ask is never a second time a post below it; the feed API keeps them.
-  const items = readFeed(ctx.app.db, user, { limit: FEED_FIRST_PAGE, withoutAsks: true }).items;
+  const items = readFeed(ctx.app.db, user, {
+    limit: FEED_FIRST_PAGE,
+    withoutAsks: true,
+    phase: (name, ms) => notePhase(ctx.request, name, ms),
+  }).items;
   const thoughts = recentThoughts(ctx.app.db, user.id, THOUGHTS_SHOWN, new Date(Date.now() - THOUGHT_AGE_MS).toISOString());
   const placed = placementsOf(ctx.app.db, thoughts.map((t) => t.id));
   // Who each poster is, asked once for the page (`core/marks.ts`).

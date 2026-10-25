@@ -8,6 +8,7 @@
 
 import { decay, type Affinity, type Weighted, type Why } from "./affinity.ts";
 import type { Candidate, FeedAsk } from "./items.ts";
+import type { Settled } from "./settled.ts";
 
 export interface FeedItem {
   readonly id: string;
@@ -24,6 +25,8 @@ export interface FeedItem {
   readonly score: number;
   /** For an ask: the decision, options, default and rank. */
   readonly ask?: FeedAsk;
+  /** For a post about a pull or an issue that is over: how it ended. Absent while open. */
+  readonly settled?: Settled;
 }
 
 const RECENCY_MAX = 4;

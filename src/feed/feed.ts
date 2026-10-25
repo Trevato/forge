@@ -18,6 +18,7 @@ import { candidatesFor, type Candidate } from "./items.ts";
 import { writeStamp } from "../core/write_clock.ts";
 import { Stamped } from "../kernel/stamped.ts";
 import { rank, type FeedItem } from "./rank.ts";
+import { settledOf } from "./settled.ts";
 
 export const FEED_LIMIT_DEFAULT = 20;
 export const FEED_LIMIT_MAX = 50;
@@ -85,6 +86,8 @@ export function readFeed(
     chips?: Chips;
     /** The home pins asks above the feed: they must not fill its page. */
     withoutAsks?: boolean;
+    /** Told how long the settled-state read took, for Server-Timing. */
+    phase?: (name: string, ms: number) => void;
   } = {},
 ): { items: FeedItem[]; next_cursor: string | null } {
   const now = options.now ?? Date.now();
@@ -135,7 +138,14 @@ export function readFeed(
         ? ranked.slice(at + 1)
         : ranked.filter((i) => i.score < cursor.score);
   }
-  const items = ranked.slice(0, limit);
+  const page = ranked.slice(0, limit);
+  const started = performance.now();
+  const settled = settledOf(db, page);
+  options.phase?.("settled", performance.now() - started);
+  const items = page.map((i) => {
+    const state = settled.get(i.id);
+    return state === undefined ? i : { ...i, settled: state };
+  });
   const last = items[items.length - 1];
   return {
     items,

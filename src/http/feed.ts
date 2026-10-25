@@ -69,6 +69,7 @@ export function feedRoutes(router: Router<Handler>): void {
       return apiError("invalid_cursor", 422, "that cursor was not issued here");
     const page = timePhase(ctx.request, "feed", () =>
       readFeed(ctx.app.db, viewer, {
+        phase: (name, ms) => notePhase(ctx.request, name, ms),
         ...(limit === undefined ? {} : { limit }),
         ...(cursor === undefined ? {} : { cursor }),
       }),
