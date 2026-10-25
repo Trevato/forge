@@ -333,6 +333,8 @@ export const ROUTES: readonly Route[] = [
   { method: "get", path: `${REPO}/labels`, summary: "List a repository's labels by name as a bare array of { id, name, color }; a private repository needs a token", auth: false },
   { method: "get", path: `${REPO}/milestones`, summary: "Read the plan: { repo: { owner, name }, limbs }, one limb per milestone with its weights (and askToLive for a pillar's umbrella); a private repository needs a token", auth: false },
   { method: "get", path: `${REPO}/milestones/{number}`, summary: "Read one milestone (a 404 for an issue that waits for nothing) as { repo, ...milestone, askToLive?, watching? }; watching is present only for a signed-in user; a private repository needs a token", auth: false },
+  { method: "get", path: `${REPO}/waves`, summary: "List what shipped, newest first, as { items: [{ version, date, headline }], next_cursor: null }; a file that is not a wave is left out; a private repository needs a token", auth: false, reply: { items: "array", next_cursor: "null" }, refusals: { not_found: "404: no such repository, or it is not readable" } },
+  { method: "get", path: `${REPO}/waves/{version}`, summary: "Read one wave as { version, date, headline, highlights, pulls: [{ number, title, url }] }; number is null when the line names no pull; a private repository needs a token", auth: false, reply: { version: "string", date: "string", headline: "string", highlights: "array", pulls: "array" }, refusals: { not_found: "404: no such repository, or it is not readable, or no such wave" } },
   {
     method: "post",
     path: `${REPO}/issues`,
