@@ -706,6 +706,10 @@ event, without a fork chain; one picked from a connected origin then has none.
 
 `/search` answers repositories and issues in full, and greps code repository by repository. A first search starts no new `git grep` after 30 ms (`codeBudgetMs` in the forge config; a soft stop, since the grep in flight still finishes, one batch of four) and shows what it has with one link, **More code results** (`?code=all`), that greps the rest. The API and the terminal palette always grep everything.
 
+## Bug hunters
+
+`bun scripts/hunt.ts <origin>` runs the hunters' detectors against one running app (GET only, same-origin, one pass) and prints findings as JSON; it exits 1 when there are any. Lanes and what is not built yet: `docs/HUNT.md`.
+
 ## Health
 
 `GET /api/v1/health` (and the MCP `health` tool) answer a site admin with
