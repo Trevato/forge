@@ -22,11 +22,12 @@ import {
   MAX_BUDGET_USD,
   MIN_BUDGET_USD,
 } from "../../spawn/plan.ts";
+import { DEFAULT_SIZE, SIZES, sizesView } from "../../spawn/sizes.ts";
 import { notFoundPage, pageHead } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { btn, card, field as formField, row } from "../ui.ts";
+import { btn, card, field as formField, row, selectField } from "../ui.ts";
 
 interface Values {
   readonly name: string;
@@ -39,6 +40,7 @@ interface Values {
   readonly keepAccess: boolean;
   readonly budgetUsd: string;
   readonly modelEndpoint: string;
+  readonly size: string;
   /** The last post carried a key: it is never sent back, so it is asked for again. */
   readonly hadKey: boolean;
 }
@@ -54,6 +56,7 @@ const EMPTY: Values = {
   keepAccess: false,
   budgetUsd: "",
   modelEndpoint: "",
+  size: DEFAULT_SIZE,
   hadKey: false,
 };
 
@@ -115,6 +118,19 @@ function readsFor(ctx: Ctx, user: User | undefined): Reads {
       ? []
       : timePhase(ctx.request, "crew", () => listAgents(ctx.app.db));
   return { full, repos, crew };
+}
+
+/** The three sizes, the one asked for chosen (small when the value is not one of them). */
+const lower = (t: string): string => t.charAt(0).toLowerCase() + t.slice(1);
+
+function sizeOptions(chosen: string): { value: string; label: string; selected?: boolean }[] {
+  const says = new Map(sizesView().sizes.map((s) => [s.size, s.says]));
+  const at = Object.hasOwn(SIZES, chosen) ? chosen : DEFAULT_SIZE;
+  return Object.keys(SIZES).map((size) => ({
+    value: size,
+    label: `${size}: ${lower(says.get(size as keyof typeof SIZES) ?? "")}`,
+    selected: size === at,
+  }));
 }
 
 function formView(
@@ -290,6 +306,13 @@ function formView(
               hint: "For the key's whole life; the child cannot raise it. Needed with a key.",
               ...(errors["budgetUsd"] ? { error: errors["budgetUsd"] } : {}),
             })}
+        ${selectField({
+          label: "Size (optional)",
+          name: "size",
+          hint: "Room for the child to grow into. Small is the default and is not recorded.",
+          options: sizeOptions(values.size),
+          ...(errors["size"] ? { error: errors["size"] } : {}),
+        })}
         <p class="muted small">
           Never copied: ${LEFT_BEHIND.join(", ")}. The child mints its own.
         </p>
@@ -421,6 +444,7 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
     keepAccess: asBool(form, "keepAccess"),
     budgetUsd: field(form, "budgetUsd").trim(),
     modelEndpoint: field(form, "modelEndpoint").trim(),
+    size: field(form, "size").trim() || DEFAULT_SIZE,
     hadKey: field(form, "modelKey").trim() !== "",
   };
   const key = field(form, "modelKey").trim();
@@ -437,6 +461,8 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
     ...(key === "" ? {} : { modelKey: key }),
     ...(values.modelEndpoint === "" ? {} : { modelEndpoint: values.modelEndpoint }),
     ...(values.budgetUsd === "" ? {} : { budgetUsd: Number(values.budgetUsd) }),
+    // Small is the default: it is not recorded, so the plan stays as it was.
+    ...(values.size === DEFAULT_SIZE ? {} : { size: values.size }),
     dryRun: planOnly,
   });
   if (door.status >= 400)

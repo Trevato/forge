@@ -75,7 +75,7 @@ describe("/boards forms", () => {
     for (const name of ["chart", "source", "aggregate", "column", "by", "series", "from", "to", "fcolumn", "fop", "fvalue"]) {
       expect(body).toMatch(new RegExp(`<div class="field"[^>]*>\\s*<label for="f-${name}-\\d+">[^]*?name="${name}"`));
     }
-    expect(body).toMatch(/<span class="hint">Column to aggregate<\/span>/);
+    expect(body).toMatch(/<span class="hint" id="[^"]*-hint">Column to aggregate<\/span>/);
     expect(body).toContain('name="slug"');
     expect(body).toContain('<label for="f-pin-title">Panel title</label>');
   });

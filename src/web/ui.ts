@@ -1198,16 +1198,22 @@ ${o.value ?? ""}</textarea
   </div>`;
 }
 
-/** A `<select>` with the same anatomy as `field`. */
+/** A `<select>` with the same anatomy as `field`: hint and error are linked and marked. */
 export function selectField(
   o: Omit<FieldOptions, "type"> & {
     options: { value: string; label: string; selected?: boolean }[];
   },
 ): Html {
   const id = o.id ?? `f-${o.name}`;
-  return html`<div class="field">
+  const described = [o.hint ? `${id}-hint` : "", o.error ? `${id}-err` : ""]
+    .filter(Boolean)
+    .join(" ");
+  return html`<div class="field" ${o.error ? raw("data-invalid") : null}>
     <label for="${id}">${o.label}</label>
-    <select class="input" id="${id}" name="${o.name}">
+    <select class="input" id="${id}" name="${o.name}"
+      ${described !== "" ? html`aria-describedby="${described}"` : null}
+      ${o.error ? raw('aria-invalid="true"') : null}
+    >
       ${o.options.map(
         (opt) =>
           html`<option
@@ -1218,7 +1224,10 @@ export function selectField(
           </option>`,
       )}
     </select>
-    ${o.hint ? html`<span class="hint">${o.hint}</span>` : null}
+    ${o.hint ? html`<span class="hint" id="${id}-hint">${o.hint}</span>` : null}
+    ${o.error
+      ? html`<span class="error" id="${id}-err">${o.error}</span>`
+      : null}
   </div>`;
 }
 

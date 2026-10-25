@@ -8,6 +8,7 @@
  */
 
 import { childUrlOf, spawnDoor } from "../../spawn/door.ts";
+import { DEFAULT_SIZE } from "../../spawn/sizes.ts";
 import { MAX_BUDGET_USD, MIN_BUDGET_USD } from "../../spawn/plan.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -34,6 +35,7 @@ const SPECS: readonly Spec[] = [
   { key: "modelEndpoint", label: "API base URL", hint: "A gateway for the key; empty for Anthropic. Optional." },
   { key: "budgetUsd", label: "Budget in dollars", hint: `${MIN_BUDGET_USD}–${MAX_BUDGET_USD}, for the key's whole life. Needed with a key.` },
   { key: "followMode", label: "Follows this forge's code", hint: "tell-me (default) or take-updates. Recorded for now: nothing tells you or takes updates yet." },
+  { key: "size", label: "Size", hint: "small (default, not recorded), medium or large. Optional." },
 ];
 
 /** The door's "field: reason" refusal, as the field it names and the reason. */
@@ -65,6 +67,8 @@ export function newForgeScreen(f: Session, ctx: Ctx): Screen {
       ...(val("modelKey") === "" ? {} : { modelKey: val("modelKey") }),
       ...(val("modelEndpoint") === "" ? {} : { modelEndpoint: val("modelEndpoint") }),
       ...(val("budgetUsd") === "" ? {} : { budgetUsd: Number(val("budgetUsd")) }),
+      // Small is the default: it is not recorded, as on the page.
+      ...(val("size") === "" || val("size") === DEFAULT_SIZE ? {} : { size: val("size") }),
       dryRun,
     };
   };
