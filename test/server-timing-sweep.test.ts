@@ -25,8 +25,6 @@ const UNNAMED: Array<[path: string, issue: string]> = [
   ["/alice/forge/changes", "#3323"],
   ["/alice/forge/map", "#3320"],
   ["/alice/forge/tells", "#3322"],
-  ["/live/apps", "#3390"],
-  ["/live/on-you", "#3390"],
   ["/signin/parent", "#3390"],
   ["/signin/parent/callback", "#3390"],
 ];
