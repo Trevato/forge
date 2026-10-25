@@ -116,6 +116,8 @@ describe("let the decider answer a hand-over", () => {
 
   afterAll(async () => {
     await servers.stop();
+    // Stops the pollers and the pooled git readers before their directory goes.
+    app.close();
     await rm(dataDir, { recursive: true, force: true });
   });
 
