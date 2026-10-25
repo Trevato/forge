@@ -400,23 +400,17 @@ the same line (#4888).
   - `.grow`
   - `.hide-sm`
   - `.js-only`
-  - `.mark`
   - `.mb`
   - `.mt`
-  - `.muted`
   - `.narrow`
   - `.narrow-wide`
-  - `.num`
   - `.reduced`
   - `.shell`
   - `.skip`
-  - `.small`
   - `.spacer`
-  - `.sr-only`
   - `.stack`
   - `.stack-tight`
   - `.topbar`
-  - `.truncate`
   - `.wordmark`
 
   A `.field` directly inside a `.bar` drops its bottom margin and the bar aligns to the end, so a labelled input and its button share a baseline
