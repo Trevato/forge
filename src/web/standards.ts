@@ -174,7 +174,10 @@ export function sitemapXml(ctx: Ctx): Response {
     const urls = [
       `<url><loc>${origin}/</loc></url>`,
       `<url><loc>${origin}/explore</loc></url>`,
-      ...repos.map((r) => `<url><loc>${origin}${xml(`/${r}`)}</loc></url>`),
+      ...repos.map((r) => {
+        const mod = r.pushedAt === null ? "" : `<lastmod>${r.pushedAt.slice(0, 10)}</lastmod>`;
+        return `<url><loc>${origin}${xml(`/${r.path}`)}</loc>${mod}</url>`;
+      }),
     ];
     return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join("\n")}\n</urlset>\n`;
   });
