@@ -33,7 +33,7 @@ import { LIST_LIMIT_MAX } from "../../core/issues.ts";
 import { listReposByOwner, type Repo } from "../../core/repos.ts";
 import { getUserByName, hiddenFrom, type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
-import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
+import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { notFoundPage, pageHead, signInFirst } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
@@ -302,17 +302,26 @@ function teamsSection(ctx: Ctx, org: User, canManage: boolean): Html {
 // drawn by the same shelf the home draws its *Your apps* card from, then
 // their other repositories, then — for an org — its members and teams.
 export async function ownerProfile(ctx: Ctx): Promise<Response> {
-  const owner = getUserByName(ctx.app.db, ctx.params.owner ?? "");
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const owner = timePhase(ctx.request, "owner", () =>
+    getUserByName(ctx.app.db, ctx.params.owner ?? ""),
+  );
   if (!owner || hiddenFrom(owner, ctx.auth.user)) return notFoundPage(ctx);
 
   const isOrg = owner.kind === "org";
-  const access = isOrg
-    ? orgAccess(ctx.app.db, owner.id, ctx.auth.user)
-    : "none";
+  const access = timePhase(ctx.request, "owner", () =>
+    isOrg ? orgAccess(ctx.app.db, owner.id, ctx.auth.user) : "none",
+  );
   const canManage = isOrg && accessAllows(access, "admin");
   const isSelf =
     ctx.auth.user !== undefined && (ctx.auth.user.id === owner.id || canManage);
-  const apps = await appsSection(ctx, owner, isSelf);
+  const apps = await timePhaseAsync(ctx.request, "apps", () =>
+    appsSection(ctx, owner, isSelf),
+  );
+  const repos = timePhase(ctx.request, "repos", () =>
+    repoSection(ctx, owner, isSelf, apps.count > 0),
+  );
+  const rendering = performance.now();
   // Said to the people it concerns: its members and the forge's owner.
   const ownerless =
     isOrg && access !== "none" && personOwners(ctx.app.db, owner.id).length === 0;
@@ -347,7 +356,7 @@ export async function ownerProfile(ctx: Ctx): Promise<Response> {
         )
       : null}
     ${apps.html}
-    ${repoSection(ctx, owner, isSelf, apps.count > 0)}
+    ${repos}
     ${when(isOrg && accessAllows(access, "read"), () =>
       teamsSection(ctx, owner, canManage),
     )}
@@ -373,10 +382,12 @@ export async function ownerProfile(ctx: Ctx): Promise<Response> {
     )}
     ${isOrg ? orgSecrets(ctx, owner.username) : null}`;
 
-  const listed = listReposByOwner(ctx.app.db, owner.username, undefined, {
-    limit: LIST_LIMIT_MAX,
-  });
-  return page({
+  const listed = timePhase(ctx.request, "listed", () =>
+    listReposByOwner(ctx.app.db, owner.username, undefined, {
+      limit: LIST_LIMIT_MAX,
+    }),
+  );
+  const res = page({
     ctx,
     title: owner.username,
     description: ownerLine({
@@ -387,6 +398,8 @@ export async function ownerProfile(ctx: Ctx): Promise<Response> {
     }),
     body,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return res;
 }
 
 function orgSecrets(ctx: Ctx, name: string): Html | null {
