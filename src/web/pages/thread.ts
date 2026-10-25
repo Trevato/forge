@@ -11,6 +11,7 @@
 import { mayView } from "../../core/sealed.ts";
 import { THREAD_SAYS } from "../../actions/thread_words.ts";
 import { ISSUE_TEAMS_SAY, nameTeams } from "../../actions/issue_teams.ts";
+import { MIRRORED_DO_IT_THERE } from "../../actions/mirror_words.ts";
 import { teamsOfIssue, TEAMS_MAX } from "../../core/issue_teams.ts";
 import { listTeams } from "../../core/teams.ts";
 import { listCrew } from "../../actions/crew.ts";
@@ -82,8 +83,7 @@ import { interruptionsOn } from "../../crew/interrupted.ts";
  */
 export function originError(error: string): string | undefined {
   const words: Record<string, string> = {
-    mirrored:
-      "This repository mirrors an origin — do it there, and the next sync brings it back.",
+    mirrored: MIRRORED_DO_IT_THERE,
     origin_owner_only:
       "Only the person who connected this origin can write through it. Your comment would otherwise appear upstream under their name.",
     origin_refused: "The origin refused that. Nothing was changed here either.",

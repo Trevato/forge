@@ -11,13 +11,13 @@ import type { User } from "../core/users.ts";
 import { err, type Result } from "../kernel/result.ts";
 import { isMirror } from "../origins/write-through.ts";
 import { requireWriter, type AccessError } from "./access.ts";
+import { MIRRORED_DO_IT_THERE } from "./mirror_words.ts";
 
 /** One sentence per refusal, said the same by the page, API, MCP tool and terminal. */
 export const ISSUE_TEAMS_SAY: Record<string, string> = {
   too_many: `An issue names at most ${TEAMS_MAX} teams.`,
   no_such_team: "No such team.",
-  mirrored:
-    "This repository mirrors an origin — do it there, and the next sync brings it back.",
+  mirrored: MIRRORED_DO_IT_THERE,
   unauthorized: "Sign in to name teams.",
   forbidden: "You need write access to name teams.",
   not_found: "No such issue.",
