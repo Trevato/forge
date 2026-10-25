@@ -14,6 +14,7 @@ import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { VERSION } from "../../story/wave.ts";
 import { readWave, readWaves } from "../../story/waves.ts";
+import { NO_WAVES } from "../../story/words.ts";
 import { loadRepo, notFoundPage, repoBase, scopeHeader } from "../chrome.ts";
 import { escapeHtml, html } from "../html.ts";
 import { page } from "../layout.ts";
@@ -53,7 +54,7 @@ export async function wavesPage(ctx: Ctx): Promise<Response> {
   const body = html`${scopeHeader(ctx, scope, "code", { compact: true })}
     <div class="mt">
       ${entries.length === 0
-        ? empty({ title: "No waves yet", note: "This repository has no waves/ directory." })
+        ? empty({ title: "No waves yet", note: NO_WAVES })
         : listCard(rows, { head: html`<h2>Waves</h2>` })}
     </div>`;
 

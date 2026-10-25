@@ -8,6 +8,7 @@
 import { canRead } from "../../core/repos.ts";
 import { VERSION } from "../../story/wave.ts";
 import { readWave, readWaves, type WaveEntry } from "../../story/waves.ts";
+import { NO_WAVES } from "../../story/words.ts";
 import type { RepoSource } from "../../view/source.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -137,7 +138,7 @@ export function wavesScreen(f: Session, ctx: Ctx, src: RepoSource): Screen {
             ? ""
             : repo === undefined
               ? "Waves are only read on this forge."
-              : "This repository has no waves/ directory.",
+              : NO_WAVES,
         });
         return;
       }
