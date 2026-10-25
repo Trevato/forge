@@ -138,6 +138,7 @@ import {
   listAssignedTo,
   listComments,
   listOpenAgentPullsVisibleTo,
+  listLabels,
 } from "../core/issues.ts";
 import { isCrew, type Agent } from "../core/agents.ts";
 import { dependenciesOf } from "../core/dependencies.ts";
@@ -189,7 +190,7 @@ import {
   directionNote,
   OUTSIDERS_NOTE,
 } from "../crew/direct.ts";
-import { setArchived, setCrewOutsiders, updateRepoSettings, setDecisionsBy, repositoryLimitMessage } from "../actions/repos.ts";
+import { createLabel, deleteLabel, setArchived, setCrewOutsiders, updateRepoSettings, setDecisionsBy, repositoryLimitMessage } from "../actions/repos.ts";
 import {
   deleteAppEnvVar,
   listAppEnv,
@@ -302,6 +303,8 @@ interface Tool {
   readonly needsAdminScope?: true;
   /** With this argument absent the tool only reads, whatever the token. */
   readonly readsWithout?: string;
+  /** A call this accepts only reads, whatever the token. */
+  readonly readsWhen?: (args: Args) => boolean;
   /** A write that only plans (`dryRun` not false) is a read: `ro` may ask. */
   readonly dryByDefault?: true;
   run(ctx: Ctx, user: User, args: Args): Promise<Answer> | Answer;
@@ -515,9 +518,9 @@ const TOOLS: readonly Tool[] = [
       type: "object",
       properties: {
         name: { type: "string", maxLength: 100 },
-        description: { type: "string", maxLength: 4000, description: "What it should become; the first issue." },
+        description: { type: "string", maxLength: 4000, description: "What it should become: the first issue." },
         owner: { type: "string", maxLength: 39 },
-        visibility: { type: "string", enum: ["public", "private"], description: "Private unless you say public." },
+        visibility: { type: "string", enum: ["public", "private"], description: "Private unless public." },
         agent: { type: "string", maxLength: 39, description: "Agent for the crew and first issue." },
         pick: { type: "boolean", description: "Pick the agent from the text." },
       },
@@ -1760,8 +1763,8 @@ const TOOLS: readonly Tool[] = [
       type: "object",
       properties: {
         username: { type: "string" },
-        dailyUsd: { type: ["number", "null"], description: "0.01–10000; null with perRunUsd null clears." },
-        perRunUsd: { type: ["number", "null"], description: "0.01–10000; null with dailyUsd null clears." },
+        dailyUsd: { type: ["number", "null"], description: "0.01–10000; null clears (with perRunUsd null)." },
+        perRunUsd: { type: ["number", "null"], description: "0.01–10000; null clears (with dailyUsd null)." },
         dryRun: { type: "boolean", description: "false to apply" },
       },
       required: ["username", "dailyUsd", "perRunUsd"],
@@ -3699,6 +3702,62 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "repo_labels",
+    description:
+      "Repo labels: list (default), create, remove (admin token).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        action: { type: "string" },
+        name: { type: "string" },
+        color: { type: "string" },
+        id: { type: "string" },
+      },
+      required: ["repo"],
+    },
+    writes: true,
+    // Listing, named or by default, is a read: a read-only token may.
+    readsWhen: (args) => args["action"] === undefined || args["action"] === "list",
+    run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const action = args["action"] ?? "list";
+      if (action === "list") return good({ items: listLabels(ctx.app.db, repo.id) });
+      if (action !== "create" && action !== "remove")
+        return bad("invalid", "action is list, create or remove");
+      // The API asks for an admin token on both routes; so does this.
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "changing labels needs an admin token");
+      if (action === "create") {
+        const name = args["name"];
+        const color = args["color"] ?? "6b7280";
+        if (typeof name !== "string" || name.trim() === "" || name.length > 64)
+          return bad("invalid", "name is one to 64 characters");
+        if (typeof color !== "string" || !/^[0-9a-fA-F]{6}$/.test(color))
+          return bad("invalid", "color is six hex digits, like 6b7280");
+        const made = createLabel(ctx.app, user, repo, name, color);
+        if (!made.ok)
+          return bad(
+            made.error,
+            made.error === "taken"
+              ? "A label with that name already exists."
+              : made.error === "invalid"
+                ? "A label needs a name and a six-digit hex color."
+                : "no such app or repository (owner/name)",
+          );
+        return good({ says: `Created the label ${made.value.name}.`, label: made.value });
+      }
+      const id = args["id"];
+      if (typeof id !== "string" || id === "" || id.length > 64)
+        return bad("invalid", "id is the label's id, from list");
+      const gone = deleteLabel(ctx.app, user, repo, id);
+      return gone.ok
+        ? good({ says: "Removed the label.", removed: id })
+        : bad("not_found", "no such label, or you are not this repository's admin");
+    },
+  },
+  {
     name: "wait_for",
     description: "Make an issue wait for another; `stop: true` ends it.",
     inputSchema: {
@@ -4346,7 +4405,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "quotas",
     description:
-      "Per-account repository and app quotas (number or null; not enforced yet). With `key` and `value` (\"\" clears), plans.",
+      "Per-account repository and app quotas (number or null; not enforced yet). With `key`, `value` (\"\" clears), plans.",
     inputSchema: {
       type: "object",
       properties: {
@@ -4443,10 +4502,10 @@ const TOOLS: readonly Tool[] = [
       type: "object",
       properties: {
         slug: { type: "string", maxLength: 40 },
-        panel: { type: "integer", minimum: 0, maximum: 23, description: "One panel, by place from 0." },
+        panel: { type: "integer", minimum: 0, maximum: 23, description: "One panel, from 0." },
         from: { type: "string", maxLength: 64 },
         to: { type: "string", maxLength: 64 },
-        step: { type: "string", maxLength: 16, description: "With panel: seconds per bucket, or a count of s, m, h or d." },
+        step: { type: "string", maxLength: 16, description: "With panel: seconds per bucket, or a count of s/m/h/d." },
       },
     },
     writes: false,
@@ -4650,7 +4709,8 @@ function rpcOne(
           : {};
       const plansOnly =
         (tool.dryByDefault === true && args["dryRun"] !== false) ||
-        (tool.readsWithout !== undefined && args[tool.readsWithout] === undefined);
+        (tool.readsWithout !== undefined && args[tool.readsWithout] === undefined) ||
+        tool.readsWhen?.(args) === true;
       if (tool.writes && !plansOnly && !scopeAllows(ctx.auth.scope ?? "ro", "rw"))
         return reply({
           content: [

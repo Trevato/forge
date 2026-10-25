@@ -253,6 +253,7 @@ describe("the forge over MCP", () => {
       "spend",
       "usage",
       "labels",
+      "repo_labels",
       "wait_for",
       "confirm_wait",
       "attach_look",
