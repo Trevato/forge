@@ -654,10 +654,12 @@ describe("the gate audit before any shard", () => {
   });
 
   test("a new file is in the gate with no list naming it, and explicit files are not audited", async () => {
-    const last = String(gateFiles().length + 1);
-    const got = await run(["test/zz-new.test.ts"], ["--gate", "--shard", `${last}/${last}`]);
+    // One slice holds every file, so the count includes the new one; a shard
+    // per file would outgrow the three digits a shard spec allows.
+    const all = String(gateFiles().length + 1);
+    const got = await run(["test/zz-new.test.ts"], ["--gate", "--shard", "1/1"]);
     expect(got.err).not.toContain("EXCLUDED");
-    expect(got.out).toContain(`matrix slice ${last}/${last} (1 of ${last} files)`);
+    expect(got.out).toContain(`matrix slice 1/1 (${all} of ${all} files)`);
     const explicit = await run(["test/zz-new.test.ts"], ["test/zz-new.test.ts"], [listed[0]!]);
     expect(explicit.err).not.toContain("EXCLUDED");
   }, 30_000);

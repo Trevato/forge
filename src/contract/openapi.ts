@@ -552,6 +552,27 @@ export const ROUTES: readonly Route[] = [
     refusals: { bad_anchor: "`path`, `line` and `side` (old or new) name no line of the pull's current diff (422)" },
   },
   { method: "post", path: `${REPO}/pulls/{number}/merge`, summary: "Merge a pull (a person's)", auth: true },
+  { method: "get", path: `${REPO}/pulls/{number}/threads`, summary: "List a pull's review threads: every review comment sharing one anchor, and whether the conversation is resolved", auth: false },
+  {
+    method: "post",
+    path: `${REPO}/pulls/{number}/threads/{anchor}/resolve`,
+    summary: "Mark a review thread resolved (rw scope; the thread's author or a writer); answers the thread",
+    auth: true,
+    refusals: {
+      not_found: "the pull has no thread at `anchor` (404)",
+      forbidden: "you neither wrote the thread's comments nor can write to the repository (403)",
+    },
+  },
+  {
+    method: "delete",
+    path: `${REPO}/pulls/{number}/threads/{anchor}/resolve`,
+    summary: "Reopen a resolved review thread (rw scope; the thread's author or a writer); answers the thread",
+    auth: true,
+    refusals: {
+      not_found: "the pull has no thread at `anchor` (404)",
+      forbidden: "you neither wrote the thread's comments nor can write to the repository (403)",
+    },
+  },
   {
     method: "get",
     path: `${REPO}/pulls/{number}/checks`,
