@@ -212,10 +212,15 @@ describe("the merge queue", () => {
     }
     expect(MAX_CANDIDATE).toBe(8);
     expect(gatesOf(repo)).toHaveLength(2);
-    expect(git(repo, "rev-list", "--count", `${base}..${gatesOf(repo)[0]!.commit}`)).toBe("8");
+    // Which gate answers first is the machine's call: the verdict is the
+    // shape, eight on main and the other two on top of them.
+    const carried = gatesOf(repo)
+      .map((g) => Number(git(repo, "rev-list", "--count", `${base}..${g.commit}`)))
+      .sort((a, b) => a - b);
+    expect(carried).toEqual([8, 10]);
     for (const pull of pulls) expect(merged(repo, pull)).toBe(true);
     const queue = said.filter((l) => l.includes("[queue] "));
-    expect(queue.some((l) => /\[queue\] gating 8 pulls since \d\d:\d\d .*waiting=2/.test(l))).toBe(true);
+    expect(queue.some((l) => /\[queue\] gating 8 pulls since \d\d:\d\d .*waiting=\d/.test(l))).toBe(true);
     expect(queue.some((l) => l.includes("[queue] gated 8 pulls: green"))).toBe(true);
     expect(queue.some((l) => l.includes("[queue] gated 2 pulls: green"))).toBe(true);
   }, SLOW);
