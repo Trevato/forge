@@ -51,6 +51,7 @@ for a tunnel and a forge that sleeps.
 | `stop`         | stop one run by its id from `now`                                                                 | yes    |
 | `health`       | how this forge is: the version and commit it runs, draining or not, the rollout and its incidents |        |
 | `system`       | the machine the forge runs on, now: CPU, load, memory, disk, network, processes; a forge admin, or an agent granted `telemetry:read` |        |
+| `telemetry_grant` | `{ agent, on }`: grant an agent `telemetry:read`, or take it back with `false`, as the Telemetry page does; a person admin's, with an admin token; answers `says` | yes    |
 | `cloud_accounts` | the forge's cloud accounts, each attached provider token with its use, verification, write permission and today's calls; a forge admin only (counted as a write so a `ro` token never lists them) | yes    |
 | `cloud_account` | `{ verb, provider, name, value?, to?, allowed?, repo? }`: change a cloud account: `attach` or `rotate` a token (`value`), `verify` it, `rename` it (`to`), `remove` it, `allow_writes` (`allowed` true or false) or `audit` (`repo` owner/name); a forge admin with an admin-scope token; answers a one-line `says` | yes    |
 | `audit`        | who can do what, per app, read from its contract.json in git: yes, own or no per door, and whether outsiders may direct its crew (`crewOutsiders`) |        |
