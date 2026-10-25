@@ -24,6 +24,7 @@ import { err, ok, type Result } from "../kernel/result.ts";
 import { getIssueById } from "../core/issues.ts";
 import type { FleetError } from "./fleet.ts";
 import type { LimbIssue } from "./limbs.ts";
+import { IN_HAND } from "./plan_words.ts";
 
 export const REPLAN_ACTIONS = ["replan", "takeback"] as const;
 export type ReplanAction = (typeof REPLAN_ACTIONS)[number];
@@ -145,7 +146,7 @@ export function takeBackLimb(
   const pending = pendingFor(app.db, repo, limb.id);
   if (pending === undefined) return fail("bad_action", "it is not with the planner");
   if (!seen.value.takeBack)
-    return fail("bad_action", "the planner has it in hand already");
+    return fail("bad_action", IN_HAND);
   recordTakenBack(app.db, pending.id);
   app.bus.append({
     kind: "limb.replan_taken_back",

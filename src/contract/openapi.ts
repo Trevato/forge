@@ -10,6 +10,7 @@
 import { CAPACITY_KEYS } from "../core/capacity.ts";
 import { FAMILY_WORDS } from "../actions/family_words.ts";
 import { LIMIT_KEYS } from "../settings/limits.ts";
+import { SELF_WAIT } from "../actions/plan_words.ts";
 
 interface Route {
   readonly method: "get" | "post" | "put" | "patch" | "delete";
@@ -1109,7 +1110,7 @@ export const ROUTES: readonly Route[] = [
     body: { blockedBy: "integer" },
     refusals: {
       no_such_issue: "`blockedBy` names no issue in this repository (422)",
-      self: "an issue cannot wait for itself (422)",
+      self: `${SELF_WAIT} (422)`,
       cycle: "that would make a loop (422)",
       cross_repo: "dependencies stay inside one repository (422)",
       not_an_issue: "only issues can depend on issues (422)",
