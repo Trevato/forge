@@ -100,21 +100,32 @@ describe("/system over server-sent events", () => {
   });
 
   test("the sampler's clock runs only while someone watches, and ticks while they do", async () => {
-    const own = createLive({ pushMs: 10 });
+    // A hand-cranked clock: no sleeping, so a loaded machine cannot starve it.
+    let tick: (() => void) | undefined;
+    let cancelled = 0;
+    const own = createLive({
+      schedule: (fn) => {
+        tick = fn;
+        return () => {
+          tick = undefined;
+          cancelled++;
+        };
+      },
+    });
     expect(own.running()).toBe(false);
     const first = own.subscribe(() => {});
     expect(own.running()).toBe(true);
     first();
     expect(own.running()).toBe(false);
+    expect(cancelled).toBe(1);
     let ticks = 0;
     const second = own.subscribe(() => ticks++);
     expect(own.running()).toBe(true);
-    await Bun.sleep(100);
+    for (let i = 0; i < 3; i++) tick!();
+    expect(ticks).toBe(3);
     second();
-    expect(ticks).toBeGreaterThan(2);
-    const stopped = ticks;
-    await Bun.sleep(60);
-    expect(ticks).toBe(stopped);
+    expect(tick).toBeUndefined();
+    expect(cancelled).toBe(2);
     expect(own.running()).toBe(false);
   });
 

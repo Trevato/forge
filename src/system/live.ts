@@ -28,7 +28,16 @@ export type Live = {
   publish(view: SystemView): void;
 };
 
-export function createLive(options: { paths?: Paths; roots?: () => Roots; self?: number; pushMs?: number } = {}): Live {
+/** Run `tick` every `ms` until the returned function is called; a test injects its own. */
+export type Schedule = (tick: () => void, ms: number) => () => void;
+
+const realSchedule: Schedule = (tick, ms) => {
+  const t = setInterval(tick, ms);
+  t.unref?.();
+  return () => clearInterval(t);
+};
+
+export function createLive(options: { paths?: Paths; roots?: () => Roots; self?: number; pushMs?: number; schedule?: Schedule } = {}): Live {
   const paths = options.paths ?? HOST;
   const roots = options.roots ?? (() => cellRoots());
   const self = options.self ?? process.pid;
@@ -37,18 +46,18 @@ export function createLive(options: { paths?: Paths; roots?: () => Roots; self?:
   let view: SystemView | undefined;
   let history: number[][] = [];
   const listeners = new Set<(view: SystemView) => void>();
-  let timer: ReturnType<typeof setInterval> | undefined;
+  const schedule = options.schedule ?? realSchedule;
+  let timer: (() => void) | undefined;
   const self_: Live = {
     subscribe(listener) {
       listeners.add(listener);
       if (timer === undefined) {
-        timer = setInterval(() => self_.publish(self_.read()), options.pushMs ?? PUSH_MS);
-        timer.unref?.();
+        timer = schedule(() => self_.publish(self_.read()), options.pushMs ?? PUSH_MS);
       }
       return () => {
         listeners.delete(listener);
         if (listeners.size === 0 && timer !== undefined) {
-          clearInterval(timer);
+          timer();
           timer = undefined;
         }
       };
