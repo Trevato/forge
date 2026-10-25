@@ -61,6 +61,7 @@ import {
 import { accountSections } from "./origins.ts";
 import { markOf } from "../../core/marks.ts";
 import { limitValue } from "../../settings/limits.ts";
+import { USERNAME_TAKEN } from "../../actions/signup_words.ts";
 
 /** The admin, or the response that turns everyone else away. */
 function requireAdmin(ctx: Ctx): Response | undefined {
@@ -146,8 +147,8 @@ interface AgentValues {
 
 const agentErrors = (ctx: Ctx): Record<string, string> => ({
   invalid_username: "Usernames are letters, digits, dots, dashes.",
-  username_taken: "That username is taken.",
-  email_taken: "That username is taken.",
+  username_taken: USERNAME_TAKEN,
+  email_taken: USERNAME_TAKEN,
   invalid_model: `A model is up to ${MODEL_MAX} characters with no spaces.`,
   brief_too_long: `A brief is at most ${BRIEF_MAX} characters.`,
   invalid_budget: `A budget is a number of dollars between 0 and ${limitValue(ctx.app.db, "agent.budget_max_usd")}.`,

@@ -30,7 +30,7 @@ import { bucketOf } from "../http/peer.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { limitValue } from "../settings/limits.ts";
 import { handOver, spawnedOrg } from "../spawn/claim.ts";
-import { EMAIL_TAKEN_MESSAGE, INVALID_USERNAME_MESSAGE } from "./signup_words.ts";
+import { EMAIL_TAKEN_MESSAGE, EMAIL_WANTED, INVALID_USERNAME_MESSAGE, NAME_RESERVED, USERNAME_TAKEN } from "./signup_words.ts";
 
 const USERNAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,38}$/;
 
@@ -50,10 +50,10 @@ export const FIRST_ADMIN_WORDS: Record<FirstAdminError, string> = {
   refused:
     "That first-admin code does not work: it may be mistyped, used, expired or replaced, or this forge already has an admin. Ask the operator to run --first-admin again.",
   invalid_username: INVALID_USERNAME_MESSAGE,
-  invalid_email: "An email address, please.",
-  username_taken: "That username is taken.",
+  invalid_email: EMAIL_WANTED,
+  username_taken: USERNAME_TAKEN,
   email_taken: EMAIL_TAKEN_MESSAGE,
-  username_reserved: "That name is reserved.",
+  username_reserved: NAME_RESERVED,
   unfinished: "The account could not be finished. Try again.",
 };
 

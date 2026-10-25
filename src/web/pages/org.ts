@@ -58,6 +58,7 @@ import {
   time,
   field as uiField,
 } from "../ui.ts";
+import { NAME_RESERVED } from "../../actions/signup_words.ts";
 
 const PER_PAGE = 20;
 
@@ -459,7 +460,7 @@ export async function newOrgSubmit(ctx: Ctx): Promise<Response> {
   if (!created.ok) {
     const messages: Record<string, string> = {
       name_taken: "That name is already taken.",
-      name_reserved: "That name is reserved.",
+      name_reserved: NAME_RESERVED,
       invalid_name: "Letters, digits, dots and dashes only.",
       unauthorized: "Sign in to create an organization.",
     };

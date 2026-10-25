@@ -1,8 +1,8 @@
 /**
- * The sentences every way of making an account says when a username is
- * malformed or an email is already held: the sign-up form, the passkey
- * sign-up, a claim, an everyday invite and the first-admin door. One place,
- * so they read the same wherever they are said.
+ * The sentences a person reads when the name or email they chose for a new
+ * account or org will not do. Every door that makes one (the sign-up and
+ * claim pages, an everyday invite, the first admin, the crew and org forms,
+ * passkey sign-up) says them from here, so they read the same everywhere.
  */
 
 /** A username outside the safe-name alphabet. */
@@ -10,3 +10,7 @@ export const INVALID_USERNAME_MESSAGE = "Usernames are letters, digits, dots and
 
 /** An email that already belongs to an account. */
 export const EMAIL_TAKEN_MESSAGE = "That email already has an account.";
+
+export const USERNAME_TAKEN = "That username is taken.";
+export const NAME_RESERVED = "That name is reserved.";
+export const EMAIL_WANTED = "An email address, please.";

@@ -54,7 +54,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { hasAdmin } from "../../spawn/claim.ts";
 import { getSignup, type SignupMode } from "../../settings/signup.ts";
-import { EMAIL_TAKEN_MESSAGE } from "../../actions/signup_words.ts";
+import { EMAIL_TAKEN_MESSAGE, NAME_RESERVED, USERNAME_TAKEN } from "../../actions/signup_words.ts";
 
 export function sessionCookie(
   value: string,
@@ -661,8 +661,8 @@ export async function signupSubmit(ctx: Ctx): Promise<Response> {
       invalid_username: {
         username: "Usernames are letters, digits, dots, dashes.",
       },
-      username_taken: { username: "That username is taken." },
-      username_reserved: { username: "That name is reserved." },
+      username_taken: { username: USERNAME_TAKEN },
+      username_reserved: { username: NAME_RESERVED },
       email_taken: { email: EMAIL_TAKEN_MESSAGE },
       password_too_long: { password: PASSWORD_TOO_LONG },
       weak_password: { password: "Passwords need at least 12 characters." },

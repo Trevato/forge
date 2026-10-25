@@ -58,7 +58,7 @@ import { passkeyJs } from "../passkey-client.ts";
 import { passkeyNote, passkeyState } from "../passkey-state.ts";
 import { btn, card, field as formField } from "../ui.ts";
 import { sessionCookie, signinAllowed } from "./site.ts";
-import { EMAIL_TAKEN_MESSAGE } from "../../actions/signup_words.ts";
+import { EMAIL_TAKEN_MESSAGE, NAME_RESERVED, USERNAME_TAKEN } from "../../actions/signup_words.ts";
 
 const USERNAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,38}$/;
 
@@ -257,7 +257,7 @@ function problems(ctx: Ctx, username: string, email: string, needEmail: boolean)
   if (!USERNAME.test(username))
     errors.username = "Usernames are letters, digits, dots, dashes.";
   else if (getUserByName(ctx.app.db, username))
-    errors.username = "That username is taken.";
+    errors.username = USERNAME_TAKEN;
   if (email !== "" ? !givenEmail(email) : needEmail)
     errors.email = "That does not look like an email address.";
   return errors;
@@ -348,8 +348,8 @@ export async function claimSubmit(ctx: Ctx): Promise<Response> {
       made.error === "email_taken"
         ? { email: EMAIL_TAKEN_MESSAGE }
         : made.error === "username_reserved"
-          ? { username: "That name is reserved." }
-          : { username: "That username is taken." },
+          ? { username: NAME_RESERVED }
+          : { username: USERNAME_TAKEN },
     );
   }
   if (credential !== undefined && !addPasskey(ctx.app.db, made.value.id, "Passkey", credential).ok) {

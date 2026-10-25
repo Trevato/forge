@@ -33,7 +33,7 @@ import { passkeyNote } from "../passkey-state.ts";
 import { btn, card, field as formField } from "../ui.ts";
 import { signOutHere } from "../../actions/signins.ts";
 import { sessionCookie } from "./site.ts";
-import { EMAIL_TAKEN_MESSAGE } from "../../actions/signup_words.ts";
+import { EMAIL_TAKEN_MESSAGE, EMAIL_WANTED, USERNAME_TAKEN } from "../../actions/signup_words.ts";
 
 const USERNAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,38}$/;
 
@@ -133,7 +133,7 @@ function everydayFields(ctx: Ctx, user: User, offerKeep: boolean): Html {
 /** Why `username` cannot be the everyday account's name, or undefined. */
 function nameProblem(ctx: Ctx, username: string): string | undefined {
   if (!USERNAME.test(username)) return "Usernames are letters, digits, dots, dashes.";
-  if (getUserByName(ctx.app.db, username)) return "That username is taken.";
+  if (getUserByName(ctx.app.db, username)) return USERNAME_TAKEN;
   return undefined;
 }
 
@@ -152,7 +152,7 @@ export async function everydayOptions(ctx: Ctx): Promise<Response> {
   const data = await boundedBody(ctx.request, STRANGER_MAX);
   if (data === "too_large") return refuse(413, "payload too large");
   const username = str(data.username).trim();
-  const bad = nameProblem(ctx, username) ?? (str(data.email).includes("@") ? undefined : "An email address, please.");
+  const bad = nameProblem(ctx, username) ?? (str(data.email).includes("@") ? undefined : EMAIL_WANTED);
   if (bad !== undefined) return refuse(422, bad);
   return json(makeOptions(ctx, "everyday", username));
 }
@@ -192,7 +192,7 @@ export async function everydayCreate(ctx: Ctx): Promise<Response> {
   if (!made.ok)
     return say(
       made.error === "username_taken"
-        ? "That username is taken."
+        ? USERNAME_TAKEN
         : made.error === "email_taken"
           ? EMAIL_TAKEN_MESSAGE
           : made.error === "username_reserved"
