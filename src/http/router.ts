@@ -56,12 +56,12 @@ function compile(pattern: string): Segment[] {
 }
 
 export class Router<H> {
-  private routes: CompiledRoute<H>[] = [];
+  private routes_: CompiledRoute<H>[] = [];
 
   /** The literal first segment of every route: the names a page owns. */
   literalHeads(): string[] {
     const heads = new Set<string>();
-    for (const route of this.routes) {
+    for (const route of this.routes_) {
       const first = route.segments[0];
       if (first?.kind === "literal" && first.value !== "") heads.add(first.value);
     }
@@ -70,17 +70,22 @@ export class Router<H> {
 
   /** Every pattern given to `add`, once each, in the order added. */
   patterns(): string[] {
-    return [...new Set(this.routes.map((r) => r.pattern))];
+    return [...new Set(this.routes_.map((r) => r.pattern))];
+  }
+
+  /** Every registered route, method and pattern, in the order added — for tests that walk the table. */
+  routes(): { method: string; pattern: string }[] {
+    return this.routes_.map(({ method, pattern }) => ({ method, pattern }));
   }
 
   add(method: string, pattern: string, handler: H): this {
-    this.routes.push({ method, pattern, segments: compile(pattern), handler });
+    this.routes_.push({ method, pattern, segments: compile(pattern), handler });
     return this;
   }
 
   match(method: string, pathname: string): Match<H> | undefined {
     const parts = pathname === "/" ? [""] : pathname.slice(1).split("/");
-    outer: for (const route of this.routes) {
+    outer: for (const route of this.routes_) {
       if (route.method !== method) continue;
       const params: Params = {};
       for (const [i, segment] of route.segments.entries()) {
