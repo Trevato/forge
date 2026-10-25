@@ -532,21 +532,31 @@ describe("RepoSource: one repository, two places to read it from", () => {
   // ---- mirroring, with something to watch ----
 
   test("a mirror reports its stages in order and ends holding the repo", async () => {
+    // Pin the job before its label import until we are subscribed: a
+    // subscriber replays only the stage the job is on, so on a loaded machine
+    // a job that raced ahead of the subscription would show just "done".
+    let release = (): void => {};
+    fake.state.holdLabels = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     const started = await api(`/api/v1/user/origins/${originId}/mirror`, {
       method: "POST",
       body: JSON.stringify({ fullName: "octo/widgets" }),
     });
     expect(started.status).toBe(202);
-    const job = (await read<{ job: { id: string; stage: string } }>(started))
+    const job = (await read<{ job: { id: string; stage: MirrorStage } }>(started))
       .job;
     expect(job.stage).toBe("creating");
 
-    const seen: MirrorStage[] = [];
+    // "creating" was observed in the 202; the subscription sees the rest.
+    const seen: MirrorStage[] = [job.stage];
     const stop = subscribe(job.id, (update) => {
       if (seen[seen.length - 1] !== update.stage) seen.push(update.stage);
     });
+    release();
     const finished = await settled(job.id);
     stop();
+    fake.state.holdLabels = undefined;
 
     expect(finished?.stage).toBe("done");
     expect(finished?.repo?.name).toBe("widgets");

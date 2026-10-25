@@ -210,6 +210,8 @@ export interface FakeState {
   refuseFork: string;
   /** Hold every issue-search answer this long before sending it. */
   searchDelayMs: number;
+  /** When set, the labels list waits for it: a test pins a mirror mid-flight. */
+  holdLabels?: Promise<void> | undefined;
   nextId: number;
   /** The OAuth endpoints, when a test wants the connect flows. */
   oauth?: FakeOAuth;
@@ -285,6 +287,13 @@ export function serveFakeForge(state: FakeState): FakeForge {
         authorization: request.headers.get("authorization") ?? "",
         body: bodyText,
       });
+
+      if (
+        state.holdLabels !== undefined &&
+        request.method === "GET" &&
+        url.pathname.endsWith("/labels")
+      )
+        await state.holdLabels;
 
       // The OAuth endpoints hang off the web origin and take no bearer
       // token, so they are answered before the API's auth check.
