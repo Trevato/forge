@@ -18,6 +18,7 @@ import { s3FromEnv, type S3Target } from "../snapshot/store.ts";
 import { snapshotsOf } from "../snapshot/service.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { NOT_SEALED } from "../kernel/seal_words.ts";
 
 export interface DestinationInput {
   readonly endpoint: string;
@@ -79,7 +80,7 @@ export function saveDestination(
   for (const [name, value] of fields) {
     if (value === "") continue;
     const set = putSecret(app, actor, "forge", "", name, value);
-    if (!set.ok) return err("That could not be sealed.");
+    if (!set.ok) return err(NOT_SEALED);
   }
   snapshotsOf(app)?.forget();
   const have = sealedSet(app.db);

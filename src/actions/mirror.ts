@@ -17,6 +17,7 @@ import {
 import { snapshotsOf } from "../snapshot/service.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { NOT_SEALED } from "../kernel/seal_words.ts";
 
 const isAdmin = (actor: User | undefined): boolean => actor?.isAdmin === true;
 
@@ -47,7 +48,7 @@ export function saveMirror(
   for (const [name, value] of fields) {
     if (value === "") continue;
     if (!putSecret(app, actor, "forge", "", name, value).ok)
-      return err("That could not be sealed.");
+      return err(NOT_SEALED);
   }
   // A new target is not judged by the old one's last pass.
   const svc = snapshotsOf(app);
