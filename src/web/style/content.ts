@@ -197,7 +197,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .bform { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 12px; margin-bottom: 8px; }
 .bform .field { margin: 0; flex: 1 1 140px; min-width: 0; }
 .bform .btn { flex: none; }
-.table-wrap { overflow-x: auto; max-width: 100%; }
 #summary { display: flex; flex-wrap: wrap; gap: 6px; }
 #summary .pill { max-width: 100%; white-space: normal; }
 .bgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }

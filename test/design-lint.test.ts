@@ -166,3 +166,9 @@ describe("design check: nothing added outside the system (#2678)", () => {
 });
 
 const namedFromReadme = (text: string) => documentedClasses("## 5. x\n" + text);
+
+describe("docs/DESIGN.md", () => {
+  test("carries no merge conflict markers", () => {
+    expect(readFileSync("docs/DESIGN.md", "utf8")).not.toMatch(/^(<<<<<<<|=======$|>>>>>>>)/m);
+  });
+});

@@ -476,7 +476,6 @@ the same line (#4888).
   - `.repo-title`
   - `.slash`
   - `.sub`
-  - `.table-wrap`
   - `.tok`
   - `.where-sep`
 - **`style/content.ts`, code view** — the source view and the syntax-highlight token classes `highlight-html.ts` builds as `tok-${kind}`:
