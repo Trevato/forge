@@ -456,9 +456,6 @@ the same line (#4888).
 - **`style/content.ts`, code view** — the source view and the syntax-highlight token classes `highlight-html.ts` builds as `tok-${kind}`:
   - `.tok-deleted`
   - `.tok-inserted`
-- **`style/content.ts`, prose (markdown)** — table cell alignment, built by `markdown.ts` as `ta-${align}`:
-  - `.ta-c`
-  - `.ta-r`
 - **`style/content.ts`, diff viewer** — the diff table: its gutters, line kinds, file head and inline review comments:
   - `.add`
   - `.del`
