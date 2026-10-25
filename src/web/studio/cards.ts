@@ -66,6 +66,7 @@ const obj = (v: unknown): Obj =>
 const list = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 const text = (v: unknown): string =>
   typeof v === "string" ? v : typeof v === "number" ? String(v) : "";
+const web = (u: string): boolean => /^https?:\/\//.test(u);
 const LIMIT = 12;
 const FEED_LIMIT = 10;
 
@@ -87,7 +88,14 @@ export function cardFor(
     const run = text(made["run"]);
     status = run === "none" || run === "" ? "alive" : `alive · first run ${run}`;
     rows.push({ label: "App", value: repo });
-    if (made["url"]) rows.push({ label: "Production", value: text(made["url"]) });
+    if (made["url"]) {
+      const url = text(made["url"]);
+      rows.push({
+        label: "Production",
+        value: url,
+        ...(web(url) ? { link: url } : {}),
+      });
+    }
     if (made["issue"]) rows.push({ label: "First issue", value: `#${text(made["issue"])}` });
     if (made["agent"]) rows.push({ label: "Agent", value: text(made["agent"]) });
     rows.push({ label: "First run", value: run === "" ? "none" : run });
@@ -97,7 +105,6 @@ export function cardFor(
   }
   if (kind === "pull") {
     const p = obj(value);
-    const web = (u: string): boolean => /^https?:\/\//.test(u);
     const state = text(p["state"]);
     const check = text(obj(p["check"])["state"]);
     const checkWord =
@@ -132,13 +139,19 @@ export function cardFor(
   if (kind === "app") {
     const apps = list(value).map(obj);
     status = `${apps.length} app${apps.length === 1 ? "" : "s"}`;
-    for (const a of apps.slice(0, LIMIT))
+    for (const a of apps.slice(0, LIMIT)) {
+      const url = text(a["url"]);
       rows.push({
         label: text(a["app"]),
-        value: `${text(a["live"])}${a["url"] ? ` · ${text(a["url"])}` : ""}${
+        value: `${text(a["live"])}${url && !web(url) ? ` · ${url}` : ""}${
           Number(a["working"]) > 0 ? ` · ${text(a["working"])} working` : ""
         }`,
+        ...(web(origin) && /^[^/]+\/[^/]+$/.test(text(a["app"]))
+          ? { link: `${origin}/${text(a["app"])}` }
+          : {}),
       });
+      if (web(url)) rows.push({ label: `${text(a["app"])} production`, value: url, link: url });
+    }
     for (const a of apps.slice(0, 3))
       if (text(a["app"]) !== "")
         actions.push({ label: `Tell ${text(a["app"])}`, tool: "tell", args: { repo: text(a["app"]), context: {} }, words: true });

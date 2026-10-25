@@ -265,7 +265,11 @@ answers
   `_meta.ui.resourceUri` (MCP Apps, SEP-1865): `ui://forge/app`, `run`,
   `decision`, `wave`, `map`, `feed`, `pull`. The Plan card (`map`) shows one row per pillar with
   its ready, working and waiting counts, and the first five ready issues linked
-  to their pages; it has no actions. `resources/list` and `resources/read` serve one small
+  to their pages; it has no actions.
+  The Apps card (`apps`) links each `owner/name` row to the app's page on the forge and adds a
+  linked production row when the app has an http(s) URL; the `new_app` card links its
+  Production row the same way. Any other address stays plain text, never a link.
+  `resources/list` and `resources/read` serve one small
   sandboxed page, which draws the `structuredContent.card` model that the
   tool result carries, with `textContent` only. The model is built in
   `src/web/studio/cards.ts`. A card's
