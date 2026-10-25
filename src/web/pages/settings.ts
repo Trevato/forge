@@ -923,7 +923,7 @@ function appDomainsView(
       html`<li>
         <div class="row">
           <span class="row-lead">${icon("globe")}</span>
-          <span class="row-main">
+          <div class="row-main">
             <span class="row-title"
               ><span class="mono">${d.host}</span> ${d.verified
                 ? badge("live", { tone: "success" })
@@ -935,8 +935,8 @@ function appDomainsView(
                 ? null
                 : html` · checked ${time(d.checkedAt)}`}</span
             >
-            ${when(!d.verified, () => recordsToPublish(d.records))}
-          </span>
+            ${when(!d.verified, () => recordsToPublish(d.host, d.records))}
+          </div>
           <span class="row-trail">
             <form method="post" action="${at(d.host)}/check">
               ${btn("Check now", { size: "sm", icon: "globe" })}
@@ -1005,21 +1005,41 @@ function appDomainsView(
 }
 
 /** The records as a person copies them into a zone: type, name, value. */
-function recordsToPublish(records: DnsRecord[]): Html {
-  return html`${records.map(
-    (r) =>
-      html`<span class="row-meta"
-        >${badge(r.type, { variant: "outline" })}
-        <span class="mono">${r.name}</span>
-        <span aria-hidden="true">→</span>
-        <span class="mono record-value" title="${r.value}"
-          >${r.value}</span
-        ></span
-      >`,
-  )}
-  ${records
-    .filter((r) => r.note !== undefined)
-    .map((r) => html`<span class="row-meta">${r.note}</span>`)}`;
+function recordsToPublish(host: string, records: DnsRecord[]): Html {
+  return html`<div
+      class="table-scroll"
+      role="region"
+      tabindex="0"
+      aria-label="DNS records for ${host}"
+    >
+      <table class="table" data-dense>
+        <caption class="sr-only">
+          DNS records for ${host}
+        </caption>
+        <thead>
+          <tr>
+            <th>Type</th>
+            <th>Name</th>
+            <th>Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${records.map(
+            (r) =>
+              html`<tr>
+                <td>${badge(r.type, { variant: "outline" })}</td>
+                <td class="mono">${r.name}</td>
+                <td class="mono record-value" title="${r.value}">
+                  ${r.value}
+                </td>
+              </tr>`,
+          )}
+        </tbody>
+      </table>
+    </div>
+    ${records
+      .filter((r) => r.note !== undefined)
+      .map((r) => html`<span class="row-meta">${r.note}</span>`)}`;
 }
 
 const appValues = (repo: Repo, record: AppRecord | undefined): AppValues => ({

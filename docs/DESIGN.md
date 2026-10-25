@@ -432,7 +432,6 @@ the same line (#4888).
   - `.break`
   - `.commit-body`
   - `.commit-head`
-  - `.domain-records`
   - `.filters`
   - `.front-admin`
   - `.front-pick`

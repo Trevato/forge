@@ -215,8 +215,7 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .fg-s5 { fill: var(--series-5); color: var(--series-5); }
 .fg-s6 { fill: var(--series-6); color: var(--series-6); }
 .fg-s7 { fill: var(--series-7); color: var(--series-7); }
-/* The records a domain waits on: type, name, value — as a zone file reads. */
-.domain-records { margin: 6px 0 2px; padding: 8px 10px; font-size: 12.5px; line-height: 1.6; white-space: pre; overflow-x: auto; scrollbar-width: thin; background: var(--muted); border-radius: var(--radius); }
+.restore-command { margin: 8px 0 0; padding: 8px 10px; font-size: 12.5px; white-space: pre-wrap; word-break: break-all; background: var(--muted); border-radius: var(--radius); }
 .policy-line {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   margin: 12px 0 0; font-size: 13px; color: var(--muted-fg);

@@ -335,7 +335,7 @@ async function movingPart(
     now,
   });
   const restore = snapshots[0]
-    ? html`<pre class="domain-records" tabindex="0" aria-label="Restore command">bun run src/snapshot/restore.ts ${snapshots[0].name} /path/to/empty/data</pre>`
+    ? html`<pre class="restore-command" tabindex="0" aria-label="Restore command">bun run src/snapshot/restore.ts ${snapshots[0].name} /path/to/empty/data</pre>`
     : null;
   return html`<div id="backups-live" data-live="backup.*" data-live-src="/settings/backups/live">${recovery}${card(
       html`<p>
