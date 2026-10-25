@@ -326,7 +326,18 @@ export const ROUTES: readonly Route[] = [
   },
   { method: "get", path: `${REPO}/issues`, summary: "List a repository's issues; fields=brief leaves out bodies and comments, any other fields value is a 422 invalid_fields", auth: false, query: { ...LIST_QUERY, fields: "string" } },
   { method: "get", path: `${REPO}/pulls`, summary: "List a repository's pulls", auth: false, query: LIST_QUERY },
-  { method: "get", path: `${REPO}/branches`, summary: "List a repository's branches as a bare array of { name, oid, isDefault, ahead, behind, protected }; ahead and behind are null past the comparison cap; a private repository needs a token", auth: false },
+  {
+    method: "get",
+    path: `${REPO}/branches`,
+    summary:
+      "List a repository's branches; answers { items: [{ name, oid, isDefault, ahead, behind, protected }], next_cursor }; ahead and behind are null past the comparison cap; limit 1 to 200, cursor from next_cursor; a private repository needs a token",
+    auth: false,
+    query: { limit: "integer", cursor: "string" },
+    refusals: {
+      invalid_limit: "limit is not a whole number from 1 to 200 (422)",
+      invalid_cursor: "cursor is not the next_cursor of a page before (422)",
+    },
+  },
   { method: "get", path: `${REPO}/commits`, summary: "List commits newest first from `ref` (default: the default branch) as a bare array of { oid, parents, author, email, date, subject, body }; limit 1 to 100 (default 30); an unsafe ref is a 422 bad_ref; a private repository needs a token", auth: false, query: { ref: "string", limit: "integer" } },
   { method: "get", path: `${REPO}/commits/{oid}`, summary: "Read one commit (a full or abbreviated id, or a ref) as { oid, parents, author, email, date, subject, body, diff: { files, additions, deletions } }; a private repository needs a token", auth: false },
   { method: "get", path: `${REPO}/contents`, summary: "Read the tree or a file at `ref` (default: the default branch); no `path` or a directory answers { type: \"dir\", ref, path, entries }, a file answers { type: \"file\", ref, path, size, encoding: \"utf-8\" | \"base64\", content }, a file over 5 MB is a 413 { type: \"file\", tooLarge: true, size }; a private repository needs a token", auth: false, query: { path: "string", ref: "string" } },
