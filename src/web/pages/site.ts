@@ -360,7 +360,7 @@ function authForm(
           A passkey signs you in with a fingerprint, face or device PIN; there
           is no password to remember.
         </p>
-        ${passkeyNote("passkey-signup-note", errors.password)}
+        ${passkeyNote("passkey-signup-note")}
         <noscript><p class="muted small">Signing up needs JavaScript for the passkey.</p></noscript>`,
       )}
       ${when(
