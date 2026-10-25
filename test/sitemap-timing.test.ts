@@ -41,3 +41,12 @@ test("the sitemap names repos and render, and lists only the public repositories
   expect(body).toContain("/alice/two</loc>");
   expect(body).not.toContain("hidden");
 });
+
+test("the sitemap lists /explore exactly once, right after the front page", async () => {
+  const body = await (await fetch(`${servers.url}/sitemap.xml`)).text();
+  const locs = [...body.matchAll(/<loc>([^<]*)<\/loc>/g)].map((m) => m[1]!);
+  expect(locs[0]).toBe(`${servers.url}/`);
+  expect(locs[1]).toBe(`${servers.url}/explore`);
+  expect(locs.filter((l) => l.endsWith("/explore")).length).toBe(1);
+  expect(body).not.toContain("hidden");
+});

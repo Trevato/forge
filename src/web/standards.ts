@@ -173,6 +173,7 @@ export function sitemapXml(ctx: Ctx): Response {
     const origin = xml(ctx.url.origin);
     const urls = [
       `<url><loc>${origin}/</loc></url>`,
+      `<url><loc>${origin}/explore</loc></url>`,
       ...repos.map((r) => `<url><loc>${origin}${xml(`/${r}`)}</loc></url>`),
     ];
     return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join("\n")}\n</urlset>\n`;
