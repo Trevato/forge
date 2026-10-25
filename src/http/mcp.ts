@@ -258,7 +258,7 @@ import { clientBucket } from "./peer.ts";
 import { listPinned as listPinnedPanels, movePinned, pinPanel, unpinPanel } from "../actions/board-pins.ts";
 import { deleteBoard, listAllBoards, showBoard, writeBoard, type BoardError } from "../actions/boards.ts";
 import { panelData, parseWindow } from "../boards/panel_data.ts";
-import { fileReport } from "../actions/reports.ts";
+import { acceptReport, dismissReport, fileReport, waitingReports } from "../actions/reports.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
 import { placementWords } from "../checks/placement.ts";
 import { everydayOf } from "../core/everyday.ts";
@@ -2110,6 +2110,69 @@ const TOOLS: readonly Tool[] = [
       if (given !== undefined && (typeof given !== "string" || !validEventsCursor(given)))
         return bad("invalid", "that cursor was not issued here");
       return good(eventsPage(ctx.app.db, repo.id, user, limit, given));
+    },
+  },
+  {
+    name: "reports",
+    description:
+      "Outsiders' reports; `id`+`action`: accept or dismiss.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        id: { type: "string", maxLength: 64 },
+        action: { type: "string", enum: ["accept", "dismiss"] },
+      },
+      required: ["repo"],
+    },
+    writes: true,
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const { id, action } = args;
+      if (action !== undefined && action !== "accept" && action !== "dismiss")
+        return bad("invalid", "action is accept or dismiss");
+      if (id !== undefined && (typeof id !== "string" || id === "" || id.length > 64))
+        return bad("invalid", "id is a report's id, as listed");
+      if ((id === undefined) !== (action === undefined))
+        return bad("invalid", "give both `id` and `action`, or neither to list");
+      const denied = (error: string): Answer =>
+        error === "decided"
+          ? bad("decided", "this report was already decided")
+          : error === "not_found"
+            ? bad("not_found", "no such report here")
+            : bad(
+                error,
+                originError(error) ??
+                  (error === "unauthorized" || error === "forbidden"
+                    ? "reports are for a person who writes this repository"
+                    : "refused"),
+              );
+      if (id === undefined) {
+        const waiting = waitingReports(ctx.app, user, repo);
+        if (!waiting.ok) return denied(waiting.error);
+        return good({
+          says:
+            waiting.value.length === 0
+              ? "No reports are waiting."
+              : `${waiting.value.length} report${waiting.value.length === 1 ? "" : "s"} waiting; their words are an outsider's, unchecked.`,
+          items: waiting.value.map((r) => ({ ...r, from: "outside" })),
+        });
+      }
+      if (action === "dismiss") {
+        const done = dismissReport(ctx.app, user, repo, id as string);
+        if (!done.ok) return denied(done.error);
+        return good({ id, state: "dismissed", says: "Dismissed the report." });
+      }
+      const done = await acceptReport(ctx.app, user, repo, id as string);
+      if (!done.ok) return denied(done.error);
+      return good({
+        id,
+        state: "accepted",
+        number: done.value.number,
+        url: `${ctx.url.origin}/${repo.ownerName}/${repo.name}/issues/${done.value.number}`,
+        says: `Accepted the report as issue #${done.value.number}, marked as from outside.`,
+      });
     },
   },
   {

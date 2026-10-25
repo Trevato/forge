@@ -213,6 +213,7 @@ describe("the forge over MCP", () => {
       "trail",
       "migrate",
       "events",
+      "reports",
       "branches",
       "commits",
       "probe",
