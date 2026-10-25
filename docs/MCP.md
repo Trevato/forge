@@ -65,6 +65,13 @@ for a tunnel and a forge that sleeps.
 | `commits`      | `{ repo, ref?, limit?, oid? }`: a branch's recent commits, newest first (`limit` 1–100, default 30; refused outside that, where REST clamps), as `GET …/commits` answers; with `oid` (4–64 hex) one commit with its diff and its check, as `GET …/commits/{oid}` and `…/check` answer |        |
 | `probe`        | knock on a running app's doors as nobody, a user and an admin; the ones that disobey its contract |        |
 | `following`    | where a fork stands against what it follows, and what the crew is doing about it                  |        |
+| `family`       | the forge that sent this one and, for a site admin, those it sent, with state and version         |        |
+| `forges`       | an admin's list of the forges sent from here: name, address, whom for, apps, claimed or not, last activity |        |
+| `follow_mode`  | `{ repo, … }`: choose how a spawned forge follows its parent, `tell-me` or `take-updates`; its `forge` repository's admin only | yes    |
+| `sever`        | `{ repo }`: cut a spawned forge's link to the forge its code came from; its `forge` repository's owner only; deletes nothing | yes    |
+| `propose_to_parent_forge` | `{ repo }`: offer this forge's landed change to its parent as a pull on `child/<name>/…`; the same tip answers with that pull | yes    |
+| `forge_proposals` | `{ repo }`: what this forge proposed to its parent, newest first; `reachable` is false if the parent did not answer |        |
+| `contribute`   | for any arriving agent: what this forge is, its bottleneck, open “help wanted” issues, how to propose |        |
 | `spawn`        | `{ name, apps?, crew?, dryRun? }`: a child forge, planned first (`dryRun` is true unless `false`); an admin's, and an `ro` token may plan but not make | yes    |
 | `agent`        | `{ action, username, … }`: `create` a crew agent, `update` its `model`, `brief` or `budgetUsd`, or `remove` it; an admin's, with an `admin` token, as `/api/v1/agents` | yes    |
 | `claim_link`   | `{ name }`: a new claim link for a child you spawned that nobody has claimed; the old one stops working. An admin's | yes    |
