@@ -292,6 +292,13 @@ export const ROUTES: readonly Route[] = [
   },
   { method: "get", path: `${REPO}/issues`, summary: "List a repository's issues; fields=brief leaves out bodies and comments, any other fields value is a 422 invalid_fields", auth: false, query: { ...LIST_QUERY, fields: "string" } },
   { method: "get", path: `${REPO}/pulls`, summary: "List a repository's pulls", auth: false, query: LIST_QUERY },
+  { method: "get", path: `${REPO}/branches`, summary: "List a repository's branches as a bare array of { name, oid, isDefault, ahead, behind, protected }; ahead and behind are null past the comparison cap; a private repository needs a token", auth: false },
+  { method: "get", path: `${REPO}/commits`, summary: "List commits newest first from `ref` (default: the default branch) as a bare array of { oid, parents, author, email, date, subject, body }; limit 1 to 100 (default 30); an unsafe ref is a 422 bad_ref; a private repository needs a token", auth: false, query: { ref: "string", limit: "integer" } },
+  { method: "get", path: `${REPO}/commits/{oid}`, summary: "Read one commit (a full or abbreviated id, or a ref) as { oid, parents, author, email, date, subject, body, diff: { files, additions, deletions } }; a private repository needs a token", auth: false },
+  { method: "get", path: `${REPO}/contents`, summary: "Read the tree or a file at `ref` (default: the default branch); no `path` or a directory answers { type: \"dir\", ref, path, entries }, a file answers { type: \"file\", ref, path, size, encoding: \"utf-8\" | \"base64\", content }, a file over 5 MB is a 413 { type: \"file\", tooLarge: true, size }; a private repository needs a token", auth: false, query: { path: "string", ref: "string" } },
+  { method: "get", path: `${REPO}/labels`, summary: "List a repository's labels by name as a bare array of { id, name, color }; a private repository needs a token", auth: false },
+  { method: "get", path: `${REPO}/milestones`, summary: "Read the plan: { repo: { owner, name }, limbs }, one limb per milestone with its weights (and askToLive for a pillar's umbrella); a private repository needs a token", auth: false },
+  { method: "get", path: `${REPO}/milestones/{number}`, summary: "Read one milestone (a 404 for an issue that waits for nothing) as { repo, ...milestone, askToLive?, watching? }; watching is present only for a signed-in user; a private repository needs a token", auth: false },
   {
     method: "post",
     path: `${REPO}/issues`,

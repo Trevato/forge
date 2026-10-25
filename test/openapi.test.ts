@@ -123,6 +123,17 @@ test("making and listing apps is described with every field the route reads", ()
     expect(post.responses.default.description).toContain(`\`${code}\``);
 });
 
+test("a repository's reads are described: branches, commits, contents, labels, milestones", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const R = "/api/v1/repos/{owner}/{name}";
+  for (const path of ["branches", "commits", "commits/{oid}", "contents", "labels", "milestones", "milestones/{number}"])
+    expect(doc.paths[`${R}/${path}`]?.get, path).toBeDefined();
+  const contents = doc.paths[`${R}/contents`].get.parameters.map((p: any) => p.name);
+  expect(contents).toEqual(expect.arrayContaining(["path", "ref"]));
+  const commits = doc.paths[`${R}/commits`].get.parameters.map((p: any) => p.name);
+  expect(commits).toEqual(expect.arrayContaining(["ref", "limit"]));
+});
+
 test("an issue's teams and labels, a pull's labels and an issue's private repository are described", () => {
   const doc = openapi("https://f.test", "1") as any;
   const R = "/api/v1/repos/{owner}/{name}";
