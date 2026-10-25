@@ -5,7 +5,7 @@
  * repository's own page. Unmuting brings them back.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,6 +28,8 @@ import { askCountFor, askLinesFor, forgeNeedsFor, repoAsks } from "../src/web/st
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
+// Every test here is HTTP round trips against a server on a shared machine: the 5s default measures its load, not the code.
+setDefaultTimeout(30_000);
 
 const PASSWORD = "a-long-mute-passphrase";
 
@@ -124,7 +126,7 @@ describe("muting a repository's asks", () => {
     claimRun(app.db, run.id);
     finishRun(app.db, run.id, { state: "ok", summary: "ok" });
     expect(assignIssue(app, alice, repo, getIssueById(app.db, pullId)!, alice).ok).toBe(true);
-  }, 30_000);
+  });
 
   afterAll(async () => {
     await servers.stop();
@@ -159,7 +161,7 @@ describe("muting a repository's asks", () => {
     const muted = await home();
     expect(muted).not.toContain('action="/asks/mute"');
     expect(muted).toContain("Listen again");
-  }, 30_000);
+  });
 
   test("the ask still exists and still counts on the repository's own page", async () => {
     expect(repoAsks(app.db, alice, repo)).toEqual({ count: 1, muted: true });
@@ -258,5 +260,5 @@ describe("muting a repository's asks", () => {
       expect(t.description).toContain("saved filter");
       expect(Object.keys(t.inputSchema.properties)).toEqual(expect.arrayContaining(["hide_kinds", "hide_people"]));
     }
-  }, 30000); // a dozen HTTP round trips: the default 5s is the machine's load, not the code
+  });
 });
