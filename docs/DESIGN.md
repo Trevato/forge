@@ -466,7 +466,6 @@ the same line (#4888).
   - `.front-live`
   - `.front-more`
   - `.front-pick`
-  - `.headroom`
   - `.owner`
   - `.page-head`
   - `.policy-line`

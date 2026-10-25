@@ -31,6 +31,7 @@ import { createUser, type User } from "../src/core/users.ts";
 import { startCrew, type CrewHandle } from "../src/crew/dispatch.ts";
 import { isRateLimited, resumeAt } from "../src/crew/limits.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { stylesheetAsset } from "../src/web/asset.ts";
 import { adminCookie } from "./helpers/admin.ts";
 
 const OAT = "sk-ant-oat01-personal-token-for-the-test";
@@ -637,6 +638,9 @@ describe("the pages", () => {
     expect(html).toContain(`action="/settings/subscriptions/${work.id}/headroom"`);
     expect(html).toMatch(/<form\s+class="row-fields"[^>]*headroom"/);
     expect(html).toMatch(/<input[^>]*name="headroom"/);
+    const css = await (await fetch(`${base}${stylesheetAsset().path}`)).text();
+    expect(css).toContain(".row-fields");
+    expect(css).not.toContain(".headroom");
   });
 
   test("nobody but an admin reaches the pool", async () => {

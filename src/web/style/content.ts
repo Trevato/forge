@@ -186,14 +186,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
   color: var(--muted-fg); margin: 8px 0 4px;
 }
 
-/* A subscription's headroom for people: a small number beside its windows. */
-.headroom { display: flex; align-items: center; gap: 6px; }
-.headroom .input { width: 5em; }
-/* On a phone an account's controls go under its name, not over it. */
-@media (max-width: 640px) {
-  .row:has(.headroom) { flex-wrap: wrap; }
-  .row:has(.headroom) .row-trail { flex-basis: 100%; flex-wrap: wrap; }
-}
 .chart-box { color: var(--accent); aspect-ratio: 720 / 260; max-width: 720px; }
 .chart-box .chart { display: block; width: 100%; height: auto; }
 .chart-box text { fill: var(--muted-fg); font-family: var(--mono); }
