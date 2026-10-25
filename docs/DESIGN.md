@@ -447,7 +447,6 @@ the same line (#4888).
   - `.repo-actions`
   - `.repo-desc`
   - `.repo-layout`
-  - `.repo-lineage`
   - `.repo-title`
   - `.slash`
   - `.sub`
