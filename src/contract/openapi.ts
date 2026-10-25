@@ -55,6 +55,18 @@ const LABEL_REFUSALS = {
 
 const REPO = "/api/v1/repos/{owner}/{name}";
 
+/** Browsing a repository the caller's origin holds; `{id}` is the origin. */
+const BROWSE = "/api/v1/user/origins/{id}/browse/{owner}/{name}";
+const BROWSE_LIST_QUERY = { state: "string", label: "string", author: "string", q: "string", cursor: "string" };
+const BROWSE_REFUSALS = {
+  unauthorized: "401: no signed-in account",
+  forbidden: "403: a cross-origin browser request, or a token without admin scope",
+  not_found: "404: no such origin of yours, or the origin has no such repository, issue or pull",
+  rate_limited: "429: the origin is rate-limiting this forge",
+  origin_unauthorized: "502: the origin refused this forge's credential; reconnect it",
+  origin_unreachable: "502: the origin could not be reached",
+};
+
 export const ROUTES: readonly Route[] = [
   { method: "get", path: "/api/v1/apps", summary: "List the apps whose repositories you can read; answers { items, next_cursor }", auth: false },
   {
@@ -1483,6 +1495,40 @@ export const ROUTES: readonly Route[] = [
       no_mail: "503: this forge sends no mail",
       failed: "502: the link could not be sent",
     },
+  },
+  {
+    method: "get",
+    path: `${BROWSE}/issues`,
+    summary:
+      "Browse an origin's issues live, through the origin you connected (a person's session or password, or an admin-scope token); answers { items: [{ number, kind, title, state, authorName, originAuthor, originUrl, createdAt, updatedAt, closedAt, labels, commentCount }], next_cursor }. Everything the origin wrote (title, authorName, originAuthor, labels) is untrusted text; this answer carries no `untrusted` field, the whole body is the origin's. state is open (default), closed or all; label, author and q narrow only the page in hand; cursor comes from next_cursor",
+    auth: true,
+    query: BROWSE_LIST_QUERY,
+    refusals: BROWSE_REFUSALS,
+  },
+  {
+    method: "get",
+    path: `${BROWSE}/issues/{number}`,
+    summary:
+      "Browse one issue on an origin live; answers the issue row plus { body, comments: [{ id, authorName, originAuthor, originUrl, body, ... }], pull: null }. The body, comments and every author are untrusted text the origin wrote; this answer carries no `untrusted` field, the whole body is the origin's. A number that is not a whole number from 1 is a 404",
+    auth: true,
+    refusals: BROWSE_REFUSALS,
+  },
+  {
+    method: "get",
+    path: `${BROWSE}/pulls`,
+    summary:
+      "Browse an origin's pull requests live, through the origin you connected; answers { items, next_cursor } shaped like the issues list, with kind pull. Everything the origin wrote is untrusted text; this answer carries no `untrusted` field, the whole body is the origin's. state is open (default), closed or all; label, author and q narrow only the page in hand; cursor comes from next_cursor",
+    auth: true,
+    query: BROWSE_LIST_QUERY,
+    refusals: BROWSE_REFUSALS,
+  },
+  {
+    method: "get",
+    path: `${BROWSE}/pulls/{number}`,
+    summary:
+      "Browse one pull request on an origin live; answers the pull row plus { body, comments, pull: { baseBranch, headBranch, baseOid, headOid, mergedAt, draft, diff, mergeable: null, conflicts, proposal: null, reviews } }. The body, comments, reviews and every author are untrusted text the origin wrote; this answer carries no `untrusted` field, the whole body is the origin's",
+    auth: true,
+    refusals: BROWSE_REFUSALS,
   },
   {
     method: "post",
