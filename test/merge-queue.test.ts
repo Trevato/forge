@@ -470,9 +470,9 @@ describe("the merge queue", () => {
     expect(queueWords(repo.id)).toBe("idle");
     // The deadline is fired by hand once the gate is reached: a wall clock
     // would race the gate's setup on a loaded machine.
-    let fire: (() => void) | undefined;
+    const fires: (() => void)[] = [];
     const restore = gateDeadlineForTest(1500, (f) => {
-      fire = f;
+      fires.push(f);
       return setTimeout(() => {}, 0);
     });
     const warned: string[] = [];
@@ -484,7 +484,7 @@ describe("the merge queue", () => {
       lastSignal = undefined;
       atGate = () => {
         words = queueWords(repo.id);
-        fire?.();
+        for (const f of fires) f();
       };
       const sweep = sweepGreen(app, repo);
       expect(await sweep).toBe(0);
