@@ -124,3 +124,28 @@ export async function readWaves(
   return [...good, ...bad];
 }
 
+
+/** Unreadable files tried before giving up on finding the newest good wave. */
+const LATEST_TRIES = 5;
+
+/**
+ * The newest wave that parses, or null. Reads the tree once and only as many
+ * files as it takes, so a home page can ask without paying for the archive.
+ */
+export async function latestWave(dir: string, branch: string): Promise<Wave | null> {
+  const tree = await listTree(dir, branch, "waves");
+  if (!tree.ok) return null;
+  const files = tree.value
+    .filter((e) => e.type === "blob" && e.name.endsWith(".md") && WAVE_VERSION.test(e.name.slice(0, -3)))
+    .sort((x, y) => byVersionDesc(x.name.slice(0, -3), y.name.slice(0, -3)))
+    .slice(0, LATEST_TRIES);
+  const reader = readerFor(dir);
+  for (const f of files) {
+    if (f.size > MAX_BYTES) continue;
+    const obj = await reader.object(f.oid);
+    if (!obj.ok) continue;
+    const parsed = parseWave(`waves/${f.name}`, new TextDecoder().decode(obj.value.body));
+    if (parsed.ok) return parsed.value;
+  }
+  return null;
+}

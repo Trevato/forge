@@ -117,6 +117,21 @@ describe("waves page", () => {
     expect(body).toContain('href="/alice/pub/waves"');
   });
 
+  test("the repository home draws the newest wave in one line, linked", async () => {
+    const res = await get("/alice/pub");
+    const body = await res.text();
+    expect(body).toContain("latest-wave");
+    expect(body).toContain('href="/alice/pub/waves/0.10.0"');
+    expect(body).toContain("Tenth · 2026-02-01");
+    expect(body).not.toContain("Ninth");
+    expect(res.headers.get("server-timing")).toContain("wave");
+  });
+
+  test("the repository home without waves draws no wave line", async () => {
+    const body = await (await get("/alice/bare")).text();
+    expect(body).not.toContain("latest-wave");
+  });
+
   test("no waves/ gets the empty state", async () => {
     const res = await get("/alice/bare/waves");
     expect(res.status).toBe(200);

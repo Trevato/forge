@@ -47,6 +47,7 @@ import {
 } from "../chrome.ts";
 import { codeJs } from "../client.ts";
 import { highlightBlob } from "../code.ts";
+import { latestWave } from "../../story/waves.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import { appStrip } from "./apps.ts";
@@ -1033,10 +1034,18 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
     readmeFor(scope.source, ref, tree, ""),
   );
   const following = await timePhaseAsync(ctx.request, "following", () => followingOf(ctx, repo));
+  const latest = await timePhaseAsync(ctx.request, "wave", () =>
+    latestWave(repoDir(ctx.app.reposRoot, repo.ownerName, repo.name), repo.defaultBranch),
+  );
   const rendering = performance.now();
   const body = html`${scopeHeader(ctx, scope, "code", {
     branchCount: refs.branches.length,
   })}${archivedLine(ctx, repo)}${noApp}
+  ${latest === null
+    ? ""
+    : html`<p class="muted latest-wave">Latest:
+        <a href="${repoBase(repo)}/waves/${encodeURIComponent(latest.version)}">${latest.version}</a>
+        · ${latest.headline} · ${latest.date}</p>`}
   ${frozenBlock(ctx, repo)} ${appStrip(ctx, repo)}
   ${following === undefined
     ? forkBar(ctx, repo)
