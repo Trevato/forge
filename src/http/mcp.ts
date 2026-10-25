@@ -57,7 +57,8 @@ import { SPEND_WORDS } from "../actions/spend_words.ts";
 import { changeSignup, readSignup } from "../actions/signup.ts";
 import { SIGNUP_MODES } from "../settings/signup.ts";
 import { QUOTA_KEYS } from "../settings/quotas.ts";
-import { LIMIT_KEYS } from "../settings/limits.ts";
+import { LIMIT_KEYS, limitValue } from "../settings/limits.ts";
+import { budgetsOf, setBudget } from "../core/subscriptions.ts";
 import { checkUpstreamNow, FOLLOW_REFUSALS, followJson, setFollowUpstream } from "../actions/upstream_follow.ts";
 import { getFollow } from "../core/upstream_follow.ts";
 import { convergeWords, FOLLOW_MODE_REFUSALS, setFollowMode, severForge, takeForgeCode, takeForgeWords, takeOrTell } from "../actions/follow.ts";
@@ -3898,6 +3899,42 @@ const TOOLS: readonly Tool[] = [
       return gone.ok
         ? good({ says: "Removed the label.", removed: id })
         : bad("not_found", "no such label, or you are not this repository's admin");
+    },
+  },
+  {
+    name: "subscription_budget",
+    description: "Admin: set an account's whole-life budget in dollars, or null to clear.",
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string" }, usd: { type: ["number", "null"] } },
+      required: ["id", "usd"],
+    },
+    writes: true,
+    adminOnly: true,
+    needsAdminScope: true,
+    run(ctx, _user, args) {
+      const id = args["id"];
+      const usd = args["usd"];
+      if (typeof id !== "string" || id === "" || id.length > 64)
+        return bad("invalid", "id is the account's id");
+      if (usd !== null && (typeof usd !== "number" || !Number.isFinite(usd)))
+        return bad("invalid", "usd is a number of dollars, or null to clear");
+      const held = budgetsOf(ctx.app.db).get(id);
+      if (!held) return bad("not_found", "no such account");
+      if (held.locked && (usd === null || !(usd < (held.budgetUsd ?? 0))))
+        return bad(
+          "locked",
+          "This budget was set by whoever made this forge: it can be lowered, never raised or cleared.",
+        );
+      const max = limitValue(ctx.app.db, "subscription.budget_max_usd");
+      if (!setBudget(ctx.app.db, id, usd))
+        return bad("invalid", `A budget is dollars from 1 to ${max}, or null for none.`);
+      const budgetUsd = usd === null ? null : Math.round(usd * 100) / 100;
+      return good({
+        id,
+        budgetUsd,
+        says: budgetUsd === null ? "No budget: this account spends until you stop it." : `Budget set: $${budgetUsd} in all.`,
+      });
     },
   },
   {
