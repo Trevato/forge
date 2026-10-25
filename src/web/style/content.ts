@@ -47,7 +47,6 @@ export const content = /* css */ `
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
   min-width: 0; font-size: 12.5px;
 }
-.where-sep { color: var(--faint); }
 .where-place {
   display: inline-flex; align-items: center; gap: 5px;
   max-width: 100%; padding: 2px 6px; border-radius: var(--radius-sm);
@@ -79,7 +78,6 @@ a.where-place:hover, button.where-place:hover {
 .row-meta .where-place { display: inline; padding: 0; }
 .row-meta .where-place .ico { display: none; }
 .row-meta .where-place > span[aria-hidden="true"] { margin-right: 3px; }
-.row-meta .where-sep { margin: 0 3px; }
 .row-title a { color: inherit; text-decoration: none; }
 .row-title a:hover { color: var(--accent); }
 .row-trail form { display: inline-flex; }
