@@ -7,6 +7,9 @@
  * added here, and `test/openapi.test.ts` fails until it is.
  */
 
+import { CAPACITY_KEYS } from "../core/capacity.ts";
+import { LIMIT_KEYS } from "../settings/limits.ts";
+
 interface Route {
   readonly method: "get" | "post" | "put" | "patch" | "delete";
   readonly path: string;
@@ -222,7 +225,19 @@ export const ROUTES: readonly Route[] = [
       "Read the forge's limits (a person admin's token, any scope); answers { items: [{ key, value, isSet, defaultValue, ... }], changes, next_cursor }",
     auth: true,
     refusals: { not_found: "the token is not a person who administers the forge" },
+  },  {
+    method: "put",
+    path: "/api/v1/admin/limits/{key}",
+    summary: `Change one limit live, or send value null to take it back to its default (a person admin's token, admin scope); {key} is one of ${LIMIT_KEYS.join(", ")}; answers the changed limit`,
+    auth: true,
+    body: { value: "integer or null" },
+    refusals: {
+      not_found: "the token is not a person who administers the forge (404)",
+      no_such_limit: "{key} is not a limit (422)",
+      out_of_bounds: "the value is outside the limit's bounds, named in the message (422)",
+    },
   },
+
   {
     method: "get",
     path: "/api/v1/admin/capacity",
@@ -230,7 +245,20 @@ export const ROUTES: readonly Route[] = [
       "Read the forge's capacity settings (a person admin's token, any scope); answers { items: [{ key, label, help, value, source, default, env, changed? }], changes, next_cursor }",
     auth: true,
     refusals: { not_found: "the token is not a person who administers the forge" },
+  },  {
+    method: "put",
+    path: "/api/v1/admin/capacity/{key}",
+    summary: `Change one capacity setting live, or send value null to take it back to its default (a person admin's token, admin scope); {key} is one of ${CAPACITY_KEYS.join(", ")}; answers the changed setting`,
+    auth: true,
+    body: { value: "string or null" },
+    refusals: {
+      not_found: "the token is not a person who administers the forge (404)",
+      no_such_setting: "{key} is not a capacity setting (422)",
+      invalid_value: "the value is outside what this setting takes (422)",
+      no_credential: "the setting needs a credential the forge does not hold (422)",
+    },
   },
+
   {
     method: "get",
     path: "/api/v1/admin/teams",
@@ -238,7 +266,22 @@ export const ROUTES: readonly Route[] = [
       "Read the crew's teams (a person admin's token, any scope); answers { teams: [{ slug, charter, dial, members, ... }] }",
     auth: true,
     refusals: { not_found: "the token is not a person who administers the forge" },
+  },  {
+    method: "put",
+    path: "/api/v1/admin/teams/{slug}",
+    summary: "Change a crew team's charter, dial or members; send only what changes (a person admin's token, admin scope); answers the team",
+    auth: true,
+    body: { charter: "string", dial: "integer", members: "array of agent ids" },
+    refusals: {
+      invalid_body: "charter is not text, dial not a number, or members not a list of agent ids (422)",
+      not_found: "no such team, or the token is not a person who administers the forge (404)",
+      bad_dial: "dial is not a whole number in range (422)",
+      bad_charter: "the charter is too long (422)",
+      over_100: "the teams' dials together would pass 100% (422)",
+      bad_member: "a member is not an agent on this forge (422)",
+    },
   },
+
   {
     method: "get",
     path: "/api/v1/admin/people",

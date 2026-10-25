@@ -220,6 +220,18 @@ test("an app's routes are described, and env values are never read back", () => 
   expect(doc.paths[`${A}/{env}/redeploy`].post.responses["202"]).toBeDefined();
 });
 
+test("the admin's writes are described: a capacity setting, a limit and a team", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  for (const path of ["capacity/{key}", "limits/{key}", "teams/{slug}"]) {
+    const put = doc.paths[`/api/v1/admin/${path}`]?.put;
+    expect(put, path).toBeDefined();
+    expect(put.security).toBeDefined();
+    expect(put.requestBody).toBeDefined();
+  }
+  expect(doc.paths["/api/v1/admin/capacity/{key}"].put.summary).toContain("egress");
+  expect(doc.paths["/api/v1/admin/limits/{key}"].put.summary).toContain("api.anonymous_per_source");
+});
+
 test("a person's sign-ins and ending one are described, with no session secret", () => {
   const doc = openapi("https://f.test", "1") as any;
   const list = doc.paths["/api/v1/users/{username}/signins"]?.get;
