@@ -27,6 +27,7 @@ import {
 import { getUserById, type User } from "../core/users.ts";
 import { watchedBy } from "../core/watches.ts";
 import { chooseCandidates } from "./choose.ts";
+import { ago } from "./rank.ts";
 import { askLinesFor } from "../web/studio/asks.ts";
 
 export type FeedKind =
@@ -255,11 +256,19 @@ export function candidatesFor(
   };
 
   const out: Candidate[] = [];
+  const folded = foldPulls(events);
   for (const e of events) {
     const repo = repos.get(e.repoId!);
     if (!repo) continue;
+    const fold = folded.get(e.id);
+    if (fold === "skip") continue;
     const c = fromEvent(db, e, repo, owns(repo), subjects);
-    if (c) out.push({ ...c, actor: nameOf(e.actorId) });
+    if (c)
+      out.push({
+        ...c,
+        actor: nameOf(e.actorId),
+        ...(fold === undefined ? {} : { what: `${c.what} · ${foldedWords(fold, now)}` }),
+      });
   }
   for (const a of asks) {
     const repo = repos.get(a.repoId);
@@ -305,6 +314,53 @@ export function candidatesFor(
     });
   }
   return awake(db, out, repos);
+}
+
+/** What a pull's earlier posts add to its latest: when it opened, how many reviews. */
+interface Fold {
+  readonly openedAt: string | undefined;
+  readonly reviews: number;
+}
+
+const FOLDS = new Set(["pull.opened", "pull.reviewed", "pull.merged"]);
+
+/**
+ * One post per pull (#5808): of the window's opened, reviewed and merged
+ * events for the same pull, the newest stands for them and reads by its
+ * latest state; the rest are "skip". Only the newest of a folded pull has
+ * an entry that is a Fold. A pull with one event in the window is unchanged.
+ * A failed run is not a pull event: it keeps its own post.
+ */
+function foldPulls(events: readonly ForgeEvent[]): Map<string, Fold | "skip"> {
+  const groups = new Map<string, ForgeEvent[]>();
+  for (const e of events) {
+    const n = e.payload["number"];
+    if (!FOLDS.has(e.kind) || typeof n !== "number" || e.repoId === null) continue;
+    const key = `${e.repoId}#${n}`;
+    const g = groups.get(key);
+    if (g) g.push(e);
+    else groups.set(key, [e]);
+  }
+  const out = new Map<string, Fold | "skip">();
+  for (const g of groups.values()) {
+    if (g.length < 2) continue;
+    const newest = g.reduce((a, b) =>
+      b.createdAt > a.createdAt || (b.createdAt === a.createdAt && b.id > a.id) ? b : a,
+    );
+    for (const e of g) if (e !== newest) out.set(e.id, "skip");
+    out.set(newest.id, {
+      openedAt: g.find((e) => e.kind === "pull.opened")?.createdAt,
+      reviews: g.filter((e) => e.kind === "pull.reviewed").length,
+    });
+  }
+  return out;
+}
+
+function foldedWords(f: Fold, now: number): string {
+  return [
+    ...(f.openedAt === undefined ? [] : [`opened ${ago(Date.parse(f.openedAt), now)}`]),
+    ...(f.reviews === 0 ? [] : [`${f.reviews} review${f.reviews === 1 ? "" : "s"}`]),
+  ].join(", ");
 }
 
 /**
