@@ -320,13 +320,13 @@ const CHIP_ARGS = {
     type: "array",
     items: { type: "string", enum: [...KIND_CHIPS] },
     maxItems: 50,
-    description: "Kinds to leave out; replaces your saved filter.",
+    description: "Kinds to hide.",
   },
   hide_people: {
     type: "array",
     items: { type: "string", maxLength: 39 },
     maxItems: 50,
-    description: "Usernames to leave out; replaces your saved filter.",
+    description: "Usernames to hide.",
   },
 } as const;
 
@@ -435,7 +435,7 @@ const APP_ARG = { type: "string" } as const;
 const REVEAL_ARG = {
   type: "boolean",
   description:
-    "Put the live claim link here (default false); only when its person reads it.",
+    "true puts the secret claim link here, for its person only.",
 } as const;
 const LINK_KEPT =
   "The claim link is a secret, so it is not in this conversation: a person admin of this forge gets a fresh one on /forges (Send a fresh link) and hands it to the child's person. Send reveal: true only to have it here on purpose.";
@@ -671,12 +671,12 @@ const TOOLS: readonly Tool[] = [
           type: "string",
           maxLength: 512,
           description:
-            "A path on this forge the issue links to, like /alice/notes/pulls/3.",
+            "Forge path to link, as /a/b/pulls/3.",
         },
         context: {
           type: "object",
           description:
-            "Where this was told from, for the builder.",
+            "Where it was told.",
           properties: {
             page: { type: "string" },
             pull: { type: "integer", minimum: 1 },
@@ -1543,7 +1543,7 @@ const TOOLS: readonly Tool[] = [
         repo: {
           ...REPO_ARG,
           description:
-            "One app, as owner/name; every app you can see when absent.",
+            "owner/name; all when absent.",
         },
       },
     },
@@ -1589,7 +1589,7 @@ const TOOLS: readonly Tool[] = [
       type: "object",
       properties: {
         username: { type: "string" },
-        usdPerMonth: { type: "number", description: "0.01 to 10000; 0 takes it back." },
+        usdPerMonth: { type: "number", description: "0.01–10000; 0 revokes." },
         dryRun: { type: "boolean", description: "false to apply" },
       },
       required: ["username", "usdPerMonth"],
@@ -1693,7 +1693,7 @@ const TOOLS: readonly Tool[] = [
       properties: {
         username: { type: "string" },
         role: { type: "string", enum: ["member", "guest"] },
-        usdPerMonth: { type: ["number", "null"], description: "0.01 to 10000; omit or null for none." },
+        usdPerMonth: { type: ["number", "null"], description: "0.01–10000 or none." },
         dryRun: { type: "boolean", description: "false to apply" },
       },
       required: ["username", "role"],
@@ -1947,7 +1947,7 @@ const TOOLS: readonly Tool[] = [
           type: "array",
           items: { type: "string" },
           maxItems: MAX_ARCHIVE_REPOS,
-          description: "Several repositories, as owner/name, to archive in one operation.",
+          description: "owner/name list, one operation.",
         },
         archived: { type: "boolean" },
         dryRun: {
@@ -2377,29 +2377,29 @@ const TOOLS: readonly Tool[] = [
         direction: {
           type: "string",
           description:
-            "What the child is for; its first issue.",
+            "Its purpose; first issue.",
         },
         fresh: {
           type: "string",
           description:
-            "A fresh app beside the copied ones.",
+            "A fresh app too.",
         },
         followMode: {
           type: "string",
           enum: ["tell-me", "take-updates"],
           description:
-            "tell-me (default) or take-updates.",
+            "tell-me or take-updates.",
         },
         size: {
           type: "string",
           enum: ["small", "medium", "large"],
           description:
-            "Recorded only; not enforced.",
+            "Recorded only.",
         },
         keepAccess: {
           type: "boolean",
           description:
-            "Stay an owner once claimed.",
+            "Stay an owner.",
         },
         dryRun: {
           type: "boolean",
@@ -2897,7 +2897,7 @@ const TOOLS: readonly Tool[] = [
         query: {
           type: "string",
           maxLength: 200,
-          description: "Words, plus kind:app|person|forge and sort:score|forks|ships|use|fresh|name.",
+          description: "Words; kind:, sort: filters.",
         },
       },
     },
@@ -3131,7 +3131,7 @@ const TOOLS: readonly Tool[] = [
         hidden: { type: "array", items: { type: "string" } },
         weights: {
           type: "object",
-          description: "Each 0 to 10: forks, ships, use, fresh.",
+          description: "0–10: forks, ships, use, fresh.",
           properties: {
             forks: { type: "number", minimum: 0, maximum: 10 },
             ships: { type: "number", minimum: 0, maximum: 10 },
@@ -3211,7 +3211,7 @@ const TOOLS: readonly Tool[] = [
           type: "integer",
           minimum: 1,
           description:
-            "The number of an issue that waits for others; the limbs when absent.",
+            "Issue number; limbs if absent.",
         },
       },
       required: ["app"],
@@ -3246,11 +3246,11 @@ const TOOLS: readonly Tool[] = [
         issue: {
           type: "integer",
           minimum: 1,
-          description: "The number of an issue that waits for others.",
+          description: "Issue number.",
         },
         watch: {
           type: "boolean",
-          description: "false to stop watching; anything else watches.",
+          description: "false to stop.",
         },
       },
       required: ["app", "issue"],
@@ -3286,7 +3286,7 @@ const TOOLS: readonly Tool[] = [
           type: "integer",
           minimum: 1,
           maximum: 50,
-          description: "How many, 1 to 50; 20 when absent.",
+          description: "1–50, default 20.",
         },
       },
       required: ["repo"],
@@ -3372,15 +3372,26 @@ const TOOLS: readonly Tool[] = [
           minimum: 1,
         },
         action: { type: "string", enum: ["defer", "resume", "close", "raise", "lower", "replan", "takeback", "undo"] },
-        reason: { type: "string" },
-        pillar: { type: "string" },
-        under: { type: "string" },
+        reason: {
+          type: "string",
+          description: "For close: why.",
+        },
+        pillar: {
+          type: "string",
+          description:
+            "For resume.",
+        },
+        under: {
+          type: "string",
+          description:
+            "`top` or a milestone number.",
+        },
         operation: {
           type: "string",
         },
         dryRun: {
           type: "boolean",
-          description: "false to apply; anything else plans and changes nothing.",
+          description: "false to apply",
         },
       },
       required: ["app", "action"],
@@ -3894,7 +3905,7 @@ const TOOLS: readonly Tool[] = [
         pull: { type: "integer" },
         why: {
           type: "string",
-          description: "To hold: why, in one line. It shows on the pull.",
+          description: "Why, one line.",
         },
         release: {
           type: "boolean",
@@ -3985,11 +3996,11 @@ const TOOLS: readonly Tool[] = [
               },
               pillar: {
                 type: "string",
-                description: 'Pillar served: "P0" or "P0 Trust".',
+                description: 'Pillar, "P0".',
               },
               later: {
                 type: "boolean",
-                description: "No pillar: needs why.",
+                description: "No pillar; needs why.",
               },
               why: {
                 type: "string",
@@ -4092,8 +4103,8 @@ const TOOLS: readonly Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        since: { type: "string", maxLength: 40, description: "ISO time; default a day, max 14 days." },
-        ua: { type: "string", maxLength: 100, description: "Part of the user agent." },
+        since: { type: "string", maxLength: 40, description: "ISO time; max 14 days." },
+        ua: { type: "string", maxLength: 100, description: "User agent part." },
         path: { type: "string", maxLength: 200, description: "Path prefix." },
       },
     },
@@ -4357,10 +4368,10 @@ const TOOLS: readonly Tool[] = [
         verb: { type: "string", enum: ["attach", "verify", "rotate", "rename", "remove", "allow_writes", "audit"] },
         provider: { type: "string", enum: [...PROVIDERS] },
         name: { type: "string", maxLength: 32 },
-        value: { type: "string", maxLength: 4096, description: "Token, for attach and rotate." },
+        value: { type: "string", maxLength: 4096, description: "For attach, rotate." },
         to: { type: "string", maxLength: 32 },
         allowed: { type: "boolean", description: "For allow_writes." },
-        repo: { type: "string", maxLength: 200, description: "For audit: owner/name." },
+        repo: { type: "string", maxLength: 200, description: "For audit." },
       },
       required: ["verb", "provider", "name"],
     },
@@ -4756,7 +4767,7 @@ const REPORT_TOOL = {
       body: { type: "string", maxLength: BODY_MAX },
       page: {
         type: "string",
-        description: "The http(s) address where the problem was seen.",
+        description: "Address where seen.",
       },
     },
     required: ["repo", "title"],

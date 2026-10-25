@@ -122,6 +122,26 @@ a failure names the bytes over and the longest descriptions.
 Answers are JSON in a text block; most carry a `says` sentence short enough
 to relay as it is.
 
+## Arguments, in full
+
+`tools/list` keeps every argument description to 60 bytes (`test/mcp-size.test.ts`
+enforces it); `dryRun` reads `false to apply` on every tool that takes it. The
+longer sentences:
+
+- `dryRun`: plans unless it is `false`; anything else changes nothing. `limb` applying takes an admin token.
+- `tell.from`: a path on this forge the issue links to, like `/alice/notes/pulls/3`. `tell.context`: where this was told from, for the builder.
+- `spawn.reveal`, `claim_link.reveal`: put the live claim link in the answer (default false); it is a secret, only when its person reads it. `spawn.fresh`: a fresh app beside the copied ones. `spawn.followMode`: `tell-me` (default) or `take-updates`. `spawn.size`: recorded only, not enforced. `spawn.keepAccess`: stay an owner once claimed.
+- `commits.ref`: branch, tag or commit; the default branch when absent. `report.page`: the http(s) address where the problem was seen. `plan.issues.pillar`: the pillar served, as `"P0"` or `"P0 Trust"`; `later: true` means no pillar and needs `why`.
+- `explore.query`: words, plus `kind:app|person|forge` and `sort:score|forks|ships|use|fresh|name`.
+- `archive.repos`: several repositories, as `owner/name`, to archive in one operation.
+- `milestones.issue`: the number of an issue that waits for others; the limbs when absent. `watch.issue` is the same number; `watch.watch` false stops watching, anything else watches.
+- `limb.reason` (close): why it is not being done, in one sentence. `limb.pillar` (resume): the pillar to return it under. `limb.under` (raise, lower): `top` or a milestone number, only when the limb sits in several places.
+- `asks.hide_kinds`, `asks.hide_people`, `feed.*`: leave out these kinds or usernames; replaces your saved filter.
+- `audit.repo`: one app, as `owner/name`; every app you can see when absent.
+- `model_ceiling.dailyUsd`/`perRunUsd`: 0.01–10000; both null clears; one null is refused. `model_grant.usdPerMonth`: 0 takes the grant back. `account_role.usdPerMonth`: omit or null for none.
+- `hold.why`: why, in one line; it shows on the pull. `runs.limit`: how many, 1 to 50; 20 when absent.
+- `boards.step`: with `panel`, seconds per bucket, or a count of `s`, `m`, `h` or `d`. `access.since`: ISO time; default a day, max 14 days.
+
 ## Connecting
 
 Mint a token under **Settings → Access tokens** (`rw` to act, `ro` to watch),

@@ -26,6 +26,8 @@ const HEADROOM_CEILING = 37_000;
 // One sentence a tool: past this, a description is a paragraph and belongs in
 // docs/MCP.md, which keeps the detail.
 const DESCRIPTION_CEILING = 120;
+// No argument description is longer than this.
+const PROPERTY_MAX = 60;
 
 let dataDir: string;
 let app: App;
@@ -70,8 +72,25 @@ test("tools/list stays under 40 KB, with 3 KB of headroom (37,000 bytes)", async
   const tools = (JSON.parse(text) as any).result.tools as {
     name: string;
     description: string;
+    inputSchema: unknown;
     annotations?: { readOnlyHint?: boolean };
   }[];
+  // The argument words are short; the detail lives in docs/MCP.md.
+  const long: string[] = [];
+  const walk = (tool: string, node: any, path: string): void => {
+    if (!node || typeof node !== "object") return;
+    for (const [k, v] of Object.entries<any>(node.properties ?? {})) {
+      if (typeof v?.description === "string" && Buffer.byteLength(v.description) > PROPERTY_MAX)
+        long.push(`${tool}.${path}${k} (${Buffer.byteLength(v.description)} bytes)`);
+      walk(tool, v, `${path}${k}.`);
+    }
+    walk(tool, node.items, path);
+  };
+  for (const t of tools) walk(t.name, t.inputSchema, "");
+  expect(long, `property descriptions over ${PROPERTY_MAX} bytes`).toEqual([]);
+  expect(bytes, "the argument descriptions were cut by 1,000 bytes").toBeLessThanOrEqual(
+    36_400,
+  );
   // readOnlyHint defaults to false; spelling the default out on every write
   // tool cost 2 KB, so only a read tool carries annotations.
   expect(tools.filter((t) => t.annotations?.readOnlyHint === false).map((t) => t.name)).toEqual([]);
