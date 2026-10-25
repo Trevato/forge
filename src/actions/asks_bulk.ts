@@ -23,6 +23,7 @@ import {
   type FleetError,
   type Plan,
 } from "./fleet.ts";
+import { SIGN_IN_TO_ACT } from "./asks_words.ts";
 
 /**
  * What a bulk action on asks may be: the fleet verb each one is. Decline is
@@ -59,7 +60,7 @@ function resolve(
   if (!actor)
     return err({
       code: "unauthorized",
-      message: "sign in to act on your asks",
+      message: SIGN_IN_TO_ACT,
     });
   const verb =
     typeof action === "string" && Object.hasOwn(ASK_ACTIONS, action)
