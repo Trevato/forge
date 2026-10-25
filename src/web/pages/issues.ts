@@ -13,6 +13,7 @@ import {
 import type { Issue } from "../../core/issues.ts";
 import { canRead, type Repo } from "../../core/repos.ts";
 import { privateRepoForSealed } from "../../actions/repos.ts";
+import { BODY_TOO_LONG, TITLE_TOO_LONG } from "../../actions/thread_limits_words.ts";
 import { COMMENT_EMPTY, COMMENT_NOT_POSTED } from "../../actions/comment_words.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -196,9 +197,9 @@ export async function newIssueSubmit(ctx: Ctx): Promise<Response> {
       (created.error === "empty_title"
         ? "An issue needs a title."
         : created.error === "title_too_long"
-          ? "That title is too long (256 characters at most)."
+          ? TITLE_TOO_LONG
           : created.error === "body_too_long"
-            ? "That description is too long (64 KB at most)."
+            ? BODY_TOO_LONG
             : "You cannot open an issue here.");
     return composePage(ctx, repo, values, message);
   }
