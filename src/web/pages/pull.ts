@@ -21,6 +21,7 @@ import {
   submitReview,
   approveToRun,
 } from "../../actions/pulls.ts";
+import { CHECK_ASKED } from "../../actions/pull_ask_words.ts";
 import { reviewWords } from "../../actions/review_words.ts";
 import { readFileAt } from "../../apps/checkout.ts";
 import { parseCheck } from "../../apps/manifest.ts";
@@ -1291,7 +1292,7 @@ export async function pullChecksSubmit(ctx: Ctx): Promise<Response> {
     ctx,
     dest,
     asked.ok
-      ? { message: "Check asked for at the current head." }
+      ? { message: CHECK_ASKED }
       : { tone: "danger", message: `No check was asked for: ${asked.message}.` },
   );
 }
