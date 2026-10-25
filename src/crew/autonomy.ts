@@ -14,6 +14,7 @@
 
 import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
+import { ceilingReached, forgeCeiling } from "../flow/ceiling.ts";
 import {
   addComment,
   assignIssue,
@@ -279,7 +280,7 @@ export function autonomyStatus(
 ): AutonomyStatus {
   const spent = spentToday(app.db, repo.id, now);
   const crew = listCrewRoles(app.db, repo.id);
-  const forgeCap = app.config.crewCeilingUsd;
+  const forgeCap = forgeCeiling(app.config);
   const paused: Paused | null =
     repo.autonomy === "off"
       ? null
@@ -289,8 +290,7 @@ export function autonomyStatus(
           ? "no crew"
           : spent >= repo.autonomyCeilingUsd
             ? "ceiling"
-            : forgeCap !== undefined &&
-                spentTodayEverywhere(app.db, now) >= forgeCap
+            : ceilingReached(spentTodayEverywhere(app.db, now), forgeCap)
               ? "forge ceiling"
               : null;
   const tomorrow = startOfTodayUtc(now);

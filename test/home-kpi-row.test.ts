@@ -141,7 +141,7 @@ describe("the terminal's figures", () => {
     expect(lines).toHaveLength(9);
     expect(lines).toContain("Last off-box backup never, overdue");
     expect(lines[4]).toBe("Crew spend today $12 of $40");
-    expect(kpiLines({ ...k, spend: { todayUsd: 0.4, ceilingUsd: null } }, null)[4]).toBe("Crew spend today $0.40, no ceiling");
+    expect(kpiLines({ ...k, spend: { todayUsd: 0.4, ceilingUsd: null } }, null)[4]).toBe("Crew spend today $0.40, no forge ceiling");
     expect(lines[3]).toBe("Builders running 2 of 4");
     expect(kpiLines({ ...k, builders: { running: 0, slots: 0 } }, null)[3]).toBe("Builders running —, no slots set");
     expect(lines[0]).toContain("Shipped per hour 0.3");
@@ -164,8 +164,8 @@ describe("the spend tile", () => {
   test("shows today's spend of the ceiling, the cents in the title, linking to the crew page", () => {
     const out = row({ todayUsd: 12.34, ceilingUsd: 40 });
     expect(out).toContain('class="stat-value num" title="$12.34 of $40.00">$12 of $40<');
-    expect(out).toContain('aria-label="Crew spend today: $12.34 of $40.00, Crew spend today (UTC), of the daily ceiling"');
-    expect(out).toContain(">of the daily ceiling<");
+    expect(out).toContain('aria-label="Crew spend today: $12.34 of $40.00, Crew spend today (UTC), of the forge ceiling"');
+    expect(out).toContain(">of the forge ceiling<");
   });
 
   test("a small spend shows cents, not $0", () => {
@@ -175,7 +175,7 @@ describe("the spend tile", () => {
   test("without a ceiling it shows the spend alone and says no ceiling", () => {
     const out = row({ todayUsd: 12.34, ceilingUsd: null });
     expect(out).toContain('title="$12.34">$12<');
-    expect(out).toContain(">no ceiling<");
+    expect(out).toContain(">no forge ceiling<");
     expect(out).not.toContain(" of $");
   });
 });
@@ -196,8 +196,8 @@ describe("the spend figure from the database", () => {
         ('1','agent',5,'2026-10-19T00:00:00.000Z'), ('2','agent',7.5,'2026-10-19T14:00:00.000Z'),
         ('3','agent',100,'2026-10-18T23:59:59.000Z'), ('4','check',9,'2026-10-19T10:00:00.000Z')`,
     );
-    expect(readKpis(db, now, { ceilingUsd: 40 }).spend).toEqual({ todayUsd: 12.5, ceilingUsd: 40 });
-    expect(readKpis(db, now).spend).toEqual({ todayUsd: 12.5, ceilingUsd: null });
+    expect(readKpis(db, now, { ceilingUsd: 40 }).spend).toEqual({ todayUsd: 12.5, ceilingUsd: 40, hitAt: null });
+    expect(readKpis(db, now).spend).toEqual({ todayUsd: 12.5, ceilingUsd: null, hitAt: null });
   });
 });
 
@@ -397,4 +397,40 @@ describe("home waiting line", () => {
     expect(body).not.toContain("waiting on you");
     expect(body).not.toContain('href="/review"');
   }, 30_000);
+});
+
+describe("the forge ceiling hit (#5798)", () => {
+  const base = { landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: NO_REACH, medianCheckMs: null, builders: { running: 0, slots: 0 } };
+  const over = { todayUsd: 601, ceilingUsd: 600, hitAt: "2026-10-25T14:03:20.000Z" };
+
+  test("past the cap the tile is attention-toned and names the time; the terminal says the same words", () => {
+    const out = kpiRowFor({ ...base, spend: over }, null).toString();
+    expect(out).toContain("ceiling hit 14:03Z, builders idle");
+    expect(out).toContain("attn");
+    expect(kpiLines({ ...base, spend: over }, null)[4]).toBe("Crew spend today $601 of $600, ceiling hit 14:03Z, builders idle");
+  });
+
+  test("under the cap there is no hit; with no cap both doors say no forge ceiling", () => {
+    expect(kpiRowFor({ ...base, spend: { todayUsd: 5, ceilingUsd: 600, hitAt: null } }, null).toString()).not.toContain("ceiling hit");
+    expect(kpiRowFor({ ...base, spend: { todayUsd: 5, ceilingUsd: null } }, null).toString()).toContain("no forge ceiling");
+    expect(kpiLines({ ...base, spend: { todayUsd: 5, ceilingUsd: null } }, null)[4]).toContain("no forge ceiling");
+  });
+
+  test("the hit time is when the run that crossed the cap was created", async () => {
+    const { readKpis } = await import("../src/flow/kpis.ts");
+    const db = new Database(":memory:");
+    db.run("CREATE TABLE repo (autonomy TEXT, autonomy_slots INTEGER, default_branch TEXT, id TEXT)");
+    db.run("CREATE TABLE run (id TEXT, kind TEXT, state TEXT, started_at TEXT, finished_at TEXT, serving_at TEXT, env TEXT, commit_oid TEXT, cost_usd REAL, created_at TEXT)");
+    db.run("CREATE TABLE pull (merged_at TEXT, merged_oid TEXT, base_oid TEXT, base_branch TEXT, issue_id TEXT)");
+    db.run("CREATE TABLE issue (id TEXT, repo_id TEXT)");
+    reachTables(db);
+    db.run(
+      `INSERT INTO run (id, kind, cost_usd, created_at) VALUES
+        ('a','agent',300,'2026-10-25T10:00:00.000Z'), ('b','agent',300,'2026-10-25T12:30:00.000Z'), ('c','agent',1,'2026-10-25T15:00:00.000Z')`,
+    );
+    const now = new Date("2026-10-25T20:00:00Z");
+    expect(readKpis(db, now, { ceilingUsd: 600 }).spend.hitAt).toBe("2026-10-25T12:30:00.000Z");
+    expect(readKpis(db, now, { ceilingUsd: 700 }).spend.hitAt).toBeNull();
+    expect(readKpis(db, now).spend.hitAt).toBeNull();
+  });
 });

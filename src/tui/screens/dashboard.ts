@@ -97,6 +97,7 @@ import { issueScreen } from "./issue.ts";
 import { listPinned } from "../../actions/board-pins.ts";
 import { migrateScreen } from "./migrate.ts";
 import { newRepoScreen } from "./newrepo.ts";
+import { forgeCeiling } from "../../flow/ceiling.ts";
 import { pullScreen } from "./pull.ts";
 import { repoScreen } from "./repo.ts";
 import { local } from "./where.ts";
@@ -107,7 +108,7 @@ const FIGURES_ROOM = 6;
 
 /** The forge-wide daily ceiling, from config, for the spend figure; the data directory, for the backup's age. */
 export const kpiForge = (app: { config: { crewCeilingUsd?: number; dataDir: string } }) => ({
-  ceilingUsd: app.config.crewCeilingUsd ?? null,
+  ceilingUsd: forgeCeiling(app.config),
   dataDir: app.config.dataDir,
 });
 

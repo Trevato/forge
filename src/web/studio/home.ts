@@ -6,6 +6,7 @@
  * best of what is public (`actions/front.ts`).
  */
 
+import { forgeCeiling } from "../../flow/ceiling.ts";
 import { liveLine } from "../pages/releases.ts";
 import {
   frontPage,
@@ -253,8 +254,8 @@ export async function studioHome(
   const rendering = performance.now();
   const ask = firstSteps ?? everydayCard(ctx, user);
   const figures = user.isAdmin && steps === undefined;
-  const ceilingUsd = ctx.app.config.crewCeilingUsd;
-  const kpiOpts = { dataDir: ctx.app.config.dataDir, ...(ceilingUsd === undefined ? {} : { ceilingUsd }) };
+  const ceilingUsd = forgeCeiling(ctx.app.config);
+  const kpiOpts = { dataDir: ctx.app.config.dataDir, ...(ceilingUsd === null ? {} : { ceilingUsd }) };
   const body = html`<h1 class="sr-only">Home</h1>
     ${ask} ${address} ${figures
       ? timePhase(ctx.request, "kpis", () => kpiRow(ctx.app.db, kpiOpts), () => kpiCache(ctx.app.db))

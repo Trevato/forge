@@ -8,7 +8,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { backupAge, backupFull, backupOverdue, buildersValue, checkTime, reactNote, speedWords, spendFull, spendValue, usersValue, visitorsNote, visitorsValue, waitingWords } from "../../flow/kpi_words.ts";
+import { backupAge, backupFull, backupOverdue, buildersValue, checkTime, reactNote, speedWords, spendCeilingWords, spendFull, spendValue, usersValue, visitorsNote, visitorsValue, waitingWords } from "../../flow/kpi_words.ts";
 import type { Kpis } from "../../flow/kpis.ts";
 import { cachedKpis, cachedWaiting } from "./home_cache.ts";
 import { escapeHtml, html, raw, type Html } from "../html.ts";
@@ -91,6 +91,7 @@ export function liveNow(): { sha: string; at: string } | null {
 
 export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null, now: Date = new Date()): Html {
   const overdue = backupOverdue(k.backupAt, now);
+  const spendWords = spendCeilingWords(k.spend);
   const rate = k.landed / k.landedHours.length;
   return html`<section class="stats mb" aria-label="The last 24 hours, as of this page load">
     ${tile(
@@ -131,8 +132,10 @@ export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null, now
       "/settings/crew",
       spendValue(k.spend),
       spendFull(k.spend),
-      k.spend.ceilingUsd === null ? "no ceiling" : "of the daily ceiling",
-      k.spend.ceilingUsd === null ? "No daily ceiling is set" : "Crew spend today (UTC), of the daily ceiling",
+      spendWords.note,
+      spendWords.title,
+      null,
+      spendWords.attn ? "attn" : null,
     )}
     ${tile(
       "Last off-box backup",
