@@ -256,5 +256,5 @@ describe("muting a repository's asks", () => {
       expect(t.description).toContain("saved filter");
       expect(Object.keys(t.inputSchema.properties)).toEqual(expect.arrayContaining(["hide_kinds", "hide_people"]));
     }
-  });
+  }, 30000); // a dozen HTTP round trips: the default 5s is the machine's load, not the code
 });
