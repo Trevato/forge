@@ -10,6 +10,7 @@
 import type { Database } from "bun:sqlite";
 import { mergePull, submitReview } from "../../actions/pulls.ts";
 import { addCommentThrough, setIssueStateThrough } from "../../actions/issues.ts";
+import { reviewWords } from "../../actions/review_words.ts";
 import { getIssue } from "../../core/issues.ts";
 import { getPull } from "../../core/pulls.ts";
 import { canRead, getRepo, listReposVisibleTo } from "../../core/repos.ts";
@@ -124,9 +125,9 @@ export async function reviewAct(ctx: Ctx): Promise<Response> {
       return refuse(
         originError(reviewed.error) ??
           (reviewed.error === "forbidden"
-            ? "A verdict that gates a merge needs write access."
+            ? reviewWords.forbidden
             : reviewed.error === "body_too_long"
-              ? "That review is too long (64 KB at most)."
+              ? reviewWords.tooLong
               : "That review could not be recorded."),
       );
     done = "Changes requested.";

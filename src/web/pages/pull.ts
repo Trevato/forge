@@ -19,6 +19,7 @@ import {
   submitReview,
   approveToRun,
 } from "../../actions/pulls.ts";
+import { reviewWords } from "../../actions/review_words.ts";
 import { readFileAt } from "../../apps/checkout.ts";
 import { parseCheck } from "../../apps/manifest.ts";
 import { tierLine, type TierState } from "../../checks/tiers.ts";
@@ -738,15 +739,14 @@ function reviewCard(ctx: Ctx, repo: Repo, pull: Pull, action: string): Html {
           isAuthor,
           () =>
             html`<span class="muted small"
-              >${icon("alert")} You cannot approve your own pull request.</span
+              >${icon("alert")} ${reviewWords.selfReview}</span
             >`,
         )}
         ${when(
           !writer,
           () =>
             html`<span class="muted small"
-              >${icon("alert")} A verdict that gates a merge needs write
-              access.</span
+              >${icon("alert")} ${reviewWords.forbidden}</span
             >`,
         )}
         <span class="spacer"></span>
@@ -1160,7 +1160,7 @@ export async function pullApproveHereSubmit(ctx: Ctx): Promise<Response> {
         done.error === "forbidden" || done.error === "unauthorized"
           ? "Only a person with write access can approve code to run here."
           : done.error === "self_review"
-            ? "You cannot approve your own pull request."
+            ? reviewWords.selfReview
             : done.error === "not_open"
               ? "That pull request is closed."
               : done.error === "not_foreign"
@@ -1215,11 +1215,11 @@ export async function pullReviewStateSubmit(ctx: Ctx): Promise<Response> {
       message:
         originError(error) ??
         (error === "self_review"
-          ? "You cannot approve your own pull request."
+          ? reviewWords.selfReview
           : error === "forbidden"
-            ? "A verdict that gates a merge needs write access. You can still leave a comment."
+            ? `${reviewWords.forbidden} You can still leave a comment.`
             : error === "body_too_long"
-              ? "That review is too long (64 KB at most)."
+              ? reviewWords.tooLong
               : error === "invalid_state"
                 ? "That is not a verdict this forge knows."
                 : "That review could not be recorded."),

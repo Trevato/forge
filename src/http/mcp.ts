@@ -77,6 +77,7 @@ import {
   submitReview,
 } from "../actions/pulls.ts";
 import { originError } from "../web/pages/thread.ts";
+import { reviewWords } from "../actions/review_words.ts";
 import { holdPull, releasePull } from "../actions/holds.ts";
 import { openPlan, parsePlan, PLAN_MAX, proposePlan } from "../actions/plan.ts";
 import {
@@ -3556,11 +3557,11 @@ const TOOLS: readonly Tool[] = [
           "refused",
           originError(error) ??
             (error === "self_review"
-              ? "You cannot approve your own pull request."
+              ? reviewWords.selfReview
               : error === "forbidden"
-                ? "A verdict that gates a merge needs write access."
+                ? reviewWords.forbidden
                 : error === "body_too_long"
-                  ? "That review is too long (64 KB at most)."
+                  ? reviewWords.tooLong
                   : "That review could not be recorded."),
         );
       }
