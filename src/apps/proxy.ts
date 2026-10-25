@@ -39,6 +39,7 @@ import { crewNow, tellLink } from "./crew.ts";
 import { feedback, mintProof } from "./feedback.ts";
 import { clientBucket } from "../http/peer.ts";
 import { doorPage } from "./door.ts";
+import { takePhases, timePhase } from "../core/route_timing.ts";
 import { notFound } from "../http/respond.ts";
 import { appMeasure } from "./measure.ts";
 import { holdPortRequest, holdPortSocket } from "./handoff.ts";
@@ -375,6 +376,17 @@ function sealedPull(runtime: AppsRuntime, target: AppTarget): Issue | undefined 
   return pull?.sealed === true ? pull : undefined;
 }
 
+/** The response with the phases the request named, as `Server-Timing`. */
+function withPhases(request: Request, res: Response): Response {
+  const phases = takePhases(request);
+  if (phases.length > 0)
+    res.headers.set(
+      "server-timing",
+      phases.map((p) => `${p.name};dur=${p.ms.toFixed(1)}`).join(", "),
+    );
+  return res;
+}
+
 /**
  * What the pill says: the app, the environment and, for a preview, the pull
  * and its title. The title goes only to a viewer who may read the pull.
@@ -578,17 +590,19 @@ export async function proxyApp(
   // The pill's fourth door: who of the crew is working on this app now,
   // for the person the app's own grant names, read once as the pill opens.
   if (url.pathname === "/__forge/crew" && !target.nested) {
-    const cookie = cookieValue(request, grantCookieName(target));
-    const signed =
-      cookie === undefined
+    const signed = timePhase(request, "session", () => {
+      const cookie = cookieValue(request, grantCookieName(target));
+      return cookie === undefined
         ? undefined
         : readGrant(runtime.app.config.dataDir, cookie, target);
+    });
     const crew = crewNow(
       runtime.app.db,
       runtime.options.forgeUrl,
       target.app,
       target.env,
       signed?.who?.id,
+      request,
     );
     const tell = tellLink(
       runtime.app.db,
@@ -596,12 +610,19 @@ export async function proxyApp(
       target.app,
       signed?.who?.id,
     );
-    return Response.json({ ...crew, ...(tell === undefined ? {} : { tell }) }, {
-      headers: {
-        "cache-control": "no-store",
-        "x-content-type-options": "nosniff",
-      },
-    });
+    const body = timePhase(request, "render", () =>
+      JSON.stringify({ ...crew, ...(tell === undefined ? {} : { tell }) }),
+    );
+    return withPhases(
+      request,
+      new Response(body, {
+        headers: {
+          "content-type": "application/json;charset=utf-8",
+          "cache-control": "no-store",
+          "x-content-type-options": "nosniff",
+        },
+      }),
+    );
   }
   // The forge's small page on the app's own host: the way back when the pill
   // is not shown. A nested host is its guest's, and has no such page.
@@ -612,25 +633,34 @@ export async function proxyApp(
         status: 405,
         headers: { allow: "GET, HEAD", "x-content-type-options": "nosniff" },
       });
-    const cookie = cookieValue(request, grantCookieName(target));
-    const signed =
-      cookie === undefined
+    const signed = timePhase(request, "session", () => {
+      const cookie = cookieValue(request, grantCookieName(target));
+      return cookie === undefined
         ? undefined
         : readGrant(runtime.app.config.dataDir, cookie, target);
-    const tell = tellLink(
-      runtime.app.db,
-      runtime.options.forgeUrl,
-      target.app,
-      signed?.who?.id,
+    });
+    const tell = timePhase(request, "app", () =>
+      tellLink(
+        runtime.app.db,
+        runtime.options.forgeUrl,
+        target.app,
+        signed?.who?.id,
+      ),
     );
-    return doorPage(
-      {
-        where: pillWhere(runtime, target, signed?.who),
-        forgeUrl: runtime.options.forgeUrl,
-        ...(tell === undefined ? { signin: "/__forge/signin" } : { tell }),
-      },
-      request.method === "HEAD",
+    const where = timePhase(request, "pull", () =>
+      pillWhere(runtime, target, signed?.who),
     );
+    const page = timePhase(request, "render", () =>
+      doorPage(
+        {
+          where,
+          forgeUrl: runtime.options.forgeUrl,
+          ...(tell === undefined ? { signin: "/__forge/signin" } : { tell }),
+        },
+        request.method === "HEAD",
+      ),
+    );
+    return withPhases(request, page);
   }
   // The third door: a problem report, answered without waking or even
   // reaching the app — the app being down is the usual reason to ask. The

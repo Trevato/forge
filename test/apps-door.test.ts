@@ -165,3 +165,54 @@ test("HEAD answers the headers with no body; POST is a 405 that says what is all
   expect(post.headers.get("allow")).toBe("GET, HEAD");
   expect(post.headers.get("x-content-type-options")).toBe("nosniff");
 });
+
+const phasesOf = async (host: string, path: string, cookie?: string) => {
+  let header = "";
+  for (let i = 0; i < 2; i++) {
+    const res = await fetch(`${servers.url}${path}`, {
+      headers: { host, ...(cookie === undefined ? {} : { cookie }) },
+    });
+    expect(res.status).toBe(200);
+    await res.text();
+    header = res.headers.get("server-timing") ?? "";
+  }
+  return new Map(
+    header.split(", ").map((p) => {
+      const [name, dur] = p.split(";dur=");
+      return [name!, Number(dur)] as const;
+    }),
+  );
+};
+
+test("the door and the crew line name the phases they read, signed in, on production and a preview", async () => {
+  const who = { id: alice, name: "alice", role: "admin" } as const;
+  const name = `forge_grant_${record.id.slice(-8)}`;
+  const grantFor = (env: string) =>
+    `${name}=${signGrant(dataDir, { app: record, env } as AppTarget, 60_000, Date.now(), who)}`;
+  const hosts: [string, string][] = [
+    [`notes.${DOMAIN}`, grantFor("production")],
+    [`notes--${pull}.${DOMAIN}`, grantFor(`pull-${pull}`)],
+  ];
+  const reads: Record<string, string[]> = {
+    "/__forge/": ["session", "app", "pull", "render"],
+    "/__forge/crew": ["session", "app", "pull", "working", "render"],
+  };
+  for (const [host, cookie] of hosts)
+    for (const [path, names] of Object.entries(reads)) {
+      const phases = await phasesOf(host, path, cookie);
+      expect([...phases.keys()].sort()).toEqual([...names].sort());
+      for (const ms of phases.values()) expect(Number.isFinite(ms)).toBe(true);
+    }
+});
+
+test("a guest names session and render, and the crew line stops before the reads it never makes", async () => {
+  for (const host of [`notes.${DOMAIN}`, `notes--${pull}.${DOMAIN}`]) {
+    // No cookie: the crew line has no viewer, so no app, pull or working read.
+    const crew = await phasesOf(host, "/__forge/crew");
+    expect([...crew.keys()].sort()).toEqual(["render", "session"]);
+    for (const ms of crew.values()) expect(Number.isFinite(ms)).toBe(true);
+    // The door still looks the app and pull up for its words.
+    const page = await phasesOf(host, "/__forge/");
+    expect([...page.keys()].sort()).toEqual(["app", "pull", "render", "session"]);
+  }
+});

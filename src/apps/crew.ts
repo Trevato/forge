@@ -9,6 +9,7 @@
 import type { Database } from "bun:sqlite";
 import type { AppRecord } from "../core/apps.ts";
 import { mayDirectCrew } from "../crew/direct.ts";
+import { timePhase } from "../core/route_timing.ts";
 import { getIssue } from "../core/issues.ts";
 import { canRead, getRepoById } from "../core/repos.ts";
 import { workingAgentRuns } from "../core/runs.ts";
@@ -23,22 +24,35 @@ export function crewNow(
   app: AppRecord,
   env: string,
   viewerId: string | undefined,
+  /** When given, the reads are named on it: `app`, `pull`, `working`. */
+  request?: Request,
 ): CrewNow | undefined {
+  const phase = <T>(name: string, work: () => T): T =>
+    request === undefined ? work() : timePhase(request, name, work);
   if (viewerId === undefined) return undefined;
-  const viewer = getUserById(db, viewerId);
-  const repo = getRepoById(db, app.repoId);
-  if (viewer === undefined || !isActive(viewer) || repo === undefined) return undefined;
-  if (!canRead(db, repo, viewer)) return undefined;
+  const seen = phase("app", () => {
+    const viewer = getUserById(db, viewerId);
+    const repo = getRepoById(db, app.repoId);
+    if (viewer === undefined || !isActive(viewer) || repo === undefined) return undefined;
+    if (!canRead(db, repo, viewer)) return undefined;
+    return { viewer, repo };
+  });
+  if (seen === undefined) return undefined;
+  const { viewer, repo } = seen;
   const number = /^pull-(\d+)$/.exec(env)?.[1];
-  let issueId: string | undefined;
-  if (number !== undefined) {
+  if (number === undefined && env !== "production") return undefined;
+  const pulled = phase("pull", () => {
+    if (number === undefined) return { issueId: undefined };
     const pull = getIssue(db, repo.id, Number(number));
     if (pull === undefined || !mayView(db, repo, pull, viewer)) return undefined;
-    issueId = pull.id;
-  } else if (env !== "production") return undefined;
+    return { issueId: pull.id as string | undefined };
+  });
+  if (pulled === undefined) return undefined;
   // A run on a sealed issue is not the viewer's to know of.
-  const run = workingAgentRuns(db, repo.id, issueId).find((r) =>
-    mayViewId(db, repo, r.issueId, viewer),
+  const run = phase("working", () =>
+    workingAgentRuns(db, repo.id, pulled.issueId).find((r) =>
+      mayViewId(db, repo, r.issueId, viewer),
+    ),
   );
   if (run === undefined) return undefined;
   const actor = run.actorId === null ? undefined : getUserById(db, run.actorId);
