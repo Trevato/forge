@@ -96,6 +96,7 @@ import { pageTitle } from "../studio/nouns.ts";
 import { appHref } from "./apps.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
+import { DELETE_REPO, STOP_APP } from "../danger_words.ts";
 import { icon } from "../icons.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import type { Flash } from "../flash.ts";
@@ -734,13 +735,13 @@ function appSettingsView(
           <div class="form-actions">
             ${confirmAction({
               action: `${base}/settings/app/disable`,
-              verb: "Stop running as an app",
+              verb: STOP_APP,
             })}
           </div>`,
         {
           tone: "danger",
           head: html`${icon("alert")}
-            <h2>Stop running as an app</h2>`,
+            <h2>${STOP_APP}</h2>`,
         },
       )}
     </div>`;
@@ -2082,13 +2083,13 @@ export function dangerPage(ctx: Ctx): Response {
       <div class="form-actions">
         ${confirmAction({
           action: `${base}/settings/delete`,
-          verb: "Delete this repository",
+          verb: DELETE_REPO,
         })}
       </div>`,
     {
       tone: "danger",
       head: html`${icon("alert")}
-        <h2>Delete this repository</h2>`,
+        <h2>${DELETE_REPO}</h2>`,
     },
   );
   const response = settingsPageResponse(ctx, repo, "danger", "Danger zone", body);
