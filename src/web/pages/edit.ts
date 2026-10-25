@@ -31,6 +31,7 @@ import { highlightToHtml } from "../highlight-html.ts";
 import { loadRepo, notFoundPage, pageHead, signInFirst } from "../chrome.ts";
 import { field as formValue, readForm, type Form } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
+import { TOO_LARGE_TO_EDIT } from "../edit_words.ts";
 import { flashTo, fragment, page } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
 import {
@@ -617,7 +618,7 @@ export async function editPage(ctx: Ctx): Promise<Response> {
         message:
           blob.value.kind === "binary"
             ? "That file is binary — edit it with git, not a textarea."
-            : "That file is too large to edit here.",
+            : TOO_LARGE_TO_EDIT,
       },
     );
   }

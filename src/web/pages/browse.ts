@@ -45,6 +45,7 @@ import { commentCard } from "../comments.ts";
 import { renderDiff } from "../diff-view.ts";
 import { readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
+import { TOO_LARGE_TO_EDIT } from "../edit_words.ts";
 import { flashTo, fragment, page, redirect } from "../layout.ts";
 import { codeJs, mirrorJs } from "../client.ts";
 import { json, notFound } from "../../http/respond.ts";
@@ -887,7 +888,7 @@ export async function browseEditPage(ctx: Ctx): Promise<Response> {
         message:
           blob.value.kind === "binary"
             ? "That file is binary — propose it with git, not a textarea."
-            : "That file is too large to edit here.",
+            : TOO_LARGE_TO_EDIT,
       },
     );
   return editorPage(

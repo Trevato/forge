@@ -56,6 +56,7 @@ import type { Ctx } from "../../http/context.ts";
 import { commentCard } from "../comments.ts";
 import { backTo, field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
+import { NOT_CHANGED } from "../edit_words.ts";
 import { flashOrJson, flashTo } from "../layout.ts";
 import {
   btn,
@@ -821,7 +822,7 @@ export async function stateSubmit(
         ? merged
         : changed.error === "forbidden"
           ? "Only the author or someone with write access can do that."
-          : "That could not be changed.");
+          : NOT_CHANGED);
     return flashOrJson(ctx, dest, { tone: "danger", message });
   }
   return flashOrJson(ctx, dest, {
@@ -858,7 +859,7 @@ export async function wordsSubmit(
             ? `A title is at most ${MAX_TITLE} characters.`
             : edited.error === "body_too_long"
               ? "That description is too long."
-              : "That could not be changed.");
+              : NOT_CHANGED);
     return flashOrJson(ctx, dest, { tone: "danger", message });
   }
   return flashOrJson(ctx, dest, { message: "Saved." });
@@ -947,7 +948,7 @@ export async function teamsSubmit(ctx: Ctx): Promise<Response> {
   const chosen = form.getAll("teams").filter((v): v is string => typeof v === "string");
   const set = nameTeams(ctx.app, ctx.auth.user, found.repo, found.issue, chosen);
   if (!set.ok)
-    return flashTo(ctx, dest, { tone: "danger", message: ISSUE_TEAMS_SAY[set.error] ?? "That could not be changed." });
+    return flashTo(ctx, dest, { tone: "danger", message: ISSUE_TEAMS_SAY[set.error] ?? NOT_CHANGED });
   return flashTo(ctx, dest, {
     message: set.value.length === 0 ? "Teams cleared." : `Teams set to ${set.value.join(", ")}.`,
   });

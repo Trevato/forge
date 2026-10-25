@@ -96,6 +96,7 @@ import { pageTitle } from "../studio/nouns.ts";
 import { appHref } from "./apps.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
+import { NOT_CHANGED } from "../edit_words.ts";
 import { DELETE_REPO, STOP_APP } from "../danger_words.ts";
 import { icon } from "../icons.ts";
 import { flashTo, page, redirect } from "../layout.ts";
@@ -488,7 +489,7 @@ export async function archiveSubmit(ctx: Ctx): Promise<Response> {
   if (asked !== "0" && asked !== "1")
     return flashTo(ctx, `${repoBase(repo)}/settings`, {
       tone: "danger",
-      message: "That could not be changed.",
+      message: NOT_CHANGED,
     });
   const archived = asked === "1";
   const updated = await updateRepoSettings(ctx.app, ctx.auth.user, repo, {
@@ -500,7 +501,7 @@ export async function archiveSubmit(ctx: Ctx): Promise<Response> {
     back,
     updated.ok
       ? { message: archived ? "Archived." : "Awake again." }
-      : { tone: "danger", message: "That could not be changed." },
+      : { tone: "danger", message: NOT_CHANGED },
   );
 }
 
@@ -549,14 +550,14 @@ export async function provenanceSubmit(ctx: Ctx): Promise<Response> {
   const asked = field(form, "shown");
   const back = `${repoBase(repo)}/settings`;
   if (asked !== "0" && asked !== "1")
-    return flashTo(ctx, back, { tone: "danger", message: "That could not be changed." });
+    return flashTo(ctx, back, { tone: "danger", message: NOT_CHANGED });
   const set = showProvenance(ctx.app, ctx.auth.user, repo, asked === "1");
   return flashTo(
     ctx,
     back,
     set.ok
       ? { message: set.value.shown ? "Where this came from is shown." : "Where this came from is hidden." }
-      : { tone: "danger", message: "That could not be changed." },
+      : { tone: "danger", message: NOT_CHANGED },
   );
 }
 
