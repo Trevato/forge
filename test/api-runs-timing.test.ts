@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { createRepo } from "../src/actions/repos.ts";
+import { createRun } from "../src/core/runs.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -16,6 +17,7 @@ let dataDir: string;
 let app: App;
 let servers: Servers;
 let cookie = "";
+let runId = "";
 
 const cells = process.env["FORGE_CELLS"];
 
@@ -37,6 +39,7 @@ beforeAll(async () => {
   cookie = `forge_session=${createSession(app.db, alice.id).token}`;
   const repo = await createRepo(app, alice, { name: "r", visibility: "public" });
   if (!repo.ok) throw new Error(String(repo.error));
+  runId = createRun(app.db, { repoId: repo.value.id, kind: "deploy", env: "production" }).id;
 });
 afterAll(async () => {
   await servers.stop();
@@ -64,4 +67,19 @@ test("a missing repository is a 404 naming session", async () => {
   const got = await phases("/api/v1/repos/alice/nope/runs");
   expect(got.status).toBe(404);
   expect(got.names).toEqual(["session"]);
+});
+
+test("one run's read names session, run, render in order, answer unchanged", async () => {
+  const got = await phases(`/api/v1/repos/alice/r/runs/${runId}`);
+  expect(got.status).toBe(200);
+  expect(got.names).toEqual(["session", "run", "render"]);
+  const body = JSON.parse(got.body);
+  expect(body.id).toBe(runId);
+  expect(body.carries).toEqual([]);
+});
+
+test("an unknown run is a 404 naming session, run", async () => {
+  const got = await phases("/api/v1/repos/alice/r/runs/nope");
+  expect(got.status).toBe(404);
+  expect(got.names).toEqual(["session", "run"]);
 });

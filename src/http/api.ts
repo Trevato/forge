@@ -6144,15 +6144,16 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/runs/:id", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const run = getRepoRun(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "");
-    if (!run.ok) return notFound();
-    // The merged pulls a finished production deploy carries (`core/carried.ts`).
-    return json({
-      ...run.value,
-      carries: carriedBy(ctx.app.db, run.value.id),
+    const found = timePhase(ctx.request, "run", () => {
+      const run = getRepoRun(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "");
+      // The merged pulls a finished production deploy carries (`core/carried.ts`).
+      return run.ok ? { ...run.value, carries: carriedBy(ctx.app.db, run.value.id) } : null;
     });
+    if (!found) return notFound();
+    return timePhase(ctx.request, "render", () => json(found));
   });
 
   // The log: text, or a live tail as server-sent events (`?follow=1`, or
