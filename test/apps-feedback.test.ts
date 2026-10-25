@@ -11,7 +11,6 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { newApp } from "../src/actions/apps.ts";
 import { AppsRuntime, type EnvStatus } from "../src/apps/runtime.ts";
-import { PROOF_LOST } from "../src/apps/note_words.ts";
 import { toolbarJs } from "../src/apps/toolbar.ts";
 import { filtered, moderateNote, noteClock, PER_APP_DAY, PER_SENDER, PER_SOURCE, saysFromApp } from "../src/actions/app_notes.ts";
 import { feedback, REQUEST_MAX } from "../src/apps/feedback.ts";
@@ -530,9 +529,47 @@ describe("the forge button takes notes from anyone", () => {
     expect(((await again.json()) as { name: string }).name).toBe("@alice");
   });
 
-  test("the panel says so when its proof chain breaks", () => {
-    expect(toolbarJs).toContain("broke()");
-    expect(toolbarJs).toContain(PROOF_LOST);
+  test("a refused note still hands on the next proof, and the next note goes as the person", async () => {
+    const owner = await grantedCookie(app, servers.url, alice, getAppBySlug(app.db, "notes")!);
+    const loaded = await page("notes", owner);
+    let proof = loaded.proof;
+    let limited: Response | undefined;
+    for (let i = 0; i <= PER_SENDER + 1 && limited === undefined; i++) {
+      const res = await postAs("notes", owner, proof, `chain ${i}`);
+      proof = res.headers.get("x-forge-proof") ?? undefined;
+      expect(proof).toBeTruthy();
+      if (res.status === 429) limited = res;
+    }
+    expect(limited).toBeDefined();
+    const bad = await at("notes", "/__forge/note", { method: "POST", headers: withProof(proof), body: "{" }, owner);
+    expect(bad.status).toBe(400);
+    proof = bad.headers.get("x-forge-proof") ?? undefined;
+    expect(proof).toBeTruthy();
+    const rude = await at("notes", "/__forge/note", { method: "POST", headers: withProof(proof), body: JSON.stringify({ text: "this is sh1t" }) }, owner);
+    expect(rude.status).toBe(422);
+    proof = rude.headers.get("x-forge-proof") ?? undefined;
+    expect(proof).toBeTruthy();
+    const mine = (await (await at("notes", "/__forge/notes", { headers: withProof(proof) }, owner)).json()) as { name: string };
+    expect(mine.name).toMatch(/^@/);
+  });
+
+  test("a send the network rejected is retried with the same proof and goes as the person", async () => {
+    const owner = await grantedCookie(app, servers.url, alice, getAppBySlug(app.db, "notes")!);
+    const loaded = await page("notes", owner);
+    // The first send never arrives, so the door never sees it; the panel keeps its token.
+    const retry = await postAs("notes", owner, loaded.proof, "second try");
+    expect(retry.status === 201 || retry.status === 429).toBe(true);
+    expect(retry.headers.get("x-forge-proof")).toBeTruthy();
+    if (retry.status === 201) expect(((await retry.json()) as { name: string }).name).toMatch(/^@/);
+  });
+
+  test("the panel keeps its proof unless an answer brings the next", () => {
+    const call = /function call\([\s\S]*?\n  \}\n/.exec(toolbarJs)![0];
+    expect(call).toContain("if (next) proof = next;");
+    expect(call).not.toMatch(/proof = ""/);
+    expect(call).not.toContain("broke");
+    expect(call).not.toContain("function (e)");
+    expect(toolbarJs).not.toContain("broke()");
   });
 
   test("the panel takes the proof from its tag, strips it, and sends it with each call", () => {

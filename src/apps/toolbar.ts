@@ -13,7 +13,7 @@
 
 import { staticResponse } from "../web/asset.ts";
 import { sha256 } from "../kernel/hash.ts";
-import { NOTE_EMPTY, NOTE_FAILED, PROOF_LOST } from "./note_words.ts";
+import { NOTE_EMPTY, NOTE_FAILED } from "./note_words.ts";
 
 /** The client, as plain source: no `eval`, no inline handlers. */
 export const toolbarJs = `(function () {
@@ -35,25 +35,17 @@ export const toolbarJs = `(function () {
   var proof = d.proof || "";
   if (me.removeAttribute) me.removeAttribute("data-proof");
   var queue = Promise.resolve();
-  var lost = false;
-  // The chain broke (a failed call, or an answer with no next proof): say so once, in the panel.
-  function broke() {
-    proof = "";
-    lost = true;
-    if (typeof tellSay !== "undefined") tellSay.textContent = ${JSON.stringify(PROOF_LOST)};
-  }
   // One call at a time, each carrying the proof the last answer left.
   function call(url, init) {
     var run = function () {
       init.headers = Object.assign({}, init.headers);
-      var sent = proof;
-      if (sent) init.headers["x-forge-proof"] = sent;
+      if (proof) init.headers["x-forge-proof"] = proof;
+      // Only an answer's next proof replaces the one held: a rejected fetch, or an answer that did not spend it, keeps the chain.
       return fetch(url, init).then(function (r) {
         var next = r.headers.get("x-forge-proof");
         if (next) proof = next;
-        else if (sent) broke();
         return r;
-      }, function (e) { if (sent) broke(); throw e; });
+      });
     };
     var p = queue.then(run, run);
     queue = p.catch(function () {});
