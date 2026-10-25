@@ -95,6 +95,11 @@ for a tunnel and a forge that sleeps.
 | `plan`         | `{ app, issues }`: open up to 12 linked issues, all or none (see below)                           | yes    |
 | `prompts`      | `{ repo, action, kind?, token?, at?, id? }`: list, add, run or remove an app's prompt sources (Instagram), as the `…/prompts` API does; the token goes in once and is never shown; listed only for an admin-scope token, and only the repository's admin may use it | yes    |
 | `account_suspend` | `{ username, suspended }`: suspend a person's account, or unsuspend it with `false`; their sessions and tokens stop at once; the API's rules (not yourself, another admin or an agent; not the only owner of an organization); an admin token | yes    |
+| `account_role` | `{ username, role, usdPerMonth?, dryRun? }`: make a person a `member`, or a `guest` again, with an optional starter allowance (`usdPerMonth`, 0.01 to 10000, promoting only); planned first (`dryRun` is true unless `false`) | yes    |
+| `mint_invite`  | `{ days? }`: mint a single-use invite link that expires in `days` (1–30, default 7) and is shown once; a person admin's, with an admin token | yes    |
+| `signup`       | `{ mode?, dryRun? }`: who may sign up: `open` (default), `invite` (only a person with an open invite link) or `closed` (no new accounts); without `mode` it reads the setting, with `mode` it plans first (`dryRun` is true unless `false`), and applying needs an admin token | yes    |
+| `access`       | `{ since?, ua?, path? }`: what outside agents tried: the redacted log of non-browser requests to public paths, newest first; `since` an ISO time (default a day, at most 14 days), `ua` part of the user agent, `path` a prefix; a forge admin's | yes    |
+| `whoami_can`   | no input: your role and that role's row of the roles table, each ability yes or no                |        |
 
 ### Room for a new tool
 
