@@ -205,7 +205,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .bp-h2 .chart-box { aspect-ratio: 720 / 400; }
 .bp-h3 .chart-box { aspect-ratio: 720 / 540; }
 .bgrid h2 { font-size: 14px; }
-.bmanage { display: grid; gap: 8px; }
 @media (max-width: 720px) { .bgrid { grid-template-columns: minmax(0, 1fr); } .bp-w2, .bp-w3 { grid-column: auto; } }
 /* The stacked bar chart's series colours, for its bars (fleet-graph.ts).
    Okabe–Ito, told apart with common colour-vision deficiencies; the eighth,
