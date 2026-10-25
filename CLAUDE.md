@@ -4,6 +4,12 @@ Orientation for an agent editing forge. Read this first, then `README.md` (what
 it is) and `docs/ARCHITECTURE.md` (why it's shaped this way). This file is the
 rulebook: the invariants you must not break, and how to work here.
 
+**Read docs/VISION.md first: it says what the forge is for and the order of work.**
+
+**Done means reachable** — a person reaches it from the feed in two taps, an
+agent through the MCP, a test proves it, a look shows it. A function nobody can
+call is not done.
+
 The whole point of forge is that **one person can hold it in their head**. Every
 change should leave it that way. When something fights you, step up and
 understand the system before adding code — a workaround usually means the system

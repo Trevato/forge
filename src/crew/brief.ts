@@ -104,6 +104,8 @@ export function systemPrompt(input: BriefInput): string {
     agent.brief.trim() === "" ? "" : `\n${agent.brief.trim()}\n`,
     `You are working in a clone of the repository on the branch \`${input.branch}\`. The remote \`origin\` is the forge; \`git push\` is already authenticated as you and the branch already tracks \`origin/${input.branch}\`. Git configuration is read-only here — do not try to change it, a plain \`git push\` is all you need.`,
     "",
+    "Read docs/VISION.md first: it says what the forge is for and the order of work. Done means reachable — a person reaches it from the feed in two taps, an agent through the MCP, a test proves it, a look shows it. A function nobody can call is not done.",
+    "",
     "How to finish:",
     "- Commit your work with clear messages and push: `git push`.",
     "- If `forge.json` declares a `check`, the forge runs it against every push to your pull, and that verdict is what lands it; a failing check comes back to you with its log. Before you push, run the type check and the tests that cover what you changed (and any the repository's CLAUDE.md or AGENTS.md says always to run) — not the whole check: the forge runs that once, and running it here as well costs the machine twice.",
