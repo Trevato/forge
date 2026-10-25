@@ -50,6 +50,8 @@ describe("the merge queue", () => {
   let flaky = 0;
   /** The signal the last gate was handed: the queue aborts it at the deadline. */
   let lastSignal: AbortSignal | undefined;
+  /** Called as a gate starts, before the deadline can fire on a loaded machine. */
+  let atGate: (() => void) | undefined;
 
   const git = (repo: Repo, ...args: string[]) =>
     Bun.spawnSync(["git", ...args], {
@@ -74,6 +76,7 @@ describe("the merge queue", () => {
     provideChecksForTest(app, {
       gate: async (repo: Repo, _pull: Pull, commitOid: string, signal?: AbortSignal) => {
         lastSignal = signal;
+        atGate?.();
         if (held !== undefined) await held;
         if (cutOff > 0) {
           cutOff--;
@@ -461,18 +464,19 @@ describe("the merge queue", () => {
     const warn = console.warn;
     console.warn = (line: string) => warned.push(line);
     held = new Promise<void>(() => {});
+    let words = "";
     try {
       lastSignal = undefined;
+      atGate = () => (words = queueWords(repo.id));
       const sweep = sweepGreen(app, repo);
-      // Building the candidate is git work first: wait for the gate itself.
-      for (let i = 0; i < 6000 && lastSignal === undefined; i++) await Bun.sleep(5);
-      expect(queueWords(repo.id)).toMatch(/^gating 1 pull since \d\d:\d\d$/);
       expect(await sweep).toBe(0);
     } finally {
       held = undefined;
+      atGate = undefined;
       console.warn = warn;
       restore();
     }
+    expect(words).toMatch(/^gating 1 pull since \d\d:\d\d$/);
     expect((lastSignal as AbortSignal | undefined)?.aborted).toBe(true);
     expect(warned.some((l) => l.includes("[queue] candidate abandoned") && l.includes(`#${pull.number}`))).toBe(true);
     expect(queueWords(repo.id)).toBe("idle");
