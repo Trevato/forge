@@ -422,9 +422,6 @@ the same line (#4888).
   A `.field` directly inside a `.bar` drops its bottom margin and the bar aligns to the end, so a labelled input and its button share a baseline
 - **`style/components.ts`** — parts of the §5 components that the table does not spell out — the palette's list, the menu's items, a dialog's head and foot, comments, the theme picker — and a few small helpers beside them:
   - `.cat`
-  - `.comment`
-  - `.comment-body`
-  - `.comment-form`
   - `.dialog-body`
   - `.dialog-foot`
   - `.dialog-head`
