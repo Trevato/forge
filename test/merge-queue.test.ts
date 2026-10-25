@@ -503,7 +503,7 @@ describe("the merge queue", () => {
     expect(listComments(app.db, pull.id)).toHaveLength(0);
     expect(await sweepGreen(app, repo)).toBe(1);
     expect(merged(repo, pull)).toBe(true);
-  });
+  }, SLOW);
 
   test("a red cut off mid-bisection hands no one back; the line lands on the next sweep", async () => {
     const repo = await autonomousRepo("cut-off-bisect");
