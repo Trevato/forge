@@ -5,6 +5,7 @@
  * who, when, from what to what. Anyone else gets the not-found page.
  */
 
+import { QUOTA_INVALID } from "../../actions/admin_limits_words.ts";
 import { changeLimit, listLimits } from "../../actions/limits.ts";
 import { changeQuotas, readQuotas } from "../../actions/quotas.ts";
 import { inviteLink, list as listInviteLinks, mint as mintInviteLink, revoke as revokeInviteLink } from "../../actions/invites.ts";
@@ -297,7 +298,7 @@ export async function quotasSet(ctx: Ctx): Promise<Response> {
     "/admin/limits",
     changed.ok
       ? { message: "Quotas saved." }
-      : { tone: "danger", message: "A quota is a positive whole number, or empty for no limit." },
+      : { tone: "danger", message: QUOTA_INVALID },
   );
 }
 
