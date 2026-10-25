@@ -426,8 +426,6 @@ the same line (#4888).
   - `.dialog-foot`
   - `.dialog-head`
   - `.error-note`
-  - `.field-row`
-  - `.form-actions`
   - `.ico`
   - `.ico-loader`
   - `.list`
