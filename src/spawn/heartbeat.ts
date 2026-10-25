@@ -21,6 +21,7 @@ import { beatKeyOf, listChildren } from "../actions/spawn.ts";
 import releases from "../core/releases.json" with { type: "json" };
 import { forgeLinkOf, forgeTipOf, FOLLOW_MODES, type FollowMode, type ForgeLink } from "./chain.ts";
 import { upstreamState } from "./upstream.ts";
+import { progress } from "../core/next-steps.ts";
 import { running } from "../kernel/version.ts";
 
 export const SIGNATURE_HEADER = "x-forge-signature";
@@ -34,6 +35,7 @@ export const MAX_CHILDREN = 100;
 export const MAX_DEPTH = 4;
 const NAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
 const VERSION = /^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$/;
+const ISO_TIME = /^\d{4}-\d\d-\d\dT[\d:.]{5,12}Z$/;
 const COUNT_MAX = 1_000_000;
 
 export interface Beat {
@@ -53,9 +55,17 @@ export interface Beat {
   readonly upstreamBehind?: number | null;
   /** True while a converge issue is open on the child; absent from an older child. */
   readonly conflict?: boolean;
+  /** Whether its person has claimed it; absent from an older child or when the value was bad. */
+  readonly claimed?: boolean;
+  /** Whether it has an everyday account (or chose to go without); absent likewise. */
+  readonly everyday?: boolean;
+  /** When its person last told the crew something; null before the first, absent likewise. */
+  readonly lastTellAt?: string | null;
 }
 
-const OPTIONAL = new Set(["forgeTip", "severedAt", "mode", "upstreamBehind", "conflict"]);
+const OPTIONAL = new Set([
+  "forgeTip", "severedAt", "mode", "upstreamBehind", "conflict", "claimed", "everyday", "lastTellAt",
+]);
 
 export function sign(key: string, body: string): string {
   return createHmac("sha256", key).update(body).digest("hex");
@@ -95,6 +105,15 @@ export function parseBeat(raw: string): Beat | undefined {
   if (mode !== undefined && !(typeof mode === "string" && (FOLLOW_MODES as readonly string[]).includes(mode))) return undefined;
   if (upstreamBehind !== undefined && upstreamBehind !== null && !count(upstreamBehind)) return undefined;
   if (conflict !== undefined && typeof conflict !== "boolean") return undefined;
+  // The person's first steps are only a hint: a bad value drops the field, never the beat.
+  const claimed = d["claimed"];
+  const everyday = d["everyday"];
+  const told = d["lastTellAt"];
+  const claimedOk = typeof claimed === "boolean";
+  const everydayOk = typeof everyday === "boolean";
+  // Strict ISO: it is printed into the parent admin's terminal, so nothing but digits and punctuation.
+  const toldOk =
+    told === null || (typeof told === "string" && ISO_TIME.test(told) && !Number.isNaN(Date.parse(told)));
   if (typeof name !== "string" || !NAME.test(name)) return undefined;
   if (typeof at !== "number" || !Number.isSafeInteger(at) || at <= 0) return undefined;
   if (typeof version !== "string" || !VERSION.test(version)) return undefined;
@@ -110,6 +129,9 @@ export function parseBeat(raw: string): Beat | undefined {
     ...(mode === undefined ? {} : { mode: mode as FollowMode }),
     ...(upstreamBehind === undefined ? {} : { upstreamBehind: upstreamBehind as number | null }),
     ...(conflict === undefined ? {} : { conflict }),
+    ...(claimedOk ? { claimed } : {}),
+    ...(everydayOk ? { everyday } : {}),
+    ...(told !== undefined && toldOk ? { lastTellAt: told as string | null } : {}),
   };
 }
 
@@ -122,7 +144,7 @@ export interface Heard {
   readonly receivedAt: number;
 }
 
-async function lastHeard(app: App, name: string): Promise<Heard | undefined> {
+export async function lastHeard(app: App, name: string): Promise<Heard | undefined> {
   try {
     const doc = JSON.parse(await readFile(beatPath(app, name), "utf8")) as {
       receivedAt?: unknown;
@@ -245,6 +267,7 @@ export async function sendBeat(
   const body = JSON.stringify({
     ...standing(app, link.name, lastAt),
     children: Math.min(own, COUNT_MAX),
+    ...progress(app),
     // Only a forge that carries a fork of its parent's code has these to say.
     ...(forge === undefined
       ? {}

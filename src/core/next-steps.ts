@@ -14,7 +14,7 @@ import { spawnedOrg } from "../spawn/claim.ts";
 import { adminOf, everydayOf, keptAdmin } from "./everyday.ts";
 import { listReposByOwner, type Repo } from "./repos.ts";
 import { getUserSetting, setUserSetting } from "./settings.ts";
-import type { User } from "./users.ts";
+import { getUserById, type User } from "./users.ts";
 
 export type StepKey = "everyday" | "apps" | "tell";
 
@@ -68,6 +68,35 @@ export async function nextStepsFor(
     },
     { key: "tell", title: "Tell the crew something", done: (told?.n ?? 0) > 0 },
   ];
+}
+
+/**
+ * Where this forge's person stands, for the heartbeat: claimed, whether they
+ * have an everyday account (or chose to keep working as admin), and when
+ * they last told the crew something (null before the first tell).
+ */
+export function progress(app: App): { claimed: boolean; everyday: boolean; lastTellAt: string | null } {
+  const owner = app.db
+    .query<{ id: string }, []>(
+      "SELECT id FROM user WHERE is_admin = 1 AND is_agent = 0 AND kind = 'user' ORDER BY created_at LIMIT 1",
+    )
+    .get();
+  const admin = owner === null ? undefined : getUserById(app.db, owner.id);
+  if (admin === undefined) return { claimed: false, everyday: false, lastTellAt: null };
+  const daily = everydayOf(app.db, admin);
+  const people = [admin.id, ...(daily ? [daily.id] : [])];
+  const last = app.db
+    .query<{ at: string | null }, string[]>(
+      `SELECT MAX(i.created_at) AS at FROM issue i
+       WHERE i.kind = 'issue' AND i.author_id IN (${people.map((_, n) => `?${n + 1}`).join(",")})
+         AND i.id NOT IN (SELECT direction_issue_id FROM repo WHERE direction_issue_id IS NOT NULL)`,
+    )
+    .get(...people);
+  return {
+    claimed: true,
+    everyday: daily !== undefined || keptAdmin(app.db, admin),
+    lastTellAt: last?.at ?? null,
+  };
 }
 
 /** The owner (or their everyday account) opened an app on a spawned forge: the second step is done. */

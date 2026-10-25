@@ -20,7 +20,7 @@ any URL — and it is the rest of this page.
 
 A forge this one spawned (hosted) runs the apps it was given too: its `bakery`
 answers at `bakery--<child>--<this forge's host>`, in this forge's lanes, on the
-child's own data, and `/forges` says how many are running and why any is not.
+child's own data, and `/forges` says how many are running and why any is not. Each row also ends with the first step its person has not taken (`not claimed yet`, `no everyday account yet`, `no tell yet`, or `going: last tell <time>`; `has not reported yet` before the child's first beat), read from the child's heartbeat; the terminal's forges screen and the MCP `forges` tool (`nextStep`) say the same.
 In the terminal an admin's palette offers "Forges you sent": each forge with its
 claim state and the same apps-running note, never a claim link.
 

@@ -19,7 +19,10 @@ import { createUser } from "../src/core/users.ts";
 import { commitFiles } from "../src/git/write.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { useChildFetch } from "../src/spawn/clients.ts";
+import { keepAdmin } from "../src/core/everyday.ts";
+import { getUserById } from "../src/core/users.ts";
+import { nextStepOf, useChildFetch } from "../src/spawn/clients.ts";
+import { parseBeat, sendBeat } from "../src/spawn/heartbeat.ts";
 import { firstBoot } from "../src/spawn/first-boot.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { passkeyFields } from "./helpers/passkey.ts";
@@ -205,6 +208,9 @@ describe("the client list", () => {
     expect(maria).toContain('class="row"');
     expect(maria).toContain("Send a fresh link");
     expect(lou).toContain("it did not answer just now");
+    // Neither has reported yet.
+    expect(maria).toContain("has not reported yet");
+    expect(lou).toContain("has not reported yet");
     // The claim link itself is never kept, so never shown here.
     expect(html).not.toContain(claimUrl.split("#")[1]!);
   });
@@ -262,6 +268,59 @@ describe("the client list", () => {
     expect(rows.maria.claimed).toBe(true);
     expect(typeof rows.maria.lastActivityAt).toBe("string");
     expect(rows.lou.claimed).toBeNull();
+    expect(rows.maria.nextStep.key).toBe("unreported");
+  });
+
+  test("a row ends with the first step its person has not taken, read from the child's beat", async () => {
+    const beatTo = () =>
+      sendBeat(child, (url, init) => fetch(url.replace("https://forge.test", parentServers.url), init));
+    const words = async () => {
+      const html = (await (await list(admin)).text()).replace(/\s+/g, " ");
+      const at = html.indexOf('data-forge="maria"');
+      const row = html.slice(at, html.indexOf("</li>", at));
+      return /not claimed yet|no everyday account yet|no tell yet|going: last tell|has not reported yet/.exec(row)?.[0];
+    };
+    const mariaStep = async () => {
+      const tool = (await (await mcp(adminRw)).json()) as any;
+      return JSON.parse(tool.result.content[0].text).forges.find((f: any) => f.name === "maria").nextStep;
+    };
+    // The claim made the child's person an admin; nothing else yet.
+    expect(await beatTo()).toBe(true);
+    expect(await words()).toBe("no everyday account yet");
+    expect((await mariaStep()).words).toBe("no everyday account yet");
+    const person = child.db.query<{ id: string }, []>("SELECT id FROM user WHERE is_admin = 1 AND kind = 'user' AND is_agent = 0").get()!;
+    keepAdmin(child.db, getUserById(child.db, person.id)!);
+    expect(await beatTo()).toBe(true);
+    expect(await words()).toBe("no tell yet");
+    expect((await mariaStep()).words).toBe("no tell yet");
+    const repo = child.db.query<{ id: string }, []>("SELECT id FROM repo LIMIT 1").get()!;
+    child.db
+      .query("INSERT INTO issue (id, repo_id, number, title, author_id, created_at) VALUES ('t1', ?1, 9999, 'hello', ?2, '2030-02-03T04:05:06.000Z')")
+      .run(repo.id, person.id);
+    expect(await beatTo()).toBe(true);
+    expect(await words()).toBe("going: last tell");
+    const step = await mariaStep();
+    expect(step).toMatchObject({ key: "going", lastTellAt: "2030-02-03T04:05:06.000Z" });
+    expect(step.words).toBe("going: last tell 2030-02-03T04:05:06.000Z");
+  });
+
+  test("each step in words, and a beat with a bad value loses the field, not the beat", () => {
+    const beat = (o: Record<string, unknown>) =>
+      parseBeat(JSON.stringify({ name: "maria", at: 1, version: "1.0.0", openProposals: 0, children: 0, ...o }));
+    const full = { claimed: true, everyday: true, lastTellAt: null };
+    expect(nextStepOf(null, undefined).words).toBe("has not reported yet");
+    expect(nextStepOf(false, beat({ ...full, claimed: false })).words).toBe("not claimed yet");
+    expect(nextStepOf(true, beat({ ...full, everyday: false })).words).toBe("no everyday account yet");
+    expect(nextStepOf(true, beat(full)).words).toBe("no tell yet");
+    expect(nextStepOf(true, beat({ ...full, lastTellAt: "2030-01-01T00:00:00Z" })).key).toBe("going");
+    // An older child says none of it.
+    expect(nextStepOf(true, beat({}))?.key).toBe("unreported");
+    for (const bad of [{ claimed: "yes" }, { everyday: 1 }, { lastTellAt: "soon" }, { lastTellAt: "2030-01-01T00:00:00Z (\u001b[31m)" }, { lastTellAt: "Jan 1 2030 (\u001b[31mx)" }, { lastTellAt: 5 }]) {
+      const kept = beat({ ...full, ...bad });
+      expect(kept).toBeDefined();
+      expect(kept?.name).toBe("maria");
+      expect(Object.keys(bad).every((k) => !(k in kept!))).toBe(true);
+    }
   });
 });
 

@@ -16,6 +16,7 @@ import { sha256 } from "../kernel/hash.ts";
 import type { ChildAppsSummary } from "./child-apps.ts";
 import { hostedChildApps } from "./host.ts";
 import { hasAdmin, spawnedOrg } from "./claim.ts";
+import { lastHeard, type Beat } from "./heartbeat.ts";
 
 /** What a spawned forge says about itself to anyone: nothing more. */
 export interface ForgeState {
@@ -36,6 +37,28 @@ export interface ClientRow {
   readonly lastActivityAt: string | null;
   /** The apps this parent runs for the child; null when it runs none here. */
   readonly running: ChildAppsSummary | null;
+  /** The first step its person has not taken, read from the child's heartbeat. */
+  readonly nextStep: NextStep;
+}
+
+export type NextStepKey = "unreported" | "claim" | "everyday" | "tell" | "going";
+
+export interface NextStep {
+  readonly key: NextStepKey;
+  readonly words: string;
+  /** When the person last told the crew something; set only while going. */
+  readonly lastTellAt: string | null;
+}
+
+/** The first step not yet taken, from the claim state and the child's last beat. */
+export function nextStepOf(claimed: boolean | null, beat: Beat | undefined): NextStep {
+  const known = beat?.claimed ?? claimed;
+  if (beat === undefined || known === null || beat.everyday === undefined || beat.lastTellAt === undefined)
+    return { key: "unreported", words: "has not reported yet", lastTellAt: null };
+  if (!known) return { key: "claim", words: "not claimed yet", lastTellAt: null };
+  if (!beat.everyday) return { key: "everyday", words: "no everyday account yet", lastTellAt: null };
+  if (beat.lastTellAt === null) return { key: "tell", words: "no tell yet", lastTellAt: null };
+  return { key: "going", words: `going: last tell ${beat.lastTellAt}`, lastTellAt: beat.lastTellAt };
 }
 
 type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
@@ -153,6 +176,7 @@ export async function clientRows(app: App): Promise<ClientRow[]> {
       return last.state;
     }),
   );
+  const beats = await Promise.all(children.map((c) => lastHeard(app, c.name)));
   return children
     .map((c, i) => ({
       name: c.name,
@@ -164,6 +188,7 @@ export async function clientRows(app: App): Promise<ClientRow[]> {
       claimed: states[i]?.claimed ?? null,
       lastActivityAt: states[i]?.lastActivityAt ?? null,
       running: hostedChildApps(app, c.name) ?? null,
+      nextStep: nextStepOf(states[i]?.claimed ?? null, beats[i]?.beat),
     }))
     .sort(
       (a, b) =>

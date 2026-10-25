@@ -15,7 +15,7 @@ export function forgeLines(rows: readonly ClientRow[]): [string, string][] {
   if (rows.length === 0) return [["", "You have not sent a forge yet"]];
   return rows.map((r) => [
     r.name,
-    [r.for === null ? null : `for ${r.for}`, CLAIM_WORDS[claimState(r)], runningWords(r)]
+    [r.for === null ? null : `for ${r.for}`, CLAIM_WORDS[claimState(r)], runningWords(r), r.nextStep.words]
       .filter((m): m is string => m !== null)
       .join(" · "),
   ]);

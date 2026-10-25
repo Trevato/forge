@@ -25,6 +25,7 @@ const row = (over: Partial<ClientRow>): ClientRow => ({
   claimed: false,
   lastActivityAt: null,
   running: null,
+  nextStep: { key: "unreported", words: "has not reported yet", lastTellAt: null },
   ...over,
 });
 
@@ -97,13 +98,14 @@ describe("forges you sent in the terminal", () => {
     const up = { total: 3, running: 3, notRunning: [] };
     const down = { total: 2, running: 1, notRunning: [{ slug: "notes", why: "build failed" }] };
     expect(forgeLines([row({ running: up })])).toEqual([
-      ["maria", "for Maria's bakery · Not claimed yet · 3 apps running"],
+      ["maria", "for Maria's bakery · Not claimed yet · 3 apps running · has not reported yet"],
     ]);
     expect(forgeLines([row({ claimed: true, running: down, for: null })])).toEqual([
-      ["maria", "Claimed · 1 app running · notes: build failed"],
+      ["maria", "Claimed · 1 app running · notes: build failed · has not reported yet"],
     ]);
     expect(forgeLines([row({ claimed: null })])[0]![1]).toContain("Unknown");
     expect(forgeLines([row({ made: false })])[0]![1]).toContain("Still being made");
+    expect(forgeLines([row({ nextStep: { key: "tell", words: "no tell yet", lastTellAt: null } })])[0]![1]).toContain("no tell yet");
     expect(JSON.stringify(forgeLines([row({})]))).not.toContain("http");
     expect(runningWords(row({ running: { total: 0, running: 0, notRunning: [] } }))).toBeNull();
   });

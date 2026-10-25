@@ -336,6 +336,9 @@ describe("family heartbeats", () => {
     expect(Object.keys(JSON.parse(sent[0]!.body)).sort()).toEqual([
       "at",
       "children",
+      "claimed",
+      "everyday",
+      "lastTellAt",
       "name",
       "openProposals",
       "version",

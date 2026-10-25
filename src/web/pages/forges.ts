@@ -39,6 +39,9 @@ function forgeRow(r: ClientRow): Html {
     r.lastActivityAt === null
       ? null
       : html`last activity ${time(r.lastActivityAt)}`,
+    badge(r.nextStep.key === "going" ? html`going: last tell ${time(r.nextStep.lastTellAt!)}` : r.nextStep.words, {
+      variant: "outline",
+    }),
   ].filter((m): m is Html => m !== null);
   return row({
     title: html`<a href="${r.url}">${r.name}</a>`,
