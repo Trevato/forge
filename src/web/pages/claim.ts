@@ -58,6 +58,7 @@ import { passkeyJs } from "../passkey-client.ts";
 import { passkeyNote, passkeyState } from "../passkey-state.ts";
 import { btn, card, field as formField } from "../ui.ts";
 import { sessionCookie, signinAllowed } from "./site.ts";
+import { EMAIL_TAKEN_MESSAGE } from "../../actions/signup_words.ts";
 
 const USERNAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,38}$/;
 
@@ -345,7 +346,7 @@ export async function claimSubmit(ctx: Ctx): Promise<Response> {
     unburnClaim(ctx.app.db, orgId, token);
     return again(
       made.error === "email_taken"
-        ? { email: "That email already has an account." }
+        ? { email: EMAIL_TAKEN_MESSAGE }
         : made.error === "username_reserved"
           ? { username: "That name is reserved." }
           : { username: "That username is taken." },

@@ -17,6 +17,7 @@ import { clientAddress, clientBucket } from "../../http/peer.ts";
 import { boundedBody, json, str } from "../../http/respond.ts";
 import { relying, store } from "./passkeys.ts";
 import { EDGE_NAME_MESSAGE, inviteOf, pinnedTo, safeNext, sessionCookie, signinAllowed, signupSlot } from "./site.ts";
+import { EMAIL_TAKEN_MESSAGE, INVALID_USERNAME_MESSAGE } from "../../actions/signup_words.ts";
 import { PASSKEY_EXPIRED, PASSKEY_REJECTED, PASSKEY_TAKEN } from "../passkey-words.ts";
 
 const refuse = (status: number, message: string) =>
@@ -24,10 +25,10 @@ const refuse = (status: number, message: string) =>
 
 /** The words for each way a sign-up can fail, written for anyone. */
 const WORDS: Record<string, string> = {
-  invalid_username: "Usernames are letters, digits, dots and dashes.",
+  invalid_username: INVALID_USERNAME_MESSAGE,
   username_taken: "That username is taken.",
   username_reserved: "That name is reserved.",
-  email_taken: "That email already has an account.",
+  email_taken: EMAIL_TAKEN_MESSAGE,
   invalid_email: "That does not look like an email address.",
   edge_name: EDGE_NAME_MESSAGE,
   human_check: HUMAN_CHECK_MESSAGE,

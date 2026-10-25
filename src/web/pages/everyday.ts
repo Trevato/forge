@@ -33,6 +33,7 @@ import { passkeyNote } from "../passkey-state.ts";
 import { btn, card, field as formField } from "../ui.ts";
 import { signOutHere } from "../../actions/signins.ts";
 import { sessionCookie } from "./site.ts";
+import { EMAIL_TAKEN_MESSAGE } from "../../actions/signup_words.ts";
 
 const USERNAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,38}$/;
 
@@ -193,7 +194,7 @@ export async function everydayCreate(ctx: Ctx): Promise<Response> {
       made.error === "username_taken"
         ? "That username is taken."
         : made.error === "email_taken"
-          ? "That email already has an account."
+          ? EMAIL_TAKEN_MESSAGE
           : made.error === "username_reserved"
             ? "That name is taken by the forge itself; pick another."
             : "That account could not be made.",
