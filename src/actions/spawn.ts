@@ -53,6 +53,7 @@ import { loadKey, open } from "../kernel/secret.ts";
 import { loadOrCreateHostKey } from "../ssh/keys.ts";
 import { claimLink, hasAdmin, mintClaim, spawnedOrg } from "../spawn/claim.ts";
 import { childPublicUrl, parentOrigin, type Placement } from "../spawn/placement.ts";
+import { quotaRefusal } from "../spawn/quota.ts";
 import { planSpawn, type SpawnInput, type SpawnPlan, type SpawnSource } from "../spawn/plan.ts";
 import { DEFAULT_SIZE, isSize, type Size } from "../spawn/sizes.ts";
 import { chainForChild, DEFAULT_MODE, forgeLinkOf, type FollowMode, type Hop } from "../spawn/chain.ts";
@@ -242,6 +243,8 @@ async function make(
     // A retry of an unfinished child is a new attempt: its failure has a start.
     app.bus.append({ kind: "forge.spawn.started", payload: { ...(deps.drill === true ? { drill: 1 } : {}) } });
   } else {
+    const over = quotaRefusal(app.config.dataDir, plan.size ?? DEFAULT_SIZE);
+    if (over !== undefined) return err({ kind: "refused", reason: "quota", message: over });
     const placed = await deps.placement.place(plan);
     if (!placed.ok) return err({ kind: "refused", ...placed.error });
     if (!SAFE_ID.test(placed.value.bodyId)) {

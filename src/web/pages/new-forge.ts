@@ -14,6 +14,7 @@ import { listReposVisibleTo } from "../../core/repos.ts";
 import type { User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
+import { quotaFull } from "../../spawn/quota.ts";
 import { childHost, childUrlOf, noRoom, spawnDoor, type Door } from "../../spawn/door.ts";
 import {
   LEFT_BEHIND,
@@ -101,13 +102,16 @@ function checks(
 /** What the form reads before it draws: room, then (when there is room) the repositories and the crew. */
 interface Reads {
   readonly full: string | undefined;
+  /** Why even a small forge would pass the host's child quota; the form still draws. */
+  readonly quota: string | undefined;
   readonly repos: ReturnType<typeof listReposVisibleTo>;
   readonly crew: ReturnType<typeof listAgents>;
 }
 
 function readsFor(ctx: Ctx, user: User | undefined): Reads {
   const full = timePhase(ctx.request, "room", () => noRoom(ctx.app));
-  if (full) return { full, repos: [], crew: [] };
+  if (full) return { full, quota: undefined, repos: [], crew: [] };
+  const quota = quotaFull(ctx.app.config.dataDir);
   // A stranger sees only public repositories, and no crew: nothing private
   // travels to a child they have not claimed.
   const repos = timePhase(ctx.request, "repos", () =>
@@ -117,7 +121,7 @@ function readsFor(ctx: Ctx, user: User | undefined): Reads {
     user === undefined
       ? []
       : timePhase(ctx.request, "crew", () => listAgents(ctx.app.db));
-  return { full, repos, crew };
+  return { full, quota, repos, crew };
 }
 
 /** The three sizes, the one asked for chosen (small when the value is not one of them). */
@@ -141,7 +145,7 @@ function formView(
   plan: Html | null,
   reads: Reads,
 ): Html {
-  const { full, repos, crew } = reads;
+  const { full, quota, repos, crew } = reads;
   if (full)
     return html`<div class="narrow-wide">
       ${pageHead("New forge")}
@@ -160,6 +164,7 @@ function formView(
         : "Your own forge, or one for someone else: the apps you choose, a crew, and one link to claim.",
       actions: btn("Forges you sent", { href: "/forges", size: "sm" }),
     })}
+    ${quota ? html`<p role="status" id="quota-full">This forge cannot hold another child: ${quota}.</p>` : null}
     ${errors["form"]
       ? html`<p class="error mb" role="alert">${errors["form"]}</p>`
       : null}

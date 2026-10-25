@@ -2215,3 +2215,12 @@ The here-manifest (`GET /api/v1/here?path=…`) reads the same for guests and
 members. On `/explore` and `/search` it names the page's own read, `?q=` carried
 over and encoded: `GET /api/v1/explore?q=…` (MCP tool `explore`) or
 `GET /api/v1/search?q=…` (MCP tool `search`), listed once.
+
+### Child quota
+
+`FORGE_CHILD_CPUS`, `FORGE_CHILD_MEMORY_MIB` and `FORGE_CHILD_DISK_MIB` declare
+what all children together may hold; each is the sum of the sizes in the spawn
+ledger (`spawn/sizes.ts`). **Unset means no quota.** A spawn that would pass a
+declared limit is a 409 `refused` with one sentence naming it, and the New
+forge page shows that sentence above the form when even a small forge would
+not fit (`spawn/quota.ts`).

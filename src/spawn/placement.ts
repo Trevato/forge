@@ -17,7 +17,7 @@ export interface Placed {
   readonly bodyId: string;
 }
 
-export type PlacementRefusal = { readonly reason: "children" | "depth" | "exists" | "unknown"; readonly message: string };
+export type PlacementRefusal = { readonly reason: "children" | "depth" | "exists" | "quota" | "unknown"; readonly message: string };
 
 export interface Placement {
   place(plan: SpawnPlan): Promise<Result<Placed, PlacementRefusal>>;

@@ -9,6 +9,7 @@
 
 import { DEFAULT_SIZE, SIZES, type Size } from "../../spawn/sizes.ts";
 import { childUrlOf, spawnDoor } from "../../spawn/door.ts";
+import { quotaFull } from "../../spawn/quota.ts";
 import { MAX_BUDGET_USD, MIN_BUDGET_USD } from "../../spawn/plan.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -56,6 +57,8 @@ export function newForgeScreen(f: Session, ctx: Ctx): Screen {
   let error: string | undefined;
   let plan: string[] | undefined;
   let busy = false;
+  // Said when the screen opens, before anything is typed: the host's child quota has no room even for small.
+  const quota = quotaFull(f.app.config.dataDir);
 
   const val = (k: string): string => (values[k] ?? "").trim();
 
@@ -154,8 +157,13 @@ export function newForgeScreen(f: Session, ctx: Ctx): Screen {
       binding(["enter"], "spawn (on the plan)"),
       binding(["esc"], "back"),
     ],
-    render(area, s) {
+    render(full, s) {
       const c = ctx.theme.c;
+      let area = full;
+      if (quota !== undefined) {
+        s.text(full.x, full.y, truncate(`This forge cannot hold another child: ${quota}.`, full.w), style(c.attn, c.bg), full.x + full.w);
+        area = { ...full, y: full.y + 2, h: Math.max(1, full.h - 2) };
+      }
       if (plan !== undefined) {
         s.text(area.x, area.y, truncate("The plan", area.w), style(c.accent, c.bg), area.x + area.w);
         plan.forEach((line, i) => {

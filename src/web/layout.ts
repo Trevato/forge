@@ -38,6 +38,7 @@ import { prefersJson } from "./form.ts";
 import { notePhase } from "../core/route_timing.ts";
 import { html, raw, when, type Html } from "./html.ts";
 import { noRoom } from "../spawn/door.ts";
+import { quotaFull } from "../spawn/quota.ts";
 import { icon, iconSprite, inlineIcons, themeGlyph } from "./icons.ts";
 import { btn, copyField, kbd, menu, type MenuItem } from "./ui.ts";
 
@@ -172,11 +173,13 @@ const NEW_FORGE: MenuItem = {
 
 /** The door shows to every person; with no room left it is disabled and says why. */
 const isPerson = (ctx: Ctx): boolean => ctx.auth.user?.kind === "user";
+const roomless = (ctx: Ctx): string | undefined =>
+  noRoom(ctx.app) ?? quotaFull(ctx.app.config.dataDir);
 const sendsForges = (ctx: Ctx): boolean =>
-  isPerson(ctx) && noRoom(ctx.app) === undefined;
+  isPerson(ctx) && roomless(ctx) === undefined;
 const forgeDoor = (ctx: Ctx): MenuItem[] => {
   if (!isPerson(ctx)) return [];
-  const why = noRoom(ctx.app);
+  const why = roomless(ctx);
   return [why === undefined ? NEW_FORGE : { ...NEW_FORGE, disabled: why }];
 };
 
