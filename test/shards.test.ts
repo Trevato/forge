@@ -614,7 +614,16 @@ describe("the gate audit before any shard", () => {
       stdout: "ignore",
       stderr: "ignore",
     }).exitCode;
-  const run = async (extra: string[], args: string[], drop: string[] = [], commit = false) => {
+  // `stopAt`: kill the runner once stderr carries it. The audit and the slice
+  // banner come before any bun test spawns; what runs after them is the
+  // machine's load, not the code under test.
+  const run = async (
+    extra: string[],
+    args: string[],
+    drop: string[] = [],
+    commit = false,
+    stopAt?: string,
+  ) => {
     const dir = mkdtempSync(join(tmpdir(), "forge-audit-"));
     mkdirSync(join(dir, "test"));
     for (const file of listed) if (!drop.includes(file)) writeFileSync(join(dir, file), "");
@@ -635,10 +644,15 @@ describe("the gate audit before any shard", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [out, err] = await Promise.all([
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-    ]);
+    const watch = async (stream: ReadableStream<Uint8Array>) => {
+      let text = "";
+      for await (const chunk of stream) {
+        text += new TextDecoder().decode(chunk);
+        if (stopAt !== undefined && text.includes(stopAt)) child.kill();
+      }
+      return text;
+    };
+    const [out, err] = await Promise.all([new Response(child.stdout).text(), watch(child.stderr)]);
     const code = await child.exited;
     rmSync(dir, { recursive: true, force: true });
     return { code, out, err, ms: performance.now() - started };
@@ -661,10 +675,10 @@ describe("the gate audit before any shard", () => {
     // One slice holds every file, so the count includes the new one; a shard
     // per file would outgrow the three digits a shard spec allows.
     const all = String(gateFiles().length + 1);
-    const got = await run(["test/zz-new.test.ts"], ["--gate", "--shard", "1/1"]);
+    const got = await run(["test/zz-new.test.ts"], ["--gate", "--shard", "1/1"], [], false, "matrix slice");
     expect(got.err).not.toContain("EXCLUDED");
     expect(got.out).toContain(`matrix slice 1/1 (${all} of ${all} files)`);
-    const explicit = await run(["test/zz-new.test.ts"], ["test/zz-new.test.ts"], [listed[0]!]);
+    const explicit = await run(["test/zz-new.test.ts"], ["test/zz-new.test.ts"], [listed[0]!], false, "matrix slice");
     expect(explicit.err).not.toContain("EXCLUDED");
   }, 30_000);
 
