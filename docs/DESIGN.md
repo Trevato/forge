@@ -511,7 +511,6 @@ the same line (#4888).
   - `.tok`
   - `.where-sep`
 - **`style/content.ts`, code view** — the source view and the syntax-highlight token classes `highlight-html.ts` builds as `tok-${kind}`:
-  - `.blob-view`
   - `.ln`
   - `.tok-attribute`
   - `.tok-comment`
