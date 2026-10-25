@@ -95,26 +95,30 @@ test("every GET page names session and render in Server-Timing, bar the listed d
 
   const named: string[] = [];
   const bare: string[] = [];
-  await Promise.all(
-    paths.map(async (path) => {
+  // A few at a time with a generous abort: the verdict is about headers, not
+  // about how fast a loaded check machine answers every page at once.
+  const queue = [...paths];
+  const worker = async () => {
+    for (let path = queue.shift(); path !== undefined; path = queue.shift()) {
       const res = await fetch(`${servers.url}${path}`, {
         headers: { cookie },
         redirect: "manual",
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(60_000),
       });
       await res.arrayBuffer();
-      if (!(res.headers.get("content-type") ?? "").startsWith("text/html")) return;
+      if (!(res.headers.get("content-type") ?? "").startsWith("text/html")) continue;
       const names = (res.headers.get("server-timing") ?? "").split(",").map((p) => p.trim().split(";")[0]);
       expect(names).toContain("app");
       (names.includes("session") && names.includes("render") ? named : bare).push(path);
-    }),
-  );
+    }
+  };
+  await Promise.all(Array.from({ length: 4 }, worker));
 
   const debt = new Set(UNNAMED.map(([p]) => p));
   expect(bare.filter((p) => !debt.has(p)).sort()).toEqual([]);
   expect(named.filter((p) => debt.has(p)).sort()).toEqual([]);
   for (const [, issue] of UNNAMED) expect(issue).toMatch(/^#\d+$/);
-});
+}, 120_000);
 
 test("the sweep reads wrapped router.add registrations, so a reformat cannot shrink it", () => {
   const found = registeredGets();
