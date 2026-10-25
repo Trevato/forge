@@ -76,6 +76,7 @@ import { editMessage } from "../actions/edit_words.ts";
 import { emailVerified } from "../core/verify.ts";
 import { readHealth } from "../actions/health.ts";
 import { isProbe } from "../kernel/probe.ts";
+import { PRIVATE_ADDRESS_REFUSED } from "../kernel/address_words.ts";
 import { listChildren } from "../actions/spawn.ts";
 import { forgeState, PARENT_HEADER } from "../spawn/clients.ts";
 import { familyView } from "../spawn/family.ts";
@@ -122,6 +123,7 @@ import {
   syncOriginNow,
   syncRepoNow,
   unpinRepo,
+  ORIGIN_ALREADY_CONNECTED,
 } from "../actions/origins.ts";
 import {
   createBranch,
@@ -6570,11 +6572,11 @@ export function forgeBaseUrl(
 export function connectMessage(code: string): string {
   if (code === "unknown_host") return "that does not look like a forge host";
   if (code === "private_host")
-    return "that address is inside a network, not on the internet";
+    return PRIVATE_ADDRESS_REFUSED;
   if (code === "unreachable") return "that host could not be reached";
   if (code === "bad_token") return "the origin rejected that token";
   if (code === "already_connected")
-    return "that account is already connected here";
+    return `${ORIGIN_ALREADY_CONNECTED} here`;
   if (code === "rate_limited")
     return "too many connect attempts; wait a minute";
   return "that origin could not be connected";
