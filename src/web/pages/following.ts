@@ -38,6 +38,7 @@ import {
 import { running } from "../../kernel/version.ts";
 import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
 import { convergeWords, takeOrTell } from "../../actions/follow.ts";
+import { FOLLOWS_NOTHING, PROPOSE_NEEDS_WRITE } from "../../actions/follow_words.ts";
 import { openProposal, proposeUpstream } from "../../actions/upstream.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
@@ -378,7 +379,7 @@ export async function followingSubmit(ctx: Ctx): Promise<Response> {
   if (parent === undefined)
     return flashOrJson(ctx, base, {
       tone: "danger",
-      message: "This repository follows nothing.",
+      message: FOLLOWS_NOTHING,
     });
   const parentName = `${parent.ownerName}/${parent.name}`;
 
@@ -399,11 +400,11 @@ export async function followingSubmit(ctx: Ctx): Promise<Response> {
         tone: "danger",
         message:
           e === "not_a_fork"
-            ? "This repository follows nothing."
+            ? FOLLOWS_NOTHING
             : e === "nothing_to_propose"
               ? `Nothing here is ahead of ${parentName}.`
               : typeof e === "string"
-                ? "You need write access to propose from here."
+                ? PROPOSE_NEEDS_WRITE
                 : `${parentName} did not take the proposal: ${e.reason}.`,
       });
     }
@@ -427,7 +428,7 @@ export async function followingSubmit(ctx: Ctx): Promise<Response> {
         tone: "danger",
         message:
           e === "not_a_fork"
-            ? "This repository follows nothing."
+            ? FOLLOWS_NOTHING
             : "You need write access to take updates here.",
       });
     // A conflict is a tell for the crew (`actions/follow.ts`).
