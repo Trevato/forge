@@ -426,7 +426,6 @@ the same line (#4888).
   - `.sep`
   - `.split`
   - `.swatch`
-  - `.table-scroll`
   - `.theme-apply`
   - `.theme-option`
   - `.tick`
