@@ -2,7 +2,7 @@
 
 The diff a pull and a commit show is one component, drawn by `renderDiff` in `src/web/diff-view.ts` and styled in
 `src/web/style/content.ts`. It is a `.diff` wrapper holding a summary line and one §5 **diff file** (`.diff-file`) per
-file; the line kinds and gutters (`.add`, `.del`, `.dh`, `.dl`, `.dn`, `.wd`) stay in §5d.
+file.
 
 - `.diff-summary` — the card above the files: how many files changed and the `+`/`−` totals, in their add and delete colours.
 - `.diff-head` — a file's `<summary>` row: the fold chevron, path, status badge, line counts and the Viewed checkbox; sticky under the top bar, and wraps when its card is narrower than 420px.
@@ -14,3 +14,12 @@ file; the line kinds and gutters (`.add`, `.del`, `.dh`, `.dl`, `.dn`, `.wd`) st
 - `.diff-stub` — a `.diff-note` for a file too large or generated to draw: why, its real counts and a View file button.
 - `.dn-comment` — a line number in the gutter that links to commenting on that line, when the diff is reviewable.
 - `.nonl` — the `↵` mark after a line that has no newline at the end of the file.
+- `.diff` — the wrapper around one whole diff: its summary and every file.
+- `.dl` — one line of a hunk, a table row; its `data-k` says whether it is context, added or deleted.
+- `.dn` — a line number in the gutter.
+- `.dh` — a hunk head, the `@@` row that opens each hunk.
+- `.add` — an added line, in the add colours.
+- `.del` — a deleted line, in the delete colours.
+- `.wd` — a changed word inside an added or deleted line, underlined on a stronger tint.
+- `.tok-inserted` — an inserted token in highlighted code, in the add colour.
+- `.tok-deleted` — a deleted token in highlighted code, in the delete colour.
