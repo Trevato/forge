@@ -25,6 +25,7 @@ import { listRefs } from "../../git/read.ts";
 import { updateRepoSettings } from "../../actions/repos.ts";
 import { showProvenance } from "../../actions/provenance.ts";
 import {
+  checkLine,
   checkedWords,
   checkUpstreamNow,
   FOLLOW_REFUSALS,
@@ -33,7 +34,7 @@ import {
   standing,
   upstreamLabel,
 } from "../../actions/upstream_follow.ts";
-import { getFollow } from "../../core/upstream_follow.ts";
+import { getFollow, listChecks } from "../../core/upstream_follow.ts";
 import {
   getProvenance,
   shownTrail,
@@ -356,6 +357,7 @@ export function upstreamRows(
       "upstream",
       `${upstreamLabel(follow.url)} ${follow.branch}${checked} · ${standing(follow)}`,
     ],
+    ...listChecks(f.db, repo.id).map((c): [string, string] => ["", checkLine(c, ago(c.at))]),
   ];
 }
 

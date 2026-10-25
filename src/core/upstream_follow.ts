@@ -142,10 +142,12 @@ export function putFollow(
     input.parentUrl ?? "",
     now,
   );
-  if (moved)
+  if (moved) {
+    db.query("DELETE FROM repo_upstream_check WHERE repo_id = ?1").run(input.repoId);
     db.query(
       "UPDATE repo_upstream SET checked_at = NULL, tip = '', behind = 0, error = '' WHERE repo_id = ?1",
     ).run(input.repoId);
+  }
   return getFollow(db, input.repoId)!;
 }
 
@@ -161,6 +163,8 @@ export function noteCheck(
     readonly pendingId?: string | null;
     /** A proposal was opened by this check. */
     readonly opened?: boolean;
+    /** How many files conflict, when the error is "conflict". */
+    readonly files?: number;
   },
 ): void {
   db.query(
@@ -179,4 +183,49 @@ export function noteCheck(
     reading.pendingId ?? null,
     reading.opened === true ? 1 : 0,
   );
+  recordCheck(db, repoId, reading);
+}
+
+/** How many checks are kept per repository. */
+export const HISTORY_KEPT = 20;
+
+export interface FollowCheck {
+  readonly at: string;
+  readonly behind: number;
+  readonly outcome: "merged" | "uptodate" | "conflict" | "error";
+  /** The conflict's file count, or the error's first line; "" otherwise. */
+  readonly detail: string;
+}
+
+function recordCheck(
+  db: Database,
+  repoId: string,
+  r: { readonly at: string; readonly behind?: number; readonly error: string; readonly files?: number },
+): void {
+  const outcome =
+    r.error === "conflict" ? "conflict" : r.error !== "" ? "error" : (r.behind ?? 0) === 0 ? "uptodate" : "merged";
+  const detail =
+    outcome === "conflict"
+      ? String(r.files ?? 0)
+      : outcome === "error"
+        ? (r.error.split("\n").find((l) => l.trim() !== "") ?? "").slice(0, 200)
+        : "";
+  // A failed check read no count: it carries the last one the row holds.
+  db.query(
+    `INSERT INTO repo_upstream_check (repo_id, at, behind, outcome, detail)
+     VALUES (?1, ?2, COALESCE(?3, (SELECT behind FROM repo_upstream WHERE repo_id = ?1), 0), ?4, ?5)`,
+  ).run(repoId, r.at, r.behind ?? null, outcome, detail);
+  db.query(
+    `DELETE FROM repo_upstream_check WHERE repo_id = ?1 AND id NOT IN
+       (SELECT id FROM repo_upstream_check WHERE repo_id = ?1 ORDER BY id DESC LIMIT ?2)`,
+  ).run(repoId, HISTORY_KEPT);
+}
+
+/** The latest checks of a repository, newest first. */
+export function listChecks(db: Database, repoId: string, limit = 5): FollowCheck[] {
+  return db
+    .query<FollowCheck, [string, number]>(
+      "SELECT at, behind, outcome, detail FROM repo_upstream_check WHERE repo_id = ?1 ORDER BY id DESC LIMIT ?2",
+    )
+    .all(repoId, limit);
 }

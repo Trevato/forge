@@ -35,6 +35,7 @@ import {
   noteCheck,
   putFollow,
   upstreamUrl,
+  type FollowCheck,
   type UpstreamFollow,
 } from "../core/upstream_follow.ts";
 import { getUserById, type User } from "../core/users.ts";
@@ -303,7 +304,7 @@ async function checkOnce(app: App, repo: Repo): Promise<Result<Checked, CheckErr
   const merged = await mergeable(dir, main, staged);
   if (!merged.ok) {
     if (merged.error.kind !== "conflict") return failed("git");
-    noteCheck(app.db, repo.id, { at, tip: staged, behind, error: "conflict" });
+    noteCheck(app.db, repo.id, { at, tip: staged, behind, error: "conflict", files: merged.error.files.length });
     convergeConflict(app, repo, by, follow, staged, merged.error.files);
     return ok({ tip: staged, behind, outcome: "conflict" });
   }
@@ -473,6 +474,19 @@ export function standing(f: UpstreamFollow): string {
   if (f.error !== "") return f.error === "conflict" ? `${f.behind} behind, conflicts` : "last check failed";
   if (f.checkedAt === null) return "not checked yet";
   return f.behind === 0 ? "up to date" : `${f.behind} behind`;
+}
+
+/** One line of the record: `2 h ago · 3 behind · merged`. */
+export function checkLine(c: FollowCheck, ago: string): string {
+  const what =
+    c.outcome === "conflict"
+      ? `conflict in ${c.detail} file${c.detail === "1" ? "" : "s"}`
+      : c.outcome === "error"
+        ? `error: ${c.detail}`
+        : c.outcome === "uptodate"
+          ? "up to date"
+          : "merged";
+  return `${ago} · ${c.behind} behind · ${what}`;
 }
 
 /** What "Check upstream now" found, in a sentence. */

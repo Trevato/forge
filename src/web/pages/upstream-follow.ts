@@ -7,6 +7,7 @@
 
 import {
   checkedWords,
+  checkLine,
   checkUpstreamNow,
   clockWords,
   FOLLOW_REFUSALS,
@@ -16,14 +17,14 @@ import {
   upstreamLabel,
 } from "../../actions/upstream_follow.ts";
 import { canAdmin, type Repo } from "../../core/repos.ts";
-import { getFollow } from "../../core/upstream_follow.ts";
+import { getFollow, listChecks } from "../../core/upstream_follow.ts";
 import type { Ctx } from "../../http/context.ts";
 import { loadRepo, repoBase, repoNotFound } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
 import { flashTo } from "../layout.ts";
-import { btn, card, field as formField } from "../ui.ts";
+import { btn, card, field as formField, row, timeAgo } from "../ui.ts";
 
 /** HH:MM in UTC, with the instant for machines and the title for people. */
 function clock(iso: string): Html {
@@ -44,6 +45,15 @@ export function followingLine(ctx: Ctx, repo: Repo): Html | null {
     ${follow.checkedAt === null ? null : html`· last checked ${clock(follow.checkedAt)}`}
     · ${standing(follow)}
   </p>`;
+}
+
+/** The last five checks, newest first; nothing when there are none. */
+function historyList(ctx: Ctx, repo: Repo): Html | null {
+  const checks = listChecks(ctx.app.db, repo.id, 5);
+  if (checks.length === 0) return null;
+  return html`<ul class="list" data-following-history>
+    ${checks.map((c) => row({ title: checkLine(c, timeAgo(c.at)) }))}
+  </ul>`;
 }
 
 /** The settings card: on or off, the URL and branch, and "Check upstream now". */
@@ -85,6 +95,7 @@ export function followUpstreamCard(ctx: Ctx, repo: Repo): Html | null {
             f.checkedAt === null ? "" : html` · last checked ${clock(f.checkedAt)}`
           }${f.error === "" ? "" : html` · ${f.error}`} · ${f.opened} proposed so far</p>`,
         )}
+        ${historyList(ctx, repo)}
         <div class="form-actions">${btn("Save")}</div>
       </form>
       ${when(

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRepo } from "../src/actions/repos.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
-import { putFollow, getFollow } from "../src/core/upstream_follow.ts";
+import { putFollow, getFollow, noteCheck } from "../src/core/upstream_follow.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
@@ -102,6 +102,27 @@ describe("the upstream in the terminal", () => {
       } finally {
         h.app.stop();
       }
+    }
+  });
+
+  test("an admin sees the last five checks under the row; a reader sees none", async () => {
+    for (let i = 1; i <= 6; i++)
+      noteCheck(forge.db, repo.id, { at: new Date().toISOString(), behind: i, error: "" });
+    const h = boot(as(alice));
+    try {
+      await openAbout(h);
+      expect(h.text()).toContain("6 behind · merged");
+      expect(h.text()).toContain("2 behind · merged");
+      expect(h.text()).not.toContain("1 behind · merged");
+    } finally {
+      h.app.stop();
+    }
+    const r = boot(as(bob));
+    try {
+      await openAbout(r);
+      expect(r.text()).not.toContain("behind · merged");
+    } finally {
+      r.app.stop();
     }
   });
 
