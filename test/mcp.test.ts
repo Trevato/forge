@@ -280,6 +280,7 @@ describe("the forge over MCP", () => {
       "scorecard",
       "flow",
       "system",
+      "telemetry_history",
       "contribute",
       "limits",
       "app_env",

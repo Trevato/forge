@@ -85,17 +85,67 @@ export function sourcesOut() {
 
 /** The node's 15-s points for the last hour: the `machine` source's `node` and `forge` targets, nothing per-cell. */
 export function historyFor(app: App) {
-  return app.db
+  return historyOver(app, 1);
+}
+
+/** Most points one series carries in `historyOver`. */
+export const HISTORY_POINTS = 300;
+
+type HistoryPoint = {
+  target: string;
+  at: string;
+  cpuCores: number | null;
+  /** The busiest sample in the bucket, so a short spike survives the averaging. */
+  cpuCoresMax: number | null;
+  memoryBytes: number | null;
+  load: number | null;
+};
+
+/**
+ * The same points over the last `hours` (15-s steps inside the day, 5-min beyond it), each target
+ * averaged down to at most `HISTORY_POINTS`, so the answer is bounded however long the window.
+ */
+export function historyOver(app: App, hours: number) {
+  const step = hours <= 24 ? 15 : 300;
+  const rows = app.db
     .query<
-      { target: string; at: string; cpu_cores: number | null; memory_bytes: number | null; load: number | null },
-      []
+      { target: string; at: string; cpu_cores: number | null; cpu_cores_max: number | null; memory_bytes: number | null; load: number | null },
+      [number, string]
     >(
-      `SELECT target, at, cpu_cores, memory_bytes, load FROM machine_sample
-        WHERE step = 15 AND target IN ('node','forge')
-          AND at >= strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 hour') ORDER BY at, target`,
+      `SELECT target, at, cpu_cores, cpu_cores_max, memory_bytes, load FROM machine_sample
+        WHERE step = ?1 AND target IN ('node','forge')
+          AND at >= strftime('%Y-%m-%dT%H:%M:%fZ','now', ?2) ORDER BY at, target`,
     )
-    .all()
-    .map((r) => ({ target: r.target, at: r.at, cpuCores: r.cpu_cores, memoryBytes: r.memory_bytes, load: r.load }));
+    .all(step, `-${hours} hours`)
+    .map((r) => ({
+      target: r.target,
+      at: r.at,
+      cpuCores: r.cpu_cores,
+      cpuCoresMax: r.cpu_cores_max ?? r.cpu_cores,
+      memoryBytes: r.memory_bytes,
+      load: r.load,
+    }));
+  const mean = (xs: (number | null)[]) => {
+    const v = xs.filter((x): x is number => x !== null);
+    return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
+  };
+  const out: HistoryPoint[] = [];
+  for (const target of ["node", "forge"]) {
+    const own = rows.filter((r) => r.target === target);
+    const size = Math.ceil(own.length / HISTORY_POINTS) || 1;
+    for (let i = 0; i < own.length; i += size) {
+      const g = own.slice(i, i + size);
+      out.push({
+        target,
+        at: g[0]!.at,
+        cpuCores: mean(g.map((r) => r.cpuCores)),
+        cpuCoresMax: g.reduce<number | null>((m, r) => (r.cpuCoresMax === null ? m : Math.max(m ?? -Infinity, r.cpuCoresMax)), null),
+        memoryBytes: mean(g.map((r) => r.memoryBytes)),
+        load: mean(g.map((r) => r.load)),
+      });
+    }
+  }
+  return out.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.target < b.target ? -1 : 1));
 }
 
 export const WELCOME_LABEL = "help wanted";

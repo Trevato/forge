@@ -115,6 +115,7 @@ export { tool as system } from "./system.ts";
 export { tool as take_updates } from "./take_updates.ts";
 export { tool as teams } from "./teams.ts";
 export { tool as telemetry_grant } from "./telemetry_grant.ts";
+export { tool as telemetry_history } from "./telemetry_history.ts";
 export { tool as tell } from "./tell.ts";
 export { tool as thought } from "./thought.ts";
 export { tool as threads } from "./threads.ts";
