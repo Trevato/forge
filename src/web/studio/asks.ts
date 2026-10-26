@@ -1019,6 +1019,8 @@ export function askLinesFor(
   link: string;
   /** The pull's or issue's number, for a row of one that is about one. */
   number?: number;
+  /** Whether `number` is a pull's or an issue's. */
+  numberOf?: "pull" | "issue";
   /** For a wave proposal: what it says, as plain text (the reader escapes it). */
   proposal?: { id: string; title: string; why: string; issues: string[] };
   items: string[];
@@ -1075,12 +1077,14 @@ export function askLinesFor(
         ...about,
         line,
         number: only.issue!.number,
+        numberOf: "issue",
         link: `${base}/issues/${only.issue!.number}`,
       };
     return {
       ...about,
       line,
       number: only.pull!.number,
+      numberOf: "pull",
       link: `${base}/pulls/${only.pull!.number}`,
     };
   });

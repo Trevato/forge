@@ -66,11 +66,15 @@ const obj = (v: unknown): Obj =>
 const list = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 const text = (v: unknown): string =>
   typeof v === "string" ? v : typeof v === "number" ? String(v) : "";
-const web = (u: string): boolean => /^https?:\/\//.test(u);
 const LIMIT = 12;
 const FEED_LIMIT = 10;
 /** The forge's id shape (src/kernel/id.ts): 26 lowercase Crockford base32 characters. */
 const RUN_ID = /^[0-9a-hjkmnp-tv-z]{26}$/;
+
+/** An absolute http(s) address: the only origin a card builds links on. */
+const web = (u: string): boolean => /^https?:\/\//.test(u);
+/** A repository named `owner/name`. */
+const slugOf = (s: string): boolean => /^[^/]+\/[^/]+$/.test(s);
 
 /** The card for a tool's answer, or nothing when the answer has no card. */
 export function cardFor(
@@ -128,7 +132,7 @@ export function cardFor(
     rows.push({
       label: "Branches",
       value: `${text(p["head"])} → ${text(p["base"])}`,
-      ...(web(origin) && /^[^/]+\/[^/]+$/.test(slug) && number !== ""
+      ...(web(origin) && slugOf(slug) && number !== ""
         ? { link: `${origin}/${slug}/pulls/${number}` }
         : {}),
     });
@@ -177,9 +181,15 @@ export function cardFor(
     status = asks.length === 0 ? "nothing waits" : `${asks.length} waiting`;
     for (const a of asks.slice(0, LIMIT)) {
       const words = obj(a["words"]);
+      const repo = text(a["repo"]);
+      const number = Number(a["number"]);
+      const page = a["numberOf"] === "pull" ? "pulls" : a["numberOf"] === "issue" ? "issues" : "";
       rows.push({
         label: text(a["line"]),
         value: `${text(words["decision"])} ${list(words["options"]).map(text).join(" / ")}`.trim(),
+        ...(web(origin) && slugOf(repo) && Number.isInteger(number) && number > 0 && page !== ""
+          ? { link: `${origin}/${repo}/${page}/${number}` }
+          : {}),
       });
     }
     const first = asks[0];
@@ -221,7 +231,7 @@ export function cardFor(
       rows.push({
         label: `#${number}`,
         value: text(r["title"]),
-        ...(/^https?:\/\//.test(origin) && number !== "" ? { link: base + number } : {}),
+        ...(web(origin) && number !== "" ? { link: base + number } : {}),
       });
     }
   } else if (kind === "feed") {

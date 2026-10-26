@@ -291,7 +291,8 @@ answers
   `_meta.ui.resourceUri` (MCP Apps, SEP-1865): `ui://forge/app`, `run`,
   `decision`, `wave`, `map`, `feed`, `pull`. The Plan card (`map`) shows one row per pillar with
   its ready, working and waiting counts, and the first five ready issues linked
-  to their pages; it has no actions.
+  to their pages; it has no actions. The decision card's rows link to the pull or issue
+  they are about (a paused repository's row has none).
   The Apps card (`apps`) links each `owner/name` row to the app's page on the forge and adds a
   linked production row when the app has an http(s) URL; the `new_app` card links its
   Production row the same way. Any other address stays plain text, never a link.

@@ -1270,6 +1270,48 @@ describe("the forge over MCP", () => {
     expect(hostile.rows.some((r) => r.label === "Preview")).toBe(false);
   });
 
+  test("the decision card links each ask to its pull or issue, and to nothing unsafe", async () => {
+    const { cardFor } = await import("../src/web/studio/cards.ts");
+    const words = { decision: "Ship it?", options: ["ship", "close"] };
+    const rows = [
+      { line: "a", repo: "alice/game", number: 3, numberOf: "pull", words },
+      { line: "b", repo: "alice/game", number: 4, numberOf: "issue", words },
+      { line: "c", repo: "alice/game", words },
+      { line: "d", repo: "alice", number: 5, numberOf: "pull", words },
+      { line: "e", repo: "alice/game", number: 0, numberOf: "pull", words },
+    ];
+    const card = cardFor("asks", { rows }, "https://forge.test")!;
+    expect(card.rows.map((r) => r.link)).toEqual([
+      "https://forge.test/alice/game/pulls/3",
+      "https://forge.test/alice/game/issues/4",
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    expect(cardFor("asks", { rows }, "javascript:x")!.rows.every((r) => r.link === undefined)).toBe(true);
+  });
+
+  test("the real asks result carries a link on a pull row and an issue row", async () => {
+    await commitToBranch(app, alice, game, { branch: "ask-links", message: "x", files: [{ path: "ask.txt", content: "a\n" }] });
+    const pull = await openPull(app, alice, game, { title: "Ask link pull", baseBranch: "main", headBranch: "ask-links" });
+    const issue = await openIssue(app, alice, game, { title: "Ask link issue", body: "" });
+    if (!pull.ok || !issue.ok) throw new Error("seed");
+    const { setAssignee } = await import("../src/core/issues.ts");
+    setAssignee(app.db, pull.value.id, alice.id);
+    setAssignee(app.db, issue.value.id, alice.id);
+    const { body } = await call(rw, "tools/call", { name: "asks", arguments: {} });
+    const rows: any[] = body.result.structuredContent.card.rows;
+    const linkOf = (label: string) => rows.find((r) => r.label.includes(label))?.link;
+    expect(linkOf("Ask link pull")).toMatch(new RegExp(`^https?://[^/]+/alice/game/pulls/${pull.value.number}$`));
+    expect(linkOf("Ask link issue")).toMatch(new RegExp(`^https?://[^/]+/alice/game/issues/${issue.value.number}$`));
+    const { askLinesFor } = await import("../src/web/studio/asks.ts");
+    const { cardFor } = await import("../src/web/studio/cards.ts");
+    const lines = askLinesFor(app.db, alice);
+    expect(lines.find((l) => l.id === `assigned:${pull.value.id}`)?.numberOf).toBe("pull");
+    expect(lines.find((l) => l.id === `assigned:${issue.value.id}`)?.numberOf).toBe("issue");
+    expect(cardFor("asks", { rows: lines }, "javascript:x")!.rows.every((r) => r.link === undefined)).toBe(true);
+  });
+
   test("the feed card draws one linked row per item, ten at most, escaped as text", async () => {
     const { cardFor } = await import("../src/web/studio/cards.ts");
     const items = Array.from({ length: 12 }, (_, n) => ({
