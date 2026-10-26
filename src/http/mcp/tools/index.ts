@@ -89,6 +89,7 @@ export { tool as repo } from "./repo.ts";
 export { tool as repo_labels } from "./repo_labels.ts";
 export { tool as repo_settings } from "./repo_settings.ts";
 export { tool as reports } from "./reports.ts";
+export { tool as restore_drill } from "./restore_drill.ts";
 export { tool as returns } from "./returns.ts";
 export { tool as review } from "./review.ts";
 export { tool as run_log } from "./run_log.ts";
