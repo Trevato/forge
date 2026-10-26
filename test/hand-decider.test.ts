@@ -118,7 +118,7 @@ describe("let the decider answer a hand-over", () => {
     await servers.stop();
     // Stops the pollers and the pooled git readers before their directory goes.
     app.close();
-    await rm(dataDir, { recursive: true, force: true });
+    await rm(dataDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   });
 
   test("without a decider there is no third tap, and a post is refused", async () => {
