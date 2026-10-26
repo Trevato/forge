@@ -40,6 +40,7 @@ import {
   getIssue,
   labelsFor,
   listComments,
+  THREAD_WINDOW,
   MAX_BODY,
   MAX_TITLE,
 } from "../../core/issues.ts";
@@ -130,6 +131,8 @@ export function threadContext(
 export interface Entry {
   at: string;
   node: Html;
+  /** A conversation comment: the window is cut on these (`commentAnchor`, core/issues.ts, counts the same). */
+  comment?: true;
 }
 
 const EVENT_LOOK: Record<string, { icon: IconName; tone: Tone; verb: string }> =
@@ -305,6 +308,7 @@ export function conversation(
   ]);
   const entries: Entry[] = comments.map((c) => ({
     at: c.createdAt,
+    comment: true as const,
     node: threadComment(c.id, c.authorName, c.createdAt, c.body, {
       originAuthor: c.originAuthor,
       originKind: glyph,
@@ -315,6 +319,31 @@ export function conversation(
   entries.push(...interruptionEntries(ctx, issue));
   entries.push(...(options.extra ?? []));
   entries.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+  // The opening post and the newest THREAD_WINDOW comments with the state
+  // changes between them; everything before the oldest of those waits behind
+  // `?all=1` (a plain link, so it works without JavaScript). The cut is on
+  // comments so that `commentAnchor` counts the very same thing and every
+  // link the forge writes to a comment lands.
+  const everything = ctx.url.searchParams.get("all") === "1";
+  let hidden = 0;
+  if (!everything) {
+    let seen = 0;
+    for (let i = entries.length - 1; i >= 0; i--) {
+      if (entries[i]!.comment && ++seen === THREAD_WINDOW) {
+        hidden = i;
+        break;
+      }
+    }
+  }
+  const shown = hidden === 0 ? entries : entries.slice(hidden);
+  const more = new URLSearchParams(ctx.url.searchParams);
+  more.set("all", "1");
+  const earlier =
+    hidden === 0
+      ? null
+      : html`<p class="tl-earlier small">
+          <a href="${ctx.url.pathname}?${more.toString()}">Show ${String(hidden)} earlier items</a>
+        </p>`;
 
   const opening = tlComment(
     commentCard({
@@ -334,7 +363,7 @@ export function conversation(
     node: html`<div class="timeline" id="conversation">
       ${opening}${when(options.editAction, (action) =>
         editForm(issue, action),
-      )}${entries.map((e) => e.node)}
+      )}${earlier}${shown.map((e) => e.node)}
     </div>`,
     lastCommentId: comments.length > 0 ? comments[comments.length - 1]!.id : "",
   };
@@ -353,7 +382,7 @@ export function threadComment(
     mark?: Mark | undefined;
   } = {},
 ): Html {
-  return html`<div class="tl-item" data-kind="comment" data-comment-id="${id}">
+  return html`<div class="tl-item" id="c-${id}" data-kind="comment" data-comment-id="${id}">
     <span class="tl-dot">${icon("comment")}</span>${commentCard({
       id,
       author,

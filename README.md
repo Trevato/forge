@@ -296,6 +296,24 @@ carries the attention dot.
 
 A fork ahead of its parent offers its commits upstream: on its home a signed-in reader of the parent sees "Offer N commits upstream" (into the new-pull form with both branches chosen) or "Offered in #M" once a pull is open; a writer who has the Following card gets its "Propose upstream" instead, one route not two. In the terminal the fork's About card (`I`) has an `offer` row and `o` opens the same pull form (or the open pull). Both read `upstreamOffer` (`src/actions/offer_upstream.ts`), the open pull by one SQL lookup.
 
+## Long threads
+
+An issue or pull page renders the opening post and its newest 50 comments
+(`THREAD_WINDOW`, `src/core/issues.ts`) with the state-change lines between
+them; above them a plain link, `Show N earlier items`, goes to the same page
+with `?all=1` (other query parts kept), which renders everything, with no
+JavaScript. N counts state-change lines as well as comments. A comment's own
+anchor is `#c-<id>`; links the forge writes to a comment (the feed's replies)
+go through `commentAnchor()`, which counts comments the way the page cuts
+them, and carry `?all=1` when the comment is folded away, so they always
+land. A hand-typed `#c-…` into the folded part cannot be seen by the server
+(the fragment never leaves the browser), so it needs `?all=1` too. The live
+region still appends new comments at the bottom.
+
+The terminal's issue and pull screens stay whole on purpose: they are a
+scrolling text view of one thread already in memory, not a page a phone
+downloads, so there is no weight to cut and no second key to learn.
+
 ## Live in the terminal
 
 `ssh` into the forge and you get the whole thing — repositories, code, issues,

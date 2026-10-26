@@ -12,7 +12,7 @@ import type { Chips } from "../core/feed_chips.ts";
 import { listDecidedIn } from "../core/decisions.ts";
 import { audienceFilter } from "../core/event_audience.ts";
 import { listEventsVisibleTo, type ForgeEvent } from "../core/events.ts";
-import { getIssuesByNumbers, numberKey, type Issue } from "../core/issues.ts";
+import { commentAnchor, getIssuesByNumbers, numberKey, type Issue } from "../core/issues.ts";
 import {
   listDetachedMirrors,
   listOrigins,
@@ -597,13 +597,20 @@ function fromEvent(
           `#${number}`,
         60,
       );
+      // The comment itself: past the newest window it is behind `?all=1`.
+      const thread = subjects.issue(repo.id, number);
+      const commentId = p["commentId"];
+      const anchor =
+        thread !== undefined && typeof commentId === "string"
+          ? commentAnchor(db, thread.id, commentId)
+          : "";
       return {
         ...common,
         kind: "reply",
         link:
-          e.kind === "issue.commented"
+          (e.kind === "issue.commented"
             ? `${base(repo)}/issues/${number}`
-            : change,
+            : change) + anchor,
         what: said === "" ? `replied on “${on}”` : `on “${on}”: ${clip(said)}`,
       };
     }

@@ -639,6 +639,26 @@ export interface ListCommentsOptions {
   limit?: number;
 }
 
+/** How many timeline items a thread page shows before it folds the earlier ones behind `?all=1`. */
+export const THREAD_WINDOW = 50;
+
+/**
+ * Where a comment's own anchor lands on its thread page: `#c-<id>` when it
+ * is among the newest comments the page shows, `?all=1#c-<id>` when it is
+ * folded away. One COUNT, not the whole thread. The page cuts its window on
+ * comments too (`conversation()`, web/pages/thread.ts): the newest
+ * THREAD_WINDOW comments, with the state lines between them riding along.
+ * Both count the same thing, so the anchor always lands.
+ */
+export function commentAnchor(db: Database, issueId: string, commentId: string): string {
+  const after = db
+    .query<{ n: number }, [string, string]>(
+      "SELECT COUNT(*) AS n FROM comment WHERE issue_id = ?1 AND kind = 'comment' AND id > ?2",
+    )
+    .get(issueId, commentId)!.n;
+  return `${after >= THREAD_WINDOW ? "?all=1" : ""}#c-${commentId}`;
+}
+
 export function listComments(
   db: Database,
   issueId: string,

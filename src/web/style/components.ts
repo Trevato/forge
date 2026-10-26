@@ -808,6 +808,7 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
   min-height: 32px;
 }
+.tl-earlier { margin: 0; padding-left: 36px; color: var(--muted-fg); font-size: 13px; }
 .tl-item[data-kind="comment"] .card { margin: 0; }
 .tl-item[data-kind="event"] > .card { flex-basis: 100%; margin: 4px 0 0; color: var(--fg); font-size: 14px; }
 .tl-item[data-kind="event"] > .card .comment-body { padding: 8px 12px; }
