@@ -22,7 +22,8 @@ import {
   type PlacementKind,
 } from "./placement.ts";
 import { DEFAULT_SIZE, isSize, type Size } from "./sizes.ts";
-import { cellChildren, forward } from "./cell.ts";
+import { cellChildren, forward, type CellChild } from "./cell.ts";
+import { cellsAvailable } from "../apps/contain.ts";
 import { readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -118,23 +119,49 @@ export async function resolveHostedChild(
   if (name === undefined) return undefined;
   const ledger = readLedgerSync(parent, name);
   if (ledger === undefined || !ledger.done) return "unknown";
-  // A child in its own cell is not an App here: the request is carried to it.
-  if (ledger.placement === "cell") return settleCell(parent, ledger);
+  // A child in its own cell is not an App here: the request is carried to
+  // it, and while its cell is not up `answerFromCell` says so at once.
+  if (ledger.placement === "cell") {
+    if (cellChildren(parent).get(ledger.bodyId) !== undefined) return "cell";
+    // A host that holds no cell at all is known without waiting.
+    const cells = await cellsAvailable();
+    if (!cells.ok) return openOnce(parent, demoted(parent, ledger, cells.reason));
+    void settleCell(parent, ledger);
+    return "cell";
+  }
   return openOnce(parent, ledger);
 }
 
+/** Starts in flight, by body id: one demotion however many requests asked. */
+const settling = new WeakMap<App, Map<string, Promise<CellChild | undefined>>>();
+
 /**
  * Start a child's cell. When the cell cannot come up the child is not left
- * dead: the ledger turns it hosted, says why (`placementNote`, which
- * `/forges` lists), and the child is opened in this process.
+ * dead: the ledger turns it hosted and says why (`placementNote`, which
+ * `/forges` lists), and the next request opens it in this process.
  */
-async function settleCell(parent: App, ledger: ChildLedger): Promise<App | "cell"> {
-  const cells = cellChildren(parent);
-  if ((await cells.start(ledger)) !== undefined) return "cell";
-  const why = cells.failure(ledger.bodyId) ?? "its cell did not start";
+function settleCell(parent: App, ledger: ChildLedger): Promise<CellChild | undefined> {
+  let flights = settling.get(parent);
+  if (!flights) settling.set(parent, (flights = new Map()));
+  let flight = flights.get(ledger.bodyId);
+  if (!flight) {
+    const cells = cellChildren(parent);
+    flight = cells.start(ledger).then((child) => {
+      if (child === undefined) demoted(parent, ledger, cells.failure(ledger.bodyId) ?? "its cell did not start");
+      return child;
+    });
+    const mine = flights;
+    flight.finally(() => mine.delete(ledger.bodyId)).catch(() => {});
+    flights.set(ledger.bodyId, flight);
+  }
+  return flight;
+}
+
+/** Record that a cell child is hosted instead, and why; the ledger as it now reads. */
+function demoted(parent: App, ledger: ChildLedger, why: string): ChildLedger {
   demote(parent, ledger.name, why);
   parent.log.warn("child forge placed hosted instead", { name: ledger.name, why });
-  return openOnce(parent, { ...ledger, placement: "hosted" });
+  return { ...ledger, placement: "hosted" };
 }
 
 function demote(parent: App, name: string, why: string): void {
@@ -174,8 +201,7 @@ export async function bootHostedChild(parent: App, name: string): Promise<void> 
   let ledger = readLedgerSync(parent, name);
   if (ledger === undefined || !ledger.done) return;
   if (ledger.placement === "cell") {
-    const settled = await settleCell(parent, ledger);
-    if (settled === "cell") return;
+    if ((await settleCell(parent, ledger)) !== undefined) return;
     ledger = { ...ledger, placement: "hosted" };
   }
   try {
@@ -245,15 +271,18 @@ export async function resolveHostedChildApp(
 export const hostedChildApps = childAppsSummary;
 
 /**
- * Answer a request for a child that runs in its own cell: start it if it is
- * not up (a parent that restarted, a child that stopped), then forward.
+ * Answer a request for a child that runs in its own cell: forward when it
+ * is up, and when it is not (just spawned, a parent that restarted, a
+ * child that stopped) start it and answer 503 at once.
  */
 export async function answerFromCell(parent: App, request: Request): Promise<Response> {
   const name = parseHostedChildName(request.headers.get("host") ?? "", childHost(parent));
   const ledger = name === undefined ? undefined : readLedgerSync(parent, name);
   if (ledger === undefined || ledger.placement !== "cell") return new Response("not found", { status: 404 });
-  const child = await cellChildren(parent).start(ledger);
-  // Unreachable once a cell has failed (the ledger turned hosted), but never a hang.
-  if (child === undefined) return new Response("this forge is starting", { status: 503, headers: { "retry-after": "5" } });
-  return forward(child, request, parent.config.clientIpHeader);
+  const child = cellChildren(parent).get(ledger.bodyId);
+  if (child !== undefined) return forward(child, request, parent.config.clientIpHeader);
+  // Never a wait on a cell that may not come up: it starts behind this
+  // answer, and once it has failed the ledger says hosted.
+  void settleCell(parent, ledger);
+  return new Response("this forge is starting", { status: 503, headers: { "retry-after": "5", "cache-control": "no-store" } });
 }
