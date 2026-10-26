@@ -520,4 +520,49 @@ describe("reviews, threads and the merge gate", () => {
       h.stop();
     }
   });
+  test("p on a sealed issue shows the private repository and its clone URL, with the same refusals", async () => {
+    const sealed = openIssue(forge, alice, repo, { title: "Token leak", sealed: true });
+    const plain = openIssue(forge, alice, repo, { title: "A typo" });
+    if (!sealed.ok || !plain.ok) throw new Error("issues");
+    const open = (user: User) =>
+      boot(forge, identityFor(user));
+
+    const h = open(alice);
+    try {
+      await h.settle();
+      await h.push((s, ctx) => issueScreen(s, ctx, local(s, repo), sealed.value.number));
+      await h.until("private repo");
+      await h.press("p");
+      await h.until("private repository alice/");
+      expect(h.text()).toContain("-sealed.git");
+      expect(h.text()).toContain("http://localhost");
+    } finally {
+      h.stop();
+    }
+
+    // An issue that is not sealed has nothing to hide, and no key for it.
+    const g = open(alice);
+    try {
+      await g.settle();
+      await g.push((s, ctx) => issueScreen(s, ctx, local(s, repo), plain.value.number));
+      await g.until("A typo");
+      expect(g.text()).not.toContain("private repo");
+      await g.press("p");
+      expect(g.text()).not.toContain("private repository alice/");
+    } finally {
+      g.stop();
+    }
+
+    // A writer whose email is not verified is refused.
+    const b = open(bob);
+    try {
+      await b.settle();
+      await b.push((s, ctx) => issueScreen(s, ctx, local(s, repo), sealed.value.number));
+      await b.until("Token leak");
+      await b.press("p");
+      await b.until("Verify your email first");
+    } finally {
+      b.stop();
+    }
+  }, 60_000);
 });

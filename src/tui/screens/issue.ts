@@ -23,6 +23,7 @@ import { ISSUE_TEAMS_SAY, nameTeams } from "../../actions/issue_teams.ts";
 import { teamsOfIssue, TEAMS_MAX } from "../../core/issue_teams.ts";
 import { listTeams } from "../../core/teams.ts";
 import { listRepoRuns } from "../../actions/runs.ts";
+import { privateRepoForSealed } from "../../actions/repos.ts";
 import { alreadyDone } from "../../core/done_on_main.ts";
 import { hasPicture } from "../../core/note_pictures.ts";
 import { getIssue, type Issue, type Label } from "../../core/issues.ts";
@@ -57,6 +58,19 @@ import { local, localRepo, whereRows, whereStrip } from "./where.ts";
 /** The crew card shows this many runs before it scrolls. */
 const CREW_ROWS = 4;
 
+/** The terminal's clone URL for a repository, from the forge's own origin. */
+export function cloneUrl(f: Session, repo: Repo): string {
+  const config = f.app.config;
+  const origin = config.url ?? `http://${config.host ?? "localhost"}:${config.port ?? 3000}`;
+  return `${origin.replace(/\/+$/, "")}/${repo.ownerName}/${repo.name}.git`;
+}
+
+/** The refusals of the private repository, in the web page's words. */
+const PRIVATE_SAY: Record<string, string> = {
+  not_sealed: "This report is not sealed: its fix can be worked in the open.",
+  unverified: "Verify your email first: the private repository is for verified writers.",
+};
+
 /** The status-line tail for an issue the crew found done on main. */
 export function doneText(commits: readonly string[], canClose: boolean): string {
   if (commits.length === 0) return "";
@@ -86,6 +100,8 @@ export function issueScreen(
   const crew = new RunList(f);
   /** Which pane `j`/`k`/`enter` belong to; `tab` moves between them. */
   let focus: "thread" | "crew" = "thread";
+  /** The private repository made for this sealed report, shown until we leave. */
+  let privateNote: string | undefined;
   const mayWrite = (): boolean => src.capabilities.write && repo !== undefined;
   scroll.top = keep.top ?? 0;
 
@@ -210,6 +226,25 @@ export function issueScreen(
     });
   };
 
+  /** `p` — the private repository to fix this sealed report in. */
+  const privateRepo = (): void => {
+    const at = row();
+    if (at?.issue === undefined) return;
+    const { repo: target, issue } = at;
+    runAsync(ctx, async () => {
+      const made = await privateRepoForSealed(f.app, f.user, target, issue);
+      if (!made.ok) {
+        ctx.toast(PRIVATE_SAY[made.error] ?? errorText(made.error), "danger");
+        return;
+      }
+      const there = `${made.value.ownerName}/${made.value.name}`;
+      privateNote = `private repository ${there} · clone ${cloneUrl(f, made.value)} · open the pull from there, saying "Closes #${number}"`;
+      width = 0;
+      ctx.invalidate();
+      ctx.toast(`private repository ${there}`, "success");
+    });
+  };
+
   const screen: Screen = {
     title: `#${number}`,
     get keys() {
@@ -232,6 +267,9 @@ export function issueScreen(
               }),
               binding(["l"], "labels"),
               binding(["t"], "teams"),
+              ...(issueRow?.sealed === true
+                ? [binding(["p"], "private repo")]
+                : []),
             ]
           : liveBindings(src)),
         binding(["r"], "refresh"),
@@ -343,7 +381,15 @@ export function issueScreen(
               ],
             ]
           : [];
-      const all = [...lines, ...hint];
+      const note =
+        privateNote === undefined
+          ? []
+          : threadLines(
+              [{ kind: "comment" as const, actor: "private repository", at: new Date().toISOString(), body: privateNote }],
+              Math.max(20, body!.w - 1),
+              c,
+            );
+      const all = [...lines, ...hint, ...note];
       drawLines(s, body!, c, scroll, all);
       hitScroll(ctx, body!, scroll, all.length);
       if (foot > 0) composer.render(s, box!, c, ctx);
@@ -427,6 +473,10 @@ export function issueScreen(
             },
           }),
         );
+        return true;
+      }
+      if (e.key === "p" && mayWrite()) {
+        privateRepo();
         return true;
       }
       if (e.key === "r") {
