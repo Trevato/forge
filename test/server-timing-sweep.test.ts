@@ -20,9 +20,6 @@ quietLogs();
 
 /** Pages without named phases yet → the issue that will name them. */
 const UNNAMED: Array<[path: string, issue: string]> = [
-  ["/-/confirm", "#3390"],
-  ["/signin/parent", "#3390"],
-  ["/signin/parent/callback", "#3390"],
 ];
 
 /** Long-lived streams and live fragments: no page, no phases to name. */

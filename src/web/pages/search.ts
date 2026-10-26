@@ -722,6 +722,11 @@ function describeTarget(to: string, ctx: Ctx): Destructive | undefined {
  * table above recognises as destructive.
  */
 export function confirmPage(ctx: Ctx): Response {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  return timePhase(ctx.request, "render", () => confirmBody(ctx));
+}
+
+function confirmBody(ctx: Ctx): Response {
   const params = ctx.url.searchParams;
   const to = params.get("to") ?? "";
   if (
