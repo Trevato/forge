@@ -270,16 +270,18 @@ export function landVerdict(
   green: boolean,
   failedTests: readonly string[],
   failedFiles: readonly string[] = [],
+  logLink?: string,
 ): Judged {
   if (green) return { lands: true };
   const names = failedTests.map((name) => `- ${name}`).join("\n");
+  const kept = logLink === undefined ? "" : `\n\nThe gate's log: ${logLink}`;
   return {
     lands: false,
     reopen: true,
     comment:
       failedTests.length === 0
-        ? "The full gate on land was red and named no test; the pull is open again."
-        : `The full gate on land was red; the pull is open again. Red tests:\n${names}`,
+        ? `The full gate on land was red and named no test; the pull is open again.${kept}`
+        : `The full gate on land was red; the pull is open again. Red tests:\n${names}${kept}`,
     learn: [...new Set(failedFiles)],
   };
 }

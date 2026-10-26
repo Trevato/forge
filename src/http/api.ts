@@ -388,6 +388,7 @@ import { readUsage, usageDays, USAGE_DAYS_MAX } from "../actions/usage.ts";
 import { readReturns, reportSpend, RETURNS_DAYS } from "../actions/returns.ts";
 import { fleetSelection, readFleetGraph } from "../actions/fleet-graph.ts";
 import { carriedBy } from "../core/carried.ts";
+import { readGateLog } from "../checks/gate_log.ts";
 import { readRunLog, subscribeRunLog } from "../runs/log.ts";
 import { blobForRender, commitLog, listRefs, listTree } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
@@ -6283,6 +6284,18 @@ export function apiRoutes(router: Router<Handler>): void {
     });
     if (!found) return notFound();
     return timePhase(ctx.request, "render", () => json(found));
+  });
+
+  // A kept gate's log (`checks/gate_log.ts`): the last 200 lines, as text.
+  router.add("GET", "/api/v1/repos/:owner/:name/gates/:id/log", (ctx) => {
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const kept = readGateLog(ctx.app.config.dataDir, repo.ownerName, repo.name, ctx.params.id ?? "");
+    if (!kept) return notFound();
+    const head = `# gate ${kept.ok ? "green" : "red"} at ${new Date(kept.at).toISOString()}, commit ${kept.commit}\n`;
+    return new Response(`${head}${kept.tail.join("\n")}\n`, {
+      headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
+    });
   });
 
   // The log: text, or a live tail as server-sent events (`?follow=1`, or
