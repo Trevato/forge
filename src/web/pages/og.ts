@@ -291,12 +291,16 @@ function mapCardInput(ctx: Ctx, ref: string): CardInput | undefined {
   const repo = twoPart(ctx, ref);
   if (!repo) return undefined;
   const db = ctx.app.db;
-  const graph = repoGraph(db, repo.id, sealedScope(db, repo, undefined));
-  // A run on a sealed report is not shown to who may not see the report.
-  const runs = listActiveRuns(db, [repo.id]).filter((r) =>
-    mayViewId(db, repo, r.issueId, undefined),
-  );
-  return mapInput(`${repo.ownerName}/${repo.name}`, graph, marksFor(db, repo.id, graph, runs));
+  const stretch = <T>(name: string, work: () => T): T => timePhase(ctx.request, name, work);
+  const graph = stretch("graph", () => repoGraph(db, repo.id, sealedScope(db, repo, undefined)));
+  const marks = stretch("marks", () => {
+    // A run on a sealed report is not shown to who may not see the report.
+    const runs = listActiveRuns(db, [repo.id]).filter((r) =>
+      mayViewId(db, repo, r.issueId, undefined),
+    );
+    return marksFor(db, repo.id, graph, runs);
+  });
+  return mapInput(`${repo.ownerName}/${repo.name}`, graph, marks, stretch);
 }
 
 /** The public apps, read the way the audit page reads them for someone signed out. */

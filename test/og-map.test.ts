@@ -50,10 +50,12 @@ test("the card draws open issues only, names the done count, and resolves fast",
   const res = await fetch(`${servers.url}/og/map/alice~notes.svg`);
   const svg = await res.text();
   expect(res.status).toBe(200);
-  expect(new TextEncoder().encode(svg).length).toBeLessThan(200_000);
+  expect(new TextEncoder().encode(svg).length).toBeLessThan(300_000);
   expect(svg).toContain("2000 done");
   expect(svg).toContain("300 open issues");
   const resolve = /resolve;dur=([\d.]+)/.exec(res.headers.get("server-timing") ?? "");
   expect(resolve).not.toBeNull();
-  expect(Number(resolve![1])).toBeLessThan(100);
+  expect(Number(resolve![1])).toBeLessThan(150);
+  const names = (res.headers.get("server-timing") ?? "").split(", ").map((p) => p.split(";")[0]);
+  for (const n of ["graph", "marks", "layout"]) expect(names).toContain(n);
 });

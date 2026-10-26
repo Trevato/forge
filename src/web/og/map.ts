@@ -103,7 +103,13 @@ export function mapStat(counts: Record<Word, number>): string {
 }
 
 /** A repository's map card, from its graph as nobody reads it and its marks. */
-export function mapInput(title: string, graph: Graph, marks: Marks): CardInput {
+export function mapInput(
+  title: string,
+  graph: Graph,
+  marks: Marks,
+  /** Names a stretch of the work; the route times it, a test need not. */
+  stretch: <T>(name: string, work: () => T) => T = (_name, work) => work(),
+): CardInput {
   const ready = readyNow(graph);
   const path = criticalPath(graph);
   const readySet = new Set(ready.map((r) => r.issue.id));
@@ -111,14 +117,16 @@ export function mapInput(title: string, graph: Graph, marks: Marks): CardInput {
   const open = graph.issues.filter((i) => i.state === "open").length;
   // The thumbnail draws what is open: done issues are counted in the caption, not drawn.
   const live = new Set(graph.issues.filter((i) => i.state === "open").map((i) => i.id));
-  const figure = graphFigure(
-    {
-      ...graph,
-      issues: graph.issues.filter((i) => live.has(i.id)),
-      edges: graph.edges.filter((e) => live.has(e.issueId) && live.has(e.blockedById)),
-    },
-    words,
-    path.map((i) => i.id),
+  const figure = stretch("layout", () =>
+    graphFigure(
+      {
+        ...graph,
+        issues: graph.issues.filter((i) => live.has(i.id)),
+        edges: graph.edges.filter((e) => live.has(e.issueId) && live.has(e.blockedById)),
+      },
+      words,
+      path.map((i) => i.id),
+    ),
   );
   // Next is what a free hand would take: ready, and nobody on it yet.
   const next = ready.find((r) => words.get(r.issue.id) === "ready")?.issue;
