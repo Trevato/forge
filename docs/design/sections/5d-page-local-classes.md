@@ -19,18 +19,9 @@ retire a class, delete its line: two pulls retiring two classes never edit
 the same line (#4888).
 
 - **`style/base.ts`** — the page shell (topbar, main, footer) and the layout and text utilities every page leans on:
-  - `.bar`
-  - `.bare`
-  - `.foot`
   - `.hide-sm`
   - `.js-only`
   - `.reduced`
-  - `.shell`
-  - `.skip`
-  - `.topbar`
-  - `.wordmark`
-
-  A `.field` directly inside a `.bar` drops its bottom margin and the bar aligns to the end, so a labelled input and its button share a baseline
 - **`style/components.ts`** — parts of the §5 components that the table does not spell out — the palette's list, the menu's items, a dialog's head and foot, comments, the theme picker — and a few small helpers beside them:
   - `.error-note`
   - `.menu-item`
