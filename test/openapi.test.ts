@@ -283,6 +283,18 @@ test("the admin's writes are described: a capacity setting, a limit and a team",
   expect(doc.paths["/api/v1/admin/limits/{key}"].put.summary).toContain("api.anonymous_per_source");
 });
 
+test("a pull comment, a pull variant, a steered run and a prompt run are described", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const R = "/api/v1/repos/{owner}/{name}";
+  for (const path of ["pulls/{number}/comments", "pulls/{number}/variant", "runs/{id}/steer", "prompts/{id}/run"]) {
+    expect(doc.paths[`${R}/${path}`]?.post?.security, path).toBeDefined();
+  }
+  expect(doc.paths[`${R}/pulls/{number}/comments`].post.responses["201"]).toBeDefined();
+  expect(doc.paths[`${R}/pulls/{number}/variant`].post.responses["201"]).toBeDefined();
+  const steer = doc.paths[`${R}/runs/{id}/steer`].post;
+  expect(Object.keys(steer.requestBody.content["application/json"].schema.properties)).toEqual(["text"]);
+});
+
 test("a person's sign-ins and ending one are described, with no session secret", () => {
   const doc = openapi("https://f.test", "1") as any;
   const list = doc.paths["/api/v1/users/{username}/signins"]?.get;
