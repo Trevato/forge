@@ -72,10 +72,11 @@ export const toolbarJs = `(function () {
   if (d.env === "production") line("Production");
   else if (d.pull) line("Preview of pull #" + d.pull);
   if (d.title) line(d.title);
+  var LS = "color:#8ab4ff;text-decoration:none;display:flex;align-items:center;min-height:44px";
   var link = document.createElement("a");
   link.textContent = "Home";
   link.rel = "noopener";
-  link.style.cssText = "color:#8ab4ff;text-decoration:none;display:flex;align-items:center;min-height:44px";
+  link.style.cssText = LS;
   try {
     var target = new URL(home);
     if (target.origin === new URL(me.src).origin) link.href = target.href;
@@ -247,9 +248,24 @@ export const toolbarJs = `(function () {
             ta.target = "_blank";
             ta.rel = "noopener";
             ta.href = t.href;
-            ta.style.cssText = "color:#8ab4ff;text-decoration:none;display:flex;align-items:center;min-height:44px";
+            ta.style.cssText = LS;
             crew.appendChild(ta);
           }
+        }
+        // The other side: origin plus this path as text, so "//" cannot leave it.
+        var sd = c.side;
+        if (sd && typeof sd.label === "string" && typeof sd.url === "string") {
+          try {
+            var so = new URL(sd.url);
+            if (so.protocol === "https:" || so.protocol === location.protocol) {
+              var sa = document.createElement("a");
+              sa.textContent = sd.label;
+              sa.rel = "noopener";
+              sa.href = so.origin + location.pathname + location.search;
+              sa.style.cssText = LS;
+              crew.appendChild(sa);
+            }
+          } catch (e) {}
         }
         if (typeof c.who !== "string" || typeof c.url !== "string") return;
         var u = new URL(c.url);
@@ -258,7 +274,7 @@ export const toolbarJs = `(function () {
         a.textContent = c.who + " is working on this";
         a.rel = "noopener";
         a.href = u.href;
-        a.style.cssText = "color:#8ab4ff;text-decoration:none;display:flex;align-items:center;min-height:44px";
+        a.style.cssText = LS;
         crew.appendChild(a);
       })
       .catch(function () {});
