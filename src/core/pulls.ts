@@ -12,7 +12,7 @@ import { sealedByNumber } from "./sealed.ts";
 import type { Database } from "bun:sqlite";
 import { diffRange, type Diff } from "../git/diff.ts";
 import { isSafeRef } from "../git/guard.ts";
-import { listRefs } from "../git/read.ts";
+import { readTips } from "../git/tips.ts";
 import {
   aheadCount,
   fetchInto,
@@ -833,26 +833,14 @@ export async function pullMergeState(
 const READ_AT_ONCE = 4;
 
 /**
- * `pullMergeState` for a page of pulls: one `for-each-ref` per repository
- * directory instead of two `rev-parse` per pull, and at most `READ_AT_ONCE`
+ * `pullMergeState` for a page of pulls: tips read from the ref files (no git
+ * process), each answer remembered by (base tip, head tip) in `mergeReading`
+ * so git runs only for a pair that moved, and at most `READ_AT_ONCE`
  * readings in flight. Same answers, same order as the input.
  */
 export async function pullMergeStates(
   items: readonly { dir: string; pull: Pull }[],
 ): Promise<({ mergeable: boolean; conflicts: string[] } | null)[]> {
-  const tips = new Map<string, Promise<Map<string, string>>>();
-  const tipsOf = (dir: string): Promise<Map<string, string>> => {
-    let known = tips.get(dir);
-    if (known === undefined) {
-      known = listRefs(dir).then((refs) => {
-        const out = new Map<string, string>();
-        if (refs.ok) for (const r of refs.value) out.set(r.name, r.oid);
-        return out;
-      });
-      tips.set(dir, known);
-    }
-    return known;
-  };
   const out: ({ mergeable: boolean; conflicts: string[] } | null)[] =
     new Array(items.length).fill(null);
   let next = 0;
@@ -860,11 +848,12 @@ export async function pullMergeStates(
     for (let i = next++; i < items.length; i = next++) {
       const { dir, pull } = items[i]!;
       if (pull.state !== "open" || pull.mergedAt !== null) continue;
-      const live = await tipsOf(dir);
-      const baseOid = live.get(`refs/heads/${pull.baseBranch}`) ?? pull.baseOid;
+      const baseRef = `refs/heads/${pull.baseBranch}`;
       const headRef = pull.crossRepo
         ? `refs/pull/${pull.number}/head`
         : `refs/heads/${pull.headBranch}`;
+      const live = await readTips(dir, [baseRef, headRef]);
+      const baseOid = live.get(baseRef) ?? pull.baseOid;
       const headOid = live.get(headRef) ?? pull.headOid;
       const r = await mergeReading(dir, baseOid, headOid);
       out[i] = { mergeable: r.mergeable, conflicts: r.conflicts };
