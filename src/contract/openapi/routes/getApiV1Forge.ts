@@ -1,0 +1,3 @@
+import type { Route } from "../shared.ts";
+
+export const route: Route = { method: "get", path: "/api/v1/forge", summary: "A spawned forge's word about itself: { claimed, lastActivityAt }; lastActivityAt is null unless the parent's secret is sent", auth: false, refusals: { not_found: "404: this forge was not spawned" } };

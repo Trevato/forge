@@ -4,7 +4,7 @@ import { ROUTES } from "../src/contract/openapi.ts";
 
 /**
  * Every `/api/v1` route registered in src/http/api.ts has a row in `ROUTES`
- * (src/contract/openapi.ts), or is listed here. This list only shrinks: describe
+ * (one file each under src/contract/openapi/routes/), or is listed here. This list only shrinks: describe
  * a route, then delete its line. An entry that is now described is ignored.
  */
 const NOT_YET_DESCRIBED: readonly string[] = [
@@ -147,7 +147,7 @@ test("every registered /api/v1 route has an OpenAPI row or is listed as not yet 
   const missing = all.filter((r) => !described.has(r) && !NOT_YET_DESCRIBED.includes(r));
   const removable = NOT_YET_DESCRIBED.filter((r) => described.has(r));
   console.log(`openapi-coverage: ${removable.length} NOT_YET_DESCRIBED entries could be removed`);
-  expect(missing, `routes with no OpenAPI row (add one to ROUTES in src/contract/openapi.ts):\n${missing.join("\n")}`).toEqual([]);
+  expect(missing, `routes with no OpenAPI row (add a file under src/contract/openapi/routes/, then run bun scripts/openapi-routes.ts):\n${missing.join("\n")}`).toEqual([]);
 });
 
 test("NOT_YET_DESCRIBED is sorted and names registered routes", () => {

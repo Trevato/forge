@@ -251,6 +251,9 @@ flag exists only in the stdio dev runner and is never reachable over SSH.
   `{ items, next_cursor }` via `paged(...)`, never a bare array
   (`test/api-list-shape.test.ts` fails on one). Web forms follow the same shape
   via `readForm(ctx, scope)`.
+  Describe it in OpenAPI as one file, `contract/openapi/routes/<operationId>.ts`,
+  exporting `route`; then `bun scripts/openapi-routes.ts` writes its line in the
+  generated index. Never list it by hand.
 - **Add a TUI screen:** one file under `tui/screens/`, exporting
   `(f: Session, ctx: Ctx, …) => Screen`. Compose `ui/widgets`; take navigation
   from `screens/common.ts` (`ListState`, `Scroll`, `Filter`, `drawList`,
