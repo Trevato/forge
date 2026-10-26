@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { newApp } from "../src/actions/apps.ts";
+import { doorPage } from "../src/apps/door.ts";
+import type { PillWhere } from "../src/apps/toolbar.ts";
 import { signGrant, type AppTarget } from "../src/apps/proxy.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import { getAppByRepo, type AppRecord } from "../src/core/apps.ts";
@@ -136,11 +138,21 @@ test("a private repository is linked only to who may read it", async () => {
     `${cookie}=${signGrant(dataDir, target, 60_000, Date.now(), { id, name, role })}`;
   const host = `vault.${DOMAIN}`;
 
+  // Not here to a stranger: the very answer a name nobody holds gets.
+  const unknown = await door(`nothing.${DOMAIN}`);
+  const unknownBody = await unknown.text();
+  expect(unknown.status).toBe(404);
   for (const cookies of [undefined, as(b.value.id, "bob", "user")]) {
-    const html = await (await door(host, cookies)).text();
-    expect(html).toContain("<h1>vault</h1>");
-    expect(html).not.toContain("alice/vault");
-    expect(html).not.toContain("The repository");
+    const res = await door(host, cookies);
+    const body = await res.text();
+    expect(res.status).toBe(unknown.status);
+    expect(body).toBe(unknownBody);
+    expect(body).not.toContain("vault");
+    expect([...res.headers].filter(([k]) => k !== "date")).toEqual(
+      [...unknown.headers].filter(([k]) => k !== "date"),
+    );
+    const post = await fetch(`${servers.url}/__forge/`, { method: "POST", headers: { host } });
+    expect(post.status).toBe(404);
   }
   const mine = await (await door(host, as(alice, "alice", "admin"))).text();
   expect(mine).toContain(`href="${servers.url}/alice/vault"`);
@@ -164,6 +176,21 @@ test("HEAD answers the headers with no body; POST is a 405 that says what is all
   expect(post.status).toBe(405);
   expect(post.headers.get("allow")).toBe("GET, HEAD");
   expect(post.headers.get("x-content-type-options")).toBe("nosniff");
+});
+
+test("every name the door draws is escaped, for production and a preview", () => {
+  const evil = `<script>alert("x")</script>'`;
+  const out = (where: PillWhere) =>
+    doorPage({ where, forgeUrl: "http://forge.test", signin: "/s" }, false).text();
+  return Promise.all([
+    out({ app: evil, env: "production", repo: evil }),
+    out({ app: evil, env: `pull-${evil}`, repo: evil, pull: evil as unknown as number }),
+  ]).then((pages) => {
+    for (const html of pages) {
+      expect(html).not.toContain("<script>");
+      expect(html).toContain("&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;&#39;");
+    }
+  });
 });
 
 const phasesOf = async (host: string, path: string, cookie?: string) => {

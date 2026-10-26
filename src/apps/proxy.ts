@@ -40,7 +40,7 @@ import { feedback, mintProof } from "./feedback.ts";
 import { clientBucket } from "../http/peer.ts";
 import { doorPage } from "./door.ts";
 import { takePhases, timePhase } from "../core/route_timing.ts";
-import { notFound } from "../http/respond.ts";
+import { notFound, securityFloor } from "../http/respond.ts";
 import { appMeasure } from "./measure.ts";
 import { holdPortRequest, holdPortSocket } from "./handoff.ts";
 import { htmlAnswer, readPage, rewritable, withToolbar, type PillWhere } from "./toolbar.ts";
@@ -628,17 +628,26 @@ export async function proxyApp(
   // is not shown. A nested host is its guest's, and has no such page.
   if (url.pathname === "/__forge/") {
     if (target.nested) return notFound();
-    if (request.method !== "GET" && request.method !== "HEAD")
-      return new Response(null, {
-        status: 405,
-        headers: { allow: "GET, HEAD", "x-content-type-options": "nosniff" },
-      });
     const signed = timePhase(request, "session", () => {
       const cookie = cookieValue(request, grantCookieName(target));
       return cookie === undefined
         ? undefined
         : readGrant(runtime.app.config.dataDir, cookie, target);
     });
+    // A private app (or a sealed pull's preview) is not here to anyone it
+    // does not admit: the answer is the one a name nobody holds gets, byte
+    // for byte, before the method is even looked at.
+    if (
+      (target.app.access === "private" ||
+        sealedPull(runtime, target) !== undefined) &&
+      (signed === undefined || !stillEntitled(runtime, target, signed))
+    )
+      return securityFloor(new Response("not found", { status: 404 }));
+    if (request.method !== "GET" && request.method !== "HEAD")
+      return new Response(null, {
+        status: 405,
+        headers: { allow: "GET, HEAD", "x-content-type-options": "nosniff" },
+      });
     const tell = timePhase(request, "app", () =>
       tellLink(
         runtime.app.db,
