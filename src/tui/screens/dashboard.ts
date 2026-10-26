@@ -88,6 +88,7 @@ import {
   plural,
   linkScreen,
 } from "./common.ts";
+import { readVitals, vitalsLine } from "../../flow/vitals.ts";
 import { readKpis } from "../../flow/kpis.ts";
 import { kpiLines } from "../../flow/kpi_words.ts";
 import { BOOTED } from "../../release/gate.ts";
@@ -265,7 +266,10 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     figures =
       f.user?.isAdmin !== true
         ? []
-        : kpiLines(readKpis(f.db, now, kpiForge(f.app)), commit === null ? null : { sha: commit, since: ago(BOOTED) });
+        : [
+            ...kpiLines(readKpis(f.db, now, kpiForge(f.app)), commit === null ? null : { sha: commit, since: ago(BOOTED) }),
+            vitalsLine(readVitals(f.db, now)),
+          ];
     // "Yours" is ownership plus the orgs you are on a team of; typing in the
     // filter reaches every repository you can see.
     const orgs = f.user

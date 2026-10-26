@@ -125,6 +125,7 @@ import {
 } from "./direct.ts";
 import { crewOffInPreview } from "./preview.ts";
 import { approvedOnHead, finishApproved, finishFields } from "./finishing.ts";
+import { readVitals, vitalsMisses, vitalsWords } from "../flow/vitals.ts";
 import { moveRequested, tallyRequested, tallyWords } from "./requested.ts";
 import { reviewersOf, sendToReview, sweepReviews } from "./review.ts";
 import { lastWaits, noteWaits, tallyWaits, type Wait, waitWords } from "./waits.ts";
@@ -1283,6 +1284,8 @@ export async function autonomyTick(
         ...(held.by.hot_file.length === 0 ? {} : { hot: hotWords(hotFiles(current.id)) }),
         // Stalled issues this tick parked and freed for another builder (#4073).
         unstuck,
+        // Open pulls, opened/landed per hour and per 6 h, conflicted (#5935).
+        ...flowVitals(app.db, now),
         active: status.active,
         slots: status.slots,
         // Approved pulls being brought up to date, those still waiting (#3682),
@@ -1331,6 +1334,13 @@ export async function autonomyTick(
   } catch (error) {
     log.error("review sweep failed", { error: String(error) });
   }
+}
+
+/** The tick line's flow vitals (#5935): the counts in words, and the targets they miss. */
+export function flowVitals(db: App["db"], now: Date): { pulls: string; offTarget?: string } {
+  const v = readVitals(db, now);
+  const misses = vitalsMisses(v);
+  return { pulls: vitalsWords(v), ...(misses.length === 0 ? {} : { offTarget: misses.join("; ") }) };
 }
 
 /**

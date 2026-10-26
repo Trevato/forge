@@ -18,6 +18,7 @@ import { HOLDS } from "../../crew/held.ts";
 import type { HeldRow } from "../../flow/held.ts";
 import { conflictedPulls, conflictedSays, rebaseLane, rebaseLaneSays } from "../../flow/conflicted.ts";
 import { readPipeline, STAGE_LABEL, verdict } from "../../flow/pipeline.ts";
+import { readVitals, vitalsLine } from "../../flow/vitals.ts";
 import { readQueues, redBatchWords } from "../../flow/queue.ts";
 import { reviewersBusy, reviewingSays } from "../../flow/reviewing.ts";
 import { requestedSays, requestedWaits } from "../../flow/requested.ts";
@@ -58,6 +59,8 @@ export function flowLines(
   const reviewing = reviewingSays(reviewersBusy(db, agent !== undefined));
   return [
     ...wrap(verdict(stages, now.getTime()), inner),
+    "",
+    ...wrap(vitalsLine(readVitals(db, now, agent !== undefined)), inner),
     "",
     ...wrap(throughputSays(flow), inner),
     "",

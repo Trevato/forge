@@ -10,7 +10,8 @@
 import type { Database } from "bun:sqlite";
 import { backupAge, backupFull, backupOverdue, buildersValue, checkTime, reactNote, speedWords, spendCeilingWords, spendFull, spendValue, usersValue, visitorsNote, visitorsValue, waitingWords } from "../../flow/kpi_words.ts";
 import type { Kpis } from "../../flow/kpis.ts";
-import { cachedKpis, cachedWaiting } from "./home_cache.ts";
+import { vitalsLine } from "../../flow/vitals.ts";
+import { cachedKpis, cachedVitals, cachedWaiting } from "./home_cache.ts";
 import { escapeHtml, html, raw, type Html } from "../html.ts";
 import { BOOTED } from "../../release/gate.ts";
 import { running } from "../../kernel/version.ts";
@@ -182,4 +183,11 @@ export function waitingLine(db: Database, user: User, now: Date = new Date()): H
   });
   const words = waitingWords(count, oldest, now);
   return words === null ? html`` : html`<p class="small muted"><a href="/review">${words}</a></p>`;
+}
+
+/** Home's flow vitals for an admin (#5935): one muted line of counts; the open count links to the boards. */
+export function vitalsRow(db: Database, now: Date = new Date()): Html {
+  const v = cachedVitals(db, now);
+  const rest = vitalsLine(v).split(" · ").slice(1).join(" · ");
+  return html`<p class="small muted"><a href="/boards">${v.open} open pulls</a> · ${rest}</p>`;
 }

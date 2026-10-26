@@ -384,6 +384,8 @@ with the same lines, worded by the same helpers (`src/core/client-apps.ts`).
 
 **Scoring the home (#5805).** `bun scripts/home-eval.ts <url>` is the deterministic half of that loop: it reads `/` with the same text conversion, builds ground truth from the forge's own API (`GET /api/v1/telemetry/home` for landings, the live version, builders and why idle, spend against the ceiling and what waits on the owner; the repository list and each newest commit for repositories quiet 3 days), and prints each of the five facts as `stated`, `missing` or `wrong` with the page's words, then coverage, errors, characters and fetch time. The method and a table of results, one row per feed pull, are in `docs/HOME-EVAL.md`. No dependency was added.
 
+Under the figures, an admin's home, the terminal's dashboard and its Flow dialog carry one vitals line (#5935, `src/flow/vitals.ts`): open pulls, opened and landed in 1 h and 6 h, and conflicted, against #5924's targets; the autonomy tick line says the same as `pulls` (and `offTarget` when a target is missed). The MCP `flow` tool and `GET /api/v1/telemetry/flow` carry it as `vitals: { says, misses, … }`; the tool's description is unchanged because `tools/list` is at its size ceiling, so an agent finds `vitals` in the result, not the listing. An agent reader's counts cover public repositories only.
+
 Home shows nine figures first, from `src/flow/kpis.ts`: shipped per hour (with
 a 24 h sparkline), the live version and since when, the median check time, the crew builders
 running of their slots, and the crew's spend today of the forge's daily

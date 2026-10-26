@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App as Forge } from "../src/app.ts";
 import { createUser, type User } from "../src/core/users.ts";
+import { readVitals, vitalsLine } from "../src/flow/vitals.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -94,4 +95,10 @@ test("past the forge cap the terminal and the web tile read the same words", asy
   const { spendCeilingWords } = await import("../src/flow/kpi_words.ts");
   const w = spendCeilingWords({ todayUsd: 601, ceilingUsd: 600, hitAt: "2026-10-25T14:03:20.000Z" });
   expect(w).toEqual({ note: "ceiling hit 14:03Z, builders idle", title: "ceiling hit 14:03Z, builders idle", attn: true });
+});
+
+test("an admin's first screen carries the flow vitals line; a non-admin's does not (#5935)", async () => {
+  const text = await withCommit(undefined, () => firstScreen(alice));
+  expect(text).toContain(vitalsLine(readVitals(forge.db)));
+  expect(await firstScreen(bob)).not.toContain("open pulls");
 });

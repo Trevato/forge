@@ -11,12 +11,14 @@ import type { Database } from "bun:sqlite";
 import type { Answer } from "../../boards/query.ts";
 import { writeStamp } from "../../core/write_clock.ts";
 import { readKpis, type Kpis } from "../../flow/kpis.ts";
+import { readVitals, type Vitals } from "../../flow/vitals.ts";
 import { Stamped } from "../../kernel/stamped.ts";
 
 export const HOME_MAX_AGE_MS = 30_000;
 
 const kpiCaches = new WeakMap<Database, Stamped<Kpis>>();
 const panelCaches = new WeakMap<Database, Stamped<Answer>>();
+const vitalsCaches = new WeakMap<Database, Stamped<Vitals>>();
 const waitingCaches = new WeakMap<Database, Stamped<Waiting>>();
 
 /** What the waiting line keeps of the viewer's asks: how many, and the oldest's time. */
@@ -38,6 +40,9 @@ function cacheOf<V>(into: WeakMap<Database, Stamped<V>>, db: Database, maxEntrie
 export const kpiCache = (db: Database): Stamped<Kpis> => cacheOf(kpiCaches, db, 8);
 /** The pinned-panel cache of `db`: for tests, which count its hits. */
 export const panelCache = (db: Database): Stamped<Answer> => cacheOf(panelCaches, db, 64);
+
+/** The vitals cache of `db`: for tests, which count its hits. */
+export const vitalsCache = (db: Database): Stamped<Vitals> => cacheOf(vitalsCaches, db, 2);
 
 /** The waiting-line cache of `db`: for tests, which count its hits. */
 export const waitingCache = (db: Database): Stamped<Waiting> => cacheOf(waitingCaches, db, 64);
@@ -72,4 +77,11 @@ export function cachedPanel(db: Database, identity: unknown, compute: () => Answ
   const stamp = writeStamp(db);
   if (stamp === undefined) return compute();
   return panelCache(db).get(`panel:${JSON.stringify(identity)}`, stamp, compute);
+}
+
+/** Admin only: the caller has checked. The forge-wide flow vitals, valid like the KPIs: while the write clock holds, 30 seconds at most. */
+export function cachedVitals(db: Database, now: Date): Vitals {
+  const stamp = writeStamp(db);
+  if (stamp === undefined) return readVitals(db, now);
+  return vitalsCache(db).get("vitals", stamp, () => readVitals(db, now));
 }
