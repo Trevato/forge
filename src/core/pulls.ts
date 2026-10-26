@@ -345,6 +345,44 @@ export function pullForBranch(
 }
 
 /**
+ * `pullForBranch` for many branches of one repository: each branch's newest
+ * pull, in two queries per chunk. Branches with none are absent.
+ */
+export function pullsForBranches(
+  db: Database,
+  repoId: string,
+  branches: readonly string[],
+): Map<string, Pull> {
+  const out = new Map<string, Pull>();
+  const unique = [...new Set(branches)].filter((b) => b !== "");
+  const CHUNK = 400;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const rows = db
+      .query<{ id: string; branch: string }, string[]>(
+        `SELECT issue.id AS id, pull.head_branch AS branch
+           FROM pull JOIN issue ON issue.id = pull.issue_id
+          WHERE issue.repo_id = ?1
+            AND pull.head_branch IN (${batch.map((_, n) => `?${n + 2}`).join(",")})
+          ORDER BY issue.created_at DESC`,
+      )
+      .all(repoId, ...batch);
+    const newest = new Map<string, string>();
+    for (const r of rows) if (!newest.has(r.branch)) newest.set(r.branch, r.id);
+    const pulls = new Map(
+      joinMany(db, [...getIssuesByIds(db, [...newest.values()]).values()]).map(
+        (pull) => [pull.id, pull] as const,
+      ),
+    );
+    for (const [branch, id] of newest) {
+      const pull = pulls.get(id);
+      if (pull !== undefined) out.set(branch, pull);
+    }
+  }
+  return out;
+}
+
+/**
  * Bring a same-repo pull's stored head up to its branch's new tip. Every seam
  * that lands a commit on a branch — a git push, the web editor, the API —
  * calls this one function, so `pull.headOid` never names a commit the branch

@@ -17,11 +17,28 @@ import { alreadyDone } from "../../core/done_on_main.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { repoGraph } from "../../core/dependencies.ts";
-import { labelsFor, listLabels, type Issue } from "../../core/issues.ts";
-import { getPull, openPullsClosing, type Pull } from "../../core/pulls.ts";
+import {
+  getIssuesByNumbers,
+  labelsFor,
+  listLabels,
+  numberKey,
+  type Issue,
+} from "../../core/issues.ts";
+import {
+  getPull,
+  joinMany,
+  openPullsClosing,
+  type Pull,
+} from "../../core/pulls.ts";
 import { canEnterApp, canWrite, getSealedFork, type Repo } from "../../core/repos.ts";
 import { canSeeSealed } from "../../core/sealed.ts";
-import { activeRunFor, listRuns } from "../../core/runs.ts";
+import {
+  activeRunFor,
+  activeRunsFor,
+  latestRunsOfKind,
+  listRuns,
+  type Run,
+} from "../../core/runs.ts";
 import { getUsersByIds } from "../../core/users.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -64,6 +81,8 @@ import {
 } from "../pages/thread.ts";
 import { changeHref } from "./nouns.ts";
 import {
+  knowPulls,
+  knowRunPulls,
   pullWord,
   runWord,
   wordBadge,
@@ -119,9 +138,91 @@ function shippedBy(wordCtx: WordCtx, repo: Repo, issue: Issue): Pull | undefined
   if (issue.state !== "closed") return undefined;
   knowMergeClosings(wordCtx, repo.id, [issue.number]);
   const number = mergeClosings.get(wordCtx)?.get(repo.id)?.get(issue.number);
+  const read = told.get(wordCtx)?.shipped;
+  if (number !== null && number !== undefined && read?.has(number))
+    return read.get(number);
   return number !== null && number !== undefined && Number.isInteger(number)
     ? getPull(wordCtx.db, repo.id, number)
     : undefined;
+}
+
+/** What `tellWords` read ahead for a page, so `tellWord` reads nothing per row. */
+// Scoped to one `tellWords` call: set before the words are read, deleted after,
+// and keyed by the request's own `WordCtx`.
+const told = new WeakMap<
+  WordCtx,
+  {
+    active: Map<string, Run | undefined>;
+    last: Map<string, Run | undefined>;
+    shipped: Map<number, Pull | undefined>;
+  }
+>();
+
+/**
+ * `tellWord` for a page of tells: the runs, pulls and checks of all of them
+ * are read together first, so the page costs a handful of queries rather
+ * than a few per row. Each word is the one `tellWord` gives (undefined for
+ * a closed tell nothing merged shut), in the order of `issues`.
+ */
+export async function tellWords(
+  wordCtx: WordCtx,
+  repo: Repo,
+  issues: readonly Issue[],
+  closingPulls: ReadonlyMap<number, Pull>,
+): Promise<({ word: Word; note: string } | undefined)[]> {
+  const db = wordCtx.db;
+  const read = {
+    active: new Map<string, Run | undefined>(),
+    last: new Map<string, Run | undefined>(),
+    shipped: new Map<number, Pull | undefined>(),
+  };
+  const pulls: Pull[] = [];
+  const closed = issues.filter((i) => i.state === "closed");
+  knowMergeClosings(wordCtx, repo.id, closed.map((i) => i.number));
+  const closings = mergeClosings.get(wordCtx)?.get(repo.id);
+  const numbers = closed.flatMap((i) => {
+    const n = closings?.get(i.number);
+    return n !== null && n !== undefined && Number.isInteger(n) ? [n] : [];
+  });
+  const found = getIssuesByNumbers(
+    db,
+    numbers.map((number) => ({ repoId: repo.id, number })),
+  );
+  for (const pull of joinMany(
+    db,
+    numbers.flatMap((n) => found.get(numberKey(repo.id, n)) ?? []),
+  )) {
+    read.shipped.set(pull.number, pull);
+    pulls.push(pull);
+  }
+  for (const n of numbers) if (!read.shipped.has(n)) read.shipped.set(n, undefined);
+  const lone = issues.filter(
+    (i) => i.state !== "closed" && !closingPulls.has(i.number),
+  );
+  for (const issue of issues)
+    if (issue.state !== "closed") {
+      const pull = closingPulls.get(issue.number);
+      if (pull !== undefined) pulls.push(pull);
+    }
+  if (runsOpenTo(wordCtx, repo)) {
+    const ids = lone.map((i) => i.id);
+    const active = activeRunsFor(db, "agent", ids);
+    const last = latestRunsOfKind(db, "agent", ids);
+    for (const id of ids) {
+      read.active.set(id, active.get(id));
+      read.last.set(id, last.get(id));
+    }
+    knowRunPulls(wordCtx, [...last.values()]);
+  }
+  knowPulls(wordCtx, pulls);
+  told.set(wordCtx, read);
+  try {
+    return await Promise.all(
+      issues.map((issue) => tellWord(wordCtx, repo, issue, closingPulls.get(issue.number))),
+    );
+  } finally {
+    told.delete(wordCtx);
+  }
 }
 
 /**
@@ -150,18 +251,20 @@ export async function tellWord(
   // A private app's runs are for those who may enter it: anyone else reads
   // that it was told, never how the crew is getting on with it.
   if (!runsOpenTo(wordCtx, repo)) return { word: "told", note: "told" };
-  if (activeRunFor(db, "agent", issue.id) !== undefined)
+  const read = told.get(wordCtx);
+  const active = read?.active.has(issue.id)
+    ? read.active.get(issue.id)
+    : activeRunFor(db, "agent", issue.id);
+  if (active !== undefined)
     return { word: "working", note: "working now" };
   // Deferred work is not waiting to be picked up: the crew will not take
   // it, and the page says why, as the map does.
   const deferred = deferredWhy(wordCtx, repo, issue);
   if (deferred !== undefined)
     return { word: "told", note: `deferred: ${deferred}` };
-  const last = listRuns(db, repo.id, {
-    kind: "agent",
-    issueId: issue.id,
-    limit: 1,
-  })[0];
+  const last = read?.last.has(issue.id)
+    ? read.last.get(issue.id)
+    : listRuns(db, repo.id, { kind: "agent", issueId: issue.id, limit: 1 })[0];
   if (last !== undefined) return await runWord(wordCtx, last);
   // A person can hold a tell the same as an agent can — the crew has never
   // touched it, but nobody is waiting on the crew to either, so it is

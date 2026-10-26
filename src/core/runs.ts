@@ -752,6 +752,63 @@ export function activeRunFor(
 }
 
 /**
+ * `listRuns(…, { kind, issueId, limit: 1 })` for many issues at once: each
+ * issue's newest run of `kind`, one query per chunk. Issues with none are absent.
+ */
+export function latestRunsOfKind(
+  db: Database,
+  kind: RunKind,
+  issueIds: readonly string[],
+): Map<string, Run> {
+  const out = new Map<string, Run>();
+  const unique = [...new Set(issueIds)];
+  const CHUNK = 400;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const rows = db
+      .query<RunRow, string[]>(
+        `SELECT * FROM run WHERE kind = ?1
+           AND issue_id IN (${batch.map((_, n) => `?${n + 2}`).join(",")})
+         ORDER BY id DESC`,
+      )
+      .all(kind, ...batch);
+    for (const row of rows)
+      if (row.issue_id && !out.has(row.issue_id)) out.set(row.issue_id, toRun(row));
+  }
+  return out;
+}
+
+/**
+ * `checksForHead` for many pulls at once: each pull's runs at its own head,
+ * newest first, one query per chunk. Pulls with none are absent.
+ */
+export function checksForHeads(
+  db: Database,
+  heads: ReadonlyMap<string, string>,
+): Map<string, Run[]> {
+  const out = new Map<string, Run[]>();
+  const ids = [...heads.keys()];
+  const CHUNK = 400;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const batch = ids.slice(i, i + CHUNK);
+    const rows = db
+      .query<RunRow, string[]>(
+        `SELECT * FROM run WHERE kind IN ('deploy','check')
+           AND issue_id IN (${batch.map((_, n) => `?${n + 1}`).join(",")})
+         ORDER BY id DESC`,
+      )
+      .all(...batch);
+    for (const row of rows) {
+      if (!row.issue_id || row.commit_oid !== heads.get(row.issue_id)) continue;
+      const list = out.get(row.issue_id) ?? [];
+      list.push(toRun(row));
+      out.set(row.issue_id, list);
+    }
+  }
+  return out;
+}
+
+/**
  * `activeRunFor` for many issues at once: each issue's earliest queued or
  * running run of `kind`, one query per chunk. Issues with none are absent.
  */
