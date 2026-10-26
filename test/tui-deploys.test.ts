@@ -47,12 +47,12 @@ afterAll(async () => {
 });
 
 const screenText = async (
-  who: User = alice,
+  who: User | null = alice,
   of: Repo = repo,
 ): Promise<string> => {
   const { app, session } = createForgeApp(
     forge,
-    { sshUsername: who.username, remoteAddress: "127.0.0.1", user: who },
+    { sshUsername: who?.username ?? "guest", remoteAddress: "127.0.0.1", ...(who === null ? {} : { user: who }) },
     { terminal: headlessTerminal(120, 30), exitHooks: false },
   );
   app.start();
@@ -172,4 +172,36 @@ test("the app's open pulls list below the deploys with check word and preview, a
   app.stop();
   expect(text).not.toContain("Add a lamp");
   expect(text).not.toContain("Open pulls");
+});
+
+test("production's terminal names the newest open preview to a reader, and a guest sees neither", async () => {
+  const { AppsRuntime } = await import("../src/apps/runtime.ts");
+  const { appSideLines } = await import("../src/actions/apps.ts");
+  const runtime = new AppsRuntime(forge, { domain: "apps.test", scheme: "https", forgeUrl: "https://forge.test", concurrency: 1 });
+  const r = await createRepo(forge, alice, { name: "beacon", visibility: "public" });
+  if (!r.ok) throw new Error("repo failed");
+  const made = createAppRecord(forge.db, { repoId: r.value.id, slug: "beacon", access: "public" });
+  if (!made.ok) throw new Error(made.error);
+  const id = crypto.randomUUID();
+  forge.db
+    .query("INSERT INTO issue (id, repo_id, number, kind, title, author_id) VALUES (?, ?, 7, 'pull', 'Dim the beacon', ?)")
+    .run(id, r.value.id, alice.id);
+  forge.db
+    .query("INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid) VALUES (?, 'main', 'dim', 'b', 'h7')")
+    .run(id);
+  const real = runtime.envStatus.bind(runtime);
+  runtime.envStatus = ((rec, env) =>
+    env === "pull-7" ? ({ state: "running" } as ReturnType<typeof real>) : real(rec, env)) as typeof runtime.envStatus;
+  try {
+    const lines = ["Production: https://beacon.apps.test", "Newest preview: #7 Dim the beacon https://beacon--7.apps.test"];
+    expect(appSideLines(forge, alice, r.value)).toEqual(lines);
+    const text = await screenText(alice, r.value);
+    for (const l of lines) expect(text).toContain(l);
+    expect(appSideLines(forge, undefined, r.value)).toEqual([]);
+    const guest = await screenText(null, r.value);
+    expect(guest).not.toContain("Production:");
+    expect(guest).not.toContain("Newest preview");
+  } finally {
+    await runtime.stop();
+  }
 });

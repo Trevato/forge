@@ -11,7 +11,7 @@
  * none.
  */
 
-import { appPace, appPullLines, appVisitors, type AppPullLine } from "../../actions/apps.ts";
+import { appPace, appPullLines, appSideLines, appVisitors, type AppPullLine } from "../../actions/apps.ts";
 import { trendLine, visitorsLine } from "../../apps/vitals.ts";
 import { listRepoRuns } from "../../actions/runs.ts";
 import { carriedByRuns, carriesText } from "../../core/carried.ts";
@@ -52,6 +52,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   let visitors = "";
   let trend = "";
   let pace = "";
+  let side: string[] = [];
   let pulls: AppPullLine[] = [];
 
   const read = (): void => {
@@ -65,6 +66,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     visitors = seen === undefined ? "" : visitorsLine(seen);
     trend = seen === undefined ? "" : trendLine(seen.loadDays);
     pace = appPace(f.app, f.user, repo);
+    side = appSideLines(f.app, f.user, repo);
     pulls = appPullLines(f.app, f.user, repo);
     loaded = true;
     ctx.invalidate();
@@ -83,7 +85,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     render(area, s) {
       const c = ctx.theme.c;
       const [head, upper, tail] = split(area, "v", [
-        len(1 + (visitors === "" ? 0 : 1) + (trend === "" ? 0 : 1) + (pace === "" ? 0 : 1)),
+        len(1 + (visitors === "" ? 0 : 1) + (trend === "" ? 0 : 1) + (pace === "" ? 0 : 1) + side.length),
         fill(1),
         len(pulls.length === 0 ? 0 : pulls.length + 1),
       ]);
@@ -106,7 +108,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         style(c.mutedFg, c.bg),
         head!.x + head!.w,
       );
-      [visitors, trend, pace]
+      [visitors, trend, pace, ...side]
         .filter((line) => line !== "")
         .forEach((line, i) =>
           s.text(head!.x, head!.y + 1 + i, truncate(line, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w),

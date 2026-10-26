@@ -29,9 +29,10 @@ import {
   canWrite,
   canRead,
   getRepoById,
+  type Repo,
   ownerInStanding,
 } from "../core/repos.ts";
-import { getUserById, isActive } from "../core/users.ts";
+import { getUserById, isActive, type User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { loadKey } from "../kernel/secret.ts";
 import { previewEnv, type EnvName } from "./data.ts";
@@ -490,16 +491,31 @@ function sideFor(
   who: GrantWho | undefined,
 ): Side | null {
   if (who === undefined) return null;
+  return sideForViewer(runtime, target.app, target.env, getUserById(runtime.app.db, who.id));
+}
+
+/** The repository, when `viewer` is an active reader of it: the only one the other side is told to. */
+export function sideReader(db: App["db"], record: AppRecord, viewer: User | undefined): Repo | undefined {
+  if (viewer === undefined || !isActive(viewer)) return undefined;
+  const repo = getRepoById(db, record.repoId);
+  return repo !== undefined && canRead(db, repo, viewer) ? repo : undefined;
+}
+
+/** The gate and the reading of the pill's other side, for the pill and the terminal alike. */
+export function sideForViewer(
+  runtime: Pick<AppsRuntime, "app" | "urlFor" | "envStatus">,
+  record: AppRecord,
+  env: EnvName,
+  viewer: User | undefined,
+): Side | null {
   const db = runtime.app.db;
-  const viewer = getUserById(db, who.id);
-  const repo = getRepoById(db, target.app.repoId);
-  if (viewer === undefined || !isActive(viewer) || repo === undefined) return null;
-  if (!canRead(db, repo, viewer)) return null;
-  const app = { url: runtime.urlFor(target.app, "production") };
-  if (target.env !== "production") return sideOf(app, target.env, []);
+  const repo = sideReader(db, record, viewer);
+  if (repo === undefined || viewer === undefined) return null;
+  const app = { url: runtime.urlFor(record, "production") };
+  if (env !== "production") return sideOf(app, env, []);
   const previews = openPulls(db, repo, viewer, 50).flatMap((p) => {
-    const env = previewEnv(p.number);
-    const status = runtime.envStatus(target.app, env);
+    const penv = previewEnv(p.number);
+    const status = runtime.envStatus(record, penv);
     if (status === undefined) return [];
     const state =
       status.state === "running"
@@ -507,9 +523,9 @@ function sideFor(
         : status.state === "asleep" || status.dormant !== undefined
           ? "asleep"
           : status.state;
-    return [{ number: p.number, title: p.title, state, url: runtime.urlFor(target.app, env) }];
+    return [{ number: p.number, title: p.title, state, url: runtime.urlFor(record, penv) }];
   });
-  return sideOf(app, target.env, previews);
+  return sideOf(app, env, previews);
 }
 
 /** Whether the person a grant names may enter this app now. */

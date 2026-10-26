@@ -37,3 +37,8 @@ export function sideOf(app: SideApp, environment: string, previews: readonly Sid
   for (const p of previews) if (OPENABLE.has(p.state) && (newest === undefined || p.number > newest.number)) newest = p;
   return newest === undefined ? null : { label: `Newest preview: #${newest.number} ${clip(newest.title)}`, url: newest.url };
 }
+
+/** A line for a terminal as plain text: control characters gone. */
+export function plainLine(text: string): string {
+  return text.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, "");
+}

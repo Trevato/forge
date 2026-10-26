@@ -17,7 +17,8 @@ import { openPulls } from "../apps/door_pulls.ts";
 import { goldenPath, goldenPathLine } from "../apps/golden_path.ts";
 import { appVitals, type AppVitals } from "../apps/vitals.ts";
 import { appsRuntime, envsFor, type EnvStatus } from "../apps/runtime.ts";
-import { grantUrl, originFor } from "../apps/proxy.ts";
+import { grantUrl, originFor, sideForViewer, sideReader } from "../apps/proxy.ts";
+import { plainLine } from "../apps/side.ts";
 import { scaffoldFiles } from "../apps/scaffold.ts";
 import {
   isEnvName,
@@ -536,6 +537,23 @@ export function appPullLines(app: App, actor: User | undefined, repo: Repo): App
     check: checkWord(p.run, p.headOid),
     preview: runtime?.urlFor(record, previewEnv(p.number)),
   }));
+}
+
+/**
+ * The other side of the app for its production terminal, gated as the pill
+ * is (an active reader of the repository; a guest gets none): production's
+ * address, then the newest open preview when there is one.
+ */
+export function appSideLines(app: App, actor: User | undefined, repo: Repo): string[] {
+  const record = getAppByRepo(app.db, repo.id);
+  const runtime = appsRuntime(app);
+  if (record === undefined || runtime === undefined) return [];
+  if (sideReader(app.db, record, actor) === undefined) return [];
+  const preview = sideForViewer(runtime, record, "production", actor);
+  return [
+    `Production: ${runtime.urlFor(record, "production")}`,
+    ...(preview === null ? [] : [`${preview.label} ${preview.url}`]),
+  ].map(plainLine);
 }
 
 export type EnvError = "not_found" | "no_runtime" | "no_such_env";

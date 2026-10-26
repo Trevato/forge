@@ -166,7 +166,10 @@ Under the box, four starter sentences are plain links (no script):
   rev-list` of the deployed commit when the run finishes. The run page says
   "Carries #3, #5" and `GET /api/v1/repos/:owner/:name/runs/:id` has `carries`.
   In the terminal, open a repository and press `d` for its production deploys
-  (each with what it carries), `enter` for the log, `r` to refresh.
+  (each with what it carries), `enter` for the log, `r` to refresh. A signed-in
+  reader also sees `Production: <url>` and, when a pull's preview is up or
+  asleep, `Newest preview: #N <title> <url>` — the pill's other side, same
+  gate; a guest sees neither.
 - A **private** app answers only to someone the forge has vouched for
   (`canRead` on the repository, then a signed grant); a public one to anyone.
 - **Every app has a terminal.** `ssh -p 2222 <name>@<forge>` runs the app's
