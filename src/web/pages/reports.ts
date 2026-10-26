@@ -41,7 +41,7 @@ import { field, readForm } from "../form.ts";
 import { pageAddress } from "../studio/toolbar.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { btn, card, empty, field as formField, time } from "../ui.ts";
+import { btn, card, empty, field as formField, messageText, time } from "../ui.ts";
 
 /** The repository, when it takes reports: public, and so seen by anyone. */
 function publicRepo(ctx: Ctx): Repo | undefined {
@@ -222,7 +222,7 @@ function reportCard(base: string, report: Report): Html {
     html`<p><strong>${report.title}</strong></p>
       ${when(
         report.body !== "",
-        () => html`<pre class="commit-body">${report.body}</pre>`,
+        () => messageText(report.body),
       )}
       ${when(report.page, (p) => html`<p class="hint">Sent from ${p}</p>`)}
       <form

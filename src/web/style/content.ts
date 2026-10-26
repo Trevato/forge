@@ -156,7 +156,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 
 .repo-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 
-
 .filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .filters form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .filters .search { min-width: 180px; flex: 1; max-width: 320px; }
@@ -168,12 +167,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .bar .search { min-width: 180px; flex: 1; max-width: 320px; }
 .bar .seg { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
 @media (max-width: 420px) { .bar .seg > a { padding: 0 8px; } }
-
-.commit-head .card-body { padding: 14px 16px; }
-.commit-body {
-  white-space: pre-wrap; font-family: var(--mono); font-size: 12.5px;
-  color: var(--muted-fg); margin: 8px 0 4px;
-}
 
 .direction-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; color: var(--muted-fg); margin: 6px 0 0; }
 
@@ -320,6 +313,13 @@ form.inline { display: inline; margin-left: auto; }
   background: var(--muted); border: 1px solid var(--border);
   border-radius: var(--radius); max-width: none;
   padding: 12px 14px; overflow-x: auto; margin: 14px 0; scrollbar-width: thin;
+}
+/* Written text kept as typed (a commit message, a report): plain muted mono, wraps, never scrolls sideways. */
+.prose[data-text="message"] { padding: 0; margin: 8px 0 4px; font-size: 12.5px; line-height: 1.5; }
+.prose[data-text="message"] pre {
+  background: none; border: 0; border-radius: 0; padding: 0; margin: 0;
+  font-family: var(--mono); color: var(--muted-fg);
+  white-space: pre-wrap; overflow-wrap: anywhere; overflow: visible;
 }
 .prose code { background: var(--muted); border: 1px solid var(--border); padding: 1px 5px; border-radius: 4px; }
 .prose pre code { background: none; border: none; padding: 0; }

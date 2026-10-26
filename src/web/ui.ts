@@ -885,6 +885,11 @@ export function card(body: Html, o: CardOptions = {}): Html {
   </div>`;
 }
 
+/** Written text kept as typed (a commit message, a report body): §5's prose, wrapped. */
+export function messageText(text: string): Html {
+  return html`<div class="prose" data-text="message"><pre>${text}</pre></div>`;
+}
+
 /** A card wrapping a `<ul class="list">` — the shape every listing takes. */
 export function listCard(rows: Html[], o: CardOptions = {}): Html {
   return card(

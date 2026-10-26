@@ -31,6 +31,7 @@ import {
   empty,
   icon,
   listCard,
+  messageText,
   originTag,
   pager,
   sha,
@@ -105,12 +106,11 @@ export function renderCommit(
   syntax: SyntaxMap,
 ): Html {
   const head: Html = card(
-    html`<h2>${commit.subject}</h2>
-      ${when(
+    html`${when(
         commit.body.trim() !== "",
-        () => html`<pre class="commit-body">${commit.body}</pre>`,
+        () => html`<div class="card-body">${messageText(commit.body)}</div>`,
       )}
-      <div class="bar small muted">
+      <div class="card-body bar small muted">
         ${commit.login
           ? originTag(
               commit.login,
@@ -132,7 +132,7 @@ export function renderCommit(
           >${icon("repo")}Browse files</a
         >
       </div>`,
-    { extra: "commit-head" },
+    { head: html`<h2>${commit.subject}</h2>`, pad: false },
   );
   return html`<div class="mt">${head}</div>
     <div class="mt">

@@ -408,6 +408,24 @@ describe("reports from outside", () => {
     ).toBe(1);
   });
 
+  test("a report's body draws in the prose message div, escaped; a report without one draws none", async () => {
+    await report("alice/game", { title: "tall menu", body: "Menu <b>breaks</b>\n  on phones" });
+    await report("alice/game", { title: "silent bug", body: "" });
+    const withBody = (await waiting("tall menu"))!;
+    const without = (await waiting("silent bug"))!;
+    const page = await (await as(aliceToken, "/alice/game/reports")).text();
+    expect(page).not.toContain("commit-body");
+    expect(page).toContain(
+      '<div class="prose" data-text="message"><pre>Menu &lt;b&gt;breaks&lt;/b&gt;\n  on phones</pre></div>',
+    );
+    // The card of the bodiless report, from its opening to its accept form.
+    const end = page.indexOf(`id="accept-${without}"`);
+    const card = page.slice(page.lastIndexOf('class="card', end), end);
+    expect(card).toContain("silent bug");
+    expect(card).not.toContain('data-text="message"');
+    expect(page.indexOf(`id="accept-${withBody}"`)).toBeGreaterThan(-1);
+  });
+
   test("the reports page offers the title to change, and the form opens the issue marked", async () => {
     await report("alice/game", { title: "menu bad", body: "On my phone." });
     const id = (await waiting("menu bad"))!;
