@@ -32,6 +32,7 @@ describe("a check's key (#1795)", () => {
       { limits: { memory: 2 } },
       { base: "c".repeat(40) },
       { learned: "test/x.test.ts" },
+      { bun: "0.0.0-other" },
     ];
     for (const change of changed)
       expect(checkKey({ ...inputs, ...change })).not.toBe(base);
