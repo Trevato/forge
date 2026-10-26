@@ -54,6 +54,24 @@ test("a warm rank is under 10 ms, even after a write the ranking does not read",
   expect(Math.min(...busy)).toBeLessThan(10);
 });
 
+test("a meter write between two requests does not rank again (#6219)", async () => {
+  const before = await explore(f.app, undefined, all);
+  await explore(f.app, undefined, all);
+  const repo = f.repos.find((r) => r.visibility === "public")!;
+  const busy: number[] = [];
+  for (let i = 0; i < 5; i++) {
+    f.app.db
+      .query(`INSERT INTO meter (repo_id, env, placement, started_at, beat_at) VALUES (?1, 'production', 'owned', ?2, ?2)`)
+      .run(repo.id, new Date(Date.now() + i).toISOString());
+    f.app.db.query("UPDATE meter SET ended_at = ?1 WHERE ended_at IS NULL").run(new Date().toISOString());
+    const t = performance.now();
+    const after = await explore(f.app, undefined, all);
+    busy.push(performance.now() - t);
+    expect(after[0]).toBe(before[0]);
+  }
+  expect(Math.min(...busy)).toBeLessThan(10);
+});
+
 test("an unrelated write does not rank again", async () => {
   const before = await explore(f.app, undefined, all);
   expect(before.length).toBeGreaterThan(3);
