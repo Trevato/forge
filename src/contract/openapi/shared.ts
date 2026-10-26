@@ -16,6 +16,8 @@ export interface Route {
   readonly query?: Readonly<Record<string, string>>;
   /** The success status, when it is not 200. */
   readonly status?: number;
+  /** Other success statuses it answers, when a flag in the request changes it. */
+  readonly alsoStatus?: readonly number[];
   /** The success body's fields, by name and type, when it is worth a schema. */
   readonly reply?: Readonly<Record<string, string>>;
   /** The refusals it answers, by stable `error` code. */

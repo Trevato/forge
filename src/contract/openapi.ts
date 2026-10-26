@@ -85,6 +85,7 @@ export function openapi(origin: string, version: string): Record<string, unknown
                 },
               }),
         },
+        ...Object.fromEntries((r.alsoStatus ?? []).map((c) => [String(c), { description: "Done" }])),
         default: {
           description:
             "An error: { error, message }; `error` is a stable code" +

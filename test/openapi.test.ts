@@ -429,6 +429,40 @@ test("the origin applications are described, and a client secret is written, nev
   expect(JSON.stringify(add.responses["201"])).not.toContain("clientSecret");
 });
 
+test("the feed, chips and asks routes are described, and the bulk default is a preview", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const want: Record<string, string[]> = {
+    "/api/v1/feed": ["get"],
+    "/api/v1/feed/chips": ["get", "post"],
+    "/api/v1/feed/interactions": ["post"],
+    "/api/v1/feed/tells": ["post"],
+    "/api/v1/asks": ["get"],
+    "/api/v1/asks/bulk": ["post"],
+    "/api/v1/asks/bulk/{id}/undo": ["post"],
+    "/api/v1/asks/decide": ["post"],
+    "/api/v1/asks/decide/{id}/undo": ["post"],
+    "/api/v1/asks/proposal/{id}/{verb}": ["post"],
+  };
+  for (const [path, methods] of Object.entries(want))
+    for (const m of methods) expect(doc.paths[path]?.[m]?.security, `${m} ${path}`).toBeDefined();
+  const bulk = doc.paths["/api/v1/asks/bulk"].post;
+  expect(bulk.summary).toContain("default is a preview");
+  expect(bulk.responses["201"]).toBeDefined();
+  expect(bulk.responses["200"]).toBeDefined();
+  expect(Object.keys(bulk.requestBody.content["application/json"].schema.properties)).toEqual(["action", "items", "reason", "preview"]);
+  expect(bulk.responses.default.description).toContain("too_many");
+  expect(doc.paths["/api/v1/asks/decide"].post.responses.default.description).toContain("too_many");
+});
+
+test("every feed and asks route src/http/feed.ts registers is described", () => {
+  const src = readFileSync("src/http/feed.ts", "utf8");
+  const doc = openapi("https://f.test", "1") as any;
+  const registered = [...src.matchAll(/router\.add\("(\w+)",\s*"([^"]+)"/g)].filter((m) => /^\/api\/v1\/(feed|asks)\b/.test(m[2]!))
+    .map((m) => [m[1]!.toLowerCase(), m[2]!.replace(/:(\w+)/g, "{$1}")] as const);
+  expect(registered.length).toBeGreaterThan(8);
+  for (const [method, path] of registered) expect(doc.paths[path]?.[method], `${method} ${path}`).toBeDefined();
+});
+
 test("the served document is tagged by version and origin and answers 304 to its tag", async () => {
   const { openapiText } = await import("../src/contract/served.ts");
   const { weakEtag } = await import("../src/http/etag.ts");
