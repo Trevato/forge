@@ -465,6 +465,7 @@ import {
   waitingReports,
 } from "../actions/reports.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
+import { REPORT_RECEIVED } from "../actions/report_words.ts";
 import { ADMIN_WORDS } from "../actions/admin_words.ts";
 import { SPEND_WORDS } from "../actions/spend_words.ts";
 
@@ -3324,8 +3325,7 @@ export function apiRoutes(router: Router<Handler>): void {
       {
         id: filed.value.id,
         state: filed.value.state,
-        message:
-          "Received. A person who maintains this repository will read it; nothing acts on it before they do.",
+        message: REPORT_RECEIVED,
       },
       202,
     );

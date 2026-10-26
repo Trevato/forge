@@ -29,6 +29,7 @@ import { body, boundedBody, json } from "./respond.ts";
 import type { Router } from "./router.ts";
 import { clientBucket } from "./peer.ts";
 import { fileReport } from "../actions/reports.ts";
+import { REPORT_RECEIVED } from "../actions/report_words.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
 import { everydayOf } from "../core/everyday.ts";
 import { type Args, visible, plansOnly, str, REPO_ARG, lean } from "./mcp/shared.ts";
@@ -257,8 +258,7 @@ function reportCall(ctx: Ctx, message: unknown): unknown | undefined {
     JSON.stringify({
       id: filed.value.id,
       state: filed.value.state,
-      message:
-        "Received. A person who maintains this repository will read it; nothing acts on it before they do.",
+      message: REPORT_RECEIVED,
     }),
   );
 }
