@@ -4,8 +4,8 @@
  * the next cut is obvious.
  *
  * Measure locally with `bun test test/mcp-size.test.ts`. A failure says how
- * many bytes the answer is, how many it is over, and the longest
- * descriptions. Before adding a tool, extend an existing one with an
+ * many bytes the answer is, how many it is over, and the five costliest
+ * tools. Before adding a tool, extend an existing one with an
  * `action` or `kind` (docs/MCP.md, "Room for a new tool"). The ceilings are
  * the owner's: do not raise them in a feature pull.
  */
@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
+import { costliestTools } from "./mcp-size-rank.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
 const CEILING = 40_000;
@@ -95,20 +96,14 @@ test(`tools/list stays under 40 KB, with 3 KB of headroom (${HEADROOM_CEILING.to
   // readOnlyHint defaults to false; spelling the default out on every write
   // tool cost 2 KB, so only a read tool carries annotations.
   expect(tools.filter((t) => t.annotations?.readOnlyHint === false).map((t) => t.name)).toEqual([]);
-  const longest = tools
-    .map((t) => `${t.name} (${Buffer.byteLength(t.description)} bytes)`)
-    .sort(
-      (a, b) =>
-        Number(/\((\d+) /.exec(b)![1]) - Number(/\((\d+) /.exec(a)![1]),
-    )
-    .slice(0, 5);
+  const longest = costliestTools(tools);
   expect(
     bytes,
-    `tools/list is ${bytes} bytes, ${bytes - CEILING} over the ${CEILING} ceiling; the five longest descriptions: ${longest.join(", ")}`,
+    `tools/list is ${bytes} bytes, ${bytes - CEILING} over the ${CEILING} ceiling; the five costliest tools: ${longest}`,
   ).toBeLessThanOrEqual(CEILING);
   expect(
     bytes,
-    `tools/list is ${bytes} bytes, ${bytes - HEADROOM_CEILING} over the ${HEADROOM_CEILING} headroom (${CEILING - bytes} left under the ceiling); the five longest descriptions: ${longest.join(", ")}`,
+    `tools/list is ${bytes} bytes, ${bytes - HEADROOM_CEILING} over the ${HEADROOM_CEILING} headroom (${CEILING - bytes} left under the ceiling); the five costliest tools: ${longest}`,
   ).toBeLessThanOrEqual(HEADROOM_CEILING);
   expect(
     tools
