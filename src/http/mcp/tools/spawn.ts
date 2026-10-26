@@ -22,13 +22,10 @@ export const tool: Tool = {
       },
       direction: {
         type: "string",
-        description:
-          "Its purpose; first issue.",
       },
       fresh: {
         type: "string",
-        description:
-          "A fresh app too.",
+        description: "One line: a new app to start.",
       },
       followMode: {
         type: "string",
@@ -37,13 +34,11 @@ export const tool: Tool = {
       size: {
         type: "string",
         enum: ["small", "medium", "large"],
-        description:
-          "Recorded only.",
+        description: "Recorded only.",
       },
       keepAccess: {
         type: "boolean",
-        description:
-          "Stay an owner.",
+        description: "Stay an owner.",
       },
       dryRun: { type: "boolean" },
       reveal: REVEAL_ARG,

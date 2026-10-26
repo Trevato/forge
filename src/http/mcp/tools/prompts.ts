@@ -11,10 +11,10 @@ export const tool: Tool = {
     properties: {
       repo: REPO_ARG,
       action: { type: "string", enum: ["list", "add", "run", "remove"] },
-      kind: { type: "string", description: "add: instagram" },
+      kind: { type: "string", enum: ["instagram"] },
       token: { type: "string", description: "add: sealed, never shown again" },
-      at: { type: "string", description: "add: HH:MM UTC" },
-      id: { type: "string", description: "run, remove" },
+      at: { type: "string", description: "HH:MM UTC" },
+      id: { type: "string" },
     },
     required: ["repo", "action"],
   },

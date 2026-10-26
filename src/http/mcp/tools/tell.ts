@@ -22,8 +22,6 @@ export const tool: Tool = {
       },
       context: {
         type: "object",
-        description:
-          "Where it was told.",
         properties: {
           page: { type: "string" },
           pull: { type: "integer", minimum: 1 },

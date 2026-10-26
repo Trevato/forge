@@ -21,7 +21,7 @@ export const tool: Tool = {
       owner: { type: "string", maxLength: 39 },
       visibility: { type: "string", enum: ["public", "private"] },
       agent: { type: "string", maxLength: 39 },
-      pick: { type: "boolean", description: "Pick the agent from the text." },
+      pick: { type: "boolean" },
     },
     required: ["name"],
   },

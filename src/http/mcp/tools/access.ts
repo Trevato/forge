@@ -10,8 +10,8 @@ export const tool: Tool = {
     type: "object",
     properties: {
       since: { type: "string", maxLength: 40 },
-      ua: { type: "string", maxLength: 100, description: "User agent part." },
-      path: { type: "string", maxLength: 200, description: "Path prefix." },
+      ua: { type: "string", maxLength: 100 },
+      path: { type: "string", maxLength: 200 },
     },
   },
   writes: true,
