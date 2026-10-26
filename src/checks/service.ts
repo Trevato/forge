@@ -55,6 +55,7 @@ import { keepCache, restoreCache } from "./cache.ts";
 import { MAX_FILED, clearedFiles, fileOrderDependent } from "./order_dependent.ts";
 import { withDisk } from "./disk_red.ts";
 import { ASKED, redMain, unheld } from "./red_main.ts";
+import { proposeRevert } from "./revert_red.ts";
 import { rebasesFirst } from "./finishing_first.ts";
 import { IMPACT_FILE, keepImpact, seedImpact } from "./impact-store.ts";
 import { getIssueById } from "../core/issues.ts";
@@ -645,6 +646,10 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       });
       write(outcome.ok ? `passed in ${seconds}s` : `failed: ${outcome.error}`);
       if (done) announceRun(app, done);
+      if (!outcome.ok && run.issueId === null && run.env === repo.defaultBranch)
+        proposeRevert(app, repo.id).catch((error) =>
+          log.error("revert proposal failed", { error: String(error) }),
+        );
     } finally {
       release();
     }
