@@ -268,6 +268,35 @@ async function probe(): Promise<{ ok: true } | { ok: false; reason: string }> {
   for (const tool of ["bwrap", "socat"])
     if (Bun.which(tool) === null)
       return { ok: false, reason: `${tool} is not installed` };
+  return askUntilBelieved(tryOnce);
+}
+
+type Verdict = { ok: true } | { ok: false; reason: string };
+
+/**
+ * A loaded machine makes a healthy host slow, or briefly out of processes or
+ * namespaces, while other checks hold theirs: a refusal is asked again after
+ * a pause before it is believed. A host that really refuses therefore costs
+ * the pauses (1.5 s in all) before it is reported; the last reason is kept.
+ */
+export async function askUntilBelieved(
+  ask: () => Promise<Verdict>,
+  pause: (ms: number) => Promise<unknown> = (ms) => Bun.sleep(ms),
+): Promise<Verdict> {
+  let last = await ask();
+  for (let i = 1; i < PROBE_TRIES && !last.ok; i++) {
+    await pause(PROBE_PAUSE_MS * i);
+    last = await ask();
+  }
+  return last;
+}
+
+const PROBE_TRIES = 3;
+const PROBE_PAUSE_MS = 500;
+const PROBE_TIMEOUT_MS = 10_000;
+
+async function tryOnce(): Promise<Verdict> {
+  let timedOut = false;
   try {
     const proc = Bun.spawn(
       [
@@ -289,7 +318,10 @@ async function probe(): Promise<{ ok: true } | { ok: false; reason: string }> {
       ],
       { stdin: "ignore", stdout: "ignore", stderr: "pipe" },
     );
-    const timer = setTimeout(() => proc.kill("SIGKILL"), 5_000);
+    const timer = setTimeout(() => {
+      timedOut = true;
+      proc.kill("SIGKILL");
+    }, PROBE_TIMEOUT_MS);
     const [text, code] = await Promise.all([
       new Response(proc.stderr).text(),
       proc.exited,
@@ -299,7 +331,9 @@ async function probe(): Promise<{ ok: true } | { ok: false; reason: string }> {
     const line = text.trim().split("\n").pop() ?? "";
     return {
       ok: false,
-      reason: `this host refuses the namespaces a cell needs${line === "" ? "" : ` (${line})`}`,
+      reason: timedOut
+        ? `the namespace probe took over ${PROBE_TIMEOUT_MS} ms`
+        : `this host refuses the namespaces a cell needs${line === "" ? "" : ` (${line})`}`,
     };
   } catch (error) {
     return {

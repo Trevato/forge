@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cellsAvailable, openCell } from "../src/apps/contain.ts";
+import { askUntilBelieved, cellsAvailable, openCell } from "../src/apps/contain.ts";
 import { closeHostedChildren, resolveHostedChild } from "../src/spawn/host.ts";
 import { createApp } from "../src/app.ts";
 import { cellChildren, stopCellChildren, cellEnv, cellLimits, cellPlacement, cellSpecFor, forward, ownsBody } from "../src/spawn/cell.ts";
@@ -157,6 +157,33 @@ describe("forwarding to a child", () => {
   test("a child that is not listening answers 502", async () => {
     const res = await forward({ port: 1 }, new Request("http://kid--f.test/"));
     expect(res.status).toBe(502);
+  });
+});
+
+describe("the cell probe", () => {
+  const verdicts = (...v: Array<{ ok: true } | { ok: false; reason: string }>) => {
+    let calls = 0;
+    return { ask: async () => v[Math.min(calls++, v.length - 1)]!, calls: () => calls };
+  };
+
+  test("a refusal that passes on a later try is not believed", async () => {
+    const run = verdicts({ ok: false, reason: "busy" }, { ok: false, reason: "busy" }, { ok: true });
+    const pauses: number[] = [];
+    expect(await askUntilBelieved(run.ask, async (ms) => void pauses.push(ms))).toEqual({ ok: true });
+    expect(run.calls()).toBe(3);
+    expect(pauses.length).toBe(2);
+  });
+
+  test("a refusal every time is believed, with the last reason", async () => {
+    const run = verdicts({ ok: false, reason: "first" }, { ok: false, reason: "second" }, { ok: false, reason: "last" });
+    expect(await askUntilBelieved(run.ask, async () => {})).toEqual({ ok: false, reason: "last" });
+    expect(run.calls()).toBe(3);
+  });
+
+  test("a host that answers at once is asked once", async () => {
+    const run = verdicts({ ok: true });
+    await askUntilBelieved(run.ask, async () => {});
+    expect(run.calls()).toBe(1);
   });
 });
 
