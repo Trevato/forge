@@ -16,6 +16,7 @@
 import type { Database } from "bun:sqlite";
 import { listEgressGrants } from "../core/egress_grants.ts";
 import { recordCarried } from "../core/carried.ts";
+import { releaseOfCommit } from "../core/release_subject.ts";
 import { pullDir, runDir } from "../core/pulls.ts";
 import { accountActive } from "../core/accounts.ts";
 import { sshCommand } from "../ssh/command.ts";
@@ -1210,6 +1211,11 @@ export class AppsRuntime {
     // subscriber (the looks service) must never be able to take the
     // deploy path down with it.
     try {
+      const release = await releaseOfCommit(
+        repoDir(this.app.reposRoot, repo.ownerName, repo.name),
+        state.env,
+        live.commitOid,
+      );
       this.app.bus.append({
         kind: "app.serving",
         repoId: repo.id,
@@ -1220,6 +1226,7 @@ export class AppsRuntime {
           servingAt,
           ...(deployStartedAt === null ? {} : { deployStartedAt }),
           testsRunning: live.manifest.test !== null,
+          ...(release === undefined ? {} : { version: release.version, pulls: release.pulls }),
         },
       });
     } catch (error) {
