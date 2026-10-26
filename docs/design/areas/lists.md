@@ -1,0 +1,14 @@
+# Lists
+
+The plain list: a bare `<ul>` or `<ol>` whose items hold §5 `.row`s, ruled between rows, and the faint note that
+trails a palette row.
+
+- `.list` — the plain list §5's rows sit in: a rule between items (`.list > li + li`) and the muted highlight on the
+  item marked `aria-current="true"`. Written as `<ul class="list">` / `<ol class="list">` by the pages under
+  `src/web/pages/` that list rows — among them `settings.ts`, `audit.ts`, `system.ts`, `capacity.ts`, `chain.ts`,
+  `admin-limits.ts`, `next-steps.ts`, and `stageList()` in `browse.ts` (`ol.list.stages`); `grep -rn
+  'class="[^"]*\blist\b' src/web` finds every one. Styled in `src/web/style/components.ts` (list rows).
+- `.cat` — the faint trailing note on a palette or finder row (a file's directory, a result's place): pushed to the
+  end, ellipsised past 45% of the row. Written by `src/web/client.ts` (the file finder's rows and the command
+  palette's `row()`), never in server markup. Styled in `src/web/style/components.ts` (`.palette-item .cat`) and
+  `src/web/style/content.ts` (`.finder .palette-item .cat`).
