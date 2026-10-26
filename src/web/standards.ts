@@ -175,26 +175,45 @@ function xml(s: string): string {
   );
 }
 
+/** The sitemap and its ETag per origin, valid while the listing read is the same one. */
+const sitemapBodies = new Map<string, { rows: unknown; body: string; etag: string }>();
+
 /** GET /sitemap.xml — the front page and every public repository. */
 export function sitemapXml(ctx: Ctx): Response {
-  // Kept without an origin, and the origin is put on per answer, so a
-  // caller who varies `Host` cannot make the forge read the rows again.
+  // The rows are kept without an origin, and the origin is put on per answer,
+  // so a caller who varies `Host` cannot make the forge read the rows again.
   const repos = timePhase(ctx.request, "repos", () => sitemapRepos(ctx.app.db));
-  // Escaping is per character, so the escaped origin and the escaped path
-  // join into the escaped URL.
-  const body = timePhase(ctx.request, "render", () => {
-    const origin = xml(ctx.url.origin);
-    const urls = [
-      `<url><loc>${origin}/</loc></url>`,
-      `<url><loc>${origin}/explore</loc></url>`,
-      ...repos.map((r) => {
-        const mod = r.pushedAt === null ? "" : `<lastmod>${r.pushedAt.slice(0, 10)}</lastmod>`;
-        return `<url><loc>${origin}${xml(`/${r.path}`)}</loc>${mod}</url>`;
-      }),
-    ];
-    return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join("\n")}\n</urlset>\n`;
-  });
-  return text(body, "application/xml; charset=utf-8");
+  const origin = ctx.url.origin;
+  let kept = sitemapBodies.get(origin);
+  if (kept === undefined || kept.rows !== repos) {
+    // Escaping is per character, so the escaped origin and the escaped path
+    // join into the escaped URL.
+    const body = timePhase(ctx.request, "render", () => {
+      const o = xml(origin);
+      const urls = [
+        `<url><loc>${o}/</loc></url>`,
+        `<url><loc>${o}/explore</loc></url>`,
+        ...repos.map((r) => {
+          const mod = r.pushedAt === null ? "" : `<lastmod>${r.pushedAt.slice(0, 10)}</lastmod>`;
+          return `<url><loc>${o}${xml(`/${r.path}`)}</loc>${mod}</url>`;
+        }),
+      ];
+      return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join("\n")}\n</urlset>\n`;
+    });
+    const etag = timePhase(ctx.request, "etag", () => `"${new Bun.CryptoHasher("sha256").update(body).digest("hex").slice(0, 32)}"`);
+    kept = { rows: repos, body, etag };
+    // Origins come from the Host header: keep a handful, not one per guess.
+    if (sitemapBodies.size >= 16) sitemapBodies.clear();
+    sitemapBodies.set(origin, kept);
+  }
+  const cache = "public, max-age=300";
+  const sent = ctx.request.headers.get("if-none-match");
+  if (sent !== null && sent.split(",").some((t) => t.trim() === kept.etag))
+    return new Response(null, { status: 304, headers: { etag: kept.etag, "cache-control": cache } });
+  const res = text(kept.body, "application/xml; charset=utf-8");
+  res.headers.set("etag", kept.etag);
+  res.headers.set("cache-control", cache);
+  return res;
 }
 
 /** GET /manifest.webmanifest — the forge as an app on a home screen. */
