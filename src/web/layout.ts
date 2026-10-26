@@ -549,7 +549,7 @@ export function page(options: PageOptions, status = 200): Response {
           name="viewport"
           content="width=device-width, initial-scale=1, viewport-fit=cover"
         />
-        <title>${options.title} · forge</title>
+        <title>${options.title === "forge" ? "forge" : `${options.title} · forge`}</title>
         <meta name="description" content="${pageDescription(options)}" />
         <meta property="og:site_name" content="forge" />
         <meta property="og:type" content="website" />
