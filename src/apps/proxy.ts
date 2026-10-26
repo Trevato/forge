@@ -37,6 +37,7 @@ import { loadKey } from "../kernel/secret.ts";
 import { previewEnv, type EnvName } from "./data.ts";
 import type { AppsRuntime, EnvStatus } from "./runtime.ts";
 import { crewNow, tellLink } from "./crew.ts";
+import { sideOf, type Side } from "./side.ts";
 import { feedback, mintProof } from "./feedback.ts";
 import { clientBucket } from "../http/peer.ts";
 import { DOOR_PULL_LIMIT, doorPage, type DoorPullLine } from "./door.ts";
@@ -479,6 +480,38 @@ function doorPulls(
   });
 }
 
+/**
+ * The pill's other side, for a signed-in reader of the repository only: the
+ * pull titles it may name are the reader's own to see (`openPulls`).
+ */
+function sideFor(
+  runtime: AppsRuntime,
+  target: AppTarget,
+  who: GrantWho | undefined,
+): Side | null {
+  if (who === undefined) return null;
+  const db = runtime.app.db;
+  const viewer = getUserById(db, who.id);
+  const repo = getRepoById(db, target.app.repoId);
+  if (viewer === undefined || !isActive(viewer) || repo === undefined) return null;
+  if (!canRead(db, repo, viewer)) return null;
+  const app = { url: runtime.urlFor(target.app, "production") };
+  if (target.env !== "production") return sideOf(app, target.env, []);
+  const previews = openPulls(db, repo, viewer, 50).flatMap((p) => {
+    const env = previewEnv(p.number);
+    const status = runtime.envStatus(target.app, env);
+    if (status === undefined) return [];
+    const state =
+      status.state === "running"
+        ? "running"
+        : status.state === "asleep" || status.dormant !== undefined
+          ? "asleep"
+          : status.state;
+    return [{ number: p.number, title: p.title, state, url: runtime.urlFor(target.app, env) }];
+  });
+  return sideOf(app, target.env, previews);
+}
+
 /** Whether the person a grant names may enter this app now. */
 function stillEntitled(
   runtime: AppsRuntime,
@@ -677,8 +710,16 @@ export async function proxyApp(
       target.app,
       signed?.who?.id,
     );
+    const side =
+      signed?.who === undefined
+        ? null
+        : timePhase(request, "side", () => sideFor(runtime, target, signed.who));
     const body = timePhase(request, "render", () =>
-      JSON.stringify({ ...crew, ...(tell === undefined ? {} : { tell }) }),
+      JSON.stringify({
+        ...crew,
+        ...(tell === undefined ? {} : { tell }),
+        ...(side === null ? {} : { side }),
+      }),
     );
     return withPhases(
       request,

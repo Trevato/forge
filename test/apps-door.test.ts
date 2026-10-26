@@ -313,7 +313,7 @@ test("the door and the crew line name the phases they read, signed in, on produc
   ];
   const reads: Record<string, string[]> = {
     "/__forge/": ["session", "app", "pull", "serving", "pulls", "render"],
-    "/__forge/crew": ["session", "app", "pull", "working", "render"],
+    "/__forge/crew": ["session", "app", "pull", "working", "side", "render"],
   };
   for (const [host, cookie] of hosts)
     for (const [path, names] of Object.entries(reads)) {
