@@ -177,6 +177,7 @@ describe("the forge over MCP", () => {
     const names = listed.body.result.tools.map((t: { name: string }) => t.name);
     // Listed by name, one file each (#5924), and `report` last.
     expect(names).toEqual(sortedThenReport([
+      "drills",
       "sizes",
       "apps",
       "app_deploy",

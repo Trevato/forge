@@ -36,6 +36,7 @@ export { tool as confirm_wait } from "./confirm_wait.ts";
 export { tool as contribute } from "./contribute.ts";
 export { tool as converge } from "./converge.ts";
 export { tool as decisions_by } from "./decisions_by.ts";
+export { tool as drills } from "./drills.ts";
 export { tool as edit } from "./edit.ts";
 export { tool as egress_grants } from "./egress_grants.ts";
 export { tool as email_verify } from "./email_verify.ts";

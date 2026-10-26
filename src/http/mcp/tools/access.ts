@@ -9,7 +9,7 @@ export const tool: Tool = {
   inputSchema: {
     type: "object",
     properties: {
-      since: { type: "string", maxLength: 40, description: "ISO time." },
+      since: { type: "string", maxLength: 40 },
       ua: { type: "string", maxLength: 100, description: "User agent part." },
       path: { type: "string", maxLength: 200, description: "Path prefix." },
     },

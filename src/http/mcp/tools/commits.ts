@@ -14,7 +14,7 @@ export const tool: Tool = {
     type: "object",
     properties: {
       repo: REPO_ARG,
-      ref: { type: "string", maxLength: 255, description: "Branch, tag or commit." },
+      ref: { type: "string", maxLength: 255 },
       limit: { type: "integer", minimum: 1, maximum: 100 },
       oid: { type: "string", minLength: 4, maxLength: 64, },
     },

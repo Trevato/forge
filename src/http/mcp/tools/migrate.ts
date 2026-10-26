@@ -14,7 +14,7 @@ export const tool: Tool = {
     properties: {
       url: { type: "string", maxLength: 2048 },
       name: { type: "string", maxLength: 100 },
-      crew: { type: "string", maxLength: 39, description: "Agent to put on it" },
+      crew: { type: "string", maxLength: 39 },
       job: { type: "string", maxLength: 64 },
     },
   },

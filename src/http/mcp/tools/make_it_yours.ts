@@ -13,7 +13,7 @@ export const tool: Tool = {
     properties: {
       repo: REPO_ARG,
       name: { type: "string" },
-      visibility: { type: "string", enum: ["private", "public"], description: "Private by default." },
+      visibility: { type: "string", enum: ["private", "public"] },
       dryRun: { type: "boolean" },
     },
     required: ["repo"],
