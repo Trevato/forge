@@ -138,7 +138,7 @@ test("with one slot, the approved conflicted pull is brought up to date before t
   expect(picked()).toHaveLength(0);
   expect(getIssueById(app.db, ready.id)!.assigneeId).toBeNull();
   expect(line).toContain("did=full");
-  expect(line).toContain("finishing=1");
+  expect(line).toContain('finishing="queued 1, in flight 0, skipped 0"');
   // In flight: the next tick queues no second, and still picks nothing.
   await tick();
   expect(conflicts()).toHaveLength(1);
@@ -161,7 +161,7 @@ test("two updates that end without a push hand the pull to a person, open and on
   const notes = listComments(app.db, pull.id).filter((c) => c.body.startsWith(HANDOVER_NOTE));
   expect(notes).toHaveLength(1);
   expect(notes[0]!.body).toContain("shared.ts");
-  expect(line).toContain('conflict="1 waiting"');
+  expect(line).toContain('finishing="queued 0, in flight 0, skipped 1: handed to a person×1"');
   // The slot it no longer needs goes to the ready issue.
   expect(getIssueById(app.db, ready.id)!.assigneeId).toBe(mason.id);
 
@@ -181,7 +181,7 @@ test("two updates that end without a push hand the pull to a person, open and on
   expect(asks).toContain("Shared the branch&#39;s way");
 });
 
-test("the tick line's fields: finishing counts what moves, conflict what waits", () => {
+test("the tick line's field: finishing counts what moves, and tallies why the rest wait", () => {
   expect(finishFields([])).toEqual({});
   expect(
     finishFields([
@@ -189,6 +189,9 @@ test("the tick line's fields: finishing counts what moves, conflict what waits",
       { pull: 2, did: "in flight" },
       { pull: 3, did: "not moved", why: "waits for a builder slot" },
       { pull: 4, did: "handed to a person", to: "alice" },
+      { pull: 5, did: "not moved", why: "waits for a builder slot" },
     ]),
-  ).toEqual({ finishing: 2, conflict: "2 waiting" });
+  ).toEqual({
+    finishing: "queued 1, in flight 1, skipped 3: waits for a builder slot×2, handed to a person×1",
+  });
 });

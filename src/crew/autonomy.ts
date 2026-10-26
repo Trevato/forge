@@ -1288,8 +1288,9 @@ export async function autonomyTick(
         ...flowVitals(app.db, now),
         active: status.active,
         slots: status.slots,
-        // Approved pulls being brought up to date, those still waiting (#3682),
-        // and the lane for rebases: conflicted N, rebasing M, room R (#6140).
+        // Approved conflicted pulls: queued, in flight, and why each other is
+        // skipped (#3682, #6237); and the lane for rebases: conflicted N,
+        // rebasing M, room R (#6140).
         ...finishFields(finishing, readConflictLane(app.db)),
         ...(requested.length === 0
           ? {}

@@ -175,7 +175,10 @@ describe("the lane reads as conflicted N, rebasing M, room R", () => {
       ],
       { runs: 1, checks: 2, room: 0 },
     );
-    expect(fields).toEqual({ finishing: 1, conflict: "1 waiting", lane: "conflicted 2, rebasing 3, room 0" });
+    expect(fields).toEqual({
+      finishing: "queued 1, in flight 0, skipped 1: waits for room in the check lane×1",
+      lane: "conflicted 2, rebasing 3, room 0",
+    });
     expect(finishFields([])).toEqual({});
   });
 

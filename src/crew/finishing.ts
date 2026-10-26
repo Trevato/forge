@@ -25,6 +25,11 @@
  *   whoever turned autonomy on, so it is on their review list, with the
  *   conflict named. Never retried forever, and never closed: the work was
  *   approved.
+ * - Held, it is left as it is, and counted conflicted on the lane.
+ *
+ * Each one not brought up to date is logged once per reason as
+ * `finishing: skip pull=N why="…"`, and the tick line tallies them:
+ * `finishing="queued Q, in flight F, skipped S: <why>×k, …"` (#6237).
  *
  * Changes requested come after (`requested.ts`), then new issues
  * (`driveRepo`). The conflict sweep and the green sweep leave approved
@@ -66,31 +71,49 @@ export type FinishMove =
   | { readonly pull: number; readonly did: "handed to a person"; readonly to: string }
   | { readonly pull: number; readonly did: "not moved"; readonly why: string };
 
+const notMoved = (pull: Pull, why: string): FinishMove => ({ pull: pull.number, did: "not moved", why });
+
 /** Whether the pull's head carries an approval and no change requested: what lands once it merges. */
 export function approvedOnHead(db: Database, pull: Pull): boolean {
   const seen = reviewSummary(db, pull.id, pull.headOid);
   return seen.approvals > 0 && seen.changesRequested === 0;
 }
 
+/** Why a pull was not brought up to date this tick: the not-moved reason, or the hand-over. */
+function skipWhy(move: FinishMove): string | undefined {
+  if (move.did === "not moved") return move.why;
+  if (move.did === "handed to a person") return "handed to a person";
+  return undefined;
+}
+
 /**
- * The tick line's numbers: pulls being brought up to date, the rest still
- * waiting, and, given the lane, `conflicted N, rebasing M, room R` — this
+ * The tick line's words: `queued Q, in flight F, skipped S: <why>×k, …` —
+ * every approved conflicted pull, and why each skipped one was (#6237) —
+ * and, given the lane, `conflicted N, rebasing M, room R`: this
  * repository's approved conflicted pulls against the forge-wide lane
- * (#6140) — whenever any is conflicted or rebasing.
+ * (#6140), whenever any is conflicted or rebasing.
  */
 export function finishFields(
   moves: readonly FinishMove[],
   lane?: ConflictLane,
-): { finishing?: number; conflict?: string; lane?: string } {
-  const finishing = moves.filter((m) => m.did === "queued update" || m.did === "in flight").length;
-  const waiting = moves.length - finishing;
+): { finishing?: string; lane?: string } {
+  const queued = moves.filter((m) => m.did === "queued update").length;
+  const inFlight = moves.filter((m) => m.did === "in flight").length;
+  const whys = new Map<string, number>();
+  for (const move of moves) {
+    const why = skipWhy(move);
+    if (why !== undefined) whys.set(why, (whys.get(why) ?? 0) + 1);
+  }
+  const skipped = moves.length - queued - inFlight;
+  const reasons = [...whys].map(([why, k]) => `${why}×${k}`).join(", ");
   const words =
     lane === undefined
       ? null
       : rebaseLaneSays({ conflicted: moves.length, rebasing: lane.runs + lane.checks, room: lane.room });
   return {
-    ...(finishing === 0 ? {} : { finishing }),
-    ...(waiting === 0 ? {} : { conflict: `${waiting} waiting` }),
+    ...(moves.length === 0
+      ? {}
+      : { finishing: `queued ${queued}, in flight ${inFlight}, skipped ${skipped}${skipped === 0 ? "" : `: ${reasons}`}` }),
     ...(words === null ? {} : { lane: words }),
   };
 }
@@ -140,13 +163,18 @@ export async function finishApproved(app: App, repo: Repo, free: number): Promis
     if (run.actorId !== null) load.set(run.actorId, (load.get(run.actorId) ?? 0) + 1);
   for (const pull of open.sort((a, b) => a.number - b.number)) {
     if (!pull.authorIsAgent || pull.mergedAt !== null) continue;
-    if (getHold(app.db, pull.id) !== undefined) continue;
     if (!approvedOnHead(app.db, pull)) continue;
     const files = await conflictOf(app, repo, pull);
     if (files === undefined) continue;
+    // From here every pull is approved and conflicted: one not brought up
+    // to date says why, on its own line and on the tick line (#6237).
     const issue = getIssueById(app.db, pull.id);
     if (!issue || issue.state !== "open") continue;
-    const move = finishOne(app, repo, pull, issue, files, builders, load, slots, room);
+    const hold = getHold(app.db, pull.id);
+    const move =
+      hold !== undefined
+        ? notMoved(pull, `held by ${hold.heldByName}`)
+        : finishOne(app, repo, pull, issue, files, builders, load, slots, room);
     if (move.did === "queued update") {
       slots--;
       room--;
@@ -180,7 +208,7 @@ function finishOne(
   slots: number,
   room: number,
 ): FinishMove {
-  const not = (why: string): FinishMove => ({ pull: pull.number, did: "not moved", why });
+  const not = (why: string): FinishMove => notMoved(pull, why);
   if (activeRunFor(app.db, "agent", pull.id) !== undefined) return { pull: pull.number, did: "in flight" };
   // A person's name on it is a person holding it — after a hand-over too.
   if (issue.assigneeId !== null && getAgent(app.db, issue.assigneeId) === undefined)
@@ -256,7 +284,7 @@ function failedUpdates(app: App, issue: Issue, builder: Agent): number {
 
 /** Two updates failed: the pull is the person's who turned autonomy on, with the conflict named. */
 function handOver(app: App, repo: Repo, pull: Pull, issue: Issue, files: readonly string[]): FinishMove {
-  const not = (why: string): FinishMove => ({ pull: pull.number, did: "not moved", why });
+  const not = (why: string): FinishMove => notMoved(pull, why);
   const by = getUserById(app.db, repo.autonomyBy!);
   if (by === undefined) return not("nobody to hand it to");
   const assigned = assignIssue(app, by, repo, issue, by);
@@ -280,12 +308,13 @@ function handOver(app: App, repo: Repo, pull: Pull, issue: Issue, files: readonl
 const said = new Map<string, string>();
 
 function say(repo: Repo, pull: Pull, move: FinishMove): void {
-  const where = { repo: `${repo.ownerName}/${repo.name}`, pull: pull.number };
+  const where = `${repo.ownerName}/${repo.name}`;
   const key = `${repo.id}:${pull.number}`;
   if (move.did === "queued update") {
     said.delete(key);
     log.info("approved pull conflicts: brought up to date first", {
-      ...where,
+      repo: where,
+      pull: pull.number,
       builder: move.builder,
       ...(move.for === undefined ? {} : { for: move.for }),
     });
@@ -295,5 +324,5 @@ function say(repo: Repo, pull: Pull, move: FinishMove): void {
   const line = `${pull.headOid}:${move.why}`;
   if (said.get(key) === line) return;
   said.set(key, line);
-  log.info(`approved pull conflicts: not moved, ${move.why}`, where);
+  log.info("finishing: skip", { pull: pull.number, why: move.why, repo: where });
 }
