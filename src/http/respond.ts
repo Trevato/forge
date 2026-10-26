@@ -206,6 +206,30 @@ export function securityFloor(response: Response): Response {
 }
 
 /**
+ * An answer to a request that carried a session cookie or an Authorization
+ * header is one person's: a shared cache must not keep it. It leaves
+ * `private`, with any `public` or `s-maxage` taken out. Content-addressed
+ * assets (`immutable`) are the same bytes for everyone and keep their year,
+ * though a browser sends its cookie for them too.
+ */
+export function privateWhenSignedIn(request: Request, response: Response): Response {
+  if (!request.headers.has("cookie") && !request.headers.has("authorization")) return response;
+  try {
+    const control = response.headers.get("cache-control") ?? "";
+    if (/\bimmutable\b/i.test(control)) return response;
+    const kept = control
+      .split(",")
+      .map((part) => part.trim())
+      .filter((part) => part !== "" && !/^(public|s-maxage\b)/i.test(part));
+    if (!kept.some((part) => /^(private|no-store)$/i.test(part))) kept.unshift("private");
+    response.headers.set("cache-control", kept.join(", "));
+  } catch {
+    // An immutable header set keeps the headers it came with.
+  }
+  return response;
+}
+
+/**
  * Map an action's error to a response: the three access errors have fixed
  * shapes; anything else is a validation code the caller chose a status for.
  */

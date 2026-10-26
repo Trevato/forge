@@ -511,6 +511,7 @@ import {
   prefersHtml,
   prefersJson,
   securityFloor,
+  privateWhenSignedIn,
   tooManyAttempts,
 } from "./respond.ts";
 import { compress } from "./compress.ts";
@@ -2228,7 +2229,7 @@ export async function serve(app: App): Promise<Servers> {
           if (url.pathname.startsWith("/api/v1/"))
             response.headers.set("www-authenticate", bearerChallenge(url.origin));
         }
-        const done = await compress(request, response).then(securityFloor);
+        const done = await compress(request, response).then(securityFloor).then((r) => privateWhenSignedIn(request, r));
         if (namesFrame(request)) notePhase(request, "compress", performance.now() - compressing);
         return done;
       },

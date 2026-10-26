@@ -437,7 +437,7 @@ describe("web pages end to end", () => {
     const path = match![1]!;
     expect(
       (await fetch(base, { headers: { cookie } })).headers.get("cache-control"),
-    ).toBe("no-cache");
+    ).toBe("private, no-cache");
 
     const response = await fetch(`${base}${path}`);
     expect(response.status).toBe(200);
