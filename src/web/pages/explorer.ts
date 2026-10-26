@@ -81,6 +81,22 @@ export async function loadExplorer(
   };
 }
 
+/** The most entries a directory page lists before it links to the rest. */
+export const TREE_WINDOW = 300;
+
+/** The side column is navigation, not the listing: it keeps fewer rows per directory. */
+export const COLUMN_WINDOW = 100;
+
+/** Directories first, then files, the first TREE_WINDOW of them. */
+export function treeWindow(
+  entries: readonly TreeEntry[],
+  limit = TREE_WINDOW,
+): TreeEntry[] {
+  const dirs = entries.filter((e) => e.type === "tree");
+  const rest = entries.filter((e) => e.type !== "tree");
+  return [...dirs, ...rest].slice(0, limit);
+}
+
 /** Directories first, then files, each alphabetical — a readable column. */
 function ordered(entries: readonly TreeEntry[]): TreeEntry[] {
   return [...entries].sort((a, b) =>
@@ -106,7 +122,9 @@ function levelList(data: ExplorerData, base: string, at: number): Html {
   if (level === undefined) return html``;
   const encoded = encodeURIComponent(data.ref);
   const next = data.levels[at + 1];
-  const rows = ordered(level.entries).map((entry) => {
+  const shown = treeWindow(ordered(level.entries), COLUMN_WINDOW);
+  const hidden = level.entries.length - shown.length;
+  const rows = shown.map((entry) => {
     const path = join(level.path, entry.name);
     if (entry.type === "tree") {
       const open = next !== undefined && next.path === path;
@@ -151,6 +169,15 @@ function levelList(data: ExplorerData, base: string, at: number): Html {
     ${rows.length === 0
       ? html`<li><span class="muted small">empty</span></li>`
       : rows}
+    ${hidden > 0
+      ? html`<li>
+          <a
+            class="ex-more"
+            href="${`${base}/tree/${encoded}${level.path === "" ? "" : `/${level.path}`}?all=1`}"
+            >Show all ${level.entries.length.toLocaleString("en-US")} entries</a
+          >
+        </li>`
+      : null}
   </ul>`;
 }
 

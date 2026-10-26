@@ -101,6 +101,7 @@ import {
   finderButton,
   finderDialog,
   loadExplorer,
+  treeWindow,
 } from "./explorer.ts";
 
 export { crumbsFor, loadRepo, repoBase };
@@ -361,8 +362,11 @@ export function treeListing(
   ref: string,
   path: string,
   entries: readonly TreeEntry[],
+  all = false,
 ): Html {
   const encoded = encodeURIComponent(ref);
+  const shown = all ? entries : treeWindow(entries);
+  const hidden = entries.length - shown.length;
   const parent = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
   const rows: Html[] = [];
   if (path !== "") {
@@ -375,7 +379,7 @@ export function treeListing(
       }),
     );
   }
-  for (const entry of entries) {
+  for (const entry of shown) {
     const target = path === "" ? entry.name : `${path}/${entry.name}`;
     const isTree = entry.type === "tree";
     rows.push(
@@ -394,8 +398,25 @@ export function treeListing(
       }),
     );
   }
+  if (hidden > 0) {
+    rows.push(
+      row({
+        href: `${base}/tree/${encoded}${path === "" ? "" : `/${path}`}?all=1`,
+        title: html`Show all ${entries.length.toLocaleString("en-US")} entries`,
+        nav: true,
+      }),
+    );
+  }
   const total = directoryTotal(entries);
-  return listCard(rows, total.text.trim() === "" ? {} : { foot: total });
+  const foot =
+    hidden > 0
+      ? html`<span class="muted small num"
+            >Showing ${shown.length.toLocaleString("en-US")} of
+            ${entries.length.toLocaleString("en-US")} entries</span
+          >
+          ${total}`
+      : total;
+  return listCard(rows, foot.text.trim() === "" ? {} : { foot });
 }
 
 /**
@@ -801,6 +822,8 @@ export async function renderCode(
     ref: string;
     path: string;
     entries: readonly TreeEntry[];
+    /** List every entry, not the first TREE_WINDOW (`?all=1`). */
+    all?: boolean;
     extra?: Html;
     rail?: Html;
     /** The README, when the caller has already read it (and timed the read). */
@@ -842,7 +865,7 @@ export async function renderCode(
           })}
         </div>`;
   const main = html`${bar} ${o.extra ?? null}
-    ${treeListing(base, ref, path, o.entries)}
+    ${treeListing(base, ref, path, o.entries, o.all === true)}
     <div class="mt">${readme}</div>`;
   return o.rail === undefined
     ? main
@@ -1321,6 +1344,7 @@ export async function treePage(ctx: Ctx): Promise<Response> {
       ref,
       path,
       entries: entries.value,
+      all: ctx.url.searchParams.get("all") === "1",
     }),
   });
   notePhase(ctx.request, "render", performance.now() - began);

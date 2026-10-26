@@ -749,6 +749,10 @@ other field in the same request is saved). Repositories migrated from a pasted
 address before this existed were filled in from their migration's `push`
 event, without a fork chain; one picked from a connected origin then has none.
 
+## Big directories
+
+A directory page lists its first 300 entries, directories first; a "Show all N entries" row links to `?all=1`, and the footer says "Showing 300 of N entries". The side Files column keeps 100 rows per directory (its lazy `?fragment=explorer` too) with the same link. The terminal's file explorer is a scrolling, lazily loaded tree rather than a page, so it is unchanged. The limits are `TREE_WINDOW` and `COLUMN_WINDOW` in `src/web/pages/explorer.ts`.
+
 ## Search
 
 `/search` answers repositories and issues in full, and greps code repository by repository. A first search starts no new `git grep` after 30 ms (`codeBudgetMs` in the forge config; a soft stop, since the grep in flight still finishes, one batch of four) and shows what it has with one link, **More code results** (`?code=all`), that greps the rest. The API and the terminal palette always grep everything.

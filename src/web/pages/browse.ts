@@ -493,6 +493,7 @@ export async function browseTree(ctx: Ctx): Promise<Response> {
       ref,
       path,
       entries: entries.value,
+      all: ctx.url.searchParams.get("all") === "1",
     }),
   });
 }
