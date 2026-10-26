@@ -466,7 +466,7 @@ async function studioTell(
 
   const marks = marksByName(db, [issue.authorName, issue.assigneeName ?? ""]);
   const head = html`<div class="page-head">
-    <h1>${issue.title} <span class="number">#${issue.number}</span></h1>
+    <h1>${issue.title} <span class="num">#${issue.number}</span></h1>
     <div class="page-head-sub bar muted small">
       ${direction
         ? html`<span class="muted small"

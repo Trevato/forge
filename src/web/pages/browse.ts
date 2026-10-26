@@ -713,7 +713,7 @@ async function browseThread(
   const body = html`<div class="page-head">
       <h1>
         ${detail.issue.title}
-        <span class="number">#${detail.issue.number}</span>
+        <span class="num">#${detail.issue.number}</span>
       </h1>
       <div class="page-head-sub bar muted small">
         ${stateBadge(state)}
