@@ -186,12 +186,12 @@ describe("the lane reads as conflicted N, rebasing M, room R", () => {
     // Other suites' ticks note their own repositories in the same process: read only this one.
     const mine = (publicOnly = false) =>
       conflictedPulls(app.db, publicOnly).filter((p) => p.repo === "zed/noted");
-    noteWaitingToFinish("zed-noted", [
+    noteWaitingToFinish(app.db, "zed-noted", [
       { repo: "zed/noted", number: 9, since: "2026-10-26T10:00:00.000Z", public: false },
       { repo: "zed/noted", number: 4, since: "2026-10-26T09:00:00.000Z", public: true },
     ]);
     // Seen again later: each keeps when it was first seen.
-    noteWaitingToFinish("zed-noted", [
+    noteWaitingToFinish(app.db, "zed-noted", [
       { repo: "zed/noted", number: 9, since: "2026-10-26T11:00:00.000Z", public: false },
       { repo: "zed/noted", number: 4, since: "2026-10-26T11:00:00.000Z", public: true },
     ]);
@@ -201,8 +201,19 @@ describe("the lane reads as conflicted N, rebasing M, room R", () => {
     ]);
     expect(mine(true).map((p) => p.number)).toEqual([4]);
     expect(rebaseLane(app.db, mine()).conflicted).toBe(2);
-    noteWaitingToFinish("zed-noted", []);
+    noteWaitingToFinish(app.db, "zed-noted", []);
     expect(mine()).toEqual([]);
+  });
+
+  test("a pull noted on one database is not read from another", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-noted-b-"));
+    const other = createApp({ dataDir: dir, port: 0 }).db;
+    const pull = { repo: "zed/solo", number: 3, since: "2026-10-26T10:00:00.000Z", public: true };
+    noteWaitingToFinish(app.db, "zed-solo", [pull]);
+    expect(conflictedPulls(other)).toEqual([]);
+    expect(conflictedPulls(app.db).filter((p) => p.repo === "zed/solo")).toHaveLength(1);
+    noteWaitingToFinish(app.db, "zed-solo", []);
+    await rm(dir, { recursive: true, force: true });
   });
 });
 

@@ -146,7 +146,7 @@ async function conflictOf(app: App, repo: Repo, pull: Pull): Promise<string[] | 
  */
 export async function finishApproved(app: App, repo: Repo, free: number): Promise<FinishMove[]> {
   if (repo.autonomy !== "autonomous" || repo.autonomyBy === null) {
-    noteWaitingToFinish(repo.id, []);
+    noteWaitingToFinish(app.db, repo.id, []);
     return [];
   }
   const moves: FinishMove[] = [];
@@ -186,6 +186,7 @@ export async function finishApproved(app: App, repo: Repo, free: number): Promis
   }
   const since = new Date().toISOString();
   noteWaitingToFinish(
+    app.db,
     repo.id,
     moves.map((m) => ({
       repo: `${repo.ownerName}/${repo.name}`,
