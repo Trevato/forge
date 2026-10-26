@@ -333,4 +333,5 @@ answers
   from `context.page`, which is any http(s) address appended as context, not
   linked as the origin.
 - **Plugins.** `plugins/opencode` and `plugins/claude-code` register this
-  server and add a `forge` command (tell, status, decide). They hold no logic.
+  server and add a `forge` command (tell, status, decide, plan, preview,
+  pulls). They hold no logic.

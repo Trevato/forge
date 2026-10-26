@@ -19,7 +19,7 @@ const opencodeText = (): string => {
 const backticked = (text: string): string[] => [...text.matchAll(/`([a-z][a-z0-9_]*)`/g)].map((m) => m[1]!);
 
 /** Backticked words that are the server or an argument, not a tool. */
-const NOT_TOOLS = new Set(["forge", "repo", "text", "context", "page", "run", "commit", "said", "action", "ship", "close", "status", "words", "id", "verb", "proposal", "approve", "later"]);
+const NOT_TOOLS = new Set(["forge", "repo", "text", "context", "page", "run", "commit", "said", "action", "ship", "close", "status", "words", "id", "verb", "proposal", "approve", "later", "url"]);
 
 /** Tools the command text tells the agent to call: every backticked name that is not an argument. */
 const toolsNamed = (text: string): string[] => [...new Set(backticked(text))].filter((n) => !NOT_TOOLS.has(n));
@@ -32,7 +32,7 @@ for (const [label, text] of [
 ] as const) {
   test(`${label} names only tools the forge has`, () => {
     const named = toolsNamed(text());
-    for (const core of ["tell", "now", "asks", "asks_act", "say"]) expect(named).toContain(core);
+    for (const core of ["tell", "now", "asks", "asks_act", "say", "preview", "pulls"]) expect(named).toContain(core);
     expect(named.filter((n) => !tools.has(n))).toEqual([]);
   });
 }
@@ -98,7 +98,7 @@ const verbDiff = (a: string, b: string): { onlyA: string[]; onlyB: string[] } =>
 
 describe("the two plugin commands offer the same verbs", () => {
   test("Claude Code and OpenCode have the same set", () => {
-    expect(verbsOf(claudeText())).toEqual(["decide", "plan", "status", "tell"]);
+    expect(verbsOf(claudeText())).toEqual(["decide", "plan", "preview", "pulls", "status", "tell"]);
     expect(verbDiff(claudeText(), opencodeText())).toEqual({ onlyA: [], onlyB: [] });
   });
 

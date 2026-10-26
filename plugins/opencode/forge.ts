@@ -1,6 +1,6 @@
 /**
  * forge for OpenCode: registers the forge's MCP server and a `forge`
- * command (tell, status, decide, plan). Set FORGE_URL and FORGE_TOKEN.
+ * command (tell, status, decide, plan, preview, pulls). Set FORGE_URL and FORGE_TOKEN.
  * No logic lives here: the tools are the forge's own (`docs/MCP.md`).
  */
 import type { Plugin } from "@opencode-ai/plugin";
@@ -10,6 +10,8 @@ const COMMAND = `Use the forge MCP tools for: $ARGUMENTS
 - status: call \`now\` and \`asks\`; say in three sentences what runs and what waits on the person.
 - decide approve|redirect|decline: call \`asks\`; approve -> \`asks_act\` ship, decline -> \`asks_act\` close, redirect -> \`say\`. Plan first, apply (dryRun false) only after the person says yes.
 - plan [approve|redirect <words>|later]: call \`asks\`; show the first wave-proposal row (the planner's next wave) in a few lines. approve|redirect|later -> \`asks_proposal\` with that row's id and verb (redirect carries the words as \`words\`). Say what it will do and apply only after the person says yes.
+- preview <url>: call \`preview\` with url; say in two lines the app, environment, pull, check and who is working.
+- pulls <app>: call \`pulls\` with repo; list the open pulls, one line each with its check.
 Never merge: a person lands changes.`;
 
 export const Forge: Plugin = async () => ({
@@ -27,7 +29,7 @@ export const Forge: Plugin = async () => ({
     };
     config["command"] = {
       ...config["command"],
-      forge: { description: "Tell, status, decide or plan on your forge", template: COMMAND },
+      forge: { description: "Tell, status, decide, plan, preview or pulls on your forge", template: COMMAND },
     };
   },
 });
