@@ -75,7 +75,8 @@ describe("muting a repository's asks", () => {
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-asks-mute-"));
-    app = createApp({ dataDir, port: 0 });
+    // The forge's own needs ride in the count: a fixed disk reading keeps the machine's free space out of it.
+    app = createApp({ dataDir, port: 0, disk: () => ({ freeBytes: 500e9, totalBytes: 1000e9 }) });
     servers = await serve(app);
     for (const name of ["alice", "bob"]) {
       const made = await createUser(app.db, {
