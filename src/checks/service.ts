@@ -55,6 +55,7 @@ import { keepCache, restoreCache } from "./cache.ts";
 import { MAX_FILED, clearedFiles, fileOrderDependent } from "./order_dependent.ts";
 import { withDisk } from "./disk_red.ts";
 import { ASKED, redMain, unheld } from "./red_main.ts";
+import { rebasesFirst } from "./finishing_first.ts";
 import { IMPACT_FILE, keepImpact, seedImpact } from "./impact-store.ts";
 import { getIssueById } from "../core/issues.ts";
 import { BUDGETS, budgetSummary } from "../kernel/budgets.ts";
@@ -434,6 +435,18 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
    * opens up. Claiming is what decides between two forges, so calling this
    * from both never runs the same check twice.
    */
+  /** `pickNext` among `queued`, passing over any whose account is at its limit. */
+  function startable(queued: readonly Run[]): Run | undefined {
+    let rest = queued;
+    let next = pickNext(rest);
+    while (next !== undefined && atLimit(next)) {
+      const held = next;
+      rest = rest.filter((run) => run !== held);
+      next = pickNext(rest);
+    }
+    return next;
+  }
+
   function schedule(): void {
     if (stopped) return;
     const limit = capacity();
@@ -453,14 +466,10 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       );
       // The limit is asked at the point of starting, one pick at a time:
       // a started check is in flight before the next is asked about, so a
-      // burst of one account's checks cannot pass together.
-      let rest = queued;
-      let next = pickNext(rest);
-      while (next !== undefined && atLimit(next)) {
-        const held = next;
-        rest = rest.filter((run) => run !== held);
-        next = pickNext(rest);
-      }
+      // burst of one account's checks cannot pass together. A rebase's
+      // check goes before any other (`finishing_first.ts`, #6140).
+      const { rebases, rest: others } = rebasesFirst(app.db, queued);
+      const next = startable(rebases) ?? startable(others);
       if (!next) return;
       const repo = getRepoById(app.db, next.repoId);
       if (!repo) return;

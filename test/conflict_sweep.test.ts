@@ -372,8 +372,15 @@ test("one landing that conflicts many pulls starts only as many runs as the chec
   });
   if (!shared.ok) throw new Error(JSON.stringify(shared.error));
   setCapacity(app.db, "checks.concurrency", "3", alice.id);
-  // A check already waits: two slots are left for the pushes to come.
-  const waiting = createRun(app.db, { repoId: repo.id, kind: "check", env: "main" });
+  // A rebase's check already waits: two slots are left for the pushes to
+  // come. Another kind of check does not stand in front of them (#6140).
+  const mainCheck = createRun(app.db, { repoId: repo.id, kind: "check", env: "main" });
+  const rebased = openIssue(app, alice, repo, { title: "Rebased elsewhere" });
+  if (!rebased.ok) throw new Error(String(rebased.error));
+  const pushedBy = createRun(app.db, { repoId: repo.id, kind: "agent", issueId: rebased.value.id, reason: "conflict" });
+  claimRun(app.db, pushedBy.id);
+  finishRun(app.db, pushedBy.id, { state: "ok", summary: "pushed" });
+  const waiting = createRun(app.db, { repoId: repo.id, kind: "check", issueId: rebased.value.id });
   try {
     expect(await sweepConflicts(app, fresh())).toBe(2);
     expect(pulls.map((p) => p.runs().length)).toEqual([1, 1, 0]);
@@ -389,6 +396,8 @@ test("one landing that conflicts many pulls starts only as many runs as the chec
         claimRun(app.db, run.id);
         finishRun(app.db, run.id, { state: "ok", summary: "" });
       }
+    claimRun(app.db, mainCheck.id);
+    finishRun(app.db, mainCheck.id, { state: "ok", summary: "" });
     setCapacity(app.db, "checks.concurrency", null, alice.id);
   }
 });

@@ -9,7 +9,7 @@
 
 import type { Reader } from "../../actions/telemetry.ts";
 import { queuesFor, systemFor } from "../../system/telemetry.ts";
-import { conflictedPulls, conflictedSays } from "../../flow/conflicted.ts";
+import { conflictedPulls, conflictedSays, rebaseLane, rebaseLaneSays } from "../../flow/conflicted.ts";
 import { reviewersBusy, reviewingSays } from "../../flow/reviewing.ts";
 import { requestedSays, requestedWaits } from "../../flow/requested.ts";
 import {
@@ -90,7 +90,9 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
   const out = new Map(flow.stages.map((t) => [t.key, t]));
   const landed = out.get("approved");
   const dups = systemFor(app, reader).duplicates;
-  const conflicted = conflictedSays(conflictedPulls(app.db, reader.kind === "agent"), now);
+  const conflictedList = conflictedPulls(app.db, reader.kind === "agent");
+  const conflicted = conflictedSays(conflictedList, now);
+  const lane = rebaseLaneSays(rebaseLane(app.db, conflictedList));
   const requested = requestedWaits(app.db, reader.kind === "agent");
   const onBuilder = requestedSays(requested.builder, "builder", now);
   const onReviewer = requestedSays(requested.reviewer, "reviewer", now);
@@ -101,6 +103,7 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
       html`<p id="bottleneck" data-stage="${worst?.key ?? ""}">
           <strong>${verdict(stages, now)}</strong>
         </p>
+    ${lane === null ? "" : html`<p id="rebase-lane">Rebases: ${lane}.</p>`}
     ${conflicted === null ? "" : html`<p id="conflicted">${conflicted}</p>`}
     ${onBuilder === null ? "" : html`<p id="requested-builder">${onBuilder}</p>`}
     ${onReviewer === null ? "" : html`<p id="requested-reviewer">${onReviewer}</p>`}

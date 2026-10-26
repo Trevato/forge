@@ -11,7 +11,11 @@
  * - With a slot free, a conflict run (the #2039 resolver brief: merge the
  *   base, resolve keeping both intents, re-run the check) is queued for
  *   its builder — the agent on it, else its author, else any builder —
- *   and it takes that slot.
+ *   and it takes that slot. When that builder already has a run in
+ *   flight, the run goes to an idle builder instead, round-robin, so one
+ *   busy agent holding many pulls does not bring them up to date one at
+ *   a time (#6140); the run's agent is who rebased, and the log names
+ *   whose pull it was.
  * - Its push is a check, so it also waits for room in the check lane, as
  *   the conflict sweep's runs do (`conflict_room.ts`): a landing that
  *   conflicts ten approved pulls at once must not put ten checks in the
@@ -36,11 +40,12 @@ import { getIssueById, type Issue } from "../core/issues.ts";
 import { listPulls, pullDir, type Pull } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
 import { reviewSummary } from "../core/reviews.ts";
-import { activeRunFor } from "../core/runs.ts";
+import { activeRunFor, listActive } from "../core/runs.ts";
 import { getUserById } from "../core/users.ts";
 import { mergeable, resolveOid } from "../git/merge.ts";
 import { createLog } from "../kernel/log.ts";
-import { readConflictRoom } from "./conflict_room.ts";
+import { noteWaitingToFinish, rebaseLaneSays } from "../flow/conflicted.ts";
+import { type ConflictLane, readConflictRoom } from "./conflict_room.ts";
 import { CHECK_FAILED_LIMIT, lastHumanWord, queueAgentRun } from "./dispatch.ts";
 import { HANDOVER_NOTE } from "./guard.ts";
 import { pickBuilder } from "./route.ts";
@@ -50,7 +55,13 @@ const log = createLog("crew");
 
 /** What the pass did with one approved, conflicted pull. */
 export type FinishMove =
-  | { readonly pull: number; readonly did: "queued update"; readonly builder: string }
+  | {
+      readonly pull: number;
+      readonly did: "queued update";
+      readonly builder: string;
+      /** The pull's own builder, when it was busy and another took the update. */
+      readonly for?: string;
+    }
   | { readonly pull: number; readonly did: "in flight" }
   | { readonly pull: number; readonly did: "handed to a person"; readonly to: string }
   | { readonly pull: number; readonly did: "not moved"; readonly why: string };
@@ -61,13 +72,26 @@ export function approvedOnHead(db: Database, pull: Pull): boolean {
   return seen.approvals > 0 && seen.changesRequested === 0;
 }
 
-/** The tick line's two numbers: pulls being brought up to date, and the rest still waiting. */
-export function finishFields(moves: readonly FinishMove[]): { finishing?: number; conflict?: string } {
+/**
+ * The tick line's numbers: pulls being brought up to date, the rest still
+ * waiting, and, given the lane, `conflicted N, rebasing M, room R` — this
+ * repository's approved conflicted pulls against the forge-wide lane
+ * (#6140) — whenever any is conflicted or rebasing.
+ */
+export function finishFields(
+  moves: readonly FinishMove[],
+  lane?: ConflictLane,
+): { finishing?: number; conflict?: string; lane?: string } {
   const finishing = moves.filter((m) => m.did === "queued update" || m.did === "in flight").length;
   const waiting = moves.length - finishing;
+  const words =
+    lane === undefined
+      ? null
+      : rebaseLaneSays({ conflicted: moves.length, rebasing: lane.runs + lane.checks, room: lane.room });
   return {
     ...(finishing === 0 ? {} : { finishing }),
     ...(waiting === 0 ? {} : { conflict: `${waiting} waiting` }),
+    ...(words === null ? {} : { lane: words }),
   };
 }
 
@@ -98,7 +122,10 @@ async function conflictOf(app: App, repo: Repo, pull: Pull): Promise<string[] | 
  * pull first.
  */
 export async function finishApproved(app: App, repo: Repo, free: number): Promise<FinishMove[]> {
-  if (repo.autonomy !== "autonomous" || repo.autonomyBy === null) return [];
+  if (repo.autonomy !== "autonomous" || repo.autonomyBy === null) {
+    noteWaitingToFinish(repo.id, []);
+    return [];
+  }
   const moves: FinishMove[] = [];
   const builders = listCrewRoles(app.db, repo.id)
     .filter((c) => c.role === "builder")
@@ -108,6 +135,9 @@ export async function finishApproved(app: App, repo: Repo, free: number): Promis
   for (const id of read.keys()) if (!ids.has(id)) read.delete(id);
   let slots = free;
   let room = readConflictRoom(app.db);
+  const load = new Map<string, number>();
+  for (const run of listActive(app.db, "agent"))
+    if (run.actorId !== null) load.set(run.actorId, (load.get(run.actorId) ?? 0) + 1);
   for (const pull of open.sort((a, b) => a.number - b.number)) {
     if (!pull.authorIsAgent || pull.mergedAt !== null) continue;
     if (getHold(app.db, pull.id) !== undefined) continue;
@@ -116,14 +146,26 @@ export async function finishApproved(app: App, repo: Repo, free: number): Promis
     if (files === undefined) continue;
     const issue = getIssueById(app.db, pull.id);
     if (!issue || issue.state !== "open") continue;
-    const move = finishOne(app, repo, pull, issue, files, builders, slots, room);
+    const move = finishOne(app, repo, pull, issue, files, builders, load, slots, room);
     if (move.did === "queued update") {
       slots--;
       room--;
+      const by = builders.find((b) => b.user.username === move.builder)!.user.id;
+      load.set(by, (load.get(by) ?? 0) + 1);
     }
     moves.push(move);
     say(repo, pull, move);
   }
+  const since = new Date().toISOString();
+  noteWaitingToFinish(
+    repo.id,
+    moves.map((m) => ({
+      repo: `${repo.ownerName}/${repo.name}`,
+      number: m.pull,
+      since,
+      public: repo.visibility === "public",
+    })),
+  );
   return moves;
 }
 
@@ -134,6 +176,7 @@ function finishOne(
   issue: Issue,
   files: readonly string[],
   builders: readonly Agent[],
+  load: ReadonlyMap<string, number>,
   slots: number,
   room: number,
 ): FinishMove {
@@ -142,12 +185,11 @@ function finishOne(
   // A person's name on it is a person holding it — after a hand-over too.
   if (issue.assigneeId !== null && getAgent(app.db, issue.assigneeId) === undefined)
     return not("a person has it");
-  const builder =
-    builders.find((b) => b.user.id === issue.assigneeId) ??
-    builders.find((b) => b.user.id === issue.authorId) ??
-    pickBuilder(issue, builders, new Map());
-  if (builder === undefined) return not(NO_BUILDER_ON_CREW);
-  if (failedUpdates(app, issue, builder) >= CHECK_FAILED_LIMIT) return handOver(app, repo, pull, issue, files);
+  const own = ownBuilder(issue, builders, load);
+  if (own === undefined) return not(NO_BUILDER_ON_CREW);
+  // Two failed updates are counted against the pull's own builder, whoever ran them.
+  const builder = (slots > 0 && room > 0 ? lentBuilder(own, builders, load) : undefined) ?? own;
+  if (failedUpdates(app, issue, own) >= CHECK_FAILED_LIMIT) return handOver(app, repo, pull, issue, files);
   if (slots <= 0) return not(WAITS_FOR_BUILDER_SLOT);
   if (room <= 0) return not("waits for room in the check lane");
   const run = queueAgentRun(app, repo, issue, builder, "conflict", undefined, {
@@ -156,7 +198,46 @@ function finishOne(
     summary: `main moved: ${files.join(", ")}`,
   });
   if (run === undefined) return not(`${builder.user.username}'s run was not queued (ceiling or breaker)`);
-  return { pull: pull.number, did: "queued update", builder: builder.user.username };
+  return {
+    pull: pull.number,
+    did: "queued update",
+    builder: builder.user.username,
+    ...(builder === own ? {} : { for: own.user.username }),
+  };
+}
+
+/** The pull's own builder: the agent on it, else its author, else the builder with least in flight. */
+export function ownBuilder(
+  issue: Issue,
+  builders: readonly Agent[],
+  load: ReadonlyMap<string, number>,
+): Agent | undefined {
+  return (
+    builders.find((b) => b.user.id === issue.assigneeId) ??
+    builders.find((b) => b.user.id === issue.authorId) ??
+    pickBuilder(issue, builders, load)
+  );
+}
+
+/** Whose turn it is among the idle builders, kept across ticks so lent updates go round. */
+let turn = 0;
+
+/**
+ * The builder who takes an update when `own` already has a run in flight:
+ * the next idle builder, round-robin by name (#6140). Undefined when `own`
+ * is idle or every builder is busy: then the update is `own`'s.
+ */
+export function lentBuilder(
+  own: Agent,
+  builders: readonly Agent[],
+  load: ReadonlyMap<string, number>,
+): Agent | undefined {
+  if ((load.get(own.user.id) ?? 0) === 0) return undefined;
+  const idle = builders
+    .filter((b) => (load.get(b.user.id) ?? 0) === 0)
+    .sort((a, b) => a.user.username.localeCompare(b.user.username));
+  if (idle.length === 0) return undefined;
+  return idle[turn++ % idle.length];
 }
 
 /**
@@ -203,7 +284,11 @@ function say(repo: Repo, pull: Pull, move: FinishMove): void {
   const key = `${repo.id}:${pull.number}`;
   if (move.did === "queued update") {
     said.delete(key);
-    log.info("approved pull conflicts: brought up to date first", { ...where, builder: move.builder });
+    log.info("approved pull conflicts: brought up to date first", {
+      ...where,
+      builder: move.builder,
+      ...(move.for === undefined ? {} : { for: move.for }),
+    });
     return;
   }
   if (move.did !== "not moved") return;

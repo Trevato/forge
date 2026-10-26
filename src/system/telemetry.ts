@@ -7,7 +7,7 @@
  */
 import type { App } from "../app.ts";
 import { SOURCES } from "../boards/sources.ts";
-import { conflictedPulls, conflictedSays } from "../flow/conflicted.ts";
+import { conflictedPulls, conflictedSays, rebaseLane, rebaseLaneSays } from "../flow/conflicted.ts";
 import { readPipeline, verdict } from "../flow/pipeline.ts";
 import { type QueueReading, readQueues } from "../flow/queue.ts";
 import { reviewersBusy, reviewingSays } from "../flow/reviewing.ts";
@@ -27,6 +27,7 @@ export function flowFor(app: App, reader: Reader, now = new Date()) {
   const flow = readThroughput(app.db, stages.map((s) => s.key), now);
   const dup = systemFor(app, reader).duplicates;
   const conflicted = conflictedPulls(app.db, reader.kind === "agent");
+  const lane = rebaseLane(app.db, conflicted);
   const requested = requestedWaits(app.db, reader.kind === "agent");
   const busy = reviewersBusy(app.db, reader.kind === "agent");
   return {
@@ -34,6 +35,8 @@ export function flowFor(app: App, reader: Reader, now = new Date()) {
     // Review runs in flight per reviewer, cut to public repositories for an agent (#4733).
     reviewing: { says: reviewingSays(busy), reviewers: busy },
     conflicted: { says: conflictedSays(conflicted, now.getTime()), pulls: conflicted },
+    // conflicted N, rebasing M, room R: a stall in the lane reads in a minute (#6140).
+    rebases: { ...lane, says: rebaseLaneSays(lane) },
     // Pulls with changes requested, by whom they wait on (#2172).
     requested: {
       builder: { says: requestedSays(requested.builder, "builder", now.getTime()), pulls: requested.builder },

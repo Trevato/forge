@@ -27,6 +27,25 @@ bottleneck; the knobs stay on Settings → Capacity. The same sentence
 (`verdict`) is the terminal's admin-only Flow command and the MCP `flow` tool,
 which also returns the stages; anyone but a forge admin is refused.
 
+## Rebases
+
+Approved work lands before new work is built, in the check lane too (#6140).
+A check on a pull whose last builder's run brought it up to date (a
+`conflict` run; a review after it does not count) goes before any other
+queued check (`checks/finishing_first.ts`). So the room for more rebases
+(`crew/conflict_room.ts`) is the check slots minus the rebases' checks and the
+bring-up-to-date runs in flight; a new build's check does not stand in front
+of a rebase and takes no room. When the pull's own builder already has a run
+in flight, the finishing pass (`crew/finishing.ts`) lends the update to an
+idle builder, round-robin by name; the run's agent is who rebased, and the log
+line names whose pull it was.
+
+The tick line's `lane` field, the `Rebases:` line on `/flow` and in the
+terminal's Flow, and `rebases` in the MCP `flow` tool all read
+`conflicted N, rebasing M, room R`: the conflicted pulls (with the approved
+ones still waiting for room, which have no run yet), the bring-up-to-date runs
+and their checks in flight, and the runs the lane has room to start now.
+
 ## Throughput
 
 `src/flow/throughput.ts` counts what each pipeline stage let out over the last

@@ -16,7 +16,7 @@
 import type { Database } from "bun:sqlite";
 import { HOLDS } from "../../crew/held.ts";
 import type { HeldRow } from "../../flow/held.ts";
-import { conflictedPulls, conflictedSays } from "../../flow/conflicted.ts";
+import { conflictedPulls, conflictedSays, rebaseLane, rebaseLaneSays } from "../../flow/conflicted.ts";
 import { readPipeline, STAGE_LABEL, verdict } from "../../flow/pipeline.ts";
 import { readQueues, redBatchWords } from "../../flow/queue.ts";
 import { reviewersBusy, reviewingSays } from "../../flow/reviewing.ts";
@@ -47,7 +47,9 @@ export function flowLines(
   const queues = agent?.queues ?? readQueues(db, now, { batches: true });
   // The row is full at 58 columns: the red-batch rate (#4235) is a line under it.
   const red = queues.filter((q) => (q.batches?.batches ?? 0) > 0);
-  const conflicted = conflictedSays(conflictedPulls(db, agent !== undefined), now.getTime());
+  const conflictedList = conflictedPulls(db, agent !== undefined);
+  const conflicted = conflictedSays(conflictedList, now.getTime());
+  const lane = rebaseLaneSays(rebaseLane(db, conflictedList));
   const requested = requestedWaits(db, agent !== undefined);
   const waits = [
     requestedSays(requested.builder, "builder", now.getTime()),
@@ -75,6 +77,7 @@ export function flowLines(
     ...(red.length === 0
       ? []
       : wrap(`Red batches, last hour: ${red.map((q) => `${q.repo} ${redBatchWords(q)}`).join(", ")}.`, inner)),
+    ...(lane === null ? [] : ["", ...wrap(`Rebases: ${lane}.`, inner)]),
     ...(conflicted === null ? [] : ["", ...wrap(conflicted, inner)]),
     ...waits,
     ...(reviewing === null ? [] : ["", ...wrap(reviewing, inner)]),

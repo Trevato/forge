@@ -27,7 +27,7 @@ import { addLearned } from "../checks/learned.ts";
 import { enqueue, type GateCandidate, type Queued, type QueueOptions, queueClashes, queueWords } from "../checks/queue.ts";
 import { checksFor } from "../checks/service.ts";
 import { queueDepth } from "../core/capacity.ts";
-import { readConflictRoom } from "./conflict_room.ts";
+import { readConflictLane, readConflictRoom } from "./conflict_room.ts";
 import { mergeable, resolveOid, treeOf } from "../git/merge.ts";
 import { CLOSED_NOTE } from "../core/done_on_main.ts";
 import { mergePull } from "../actions/pulls.ts";
@@ -1285,8 +1285,9 @@ export async function autonomyTick(
         unstuck,
         active: status.active,
         slots: status.slots,
-        // Approved pulls being brought up to date, and those still waiting (#3682).
-        ...finishFields(finishing),
+        // Approved pulls being brought up to date, those still waiting (#3682),
+        // and the lane for rebases: conflicted N, rebasing M, room R (#6140).
+        ...finishFields(finishing, readConflictLane(app.db)),
         ...(requested.length === 0
           ? {}
           : {

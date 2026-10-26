@@ -20,15 +20,23 @@
  * pulls: it queues before the sweep, and the sweep counts its runs as in
  * flight, so between them a tick never starts more than the lane holds
  * (#4784).
+ *
+ * The checks counted are the rebases' own, not every check (#6140): a
+ * rebase's check goes before any other in the lane (`checks/
+ * finishing_first.ts`), so a new build's check does not stand in front of
+ * it. Counting those let new builds keep the room at one, and 64 approved
+ * pulls drained one at a time.
  */
 
 import type { Database } from "bun:sqlite";
+import { rebasesFirst } from "../checks/finishing_first.ts";
 import { capacityValue } from "../core/capacity.ts";
+import { listActive } from "../core/runs.ts";
 
 export function conflictRoom(
   /** Checks the forge runs at once (`checks.concurrency`). */
   slots: number,
-  /** Check runs queued or running. */
+  /** Rebases' check runs queued or running: the ones ahead of the next. */
   checks: number,
   /** Bring-up-to-date runs queued or running. */
   inFlight: number,
@@ -37,20 +45,29 @@ export function conflictRoom(
   return Math.max(room, inFlight === 0 ? 1 : 0);
 }
 
+/** What the lane holds for rebases now, and the room left: the tick line's and /flow's words (#6140). */
+export interface ConflictLane {
+  /** Bring-up-to-date runs queued or running. */
+  readonly runs: number;
+  /** Rebases' checks queued or running. */
+  readonly checks: number;
+  readonly room: number;
+}
+
+/** The lane from what the forge holds now. */
+export function readConflictLane(db: Database): ConflictLane {
+  const runs = db
+    .query<{ n: number }, []>(
+      `SELECT COUNT(*) AS n FROM run
+        WHERE kind = 'agent' AND reason = 'conflict' AND state IN ('queued','running')`,
+    )
+    .get()!.n;
+  const checks = rebasesFirst(db, listActive(db, "check")).rebases.length;
+  const slots = Number(capacityValue(db, "checks.concurrency"));
+  return { runs, checks, room: conflictRoom(Number.isInteger(slots) && slots > 0 ? slots : 1, checks, runs) };
+}
+
 /** `conflictRoom` from what the forge holds now. */
 export function readConflictRoom(db: Database): number {
-  const row = db
-    .query<{ checks: number; conflicts: number }, []>(
-      `SELECT
-         COALESCE(SUM(kind = 'check'), 0) AS checks,
-         COALESCE(SUM(kind = 'agent' AND reason = 'conflict'), 0) AS conflicts
-       FROM run WHERE state IN ('queued','running')`,
-    )
-    .get();
-  const slots = Number(capacityValue(db, "checks.concurrency"));
-  return conflictRoom(
-    Number.isInteger(slots) && slots > 0 ? slots : 1,
-    row?.checks ?? 0,
-    row?.conflicts ?? 0,
-  );
+  return readConflictLane(db).room;
 }
