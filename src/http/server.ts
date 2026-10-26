@@ -540,7 +540,14 @@ import {
 
 import { stopCellChildren } from "../spawn/cell.ts";
 import { portInsteadOfSocket, tcpAddress } from "../git/hook-address.ts";
-import { answerFromCell, closeHostedChildren, resolveHostedChild, resolveHostedChildApp } from "../spawn/host.ts";
+import {
+  answerFromCell,
+  closeHostedChildren,
+  hostedChildOpen,
+  resolveHostedChild,
+  resolveHostedChildApp,
+  watchHostedChildClose,
+} from "../spawn/host.ts";
 import { getVerifiedDomain } from "../core/domains.ts";
 
 // ---- auth ----
@@ -2151,10 +2158,25 @@ export async function serve(app: App): Promise<Servers> {
   // One limiter per listener: its state is a minute of timestamps, and two
   // forges in one process (every test file) must not share a budget.
   const limiter = new RateLimiter();
-  // Hosted children answered in-process: one ForgeHttp per child dataDir.
-  const childHttps = new Map<string, ForgeHttp>();
-  // And one internal (hook) listener per hosted child App it has answered for.
-  const childInternals = new Map<App, InternalListener>();
+  // Hosted children answered in-process: one ForgeHttp per child dataDir,
+  // for the App open there now.
+  const childHttps = new Map<string, { child: App; http: ForgeHttp }>();
+  // And one internal (hook) listener per child dataDir, for that same App.
+  const childInternals = new Map<string, { child: App; listener: InternalListener }>();
+  // A child closed (and maybe reopened as a new App) takes its listener with it.
+  const letGo = (key: string, child?: App): void => {
+    const http = childHttps.get(key);
+    if (http !== undefined && (child === undefined || http.child === child)) {
+      http.http.close();
+      childHttps.delete(key);
+    }
+    const internal = childInternals.get(key);
+    if (internal !== undefined && (child === undefined || internal.child === child)) {
+      internal.listener.stop();
+      childInternals.delete(key);
+    }
+  };
+  const unwatchChildren = watchHostedChildClose(app, (child) => letGo(child.config.dataDir, child));
   // An account suspended or removed ends what it has open on this
   // listener: its event streams and the app sockets it was let into. A
   // browser signed out ends the streams it opened.
@@ -2352,16 +2374,21 @@ export async function serve(app: App): Promise<Servers> {
         }
         if (child !== undefined) {
           const key = child.config.dataDir;
-          let http = childHttps.get(key);
+          // One App per dataDir at a time: whatever served an earlier one goes.
+          for (const held of [childHttps.get(key)?.child, childInternals.get(key)?.child])
+            if (held !== undefined && held !== child) letGo(key, held);
+          let http = childHttps.get(key)?.http;
           if (http === undefined) {
             http = forgeHttp(child);
-            childHttps.set(key, http);
+            childHttps.set(key, { child, http });
           }
           // Its pushes run its hooks, which relay to its own listener with
-          // its own boot secret: one per child App, never the parent's.
-          if (!childInternals.has(child)) {
+          // its own boot secret: one per child, never the parent's.
+          if (!childInternals.has(key)) {
             await clearStaleSockets(child);
-            if (!childInternals.has(child)) childInternals.set(child, serveInternal(child));
+            // Still the open child, and no other request started its listener meanwhile.
+            if (!childInternals.has(key) && hostedChildOpen(app, child))
+              childInternals.set(key, { child, listener: serveInternal(child) });
           }
           notePeer(request, server.requestIP(request)?.address, trust);
           armClose(request, () => server.timeout(request, 1));
@@ -2448,12 +2475,10 @@ export async function serve(app: App): Promise<Servers> {
         }
       }
       timings.clear();
-      for (const http of childHttps.values()) http.close();
-      childHttps.clear();
       // A child's hooks stop answering before its database closes.
-      for (const listener of childInternals.values()) listener.stop();
-      childInternals.clear();
+      for (const key of [...new Set([...childHttps.keys(), ...childInternals.keys()])]) letGo(key);
       closeHostedChildren(app);
+      unwatchChildren();
       void stopCellChildren(app);
       flushAccess();
       web.stop(true);

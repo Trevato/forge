@@ -6,6 +6,7 @@
  * "forge: hook relay failed".
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { existsSync, readdirSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,7 +16,7 @@ import { createUser } from "../src/core/users.ts";
 import { fetchInternal } from "../src/git/hook-address.ts";
 import { HOOK_SECRET_HEADER } from "../src/git/hook-protocol.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { resolveHostedChild } from "../src/spawn/host.ts";
+import { closeHostedChildren, resolveHostedChild } from "../src/spawn/host.ts";
 import { hostedPlacement } from "../src/spawn/placement.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -78,7 +79,8 @@ describe("a hosted child takes a push over HTTPS", () => {
       parent,
       new Request("https://forge.test/healthz", { headers: { host: CHILD_HOST } }),
     );
-    if (opened === undefined || opened === "unknown") throw new Error("child not found");
+    if (opened === undefined || opened === "unknown" || opened === "cell")
+      throw new Error("child not found hosted");
     child = opened;
     const bob = await createUser(child.db, {
       origin: "seed",
@@ -127,7 +129,7 @@ describe("a hosted child takes a push over HTTPS", () => {
     const events = await fetch(`${servers.url}/api/v1/repos/bob/app/events`, {
       headers: { host: CHILD_HOST, authorization: `Bearer ${token}` },
     });
-    const list = (await events.json()) as { kind: string }[];
+    const list = ((await events.json()) as { items: { kind: string }[] }).items;
     expect(list.some((e) => e.kind === "push")).toBe(true);
   });
 
@@ -146,5 +148,60 @@ describe("a hosted child takes a push over HTTPS", () => {
       body: "{}",
     });
     expect(bare.status).toBe(403);
+  });
+
+  test("a child closed and reopened: the old listener stops, one listener, and a push still lands", async () => {
+    const old = child;
+    const oldAddress = old.hookAddress.current;
+    const oldSocket = old.socketPath;
+    closeHostedChildren(parent);
+    // The closed child's listener is gone at once, not when the parent stops.
+    let answered = true;
+    try {
+      await fetchInternal(oldAddress, "/internal/hook", {
+        method: "POST",
+        headers: { "content-type": "application/json", [HOOK_SECRET_HEADER]: old.hookSecret },
+        body: "{}",
+        signal: AbortSignal.timeout(2000),
+      });
+    } catch {
+      answered = false;
+    }
+    expect(answered).toBe(false);
+    expect(existsSync(oldSocket)).toBe(false);
+
+    // The next request opens the child again, as a new App with its own listener.
+    const reopened = await resolveHostedChild(
+      parent,
+      new Request("https://forge.test/healthz", { headers: { host: CHILD_HOST } }),
+    );
+    if (reopened === undefined || reopened === "unknown" || reopened === "cell")
+      throw new Error("child not reopened hosted");
+    expect(reopened).not.toBe(old);
+    child = reopened;
+
+    const repo = join(work, "app");
+    await Bun.write(join(repo, "NEXT.md"), "next\n");
+    expect((await git(["add", "."], repo)).code).toBe(0);
+    expect((await git(["commit", "-qm", "after reopen"], repo)).code).toBe(0);
+    const remote = `${servers.url.replace("http://", `http://bob:${token}@`)}/bob/app.git`;
+    const pushed = await git(
+      ["-c", `http.extraHeader=Host: ${CHILD_HOST}`, "push", remote, "main"],
+      repo,
+    );
+    expect(pushed.err).not.toContain("hook relay failed");
+    expect(pushed.code).toBe(0);
+
+    // One listener for the child: the new App's, on its own socket.
+    expect(child.hookAddress.current).not.toBe(oldAddress);
+    if (child.hookAddress.current === child.socketPath) {
+      const sockets = readdirSync(child.config.dataDir).filter((n) => /^forge(?:-[a-z0-9]+)?\.sock$/.test(n));
+      expect(sockets).toEqual([child.socketPath.split("/").pop() ?? ""]);
+    }
+    const events = await fetch(`${servers.url}/api/v1/repos/bob/app/events`, {
+      headers: { host: CHILD_HOST, authorization: `Bearer ${token}` },
+    });
+    const list = ((await events.json()) as { items: { kind: string }[] }).items;
+    expect(list.filter((e) => e.kind === "push").length).toBeGreaterThanOrEqual(2);
   });
 });
