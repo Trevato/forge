@@ -31,6 +31,7 @@ import { llmsRepos, sitemapRepos } from "../core/listings.ts";
 import { canRead, getRepo } from "../core/repos.ts";
 import type { Ctx } from "../http/context.ts";
 import { notFound } from "../http/respond.ts";
+import { SITE_LINE } from "./site_line.ts";
 import { mcpCard, mcpPointers } from "../core/mcp_card.ts";
 import { timePhase } from "../core/route_timing.ts";
 
@@ -203,7 +204,7 @@ export function webManifest(ctx: Ctx): Response {
       {
         name,
         short_name: name,
-        description: "Your code, your machine.",
+        description: SITE_LINE,
         start_url: "/",
         scope: "/",
         id: "/",

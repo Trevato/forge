@@ -41,6 +41,7 @@ import { noRoom } from "../spawn/door.ts";
 import { quotaFull } from "../spawn/quota.ts";
 import { icon, iconSprite, inlineIcons, themeGlyph } from "./icons.ts";
 import { btn, copyField, kbd, menu, type MenuItem } from "./ui.ts";
+import { SITE_LINE } from "./site_line.ts";
 
 /** One row of the command palette: title, href, category. */
 export interface PaletteItem {
@@ -504,7 +505,6 @@ function footer(ctx: Ctx): Html {
 
 // ---- the page ----
 
-const SITE_LINE = "Your code, your machine.";
 
 function pageDescription(options: PageOptions): string {
   const own = options.description?.trim().split(/\r?\n/)[0]?.trim() ?? "";

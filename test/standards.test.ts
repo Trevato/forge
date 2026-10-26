@@ -20,6 +20,7 @@ import { createUser, type User } from "../src/core/users.ts";
 import { forgetListings, listingBuilds } from "../src/core/listings.ts";
 import { createOrg, retireOrg } from "../src/core/orgs.ts";
 import { getRepo, moveArchived } from "../src/core/repos.ts";
+import { SITE_LINE } from "../src/web/site_line.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
 describe("what the open web expects", () => {
@@ -329,5 +330,14 @@ describe("what the open web expects", () => {
     expect(csp).toContain("default-src 'none'");
     expect(csp).toContain("manifest-src 'self'");
     expect(csp).toMatch(/img-src [^;]*'self'/);
+  });
+
+  test("the manifest and the front page carry the same sentence", async () => {
+    const manifest = (await (await fetch(`${base}/manifest.webmanifest`)).json()) as { description: string };
+    const html = await (await fetch(`${base}/`)).text();
+    expect(manifest.description).toBe(SITE_LINE);
+    expect(html).toContain(`<meta name="description" content="${SITE_LINE}"`);
+    expect(html).toContain(`<meta property="og:description" content="${SITE_LINE}"`);
+    expect(html).toContain(SITE_LINE);
   });
 });

@@ -64,6 +64,7 @@ import { nextStepsCard, nextStepsOf } from "../pages/next-steps.ts";
 import { spawnedOrg } from "../../spawn/claim.ts";
 import { clientApps } from "./client_home.ts";
 import { passkeyJs } from "../passkey-client.ts";
+import { SITE_LINE } from "../site_line.ts";
 
 /** The events that can change what is on you. */
 const ON_YOU_LIVE =
@@ -517,7 +518,7 @@ export function studioDoor(ctx: Ctx): Response {
   const ssh = sshCommand(ctx.app);
   const body = html`<section class="narrow narrow-wide stack">
       <h1>Apps, live.</h1>
-      <p class="muted">A software forge that builds and serves its own apps.</p>
+      <p class="muted">${SITE_LINE}</p>
       <div class="bar">
         ${ctx.auth.user !== undefined
           ? null
