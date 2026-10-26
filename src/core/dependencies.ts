@@ -287,6 +287,8 @@ export function repoGraph(
     readonly sealedBy?: string;
     /** The repository's pillars, when the caller has read them already. */
     readonly pillars?: Pillars;
+    /** Issues come without their bodies, when the caller shows none (a plan). */
+    readonly lean?: boolean;
   } = {},
 ): Graph {
   const edges = db
@@ -312,7 +314,7 @@ export function repoGraph(
     .all(repoId);
   // A big graph wants most of its repository: one read of it beats chunked
   // lookups, and the open issues are found in it.
-  const whole = edges.length > GRAPH_MAX ? getIssuesOfRepo(db, repoId) : undefined;
+  const whole = edges.length > GRAPH_MAX ? getIssuesOfRepo(db, repoId, "issue", options.lean) : undefined;
   const open =
     whole === undefined
       ? db

@@ -98,6 +98,14 @@ const SELECT = `
   FROM issue JOIN user ON user.id = issue.author_id
   LEFT JOIN user AS assignee ON assignee.id = issue.assignee_id`;
 
+/** `SELECT` without the body: a plan reads titles and states, and a body is most of a row's bytes. */
+const SELECT_LEAN = SELECT.replace(
+  "issue.*,",
+  `issue.id, issue.repo_id, issue.number, issue.kind, issue.title, '' AS body, issue.author_id,
+         issue.state, issue.created_at, issue.updated_at, issue.closed_at, issue.close_reason,
+         issue.parked, issue.origin_author, issue.origin_html_url, issue.assignee_id, issue.sealed,`,
+);
+
 function toIssue(row: IssueRow): Issue {
   return {
     id: row.id,
@@ -169,11 +177,20 @@ export function getIssuesByIds(
  * Every conversation of one repository in one read, by id: cheaper than
  * `getIssuesByIds` once most of a repository is wanted.
  */
-export function getIssuesOfRepo(db: Database, repoId: string): Map<string, Issue> {
+export function getIssuesOfRepo(
+  db: Database,
+  repoId: string,
+  /** Only issues, or only pulls: a pull's body is the bulk of a repository's rows. */
+  kind?: IssueKind,
+  /** Leave the bodies empty: for a reader that never shows one. */
+  lean = false,
+): Map<string, Issue> {
   const out = new Map<string, Issue>();
   for (const row of db
-    .query<IssueRow, [string]>(`${SELECT} WHERE issue.repo_id = ?1`)
-    .all(repoId))
+    .query<IssueRow, [string, string]>(
+      `${lean ? SELECT_LEAN : SELECT} WHERE issue.repo_id = ?1 AND (?2 = '' OR issue.kind = ?2)`,
+    )
+    .all(repoId, kind ?? ""))
     out.set(row.id, toIssue(row));
   return out;
 }

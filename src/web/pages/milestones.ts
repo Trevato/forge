@@ -206,7 +206,11 @@ const planFor = (ctx: Ctx, repo: Repo, spend: boolean): Plan =>
       spend,
       now: new Date(),
     },
-    () => readPlan(ctx.app.db, repo, { spend }),
+    () =>
+      readPlan(ctx.app.db, repo, {
+        spend,
+        stretch: (name, ms) => notePhase(ctx.request, `plan-${name}`, ms),
+      }),
   );
 
 /** GET /:owner/:name/milestones — the plan, collapsed to its limbs. */

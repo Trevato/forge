@@ -128,3 +128,22 @@ test("a milestone page names session, repo, plan and render", async () => {
   for (const name of ["session", "repo", "plan", "render"])
     expect(parts.find((p) => p.startsWith(`${name};`))).toMatch(/^[a-z]+;dur=\d+\.\d$/);
 });
+
+test("a cold plan names its stretches, stays under 50 ms, and keeps each limb's counts", async () => {
+  const against = await baselineMs(servers.url);
+  const stretches: string[] = [];
+  const repo = getRepo(app.db, "alice", "forge")!;
+  const start = performance.now();
+  const plan = readPlan(app.db, repo, { spend: true, stretch: (name) => stretches.push(name) });
+  expectBudget(performance.now() - start, { ms: 50, against });
+  expect(stretches).toEqual(["graph", "crew", "week", "spend", "limbs"]);
+  expect(plan.limbs).toHaveLength(PILLARS);
+  for (const limb of plan.limbs)
+    expect(limb.weight).toMatchObject({ total: (CLOSED + OPEN) / PILLARS, done: CLOSED / PILLARS, open: OPEN / PILLARS });
+
+  clearMapCache();
+  const res = await fetch(`${servers.url}/alice/forge/milestones`, { headers: { cookie } });
+  await res.text();
+  const timing = res.headers.get("server-timing") ?? "";
+  for (const name of ["plan-graph", "plan-limbs"]) expect(timing).toContain(`${name};dur=`);
+});

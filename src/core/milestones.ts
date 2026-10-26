@@ -14,6 +14,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { writeStamp } from "./write_clock.ts";
 import { deferredIn, repoGraph, type Graph } from "./dependencies.ts";
 import {
   limbTree,
@@ -181,7 +182,23 @@ const counted = (issue: Issue): boolean =>
  * inside a transaction: nothing is kept that a rollback could outlive.
  */
 export function planStamp(db: Database, repo: Repo): string | undefined {
-  if (db.inTransaction) return undefined;
+  const clock = writeStamp(db);
+  if (clock === undefined) return undefined;
+  let kept = stamps.get(db);
+  if (kept === undefined) stamps.set(db, (kept = new Map()));
+  const known = kept.get(repo.id);
+  if (known?.clock === clock) return known.stamp;
+  const stamp = readStamp(db, repo);
+  if (kept.size >= STAMPS_KEPT) kept.clear();
+  kept.set(repo.id, { clock, stamp });
+  return stamp;
+}
+
+/** The stamp last read for each repository, and the write clock it was read at: nothing written since means nothing to read again. */
+const stamps = new WeakMap<Database, Map<string, { clock: string; stamp: string }>>();
+const STAMPS_KEPT = 200;
+
+function readStamp(db: Database, repo: Repo): string {
   const one = (sql: string): string =>
     JSON.stringify(Object.values(db.query<Record<string, unknown>, [string]>(sql).get(repo.id) ?? {}));
   return [
@@ -200,18 +217,30 @@ export function planStamp(db: Database, repo: Repo): string | undefined {
 export function readPlan(
   db: Database,
   repo: Repo,
-  options: { readonly spend: boolean; readonly now?: Date } = { spend: false },
+  options: {
+    readonly spend: boolean;
+    readonly now?: Date;
+    /** Told how long each stretch took (`graph`, `crew`, `week`, `spend`, `limbs`), for Server-Timing. */
+    readonly stretch?: (name: string, ms: number) => void;
+  } = { spend: false },
 ): Plan {
   const now = options.now ?? new Date();
   const since = pillarWindowStart(now);
+  let mark = performance.now();
+  const lap = (name: string): void => {
+    const at = performance.now();
+    options.stretch?.(name, at - mark);
+    mark = at;
+  };
   const set: Pillars = pillarsOf(db, repo);
-  const graph: Graph = repoGraph(db, repo.id, { pillars: set });
+  const graph: Graph = repoGraph(db, repo.id, { pillars: set, lean: true });
   const byId = new Map(graph.issues.map((i) => [i.id, i]));
   const byNumber = new Map(graph.issues.map((i) => [i.number, i]));
 
   // What each issue waits for directly, furniture left out (`limb_order.ts`).
   const tree = limbTree(graph, set);
   const places = readPlaces(db, repo.id);
+  lap("graph");
   const { waitsFor, waitedBy, waits, childrenOf } = tree;
   const memo = new Map<string, Set<string>>();
   const walking = new Set<string>();
@@ -262,6 +291,8 @@ export function readPlan(
     });
   }
 
+  lap("crew");
+
   // The week's merged pulls, by the issues each closes.
   const merged: MergedPull[] = db
     .query<
@@ -281,12 +312,14 @@ export function readPlan(
       closes: closesFromBody(row.body),
     }));
 
+  lap("week");
+
   // What each issue cost: its own runs, and the runs on the pulls for it.
   const cost = new Map<string, number>();
   if (options.spend) {
     const rows = db
       .query<{ id: string; kind: string; body: string; usd: number }, [string]>(
-        `SELECT i.id, i.kind, i.body, SUM(r.cost_usd) AS usd
+        `SELECT i.id, i.kind, CASE i.kind WHEN 'pull' THEN i.body ELSE '' END AS body, SUM(r.cost_usd) AS usd
            FROM run r JOIN issue i ON i.id = r.issue_id
           WHERE r.repo_id = ?1 AND r.kind = 'agent' AND r.cost_usd > 0
           GROUP BY i.id`,
@@ -305,16 +338,19 @@ export function readPlan(
   }
 
   // Every pull ever merged, by the issues it closes: what a limb landed.
-  // One query that parses each merged pull's body; owner reads only.
-  const everMerged: (readonly number[])[] = options.spend
-    ? db
-        .query<{ body: string }, [string]>(
-          `SELECT i.body FROM pull p JOIN issue i ON i.id = p.issue_id
-            WHERE i.repo_id = ?1 AND p.merged_at IS NOT NULL`,
-        )
-        .all(repo.id)
-        .map((row) => closesFromBody(row.body))
-    : [];
+  // One query that parses each merged pull's body; owner reads only, and
+  // only one milestone's page asks, so the list of limbs never pays for it.
+  let ever: (readonly number[])[] | undefined;
+  const everMerged = (): (readonly number[])[] =>
+    (ever ??= db
+      .query<{ body: string }, [string]>(
+        `SELECT i.body FROM pull p JOIN issue i ON i.id = p.issue_id
+          WHERE i.repo_id = ?1 AND p.merged_at IS NOT NULL`,
+      )
+      .all(repo.id)
+      .map((row) => closesFromBody(row.body)));
+
+  lap("spend");
 
   const stateOf = (issue: Issue): LeafState => {
     if (issue.state === "closed") return counted(issue) ? "done" : "gone";
@@ -391,9 +427,12 @@ export function readPlan(
     tree.top.map((i) => i.id),
   );
 
+  const limbs = top.map(limbOf);
+  lap("limbs");
+
   return {
     read: { graph, tree, places },
-    limbs: top.map(limbOf),
+    limbs,
     limb(number: number): { own: Issue[]; shared: Issue[] } | undefined {
       const issue = byNumber.get(number);
       if (issue === undefined) return undefined;
@@ -554,7 +593,7 @@ export function readPlan(
           ? {
               spend: {
                 usd: limb.weight.spentUsd ?? 0,
-                landed: everMerged.filter((closes) =>
+                landed: everMerged().filter((closes) =>
                   closes.some((n) => numbers.has(n)),
                 ).length,
                 costliest: under

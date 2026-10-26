@@ -564,6 +564,13 @@ The web page has the same *Cost and landed* section on a milestone, and the
 milestones API and MCP carry it as `spend` (`usd`, `landed`, `costliest`),
 owner only.
 
+The milestones page's `Server-Timing` names what a plan cost when it had to be
+built: `plan-graph`, `plan-crew`, `plan-week`, `plan-spend` and `plan-limbs`. A
+plan kept from an earlier request builds nothing, so those names appear on the
+request that built it and not on the ones it served; `plan` is the whole phase,
+which on a kept plan is the one stamp read that says nothing changed. That stamp
+is itself kept while the forge's write clock has not moved.
+
 Working on the UI itself? `bun run src/tui/main.ts --user alice` runs it over
 stdio against your local data directory. That `--user` flag is a development
 convenience and exists only there: over SSH, the key decides who you are and
