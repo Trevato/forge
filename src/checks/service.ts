@@ -89,7 +89,7 @@ import type { Result } from "../kernel/result.ts";
 import { placementFromEnv, type Placement } from "./placement.ts";
 import { JOB_VANISHED, runJobStep } from "./job_step.ts";
 import { checkInstallCache, installWithRetry, withLock } from "./install.ts";
-import { extraGates } from "./queue.ts";
+import { extraGates, gateQueued, gatesInFlight, watchGates } from "./queue.ts";
 import type { JobOptions } from "../cluster/jobs.ts";
 import type { CheckDetail } from "../core/runs.ts";
 
@@ -203,6 +203,15 @@ const TICK_MS = 5_000;
  * long enough to make the lane a cause, even when the lane kept up.
  */
 export const STARVATION_MS = BUDGETS.laneWait / 2;
+
+/**
+ * Whether a pull's check must pass over the free slots left (`free`): while
+ * a merge-queue gate is about to start (`gateQueued`), the last one is the
+ * gate's.
+ */
+export function holdsLastSlot(free: number, gateWaits: boolean): boolean {
+  return gateWaits && free <= 1;
+}
 
 /**
  * Which queued check takes a slot when one frees: the one requested most
@@ -451,8 +460,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     if (stopped) return;
     const limit = capacity();
     if (options.gate === undefined) gate.resize(limit);
-    // A merge-queue gate beyond a line's first holds a slot (#4053).
-    while (inFlight.size < limit - extraGates()) {
+    // Every merge-queue gate in flight holds a slot, a line's first too (#6376).
+    while (inFlight.size < limit - gatesInFlight()) {
       // A pull's check waits while its main is red (`checks/red_main.ts`).
       const queued = unheld(
         listActive(app.db, "check").filter(
@@ -469,7 +478,10 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       // burst of one account's checks cannot pass together. A rebase's
       // check goes before any other (`finishing_first.ts`, #6140).
       const { rebases, rest: others } = rebasesFirst(app.db, queued);
-      const next = startable(rebases) ?? startable(others);
+      // While a gate is about to start, the last free slot is its: a pull's
+      // check waits for it, a rebase's and a main check do not.
+      const held = holdsLastSlot(limit - gatesInFlight() - inFlight.size, gateQueued());
+      const next = startable(rebases) ?? startable(held ? others.filter((run) => run.issueId === null) : others);
       if (!next) return;
       const repo = getRepoById(app.db, next.repoId);
       if (!repo) return;
@@ -1199,6 +1211,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   const timer = setInterval(() => {
     if (!stopped) schedule();
   }, TICK_MS);
+  // A gate's slot frees: the pull check held for it starts now, not at the tick.
+  const unwatch = watchGates(schedule);
   schedule();
   void catchUp();
 
@@ -1248,6 +1262,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       stopped = true;
       clearInterval(timer);
       unsubscribe();
+      unwatch();
       // A roll waits for the checks under way, up to the budget, and only
       // then cuts off what is left (it is queued again, not lost).
       const running = Promise.all([...inFlight.values()].map((f) => f.promise));

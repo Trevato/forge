@@ -207,6 +207,8 @@ interface Line {
   readonly holds: Set<string>;
   /** The gates this line has in flight now. */
   readonly flights: Set<InFlight>;
+  /** Candidates being built, taken from the line and not yet at the gate. */
+  forming: number;
   /** The gate runs this line has made, for a test and the log. */
   gates: number;
   /** Pulls handed back red, by pull id: re-checked alone if they join again. */
@@ -248,6 +250,44 @@ export function extraGates(): number {
   return extra;
 }
 
+const watchers = new Set<() => void>();
+
+/**
+ * Calls `fn` whenever a gate's slot frees: a gate ends or a candidate stops
+ * forming. The check service schedules then, not at its next tick, so a pull
+ * check held back for the gate starts as soon as the gate is done.
+ */
+export function watchGates(fn: () => void): () => void {
+  watchers.add(fn);
+  return () => void watchers.delete(fn);
+}
+
+function gateFreed(): void {
+  for (const fn of [...watchers]) fn();
+}
+
+/**
+ * Every gate in flight, each line's first included: each holds a check slot
+ * for as long as it runs, so a pull check never shares the machine with it
+ * (`checks/service.ts`, #6376).
+ */
+export function gatesInFlight(): number {
+  let n = extra;
+  for (const line of lines.values()) if (line.flights.size > 0) n++;
+  return n;
+}
+
+/**
+ * Whether some line's first gate is about to start: its candidate is being
+ * built and no gate of that line is in flight. Such a gate takes the next
+ * free check slot before a pull check does (`checks/service.ts`); once it
+ * runs, `gatesInFlight` holds the slot.
+ */
+export function gateQueued(): boolean {
+  for (const line of lines.values()) if (line.forming > 0 && line.flights.size === 0) return true;
+  return false;
+}
+
 const IDENTITY = {
   GIT_AUTHOR_NAME: "forge",
   GIT_AUTHOR_EMAIL: "forge@localhost",
@@ -265,6 +305,7 @@ function lineOf(repoId: string): Line {
       waiting: [],
       holds: new Set(),
       flights: new Set(),
+      forming: 0,
       gates: 0,
       reds: new Map(),
       suspects: new Map(),
@@ -463,6 +504,7 @@ function counted(line: Line, gate: GateCandidate): Gated {
       if (dropped !== undefined) signal?.removeEventListener("abort", dropped);
       line.flights.delete(flight);
       if (beyond) extra--;
+      gateFreed();
     }
   };
 }
@@ -642,21 +684,29 @@ async function launch(line: Line, gated: Gated, on: Flight | undefined): Promise
     : [...same.filter((w) => !cleared(w)), ...same.filter(cleared)].slice(0, MAX_CANDIDATE);
   line.waiting = line.waiting.filter((w) => !batch.includes(w));
   let candidate: Candidate | undefined;
-  try {
-    candidate = await build(batch, on?.candidate);
-  } catch (error) {
-    log.warn("merge queue round failed", { error: String(error) });
-  }
-  if (candidate === undefined || candidate.steps.length === 0) {
-    for (const w of batch) w.settle(false);
-    return undefined;
-  }
-  const steps = inCandidate(batch, candidate);
+  line.forming++;
+  let verdict: Promise<LandVerdict>;
+  let steps: Waiting[];
   const abort = new AbortController();
-  const verdict = gated(candidate, abort.signal).catch((error: unknown) => {
-    log.warn("merge queue round failed", { error: String(error) });
-    return UNDECIDED;
-  });
+  try {
+    try {
+      candidate = await build(batch, on?.candidate);
+    } catch (error) {
+      log.warn("merge queue round failed", { error: String(error) });
+    }
+    if (candidate === undefined || candidate.steps.length === 0) {
+      for (const w of batch) w.settle(false);
+      return undefined;
+    }
+    steps = inCandidate(batch, candidate);
+    verdict = gated(candidate, abort.signal).catch((error: unknown) => {
+      log.warn("merge queue round failed", { error: String(error) });
+      return UNDECIDED;
+    });
+  } finally {
+    line.forming--;
+    gateFreed();
+  }
   return { steps, candidate, speculative: on !== undefined, recheck: front.recheck, branch, verdict, abort };
 }
 

@@ -18,6 +18,7 @@ import { summariseCheckFailure } from "../src/checks/summary.ts";
 import { SLOW_SECONDS, summaryLines } from "../scripts/gate-summary.ts";
 import { tally } from "../scripts/shards.ts";
 import {
+  holdsLastSlot,
   pickNext,
   requeueAbandonedChecks,
   startChecks,
@@ -840,6 +841,15 @@ describe("checks", () => {
         ),
       ).toBe(true);
     }, 60_000);
+
+  test("a queued gate keeps the last free slot from pull checks", () => {
+    // One slot free, a gate queued: the pull check passes, the gate starts.
+    expect(holdsLastSlot(1, true)).toBe(true);
+    // With no gate queued the pull check takes it, as every slot.
+    expect(holdsLastSlot(1, false)).toBe(false);
+    // More than one free: the pull check starts, one is still left.
+    expect(holdsLastSlot(2, true)).toBe(false);
+  });
 
   test("pickNext takes the newest queued check, unless one has starved", () => {
     const a = createRun(app.db, { repoId: repo.id, kind: "check", env: "a" });
