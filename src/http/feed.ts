@@ -21,6 +21,9 @@ import {
 } from "../core/interactions.ts";
 import { chipsOf, isKindChip, setChip } from "../core/feed_chips.ts";
 import { getUserByName, getUsersByIds } from "../core/users.ts";
+import { drainQueue } from "../core/shares.ts";
+import { feedTag, hasQueuedShares } from "../feed/feed_tag.ts";
+import { holds } from "../web/feeds.ts";
 import { share, RECIPIENTS_MAX } from "../feed/share.ts";
 import { canRead, getRepo, getRepoById } from "../core/repos.ts";
 import {
@@ -67,6 +70,28 @@ export function feedRoutes(router: Router<Handler>): void {
     const cursor = rawCursor === null ? undefined : parseCursor(rawCursor);
     if (rawCursor !== null && cursor === undefined)
       return apiError("invalid_cursor", 422, "that cursor was not issued here");
+    // A 304 only when nothing the viewer would read has changed (`feedTag`).
+    // The queue drains first, as `readFeed` would; shares still waiting
+    // depend on the clock, so they always get a page.
+    const now = Date.now();
+    drainQueue(ctx.app.db, viewer.id, now);
+    const tag = feedTag(ctx.app.db, viewer, {
+      chips: chipsOf(ctx.app.db, viewer.id),
+      cursor: rawCursor,
+      limit: limit ?? null,
+      now,
+    });
+    const headers: Record<string, string> = {
+      "cache-control": "private, no-store",
+      vary: "authorization, cookie",
+      ...(tag === undefined ? {} : { etag: tag }),
+    };
+    if (
+      tag !== undefined &&
+      holds(ctx.request.headers.get("if-none-match"), tag) &&
+      !hasQueuedShares(ctx.app.db, viewer.id)
+    )
+      return new Response(null, { status: 304, headers });
     const page = timePhase(ctx.request, "feed", () =>
       readFeed(ctx.app.db, viewer, {
         phase: (name, ms) => notePhase(ctx.request, name, ms),
@@ -75,7 +100,7 @@ export function feedRoutes(router: Router<Handler>): void {
       }),
     );
     return timePhase(ctx.request, "render", () =>
-      json(page, 200, { "cache-control": "private, no-store" }),
+      json(page, 200, headers),
     );
   });
 
