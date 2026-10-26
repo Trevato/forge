@@ -20,10 +20,12 @@ import {
 import { joinMany, toldBy, type Pull } from "../core/pulls.ts";
 import {
   canSeeOwnerFacts,
+  onCrew,
   getReposByIds,
   listReposWritableTo,
   type Repo,
 } from "../core/repos.ts";
+import { getRunErrorLine } from "../core/runs.ts";
 import { getUserById, type User } from "../core/users.ts";
 import { watchedBy } from "../core/watches.ts";
 import { chooseCandidates } from "./choose.ts";
@@ -285,6 +287,12 @@ export function candidatesFor(
     },
   };
 
+  const logs = new Map<string, boolean>();
+  const readsLogs = (repo: Repo): boolean => {
+    if (!logs.has(repo.id)) logs.set(repo.id, owns(repo) || onCrew(db, repo, viewer));
+    return logs.get(repo.id)!;
+  };
+
   const out: Candidate[] = [];
   const folded = foldPulls(events);
   for (const e of events) {
@@ -292,7 +300,7 @@ export function candidatesFor(
     if (!repo) continue;
     const fold = folded.get(e.id);
     if (fold === "skip") continue;
-    const c = fromEvent(db, e, repo, owns(repo), subjects);
+    const c = fromEvent(db, e, repo, owns(repo), readsLogs(repo), subjects);
     if (c)
       out.push({
         ...c,
@@ -421,6 +429,7 @@ function fromEvent(
   e: ForgeEvent,
   repo: Repo,
   ownerFacts: boolean,
+  logReader: boolean,
   subjects: Subjects,
 ): Partial | undefined {
   const common = {
@@ -449,6 +458,17 @@ function fromEvent(
       const cost = typeof p["costUsd"] === "number" ? p["costUsd"] : 0;
       const link = `${base(repo)}/runs/${String(p["runId"] ?? "")}`;
       const summary = clip(typeof p["summary"] === "string" ? p["summary"] : "");
+      const subject = typeof p["subject"] === "number" ? ` on #${p["subject"]}` : "";
+      // A log line is for writers and crew; everyone else keeps the summary.
+      const kept =
+        state === "failed" && logReader ? getRunErrorLine(db, String(p["runId"] ?? "")) : undefined;
+      const errorLine = kept?.text ?? "";
+      const errorAt = kept?.at ?? 0;
+      // The line it broke at, on the run page that already holds the whole log.
+      const failLink = state === "failed" && errorLine !== "" && errorAt > 0
+        ? `${link}?all=1#L${errorAt}`
+        : link;
+      const failure = errorLine === "" ? summary : errorLine;
       if (kind === "agent" && cost >= COST_FLOOR_USD && ownerFacts)
         return {
           ...common,
@@ -459,9 +479,9 @@ function fromEvent(
       return {
         ...common,
         kind: "run",
-        link,
+        link: failLink,
         urgency: state === "failed" ? 4 : 0,
-        what: `${/^[aeiou]/.test(kind) ? "an" : "a"} ${kind} run ${state === "failed" ? "failed" : "finished"}${summary ? `: ${summary}` : ""}`,
+        what: `${/^[aeiou]/.test(kind) ? "an" : "a"} ${kind} run${subject} ${state === "failed" ? "failed" : "finished"}${state === "failed" ? (failure ? `: ${failure}` : "") : summary ? `: ${summary}` : ""}`,
       };
     }
     case "pull.opened":

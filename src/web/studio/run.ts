@@ -341,6 +341,7 @@ export async function runView(
       )}
       ${when(!logHidden, () => logBox({
         id: "run-log",
+        anchors: true,
         who,
         cap: all
           ? Math.max(lines.length, RUN_TRANSCRIPT_CAP)

@@ -26,12 +26,14 @@ import {
   listRuns as queryRuns,
   type ListRunsOptions,
   type Run,
+  setRunErrorLine,
 } from "../core/runs.ts";
 import type { User } from "../core/users.ts";
 import { abortAgentRun } from "../crew/running.ts";
 import { queueAgentRun, taskOf } from "../crew/dispatch.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { readRunLog, runLogPath } from "../runs/log.ts";
+import { firstErrorLine } from "../runs/error_line.ts";
 import { requireReader, requireWriter, type AccessError } from "./access.ts";
 
 /** What a run event carries: enough for a surface to render the card. */
@@ -66,8 +68,21 @@ export function announceRun(app: App, run: Run, actorId?: string): void {
     kind,
     repoId: run.repoId,
     ...(actorId === undefined ? {} : { actorId }),
-    payload: runPayload(run),
+    payload: { ...runPayload(run), ...(kind === "run.finished" ? failureOf(app, run) : {}) },
   });
+}
+
+/**
+ * What a failed run's public event may say of it: the number of the pull or
+ * issue it was for. The first error line of its log is a log line, so it is
+ * kept with the run (`setRunErrorLine`), once, and never put on the event.
+ */
+function failureOf(app: App, run: Run): Record<string, unknown> {
+  if (run.state !== "failed") return {};
+  const found = firstErrorLine(readRunLog(app.config.dataDir, run.id).lines);
+  if (found !== undefined) setRunErrorLine(app.db, run.id, found.text, found.at);
+  const subject = run.issueId === null ? undefined : getIssueById(app.db, run.issueId);
+  return subject === undefined ? {} : { subject: subject.number };
 }
 
 /**

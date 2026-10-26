@@ -157,18 +157,18 @@ export function lineKind(line: string): LineKind {
 /** One line of a run's log, as the page draws it: §5's row, a badge naming
  * who or what spoke in the lead, the words as its title. The live script in
  * `client.ts` builds the same markup. */
-export function logLine(line: string, who = "agent"): Html {
+export function logLine(line: string, who = "agent", anchor?: string): Html {
   const kind = lineKind(line);
   if (kind === "tool") {
     const rest = line.slice(2);
     const at = rest.indexOf(" ");
     const tool = at === -1 ? rest : rest.slice(0, at);
     const args = at === -1 ? "" : rest.slice(at + 1);
-    return logRow(kind, "tool", html`<b>${tool}</b> ${args}`);
+    return logRow(kind, "tool", html`<b>${tool}</b> ${args}`, undefined, anchor);
   }
-  if (kind === "you") return logRow(kind, "you", line.slice(5), "secondary");
-  if (kind === "forge") return logRow(kind, "forge", line, "outline");
-  return logRow(kind, who, line);
+  if (kind === "you") return logRow(kind, "you", line.slice(5), "secondary", anchor);
+  if (kind === "forge") return logRow(kind, "forge", line, "outline", anchor);
+  return logRow(kind, who, line, undefined, anchor);
 }
 
 /** The row itself; also the pulse's, in `studio/log.ts`. */
@@ -177,9 +177,11 @@ export function logRow(
   label: string,
   body: Html | string | null,
   variant?: "secondary" | "outline",
+  /** The row's `id`, so a link can point at this line (`#L12`). */
+  anchor?: string,
 ): Html {
   const lead = variant === undefined ? badge(label) : badge(label, { variant });
-  return html`<div class="row" data-line="${kind}">
+  return html`<div class="row" data-line="${kind}"${anchor === undefined ? null : html` id="${anchor}"`}>
     <span class="row-lead">${lead}</span>
     <span class="row-main"><span class="row-title">${body}</span></span>
   </div>`;

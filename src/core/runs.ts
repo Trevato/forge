@@ -1262,3 +1262,18 @@ export function listRunning(
     issue: r.issue_number,
   }));
 }
+
+/** Keep a finished run's first error line (see `runs/error_line.ts`) beside it. */
+export function setRunErrorLine(db: Database, runId: string, text: string, at: number): void {
+  db.query("UPDATE run SET error_line = ?2, error_at = ?3 WHERE id = ?1").run(runId, text, at);
+}
+
+/** That line and its number in the log, when one was kept. */
+export function getRunErrorLine(db: Database, runId: string): { text: string; at: number } | undefined {
+  const row = db
+    .query<{ error_line: string; error_at: number }, [string]>(
+      "SELECT error_line, error_at FROM run WHERE id = ?1",
+    )
+    .get(runId);
+  return row === null || row === undefined || row.error_line === "" ? undefined : { text: row.error_line, at: row.error_at };
+}
