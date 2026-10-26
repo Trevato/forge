@@ -1783,6 +1783,7 @@ forge icon.
 ```sh
 bun test              # protocol-level + adversarial suite
 bun scripts/design-lint.ts   # no colour or off-scale font-size beyond docs/design/baseline.json, no class docs/DESIGN.md §5 does not name
+bun scripts/cold-read.ts <url> [--repo owner/name] [--write [--allow-text-only]] [--file-issues N [--file-into owner/name]]   # cold-read audit (#5882): a no-context model reads the top pages (signed in with FORGE_TOKEN, sent only to FORGE_URL's forge; the signed-in pages go to the model endpoint, so use a throwaway account) at 390 and 1440 px; needs ANTHROPIC_API_KEY
 bun x tsc --noEmit    # zero type errors is the standard
 bun run check         # exactly what the forge runs against every push
 bun run check:record  # the same, and rewrites scripts/test-times.json

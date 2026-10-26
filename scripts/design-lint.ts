@@ -317,7 +317,7 @@ if (import.meta.main) {
   const root = process.cwd();
   const now = scan(root);
   if (process.argv.includes("--update")) {
-    const baseline: Baseline = { files: now.files };
+    const baseline = { ...JSON.parse(readFileSync(join(root, BASELINE), "utf8")), files: now.files }; // keeps `coldRead` (#5882)
     writeFileSync(join(root, BASELINE), JSON.stringify(baseline, null, 2) + "\n");
     console.log(`wrote ${BASELINE}`);
   } else {
