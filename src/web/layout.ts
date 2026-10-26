@@ -678,7 +678,7 @@ export function page(options: PageOptions, status = 200): Response {
     link: linkHeader(links),
   });
   // A flash is shown exactly once: rendering it is also what clears it.
-  if (cookieFlash) headers.append("set-cookie", clearFlashCookie(ctx.url));
+  if (cookieFlash) headers.append("set-cookie", clearFlashCookie(ctx.url, ctx.app.config.url));
   if (tagged) {
     const etag = weakEtag(text);
     headers.set("etag", etag);
@@ -697,6 +697,8 @@ export interface RedirectOptions {
   flash?: Flash;
   /** Needed only so the flash cookie learns whether to be Secure. */
   url?: URL;
+  /** The forge's own address: https there makes the cookie Secure behind a TLS-ending proxy. */
+  forgeUrl?: string | undefined;
 }
 
 export function redirect(
@@ -708,7 +710,7 @@ export function redirect(
   const headers = new Headers({ location: to });
   if (o.cookie !== undefined) headers.append("set-cookie", o.cookie);
   if (o.flash !== undefined)
-    headers.append("set-cookie", flashCookie(o.flash, o.url));
+    headers.append("set-cookie", flashCookie(o.flash, o.url, o.forgeUrl));
   return new Response(null, { status: 303, headers });
 }
 
@@ -768,7 +770,7 @@ export function missingFragment(request: Request): Response {
 
 /** Redirect back to a page carrying a message — the shape most handlers want. */
 export function flashTo(ctx: Ctx, to: string, flash: Flash): Response {
-  return redirect(to, { flash, url: ctx.url });
+  return redirect(to, { flash, url: ctx.url, forgeUrl: ctx.app.config.url });
 }
 
 /**

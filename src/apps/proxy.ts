@@ -47,7 +47,12 @@ import { readServing } from "./serving.ts";
 import { notFound, securityFloor } from "../http/respond.ts";
 import { appMeasure } from "./measure.ts";
 import { holdPortRequest, holdPortSocket } from "./handoff.ts";
+import { secureFor } from "../http/cookie_secure.ts";
 import { htmlAnswer, readPage, rewritable, withToolbar, type PillWhere } from "./toolbar.ts";
+
+const proxySecure = (request: Request, url: URL, forgeUrl: string): boolean =>
+  secureFor(url, forgeUrl) ||
+  request.headers.get("x-forwarded-proto") === "https";
 
 export interface AppTarget {
   readonly app: AppRecord;
@@ -637,9 +642,7 @@ export async function proxyApp(
     );
   }
   if (url.pathname === "/__forge/signout" && !target.nested) {
-    const secure =
-      url.protocol === "https:" ||
-      request.headers.get("x-forwarded-proto") === "https";
+    const secure = proxySecure(request, url, runtime.options.forgeUrl);
     return securityFloor(
       new Response(null, {
         status: 303,
@@ -794,9 +797,7 @@ export async function proxyApp(
       sealed,
       viewerId,
       grantCookie: cookie,
-      secure:
-        url.protocol === "https:" ||
-        request.headers.get("x-forwarded-proto") === "https",
+      secure: proxySecure(request, url, runtime.options.forgeUrl),
       source: clientBucket(request),
     });
     if (answer !== undefined) return securityFloor(answer);
@@ -1294,9 +1295,7 @@ function grant(
     vouched.who,
   );
   const path = safePath(url.searchParams.get("to"));
-  const secure =
-    url.protocol === "https:" ||
-    request.headers.get("x-forwarded-proto") === "https";
+  const secure = proxySecure(request, url, runtime.options.forgeUrl);
   return new Response(null, {
     status: 303,
     headers: {

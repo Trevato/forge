@@ -6,6 +6,7 @@
  */
 
 import { followUpstreamCheck, followUpstreamUpdate } from "../web/pages/upstream-follow.ts";
+import { secureFor } from "./cookie_secure.ts";
 import { refusedByDatabase, shownRefusal } from "./refusal.ts";
 import { NOT_A_MEMBER } from "../core/roles.ts";
 import { signupOptions, signupPasskey } from "../web/pages/signup-passkey.ts";
@@ -1678,11 +1679,11 @@ function withRateHeaders(
  * a redirect to its own clean address, and the cookie that used to hold the
  * choice is let go on the way.
  */
-function withoutMode(url: URL, request: Request): Response | undefined {
+function withoutMode(url: URL, request: Request, forgeUrl?: string): Response | undefined {
   if (request.method !== "GET" || !url.searchParams.has("mode")) return undefined;
   const clean = new URL(url);
   clean.searchParams.delete("mode");
-  const secure = url.protocol === "https:" ? "; Secure" : "";
+  const secure = secureFor(url, forgeUrl) ? "; Secure" : "";
   return new Response(null, {
     status: 303,
     headers: {
@@ -2578,7 +2579,7 @@ async function answerGet(
 
   const themeCookie = cookieValue(request, "forge_theme") ?? "";
   if (!isApiPath) {
-    const clean = withoutMode(url, request);
+    const clean = withoutMode(url, request, app.config.url);
     if (clean !== undefined) return clean;
   }
   const invoke = (into: Request): Response | Promise<Response> =>

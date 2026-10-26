@@ -1,3 +1,5 @@
+import { secureFor } from "../http/cookie_secure.ts";
+
 /**
  * Flash messages: the missing half of post-redirect-get. A mutation sets a
  * short-lived cookie, the next page renders it exactly once as a `.toast` and
@@ -27,15 +29,15 @@ export interface Flash {
 const MAX_FLASH = 2000;
 
 /** The `Set-Cookie` value that carries a flash to the next request. */
-export function flashCookie(flash: Flash, url?: URL): string {
+export function flashCookie(flash: Flash, url?: URL, forgeUrl?: string): string {
   const encoded = encodeURIComponent(JSON.stringify(flash)).slice(0, MAX_FLASH);
-  const secure = url?.protocol === "https:" ? "; Secure" : "";
+  const secure = secureFor(url, forgeUrl) ? "; Secure" : "";
   return `${FLASH_COOKIE}=${encoded}; Path=/; Max-Age=60; SameSite=Lax; HttpOnly${secure}`;
 }
 
 /** The `Set-Cookie` value that clears it, sent with the page that showed it. */
-export function clearFlashCookie(url?: URL): string {
-  const secure = url?.protocol === "https:" ? "; Secure" : "";
+export function clearFlashCookie(url?: URL, forgeUrl?: string): string {
+  const secure = secureFor(url, forgeUrl) ? "; Secure" : "";
   return `${FLASH_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly${secure}`;
 }
 

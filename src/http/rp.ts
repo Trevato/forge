@@ -11,6 +11,7 @@
  * Both are GETs that change nothing a stranger could use: a callback with
  * no matching cookie and state is refused before anything is fetched.
  */
+import { secureFor } from "./cookie_secure.ts";
 import { createHash, randomBytes } from "node:crypto";
 import type { App } from "../app.ts";
 import {
@@ -117,8 +118,8 @@ function failure(ctx: Ctx, message: string, status: number): Response {
   return response;
 }
 
-const cookieHeader = (value: string, maxAge: number, url: URL, forgeUrl?: string): string => {
-  const secure = url.protocol === "https:" || forgeUrl?.startsWith("https://") ? "; Secure" : "";
+export const cookieHeader = (value: string, maxAge: number, url: URL, forgeUrl?: string): string => {
+  const secure = secureFor(url, forgeUrl) ? "; Secure" : "";
   return `${STATE_COOKIE}=${value}; Path=/signin/parent; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`;
 };
 

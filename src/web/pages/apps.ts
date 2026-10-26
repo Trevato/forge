@@ -794,6 +794,7 @@ export async function appRedeploy(ctx: Ctx): Promise<Response> {
   // there (`envBack`); the run itself is one link away on that card.
   return redirect(envBack(ctx, repo), {
     url: ctx.url,
+    forgeUrl: ctx.app.config.url,
     flash: {
       message:
         run === undefined

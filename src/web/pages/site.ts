@@ -52,6 +52,7 @@ import {
 } from "../ui.ts";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { secureFor } from "../../http/cookie_secure.ts";
 import { hasAdmin } from "../../spawn/claim.ts";
 import { getSignup, type SignupMode } from "../../settings/signup.ts";
 import { EMAIL_TAKEN_MESSAGE, NAME_RESERVED, USERNAME_TAKEN } from "../../actions/signup_words.ts";
@@ -64,10 +65,7 @@ export function sessionCookie(
 ): string {
   // Secure when the request or the forge's own address is https: behind a
   // proxy that ends TLS the request itself arrives as http.
-  const secure =
-    url.protocol === "https:" || forgeUrl?.startsWith("https://")
-      ? "; Secure"
-      : "";
+  const secure = secureFor(url, forgeUrl) ? "; Secure" : "";
   return `forge_session=${value}; Path=/; HttpOnly; SameSite=Lax; Expires=${expires.toUTCString()}${secure}`;
 }
 
@@ -696,7 +694,7 @@ export async function themeSubmit(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, undefined, STRANGER_MAX);
   if (form instanceof Response) return form;
   const choice = field(form, "theme");
-  const secure = ctx.url.protocol === "https:" ? "; Secure" : "";
+  const secure = secureFor(ctx.url, ctx.app.config.url) ? "; Secure" : "";
   const cookie = isThemeName(choice)
     ? `forge_theme=${choice}; Path=/; Max-Age=31536000; SameSite=Lax; HttpOnly${secure}`
     : `forge_theme=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly${secure}`;

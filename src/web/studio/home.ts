@@ -629,6 +629,7 @@ export async function frontUpdate(ctx: Ctx): Promise<Response> {
   const set = setFront(ctx.app, ctx.auth.user, next);
   return redirect("/front", {
     url: ctx.url,
+    forgeUrl: ctx.app.config.url,
     flash: set.ok
       ? { message: "The front page is updated." }
       : {
