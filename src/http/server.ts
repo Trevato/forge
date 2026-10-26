@@ -376,7 +376,6 @@ import {
   crewRoleUpdate,
   crewSettingsPage,
   dangerPage,
-  hooksPage,
   promptSourceAdd,
   promptSourceDelete,
   promptSourceRun,
@@ -388,9 +387,8 @@ import {
   archiveSubmit,
   provenanceSubmit,
   mirrorStop,
-  webhookCreate,
-  webhookDelete,
 } from "../web/pages/settings.ts";
+import { hooksPage, webhookCreate, webhookDelete } from "../web/pages/hooks.ts";
 import {
   labelCreate,
   labelDelete,
