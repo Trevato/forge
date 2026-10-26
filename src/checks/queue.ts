@@ -11,10 +11,12 @@
  * candidate gates on main, the next gates on top of it (`depth` deep): if
  * the first lands whole, the next lands right after on the tree it was
  * gated on; if not, the next is discarded and formed again on main. A red
- * candidate is searched by gating disjoint segments of it at once, one per
- * free slot: the culprit is in the first red segment, searched again. With
- * no slot free that is one segment, the front half: plain bisection. A
- * single red step is the culprit and is handed back.
+ * candidate is searched by gating prefixes of its own chain at once, one per
+ * free slot, each stacked on the one before (#5994): the longest green
+ * prefix lands, and the culprit is in the run the first red one adds,
+ * searched again on top of it. With no slot free that is one prefix, the
+ * front half: plain bisection. A single red step is the culprit and is
+ * handed back.
  *
  * A gate cut off by the forge stopping is no verdict: nothing is handed
  * back, and the forge that carries on admits the line again (#3155). A gate
@@ -853,14 +855,17 @@ async function round(
 
 /**
  * A red candidate: one step is the culprit, handed back on the base it was
- * red on. More are searched (#4053, #6353): its steps are cut into disjoint
- * segments, one gate per free check slot (at least the front half), each
- * built and gated on the base alone, so no pull is in two gates of a round.
- * The first red segment holds a culprit and is searched again, on top of a
- * green first segment, which lands; the other green ones, each cleared
- * alone, and the steps after wait for the next candidate.
- * All green, the interaction is between them: the first lands and the rest
- * are searched on it.
+ * red on. More are searched by stacked prefixes (#5994): its steps are cut
+ * into runs, one gate per free check slot (at least the front half), and
+ * the gates are the candidate's own chain cut short — the first run, the
+ * first two, and so on — each on the one before, as the line stacks its
+ * candidates. The whole is known red, so it is not gated again. The first
+ * red prefix holds a culprit in its last run: every green prefix before it
+ * is one piece that lands as it was gated, and that run is searched again on
+ * top of it. All green, the culprit is in the last run. The runs after the
+ * red one wait, in line order, for the next candidate. No green verdict is
+ * thrown away: a disjoint segment gated on the base alone was void once
+ * another landed (#6353).
  */
 async function judged(
   search: Search,
@@ -888,49 +893,36 @@ async function judged(
     return [];
   }
   const n = steps.length;
-  // One gate per free slot, at least the front half; with no slot free the
-  // back half is not gated and waits for the next round.
+  // One gate per free slot and one more, at least the front half, never the
+  // whole: it is known red.
   const free = Math.max(0, room());
-  const cut = free > 0 ? Math.min(n, 1 + free) : 2;
-  const runs = split(steps, cut - 1);
-  const segments = runs.slice(0, free > 0 ? cut : 1);
-  const rest = runs.slice(segments.length).flat();
-  // Each segment is built and gated on the base alone: no step is in two
-  // gates, so one culprit turns one gate red, not every prefix after it.
-  const built = await Promise.all(segments.map((seg) => build(seg)));
-  const gates = built.filter((c): c is Candidate => c !== undefined && c.steps.length > 0);
-  if (gates.length !== segments.length || gates.some((c) => c.baseOid !== gates[0]!.baseOid)) {
-    // The base moved under the search: nothing here is decided, and the
-    // next sweep admits these again onto the base as it is now.
-    for (const w of steps) w.settle(false);
-    return [];
-  }
-  const verdicts = await Promise.all(gates.map((c) => gated(c)));
+  const runs = split(steps, Math.min(n - 1, 1 + free));
+  const ends: number[] = [];
+  for (const run of runs) ends.push((ends.at(-1) ?? 0) + run.length);
+  const prefixes = ends.slice(0, -1).map((end) => prefixOf(candidate, end));
+  const verdicts = await Promise.all(prefixes.map((c) => gated(c)));
   if (verdicts.some((v) => !v.lands && "interrupted" in v)) {
     for (const w of steps) w.settle(false);
     return [];
   }
-  const inGate = gates.map((c, i) => inCandidate(segments[i]!, c));
-  const bad = verdicts.findIndex((v) => !v.lands);
-  if (bad < 0) {
-    // Each green alone, the whole red: the interaction is between them. The
-    // first lands, gated as it is on the base; the rest are searched on it.
-    await land(gates[0]!, inGate[0]!);
-    const next = [...inGate.slice(1).flat(), ...rest];
-    return round(search, next, { treeOid: candidate.treeOid, red }, [...landed, ...inGate[0]!.map((w) => w.entry)]);
-  }
-  // The first red segment holds a culprit and is searched again. A green
-  // first segment before it lands as it was gated and the search goes on top
-  // of it; the other green segments, each gated alone, and the steps after
-  // the red one wait, in line order, for the next candidate.
-  const first = bad > 0;
-  if (first) await land(gates[0]!, inGate[0]!);
-  const now = first ? [...landed, ...inGate[0]!.map((w) => w.entry)] : landed;
-  const before = inGate.slice(first ? 1 : 0, bad).flat();
-  const after = [...inGate.slice(bad + 1).flat(), ...rest];
-  const left = await round(search, inGate[bad]!, { treeOid: gates[bad]!.treeOid, red: verdicts[bad] as Red }, now);
-  return [...before, ...left, ...after];
+  // The first red prefix, the whole when every gated one was green.
+  const found = verdicts.findIndex((v) => !v.lands);
+  const bad = found < 0 ? prefixes.length : found;
+  const known = bad < prefixes.length ? { treeOid: prefixes[bad]!.treeOid, red: verdicts[bad] as Red } : { treeOid: candidate.treeOid, red };
+  const green = bad > 0 ? ends[bad - 1]! : 0;
+  if (green > 0) await land(prefixes[bad - 1]!, steps.slice(0, green));
+  const now = [...landed, ...steps.slice(0, green).map((w) => w.entry)];
+  const after = runs.slice(bad + 1).flat();
+  const left = await round(search, runs[bad]!, known, now);
+  return [...left, ...after];
 }
+
+/** The candidate's chain cut after its first `end` steps: the tree a prefix gates. */
+function prefixOf(candidate: Candidate, end: number): Candidate {
+  const last = candidate.steps[end - 1]!;
+  return { ...candidate, steps: candidate.steps.slice(0, end), tipOid: last.commitOid, treeOid: last.treeOid };
+}
+
 
 /** The steps cut into `k` + 1 runs, evenly, none shared. */
 function split<T>(steps: readonly T[], k: number): T[][] {

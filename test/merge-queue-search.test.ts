@@ -1,6 +1,7 @@
 /**
- * A red candidate is searched by disjoint segments, never by nested
- * prefixes holding the same suspects (#6353). The gate here is held open and
+ * A red candidate is searched by prefixes of its own chain, each stacked on
+ * the one before (#5994), so every green piece lands in order: a disjoint
+ * segment gated on the base alone was void once another landed (#6353). The gate here is held open and
  * let go a wave at a time, so "at once" is counted, never timed; it reads
  * the candidate's tree: red when it holds `bad.txt`.
  */
@@ -12,7 +13,7 @@ import { type Candidate, enqueue, type Expect, type Queued } from "../src/checks
 import type { LandVerdict } from "../src/checks/tiers.ts";
 import type { Pull } from "../src/core/pulls.ts";
 
-describe("the merge queue searches a red candidate by disjoint segments", () => {
+describe("the merge queue searches a red candidate by stacked prefixes", () => {
   let dir: string;
   const told: number[] = [];
 
@@ -59,37 +60,61 @@ describe("the merge queue searches a red candidate by disjoint segments", () => 
     };
   }
 
-  test("a red 7-step candidate with 3 free slots: the gates share no step, and a culprit at step 5 is found in 2 rounds beyond the head's", async () => {
-    const pulls: Queued[] = [];
-    for (let i = 1; i <= 7; i++) pulls.push(entry(i, await headAdding(`s${i}`, i === 5 ? "bad.txt" : `f${i}.txt`)));
+  /** A gate held open and let go a wave at a time: "at once" is counted, never timed. */
+  function waves() {
     let pending: { candidate: Candidate; go: (v: LandVerdict) => void }[] = [];
-    const waves: number[][][] = [];
+    const seen: number[][][] = [];
+    const greens: number[][] = [];
     const gate = (candidate: Candidate) => new Promise<LandVerdict>((go) => pending.push({ candidate, go }));
     const letGo = async (n: number) => {
       for (let i = 0; i < 2000 && pending.length < n; i++) await Bun.sleep(5);
       expect(pending).toHaveLength(n);
       const going = pending;
       pending = [];
-      waves.push(going.map((p) => p.candidate.steps.map((s) => s.entry.pull.number)));
-      for (const p of going) p.go(verdictOf(p.candidate));
+      seen.push(going.map((p) => p.candidate.steps.map((s) => s.entry.pull.number)));
+      for (const p of going) {
+        const verdict = verdictOf(p.candidate);
+        if (verdict.lands) greens.push(p.candidate.steps.map((s) => s.entry.pull.number));
+        p.go(verdict);
+      }
     };
+    return { gate, letGo, seen, greens };
+  }
+
+  test("a red 7-step candidate with 3 free slots: the rest is searched by stacked prefixes, and every green prefix's pulls land", async () => {
+    told.length = 0;
+    const pulls: Queued[] = [];
+    for (let i = 1; i <= 7; i++) pulls.push(entry(i, await headAdding(`s${i}`, i === 5 ? "bad.txt" : `f${i}.txt`)));
+    const { gate, letGo, seen } = waves();
     const landed = enqueue("search", pulls, gate, { depth: 1, room: () => 3 });
     await letGo(1); // the whole candidate: red
     await letGo(2); // its head alone (#4999), beside the six without it
-    await letGo(4); // the six, cut into four segments gated at once
-    await letGo(1); // the first segment landed as gated; the red one is gated on it
-    await letGo(2); // the red segment, halved: the culprit is in it alone
-    await letGo(1); // the pulls cleared alone, formed again as one candidate
+    await letGo(4); // the six: four prefixes of their own chain, each on the one before
+    await letGo(1); // the pulls after the culprit, with the head, as one candidate
     const answers = await landed;
-    for (const wave of waves) {
-      const seen = wave.flat();
-      expect(new Set(seen).size).toBe(seen.length);
-    }
-    expect(waves[3]).toEqual([[5, 6]]);
-    expect(waves[4]!.flat().sort()).toEqual([5, 6]);
+    expect(seen[2]).toEqual([[2, 3], [2, 3, 4], [2, 3, 4, 5], [2, 3, 4, 5, 6]]);
     expect(told).toEqual([5]);
     expect(answers[4]).toBe(false);
     expect(answers.filter(Boolean)).toHaveLength(6);
+  });
+
+  test("an 8-pull batch with one bad pull: the 7 good land, the search takes 2 gate rounds past the head's, and no green verdict is thrown away (#5994)", async () => {
+    told.length = 0;
+    const pulls: Queued[] = [];
+    for (let i = 21; i <= 28; i++) pulls.push(entry(i, await headAdding(`u${i}`, i === 24 ? "bad.txt" : `f${i}.txt`)));
+    const { gate, letGo, seen, greens } = waves();
+    const landed = enqueue("search-eight", pulls, gate, { depth: 1, room: () => 7 });
+    await letGo(1); // the eight: red
+    await letGo(2); // its head alone (#4999), beside the seven without it: red
+    await letGo(6); // round one: the seven, six prefixes at once; the culprit is named
+    await letGo(1); // round two: the pulls after the culprit, with the head
+    const answers = await landed;
+    expect(seen).toHaveLength(4);
+    expect(told).toEqual([24]);
+    expect(answers).toEqual(pulls.map((q) => q.pull.number !== 24));
+    // Every gate that came back green holds only pulls that landed.
+    for (const g of greens) for (const n of g) expect(n).not.toBe(24);
+    expect(git("ls-tree", "--name-only", "refs/heads/main").split("\n")).not.toContain("bad.txt");
   });
 
   test("with no slot free, the green front half lands and the red back half is not gated again", async () => {
