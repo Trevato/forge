@@ -86,6 +86,7 @@ export { route as getApiV1ReposOwnerNamePullsNumber } from "./getApiV1ReposOwner
 export { route as getApiV1ReposOwnerNamePullsNumberChecks } from "./getApiV1ReposOwnerNamePullsNumberChecks.ts";
 export { route as getApiV1ReposOwnerNamePullsNumberReviews } from "./getApiV1ReposOwnerNamePullsNumberReviews.ts";
 export { route as getApiV1ReposOwnerNamePullsNumberThreads } from "./getApiV1ReposOwnerNamePullsNumberThreads.ts";
+export { route as getApiV1ReposOwnerNameReports } from "./getApiV1ReposOwnerNameReports.ts";
 export { route as getApiV1ReposOwnerNameRuns } from "./getApiV1ReposOwnerNameRuns.ts";
 export { route as getApiV1ReposOwnerNameRunsId } from "./getApiV1ReposOwnerNameRunsId.ts";
 export { route as getApiV1ReposOwnerNameRunsIdLog } from "./getApiV1ReposOwnerNameRunsIdLog.ts";
