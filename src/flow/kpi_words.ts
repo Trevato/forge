@@ -127,6 +127,11 @@ export function waitingWords(count: number, oldestAt: string | null, now: Date):
   return `${count} waiting on you, oldest ${h < 1 ? "under 1" : h} h`;
 }
 
+/** The fold for asks older than 30 days, on Home and on /review. */
+export function staleWords(count: number): string {
+  return `${count} stale, archive?`;
+}
+
 /**
  * The terminal's row: the same figures in the same words, as plain
  * lines. Forge-wide like the web's, so the caller shows them to an admin only.

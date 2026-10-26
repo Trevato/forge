@@ -18,7 +18,9 @@ import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { badge, empty, listCard, row, runStateBadge, time } from "../ui.ts";
 import { lookThumb, lookThumbPlain, thumbLook } from "../pages/looks.ts";
-import { actRow, orderedAsks, rowId } from "./review_act.ts";
+import { actRow, rowId } from "./review_act.ts";
+import { reviewSet } from "./review_set.ts";
+import { staleArchive } from "./review_stale.ts";
 import { diffStatFor, sizeLine } from "./review_evidence.ts";
 
 /** The check on a pull's head, as the pull page wears it; only a run of this very head counts. */
@@ -67,7 +69,8 @@ export function reviewPage(ctx: Ctx): Response {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const user = ctx.auth.user;
   if (!user) return signInFirst(ctx);
-  const asks = timePhase(ctx.request, "asks", () => orderedAsks(ctx.app.db, user));
+  const set = timePhase(ctx.request, "asks", () => reviewSet(ctx, user));
+  const asks = set.live;
   const rendering = performance.now();
   const advice = recommendationsFor(
     ctx.app.db,
@@ -140,8 +143,10 @@ export function reviewPage(ctx: Ctx): Response {
       ],
     });
   });
+  // Asks older than 30 days fold under one row, whose button opens the bulk-dismiss preview.
+  if (set.stale.length > 0) rows.push(html`<li>${staleArchive(set.stale)}<span class="small muted">Older than 30 days; nothing is dismissed without a look</span></li>`);
   const body = html`<h1>Review</h1>
-    <p class="muted">${asks.length === 0 ? "All fine" : `${asks.length} ${asks.length === 1 ? "ask" : "asks"}, newest first`}</p>
+    <p class="muted">${set.count === 0 ? "All fine" : `${set.count} ${set.count === 1 ? "ask" : "asks"}, newest first`}</p>
     ${rows.length === 0
       ? empty({
           icon: "issue",

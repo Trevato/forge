@@ -21,10 +21,11 @@ const panelCaches = new WeakMap<Database, Stamped<Answer>>();
 const vitalsCaches = new WeakMap<Database, Stamped<Vitals>>();
 const waitingCaches = new WeakMap<Database, Stamped<Waiting>>();
 
-/** What the waiting line keeps of the viewer's asks: how many, and the oldest's time. */
+/** What the waiting line keeps of the viewer's asks: how many are live, the oldest's time, and the stale ones' ids. */
 export interface Waiting {
   readonly count: number;
   readonly oldest: string | null;
+  readonly stale: readonly { readonly id: string }[];
 }
 
 function cacheOf<V>(into: WeakMap<Database, Stamped<V>>, db: Database, maxEntries: number): Stamped<V> {

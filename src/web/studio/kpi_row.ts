@@ -16,9 +16,9 @@ import { escapeHtml, html, raw, type Html } from "../html.ts";
 import { BOOTED } from "../../release/gate.ts";
 import { running } from "../../kernel/version.ts";
 import { sha, stat, time } from "../ui.ts";
-import { listReposVisibleTo } from "../../core/repos.ts";
 import type { User } from "../../core/users.ts";
-import { waitingOn } from "./asks.ts";
+import { reviewSetOf } from "./review_set.ts";
+import { staleArchive } from "./review_stale.ts";
 
 const W = 96;
 const H = 24;
@@ -170,19 +170,23 @@ export function kpiRow(db: Database, opts: { ceilingUsd?: number; dataDir?: stri
 
 /**
  * One `.small .muted` line over `/review`: how many asks wait on the viewer
- * (the very rows /review lists) and how long the oldest has. Empty at zero.
+ * (the very set /review draws, stale ones left out) and how long the oldest has. Asks older than 30 days follow as
+ * `N stale, archive?`, which opens the bulk-dismiss preview: nothing is
+ * dismissed without a look. Empty when there is nothing to say.
  */
 export function waitingLine(db: Database, user: User, now: Date = new Date()): Html {
-  const { count, oldest } = cachedWaiting(db, user.id, () => {
-    const repos = listReposVisibleTo(db, user, { limit: 200, withoutArchived: true });
-    const asks = waitingOn(db, user, repos);
+  const { count, oldest, stale } = cachedWaiting(db, user.id, () => {
+    const set = reviewSetOf(db, user, now);
     return {
-      count: asks.length,
-      oldest: asks.reduce<string | null>((o, a) => (o === null || Date.parse(a.since) < Date.parse(o) ? a.since : o), null),
+      count: set.count,
+      oldest: set.live.reduce<string | null>((o, a) => (o === null || Date.parse(a.since) < Date.parse(o) ? a.since : o), null),
+      stale: set.stale.map((a) => ({ id: a.id })),
     };
   });
   const words = waitingWords(count, oldest, now);
-  return words === null ? html`` : html`<p class="small muted"><a href="/review">${words}</a></p>`;
+  if (words === null && stale.length === 0) return html``;
+  // The fold is a form, which cannot sit in the paragraph: it follows it.
+  return html`${words === null ? null : html`<p class="small muted"><a href="/review">${words}</a></p>`}${stale.length === 0 ? null : staleArchive(stale)}`;
 }
 
 /** Home's flow vitals for an admin (#5935): one muted line of counts; the open count links to the boards. */

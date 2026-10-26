@@ -39,9 +39,13 @@ import { putAsideWaves } from "../../web/studio/asks.ts";
 import type { Proposal } from "../../core/proposals.ts";
 import {
   applyAsksBulk,
+  BULK_MAX,
   latestUndoable,
+  previewAsksBulk,
   undoAsksBulk,
 } from "../../actions/asks_bulk.ts";
+import { reviewSetOf, type ReviewSet } from "../../web/studio/review_set.ts";
+import { staleWords } from "../../flow/kpi_words.ts";
 import { mutedRepos, removeMutes } from "../../core/interactions.ts";
 import { chipsOf, KIND_CHIPS, setChip } from "../../core/feed_chips.ts";
 import type { Operation } from "../../core/fleet_ops.ts";
@@ -162,6 +166,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   /** The rows marked for one verb, by issue id. */
   const marked = new Set<string>();
   let lastSet: Operation | undefined;
+  /** What Home and /review count: live asks waiting on the viewer, and the stale ones folded apart. */
+  let waitingSet: ReviewSet | undefined;
   /** The repositories marked for archiving, by id; only ones the viewer administers. */
   const markedRepos = new Set<string>();
   /** The receipt of the last archive made here, which `u` reverses once. */
@@ -237,6 +243,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     pinned = f.user ? pinnedRepoIds(f.db, f.user.id) : new Set<string>();
     all = listReposVisibleTo(f.db, f.user, { limit: 200 });
     onYou = assignedToMe();
+    waitingSet = f.user === undefined ? undefined : reviewSetOf(f.db, f.user, new Date());
     waves = f.user === undefined ? [] : wavesFor();
     asideWaves = f.user === undefined ? [] : putAsideWaves(f.db, f.user);
     for (const id of [...marked])
@@ -550,6 +557,48 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     );
   };
 
+  /** The asks older than 30 days, dismissed in one step: the bulk preview first, nothing before the choice. */
+  const archiveStale = (): void => {
+    const stale = (waitingSet?.stale ?? []).slice(0, BULK_MAX);
+    if (stale.length === 0 || f.user === undefined) return;
+    const items = stale.map((a) => a.id);
+    const plan = previewAsksBulk(f.app, f.user, "dismiss", items);
+    if (!plan.ok) {
+      ctx.toast(plan.error.message, "danger");
+      return;
+    }
+    if (plan.value.counts.change === 0) {
+      ctx.toast("nothing to archive", "attn");
+      return;
+    }
+    ctx.push(
+      confirmScreen(ctx, screen, {
+        title: `Archive ${plural(plan.value.counts.change, "stale ask")}?`,
+        body: [
+          ...plan.value.rows.map((r) => r.label),
+          ...((waitingSet?.stale.length ?? 0) > BULK_MAX ? [`First ${BULK_MAX} of ${waitingSet?.stale.length}; run it again for the rest.`] : []),
+        ],
+        actions: [
+          { label: "Archive", variant: "danger" },
+          { label: "Cancel", variant: "ghost" },
+        ],
+        onChoose: (choice) => {
+          if (choice !== 0) return;
+          runAsync(ctx, async () => {
+            const done = await applyAsksBulk(f.app, f.user, "dismiss", items);
+            if (!done.ok) {
+              ctx.toast(done.error.message, "danger");
+              return;
+            }
+            const n = done.value.rows.filter((r) => r.outcome === "ok").length;
+            reload();
+            ctx.toast(`archived ${n}${n > 0 ? " — u undoes it" : ""}`, n > 0 ? "success" : "attn");
+          });
+        },
+      }),
+    );
+  };
+
   const undoArchive = (): void => {
     const id = lastArchive;
     if (id === undefined) return;
@@ -791,6 +840,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
               binding(["S"], "ship"),
             ]
           : []),
+        ...(focus === "onyou" && (waitingSet?.stale.length ?? 0) > 0 ? [binding(["Z"], "archive stale")] : []),
         ...(lastSet !== undefined || lastArchive !== undefined ? [binding(["u"], "undo")] : []),
         ...(silenced.size > 0 ? [binding(["L"], "listen again")] : []),
         binding(["d"], "unpin", {
@@ -953,6 +1003,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
           return true;
         }
         if (e.key === "x") return closeSet(), true;
+        if (e.key === "Z") return archiveStale(), true;
         if (e.key === "m") return clear("mute"), true;
         if (e.key === "S") return shipSet(), true;
         if (e.key === "D" && item !== undefined) return handToDecider(), true;
@@ -1097,6 +1148,13 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   /** What the card says about mutes, marks and the day's undo. */
   function onYouFooter(): string | undefined {
     const parts: string[] = [];
+    // The same figures as Home's line and /review: live asks counted, stale ones folded apart.
+    if (waitingSet !== undefined && waitingSet.count > 0) parts.push(`${waitingSet.count} waiting on you`);
+    if (waitingSet !== undefined && waitingSet.stale.length > 0) parts.push(`${staleWords(waitingSet.stale.length)} Z previews`);
+    // The decider keys come first: the card clips its footer from the right.
+    if (lastHand !== undefined) parts.push("U undo decider");
+    if (onYou[at("onyou").index]?.hand === true) parts.push("D let the decider");
+    if (onYou[at("onyou").index]?.over === true) parts.push("b give back to the crew");
     if (f.user !== undefined) {
       const chips = chipsOf(f.db, f.user.id);
       const off: string[] = KIND_CHIPS.filter((k) => chips.kinds.has(k));
@@ -1113,9 +1171,6 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         `${silenced.size} ${silenced.size === 1 ? "repository" : "repositories"} muted · L listen again`,
       );
     if (lastSet !== undefined) parts.push(`u undo ${lastSet.verb}`);
-    if (lastHand !== undefined) parts.push("U undo decider");
-    if (onYou[at("onyou").index]?.hand === true) parts.push("D let the decider");
-    if (onYou[at("onyou").index]?.over === true) parts.push("b give back to the crew");
     if (asideWaves.length > 0) parts.push(`${asideWaves.length} ${asideWaves.length === 1 ? "wave" : "waves"} put aside · B bring back`);
     return parts.length > 0 ? parts.join(" · ") : undefined;
   }

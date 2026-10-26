@@ -9,6 +9,7 @@
 
 import type { Database } from "bun:sqlite";
 import { forgeVitals, needLine } from "../../actions/health.ts";
+import { reviewSet } from "./review_set.ts";
 import type { Degraded } from "../../kernel/vitals.ts";
 import { waitingFor, type WaitingFor } from "../../core/waiting_for.ts";
 import { crewForRepos } from "../../core/agents.ts";
@@ -1128,7 +1129,10 @@ export function askSentence(count: number): string {
  */
 export function asksAnswer(ctx: Ctx, user: User, chips?: Chips) {
   const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
+  const set = reviewSet(ctx, user);
   return {
+    // The very figures Home's line and /review show: `count` is live asks plus the forge's needs; `stale` are older than 30 days.
+    waiting: { count: set.count, stale: set.stale.length },
     rows: askLinesFor(ctx.app.db, user, chips),
     forge: forgeNeedsFor(ctx, user).map((d) => needLine(d)),
     measure: { days: 7, ...askMeasure(ctx.app.db, user.id, since) },
