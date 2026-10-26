@@ -1212,13 +1212,14 @@ export function moveArchived(
   archived: boolean,
   at: string = new Date().toISOString(),
 ): boolean {
+  // RETURNING counts the repository, not the trigger's write to `front_epoch`.
   const changes = archived
     ? db
-        .query("UPDATE repo SET archived_at = ?2 WHERE id = ?1 AND archived_at IS NULL")
-        .run(repoId, at).changes
+        .query("UPDATE repo SET archived_at = ?2 WHERE id = ?1 AND archived_at IS NULL RETURNING id")
+        .all(repoId, at).length
     : db
-        .query("UPDATE repo SET archived_at = NULL WHERE id = ?1 AND archived_at IS NOT NULL")
-        .run(repoId).changes;
+        .query("UPDATE repo SET archived_at = NULL WHERE id = ?1 AND archived_at IS NOT NULL RETURNING id")
+        .all(repoId).length;
   if (changes === 1) forgetListings(db);
   return changes === 1;
 }

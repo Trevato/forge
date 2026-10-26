@@ -45,6 +45,7 @@ import { keepLook } from "../looks/service.ts";
 import { canRead, getRepo, getReposByIds, type Repo } from "../core/repos.ts";
 import { listActiveRuns } from "../core/runs.ts";
 import { getUsersByIds, isActive, type User } from "../core/users.ts";
+import { timePhase } from "../core/route_timing.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { limitValue } from "../settings/limits.ts";
 
@@ -163,18 +164,24 @@ const PAGE_MS = 3_000;
  */
 const built = new WeakMap<App, { key: string; at: number; page: FrontPage }>();
 
-function dbKey(app: App): string {
+/**
+ * The shelf's data version: one row that triggers bump when a column the
+ * shelf renders changes (`front_epoch`). Its size never depends on how many
+ * apps there are, and a session, a heartbeat or a push does not move it.
+ */
+export function frontKey(app: App): string {
   const row = app.db
-    .query<{ c: number; v: number }, []>(
-      "SELECT total_changes() AS c, (SELECT data_version FROM pragma_data_version) AS v",
-    )
+    .query<{ n: number }, []>("SELECT n FROM front_epoch")
     .get();
-  return `${row?.c}:${row?.v}`;
+  return String(row?.n);
 }
 
-/** The front page as a stranger is shown it. */
-export function frontPage(app: App, now = Date.now()): FrontPage {
-  const key = dbKey(app);
+/** The front page as a stranger is shown it; `request` is told what the key cost. */
+export function frontPage(app: App, now = Date.now(), request?: Request): FrontPage {
+  const key =
+    request === undefined
+      ? frontKey(app)
+      : timePhase(request, "key", () => frontKey(app));
   const kept = built.get(app);
   const wall = performance.now();
   if (kept !== undefined && kept.key === key && wall - kept.at < PAGE_MS)

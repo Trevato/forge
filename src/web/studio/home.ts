@@ -516,7 +516,7 @@ function frontControls(ctx: Ctx, front: FrontPage): Html {
 export function studioDoor(ctx: Ctx): Response {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   let tiles: Html[] = [];
-  const front = timePhase(ctx.request, "shelf", () => frontPage(ctx.app));
+  const front = timePhase(ctx.request, "shelf", () => frontPage(ctx.app, Date.now(), ctx.request));
   timePhase(ctx.request, "tiles", () => {
     tiles = front.shelf.map(tile);
   });
