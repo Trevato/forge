@@ -12,6 +12,8 @@ import { mayView } from "../core/sealed.ts";
 import { requireVerified } from "./verify.ts";
 import { requireAppRoom } from "./app_limit.ts";
 import type { App } from "../app.ts";
+import { checkWord, type CheckWord } from "../apps/check_word.ts";
+import { openPulls } from "../apps/door_pulls.ts";
 import { goldenPath, goldenPathLine } from "../apps/golden_path.ts";
 import { appVitals, type AppVitals } from "../apps/vitals.ts";
 import { appsRuntime, envsFor, type EnvStatus } from "../apps/runtime.ts";
@@ -509,6 +511,31 @@ export function appPace(app: App, actor: User | undefined, repo: Repo): string {
   if (!requireReader(app, actor, repo).ok) return "";
   const record = getAppByRepo(app.db, repo.id);
   return record === undefined ? "" : goldenPathLine(goldenPath(app.db, record));
+}
+
+export interface AppPullLine {
+  readonly number: number;
+  readonly title: string;
+  readonly check: CheckWord;
+  /** The pull's preview address, or `undefined` when the forge serves none. */
+  readonly preview: string | undefined;
+}
+
+/**
+ * The app's open pulls with their check word and preview address, for a
+ * signed-in viewer who may read the repository; a guest gets none.
+ */
+export function appPullLines(app: App, actor: User | undefined, repo: Repo): AppPullLine[] {
+  if (actor === undefined) return [];
+  const record = getAppByRepo(app.db, repo.id);
+  if (record === undefined) return [];
+  const runtime = appsRuntime(app);
+  return openPulls(app.db, repo, actor).map((p) => ({
+    number: p.number,
+    title: p.title,
+    check: checkWord(p.run, p.headOid),
+    preview: runtime?.urlFor(record, previewEnv(p.number)),
+  }));
 }
 
 export type EnvError = "not_found" | "no_runtime" | "no_such_env";
