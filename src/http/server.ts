@@ -452,8 +452,6 @@ import {
   originAppDelete,
   originConnectToken,
   originDisconnect,
-  originFlowPage,
-  originFlowPoll,
   originMirrorSubmit,
   originOAuthStart,
   originReposPage,
@@ -461,6 +459,7 @@ import {
   originsPage,
   originTrustedHosts,
 } from "../web/pages/origins.ts";
+import { originFlowPage, originFlowPoll } from "../web/pages/origin-flow.ts";
 import { pushThrough } from "../origins/push-through.ts";
 import { notFoundPage } from "../web/chrome.ts";
 import { targetForShortCode } from "../origins/oauth.ts";
