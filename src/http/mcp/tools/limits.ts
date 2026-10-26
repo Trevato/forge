@@ -5,6 +5,7 @@ import { good, bad, type Tool } from "../shared.ts";
 
 export const tool: Tool = {
   name: "limits",
+  doc: "`{ key?, value?, dryRun? }` (forge admin): every limit the forge's owner can hit, with its value, default and bounds; with `key` and `value` (`\"\"` restores the default), planned first (`dryRun` is true unless `false`); a value out of bounds is refused, applying needs an admin-scope token",
   description:
     "Every limit the owner can hit, value and bounds. `key`, `value` (\"\" restores) plan.",
   inputSchema: {
