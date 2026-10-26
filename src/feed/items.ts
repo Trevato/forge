@@ -7,6 +7,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { isEnvName, type EnvName } from "../apps/data.ts";
 import type { Chips } from "../core/feed_chips.ts";
 import { listDecidedIn } from "../core/decisions.ts";
 import { audienceFilter } from "../core/event_audience.ts";
@@ -71,6 +72,13 @@ export interface Candidate {
   readonly said?: string;
   /** For an ask: what it asks, the answers, what happens if nobody acts, and its rank. */
   readonly ask?: FeedAsk;
+  /** For a look: the picture's environment and commit; the page finds the thumbnail. */
+  readonly look?: FeedLook;
+}
+
+export interface FeedLook {
+  readonly env: EnvName;
+  readonly commitOid: string;
 }
 
 export interface FeedAsk {
@@ -490,8 +498,20 @@ function fromEvent(
       return { ...common, kind: "pull", link: change, what: `merged a pull request${title ? `: ${clip(title)}` : ""}${toldWords}` };
     case "pull.reviewed":
       return { ...common, kind: "pull", link: change, what: `reviewed a pull request${title ? `: ${clip(title)}` : ""}` };
-    case "look.taken":
-      return { ...common, kind: "look", link: base(repo), what: "a new picture of it is ready" };
+    case "look.taken": {
+      const env = p["env"];
+      const oid = p["commitOid"];
+      if (typeof env !== "string" || !isEnvName(env))
+        return { ...common, kind: "look", link: base(repo), what: "a new picture of it is ready" };
+      const of = env === "production" ? "production" : `#${env.slice("pull-".length)}`;
+      return {
+        ...common,
+        kind: "look",
+        link: env === "production" ? base(repo) : `${base(repo)}/pulls/${env.slice("pull-".length)}`,
+        what: `a new picture of ${of}`,
+        ...(typeof oid === "string" && /^[0-9a-f]{40}$/.test(oid) ? { look: { env, commitOid: oid } } : {}),
+      };
+    }
     case "app.serving":
       return { ...common, kind: "release", link: base(repo), what: "a new version is serving" };
     // A tell is a post; a comment is a reply under it, in its own words.

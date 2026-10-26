@@ -17,6 +17,10 @@ import { placementsOf, type Placement } from "../../core/placements.ts";
 import { recentThoughts, type Thought } from "../../core/thoughts.ts";
 import { parseCursor, readFeed } from "../../feed/feed.ts";
 import type { FeedItem } from "../../feed/rank.ts";
+import { getAppByRepo } from "../../core/apps.ts";
+import { getRepo } from "../../core/repos.ts";
+import { DEFAULT_PAGE, looksForEnv, lookUrl } from "../../core/looks.ts";
+import { mayFetchLook, pictured } from "../pages/looks.ts";
 import { html, type Html } from "../html.ts";
 import { fragment } from "../layout.ts";
 import { outboxJs } from "../outbox.ts";
@@ -55,6 +59,38 @@ const saysMore = (item: FeedItem): boolean =>
   !item.reason.startsWith(item.what) &&
   !/^because you (own|work on|pinned) /.test(item.reason);
 
+/** A look post's thumbnail: its address and the size it is drawn at, so nothing shifts. */
+export interface FeedPicture {
+  readonly src: string;
+  readonly width: number;
+  readonly height: number;
+}
+
+/** The thumbnail is drawn at 160×100, the thumb's 8:5. */
+export const FEED_PICTURE = { width: 160, height: 100 } as const;
+
+/**
+ * The thumbnail each look post shows, by post id — only one this viewer
+ * may fetch (`mayFetchLook`), so a post never carries a broken image.
+ */
+export function picturesFor(ctx: Ctx, items: readonly FeedItem[]): Map<string, FeedPicture> {
+  const out = new Map<string, FeedPicture>();
+  for (const item of items) {
+    if (item.kind !== "look" || item.look === undefined) continue;
+    const [owner = "", name = ""] = item.app.split("/");
+    const repo = getRepo(ctx.app.db, owner, name);
+    const record = repo && getAppByRepo(ctx.app.db, repo.id);
+    if (!repo || !record) continue;
+    const home = looksForEnv(ctx.app.db, record.id, item.look.env).filter(
+      (l) => l.page === DEFAULT_PAGE && l.commitOid === item.look!.commitOid,
+    );
+    const thumb = pictured(home, "thumb");
+    if (thumb === undefined || !mayFetchLook(ctx, repo, record, thumb)) continue;
+    out.set(item.id, { src: lookUrl(`/${repo.ownerName}/${repo.name}`, thumb), ...FEED_PICTURE });
+  }
+  return out;
+}
+
 /** How a pull or an issue ended, as the quiet word beside a post's time. */
 function settledBadge(settled: FeedItem["settled"]): Html | null {
   if (settled === undefined) return null;
@@ -69,6 +105,7 @@ function settledBadge(settled: FeedItem["settled"]): Html | null {
 export function feedCard(
   item: FeedItem,
   marks: ReadonlyMap<string, Mark> = new Map(),
+  picture?: FeedPicture,
 ): Html {
   const steer = item.kind === "run" || item.kind === "cost";
   const target = steer && RUN_LINK.test(item.link) ? `${item.link}/steer` : null;
@@ -80,6 +117,11 @@ export function feedCard(
       <span class="spacer"></span>
       <span class="badge">${KIND_LABEL[item.kind]}</span>`;
   const body = html`<p class="break"><a href="${item.link}" data-feed-open>${item.what}</a></p>
+    ${picture === undefined
+      ? null
+      : html`<a class="look" data-slot="feed" href="${item.link}" tabindex="-1" aria-hidden="true"
+          ><img src="${picture.src}" width="${picture.width}" height="${picture.height}" alt="" loading="lazy" decoding="async"
+        /></a>`}
     ${saysMore(item) ? html`<p class="small muted break">${item.reason}</p>` : null}`;
   const foot = disclosure(
     `${target ? "Steer" : "Tell"} · more`,
@@ -265,7 +307,7 @@ function readRegion(user: User, ctx: Ctx) {
     ctx.app.db,
     items.map((item) => item.actor ?? ""),
   );
-  return { items, next: page.next_cursor, cursor, thoughts, placed, marks };
+  return { items, next: page.next_cursor, cursor, thoughts, placed, marks, pictures: picturesFor(ctx, items) };
 }
 
 /** The region: cards, or one line saying there is nothing to do. */
@@ -293,7 +335,7 @@ export function caughtUp(items: readonly FeedItem[], next: string | null, cursor
 }
 
 function drawRegion(user: User, ctx: Ctx, read: ReturnType<typeof readRegion>): Html {
-  const { items, next, cursor, thoughts, placed, marks } = read;
+  const { items, next, cursor, thoughts, placed, marks, pictures } = read;
   return html`<section
     id="live-feed"
     class="feed"
@@ -309,7 +351,7 @@ function drawRegion(user: User, ctx: Ctx, read: ReturnType<typeof readRegion>): 
           title: "Nothing new",
           note: "When something happens in your apps, it lands here.",
         })
-      : items.map((item) => feedCard(item, marks))}
+      : items.map((item) => feedCard(item, marks, pictures.get(item.id)))}
     ${caughtUp(items, next, cursor)}
   </section>`;
 }

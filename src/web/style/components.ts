@@ -367,6 +367,8 @@ a.sha:hover { color: var(--accent); }
 .look img { display: block; width: 100%; height: auto; }
 .look[data-slot="thumb"] { flex: none; width: 30px; height: 40px; border-radius: 4px; }
 .look[data-slot="thumb"] img { height: 100%; object-fit: cover; object-position: top; }
+.look[data-slot="feed"] { width: 160px; height: 100px; margin-top: 6px; }
+.look[data-slot="feed"] img { height: 100%; object-fit: cover; object-position: top; }
 .look[data-slot="now"] { flex: none; width: 168px; }
 .looks { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
 .looks > [data-slot="phone"] { flex: 0 0 200px; }
