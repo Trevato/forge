@@ -6,7 +6,7 @@ export const tool: Tool = {
   name: "search",
   doc: "`{ q, kind?, repo? }`: issues, pulls, repositories and code you can read, the same results as /search; `repo` keeps to one",
   description:
-    "Find issues, pulls, repositories and code you can read; `kind` narrows, `repo` keeps to one.",
+    "Find issues, pulls, repositories and code you can read; `kind` and `repo` narrow.",
   inputSchema: {
     type: "object",
     properties: {

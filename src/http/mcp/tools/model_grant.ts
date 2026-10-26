@@ -12,7 +12,7 @@ export const tool: Tool = {
     properties: {
       username: { type: "string" },
       usdPerMonth: { type: "number", description: "0.01–10000; 0 revokes." },
-      dryRun: { type: "boolean", description: "false to apply" },
+      dryRun: { type: "boolean" },
     },
     required: ["username", "usdPerMonth"],
   },

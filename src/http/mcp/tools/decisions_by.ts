@@ -13,10 +13,7 @@ export const tool: Tool = {
     properties: {
       repo: REPO_ARG,
       by: { type: "string", enum: ["me", "decider", "decider_tell"] },
-      dryRun: {
-        type: "boolean",
-        description: "false to apply",
-      },
+      dryRun: { type: "boolean" },
     },
     required: ["repo"],
   },

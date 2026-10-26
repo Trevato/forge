@@ -12,7 +12,7 @@ export const tool: Tool = {
     properties: {
       key: { type: "string", enum: [...QUOTA_KEYS] },
       value: { type: "string", maxLength: 16 },
-      dryRun: { type: "boolean", description: "false to apply" },
+      dryRun: { type: "boolean" },
     },
   },
   writes: true,

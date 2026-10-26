@@ -8,7 +8,7 @@ export const tool: Tool = {
   name: "pulls",
   doc: "`{ repo, state?, limit? }`: a repository's pulls, newest first, one brief line each: `number`, `title`, `author`, `head`, `check` (state), `approvals`, `changesRequested`, `mergeable` (null once closed); `state` open (default) or closed, `limit` 1-50 (default 20); no bodies, no diffs",
   description:
-    "A repository's pulls, newest first. `state` open (default) or closed; `limit` 1-50 (default 20).",
+    "A repository's pulls, newest first. `state` open (default) or closed; `limit` 1-50.",
   inputSchema: {
     type: "object",
     properties: {

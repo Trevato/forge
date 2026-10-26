@@ -35,10 +35,7 @@ export const tool: Tool = {
       operation: {
         type: "string",
       },
-      dryRun: {
-        type: "boolean",
-        description: "false to apply",
-      },
+      dryRun: { type: "boolean" },
     },
     required: ["app", "action"],
   },

@@ -12,7 +12,7 @@ export const tool: Tool = {
     type: "object",
     properties: {
       mode: { type: "string", enum: [...SIGNUP_MODES] },
-      dryRun: { type: "boolean", description: "false to apply" },
+      dryRun: { type: "boolean" },
     },
   },
   writes: true,

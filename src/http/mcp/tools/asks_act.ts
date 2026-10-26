@@ -11,7 +11,7 @@ export const tool: Tool = {
       action: { type: "string", enum: ["dismiss", "decline", "mute", "ship", "close", "replan"] },
       items: { type: "array", items: { type: "string" }, maxItems: 100 },
       reason: { type: "string", maxLength: 300 },
-      dryRun: { type: "boolean", description: "false to apply" },
+      dryRun: { type: "boolean" },
     },
     required: ["action", "items"],
   },

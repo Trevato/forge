@@ -162,6 +162,8 @@ a failure names the bytes over and the longest descriptions.
 - A new door is an `action` or `kind` on the tool that already owns the
   resource before it is a new tool.
 - A new tool's description is one sentence.
+- A `dryRun` argument is bare `{ type: "boolean" }`: the server's
+  `instructions` say once that a tool with `dryRun` plans unless it is `false`.
 - The ceiling is the owner's: never raise it in a feature pull.
 
 Answers are JSON in a text block; most carry a `says` sentence short enough

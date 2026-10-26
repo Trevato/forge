@@ -13,7 +13,7 @@ export const tool: Tool = {
       charter: { type: "string", maxLength: 2000 },
       dial: { type: "integer", minimum: 0, maximum: 100 },
       members: { type: "array", maxItems: 500, items: { type: "string", maxLength: 64 } },
-      dryRun: { type: "boolean", description: "false to apply" },
+      dryRun: { type: "boolean" },
     },
   },
   writes: true,

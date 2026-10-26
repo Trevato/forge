@@ -7,14 +7,14 @@ export const tool: Tool = {
   name: "account_role",
   doc: "`{ username, role, usdPerMonth?, dryRun? }`: make a person a `member`, or a `guest` again, with an optional starter allowance (`usdPerMonth`, 0.01 to 10000, promoting only); planned first (`dryRun` is true unless `false`)",
   description:
-    "Make a person a member, or a guest again; promoting may give a monthly `usdPerMonth` allowance.",
+    "Make a person a member, or a guest again; promoting may grant a monthly `usdPerMonth`.",
   inputSchema: {
     type: "object",
     properties: {
       username: { type: "string" },
       role: { type: "string", enum: ["member", "guest"] },
       usdPerMonth: { type: ["number", "null"], description: "0.01–10000 or none." },
-      dryRun: { type: "boolean", description: "false to apply" },
+      dryRun: { type: "boolean" },
     },
     required: ["username", "role"],
   },

@@ -15,7 +15,7 @@ export const tool: Tool = {
         enum: ["crew.concurrency", "checks.concurrency", "checks.shards", "cells.egress", "guard_new_accounts", "signin.edge"],
       },
       value: { type: "string", maxLength: 16 },
-      dryRun: { type: "boolean", description: "false to apply" },
+      dryRun: { type: "boolean" },
     },
   },
   writes: true,

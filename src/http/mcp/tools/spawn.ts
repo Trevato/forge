@@ -5,7 +5,7 @@ export const tool: Tool = {
   name: "spawn",
   doc: "`{ name, apps?, crew?, dryRun? }`: a child forge, planned first (`dryRun` is true unless `false`); an admin's, and an `ro` token may plan but not make",
   description:
-    "Spawn a child forge with the named apps and the crew's briefs. Plans first (dryRun false spawns).",
+    "Spawn a child forge with the named apps and the crew's briefs. Plans first.",
   inputSchema: {
     type: "object",
     properties: {
@@ -45,10 +45,7 @@ export const tool: Tool = {
         description:
           "Stay an owner.",
       },
-      dryRun: {
-        type: "boolean",
-        description: "false to apply",
-      },
+      dryRun: { type: "boolean" },
       reveal: REVEAL_ARG,
     },
     required: ["name"],

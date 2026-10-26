@@ -4,7 +4,7 @@ import { good, type Tool } from "../shared.ts";
 export const tool: Tool = {
   name: "sizes",
   description:
-    "What a child forge's sizes mean: small, medium and large, each with CPU, memory and disk.",
+    "A child forge's sizes: small, medium and large, each with CPU, memory and disk.",
   inputSchema: { type: "object", properties: {} },
   writes: false,
   run: () => good(sizesView()),

@@ -13,7 +13,7 @@ export const tool: Tool = {
       username: { type: "string" },
       dailyUsd: { type: ["number", "null"], description: "0.01–10000; null clears." },
       perRunUsd: { type: ["number", "null"], description: "0.01–10000; null clears." },
-      dryRun: { type: "boolean", description: "false to apply" },
+      dryRun: { type: "boolean" },
     },
     required: ["username", "dailyUsd", "perRunUsd"],
   },

@@ -19,10 +19,7 @@ export const tool: Tool = {
       release: {
         type: "boolean",
       },
-      dryRun: {
-        type: "boolean",
-        description: "false to apply",
-      },
+      dryRun: { type: "boolean" },
     },
     required: ["app", "pull"],
   },

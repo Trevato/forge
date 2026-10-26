@@ -18,10 +18,7 @@ export const tool: Tool = {
         description: "owner/name list, one operation.",
       },
       archived: { type: "boolean" },
-      dryRun: {
-        type: "boolean",
-        description: "false to apply",
-      },
+      dryRun: { type: "boolean" },
     },
   },
   writes: true,

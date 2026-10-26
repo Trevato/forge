@@ -97,7 +97,7 @@ function rpcOne(
           : PROTOCOLS[0],
         capabilities: { tools: {}, resources: {} },
         serverInfo: server(),
-        instructions: `This is a person's forge: their apps, and the crew that builds them. \`tell\` and \`say\` are how they direct it. Keep what you relay short — three sentences and the real options.${adminNote(ctx, user)}`,
+        instructions: `This is a person's forge: their apps, and the crew that builds them. \`tell\` and \`say\` are how they direct it. Keep what you relay short — three sentences and the real options. A tool with \`dryRun\` plans unless it is \`false\`.${adminNote(ctx, user)}`,
       });
     }
     case "ping":
@@ -183,7 +183,7 @@ function rpcOne(
 const REPORT_TOOL = {
   name: "report",
   description:
-    "Report a problem in a public repository, without an account. Plain text; a person reads it first.",
+    "Report a problem in a public repository, no account needed. Plain text; a person reads it first.",
   inputSchema: {
     type: "object",
     properties: {

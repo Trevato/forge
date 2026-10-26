@@ -18,10 +18,7 @@ export const tool: Tool = {
         type: "string",
       },
       image: { type: "string" },
-      dryRun: {
-        type: "boolean",
-        description: "false to apply",
-      },
+      dryRun: { type: "boolean" },
     },
     required: ["app", "pull", "width", "says", "image"],
   },

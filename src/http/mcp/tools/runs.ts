@@ -6,7 +6,7 @@ export const tool: Tool = {
   name: "runs",
   doc: "`{ repo, limit? }`: the repository's recent runs, newest first (id, kind, state, issue or pull number, started, ended), 1–50, default 20; read as the runs page reads them",
   description:
-    "A repository's runs, newest first: id, kind, state, the issue or pull number, started and ended.",
+    "A repository's runs, newest first: id, kind, state, issue or pull, started and ended.",
   inputSchema: {
     type: "object",
     properties: {
