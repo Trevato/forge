@@ -235,12 +235,17 @@ export function cardFor(
   } else {
     const limbs = list(obj(value)["limbs"]).map(obj);
     const repo = obj(obj(value)["repo"]);
-    status = `${text(repo["owner"])}/${text(repo["name"])}`.replace(/^\/$/, "");
-    for (const l of limbs.slice(0, LIMIT))
+    const slug = `${text(repo["owner"])}/${text(repo["name"])}`;
+    status = slug.replace(/^\/$/, "");
+    const linkable = web(origin) && /^[^/]+\/[^/]+$/.test(slug);
+    for (const l of limbs.slice(0, LIMIT)) {
+      const number = Number(l["number"]);
       rows.push({
         label: `#${text(l["number"])} ${text(l["name"])}`,
         value: `${text(l["done"])}/${text(l["total"])} done · ${text(l["building"])} building`,
+        ...(linkable && Number.isInteger(number) && number > 0 ? { link: `${origin}/${slug}/milestones/${number}` } : {}),
       });
+    }
   }
   return { kind, title: CARD_TITLE[kind], status, rows, actions };
 }
