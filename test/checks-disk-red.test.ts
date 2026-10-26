@@ -118,6 +118,28 @@ describe("a red on a full check machine", () => {
     expect(requested).toHaveLength(3);
   });
 
+  test("another forge's recheck leaves this forge's waiting pulls alone", async () => {
+    const other = await startStandInCrew();
+    try {
+      const asked: unknown[][] = [];
+      other.checks.request = async (...args: unknown[]) => {
+        asked.push(args);
+        return undefined;
+      };
+      const pull = await spentPull();
+      requested = [];
+      announceRun(app, failed(pull, 40));
+      diskReading.read = reading(300);
+      recheckForDisk(other.app);
+      expect(requested).toHaveLength(0);
+      expect(asked).toHaveLength(0);
+      recheckForDisk(app);
+      expect(requested.map((r) => r[4])).toEqual([pull.id]);
+    } finally {
+      await stopStandInCrew(other);
+    }
+  }, 30_000);
+
   test("the card ends when the disk is back above the floor, not an hour later", () => {
     expect(cards(30)).toHaveLength(1);
     expect(cards(500)).toHaveLength(0);
