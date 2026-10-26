@@ -14,6 +14,7 @@ import type { App } from "../app.ts";
 import { cellsAvailable, killTree, openCell, type Cell, type CellSpec, type Limits } from "../apps/contain.ts";
 import { childEnv, freePort } from "../apps/process.ts";
 import { childDirOf } from "../actions/spawn.ts";
+import { openBeatDoor, parentLocal, type BeatDoor } from "./beat-door.ts";
 import { hostedPlacement, parentOrigin, childPublicUrl, type BodyStore, type Placement } from "./placement.ts";
 import { SIZES, type Size } from "./sizes.ts";
 
@@ -37,6 +38,8 @@ export function cellSpecFor(input: {
   dir: string;
   parentDataDir: string;
   parentUrl: string;
+  /** The parent's heartbeat door (`beat-door.ts`): the only way to it that needs no public address (a preview's cell has none). */
+  parentPort?: number;
   size: Size;
   port: number;
   label: string;
@@ -51,7 +54,7 @@ export function cellSpecFor(input: {
     // The forge's own code may live under the parent's data (a release checkout).
     reveal: [CODE],
     egress: [],
-    reach: [input.parentUrl],
+    reach: input.parentPort === undefined ? [input.parentUrl] : [input.parentUrl, parentLocal(input.parentPort)],
     limits: cellLimits(input.size),
     listen: input.port,
     label: input.label,
@@ -59,13 +62,14 @@ export function cellSpecFor(input: {
 }
 
 /** The child forge's environment: short, explicit, and its own. */
-export function cellEnv(input: { port: number; dataDir: string; url: string }): Record<string, string> {
+export function cellEnv(input: { port: number; dataDir: string; url: string; parentPort?: number }): Record<string, string> {
   const env = childEnv({
     PORT: String(input.port),
     FORGE_HOST: "127.0.0.1",
     FORGE_APP_URL: input.url,
     FORGE_APP_DATA: input.dataDir,
     NODE_ENV: "production",
+    ...(input.parentPort === undefined ? {} : { FORGE_PARENT_LOCAL: parentLocal(input.parentPort) }),
   });
   delete env["USER"];
   delete env["LOGNAME"];
@@ -83,6 +87,7 @@ export interface CellChild {
 }
 
 interface Held extends CellChild {
+  readonly door: BeatDoor;
   readonly cell: Cell;
   readonly proc: ReturnType<typeof Bun.spawn>;
 }
@@ -137,10 +142,13 @@ function makeRegistry(parent: App): CellChildren {
     const port = freePort();
     const dir = childDirOf(parent, input.bodyId);
     const url = childPublicUrl(input.name, parentOrigin(parent.config));
+    const door = openBeatDoor(parent);
+    const parentPort = door.port;
     const spec = cellSpecFor({
       dir,
       parentDataDir: parent.config.dataDir,
       parentUrl: parentOrigin(parent.config),
+      parentPort,
       size: input.size,
       port,
       label: `forge:${input.name}`,
@@ -150,11 +158,17 @@ function makeRegistry(parent: App): CellChildren {
       if (recent.length > 5) recent.shift();
       parent.log.info("child forge", { name: input.name, line });
     };
-    const cell = openCell(spec, log);
+    let cell: Cell;
+    try {
+      cell = openCell(spec, log);
+    } catch (error) {
+      door.close();
+      throw error;
+    }
     const command = `exec ${JSON.stringify(process.execPath)} ${JSON.stringify(MAIN)}`;
     const proc = Bun.spawn(cell.argv(command), {
       cwd: dirname(MAIN),
-      env: cell.env(cellEnv({ port, dataDir: dir, url })),
+      env: cell.env(cellEnv({ port, dataDir: dir, url, parentPort })),
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
@@ -163,6 +177,7 @@ function makeRegistry(parent: App): CellChildren {
       const why = cell.breach();
       if (why !== undefined) parent.log.warn("child forge stopped", { name: input.name, why });
       cell.close();
+      door.close();
       if (held.get(input.bodyId)?.proc === proc) held.delete(input.bodyId);
       if (why !== undefined) recent.push(why);
       return code;
@@ -170,7 +185,7 @@ function makeRegistry(parent: App): CellChildren {
     cell.watch(proc.pid, () => killTree(proc.pid));
     void drain(proc.stdout, log);
     void drain(proc.stderr, log);
-    const child: Held = { ...input, port, limits: spec.limits, pid: proc.pid, exited, cell, proc };
+    const child: Held = { ...input, port, limits: spec.limits, pid: proc.pid, exited, cell, proc, door };
     if (!(await answers(port, exited))) {
       const why = `its cell did not come up: ${recent.slice(-3).join(" | ") || "no output"}`.slice(0, 400);
       parent.log.warn("child forge did not answer", { name: input.name, why });

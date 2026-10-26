@@ -11,6 +11,8 @@ import type { SpawnPlan } from "../src/spawn/plan.ts";
 import { SIZES } from "../src/spawn/sizes.ts";
 import { notePeer } from "../src/http/peer.ts";
 import type { App } from "../src/app.ts";
+import { openBeatDoor, parentLocal } from "../src/spawn/beat-door.ts";
+import { lastHeard, sendBeat } from "../src/spawn/heartbeat.ts";
 
 const plan = (name: string): SpawnPlan => ({ name, org: "o", apps: [], briefs: [], subscriptions: [], direction: "", keepAccess: false, budgetUsd: null });
 const tmp = mkdtempSync(join(tmpdir(), "spawn-cell-"));
@@ -38,6 +40,57 @@ describe("a child forge's cell", () => {
       expect(env["PORT"]).toBe("4100");
     } finally {
       delete process.env["FORGE_EDGE_TOKEN"];
+    }
+  });
+});
+
+describe("a child reaching its parent from inside its cell", () => {
+  test("the cell relays the parent's heartbeat door in, and the child is told where", () => {
+    const spec = cellSpecFor({ dir: "/d/c", parentDataDir: "/d", parentUrl: "https://f.test", parentPort: 3000, size: "small", port: 4100, label: "forge:kid" });
+    expect(spec.reach).toEqual(["https://f.test", parentLocal(3000)]);
+    expect(cellEnv({ port: 4100, dataDir: "/d/c", url: "https://kid--f.test", parentPort: 3000 })["FORGE_PARENT_LOCAL"]).toBe("http://127.0.0.1:3000");
+    expect(cellEnv({ port: 4100, dataDir: "/d/c", url: "https://kid--f.test" })["FORGE_PARENT_LOCAL"]).toBeUndefined();
+  });
+
+  test("the door answers the heartbeat route and nothing else, and ignores who the client claims to be", async () => {
+    const parent = createApp({ dataDir: join(tmp, "door-parent"), url: "https://f.test" });
+    const door = openBeatDoor(parent);
+    const at = (path: string, init?: RequestInit) => fetch(`http://127.0.0.1:${door.port}${path}`, init);
+    try {
+      for (const path of ["/", "/healthz", "/api/v1/forges", "/api/v1/heartbeat/x"]) {
+        for (const method of ["GET", "POST"]) {
+          const res = await at(path, { method, headers: { "x-forwarded-for": "6.6.6.6" } });
+          expect(res.status).toBe(404);
+          expect(await res.text()).toBe("no such door");
+        }
+      }
+      expect((await at("/api/v1/heartbeat", { method: "GET" })).status).toBe(404);
+      // An unsigned beat is refused alike, whoever it says it is.
+      const beat = await at("/api/v1/heartbeat", { method: "POST", body: "{}", headers: { "x-forwarded-for": "6.6.6.6" } });
+      expect(beat.status).toBe(404);
+    } finally {
+      door.close();
+      parent.close();
+    }
+  });
+
+  test("a heartbeat goes to the relayed port when one is named, and to the public address otherwise", async () => {
+    const dataDir = join(tmp, "beat-child");
+    mkdirSync(dataDir, { recursive: true });
+    writeFileSync(join(dataDir, "parent.json"), JSON.stringify({ name: "kid", upstream: "https://f.test/", beatKey: "k" }));
+    const child = createApp({ dataDir });
+    const urls: string[] = [];
+    const fetcher = async (url: string) => (urls.push(url), new Response("{}"));
+    try {
+      await sendBeat(child, fetcher);
+      process.env["FORGE_PARENT_LOCAL"] = "http://127.0.0.1:3000";
+      await sendBeat(child, fetcher);
+      process.env["FORGE_PARENT_LOCAL"] = "http://evil.test";
+      await sendBeat(child, fetcher);
+      expect(urls).toEqual(["https://f.test/api/v1/heartbeat", "http://127.0.0.1:3000/api/v1/heartbeat", "https://f.test/api/v1/heartbeat"]);
+    } finally {
+      delete process.env["FORGE_PARENT_LOCAL"];
+      child.close();
     }
   });
 });
@@ -108,6 +161,14 @@ describe("forwarding to a child", () => {
 });
 
 const cells = await cellsAvailable();
+// The check host sets FORGE_REQUIRE_CELLS: there a cell that cannot come up is a failure, never a skip.
+if (!cells.ok && process.env["FORGE_REQUIRE_CELLS"] === "1") {
+  describe("the host holds cells", () => {
+    test("cells are available", () => {
+      throw new Error(`FORGE_REQUIRE_CELLS is set but this host refuses a cell: ${cells.reason}`);
+    });
+  });
+}
 describe("a real cell", () => {
   test.skipIf(!cells.ok)("runs the child with the small limits and cannot see the parent's data", async () => {
     const parent = join(tmp, "parent");
@@ -175,6 +236,30 @@ describe("a real child forge", () => {
       const res = await forward(child, new Request("http://kid--f.test/healthz", { headers: { host: "kid--f.test" } }));
       expect(res.status).toBe(200);
       await children.stop("cell-real");
+    } finally {
+      await stopCellChildren(parent);
+      parent.close();
+    }
+  }, 60_000);
+
+  test.skipIf(!cells.ok)("its heartbeat reaches the parent through the cell, with no public address", async () => {
+    // The parent's public url is not reachable from here, as in a preview's cell.
+    const parent = createApp({ dataDir: join(tmp, "beat-parent"), url: "https://unreachable.invalid" });
+    try {
+      mkdirSync(join(parent.config.dataDir, "spawn"), { recursive: true });
+      writeFileSync(join(parent.config.dataDir, "spawn", "kid.json"), JSON.stringify({ name: "kid", bodyId: "cell-beat", done: true, beatKey: "beat-key" }));
+      const dir = join(parent.config.dataDir, "children", "cell-beat");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "parent.json"), JSON.stringify({ name: "kid", upstream: "https://unreachable.invalid", beatKey: "beat-key" }));
+      const children = cellChildren(parent);
+      const child = await children.start({ bodyId: "cell-beat", name: "kid", size: "small" });
+      if (child === undefined) throw new Error(`the child did not start: ${children.failure("cell-beat")}`);
+      let heard = await lastHeard(parent, "kid");
+      for (let i = 0; i < 100 && heard === undefined; i++) {
+        await Bun.sleep(100);
+        heard = await lastHeard(parent, "kid");
+      }
+      expect(heard?.beat.name).toBe("kid");
     } finally {
       await stopCellChildren(parent);
       parent.close();

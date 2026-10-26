@@ -21,6 +21,7 @@ import { spentTodayEverywhere } from "../crew/autonomy.ts";
 import { beatKeyOf, listChildren } from "../actions/spawn.ts";
 import releases from "../core/releases.json" with { type: "json" };
 import { forgeLinkOf, forgeTipOf, FOLLOW_MODES, type FollowMode, type ForgeLink } from "./chain.ts";
+import { isParentLocal } from "./beat-door.ts";
 import { upstreamState } from "./upstream.ts";
 import { progress } from "../core/next-steps.ts";
 import { running } from "../kernel/version.ts";
@@ -273,6 +274,12 @@ async function forkReport(app: App, forge: ForgeLink) {
   };
 }
 
+/** In a cell the parent's public address is out of reach; its relayed loopback port (`FORGE_PARENT_LOCAL`) is not. */
+function beatBase(upstream: string): string {
+  const local = process.env["FORGE_PARENT_LOCAL"] ?? "";
+  return isParentLocal(local) ? local : upstream;
+}
+
 type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 let lastAt = 0;
 
@@ -299,7 +306,7 @@ export async function sendBeat(
       : await forkReport(app, forge)),
   });
   try {
-    const res = await fetcher(`${link.upstream}/api/v1/heartbeat`, {
+    const res = await fetcher(`${beatBase(link.upstream)}/api/v1/heartbeat`, {
       method: "POST",
       headers: { "content-type": "application/json", [SIGNATURE_HEADER]: sign(link.key, body) },
       body,
