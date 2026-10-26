@@ -57,7 +57,7 @@ import { createLog } from "../kernel/log.ts";
 import type { Result } from "../kernel/result.ts";
 import { holdLease, STALE_AFTER_MS } from "../runs/lease.ts";
 import { appendRunLog } from "../runs/log.ts";
-import { primaryDomain } from "../core/domains.ts";
+import { primaryDomain, primaryHosts } from "../core/domains.ts";
 import {
   beatAwake,
   closeAllAwake,
@@ -394,6 +394,14 @@ export function envsFor(
   return runtime.status(record);
 }
 
+/** Production first, then previews by pull number — a number, so `pull-10` follows `pull-9`. */
+const byEnv = (a: EnvStatus, b: EnvStatus): number =>
+  a.env === "production"
+    ? -1
+    : b.env === "production"
+      ? 1
+      : (envPull(a.env) ?? 0) - (envPull(b.env) ?? 0);
+
 export class AppsRuntime {
   private readonly envs = new Map<string, Environment>();
   /** Whether this host can hold an app in a cell (`apps/contain.ts`), asked once at start. */
@@ -449,10 +457,16 @@ export class AppsRuntime {
    * domain carries no port: it reaches the forge through whatever fronts
    * it, which holds its own.
    */
-  urlFor(record: AppRecord, env: EnvName): string {
+  urlFor(
+    record: AppRecord,
+    env: EnvName,
+    hosts?: ReadonlyMap<string, string>,
+  ): string {
     if (env === "production") {
-      const own = primaryDomain(this.app.db, record.id);
-      if (own !== undefined) return `${this.options.scheme}://${own.host}`;
+      const host = hosts
+        ? hosts.get(record.id)
+        : primaryDomain(this.app.db, record.id)?.host;
+      if (host !== undefined) return `${this.options.scheme}://${host}`;
     }
     const port =
       this.options.publicPort === undefined ||
@@ -471,6 +485,22 @@ export class AppsRuntime {
     return this.describe(state);
   }
 
+  /**
+   * `status` for many apps in one pass over the environments and one read
+   * of their domains; nothing per app touches the database. The caller has
+   * already decided which apps the viewer may see (`envsFor`'s rule).
+   */
+  statusMany(records: readonly AppRecord[]): Map<string, EnvStatus[]> {
+    const out = new Map<string, EnvStatus[]>();
+    const wanted = new Set(records.map((r) => r.id));
+    const hosts = primaryHosts(this.app.db, [...wanted]);
+    for (const id of wanted) out.set(id, []);
+    for (const state of this.envs.values())
+      out.get(state.app.id)?.push(this.describe(state, hosts));
+    for (const list of out.values()) list.sort(byEnv);
+    return out;
+  }
+
   /** Every environment of an app, production first. */
   status(record: AppRecord): EnvStatus[] {
     const out: EnvStatus[] = [];
@@ -479,17 +509,14 @@ export class AppsRuntime {
     }
     // Production first, then previews by pull number — a number, not a
     // string, so `pull-10` follows `pull-9`.
-    return out.sort((a, b) =>
-      a.env === "production"
-        ? -1
-        : b.env === "production"
-          ? 1
-          : (envPull(a.env) ?? 0) - (envPull(b.env) ?? 0),
-    );
+    return out.sort(byEnv);
   }
 
-  private describe(state: Environment): EnvStatus {
-    const url = this.urlFor(state.app, state.env);
+  private describe(
+    state: Environment,
+    hosts?: ReadonlyMap<string, string>,
+  ): EnvStatus {
+    const url = this.urlFor(state.app, state.env, hosts);
     // Once a deploy's own commit has answered and swapped in, it is
     // "running" from here — even though its run stays open, checking its
     // tests, until they finish. Only a build still short of that point (no

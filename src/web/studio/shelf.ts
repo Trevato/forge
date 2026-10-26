@@ -25,11 +25,12 @@
  */
 
 import { spanWords } from "../../apps/golden_path.ts";
-import { appsRuntime, type EnvStatus, envsFor } from "../../apps/runtime.ts";
-import { appsForRepos } from "../../core/apps.ts";
+import { appsRuntime, type EnvStatus } from "../../apps/runtime.ts";
+import { appsForRepos, type AppRecord } from "../../core/apps.ts";
 import { reposWithBuilder } from "../../core/agents.ts";
 import { reposWithUnclaimedTell } from "../../core/issues.ts";
 import { openPullsForRepos } from "../../core/pulls.ts";
+import { notePhase } from "../../core/route_timing.ts";
 import { enterableApps, ownerFactRepoIds, type Repo } from "../../core/repos.ts";
 import {
   getRunsByIds,
@@ -67,43 +68,83 @@ export interface ShelfReads {
 }
 
 /**
- * Production's own fact for every one of these repositories, in one batch:
- * `runtime.status` is in-memory (no query), so the only read is the run rows
- * a fact points to — one `IN` for the whole shelf, never one per row.
+ * Production's status for each of these apps, in one batch: the runtime's
+ * environments are in memory and their domains are one read, so nothing per
+ * app touches the database. `enterable` is who the viewer may see into
+ * (`enterableApps`, the rule `envsFor` holds); the rest read as no status.
  */
-export function productionFactsForRepos(
+function productionStatuses(
   ctx: Ctx,
   repos: readonly Repo[],
-): Map<string, ProductionFact> {
-  const db = ctx.app.db;
+  records: ReadonlyMap<string, AppRecord>,
+  enterable: ReadonlySet<string>,
+): Map<string, EnvStatus | undefined> {
+  const out = new Map<string, EnvStatus | undefined>();
   const runtime = appsRuntime(ctx.app);
-  const out = new Map<string, ProductionFact>();
   if (runtime === undefined) return out;
-  const records = appsForRepos(
-    db,
-    repos.map((r) => r.id),
-  );
-  const productions = new Map<string, EnvStatus | undefined>();
-  const runIds = new Set<string>();
+  const seen = repos.flatMap((r) => {
+    const record = records.get(r.id);
+    return record !== undefined && enterable.has(record.id) ? [record] : [];
+  });
+  const statuses = runtime.statusMany(seen);
   for (const repo of repos) {
     const record = records.get(repo.id);
-    const production = record
-      ? envsFor(ctx.app, ctx.auth.user, record).find(
-          (e) => e.env === "production",
-        )
-      : undefined;
-    productions.set(repo.id, production);
+    out.set(
+      repo.id,
+      record === undefined
+        ? undefined
+        : statuses.get(record.id)?.find((e) => e.env === "production"),
+    );
+  }
+  return out;
+}
+
+/** Production's own fact for each status, reading the run rows it points to in one `IN`. */
+function factsOf(
+  ctx: Ctx,
+  productions: ReadonlyMap<string, EnvStatus | undefined>,
+): Map<string, ProductionFact> {
+  const out = new Map<string, ProductionFact>();
+  const runIds = new Set<string>();
+  for (const production of productions.values()) {
     if (production?.runId !== undefined && production.createdAt !== undefined)
       runIds.add(production.runId);
     if (production?.failedDeploy !== undefined)
       runIds.add(production.failedDeploy.runId);
   }
-  const runs = getRunsByIds(db, [...runIds]);
+  const runs = getRunsByIds(ctx.app.db, [...runIds]);
   for (const [repoId, production] of productions) {
     const fact = productionFact(production, runs);
     if (fact !== undefined) out.set(repoId, fact);
   }
   return out;
+}
+
+/**
+ * Production's own fact for every one of these repositories, in one batch:
+ * `runtime.status` is in-memory (no query), so the only reads are the app
+ * records, who may enter them, their domains and the run rows a fact points
+ * to — one each for the whole shelf, never one per row.
+ */
+export function productionFactsForRepos(
+  ctx: Ctx,
+  repos: readonly Repo[],
+): Map<string, ProductionFact> {
+  if (appsRuntime(ctx.app) === undefined) return new Map();
+  const records = appsForRepos(
+    ctx.app.db,
+    repos.map((r) => r.id),
+  );
+  const enterable = enterableApps(
+    ctx.app.db,
+    repos.flatMap((repo) => {
+      const app = records.get(repo.id);
+      return app === undefined ? [] : [{ repo, app }];
+    }),
+    ctx.auth.user,
+    { named: false },
+  );
+  return factsOf(ctx, productionStatuses(ctx, repos, records, enterable));
 }
 
 /** The row of a private app the viewer may not enter: its name, nothing it says. */
@@ -136,48 +177,19 @@ export async function shelfRows(
   const user = ctx.auth.user;
   const runtime = appsRuntime(ctx.app);
   const history = reads.history ?? servingHistory();
-  const records = appsForRepos(
-    db,
-    repos.map((r) => r.id),
-  );
+  const repoIds = repos.map((r) => r.id);
+  // Each stretch is named for Server-Timing, so a slow shelf says where.
+  let mark = performance.now();
+  const lap = (name: string): void => {
+    const now = performance.now();
+    notePhase(ctx.request, name, now - mark);
+    mark = now;
+  };
+  const records = appsForRepos(db, repoIds);
   // A public app you can only read appears here too, but who is on its
   // crew is its owner's fact, not yours to see — same predicate as the
   // app's own page.
   const ownerFacts = ownerFactRepoIds(db, repos, user);
-  // One read for the newest run of every app, one for who ran them: the
-  // shelf must not get slower as the apps grow.
-  const latestRuns = latestAgentRunsForRepos(
-    db,
-    repos.map((r) => r.id),
-  );
-  // Production's own fact, per app, one batch — a deploy that just landed or
-  // just failed, the other half of what "the last thing that happened" can
-  // mean now that it is not only an agent run.
-  const productionFacts =
-    reads.productionFacts ?? productionFactsForRepos(ctx, repos);
-  const actors = getUsersByIds(
-    db,
-    [
-      ...[...latestRuns.values()].map((r) => r.actorId),
-      ...[...productionFacts.values()].map((f) => f.actorId),
-    ].filter((id): id is string => id !== null),
-  );
-  // The newest open change of every app, one read — a person's own change
-  // counts here too, not only one an agent run produced.
-  const openPulls = openPullsForRepos(
-    db,
-    repos.map((r) => r.id),
-  );
-  // A tell nobody can pick up (the crew has no builder) is stuck, not quiet —
-  // both reads batched across the whole shelf, never once per row.
-  const repoIds = repos.map((r) => r.id);
-  const withBuilder = reposWithBuilder(db, repoIds);
-  const stuck = new Set(
-    [...reposWithUnclaimedTell(db, repoIds)].filter(
-      (id) => !withBuilder.has(id),
-    ),
-  );
-
   // Who may enter which private app, for the whole shelf in one batch.
   const enterable = enterableApps(
     db,
@@ -188,8 +200,38 @@ export async function shelfRows(
     user,
     { named: false },
   );
+  lap("records");
+  // One read for the newest run of every app, one for who ran them: the
+  // shelf must not get slower as the apps grow.
+  const latestRuns = latestAgentRunsForRepos(db, repoIds);
+  lap("runs");
+  // Production's own fact, per app, one batch — a deploy that just landed or
+  // just failed, the other half of what "the last thing that happened" can
+  // mean now that it is not only an agent run.
+  const productions = productionStatuses(ctx, repos, records, enterable);
+  const productionFacts = reads.productionFacts ?? factsOf(ctx, productions);
+  lap("production");
+  const actors = getUsersByIds(
+    db,
+    [
+      ...[...latestRuns.values()].map((r) => r.actorId),
+      ...[...productionFacts.values()].map((f) => f.actorId),
+    ].filter((id): id is string => id !== null),
+  );
+  // The newest open change of every app, one read — a person's own change
+  // counts here too, not only one an agent run produced.
+  const openPulls = openPullsForRepos(db, repoIds);
+  // A tell nobody can pick up (the crew has no builder) is stuck, not quiet —
+  // both reads batched across the whole shelf, never once per row.
+  const withBuilder = reposWithBuilder(db, repoIds);
+  const stuck = new Set(
+    [...reposWithUnclaimedTell(db, repoIds)].filter(
+      (id) => !withBuilder.has(id),
+    ),
+  );
+  lap("pulls");
 
-  return await Promise.all(
+  const rows = await Promise.all(
     repos.map(async (repo) => {
       const record = records.get(repo.id);
       // A private app the viewer may not enter is a name on a shelf: no
@@ -197,9 +239,7 @@ export async function shelfRows(
       // and crew's (`envsFor`, `mayReadRuns`).
       if (record !== undefined && !enterable.has(record.id))
         return sealedRow(repo, user);
-      const envs =
-        record === undefined ? [] : envsFor(ctx.app, ctx.auth.user, record);
-      const production = envs.find((e) => e.env === "production");
+      const production = productions.get(repo.id);
       const latest = latestRuns.get(repo.id);
       // A run still in flight is the thing that is moving, and outranks a
       // change sitting open; once nothing is moving, an open change — an
@@ -315,4 +355,6 @@ export async function shelfRows(
       });
     }),
   );
+  lap("rows");
+  return rows;
 }
