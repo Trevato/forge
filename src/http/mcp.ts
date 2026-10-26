@@ -194,6 +194,7 @@ import {
 import { plannerDeclines } from "../crew/autonomy.ts";
 import { checkStale } from "../checks/stale.ts";
 import { checkSummary, listActiveRuns } from "../core/runs.ts";
+import { previewOf } from "../apps/preview_view.ts";
 import { scopeAllows } from "../core/tokens.ts";
 import { addSshKey, deleteSshKey } from "../actions/users.ts";
 import { listKeys, publicKey } from "../core/keys.ts";
@@ -1007,6 +1008,24 @@ const TOOLS: readonly Tool[] = [
           ...(env === undefined ? {} : { preview: env.url }),
         },
       };
+    },
+  },
+  {
+    name: "preview",
+    description:
+      "An app URL's pull, check, first failure, log.",
+    inputSchema: {
+      type: "object",
+      properties: { url: { type: "string" } },
+      required: ["url"],
+    },
+    writes: false,
+    run(ctx, user, args) {
+      const seen = previewOf(ctx.app, appsRuntime(ctx.app)?.options.domain, user, ctx.url.origin, args["url"]);
+      if (seen.ok) return good(seen.value);
+      if (seen.error === "foreign") return bad("invalid", "`url` is one of this forge's app hosts");
+      if (seen.error === "no_such_pull") return bad("no_such_pull", `no pull #${String(seen.number)}`);
+      return bad("not_found", "no such app or repository (owner/name)");
     },
   },
   {

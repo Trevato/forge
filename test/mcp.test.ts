@@ -181,6 +181,7 @@ describe("the forge over MCP", () => {
       "say",
       "issue",
       "pull",
+      "preview",
       "pulls",
       "variant",
       "edit",
