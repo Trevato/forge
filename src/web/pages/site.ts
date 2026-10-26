@@ -155,7 +155,7 @@ export function downloadsCard(ctx: Ctx, user: User): Html {
             ${copyField("forge-sync", "forge sync", "Sync command", "Copy the sync command")}
             <span class="row-meta"
               >Clones what is missing, fetches the rest, and reports
-              ahead/behind/dirty. See "Origins" in the README.</span
+              ahead/behind/dirty. See "On your machine" in the README.</span
             >
           </span>
         </div>

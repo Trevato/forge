@@ -1161,7 +1161,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       note(s, inner, c, [
         "Nothing pinned yet.",
         "p pins the repository under the cursor;",
-        'see "Origins" in the README for forge sync.',
+        'for forge sync, see README "On your machine".',
       ]);
       return;
     }

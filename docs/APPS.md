@@ -14,6 +14,222 @@ using it need not be a developer. They know what an app is, they can hold
 asks nothing more of them than that. Developers and agents use the same
 primitives underneath; nobody gets a second system.
 
+## Making an app, and what it does
+
+A repository that runs. Press **New app**, give it a name and — if you like —
+a sentence about what it should do. Seconds later it is serving at
+`http://<name>.<your forge's host>` from a small, real app (notes in a SQLite
+file), and if you named an agent, the sentence became issue #1, assigned.
+
+Under the box, four starter sentences are plain links (no script):
+`/apps/new?description=…` fills the box with that text (plain text up to
+200 characters, anything else is ignored; always escaped), and
+`&owner=` keeps the chosen owner. The list is `src/web/pages/apps-starters.ts`.
+
+- **Private egress is a site admin's yes.** An app reaches a private
+  destination (a tailnet or LAN `host:port`) only when `forge.json` `egress`
+  names it exactly and a site admin has granted it: on the
+  app's settings page, or in the terminal (About `I`, then `e`, `g`
+  to grant, `x` to revoke). The rule is under "Rules that are mechanical" below.
+- **Egress connections are bounded.** The proxy closes the upstream socket
+  the moment the cell side closes, errors or stops, and the other way round.
+  An app holds at most 8 open connections to one destination (the ninth
+  gets a `429`, logged), and a connection that moves no bytes, either way, for 5 min is
+  cut, so a tunnel quiet for longer than that (a websocket or SSE stream with
+  very long gaps) needs a keepalive. Open connections per app and
+  destination, with the bytes moved, are on the Capacity page
+  (`/settings/capacity`, admins) and in the terminal: About `I`, then `c`
+  (site admins).
+- **Production is the default branch.** The only way code reaches it is that
+  branch moving, and an agent cannot move it: the crew proposes through
+  pulls, a person merges.
+- **Every open pull gets a preview** at `<name>--<pull number>.<host>`,
+  redeployed on each push and gone when the pull closes. Its data starts as
+  a copy of production's — copy-on-write where the filesystem can — and
+  never writes back. Merging moves code and touches no data.
+- **A preview is held to the website specification, report-only.** Once it is
+  live, `webspec()` runs over the `app.looks` paths of its `forge.json`. The pull
+  page shows the result under the Checks line as **Website spec: N findings
+  (report only)**; open it for one row per finding and its
+  specification.website section. Findings the edge owns are counted apart
+  (`, M the edge owns`). The terminal's pull screen ends its checks row with the
+  same words. Nothing here fails a deploy or the check; see
+  [`docs/WEBSPEC-PREVIEWS.md`](WEBSPEC-PREVIEWS.md).
+- **A streamed page gets the pill too.** An HTML answer with no
+  `Content-Length` is read up to 4 MiB for at most 100 ms, and only while its
+  first chunk starts like markup; if it ends in that window it gets the pill
+  like a sized page. Otherwise what was read is sent first and the rest of the
+  stream follows unchanged. The cost: a streamed page that is still going
+  waits up to those 100 ms before its first byte reaches the browser, so a slow
+  server-rendered page paints up to 100 ms later (a page sent with a
+  `Content-Length`, or one that starts with something other than markup, does
+  not wait). Event streams and WebSockets are untouched.
+- **A signed-in note needs the panel's one-use proof (#5612).** The grant
+  cookie alone no longer makes a note `@name`: the forge puts a one-use token in
+  the panel's script tag on a signed-in page load, the panel sends it as
+  `x-forge-proof` and each answer carries the next. Without it, a reused one or
+  one for another grant or host, the sender is a visitor and `admin` is false.
+  This stops an app's code that merely holds the cookie (a `fetch` from its
+  page). It does **not** stop app code that runs in the same page and watches
+  for the tag or patches `fetch` before the panel runs: the token reaches the
+  panel through the page, so that code can read it. Closing that needs the
+  panel in a cross-origin frame, which is not built. If a call fails the panel
+  asks for a reload, since the chain is then spent.
+- **The forge button is a feedback door (#4758).** One tap opens *Tell the
+  builders*: a text box and Send, no account. The note is posted to the app's
+  own host (`POST /__forge/note`, same-origin only) and filed as an issue on
+  its repository, labelled `from-app`, with the page, the viewport and the time,
+  in the owner's name and with the sender's words inside one fence. A visitor
+  is an anonymous `visitor-xxxxxx` (an HttpOnly cookie); a signed-in person is
+  `@name`. Moderation: 3 notes a minute per sender, 6 per source address, 20 per
+  app, a word filter, and the owner's hide or ban, which closes the issue and, for
+  `ban`, refuses that sender. `GET /__forge/notes` gives the sender's own notes with a live
+  status (queued, being built by a member, shipped on a date), polled every 15 s
+  while the panel is open; a public app's note links to its issue. Left out: the
+  optional screenshot and a version name in "shipped".
+  From the terminal, a repository screen that is an app has two palette rows
+  (`:`): *Tell the builders* sends a note as you, and *Notes from the app*
+  lists yours with their status; the repository's admin sees every sender's and
+  may hide a note, ban its sender, list the banned senders (*Banned senders*)
+  and unban one. The gating is the page's: a guest or a
+  non-reader sees nothing, and a repository that is not an app has no rows.
+  Who may write: anyone on a public app, but a private app, and any sealed
+  pull's preview, take notes only from a person the app admits (the condition
+  `/__forge/measure` uses); a stranger is refused with a 404 before anything is
+  filed. Moderation
+  happens on the forge, not on the app: the app host answers only
+  `POST /__forge/note` and `GET /__forge/notes`, and `/__forge/note/moderate` is
+  a 404 there, because the app's own code (or a preview's) could call it
+  same-origin with a visiting admin's cookie. The terminal screen above and the
+  app's studio page are the owner's tools: the page lists the latest notes
+  (sender, words, page, when) for those who may admin the repository, each with
+  Hide and Ban sender, and every banned sender once with Unban, posting to
+  `POST /:owner/:name/app/notes` on the forge's origin (`web/studio/notes.ts`).
+  Limits count the socket's client (`http/peer.ts`, with its trusted-proxy
+  rule), never a header the client wrote, and all three are checked before any
+  is spent. The request body is read only up to 16 KB. The issue says its text
+  is untrusted data, and the crew's brief says so for any `from-app` issue.
+  A title always opens with `From the app: ` (`saysFromApp`), the label is made
+  before the issue, and a failed labelling closes the issue and refuses the note.
+  Only a note closed as done reads "Shipped"; the other reasons say what they are.
+  Beyond the per-minute limits an app takes 30 notes an hour and 100 a day.
+  The script grew to about 15 KB (cached, immutable); the notes are polled only
+  while the panel is open.
+- **The forge pill acts.** The pill the proxy adds to an app's pages
+  (`"toolbar": false` in `forge.json` turns it off; to write it in, the proxy asks the app for the page uncompressed, so a page that carries the pill goes out without gzip) links to a forge page,
+  `/:owner/:name/toolbar?env=production|pull-N`, opened in a tab of its own: the
+  pill posts nothing and reads nothing of the app's page, and every action is a
+  same-origin form on the forge. On a preview, everyone who may see the pull sees what it changed (files, +added, −removed, linked to its Files tab) and where its latest check stands (linked to the run); the totals are left out when git cannot give them. Signed out, the page is where you are and Home.
+  Signed in it shows the live agent run on this app or preview, linked to its
+  run page (read once when the page opens; runs on work you may not see, such as
+  a sealed report, are left out); *Report this page* / *Comment on this pull*,
+  previewed first, then a receipt; *Tell the crew* for those who may direct it
+  (the one `/:owner/:name/tell`); and *Make it yours* for everyone who cannot
+  write the app. A production comment opens an issue carrying the page address;
+  a preview comment goes on its pull. From a terminal or an agent the same
+  actions are, in the SSH terminal, rows of the palette on a repository
+  screen: *Working now* (while an agent run is live, left out when it is on work
+  you may not see), *Tell the crew*, *Report a problem* (one text, an issue
+  titled by its first line, through `openIssueThrough`) and *Make it yours*
+  (the fork screen, for those who cannot write the repository); a pull is
+  commented on from its own screen. Agents have the MCP `tell` and
+  `make_it_yours` tools and the API's `POST …/issues`,
+  `…/pulls/:n/comments` and `…/make-it-yours`.
+- **A run has a budget** (`src/kernel/budgets.ts`): a check past `gate`
+  (60 min) or a reviewer's run past `review` (10 min) is killed with
+  `budget: <what> took <n> min, limit <m>`, queued again once, and failed
+  the second time, which the vitals carry as a need for a day. `gate` is 60
+  min because this repository's own gate takes 18–25 min alone and 45 beside
+  another check; it comes down when the gate does. A check waiting in the lane
+  past `laneWait` (10 min) or a run silent past `heartbeat` (3 min) turns the
+  health degraded with one sentence naming the cause ("22 checks wait behind
+  one lane; the oldest since 04:13; the lane runs #1212 for 31 min (limit
+  60)"). The sentinel files each such breach at once, not once per tick:
+  labelled P0 Trust and assigned to the sentinel, whose run the dispatcher
+  queues on the assignment.
+- **Every deploy is a run**, and the run is the check on the pull. Turn on
+  **require checks** and a pull cannot merge until its head is green.
+- **A production deploy records the merged pulls it carries**: one `git
+  rev-list` of the deployed commit when the run finishes. The run page says
+  "Carries #3, #5" and `GET /api/v1/repos/:owner/:name/runs/:id` has `carries`.
+  In the terminal, open a repository and press `d` for its production deploys
+  (each with what it carries), `enter` for the log, `r` to refresh.
+- A **private** app answers only to someone the forge has vouched for
+  (`canRead` on the repository, then a signed grant); a public one to anyone.
+- **Every app has a terminal.** `ssh -p 2222 <name>@<forge>` runs the app's
+  `tty` command from `forge.json` on a real pty over the environment's own
+  data; `<name>--<pull>@<forge>` opens a preview's. The scaffold ships one.
+- **A new app starts trustworthy.** The scaffold's door asks the app's
+  contract before a body is read, every change and refused change is an
+  audit row, the API describes itself at `/openapi.json`, `/healthz` says
+  up, and the look is design tokens, light and dark, with no colour spelled
+  out anywhere else ([below](#what-a-new-app-starts-as)).
+
+The repository says how it runs in `forge.json` (`run`, and optionally
+`install`, `test`, `health`, `ready`); a `package.json` with a `start` script
+is enough on its own. The forge hands the process `PORT`, `FORGE_APP_DATA`
+(this environment's directory — keep state there), `FORGE_APP_ENV`,
+`FORGE_APP_URL` and `FORGE_APP_COMMIT`, and nothing from its own
+environment. Browsers resolve `*.localhost` to loopback, so a laptop forge
+needs no DNS at all; elsewhere point a wildcard at it and set
+`FORGE_APP_DOMAIN`.
+
+**Move the pill.** If the pill covers something of the app's, drag it (mouse or
+touch) and it snaps to the nearest corner on release; with the pill focused, the
+arrow keys walk it from corner to corner. The corner is kept in the browser's
+`localStorage` for that app's host (bottom-right until then), and the panel opens
+toward the inside of the screen, bounded to it at phone width. The script stays
+under a 10 KB budget (a test holds it), since it loads on every app page.
+
+The forge pill on an app's pages says where you are: its accessible name reads
+`notes, production` or `notes, preview of pull #7`, and pressing it opens a
+panel with the app, the environment, and a link home. The pull's title is shown
+only to people who may read the pull. A tap outside the open panel, or Escape,
+closes it. When a crew run is working on the app (production) or on the preview's
+pull, the panel also says `scout is working on this` and links the run; it asks
+`/__forge/crew` once as the pill loads, answers only a signed-in person who may
+read the repository (and, for a run on a sealed issue, that issue), and shows
+nothing when the crew is idle.
+
+**When the pill is not shown** (an app whose own policy refuses foreign
+scripts), `/__forge/` on the app's host is the way back: a small page from the
+forge, never the app, with no script, saying the app and where you are
+(`production` or `preview of pull #N`) and linking Home, the repository (to
+who may read it) and *Tell the crew* (the same link `/__forge/crew` gives; signed
+out it offers sign in). It also says what is serving, read from the deploy
+record (no git): production shows the newest release and the three before it
+(a redeploy of the same commit is not another release), a preview shows its
+pull and the commit it last served, or "not deployed yet". A viewer who cannot
+read the repository sees only the time, never a sha. The read is the `serving`
+Server-Timing phase. The prefix was already the forge's, so an app's own
+`/__forge/` path is not reachable.
+
+**Tell the crew from the pill.** Signed in as someone who may direct the crew,
+the panel also offers *Tell the crew* (`/__forge/crew` adds a `tell` link, only
+for them; signed out there is no action). It opens the forge's own
+`/:owner/:name/tell?page=<address>&pull=<n>` in a new tab, so the POST is the
+forge's same-origin, CSRF-checked form and the app's origin can never send one.
+It is the same `tell()` as every door; `page` (an http(s) address) and `pull`
+(a number, on a preview) are checked again on send and written into the tell
+as the *Where this was told from* block. A receipt links the issue it opened; a
+refused tell returns to the box with the words, page and pull kept. The MCP
+`tell` takes the same through `context: { page, pull, run, commit, said }`, and
+the terminal's palette has *Tell the crew from a page*, which asks for the
+page, the pull (optional) and the line, through the same `parseContext` and
+`contextNote`.
+
+With a sentence and **Pick for me**, the sentence becomes a plan before the
+page comes back: `src/crew/plan.ts` makes one non-interactive call to
+`claude` — the quickest model, a fixed JSON shape, at most 3 seconds — for a
+short checklist and a crew pick, so issue #1 opens as a checklist already
+assigned to whoever the plan named, instead of a paragraph and a dropdown.
+It costs one small model call per app made this way (a few tenths of a
+cent), never blocks the repository or the app starting, and a bad or slow
+answer is the same as none: no pick, no checklist, exactly what naming an
+agent yourself already does. `FORGE_APP_PLAN=0` turns it off; so does having
+no `claude` on `PATH` — either way **Pick for me** stops being offered and
+`New app` behaves exactly as it did before this existed.
+
 ## Vocabulary
 
 - **App** — a repository that runs. A repository becomes an app explicitly
@@ -302,7 +518,9 @@ own process is not lowered.
 Where the host cannot hold cells (or the crew's shell sandbox), the forge
 runs uncontained and says so in one line: a boot warning, and, in the foot of
 every page a site admin reads, `Reduced protection: apps (<reason>) runs
-uncontained.` (`kernel/protection.ts`). A fully protected forge shows nothing.
+uncontained.` (`kernel/protection.ts`), and the same line under the filter on
+the terminal's first screen. Nobody else sees it, and a fully protected forge
+shows nothing.
 
 A private destination (a tailnet or LAN address) is reached only when
 `egress` names it exactly, `"100.89.95.68:8101"` (an address or host with its

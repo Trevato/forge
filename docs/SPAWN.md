@@ -73,6 +73,8 @@ Children report in; the parent never reaches in. Every ten minutes a spawned chi
 
 `POST /api/v1/forges {name, apps[], crew[], direction?, keepAccess?, modelKey?, budgetUsd?, size?, dryRun}` (rw token, admin only) and the MCP `spawn` tool share `src/spawn/door.ts`. `size` is `small` (default), `medium` or `large`; anything else is a 422 on `size`. It is recorded in the plan, the ledger, `parent.json` and `GET /api/v1/forges`, but not enforced yet: it limits nothing. `dryRun` is true unless it is `false`: the answer is the plan, what is left behind, and `firstAdmin` (the caller's username, or `null` for an anonymous plan, where whoever claims the child becomes its admin), and nothing is made. `GET /api/v1/forges` lists the ledger's children. The child's org is its name; `crew` names the agents whose briefs travel. Errors: 401 unauthorized, 403 forbidden / cross_origin, 422 invalid, 409 refused / exists, 500 failed — each with one sentence. The MCP lets an `ro` token plan, never make.
 
+A spawn may also name a `size`: `small`, `medium` or `large` (`src/spawn/sizes.ts` maps each to CPU, memory and disk). It is recorded in the plan only when given, so a plan without one hashes as it always did, and an unknown size is a 422 on `size`. The New forge page and the terminal form both offer it, small preselected and not sent; the page shows a refusal beside the select, linked with `aria-describedby`. Nothing enforces the limits yet, and the table's numbers are provisional. `GET /api/v1/forges/sizes` (no sign-in, ETag, cached for 5 minutes) and the MCP tool `sizes` give the same answer — each size's CPU, memory and disk, read from that table, and one sentence on what it is for — so a page or an agent offering a size reads it there.
+
 ## The forge's own code, and the chain (#1085)
 
 Every child is born with `<org>/forge`: a fork, with full history, of the
@@ -130,6 +132,29 @@ fork, its history and the record of where it came from stay, and nothing
 leaves. The page and the parent's tree then say it follows nothing since
 the date.
 
+A spawned forge's own code is a fork of its parent's (`<org>/forge`, chosen
+`followMode` `tell-me` or `take-updates`; in `take-updates` the hourly check puts what the parent gained in a pull.
+ Once an hour, and
+on demand, a forge that follows and has not severed fetches its parent's code into
+`refs/upstream/*` of its own `<org>/forge` (no branch of the fork moves) and keeps
+`{ behind, parentTip, checkedAt, error }` in `upstream.json` under `FORGE_APP_DATA`;
+the count shows on the chain page, in the terminal's **Chain** (`c` checks now), and as
+`upstream` in the API and MCP payloads. `POST /:owner/forge/following/check` (a writer,
+same-origin) checks on demand; a fetch is cut at 60 s and a failure is recorded, not
+thrown. In `take-updates` the check then puts `refs/upstream/HEAD` (a fast-forward, or a clean merge commit) on the
+fork's `forge/take-updates` branch and opens one pull, "Take updates from <parent>", into main, or updates
+that pull when it is open (`spawn/take.ts`); the fork's check runs on it like on any pull and a person merges it.
+Main is never moved, so nothing deploys by itself. It is recorded as `taken` in `upstream.json` (the chain line
+reads "N commits from your parent are in pull #P") and as a `forge.updates_taken` event; a pull closed unmerged
+is not reopened until the parent moves again. `forge/take-updates` belongs to the check: a commit a person pushes there is overwritten by the next check that finds something different to put on it (open a branch of your own to build on it). On a conflict nothing changes and one open issue,
+"Take updates from <parent>", names the files. In `tell-me`, a new parent tip makes one inbox card for the owner (an issue on the fork assigned to them, "Your parent forge has N new commits", linking the chain page); `toldTip` in `upstream.json` keeps it to one per tip, and `take-updates` or a severed link makes none. Its chain
+to the root is at `/:owner/forge/following`, in `chain` of `GET
+/api/v1/repos/:owner/forge/following` and the MCP `following` tool, and in the
+terminal's **Chain** command; the owner severs it with the page's Sever,
+`POST …/following/sever` or the MCP `sever` tool (nothing is deleted). Taking
+updates into a conflict opens the converge issue at every door. See
+`docs/FOLLOWING.md`.
+
 ## One click from a stranger to their own forge (#2914)
 
 The program: a stranger makes an account with a username and a password (email
@@ -153,3 +178,12 @@ apps as forks, and the MCP `spawn`. What is missing is built as linked issues:
 | #2931 | nightly drill of the same path on the vxrail                      | #2930        |
 | #2932 | /boards: forges made, time to live, failures                      |              |
 | #2933 | /forges: an owner's forges side by side, use against size         | #2925, #2926 |
+
+## Child quota
+
+`FORGE_CHILD_CPUS`, `FORGE_CHILD_MEMORY_MIB` and `FORGE_CHILD_DISK_MIB` declare
+what all children together may hold; each is the sum of the sizes in the spawn
+ledger (`spawn/sizes.ts`). **Unset means no quota.** A spawn that would pass a
+declared limit is a 409 `refused` with one sentence naming it, and the New
+forge page shows that sentence above the form when even a small forge would
+not fit (`spawn/quota.ts`).

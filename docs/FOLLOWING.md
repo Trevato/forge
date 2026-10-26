@@ -51,7 +51,9 @@ each fork's standing as a badge. The JSON is
 The parent serves `/releases.json` as `{"releases":[{"name","url"}]}`, newest
 first; the child reads it with a 3 s timeout, no redirects and a 256 KB cap,
 caches it under `FORGE_APP_DATA` for 10 minutes, and says "N releases behind
-<parent>" on a fork's following card and in the terminal's About card (`I`). A
+<parent>" on a fork's following card, in the terminal's About card (`I`), and as `parentForge`
+(`{host, behind, releases, fetchedAt, down}`, null when unset) in
+`GET /api/v1/repos/:owner/:name/following` and the MCP `following` tool. A
 page never waits for the parent: it shows the cached copy and refreshes in the
 background, and a parent that is down or answering garbage leaves a "could not
 be reached" with the age of the last copy. Unset, nothing is shown. Read only:
@@ -193,3 +195,22 @@ has none. The step is `takeOrTell` in `src/actions/follow.ts`, shared by the
 page, `POST /api/v1/repos/:owner/:name/following/take` (409, naming the
 converge issue), and the MCP `take_updates` tool, so the same press does the
 same thing at every door.
+
+## Ranked forks
+
+`/:owner/:name/forks` and the terminal's forks screen (`f` in a repository)
+list a repository's direct forks the same way, so the best of a fork tree
+rises. Order: commits ahead of the parent's default branch (most first),
+then fewest behind, then the newest tip commit. Each row reads `N ahead · M
+behind` and when the fork last moved; a fork that is ahead has a **Compare**
+button (on the page) to its `/pulls/new`, which proposes it to the parent.
+Each fork's own forks are listed indented beneath it (one more level, on the
+page and in the terminal alike); the forks below those are a count, `and N more
+forks below`, linking on the page to that fork's forks page. A private fork is
+never named or counted to someone who cannot read it.
+
+Forks with nothing ahead (or whose standing git cannot read) follow under
+`N forks with nothing new`. At most 60 forks are ranked per view; past that
+the page says `Ranking the first 60 of N forks`. A fork's standing is cached
+by the pair of tips (`actions/forks.ts`), so a view of forks that have not
+moved costs one `git log` per fork.
