@@ -16,6 +16,7 @@ and user accounts. The child mints its own. A test in #420 and #422 proves it.
 | ----- | ------------------------------------------------------- | ---------------- |
 | #420  | spawn plan: one validated value, dry-run                | #383             |
 | #427  | placement seam; hosted inside the parent today          | #420             |
+| #2926 | `cell` placement: a child as its own `bun src/main.ts` in a cell held to its size (`spawn/cell.ts`); `hosted` where the host cannot hold a cell. The spawn answer and the children list say `placement` | #2925 |
 | #421  | spawn action: org, instance, apps as repos, briefs      | #420, #427       |
 
 `src/actions/spawn.ts` (#421): the child lives in `<data>/children/<bodyId>`; the parent keeps a ledger line in `<data>/spawn/<name>.json` so a retry resumes or answers. Subscription names are in the plan but not yet created in the child (a subscription is a token).

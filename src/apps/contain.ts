@@ -189,6 +189,8 @@ export interface CellSpec {
   /** Origins always reachable: the forge's own URL. */
   readonly reach: readonly string[];
   readonly limits: Limits;
+  /** Read-only paths to keep visible when they sit under a hidden directory (a forge's own code). */
+  readonly reveal?: readonly string[] | undefined;
   /** The port an app listens on; the forge relays `127.0.0.1:<port>` in. */
   readonly listen?: number | undefined;
   /** Keep the controlling terminal (an app's `tty`). */
@@ -405,7 +407,7 @@ export function openCell(
   const blank = hidden.filter((path) => !isDirectory(path));
   // The runtime itself must stay visible when it lives in a hidden home
   // (`~/.bun/bin/bun` on a developer's machine).
-  const reveal = [dirname(process.execPath)].filter((path) =>
+  const reveal = [dirname(process.execPath), ...(spec.reveal ?? [])].filter((path) =>
     hide.some((h) => path === h || path.startsWith(`${h}/`)),
   );
   const writable = [...new Set([spec.dir, spec.home, ...spec.writable])];

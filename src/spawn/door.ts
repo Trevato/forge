@@ -19,6 +19,7 @@ import type { Ctx } from "../http/context.ts";
 import { takeDoor } from "../http/strangers.ts";
 import {
   childPublicUrl,
+  fallbackPlacement,
   hostedPlacement,
   memoryBodies,
   parentOrigin,
@@ -27,6 +28,8 @@ import {
 } from "./placement.ts";
 import { dryRun, planSpawn, KEY_BUDGET_NOTE, MAX_APPS, type CatalogApp, type CrewBrief, type SpawnSource } from "./plan.ts";
 import { bootHostedChild } from "./host.ts";
+import { cellPlacement, ownsBody } from "./cell.ts";
+import { cellsAvailable } from "../apps/contain.ts";
 import { ANON_SPAWNS_PER_DAY, checkAnonSpawn, noteAnonSpawn } from "./rate.ts";
 import { readdirSync, readFileSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
@@ -101,7 +104,14 @@ function placementFor(app: App): Placement {
   if (!p) {
     const store = memoryBodies();
     seedBodies(app, store);
-    p = hostedPlacement({ host: parentOrigin(app.config), store, maxChildren: () => maxChildren(app.db) });
+    const cap = () => maxChildren(app.db);
+    // A cell where the host can hold one, the parent's own process where it cannot.
+    p = fallbackPlacement(
+      cellPlacement(app, store, cap),
+      hostedPlacement({ host: parentOrigin(app.config), store, maxChildren: cap }),
+      async () => (await cellsAvailable()).ok,
+      ownsBody,
+    );
     placements.set(app, p);
   }
   return p;

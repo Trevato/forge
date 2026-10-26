@@ -165,6 +165,8 @@ describe("spawn over the API and MCP", () => {
         apps: expect.any(Array),
         createdAt: expect.any(String),
         size: "small",
+        placement: "hosted",
+        placementNote: null,
       },
     ]);
     // The same request again is answered, not made twice.

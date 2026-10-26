@@ -150,7 +150,7 @@ describe("a parent on plain http with a port", () => {
       parent,
       new Request("http://forge.lan:8080/healthz", { headers: { host: "kid--forge.lan:8080" } }),
     );
-    if (child === undefined || child === "unknown") throw new Error("child not found");
+    if (child === undefined || child === "unknown" || child === "cell") throw new Error("child not found");
     expect(child.config.url).toBe("http://kid--forge.lan:8080");
   });
 });

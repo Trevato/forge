@@ -16,6 +16,7 @@ import { join } from "node:path";
 const PIPING: Record<string, { sites: string[]; reason: string }> = {
   "src/apps/contain.ts": { sites: ["stderr"], reason: "stderr awaited with the exit; stdout ignored" },
   "src/apps/process.ts": { sites: ["stdout+stderr", "stdout+stderr"], reason: "pump() reads stdout and stderr of the app until exit" },
+  "src/spawn/cell.ts": { sites: ["stdout+stderr"], reason: "drain() reads the child forge's stdout and stderr to its log until exit" },
   "src/chaos/faults.ts": { sites: ["stdout"], reason: "stdout is read until the kill closes it, then cancelled; stderr is ignored" },
   "src/crew/claude.ts": { sites: ["stdout+stderr", "stdout"], reason: "session pumps stdout and stderr; --version awaits stdout, stderr ignored" },
   "src/crew/plan.ts": { sites: ["stdout"], reason: "stdout awaited with the exit; stderr ignored" },

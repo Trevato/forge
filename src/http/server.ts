@@ -532,8 +532,9 @@ import {
   resolveAppHost,
 } from "../apps/proxy.ts";
 
+import { stopCellChildren } from "../spawn/cell.ts";
 import { portInsteadOfSocket, tcpAddress } from "../git/hook-address.ts";
-import { closeHostedChildren, resolveHostedChild, resolveHostedChildApp } from "../spawn/host.ts";
+import { answerFromCell, closeHostedChildren, resolveHostedChild, resolveHostedChildApp } from "../spawn/host.ts";
 import { getVerifiedDomain } from "../core/domains.ts";
 
 // ---- auth ----
@@ -2277,6 +2278,18 @@ export async function serve(app: App): Promise<Servers> {
         const child = await resolveHostedChild(app, request);
         if (child === "unknown")
           return securityFloor(new Response("not found", { status: 404 }));
+        if (child === "cell") {
+          // The child sees only this forge's relay, so it is told who the client is.
+          notePeer(request, server.requestIP(request)?.address, trust);
+          armClose(request, () => server.timeout(request, 1));
+          const response = await answered(app, request, () => answerFromCell(app, request));
+          counted(app, request, response, started);
+          logged(app.config.dataDir, request, response, started);
+          await settleBody(request);
+          if (!mustClose(request)) return response;
+          server.timeout(request, 1);
+          return withHeader(response, "connection", "close");
+        }
         if (child !== undefined) {
           const key = child.config.dataDir;
           let http = childHttps.get(key);
@@ -2395,6 +2408,7 @@ export async function serve(app: App): Promise<Servers> {
       for (const http of childHttps.values()) http.close();
       childHttps.clear();
       closeHostedChildren(app);
+      void stopCellChildren(app);
       flushAccess();
       web.stop(true);
       internal.stop(true);

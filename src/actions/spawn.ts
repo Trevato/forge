@@ -52,7 +52,7 @@ import { Database } from "bun:sqlite";
 import { loadKey, open } from "../kernel/secret.ts";
 import { loadOrCreateHostKey } from "../ssh/keys.ts";
 import { claimLink, hasAdmin, mintClaim, spawnedOrg } from "../spawn/claim.ts";
-import { childPublicUrl, parentOrigin, type Placement } from "../spawn/placement.ts";
+import { childPublicUrl, parentOrigin, type Placement, type PlacementKind } from "../spawn/placement.ts";
 import { quotaRefusal } from "../spawn/quota.ts";
 import { planSpawn, type SpawnInput, type SpawnPlan, type SpawnSource } from "../spawn/plan.ts";
 import { DEFAULT_SIZE, isSize, type Size } from "../spawn/sizes.ts";
@@ -64,6 +64,8 @@ export interface Spawned {
   readonly org: string;
   readonly url: string;
   readonly bodyId: string;
+  /** Where the child runs: in this process, or as a process in its own cell. */
+  readonly placement: PlacementKind;
   /** True when this call found the child already made and changed nothing. */
   readonly existed: boolean;
   /**
@@ -112,6 +114,10 @@ interface Ledger {
   readonly createdAt?: string;
   /** Absent on a ledger written before sizes; reads as small. */
   readonly size?: Size;
+  /** Absent on a ledger written before cells; reads as hosted. */
+  readonly placement?: PlacementKind;
+  /** Why a child that wanted a cell is hosted instead (`spawn/host.ts`). */
+  readonly placementNote?: string;
   /**
    * What the parent shows the child to learn its private facts (when anything
    * last happened); the child keeps only its hash. Never in an answer.
@@ -234,7 +240,7 @@ async function make(
         });
     }
     if (ledger.done)
-      return ok({ name: plan.name, org: plan.org, url: liveChildUrl(app, plan.name), bodyId: ledger.bodyId, existed: true });
+      return ok({ name: plan.name, org: plan.org, url: liveChildUrl(app, plan.name), bodyId: ledger.bodyId, placement: ledger.placement ?? "hosted", existed: true });
     if (ledger.statusToken === undefined || ledger.beatKey === undefined) {
       ledger.statusToken ??= secret();
       ledger.beatKey ??= secret();
@@ -261,6 +267,7 @@ async function make(
       apps: plan.apps.map((a) => a.ref),
       createdAt: new Date().toISOString(),
       size: plan.size ?? DEFAULT_SIZE,
+      placement: placed.value.kind ?? "hosted",
       statusToken: secret(),
       beatKey: secret(),
     };
@@ -284,6 +291,7 @@ async function make(
     org: plan.org,
     url: liveChildUrl(app, plan.name),
     bodyId: ledger.bodyId,
+    placement: ledger.placement ?? "hosted",
     existed: false,
     claimUrl,
   });
@@ -665,6 +673,9 @@ export interface Child {
   /** When it was begun; null on a ledger older than the client list. */
   readonly createdAt: string | null;
   readonly size: Size;
+  readonly placement: PlacementKind;
+  /** Why it is hosted when it asked for a cell; null otherwise. */
+  readonly placementNote: string | null;
 }
 
 /** The children this forge has made or begun, from its ledger, by name. */
@@ -684,6 +695,8 @@ export async function listChildren(app: App): Promise<Child[]> {
         apps: ledger.apps ?? [],
         createdAt: ledger.createdAt ?? null,
         size: isSize(ledger.size) ? ledger.size : DEFAULT_SIZE,
+        placement: ledger.placement ?? "hosted",
+        placementNote: ledger.placementNote ?? null,
       });
   }
   return out;
