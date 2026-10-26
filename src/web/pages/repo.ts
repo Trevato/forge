@@ -486,6 +486,32 @@ function readmeKey(source: RepoSource, entry: TreeEntry): string | null {
   return `${repo}:${entry.oid}:${entry.name}`;
 }
 
+/** How much README source the repository home draws before linking the rest. */
+export const README_HOME_BYTES = 64 * 1024;
+
+/**
+ * The README source up to `limit` bytes, cut between top-level blocks: at the
+ * last blank line outside a fenced code block, so no fence is ever split.
+ * Null when the whole text fits.
+ */
+export function cutAtBlock(text: string, limit: number): string | null {
+  const bytes = new TextEncoder().encode(text);
+  if (bytes.length <= limit) return null;
+  const head = new TextDecoder().decode(bytes.subarray(0, limit));
+  const lines = head.split("\n");
+  lines.pop(); // the last line may be cut mid-way
+  let fence = "";
+  let cut = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^ {0,3}(`{3,}|~{3,})/.exec(lines[i]!);
+    if (m) {
+      if (fence === "") fence = m[1]!;
+      else if (m[1]![0] === fence[0] && m[1]!.length >= fence.length) fence = "";
+    } else if (fence === "" && lines[i]!.trim() === "") cut = i;
+  }
+  return cut < 0 ? "" : lines.slice(0, cut).join("\n");
+}
+
 /** Empties the README cache; for tests. */
 export function clearReadmeCache(): void {
   readmeCache.clear();
@@ -503,13 +529,16 @@ export async function readmeFor(
   ref: string,
   entries: readonly TreeEntry[],
   prefix: string,
+  /** The blob base of the whole README; when given, a long one is cut and links there. */
+  whole?: string,
 ): Promise<Html> {
   const readme = entries.find(
     (e) =>
       e.type === "blob" && /^readme(\.md|\.markdown|\.txt)?$/i.test(e.name),
   );
   if (!readme) return html``;
-  const key = readmeKey(source, readme);
+  const baseKey = readmeKey(source, readme);
+  const key = baseKey === null || whole === undefined ? baseKey : `${baseKey}:${whole}`;
   const cached = key === null ? undefined : readmeCache.get(key);
   if (key !== null && cached) {
     readmeCache.delete(key);
@@ -520,11 +549,17 @@ export async function readmeFor(
   const blob = await source.blob(ref, at);
   if (!blob.ok || blob.value.kind !== "text") return html``;
   if (blob.value.size > MAX_RENDER_BYTES) return html``;
-  const text = new TextDecoder().decode(blob.value.body);
+  const full = new TextDecoder().decode(blob.value.body);
+  const cut = whole === undefined ? null : cutAtBlock(full, README_HOME_BYTES);
+  const text = cut ?? full;
   const rendered = /\.(md|markdown)$/i.test(readme.name)
     ? renderMarkdown(text)
     : html`<pre>${text}</pre>`;
-  const made = card(html`<div class="prose">${rendered}</div>`, {
+  const more =
+    cut === null
+      ? html``
+      : html`<p><a href="${`${whole}/${at.split("/").map(encodeURIComponent).join("/")}`}">Read the whole README</a></p>`;
+  const made = card(html`<div class="prose">${rendered}${more}</div>`, {
     pad: false,
     head: html`${icon("file")}
       <h2>${readme.name}</h2>`,
@@ -1167,7 +1202,7 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
   const tree = entries.ok ? entries.value : [];
 
   const readme = await timePhaseAsync(ctx.request, "readme", () =>
-    readmeFor(scope.source, ref, tree, ""),
+    readmeFor(scope.source, ref, tree, "", `${scope.base}/blob/${encodeURIComponent(ref)}`),
   );
   const following = await timePhaseAsync(ctx.request, "following", () => followingOf(ctx, repo));
   const latest = await timePhaseAsync(ctx.request, "wave", () =>
