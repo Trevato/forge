@@ -307,6 +307,8 @@ ssh -p 2222 localhost                        # the terminal UI
 git clone ssh://localhost:2222/you/hello.git # git, same port
 ```
 
+An app's open pulls, newest five first, one line each (`#n title · green|red|running|none`), need no tty: run `pulls` on the app's login — `ssh <app>@<forge> pulls`, with the app's page printing the exact command as `FORGE_APP_SSH` (the terminal is off when that is unset). A private app answers only a key its gate admits; sealed pulls show to their author, writers and the crew (`src/apps/door_pulls.ts`).
+
 A big repository clones over either transport. To skip its large files until a
 checkout needs them, run `git clone --filter=blob:none <url>`. See
 [`docs/GIT.md`](docs/GIT.md).
