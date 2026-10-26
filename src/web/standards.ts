@@ -27,6 +27,7 @@ import releases from "../core/releases.json" with { type: "json" };
 import { markPng, type MarkShape } from "../design/mark.ts";
 import { metaThemeColor } from "../design/themes.ts";
 import { BODY_MAX, TITLE_MAX } from "../core/reports.ts";
+import { sshTellCommand } from "../ssh/command.ts";
 import { llmsRepos, sitemapRepos } from "../core/listings.ts";
 import { canRead, getRepo } from "../core/repos.ts";
 import type { Ctx } from "../http/context.ts";
@@ -302,6 +303,7 @@ function runningSentence(): string {
 export function llmsTxt(ctx: Ctx): Response {
   const o = ctx.url.origin;
   const mcp = mcpPointers(o);
+  const tell = sshTellCommand(ctx.app);
   const repos = timePhase(ctx.request, "repos", () => llmsRepos(ctx.app.db));
   return timePhase(ctx.request, "render", () => text(
     [
@@ -332,6 +334,14 @@ export function llmsTxt(ctx: Ctx): Response {
       "",
       `- GET ${o}/api/v1/here?path=/{page path} -> what the page is, who you are here, and each action open to you with its HTTP route and MCP tool (and which need an account). Every page links to it: rel="alternate" type="application/json". MCP: the tool "here" with the page URL.`,
       "",
+      ...(tell === undefined
+        ? []
+        : [
+            "## Tell the crew from a shell",
+            "",
+            `- With an account and an SSH key added under Settings -> Keys: \`${tell}\` tells the crew in one line and prints where it went.`,
+            "",
+          ]),
       "## Find things (no account)",
       "",
       `- Explore repositories: GET ${o}/api/v1/explore?q=kind:app+sort:forks+garden. MCP: the tool "explore" with {"q"}. In q, kind: is app, person or forge; sort: is score, forks, ships, use, fresh or name; any other word is free text matched against name, owner and description.`,

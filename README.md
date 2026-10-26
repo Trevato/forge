@@ -326,7 +326,7 @@ git clone ssh://localhost:2222/you/hello.git # git, same port
 ssh -p 2222 localhost tell make the header blue # tell the crew in one line
 ```
 
-`tell <words>` takes the rest of the command line as given (no shell expansion; control characters are refused) and tells the crew in the forge's own repository, as the account the key belongs to, through the same action as the web composer. It prints the told line and the full address of the issue, and exits 0; an unknown key, nothing said, too much, or an unverified email prints the reason on stderr, records nothing and exits 1. (Quote the words if your local shell would expand them.)
+`tell <words>` takes the rest of the command line as given (no shell expansion; control characters are refused) and tells the crew in the forge's own repository, as the account the key belongs to, through the same action as the web composer. It prints the told line and the full address of the issue, and exits 0; an unknown key, nothing said, too much, or an unverified email prints the reason on stderr, records nothing and exits 1. (Quote the words if your local shell would expand them.) When SSH is on, `/llms.txt` and `/api/v1/here` (the `ssh` field of the "tell the crew" action) name this exact command, so an agent finds it without being taught; with SSH off they say nothing about it.
 
 An app's open pulls, newest five first, one line each (`#n title · green|red|running|none`), need no tty: run `pulls` on the app's login — `ssh <app>@<forge> pulls`, with the app's page printing the exact command as `FORGE_APP_SSH` (the terminal is off when that is unset). A private app answers only a key its gate admits; sealed pulls show to their author, writers and the crew (`src/apps/door_pulls.ts`).
 

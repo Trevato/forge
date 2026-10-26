@@ -12,6 +12,7 @@
  * An action that needs an account is listed for someone without one,
  * saying so, because that is the next thing they need to know.
  */
+import { sshTellCommand } from "../ssh/command.ts";
 import { mcpPointers } from "../core/mcp_card.ts";
 import type { App } from "../app.ts";
 import { appsRuntime } from "../apps/runtime.ts";
@@ -42,6 +43,8 @@ export interface Action {
   readonly http?: string;
   /** The MCP tool that does the same, when there is one. */
   readonly mcp?: string;
+  /** The shell command that does the same, when the forge's SSH is on. */
+  readonly ssh?: string;
   /** `true`: needs an account the caller does not have; `false`: needs none. */
   readonly account?: boolean;
   /** `true`: needs a verified email, which this account has not proven yet. */
@@ -123,10 +126,10 @@ export function manifestFor(
       you: youFor(viewer, scope, undefined, app),
       actions:
         page === undefined
-          ? forgeActions(viewer)
+          ? forgeActions(app, viewer, scope)
           : [
               pageRead(page, path),
-              ...forgeActions(viewer).filter((a) => a.mcp !== page),
+              ...forgeActions(app, viewer, scope).filter((a) => a.mcp !== page),
             ],
       ...common,
     });
@@ -224,7 +227,15 @@ function pageRead(page: "explore" | "search", path: string): Action {
   };
 }
 
-function forgeActions(viewer: User | undefined): Action[] {
+function forgeActions(
+  app: App,
+  viewer: User | undefined,
+  scope: TokenScope | undefined,
+): Action[] {
+  const tellSsh =
+    viewer !== undefined && (scope === undefined || scopeAllows(scope, "rw"))
+      ? sshTellCommand(app)
+      : undefined;
   return [
     {
       do: "explore apps and repositories",
@@ -246,6 +257,7 @@ function forgeActions(viewer: User | undefined): Action[] {
     ...(viewer === undefined
       ? [{ do: "use the MCP", http: "POST /mcp", account: true }]
       : [{ do: "use the MCP", http: "POST /mcp" }]),
+    ...(tellSsh === undefined ? [] : [{ do: "tell the crew", ssh: tellSsh }]),
   ];
 }
 
@@ -297,8 +309,14 @@ function repoActions(
   if (record !== undefined && canEnterApp(db, repo, record, viewer))
     out.push({ do: "open the app", http: `GET ${r}/app/production/open` });
   if (!acts) return out;
+  const tellSsh = sshTellCommand(app);
   if (mayDirectCrew(db, repo, viewer))
-    out.push({ do: "tell the crew", mcp: "tell", ...unproven });
+    out.push({
+      do: "tell the crew",
+      mcp: "tell",
+      ...(tellSsh === undefined ? {} : { ssh: tellSsh }),
+      ...unproven,
+    });
   // A verdict is a writer's or the crew's; the merge is a person's.
   // The same rule `submitReview` asks.
   if (
