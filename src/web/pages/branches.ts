@@ -18,8 +18,8 @@
 import { createBranch, deleteBranch } from "../../actions/branches.ts";
 import type { Repo } from "../../core/repos.ts";
 import { notePhase, takeSessionTime, timePhaseAsync } from "../../core/route_timing.ts";
-import { listBranches, type BranchInfo } from "../../git/branches.ts";
-import { commitLog, type Commit } from "../../git/read.ts";
+import { listBranches, tipCommits, type BranchInfo } from "../../git/branches.ts";
+import type { Commit } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import type { RepoScope } from "../scope.ts";
@@ -51,7 +51,6 @@ import { refSetFrom } from "./refs.ts";
  * cap, so a repository with a thousand branches still renders one page.
  */
 const TIP_COMMITS = 40;
-const TIP_CONCURRENCY = 8;
 
 export interface BranchRow {
   readonly name: string;
@@ -63,26 +62,19 @@ export interface BranchRow {
   readonly tip: Commit | undefined;
 }
 
-/** The tip commit of the first `TIP_COMMITS` rows, a few at a time. */
+/** The tip commit of the first `TIP_COMMITS` rows, from one git call. */
 async function withTips(
   dir: string,
   rows: readonly Omit<BranchRow, "tip">[],
 ): Promise<BranchRow[]> {
-  const out: BranchRow[] = rows.map((r) => ({ ...r, tip: undefined }));
-  const wanted = out.slice(0, TIP_COMMITS);
-  for (let i = 0; i < wanted.length; i += TIP_CONCURRENCY) {
-    const slice = wanted.slice(i, i + TIP_CONCURRENCY);
-    const logs = await Promise.all(
-      slice.map((row) => commitLog(dir, row.oid, { limit: 1 })),
-    );
-    slice.forEach((row, j) => {
-      const log = logs[j];
-      const at = out.indexOf(row);
-      if (log?.ok === true && log.value[0] !== undefined && at !== -1)
-        out[at] = { ...row, tip: log.value[0] };
-    });
-  }
-  return out;
+  const tips = await tipCommits(
+    dir,
+    rows.slice(0, TIP_COMMITS).map((r) => r.oid),
+  );
+  return rows.map((r, i) => ({
+    ...r,
+    tip: i < TIP_COMMITS ? tips.get(r.oid) : undefined,
+  }));
 }
 
 /** Every branch this scope can see, however it has to ask. */
@@ -112,7 +104,9 @@ async function branchRows(
     return { rows, compared: false };
   }
   const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
-  const listed = await listBranches(dir, repo.defaultBranch);
+  const listed = await timePhaseAsync(ctx.request, "compare", () =>
+    listBranches(dir, repo.defaultBranch),
+  );
   if (!listed.ok) return { rows: [], compared: false };
   const bare = listed.value.branches.map((b: BranchInfo) => ({
     name: b.name,

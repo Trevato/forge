@@ -503,30 +503,13 @@ export async function committedAt(dir: string, oid: string): Promise<string | un
   return Number.isNaN(when.getTime()) ? undefined : when.toISOString();
 }
 
-export async function commitLog(
-  dir: string,
-  rev: string,
-  options: LogOptions = {},
-): Promise<Result<Commit[], GitFailure>> {
-  assertBatchSafe(rev);
-  const args = [
-    "log",
-    "-z",
-    "--format=%H%x00%P%x00%an%x00%ae%x00%aI%x00%s%x00%b",
-    `--max-count=${options.limit ?? 50}`,
-    `--skip=${options.skip ?? 0}`,
-    rev,
-    "--",
-  ];
-  if (options.path !== undefined) args.push(options.path);
-  const result = await runGitRaw(args, { cwd: dir });
-  if (!result.ok) return result;
+/** The `git log -z` format `parseLogRecords` reads: seven NUL-separated fields. */
+export const LOG_FORMAT = "%H%x00%P%x00%an%x00%ae%x00%aI%x00%s%x00%b";
 
-  const text = new TextDecoder().decode(result.value);
+/** Records of `git log -z --format=LOG_FORMAT`: groups of 7 NUL-separated fields. */
+export function parseLogRecords(bytes: Uint8Array): Commit[] {
   const commits: Commit[] = [];
-  // -z terminates each record with NUL; fields inside are NUL-separated too,
-  // so records are groups of 7 fields.
-  const fields = text.split("\0");
+  const fields = new TextDecoder().decode(bytes).split("\0");
   for (let i = 0; i + 6 < fields.length; i += 7) {
     commits.push({
       oid: fields[i]!,
@@ -538,7 +521,29 @@ export async function commitLog(
       body: fields[i + 6]!.replace(/\n$/, ""),
     });
   }
-  return ok(commits);
+  return commits;
+}
+
+export async function commitLog(
+  dir: string,
+  rev: string,
+  options: LogOptions = {},
+): Promise<Result<Commit[], GitFailure>> {
+  assertBatchSafe(rev);
+  const args = [
+    "log",
+    "-z",
+    `--format=${LOG_FORMAT}`,
+    `--max-count=${options.limit ?? 50}`,
+    `--skip=${options.skip ?? 0}`,
+    rev,
+    "--",
+  ];
+  if (options.path !== undefined) args.push(options.path);
+  const result = await runGitRaw(args, { cwd: dir });
+  if (!result.ok) return result;
+
+  return ok(parseLogRecords(result.value));
 }
 
 export interface PathListing {
