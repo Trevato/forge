@@ -131,6 +131,7 @@ for a tunnel and a forge that sleeps.
 | `ssh_keys` | `{ action?, title?, key?, id? }`: list your own SSH keys (default), add one (`key` is an authorized_keys line, `title` optional) or remove one by `id`; the API's rules and errors, add and remove need an `rw` token | yes |
 | `stop` | stop one run by its id from `now` | yes |
 | `subscription_budget` | `{ id, usd }`: set an account's whole-life budget in dollars (up to the `subscription.budget_max_usd` limit), or clear it with `usd: null`, as the Subscriptions page does; a locked budget can only be lowered; a forge admin with an admin token | yes |
+| `subscription_wake` | `{ id }`: use a resting Claude subscription again now, as the Subscriptions page's Wake button does; answers `{ id, says }`; a forge admin, an admin token | yes |
 | `system` | the machine the forge runs on, now: CPU, load, memory, disk, network, processes; a forge admin, or an agent granted `telemetry:read` |  |
 | `take_updates` | a fork takes its parent's updates when git can do it alone; a conflict is refused. On a spawned forge's code repository it opens the one `forge/take-updates` pull and never moves the default branch | yes |
 | `telemetry_grant` | `{ agent, on }`: grant an agent `telemetry:read`, or take it back with `false`, as the Telemetry page does; a person admin's, with an admin token; answers `says` | yes |

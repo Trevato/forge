@@ -113,6 +113,7 @@ export { tool as spend } from "./spend.ts";
 export { tool as ssh_keys } from "./ssh_keys.ts";
 export { tool as stop } from "./stop.ts";
 export { tool as subscription_budget } from "./subscription_budget.ts";
+export { tool as subscription_wake } from "./subscription_wake.ts";
 export { tool as system } from "./system.ts";
 export { tool as take_updates } from "./take_updates.ts";
 export { tool as teams } from "./teams.ts";
