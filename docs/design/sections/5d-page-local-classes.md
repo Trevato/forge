@@ -18,10 +18,7 @@ gone, so this list only shrinks. Each class sits on its own line, so to
 retire a class, delete its line: two pulls retiring two classes never edit
 the same line (#4888).
 
-- **`style/base.ts`** — the page shell (topbar, main, footer) and the layout and text utilities every page leans on:
-  - `.hide-sm`
-  - `.js-only`
-  - `.reduced`
+- **`style/base.ts`** — the page shell (topbar, main, footer) and the layout and text utilities every page leans on (all of them now named in docs/design/areas/shell.md and visibility.md).
 - **`style/components.ts`** — parts of the §5 components that the table does not spell out — the palette's list, the menu's items, a dialog's head and foot, comments, the theme picker — and a few small helpers beside them:
   - `.error-note`
   - `.menu-item`
