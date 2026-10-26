@@ -41,7 +41,6 @@ the same line (#4888).
   - `.commit-head`
   - `.filters`
   - `.page-head`
-  - `.policy-line`
   - `.repo-actions`
   - `.repo-desc`
 - **`style/content.ts`, apps, runs, and the crew** — run pages, their logs and checks (a pull's look is §5's **look**).

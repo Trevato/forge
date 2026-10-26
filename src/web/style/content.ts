@@ -202,14 +202,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .fg-s6 { fill: var(--series-6); color: var(--series-6); }
 .fg-s7 { fill: var(--series-7); color: var(--series-7); }
 .restore-command { margin: 8px 0 0; padding: 8px 10px; font-size: 12.5px; white-space: pre-wrap; word-break: break-all; background: var(--muted); border-radius: var(--radius); }
-.policy-line {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  margin: 12px 0 0; font-size: 13px; color: var(--muted-fg);
-}
-.policy-line .ico { color: var(--faint); flex: none; }
-.policy-line b { color: var(--fg); font-weight: 600; }
-.policy-line[data-tone="mismatch"] .ico { color: var(--danger); }
-.policy-line[data-tone="ok"] .ico { color: var(--success); }
 form.inline { display: inline; margin-left: auto; }
 
 /* The studio's front door: the public apps, live first, as pictures. */
