@@ -161,7 +161,7 @@ describe("forwarding to a child", () => {
 });
 
 const cells = await cellsAvailable();
-// The check host sets FORGE_REQUIRE_CELLS: there a cell that cannot come up is a failure, never a skip.
+// A host that can hold cells sets FORGE_REQUIRE_CELLS=1 (opt-in): there a cell that cannot come up is a failure, never a skip. The forge check host runs inside its own cell and cannot nest one, so forge.json does not set it.
 if (!cells.ok && process.env["FORGE_REQUIRE_CELLS"] === "1") {
   describe("the host holds cells", () => {
     test("cells are available", () => {
