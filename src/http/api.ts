@@ -2923,20 +2923,34 @@ export function apiRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
+    const q = ctx.url.searchParams;
+    const limit = eventsLimit(q.get("limit"));
+    if (limit === undefined)
+      return apiError("invalid_limit", 422, `limit is a whole number from 1 to ${EVENTS_LIMIT_MAX}`);
+    const cursor = q.get("cursor");
+    if (cursor !== null && (cursor.length > 200 || !isSafeRef(cursor)))
+      return apiError("invalid_cursor", 422, "cursor is the next_cursor of a page before");
     const refs = await timePhaseAsync(ctx.request, "git", () =>
-      listRefs(dirOf(ctx, repo), "refs/tags/"),
+      listRefs(dirOf(ctx, repo), "refs/tags/", true),
     );
-    if (!refs.ok) return timePhase(ctx.request, "render", () => json([]));
-    return timePhase(ctx.request, "render", () =>
-      json(
-        refs.value.map((r) => ({
-          name: r.name.replace("refs/tags/", ""),
-          oid: r.oid,
-          // Annotated tags point at a tag object; this is the commit beneath.
-          commit: r.peeled ?? r.oid,
-        })),
-      ),
-    );
+    return timePhase(ctx.request, "render", () => {
+      // Newest first; the cursor is the last tag name of the page before.
+      const all = refs.ok
+        ? refs.value.map((r) => ({
+            name: r.name.replace("refs/tags/", ""),
+            oid: r.oid,
+            // Annotated tags point at a tag object; this is the commit beneath.
+            commit: r.peeled ?? r.oid,
+          }))
+        : [];
+      const at = cursor === null ? -1 : all.findIndex((t) => t.name === cursor);
+      if (cursor !== null && at < 0)
+        return apiError("invalid_cursor", 422, "cursor names a tag that is gone: start again without it");
+      const from = at + 1;
+      const items = all.slice(from, from + limit);
+      const more = from + limit < all.length;
+      return json({ items, next_cursor: more ? items[items.length - 1]!.name : null });
+    });
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/commits", async (ctx) => {

@@ -389,10 +389,12 @@ export interface Ref {
 export async function listRefs(
   dir: string,
   prefix = "refs/",
+  newestFirst = false,
 ): Promise<Result<Ref[], GitFailure>> {
   const result = await runGit(
     [
       "for-each-ref",
+      ...(newestFirst ? ["--sort=-refname", "--sort=-creatordate"] : []),
       "--format=%(refname)%00%(objectname)%00%(*objectname)",
       "--",
       prefix,
