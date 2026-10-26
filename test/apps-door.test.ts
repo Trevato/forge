@@ -182,6 +182,13 @@ test("a private repository is linked only to who may read it", async () => {
       "INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid) VALUES (?, 'main', 'h', 'b', 'x')",
     )
     .run(secret.value.id);
+  // The newest run is the one the door words; the runtime's own preview
+  // deploy of this head races to fail, so pin a running one that sorts last.
+  app.db
+    .query(
+      "INSERT INTO run (id, repo_id, kind, issue_id, commit_oid, state) VALUES ('zzzz-pinned', ?, 'check', ?, 'x', 'running')",
+    )
+    .run(vault.repoId, secret.value.id);
   const target = { app: vault, env: "production" } as AppTarget;
   const cookie = `forge_grant_${vault.id.slice(-8)}`;
   const as = (id: string, name: string, role: "admin" | "user") =>
