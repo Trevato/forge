@@ -32,11 +32,13 @@ import {
   type StageThroughput,
 } from "../../flow/throughput.ts";
 import { type QueueRow, redBatchWords } from "../../flow/queue.ts";
+import { HOT_PULLS, warmFiles } from "../../crew/hot_files.ts";
+import { getRepoById } from "../../core/repos.ts";
 import { readHeld } from "../../flow/held.ts";
 import type { App } from "../../app.ts";
 import { html, type Html } from "../html.ts";
 import { heldCard } from "./boards-held.ts";
-import { badge, card } from "../ui.ts";
+import { badge, card, meter } from "../ui.ts";
 
 /** What `?out=` and `?hour=` ask to list, checked: an unknown stage or hour lists nothing. */
 function asked(url: URL): { key: PipelineKey; hour: number | null } | null {
@@ -167,6 +169,7 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
       </div>`,
       { head: html`<h2>Pipeline</h2><a class="muted small" href="/settings/capacity">Capacity</a>`, id: "pipeline", pad: false },
     )}
+    ${hotFilesCard(app, reader)}
     ${heldCard(readHeld(app, reader.kind === "owner", now))}
     ${queueCard(queuesFor(app, reader, new Date(now), { batches: true }))}
     ${listed === null || shown === undefined ? null : outList(shown, listed.hour, now)}`;
@@ -236,5 +239,42 @@ function outList(t: StageThroughput, hour: number | null, now: number): Html {
             )}
           </ul>`}`,
     { id: "out" },
+  );
+}
+
+/** The most files the panel lists. */
+const HOT_LISTED = 10;
+
+/** Files several open pulls touch, most-touched first, from what `hot_files.ts` holds in memory. */
+function hotFilesCard(app: App, reader: Reader): Html {
+  const rows: { repo: string; path: string; pulls: number }[] = [];
+  const repos = new Map<string, { name: string; ok: boolean } | undefined>();
+  for (const w of warmFiles()) {
+    if (!repos.has(w.repoId)) {
+      const r = getRepoById(app.db, w.repoId);
+      repos.set(w.repoId, r && { name: `${r.ownerName}/${r.name}`, ok: reader.kind === "owner" || r.visibility === "public" });
+    }
+    const repo = repos.get(w.repoId);
+    if (repo?.ok) rows.push({ repo: repo.name, path: w.path, pulls: w.pulls });
+  }
+  rows.sort((a, b) => b.pulls - a.pulls || a.path.localeCompare(b.path) || a.repo.localeCompare(b.repo));
+  const top = rows.slice(0, HOT_LISTED);
+  const max = Math.max(1, ...top.map((r) => r.pulls));
+  return card(
+    html`<h2>Hot files</h2>
+      ${top.length === 0
+        ? html`<p class="muted">No file is touched by 3 or more open pulls.</p>`
+        : html`<ul>
+            ${top.map(
+              (r) =>
+                html`<li data-hot-file="${r.path}">
+                  <span class="mono">${r.path}</span> <span class="muted small">${r.repo}</span>
+                  <span class="mono" data-pulls>${String(r.pulls)}</span> open pulls
+                  ${r.pulls >= HOT_PULLS ? badge("builds held", { tone: "danger" }) : null}
+                  ${meter((r.pulls / max) * 100, `${r.pulls} open pulls touch ${r.path}`)}
+                </li>`,
+            )}
+          </ul>`}`,
+    { id: "hot-files" },
   );
 }

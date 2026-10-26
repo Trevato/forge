@@ -112,6 +112,28 @@ export function hotFiles(repoId: string): Map<string, number> {
   return counts;
 }
 
+/** The flow panel lists a file this many open pulls touch, held or not. */
+export const WARM_PULLS = 3;
+
+/** Every repository with pulls learned, and each file `WARM_PULLS` or more of its open pulls touch. Memory only: never git. */
+export function warmFiles(): { repoId: string; path: string; pulls: number }[] {
+  const out: { repoId: string; path: string; pulls: number }[] = [];
+  for (const [repoId, pulls] of touched) {
+    const counts = new Map<string, number>();
+    for (const { files } of pulls.values()) {
+      if (files.length > WIDE_PULL) continue;
+      for (const file of files) counts.set(file, (counts.get(file) ?? 0) + 1);
+    }
+    for (const [path, n] of counts) if (n >= WARM_PULLS) out.push({ repoId, path, pulls: n });
+  }
+  return out;
+}
+
+/** Put what git said about `repoId`'s open pulls into the cache, as `learnPullFiles` would; for tests. */
+export function rememberPullFiles(repoId: string, pulls: readonly { number: number; files: readonly string[] }[]): void {
+  touched.set(repoId, new Map(pulls.map((p) => [`pull-${p.number}`, { at: `seeded-${p.number}`, ...p }])));
+}
+
 /** An open pull too wide to count toward heat, with the files its diff touches. */
 export interface WidePull {
   readonly number: number;
