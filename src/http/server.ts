@@ -468,6 +468,7 @@ import { proposalTokenMint, proposalTokenRevoke } from "../web/pages/proposal-to
 import { adminGate } from "./admin_gate.ts";
 import { proposalGate } from "./proposal_gate.ts";
 import { runGate } from "./run_gate.ts";
+import { checksRecheckRoutes } from "./checks_recheck.ts";
 import { feedRoutes } from "./feed.ts";
 import type { Database } from "bun:sqlite";
 import { mcpRoutes } from "./mcp.ts";
@@ -1463,6 +1464,7 @@ export function buildApiRouter(): Router<Handler> {
   const router = new Router<Handler>();
   apiRoutes(router);
   feedRoutes(router);
+  checksRecheckRoutes(router);
   return router;
 }
 

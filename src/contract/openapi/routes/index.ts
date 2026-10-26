@@ -175,6 +175,7 @@ export { route as postApiV1ReposOwnerNameAppDomainsHostCheck } from "./postApiV1
 export { route as postApiV1ReposOwnerNameAppEnvRedeploy } from "./postApiV1ReposOwnerNameAppEnvRedeploy.ts";
 export { route as postApiV1ReposOwnerNameAppEnvStop } from "./postApiV1ReposOwnerNameAppEnvStop.ts";
 export { route as postApiV1ReposOwnerNameBranches } from "./postApiV1ReposOwnerNameBranches.ts";
+export { route as postApiV1ReposOwnerNameChecksRecheck } from "./postApiV1ReposOwnerNameChecksRecheck.ts";
 export { route as postApiV1ReposOwnerNameContents } from "./postApiV1ReposOwnerNameContents.ts";
 export { route as postApiV1ReposOwnerNameContribute } from "./postApiV1ReposOwnerNameContribute.ts";
 export { route as postApiV1ReposOwnerNameEdits } from "./postApiV1ReposOwnerNameEdits.ts";
