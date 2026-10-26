@@ -36,6 +36,7 @@ for a tunnel and a forge that sleeps.
 | `accounts` | `{ cursor?, limit? }`: the forge's accounts, newest first: `username`, `role`, `verified`, `suspended`, `created`, and `next` (a cursor, or null); `limit` 1-50 (default 20); a person admin's |  |
 | `agent` | `{ action, username, … }`: `create` a crew agent, `update` its `model`, `brief` or `budgetUsd`, or `remove` it; an admin's, with an `admin` token, as `/api/v1/agents` | yes |
 | `app_deploy` | `{ repo, env, action }`: `redeploy` or `stop` an app's `production` or a pull's `pull-N` preview; a writer's, queued as `POST …/app/:env/redeploy` and `…/stop` are; answers `{ queued, run }` or `{ stopped }` | yes |
+| `app_domains` | `{ repo, action, host? }`: `list`, `add`, `check` (looks the DNS proof up now) or `remove` an app's own domains, with the records to publish, as `…/app/domains` answers; an admin of the repository with an admin-scope token | yes |
 | `app_env` | `{ repo, action, name?, value?, scope? }`: `list` an app's variable names and scopes, `set` one, or `unset` it, in `all` (default), `production` or `preview`; the API's rules and errors, an admin of the repository with an admin-scope token; a value is never read back | yes |
 | `app_members` | `{ repo, members?, dryRun? }`: the people a private app names, who may enter it and its previews and nothing else; a writer (never an agent) changes the list with an admin-scope token | yes |
 | `apps` | the apps you can see: live or not, where served, how each runs itself, what is working |  |

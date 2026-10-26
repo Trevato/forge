@@ -7,6 +7,7 @@ export { tool as account_verify } from "./account_verify.ts";
 export { tool as accounts } from "./accounts.ts";
 export { tool as agent } from "./agent.ts";
 export { tool as app_deploy } from "./app_deploy.ts";
+export { tool as app_domains } from "./app_domains.ts";
 export { tool as app_env } from "./app_env.ts";
 export { tool as app_members } from "./app_members.ts";
 export { tool as apps } from "./apps.ts";

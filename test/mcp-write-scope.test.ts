@@ -27,6 +27,7 @@ const ADMIN_ARGS: Record<string, Record<string, unknown>> = {
   prompts: { repo: "alice/game", action: "remove", id: "p1" },
   telemetry_grant: { agent: "robo", on: true },
   hooks: { repo: "alice/game", action: "add", url: "https://example.com/h", secret: "0123456789abcdef0123" },
+  app_domains: { repo: "alice/game", action: "add", host: "game.example.com" },
 };
 
 /** What `visible()` answers for a tool the token's scope does not open. */
