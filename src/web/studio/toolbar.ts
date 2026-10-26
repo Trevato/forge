@@ -39,6 +39,7 @@ import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { originError } from "../pages/thread.ts";
+import { toolbarSide } from "./toolbar_side.ts";
 import { btn, card, envFacts, runStateBadge, badge } from "../ui.ts";
 
 /** The longest page address the bar may carry. */
@@ -155,8 +156,8 @@ export async function toolbarPage(ctx: Ctx): Promise<Response> {
   const repo = timePhase(request, "repo", () => loadRepo(ctx));
   if (!repo) return timePhase(request, "render", () => notFoundPage(ctx));
   const where = parseEnv(ctx.url.searchParams.get("env") ?? "production");
-  if (where === undefined || timePhase(request, "app-row", () => getAppByRepo(ctx.app.db, repo.id)) === undefined)
-    return timePhase(request, "render", () => notFoundPage(ctx));
+  const record = where === undefined ? undefined : timePhase(request, "app-row", () => getAppByRepo(ctx.app.db, repo.id));
+  if (where === undefined || record === undefined) return timePhase(request, "render", () => notFoundPage(ctx));
   const db = ctx.app.db;
   const user = ctx.auth.user;
   const pull =
@@ -170,6 +171,8 @@ export async function toolbarPage(ctx: Ctx): Promise<Response> {
   const here = html`${repo.name}, ${pull ? html`preview of pull #${pull.number}` : "production"}`;
   const liveNote = pull ? html`` : await timePhaseAsync(request, "live", () => liveLine(ctx, repo, base));
   const home = btn("Home", { href: "/", variant: "ghost" });
+  const side = timePhase(request, "side", () => toolbarSide(ctx, repo, record, where.env, address));
+  const other = side === null ? html`` : btn(side.label, { href: side.url, variant: "ghost", icon: "external" });
   // The issue row carries no head oid; a pull row may be absent (an import in progress).
   const joined = pull ? getPull(db, repo.id, pull.number) : undefined;
   const change = joined
@@ -183,7 +186,7 @@ export async function toolbarPage(ctx: Ctx): Promise<Response> {
     const response = page({
       ctx,
       title: `${repo.name} · forge`,
-      body: html`<div class="narrow-wide">${pageHead(here)}${change}${liveNote}<div class="form-actions">${btn("Sign in to comment", { href: `/signin?next=${next}`, variant: "primary" })}${when(open, () => btn("Report a problem, no account needed", { href: report }))}${home}</div></div>`,
+      body: html`<div class="narrow-wide">${pageHead(here)}${change}${liveNote}<div class="form-actions">${btn("Sign in to comment", { href: `/signin?next=${next}`, variant: "primary" })}${other}${when(open, () => btn("Report a problem, no account needed", { href: report }))}${home}</div></div>`,
     });
     notePhase(request, "render", performance.now() - rendering);
     return response;
@@ -242,7 +245,7 @@ export async function toolbarPage(ctx: Ctx): Promise<Response> {
         !canWrite(db, repo, user),
         () => btn("Make it yours", { href: `${base}/make-it-yours`, icon: "fork" }),
       )}
-      ${home}
+      ${other}${home}
     </div>
   </div>`;
   const response = page({ ctx, title: `${repo.name} · forge`, body });

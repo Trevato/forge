@@ -60,7 +60,7 @@ afterAll(() => {
 const PAGES: [path: string, who: string, names: string[]][] = [
   ["/alice/forge/issues/new", "alice", ["session", "repo", "render"]],
   ["/alice/forge/report", "alice", ["session", "repo", "access", "render"]],
-  ["/alice/forge/toolbar", "alice", ["session", "repo", "app-row", "live", "runs", "render"]],
+  ["/alice/forge/toolbar", "alice", ["session", "repo", "app-row", "live", "side", "runs", "render"]],
   ["/alice/forge/make-it-yours", "bob", ["session", "repo", "plan", "render"]],
 ];
 

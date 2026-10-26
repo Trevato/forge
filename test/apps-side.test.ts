@@ -30,3 +30,8 @@ test("stopped, failed and deploying previews are skipped", () => {
   );
   expect(sideOf(app, "production", [p(8, "stopped")])).toBeNull();
 });
+
+test("a long pull title is clipped so the label stays one line", () => {
+  const label = sideOf(app, "production", [p(2, "running", "x".repeat(200))])?.label ?? "";
+  expect(label).toBe(`Newest preview: #2 ${"x".repeat(31)}…`);
+});
