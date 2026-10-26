@@ -104,10 +104,48 @@ test("a preview says the pull, and a signed-in director gets the tell link", asy
   const html = await (
     await door(`notes--${pull}.${DOMAIN}`, `forge_grant_${record.id.slice(-8)}=${grant}`)
   ).text();
-  expect(html).toContain(`<p>preview of pull #${pull}</p>`);
+  expect(html).toContain(`preview of <a href="${servers.url}/alice/notes/pulls/${pull}">pull #${pull}</a>`);
   expect(html).toContain(`href="${servers.url}/alice/notes/tell"`);
   expect(html).toContain(">Tell the crew<");
   expect(html).not.toContain("<b>t</b>");
+});
+
+test("a preview links the pull and shows its escaped title to a reader; a private repo shows neither", async () => {
+  const html = await (await door(`notes--${pull}.${DOMAIN}`)).text();
+  expect(html).toContain(
+    `<a href="${servers.url}/alice/notes/pulls/${pull}">pull #${pull}</a>: &lt;b&gt;t&lt;/b&gt;`,
+  );
+  const owner = getUserById(app.db, alice)!;
+  const made = await newApp(app, owner, { name: "hush", description: "x", visibility: "private" });
+  if (!made.ok) throw new Error(String(made.error));
+  const hush = getAppByRepo(app.db, made.value.repo.id)!;
+  const p = createIssue(app.db, {
+    repoId: made.value.repo.id,
+    authorId: alice,
+    title: "secret plan",
+    kind: "pull",
+  });
+  if (!p.ok) throw new Error(p.error);
+  const n = p.value.number;
+  const target = { app: hush, env: `pull-${n}` } as AppTarget;
+  const grant = signGrant(dataDir, target, 60_000, Date.now(), {
+    id: alice,
+    name: "alice",
+    role: "admin",
+  });
+  const mine = await (
+    await door(`hush--${n}.${DOMAIN}`, `forge_grant_${hush.id.slice(-8)}=${grant}`)
+  ).text();
+  expect(mine).toContain("secret plan");
+  // Same facts without the reader's rights: number only.
+  const bare = doorPage(
+    { where: { app: "hush", env: `pull-${n}`, pull: n }, forgeUrl: servers.url },
+    false,
+  );
+  const text = await bare.text();
+  expect(text).toContain(`<p>preview of pull #${n}</p>`);
+  expect(text).not.toContain("<a href=\"" + servers.url + "/alice/hush/pulls");
+  expect(text).not.toContain("secret plan");
 });
 
 test("a nested host is the guest's: not found", async () => {

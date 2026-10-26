@@ -47,6 +47,16 @@ export function doorWhere(where: PillWhere): string {
 const link = (href: string, text: string): string =>
   `<li><a href="${escapeAttr(href)}">${escapeAttr(text)}</a></li>`;
 
+/** The where line; a reader of the pull gets its number linked and its title. */
+function whereLine(where: PillWhere, forgeUrl: string): string {
+  const words = escapeAttr(doorWhere(where));
+  if (where.pull === undefined || where.repo === undefined || where.title === undefined)
+    return words;
+  const href = new URL(`/${where.repo}/pulls/${where.pull}`, forgeUrl).href;
+  const n = `pull #${where.pull}`;
+  return `${words.replace(n, `<a href="${escapeAttr(href)}">${n}</a>`)}: ${escapeAttr(where.title)}`;
+}
+
 /** `2026-10-25 14:03 UTC`, or the raw text when it is not a date. */
 function when(at: string): string {
   const t = Date.parse(at);
@@ -109,7 +119,7 @@ export function doorPage(facts: DoorFacts, head: boolean): Response {
         : `<p>Terminal:</p><pre><code>${escapeAttr(facts.ssh)}</code></pre>`;
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>${escapeAttr(where.app)}, ${escapeAttr(doorWhere(where))}</title><style>${STYLE}</style></head>
-<body><main><h1>${escapeAttr(where.app)}</h1><p>${escapeAttr(doorWhere(where))}</p>${servingHtml(facts)}${pullsHtml(facts.pulls)}<ul>${links.join("")}</ul>${terminal}</main></body></html>
+<body><main><h1>${escapeAttr(where.app)}</h1><p>${whereLine(where, forgeUrl)}</p>${servingHtml(facts)}${pullsHtml(facts.pulls)}<ul>${links.join("")}</ul>${terminal}</main></body></html>
 `;
   return new Response(head ? null : html, {
     headers: {
