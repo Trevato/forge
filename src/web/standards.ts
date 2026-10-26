@@ -33,6 +33,7 @@ import { canRead, getRepo } from "../core/repos.ts";
 import type { Ctx } from "../http/context.ts";
 import { notFound } from "../http/respond.ts";
 import { SITE_LINE } from "./site_line.ts";
+import { mcpToolsSection } from "./llms_tools.ts";
 import { mcpCard, mcpPointers } from "../core/mcp_card.ts";
 import { running } from "../kernel/version.ts";
 import { timePhase } from "../core/route_timing.ts";
@@ -354,6 +355,7 @@ export function llmsTxt(ctx: Ctx): Response {
       `- API: ${o}/api/v1, Authorization: Bearer <token>`,
       `- OpenAPI: GET ${o}/api/v1/openapi.json (redirects to ${o}/contract/openapi.json)`,
       "",
+      ...mcpToolsSection(),
       "## Public repositories",
       "",
       // Names and addresses only: a description is whatever its owner
