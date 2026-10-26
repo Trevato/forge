@@ -76,6 +76,8 @@ describe("settings → flags", () => {
     expect(text).toContain("alpha");
     expect(text).toContain("shows the new board");
     expect(text).toContain('href="/acme/forge/issues/1970"');
+    expect(text).toContain('class="row-fields"');
+    expect(text).not.toContain("flag-form");
 
     const set = await post(cookie, { name: "alpha", forge: "on", users: "u1, u2", roles: "admin", percent: "30" });
     expect(set.status).toBe(303);
