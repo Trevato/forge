@@ -17,6 +17,7 @@ import { alreadyDone } from "../../core/done_on_main.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { LATER_TITLED } from "../../core/pillars.ts";
+import { hasPicture } from "../../core/note_pictures.ts";
 import { linkedIssueIds, repoGraph } from "../../core/dependencies.ts";
 import {
   getIssuesByNumbers,
@@ -568,6 +569,15 @@ async function studioTell(
       </div>
       <aside>
         ${privateWorkCard(ctx, repo, issue, `${thread}/private`)}
+        ${hasPicture(db, repo.id, issue.number)
+          ? card(
+              html`<h2>Picture of the page</h2>
+                <a href="${thread}/picture"
+                  ><img src="${thread}/picture" alt="The page the sender was looking at" loading="lazy" class="tell-picture"
+                /></a>`,
+              { extra: "mt" },
+            )
+          : null}
         ${runsCard}
         ${closingCard}
         ${dependencies}

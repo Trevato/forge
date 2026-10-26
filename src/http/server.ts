@@ -230,6 +230,7 @@ import {
 } from "../web/pages/issues.ts";
 import { noteModerate } from "../web/studio/notes.ts";
 import { tellPage } from "../web/studio/tell.ts";
+import { issuePicture } from "../web/studio/picture.ts";
 import { tellHerePage } from "../web/studio/tell_here.ts";
 import { globalMapPage } from "../web/pages/global-map.ts";
 import { mapPage } from "../web/pages/map.ts";
@@ -1119,6 +1120,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/issues/new", newIssueSubmit);
   router.add("GET", "/:owner/:name/issues/:number", tellPage);
   router.add("GET", "/:owner/:name/issues/:number/thread", issueThreadFragment);
+  router.add("GET", "/:owner/:name/issues/:number/picture", issuePicture);
   router.add(
     "POST",
     "/:owner/:name/issues/:number/comments",

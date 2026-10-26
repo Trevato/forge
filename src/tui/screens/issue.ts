@@ -24,6 +24,7 @@ import { teamsOfIssue, TEAMS_MAX } from "../../core/issue_teams.ts";
 import { listTeams } from "../../core/teams.ts";
 import { listRepoRuns } from "../../actions/runs.ts";
 import { alreadyDone } from "../../core/done_on_main.ts";
+import { hasPicture } from "../../core/note_pictures.ts";
 import { getIssue, type Issue, type Label } from "../../core/issues.ts";
 import type { Repo } from "../../core/repos.ts";
 import type { IssueDetail, RepoSource } from "../../view/source.ts";
@@ -116,6 +117,12 @@ export function issueScreen(
     const listed = await src.labels();
     labels = listed.ok ? listed.value : [];
   };
+
+  /** The path of the picture a note sent with this issue, when it has one. */
+  const pictureText = (): string =>
+    repo !== undefined && issueRow !== undefined && hasPicture(f.db, repo.id, issueRow.number)
+      ? ` · picture: /${repo.ownerName}/${repo.name}/issues/${issueRow.number}/picture`
+      : "";
 
   /** `a` — hand the issue to a person, an agent, or nobody. */
   const assign = (): void => {
@@ -277,7 +284,7 @@ export function issueScreen(
         x,
         head!.y + 1,
         truncate(
-          ` ${issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)} · ${plural(detail.comments.length, "comment")}${assignedText(issueRow, ctx.icons)}${doneText(doneBy, mayWrite())}`,
+          ` ${issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)} · ${plural(detail.comments.length, "comment")}${assignedText(issueRow, ctx.icons)}${doneText(doneBy, mayWrite())}${pictureText()}`,
           Math.max(0, right - x),
         ),
         style(c.mutedFg, c.bg),

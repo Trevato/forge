@@ -115,6 +115,19 @@ Under the box, four starter sentences are plain links (no script):
   Beyond the per-minute limits an app takes 30 notes an hour and 100 a day.
   The script grew to about 15 KB (cached, immutable); the notes are polled only
   while the panel is open.
+- **A note may carry a picture of the page (#4820).** The panel has an
+  unticked *Include a picture of this page* box; nothing is captured unless it
+  is ticked. The picture is taken in the browser with no dependency: the
+  visible page is cloned with its computed styles inlined, drawn through an SVG
+  `foreignObject` onto a canvas and encoded as PNG (JPEG if over 2 MB). Images
+  and fonts loaded from other origins do not travel with it, and a browser that
+  refuses to encode it sends the note without, saying so. The note is filed
+  first; the picture follows as `POST /__forge/note/picture?note=<id>` (raw
+  bytes, same-origin, the note's own sender only, one per note). The server
+  reads at most 2 MB, accepts only PNG or JPEG by their first bytes, never by
+  the declared type, and keeps the file under `FORGE_APP_DATA/note-pictures`.
+  The issue page shows it from `/:owner/:name/issues/:n/picture`, which answers
+  exactly those who can read the issue (a sealed report gives the not-found).
 - **The forge pill acts.** The pill the proxy adds to an app's pages
   (`"toolbar": false` in `forge.json` turns it off; to write it in, the proxy asks the app for the page uncompressed, so a page that carries the pill goes out without gzip) links to a forge page,
   `/:owner/:name/toolbar?env=production|pull-N`, opened in a tab of its own: the

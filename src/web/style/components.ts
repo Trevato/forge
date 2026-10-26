@@ -670,6 +670,7 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 
 /* ---- tell the crew, in place: fixed, so nothing shifts ---- */
 .tell-here { position: fixed; left: 0; right: 0; bottom: 0; z-index: 50; width: min(620px, 100%); margin: 0 auto; padding: 8px; }
+.tell-picture { max-width: 100%; height: auto; }
 .tell-here .comment-form { margin: 0; box-shadow: var(--shadow-2); }
 
 /* ---- command palette ---- */

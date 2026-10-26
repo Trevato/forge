@@ -101,6 +101,16 @@ export const toolbarJs = `(function () {
   tellText.required = true;
   tellText.setAttribute("aria-label", "Your note to the builders");
   tellText.style.cssText = "box-sizing:border-box;width:100%;font:16px/1.3 system-ui,sans-serif;padding:8px;border-radius:8px;border:1px solid #57606a;background:#0d1117;color:#fff;resize:vertical";
+  var tellPicRow = document.createElement("label");
+  tellPicRow.style.cssText = "display:flex;align-items:center;gap:8px;min-height:44px";
+  var tellPic = document.createElement("input");
+  tellPic.type = "checkbox";
+  tellPic.checked = false;
+  tellPic.style.cssText = "width:20px;height:20px;margin:0";
+  var tellPicText = document.createElement("span");
+  tellPicText.textContent = "Include a picture of this page, visible to anyone who can read the report";
+  tellPicRow.appendChild(tellPic);
+  tellPicRow.appendChild(tellPicText);
   var tellGo = document.createElement("button");
   tellGo.type = "submit";
   tellGo.textContent = "Send";
@@ -112,9 +122,11 @@ export const toolbarJs = `(function () {
   mine.style.cssText = "display:flex;flex-direction:column;gap:6px";
   ring(tellGo);
   ring(tellText);
+  ring(tellPic);
   tellBox.appendChild(tellHead);
   tellBox.appendChild(tellHint);
   tellBox.appendChild(tellText);
+  tellBox.appendChild(tellPicRow);
   tellBox.appendChild(tellGo);
   tellBox.appendChild(tellSay);
   tellBox.appendChild(mine);
@@ -172,25 +184,86 @@ export const toolbarJs = `(function () {
       })
       .catch(function () {});
   }
+  var PICTURE_MAX = 2097152;
+  function shoot() {
+    return new Promise(function (resolve) {
+      var done = false;
+      function end(blob) { if (!done) { done = true; resolve(blob || null); } }
+      setTimeout(end, 8000);
+      try {
+        var w = window.innerWidth, h = window.innerHeight;
+        var src = document.documentElement;
+        var all = src.querySelectorAll("*");
+        var copy = src.cloneNode(true);
+        var twins = copy.querySelectorAll("*");
+        for (var i = 0; i < twins.length && i < all.length; i++) {
+          var t = twins[i], tag = t.tagName;
+          if (tag === "SCRIPT" || tag === "NOSCRIPT" || tag === "IFRAME" || t.id === "forge-toolbar") { t.setAttribute("data-drop", "1"); continue; }
+          if (i > 4000) { t.setAttribute("data-drop", "1"); continue; }
+          var cs = getComputedStyle(all[i]), css = "";
+          for (var k = 0; k < cs.length; k++) css += cs[k] + ":" + cs.getPropertyValue(cs[k]) + ";";
+          t.setAttribute("style", css);
+        }
+        copy.querySelectorAll("[data-drop]").forEach(function (n) { n.remove(); });
+        var cb = getComputedStyle(src);
+        copy.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+        copy.setAttribute("style", "margin:0;background:" + (cb.backgroundColor || "#fff") + ";width:" + src.scrollWidth + "px;transform:translate(" + (-window.scrollX) + "px," + (-window.scrollY) + "px)");
+        var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '"><foreignObject width="100%" height="100%">' + new XMLSerializer().serializeToString(copy) + "</foreignObject></svg>";
+        var img = new Image();
+        img.onload = function () {
+          try {
+            var c = document.createElement("canvas");
+            c.width = w; c.height = h;
+            c.getContext("2d").drawImage(img, 0, 0);
+            c.toBlob(function (png) {
+              if (png && png.size <= PICTURE_MAX) return end(png);
+              c.toBlob(function (jpg) { end(jpg && jpg.size <= PICTURE_MAX ? jpg : null); }, "image/jpeg", 0.7);
+            }, "image/png");
+          } catch (e) { end(); }
+        };
+        img.onerror = function () { end(); };
+        img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+      } catch (e) { end(); }
+    });
+  }
   tellBox.addEventListener("submit", function (e) {
     e.preventDefault();
     var text = tellText.value.trim();
     if (!text) { tellSay.textContent = ${JSON.stringify(NOTE_EMPTY)}; return; }
     if (tellGo.disabled) return;
+    var wantPicture = tellPic.checked === true;
     tellGo.disabled = true;
     tellGo.setAttribute("aria-busy", "true");
     tellGo.style.opacity = ".6";
     function idle() { tellGo.disabled = false; tellGo.removeAttribute("aria-busy"); tellGo.style.opacity = "1"; }
-    call("/__forge/note", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text: text, page: location.href, viewport: window.innerWidth + "x" + window.innerHeight })
+    var taken = wantPicture ? shoot() : Promise.resolve(null);
+    taken.then(function (blob) {
+      return call("/__forge/note", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: text, page: location.href, viewport: window.innerWidth + "x" + window.innerHeight })
+      })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+        .then(function (a) {
+          if (!a.ok || !blob || !a.j || !a.j.note || !a.j.note.id) return { a: a, pic: false };
+          return call("/__forge/note/picture?note=" + encodeURIComponent(a.j.note.id), {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "content-type": blob.type },
+            body: blob
+          }).then(function (r) { return { a: a, pic: r.ok }; }, function () { return { a: a, pic: false }; });
+        });
     })
-      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
-      .then(function (a) {
+      .then(function (x) {
         idle();
-        if (a.ok) { tellText.value = ""; tellSay.textContent = "Sent. The builders will see it."; refresh(true); }
+        var a = x.a;
+        if (a.ok) {
+          tellText.value = "";
+          tellPic.checked = false;
+          tellSay.textContent = wantPicture && x.pic !== true ? "Sent, without the picture. The builders will see it." : "Sent. The builders will see it.";
+          refresh(true);
+        }
         else tellSay.textContent = a.j && a.j.message ? a.j.message : ${JSON.stringify(NOTE_FAILED)};
       })
       .catch(function () { idle(); tellSay.textContent = ${JSON.stringify(NOTE_FAILED)}; });
