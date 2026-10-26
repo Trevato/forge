@@ -6,7 +6,7 @@ import { good, bad, type Tool } from "../shared.ts";
 export const tool: Tool = {
   name: "quotas",
   description:
-    "Per-account repo and app quotas (number or null; unenforced). With `key`, `value` (\"\" clears).",
+    "Per-account repo and app quotas (unenforced).",
   inputSchema: {
     type: "object",
     properties: {

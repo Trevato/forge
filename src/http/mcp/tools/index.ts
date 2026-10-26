@@ -73,6 +73,7 @@ export { tool as new_app } from "./new_app.ts";
 export { tool as next_steps } from "./next_steps.ts";
 export { tool as now } from "./now.ts";
 export { tool as org_teams } from "./org_teams.ts";
+export { tool as orgs } from "./orgs.ts";
 export { tool as origin_apps } from "./origin_apps.ts";
 export { tool as origins } from "./origins.ts";
 export { tool as outsiders } from "./outsiders.ts";

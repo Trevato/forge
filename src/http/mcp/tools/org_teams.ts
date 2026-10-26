@@ -5,7 +5,7 @@ import { good, bad, type Tool } from "../shared.ts";
 export const tool: Tool = {
   name: "org_teams",
   doc: "`{ org, action, team, user?, permission? }` (admin-scope token, an org owner): `create` a team (`permission` read, write or admin; read by default), `add_member` a `user`, or `remove` the team; the same as POST/DELETE `/api/v1/orgs/:org/teams`",
-  description: "An organization's teams: create, add a member, remove.",
+  description: "An org's teams: create, add member, remove.",
   inputSchema: {
     type: "object",
     properties: {

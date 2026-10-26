@@ -205,6 +205,7 @@ describe("the forge over MCP", () => {
       "seal",
       "secrets",
       "issue_teams",
+      "orgs",
       "now",
       "stop",
       "health",

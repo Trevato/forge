@@ -5,7 +5,7 @@ import { good, bad, type Tool, mayBoards } from "../shared.ts";
 export const tool: Tool = {
   name: "invites",
   doc: "`{ action, id? }`: `list` the outstanding invites (state and expiry, never a link) or `revoke` one by `id`; a person admin with an admin token, stricter than the API's list, which an `ro` token may read",
-  description: "List open invites, or revoke one by `id`.",
+  description: "Open invites; `id` revokes.",
   inputSchema: {
     type: "object",
     properties: {

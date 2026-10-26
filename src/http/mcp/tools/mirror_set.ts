@@ -5,7 +5,7 @@ import { good, bad, type Tool } from "../shared.ts";
 export const tool: Tool = {
   name: "mirror_set",
   doc: "`{ action, endpoint?, bucket?, region?, accessKey?, secretKey? }` (forge admin, admin-scope token): `set` seals the off-box snapshot mirror, `forget` clears it; the Backups page's rules and refusals, a blank field keeps what was sealed; answers `{ place, says }`, never a key",
-  description: "Admin: set or forget the off-box snapshot mirror.",
+  description: "Admin: set or forget the snapshot mirror.",
   inputSchema: {
     type: "object",
     properties: {
