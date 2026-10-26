@@ -51,8 +51,6 @@ the same line (#4888).
   - `.commit-body`
   - `.commit-head`
   - `.filters`
-  - `.front-admin`
-  - `.front-pick`
   - `.owner`
   - `.page-head`
   - `.policy-line`
