@@ -4,6 +4,8 @@ Orientation for an agent editing forge. Read this first, then `README.md` (what
 it is) and `docs/ARCHITECTURE.md` (why it's shaped this way). This file is the
 rulebook: the invariants you must not break, and how to work here.
 
+**README.md is capped: a new feature's how-to goes in `docs/features/<name>.md`, not a new README section.**
+
 **Read docs/VISION.md first: it says what the forge is for and the order of work.**
 
 **Done means reachable** — a person reaches it from the feed in two taps, an
