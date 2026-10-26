@@ -161,6 +161,8 @@ src/
               scope floors, pagination, `securityFloor` — the headers every
               response leaves with), api (every /api/v1 route), server
               (auth resolution, git smart HTTP, web routes, hook socket), sse
+              mcp (the MCP protocol and dispatch; one file per tool under
+              mcp/tools/, gathered by a generated index)
   design/     shared design tokens: themes (palettes both surfaces render)
   origins/    other forges as one Provider interface: discover (version-endpoint
               probe), providers/{github,forgejo} (+ http: paging, ETags, rate
@@ -254,6 +256,9 @@ flag exists only in the stdio dev runner and is never reachable over SSH.
   Describe it in OpenAPI as one file, `contract/openapi/routes/<operationId>.ts`,
   exporting `route`; then `bun scripts/openapi-routes.ts` writes its line in the
   generated index. Never list it by hand.
+- **Add an MCP tool:** one file, `http/mcp/tools/<name>.ts`, exporting `tool`;
+  then `bun scripts/mcp-tools.ts` writes its line in the index and its row in
+  docs/MCP.md (docs/MCP.md, "Adding a tool"). Never list it by hand.
 - **Add a TUI screen:** one file under `tui/screens/`, exporting
   `(f: Session, ctx: Ctx, …) => Screen`. Compose `ui/widgets`; take navigation
   from `screens/common.ts` (`ListState`, `Scroll`, `Filter`, `drawList`,

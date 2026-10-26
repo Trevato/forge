@@ -11,9 +11,11 @@ import {
   ORIGIN_UNREACHABLE,
   REPORT_ALREADY_DECIDED,
 } from "../src/actions/origin_app_words.ts";
+import { importsFrom, mcpSource } from "./helpers/mcp.ts";
 
 const root = join(import.meta.dir, "..");
-const read = (path: string) => readFileSync(join(root, path), "utf8");
+const read = (path: string) =>
+  path === "src/http/mcp.ts" ? mcpSource(root) : readFileSync(join(root, path), "utf8");
 
 const SENTENCES = {
   ORIGIN_UNREACHABLE: "the origin could not be reached",
@@ -35,7 +37,7 @@ describe("origin, app and report refusals live in one module", () => {
   for (const door of DOORS) {
     test(`${door} imports the sentences and types none of them out`, () => {
       const text = read(door);
-      expect(text).toContain('from "../actions/origin_app_words.ts"');
+      expect(importsFrom(text, "actions/origin_app_words.ts")).toBe(true);
       for (const [name, sentence] of Object.entries(SENTENCES)) {
         expect(text).toContain(name);
         expect(text).not.toContain(sentence);

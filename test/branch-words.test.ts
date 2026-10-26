@@ -1,6 +1,6 @@
 /**
  * A branch's sentences are typed once, in `src/actions/branch_words.ts`
- * (#5713), and the branches page, the MCP and the terminal read
+ * (#5713), and the branches page, the MCP `branches` tool and the terminal read
  * them from there. This fails if a copy of a sentence is typed back.
  */
 
@@ -25,7 +25,7 @@ const SENTENCES = {
 /** Each file, and the sentences it reads by name. */
 const READERS: Record<string, readonly (keyof typeof SENTENCES)[]> = {
   "src/web/pages/branches.ts": ["BRANCH_NOT_CREATED", "BRANCH_NOT_DELETED"],
-  "src/http/mcp.ts": ["BRANCH_NOT_CREATED", "BRANCH_NOT_DELETED"],
+  "src/http/mcp/tools/branches.ts": ["BRANCH_NOT_CREATED", "BRANCH_NOT_DELETED"],
   "src/tui/screens/refs.ts": ["NAME_THE_BRANCH"],
   "src/tui/screens/workspace.ts": ["NAME_THE_BRANCH"],
 };

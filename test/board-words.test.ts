@@ -12,9 +12,11 @@ import {
   MILESTONE_WATCH_PERSON_ONLY,
   VOTE_NOT_RECORDED,
 } from "../src/actions/board_words.ts";
+import { importsFrom, mcpSource } from "./helpers/mcp.ts";
 
 const ROOT = join(import.meta.dir, "..");
-const read = (path: string): string => readFileSync(join(ROOT, path), "utf8");
+const read = (path: string): string =>
+  path === "src/http/mcp.ts" ? mcpSource(ROOT) : readFileSync(join(ROOT, path), "utf8");
 
 const SENTENCES = {
   BOARD_NOT_SAVED: "that board could not be saved",
@@ -32,7 +34,7 @@ describe("board, vote and milestone-watch refusals", () => {
   for (const file of FILES) {
     test(`${file} imports the sentences and types none of them`, () => {
       const text = read(file);
-      expect(text).toContain('from "../actions/board_words.ts"');
+      expect(importsFrom(text, "actions/board_words.ts")).toBe(true);
       for (const [name, sentence] of Object.entries(SENTENCES)) {
         expect(text).not.toContain(sentence);
         expect(text).toContain(name);

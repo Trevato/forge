@@ -33,6 +33,12 @@ import { promote } from "./helpers/members.ts";
 import { showBoard } from "../src/actions/boards.ts";
 import { panelData } from "../src/boards/panel_data.ts";
 
+/** tools/list's order: the tools by name, then `report`. */
+const sortedThenReport = (names: string[]): string[] => [
+  ...names.filter((n) => n !== "report").sort((a, b) => a.localeCompare(b)),
+  "report",
+];
+
 describe("the forge over MCP", () => {
   let dataDir: string;
   let app: App;
@@ -169,7 +175,8 @@ describe("the forge over MCP", () => {
 
     const listed = await call(rw, "tools/list");
     const names = listed.body.result.tools.map((t: { name: string }) => t.name);
-    expect(names).toEqual([
+    // Listed by name, one file each (#5924), and `report` last.
+    expect(names).toEqual(sortedThenReport([
       "sizes",
       "apps",
       "app_deploy",
@@ -283,7 +290,7 @@ describe("the forge over MCP", () => {
       "board_pins",
       "board_delete",
       "report",
-    ]);
+    ]));
     const byName = new Map<string, any>(
       listed.body.result.tools.map((t: any) => [t.name, t]),
     );
