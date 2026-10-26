@@ -33,6 +33,7 @@ import type { Ctx } from "../http/context.ts";
 import { notFound } from "../http/respond.ts";
 import { SITE_LINE } from "./site_line.ts";
 import { mcpCard, mcpPointers } from "../core/mcp_card.ts";
+import { running } from "../kernel/version.ts";
 import { timePhase } from "../core/route_timing.ts";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -265,6 +266,14 @@ export function iconPng(ctx: Ctx): Response {
   });
 }
 
+/** `Running 0.7.51 at a1b2c3d`: which build these instructions describe. */
+function runningSentence(): string {
+  const r = running();
+  return r.commit === null
+    ? `Running ${r.version}`
+    : `Running ${r.version} at ${r.commit.slice(0, 7)}`;
+}
+
 /**
  * GET /llms.txt — the forge as an agent should meet it (llmstxt.org): what
  * this is, how to report a problem with no account, how to offer a change,
@@ -278,6 +287,8 @@ export function llmsTxt(ctx: Ctx): Response {
   return timePhase(ctx.request, "render", () => text(
     [
       `# forge at ${ctx.url.host}`,
+      "",
+      runningSentence(),
       "",
       "> Git repositories, their issues and pulls, and the apps they run. Anyone may read a public repository, and report a problem in it without an account.",
       "",

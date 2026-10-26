@@ -188,6 +188,34 @@ describe("what the open web expects", () => {
     }
   });
 
+  test("llms.txt opens with the version, and the short commit only when one is known", async () => {
+    const saved = {
+      v: process.env["FORGE_VERSION"],
+      c: process.env["FORGE_COMMIT"],
+      a: process.env["FORGE_APP_COMMIT"],
+    };
+    try {
+      process.env["FORGE_VERSION"] = "v1.2.3";
+      delete process.env["FORGE_COMMIT"];
+      process.env["FORGE_APP_COMMIT"] = "0123456789abcdef0123";
+      let body = await fetch(`${base}/llms.txt`).then((r) => r.text());
+      expect(body.split("\n")[2]).toBe("Running 1.2.3 at 0123456");
+      delete process.env["FORGE_APP_COMMIT"];
+      body = await fetch(`${base}/llms.txt`).then((r) => r.text());
+      expect(body.split("\n")[2]).toBe("Running 1.2.3");
+      expect(body.split("\n")[2]).not.toContain(" at ");
+    } finally {
+      for (const [k, v] of [
+        ["FORGE_VERSION", saved.v],
+        ["FORGE_COMMIT", saved.c],
+        ["FORGE_APP_COMMIT", saved.a],
+      ] as const) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+
   test("a suspended account's repositories leave the cached listings at once", async () => {
     const bob = await createUser(app.db, {
       origin: "seed",
