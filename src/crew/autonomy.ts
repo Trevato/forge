@@ -94,6 +94,7 @@ import { grantedAccounts } from "../core/subscriptions.ts";
 import { reviewSummary } from "../core/reviews.ts";
 import { standing } from "../core/standing.ts";
 import { pace, type Pace } from "./pacing.ts";
+import { announceGovernor, governorFor } from "./governed.ts";
 import { BREAKER_NOTE, breakerTripped } from "./breaker.ts";
 import { given, pendingReplans } from "../core/limb_replan.ts";
 import { handedOverPulls, SKIP_SUMMARY, skipsReplan } from "./guard.ts";
@@ -328,7 +329,7 @@ function meanRunUsd(db: App["db"], repoId: string): number {
   );
 }
 
-/** The crew's pace here: the operator's slots, held to what the windows have left. */
+/** The crew's pace here: the operator's slots, held to what the windows have left and to the governor's. */
 export function repoPace(app: App, repo: Repo, now = new Date()): Pace {
   const accounts = grantedAccounts(app.db, repo.id, repo.ownerId).flatMap(
     (a) => {
@@ -336,7 +337,9 @@ export function repoPace(app: App, repo: Repo, now = new Date()): Pace {
       return s === undefined ? [] : [{ name: a.name, standing: s }];
     },
   );
-  return pace(accounts, repo.autonomySlots, meanRunUsd(app.db, repo.id), now);
+  const paced = pace(accounts, repo.autonomySlots, meanRunUsd(app.db, repo.id), now);
+  const governed = governorFor(app, repo, now).slots;
+  return governed < paced.slots ? { ...paced, slots: governed } : paced;
 }
 
 /** The builder slots free now: none while paused, else the paced slots less what is slotted. */
@@ -1254,6 +1257,8 @@ export async function autonomyTick(
         activeRuns(app, current.id),
       );
       const boots = bootCounts(app.config.dataDir);
+      // Says when the governor lowers the slots (#6375); one feed item per change.
+      const governor = announceGovernor(app, current, now);
       log.info("tick", {
         repo: `${repo.ownerName}/${repo.name}`,
         did,
@@ -1273,6 +1278,7 @@ export async function autonomyTick(
         ...flowVitals(app.db, now),
         active: status.active,
         slots: status.slots,
+        ...(governor === undefined ? {} : { governor }),
         // Approved conflicted pulls: queued, in flight, and why each other is
         // skipped (#3682, #6237), or "0 candidates of N open" (#6263); and the lane for rebases: conflicted N,
         // rebasing M, room R (#6140).

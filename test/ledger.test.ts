@@ -628,7 +628,9 @@ describe("the decision ledger", () => {
         r.reason !== "review",
     ).length;
     updateRepoSettings(app.db, fresh(), { autonomySlots: builders + 1 });
-    expect(await driveRepo(app, fresh())).toBe("picked");
+    // Seven hours on, the governor's flow windows hold nothing: this is about slots, not the pile (#6375).
+    const later = new Date(Date.now() + 7 * 3_600_000);
+    expect(await driveRepo(app, fresh(), later)).toBe("picked");
     expect(issueById(app.db, work.value.id)?.assigneeId).toBe(scout.id);
 
     // The builder's run ends with nothing pushed: parked, unassigned. (No

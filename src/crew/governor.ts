@@ -1,7 +1,7 @@
 /**
  * The inflow governor (#6374): build slots fall while pulls open faster than
  * they land, and rise as the pile drains. Pure: the flow vitals and the
- * operator's ceiling in, `{ slots, why }` out. Nothing calls it yet.
+ * operator's ceiling in, `{ slots, why }` out. The picker reads it through `governed.ts` (#6375).
  *
  * Two pressures, each scaled to how far past its line the forge is; the
  * stronger wins. Vitals carry a 1 h and a 6 h window, so "stayed above 1.5×

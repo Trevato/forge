@@ -697,6 +697,13 @@ function fromEvent(
             ? `#${String(number)} now waits for #${String(p["blockedBy"])}`
             : `#${String(number)} no longer waits for #${String(p["blockedBy"])}`,
       };
+    case "crew.governed":
+      return {
+        ...common,
+        kind: "map",
+        link: `${base(repo)}/map`,
+        what: clip(typeof p["why"] === "string" ? p["why"] : "the crew's slots changed"),
+      };
     default:
       return undefined;
   }
