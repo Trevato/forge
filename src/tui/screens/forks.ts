@@ -12,7 +12,7 @@ import {
   MAX_RANKED_FORKS,
   type ForkRanking,
 } from "../../actions/forks.ts";
-import { canRead, listForks, type Repo } from "../../core/repos.ts";
+import { canRead, forkTree, listForks, type ForkNode, type Repo } from "../../core/repos.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { style } from "../term/style.ts";
@@ -25,29 +25,43 @@ import { repoScreen } from "./workspace.ts";
 import { ListState, drawList, plural, type ListRow } from "./common.ts";
 
 /** The rows the screen draws, in order: pure so a test reads them without a terminal. */
-export function forkRows(ranked: ForkRanking): { repo: Repo; name: string; words: string; heading: string }[] {
-  const row = (f: ForkRanking["offering"][number], heading: string) => ({
-    repo: f.fork,
-    name: `${f.fork.ownerName}/${f.fork.name}`,
-    words: driftWords(f.drift),
-    heading,
-  });
+export function forkRows(
+  ranked: ForkRanking,
+  tree: readonly ForkNode[] = [],
+): { repo: Repo; name: string; words: string; heading: string }[] {
+  const below = new Map(tree.map((n) => [n.repo.id, n.forks]));
+  const row = (f: ForkRanking["offering"][number], heading: string) => [
+    {
+      repo: f.fork,
+      name: `${f.fork.ownerName}/${f.fork.name}`,
+      words: driftWords(f.drift),
+      heading,
+    },
+    ...(below.get(f.fork.id) ?? []).map((n) => ({
+      repo: n.repo,
+      name: `  ${n.repo.ownerName}/${n.repo.name}`,
+      words: n.deeper === 0 ? "" : `and ${n.deeper} more fork${n.deeper === 1 ? "" : "s"} below`,
+      heading: "",
+    })),
+  ];
   return [
-    ...ranked.offering.map((f) => row(f, "")),
-    ...ranked.nothingNew.map((f, i) => row(f, i === 0 ? nothingNewHeading(ranked.nothingNew.length) : "")),
+    ...ranked.offering.flatMap((f) => row(f, "")),
+    ...ranked.nothingNew.flatMap((f, i) => row(f, i === 0 ? nothingNewHeading(ranked.nothingNew.length) : "")),
   ];
 }
 
 export function forksScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   let ranked: ForkRanking | undefined;
+  let tree: ForkNode[] = [];
   const state = new ListState();
-  const rows = () => (ranked === undefined ? [] : forkRows(ranked));
+  const rows = () => (ranked === undefined ? [] : forkRows(ranked, tree));
   return {
     title: "Forks",
     keys: [binding(["j", "k"], "move"), binding(["enter"], "open this fork"), binding(["esc"], "close")],
     async load() {
       const forks = listForks(f.db, repo.id).filter((r) => canRead(f.db, r, f.user));
       ranked = await rankedForksOf(f.app, repo, forks);
+      tree = forkTree(f.db, repo.id, f.user);
       ctx.invalidate();
     },
     render(area, s) {

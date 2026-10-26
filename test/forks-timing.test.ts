@@ -36,11 +36,11 @@ afterAll(async () => {
 const names = (res: Response): string[] =>
   (res.headers.get("server-timing") ?? "").split(", ").map((p) => p.split(";")[0]!).filter((n) => n !== "app");
 
-test("the forks page names session, repository, forks, lineage, drift and render, in order", async () => {
+test("the forks page names session, repository, forks, fork-tree, lineage, drift and render, in order", async () => {
   const res = await fetch(`${servers.url}/alice/notes/forks`, { headers: { authorization: `Bearer ${bearer}` } });
   expect(res.status).toBe(200);
   await res.text();
-  expect(names(res)).toEqual(["session", "repository", "forks", "lineage", "drift", "render"]);
+  expect(names(res)).toEqual(["session", "repository", "forks", "fork-tree", "lineage", "drift", "render"]);
 });
 
 test("a missing repository still names session and repository", async () => {

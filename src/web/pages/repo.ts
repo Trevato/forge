@@ -38,6 +38,8 @@ import { pinRepo, syncRepoNow, unpinRepo } from "../../actions/origins.ts";
 import {
   canAdmin,
   forkParentFor,
+  forkTree,
+  type ForkNode,
   visibleForks,
 } from "../../core/repos.ts";
 import { isSafeRef, isSafeTreePath } from "../../git/guard.ts";
@@ -131,6 +133,9 @@ export async function forksPage(ctx: Ctx): Promise<Response> {
   );
   notePhase(ctx.request, "forks", performance.now() - t);
   t = performance.now();
+  const tree = forkTree(ctx.app.db, repo.id, ctx.auth.user);
+  notePhase(ctx.request, "fork-tree", performance.now() - t);
+  t = performance.now();
   // The whole family, from the oldest ancestor this viewer may see: who
   // follows whom, and where each stands against the one it follows.
   const lineage = await lineageOf(ctx.app, repo, (r) =>
@@ -151,7 +156,7 @@ export async function forksPage(ctx: Ctx): Promise<Response> {
           title: "No forks yet",
           note: "A fork is a copy under another name that can propose changes back here, and follows this one until it has work of its own.",
         })
-      : html`${forkRanking(ranked)}
+      : html`${forkRanking(ranked, new Map(tree.map((n) => [n.repo.id, n])))}
           <h3 class="mt">The family, by who follows whom</h3>
           ${lineageCard(lineage, repo.id)}`}`;
   const res = page({
@@ -167,9 +172,27 @@ export async function forksPage(ctx: Ctx): Promise<Response> {
  * The forks with work to offer, best first, each linking to the compare
  * view that proposes it upstream; then those with nothing new, counted.
  */
-function forkRanking(ranked: ForkRanking): Html {
+function forkRanking(
+  ranked: ForkRanking,
+  tree: ReadonlyMap<string, ForkNode>,
+): Html {
+  const below = (n: ForkNode): Html =>
+    row({
+      lead: icon("fork"),
+      title: html`<a href="/${n.repo.ownerName}/${n.repo.name}"
+        >${n.repo.ownerName}/${n.repo.name}</a
+      >`,
+      ...(n.deeper === 0
+        ? {}
+        : {
+            meta: html`<a href="/${n.repo.ownerName}/${n.repo.name}/forks"
+              >and ${n.deeper} more fork${n.deeper === 1 ? "" : "s"} below</a
+            >`,
+          }),
+    });
   const line = (f: RankedFork, offer: boolean): Html =>
     row({
+      children: (tree.get(f.fork.id)?.forks ?? []).map(below),
       lead: icon("fork"),
       title: html`<a href="/${f.fork.ownerName}/${f.fork.name}"
         >${f.fork.ownerName}/${f.fork.name}</a

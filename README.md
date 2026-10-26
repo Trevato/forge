@@ -2006,6 +2006,11 @@ rises. Order: commits ahead of the parent's default branch (most first),
 then fewest behind, then the newest tip commit. Each row reads `N ahead · M
 behind` and when the fork last moved; a fork that is ahead has a **Compare**
 button (on the page) to its `/pulls/new`, which proposes it to the parent.
+Each fork's own forks are listed indented beneath it (one more level, on the
+page and in the terminal alike); the forks below those are a count, `and N more
+forks below`, linking on the page to that fork's forks page. A private fork is
+never named or counted to someone who cannot read it.
+
 Forks with nothing ahead (or whose standing git cannot read) follow under
 `N forks with nothing new`. At most 60 forks are ranked per view; past that
 the page says `Ranking the first 60 of N forks`. A fork's standing is cached

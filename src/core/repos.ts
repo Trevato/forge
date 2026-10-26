@@ -626,6 +626,66 @@ export function visibleForks(
   return listForks(db, repoId).filter((fork) => canRead(db, fork, viewer));
 }
 
+/** A fork the viewer may see, the visible forks beneath it, and how many lie one level further. */
+export interface ForkNode {
+  readonly repo: Repo;
+  readonly forks: readonly ForkNode[];
+  /** Visible forks of this one, counted but not listed; only the second level carries it. */
+  readonly deeper: number;
+}
+
+const forksOfMany = (db: Database, ids: readonly string[]): Repo[] =>
+  ids.length === 0
+    ? []
+    : db
+        .query<RepoRow, string[]>(
+          `${SELECT} WHERE repo.fork_parent_id IN (${ids.map(() => "?").join(",")}) ORDER BY repo.id`,
+        )
+        .all(...ids)
+        .map(toRepo);
+
+/** The visible forks of these parents, grouped by parent id: one query. */
+function visibleForksByParent(
+  db: Database,
+  parents: readonly Repo[],
+  viewer: User | undefined,
+): Map<string, Repo[]> {
+  const byParent = new Map<string, Repo[]>();
+  for (const fork of forksOfMany(db, parents.map((p) => p.id))) {
+    if (fork.forkParentId === null || !canRead(db, fork, viewer)) continue;
+    const siblings = byParent.get(fork.forkParentId) ?? [];
+    siblings.push(fork);
+    byParent.set(fork.forkParentId, siblings);
+  }
+  return byParent;
+}
+
+/**
+ * The visible forks of a repository, each with its own visible forks, and
+ * for those a count of the visible forks one level further: three queries
+ * at most, one per level. A fork the viewer cannot read hides itself and
+ * everything under it.
+ */
+export function forkTree(
+  db: Database,
+  repoId: string,
+  viewer: User | undefined,
+): ForkNode[] {
+  const first = visibleForks(db, repoId, viewer);
+  const secondBy = visibleForksByParent(db, first, viewer);
+  const second = [...secondBy.values()].flat();
+  const thirdBy = visibleForksByParent(db, second, viewer);
+  return first.map((repo) => ({
+    repo,
+    deeper: 0,
+    forks: (secondBy.get(repo.id) ?? []).map((child) => ({
+      repo: child,
+      forks: [],
+      deeper: thirdBy.get(child.id)?.length ?? 0,
+    })),
+  }));
+}
+
 export function getRepo(
   db: Database,
   ownerName: string,
