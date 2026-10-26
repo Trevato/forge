@@ -30,6 +30,17 @@ export interface Auth {
   readonly retryAfter?: number;
 }
 
+/**
+ * The account itself is asking — a browser identity (a session cookie, or
+ * the platform edge behind its headers) or the password — never a token.
+ * Account-level acts (minting tokens) take this and nothing less, so the
+ * API and the web forms cannot drift apart on who may mint. Browser
+ * identities still need a same-origin request; callers check that too.
+ */
+export function isAccountItself(auth: Auth): boolean {
+  return auth.via === "session" || auth.via === "edge" || auth.via === "password";
+}
+
 export interface Ctx {
   app: App;
   request: Request;
