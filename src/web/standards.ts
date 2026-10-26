@@ -3,6 +3,9 @@
  * by default so a forge is a good citizen the moment it boots:
  *
  *   /.well-known/security.txt     who to tell about a vulnerability (RFC 9116)
+ *   /.well-known/mcp.json         the MCP server card: endpoint, sign-in, the
+ *                                 tool that needs no token (a draft format:
+ *                                 only fields we keep true)
  *   /.well-known/change-password  where a password manager sends someone
  *   /robots.txt                   what a crawler may index, and the sitemap
  *   /sitemap.xml                  every public repository
@@ -28,6 +31,7 @@ import { llmsRepos, sitemapRepos } from "../core/listings.ts";
 import { canRead, getRepo } from "../core/repos.ts";
 import type { Ctx } from "../http/context.ts";
 import { notFound } from "../http/respond.ts";
+import { mcpCard, mcpPointers } from "../core/mcp_card.ts";
 import { timePhase } from "../core/route_timing.ts";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -84,6 +88,13 @@ export function securityTxt(ctx: Ctx): Response {
       "",
     ].join("\n"),
   );
+}
+
+/** GET /.well-known/mcp.json — the MCP server card (a draft format; see docs/MCP.md). */
+export function mcpJson(ctx: Ctx): Response {
+  const res = text(JSON.stringify(mcpCard(ctx.url.origin), null, 2), "application/json");
+  res.headers.set("access-control-allow-origin", "*");
+  return res;
 }
 
 /** GET /.well-known/change-password — where a password manager sends a person. */
@@ -261,6 +272,7 @@ export function iconPng(ctx: Ctx): Response {
  */
 export function llmsTxt(ctx: Ctx): Response {
   const o = ctx.url.origin;
+  const mcp = mcpPointers(o);
   const repos = timePhase(ctx.request, "repos", () => llmsRepos(ctx.app.db));
   return timePhase(ctx.request, "render", () => text(
     [
@@ -291,7 +303,7 @@ export function llmsTxt(ctx: Ctx): Response {
       "",
       "## For agents with an account",
       "",
-      `- MCP: ${o}/mcp (OAuth discovery: ${o}/.well-known/oauth-protected-resource)`,
+      `- MCP: ${mcp.url} (OAuth discovery: ${mcp.oauth}; server card, a draft format: ${o}/.well-known/mcp.json)`,
       `- API: ${o}/api/v1, Authorization: Bearer <token>`,
       `- OpenAPI: GET ${o}/api/v1/openapi.json (redirects to ${o}/contract/openapi.json)`,
       "",

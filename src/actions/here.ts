@@ -12,6 +12,7 @@
  * An action that needs an account is listed for someone without one,
  * saying so, because that is the next thing they need to know.
  */
+import { mcpPointers } from "../core/mcp_card.ts";
 import type { App } from "../app.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import { isCrew } from "../core/agents.ts";
@@ -89,10 +90,7 @@ export function manifestFor(
   path: string,
 ): Result<Manifest, "not_found"> {
   const common = {
-    mcp: {
-      url: `${origin}/mcp`,
-      oauth: `${origin}/.well-known/oauth-protected-resource`,
-    },
+    mcp: mcpPointers(origin),
     docs: `${origin}/llms.txt`,
   };
   const [owner, name, section, number] = path

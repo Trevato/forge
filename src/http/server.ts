@@ -187,6 +187,7 @@ import {
   releasesJson,
   robotsTxt,
   securityTxt,
+  mcpJson,
   sitemapXml,
   webManifest,
 } from "../web/standards.ts";
@@ -667,6 +668,7 @@ export function buildRouter(): Router<Handler> {
   });
   // What the open web expects of a site, from the forge's own facts.
   router.add("GET", "/.well-known/security.txt", securityTxt);
+  router.add("GET", "/.well-known/mcp.json", mcpJson);
   router.add("GET", "/llms.txt", llmsTxt);
   router.add("GET", "/.well-known/change-password", changePassword);
   router.add("GET", "/robots.txt", robotsTxt);
