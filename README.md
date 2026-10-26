@@ -1736,10 +1736,15 @@ The design check (`test/design-lint.test.ts`, run in the gate) fails a pull that
 adds a colour literal or an off-scale `font-size` beyond
 `docs/design/baseline.json`, or defines a class `docs/DESIGN.md` §5 does not
 name; the message names the file or the class. The way out is to use a token
-(`var(--…)`) or a component §5 names; a new component goes into the §5 table
-first. When a change lowers the counts, run `bun scripts/design-lint.ts
+(`var(--…)`) or a component §5 names; a new component is named in its own
+`docs/design/areas/<area>.md`. When a change lowers the counts, run `bun scripts/design-lint.ts
 --update` and commit the baseline; when it deletes the last rule for a class
 in the §5d register, strike the name there too. See `docs/design/plan.md`.
+
+`docs/DESIGN.md` is a spine: each of its sections is its own file under
+`docs/design/sections/` (§5d is `5d-page-local-classes.md`), linked from the
+spine in order, and the check reads them in that order. A new section is a
+new file and a new line in the spine.
 
 `bun run check` is the gate: the same command `forge.json` declares, so what
 it says here is what the deploy will say. It type-checks once, then runs the
