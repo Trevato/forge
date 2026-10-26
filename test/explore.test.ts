@@ -338,6 +338,18 @@ describe("explore on a forge with nothing public", () => {
       })
     ).text();
 
+  test("the Forges chip is a site admin's: current on kind:forge, sort kept, absent for a guest", async () => {
+    const chip = (q: string) => new RegExp(`<a[^>]*href="/explore\\?q=${q}"[^>]*>\\s*Forges</a\\s*>`);
+    const sorted = await get(`/explore?q=${encodeURIComponent("sort:forks")}`, true);
+    expect(sorted).toContain(`href="/explore?q=${encodeURIComponent("kind:forge sort:forks")}"`);
+    const page = await get(`/explore?q=${encodeURIComponent("kind:forge")}`, true);
+    const tag = page.match(chip("kind%3Aforge"))?.[0] ?? "";
+    expect(tag).toContain("aria-current");
+    const guest = await get(`/explore?q=${encodeURIComponent("kind:forge")}`, false);
+    expect(guest).not.toMatch(/>\s*Forges</);
+    expect(guest).toContain("Nothing");
+  });
+
   test("no query says nothing is public yet and how to make the first app", async () => {
     const out = await get("/explore", false);
     expect(out).toContain("Nothing public yet");

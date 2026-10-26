@@ -129,6 +129,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
     { label: "All", kind: "all" as const },
     { label: "Apps", kind: "app" as const },
     { label: "People", kind: "person" as const },
+    // Forges are a site admin's to see (explore.ts in actions): no chip onto an empty page.
     ...(ctx.auth.user?.isAdmin === true
       ? [{ label: "Forges", kind: "forge" as const }]
       : []),
