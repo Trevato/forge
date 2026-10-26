@@ -80,9 +80,13 @@ export function notFoundPage(ctx: Ctx, opts: { plain?: boolean } = {}): Response
           icon: "search",
           title: "Nothing here",
           note: "The page you asked for does not exist, or is not visible to you.",
-          action: offerSignIn
-            ? btn("Sign in", { href: signInHref(ctx), variant: "primary" })
-            : btn("Go home", { href: "/", variant: "primary" }),
+          action: opts.plain
+            ? btn("Go home", { href: "/", variant: "primary" })
+            : offerSignIn
+              ? html`${btn("Sign in", { href: signInHref(ctx), variant: "primary" })}
+                ${btn("Go home", { href: "/" })} ${btn("Explore", { href: "/explore" })}`
+              : html`${btn("Go home", { href: "/", variant: "primary" })}
+                ${btn("Explore", { href: "/explore" })}`,
         })}`,
     },
     404,
