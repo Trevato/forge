@@ -426,6 +426,52 @@ export function directoryTotal(entries: readonly TreeEntry[]): Html {
 }
 
 /**
+ * Rendered README cards by blob oid. An oid names its bytes for good, so an
+ * entry never goes stale; the cache is bounded by the bytes of source behind
+ * the entries it holds, oldest out first.
+ */
+const README_CACHE_BYTES = 8_000_000;
+const readmeCache = new Map<string, { card: Html; bytes: number }>();
+let readmeCacheBytes = 0;
+
+function remember(key: string, card: Html, bytes: number): void {
+  if (bytes > README_CACHE_BYTES) return;
+  const old = readmeCache.get(key);
+  if (old) {
+    readmeCacheBytes -= old.bytes;
+    readmeCache.delete(key);
+  }
+  readmeCache.set(key, { card, bytes });
+  readmeCacheBytes += bytes;
+  for (const [k, v] of readmeCache) {
+    if (readmeCacheBytes <= README_CACHE_BYTES) break;
+    readmeCache.delete(k);
+    readmeCacheBytes -= v.bytes;
+  }
+}
+
+/**
+ * Whose bytes an entry holds: the repository being read, then the oid and
+ * name. An origin's oid is whatever the remote host sent, so it is never
+ * trusted alone, and one that is not a real object id is not cached at all.
+ */
+function readmeKey(source: RepoSource, entry: TreeEntry): string | null {
+  if (!/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(entry.oid)) return null;
+  const w = source.where;
+  const repo =
+    w.kind === "local"
+      ? `local:${w.repo.id}`
+      : `origin:${w.origin.id}:${w.fullName}`;
+  return `${repo}:${entry.oid}:${entry.name}`;
+}
+
+/** Empties the README cache; for tests. */
+export function clearReadmeCache(): void {
+  readmeCache.clear();
+  readmeCacheBytes = 0;
+}
+
+/**
  * The README under a directory listing, read through whichever source is
  * answering. It is found in the entries we already have rather than by asking
  * for the tree again — `RepoSource.readme` only knows the root, and a README
@@ -442,6 +488,13 @@ export async function readmeFor(
       e.type === "blob" && /^readme(\.md|\.markdown|\.txt)?$/i.test(e.name),
   );
   if (!readme) return html``;
+  const key = readmeKey(source, readme);
+  const cached = key === null ? undefined : readmeCache.get(key);
+  if (key !== null && cached) {
+    readmeCache.delete(key);
+    readmeCache.set(key, cached);
+    return cached.card;
+  }
   const at = prefix === "" ? readme.name : `${prefix}/${readme.name}`;
   const blob = await source.blob(ref, at);
   if (!blob.ok || blob.value.kind !== "text") return html``;
@@ -450,11 +503,13 @@ export async function readmeFor(
   const rendered = /\.(md|markdown)$/i.test(readme.name)
     ? renderMarkdown(text)
     : html`<pre>${text}</pre>`;
-  return card(html`<div class="prose">${rendered}</div>`, {
+  const made = card(html`<div class="prose">${rendered}</div>`, {
     pad: false,
     head: html`${icon("file")}
       <h2>${readme.name}</h2>`,
   });
+  if (key !== null) remember(key, made, blob.value.size + key.length);
+  return made;
 }
 
 /**
