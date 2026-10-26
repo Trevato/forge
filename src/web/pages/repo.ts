@@ -867,7 +867,9 @@ export async function renderCode(
 ): Promise<Html> {
   const base = scope.base;
   const { ref, path } = o;
-  const readme = o.readme ?? (await readmeFor(scope.source, ref, o.entries, path));
+  const readme =
+    o.readme ??
+    (await readmeFor(scope.source, ref, o.entries, path, `${base}/blob/${encodeURIComponent(ref)}`));
   const historyParams = new URLSearchParams({ ref });
   if (path !== "") historyParams.set("path", path);
   const bar =

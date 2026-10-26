@@ -85,3 +85,12 @@ test("the cut falls between blocks, never inside a fence", () => {
   expect((cut.match(/^```/gm) ?? []).length % 2).toBe(0);
   expect(cutAtBlock("short", 64 * 1024)).toBeNull();
 });
+
+test("the files page cuts a 200 KB README too, and links to the whole of it", async () => {
+  const res = await fetch(`${servers.url}/alice/big/tree/main`, { headers: { cookie } });
+  const body = await res.text();
+  expect(res.status).toBe(200);
+  expect(body.length).toBeLessThan(150_000);
+  expect(body).not.toContain("Section 219");
+  expect(body).toMatch(/<a href="\/alice\/big\/blob\/[^"]+\/README\.md">Read the whole README<\/a>/);
+});
