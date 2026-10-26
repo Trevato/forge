@@ -9,6 +9,7 @@ import {
   rankForks,
   type RankedFork,
 } from "../src/actions/forks.ts";
+import { forkRelation } from "../src/core/following.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { getRepo, listForks } from "../src/core/repos.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
@@ -81,11 +82,19 @@ describe("the forks page ranks", () => {
     const bob = must(await forkRepo(app, users["bob"]!, upstream));
     const carol = must(await forkRepo(app, users["carol"]!, upstream));
     const dan = must(await forkRepo(app, users["dan"]!, upstream));
-    must(await forkRepo(app, users["erin"]!, upstream));
+    const erin = must(await forkRepo(app, users["erin"]!, upstream));
     await commit("bob", bob, 1);
     await commit("carol", carol, 2);
     await commit("dan", dan, 3);
     await commit("alice", upstream, 1); // everyone now 1 behind
+    // Erin has nothing of her own, so the fork follows by itself; the page is
+    // read once that has landed, not while it races the render.
+    let synced = false;
+    for (let i = 0; i < 100 && !synced; i++) {
+      synced = (await forkRelation(app, erin, upstream))?.state === "synced";
+      if (!synced) await Bun.sleep(50);
+    }
+    if (!synced) throw new Error("erin's fork never caught up with its parent");
   }, 60_000);
 
   afterAll(async () => {

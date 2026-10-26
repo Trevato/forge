@@ -550,6 +550,45 @@ export function listAllForks(db: Database): Repo[] {
     .map(toRepo);
 }
 
+/** What a repository forks, nearest first, to `maxDepth` generations: one query. */
+export function listAncestors(
+  db: Database,
+  repoId: string,
+  maxDepth: number,
+): Repo[] {
+  return db
+    .query<RepoRow, [string, number]>(
+      `WITH RECURSIVE up(id, d) AS (
+         SELECT fork_parent_id, 1 FROM repo
+           WHERE id = ?1 AND fork_parent_id IS NOT NULL
+         UNION ALL
+         SELECT r.fork_parent_id, up.d + 1 FROM repo r JOIN up ON r.id = up.id
+           WHERE r.fork_parent_id IS NOT NULL AND up.d < ?2)
+       ${SELECT} JOIN up ON up.id = repo.id ORDER BY up.d`,
+    )
+    .all(repoId, maxDepth)
+    .map(toRepo);
+}
+
+/** Every fork below a repository, to `maxDepth` generations: one query, by id. */
+export function listDescendants(
+  db: Database,
+  repoId: string,
+  maxDepth: number,
+): Repo[] {
+  return db
+    .query<RepoRow, [string, number]>(
+      `WITH RECURSIVE down(id, d) AS (
+         SELECT id, 1 FROM repo WHERE fork_parent_id = ?1
+         UNION ALL
+         SELECT r.id, down.d + 1 FROM repo r JOIN down ON r.fork_parent_id = down.id
+           WHERE down.d < ?2)
+       ${SELECT} WHERE repo.id IN (SELECT id FROM down) ORDER BY repo.id`,
+    )
+    .all(repoId, maxDepth)
+    .map(toRepo);
+}
+
 export function listForks(db: Database, repoId: string): Repo[] {
   return db
     .query<

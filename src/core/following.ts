@@ -21,7 +21,13 @@
 import type { Database } from "bun:sqlite";
 import type { EventBus, ForgeEvent } from "./events.ts";
 import { getPull, listOpenPullsFromHead, type Pull } from "./pulls.ts";
-import { getRepoById, listForks, type Repo } from "./repos.ts";
+import {
+  getRepoById,
+  listAncestors,
+  listDescendants,
+  listForks,
+  type Repo,
+} from "./repos.ts";
 import {
   fetchInto,
   merge,
@@ -32,7 +38,7 @@ import {
   type MergeIdentity,
 } from "../git/merge.ts";
 import { runGit } from "../git/env.ts";
-import { readTip } from "../git/tip.ts";
+import { readTipOrAbsent } from "../git/tip.ts";
 import { repoDir } from "../git/repos.ts";
 import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -154,6 +160,7 @@ export async function forkRelation(
   forge: Pick<Following, "db" | "reposRoot">,
   fork: Repo,
   parent?: Repo,
+  tips: TipReads = new Map(),
 ): Promise<ForkRelation | undefined> {
   const p =
     parent ??
@@ -164,8 +171,8 @@ export async function forkRelation(
   const parentDir = repoDir(forge.reposRoot, p.ownerName, p.name);
   const forkDir = repoDir(forge.reposRoot, fork.ownerName, fork.name);
   const [parentTip, forkTip] = await Promise.all([
-    tipOf(parentDir, `refs/heads/${p.defaultBranch}`),
-    tipOf(forkDir, `refs/heads/${fork.defaultBranch}`),
+    tipOf(parentDir, `refs/heads/${p.defaultBranch}`, tips),
+    tipOf(forkDir, `refs/heads/${fork.defaultBranch}`, tips),
   ]);
   const at = (
     state: RelationState,
@@ -201,9 +208,25 @@ export async function forkRelation(
   return at(...standing);
 }
 
+/** Tips already asked for in one read, so a parent is read once for all its forks. */
+export type TipReads = Map<string, Promise<string | undefined>>;
+
 /** The tip from the ref files; git is asked only when they cannot say. */
-async function tipOf(dir: string, ref: string): Promise<string | undefined> {
-  return (await readTip(dir, ref)) ?? (await resolveOid(dir, ref));
+function tipOf(
+  dir: string,
+  ref: string,
+  reads: TipReads,
+): Promise<string | undefined> {
+  const key = `${dir}\0${ref}`;
+  let read = reads.get(key);
+  if (read === undefined) {
+    read = readTipOrAbsent(dir, ref).then((tip) =>
+      // An unborn branch is nothing to spawn git for.
+      tip === null ? undefined : (tip ?? resolveOid(dir, ref)),
+    );
+    reads.set(key, read);
+  }
+  return read;
 }
 
 type Standing = [
@@ -519,15 +542,26 @@ export async function lineageOf(
   repo: Repo,
   mayRead: (r: Repo) => boolean,
 ): Promise<Lineage> {
-  // Up: as far as the viewer may see, and never in circles.
+  // Up: as far as the viewer may see, and never in circles. One read for
+  // the whole chain; the viewer's predicate cuts it afterwards.
   let top = repo;
   const seen = new Set<string>([repo.id]);
-  while (top.forkParentId !== null && seen.size <= LINEAGE_MAX_DEPTH) {
-    const parent = getRepoById(forge.db, top.forkParentId);
-    if (parent === undefined || !mayRead(parent) || seen.has(parent.id)) break;
+  for (const parent of listAncestors(forge.db, repo.id, LINEAGE_MAX_DEPTH)) {
+    if (!mayRead(parent) || seen.has(parent.id)) break;
     seen.add(parent.id);
     top = parent;
   }
+  // Down: one read for every fork below, one generation past the bound so
+  // "more below" can be told, grouped by parent here.
+  const below = new Map<string, Repo[]>();
+  for (const fork of listDescendants(forge.db, top.id, LINEAGE_MAX_DEPTH + 1)) {
+    const parentId = fork.forkParentId;
+    if (parentId === null) continue;
+    const siblings = below.get(parentId);
+    if (siblings === undefined) below.set(parentId, [fork]);
+    else siblings.push(fork);
+  }
+  const forksOf = (id: string): readonly Repo[] => below.get(id) ?? [];
   // Down: breadth first, so a bound cuts the deepest and newest, not a
   // whole branch of the family.
   let size = 1;
@@ -540,31 +574,38 @@ export async function lineageOf(
   }
   const root: Draft = { repo: top, relation: undefined, children: [] };
   let level: Draft[] = [root];
+  const tips: TipReads = new Map();
   for (let depth = 0; depth < LINEAGE_MAX_DEPTH && level.length > 0; depth++) {
     const next: Draft[] = [];
+    const asked: Promise<void>[] = [];
     for (const node of level) {
-      for (const fork of listForks(forge.db, node.repo.id)) {
+      for (const fork of forksOf(node.repo.id)) {
         if (!mayRead(fork)) continue;
         if (size >= LINEAGE_MAX_NODES) {
           truncated = true;
           break;
         }
         size++;
-        const relation =
-          relations < LINEAGE_MAX_RELATIONS
-            ? await forkRelation(forge, fork, node.repo)
-            : undefined;
-        if (relation !== undefined) relations++;
-        const child: Draft = { repo: fork, relation, children: [] };
+        const child: Draft = { repo: fork, relation: undefined, children: [] };
+        // The budget is spent in order; the reads themselves run together.
+        if (relations < LINEAGE_MAX_RELATIONS) {
+          relations++;
+          asked.push(
+            forkRelation(forge, fork, node.repo, tips).then((r) => {
+              child.relation = r;
+            }),
+          );
+        }
         node.children.push(child);
         next.push(child);
       }
     }
+    await Promise.all(asked);
     level = next;
   }
   // "More below" only for forks this viewer could see: a private fork past
   // the bound is not hinted at, any more than one inside it is shown.
-  if (level.some((n) => listForks(forge.db, n.repo.id).some(mayRead)))
+  if (level.some((n) => forksOf(n.repo.id).some(mayRead)))
     truncated = true;
   return { root, size, truncated };
 }

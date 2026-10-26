@@ -20,14 +20,28 @@ export async function readTip(
   dir: string,
   ref: string,
 ): Promise<string | undefined> {
+  const tip = await readTipOrAbsent(dir, ref);
+  return tip === null ? undefined : tip;
+}
+
+/**
+ * Like `readTip`, but `null` says the files agree the branch does not
+ * exist (no loose ref, no line in packed-refs), where `undefined` says they
+ * cannot tell. Only the second is worth spawning git for.
+ */
+export async function readTipOrAbsent(
+  dir: string,
+  ref: string,
+): Promise<string | null | undefined> {
   if (!isSafeRef(ref) || !ref.startsWith("refs/heads/")) return undefined;
   const loose = (await text(join(dir, ref)))?.trim();
   if (loose !== undefined) return isSafeOid(loose) ? loose : undefined;
   const packed = await text(join(dir, "packed-refs"));
-  if (packed === undefined) return undefined;
+  if (packed === undefined) return null;
   for (const line of packed.split("\n")) {
     const [oid, name] = line.split(" ");
-    if (name === ref && oid !== undefined && isSafeOid(oid)) return oid;
+    if (name === ref)
+      return oid !== undefined && isSafeOid(oid) ? oid : undefined;
   }
-  return undefined;
+  return null;
 }
