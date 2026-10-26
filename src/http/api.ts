@@ -353,7 +353,8 @@ import { pillarView } from "../core/pillars.ts";
 import { askToLiveFor } from "../web/ask_to_live.ts";
 import { decisionStats, listDecisions } from "../core/decisions.ts";
 import { forReader } from "../crew/handover.ts";
-import { globalMapJson, mapJson, marksFor } from "../web/pages/map.ts";
+import { globalMapJson } from "../web/pages/global-map.ts";
+import { mapJson, marksFor } from "../web/pages/map.ts";
 import { cachedMap } from "../web/map_snapshot.ts";
 import {
   milestoneData,

@@ -231,7 +231,8 @@ import {
 import { noteModerate } from "../web/studio/notes.ts";
 import { tellPage } from "../web/studio/tell.ts";
 import { tellHerePage } from "../web/studio/tell_here.ts";
-import { globalMapPage, mapPage } from "../web/pages/map.ts";
+import { globalMapPage } from "../web/pages/global-map.ts";
+import { mapPage } from "../web/pages/map.ts";
 import {
   milestonePage,
   milestonesPage,
