@@ -486,6 +486,20 @@ function awake(
   return candidates.filter((c) => all.get(c.repoId)?.archivedAt == null);
 }
 
+/** `0.7.251 is serving: <first title> and N more`, or undefined without a valid version. */
+function releasePost(p: Record<string, unknown>): string | undefined {
+  const version = p["version"];
+  if (typeof version !== "string" || !/^\d{1,6}\.\d{1,6}\.\d{1,6}$/.test(version)) return undefined;
+  const pulls = Array.isArray(p["pulls"]) ? p["pulls"] : [];
+  const titles = pulls.flatMap((x) => {
+    const t = (x as { title?: unknown } | null)?.title;
+    return typeof t === "string" && t.trim() !== "" ? [t.trim()] : [];
+  });
+  if (titles.length === 0) return `${version} is serving`;
+  const more = titles.length - 1;
+  return `${version} is serving: ${clip(titles[0]!, 80)}${more > 0 ? ` and ${more} more` : ""}`;
+}
+
 type Partial = Omit<Candidate, "actor">;
 
 /** The conversations the window's events name, read once for all of them. */
@@ -574,8 +588,18 @@ function fromEvent(
         ...(typeof oid === "string" && /^[0-9a-f]{40}$/.test(oid) ? { look: { env, commitOid: oid } } : {}),
       };
     }
-    case "app.serving":
-      return { ...common, kind: "release", link: base(repo), what: "a new version is serving" };
+    case "app.serving": {
+      const post = releasePost(p);
+      if (post === undefined)
+        return { ...common, kind: "release", link: base(repo), what: "a new version is serving" };
+      const oid = p["commitOid"];
+      return {
+        ...common,
+        kind: "release",
+        link: typeof oid === "string" && /^[0-9a-f]{40}$/.test(oid) ? `${base(repo)}/commit/${oid}` : base(repo),
+        what: post,
+      };
+    }
     // A tell is a post; a comment is a reply under it, in its own words.
     case "issue.opened": {
       if (number === undefined) return undefined;
