@@ -1,7 +1,7 @@
-/** What a client's apps are doing: the work running, else the last change landed this week (#4007). */
+/** What a client's apps are doing: the work running, else what was last finished (#4007, #6091). */
 import { beforeEach, describe, expect, test } from "bun:test";
 import type { Database } from "bun:sqlite";
-import { clientDoings } from "../src/core/client-apps.ts";
+import { clientDoings, clientFinished, doingLine, finishedLine } from "../src/core/client-apps.ts";
 import { migrations } from "../src/core/schema.ts";
 import { openDb } from "../src/kernel/db.ts";
 
@@ -33,41 +33,51 @@ function running(repo: string, issueId: string | null): void {
 describe("clientDoings", () => {
   test("a running run names its issue", () => {
     running("a", issue("a", "Add a contact form"));
-    expect(clientDoings(db, ["a"], NOW).get("a")).toEqual({ kind: "working", title: "Add a contact form" });
+    expect(clientDoings(db, ["a"]).get("a")).toEqual({ title: "Add a contact form" });
   });
 
-  test("a change landed inside the week is reported with when", () => {
-    landed("a", "Fix the footer", "2026-10-15T13:00:00.000Z");
-    expect(clientDoings(db, ["a"], NOW).get("a")).toEqual({ kind: "landed", title: "Fix the footer", at: "2026-10-15T13:00:00.000Z" });
-  });
-
-  test("a change landed more than 7 days ago is ignored", () => {
-    landed("a", "Old", "2026-10-14T11:59:59.000Z");
-    expect(clientDoings(db, ["a"], NOW).size).toBe(0);
-  });
-
-  test("the latest landed change wins", () => {
-    landed("a", "First", "2026-10-16T10:00:00.000Z");
-    landed("a", "Second", "2026-10-18T10:00:00.000Z");
-    expect(clientDoings(db, ["a"], NOW).get("a")).toMatchObject({ title: "Second" });
-  });
-
-  test("working beats landed", () => {
-    landed("a", "Done", "2026-10-20T10:00:00.000Z");
-    running("a", issue("a", "Doing"));
-    expect(clientDoings(db, ["a"], NOW).get("a")).toEqual({ kind: "working", title: "Doing" });
+  test("a change that landed is not work in progress", () => {
+    landed("a", "Fix the footer", "2026-10-20T10:00:00.000Z");
+    expect(clientDoings(db, ["a"]).size).toBe(0);
   });
 
   test("a running run with no issue yields nothing", () => {
     running("a", null);
-    expect(clientDoings(db, ["a"], NOW).size).toBe(0);
+    expect(clientDoings(db, ["a"]).size).toBe(0);
   });
 
   test("a quiet app, an unlisted app and no apps yield nothing; apps are kept apart", () => {
+    running("b", issue("b", "Mine"));
+    running("c", issue("c", "Not asked"));
+    expect([...clientDoings(db, ["a", "b"]).keys()]).toEqual(["b"]);
+    expect(clientDoings(db, []).size).toBe(0);
+  });
+});
+
+describe("clientFinished", () => {
+  test("the newest merged pull wins, however old", () => {
+    landed("a", "First", "2025-01-16T10:00:00.000Z");
+    landed("a", "Second", "2025-02-18T10:00:00.000Z");
+    expect(clientFinished(db, ["a"]).get("a")).toEqual({ title: "Second", at: "2025-02-18T10:00:00.000Z" });
+  });
+
+  test("a quiet app, an unlisted app and no apps yield nothing", () => {
     landed("b", "Mine", "2026-10-20T10:00:00.000Z");
     landed("c", "Not asked", "2026-10-20T10:00:00.000Z");
-    const got = clientDoings(db, ["a", "b"], NOW);
-    expect([...got.keys()]).toEqual(["b"]);
-    expect(clientDoings(db, [], NOW).size).toBe(0);
+    expect([...clientFinished(db, ["a", "b"]).keys()]).toEqual(["b"]);
+    expect(clientFinished(db, []).size).toBe(0);
+  });
+});
+
+describe("the lines", () => {
+  test("finishedLine spells the age out and is empty with nothing finished", () => {
+    const at = new Date(NOW.getTime() - 3 * 86_400_000).toISOString();
+    expect(finishedLine({ title: "Fix the menu", at }, NOW.getTime())).toBe("Finished 3 days ago: Fix the menu");
+    expect(finishedLine(undefined, NOW.getTime())).toBe("");
+  });
+
+  test("doingLine says Working on, or nothing", () => {
+    expect(doingLine({ title: "Add rye" })).toBe("Working on: Add rye");
+    expect(doingLine(undefined)).toBe("");
   });
 });

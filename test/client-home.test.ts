@@ -506,13 +506,48 @@ describe("a client's first screen", () => {
       clean();
     });
 
-    test("a change landed this week reads Last change with its age", async () => {
+    test("a change landed this week reads Finished once, not Last change too", async () => {
       clean();
       seedIssue("i-doing-2", 9002, "pull", "Fix the menu", "closed");
       child.db
         .query("INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, merged_at) VALUES ('i-doing-2', 'main', 'x', ?1, ?1, ?2)")
         .run("0".repeat(40), new Date(Date.now() - 3 * 86_400_000).toISOString());
-      expect(await row()).toContain("Last change: Fix the menu, 3 days ago");
+      const r = await row();
+      expect(r).toContain("Finished");
+      expect(r).toContain("3 days ago");
+      expect(r).toContain("Fix the menu");
+      expect(r).not.toContain("Last change");
+      expect(r).not.toContain("client-app-doing");
+      clean();
+    });
+
+    test("the newest merged pull reads Finished, on that app only, escaped, with its own phase", async () => {
+      clean();
+      const maria = ids().maria;
+      const other = await createRepo(child, maria, { name: "cafe2", owner: "marias" });
+      if (!other.ok) throw new Error(JSON.stringify(other.error));
+      const none = main(await page(owner));
+      expect(none).not.toContain("client-app-finished");
+      seedIssue("i-doing-4", 9004, "pull", "Older <i>fix</i>", "closed");
+      seedIssue("i-doing-5", 9005, "pull", "Add <b>rye</b> bread", "closed");
+      const ins = child.db.query(
+        "INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, merged_at) VALUES (?1, 'main', 'x', ?2, ?2, ?3)",
+      );
+      ins.run("i-doing-4", "0".repeat(40), new Date(Date.now() - 90 * 86_400_000).toISOString());
+      ins.run("i-doing-5", "0".repeat(40), new Date(Date.now() - 40 * 86_400_000).toISOString());
+      const home = main(await page(owner));
+      const line = home.match(/client-app-finished[^>]*>([^]*?)<\/span>/)?.[1] ?? "";
+      expect(line).toContain("Finished");
+      expect(line).toContain("Add &lt;b&gt;rye&lt;/b&gt; bread");
+      expect(line).not.toContain("Older");
+      for (const word of ["pull", "branch", "commit", "merge", "CI", "repository", "repositories"])
+        expect(words(line)).not.toMatch(new RegExp(`\\b${word}`, "i"));
+      expect(home.match(/client-app-finished/g)?.length).toBe(1);
+      const cafe = home.slice(home.indexOf('href="/marias/cafe2"'));
+      expect(cafe.slice(0, cafe.indexOf("</li>"))).not.toContain("Finished");
+      const res = await fetch(url("/"), { headers: { cookie: owner } });
+      expect(res.headers.get("server-timing") ?? "").toMatch(/\bfinished;/);
+      child.db.query("DELETE FROM repo WHERE id = ?1").run(other.value.id);
       clean();
     });
 
@@ -542,6 +577,27 @@ describe("a client's first screen", () => {
       clean();
     });
 
+    test("the terminal's line for the app says what was finished too", async () => {
+      clean();
+      seedIssue("i-doing-6", 9006, "pull", "Fix the menu", "closed");
+      child.db
+        .query("INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, merged_at) VALUES ('i-doing-6', 'main', 'x', ?1, ?1, ?2)")
+        .run("0".repeat(40), new Date(Date.now() - 3 * 86_400_000).toISOString());
+      const terminal = headlessTerminal(160, 30);
+      const { app } = createForgeApp(
+        child,
+        { sshUsername: "maria", remoteAddress: "127.0.0.1", fingerprint: "SHA256:t", user: ids().maria },
+        { terminal, exitHooks: false },
+      );
+      app.start();
+      await settleApp(app);
+      const text = app.screen.toText();
+      expect(text).toContain("Finished 3 days ago: Fix the menu");
+      expect(text).not.toContain("Last change");
+      app.stop();
+      clean();
+    });
+
     test("titles are cut to 80 characters at a word boundary", () => {
       const long = "word ".repeat(30);
       const cut = cutTitle(long);
@@ -549,7 +605,7 @@ describe("a client's first screen", () => {
       expect(cut.endsWith("word…")).toBe(true);
       expect(cutTitle("short title")).toBe("short title");
       expect(cutTitle("x".repeat(200))).toBe(`${"x".repeat(79)}…`);
-      expect(doingLine(undefined, 0)).toBe("");
+      expect(doingLine(undefined)).toBe("");
     });
   });
 });
