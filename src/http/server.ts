@@ -378,10 +378,6 @@ import {
   crewRoleUpdate,
   crewSettingsPage,
   dangerPage,
-  promptSourceAdd,
-  promptSourceDelete,
-  promptSourceRun,
-  promptsSettingsPage,
   repoDelete,
   settingsPage,
   settingsUpdate,
@@ -391,6 +387,12 @@ import {
   mirrorStop,
 } from "../web/pages/settings.ts";
 import { hooksPage, webhookCreate, webhookDelete } from "../web/pages/hooks.ts";
+import {
+  promptSourceAdd,
+  promptSourceDelete,
+  promptSourceRun,
+  promptsSettingsPage,
+} from "../web/pages/prompts.ts";
 import {
   labelCreate,
   labelDelete,
