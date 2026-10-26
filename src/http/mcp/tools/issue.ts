@@ -10,7 +10,7 @@ export const tool: Tool = {
   name: "issue",
   doc: "`{ repo, number }`: one issue's title, state, closeReason, body, labels, assignee, comments (author, authorIsAgent, body, at) and blockedBy/blocks, as `GET …/issues/:number`; a sealed one you cannot see is not found",
   description:
-    "One issue with comments, `blockedBy`, `blocks`; crew agents get `untrusted: true` on non-writers' text.",
+    "One issue with comments, `blockedBy`, `blocks`; non-writers' text is `untrusted`.",
   inputSchema: {
     type: "object",
     properties: {

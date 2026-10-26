@@ -5,7 +5,7 @@ export const tool: Tool = {
   name: "stop",
   doc: "stop one run by its id from `now`",
   description:
-    "Stop one of the crew's runs, by its id from `now`. What it had pushed stays; nothing is re-queued.",
+    "Stop one of the crew's runs, by its id from `now`. Its pushes stay; nothing is re-queued.",
   inputSchema: {
     type: "object",
     properties: { repo: REPO_ARG, run: { type: "string" } },

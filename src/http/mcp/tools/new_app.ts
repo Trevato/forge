@@ -11,7 +11,7 @@ export const tool: Tool = {
   name: "new_app",
   doc: "`{ name, description?, owner?, visibility?, agent?, pick? }`: make an app from a sentence; answers `{ repo, url, issue, agent, run }` (`run` is the first run's state, or `none`) and draws the `ui://forge/app` card: name, production URL, first issue, agent, first run; refused as `POST /api/v1/apps` is (unverified, app_limit, no_such_agent, name_taken)",
   description:
-    "Make an app from a sentence: a repository, production started, and with `description` a first issue.",
+    "Make an app from a sentence: a repository, production, and with `description` a first issue.",
   inputSchema: {
     type: "object",
     properties: {

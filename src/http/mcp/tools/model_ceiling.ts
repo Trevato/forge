@@ -6,7 +6,7 @@ import { good, bad, type Tool, mayBoards } from "../shared.ts";
 export const tool: Tool = {
   name: "model_ceiling",
   description:
-    "Set an account's daily and per-run model spend ceilings in dollars; a run past one does not start.",
+    "Set an account's daily and per-run model spend ceilings in dollars.",
   inputSchema: {
     type: "object",
     properties: {

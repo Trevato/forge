@@ -8,7 +8,7 @@ export const tool: Tool = {
   name: "tell",
   doc: "a sentence becomes an issue, a builder is picked, a run starts on the crew's next tick",
   description:
-    "Tell an app's crew what should change (first line is the title). No `repo`: kept; answers a thought id.",
+    "Tell an app's crew what to change (first line is the title). No `repo`: kept.",
   inputSchema: {
     type: "object",
     properties: {

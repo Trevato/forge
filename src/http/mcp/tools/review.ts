@@ -9,7 +9,7 @@ export const tool: Tool = {
   name: "review",
   doc: "`{ repo, number, verdict, reason? }`: approve a pull (`approve`) or request changes (`changes`, with a `reason`), as the page does; a writer's or the crew's, and never your own pull",
   description:
-    "Approve a pull, or request changes with a `reason` (required for changes); your own pull is refused.",
+    "Approve a pull, or request changes (`reason` required); your own pull is refused.",
   inputSchema: {
     type: "object",
     properties: {

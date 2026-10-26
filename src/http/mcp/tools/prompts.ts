@@ -5,7 +5,7 @@ export const tool: Tool = {
   name: "prompts",
   doc: "`{ repo, action, kind?, token?, at?, id? }`: list, add, run or remove an app's prompt sources (Instagram), as the `…/prompts` API does; the token goes in once and is never shown; listed only for an admin-scope token, and only the repository's admin may use it",
   description:
-    "An app's prompt sources (Instagram): list, add (`kind`, `token`, `at`), run or remove (`id`). Admin token.",
+    "Prompt sources: list, add (`kind`, `token`, `at`), run or remove (`id`). Admin.",
   inputSchema: {
     type: "object",
     properties: {

@@ -5,7 +5,7 @@ export const tool: Tool = {
   name: "claim_link",
   doc: "`{ name }`: a new claim link for a child you spawned that nobody has claimed; the old one stops working. An admin's",
   description:
-    "A new claim link for an unclaimed child forge, only with `reveal: true`; the old one stops at once.",
+    "A new claim link for an unclaimed child forge, only with `reveal: true`; the old one stops.",
   inputSchema: {
     type: "object",
     properties: {

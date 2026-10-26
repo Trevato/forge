@@ -5,7 +5,7 @@ import { good, bad, type Tool } from "../shared.ts";
 export const tool: Tool = {
   name: "scorecard",
   description:
-    "Crew scorecard (forge admin): per agent, all time and 30 days: landed, rounds, red rate, reverts.",
+    "Crew scorecard (forge admin): per agent, all time and 30 days: landed, rounds, red rate.",
   inputSchema: { type: "object", properties: {} },
   writes: false,
   adminOnly: true,

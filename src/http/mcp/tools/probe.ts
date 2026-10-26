@@ -8,7 +8,7 @@ export const tool: Tool = {
   name: "probe",
   doc: "knock on a running app's doors as nobody, a user and an admin; the ones that disobey its contract",
   description:
-    "Try every door of a running app as nobody, a user and an admin against its contract.json; read-only.",
+    "Try every door of a running app as nobody, a user and an admin; read-only.",
   inputSchema: {
     type: "object",
     properties: { repo: REPO_ARG },

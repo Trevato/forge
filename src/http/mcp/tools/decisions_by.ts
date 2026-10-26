@@ -7,7 +7,7 @@ export const tool: Tool = {
   name: "decisions_by",
   doc: "`{ repo, by?, dryRun? }`: the standing rule for a repository's hand-overs (`me`, `decider`, `decider_tell`); with `by`, planned first (`dryRun` is true unless `false`); set only by the app's admin with an admin token, never an agent",
   description:
-    "Who decides a repository's parked hand-over cards: `me`, `decider`, `decider_tell`. No `by` reads it.",
+    "Who decides parked hand-over cards: `me`, `decider`, `decider_tell`. No `by` reads.",
   inputSchema: {
     type: "object",
     properties: {

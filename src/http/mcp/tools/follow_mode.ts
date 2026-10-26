@@ -6,7 +6,7 @@ export const tool: Tool = {
   name: "follow_mode",
   doc: "`{ repo, … }`: choose how a spawned forge follows its parent, `tell-me` or `take-updates`; its `forge` repository's admin only",
   description:
-    "How a spawned forge follows its parent: `tell-me` or `take-updates`. Its `forge` repository's admin.",
+    "How a spawned forge follows its parent: `tell-me` or `take-updates`.",
   inputSchema: {
     type: "object",
     properties: {

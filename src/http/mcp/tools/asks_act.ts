@@ -4,7 +4,7 @@ import { good, bad, type Tool } from "../shared.ts";
 export const tool: Tool = {
   name: "asks_act",
   description:
-    "Decide asks (`items`: ask ids, `issue:<id>`): dismiss, decline, ship (final), close (`reason`), mute, replan",
+    "Decide asks (`items`): dismiss, decline, ship, close (`reason`), mute, replan",
   inputSchema: {
     type: "object",
     properties: {

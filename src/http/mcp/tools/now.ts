@@ -15,7 +15,7 @@ export const tool: Tool = {
   name: "now",
   doc: "what the crew is doing right now: who, on what, since when, at what cost; a planner that declined the direction and waits for you comes first (`run: null`, its words in `says`)",
   description:
-    "What the crew is doing across your apps: who, on what, since when, cost; what waits on your review.",
+    "What the crew is doing across your apps: who, on what, since when, cost; what awaits review.",
   inputSchema: { type: "object", properties: {} },
   writes: false,
   run(ctx, user) {

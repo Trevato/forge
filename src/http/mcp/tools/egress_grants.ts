@@ -7,7 +7,7 @@ export const tool: Tool = {
   name: "egress_grants",
   doc: "`{ repo, op?, destination? }`: the private `host:port` destinations an app's forge.json asks for and which are granted; `op` grant or revoke by a site admin (never an agent), and every op needs an admin-scope token; the same as the settings page and `/api/v1/repos/:owner/:name/egress-grants`",
   description:
-    "An app's private destinations and their grants: list, grant or revoke (site admin). See docs/MCP.md.",
+    "Private destinations and grants: list, grant or revoke (site admin).",
   inputSchema: {
     type: "object",
     properties: {

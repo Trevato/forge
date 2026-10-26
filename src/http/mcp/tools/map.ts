@@ -10,7 +10,7 @@ export const tool: Tool = {
   name: "map",
   doc: "an app's plan: ready now, waiting on what, the critical path, where the crew is, parked twice and why (`app`); draws the `ui://forge/map` card",
   description:
-    "An app's plan: open issues ready or waiting, critical path, edges, where the crew is, `parkedTwice`.",
+    "An app's plan: open issues ready or waiting, critical path, edges, crew, `parkedTwice`.",
   inputSchema: {
     type: "object",
     properties: { app: APP_ARG },

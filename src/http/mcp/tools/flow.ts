@@ -6,7 +6,7 @@ export const tool: Tool = {
   name: "flow",
   doc: "the forge's pipeline (a forge admin's, or an agent the owner granted `telemetry:read`; private repositories cut out): per stage counts, `oldestWaiting`, `capacity`, the bottleneck, the merge `queue` and what each reviewer has `reviewing`",
   description:
-    "Pipeline (forge admin): stage counts, `oldestWaiting`, `capacity`, bottleneck, `queue`, `reviewing`.",
+    "Pipeline (forge admin): stage counts, `oldestWaiting`, `capacity`, `queue`.",
   inputSchema: { type: "object", properties: {} },
   writes: false,
   run(ctx, user) {

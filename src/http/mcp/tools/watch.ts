@@ -6,7 +6,7 @@ export const tool: Tool = {
   name: "watch",
   doc: "`{ app, issue, watch? }`: watch a milestone, or stop with `watch: false`: one item in your feed that follows it, and one push to your phone when it lands",
   description:
-    "Watch a milestone, or stop (`watch: false`): one feed item; your phone is told once when it lands.",
+    "Watch a milestone, or stop (`watch: false`); your phone is told once when it lands.",
   inputSchema: {
     type: "object",
     properties: {
