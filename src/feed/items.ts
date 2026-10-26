@@ -30,6 +30,9 @@ import { getRunErrorLine } from "../core/runs.ts";
 import { getUserById, type User } from "../core/users.ts";
 import { watchedBy } from "../core/watches.ts";
 import { chooseCandidates } from "./choose.ts";
+import { writeStamp } from "../core/write_clock.ts";
+import { Stamped } from "../kernel/stamped.ts";
+import { QUIET_WINDOW_MS, quietRunEventIds } from "./quiet.ts";
 import { hotSays, standingHot } from "../crew/hot_files.ts";
 import { ago } from "./rank.ts";
 import { askLinesFor } from "../web/studio/asks.ts";
@@ -92,6 +95,64 @@ export interface FeedAsk {
 
 export const EVENT_WINDOW = 300;
 const COST_FLOOR_USD = 1;
+
+/** A run that cost enough to be a post of its own is never quiet. */
+const cheap = (e: ForgeEvent): boolean => {
+  const cost = e.payload["costUsd"];
+  return !(typeof cost === "number" && cost >= COST_FLOOR_USD);
+};
+
+/** What one read of the viewer's recent events found: the heard ones and the quiet runs among them. */
+interface Heard {
+  readonly heard: ForgeEvent[];
+  /** Quiet `run.finished` events of the last day, by id. */
+  readonly quiet: Set<string>;
+  readonly finished: ForgeEvent[];
+}
+
+const heardCache = new WeakMap<Database, Stamped<Heard>>();
+
+/**
+ * The viewer's visible recent events and which of the last day's runs among
+ * them were quiet, worked out once and shared by the timeline filter and the
+ * count (both read it under the same write stamp). A quiet run older than the
+ * window stays a post, so none vanishes uncounted.
+ */
+function heardBy(db: Database, viewer: User, now: number): Heard {
+  const work = (): Heard => {
+    const recent = listEventsVisibleTo(db, viewer, { limit: EVENT_WINDOW });
+    const heard = recent.filter(audienceFilter(db, viewer, recent));
+    const since = new Date(now - QUIET_WINDOW_MS).toISOString();
+    const finished = heard.filter(
+      (e) => e.kind === "run.finished" && cheap(e) && e.createdAt >= since,
+    );
+    return { heard, finished, quiet: quietRunEventIds(db, finished) };
+  };
+  const stamp = writeStamp(db);
+  if (stamp === undefined) return work();
+  let cache = heardCache.get(db);
+  if (cache === undefined) {
+    cache = new Stamped<Heard>({ maxEntries: 100, maxAgeMs: 60_000 });
+    heardCache.set(db, cache);
+  }
+  return cache.get(`${viewer.id}|${Math.floor(now / 60_000)}`, stamp, work);
+}
+
+/**
+ * How many quiet runs the viewer was spared in the last day, and where each
+ * was: the repository and the agent, so the viewer's mutes and chips apply.
+ */
+export function quietRunsFor(
+  db: Database,
+  viewer: User,
+  now: number,
+): { repoId: string; actorId: string | null; id: string }[] {
+  const { quiet, finished } = heardBy(db, viewer, now);
+  const repos = getReposByIds(db, finished.map((e) => e.repoId!));
+  return finished
+    .filter((e) => quiet.has(e.id) && repos.get(e.repoId!)?.archivedAt == null)
+    .map((e) => ({ repoId: e.repoId!, actorId: e.actorId, id: e.id }));
+}
 const clip = (s: string, n = 120): string =>
   s.length > n ? `${s.slice(0, n - 1)}…` : s;
 
@@ -245,8 +306,9 @@ export function candidatesFor(
   /** False when the caller shows asks itself (the home pins them): they are not read twice. */
   withAsks = true,
 ): Candidate[] {
-  const recent = listEventsVisibleTo(db, viewer, { limit: EVENT_WINDOW });
-  const events = recent.filter(audienceFilter(db, viewer, recent));
+  // A quiet run is counted at the end of the first page, not posted.
+  const { heard, quiet } = heardBy(db, viewer, now);
+  const events = heard.filter((e) => !quiet.has(e.id));
   const writable = listReposWritableTo(db, viewer, { limit: 200 });
   const asks = withAsks ? askLinesFor(db, viewer, chips) : [];
   const decided = listDecidedIn(

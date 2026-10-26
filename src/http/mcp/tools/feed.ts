@@ -3,7 +3,7 @@ import { good, bad, type Tool, CHIP_ARGS, chipArgs, str } from "../shared.ts";
 
 export const tool: Tool = {
   name: "feed",
-  doc: "`{ limit?, cursor? }`: your home timeline — tells, replies, runs, changes and looks — ranked, with who, what, why and a link; the same items as `GET /api/v1/feed`",
+  doc: "`{ limit?, cursor? }`: your home timeline — tells, replies, runs, changes and looks — ranked, with who, what, why and a link; the same items as `GET /api/v1/feed`; `quietRuns` counts agent runs of the last 24 h that pushed, opened or said nothing, which the timeline leaves out",
   description:
     "Your ranked home timeline across visible apps; `cursor` pages; saved filter (`feed_chips`) applies.",
   inputSchema: {

@@ -15,10 +15,10 @@ import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { placementsOf, type Placement } from "../../core/placements.ts";
 import { recentThoughts, type Thought } from "../../core/thoughts.ts";
-import { parseCursor, readFeed } from "../../feed/feed.ts";
+import { parseCursor, readFeedPage } from "../../feed/feed.ts";
 import type { FeedItem } from "../../feed/rank.ts";
 import { getAppByRepo } from "../../core/apps.ts";
-import { getRepo } from "../../core/repos.ts";
+import { getRepo, getRepoById } from "../../core/repos.ts";
 import { DEFAULT_PAGE, looksForEnv, lookUrl } from "../../core/looks.ts";
 import { mayFetchLook, pictured } from "../pages/looks.ts";
 import { html, type Html } from "../html.ts";
@@ -293,7 +293,7 @@ function readRegion(user: User, ctx: Ctx) {
   // ask is never a second time a post below it; the feed API keeps them.
   // `?cursor=` is a page the line below the last post pointed at; one not issued here is the first page.
   const cursor = parseCursor(ctx.url.searchParams.get("cursor") ?? "");
-  const page = readFeed(ctx.app.db, user, {
+  const page = readFeedPage(ctx.app.db, user, {
     limit: FEED_FIRST_PAGE,
     withoutAsks: true,
     phase: (name, ms) => notePhase(ctx.request, name, ms),
@@ -307,7 +307,10 @@ function readRegion(user: User, ctx: Ctx) {
     ctx.app.db,
     items.map((item) => item.actor ?? ""),
   );
-  return { items, next: page.next_cursor, cursor, thoughts, placed, marks, pictures: picturesFor(ctx, items) };
+  const quiet = page.quiet;
+  const quietRepo = quiet.repoId === null ? undefined : getRepoById(ctx.app.db, quiet.repoId);
+  const quietLink = quietRepo === undefined ? "/explore" : `/${quietRepo.ownerName}/${quietRepo.name}/runs?kind=agent`;
+  return { items, next: page.next_cursor, cursor, thoughts, placed, marks, pictures: picturesFor(ctx, items), quiet: quiet.count, quietLink };
 }
 
 /** The region: cards, or one line saying there is nothing to do. */
@@ -335,7 +338,7 @@ export function caughtUp(items: readonly FeedItem[], next: string | null, cursor
 }
 
 function drawRegion(user: User, ctx: Ctx, read: ReturnType<typeof readRegion>): Html {
-  const { items, next, cursor, thoughts, placed, marks, pictures } = read;
+  const { items, next, cursor, thoughts, placed, marks, pictures, quiet, quietLink } = read;
   return html`<section
     id="live-feed"
     class="feed"
@@ -352,6 +355,9 @@ function drawRegion(user: User, ctx: Ctx, read: ReturnType<typeof readRegion>): 
           note: "When something happens in your apps, it lands here.",
         })
       : items.map((item) => feedCard(item, marks, pictures.get(item.id)))}
+    ${quiet === 0
+      ? ""
+      : html`<p class="small muted"><a href="${quietLink}">${quiet} quiet ${quiet === 1 ? "run" : "runs"} in the last 24 h</a></p>`}
     ${caughtUp(items, next, cursor)}
   </section>`;
 }
