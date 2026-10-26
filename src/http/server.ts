@@ -507,7 +507,9 @@ import {
   json,
   noRoute,
   notFound,
+  pageNotFoundAsJson,
   prefersHtml,
+  prefersJson,
   securityFloor,
   tooManyAttempts,
 } from "./respond.ts";
@@ -2597,5 +2599,16 @@ async function answerGet(
     replayAs === undefined
       ? await invoke(request)
       : await withIdempotency(app, request, url, replayAs, invoke);
+  // A page route's HTML 404 (`/:owner` claims `/nope`) is a refusal an
+  // agent cannot read; one that asked for JSON gets it as JSON.
+  if (
+    response.status === 404 &&
+    !isApiPath &&
+    (request.method === "GET" || request.method === "HEAD") &&
+    (response.headers.get("content-type") ?? "").startsWith("text/html") &&
+    prefersJson(request)
+  ) {
+    return withRateHeaders(pageNotFoundAsJson(url.origin), verdict);
+  }
   return withRateHeaders(response, verdict);
 }

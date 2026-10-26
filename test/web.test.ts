@@ -610,6 +610,27 @@ describe("web pages end to end", () => {
     const apiBody = (await api.json()) as { error: string };
     expect(apiBody.error).toBe("no_route");
   });
+
+  test("a page's 404 is JSON for a caller whose Accept prefers JSON, HTML otherwise", async () => {
+    const agent = await fetch(`${base}/nope`, {
+      headers: { accept: "application/json" },
+    });
+    expect(agent.status).toBe(404);
+    expect(agent.headers.get("content-type")).toContain("application/json");
+    expect(agent.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(agent.headers.get("referrer-policy")).toBeTruthy();
+    expect(agent.headers.get("content-security-policy")).toBeTruthy();
+    const body = (await agent.json()) as { error: string; message: string; docs: string };
+    expect(body.error).toBe("not_found");
+    expect(body.message.length).toBeGreaterThan(0);
+    expect(body.docs).toBe(`${base}/llms.txt`);
+
+    for (const accept of ["text/html,application/xhtml+xml,*/*;q=0.8", "*/*", undefined]) {
+      const other = await fetch(`${base}/nope`, accept ? { headers: { accept } } : {});
+      expect(other.status).toBe(404);
+      expect(other.headers.get("content-type")).toContain("text/html");
+    }
+  });
 });
 
 describe("themes", () => {

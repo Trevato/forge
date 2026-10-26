@@ -114,6 +114,29 @@ export function prefersHtml(request: Request, pathname: string): boolean {
 }
 
 /**
+ * Whether a request, judged by `Accept` alone, names JSON and ranks it above
+ * HTML. A tie — curl's curl's wildcard — is not a preference, and never the user agent.
+ */
+export function prefersJson(request: Request): boolean {
+  const accept = request.headers.get("accept");
+  if (!accept) return false;
+  return (
+    acceptQuality(accept, "application/json") > acceptQuality(accept, "text/html")
+  );
+}
+
+/** A page's 404 for a caller that asked for JSON: a refusal it can read. */
+export const pageNotFoundAsJson = (origin: string) =>
+  json(
+    {
+      error: "not_found",
+      message: "no page here, or it is not visible to you",
+      docs: `${origin}/llms.txt`,
+    },
+    404,
+  );
+
+/**
  * The policy for a body that is not a document: nothing loads, nothing
  * frames it, no base tag redirects a relative URL inside it. JSON carrying
  * repository names and comment text a person typed is the case that wants
