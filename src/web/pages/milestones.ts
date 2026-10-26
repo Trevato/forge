@@ -13,6 +13,7 @@
 import {
   limbJson,
   milestoneJson,
+  planStamp,
   readPlan,
   type LeafState,
   type Limb,
@@ -38,7 +39,6 @@ import { replanResult } from "../../actions/limb_replan.ts";
 import { given, pendingFor } from "../../core/limb_replan.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
-import { writeStamp } from "../../core/write_clock.ts";
 import { cachedPlan } from "../map_cache.ts";
 import { askToLiveFor } from "../ask_to_live.ts";
 import {
@@ -197,23 +197,25 @@ function limbLine(base: string, limb: Limb, move: Html | null = null): Html {
   });
 }
 
+/** The repository's plan, kept while nothing it reads changes. */
+const planFor = (ctx: Ctx, repo: Repo, spend: boolean): Plan =>
+  cachedPlan(
+    {
+      repoId: repo.id,
+      stamp: planStamp(ctx.app.db, repo),
+      spend,
+      now: new Date(),
+    },
+    () => readPlan(ctx.app.db, repo, { spend }),
+  );
+
 /** GET /:owner/:name/milestones — the plan, collapsed to its limbs. */
 export function milestonesPage(ctx: Ctx): Response {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const repo = timePhase(ctx.request, "repo", () => loadRepo(ctx));
   if (!repo) return notFoundPage(ctx);
   const spend = canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user);
-  const plan = timePhase(ctx.request, "plan", () =>
-    cachedPlan(
-      {
-        repoId: repo.id,
-        stamp: writeStamp(ctx.app.db),
-        spend,
-        now: new Date(),
-      },
-      () => readPlan(ctx.app.db, repo, { spend }),
-    ),
-  );
+  const plan = timePhase(ctx.request, "plan", () => planFor(ctx, repo, spend));
   const base = repoBase(repo);
   const move = timePhase(ctx.request, "seats", () =>
     moverFor(ctx.app.db, repo, ctx.auth.user, plan.read),
@@ -530,15 +532,17 @@ function milestoneBody(
 
 /** GET /:owner/:name/milestones/:number — one milestone, opened. */
 export function milestonePage(ctx: Ctx): Response {
-  const repo = loadRepo(ctx);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const repo = timePhase(ctx.request, "repo", () => loadRepo(ctx));
   if (!repo) return notFoundPage(ctx);
   const number = Number(ctx.params.number);
   const owner = canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user);
   const plan = Number.isInteger(number)
-    ? readPlan(ctx.app.db, repo, { spend: owner })
+    ? timePhase(ctx.request, "plan", () => planFor(ctx, repo, owner))
     : undefined;
   const milestone = plan?.milestone(number);
   if (plan === undefined || milestone === undefined) return notFoundPage(ctx);
+  const rendering = performance.now();
   const viewer = ctx.auth.user;
   // Watch is each person's own; acting on the whole limb is for whoever
   // administers the repository. One row, Watch first.
@@ -567,7 +571,7 @@ export function milestonePage(ctx: Ctx): Response {
     : watch === null && replan === null
       ? null
       : html`<p class="bar mt">${watch}${replan}</p>`;
-  return page({
+  const response = page({
     ctx,
     title: `${milestone.name} · ${repo.name}`,
     crumbs: crumbsFor(repo),
@@ -578,6 +582,8 @@ export function milestonePage(ctx: Ctx): Response {
     ${liveMount({ repo: repoBase(repo) })}`,
     scriptJs: liveClientJs,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 /** POST /:owner/:name/milestones/:number/watch — watch, or stop, and back to it. */

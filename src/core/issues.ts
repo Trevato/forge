@@ -165,6 +165,19 @@ export function getIssuesByIds(
   return out;
 }
 
+/**
+ * Every conversation of one repository in one read, by id: cheaper than
+ * `getIssuesByIds` once most of a repository is wanted.
+ */
+export function getIssuesOfRepo(db: Database, repoId: string): Map<string, Issue> {
+  const out = new Map<string, Issue>();
+  for (const row of db
+    .query<IssueRow, [string]>(`${SELECT} WHERE issue.repo_id = ?1`)
+    .all(repoId))
+    out.set(row.id, toIssue(row));
+  return out;
+}
+
 /** The key `getIssuesByNumbers` files a conversation under. */
 export const numberKey = (repoId: string, number: number): string =>
   `${repoId}#${number}`;

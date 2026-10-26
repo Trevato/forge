@@ -174,6 +174,26 @@ const counted = (issue: Issue): boolean =>
   issue.closeReason === null;
 
 /**
+ * What `readPlan` reads of one repository, as a string that moves when any
+ * of it does: its issues and pulls, their dependencies, the runs on it (a
+ * start, a finish, a cost) and where limbs are placed. Equal strings mean
+ * the same plan. Another repository's writes do not move it. Undefined
+ * inside a transaction: nothing is kept that a rollback could outlive.
+ */
+export function planStamp(db: Database, repo: Repo): string | undefined {
+  if (db.inTransaction) return undefined;
+  const one = (sql: string): string =>
+    JSON.stringify(Object.values(db.query<Record<string, unknown>, [string]>(sql).get(repo.id) ?? {}));
+  return [
+    one(`SELECT COUNT(*), SUM(state = 'open'), MAX(updated_at), MAX(closed_at), SUM(length(title)), SUM(sealed), SUM(parked), COUNT(close_reason), COUNT(assignee_id) FROM issue WHERE repo_id = ?1`),
+    one(`SELECT COUNT(*), MAX(d.created_at), SUM(d.confirmed) FROM issue_dependency d JOIN issue i ON i.id = d.issue_id WHERE i.repo_id = ?1`),
+    one(`SELECT COUNT(*), MAX(p.merged_at) FROM pull p JOIN issue i ON i.id = p.issue_id WHERE i.repo_id = ?1`),
+    one(`SELECT COUNT(*), SUM(state IN ('queued','running')), SUM(cost_usd), MAX(started_at), MAX(finished_at) FROM run WHERE repo_id = ?1 AND kind = 'agent'`),
+    one(`SELECT COUNT(*), SUM(place), SUM(rowid) FROM limb_place WHERE repo_id = ?1`),
+  ].join("|");
+}
+
+/**
  * Read one repository's plan as milestones. `spend` adds what each limb
  * cost, for a viewer who may see owner facts — the caller decides.
  */
@@ -184,8 +204,8 @@ export function readPlan(
 ): Plan {
   const now = options.now ?? new Date();
   const since = pillarWindowStart(now);
-  const graph: Graph = repoGraph(db, repo.id);
   const set: Pillars = pillarsOf(db, repo);
+  const graph: Graph = repoGraph(db, repo.id, { pillars: set });
   const byId = new Map(graph.issues.map((i) => [i.id, i]));
   const byNumber = new Map(graph.issues.map((i) => [i.number, i]));
 
