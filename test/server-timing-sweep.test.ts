@@ -21,8 +21,6 @@ quietLogs();
 /** Pages without named phases yet → the issue that will name them. */
 const UNNAMED: Array<[path: string, issue: string]> = [
   ["/-/confirm", "#3390"],
-  ["/alice/forge/changes", "#3323"],
-  ["/alice/forge/tells", "#3322"],
   ["/signin/parent", "#3390"],
   ["/signin/parent/callback", "#3390"],
 ];
@@ -35,6 +33,22 @@ const NOT_PAGES = new Set([
   "/fleet/graph/live",
   "/settings/backups/live",
   "/:owner/:name/stream",
+]);
+
+/** Routes that answer 3xx for the sweep's signed-in user: not pages, no phases. A page may not join by redirecting. */
+const REDIRECTS = new Set([
+  "/.well-known/change-password",
+  "/alice/forge/changes",
+  "/alice/forge/files",
+  "/alice/forge/following",
+  "/alice/forge/settings/autonomy",
+  "/alice/forge/settings/crew",
+  "/alice/forge/tells",
+  "/alice/forge/tells/new",
+  "/big",
+  "/flow",
+  "/settings/origins/callback",
+  "/settings/resilience",
 ]);
 
 /** Every GET pattern the router source registers, one-line or wrapped. */
@@ -95,6 +109,7 @@ test("every GET page names session and render in Server-Timing, bar the listed d
 
   const named: string[] = [];
   const bare: string[] = [];
+  const redirected: string[] = [];
   // A few at a time with a generous abort: the verdict is about headers, not
   // about how fast a loaded check machine answers every page at once.
   const queue = [...paths];
@@ -106,6 +121,10 @@ test("every GET page names session and render in Server-Timing, bar the listed d
         signal: AbortSignal.timeout(60_000),
       });
       await res.arrayBuffer();
+      if (res.status >= 300 && res.status < 400) {
+        redirected.push(path);
+        continue;
+      }
       if (!(res.headers.get("content-type") ?? "").startsWith("text/html")) continue;
       const names = (res.headers.get("server-timing") ?? "").split(",").map((p) => p.trim().split(";")[0]);
       expect(names).toContain("app");
@@ -113,6 +132,10 @@ test("every GET page names session and render in Server-Timing, bar the listed d
     }
   };
   await Promise.all(Array.from({ length: 4 }, worker));
+
+  const started = redirected.filter((p) => !REDIRECTS.has(p)).sort();
+  const stopped = [...REDIRECTS].filter((p) => !redirected.includes(p)).sort();
+  expect({ startedRedirecting: started, stoppedRedirecting: stopped }).toEqual({ startedRedirecting: [], stoppedRedirecting: [] });
 
   const debt = new Set(UNNAMED.map(([p]) => p));
   expect(bare.filter((p) => !debt.has(p)).sort()).toEqual([]);
