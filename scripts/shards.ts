@@ -363,6 +363,8 @@ export interface ShardResult {
   readonly files: readonly string[];
   readonly code: number;
   readonly output: string;
+  /** How long the shard ran, when the runner timed it. */
+  readonly seconds?: number;
 }
 
 /** What the log ends with, and the exit code of the whole run. */
@@ -373,6 +375,20 @@ export interface Tally {
 
 const RAN = /^Ran (\d+) tests? across (\d+) files?\./m;
 const FAIL = /^\(fail\) .*$/gm;
+const FILE_STARTED = /^(\S+\.test\.[cm]?[jt]sx?):$/gm;
+
+/** The last test file a shard's output says it started, if any. */
+export function lastStarted(output: string): string | undefined {
+  return [...output.matchAll(FILE_STARTED)].at(-1)?.[1];
+}
+
+/** The line for a red shard that named no test: where it was and how long it ran, when known. */
+function unnamedLine(n: number, result: ShardResult): string {
+  const running = lastStarted(result.output);
+  if (running !== undefined && result.seconds !== undefined)
+    return `shard ${n} killed after ${Math.round(result.seconds)} s, running ${running}`;
+  return `shard ${n} exited ${result.code} without naming a test: ${result.files.join(" ")}`;
+}
 
 /**
  * Reads every shard's `bun test` output into one ending. Green: one line,
@@ -394,9 +410,7 @@ export function tally(results: readonly ShardResult[], seconds: number): Tally {
     const named = nameUnnamed(result.output.split("\n")).join("\n").match(FAIL) ?? [];
     for (const line of new Set(named)) failing.push(`${line} [shard ${i + 1}]`);
     if (result.code !== 0 && named.length === 0)
-      unnamed.push(
-        `shard ${i + 1} exited ${result.code} without naming a test: ${result.files.join(" ")}`,
-      );
+      unnamed.push(unnamedLine(i + 1, result));
   });
   const took = `${seconds.toFixed(1)}s`;
   const shards = `${results.length} shard${results.length === 1 ? "" : "s"}`;

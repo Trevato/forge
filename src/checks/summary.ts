@@ -20,7 +20,8 @@ import { webvitals, type Entries } from "../release/webvitals.ts";
 export const GATE_SUMMARY_HEADING = "── gate summary";
 
 /** The sharded gate's line for a red shard that named no test (`tally` in scripts/shards.ts). */
-const UNNAMED_SHARD = /^shard [0-9]+ exited -?[0-9]+ without naming a test: /;
+const UNNAMED_SHARD =
+  /^shard [0-9]+ (?:exited -?[0-9]+ without naming a test: |killed after [0-9]+ s, running )/;
 
 /** A summary is one line on a card; a name from a subprocess is bounded to fit it. */
 const SUMMARY_MAX = 200;

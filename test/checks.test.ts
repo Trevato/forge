@@ -323,6 +323,15 @@ describe("summariseCheckFailure: a red gate is summarised by its red test, never
     );
   });
 
+  test("a killed shard's line is the summary, and the old line is still recognised", () => {
+    expect(
+      summariseCheckFailure(["shard 258 killed after 412 s, running test/x.test.ts"], "check exited with code 1").summary,
+    ).toBe("shard 258 killed after 412 s, running test/x.test.ts");
+    expect(
+      summariseCheckFailure(["shard 258 exited 143 without naming a test: a b"], "check exited with code 1").summary,
+    ).toBe("shard 258 exited 143 without naming a test: a b");
+  });
+
   test("without names or a tally, the last line before the gate summary block, never a line of it", () => {
     const lines = ["test-shards: something went wrong", "", ...block([{ file: "test/crew.test.ts", seconds: 52.5 }])];
     expect(summariseCheckFailure(lines, "check exited with code 1").summary).toBe(

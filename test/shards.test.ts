@@ -446,6 +446,19 @@ describe("tally", () => {
   });
 });
 
+describe("tally, a shard killed mid-file", () => {
+  test("names the last file it started and how long it ran", () => {
+    const output = "test/a.test.ts:\n(pass) x [1ms]\n\ntest/x.test.ts:\n(pass) y [1ms]\n";
+    const ending = tally([{ files: ["test/a.test.ts", "test/x.test.ts"], code: 143, output, seconds: 411.6 }], 412);
+    expect(ending.lines).toContain("shard 1 killed after 412 s, running test/x.test.ts");
+  });
+
+  test("without a started file or a timing, the old line stands", () => {
+    const ending = tally([{ files: ["b"], code: 143, output: "", seconds: 5 }], 5);
+    expect(ending.lines).toContain("shard 1 exited 143 without naming a test: b");
+  });
+});
+
 describe("splitArgs", () => {
   test("after --, a bare name is a file under test/", () => {
     expect(
