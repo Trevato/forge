@@ -181,6 +181,8 @@ interface Waiting {
 /** A pull the line handed back red, while its head is the same (#4235). */
 interface Remembered {
   readonly head: string;
+  /** The base tip it went red on: a moved base is a new try (#6493). */
+  readonly base: string;
   /** The pulls its red tree held besides it: a clash when there are any. */
   readonly together: readonly number[];
 }
@@ -331,19 +333,28 @@ function lineOf(repoId: string): Line {
  * pull landed. A pull already in the line is answered `false` at once: the
  * entry already there carries it.
  */
-export function enqueue(
+export async function enqueue(
   repoId: string,
   entries: readonly Queued[],
   gate: GateCandidate,
   options: QueueOptions = {},
 ): Promise<boolean[]> {
   const line = lineOf(repoId);
+  // A red mark names the base it went red on; the tip is read only when a
+  // mark is there to compare it with.
+  const tips = new Map<string, string | undefined>();
+  for (const { pull, dir } of entries) {
+    if (!line.reds.has(pull.id) || tips.has(pull.baseBranch + "\0" + dir)) continue;
+    tips.set(pull.baseBranch + "\0" + dir, await resolveOid(dir, `refs/heads/${pull.baseBranch}`));
+  }
   const answers = entries.map((entry) => {
     if (line.holds.has(entry.pull.id)) return Promise.resolve(false);
     line.holds.add(entry.pull.id);
     const red = line.reds.get(entry.pull.id);
-    if (red !== undefined && red.head !== entry.pull.headOid) line.reds.delete(entry.pull.id);
-    const recheck = red !== undefined && red.head === entry.pull.headOid;
+    const tip = tips.get(entry.pull.baseBranch + "\0" + entry.dir);
+    const held = red !== undefined && red.head === entry.pull.headOid && (tip === undefined || red.base === tip);
+    if (red !== undefined && !held) line.reds.delete(entry.pull.id);
+    const recheck = held;
     if (line.suspects.get(entry.pull.id)?.head !== entry.pull.headOid) line.suspects.delete(entry.pull.id);
     return new Promise<boolean>((resolve) =>
       line.waiting.push({
@@ -636,7 +647,7 @@ async function solo(line: Line, gated: Gated, w: Waiting): Promise<{ readonly do
         return;
       }
       line.suspects.delete(pull.id);
-      line.reds.set(pull.id, { head: pull.headOid, together: [] });
+      line.reds.set(pull.id, { head: pull.headOid, base: on.baseOid, together: [] });
       log.info("red alone", { repo: line.repoId, pull: pull.number });
       w.entry.handBack(verdict, on.baseOid, []);
       w.settle(false);
@@ -881,7 +892,7 @@ async function judged(
     // with them, or red on its own — not gated alone on the base before
     // them to tell which. Remembered with them either way (#4235).
     const together = landed.map((q) => q.pull.number);
-    search.line.reds.set(culprit.pull.id, { head: culprit.pull.headOid, together });
+    search.line.reds.set(culprit.pull.id, { head: culprit.pull.headOid, base: candidate.baseOid, together });
     search.line.suspects.delete(culprit.pull.id);
     log.info(together.length === 0 ? "red on its own merge" : "red on top of its candidate", {
       repo: search.line.repoId,

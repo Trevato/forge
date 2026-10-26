@@ -576,7 +576,7 @@ describe("the merge queue", () => {
     expect(gatesOf(repo)).toHaveLength(before);
   });
 
-  test("a red pull stays out of the queue when main moves, and the re-gate checks it alone after the fresh pulls (#4235)", async () => {
+  test("a red pull stays out of the queue when main moves, and the re-gate gates it fresh with the pulls then waiting (#4235, #6493)", async () => {
     const repo = await autonomousRepo("red-stays-out");
     const a = await greenPull(repo, "a.ts");
     const red = await greenPull(repo, "red-x.ts");
@@ -596,19 +596,18 @@ describe("the merge queue", () => {
     before = gatesOf(repo).length;
     expect(await sweepGreen(app, repo)).toBe(1);
     expect(merged(repo, c)).toBe(true);
-    const [fresh, recheck] = gatesOf(repo).slice(before);
-    expect(fresh?.ok).toBe(true);
-    expect(git(repo, "ls-tree", "--name-only", fresh!.commit)).not.toContain("red-x.ts");
-    expect(recheck?.ok).toBe(false);
-    // Gated on main once c had landed: c is under it, and nothing else rode with it.
-    expect(git(repo, "ls-tree", "--name-only", recheck!.commit).split("\n").sort()).toEqual(
-      ["README.md", "a.ts", "b.ts", "c.ts", "forge.json", "red-x.ts"],
-    );
-    // /boards: one red candidate of three in the hour; the re-check is none.
+    // Main moved since it went red: it gates again as a fresh entry (#6493),
+    // in the candidate with c, not behind c as a re-check.
+    const [batch, ...rest] = gatesOf(repo).slice(before);
+    expect(batch?.ok).toBe(false);
+    expect(git(repo, "ls-tree", "--name-only", batch!.commit)).toContain("c.ts");
+    expect(git(repo, "ls-tree", "--name-only", batch!.commit)).toContain("red-x.ts");
+    expect(rest.at(-1)?.ok).toBe(true);
+    // /boards: two red candidates of four in the hour.
     const page = await (await fetch(`${servers.url}/boards`, { headers: { cookie: await login() } })).text();
-    expect(page).toMatch(/data-queue="alice\/red-stays-out">[\s\S]*?data-red-batches>1 of 3</);
+    expect(page).toMatch(/data-queue="alice\/red-stays-out">[\s\S]*?data-red-batches>2 of 4</);
     // The terminal's Flow dialog says the same, on a line of its own under the table.
-    expect(flowLines(app.db).join(" ").replace(/\s+/g, " ")).toMatch(/Red batches, last hour: [^.]*alice\/red-stays-out 1 of 3/);
+    expect(flowLines(app.db).join(" ").replace(/\s+/g, " ")).toMatch(/Red batches, last hour: [^.]*alice\/red-stays-out 2 of 4/);
     // The MCP rows keep their shape: the rate is the page's and the terminal's.
     expect(Object.keys((await mcpQueue()).find((q) => (q as { repo: string }).repo === "alice/red-stays-out") as object)).not.toContain("batches");
   });
