@@ -9,7 +9,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { ancestorsOf } from "../../git/merge.ts";
+import { ancestries } from "./ancestry.ts";
 import {
   NO_TESTS_TAIL,
   TESTS_PASSED_TAIL,
@@ -212,7 +212,7 @@ async function caughtUp(
   const key = `${ctx.dir}\0${production.commitOid}`;
   let ancestry = ctx.history.get(key);
   if (ancestry === undefined) {
-    ancestry = ancestorsOf(ctx.dir, production.commitOid);
+    ancestry = ancestries.of(ctx.dir, production.commitOid);
     ctx.history.set(key, ancestry);
   }
   return (await ancestry)?.has(commitOid) ?? false;
