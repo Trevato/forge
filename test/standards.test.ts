@@ -52,7 +52,9 @@ describe("what the open web expects", () => {
       visibility: "private",
     });
     if (!priv.ok) throw new Error(String(priv.error));
-  });
+    // Password hashing and two repo creations are the setup's cost: a loaded
+    // check machine gets the same generous bound as the tests (#6025).
+  }, 60_000);
 
   afterAll(async () => {
     servers.stop();
