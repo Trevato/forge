@@ -7,7 +7,7 @@
  * `--rollback`, then this process drains.
  */
 
-import { getRepoById } from "../../core/repos.ts";
+import { getReposByIds, type Repo } from "../../core/repos.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { running } from "../../kernel/version.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -29,9 +29,9 @@ export function liveLine(ctx: Ctx): Html | undefined {
   </p>`;
 }
 
-function pullCell(ctx: Ctx, r: Release): Html {
+function pullCell(repos: ReadonlyMap<string, Repo>, r: Release): Html {
   if (r.pullNumber === null) return html`—`;
-  const repo = getRepoById(ctx.app.db, r.repoId);
+  const repo = repos.get(r.repoId);
   return repo === undefined
     ? html`#${r.pullNumber}`
     : html`<a href="/${repo.ownerName}/${repo.name}/pulls/${r.pullNumber}">#${r.pullNumber}</a>`;
@@ -45,6 +45,9 @@ export async function releasesPage(ctx: Ctx): Promise<Response> {
   const reading = performance.now();
   const releases = listReleases(ctx.app.db);
   notePhase(ctx.request, "releases", performance.now() - reading);
+  const looking = performance.now();
+  const repos = getReposByIds(ctx.app.db, releases.flatMap((r) => (r.pullNumber === null ? [] : [r.repoId])));
+  notePhase(ctx.request, "repos", performance.now() - looking);
   const live = running().commit;
   const writer = mayRollBack(ctx.app, user);
   const checking = performance.now();
@@ -60,7 +63,7 @@ export async function releasesPage(ctx: Ctx): Promise<Response> {
     rows.push(html`<tr>
       <td>${sha(r.sha)} ${when(isLive, () => badge("live", { tone: "success" }))}
         ${when(!r.ok, () => badge("preflight failed", { tone: "danger" }))}</td>
-      <td>${pullCell(ctx, r)}</td>
+      <td>${pullCell(repos, r)}</td>
       <td>${time(r.createdAt)}</td>
       <td>${isLive ? html`since ${time(BOOTED)}` : html`—`}</td>
       <td>${when(button, () =>
