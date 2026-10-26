@@ -125,7 +125,7 @@ test("a pull's Files page names session, diff, checks, reviews and render, in th
   expect(html).not.toContain("<b>1</b>");
   const parts = (res.headers.get("server-timing") ?? "").split(", ");
   const names = parts.map((p) => p.split(";")[0]!);
-  expect(names.slice(names.indexOf("app") + 1)).toEqual(["session", "diff", "git", "checks", "reviews", "render"]);
+  expect(names.slice(names.indexOf("app") + 1)).toEqual(["session", "diff", "diff-git", "diff-parse", "diff-highlight", "git", "checks", "reviews", "render"]);
 });
 
 /** The `app` duration of one Files-page view, in ms. */

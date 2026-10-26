@@ -66,6 +66,7 @@ import {
   signInFirst,
 } from "../chrome.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
+import type { DiffLaps } from "../../git/diff.ts";
 import { diffCacheCounts, diffKey, keptDiff, keptRender } from "../diff-cache.ts";
 import { keptRead } from "../head-reads.ts";
 import { diffSyntax } from "../diff-syntax.ts";
@@ -832,11 +833,16 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
   );
   // The diff and its highlighting depend on two oids and nothing else, so
   // the next reader of this head gets them from memory (`diff-cache.ts`).
+  // On a miss the stretches say where the time went; a hit has none.
+  const stretches: DiffLaps & { highlight?: number } = {};
   const cacheBefore = diffCacheCounts();
   const { diff, syntax, failed } = await lap("diff", () =>
     keptDiff(diffKey(status.baseOid, status.headOid), async () => {
-      const { from, diff, failed } = await diffBetween(dir, status.baseOid, status.headOid);
-      return { from, diff, failed, syntax: await diffSyntax(dir, diff, from, status.headOid) };
+      const { from, diff, failed } = await diffBetween(dir, status.baseOid, status.headOid, stretches);
+      const highlighting = performance.now();
+      const syntax = await diffSyntax(dir, diff, from, status.headOid);
+      stretches.highlight = performance.now() - highlighting;
+      return { from, diff, failed, syntax };
     }),
   );
   const cacheAfter = diffCacheCounts();
@@ -993,6 +999,7 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
   });
   const { diff: diffMs, git, checks, reviews } = spent;
   notePhase(ctx.request, "diff", diffMs, diffHit);
+  for (const [name, ms] of Object.entries(stretches)) notePhase(ctx.request, `diff-${name}`, ms);
   notePhase(ctx.request, "git", git);
   notePhase(ctx.request, "checks", checks);
   notePhase(ctx.request, "reviews", reviews);

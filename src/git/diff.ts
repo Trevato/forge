@@ -73,10 +73,11 @@ export async function diffRange(
   dir: string,
   base: string,
   head: string,
+  laps?: DiffLaps,
 ): Promise<Result<Diff, GitFailure | "unsafe_rev">> {
   if (!safeRange(base, head)) return err("unsafe_rev");
   // `git diff A B` compares two tree-ish and needs no work tree.
-  return runDiff(dir, ["diff", ...DIFF_FLAGS, base, head, "--"]);
+  return runDiff(dir, ["diff", ...DIFF_FLAGS, base, head, "--"], laps);
 }
 
 /** Diff a commit against its first parent (or the empty tree for a root). */
@@ -101,13 +102,25 @@ export async function diffCommit(
   ]);
 }
 
+/** Where a diff's time went, in ms: git's own run and our parse of its text. */
+export interface DiffLaps {
+  git?: number;
+  parse?: number;
+}
+
 async function runDiff(
   dir: string,
   args: readonly string[],
+  laps?: DiffLaps,
 ): Promise<Result<Diff, GitFailure>> {
+  const started = performance.now();
   const raw = await runGitRaw(args, { cwd: dir, timeoutMs: 60_000 });
+  const parsing = performance.now();
+  if (laps) laps.git = (laps.git ?? 0) + parsing - started;
   if (!raw.ok) return raw;
-  return ok(parseUnifiedDiff(new TextDecoder().decode(raw.value)));
+  const diff = parseUnifiedDiff(new TextDecoder().decode(raw.value));
+  if (laps) laps.parse = (laps.parse ?? 0) + performance.now() - parsing;
+  return ok(diff);
 }
 
 // ---- the parser ----

@@ -10,7 +10,7 @@ import { getRepoById } from "./repos.ts";
 import { repoDir } from "../git/repos.ts";
 import { sealedByNumber } from "./sealed.ts";
 import type { Database } from "bun:sqlite";
-import { diffRange, type Diff } from "../git/diff.ts";
+import { diffRange, type Diff, type DiffLaps } from "../git/diff.ts";
 import { isSafeRef } from "../git/guard.ts";
 import { refTip } from "../git/read.ts";
 import { readTips } from "../git/tips.ts";
@@ -685,9 +685,12 @@ export async function diffBetween(
   dir: string,
   baseOid: string,
   headOid: string,
+  laps?: DiffLaps,
 ): Promise<{ from: string; diff: Diff; failed: boolean }> {
+  const started = performance.now();
   const from = (await mergeBase(dir, baseOid, headOid)) ?? baseOid;
-  const result = await diffRange(dir, from, headOid);
+  if (laps) laps.git = performance.now() - started;
+  const result = await diffRange(dir, from, headOid, laps);
   return result.ok
     ? { from, diff: result.value, failed: false }
     : { from, diff: { files: [], additions: 0, deletions: 0 }, failed: true };
