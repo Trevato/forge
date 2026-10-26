@@ -182,7 +182,7 @@ export async function shelfRows(
   let mark = performance.now();
   const lap = (name: string): void => {
     const now = performance.now();
-    notePhase(ctx.request, name, now - mark);
+    notePhase(ctx.request, `shelf-${name}`, now - mark);
     mark = now;
   };
   const records = appsForRepos(db, repoIds);

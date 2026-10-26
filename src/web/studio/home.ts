@@ -504,10 +504,9 @@ function frontControls(ctx: Ctx, front: FrontPage): Html {
 export function studioDoor(ctx: Ctx): Response {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   let tiles: Html[] = [];
-  const front = timePhase(ctx.request, "shelf", () => {
-    const found = frontPage(ctx.app);
-    tiles = found.shelf.map(tile);
-    return found;
+  const front = timePhase(ctx.request, "shelf", () => frontPage(ctx.app));
+  timePhase(ctx.request, "tiles", () => {
+    tiles = front.shelf.map(tile);
   });
   // Render is what is left of the page once the shelf read is taken out.
   const rendering = performance.now();

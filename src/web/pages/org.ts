@@ -309,7 +309,7 @@ export async function ownerProfile(ctx: Ctx): Promise<Response> {
   if (!owner || hiddenFrom(owner, ctx.auth.user)) return notFoundPage(ctx);
 
   const isOrg = owner.kind === "org";
-  const access = timePhase(ctx.request, "owner", () =>
+  const access = timePhase(ctx.request, "access", () =>
     isOrg ? orgAccess(ctx.app.db, owner.id, ctx.auth.user) : "none",
   );
   const canManage = isOrg && accessAllows(access, "admin");

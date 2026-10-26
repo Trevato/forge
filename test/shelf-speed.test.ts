@@ -84,7 +84,7 @@ test("40 apps are drawn within budget, in the phases Server-Timing names", async
     best = Math.min(best, performance.now() - started);
     phases = takePhases(c.request).map((p) => p.name);
   }
-  expect(phases).toEqual(["records", "runs", "production", "pulls", "rows"]);
+  expect(phases).toEqual(["shelf-records", "shelf-runs", "shelf-production", "shelf-pulls", "shelf-rows"]);
   // The yardstick is one batched read of the same shelf, taken in this run.
   let against = Infinity;
   for (let i = 0; i < 5; i++) {
