@@ -7,7 +7,7 @@ export const tool: Tool = {
   name: "labels",
   doc: "`{ repo, number, labels }`: set an issue's or a pull's labels to exactly these (`[]` clears); only labels the repository has, by a writer",
   description:
-    "Set an issue's or pull's labels to exactly these (none clears), from the repository's. Writers.",
+    "Set an issue's or pull's labels to exactly these (none clears). Writers.",
   inputSchema: {
     type: "object",
     properties: {

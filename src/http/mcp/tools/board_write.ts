@@ -5,7 +5,7 @@ export const tool: Tool = {
   name: "board_write",
   doc: "`{ slug, board }` (person admins): write a whole board under a slug, made or replaced: `{ title, range, refresh, panels: [{ title, chart, query, w, h }] }`",
   description:
-    "Write a whole board under a slug: {title, range, refresh, panels: [{title, chart, query, w, h}]}.",
+    "Write a whole board under a slug: {title, range, refresh, panels}.",
   inputSchema: {
     type: "object",
     properties: {

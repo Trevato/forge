@@ -6,7 +6,7 @@ export const tool: Tool = {
   name: "archive",
   doc: "`{ repo | repos, archived?, dryRun? }`: archive (true) or wake (false) a repository, by name; planned first (`dryRun` is true unless `false`); only the repository's admin with an admin token, never an agent. `repos` (at most 50) runs the fleet `archive` operation over them, answers each one's outcome and the `operation` id; `limb` with `action: \"undo\"`, that `operation` and any one of the repositories as `app` reverts it for a day",
   description:
-    "Archive a repository or wake it (`archived` true/false); deletes nothing. Plans first; admin token.",
+    "Archive or wake a repository (`archived`). Plans first; admin token.",
   inputSchema: {
     type: "object",
     properties: {

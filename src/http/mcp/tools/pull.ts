@@ -12,7 +12,7 @@ export const tool: Tool = {
   name: "pull",
   doc: "`{ repo, number }`: a pull's title, state, head and base, and for an open pull whether it merges into the base's current head (`mergeable`) and the paths that stop it (`conflicts`), and `check: { state, baseOid }`: the latest check's state and the base tip it was merged with (empty when it merged nothing); `mergeable` and `conflicts` are the same fields as `GET …/pulls/:number`, `check` is `state` and `run.baseOid` from `GET …/pulls/:number/checks`; draws the `ui://forge/pull` card: `#N title`, state with check and conflicts while open, `head → base` linked to the pull, and the preview link when the pull has an environment",
   description:
-    "Read a pull: title, state, head, base; open: `mergeable`, `conflicts`, `proposal`, `checkStale`, `check`.",
+    "Read a pull: title, state, head, base; open: `mergeable`, `conflicts`, `proposal`, `check`.",
   inputSchema: {
     type: "object",
     properties: {

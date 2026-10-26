@@ -5,7 +5,7 @@ export const tool: Tool = {
   name: "edit",
   doc: "a new title or body for an issue or a pull: its author's, or a writer's; an agent edits only what it wrote",
   description:
-    "Retitle or rewrite an issue or pull: yours, or any where you write; an agent edits only its own.",
+    "Retitle or rewrite an issue or pull: yours, or where you write; an agent only its own.",
   inputSchema: {
     type: "object",
     properties: {

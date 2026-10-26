@@ -7,7 +7,7 @@ export const tool: Tool = {
   name: "make_it_yours",
   doc: "`{ repo, name?, visibility?, dryRun? }`: a fork of an app you can see, as your own app, following the original; code and history copied, data and secrets not; private unless `visibility` is public (a public original only); at most 5 copies an account a day; plans unless `dryRun` is false",
   description:
-    "Fork an app you can see: its code and history, following the original; nothing else is copied.",
+    "Fork an app you can see: code and history, following the original.",
   inputSchema: {
     type: "object",
     properties: {

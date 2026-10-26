@@ -6,7 +6,7 @@ import { good, attachWords, bad, type Tool, str, APP_ARG, planRepo, isAnswer } f
 export const tool: Tool = {
   name: "attach_look",
   description:
-    "Attach a PNG or JPEG (base64 `image`, max 5 MB) to an open pull: `phone` or `desktop`, `says`.",
+    "Attach a PNG or JPEG (base64 `image`, max 5 MB) to an open pull: `phone`/`desktop`, `says`.",
   inputSchema: {
     type: "object",
     properties: {

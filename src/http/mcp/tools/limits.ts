@@ -6,7 +6,7 @@ import { good, bad, type Tool } from "../shared.ts";
 export const tool: Tool = {
   name: "limits",
   description:
-    "Every limit the forge's owner can hit, value and bounds. `key` and `value` (\"\" restores) plan.",
+    "Every limit the owner can hit, value and bounds. `key`, `value` (\"\" restores) plan.",
   inputSchema: {
     type: "object",
     properties: {

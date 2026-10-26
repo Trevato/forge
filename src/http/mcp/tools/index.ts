@@ -4,6 +4,7 @@ export { tool as access } from "./access.ts";
 export { tool as account_role } from "./account_role.ts";
 export { tool as account_suspend } from "./account_suspend.ts";
 export { tool as account_verify } from "./account_verify.ts";
+export { tool as accounts } from "./accounts.ts";
 export { tool as agent } from "./agent.ts";
 export { tool as app_deploy } from "./app_deploy.ts";
 export { tool as app_env } from "./app_env.ts";

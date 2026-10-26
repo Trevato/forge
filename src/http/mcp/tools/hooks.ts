@@ -20,7 +20,7 @@ const notAdmin = (): Answer => bad("not_found", "no such app or repository, or y
 export const tool: Tool = {
   name: "hooks",
   doc: "`{ repo, action, url, secret, kinds, id }`: `list`, `add` (`secret`, 16–200 characters, is required) or `remove` the repository's webhooks, as `…/hooks`; an admin-scope token on a repository you administer, and a secret is never shown",
-  description: "List, add (`url`, `secret`, `kinds`) or remove (`id`) a repository's webhooks; admins only, a secret is never shown.",
+  description: "List, add (`url`, `secret`, `kinds`) or remove (`id`) a repository's webhooks; admins; a secret is never shown.",
   inputSchema: {
     type: "object",
     properties: {

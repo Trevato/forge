@@ -4,7 +4,7 @@ import { good, bad, type Tool, str } from "../shared.ts";
 export const tool: Tool = {
   name: "here",
   description:
-    "What you can do on a forge page, as who you are: each open action with its HTTP route and MCP tool.",
+    "What you can do on a forge page: each open action with its HTTP route and MCP tool.",
   inputSchema: {
     type: "object",
     properties: { url: { type: "string", maxLength: 2000 } },

@@ -4,7 +4,7 @@ import { good, bad, type Tool } from "../shared.ts";
 export const tool: Tool = {
   name: "asks_undecide",
   description:
-    "Put a card the decider set aside back on your board, within a day. `id` is from `asks_decide`.",
+    "Put a set-aside card back on your board, within a day. `id` from `asks_decide`.",
   inputSchema: {
     type: "object",
     properties: { id: { type: "string", maxLength: 80 } },

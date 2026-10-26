@@ -6,7 +6,7 @@ export const tool: Tool = {
   name: "app_env",
   doc: "`{ repo, action, name?, value?, scope? }`: `list` an app's variable names and scopes, `set` one, or `unset` it, in `all` (default), `production` or `preview`; the API's rules and errors, an admin of the repository with an admin-scope token; a value is never read back",
   description:
-    "An app's environment variables: list names, set or unset one by scope; values are write-only. Admin.",
+    "An app's environment variables: list names, set or unset by scope; write-only. Admin.",
   inputSchema: {
     type: "object",
     properties: {

@@ -208,6 +208,7 @@ describe("the forge over MCP", () => {
       "health",
       "audit",
       "model_grant",
+      "accounts",
       "whoami_can",
       "mint_invite",
       "invites",

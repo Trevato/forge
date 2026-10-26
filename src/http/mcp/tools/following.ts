@@ -9,7 +9,7 @@ export const tool: Tool = {
   name: "following",
   doc: "where a fork stands against what it follows, and what the crew is doing about it",
   description:
-    "Where a fork stands against what it follows: in step, behind, ahead, diverged; files to decide.",
+    "Where a fork stands against what it follows: in step, behind, ahead, diverged.",
   inputSchema: {
     type: "object",
     properties: { repo: REPO_ARG },
