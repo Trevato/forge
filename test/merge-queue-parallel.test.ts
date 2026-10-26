@@ -163,13 +163,15 @@ describe("the merge queue in parallel", () => {
     // beside the other seven and the next on main and the last on top.
     await letGo(3);
     // Wave three: the head was green alone; the eight without it are red
-    // again, and seven prefixes of them gate at once: three green, the fourth red.
-    await letGo(7);
-    // Wave four: the culprit is handed back without a gate of its own; the
-    // four after it, the last and the head (at the tail) are one candidate.
+    // again, and the eight are gated at once, no pull in two gates: one is red.
+    await letGo(8);
+    // Wave four: the first of the eight landed as gated; the culprit, red
+    // alone, is gated on top of it and handed back.
+    await letGo(1);
+    // Wave five: the pulls cleared alone, with the head, are one candidate.
     await letGo(1);
     expect(await sweep).toBe(9);
-    expect(wave - first).toBe(4);
+    expect(wave - first).toBe(5);
     const red = pulls[4]!;
     for (const pull of pulls) expect(merged(repo, pull)).toBe(pull !== red);
     expect(latestDecision(app.db, red.id, "land")?.answer).toBe("red");
@@ -184,8 +186,9 @@ describe("the merge queue in parallel", () => {
     for (let i = 0; i < 10; i++) pulls.push(await greenPull(repo, i === 9 ? `red-${i}.ts` : `p${i}.ts`));
     const sweep = sweepGreen(app, repo);
     await letGo(2);
-    // The first eight landed; the two behind are red on them, so one is
-    // gated alone (the only prefix of two), and the culprit handed back.
+    // The first eight landed; the two behind are red on them, so each is
+    // gated alone: the culprit is handed back, the other gated again on main.
+    await letGo(2);
     await letGo(1);
     expect(await sweep).toBe(9);
     for (const pull of pulls.slice(0, 9)) expect(merged(repo, pull)).toBe(true);

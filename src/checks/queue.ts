@@ -11,11 +11,10 @@
  * candidate gates on main, the next gates on top of it (`depth` deep): if
  * the first lands whole, the next lands right after on the tree it was
  * gated on; if not, the next is discarded and formed again on main. A red
- * candidate is searched by gating several of its prefixes at once, one per
- * free slot: the longest green prefix lands, the culprit is in the steps up
- * to the first red prefix, and the steps after it wait for the next
- * candidate. With no slot free that is one prefix, the front half: plain
- * bisection. A single red step is the culprit and is handed back.
+ * candidate is searched by gating disjoint segments of it at once, one per
+ * free slot: the culprit is in the first red segment, searched again. With
+ * no slot free that is one segment, the front half: plain bisection. A
+ * single red step is the culprit and is handed back.
  *
  * A gate cut off by the forge stopping is no verdict: nothing is handed
  * back, and the forge that carries on admits the line again (#3155). A gate
@@ -790,13 +789,14 @@ async function round(
 
 /**
  * A red candidate: one step is the culprit, handed back on the base it was
- * red on. More are searched (#4053): the candidate is built again on the
- * base's tip and `k` of its prefixes are gated at once — one, the front
- * half, plus one per free check slot, evenly cut. The longest green prefix
- * before the first red one lands; the culprit is among the steps up to the
- * first red prefix (or, all green, the rest of the candidate, whose whole
- * tree is the red one), searched again; the steps after wait for the next
- * candidate.
+ * red on. More are searched (#4053, #6353): its steps are cut into disjoint
+ * segments, one gate per free check slot (at least the front half), each
+ * built and gated on the base alone, so no pull is in two gates of a round.
+ * The first red segment holds a culprit and is searched again, on top of a
+ * green first segment, which lands; the other green ones, each cleared
+ * alone, and the steps after wait for the next candidate.
+ * All green, the interaction is between them: the first lands and the rest
+ * are searched on it.
  */
 async function judged(
   search: Search,
@@ -824,45 +824,57 @@ async function judged(
     return [];
   }
   const n = steps.length;
-  const k = Math.min(n - 1, 1 + Math.max(0, room()));
-  const cuts = [...new Set(Array.from({ length: k }, (_, j) => Math.ceil(((j + 1) * n) / (k + 1))))].filter(
-    (c) => c >= 1 && c < n,
-  );
-  const last = cuts.at(-1)!;
-  const whole = await build(steps);
-  if (whole === undefined || whole.steps.slice(0, last).some((s, i) => s.entry !== steps[i]!.entry) || whole.steps.length < last) {
+  // One gate per free slot, at least the front half; with no slot free the
+  // back half is not gated and waits for the next round.
+  const free = Math.max(0, room());
+  const cut = free > 0 ? Math.min(n, 1 + free) : 2;
+  const runs = split(steps, cut - 1);
+  const segments = runs.slice(0, free > 0 ? cut : 1);
+  const rest = runs.slice(segments.length).flat();
+  // Each segment is built and gated on the base alone: no step is in two
+  // gates, so one culprit turns one gate red, not every prefix after it.
+  const built = await Promise.all(segments.map((seg) => build(seg)));
+  const gates = built.filter((c): c is Candidate => c !== undefined && c.steps.length > 0);
+  if (gates.length !== segments.length || gates.some((c) => c.baseOid !== gates[0]!.baseOid)) {
     // The base moved under the search: nothing here is decided, and the
     // next sweep admits these again onto the base as it is now.
     for (const w of steps) w.settle(false);
     return [];
   }
-  const prefix = (c: number): Candidate => {
-    const end = whole.steps[c - 1]!;
-    return { ...whole, steps: whole.steps.slice(0, c), tipOid: end.commitOid, treeOid: end.treeOid };
-  };
-  const verdicts = await Promise.all(cuts.map((c) => gated(prefix(c))));
-  let green = 0;
-  let stop: Exclude<LandVerdict, { lands: true }> | undefined;
-  let stopAt = n;
-  for (const [j, c] of cuts.entries()) {
-    const v = verdicts[j]!;
-    if (v.lands) {
-      green = c;
-      continue;
-    }
-    stop = v;
-    stopAt = c;
-    break;
-  }
-  if (green > 0) await land(prefix(green), steps.slice(0, green));
-  if (stop !== undefined && "interrupted" in stop) {
-    for (const w of steps.slice(green)) w.settle(false);
+  const verdicts = await Promise.all(gates.map((c) => gated(c)));
+  if (verdicts.some((v) => !v.lands && "interrupted" in v)) {
+    for (const w of steps) w.settle(false);
     return [];
   }
-  const known = stop === undefined ? { treeOid: candidate.treeOid, red } : { treeOid: prefix(stopAt).treeOid, red: stop };
-  const now = [...landed, ...steps.slice(0, green).map((w) => w.entry)];
-  const left = await round(search, steps.slice(green, stopAt), known, now);
-  return [...left, ...steps.slice(stopAt)];
+  const inGate = gates.map((c, i) => inCandidate(segments[i]!, c));
+  const bad = verdicts.findIndex((v) => !v.lands);
+  if (bad < 0) {
+    // Each green alone, the whole red: the interaction is between them. The
+    // first lands, gated as it is on the base; the rest are searched on it.
+    await land(gates[0]!, inGate[0]!);
+    const next = [...inGate.slice(1).flat(), ...rest];
+    return round(search, next, { treeOid: candidate.treeOid, red }, [...landed, ...inGate[0]!.map((w) => w.entry)]);
+  }
+  // The first red segment holds a culprit and is searched again. A green
+  // first segment before it lands as it was gated and the search goes on top
+  // of it; the other green segments, each gated alone, and the steps after
+  // the red one wait, in line order, for the next candidate.
+  const first = bad > 0;
+  if (first) await land(gates[0]!, inGate[0]!);
+  const now = first ? [...landed, ...inGate[0]!.map((w) => w.entry)] : landed;
+  const before = inGate.slice(first ? 1 : 0, bad).flat();
+  const after = [...inGate.slice(bad + 1).flat(), ...rest];
+  const left = await round(search, inGate[bad]!, { treeOid: gates[bad]!.treeOid, red: verdicts[bad] as Red }, now);
+  return [...before, ...left, ...after];
+}
+
+/** The steps cut into `k` + 1 runs, evenly, none shared. */
+function split<T>(steps: readonly T[], k: number): T[][] {
+  const n = steps.length;
+  const cuts = [0, ...Array.from({ length: k }, (_, j) => Math.ceil(((j + 1) * n) / (k + 1))), n];
+  const runs: T[][] = [];
+  for (let i = 0; i + 1 < cuts.length; i++) if (cuts[i + 1]! > cuts[i]!) runs.push(steps.slice(cuts[i], cuts[i + 1]));
+  return runs;
 }
 
 /**
