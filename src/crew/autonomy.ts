@@ -125,6 +125,7 @@ import {
 import { crewOffInPreview } from "./preview.ts";
 import { approvedOnHead, finishApproved, finishFields } from "./finishing.ts";
 import { recheckRedApproved } from "./red_approved.ts";
+import { keepBatch } from "../flow/red_batches.ts";
 import { readVitals, vitalsMisses, vitalsWords } from "../flow/vitals.ts";
 import { moveRequested, tallyRequested, tallyWords } from "./requested.ts";
 import { reviewersOf, sendToReview, sweepReviews } from "./review.ts";
@@ -2018,12 +2019,14 @@ export function regateDue(red: Decision, now: number): boolean {
 
 /**
  * How the merge queue may use the forge's check slots (#4053): its depth as
- * an admin set it, and the slots the checks service has spare.
+ * an admin set it, and the slots the checks service has spare. Each judged
+ * batch is kept for the red-batch rate (#6427).
  */
 function queueOptions(app: App): QueueOptions {
   return {
     depth: queueDepth(app.db),
     room: () => checksFor(app)?.spareSlots?.() ?? 0,
+    onBatch: (repoId, red) => keepBatch(app.db, repoId, red),
   };
 }
 

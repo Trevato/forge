@@ -46,6 +46,17 @@ terminal's Flow, and `rebases` in the MCP `flow` tool all read
 ones still waiting for room, which have no run yet), the bring-up-to-date runs
 and their checks in flight, and the runs the lane has room to start now.
 
+## Red batches
+
+`src/flow/red_batches.ts` `readRedBatches(db, now, publicOnly)` says, of the
+merge-queue batches judged in the last 6 hours, how many went red:
+`{ finished, red, rate }`, `rate` null when none finished. A batch is one
+candidate the queue judged (`checks/queue.ts` calls `onBatch` beside its
+in-memory hourly count): a red batch's bisection prefixes and its head gated
+alone are its search, not batches; re-checks, cut-off gates and pull checks
+are not counted. Each verdict is a row of `queue_batch`, kept a week. The
+`publicOnly` rule is `readVitals`'s. Nothing shows it yet (#5930).
+
 ## Throughput
 
 `src/flow/throughput.ts` counts what each pipeline stage let out over the last

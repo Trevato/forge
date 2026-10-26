@@ -141,6 +141,12 @@ export interface QueueOptions {
    * checks' reserve already kept back; none when not said.
    */
   readonly room?: () => number;
+  /**
+   * A batch was judged: called once per candidate verdict the batch rate
+   * counts (search prefixes, re-checks and cut-off gates not), so it can be
+   * kept beyond this process (#6427).
+   */
+  readonly onBatch?: (repoId: string, red: boolean) => void;
 }
 
 /**
@@ -570,7 +576,7 @@ async function drain(line: Line, gate: GateCandidate, options: QueueOptions): Pr
       ahead.shift();
       let left: Waiting[];
       try {
-        left = await settleHead({ line, gated, room }, head, verdict, ahead);
+        left = await settleHead({ line, gated, room, onBatch: options.onBatch }, head, verdict, ahead);
       } catch (error) {
         log.warn("merge queue round failed", { error: String(error) });
         for (const w of head.steps) w.settle(false);
@@ -739,7 +745,14 @@ async function settleHead(search: Search, head: Flight, verdict: LandVerdict, ah
     }
     candidate = { ...candidate, baseOid: tip };
   }
-  if (!head.recheck && !("interrupted" in verdict)) search.line.batches.push({ at: Date.now(), red: !verdict.lands });
+  if (!head.recheck && !("interrupted" in verdict)) {
+    search.line.batches.push({ at: Date.now(), red: !verdict.lands });
+    try {
+      search.onBatch?.(search.line.repoId, !verdict.lands);
+    } catch (error) {
+      log.warn("batch verdict not kept", { repo: search.line.repoId, error: String(error) });
+    }
+  }
   if (verdict.lands) {
     if (await land(candidate, head.steps)) return [];
     return discard(ahead);
@@ -802,6 +815,7 @@ interface Search {
   readonly line: Line;
   readonly gated: Gated;
   readonly room: Room;
+  readonly onBatch: ((repoId: string, red: boolean) => void) | undefined;
 }
 
 /**
