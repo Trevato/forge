@@ -29,6 +29,7 @@ import { appForLogin, attachAppTty } from "../apps/tty.ts";
 import { servePulls } from "../apps/tty_pulls.ts";
 import type { Terminal } from "./term/terminal.ts";
 import type { TuiIdentity } from "./session.ts";
+import { parseTellCommand, serveTell } from "./ssh-tell.ts";
 
 const CRLF = "\r\n";
 
@@ -199,7 +200,7 @@ const appExecs: Record<string, typeof servePulls> = Object.assign(
 
 /**
  * What a forge does with an inbound SSH session: a shell is the TUI, an exec
- * is git or nothing. Never throws — a fault here would take the listener with
+ * is git, `tell`, or nothing. Never throws — a fault here would take the listener with
  * it, and one bad client must not.
  */
 export function forgeSshSession(forge: Forge): (session: SshSession) => void {
@@ -222,6 +223,18 @@ export function forgeSshSession(forge: Forge): (session: SshSession) => void {
       const verb = session.command === undefined ? undefined : appExecs[session.command.trim()];
       if (door !== undefined && verb !== undefined) {
         verb(forge, session, identity.user, door);
+        return;
+      }
+      // `tell <words>` on a login that names no app: the crew, in one line.
+      const said = parseTellCommand(session.command);
+      if (said !== undefined && door === undefined) {
+        void serveTell(forge, session, identity.user, said).catch(
+          (error: unknown) => {
+            forge.log.error("tell over ssh failed", { error: String(error) });
+            session.writeStderr(`forge: internal error${CRLF}`);
+            session.exit(1);
+          },
+        );
         return;
       }
       void serveGitCommand(forge, session, identity.user).catch(
