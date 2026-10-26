@@ -558,15 +558,20 @@ export async function submitReview(
       pull.id,
       [sent.value],
     );
+    const stored = getReviewByRemoteId(app.db, pull.id, sent.value.remoteId);
     app.bus.append({
       kind: "pull.reviewed",
       repoId: repo.id,
       actorId: user.id,
-      payload: { number: pull.number, state: input.state, via: "origin" },
+      payload: {
+        number: pull.number,
+        state: input.state,
+        via: "origin",
+        ...(stored ? { reviewId: stored.id } : {}),
+      },
     });
     // Line comments stay here, as `addReview`'s always have on a mirror.
     for (const line of anchored.value) postLine(app, pull, user, line);
-    const stored = getReviewByRemoteId(app.db, pull.id, sent.value.remoteId);
     return stored ? ok(stored) : err("origin_refused");
   }
 
@@ -611,6 +616,7 @@ export async function submitReview(
       number: pull.number,
       state: input.state,
       body: (input.body ?? "").trim(),
+      reviewId: recorded.value.id,
     },
   });
   return recorded;
@@ -752,7 +758,12 @@ export async function approveHere(
     kind: "pull.reviewed",
     repoId: repo.id,
     actorId: user.id,
-    payload: { number: pull.number, state: "approved", via: "here" },
+    payload: {
+      number: pull.number,
+      state: "approved",
+      via: "here",
+      reviewId: recorded.value.id,
+    },
   });
   return recorded;
 }

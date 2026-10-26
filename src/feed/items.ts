@@ -12,6 +12,7 @@ import type { Chips } from "../core/feed_chips.ts";
 import { listDecidedIn } from "../core/decisions.ts";
 import { audienceFilter } from "../core/event_audience.ts";
 import { listEventsVisibleTo, type ForgeEvent } from "../core/events.ts";
+import { getReview } from "../core/reviews.ts";
 import { commentAnchor, getIssuesByNumbers, numberKey, type Issue } from "../core/issues.ts";
 import {
   listDetachedMirrors,
@@ -516,6 +517,45 @@ interface Subjects {
   pull(repoId: string, number: number): Pull | undefined;
 }
 
+/** Asked-for-changes sits above plain news; an approval is news. */
+const CHANGES_URGENCY = 1;
+
+/**
+ * The verdict and the reviewer's first sentence, from the review the event
+ * names. A review that is gone, or one with no verdict, keeps the old words.
+ */
+function reviewedPost(
+  db: Database,
+  p: Record<string, unknown>,
+  common: Omit<Partial, "what">,
+  title: string,
+): Partial {
+  const review =
+    typeof p["reviewId"] === "string" ? getReview(db, p["reviewId"]) : undefined;
+  const on = title === "" ? "a pull request" : clip(title);
+  if (review?.state === "approved")
+    return { ...common, what: `approved ${on}` };
+  if (review?.state === "changes_requested") {
+    const first = firstSentence(review.body);
+    return {
+      ...common,
+      urgency: CHANGES_URGENCY,
+      what: `asked for changes on ${on}${first === "" ? "" : `: ${first}`}`,
+    };
+  }
+  return {
+    ...common,
+    what: `reviewed a pull request${title ? `: ${clip(title)}` : ""}`,
+  };
+}
+
+/** Up to the first sentence's end, at most 100 characters. */
+function firstSentence(body: string): string {
+  const text = body.trim().replace(/\s+/g, " ");
+  const end = text.search(/[.!?](\s|$)/);
+  return clip(end === -1 ? text : text.slice(0, end + 1), 100);
+}
+
 function fromEvent(
   db: Database,
   e: ForgeEvent,
@@ -581,7 +621,7 @@ function fromEvent(
     case "pull.merged":
       return { ...common, kind: "pull", link: change, what: `merged a pull request${title ? `: ${clip(title)}` : ""}${toldWords}` };
     case "pull.reviewed":
-      return { ...common, kind: "pull", link: change, what: `reviewed a pull request${title ? `: ${clip(title)}` : ""}` };
+      return reviewedPost(db, p, { ...common, kind: "pull", link: change }, title);
     case "look.taken": {
       const env = p["env"];
       const oid = p["commitOid"];
