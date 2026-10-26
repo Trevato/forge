@@ -2,7 +2,7 @@
  * Who opened the last hour's pulls (#6443): per author, how many pulls opened
  * in the hour before `now`, and how many of those serve a flow issue. A pull
  * serves flow when the issue its description closes (`Closes #N`) is one of
- * the flow issues, or waits on one in the dependency graph, however far.
+ * the flow issues or carries the `flow` label (any case), or waits on one in the dependency graph, however far.
  * Most first, ties by name. Same `publicOnly` rule as `readVitals`; two reads.
  */
 
@@ -34,7 +34,10 @@ export function readOpeners(db: Database, now = new Date(), publicOnly = false):
     .query<{ key: string }, [number, number, number, number]>(
       `WITH RECURSIVE flow(id) AS (
          SELECT i.id FROM issue i JOIN repo r ON r.id = i.repo_id
-          WHERE i.number IN (?1, ?2, ?3) AND (?4 = 0 OR r.visibility = 'public')
+          WHERE (i.number IN (?1, ?2, ?3)
+                 OR EXISTS (SELECT 1 FROM issue_label il JOIN label l ON l.id = il.label_id
+                             WHERE il.issue_id = i.id AND l.name = 'flow' COLLATE NOCASE))
+            AND (?4 = 0 OR r.visibility = 'public')
          UNION
          SELECT d.issue_id FROM issue_dependency d JOIN flow f ON f.id = d.blocked_by_id
        )

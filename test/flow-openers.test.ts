@@ -79,6 +79,18 @@ describe("readOpeners", () => {
     expect(readOpeners(app.db, NOW)).toEqual([{ author: "bob", opened: 2, flow: 1 }]);
   });
 
+  test("a pull closing a flow-labelled issue in another repository is flow; an unlabelled one is not", () => {
+    const other = repo("other", "public", users.alice!);
+    const tagged = issue(other, 7, users.alice!);
+    issue(other, 8, users.alice!);
+    const lid = id();
+    app.db.query(`INSERT INTO label (id, repo_id, name) VALUES (?1, ?2, 'Flow')`).run(lid, other);
+    app.db.query(`INSERT INTO issue_label (issue_id, label_id) VALUES (?1, ?2)`).run(tagged, lid);
+    pull(other, users.bob!, "Closes #7", 3);
+    pull(other, users.bob!, "Closes #8", 4);
+    expect(readOpeners(app.db, NOW)).toEqual([{ author: "bob", opened: 2, flow: 1 }]);
+  });
+
   test("a pull opened 61 minutes ago is left out, 59 is in", () => {
     pull(pub, users.bob!, "", 61);
     pull(pub, users.alice!, "", 59);
