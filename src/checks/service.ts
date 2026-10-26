@@ -50,6 +50,7 @@ import { mergeForCheck } from "./merged.ts";
 import { approvedOnce } from "./approved_first.ts";
 import { checkOnApproval } from "./approval.ts";
 import { checkKey, provenBy, recordProven } from "./proven.ts";
+import { beginGate, endGate } from "./gate_record.ts";
 import { giveHistory } from "./history.ts";
 import { readLearned } from "./learned.ts";
 import { keepCache, restoreCache } from "./cache.ts";
@@ -1235,6 +1236,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       gates.add(controller);
       const abandon = (): void => controller.abort();
       signal?.addEventListener("abort", abandon, { once: true });
+      // The slot minutes it spends are the flow's gate minutes (#6426).
+      const traced = beginGate(app.db, repo.id, pull.id, commitOid);
       try {
         const bare = await pullDir(app.db, app.reposRoot, repo, pull);
         const done = await runTier({
@@ -1260,6 +1263,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           return { ok: false, error: done.error, lines, interrupted: true };
         return { ok: false, error: done.error, lines };
       } finally {
+        endGate(app.db, traced);
         signal?.removeEventListener("abort", abandon);
         gates.delete(controller);
       }
