@@ -119,7 +119,9 @@ export type RepoTab =
   | "branches"
   | "app"
   | "runs"
-  | "settings";
+  | "settings"
+  /** A page that belongs to no tab (waves): nothing is marked current. */
+  | "none";
 
 export interface RepoHeaderOptions {
   /** Rendered at the right of the title line (fork, clone, watch). */

@@ -149,6 +149,24 @@ describe("waves page", () => {
     expect(await res.text()).toContain("No waves yet");
   });
 
+  test("the empty state says what a wave is; an admin gets Cut a wave, a reader does not", async () => {
+    const admin = await (await get("/alice/bare/waves")).text();
+    expect(admin).toContain("A wave is a release note");
+    expect(admin).toContain('action="/alice/bare/settings/wave"');
+    expect(admin).toContain("Cut a wave");
+    const reader = await (await get("/alice/bare/waves", false)).text();
+    expect(reader).toContain("A wave is a release note");
+    expect(reader).not.toContain("Cut a wave");
+    expect(reader).not.toContain("/settings/wave");
+  });
+
+  test("the waves pages mark no tab as current", async () => {
+    for (const path of ["/alice/pub/waves", "/alice/bare/waves", "/alice/pub/waves/0.10.0"]) {
+      const body = await (await get(path)).text();
+      expect(body).not.toContain('aria-current="page"');
+    }
+  });
+
   test("a private repository is refused to an outsider as any other page is", async () => {
     const waves = await get("/alice/priv/waves", false);
     const other = await get("/alice/priv/branches", false);

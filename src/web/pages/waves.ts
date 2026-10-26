@@ -6,7 +6,7 @@
  * it does for any other page of a private repository.
  */
 
-import { canRead, getRepo } from "../../core/repos.ts";
+import { canAdmin, canRead, getRepo } from "../../core/repos.ts";
 import { notFound } from "../../http/respond.ts";
 import { holds, stamp, xml } from "../feeds.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
@@ -19,8 +19,11 @@ import { NO_WAVES } from "../../story/words.ts";
 import { loadRepo, notFoundPage, repoBase, scopeHeader } from "../chrome.ts";
 import { escapeHtml, html } from "../html.ts";
 import { page } from "../layout.ts";
-import { empty, listCard, row } from "../ui.ts";
+import { btn, empty, listCard, row } from "../ui.ts";
 import { localScope } from "../scope.ts";
+
+const WHAT_A_WAVE =
+  "A wave is a release note in waves/<version>.md that names its highlights and the pulls merged since the last one.";
 
 /** A wave's row title: `<version> · <headline> · N pulls`, N being the pulls this viewer can see. */
 export function waveLine(w: Wave, visible: number): string {
@@ -58,10 +61,20 @@ export async function wavesPage(ctx: Ctx): Promise<Response> {
         }),
   );
 
-  const body = html`${scopeHeader(ctx, scope, "code", { compact: true })}
+  const body = html`${scopeHeader(ctx, scope, "none", { compact: true })}
     <div class="mt">
       ${entries.length === 0
-        ? empty({ title: "No waves yet", note: NO_WAVES })
+        ? empty({
+            title: "No waves yet",
+            note: `${WHAT_A_WAVE} ${NO_WAVES}`,
+            ...(canAdmin(ctx.app.db, repo, ctx.auth.user)
+              ? {
+                  action: html`<form method="post" action="${repoBase(repo)}/settings/wave">
+                    ${btn("Cut a wave", { variant: "primary" })}
+                  </form>`,
+                }
+              : {}),
+          })
         : listCard(rows, { head: html`<h2>Waves</h2>` })}
     </div>`;
 
@@ -189,7 +202,7 @@ export async function wavePage(ctx: Ctx): Promise<Response> {
     : html`<h1>${entry.file}</h1>
         <p class="muted">Not a wave: ${entry.reason}</p>`;
 
-  const body = html`${scopeHeader(ctx, scope, "code", { compact: true })}
+  const body = html`${scopeHeader(ctx, scope, "none", { compact: true })}
     <div class="mt">${content}<p>${back}</p></div>`;
 
   const response = page({
