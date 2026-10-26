@@ -12,7 +12,7 @@ import { holds, stamp, xml } from "../feeds.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
-import { VERSION } from "../../story/wave.ts";
+import { VERSION, type Wave } from "../../story/wave.ts";
 import { carriedPulls, pullPath } from "../../story/wave_pulls.ts";
 import { pullRefs, readWave, readWaves } from "../../story/waves.ts";
 import { NO_WAVES } from "../../story/words.ts";
@@ -21,6 +21,11 @@ import { escapeHtml, html } from "../html.ts";
 import { page } from "../layout.ts";
 import { empty, listCard, row } from "../ui.ts";
 import { localScope } from "../scope.ts";
+
+/** A wave's row title: `<version> · <headline> · N pulls`, N being the pulls this viewer can see. */
+export function waveLine(w: Wave, visible: number): string {
+  return `${w.version} · ${w.headline} · ${visible} ${visible === 1 ? "pull" : "pulls"}`;
+}
 
 // GET /:owner/:name/waves
 export async function wavesPage(ctx: Ctx): Promise<Response> {
@@ -42,8 +47,9 @@ export async function wavesPage(ctx: Ctx): Promise<Response> {
     e.ok
       ? row({
           href: fileHref(e.file),
-          title: e.wave.headline,
-          meta: html`${e.wave.version} · ${e.wave.date}`,
+          // The wave's own page lists these same pulls, so the two agree.
+          title: waveLine(e.wave, carriedPulls(ctx.app.db, pullRefs(e.wave), ctx.auth.user).length),
+          meta: html`${e.wave.date}`,
         })
       : row({
           href: fileHref(e.file),
