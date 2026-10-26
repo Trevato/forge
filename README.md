@@ -1137,7 +1137,12 @@ scripts), `/__forge/` on the app's host is the way back: a small page from the
 forge, never the app, with no script, saying the app and where you are
 (`production` or `preview of pull #N`) and linking Home, the repository (to
 who may read it) and *Tell the crew* (the same link `/__forge/crew` gives; signed
-out it offers sign in). The prefix was already the forge's, so an app's own
+out it offers sign in). It also says what is serving, read from the deploy
+record (no git): production shows the newest release and the three before it
+(a redeploy of the same commit is not another release), a preview shows its
+pull and the commit it last served, or "not deployed yet". A viewer who cannot
+read the repository sees only the time, never a sha. The read is the `serving`
+Server-Timing phase. The prefix was already the forge's, so an app's own
 `/__forge/` path is not reachable.
 
 **Tell the crew from the pill.** Signed in as someone who may direct the crew,

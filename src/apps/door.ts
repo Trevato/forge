@@ -6,6 +6,7 @@
 
 import { createHash } from "node:crypto";
 import { escapeAttr, type PillWhere } from "./toolbar.ts";
+import type { Served, Serving } from "./serving.ts";
 
 export type DoorFacts = {
   where: PillWhere;
@@ -14,6 +15,8 @@ export type DoorFacts = {
   tell?: string;
   /** This host's own sign-in door, offered when nobody is signed in. */
   signin?: string;
+  /** What the host is serving, read from the deploy record. */
+  serving?: Serving | undefined;
   /**
    * The terminal, only for someone who may write the repository: the exact
    * `ssh …` command, or null when the terminal is off. Unset shows nothing.
@@ -37,6 +40,41 @@ export function doorWhere(where: PillWhere): string {
 const link = (href: string, text: string): string =>
   `<li><a href="${escapeAttr(href)}">${escapeAttr(text)}</a></li>`;
 
+/** `2026-10-25 14:03 UTC`, or the raw text when it is not a date. */
+function when(at: string): string {
+  const t = Date.parse(at);
+  return Number.isNaN(t) ? at : new Date(t).toISOString().slice(0, 16).replace("T", " ") + " UTC";
+}
+
+const stamp = (at: string): string =>
+  `<time datetime="${escapeAttr(at)}">${escapeAttr(when(at))}</time>`;
+
+function servingHtml(facts: DoorFacts): string {
+  const s = facts.serving;
+  if (s === undefined) return "";
+  const repo = facts.where.repo;
+  // Commit ids and the release history belong to someone who may read the
+  // repository; a guest of the app learns only when it last changed.
+  if (repo === undefined) {
+    if (s.kind === "preview")
+      return `<p>Preview of #${s.pull}${
+        s.current === undefined ? ", not deployed yet" : `, deployed ${stamp(s.current.at)}`
+      }</p>`;
+    const now = s.releases[0];
+    return now === undefined ? "<p>not released yet</p>" : `<p>Serving since ${stamp(now.at)}</p>`;
+  }
+  const sha = (x: Served): string =>
+    `<a href="${escapeAttr(new URL(`/${repo}/commit/${x.sha}`, facts.forgeUrl).href)}"><code>${escapeAttr(x.sha.slice(0, 7))}</code></a>`;
+  if (s.kind === "preview")
+    return `<p>Preview of #${s.pull}${
+      s.current === undefined ? ", not deployed yet" : ` at ${sha(s.current)}, deployed ${stamp(s.current.at)}`
+    }</p>`;
+  const [now, ...before] = s.releases;
+  if (now === undefined) return "<p>not released yet</p>";
+  const older = before.map((r) => `<li>${sha(r)}, ${stamp(r.at)}</li>`).join("");
+  return `<p>Serving ${sha(now)} since ${stamp(now.at)}</p>${older === "" ? "" : `<h2>Before it</h2><ul>${older}</ul>`}`;
+}
+
 export function doorPage(facts: DoorFacts, head: boolean): Response {
   const { where, forgeUrl } = facts;
   const links = [link(forgeUrl, "Home")];
@@ -55,7 +93,7 @@ export function doorPage(facts: DoorFacts, head: boolean): Response {
         : `<p>Terminal:</p><pre><code>${escapeAttr(facts.ssh)}</code></pre>`;
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>${escapeAttr(where.app)}, ${escapeAttr(doorWhere(where))}</title><style>${STYLE}</style></head>
-<body><main><h1>${escapeAttr(where.app)}</h1><p>${escapeAttr(doorWhere(where))}</p><ul>${links.join("")}</ul>${terminal}</main></body></html>
+<body><main><h1>${escapeAttr(where.app)}</h1><p>${escapeAttr(doorWhere(where))}</p>${servingHtml(facts)}<ul>${links.join("")}</ul>${terminal}</main></body></html>
 `;
   return new Response(head ? null : html, {
     headers: {

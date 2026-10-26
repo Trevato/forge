@@ -41,6 +41,7 @@ import { feedback, mintProof } from "./feedback.ts";
 import { clientBucket } from "../http/peer.ts";
 import { doorPage } from "./door.ts";
 import { takePhases, timePhase } from "../core/route_timing.ts";
+import { readServing } from "./serving.ts";
 import { notFound, securityFloor } from "../http/respond.ts";
 import { appMeasure } from "./measure.ts";
 import { holdPortRequest, holdPortSocket } from "./handoff.ts";
@@ -681,10 +682,14 @@ export async function proxyApp(
     const where = timePhase(request, "pull", () =>
       pillWhere(runtime, target, signed?.who),
     );
+    const serving = timePhase(request, "serving", () =>
+      readServing(runtime.app.db, target.app.repoId, target.env),
+    );
     const page = timePhase(request, "render", () =>
       doorPage(
         {
           where,
+          ...(serving === undefined ? {} : { serving }),
           forgeUrl: runtime.options.forgeUrl,
           ...(ssh === undefined ? {} : { ssh }),
           ...(tell === undefined ? { signin: "/__forge/signin" } : { tell }),

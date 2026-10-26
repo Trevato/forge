@@ -260,7 +260,7 @@ test("the door and the crew line name the phases they read, signed in, on produc
     [`notes--${pull}.${DOMAIN}`, grantFor(`pull-${pull}`)],
   ];
   const reads: Record<string, string[]> = {
-    "/__forge/": ["session", "app", "pull", "render"],
+    "/__forge/": ["session", "app", "pull", "serving", "render"],
     "/__forge/crew": ["session", "app", "pull", "working", "render"],
   };
   for (const [host, cookie] of hosts)
@@ -279,6 +279,6 @@ test("a guest names session and render, and the crew line stops before the reads
     for (const ms of crew.values()) expect(Number.isFinite(ms)).toBe(true);
     // The door still looks the app and pull up for its words.
     const page = await phasesOf(host, "/__forge/");
-    expect([...page.keys()].sort()).toEqual(["app", "pull", "render", "session"]);
+    expect([...page.keys()].sort()).toEqual(["app", "pull", "render", "serving", "session"]);
   }
 });
