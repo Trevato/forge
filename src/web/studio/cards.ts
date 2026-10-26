@@ -10,7 +10,7 @@
 import { html, raw } from "../html.ts";
 import { timeAgo } from "../ui.ts";
 
-export type CardKind = "app" | "run" | "decision" | "wave" | "map" | "feed" | "pull";
+export type CardKind = "app" | "run" | "decision" | "wave" | "map" | "feed" | "pull" | "explore";
 
 export interface CardRow {
   readonly label: string;
@@ -34,9 +34,12 @@ export interface Card {
   readonly actions: readonly CardAction[];
 }
 
+/** Only a rooted path on this forge: "//host" or another forge's address would leave it. */
+const here = (origin: string, path: string): boolean => origin !== "" && /^\/(?!\/)/.test(path);
+
 export const CARD_MIME = "text/html;profile=mcp-app";
 export const CARD_URI = (kind: CardKind): string => `ui://forge/${kind}`;
-export const CARD_KINDS: readonly CardKind[] = ["app", "run", "decision", "wave", "map", "feed", "pull"];
+export const CARD_KINDS: readonly CardKind[] = ["app", "run", "decision", "wave", "map", "feed", "pull", "explore"];
 
 /** The tool whose answer each card draws. */
 export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
@@ -46,6 +49,7 @@ export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   milestones: "wave",
   map: "map",
   feed: "feed",
+  explore: "explore",
   new_app: "app",
   pull: "pull",
 };
@@ -57,6 +61,7 @@ const CARD_TITLE: Readonly<Record<CardKind, string>> = {
   wave: "Wave",
   map: "Plan",
   feed: "Feed",
+  explore: "Explore",
   pull: "Pull",
 };
 
@@ -243,9 +248,35 @@ export function cardFor(
       rows.push({
         label: `${who === "" ? "" : `${who}: `}${text(i["what"])}`,
         value: [text(i["app"]), timeAgo(text(i["at"]))].filter((x) => x !== "").join(" · "),
-        // Only a rooted path on this forge: "//host" would leave it.
-        ...(origin !== "" && /^\/(?!\/)/.test(link) ? { link: origin + link } : {}),
+        ...(here(origin, link) ? { link: origin + link } : {}),
       });
+    }
+  } else if (kind === "explore") {
+    const items = list(obj(value)["items"]).map(obj);
+    const query = text(obj(value)["query"]);
+    status = `${items.length} ranked${query === "" ? "" : ` · ${query}`}`;
+    for (const i of items.slice(0, FEED_LIMIT)) {
+      const n = obj(i["numbers"]);
+      const link = text(i["url"]);
+      const kindOf = text(i["kind"]);
+      rows.push({
+        label: `${kindOf} · ${text(i["name"])}`,
+        value:
+          kindOf === "forge"
+            ? text(i["description"])
+            : `${text(n["forks"])} forks · ${text(n["ships"])} ships · ${text(n["awakeHours"])} h awake${
+                kindOf === "person" ? ` · ${text(n["apps"])} apps` : ""
+              }`,
+        ...(here(origin, link) ? { link: origin + link } : {}),
+      });
+      const repo = obj(i["repo"]);
+      const slug = `${text(repo["owner"])}/${text(repo["name"])}`;
+      if (kindOf === "app" && i["copyable"] === true && origin !== "" && /^[^/]+\/[^/]+$/.test(slug))
+        rows.push({
+          label: "Make it yours",
+          value: text(i["name"]),
+          link: `${origin}/${slug}/make-it-yours`,
+        });
     }
   } else {
     const limbs = list(obj(value)["limbs"]).map(obj);

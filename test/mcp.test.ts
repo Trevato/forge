@@ -1176,6 +1176,7 @@ describe("the forge over MCP", () => {
     expect(uris).toEqual([
       "ui://forge/app",
       "ui://forge/decision",
+      "ui://forge/explore",
       "ui://forge/feed",
       "ui://forge/map",
       "ui://forge/pull",
@@ -1198,6 +1199,7 @@ describe("the forge over MCP", () => {
     expect(meta("milestones")).toBe("ui://forge/wave");
     expect(meta("map")).toBe("ui://forge/map");
     expect(meta("feed")).toBe("ui://forge/feed");
+    expect(meta("explore")).toBe("ui://forge/explore");
     expect(meta("pull")).toBe("ui://forge/pull");
   });
 
