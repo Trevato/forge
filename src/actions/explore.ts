@@ -28,6 +28,7 @@ import {
 import { isSafeName } from "../git/guard.ts";
 import { canEnterApp, listReposVisibleTo, type Repo } from "../core/repos.ts";
 import { getUsersByIds, isActive, type User } from "../core/users.ts";
+import { rankInputs } from "../core/rank_inputs.ts";
 import { writeStamp } from "../core/write_clock.ts";
 import { Stamped } from "../kernel/stamped.ts";
 import { listChildren } from "./spawn.ts";
@@ -153,14 +154,20 @@ export interface ExploreRow {
 
 /**
  * The ranking as last computed, per viewer (id and admin standing) and line
- * (#3394). Valid while the forge's write clock has not moved — a new star,
- * push or merge moves it, so it shows on the next request — and for 5 seconds
- * at most, because a score ages with the clock. Admins' answers are kept too;
- * the spawned forges, which no write clock sees, are read fresh on every call
- * and added to a copy after the kept read. A call at a given `now` is never kept.
+ * (#3394, #6129). A signed-out viewer has the one key every stranger shares;
+ * a signed-in one is keyed by id, which fixes their readable set — so a
+ * private app is never served from an entry built for someone who could not
+ * read it. Two tiers: while the forge's write clock has not moved, the answer
+ * stands without a query; when it has (it moves on every write, ranked or
+ * not), `rankInputs` says whether anything the ranking reads changed, and
+ * only then is it ranked again. A score ages with the clock, so the answer
+ * is ranked again after a minute at most. The spawned forges, which no write
+ * clock sees, are read fresh on every call and added to a copy after the kept
+ * read. A call at a given `now` is never kept.
  */
-const RANK_MAX_AGE_MS = 5_000;
-const ranked = new WeakMap<Database, Stamped<ExploreRow[]>>();
+const RANK_MAX_AGE_MS = 60_000;
+const CLOCK_MAX_AGE_MS = 5_000;
+const ranked = new WeakMap<Database, { clock: Stamped<ExploreRow[]>; inputs: Stamped<ExploreRow[]> }>();
 
 export async function explore(
   app: App,
@@ -171,13 +178,18 @@ export async function explore(
   const forgeRows = await forges(app, viewer, query);
   const stamp = now === undefined ? writeStamp(app.db) : undefined;
   if (stamp === undefined) return place(rank(app, viewer, query, now ?? Date.now()), forgeRows, query);
-  let cache = ranked.get(app.db);
-  if (cache === undefined) {
-    cache = new Stamped<ExploreRow[]>({ maxEntries: 64, maxAgeMs: RANK_MAX_AGE_MS });
-    ranked.set(app.db, cache);
+  let tiers = ranked.get(app.db);
+  if (tiers === undefined) {
+    tiers = {
+      clock: new Stamped<ExploreRow[]>({ maxEntries: 64, maxAgeMs: CLOCK_MAX_AGE_MS }),
+      inputs: new Stamped<ExploreRow[]>({ maxEntries: 64, maxAgeMs: RANK_MAX_AGE_MS }),
+    };
+    ranked.set(app.db, tiers);
   }
-  const kept = cache.get(`${viewer?.id ?? ""}\n${viewer?.isAdmin === true ? "admin" : ""}\n${exploreLine(query)}`, stamp, () =>
-    rank(app, viewer, query, Date.now()),
+  const { clock, inputs } = tiers;
+  const key = `${viewer?.id ?? ""}\n${viewer?.isAdmin === true ? "admin" : ""}\n${exploreLine(query)}`;
+  const kept = clock.get(key, stamp, () =>
+    inputs.get(key, rankInputs(app.db), () => rank(app, viewer, query, Date.now())),
   );
   return place(kept, forgeRows, query);
 }
