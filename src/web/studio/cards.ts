@@ -69,6 +69,8 @@ const text = (v: unknown): string =>
 const web = (u: string): boolean => /^https?:\/\//.test(u);
 const LIMIT = 12;
 const FEED_LIMIT = 10;
+/** The forge's id shape (src/kernel/id.ts): 26 lowercase Crockford base32 characters. */
+const RUN_ID = /^[0-9a-hjkmnp-tv-z]{26}$/;
 
 /** The card for a tool's answer, or nothing when the answer has no card. */
 export function cardFor(
@@ -163,6 +165,9 @@ export function cardFor(
       rows.push({
         label: `${text(r["who"])} on ${text(r["app"])}`,
         value: `${text(r["on"])} — ${text(r["state"])}${cost}`,
+        ...(web(origin) && /^[^/]+\/[^/]+$/.test(text(r["app"])) && RUN_ID.test(text(r["run"]))
+          ? { link: `${origin}/${text(r["app"])}/runs/${text(r["run"])}` }
+          : {}),
       });
       if (r["run"] && actions.length < 3)
         actions.push({ label: `Stop ${text(r["who"])}`, tool: "stop", args: { repo: text(r["app"]), run: text(r["run"]) } });
