@@ -326,9 +326,9 @@ describe("reviews, threads and the merge gate", () => {
       await admin.press("enter");
       await admin.until("#1");
       // The box says what is missing, and `m` says it out loud.
-      expect(admin.text()).toContain("review");
+      await admin.until("review");
       await admin.press("m");
-      expect(admin.text()).toContain("approval");
+      await admin.until("approval");
       expect(getPull(forge.db, repo.id, 1)?.mergedAt).toBeNull();
     } finally {
       admin.stop();
