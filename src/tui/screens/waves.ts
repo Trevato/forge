@@ -26,9 +26,9 @@ export function waveRows(entries: WaveEntry[]) {
   return entries.map((e) =>
     e.ok
       ? {
-          title: e.wave.headline,
+          title: `${e.wave.version} · ${e.wave.date} · ${e.wave.headline}`,
           secondary: "",
-          meta: `${e.wave.version}  ${e.wave.date}`,
+          meta: "",
         }
       : { title: e.file, secondary: `Not a wave: ${e.reason}`, meta: "" },
   );

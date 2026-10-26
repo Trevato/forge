@@ -25,9 +25,9 @@ import { localScope } from "../scope.ts";
 const WHAT_A_WAVE =
   "A wave is a release note in waves/<version>.md that names its highlights and the pulls merged since the last one.";
 
-/** A wave's row title: `<version> · <headline> · N pulls`, N being the pulls this viewer can see. */
+/** A wave's row title: `<version> · <date> · <headline> · N pulls`, N being the pulls this viewer can see. */
 export function waveLine(w: Wave, visible: number): string {
-  return `${w.version} · ${w.headline} · ${visible} ${visible === 1 ? "pull" : "pulls"}`;
+  return `${w.version} · ${w.date} · ${w.headline} · ${visible} ${visible === 1 ? "pull" : "pulls"}`;
 }
 
 // GET /:owner/:name/waves
@@ -52,7 +52,6 @@ export async function wavesPage(ctx: Ctx): Promise<Response> {
           href: fileHref(e.file),
           // The wave's own page lists these same pulls, so the two agree.
           title: waveLine(e.wave, carriedPulls(ctx.app.db, pullRefs(e.wave), ctx.auth.user).length),
-          meta: html`${e.wave.date}`,
         })
       : row({
           href: fileHref(e.file),
