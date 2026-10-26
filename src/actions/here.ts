@@ -300,6 +300,12 @@ function forgeActions(
       mcp: "report",
       account: false,
     },
+    {
+      do: "see how to help build this forge",
+      http: "GET /api/v1/contribute",
+      mcp: "contribute",
+      account: false,
+    },
     ...(viewer === undefined
       ? [{ do: "use the MCP", http: "POST /mcp", account: true }]
       : [{ do: "use the MCP", http: "POST /mcp" }]),

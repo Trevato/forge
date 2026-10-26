@@ -215,6 +215,22 @@ describe("the manifest: what you can do here, as who you are", () => {
     expect(JSON.stringify(body)).not.toContain("vault");
   });
 
+  test("the forge's manifest names how to help, for anyone; a repository's does not", async () => {
+    for (const who of [undefined, "carol"]) {
+      const { body, size } = await manifest("/", who);
+      expect(body.actions).toContainEqual({
+        do: "see how to help build this forge",
+        http: "GET /api/v1/contribute",
+        mcp: "contribute",
+        account: false,
+      });
+      expect(size).toBeLessThan(2048);
+      expect(does((await manifest("/acme/game", who)).body)).not.toContain(
+        "see how to help build this forge",
+      );
+    }
+  });
+
   test("/explore and /search name their query API and MCP tool, the query carried over", async () => {
     for (const who of [undefined, "carol"]) {
       const e = (await manifest("/explore?q=kind:app", who)).body;
