@@ -54,8 +54,7 @@ import {
 } from "../../core/reviews.ts";
 import { getUsersByIds } from "../../core/users.ts";
 import { canWrite, getRepoById, type Repo } from "../../core/repos.ts";
-import { resolveOid } from "../../git/merge.ts";
-import { commitLog } from "../../git/read.ts";
+import { commitLog, readerFor } from "../../git/read.ts";
 import { wallOf } from "../../contract/policy.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -303,6 +302,28 @@ export function checksLine(
   </p>`;
 }
 
+/** Whether a head declares a fast tier: a commit's files never change. */
+const fastByHead = new Map<string, boolean>();
+export async function declaresFast(dir: string, head: string): Promise<boolean> {
+  const known = fastByHead.get(head);
+  if (known !== undefined) return known;
+  const [forgeJson, packageJson] = await Promise.all([
+    readFileAt(dir, head, "forge.json"),
+    readFileAt(dir, head, "package.json"),
+  ]);
+  const declared = parseCheck(forgeJson, packageJson);
+  const fast = declared.ok && declared.value?.fast != null;
+  // Nothing read: remember that only for a commit known to exist (its tree
+  // reads); an unreadable one may simply not have landed yet.
+  if (forgeJson === undefined && packageJson === undefined) {
+    const tree = await readerFor(dir).object(`${head}^{tree}`);
+    if (!tree.ok) return fast;
+  }
+  if (fastByHead.size >= 500) fastByHead.delete(fastByHead.keys().next().value!);
+  fastByHead.set(head, fast);
+  return fast;
+}
+
 /**
  * The tiers' words for a pull whose check declares a fast tier (#1198);
  * nothing when it does not, or when no check has run on this head.
@@ -314,12 +335,7 @@ async function tierOf(
 ): Promise<string> {
   const run = check.run;
   if (run === null || run.kind !== "check") return "";
-  const [forgeJson, packageJson] = await Promise.all([
-    readFileAt(dir, head, "forge.json"),
-    readFileAt(dir, head, "package.json"),
-  ]);
-  const declared = parseCheck(forgeJson, packageJson);
-  if (!declared.ok || declared.value?.fast == null) return "";
+  if (!(await declaresFast(dir, head))) return "";
   const state: TierState | undefined =
     check.state === "ok"
       ? "green"
@@ -843,11 +859,11 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
   const check = tick("checks", () => checkSummary(ctx.app.db, pull.id, status.headOid));
   const isApp = getAppByRepo(ctx.app.db, repo.id) !== undefined;
   const tier = await lap("checks", () => tierOf(dir, status.headOid, check));
-  const stale = await lap("checks", async () =>
+  // `status.baseOid` is the live base tip already: no second reading of it.
+  const stale =
     pull.state === "open" && pull.mergedAt === null
-      ? checkStale(check.run, await resolveOid(dir, `refs/heads/${pull.baseBranch}`))
-      : false,
-  );
+      ? checkStale(check.run, status.baseOid)
+      : false;
   const threads = await lap("reviews", () => pullThreads(ctx.app, pull));
   const threadViews = threadStateViews(ctx, repo, threads);
   const unresolved = threads.filter((t) => t.resolvedAt === null).length;
@@ -1395,7 +1411,7 @@ export async function pullChecksLineFor(
   const tier = await tierOf(dir, status.headOid, check);
   const stale =
     pull.state === "open" && pull.mergedAt === null
-      ? checkStale(check.run, await resolveOid(dir, `refs/heads/${pull.baseBranch}`))
+      ? checkStale(check.run, status.baseOid)
       : false;
   return pullChecksLine(ctx, repo, pull, status, check, isApp, tier, stale);
 }

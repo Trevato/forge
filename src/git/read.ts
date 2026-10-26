@@ -8,6 +8,7 @@
 import { defect } from "../kernel/error.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { gitEnv, runGit, runGitRaw, type GitFailure } from "./env.ts";
+import { isSafeRef } from "./guard.ts";
 
 export type ObjectType = "blob" | "tree" | "commit" | "tag";
 
@@ -555,4 +556,31 @@ export async function listPaths(
   const all = text.split("\0");
   if (all.at(-1) === "") all.pop();
   return ok({ paths: all.slice(0, cap), truncated: all.length > cap });
+}
+
+/**
+ * The commit a ref names, read from the ref files themselves: no process.
+ * A loose ref wins over `packed-refs`, as in git. Anything this does not
+ * fully understand (a symbolic ref, a missing file, an odd line) answers
+ * undefined and the caller asks git.
+ */
+export async function refTip(dir: string, ref: string): Promise<string | undefined> {
+  if (!isSafeRef(ref) || !ref.startsWith("refs/") || ref.includes("..")) return undefined;
+  const oid = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+  try {
+    const loose = (await Bun.file(`${dir}/${ref}`).text()).trim();
+    return oid.test(loose) ? loose : undefined;
+  } catch {
+    // not loose: it may be packed
+  }
+  try {
+    const packed = await Bun.file(`${dir}/packed-refs`).text();
+    for (const line of packed.split("\n")) {
+      if (line.endsWith(` ${ref}`) && oid.test(line.slice(0, line.length - ref.length - 1)))
+        return line.slice(0, line.length - ref.length - 1);
+    }
+  } catch {
+    // no packed-refs
+  }
+  return undefined;
 }

@@ -12,6 +12,7 @@ import { sealedByNumber } from "./sealed.ts";
 import type { Database } from "bun:sqlite";
 import { diffRange, type Diff } from "../git/diff.ts";
 import { isSafeRef } from "../git/guard.ts";
+import { refTip } from "../git/read.ts";
 import { readTips } from "../git/tips.ts";
 import {
   aheadCount,
@@ -761,12 +762,19 @@ export async function pullStatus(
   pull: Pull,
   gate?: ReviewGate,
 ): Promise<PullStatus> {
-  const baseOid =
-    (await resolveOid(dir, `refs/heads/${pull.baseBranch}`)) ?? pull.baseOid;
   const headRef = pull.crossRepo
     ? `refs/pull/${pull.number}/head`
     : `refs/heads/${pull.headBranch}`;
-  const headOid = (await resolveOid(dir, headRef)) ?? pull.headOid;
+  // The tips come from the ref files (no process); git is asked only when
+  // they cannot be read that way.
+  const tip = async (ref: string): Promise<string | undefined> =>
+    (await refTip(dir, ref)) ?? (await resolveOid(dir, ref));
+  const [liveBase, liveHead] = await Promise.all([
+    tip(`refs/heads/${pull.baseBranch}`),
+    tip(headRef),
+  ]);
+  const baseOid = liveBase ?? pull.baseOid;
+  const headOid = liveHead ?? pull.headOid;
   const reviews = gate === undefined ? null : reviewGate(gate, pull, headOid);
   const { ahead, mergeable: clean, conflicts } = await mergeReading(
     dir,
