@@ -73,14 +73,20 @@ export async function learnPullFiles(app: App, repo: Repo): Promise<void> {
   const before = touched.get(repo.id) ?? new Map();
   const after = new Map<string, { at: string; files: readonly string[] }>();
   for (const pull of pulls) {
-    const at = `${pull.baseOid}...${pull.headOid}`;
+    if (!OID.test(pull.headOid)) continue;
+    const dir = await pullDir(app.db, app.reposRoot, repo, pull);
+    // From the base branch's tip now, not the base the pull was opened on:
+    // after a rebase that old base is behind, and `old...head` counts every
+    // file main changed since as the pull's own, so every file looked hot.
+    const tip = await runGitCapture(["rev-parse", "--verify", `refs/heads/${pull.baseBranch}`], { cwd: dir });
+    const base = tip.code === 0 ? tip.stdout.trim() : pull.baseOid;
+    if (!OID.test(base)) continue;
+    const at = `${base}...${pull.headOid}`;
     const known = before.get(pull.id);
     if (known !== undefined && known.at === at) {
       after.set(pull.id, known);
       continue;
     }
-    if (!OID.test(pull.baseOid) || !OID.test(pull.headOid)) continue;
-    const dir = await pullDir(app.db, app.reposRoot, repo, pull);
     const out = await runGitCapture(["diff", "--name-only", "-z", at], { cwd: dir });
     if (out.code !== 0) continue;
     after.set(pull.id, { at, files: out.stdout.split("\0").filter((f) => f !== "") });
