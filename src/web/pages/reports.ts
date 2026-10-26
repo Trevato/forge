@@ -38,6 +38,7 @@ import {
   signInFirst,
 } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
+import { pageAddress } from "../studio/toolbar.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import { btn, card, empty, field as formField, time } from "../ui.ts";
@@ -83,6 +84,7 @@ function reportForm(
             something is wrong. You need no account. A person reads it first;
             nothing acts on it before they do.
           </p>
+          ${when(values.page !== "", () => html`<p class="small mono">About this page: ${values.page}</p>`)}
           <form class="mt" method="post" action="${base}/report">
             ${formField({
               label: "What is wrong",
@@ -152,7 +154,7 @@ function reportBody(ctx: Ctx, repo: Repo): Response {
   return reportForm(ctx, repo, {
     title: "",
     body: "",
-    page: ctx.url.searchParams.get("from") ?? "",
+    page: pageAddress(ctx.url.searchParams.get("from") ?? ""),
   });
 }
 

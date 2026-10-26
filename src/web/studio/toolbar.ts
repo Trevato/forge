@@ -23,7 +23,7 @@ import { NOTE_TOO_LONG } from "../../apps/note_words.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { getIssue, MAX_BODY } from "../../core/issues.ts";
 import { diffBetween, getPull, pullDir, type Pull } from "../../core/pulls.ts";
-import { canWrite, type Repo } from "../../core/repos.ts";
+import { canRead, canWrite, type Repo } from "../../core/repos.ts";
 import { checkSummary, listRuns } from "../../core/runs.ts";
 import { mayView, mayViewId } from "../../core/sealed.ts";
 import { mayDirectCrew } from "../../crew/direct.ts";
@@ -178,10 +178,12 @@ export async function toolbarPage(ctx: Ctx): Promise<Response> {
   const rendering = performance.now();
   if (!user) {
     const next = encodeURIComponent(toolbarPath(base, where.env, address));
+    const open = canRead(db, repo, undefined);
+    const report = `${base}/report${address === "" ? "" : `?from=${encodeURIComponent(address)}`}`;
     const response = page({
       ctx,
       title: `${repo.name} · forge`,
-      body: html`<div class="narrow-wide">${pageHead(here)}${change}${liveNote}<div class="form-actions">${btn("Sign in to comment", { href: `/signin?next=${next}`, variant: "primary" })}${home}</div></div>`,
+      body: html`<div class="narrow-wide">${pageHead(here)}${change}${liveNote}<div class="form-actions">${btn("Sign in to comment", { href: `/signin?next=${next}`, variant: "primary" })}${when(open, () => btn("Report a problem, no account needed", { href: report }))}${home}</div></div>`,
     });
     notePhase(request, "render", performance.now() - rendering);
     return response;
