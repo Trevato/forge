@@ -16,6 +16,7 @@ export const tool: Tool = {
     required: ["repo", "number"],
   },
   writes: true,
+  doc: "`{ repo, number, teams? }`: the crew teams an issue names; with `teams` (at most two slugs, `[]` clears) names them, and each reviews the closing pull",
   run(ctx, user, args) {
     const repo = repoArg(ctx, user, args);
     if (isAnswer(repo)) return repo;

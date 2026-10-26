@@ -8,6 +8,7 @@ export const tool: Tool = {
     "Crew scorecard (forge admin): per agent, all time and 30 days: landed, rounds, red rate.",
   inputSchema: { type: "object", properties: {} },
   writes: false,
+  doc: "(forge admin) no input: the crew's scorecard per agent, all time and 30 days: landed, review rounds, red rate, reverts",
   adminOnly: true,
   run(ctx, user) {
     const card = readScorecards(ctx.app, user);

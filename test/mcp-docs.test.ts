@@ -23,12 +23,7 @@ const undocumented = new Set<string>([
   "asks_decide",
   "asks_proposal",
   "asks_undecide",
-  "issue_teams",
-  "model_grant",
-  "model_ceiling",
   "spend",
-  "scorecard",
-  "teams",
   "report",
 ]);
 
