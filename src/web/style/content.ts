@@ -175,6 +175,8 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
   color: var(--muted-fg); margin: 8px 0 4px;
 }
 
+.direction-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; color: var(--muted-fg); margin: 6px 0 0; }
+
 .chart-box { color: var(--accent); aspect-ratio: 720 / 260; max-width: 720px; }
 .chart-box .chart { display: block; width: 100%; height: auto; }
 .chart-box text { fill: var(--muted-fg); font-family: var(--mono); }

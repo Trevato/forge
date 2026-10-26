@@ -12,7 +12,7 @@ import { parseVision, type Vision } from "../core/vision.ts";
 import { canAdmin, getRepoById, updateRepoSettings } from "../core/repos.ts";
 import { createLog } from "../kernel/log.ts";
 import { editFiles } from "../actions/contents.ts";
-import type { Pull } from "../core/pulls.ts";
+import { pullDir, type Pull } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { listTree, readerFor } from "../git/read.ts";
@@ -53,8 +53,11 @@ export function withDirection(current: string | null, line: string): string {
 }
 
 async function readVision(app: App, repo: Repo): Promise<string | null> {
-  const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
-  const tree = await listTree(dir, repo.defaultBranch, "docs");
+  return readVisionAt(repoDir(app.reposRoot, repo.ownerName, repo.name), repo.defaultBranch);
+}
+
+async function readVisionAt(dir: string, rev: string): Promise<string | null> {
+  const tree = await listTree(dir, rev, "docs");
   const entry = tree.ok ? tree.value.find((e) => e.type === "blob" && e.name === "VISION.md") : undefined;
   if (!entry) return null;
   const obj = await readerFor(dir).object(entry.oid);
@@ -135,6 +138,49 @@ export function withVisionBlock(
   return block === null ? { ok: false, why: "the owner's words leave no room for the block" } : { ok: true, text: `${before}${block}${after}` };
 }
 
+/** What the direction becomes when `md` is the landed VISION.md: the one function both the merge and the preview call. */
+export function nextDirection(direction: string, md: string): ReturnType<typeof withVisionBlock> {
+  return withVisionBlock(direction, parseVision(md));
+}
+
+export interface DirectionPart {
+  readonly kind: "vision" | "owner";
+  readonly text: string;
+}
+
+/** The direction cut at its fenced block: the owner's words and the part that follows docs/VISION.md. Odd markers make it all the owner's. */
+export function directionParts(direction: string): DirectionPart[] {
+  const from = direction.indexOf(BLOCK_START);
+  const to = direction.indexOf(BLOCK_END);
+  const paired = count(direction, BLOCK_START) === 1 && count(direction, BLOCK_END) === 1 && to > from;
+  const raw: DirectionPart[] = paired
+    ? [
+        { kind: "owner", text: direction.slice(0, from) },
+        { kind: "vision", text: direction.slice(from, to + BLOCK_END.length) },
+        { kind: "owner", text: direction.slice(to + BLOCK_END.length) },
+      ]
+    : [{ kind: "owner", text: direction }];
+  return raw.filter((p) => p.text.trim() !== "").map((p) => ({ kind: p.kind, text: p.text.trim() }));
+}
+
+export type VisionPreview =
+  | { readonly ok: true; readonly today: string; readonly after: string }
+  | { readonly ok: false; readonly why: string };
+
+/**
+ * For an open vision pull: the direction as it stands and as the merge of
+ * this pull (by an admin) will write it, from the VISION.md on its head.
+ * Null for any other pull.
+ */
+export async function previewVision(app: App, repo: Repo, pull: Pull): Promise<VisionPreview | null> {
+  if (pull.state !== "open" || pull.mergedAt !== null) return null;
+  if (!isVisionPull(app.db, `${repo.ownerName}/${repo.name}`, pull.number)) return null;
+  const md = await readVisionAt(await pullDir(app.db, app.reposRoot, repo, pull), pull.headOid);
+  if (md === null) return { ok: false, why: "this pull has no docs/VISION.md" };
+  const next = nextDirection(repo.autonomyDirection, md);
+  return next.ok ? { ok: true, today: repo.autonomyDirection, after: next.text } : { ok: false, why: next.why };
+}
+
 /**
  * After a pull lands: when it is a vision pull (its placement says so, never
  * its branch name) and the merger administers the repository, regenerate the
@@ -154,7 +200,7 @@ export async function landVision(app: App, merger: User, repo: Repo, pull: Pull)
   const fresh = getRepoById(app.db, repo.id) ?? repo;
   const md = await readVision(app, fresh);
   if (md === null) return;
-  const next = withVisionBlock(fresh.autonomyDirection, parseVision(md));
+  const next = nextDirection(fresh.autonomyDirection, md);
   if (!next.ok) {
     log.warn("left the direction unchanged", { repo: `${repo.ownerName}/${repo.name}`, pull: pull.number, why: next.why });
     return;

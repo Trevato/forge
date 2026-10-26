@@ -29,7 +29,7 @@ import {
   type Pull,
   pullDir,
 } from "../../core/pulls.ts";
-import { canWrite, type Repo } from "../../core/repos.ts";
+import { canAdmin, canWrite, type Repo } from "../../core/repos.ts";
 import { listReviews, type Review } from "../../core/reviews.ts";
 import { wallOf, wallSentence, type Wall } from "../../contract/policy.ts";
 import { checkSummary } from "../../core/runs.ts";
@@ -84,6 +84,8 @@ import {
   type Decision,
 } from "./asks.ts";
 import { tellLine, tellsAnswered } from "./branch_tell.ts";
+import { previewVision } from "../../crew/vision.ts";
+import { visionPreviewCard } from "./direction.ts";
 import { holdCard } from "./hold.ts";
 import { pullMayRun } from "../../core/pull_trust.ts";
 import { changeHref } from "./nouns.ts";
@@ -532,6 +534,10 @@ async function changeConversation(
       : ownNotReadyNote !== undefined
         ? html`<p class="muted small">Not ready to ship — ${ownNotReadyNote}.</p>`
         : undefined;
+  const visionPreview =
+    ctx.auth.user !== undefined && canAdmin(db, repo, ctx.auth.user)
+      ? await previewVision(ctx.app, repo, pull)
+      : null;
   const decisionSection = when(decisionBody, (body) =>
     card(body, {
       head: html`${icon("alert")}
@@ -604,6 +610,7 @@ async function changeConversation(
     ${approveHereCard(ctx, repo, pull, headOid, `${thread}/approve-here`)}
     ${teamsCard(teamVerdicts(db, { ...pull, headOid }))}
     ${when(wall, (w) => wallCard(w))} ${decisionSection}
+    ${when(visionPreview, (v) => visionPreviewCard(v))}
     ${takeBackSection}
     ${when(record, (r) => lookCard(ctx, repo, r, pull, pull.headOid))}
     <div class="split">

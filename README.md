@@ -2317,3 +2317,8 @@ ledger (`spawn/sizes.ts`). **Unset means no quota.** A spawn that would pass a
 declared limit is a 409 `refused` with one sentence naming it, and the New
 forge page shows that sentence above the form when even a small forge would
 not fit (`spawn/quota.ts`).
+
+### Seeing the direction a vision pull will write
+An open vision pull's page shows, to an admin of the repository, "Direction after the merge": today's direction beside the one an admin's merge will write, computed by the same `nextDirection` the merge uses (`src/crew/vision.ts`), so the two cannot differ. Repository settings (Crew) marks the direction's fenced block `follows docs/VISION.md` and the words around it `the owner's`. Today and After the merge stack vertically at every width.
+
+The same read is a second door: the MCP `vision` tool takes an optional `number`, and for an admin returns `preview` (`{ today, after }`, or `{ why }` the direction would stay) for that open vision pull, plus `directionParts` (the direction cut into `vision` and `owner` parts). The terminal (TUI) has no such view; it is not touched by this change.
