@@ -154,6 +154,7 @@ export { route as postApiV1Apps } from "./postApiV1Apps.ts";
 export { route as postApiV1BoardsPins } from "./postApiV1BoardsPins.ts";
 export { route as postApiV1BoardsQuery } from "./postApiV1BoardsQuery.ts";
 export { route as postApiV1Drills } from "./postApiV1Drills.ts";
+export { route as postApiV1FeedInteractions } from "./postApiV1FeedInteractions.ts";
 export { route as postApiV1FeedTells } from "./postApiV1FeedTells.ts";
 export { route as postApiV1FirstAdmin } from "./postApiV1FirstAdmin.ts";
 export { route as postApiV1FirstAdminRecover } from "./postApiV1FirstAdminRecover.ts";
@@ -208,6 +209,7 @@ export { route as postApiV1ReposOwnerNameSpend } from "./postApiV1ReposOwnerName
 export { route as postApiV1ReposOwnerNameSync } from "./postApiV1ReposOwnerNameSync.ts";
 export { route as postApiV1ReposOwnerNameUpstreamCheck } from "./postApiV1ReposOwnerNameUpstreamCheck.ts";
 export { route as postApiV1Sessions } from "./postApiV1Sessions.ts";
+export { route as postApiV1Share } from "./postApiV1Share.ts";
 export { route as postApiV1Thoughts } from "./postApiV1Thoughts.ts";
 export { route as postApiV1Tokens } from "./postApiV1Tokens.ts";
 export { route as postApiV1UserEmailVerify } from "./postApiV1UserEmailVerify.ts";
