@@ -164,7 +164,8 @@ import { holdPull, releasePull } from "../actions/holds.ts";
 import { getHold, type Hold } from "../core/holds.ts";
 import { watchMilestone } from "../actions/watches.ts";
 import { THOUGHT_MAX, keepThought } from "../actions/thought.ts";
-import { search } from "../actions/search.ts";
+import { search, searchWithin } from "../actions/search.ts";
+import { runRepos } from "./run_gate.ts";
 import {
   commitToBranch,
   createLabel,
@@ -2372,13 +2373,17 @@ export function apiRoutes(router: Router<Handler>): void {
       return refused;
     }
     try {
+      const input = {
+        q: query,
+        kind,
+        ...(q.has("limit") ? { limit: Number(q.get("limit")) } : {}),
+        live: q.get("live") === "1" || q.get("live") === "true",
+      };
+      const mine = runRepos(ctx.app, ctx.auth);
       const found = await timePhaseAsync(ctx.request, "search", () =>
-        search(ctx.app, ctx.auth.user, {
-          q: query,
-          kind,
-          ...(q.has("limit") ? { limit: Number(q.get("limit")) } : {}),
-          live: q.get("live") === "1" || q.get("live") === "true",
-        }),
+        mine === undefined
+          ? search(ctx.app, ctx.auth.user, input)
+          : searchWithin(ctx.app, ctx.auth.user, mine, input),
       );
       return timePhase(ctx.request, "render", () => json(found));
     } finally {
@@ -5355,9 +5360,19 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/explore", async (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const query = parseExploreQuery(ctx.url.searchParams.get("q") ?? "");
-    const items = await timePhaseAsync(ctx.request, "explore", () =>
+    const mine = runRepos(ctx.app, ctx.auth);
+    const all = await timePhaseAsync(ctx.request, "explore", () =>
       explore(ctx.app, ctx.auth.user, query),
     );
+    // A run token is shown only the rows of its own repositories.
+    const items =
+      mine === undefined
+        ? all
+        : all.filter(
+            (row) =>
+              row.repo !== undefined &&
+              mine.some((r) => r.ownerName.toLowerCase() === row.repo!.owner.toLowerCase() && r.name.toLowerCase() === row.repo!.name.toLowerCase()),
+          );
     return timePhase(ctx.request, "render", () => json({ query: exploreLine(query), items }));
   });
 
@@ -6203,6 +6218,15 @@ export function apiRoutes(router: Router<Handler>): void {
       ),
     );
     if (!found.ok) return notFound();
+    // A run token sees repository pages of its own repositories, and nothing
+    // else: not the forge, not another repository, not even that one exists.
+    const mine = runRepos(ctx.app, ctx.auth);
+    const at = found.value.here;
+    if (
+      mine !== undefined &&
+      !(at.kind === "repository" && mine.some((r) => `${r.ownerName}/${r.name}`.toLowerCase() === at.name.toLowerCase()))
+    )
+      return notFound();
     return timePhase(ctx.request, "render", () =>
       json(found.value, 200, {
         "cache-control": "no-store",
