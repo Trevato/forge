@@ -376,10 +376,6 @@ import {
   crewSettingsPage,
   dangerPage,
   hooksPage,
-  labelCreate,
-  labelDelete,
-  labelUpdate,
-  labelsPage,
   promptSourceAdd,
   promptSourceDelete,
   promptSourceRun,
@@ -394,6 +390,12 @@ import {
   webhookCreate,
   webhookDelete,
 } from "../web/pages/settings.ts";
+import {
+  labelCreate,
+  labelDelete,
+  labelsPage,
+  labelUpdate,
+} from "../web/pages/labels.ts";
 import {
   newOrgPage,
   newOrgSubmit,

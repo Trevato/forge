@@ -50,12 +50,9 @@ import { addToCrew, listCrew, removeFromCrew } from "../../actions/crew.ts";
 import { getAgentByName, isCrewRole, setCrewRole } from "../../core/agents.ts";
 import { isAutonomy, isDecisionsBy } from "../../core/repos.ts";
 import {
-  createLabel,
   createWebhook,
-  deleteLabel,
   deleteRepo,
   deleteWebhook,
-  updateLabel,
   updateRepoSettings,
 } from "../../actions/repos.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
@@ -69,7 +66,6 @@ import {
   type AppAccess,
   type AppRecord,
 } from "../../core/apps.ts";
-import { listLabels, type Label } from "../../core/issues.ts";
 import {
   readAppMembers,
   setAppMembersThrough,
@@ -109,8 +105,6 @@ import {
   dot,
   empty,
   field as formField,
-  labelChip,
-  labelCss,
   row,
   selectField,
   time,
@@ -123,7 +117,6 @@ import { secretsSection } from "./secrets.ts";
 import { checkMemoryAt } from "../../apps/check-memory.ts";
 import { followUpstreamCard } from "./upstream-follow.ts";
 import { saveGrants } from "./subscriptions.ts";
-import { LABEL_WORDS } from "../../actions/label_words.ts";
 
 type Section =
   | "general"
@@ -142,7 +135,7 @@ function loadAdminRepo(ctx: Ctx): Repo | undefined {
 }
 
 /** `loadAdminRepo` for a GET page: names the session, then the repo read as `repo`. */
-function timedAdminRepo(ctx: Ctx): Repo | undefined {
+export function timedAdminRepo(ctx: Ctx): Repo | undefined {
   nameFrame(ctx.request);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   return timePhase(ctx.request, "repo", () => loadAdminRepo(ctx));
@@ -190,7 +183,7 @@ function sections(base: string, active: Section) {
 }
 
 /** Every settings page is the same frame with a different pane inside it. */
-function settingsPageResponse(
+export function settingsPageResponse(
   ctx: Ctx,
   repo: Repo,
   active: Section,
@@ -214,7 +207,7 @@ function settingsPageResponse(
 }
 
 /** The gate every settings POST passes: admin, same-origin, admin scope. */
-async function adminForm(
+export async function adminForm(
   ctx: Ctx,
 ): Promise<{ repo: Repo; form: Form } | Response> {
   const repo = loadAdminRepo(ctx);
@@ -1737,181 +1730,6 @@ export async function crewRemove(ctx: Ctx): Promise<Response> {
     removed.ok
       ? { message: `${username} is off the crew.` }
       : { tone: "danger", message: "No such agent on this forge." },
-  );
-}
-
-// ---- labels ----
-
-/** `<input type="color">` submits `#rrggbb`; the store keeps six hex digits. */
-function readColor(form: Form): string {
-  return field(form, "color").replace(/^#/, "").toLowerCase();
-}
-
-/**
- * The colour control is a native `<input type="color">`, so it works with no
- * script at all — the hex beside it is a readout, updated live where there is
- * a script and correct on load where there is not. A browser submits it as
- * `#rrggbb`; `readColor` strips the hash on the way in.
- */
-function colorField(value: string, label: string): Html {
-  return html`<span class="color-field"
-    ><input
-      type="color"
-      name="color"
-      value="#${value}"
-      aria-label="${label}"
-    /><span class="mono muted" data-hex>#${value}</span></span
-  >`;
-}
-
-function labelEditor(base: string, label: Label): Html {
-  return html`<li>
-    <form
-      class="edit-row"
-      method="post"
-      action="${base}/settings/labels/${label.id}"
-    >
-      <span class="preview">${labelChip(label)}</span>
-      <input
-        class="input"
-        type="text"
-        name="name"
-        value="${label.name}"
-        aria-label="Label name"
-        required
-      />
-      ${colorField(label.color, `Colour of the label ${label.name}`)}
-      ${btn("Save", { size: "sm" })}
-      ${confirmAction({
-        action: `${base}/settings/labels/${label.id}/delete`,
-        verb: "Delete",
-        size: "sm",
-      })}
-    </form>
-  </li>`;
-}
-
-export function labelsPage(ctx: Ctx): Response {
-  const repo = timedAdminRepo(ctx);
-  if (!repo) return repoNotFound(ctx);
-  const labels = timePhase(ctx.request, "labels", () => listLabels(ctx.app.db, repo.id));
-  const rendering = performance.now();
-  const base = repoBase(repo);
-
-  const list =
-    labels.length === 0
-      ? empty({
-          icon: "tag",
-          title: "No labels yet",
-          note: "Labels are this repository's work queue — a handful is usually enough.",
-        })
-      : html`<div class="card">
-          <ul class="list">
-            ${labels.map((l) => labelEditor(base, l))}
-          </ul>
-        </div>`;
-
-  const create = card(
-    html`<form class="edit-row" method="post" action="${base}/settings/labels">
-      <input
-        class="input"
-        type="text"
-        name="name"
-        placeholder="Label name"
-        aria-label="New label name"
-        required
-      />
-      ${colorField("6b7280", "Colour of the new label")}
-      ${btn("Add label", { variant: "primary", size: "sm" })}
-    </form>`,
-    { head: html`<h2>New label</h2>`, pad: false },
-  );
-
-  const body = html`${list}
-    <div class="mt">${create}</div>`;
-  const response = settingsPageResponse(
-    ctx,
-    repo,
-    "labels",
-    "Labels",
-    body,
-    labelCss(labels),
-  );
-  notePhase(ctx.request, "render", performance.now() - rendering);
-  return response;
-}
-
-export async function labelCreate(ctx: Ctx): Promise<Response> {
-  const gate = await adminForm(ctx);
-  if (gate instanceof Response) return gate;
-  const { repo, form } = gate;
-  const created = createLabel(
-    ctx.app,
-    ctx.auth.user,
-    repo,
-    field(form, "name"),
-    readColor(form) || "6b7280",
-  );
-  return flashTo(
-    ctx,
-    `${repoBase(repo)}/settings/labels`,
-    created.ok
-      ? { message: `Label “${created.value.name}” created.` }
-      : {
-          tone: "danger",
-          message:
-            created.error === "taken"
-              ? "This repository already has a label by that name."
-              : LABEL_WORDS.shape,
-        },
-  );
-}
-
-export async function labelUpdate(ctx: Ctx): Promise<Response> {
-  const gate = await adminForm(ctx);
-  if (gate instanceof Response) return gate;
-  const { repo, form } = gate;
-  const updated = updateLabel(
-    ctx.app,
-    ctx.auth.user,
-    repo,
-    ctx.params.id ?? "",
-    field(form, "name"),
-    readColor(form),
-  );
-  return flashTo(
-    ctx,
-    `${repoBase(repo)}/settings/labels`,
-    updated.ok
-      ? { message: `Label “${updated.value.name}” updated.` }
-      : {
-          tone: "danger",
-          message:
-            updated.error === "taken"
-              ? "This repository already has a label by that name."
-              : updated.error === "not_found"
-                ? "That label no longer exists."
-                : LABEL_WORDS.shape,
-        },
-  );
-}
-
-export async function labelDelete(ctx: Ctx): Promise<Response> {
-  const gate = await adminForm(ctx);
-  if (gate instanceof Response) return gate;
-  const { repo } = gate;
-  const removed = deleteLabel(
-    ctx.app,
-    ctx.auth.user,
-    repo,
-    ctx.params.id ?? "",
-  );
-  return flashTo(
-    ctx,
-    `${repoBase(repo)}/settings/labels`,
-    removed.ok
-      ? { message: "Label deleted." }
-      : { tone: "danger", message: "That label no longer exists." },
   );
 }
 
