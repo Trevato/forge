@@ -6,7 +6,7 @@ export const tool: Tool = {
   name: "sever",
   doc: "`{ repo }`: cut a spawned forge's link to the forge its code came from; its `forge` repository's owner only; deletes nothing",
   description:
-    "Cut a spawned forge's link to its parent (its `forge` repository's owner only). Deletes nothing.",
+    "Unlink a spawned forge from its parent (owner of its `forge` repo only). Deletes nothing.",
   inputSchema: {
     type: "object",
     properties: { repo: REPO_ARG },

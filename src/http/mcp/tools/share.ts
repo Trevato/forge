@@ -7,7 +7,7 @@ export const tool: Tool = {
   name: "share",
   doc: "`{ item, to? }`: share a feed item (`item` is its id); with no `to` it goes to the app's crew and owners, else to up to 10 named usernames' followers; a daily budget each; answers `{ sent }`",
   description:
-    "Share a feed item: no `to` tells the app's crew and owners, else followers; daily budget.",
+    "Share a feed item: no `to` tells the app's crew and owners, else followers; budgeted.",
   inputSchema: {
     type: "object",
     properties: {

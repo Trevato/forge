@@ -7,7 +7,7 @@ export const tool: Tool = {
   name: "outsiders",
   doc: "`{ repo, on?, dryRun? }`: whether people who cannot write may direct the crew; with `on`, planned first (`dryRun` is true unless `false`); set only by the app's admin with an admin token, never an agent",
   description:
-    "Whether people who cannot write an app may direct its crew (off by default). No `on` reads it.",
+    "Whether non-writers may direct an app's crew (off by default). No `on` reads it.",
   inputSchema: {
     type: "object",
     properties: {

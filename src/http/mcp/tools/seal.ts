@@ -5,7 +5,7 @@ export const tool: Tool = {
   name: "seal",
   doc: "`{ repo, number, sealed }`: seal a security report (and the pull that fixes it) so only writers and the crew see it, or unseal it for every reader; a writer's, recorded",
   description:
-    "Seal or unseal an issue or pull: a sealed one is seen only by the app's writers and crew.",
+    "Seal or unseal an issue or pull: a sealed one is seen only by writers and crew.",
   inputSchema: {
     type: "object",
     properties: {

@@ -4,7 +4,7 @@ import { good, bad, type Tool } from "../shared.ts";
 export const tool: Tool = {
   name: "asks_proposal",
   description:
-    "Act on a wave proposal (`asks` row): `approve`, `redirect` (`words`), `later` (`again`). Owner.",
+    "Act on a wave proposal: `approve`, `redirect` (`words`), `later` (`again`). Owner.",
   inputSchema: {
     type: "object",
     properties: {

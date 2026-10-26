@@ -3,9 +3,9 @@ import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts"
 
 export const tool: Tool = {
   name: "repo_settings",
-  doc: "`{ repo, description?, visibility? }` (admin token): change a repository's description and visibility as `PATCH /api/v1/repos/:owner/:name` does, for the same callers (a repository admin); answers `{ repo, description, visibility }`; a visibility other than public or private is `invalid`",
+  doc: "`{ repo, description?, visibility? }` (admin): change a repository's description and visibility as `PATCH /api/v1/repos/:owner/:name` does, for the same callers (a repository admin); answers `{ repo, description, visibility }`; a visibility other than public or private is `invalid`",
   description:
-    "Change a repository's description or visibility, as PATCH /api/v1/repos/:owner/:name (admin token).",
+    "Change a repo's description or visibility: PATCH /api/v1/repos/:owner/:name (admin).",
   inputSchema: {
     type: "object",
     properties: {

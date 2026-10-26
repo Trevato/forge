@@ -4,7 +4,7 @@ import { good, bad, type Tool } from "../shared.ts";
 export const tool: Tool = {
   name: "asks_decide",
   description:
-    "Let the decider answer a hand-over (`item`: `parked:<id>`); only a sure set_aside clears it.",
+    "Let the decider answer a hand-over (`item`: `parked:<id>`); only a sure set_aside clears.",
   inputSchema: {
     type: "object",
     properties: { item: { type: "string", maxLength: 80 } },

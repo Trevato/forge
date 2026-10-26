@@ -5,7 +5,7 @@ export const tool: Tool = {
   name: "family",
   doc: "the forge that sent this one and, for a site admin, those it sent, with state and version",
   description:
-    "The forge that sent this one and, for a site admin, those it sent, with state and version.",
+    "The forge that sent this one and, for a site admin, those it sent, with state, version.",
   inputSchema: { type: "object", properties: {} },
   writes: false,
   async run(ctx, user) {

@@ -6,7 +6,7 @@ import { good, bad, type Tool, mayBoards } from "../shared.ts";
 export const tool: Tool = {
   name: "model_grant",
   description:
-    "Give a person a capped monthly model grant (`usdPerMonth`, 0 takes it back). Person admins.",
+    "Give a person a monthly model grant (`usdPerMonth`, 0 takes it back). Person admins.",
   inputSchema: {
     type: "object",
     properties: {

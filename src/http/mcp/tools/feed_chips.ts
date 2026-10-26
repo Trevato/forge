@@ -6,7 +6,7 @@ export const tool: Tool = {
   name: "feed_chips",
   doc: "`{ kind?, value?, hidden? }`: the feed chips you switched off, which `feed` and `asks` leave out; with `kind` (`kind` or `person`), `value` and `hidden` it switches one off or on",
   description:
-    "Feed chips you switched off in `feed` and `asks`. With `kind`, `value` and `hidden`, sets one.",
+    "Feed chips you switched off. With `kind`, `value` and `hidden`, sets one.",
   inputSchema: {
     type: "object",
     properties: {

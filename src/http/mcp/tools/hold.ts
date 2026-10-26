@@ -6,7 +6,7 @@ export const tool: Tool = {
   name: "hold",
   doc: "`{ app, pull, why?, release?, dryRun? }`: hold a pull so no rule reviews or lands it, or let it go; a person who can write, never an agent; plans unless `dryRun: false`",
   description:
-    "Hold a pull (`why`) or release it (`release: true`): held, nothing reviews or lands it. Writers.",
+    "Hold a pull (`why`) or release it (`release: true`); held, none reviews or lands it. Writers.",
   inputSchema: {
     type: "object",
     properties: {

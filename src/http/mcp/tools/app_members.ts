@@ -7,7 +7,7 @@ export const tool: Tool = {
   name: "app_members",
   doc: "`{ repo, members?, dryRun? }`: the people a private app names, who may enter it and its previews and nothing else; a writer (never an agent) changes the list with an admin-scope token",
   description:
-    "The people a private app names, who may enter it and its previews. With `members`, plans.",
+    "People a private app names, who may enter it and its previews. With `members`, plans.",
   inputSchema: {
     type: "object",
     properties: {

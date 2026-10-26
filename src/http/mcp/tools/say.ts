@@ -7,7 +7,7 @@ export const tool: Tool = {
   name: "say",
   doc: "speak on an issue or a pull; a working builder hears it as its next step",
   description:
-    "Say something on an issue or pull. A working builder hears it next; otherwise the next run does.",
+    "Say something on an issue or pull. A working builder hears it next, else the next run.",
   inputSchema: {
     type: "object",
     properties: {
