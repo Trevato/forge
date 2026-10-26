@@ -105,6 +105,7 @@ export { route as getApiV1ReposOwnerNamePrompts } from "./getApiV1ReposOwnerName
 export { route as getApiV1ReposOwnerNamePulls } from "./getApiV1ReposOwnerNamePulls.ts";
 export { route as getApiV1ReposOwnerNamePullsNumber } from "./getApiV1ReposOwnerNamePullsNumber.ts";
 export { route as getApiV1ReposOwnerNamePullsNumberChecks } from "./getApiV1ReposOwnerNamePullsNumberChecks.ts";
+export { route as getApiV1ReposOwnerNamePullsNumberReviewStates } from "./getApiV1ReposOwnerNamePullsNumberReviewStates.ts";
 export { route as getApiV1ReposOwnerNamePullsNumberReviews } from "./getApiV1ReposOwnerNamePullsNumberReviews.ts";
 export { route as getApiV1ReposOwnerNamePullsNumberThreads } from "./getApiV1ReposOwnerNamePullsNumberThreads.ts";
 export { route as getApiV1ReposOwnerNameReports } from "./getApiV1ReposOwnerNameReports.ts";
@@ -225,7 +226,9 @@ export { route as postApiV1ReposOwnerNamePulls } from "./postApiV1ReposOwnerName
 export { route as postApiV1ReposOwnerNamePullsNumberApproveHere } from "./postApiV1ReposOwnerNamePullsNumberApproveHere.ts";
 export { route as postApiV1ReposOwnerNamePullsNumberChecks } from "./postApiV1ReposOwnerNamePullsNumberChecks.ts";
 export { route as postApiV1ReposOwnerNamePullsNumberComments } from "./postApiV1ReposOwnerNamePullsNumberComments.ts";
+export { route as postApiV1ReposOwnerNamePullsNumberLooks } from "./postApiV1ReposOwnerNamePullsNumberLooks.ts";
 export { route as postApiV1ReposOwnerNamePullsNumberMerge } from "./postApiV1ReposOwnerNamePullsNumberMerge.ts";
+export { route as postApiV1ReposOwnerNamePullsNumberReviewStates } from "./postApiV1ReposOwnerNamePullsNumberReviewStates.ts";
 export { route as postApiV1ReposOwnerNamePullsNumberReviews } from "./postApiV1ReposOwnerNamePullsNumberReviews.ts";
 export { route as postApiV1ReposOwnerNamePullsNumberThreadsAnchorResolve } from "./postApiV1ReposOwnerNamePullsNumberThreadsAnchorResolve.ts";
 export { route as postApiV1ReposOwnerNamePullsNumberVariant } from "./postApiV1ReposOwnerNamePullsNumberVariant.ts";
