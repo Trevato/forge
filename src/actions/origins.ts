@@ -28,7 +28,7 @@ import {
   findOrigin,
   getOriginById,
   getOriginFor,
-  hostOf, siteOf,
+  siteOf,
   linkRepoToOrigin,
   listDetachedMirrors,
   listMirrors,
@@ -94,7 +94,6 @@ import { open } from "../kernel/secret.ts";
 import {
   staticCredential,
   type OriginKind,
-  type Provider,
 } from "../origins/types.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import {
@@ -103,6 +102,9 @@ import {
   requireWriter,
   type AccessError,
 } from "./access.ts";
+
+/** The words a connect carries when the account is already connected. */
+export const ORIGIN_ALREADY_CONNECTED = "that account is already connected";
 
 // ---- abuse control ----
 
@@ -647,7 +649,7 @@ async function completeConnect(
     expiresAt: tokens.expiresAt,
   });
   if (!stored.ok)
-    return { status: "failed", detail: "that account is already connected" };
+    return { status: "failed", detail: ORIGIN_ALREADY_CONNECTED };
   await afterConnect(app, user, stored.value);
   return { status: "done", detail: "", originId: stored.value.id };
 }

@@ -25,6 +25,7 @@ import {
   type StreamThought,
   type ThoughtState,
 } from "../../core/thought_stream.ts";
+import { NOT_PLACED_YET } from "../../actions/ask_state_words.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase, signInFirst } from "../chrome.ts";
@@ -64,10 +65,10 @@ function placedLinks(t: StreamThought): Html {
       ? html`${x.action} in a repository you cannot read`
       : x.title === null
       ? html`${x.action} ${x.repo} #${x.number}`
-      : html`${x.action} <a href="/${x.repo}/issues/${x.number}">${x.repo} #${x.number}</a>`,
+      : html`${x.action} <a href="/${x.repo}/${x.pull === x.number ? "pulls" : "issues"}/${x.number}">${x.repo} #${x.number}</a>`,
   );
   return links.length === 0
-    ? html`${t.reply ?? "the planner has not placed it yet"}`
+    ? html`${t.reply ?? NOT_PLACED_YET}`
     : html`${links.map((l, i) => html`${i > 0 ? " · " : ""}${l}`)}`;
 }
 

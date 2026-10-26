@@ -19,6 +19,7 @@ import { repoDir } from "../git/repos.ts";
 import { commitFiles } from "../git/write.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { requireWriter, type AccessError } from "./access.ts";
+import { NO_WRITE_ACCESS, PULL_GONE } from "./pull_words.ts";
 
 export type FinishError =
   | AccessError
@@ -38,8 +39,8 @@ export type FinishError =
 /** What each refusal says, on the page and in the terminal alike. */
 export const FINISH_REFUSALS: Record<FinishError, string> = {
   unauthorized: "Sign in to finish a conflict.",
-  forbidden: "You do not have write access to this repository.",
-  not_found: "That pull request is no longer here.",
+  forbidden: NO_WRITE_ACCESS,
+  not_found: PULL_GONE,
   closed: "This pull request is not open. Nothing was written.",
   elsewhere: "This pull's branch lives elsewhere; resolve it there. Nothing was written.",
   stale:

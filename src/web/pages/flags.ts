@@ -6,7 +6,7 @@
  * Anyone else is told 403, and an agent is never an admin here.
  */
 
-import { checkInput, flagRegistry, usesLine, winnerOffer, mayManageFlags, useFlagRegistry, type FlagDecl, type FlagValue } from "../../core/flags.ts";
+import { checkInput, FLAGS_ADMIN_ONLY, flagRegistry, usesLine, winnerOffer, mayManageFlags, useFlagRegistry, type FlagDecl, type FlagValue } from "../../core/flags.ts";
 import { makeWinnerDefault } from "../../actions/flag_winner.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
@@ -31,7 +31,7 @@ function denied(ctx: Ctx): Response | undefined {
         ${empty({
           icon: "lock",
           title: "Admins only",
-          note: "Flags are set by a forge admin.",
+          note: FLAGS_ADMIN_ONLY,
           action: btn("Go home", { href: "/", variant: "primary" }),
         })}`,
     },
@@ -88,7 +88,7 @@ export function flagsPage(ctx: Ctx): Response {
         <span class="mono">${decl.default ? "on" : "off"}</span> · owner
         ${issueLink(repo, decl.issue)} ·
         live: ${summary(v)}<br /><span class="mono">${usesLine(week, month)}</span>`,
-      trail: html`<form class="row-fields flag-form" method="post" action="/settings/flags">
+      trail: html`<form class="row-fields" method="post" action="/settings/flags">
         <input type="hidden" name="name" value="${name}" />
         <select class="input" name="forge" aria-label="${name} for the forge">
           <option value="" ${v?.forge === undefined ? "selected" : ""}>forge: default</option>

@@ -172,3 +172,45 @@ describe("the card shell", () => {
     expect(s.root.all().filter((n) => n.tag === "a")).toHaveLength(1);
   });
 });
+
+describe("the Wave card links its limbs", () => {
+  const json = { repo: { owner: "a", name: "b" }, limbs: [{ number: 3, name: "x", done: 1, total: 2, building: 0 }, { number: 0, name: "y" }] };
+  test("a good origin links a positive number; a bad origin or repo does not", () => {
+    const good = cardFor("milestones", json, "https://f.example")!;
+    expect(good.rows[0]!.link).toBe("https://f.example/a/b/milestones/3");
+    expect(good.rows[1]!.link).toBeUndefined();
+    expect(cardFor("milestones", json, "javascript:x")!.rows[0]!.link).toBeUndefined();
+    expect(cardFor("milestones", { ...json, repo: {} }, "https://f.example")!.rows[0]!.link).toBeUndefined();
+  });
+});
+
+describe("app card links", () => {
+  const origin = "https://forge.example";
+  test("apps rows link to the app page only for an http(s) origin and owner/name", () => {
+    const rows = (o: string, app = "alice/game") => cardFor("apps", [{ app, live: "up" }], o)!.rows;
+    expect(rows(origin)[0]!.link).toBe("https://forge.example/alice/game");
+    expect(rows("javascript:alert(1)")[0]!.link).toBeUndefined();
+    expect(rows("//evil.example")[0]!.link).toBeUndefined();
+    expect(rows("")[0]!.link).toBeUndefined();
+    expect(rows(origin, "a/b/c")[0]!.link).toBeUndefined();
+  });
+  test("apps adds a linked production row for an http(s) url only", () => {
+    const rows = (url: string) => cardFor("apps", [{ app: "alice/game", live: "up", url }], origin)!.rows;
+    const good = rows("https://game.example");
+    expect(good[1]!.link).toBe("https://game.example");
+    const bad = rows("javascript:alert(1)");
+    expect(bad).toHaveLength(1);
+    expect(bad.every((r) => r.link !== "javascript:alert(1)")).toBe(true);
+    const proto = rows("//evil.example");
+    expect(proto).toHaveLength(1);
+    expect(proto.some((r) => r.link === "//evil.example")).toBe(false);
+    expect(proto[0]!.value).toContain("//evil.example");
+  });
+  test("new_app links Production only when the url is http(s)", () => {
+    const prod = (url: string) =>
+      cardFor("new_app", { repo: "alice/game", url, run: "none" })!.rows.find((r) => r.label === "Production")!;
+    expect(prod("https://game.example").link).toBe("https://game.example");
+    expect(prod("javascript:alert(1)").link).toBeUndefined();
+    expect(prod("//evil.example").link).toBeUndefined();
+  });
+});

@@ -17,10 +17,13 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { App } from "../app.ts";
+import { spentTodayEverywhere } from "../crew/autonomy.ts";
 import { beatKeyOf, listChildren } from "../actions/spawn.ts";
 import releases from "../core/releases.json" with { type: "json" };
 import { forgeLinkOf, forgeTipOf, FOLLOW_MODES, type FollowMode, type ForgeLink } from "./chain.ts";
+import { isParentLocal } from "./beat-door.ts";
 import { upstreamState } from "./upstream.ts";
+import { progress } from "../core/next-steps.ts";
 import { running } from "../kernel/version.ts";
 
 export const SIGNATURE_HEADER = "x-forge-signature";
@@ -34,6 +37,7 @@ export const MAX_CHILDREN = 100;
 export const MAX_DEPTH = 4;
 const NAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
 const VERSION = /^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$/;
+const ISO_TIME = /^\d{4}-\d\d-\d\dT[\d:.]{5,12}Z$/;
 const COUNT_MAX = 1_000_000;
 
 export interface Beat {
@@ -53,9 +57,26 @@ export interface Beat {
   readonly upstreamBehind?: number | null;
   /** True while a converge issue is open on the child; absent from an older child. */
   readonly conflict?: boolean;
+  /** Dollars the child's crew spent since 00:00 UTC; absent from an older child or when it sent a bad value. */
+  readonly spendTodayUsd?: number;
+  /** The child's forge cap in dollars (the daily ceiling that pauses its crew), null when it has none; absent when unsaid or bad. */
+  readonly ceilingUsd?: number | null;
+  /** Whether its person has claimed it; absent from an older child or when the value was bad. */
+  readonly claimed?: boolean;
+  /** Whether it has an everyday account (or chose to go without); absent likewise. */
+  readonly everyday?: boolean;
+  /** When its person last told the crew something; null before the first, absent likewise. */
+  readonly lastTellAt?: string | null;
 }
 
-const OPTIONAL = new Set(["forgeTip", "severedAt", "mode", "upstreamBehind", "conflict"]);
+const OPTIONAL = new Set([
+  "forgeTip", "severedAt", "mode", "upstreamBehind", "conflict", "spendTodayUsd", "ceilingUsd", "claimed", "everyday", "lastTellAt",
+]);
+const USD_MAX = 1_000_000;
+
+/** Dollars: a finite number from `min` to a million; anything else is not a sum of money. */
+const dollars = (v: unknown, min: number): v is number =>
+  typeof v === "number" && Number.isFinite(v) && v >= min && v <= USD_MAX;
 
 export function sign(key: string, body: string): string {
   return createHmac("sha256", key).update(body).digest("hex");
@@ -95,21 +116,38 @@ export function parseBeat(raw: string): Beat | undefined {
   if (mode !== undefined && !(typeof mode === "string" && (FOLLOW_MODES as readonly string[]).includes(mode))) return undefined;
   if (upstreamBehind !== undefined && upstreamBehind !== null && !count(upstreamBehind)) return undefined;
   if (conflict !== undefined && typeof conflict !== "boolean") return undefined;
+  // The person's first steps are only a hint: a bad value drops the field, never the beat.
+  const claimed = d["claimed"];
+  const everyday = d["everyday"];
+  const told = d["lastTellAt"];
+  const claimedOk = typeof claimed === "boolean";
+  const everydayOk = typeof everyday === "boolean";
+  // Strict ISO: it is printed into the parent admin's terminal, so nothing but digits and punctuation.
+  const toldOk =
+    told === null || (typeof told === "string" && ISO_TIME.test(told) && !Number.isNaN(Date.parse(told)));
   if (typeof name !== "string" || !NAME.test(name)) return undefined;
   if (typeof at !== "number" || !Number.isSafeInteger(at) || at <= 0) return undefined;
   if (typeof version !== "string" || !VERSION.test(version)) return undefined;
   if (!count(openProposals) || !count(children)) return undefined;
+  // A bad sum drops the field, not the beat.
+  const spend = dollars(d["spendTodayUsd"], 0) ? d["spendTodayUsd"] : undefined;
+  const ceil = d["ceilingUsd"] === null ? null : dollars(d["ceilingUsd"], 0.01) ? d["ceilingUsd"] : undefined;
   return {
     name,
     at,
     version,
     openProposals,
     children,
+    ...(spend === undefined ? {} : { spendTodayUsd: spend }),
+    ...(ceil === undefined ? {} : { ceilingUsd: ceil }),
     ...(forgeTip === undefined ? {} : { forgeTip: forgeTip as string | null }),
     ...(severedAt === undefined ? {} : { severedAt: severedAt as string | null }),
     ...(mode === undefined ? {} : { mode: mode as FollowMode }),
     ...(upstreamBehind === undefined ? {} : { upstreamBehind: upstreamBehind as number | null }),
     ...(conflict === undefined ? {} : { conflict }),
+    ...(claimedOk ? { claimed } : {}),
+    ...(everydayOk ? { everyday } : {}),
+    ...(told !== undefined && toldOk ? { lastTellAt: told as string | null } : {}),
   };
 }
 
@@ -122,7 +160,7 @@ export interface Heard {
   readonly receivedAt: number;
 }
 
-async function lastHeard(app: App, name: string): Promise<Heard | undefined> {
+export async function lastHeard(app: App, name: string): Promise<Heard | undefined> {
   try {
     const doc = JSON.parse(await readFile(beatPath(app, name), "utf8")) as {
       receivedAt?: unknown;
@@ -214,6 +252,15 @@ export function standing(app: App, name: string, at = Date.now()): Beat {
   };
 }
 
+/** What the crew spent today, and the daily ceiling that pauses it (null when the forge sets none). */
+export function spendReport(app: App, now = new Date()): { spendTodayUsd: number; ceilingUsd: number | null } {
+  const cap = app.config.crewCeilingUsd;
+  return {
+    spendTodayUsd: Math.min(Math.round(spentTodayEverywhere(app.db, now) * 100) / 100, USD_MAX),
+    ceilingUsd: cap === undefined || !(cap > 0) ? null : Math.min(cap, USD_MAX),
+  };
+}
+
 /** What a fork says of how it follows: its tip, whether it cut the link, and how far behind it is. */
 async function forkReport(app: App, forge: ForgeLink) {
   const up = await upstreamState(app);
@@ -225,6 +272,12 @@ async function forkReport(app: App, forge: ForgeLink) {
     upstreamBehind: behind === null ? null : Math.min(behind, COUNT_MAX),
     conflict: up?.taken?.kind === "conflict" && up.taken.issue !== null,
   };
+}
+
+/** In a cell the parent's public address is out of reach; its relayed loopback port (`FORGE_PARENT_LOCAL`) is not. */
+function beatBase(upstream: string): string {
+  const local = process.env["FORGE_PARENT_LOCAL"] ?? "";
+  return isParentLocal(local) ? local : upstream;
 }
 
 type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
@@ -245,13 +298,15 @@ export async function sendBeat(
   const body = JSON.stringify({
     ...standing(app, link.name, lastAt),
     children: Math.min(own, COUNT_MAX),
+    ...spendReport(app),
+    ...progress(app),
     // Only a forge that carries a fork of its parent's code has these to say.
     ...(forge === undefined
       ? {}
       : await forkReport(app, forge)),
   });
   try {
-    const res = await fetcher(`${link.upstream}/api/v1/heartbeat`, {
+    const res = await fetcher(`${beatBase(link.upstream)}/api/v1/heartbeat`, {
       method: "POST",
       headers: { "content-type": "application/json", [SIGNATURE_HEADER]: sign(link.key, body) },
       body,
@@ -293,6 +348,10 @@ export interface ChildStanding {
   readonly upstreamBehind: number | null;
   /** A converge issue is open on the child; false when none or unsaid. */
   readonly conflict: boolean;
+  /** Dollars the child's crew spent today, as last reported; null when unsaid. */
+  readonly spendTodayUsd: number | null;
+  /** The child's forge cap in dollars; null when it has none or did not say. */
+  readonly ceilingUsd: number | null;
 }
 
 /** How many releases of this forge are newer than `version`; null when it is not one of them. */
@@ -324,6 +383,8 @@ export async function childStandings(
       mode: heard?.beat.mode ?? null,
       upstreamBehind: heard?.beat.upstreamBehind ?? null,
       conflict: heard?.beat.conflict ?? false,
+      spendTodayUsd: heard?.beat.spendTodayUsd ?? null,
+      ceilingUsd: heard?.beat.ceilingUsd ?? null,
     });
   }
   return { items, more: Math.max(0, all.length - MAX_CHILDREN) };

@@ -12,6 +12,8 @@
  * An action that needs an account is listed for someone without one,
  * saying so, because that is the next thing they need to know.
  */
+import { sshTellCommand } from "../ssh/command.ts";
+import { mcpPointers } from "../core/mcp_card.ts";
 import type { App } from "../app.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import { isCrew } from "../core/agents.ts";
@@ -24,6 +26,7 @@ import {
   getRepo,
   type Repo,
 } from "../core/repos.ts";
+import { getUserByName, hiddenFrom } from "../core/users.ts";
 import { SYSTEM_NAMES } from "../core/reserved.ts";
 import { scopeAllows, type TokenScope } from "../core/tokens.ts";
 import type { User } from "../core/users.ts";
@@ -41,6 +44,8 @@ export interface Action {
   readonly http?: string;
   /** The MCP tool that does the same, when there is one. */
   readonly mcp?: string;
+  /** The shell command that does the same, when the forge's SSH is on. */
+  readonly ssh?: string;
   /** `true`: needs an account the caller does not have; `false`: needs none. */
   readonly account?: boolean;
   /** `true`: needs a verified email, which this account has not proven yet. */
@@ -50,6 +55,8 @@ export interface Action {
 export interface Manifest {
   readonly here:
     | { readonly kind: "forge" | "explore" | "search" }
+    | { readonly kind: "person"; readonly username: string }
+    | { readonly kind: "org"; readonly org: string }
     | {
         readonly kind: "repository";
         readonly name: string;
@@ -89,10 +96,7 @@ export function manifestFor(
   path: string,
 ): Result<Manifest, "not_found"> {
   const common = {
-    mcp: {
-      url: `${origin}/mcp`,
-      oauth: `${origin}/.well-known/oauth-protected-resource`,
-    },
+    mcp: mcpPointers(origin),
     docs: `${origin}/llms.txt`,
   };
   const [owner, name, section, number] = path
@@ -110,6 +114,49 @@ export function manifestFor(
     name === undefined && (owner === "explore" || owner === "search")
       ? owner
       : undefined;
+  // One segment, or `/:owner/-/…`, that is not a page the forge keeps for
+  // itself names an account: a person, an organization, or nobody.
+  if (
+    owner !== undefined &&
+    page === undefined &&
+    (name === undefined || name === "-") &&
+    !SYSTEM.has(owner.toLowerCase())
+  ) {
+    const account = getUserByName(app.db, owner);
+    if (account === undefined || hiddenFrom(account, viewer))
+      return err("not_found");
+    const you = youFor(viewer, scope, undefined, app);
+    const rest = forgeActions(app, viewer, scope);
+    if (account.kind === "org")
+      return ok({
+        here: { kind: "org", org: account.username },
+        you,
+        actions: [
+          {
+            do: "list the organization's teams",
+            http: `GET /api/v1/orgs/${account.username}/teams`,
+          },
+          {
+            do: "list its public repositories",
+            http: `GET /api/v1/users/${account.username}/repos`,
+          },
+          ...rest,
+        ],
+        ...common,
+      });
+    return ok({
+      here: { kind: "person", username: account.username },
+      you,
+      actions: [
+        {
+          do: "read their public repositories",
+          http: `GET /api/v1/users/${account.username}/repos`,
+        },
+        ...rest,
+      ],
+      ...common,
+    });
+  }
   // Two segments under a name the forge keeps for itself are its own page,
   // never a repository (`core/reserved.ts`).
   // `/:owner/-/…` is an account's or an org's own page (its teams), never
@@ -125,10 +172,10 @@ export function manifestFor(
       you: youFor(viewer, scope, undefined, app),
       actions:
         page === undefined
-          ? forgeActions(viewer)
+          ? forgeActions(app, viewer, scope)
           : [
               pageRead(page, path),
-              ...forgeActions(viewer).filter((a) => a.mcp !== page),
+              ...forgeActions(app, viewer, scope).filter((a) => a.mcp !== page),
             ],
       ...common,
     });
@@ -226,7 +273,15 @@ function pageRead(page: "explore" | "search", path: string): Action {
   };
 }
 
-function forgeActions(viewer: User | undefined): Action[] {
+function forgeActions(
+  app: App,
+  viewer: User | undefined,
+  scope: TokenScope | undefined,
+): Action[] {
+  const tellSsh =
+    viewer !== undefined && (scope === undefined || scopeAllows(scope, "rw"))
+      ? sshTellCommand(app)
+      : undefined;
   return [
     {
       do: "explore apps and repositories",
@@ -248,6 +303,7 @@ function forgeActions(viewer: User | undefined): Action[] {
     ...(viewer === undefined
       ? [{ do: "use the MCP", http: "POST /mcp", account: true }]
       : [{ do: "use the MCP", http: "POST /mcp" }]),
+    ...(tellSsh === undefined ? [] : [{ do: "tell the crew", ssh: tellSsh }]),
   ];
 }
 
@@ -299,8 +355,14 @@ function repoActions(
   if (record !== undefined && canEnterApp(db, repo, record, viewer))
     out.push({ do: "open the app", http: `GET ${r}/app/production/open` });
   if (!acts) return out;
+  const tellSsh = sshTellCommand(app);
   if (mayDirectCrew(db, repo, viewer))
-    out.push({ do: "tell the crew", mcp: "tell", ...unproven });
+    out.push({
+      do: "tell the crew",
+      mcp: "tell",
+      ...(tellSsh === undefined ? {} : { ssh: tellSsh }),
+      ...unproven,
+    });
   // A verdict is a writer's or the crew's; the merge is a person's.
   // The same rule `submitReview` asks.
   if (

@@ -7,7 +7,6 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import keptIsAPersons from "../src/core/migrations/20261016120000-kept-is-a-person-s.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { createApp, type App } from "../src/app.ts";
 import { createRepo } from "../src/actions/repos.ts";
@@ -77,7 +76,10 @@ beforeAll(async () => {
   if (!made.ok) throw new Error(String(made.error));
   repo = made.value;
 });
+const keptSentinelRepo = process.env.FORGE_SENTINEL_REPO;
 afterAll(async () => {
+  if (keptSentinelRepo === undefined) delete process.env.FORGE_SENTINEL_REPO;
+  else process.env.FORGE_SENTINEL_REPO = keptSentinelRepo;
   app.db.close();
   await rm(dataDir, { recursive: true, force: true });
 });
@@ -165,6 +167,41 @@ describe("a push blocked on the network is still a push fault", () => {
   });
 });
 
+describe("a gate never green", () => {
+  const gateKeys = (): string[] =>
+    findFaults(app.db, NOW).map((f) => f.key).filter((k) => k.startsWith("gate:"));
+  const plant = (repoId: string): void => {
+    for (let n = 0; n < 15; n++) {
+      const run = createRun(app.db, { repoId, kind: "check" });
+      app.db
+        .query("UPDATE run SET state = 'failed', summary = 'no check.run', created_at = ?2 WHERE id = ?1")
+        .run(run.id, ago((40 + n) * HOUR));
+    }
+  };
+
+  test("in another repository files nothing", async () => {
+    const made = await createRepo(app, alice, { name: "elsewhere", visibility: "private" });
+    if (!made.ok) throw new Error(String(made.error));
+    process.env.FORGE_SENTINEL_REPO = "alice/forge";
+    try {
+      plant(made.value.id);
+      expect(gateKeys()).not.toContain(`gate:${made.value.id}`);
+    } finally {
+      app.db.query("DELETE FROM run WHERE repo_id = ?1").run(made.value.id);
+    }
+  });
+
+  test("in the sentinel's own repository still files", () => {
+    process.env.FORGE_SENTINEL_REPO = "alice/forge";
+    try {
+      plant(repo.id);
+      expect(gateKeys()).toContain(`gate:${repo.id}`);
+    } finally {
+      app.db.query("DELETE FROM run WHERE repo_id = ?1 AND summary = 'no check.run'").run(repo.id);
+    }
+  });
+});
+
 describe("a failed push that pushed nothing", () => {
   test("still raises the push fault", async () => {
     const made = await createRepo(app, alice, { name: "blocked", visibility: "private" });
@@ -184,6 +221,7 @@ describe("a failed push that pushed nothing", () => {
 describe("the faults of the day", () => {
   let queuedId = "";
   beforeAll(() => {
+    process.env.FORGE_SENTINEL_REPO = "alice/forge";
     // 1. a slot held by a finished run: work waits, nothing runs.
     plantRun("check", "cancelled", "cancelled", ago(3 * HOUR));
     queuedId = createRun(app.db, { repoId: repo.id, kind: "check" }).id;
@@ -267,13 +305,16 @@ describe("the faults of the day", () => {
 describe("the schedule", () => {
   test("a new fault is a signal inside the hour; a known one waits for the hour", () => {
     const last = new Date(sentinelStanding(app.db).lastHuntAt!).getTime();
-    expect(sentinelTick(app, last + 5 * 60_000)).toBeNull();
-    expect(sentinelTick(app, last + 20 * 60_000)).toBeNull();
-    process.env.FORGE_SENTINEL_REPO = "alice/forge";
+    const kept = process.env.FORGE_SENTINEL_REPO;
+    delete process.env.FORGE_SENTINEL_REPO;
     try {
+      expect(sentinelTick(app, last + 5 * 60_000)).toBeNull();
+      expect(sentinelTick(app, last + 20 * 60_000)).toBeNull();
+      process.env.FORGE_SENTINEL_REPO = "alice/forge";
       expect(sentinelTick(app, last + HOUR + 1)).not.toBeNull();
     } finally {
-      delete process.env.FORGE_SENTINEL_REPO;
+      if (kept === undefined) delete process.env.FORGE_SENTINEL_REPO;
+      else process.env.FORGE_SENTINEL_REPO = kept;
     }
   });
 });
@@ -577,6 +618,16 @@ describe("degraded causes", () => {
     plantSpan("disk", day - 3 * 3_600_000, 6);
     expect(degradedCauses(dapp.db, day).map((f) => f.key)).toEqual(["degraded:disk"]);
   });
+
+  test("a drill cause is a person's: no issue, but a shared one of the forge's own still is", () => {
+    const day = D_NIGHT + 10 * D_DAY;
+    plantSpan("drill:never", day - 5 * 3_600_000, 30);
+    plantSpan("drill:compute", day - 3 * 3_600_000, 30);
+    expect(degradedCauses(dapp.db, day, drepo.id)).toEqual([]);
+    expect(degradedCauses(dapp.db, day)).toEqual([]);
+    plantSpan(`shared:${drepo.id}:abc`, day - 2 * 3_600_000, 30);
+    expect(degradedCauses(dapp.db, day, drepo.id).map((f) => f.key).length).toBe(1);
+  });
 });
 
 // ---- budget breaches (#1270) ----
@@ -748,14 +799,42 @@ describe("a degraded incident whose issue closed as done", () => {
     expect(issues("open").length).toBe(1);
   });
 
-  test("a finding closed as dropped that returns is refiled", () => {
+  test("a finding closed as dropped stays silent while the incident goes on", () => {
     const t = T0 + 10 * DAY;
     span("disk", t - 2 * HOUR, 30);
     expect(hunt(iapp, "alice/forge", t).filed).toBe(1);
     iapp.db.query("UPDATE issue SET state = 'closed', close_reason = 'dropped', closed_at = ?1 WHERE state = 'open'").run(new Date(t).toISOString());
     const r = hunt(iapp, "alice/forge", t + 30 * D_MIN);
-    expect(r.filed).toBe(1);
+    expect(r.filed).toBe(0);
     expect(r.commented).toBe(0);
+    expect(issues("open").length).toBe(0);
+  });
+
+  test("a finding closed as split is commented once a day, not refiled", () => {
+    const t = T0 + 20 * DAY;
+    span("queue", t - 2 * HOUR, 30);
+    expect(hunt(iapp, "alice/forge", t).filed).toBe(1);
+    iapp.db.query("UPDATE issue SET state = 'closed', close_reason = 'split', closed_at = ?1 WHERE state = 'open'").run(new Date(t).toISOString());
+    const again = hunt(iapp, "alice/forge", t + 30 * D_MIN);
+    expect(again.filed).toBe(0);
+    expect(again.commented).toBe(1);
+    const third = hunt(iapp, "alice/forge", t + 2 * HOUR);
+    expect(third.filed).toBe(0);
+    expect(third.commented).toBe(0);
+    expect(issues("open").length).toBe(0);
+  });
+
+  test("a new incident after a split close is refiled", () => {
+    const t = T0 + 30 * DAY;
+    span("cache", t - 2 * HOUR, 30);
+    expect(hunt(iapp, "alice/forge", t).filed).toBe(1);
+    iapp.db.query("UPDATE issue SET state = 'closed', close_reason = 'split', closed_at = ?1 WHERE state = 'open'").run(new Date(t).toISOString());
+    // The incident ends; a fresh one opens later, with another first-open time.
+    const later = t + 2 * DAY;
+    span("cache", later - HOUR, 20);
+    const r = hunt(iapp, "alice/forge", later);
+    expect(r.filed).toBe(1);
+    expect(issues("open").length).toBe(1);
   });
 });
 
@@ -764,7 +843,6 @@ describe("a degraded incident whose issue closed as done", () => {
 describe("a degraded finding whose cause has stayed closed", () => {
   let hdir: string;
   let happ: App;
-  let hrepo: Repo;
   let halice: User;
   const T0 = Date.parse("2026-10-18T12:00:00.000Z");
   const plant = (cause: string, closedAt: number): void => {
@@ -782,7 +860,6 @@ describe("a degraded finding whose cause has stayed closed", () => {
     halice = a.value;
     const made = await createRepo(happ, halice, { name: "forge", visibility: "private" });
     if (!made.ok) throw new Error(String(made.error));
-    hrepo = made.value;
     // Two incidents, both closed at T0; one will get a person's comment.
     plant("drill", T0);
     plant("disk", T0);

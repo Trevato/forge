@@ -6,6 +6,7 @@
  * anyone else sees nothing.
  */
 
+import { USAGE_ADMIN_ONLY } from "../../actions/admin_limits_words.ts";
 import { mayManageFlags } from "../../core/flags.ts";
 import { ROLES, SURFACES } from "../../core/usage_count.ts";
 import { routeUsage, WINDOW_DAYS, type RouteUsage } from "../../core/usage_report.ts";
@@ -42,7 +43,7 @@ export function usageScreen(f: Session, ctx: Ctx): Screen {
       const [head, list] = split(area, "v", [len(1), fill(1)]);
       const all = rows;
       const text = !allowed
-        ? "Usage is read by a forge admin."
+        ? USAGE_ADMIN_ONLY
         : `${all.filter((r) => r.total === 0).length} of ${all.length} routes had no request in ${WINDOW_DAYS} days; unused first.`;
       s.text(head!.x, head!.y, truncate(text, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
       drawList(s, list!, c, state, usageRows(all));

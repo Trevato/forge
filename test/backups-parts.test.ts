@@ -76,6 +76,8 @@ test("the page carries none of the old classes, and keeps its words, links and f
 test("the restore command is a scrollable pre in the card body, not in the foot", async () => {
   const page = await get();
   const pre = /<pre[^>]*>[^]*?<\/pre>/.exec(page)?.[0] ?? "";
+  expect(pre).toContain('class="restore-command"');
+  expect(page).not.toContain("domain-records");
   expect(pre).toContain('tabindex="0"');
   expect(pre).toContain("aria-label=");
   expect(pre).toContain("bun run src/snapshot/restore.ts");

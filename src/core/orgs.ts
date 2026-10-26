@@ -247,6 +247,13 @@ export function retireOrg(db: Database, orgId: string, at: string): void {
   forgetListings(db);
 }
 
+/** Why suspending `username` is refused while they are the last owner of an organization. */
+export function lastOwnerSays(db: Database, username: string): string {
+  const user = getUserByName(db, username);
+  const orgs = user === undefined ? [] : soleOwnedOrgs(db, user.id).map((o) => o.username);
+  return `${username} is the only active person owning ${orgs.join(", ")}: suspending leaves no one to administer it. Make someone else an owner first`;
+}
+
 /** The organizations `userId` is the last active person owning: removing them would orphan these. */
 export function soleOwnedOrgs(db: Database, userId: string): User[] {
   const user = getUserById(db, userId);

@@ -30,7 +30,7 @@ import { liveRegionsJs, studioRunJs } from "../client.ts";
 import { html, raw, when, type Html } from "../html.ts";
 import { runLine } from "../describe.ts";
 import { page } from "../layout.ts";
-import { badge, btn, listCard, row as stepRow, sha, type Tone } from "../ui.ts";
+import { badge, btn, card, listCard, row as stepRow, sha, type Tone } from "../ui.ts";
 import { previewCard } from "../pages/apps.ts";
 import { costText, durationText, runTitle, runTokens } from "../pages/runs.ts";
 import { placementLine, sandboxLine } from "./sandbox.ts";
@@ -145,14 +145,14 @@ export async function runView(
   // finishing shows its final state without a reload. Its id stays once the
   // run is over, so the last swap still finds its match.
   const head = html`<div
-    class="issue-head"
+    class="page-head"
     id="run-head"
     ${unfinished
       ? html`data-live="run.*" data-live-repo="${repo.ownerName}/${repo.name}"`
       : null}
   >
     <h1>${title}</h1>
-    <div class="issue-meta">
+    <div class="page-head-sub bar muted small">
       ${wordBadge(word, "run-word")}
       ${when(
         issue,
@@ -315,17 +315,15 @@ export async function runView(
                 : ""}
             <p class="check-words small muted break">${[words, runningWords].filter((w) => w !== "").join(" · ")}</p>
           </div>
-          <div class="pinned-slot" id="check-pins"${row.failures.length > 0 ? raw(' role="region" tabindex="0" aria-label="Failed tests"') : ""}>
-            ${when(
-              row.failures.length > 0,
-              () => html`<ul class="pinned-failures">
-                ${row.failures.map(
-                  (f) => html`<li><strong>${f.name}</strong>${when(
-                    f.lines.length > 0,
-                    () => html`<pre>${f.lines.join("\n")}</pre>`,
-                  )}</li>`,
-                )}
-              </ul>`,
+          <div data-pins id="check-pins"${row.failures.length > 0 ? raw(' role="region" tabindex="0" aria-label="Failed tests"') : ""}>
+            ${row.failures.map((f) =>
+              card(
+                html`<strong class="break">${f.name}</strong>${when(
+                  f.lines.length > 0,
+                  () => html`<pre class="break">${f.lines.join("\n")}</pre>`,
+                )}`,
+                { tone: "danger" },
+              ),
             )}
           </div>
         </div>`;
@@ -343,6 +341,7 @@ export async function runView(
       )}
       ${when(!logHidden, () => logBox({
         id: "run-log",
+        anchors: true,
         who,
         cap: all
           ? Math.max(lines.length, RUN_TRANSCRIPT_CAP)

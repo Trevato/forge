@@ -37,7 +37,6 @@ import {
 } from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { serving } from "./helpers/studio.ts";
 import { promote } from "./helpers/members.ts";
 
 describe("finding things in the studio: /search", () => {
@@ -181,6 +180,18 @@ describe("finding things in the studio: /search", () => {
     expect(html).toContain("Wire up the chess clock");
     expect(html).toContain(`/alice/widgets/pulls/${changeNumber}`);
     expect(html).toContain("alice/widgets");
+  });
+
+  test("the filter form and chips are drawn with §5's bar, never .filters", async () => {
+    for (const path of ["/search?q=chess", "/search"]) {
+      const html = await (await asAlice(path)).text();
+      expect(html).toContain('role="search"');
+      expect(html).not.toContain('class="filters"');
+    }
+    const html = mainOf(await (await asAlice("/search?q=chess")).text());
+    expect(html).toMatch(/<form\s+class="bar mb"[^>]*role="search"/);
+    expect(html).toMatch(/<div class="bar mb">\s*<div class="seg">/);
+    expect(html).toContain("Apps &amp; repos");
   });
 
   test("an empty query is an empty result, not an error page", async () => {

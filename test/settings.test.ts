@@ -119,6 +119,9 @@ describe("repo settings", () => {
     ).text();
     expect(pageHtml).toContain("lc-d73a4a");
     expect(pageHtml).toContain(".lc-d73a4a{--label:#d73a4a}");
+    // The colour readout beside the picker draws from base utilities, not .hex.
+    expect(pageHtml).toContain('<span class="mono muted" data-hex>#');
+    expect(pageHtml).not.toContain('class="hex"');
 
     await fetch(`${base}/olive/proj/settings/labels/${labelId}/delete`, {
       method: "POST",

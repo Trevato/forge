@@ -36,6 +36,10 @@ Nesting a sandbox is not possible there, so `test/crew-sandbox.test.ts` checks
 the settings that enforce it (`allowLocalBinding` on, `allowAllUnixSockets` off,
 the `denyRead` list) and not the boundary itself.
 
+## Where a run's time went
+
+Every run that started ends its log with one `timing: run ended …s after the run started — clone … · brief … · harness …` line (plus `wrap-up` when the reserve was used), whatever way it ended; `src/apps/timing.ts` draws it.
+
 ## The sentinel (#1131)
 
 The forge hunts its own faults. `src/crew/sentinel.ts` runs on the autonomy
@@ -52,3 +56,15 @@ strip shows the last hunt and the count of open findings.
 Left to a person on purpose: ingress routes at the edge are not in the
 database, and the sentinel opens no pull itself — a finding with a mechanical
 fix says what it is, and a run of the crew picks the issue up.
+
+## Hot files (#5934, #6235)
+
+A build is not started while a file its issue names is touched by 5 or more
+open pulls (`HOT_PULLS`). A pull whose diff against the base tip touches more
+than 60 files (`WIDE_PULL`) counts toward no file's heat: such a diff is
+almost always the base's history on a conflicted pull, not its own work, and
+five of them would make hundreds of files hot and hold the whole map. It is
+named instead, with its file count, on the feed post that says what waits
+(`too wide to count: #4840 (1,081 files)`), so a person can close or rebase
+it. A real sweeping change, such as a rename across the tree, goes uncounted
+too; it conflicts with everything anyway, and it is named.

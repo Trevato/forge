@@ -17,16 +17,23 @@ import {
   type EnvStatus,
 } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
-import { canEnterApp, getRepoById } from "../../core/repos.ts";
+import { canEnterApp, getRepoById, type Repo } from "../../core/repos.ts";
 import type { User } from "../../core/users.ts";
 import type { Efficiency } from "../../core/efficiency.ts";
 import type { WindowStanding } from "../../core/standing.ts";
 import { whenText } from "../../crew/limits.ts";
-import { waitsForReviewer } from "../../crew/review.ts";
-import { getIssueById } from "../../core/issues.ts";
-import { getPull, pullForBranch, type Pull } from "../../core/pulls.ts";
+import { reviewWaitsFor, waitsForReviewer } from "../../crew/review.ts";
+import { getIssueById, getIssuesByIds } from "../../core/issues.ts";
+import {
+  getPull,
+  joinMany,
+  pullForBranch,
+  pullsForBranches,
+  type Pull,
+} from "../../core/pulls.ts";
 import {
   checkSummary,
+  checksForHeads,
   STOPPED_SUMMARY,
   type CheckDetail,
   type CheckSummary,
@@ -92,6 +99,89 @@ export interface WordCtx {
   readonly history: ServingHistory;
   /** Who is reading: a private app's production is theirs only if they may enter it. */
   readonly viewer: User | undefined;
+}
+
+/** What a page read ahead for its rows, so `pullWord` and `runWord` do not read per row. */
+interface Ahead {
+  readonly checks: Map<string, CheckSummary>;
+  readonly reviewers: Map<string, string | undefined>;
+  readonly runPulls: Map<string, Pull | undefined>;
+}
+// Keyed by the page's `WordCtx`, which is made fresh for each request and
+// dropped with it, so nothing here outlives the render it was read for.
+const ahead = new WeakMap<WordCtx, Ahead>();
+const aheadOf = (ctx: WordCtx): Ahead => {
+  let a = ahead.get(ctx);
+  if (a === undefined)
+    ahead.set(ctx, (a = { checks: new Map(), reviewers: new Map(), runPulls: new Map() }));
+  return a;
+};
+
+/**
+ * Read, for all these pulls at once, what `pullWord` asks per open pull: its
+ * check at its head, and the reviewer a green agent pull waits for. The
+ * words that follow are the ones a read apiece gives, in a handful of queries.
+ */
+export function knowPulls(ctx: WordCtx, pulls: readonly Pull[]): void {
+  const a = aheadOf(ctx);
+  const open = pulls.filter(
+    (p) => p.mergedAt === null && p.state !== "closed" && !a.checks.has(p.id),
+  );
+  if (open.length === 0) return;
+  const runs = checksForHeads(ctx.db, new Map(open.map((p) => [p.id, p.headOid])));
+  const green: Pull[] = [];
+  for (const p of open) {
+    const latest = runs.get(p.id)?.[0];
+    a.checks.set(
+      p.id,
+      latest ? { state: latest.state, run: latest } : { state: "none", run: null },
+    );
+    if (latest?.state === "ok") green.push(p);
+  }
+  const repos = new Map<string, Repo | undefined>();
+  for (const p of green)
+    if (!repos.has(p.repoId)) repos.set(p.repoId, getRepoById(ctx.db, p.repoId));
+  const have = green.flatMap((pull) => {
+    const repo = repos.get(pull.repoId);
+    return repo ? [{ repo, pull }] : [];
+  });
+  const waits = reviewWaitsFor(ctx.db, have);
+  for (const p of green) a.reviewers.set(p.id, waits.get(p.id)?.reviewer);
+}
+
+/** `knowPulls` for the pull each of these finished runs produced (`pullFromRun`). */
+export function knowRunPulls(ctx: WordCtx, runs: readonly Run[]): void {
+  const a = aheadOf(ctx);
+  const want = runs.filter((r) => !a.runPulls.has(r.id));
+  if (want.length === 0) return;
+  const about = getIssuesByIds(
+    ctx.db,
+    want.flatMap((r) => (r.issueId === null ? [] : [r.issueId])),
+  );
+  const direct = new Map(
+    joinMany(ctx.db, [...about.values()].filter((i) => i.kind === "pull")).map(
+      (p) => [p.id, p] as const,
+    ),
+  );
+  const byBranch = new Map<string, Map<string, Pull>>();
+  for (const repoId of new Set(want.map((r) => r.repoId)))
+    byBranch.set(
+      repoId,
+      pullsForBranches(
+        ctx.db,
+        repoId,
+        want.filter((r) => r.repoId === repoId).map((r) => r.branch),
+      ),
+    );
+  const found: Pull[] = [];
+  for (const r of want) {
+    const pull =
+      (r.issueId === null ? undefined : direct.get(r.issueId)) ??
+      (r.branch === "" ? undefined : byBranch.get(r.repoId)?.get(r.branch));
+    a.runPulls.set(r.id, pull);
+    if (pull !== undefined) found.push(pull);
+  }
+  knowPulls(ctx, found);
 }
 
 /**
@@ -186,7 +276,7 @@ function checkRunWord(check: CheckSummary): { word: Word; note: string } {
     const detail = check.run?.checkDetail;
     return {
       word: "stopped",
-      note: detail ? `${base} — ${detailNote(detail)}` : base,
+      note: detail && detail.names.length > 0 ? `${base} — ${detailNote(detail)}` : base,
     };
   }
   if (check.state === "running")
@@ -239,13 +329,18 @@ export async function pullWord(
           ? "parked by the crew"
           : "closed without shipping",
     };
-  const check = checkSummary(ctx.db, pull.id, pull.headOid);
+  const check =
+    ahead.get(ctx)?.checks.get(pull.id) ??
+    checkSummary(ctx.db, pull.id, pull.headOid);
   // A repository that is not an app never deploys a head, so it never gets
   // a look: an open change there waits on a person, and says so.
   if (ctx.record === undefined && check.state === "none")
     return { word: "waiting", note: "open — waiting on a person" };
   if (check.state === "ok") {
-    const reviewer = waitsForReviewer(ctx.db, pull.repoId, pull);
+    const known = ahead.get(ctx)?.reviewers;
+    const reviewer = known?.has(pull.id)
+      ? known.get(pull.id)
+      : waitsForReviewer(ctx.db, pull.repoId, pull);
     if (reviewer !== undefined)
       return { word: "waiting", note: `waiting for ${reviewer}'s review` };
   }
@@ -286,7 +381,8 @@ export async function runWord(
           ? "interrupted by a restart"
           : run.summary || run.state,
     };
-  const pull = pullFromRun(ctx.db, run);
+  const known = ahead.get(ctx)?.runPulls;
+  const pull = known?.has(run.id) ? known.get(run.id) : pullFromRun(ctx.db, run);
   if (pull !== undefined) return await pullWord(ctx, pull);
   if (run.kind !== "agent")
     return {
@@ -380,18 +476,6 @@ export function productionFact(
     return failed.at >= shipped.at ? failed : shipped;
   return failed ?? shipped;
 }
-
-const WORD_ICON: Record<Word, Parameters<typeof icon>[0]> = {
-  working: "loader",
-  look: "eye",
-  shipped: "check",
-  stopped: "alert",
-  waiting: "clock",
-  planned: "map",
-  told: "clock",
-  done: "check",
-  cancelled: "ban",
-};
 
 /** One of the five (or six) studio words, as a badge. An id names the one a
  * live script repaints as a run finishes (`studioRunJs`). `cancelled` draws

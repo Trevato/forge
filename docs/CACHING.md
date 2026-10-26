@@ -183,6 +183,10 @@ and rounds to 0.0):
   event on the repository (see "Gaps") and spend reported by another
   process.
 
+### 2b. The API map: the finished answer, by the write clock (#3321)
+
+`GET /api/v1/repos/:owner/:name/map` keeps its whole answer in `web/map_snapshot.ts`, keyed by repository, the viewer's sealed scope and the UTC minute (the week's merge window slides with time) and valid only under the forge's write clock, so a plan, or any write, drops it before the next read. A hit still names the five phases, flagged as hits. Test: `test/map-seed-timing.test.ts`.
+
 ## Home (`/`)
 
 ### 3. The feed's first page: per viewer
@@ -266,6 +270,21 @@ fixture; all three caches hit):
 | `kpis`        |       0.2 |       0.3 |
 | `panels`      |       0.1 |       0.1 |
 | `feed`        |       7.1 |      10.0 |
+
+### 6. The waiting line: per viewer (#5806)
+
+- **What:** how many asks wait on the viewer and the oldest's time (the
+  `waitingOn` scan over up to 200 repositories); the words are made fresh
+  for each request.
+- **Key:** `waiting:{viewerId}`, read for the signed-in viewer only, so no
+  one reads another's count. `waiting` in `Server-Timing` carries `desc="hit"`.
+- **Invalidated by:** every write, through the write clock (dismissals,
+  assignments, pulls, holds), as the KPI row is.
+- **Max age:** 30 seconds.
+- **Measured** (`test/home-200.test.ts`: 200 repositories, 100 assigned asks,
+  owner, second look): the miss cost `waiting` 7.5 ms, the largest read after
+  `feed`; a hit is under 0.1 ms. Every phase over 20 ms is named in the
+  test's output; none is over 20 ms in the sandbox.
 
 ### Not cached on home
 
@@ -370,7 +389,18 @@ warm:
   `test/flake.test.ts` allows a request; the 50 ms is read off the bench.
 - **`/`: p95 ≤ 50 ms on the bench, and a statement count that does not
   grow with the feed's candidates** (the `test/counts.test.ts` pattern).
-  The test's wall-clock bound is 200 ms, for the same reason.
+  The 50 ms is read off the bench, end to end. `test/home-cache.test.ts`
+  bounds what the KPI and panel caches spend, not the page's wall clock: it
+  first records the statements a miss of both runs that a warm page does not
+  (the KPI reads and the pinned panel's query), then requires that in 30 warm
+  requests every `kpis` and `panels` phase is a `desc="hit"` and runs none
+  of them. A request that a write came near (the route-timing flush, a
+  session's last-seen) misses rightly and is not judged; at least 20 of the
+  30 must be. Its earlier bound, 200 ms p95 on `/`, timed the feed (most of
+  the page) and the machine's load, and went red on loaded check machines
+  (#5237). The two phases take about 1.5 ms warm, but under load a hit and
+  a miss both take from under a millisecond to tens of milliseconds, so no
+  time bound can tell them apart.
 
 ## Max ages, at a glance
 

@@ -31,8 +31,12 @@ change, so hooks and the crew see it.
 
 ## The map
 
-`/:owner/:name/map` draws the repository's open issues, and any closed one
-still on an edge, laid out by what waits for what. Each issue is a card one
+`/:owner/:name/map` draws the repository's open issues, laid out by what
+waits for what. Closed issues are not drawn unless the page is asked for
+`?done=1` ("Show done" beside the counts; "Open only" returns). Ready now,
+Blocked on, the critical path, the marks, the counts and the pillar rows are
+still computed on the whole graph, so a closed blocker still frees what it
+held. The layout cache keys on the graph drawn, so each filter has its own. Each issue is a card one
 level below everything it is blocked by, so the top edge is what is ready
 now. Within a level, cards are ordered to keep the curves short and
 uncrossed: a barycenter pass sorts each level by where its blockers sit,
@@ -425,7 +429,8 @@ asked, under **Settings → Autonomy**:
   to a pull with changes requested, then to a new issue, and one whose
   two updates ended without a push is handed to the person who turned
   autonomy on — assigned to them, not closed (`crew/finishing.ts`; the
-  tick line says `finishing=N` and `conflict="N waiting"`). The planner's next pass splits or rewrites a parked
+  tick line says `finishing="queued Q, in flight F, skipped S: <why>×k"`,
+  and each skipped pull is logged once per reason as `finishing: skip pull=N why="…"`). The planner's next pass splits or rewrites a parked
   issue, and one parked twice is handed to the planner (below). The planner
   keeps a standing reserve of startable work — two issues per builder
   slot, never fewer than three — and is asked whenever fewer than that can

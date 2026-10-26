@@ -38,8 +38,10 @@ import { prefersJson } from "./form.ts";
 import { notePhase } from "../core/route_timing.ts";
 import { html, raw, when, type Html } from "./html.ts";
 import { noRoom } from "../spawn/door.ts";
+import { quotaFull } from "../spawn/quota.ts";
 import { icon, iconSprite, inlineIcons, themeGlyph } from "./icons.ts";
-import { btn, kbd, menu, pill, type MenuItem } from "./ui.ts";
+import { btn, copyField, kbd, menu, type MenuItem } from "./ui.ts";
+import { SITE_LINE } from "./site_line.ts";
 
 /** One row of the command palette: title, href, category. */
 export interface PaletteItem {
@@ -51,6 +53,11 @@ export interface PaletteItem {
 export interface PageOptions {
   /** The request: user, theme and flash all come from here. */
   ctx: Ctx;
+  /**
+   * A flash for this response itself, for a form that re-renders instead of
+   * redirecting. It stands in for the cookie's, so a page never shows two.
+   */
+  flash?: Flash;
   title: string;
   /**
    * One sentence for the places that show a page before it is opened: a
@@ -121,7 +128,7 @@ export interface PageOptions {
 /** The theme choice as a panel section: lives in a menu, never in the bar. */
 function themeForm(active: ThemeName | undefined): Html {
   const option = (value: string, label: string, checked: boolean) =>
-    html`<label class="theme-option">
+    html`<label class="check">
       <input
         type="radio"
         name="theme"
@@ -130,17 +137,16 @@ function themeForm(active: ThemeName | undefined): Html {
       />
       <span class="swatch" data-t="${value}"></span>
       ${label}
-      <span class="tick" aria-hidden="true">${icon("check")}</span>
     </label>`;
   return html`<form class="theme-form" method="post" action="/theme">
-      <span class="menu-title">Theme</span>
-      ${option("system", "System", active === undefined)}
-      ${THEME_NAMES.map((name) =>
-        option(name, THEMES[name].label, active === name),
-      )}
-      <button class="btn theme-apply" data-size="sm" type="submit">
-        Apply
-      </button>
+      <fieldset class="field">
+        <legend>Theme</legend>
+        ${option("system", "System", active === undefined)}
+        ${THEME_NAMES.map((name) =>
+          option(name, THEMES[name].label, active === name),
+        )}
+      </fieldset>
+      ${btn("Apply", { size: "sm" })}
     </form>`;
 }
 
@@ -168,11 +174,13 @@ const NEW_FORGE: MenuItem = {
 
 /** The door shows to every person; with no room left it is disabled and says why. */
 const isPerson = (ctx: Ctx): boolean => ctx.auth.user?.kind === "user";
+const roomless = (ctx: Ctx): string | undefined =>
+  noRoom(ctx.app) ?? quotaFull(ctx.app.config.dataDir);
 const sendsForges = (ctx: Ctx): boolean =>
-  isPerson(ctx) && noRoom(ctx.app) === undefined;
+  isPerson(ctx) && roomless(ctx) === undefined;
 const forgeDoor = (ctx: Ctx): MenuItem[] => {
   if (!isPerson(ctx)) return [];
-  const why = noRoom(ctx.app);
+  const why = roomless(ctx);
   return [why === undefined ? NEW_FORGE : { ...NEW_FORGE, disabled: why }];
 };
 
@@ -400,19 +408,7 @@ function flashToast(flash: Flash): Html {
       ${when(
         flash.code,
         (code) =>
-          html`<span class="clone"
-            ><span class="clone-text" id="flash-code">${code}</span>
-            <button
-              class="btn btn-icon"
-              data-size="sm"
-              type="button"
-              data-copy="flash-code"
-              aria-label="Copy"
-              title="Copy"
-            >
-              ${icon("copy")}
-            </button></span
-          >`,
+          copyField("flash-code", code, "Code", "Copy code"),
       )}
     </div>
   </div>`;
@@ -509,7 +505,6 @@ function footer(ctx: Ctx): Html {
 
 // ---- the page ----
 
-const SITE_LINE = "Your code, your machine.";
 
 function pageDescription(options: PageOptions): string {
   const own = options.description?.trim().split(/\r?\n/)[0]?.trim() ?? "";
@@ -524,7 +519,8 @@ export function page(options: PageOptions, status = 200): Response {
   const placeholder = secret();
   const { ctx } = options;
   const theme = ctx.theme ?? options.theme;
-  const flash = readFlash(ctx.request);
+  const cookieFlash = readFlash(ctx.request);
+  const flash = options.flash ?? cookieFlash;
   const links = pageLinks(ctx);
 
   // The body's markup, built before the document so the icons it used can be
@@ -553,7 +549,7 @@ export function page(options: PageOptions, status = 200): Response {
           name="viewport"
           content="width=device-width, initial-scale=1, viewport-fit=cover"
         />
-        <title>${options.title} · forge</title>
+        <title>${options.title === "forge" ? "forge" : `${options.title} · forge`}</title>
         <meta name="description" content="${pageDescription(options)}" />
         <meta property="og:site_name" content="forge" />
         <meta property="og:type" content="website" />
@@ -682,7 +678,7 @@ export function page(options: PageOptions, status = 200): Response {
     link: linkHeader(links),
   });
   // A flash is shown exactly once: rendering it is also what clears it.
-  if (flash) headers.append("set-cookie", clearFlashCookie(ctx.url));
+  if (cookieFlash) headers.append("set-cookie", clearFlashCookie(ctx.url, ctx.app.config.url));
   if (tagged) {
     const etag = weakEtag(text);
     headers.set("etag", etag);
@@ -701,6 +697,8 @@ export interface RedirectOptions {
   flash?: Flash;
   /** Needed only so the flash cookie learns whether to be Secure. */
   url?: URL;
+  /** The forge's own address: https there makes the cookie Secure behind a TLS-ending proxy. */
+  forgeUrl?: string | undefined;
 }
 
 export function redirect(
@@ -712,7 +710,7 @@ export function redirect(
   const headers = new Headers({ location: to });
   if (o.cookie !== undefined) headers.append("set-cookie", o.cookie);
   if (o.flash !== undefined)
-    headers.append("set-cookie", flashCookie(o.flash, o.url));
+    headers.append("set-cookie", flashCookie(o.flash, o.url, o.forgeUrl));
   return new Response(null, { status: 303, headers });
 }
 
@@ -772,7 +770,7 @@ export function missingFragment(request: Request): Response {
 
 /** Redirect back to a page carrying a message — the shape most handlers want. */
 export function flashTo(ctx: Ctx, to: string, flash: Flash): Response {
-  return redirect(to, { flash, url: ctx.url });
+  return redirect(to, { flash, url: ctx.url, forgeUrl: ctx.app.config.url });
 }
 
 /**

@@ -109,7 +109,7 @@ describe("the chain at the MCP and terminal doors", () => {
     rw = createToken(child.db, alice.id, "rw", "rw").token;
     ro = createToken(child.db, alice.id, "ro", "ro").token;
     readerRw = createToken(child.db, reader.id, "rr", "rw").token;
-  }, 60_000);
+  }, 240_000);
 
   // Every test starts from a followed forge with a public forge repository.
   beforeEach(async () => {
@@ -121,10 +121,10 @@ describe("the chain at the MCP and terminal doors", () => {
   });
 
   afterAll(async () => {
-    servers.stop();
-    child.close();
-    root.close();
-    await rm(dir, { recursive: true, force: true });
+    servers?.stop();
+    child?.close();
+    root?.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   test("MCP following carries the chain, root first", async () => {

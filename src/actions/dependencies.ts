@@ -18,11 +18,12 @@ import { canRead, canWrite, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import type { AccessError } from "./access.ts";
+import { SELF_WAIT } from "./plan_words.ts";
 import { followLink } from "./pillars.ts";
 
 /** What a refused link says, in the words the API and the MCP share. */
 export const dependencyWords: Record<string, string> = {
-  self: "an issue cannot wait for itself",
+  self: SELF_WAIT,
   cycle: "that would make a loop",
   cross_repo: "dependencies stay inside one repository",
   not_an_issue: "only issues can depend on issues",

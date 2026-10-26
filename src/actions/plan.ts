@@ -28,6 +28,7 @@ import { transact } from "../kernel/db.ts";
 import { id as newId } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { isMirror } from "../origins/write-through.ts";
+import { SELF_WAIT } from "./plan_words.ts";
 import { followLink } from "./pillars.ts";
 
 export const PLAN_MAX = 12;
@@ -226,7 +227,7 @@ function vet(
         if (w === item.key)
           return refuse(
             "self",
-            `"${item.key}": ${"an issue cannot wait for itself"}`,
+            `"${item.key}": ${SELF_WAIT}`,
           );
       } else {
         const found = getIssue(app.db, repo.id, w);

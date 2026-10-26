@@ -10,7 +10,9 @@
 
 import { askCheck } from "../../checks/again.ts";
 import { addCommentThrough } from "../../actions/issues.ts";
+import { COMMENT_EMPTY, COMMENT_NOT_POSTED } from "../../actions/comment_words.ts";
 import type { AccessError } from "../../actions/access.ts";
+import { NO_WRITE_ACCESS, PULL_GONE } from "../../actions/pull_words.ts";
 import {
   addReview,
   mergePull,
@@ -19,6 +21,8 @@ import {
   submitReview,
   approveToRun,
 } from "../../actions/pulls.ts";
+import { CHECK_ASKED } from "../../actions/pull_ask_words.ts";
+import { reviewWords } from "../../actions/review_words.ts";
 import { readFileAt } from "../../apps/checkout.ts";
 import { parseCheck } from "../../apps/manifest.ts";
 import { tierLine, type TierState } from "../../checks/tiers.ts";
@@ -45,15 +49,12 @@ import {
   isReviewState,
   latestReviewByAuthor,
   listReviewComments,
-  type Review,
   type ReviewState,
   type Side,
 } from "../../core/reviews.ts";
 import { getUsersByIds } from "../../core/users.ts";
 import { canWrite, getRepoById, type Repo } from "../../core/repos.ts";
-import { resolveOid } from "../../git/merge.ts";
-import { commitLog } from "../../git/read.ts";
-import { repoDir } from "../../git/repos.ts";
+import { commitLog, readerFor } from "../../git/read.ts";
 import { wallOf } from "../../contract/policy.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -65,7 +66,9 @@ import {
   signInFirst,
 } from "../chrome.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
-import { diffCacheCounts, diffKey, keptDiff } from "../diff-cache.ts";
+import type { DiffLaps } from "../../git/diff.ts";
+import { diffCacheCounts, diffKey, keptDiff, keptRender } from "../diff-cache.ts";
+import { keptRead } from "../head-reads.ts";
 import { diffSyntax } from "../diff-syntax.ts";
 import {
   renderDiff,
@@ -75,7 +78,7 @@ import {
 import { field, readForm } from "../form.ts";
 import { teamVerdicts, type TeamVerdict } from "../../core/issue_teams.ts";
 import { html, raw, when, type Html } from "../html.ts";
-import { flashTo, fragment, page, redirect } from "../layout.ts";
+import { flashTo, fragment, page } from "../layout.ts";
 import { liveRegionsJs } from "../client.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import {
@@ -86,12 +89,13 @@ import {
   icon,
   labelCss,
   queuedPhrase,
+  row,
   sha,
   time,
+  type Tone,
 } from "../ui.ts";
 import {
   assigneeCard,
-  conversation,
   labelsCard,
   originError,
   threadFragment,
@@ -299,6 +303,28 @@ export function checksLine(
   </p>`;
 }
 
+/** Whether a head declares a fast tier: a commit's files never change. */
+const fastByHead = new Map<string, boolean>();
+export async function declaresFast(dir: string, head: string): Promise<boolean> {
+  const known = fastByHead.get(head);
+  if (known !== undefined) return known;
+  const [forgeJson, packageJson] = await Promise.all([
+    readFileAt(dir, head, "forge.json"),
+    readFileAt(dir, head, "package.json"),
+  ]);
+  const declared = parseCheck(forgeJson, packageJson);
+  const fast = declared.ok && declared.value?.fast != null;
+  // Nothing read: remember that only for a commit known to exist (its tree
+  // reads); an unreadable one may simply not have landed yet.
+  if (forgeJson === undefined && packageJson === undefined) {
+    const tree = await readerFor(dir).object(`${head}^{tree}`);
+    if (!tree.ok) return fast;
+  }
+  if (fastByHead.size >= 500) fastByHead.delete(fastByHead.keys().next().value!);
+  fastByHead.set(head, fast);
+  return fast;
+}
+
 /**
  * The tiers' words for a pull whose check declares a fast tier (#1198);
  * nothing when it does not, or when no check has run on this head.
@@ -310,12 +336,7 @@ async function tierOf(
 ): Promise<string> {
   const run = check.run;
   if (run === null || run.kind !== "check") return "";
-  const [forgeJson, packageJson] = await Promise.all([
-    readFileAt(dir, head, "forge.json"),
-    readFileAt(dir, head, "package.json"),
-  ]);
-  const declared = parseCheck(forgeJson, packageJson);
-  if (!declared.ok || declared.value?.fast == null) return "";
+  if (!(await declaresFast(dir, head))) return "";
   const state: TierState | undefined =
     check.state === "ok"
       ? "green"
@@ -373,6 +394,28 @@ function pullChecksLine(
   return html`${line}${found === null ? "" : specFindings(found)}`;
 }
 
+/** One §5 row in a toned card; `.setting-list` wraps the sentence and drops the action under it on a phone. */
+function box(
+  tone: Tone | undefined,
+  lead: Html,
+  /** A fixed phrase of ours, never a person's text. */
+  title: Html | string,
+  meta: Html,
+  trail: Html | null,
+): Html {
+  return card(
+    html`<ul class="list setting-list">
+      ${row({
+        lead,
+        title: typeof title === "string" ? raw(title) : title,
+        meta,
+        ...(trail ? { trail } : {}),
+      })}
+    </ul>`,
+    { ...(tone ? { tone } : {}), pad: false, extra: "mt" },
+  );
+}
+
 /**
  * Six states, six cards. Every one names the situation, gives the reason,
  * and offers exactly the actions that are actually available.
@@ -399,37 +442,26 @@ function mergeBox(
   </form>`;
 
   if (pull.mergedAt !== null) {
-    return card(
-      html`${icon("merge")}
-        <div class="grow">
-          <div class="merge-headline">Merged.</div>
-          <p class="merge-sub">
-            <span class="mono">${pull.headBranch}</span> was merged into
-            <span class="mono">${pull.baseBranch}</span>${when(
-              pull.mergedOid,
-              (oid) => html` as ${sha(oid, `${repoBase(repo)}/commit/${oid}`)}`,
-            )}.
-          </p>
-        </div>`,
-      { tone: "merged", extra: "merge-box" },
+    return box(
+      "merged",
+      icon("merge"),
+      "Merged.",
+      html`<span class="mono">${pull.headBranch}</span> was merged into
+        <span class="mono">${pull.baseBranch}</span>${when(
+          pull.mergedOid,
+          (oid) => html` as ${sha(oid, `${repoBase(repo)}/commit/${oid}`)}`,
+        )}.`,
+      null,
     );
   }
 
   if (pull.state === "closed") {
-    return card(
-      html`${icon("x")}
-        <div class="grow">
-          <div class="merge-headline">Closed without merging.</div>
-          <p class="merge-sub">
-            Nothing was applied to
-            <span class="mono">${pull.baseBranch}</span>.
-          </p>
-        </div>
-        ${when(
-          ctx.auth.user !== undefined,
-          () => html`<span class="merge-form">${reopen}</span>`,
-        )}`,
-      { extra: "merge-box" },
+    return box(
+      undefined,
+      icon("x"),
+      "Closed without merging.",
+      html`Nothing was applied to <span class="mono">${pull.baseBranch}</span>.`,
+      when(ctx.auth.user !== undefined, () => reopen),
     );
   }
 
@@ -439,31 +471,23 @@ function mergeBox(
   // required checks exactly. So the box says where the button is instead.
   if (repo.origin !== null || pull.originHeadRepo !== null) {
     const at = repo.origin;
-    return card(
-      html`${icon(at?.kind ?? "globe")}
-        <div class="grow">
-          <div class="merge-headline">Merge on the origin.</div>
-          <p class="merge-sub">
-            This repository mirrors
-            ${at === null || at.fullName === ""
-              ? html`another forge`
-              : html`<span class="mono">${at.fullName}</span>`},
-            which is truth for it. Merge there and the next sync brings back the
-            merge commit it actually made.
-          </p>
-        </div>
-        ${when(
-          pull.originUrl,
-          (url) =>
-            html`<span class="merge-form"
-              >${btn("Open on the origin", {
-                href: url,
-                variant: "primary",
-                icon: "external",
-              })}</span
-            >`,
-        )}`,
-      { tone: "attn", extra: "merge-box" },
+    return box(
+      "attn",
+      icon(at?.kind ?? "globe"),
+      "Merge on the origin.",
+      html`This repository mirrors
+        ${at === null || at.fullName === ""
+          ? html`another forge`
+          : html`<span class="mono">${at.fullName}</span>`},
+        which is truth for it. Merge there and the next sync brings back the
+        merge commit it actually made.`,
+      when(pull.originUrl, (url) =>
+        btn("Open on the origin", {
+          href: url,
+          variant: "primary",
+          icon: "external",
+        }),
+      ),
     );
   }
 
@@ -483,14 +507,12 @@ function mergeBox(
                 ? html` <a href="${thread}/resolve">Resolve</a> it here.`
                 : ""}`
           : html`This branch cannot be applied automatically.`;
-    return card(
-      html`${icon("alert")}
-        <div class="grow">
-          <div class="merge-headline">Can't merge.</div>
-          <p class="merge-sub">${reason}</p>
-          ${reviewsChip(status.reviews, by)} ${checks}
-        </div>`,
-      { tone: "danger", extra: "merge-box" },
+    return box(
+      "danger",
+      icon("alert"),
+      "Can't merge.",
+      html`${reason} ${reviewsChip(status.reviews, by)} ${checks}`,
+      null,
     );
   }
 
@@ -509,26 +531,19 @@ function mergeBox(
         : html`This repository requires an approving review of the commit that
           is head right now. A verdict passed before the latest push does not
           count.`;
-    return card(
-      html`${icon("eye")}
-        <div class="grow">
-          <div class="merge-headline">Waiting on review.</div>
-          <p class="merge-sub">${why}</p>
-          ${reviewsChip(status.reviews, by)} ${checks}
-        </div>
-        ${when(
-          mayMerge,
-          () =>
-            html`<span class="merge-form"
-              >${btn("Merge pull request", {
-                variant: "primary",
-                icon: "merge",
-                disabled: true,
-                title: "An approving review of this head is required first",
-              })}</span
-            >`,
-        )}`,
-      { tone: "attn", extra: "merge-box" },
+    return box(
+      "attn",
+      icon("eye"),
+      "Waiting on review.",
+      html`${why} ${reviewsChip(status.reviews, by)} ${checks}`,
+      when(mayMerge, () =>
+        btn("Merge pull request", {
+          variant: "primary",
+          icon: "merge",
+          disabled: true,
+          title: "An approving review of this head is required first",
+        }),
+      ),
     );
   }
 
@@ -552,60 +567,43 @@ function mergeBox(
               or push again.`
             : html`There is no deploy of this head yet. Nothing merges until one
               passes.`;
-    return card(
-      html`${icon("loader")}
-        <div class="grow">
-          <div class="merge-headline">Waiting on checks.</div>
-          <p class="merge-sub">${why}</p>
-          ${reviewsChip(status.reviews, by)} ${checks}
-        </div>
-        ${when(
-          mayMerge,
-          () =>
-            html`<span class="merge-form"
-              >${btn("Merge pull request", {
-                variant: "primary",
-                icon: "merge",
-                disabled: true,
-                title: "A passing deploy of this head is required first",
-              })}</span
-            >`,
-        )}`,
-      { tone: "attn", extra: "merge-box" },
+    return box(
+      "attn",
+      icon("loader"),
+      "Waiting on checks.",
+      html`${why} ${reviewsChip(status.reviews, by)} ${checks}`,
+      when(mayMerge, () =>
+        btn("Merge pull request", {
+          variant: "primary",
+          icon: "merge",
+          disabled: true,
+          title: "A passing deploy of this head is required first",
+        }),
+      ),
     );
   }
 
-  return card(
-    html`${icon("check")}
-      <div class="grow">
-        <div class="merge-headline">
-          Ready to merge — no conflicts with
-          <span class="mono">${pull.baseBranch}</span>.
-        </div>
-        <p class="merge-sub">
-          ${status.ahead} commit${status.ahead === 1 ? "" : "s"} will land on
-          <span class="mono">${pull.baseBranch}</span>.
-        </p>
-        ${reviewsChip(status.reviews, by)} ${checks}
-      </div>
-      ${mayMerge
-        ? html`<span class="merge-form">
-            <form method="post" action="${thread}/merge" class="merge-form">
-              <label class="sr-only" for="strategy">Merge strategy</label>
-              <select class="input" id="strategy" name="strategy">
-                <option value="merge">Merge commit</option>
-                <option value="squash">Squash and merge</option>
-              </select>
-              ${btn("Merge pull request", {
-                variant: "primary",
-                icon: "merge",
-              })}
-            </form>
-          </span>`
-        : html`<span class="muted small"
-            >You need write access to merge.</span
-          >`}`,
-    { tone: "success", extra: "merge-box" },
+  return box(
+    "success",
+    icon("check"),
+    html`Ready to merge — no conflicts with
+      <span class="mono">${pull.baseBranch}</span>.`,
+    html`${status.ahead} commit${status.ahead === 1 ? "" : "s"} will land on
+      <span class="mono">${pull.baseBranch}</span>. ${reviewsChip(status.reviews, by)}
+      ${checks}`,
+    mayMerge
+      ? html`<form method="post" action="${thread}/merge" class="row-fields">
+          <label class="sr-only" for="strategy">Merge strategy</label>
+          <select class="input" id="strategy" name="strategy">
+            <option value="merge">Merge commit</option>
+            <option value="squash">Squash and merge</option>
+          </select>
+          ${btn("Merge pull request", {
+            variant: "primary",
+            icon: "merge",
+          })}
+        </form>`
+      : html`<span class="muted small">You need write access to merge.</span>`,
   );
 }
 
@@ -762,15 +760,14 @@ function reviewCard(ctx: Ctx, repo: Repo, pull: Pull, action: string): Html {
           isAuthor,
           () =>
             html`<span class="muted small"
-              >${icon("alert")} You cannot approve your own pull request.</span
+              >${icon("alert")} ${reviewWords.selfReview}</span
             >`,
         )}
         ${when(
           !writer,
           () =>
             html`<span class="muted small"
-              >${icon("alert")} A verdict that gates a merge needs write
-              access.</span
+              >${icon("alert")} ${reviewWords.forbidden}</span
             >`,
         )}
         <span class="spacer"></span>
@@ -802,7 +799,7 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
   const { repo, pull } = found;
   const began = performance.now();
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-  const spent = { diff: 0, checks: 0, reviews: 0 };
+  const spent = { diff: 0, git: 0, checks: 0, reviews: 0 };
   /** Run `work`, adding the time it took to `spent[key]`. */
   const lap = async <T>(key: keyof typeof spent, work: () => T | Promise<T>): Promise<T> => {
     const started = performance.now();
@@ -828,7 +825,7 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
 
   // The review gate travels with the status, so the merge box and
   // `mergePull` are answering the same question from the same numbers.
-  const status = await lap("diff", () =>
+  const status = await lap("git", () =>
     pullStatus(dir, pull, {
       db: ctx.app.db,
       requireReview: repo.requireReview,
@@ -836,11 +833,16 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
   );
   // The diff and its highlighting depend on two oids and nothing else, so
   // the next reader of this head gets them from memory (`diff-cache.ts`).
+  // On a miss the stretches say where the time went; a hit has none.
+  const stretches: DiffLaps & { highlight?: number } = {};
   const cacheBefore = diffCacheCounts();
-  const { diff, syntax } = await lap("diff", () =>
+  const { diff, syntax, failed } = await lap("diff", () =>
     keptDiff(diffKey(status.baseOid, status.headOid), async () => {
-      const { from, diff, failed } = await diffBetween(dir, status.baseOid, status.headOid);
-      return { from, diff, failed, syntax: await diffSyntax(dir, diff, from, status.headOid) };
+      const { from, diff, failed } = await diffBetween(dir, status.baseOid, status.headOid, stretches);
+      const highlighting = performance.now();
+      const syntax = await diffSyntax(dir, diff, from, status.headOid);
+      stretches.highlight = performance.now() - highlighting;
+      return { from, diff, failed, syntax };
     }),
   );
   const cacheAfter = diffCacheCounts();
@@ -848,7 +850,9 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
   // A merged or closed pull is history; the wall is a question about landing.
   const wall =
     pull.mergedAt === null && pull.state === "open"
-      ? await lap("diff", () => wallOf(dir, status.baseOid, status.headOid))
+      ? await lap("git", () =>
+          keptRead(`wall:${status.baseOid}:${status.headOid}`, () => wallOf(dir, status.baseOid, status.headOid)),
+        )
       : undefined;
   const reviewLines = tick("reviews", () => listReviewComments(ctx.app.db, pull.id));
   const reviewComments = byAnchor(reviewLines);
@@ -861,11 +865,11 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
   const check = tick("checks", () => checkSummary(ctx.app.db, pull.id, status.headOid));
   const isApp = getAppByRepo(ctx.app.db, repo.id) !== undefined;
   const tier = await lap("checks", () => tierOf(dir, status.headOid, check));
-  const stale = await lap("checks", async () =>
+  // `status.baseOid` is the live base tip already: no second reading of it.
+  const stale =
     pull.state === "open" && pull.mergedAt === null
-      ? checkStale(check.run, await resolveOid(dir, `refs/heads/${pull.baseBranch}`))
-      : false,
-  );
+      ? checkStale(check.run, status.baseOid)
+      : false;
   const threads = await lap("reviews", () => pullThreads(ctx.app, pull));
   const threadViews = threadStateViews(ctx, repo, threads);
   const unresolved = threads.filter((t) => t.resolvedAt === null).length;
@@ -889,6 +893,13 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     ...(active ? { active } : {}),
   };
 
+  // Nothing viewer-specific is drawn when no comment, thread or form is; then
+  // the markup is a function of the diff and the link bases (`keptRender`).
+  const renderKey =
+    reviewLines.length === 0 && threadViews.size === 0 && active === undefined && !failed
+      ? `${diffKey(status.baseOid, status.headOid)}|${diffOptions.fileLinkBase}|${diffOptions.reviewBase ?? ""}|${diffOptions.reviewPage ?? ""}`
+      : undefined;
+
   const headRepo = pull.crossRepo
     ? getRepoById(ctx.app.db, pull.headRepoId)
     : undefined;
@@ -896,10 +907,13 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     ? `${headRepo.ownerName}/${headRepo.name}:${pull.headBranch}`
     : pull.headBranch;
 
-  const log = await lap("diff", () =>
-    commitLog(dir, status.headOid, {
-      limit: Math.min(Math.max(status.ahead, 1), 100),
-    }),
+  const logLimit = Math.min(Math.max(status.ahead, 1), 100);
+  const log = await lap("git", () =>
+    keptRead(
+      `log:${status.headOid}:${logLimit}`,
+      () => commitLog(dir, status.headOid, { limit: logLimit }),
+      (r) => r.ok,
+    ),
   );
   const commits = log.ok ? log.value : [];
   const commitsCard = card(
@@ -971,7 +985,7 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
         ${crewActivityCard(ctx, repo, pull)}
       </aside>
     </div>
-    <div class="mt">${renderDiff(diff, diffOptions)}</div>
+    <div class="mt">${keptRender(renderKey, () => renderDiff(diff, diffOptions))}</div>
     ${liveMount({ repo: base })}`;
 
   const response = page({
@@ -983,14 +997,16 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     styleCss: labelCss([...allLabels, ...applied]),
     scriptJs: `${liveClientJs}\n${liveRegionsJs}`,
   });
-  const { diff: diffMs, checks, reviews } = spent;
+  const { diff: diffMs, git, checks, reviews } = spent;
   notePhase(ctx.request, "diff", diffMs, diffHit);
+  for (const [name, ms] of Object.entries(stretches)) notePhase(ctx.request, `diff-${name}`, ms);
+  notePhase(ctx.request, "git", git);
   notePhase(ctx.request, "checks", checks);
   notePhase(ctx.request, "reviews", reviews);
   notePhase(
     ctx.request,
     "render",
-    Math.max(0, performance.now() - began - diffMs - checks - reviews),
+    Math.max(0, performance.now() - began - diffMs - git - checks - reviews),
   );
   return response;
 }
@@ -1015,7 +1031,7 @@ export async function pullCommentSubmit(ctx: Ctx): Promise<Response> {
   if (bodyText.trim() === "")
     return flashTo(ctx, dest, {
       tone: "danger",
-      message: "A comment needs something in it.",
+      message: COMMENT_EMPTY,
     });
   const added = await addCommentThrough(
     ctx.app,
@@ -1027,7 +1043,7 @@ export async function pullCommentSubmit(ctx: Ctx): Promise<Response> {
   if (!added.ok)
     return flashTo(ctx, dest, {
       tone: "danger",
-      message: originError(added.error) ?? "That comment could not be posted.",
+      message: originError(added.error) ?? COMMENT_NOT_POSTED,
     });
   return flashTo(ctx, `${dest}#conversation`, { message: "Comment posted." });
 }
@@ -1094,7 +1110,7 @@ export async function pullReviewSubmit(ctx: Ctx): Promise<Response> {
  * or lifecycle code, or git's own structured `MergeError` — both are answers
  * the person pressing the button deserves to see.
  */
-function mergeFailure(error: AccessError | MergePullError): string {
+export function mergeFailure(error: AccessError | MergePullError): string {
   if (typeof error !== "string") {
     if (error.kind === "conflict")
       return `The branches conflict in ${error.files.length} file${error.files.length === 1 ? "" : "s"} — merge the base branch in and push again.`;
@@ -1116,8 +1132,8 @@ function mergeFailure(error: AccessError | MergePullError): string {
   if (error === "checks_required")
     return "This pull request needs a passing deploy of its current head, and does not have one yet. Nothing was merged.";
   if (error === "forbidden" || error === "unauthorized")
-    return "You do not have write access to this repository.";
-  return "That pull request is no longer here.";
+    return NO_WRITE_ACCESS;
+  return PULL_GONE;
 }
 
 // ---- verdicts and threads ----
@@ -1184,12 +1200,12 @@ export async function pullApproveHereSubmit(ctx: Ctx): Promise<Response> {
         done.error === "forbidden" || done.error === "unauthorized"
           ? "Only a person with write access can approve code to run here."
           : done.error === "self_review"
-            ? "You cannot approve your own pull request."
+            ? reviewWords.selfReview
             : done.error === "not_open"
               ? "That pull request is closed."
               : done.error === "not_foreign"
                 ? "That pull request needs no approval to run."
-                : "That pull request is no longer here.",
+                : PULL_GONE,
     });
   return flashTo(ctx, dest, {
     message: isProposed(ctx.app.db, found.pull)
@@ -1239,11 +1255,11 @@ export async function pullReviewStateSubmit(ctx: Ctx): Promise<Response> {
       message:
         originError(error) ??
         (error === "self_review"
-          ? "You cannot approve your own pull request."
+          ? reviewWords.selfReview
           : error === "forbidden"
-            ? "A verdict that gates a merge needs write access. You can still leave a comment."
+            ? `${reviewWords.forbidden} You can still leave a comment.`
             : error === "body_too_long"
-              ? "That review is too long (64 KB at most)."
+              ? reviewWords.tooLong
               : error === "invalid_state"
                 ? "That is not a verdict this forge knows."
                 : "That review could not be recorded."),
@@ -1313,7 +1329,7 @@ export async function pullChecksSubmit(ctx: Ctx): Promise<Response> {
     ctx,
     dest,
     asked.ok
-      ? { message: "Check asked for at the current head." }
+      ? { message: CHECK_ASKED }
       : { tone: "danger", message: `No check was asked for: ${asked.message}.` },
   );
 }
@@ -1402,7 +1418,7 @@ export async function pullChecksLineFor(
   const tier = await tierOf(dir, status.headOid, check);
   const stale =
     pull.state === "open" && pull.mergedAt === null
-      ? checkStale(check.run, await resolveOid(dir, `refs/heads/${pull.baseBranch}`))
+      ? checkStale(check.run, status.baseOid)
       : false;
   return pullChecksLine(ctx, repo, pull, status, check, isApp, tier, stale);
 }

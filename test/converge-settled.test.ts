@@ -15,8 +15,10 @@ import {
   convergeFork,
   convergeIssue,
   settleAll,
+  settleConverge,
 } from "../src/crew/converge.ts";
 import { getIssueById, listComments } from "../src/core/issues.ts";
+import { listEvents } from "../src/core/events.ts";
 import { forkRelation } from "../src/core/following.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { listRuns } from "../src/core/runs.ts";
@@ -30,9 +32,8 @@ describe("a converge issue whose parent tip the fork already holds", () => {
   let app: App;
   let alice: User;
   let bob: User;
-  let parent: Repo;
-  let fork: Repo;
-  let issueId: string;
+  let carol: User;
+  let n = 0;
 
   const fresh = (r: Repo): Repo => getRepoById(app.db, r.id)!;
   const commit = (who: User, repo: Repo, path: string, content: string) =>
@@ -59,26 +60,20 @@ describe("a converge issue whose parent tip the fork already holds", () => {
       email: "bob@forge.local",
       password: "a-good-passphrase",
     });
-    if (!a.ok || !b.ok) throw new Error("users");
+    const c = await createUser(app.db, {
+      origin: "seed",
+      trusted: true,
+      username: "carol",
+      email: "carol@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!a.ok || !b.ok || !c.ok) throw new Error("users");
     alice = a.value;
     bob = b.value;
+    carol = c.value;
     promote(app.db, bob);
-    const made = await createRepo(app, alice, { name: "game", visibility: "public" });
-    if (!made.ok) throw new Error(String(made.error));
-    parent = made.value;
-    await commit(alice, parent, "README.md", "# game\n");
-    const forked = await forkRepo(app, bob, parent);
-    if (!forked.ok) throw new Error(String(forked.error));
-    fork = forked.value;
     const bot = await createAgent(app, alice, { username: "bot", brief: "Be brief." });
     if (!bot.ok) throw new Error(String(bot.error));
-    expect(addToCrew(app, bob, fresh(fork), "bot").ok).toBe(true);
-    // Both sides change the same file: a decision, so the crew gets an issue.
-    await commit(bob, fork, "README.md", "# game — by bob\n");
-    await commit(alice, parent, "README.md", "# game — by alice\n");
-    const out = await convergeFork(app, fresh(fork), fresh(parent), bob);
-    expect(out.kind).toBe("queued");
-    issueId = out.kind === "queued" ? out.issue.id : "";
   }, 30_000);
 
   afterAll(async () => {
@@ -86,20 +81,36 @@ describe("a converge issue whose parent tip the fork already holds", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  const runsFor = () =>
-    listRuns(app.db, fork.id, { kind: "agent", limit: 20 }).filter(
-      (r) => r.issueId === issueId,
-    );
+  /** A parent and bob's fork that both changed README.md, with the crew's converge issue open and a run queued. */
+  async function diverged() {
+    const name = `game${++n}`;
+    const made = await createRepo(app, alice, { name, visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    const parent = made.value;
+    await commit(alice, parent, "README.md", "# game\n");
+    const forked = await forkRepo(app, bob, parent);
+    if (!forked.ok) throw new Error(String(forked.error));
+    const fork = forked.value;
+    expect(addToCrew(app, bob, fresh(fork), "bot").ok).toBe(true);
+    // Both sides change the same file: a decision, so the crew gets an issue.
+    await commit(bob, fork, "README.md", "# game — by bob\n");
+    await commit(alice, parent, "README.md", "# game — by alice\n");
+    const out = await convergeFork(app, fresh(fork), fresh(parent), bob);
+    expect(out.kind).toBe("queued");
+    const issueId = out.kind === "queued" ? out.issue.id : "";
+    // The issue was opened by alice, so a comment as bob is not the author's.
+    app.db.query("UPDATE issue SET author_id = ?1 WHERE id = ?2").run(alice.id, issueId);
+    const runs = () =>
+      listRuns(app.db, fork.id, { kind: "agent", limit: 20 }).filter(
+        (r) => r.issueId === issueId,
+      );
+    return { parent, fork, issueId, runs, name };
+  }
 
-  test("a fork still diverged keeps its issue open and its run queued", async () => {
-    expect(await settleAll(app)).toBe(0);
-    expect(getIssueById(app.db, issueId)?.state).toBe("open");
-    expect(runsFor().map((r) => r.state)).toEqual(["queued"]);
-  });
-
-  test("merging the parent by hand closes the issue, names both commits, starts no run", async () => {
-    const parentDir = repoDir(app.reposRoot, "alice", "game");
-    const forkDir = repoDir(app.reposRoot, "bob", "game");
+  /** Merge the parent's tip into the fork's default branch by hand; returns both commits. */
+  async function mergeByHand(name: string) {
+    const parentDir = repoDir(app.reposRoot, "alice", name);
+    const forkDir = repoDir(app.reposRoot, "bob", name);
     const parentTip = (await resolveOid(parentDir, "refs/heads/main"))!;
     const forkTip = (await resolveOid(forkDir, "refs/heads/main"))!;
     const env = {
@@ -119,23 +130,65 @@ describe("a converge issue whose parent tip the fork already holds", () => {
       "commit-tree", `${forkTip}^{tree}`, "-p", forkTip, "-p", parentTip, "-m", "merge alice by hand",
     );
     await git("update-ref", "refs/heads/main", merge);
+    return { parentTip, merge };
+  }
+
+  const closedBy = (forkId: string) =>
+    listEvents(app.db, { repoId: forkId, kind: "issue.closed" })[0];
+
+  test("a fork still diverged keeps its issue open and its run queued", async () => {
+    const { issueId, runs } = await diverged();
+    expect(await settleAll(app)).toBe(0);
+    expect(getIssueById(app.db, issueId)?.state).toBe("open");
+    expect(runs().map((r) => r.state)).toEqual(["queued"]);
+  });
+
+  test("a writer moving the branch closes the issue as the writer, naming both commits, starting no run", async () => {
+    const { parent, fork, issueId, runs, name } = await diverged();
+    const { parentTip, merge } = await mergeByHand(name);
     expect((await forkRelation(app, fresh(fork), fresh(parent)))?.state).toBe("ahead");
 
-    expect(await settleAll(app)).toBe(1);
-    const issue = getIssueById(app.db, issueId)!;
-    expect(issue.state).toBe("closed");
+    expect(await settleConverge(app, fresh(fork), fresh(parent), bob)).toBe(true);
+    expect(getIssueById(app.db, issueId)?.state).toBe("closed");
     expect(convergeIssue(app, fresh(fork), fresh(parent))).toBeUndefined();
-    const said = listComments(app.db, issueId).map((c) => c.body).join("\n");
-    expect(said).toContain(parentTip.slice(0, 7));
-    expect(said).toContain(merge.slice(0, 7));
-    expect(runsFor().map((r) => r.state)).toEqual(["cancelled"]);
+    const comments = listComments(app.db, issueId);
+    expect(comments.map((c) => c.authorId)).toEqual([bob.id]);
+    expect(comments[0]!.body).toContain(parentTip.slice(0, 7));
+    expect(comments[0]!.body).toContain(merge.slice(0, 7));
+    expect(closedBy(fork.id)?.actorId).toBe(bob.id);
+    const said = listEvents(app.db, { repoId: fork.id, kind: "issue.commented" })[0];
+    expect(said?.actorId).toBe(bob.id);
+    expect(runs().map((r) => r.state)).toEqual(["cancelled"]);
     // Nothing is left to do twice.
     expect(await settleAll(app)).toBe(0);
   });
 
+  test("someone who cannot write the fork moving the branch closes the issue and says nothing", async () => {
+    const { parent, fork, issueId } = await diverged();
+    await mergeByHand(`game${n}`);
+    expect(await settleConverge(app, fresh(fork), fresh(parent), carol)).toBe(true);
+    expect(getIssueById(app.db, issueId)?.state).toBe("closed");
+    expect(listComments(app.db, issueId)).toEqual([]);
+    expect(closedBy(fork.id)?.actorId).toBe(carol.id);
+  });
+
+  test("the tick, with nobody who moved the branch, closes the issue and writes no comment", async () => {
+    const { fork, issueId, runs } = await diverged();
+    await mergeByHand(`game${n}`);
+    expect(await settleAll(app)).toBe(1);
+    expect(getIssueById(app.db, issueId)?.state).toBe("closed");
+    expect(listComments(app.db, issueId)).toEqual([]);
+    expect(closedBy(fork.id)?.actorId).toBeNull();
+    expect(runs().map((r) => r.state)).toEqual(["cancelled"]);
+  });
+
   test("asking the crew to converge now opens nothing and queues nothing", async () => {
+    const { parent, fork, issueId, runs } = await diverged();
+    await mergeByHand(`game${n}`);
+    expect(await settleAll(app)).toBe(1);
     const out = await convergeFork(app, fresh(fork), fresh(parent), bob);
     expect(out.kind).toBe("nothing");
-    expect(runsFor().length).toBe(1);
+    expect(runs().length).toBe(1);
+    expect(getIssueById(app.db, issueId)?.state).toBe("closed");
   });
 });

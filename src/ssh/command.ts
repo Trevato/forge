@@ -21,3 +21,14 @@ export function sshCommand(app: App, login?: string): string | undefined {
   const at = login === undefined ? "" : `${login}@`;
   return `ssh${port === 22 ? "" : ` -p ${port}`} ${at}${host}`;
 }
+
+/**
+ * The one-line tell, `ssh … tell <words>`, built from the forge's own
+ * address. Undefined when SSH is off, and when the forge is itself hosted as
+ * an app (its address then names an app login, which has no `tell`).
+ */
+export function sshTellCommand(app: App): string | undefined {
+  if (app.config.appSsh !== undefined) return undefined;
+  const base = sshCommand(app);
+  return base === undefined ? undefined : `${base} tell <words>`;
+}

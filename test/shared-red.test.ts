@@ -4,6 +4,9 @@
  * longer ago, is the pull's own; the vitals carry one card per shared test,
  * linked to its flake issue once the sentinel has filed one.
  */
+import { nameUnnamed } from "../src/checks/bun-test.ts";
+import { summariseCheckFailure } from "../src/checks/summary.ts";
+import { tally } from "../scripts/shards.ts";
 import { beforeEach, describe, expect, test } from "bun:test";
 import type { Database } from "bun:sqlite";
 import { Glob } from "bun";
@@ -62,6 +65,13 @@ describe("a red many pulls share", () => {
   test("bun's (unnamed) label is no test: unrelated pulls sharing it are not the lane's", () => {
     for (const i of ["i1", "i2", "i3"]) red(i, ["(unnamed)"]);
     expect(shared(red("i4", ["(unnamed)"]))).toBe(false);
+    expect(sharedTests(db)).toEqual([]);
+  });
+
+  test("a named (unnamed) failure, with the error it threw, is no test either (#5727)", () => {
+    const name = "a.test.ts > (unnamed): error: x";
+    for (const i of ["i1", "i2", "i3"]) red(i, [name]);
+    expect(shared(red("i4", [name]))).toBe(false);
     expect(sharedTests(db)).toEqual([]);
   });
 
@@ -156,5 +166,87 @@ describe("a red many pulls share", () => {
     expect(id(at) >= idFloor(at)).toBe(true);
     expect(idFloor(at - 1) < idFloor(at)).toBe(true);
     expect(idFloor(at)).toHaveLength(26);
+  });
+});
+
+describe("a failure outside a named test names its file and hook (#4582)", () => {
+  // Captured from bun 1.3.14 (`CI=1 bun test`): a beforeAll with a 50 ms
+  // timeout, an afterAll that throws, then the summary and a headerless
+  // recap such as bun prints when many tests fail.
+  const captured = [
+    "bun test v1.3.14 (0d9b296a)",
+    "",
+    "a.test.ts:",
+    "(fail) (unnamed) [50.82ms]",
+    "  ^ a beforeEach/afterEach hook timed out for this test.",
+    "",
+    "c.test.ts:",
+    '1 | import { afterAll, describe, test } from "bun:test";',
+    "error: late",
+    "      at <anonymous> (c.test.ts:2:62)",
+    "(fail) s > (unnamed) [0.13ms]",
+    "",
+    " 10 pass",
+    " 2 fail",
+    "Ran 12 tests across 2 files. [127.00ms]",
+    "",
+    "2 tests failed:",
+    "(fail) (unnamed) [50.82ms]",
+    "(fail) s > (unnamed) [0.13ms]",
+  ];
+
+  test("summary names the file and the hook, not (unnamed)", () => {
+    const failure = summariseCheckFailure(captured, "check exited with code 1");
+    expect(failure.detail?.names).toEqual([
+      "a.test.ts > beforeEach/afterEach (timeout)",
+      "c.test.ts > s > (unnamed): error: late",
+      "(unnamed)",
+    ]);
+    expect(failure.summary).toContain("a.test.ts > beforeEach/afterEach (timeout)");
+  });
+
+  test("the recap after the summary is not given the last file's name", () => {
+    const named = nameUnnamed(captured);
+    expect(named.slice(-2)).toEqual(captured.slice(-2));
+  });
+
+  test("the sharded tally echoes the named failure", () => {
+    const { lines } = tally([{ files: ["a.test.ts"], code: 1, output: captured.join("\n") }], 1);
+    expect(lines).toContain("(fail) a.test.ts > beforeEach/afterEach (timeout) [50.82ms] [shard 1]");
+  });
+});
+
+const one = (body: string[]) => nameUnnamed(["a.test.ts:", ...body]).at(-1);
+
+describe("a failure outside a test names what it threw (#5727)", () => {
+  test("a thrown error is appended", () => {
+    expect(
+      one(["error: database is closed", "      at x (a.test.ts:1:1)", "(fail) (unnamed) [1.00ms]"]),
+    ).toBe("(fail) a.test.ts > (unnamed): error: database is closed [1.00ms]");
+  });
+
+  test("a hook timeout is named as before", () => {
+    const lines = nameUnnamed([
+      "a.test.ts:",
+      "error: late",
+      "(fail) (unnamed) [50ms]",
+      "  ^ a beforeAll hook timed out for this test.",
+    ]);
+    expect(lines[2]).toBe("(fail) a.test.ts > beforeAll (timeout) [50ms]");
+  });
+
+  test("no error line keeps today's name; an earlier test's error is not borrowed", () => {
+    expect(one(["(fail) (unnamed) [1ms]"])).toBe("(fail) a.test.ts > (unnamed) [1ms]");
+    expect(
+      one(["error: other", "(fail) t [1ms]", "(fail) s > (unnamed) [1ms]"]),
+    ).toBe("(fail) a.test.ts > s > (unnamed) [1ms]");
+  });
+
+  test("a long error is cut at 120, control characters and paths dropped", () => {
+    const got = one([`error: ${"x".repeat(200)}`, "(fail) (unnamed)"])!;
+    expect(got).toBe(`(fail) a.test.ts > (unnamed): error: ${"x".repeat(113)}`);
+    expect(one(["error: bad\u001b /home/u/proj/f.ts", "(fail) (unnamed)"])).toBe(
+      "(fail) a.test.ts > (unnamed): error: bad f.ts",
+    );
   });
 });

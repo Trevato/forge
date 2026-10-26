@@ -50,6 +50,25 @@ export function spendFull(s: Kpis["spend"]): string {
   return s.ceilingUsd === null ? cents(s.todayUsd) : `${cents(s.todayUsd)} of ${cents(s.ceilingUsd)}`;
 }
 
+/** The `HH:MMZ` of an ISO time. */
+const hhmmZ = (iso: string): string => `${iso.slice(11, 16)}Z`;
+
+/** The forge ceiling's state in words, shared by the tile and the terminal row. */
+export function spendCeilingWords(s: Kpis["spend"]): { note: string; title: string; attn: boolean } {
+  if (s.ceilingUsd === null) return { note: "no forge ceiling", title: "No forge ceiling is set", attn: false };
+  if (s.todayUsd >= s.ceilingUsd) {
+    const note = s.hitAt ? `ceiling hit ${hhmmZ(s.hitAt)}, builders idle` : "ceiling hit, builders idle";
+    return { note, title: note, attn: true };
+  }
+  return { note: "of the forge ceiling", title: "Crew spend today (UTC), of the forge ceiling", attn: false };
+}
+
+/** The terminal's tail on the spend line: only the two states worth a word. */
+function spendLineNote(s: Kpis["spend"]): string {
+  const w = spendCeilingWords(s);
+  return w.attn || s.ceilingUsd === null ? `, ${w.note}` : "";
+}
+
 const DAY_MS = 24 * 3_600_000;
 
 /** Past a day, or with no backup at all, the last off-box backup is overdue. */
@@ -99,6 +118,15 @@ export function reactNote(r: Reach): string {
   return r.inpP75 === null ? "no taps measured yet" : `reacts in ${speedWords(r.inpP75)}`;
 }
 
+/** Home's one line over /review: `3 waiting on you, oldest 50 h`; null at zero, so the line is absent. */
+export function waitingWords(count: number, oldestAt: string | null, now: Date): string | null {
+  if (count <= 0) return null;
+  const t = oldestAt === null ? NaN : Date.parse(oldestAt);
+  if (Number.isNaN(t)) return `${count} waiting on you`;
+  const h = Math.max(0, Math.floor((now.getTime() - t) / 3_600_000));
+  return `${count} waiting on you, oldest ${h < 1 ? "under 1" : h} h`;
+}
+
 /**
  * The terminal's row: the same figures in the same words, as plain
  * lines. Forge-wide like the web's, so the caller shows them to an admin only.
@@ -109,7 +137,7 @@ export function kpiLines(k: Kpis, live: { sha: string; since: string } | null, n
     `Live version ${live === null ? "— nothing live yet" : `${live.sha.slice(0, 7)}, live ${live.since}`}`,
     `Median check time ${checkTime(k.medianCheckMs)}`,
     `Builders running ${buildersValue(k.builders)}${k.builders.slots === 0 ? ", no slots set" : ""}`,
-    `Crew spend today ${spendValue(k.spend)}${k.spend.ceilingUsd === null ? ", no ceiling" : ""}`,
+    `Crew spend today ${spendValue(k.spend)}${spendLineNote(k.spend)}`,
     `Last off-box backup ${backupAge(k.backupAt, now)}${backupOverdue(k.backupAt, now) ? ", overdue" : ""}`,
     `Visitors ${visitorsValue(k.reach)}, ${visitorsNote(k.reach)}  ${trendText(k.reach.visitorDays)}  30 days`,
     `Accounts ${usersValue(k.reach)} signed in today`,

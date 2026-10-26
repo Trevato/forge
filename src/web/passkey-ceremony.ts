@@ -17,6 +17,7 @@ import { field, type Form } from "./form.ts";
 import { html, type Html } from "./html.ts";
 import { clientBucket } from "../http/peer.ts";
 import { relying, store } from "./pages/passkeys.ts";
+import { PASSKEY_EXPIRED, PASSKEY_REJECTED, PASSKEY_TAKEN } from "./passkey-words.ts";
 
 /**
  * Which form is making the account. Each has its own challenge store, so a
@@ -46,9 +47,9 @@ export type PasskeyRefusal = "missing" | "expired" | "rejected" | "taken";
 /** The words for each way a posted key is refused, written for anyone. */
 export const PASSKEY_WORDS: Record<PasskeyRefusal, string> = {
   missing: "This needs a passkey, and a browser with JavaScript on to make one. Passwords are not taken here.",
-  expired: "That request expired. Try again.",
-  rejected: "That passkey was not accepted.",
-  taken: "That passkey is already registered.",
+  expired: PASSKEY_EXPIRED,
+  rejected: PASSKEY_REJECTED,
+  taken: PASSKEY_TAKEN,
 };
 
 /**

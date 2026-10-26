@@ -7,7 +7,9 @@
 
 import { canRead } from "../../core/repos.ts";
 import { VERSION } from "../../story/wave.ts";
-import { readWave, readWaves, type WaveEntry } from "../../story/waves.ts";
+import { carriedPulls, pullPath, type CarriedPull } from "../../story/wave_pulls.ts";
+import { pullRefs, readWave, readWaves, type WaveEntry } from "../../story/waves.ts";
+import { NO_WAVES } from "../../story/words.ts";
 import type { RepoSource } from "../../view/source.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -37,8 +39,8 @@ const plain = (s: string): string =>
   // eslint-disable-next-line no-control-regex
   s.replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]+/g, " ");
 
-/** One wave as lines of plain text: headline, version and date, highlights with why, pulls as title and URL. */
-export function waveLines(entry: WaveEntry): string[] {
+/** One wave as lines of plain text: headline, version and date, highlights with why, then the pulls the viewer may see. */
+export function waveLines(entry: WaveEntry, pulls: CarriedPull[]): string[] {
   if (!entry.ok) return [plain(entry.file), "", `Not a wave: ${plain(entry.reason)}`];
   const w = entry.wave;
   return [
@@ -49,12 +51,17 @@ export function waveLines(entry: WaveEntry): string[] {
     ...w.highlights.map((h) => `  ${plain(h.title)} - ${plain(h.why)}`),
     "",
     "Pulls",
-    ...w.pulls.flatMap((p) => [`  ${plain(p.title)}`, `    ${plain(p.url)}`]),
+    ...(pulls.length === 0
+      ? ["  No pulls to show here."]
+      : pulls.flatMap((p) => [
+          `  #${p.number} ${plain(p.title)}  ${p.mergedAt === null ? p.state : `merged ${p.mergedAt.slice(0, 10)}`}`,
+          `    ${plain(pullPath(p))}`,
+        ])),
   ];
 }
 
-function waveScreen(ctx: Ctx, entry: WaveEntry): Screen {
-  const lines = waveLines(entry);
+function waveScreen(ctx: Ctx, entry: WaveEntry, pulls: CarriedPull[]): Screen {
+  const lines = waveLines(entry, pulls);
   const scroll = new Scroll();
   return {
     title: entry.ok ? entry.wave.version : entry.file,
@@ -89,7 +96,10 @@ export function wavesScreen(f: Session, ctx: Ctx, src: RepoSource): Screen {
       const one = VERSION.test(version)
         ? await readWave(f.dir(repo), repo.defaultBranch, version)
         : entry;
-      if (one) ctx.push(waveScreen(ctx, one));
+      if (!one) return;
+      // The page's gate on each pull: one the viewer cannot read is not named.
+      const pulls = one.ok ? carriedPulls(f.db, pullRefs(one.wave), f.user) : [];
+      ctx.push(waveScreen(ctx, one, pulls));
     });
   };
 
@@ -137,7 +147,7 @@ export function wavesScreen(f: Session, ctx: Ctx, src: RepoSource): Screen {
             ? ""
             : repo === undefined
               ? "Waves are only read on this forge."
-              : "This repository has no waves/ directory.",
+              : NO_WAVES,
         });
         return;
       }

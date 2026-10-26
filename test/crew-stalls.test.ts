@@ -17,7 +17,7 @@ import { openIssue } from "../src/actions/issues.ts";
 import { createRepo, updateRepoSettings } from "../src/actions/repos.ts";
 import { getAgentByName, setCrewRole } from "../src/core/agents.ts";
 import { getIssueById, listComments, type Issue } from "../src/core/issues.ts";
-import { getRepoById, type Repo } from "../src/core/repos.ts";
+import { getRepoById, listAutonomousRepos, type Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun, listRuns } from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { autonomyTick, driveRepo, ensureDirectionIssue } from "../src/crew/autonomy.ts";
@@ -66,16 +66,28 @@ function issue(repo: Repo, title: string): Issue {
 
 /** `by`'s run on `issue` ends without a pull, the issue left assigned to them. */
 function stall(issue: Issue, by: User, summary: string): void {
+  // A later stall must be strictly newer than the note it follows, or the
+  // tick sees no stall since: wait out the millisecond the machine shares.
+  const newest = listComments(app.db, issue.id).at(-1)?.createdAt;
+  while (newest !== undefined && new Date().toISOString() <= newest) Bun.sleepSync(1);
   const active = listRuns(app.db, issue.repoId, { kind: "agent" }).filter(
     (r) => r.issueId === issue.id && (r.state === "queued" || r.state === "running"),
   );
-  const runs =
+  const fresh =
     active.length > 0
-      ? active
+      ? []
       : [createRun(app.db, { repoId: issue.repoId, kind: "agent", issueId: issue.id, actorId: by.id, reason: "assigned" })];
-  for (const run of runs) {
+  for (const run of active.length > 0 ? active : fresh) {
     if (run.state === "queued") claimRun(app.db, run.id);
     finishRun(app.db, run.id, { state: "failed", summary, costUsd: 0.1 });
+  }
+  // A first stall happened a while ago: the tick's park note is then newer by
+  // seconds, never by the millisecond the check machine's speed decides (a
+  // comment counts as "since" only when strictly newer than the run). A later
+  // stall stays after the note it follows.
+  for (const run of listComments(app.db, issue.id).length === 0 ? fresh : []) {
+    const then = new Date(Date.now() - 5_000).toISOString();
+    app.db.query("UPDATE run SET created_at = ?2, finished_at = ?2 WHERE id = ?1").run(run.id, then);
   }
   app.db.query("UPDATE issue SET assignee_id = ?2 WHERE id = ?1").run(issue.id, by.id);
 }
@@ -92,8 +104,18 @@ function plannerDone(repo: Repo): void {
   app.db.query("UPDATE issue SET assignee_id = NULL WHERE id = ?1").run(direction);
 }
 
+/** Lets the run an assignment queues, and any other deferred work, land before the test reads or stalls it. */
+async function settle(): Promise<void> {
+  for (let n = 0; n < 5; n++) await new Promise((r) => setTimeout(r, 5));
+}
+
 /** One tick, with the green sweep left out, and the tick line it said for `repo`. */
 async function tick(repo: Repo, now = new Date()): Promise<string> {
+  // The tick walks every autonomous repository; only the one under test may
+  // take the machine's time, or its verdict would follow the others' load.
+  for (const other of listAutonomousRepos(app.db))
+    if (other.id !== repo.id) app.db.query("UPDATE repo SET autonomy = 'off' WHERE id = ?1").run(other.id);
+  Bun.sleepSync(2);
   const lines: string[] = [];
   const spy = spyOn(console, "info").mockImplementation((line: unknown) => {
     lines.push(String(line));
@@ -103,6 +125,7 @@ async function tick(repo: Repo, now = new Date()): Promise<string> {
   } finally {
     spy.mockRestore();
   }
+  await settle();
   return (
     lines.find(
       (l) => l.includes("[autonomy] tick") && l.includes(`repo=alice/${repo.name} `) && l.includes("did="),
@@ -216,6 +239,13 @@ describe("a stalled issue frees itself", () => {
     expect(heldNow(app, getRepoById(app.db, repo.id)!).startable.map((r) => r.issue.id)).toContain(netcode.id);
     plannerDone(repo);
 
+    await settle();
+    // Whatever run the tick queued for the shunned builder is not in flight.
+    for (const run of listRuns(app.db, repo.id, { kind: "agent" }))
+      if (run.state === "queued" || run.state === "running") {
+        if (run.state === "queued") claimRun(app.db, run.id);
+        finishRun(app.db, run.id, { state: "ok", summary: "opened nothing", costUsd: 0 });
+      }
     const later = new Date(Date.now() + SHUN_MS + 60_000);
     expect(await driveRepo(app, getRepoById(app.db, repo.id)!, later)).toBe("picked");
     expect(getIssueById(app.db, netcode.id)!.assigneeId).toBe(mason.id);

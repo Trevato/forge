@@ -1,13 +1,15 @@
 /**
  * Home's KPI row and pinned panels come from the cache docs/CACHING.md
- * designs (#2717): hit when nothing was written, miss after a write, p95
- * under the budget, and the owner's figures never reach another viewer.
+ * designs (#2717): hit when nothing was written, miss after a write, a warm
+ * hit that runs none of their reads, and the owner's figures never reach
+ * another viewer.
  */
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { pinPanel } from "../src/actions/board-pins.ts";
 import { writeBoard } from "../src/actions/boards.ts";
+import { writeStamp } from "../src/core/write_clock.ts";
 import { kpiCache, panelCache } from "../src/web/studio/home_cache.ts";
-import { snappyFixture, timeRoute, type SnappyFixture } from "../bench/snappy.ts";
+import { snappyFixture, type SnappyFixture } from "../bench/snappy.ts";
 
 let f: SnappyFixture;
 const home = async (cookie?: string): Promise<string> =>
@@ -56,9 +58,87 @@ test("the owner's KPIs and panels never render for another viewer, warm or not",
   }
 });
 
+/** The `kpis` and `panels` phases of one response, and whether each was a hit. */
+const phases = (header: string | null): Record<string, boolean> =>
+  Object.fromEntries(
+    (header ?? "")
+      .split(", ")
+      .filter((p) => p.startsWith("kpis;") || p.startsWith("panels;"))
+      .map((p) => [p.slice(0, p.indexOf(";")), p.endsWith(';desc="hit"')]),
+  );
+
+interface Counted {
+  readonly status: number;
+  readonly hits: Record<string, boolean>;
+  /** How many times it ran each statement, by SQL text. */
+  readonly ran: ReadonlyMap<string, number>;
+  /** The write clock before and after it: a write in between is a correct miss. */
+  readonly before: string | undefined;
+  readonly after: string | undefined;
+}
+
+/** One owner home: its status, its `kpis`/`panels` hits and the statements it ran. */
+async function counted(): Promise<Counted> {
+  const before = writeStamp(f.app.db);
+  f.counter.reset();
+  const res = await fetch(`${f.base}/`, { headers: { cookie: f.ownerCookie } });
+  await res.arrayBuffer();
+  const ran = new Map(f.counter.top(10_000).map((s) => [s.sql, s.times]));
+  return { status: res.status, hits: phases(res.headers.get("server-timing")), ran, before, after: writeStamp(f.app.db) };
+}
+
+/**
+ * Nothing was written from the start of the request before `c` to its end:
+ * every entry `c` reads was stored at the clock it reads at. (A write inside
+ * the request before, after its KPI phase, leaves the KPIs stale and the
+ * panels fresh, and the next request misses one of them, rightly.)
+ */
+const still = (c: Counted, previous: Counted): boolean =>
+  c.before !== undefined && c.after === c.before && previous.before === c.before;
+
+/** Request until one ran with nothing written since the request before it: the warm page. */
+async function warmed(): Promise<Counted> {
+  let previous = await counted();
+  for (let i = 0; i < 10; i++) {
+    const c = await counted();
+    if (still(c, previous) && c.hits.kpis && c.hits.panels) return c;
+    previous = c;
+  }
+  throw new Error("home never warmed: every request missed the KPI or panel cache");
+}
+
+// The budget is what the cached code spends, not the page's wall clock (#5237):
+// a warm hit runs none of the KPI or panel reads, on any machine. The 200 ms
+// bound this replaces timed the feed and the machine's load; and on a loaded
+// machine a 0.4 ms hit and a 4 ms miss overlap, so time cannot tell them apart.
 test("warm home holds p95 under the stated budget", async () => {
-  const t = await timeRoute(f, "home owner", "/", { cookie: f.ownerCookie }, 30);
-  expect(t.status).toBe(200);
-  // The doc's 50 ms is read off the bench; the test keeps the 200 ms floor test/flake.test.ts allows.
-  expect(t.p95).toBeLessThan(200);
+  const warm = await warmed();
+  expect(warm.status).toBe(200);
+
+  // What a miss of both runs that the warm page does not, with the feed still warm.
+  kpiCache(f.app.db).clear();
+  panelCache(f.app.db).clear();
+  const missed = await counted();
+  expect(missed.hits).toEqual({ kpis: false, panels: false });
+  const missOnly = [...missed.ran.keys()].filter((sql) => !warm.ran.has(sql));
+  // The KPI reads (eight on this fixture) and the pinned panel's own query.
+  expect(missOnly.length).toBeGreaterThan(5);
+  expect(missOnly).toContain('SELECT "kind" AS "group", COUNT(*) AS "value" FROM "run" GROUP BY 1 ORDER BY 1 LIMIT 1000');
+
+  // Every warm request, not 95 in 100, is a hit of both and runs none of
+  // them. A request a write came near (the route-timing flush, a session's
+  // last-seen) may miss, rightly; most must not have.
+  let previous = await warmed();
+  let judged = 0;
+  for (let i = 0; i < 30; i++) {
+    const t = await counted();
+    const quiet = still(t, previous);
+    previous = t;
+    if (!quiet) continue;
+    judged++;
+    expect(t.status).toBe(200);
+    expect(t.hits).toEqual({ kpis: true, panels: true });
+    expect(missOnly.filter((sql) => t.ran.has(sql))).toEqual([]);
+  }
+  expect(judged).toBeGreaterThanOrEqual(20);
 });

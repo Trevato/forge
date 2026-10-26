@@ -8,6 +8,7 @@
  */
 
 import { inviteLink, list, mint, revoke } from "../../actions/invites.ts";
+import { INVITE_NOT_OPEN } from "../../actions/sever_invite_words.ts";
 import { DEFAULT_DAYS, MAX_DAYS } from "../../core/invites.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -82,7 +83,7 @@ export function invitesScreen(f: Session, ctx: Ctx): Screen {
       } else if (e.key === "x") {
         const row = all[state.index];
         if (row === undefined) return false;
-        note = revoke(f.app, f.user, row.id).ok ? `Revoked ${row.id}.` : "That link is not open.";
+        note = revoke(f.app, f.user, row.id).ok ? `Revoked ${row.id}.` : INVITE_NOT_OPEN;
         ctx.invalidate();
       } else return false;
       return true;

@@ -127,6 +127,19 @@ describe("pull requests end to end", () => {
     expect(pr).toContain("Ready to merge");
   });
 
+  test("an empty pull title is refused in the title field", async () => {
+    const res = await post("/dev/app/pulls/new", {
+      base: "main",
+      head: "main",
+      title: "",
+      body: "",
+    });
+    expect(res.status).toBe(422);
+    const page = await res.text();
+    expect(page).not.toContain("error-note");
+    expect(page).toMatch(/<div class="field" data-invalid>[\s\S]*?id="f-title"[^>]*aria-invalid="true"[\s\S]*?class="error"/);
+  });
+
   test("merge the PR, base advances, PR shows merged", async () => {
     const merged = await post("/dev/app/pulls/1/merge", { strategy: "merge" });
     expect(merged.status).toBe(303);

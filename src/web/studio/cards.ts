@@ -10,7 +10,7 @@
 import { html, raw } from "../html.ts";
 import { timeAgo } from "../ui.ts";
 
-export type CardKind = "app" | "run" | "decision" | "wave" | "map" | "feed";
+export type CardKind = "app" | "run" | "decision" | "wave" | "map" | "feed" | "pull" | "explore";
 
 export interface CardRow {
   readonly label: string;
@@ -34,19 +34,25 @@ export interface Card {
   readonly actions: readonly CardAction[];
 }
 
+/** Only a rooted path on this forge: "//host" or another forge's address would leave it. */
+const here = (origin: string, path: string): boolean => origin !== "" && /^\/(?!\/)/.test(path);
+
 export const CARD_MIME = "text/html;profile=mcp-app";
 export const CARD_URI = (kind: CardKind): string => `ui://forge/${kind}`;
-export const CARD_KINDS: readonly CardKind[] = ["app", "run", "decision", "wave", "map", "feed"];
+export const CARD_KINDS: readonly CardKind[] = ["app", "run", "decision", "wave", "map", "feed", "pull", "explore"];
 
 /** The tool whose answer each card draws. */
 export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   apps: "app",
   now: "run",
+  runs: "run",
   asks: "decision",
   milestones: "wave",
   map: "map",
   feed: "feed",
+  explore: "explore",
   new_app: "app",
+  pull: "pull",
 };
 
 const CARD_TITLE: Readonly<Record<CardKind, string>> = {
@@ -56,6 +62,8 @@ const CARD_TITLE: Readonly<Record<CardKind, string>> = {
   wave: "Wave",
   map: "Plan",
   feed: "Feed",
+  explore: "Explore",
+  pull: "Pull",
 };
 
 type Obj = Record<string, unknown>;
@@ -66,9 +74,21 @@ const text = (v: unknown): string =>
   typeof v === "string" ? v : typeof v === "number" ? String(v) : "";
 const LIMIT = 12;
 const FEED_LIMIT = 10;
+/** The forge's id shape (src/kernel/id.ts): 26 lowercase Crockford base32 characters. */
+const RUN_ID = /^[0-9a-hjkmnp-tv-z]{26}$/;
+
+/** An absolute http(s) address: the only origin a card builds links on. */
+const web = (u: string): boolean => /^https?:\/\//.test(u);
+/** A repository named `owner/name`. */
+const slugOf = (s: string): boolean => /^[^/]+\/[^/]+$/.test(s);
 
 /** The card for a tool's answer, or nothing when the answer has no card. */
-export function cardFor(tool: string, value: unknown, origin = ""): Card | undefined {
+export function cardFor(
+  tool: string,
+  value: unknown,
+  origin = "",
+  extra: Record<string, unknown> = {},
+): Card | undefined {
   const kind = CARD_OF_TOOL[tool];
   if (kind === undefined) return undefined;
   const rows: CardRow[] = [];
@@ -80,7 +100,14 @@ export function cardFor(tool: string, value: unknown, origin = ""): Card | undef
     const run = text(made["run"]);
     status = run === "none" || run === "" ? "alive" : `alive · first run ${run}`;
     rows.push({ label: "App", value: repo });
-    if (made["url"]) rows.push({ label: "Production", value: text(made["url"]) });
+    if (made["url"]) {
+      const url = text(made["url"]);
+      rows.push({
+        label: "Production",
+        value: url,
+        ...(web(url) ? { link: url } : {}),
+      });
+    }
     if (made["issue"]) rows.push({ label: "First issue", value: `#${text(made["issue"])}` });
     if (made["agent"]) rows.push({ label: "Agent", value: text(made["agent"]) });
     rows.push({ label: "First run", value: run === "" ? "none" : run });
@@ -88,19 +115,73 @@ export function cardFor(tool: string, value: unknown, origin = ""): Card | undef
       actions.push({ label: `Tell ${repo}`, tool: "tell", args: { repo, context: {} }, words: true });
     return { kind, title: "New app", status, rows, actions };
   }
+  if (kind === "pull") {
+    const p = obj(value);
+    const state = text(p["state"]);
+    const check = text(obj(p["check"])["state"]);
+    const checkWord =
+      check === "ok" ? "check green"
+      : check === "failed" ? "check red"
+      : check === "queued" || check === "running" ? "check running"
+      : check === "cancelled" ? "check cancelled"
+      : "";
+    const conflicts = list(p["conflicts"]).map(text).filter((c) => c !== "");
+    status = [
+      state,
+      state === "open" ? checkWord : "",
+      state === "open" && conflicts.length > 0 ? "conflicts" : "",
+    ]
+      .filter((w) => w !== "")
+      .join(" · ");
+    const number = text(p["number"]);
+    const slug = text(extra["repo"]);
+    rows.push({
+      label: "Branches",
+      value: `${text(p["head"])} → ${text(p["base"])}`,
+      ...(web(origin) && slugOf(slug) && number !== ""
+        ? { link: `${origin}/${slug}/pulls/${number}` }
+        : {}),
+    });
+    if (conflicts.length > 0)
+      rows.push({ label: "Conflicts", value: conflicts.slice(0, LIMIT).join(", ") });
+    const preview = text(extra["preview"]);
+    if (web(preview)) rows.push({ label: "Preview", value: preview, link: preview });
+    return { kind, title: `#${number} ${text(p["title"])}`.trim(), status, rows, actions };
+  }
   if (kind === "app") {
     const apps = list(value).map(obj);
     status = `${apps.length} app${apps.length === 1 ? "" : "s"}`;
-    for (const a of apps.slice(0, LIMIT))
+    for (const a of apps.slice(0, LIMIT)) {
+      const url = text(a["url"]);
       rows.push({
         label: text(a["app"]),
-        value: `${text(a["live"])}${a["url"] ? ` · ${text(a["url"])}` : ""}${
+        value: `${text(a["live"])}${url && !web(url) ? ` · ${url}` : ""}${
           Number(a["working"]) > 0 ? ` · ${text(a["working"])} working` : ""
         }`,
+        ...(web(origin) && /^[^/]+\/[^/]+$/.test(text(a["app"]))
+          ? { link: `${origin}/${text(a["app"])}` }
+          : {}),
       });
+      if (web(url)) rows.push({ label: `${text(a["app"])} production`, value: url, link: url });
+    }
     for (const a of apps.slice(0, 3))
       if (text(a["app"]) !== "")
         actions.push({ label: `Tell ${text(a["app"])}`, tool: "tell", args: { repo: text(a["app"]), context: {} }, words: true });
+  } else if (tool === "runs") {
+    // `runs` answers `{ runs: [{ id, kind, state, number, startedAt, endedAt }] }`,
+    // newest first; the repo comes in `extra`; past runs, so the card offers no stop.
+    const runs = list(obj(value)["runs"]).map(obj);
+    status = runs.length === 0 ? "no runs" : `${runs.length} run${runs.length === 1 ? "" : "s"}`;
+    const slug = text(extra["repo"]);
+    for (const r of runs.slice(0, LIMIT))
+      rows.push({
+        label: `${text(r["kind"])} ${text(r["id"])}`,
+        value: `${r["number"] == null ? "" : `#${text(r["number"])} — `}${text(r["state"])}`,
+        ...(web(origin) && slugOf(slug) && RUN_ID.test(text(r["id"]))
+          ? { link: `${origin}/${slug}/runs/${text(r["id"])}` }
+          : {}),
+      });
+    return { kind, title: "Runs", status, rows, actions };
   } else if (kind === "run") {
     const runs = list(value).map(obj);
     status = runs.length === 0 ? "nothing running" : `${runs.length} going`;
@@ -109,6 +190,9 @@ export function cardFor(tool: string, value: unknown, origin = ""): Card | undef
       rows.push({
         label: `${text(r["who"])} on ${text(r["app"])}`,
         value: `${text(r["on"])} — ${text(r["state"])}${cost}`,
+        ...(web(origin) && /^[^/]+\/[^/]+$/.test(text(r["app"])) && RUN_ID.test(text(r["run"]))
+          ? { link: `${origin}/${text(r["app"])}/runs/${text(r["run"])}` }
+          : {}),
       });
       if (r["run"] && actions.length < 3)
         actions.push({ label: `Stop ${text(r["who"])}`, tool: "stop", args: { repo: text(r["app"]), run: text(r["run"]) } });
@@ -118,9 +202,15 @@ export function cardFor(tool: string, value: unknown, origin = ""): Card | undef
     status = asks.length === 0 ? "nothing waits" : `${asks.length} waiting`;
     for (const a of asks.slice(0, LIMIT)) {
       const words = obj(a["words"]);
+      const repo = text(a["repo"]);
+      const number = Number(a["number"]);
+      const page = a["numberOf"] === "pull" ? "pulls" : a["numberOf"] === "issue" ? "issues" : "";
       rows.push({
         label: text(a["line"]),
         value: `${text(words["decision"])} ${list(words["options"]).map(text).join(" / ")}`.trim(),
+        ...(web(origin) && slugOf(repo) && Number.isInteger(number) && number > 0 && page !== ""
+          ? { link: `${origin}/${repo}/${page}/${number}` }
+          : {}),
       });
     }
     const first = asks[0];
@@ -162,7 +252,7 @@ export function cardFor(tool: string, value: unknown, origin = ""): Card | undef
       rows.push({
         label: `#${number}`,
         value: text(r["title"]),
-        ...(/^https?:\/\//.test(origin) && number !== "" ? { link: base + number } : {}),
+        ...(web(origin) && number !== "" ? { link: base + number } : {}),
       });
     }
   } else if (kind === "feed") {
@@ -174,19 +264,50 @@ export function cardFor(tool: string, value: unknown, origin = ""): Card | undef
       rows.push({
         label: `${who === "" ? "" : `${who}: `}${text(i["what"])}`,
         value: [text(i["app"]), timeAgo(text(i["at"]))].filter((x) => x !== "").join(" · "),
-        // Only a rooted path on this forge: "//host" would leave it.
-        ...(origin !== "" && /^\/(?!\/)/.test(link) ? { link: origin + link } : {}),
+        ...(here(origin, link) ? { link: origin + link } : {}),
       });
+    }
+  } else if (kind === "explore") {
+    const items = list(obj(value)["items"]).map(obj);
+    const query = text(obj(value)["query"]);
+    status = `${items.length} ranked${query === "" ? "" : ` · ${query}`}`;
+    for (const i of items.slice(0, FEED_LIMIT)) {
+      const n = obj(i["numbers"]);
+      const link = text(i["url"]);
+      const kindOf = text(i["kind"]);
+      rows.push({
+        label: `${kindOf} · ${text(i["name"])}`,
+        value:
+          kindOf === "forge"
+            ? text(i["description"])
+            : `${text(n["forks"])} forks · ${text(n["ships"])} ships · ${text(n["awakeHours"])} h awake${
+                kindOf === "person" ? ` · ${text(n["apps"])} apps` : ""
+              }`,
+        ...(here(origin, link) ? { link: origin + link } : {}),
+      });
+      const repo = obj(i["repo"]);
+      const slug = `${text(repo["owner"])}/${text(repo["name"])}`;
+      if (kindOf === "app" && i["copyable"] === true && origin !== "" && /^[^/]+\/[^/]+$/.test(slug))
+        rows.push({
+          label: "Make it yours",
+          value: text(i["name"]),
+          link: `${origin}/${slug}/make-it-yours`,
+        });
     }
   } else {
     const limbs = list(obj(value)["limbs"]).map(obj);
     const repo = obj(obj(value)["repo"]);
-    status = `${text(repo["owner"])}/${text(repo["name"])}`.replace(/^\/$/, "");
-    for (const l of limbs.slice(0, LIMIT))
+    const slug = `${text(repo["owner"])}/${text(repo["name"])}`;
+    status = slug.replace(/^\/$/, "");
+    const linkable = web(origin) && /^[^/]+\/[^/]+$/.test(slug);
+    for (const l of limbs.slice(0, LIMIT)) {
+      const number = Number(l["number"]);
       rows.push({
         label: `#${text(l["number"])} ${text(l["name"])}`,
         value: `${text(l["done"])}/${text(l["total"])} done · ${text(l["building"])} building`,
+        ...(linkable && Number.isInteger(number) && number > 0 ? { link: `${origin}/${slug}/milestones/${number}` } : {}),
       });
+    }
   }
   return { kind, title: CARD_TITLE[kind], status, rows, actions };
 }

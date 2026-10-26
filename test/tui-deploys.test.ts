@@ -141,3 +141,35 @@ test("an admin sees the app's visitors and speed above the deploys, and a reader
   if (!c.ok) throw new Error("signup failed");
   expect(await screenText(c.value, r.value)).not.toContain("visitors");
 });
+
+test("the app's open pulls list below the deploys with check word and preview, and a guest sees none", async () => {
+  const r = await createRepo(forge, alice, { name: "kiosk", visibility: "public" });
+  if (!r.ok) throw new Error("repo failed");
+  const made = createAppRecord(forge.db, { repoId: r.value.id, slug: "kiosk", access: "public" });
+  if (!made.ok) throw new Error(made.error);
+  const id = crypto.randomUUID();
+  forge.db
+    .query("INSERT INTO issue (id, repo_id, number, kind, title, author_id) VALUES (?, ?, 4, 'pull', 'Add a lamp', ?)")
+    .run(id, r.value.id, alice.id);
+  forge.db
+    .query("INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid) VALUES (?, 'main', 'lamp', 'b', 'h4')")
+    .run(id);
+  forge.db
+    .query("INSERT INTO run (id, repo_id, kind, issue_id, commit_oid, state) VALUES (?, ?, 'check', ?, 'h4', 'ok')")
+    .run(crypto.randomUUID(), r.value.id, id);
+  expect(await screenText(alice, r.value)).toContain("#4 Add a lamp · check green · none");
+
+  const { app, session } = createForgeApp(
+    forge,
+    { sshUsername: "guest", remoteAddress: "127.0.0.1" },
+    { terminal: headlessTerminal(120, 30), exitHooks: false },
+  );
+  app.start();
+  await settleApp(app);
+  app.push(deploysScreen(session, app.ctx, r.value));
+  await settleApp(app);
+  const text = app.screen.toText();
+  app.stop();
+  expect(text).not.toContain("Add a lamp");
+  expect(text).not.toContain("Open pulls");
+});

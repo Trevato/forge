@@ -158,7 +158,7 @@ describe("the pages", () => {
       finishRun(app.db, run.id, { state: "ok", summary: "Checked.", costUsd: 0, turns: 0 });
       ids[tag === "tell" ? "run" : "hushRun"] = run.id;
     }
-  });
+  }, 30_000);
 
   afterAll(async () => {
     await servers.stop();

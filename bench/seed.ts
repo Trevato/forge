@@ -15,8 +15,8 @@
  */
 
 import { mkdirSync, rmSync } from "node:fs";
-import { createApp, type App } from "../src/app.ts";
-import { createIssue, nextNumber } from "../src/core/issues.ts";
+import { createApp } from "../src/app.ts";
+import { createIssue } from "../src/core/issues.ts";
 import { createRepo as coreCreateRepo } from "../src/core/repos.ts";
 import { createUser } from "../src/core/users.ts";
 import { commitFiles } from "../src/git/write.ts";

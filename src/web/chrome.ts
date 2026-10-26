@@ -9,7 +9,6 @@
  */
 
 import { sshCommand } from "../ssh/command.ts";
-import { mayDirectCrew } from "../crew/direct.ts";
 import { mayReadRuns } from "../actions/runs.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import { audienceFacts, audienceOf } from "../core/audience.ts";
@@ -81,9 +80,13 @@ export function notFoundPage(ctx: Ctx, opts: { plain?: boolean } = {}): Response
           icon: "search",
           title: "Nothing here",
           note: "The page you asked for does not exist, or is not visible to you.",
-          action: offerSignIn
-            ? btn("Sign in", { href: signInHref(ctx), variant: "primary" })
-            : btn("Go home", { href: "/", variant: "primary" }),
+          action: opts.plain
+            ? btn("Go home", { href: "/", variant: "primary" })
+            : offerSignIn
+              ? html`${btn("Sign in", { href: signInHref(ctx), variant: "primary" })}
+                ${btn("Go home", { href: "/" })} ${btn("Explore", { href: "/explore" })}`
+              : html`${btn("Go home", { href: "/", variant: "primary" })}
+                ${btn("Explore", { href: "/explore" })}`,
         })}`,
     },
     404,
@@ -120,7 +123,9 @@ export type RepoTab =
   | "branches"
   | "app"
   | "runs"
-  | "settings";
+  | "settings"
+  /** A page that belongs to no tab (waves): nothing is marked current. */
+  | "none";
 
 export interface RepoHeaderOptions {
   /** Rendered at the right of the title line (fork, clone, watch). */
@@ -310,14 +315,13 @@ export function scopeHeader(
     )}
     <span
       >${scope.kind === "local"
-        ? html`<a class="owner" href="/${owner}">${owner}</a>`
-        : html`<span class="owner">${owner}</span>`}<span class="slash">/</span
+        ? html`<a class="muted" href="/${owner}">${owner}</a>`
+        : html`<span class="muted">${owner}</span>`}<span class="sep">/</span
       ><a href="${base}">${facts.name}</a></span
     >
     ${facts.visibility === "private"
       ? badge("Private", { icon: "lock", variant: "secondary" })
       : badge("Public", { variant: "secondary" })}
-    ${repo === undefined ? null : audienceLine(ctx, repo, admin, base)}
     ${actions.text.trim() !== ""
       ? html`<span class="repo-actions">${actions}</span>`
       : null}`;
@@ -326,9 +330,10 @@ export function scopeHeader(
     ${options.ownTitle
       ? html`<div class="repo-title">${title}</div>`
       : html`<h1 class="repo-title">${title}</h1>`}
+    ${repo === undefined ? null : audienceLine(ctx, repo, admin, base)}
     ${when(
       !options.compact && facts.description !== "",
-      () => html`<p class="repo-desc">${facts.description}</p>`,
+      () => html`<p class="muted small">${facts.description}</p>`,
     )}
     ${repo === undefined ? null : lineageLine(ctx.app.db, repo, parent)}
     ${when(
@@ -387,17 +392,18 @@ export function lineageLine(
 }
 
 /**
- * Who can see this repository, in the one sentence `audienceOf` gives, beside
- * the badge. A link to the settings for whoever can open them, plain text for
- * everyone else. One line: CSS truncates it, `title` keeps all of it.
+ * Who can see this repository, in the one sentence `audienceOf` gives, on a
+ * line under the title. The Public/Private badge in the title says the code's
+ * visibility; a Split repository (public code, private app) is the case it
+ * cannot say, so only then does a badge lead the sentence. The sentence is the
+ * link to the settings for whoever can open them.
  */
 function audienceLine(ctx: Ctx, repo: Repo, admin: boolean, base: string): Html {
-  const { sentence } = audienceOf(audienceFacts(ctx.app.db, repo, ctx.auth.user));
-  return admin
-    ? html`<a class="repo-audience" href="${base}/settings" title="${sentence}"
-        >${sentence}</a
-      >`
-    : html`<span class="repo-audience" title="${sentence}">${sentence}</span>`;
+  const { level, sentence } = audienceOf(audienceFacts(ctx.app.db, repo, ctx.auth.user));
+  const split = level === "split" ? html`${badge("Split", { tone: "attn" })} ` : null;
+  return html`<p class="repo-desc">
+    ${split}${admin ? html`<a href="${base}/settings">${sentence}</a>` : sentence}
+  </p>`;
 }
 
 export { hostOf };
@@ -455,7 +461,7 @@ export function pageHead(
     ${o.lead ?? null}
     <h1>${title}</h1>
     ${o.actions ? html`<span class="spacer"></span>${o.actions}` : null}
-    ${o.sub ? html`<span class="sub">${o.sub}</span>` : null}
+    ${o.sub ? html`<span class="page-head-sub muted small">${o.sub}</span>` : null}
   </div>`;
 }
 

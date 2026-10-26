@@ -1,7 +1,7 @@
 /** A second clone borrows from the repository's mirror; a deleted mirror breaks nothing. */
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { seedAdmin } from "./helpers/admin.ts";
@@ -222,4 +222,52 @@ test("removing an account deletes its repositories' mirrors without waiting for 
   } finally {
     app.close();
   }
+});
+
+test("a damaged mirror is dropped and the clone falls back to a plain one", async () => {
+  expect((await mirrored(data(), "r7")).ok).toBe(true);
+  const mirror = mirrorDir(data(), "r7");
+  // Loosen the objects, then garble the blob: a fetch that finds nothing new never reads it, the clone does.
+  const packs = Bun.spawnSync(["sh", "-c", "ls objects/pack/*.pack"], { cwd: mirror }).stdout.toString().trim().split("\n");
+  for (const p of packs) {
+    const moved = join(root, "moved.pack");
+    renameSync(join(mirror, p), moved);
+    rmSync(join(mirror, p.replace(/\.pack$/, ".idx")));
+    expect(Bun.spawnSync(["git", "unpack-objects", "-q"], { cwd: mirror, stdin: readFileSync(moved) }).exitCode).toBe(0);
+  }
+  const blob = Bun.spawnSync(["git", "rev-parse", "HEAD:a.txt"], { cwd: origin }).stdout.toString().trim();
+  const loose = join(mirror, "objects", blob.slice(0, 2), blob.slice(2));
+  chmodSync(loose, 0o644);
+  writeFileSync(loose, "garbage");
+  const dir = join(root, "c-damaged");
+  const cloned = await cloneWithMirror({ dataDir: data(), repoId: "r7", url: `file://${origin}`, dir, env: {} });
+  expect(cloned.ok).toBe(true);
+  expect(readFileSync(join(dir, "a.txt"), "utf8")).toBe("hello\n");
+  expect(existsSync(mirror)).toBe(false);
+  // rebuilt on the next call
+  expect((await mirrored(data(), "r7")).ok).toBe(true);
+  expect(existsSync(join(mirror, "HEAD"))).toBe(true);
+});
+
+test("a clone that times out keeps a good mirror and does not clone again", async () => {
+  expect((await mirrored(data(), "r8")).ok).toBe(true);
+  // Fast for the mirror's fetch (the first conversation), slow for the clone after it.
+  const script = join(root, "late-ssh");
+  writeFileSync(
+    script,
+    `#!/bin/sh\necho start >> "$SLOW_LOG"\n[ "$(wc -l < "$SLOW_LOG")" -gt 1 ] && sleep 2\neval "git \${2#git-}"\n`,
+  );
+  chmodSync(script, 0o755);
+  const logFile = join(root, `late-${throwaway++}.log`);
+  writeFileSync(logFile, "");
+  const dir = join(root, "c-timeout");
+  const cloned = await cloneWithMirror({
+    dataDir: data(), repoId: "r8", url: `ssh://forge.test${origin}`, dir,
+    env: { GIT_SSH_COMMAND: script, GIT_SSH_VARIANT: "simple", SLOW_LOG: logFile },
+    timeoutMs: 500,
+  });
+  expect(cloned.ok).toBe(false);
+  expect(existsSync(join(mirrorDir(data(), "r8"), "HEAD"))).toBe(true);
+  // one fetch and one borrowed clone; no plain retry
+  expect(readFileSync(logFile, "utf8").split("\n").filter(Boolean)).toHaveLength(2);
 });

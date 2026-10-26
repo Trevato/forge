@@ -15,6 +15,9 @@ import { binding, type Binding } from "../app/keys.ts";
 import type { KeyEvent } from "../term/input.ts";
 import { ARCHIVED_WHY, type RepoCounts } from "../../core/repos.ts";
 import { SIGNUP_CLOSED_MESSAGE } from "../../actions/users.ts";
+import { ORIGIN_ALREADY_CONNECTED } from "../../actions/origins.ts";
+import { NEW_ACCOUNT_GUARD_MESSAGE } from "../../core/capacity.ts";
+import { PRIVATE_ADDRESS_REFUSED } from "../../kernel/address_words.ts";
 import type { Session } from "../session.ts";
 import { G, Screen as Surface, type Rect } from "../term/screen.ts";
 import { style } from "../term/style.ts";
@@ -826,7 +829,7 @@ const MESSAGES: Record<string, string> = {
   unauthorized: "sign in first",
   forbidden: "you do not have permission",
   forbidden_owner: "you cannot create repos for that owner",
-  refused: "new accounts cannot create repositories yet",
+  refused: NEW_ACCOUNT_GUARD_MESSAGE,
   empty_title: "a title is required",
   empty_body: "write something first",
   title_too_long: "that title is too long (256 characters at most)",
@@ -881,10 +884,10 @@ const MESSAGES: Record<string, string> = {
   origin_owner_only: "only whoever connected this origin can write through it",
   origin_refused: "the origin refused that; nothing changed here",
   origin_unreachable: "the origin could not be reached; nothing changed",
-  already_connected: "that account is already connected",
+  already_connected: ORIGIN_ALREADY_CONNECTED,
   already_mirrored: "that repository is already mirrored here",
   unknown_host: "that does not look like a forge",
-  private_host: "that address is inside a network, not on the internet",
+  private_host: PRIVATE_ADDRESS_REFUSED,
   unreachable: "that instance could not be reached",
   bad_token: "the origin refused that token",
   rate_limited: "too many connect attempts; wait a few minutes",

@@ -8,12 +8,24 @@
  * path segment and can never smuggle a path of its own.
  */
 
-import { followingLine } from "./upstream-follow.ts";
+import { behindLine, followingLine } from "./upstream-follow.ts";
+import { upstreamOffer } from "../../actions/offer_upstream.ts";
+import { offerUpstream } from "./offer-upstream.ts";
 import { NOT_A_MEMBER } from "../../core/roles.ts";
 import { storageLimitMessage } from "../../core/storage.ts";
-import { canRead, listForks, type Repo } from "../../core/repos.ts";
+import { canRead, canWrite, listForks, type Repo } from "../../core/repos.ts";
 import { FORKS_PER_DAY, forkRepo, repositoryLimitMessage } from "../../actions/repos.ts";
-import { forkDrift, takeUpdates, type ForkDrift } from "../../actions/forks.ts";
+import {
+  type RankedFork,
+  forkDrift,
+  driftWords,
+  nothingNewHeading,
+  rankedForksOf,
+  MAX_RANKED_FORKS,
+  type ForkRanking,
+  takeUpdates,
+  type ForkDrift,
+} from "../../actions/forks.ts";
 import { lineageOf } from "../../core/following.ts";
 import {
   followingCard,
@@ -25,8 +37,9 @@ import { frozenBlock } from "./frozen.ts";
 import { pinRepo, syncRepoNow, unpinRepo } from "../../actions/origins.ts";
 import {
   canAdmin,
-  canWrite,
   forkParentFor,
+  forkTree,
+  type ForkNode,
   visibleForks,
 } from "../../core/repos.ts";
 import { isSafeRef, isSafeTreePath } from "../../git/guard.ts";
@@ -48,6 +61,7 @@ import {
 } from "../chrome.ts";
 import { codeJs } from "../client.ts";
 import { highlightBlob } from "../code.ts";
+import { latestWave } from "../../story/waves.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import { appStrip } from "./apps.ts";
@@ -68,11 +82,11 @@ import {
   sizeWithTokens,
   tokenCount,
   icon,
-  iconBtn,
   listCard,
   row,
   seg,
   time,
+  copyField,
 } from "../ui.ts";
 
 const MAX_RENDER_BYTES = 1_000_000;
@@ -89,6 +103,7 @@ import {
   finderButton,
   finderDialog,
   loadExplorer,
+  treeWindow,
 } from "./explorer.ts";
 
 export { crumbsFor, loadRepo, repoBase };
@@ -101,33 +116,6 @@ const forkParent = (ctx: Ctx, repo: Repo): Repo | undefined =>
   forkParentFor(ctx.app.db, repo, ctx.auth.user);
 const forksFor = (ctx: Ctx, repo: Repo): Repo[] =>
   visibleForks(ctx.app.db, repo.id, ctx.auth.user);
-
-/**
- * How far the fork has slipped from its parent, in a phrase. A fork with
- * commits of its own says so: an update would be refused, so the sentence
- * has to explain the missing button.
- */
-function driftNote(drift: ForkDrift | undefined): string | undefined {
-  if (drift === undefined || drift.ahead === null || drift.behind === null)
-    return undefined;
-  const commits = (n: number) => `${n} commit${n === 1 ? "" : "s"}`;
-  const { ahead, behind } = drift;
-  if (ahead === 0)
-    return behind === 0 ? "up to date" : `${commits(behind)} behind`;
-  if (behind === 0) return `${commits(ahead)} of its own`;
-  return `${commits(ahead)} of its own, ${behind} behind — merge by hand`;
-}
-
-/**
- * Offer the update only when it would fast-forward: something to take, and
- * nothing of the fork's own in the way. Unknown drift keeps the button, since
- * the action itself is the thing that decides.
- */
-function updatable(drift: ForkDrift | undefined): boolean {
-  if (drift === undefined || drift.ahead === null || drift.behind === null)
-    return true;
-  return drift.behind > 0 && drift.ahead === 0;
-}
 
 /**
  * GET /:owner/:name/forks — every fork of this repository the viewer may
@@ -145,12 +133,18 @@ export async function forksPage(ctx: Ctx): Promise<Response> {
   );
   notePhase(ctx.request, "forks", performance.now() - t);
   t = performance.now();
+  const tree = forkTree(ctx.app.db, repo.id, ctx.auth.user);
+  notePhase(ctx.request, "fork-tree", performance.now() - t);
+  t = performance.now();
   // The whole family, from the oldest ancestor this viewer may see: who
   // follows whom, and where each stands against the one it follows.
   const lineage = await lineageOf(ctx.app, repo, (r) =>
     canRead(ctx.app.db, r, ctx.auth.user),
   );
   notePhase(ctx.request, "lineage", performance.now() - t);
+  t = performance.now();
+  const ranked = await rankedForksOf(ctx.app, repo, forks);
+  notePhase(ctx.request, "drift", performance.now() - t);
   t = performance.now();
   const body = html`${repoHeader(ctx, repo, "forks")}
     <div class="page-head mt">
@@ -162,7 +156,9 @@ export async function forksPage(ctx: Ctx): Promise<Response> {
           title: "No forks yet",
           note: "A fork is a copy under another name that can propose changes back here, and follows this one until it has work of its own.",
         })
-      : lineageCard(lineage, repo.id)}`;
+      : html`${forkRanking(ranked, new Map(tree.map((n) => [n.repo.id, n])))}
+          <h3 class="mt">The family, by who follows whom</h3>
+          ${lineageCard(lineage, repo.id)}`}`;
   const res = page({
     ctx,
     title: `Forks · ${repo.ownerName}/${repo.name}`,
@@ -170,6 +166,63 @@ export async function forksPage(ctx: Ctx): Promise<Response> {
   });
   notePhase(ctx.request, "render", performance.now() - t);
   return res;
+}
+
+/**
+ * The forks with work to offer, best first, each linking to the compare
+ * view that proposes it upstream; then those with nothing new, counted.
+ */
+function forkRanking(
+  ranked: ForkRanking,
+  tree: ReadonlyMap<string, ForkNode>,
+): Html {
+  const below = (n: ForkNode): Html =>
+    row({
+      lead: icon("fork"),
+      title: html`<a href="/${n.repo.ownerName}/${n.repo.name}"
+        >${n.repo.ownerName}/${n.repo.name}</a
+      >`,
+      ...(n.deeper === 0
+        ? {}
+        : {
+            meta: html`<a href="/${n.repo.ownerName}/${n.repo.name}/forks"
+              >and ${n.deeper} more fork${n.deeper === 1 ? "" : "s"} below</a
+            >`,
+          }),
+    });
+  const line = (f: RankedFork, offer: boolean): Html =>
+    row({
+      children: (tree.get(f.fork.id)?.forks ?? []).map(below),
+      lead: icon("fork"),
+      title: html`<a href="/${f.fork.ownerName}/${f.fork.name}"
+        >${f.fork.ownerName}/${f.fork.name}</a
+      >`,
+      meta: html`${driftWords(f.drift)}${f.pushedAt === null
+        ? html``
+        : html` · pushed ${time(f.pushedAt)}`}`,
+      ...(offer
+        ? {
+            trail: btn("Compare", {
+              href: `/${f.fork.ownerName}/${f.fork.name}/pulls/new`,
+              size: "sm",
+              icon: "merge",
+            }),
+          }
+        : {}),
+    });
+  const { offering, nothingNew } = ranked;
+  return html`${ranked.truncated
+      ? html`<p class="muted small">
+          Ranking the first ${MAX_RANKED_FORKS} of ${ranked.total} forks.
+        </p>`
+      : html``}
+    ${offering.length === 0
+      ? html``
+      : listCard(offering.map((f) => line(f, true)))}
+    ${nothingNew.length === 0
+      ? html``
+      : html`<h3 class="mt">${nothingNewHeading(nothingNew.length)}</h3>
+          ${listCard(nothingNew.map((f) => line(f, false)))}`}`;
 }
 
 /** The "forked from …" lineage line and a Fork button, for the repo home. */
@@ -332,8 +385,11 @@ export function treeListing(
   ref: string,
   path: string,
   entries: readonly TreeEntry[],
+  all = false,
 ): Html {
   const encoded = encodeURIComponent(ref);
+  const shown = all ? entries : treeWindow(entries);
+  const hidden = entries.length - shown.length;
   const parent = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
   const rows: Html[] = [];
   if (path !== "") {
@@ -346,7 +402,7 @@ export function treeListing(
       }),
     );
   }
-  for (const entry of entries) {
+  for (const entry of shown) {
     const target = path === "" ? entry.name : `${path}/${entry.name}`;
     const isTree = entry.type === "tree";
     rows.push(
@@ -365,8 +421,25 @@ export function treeListing(
       }),
     );
   }
+  if (hidden > 0) {
+    rows.push(
+      row({
+        href: `${base}/tree/${encoded}${path === "" ? "" : `/${path}`}?all=1`,
+        title: html`Show all ${entries.length.toLocaleString("en-US")} entries`,
+        nav: true,
+      }),
+    );
+  }
   const total = directoryTotal(entries);
-  return listCard(rows, total.text.trim() === "" ? {} : { foot: total });
+  const foot =
+    hidden > 0
+      ? html`<span class="muted small num"
+            >Showing ${shown.length.toLocaleString("en-US")} of
+            ${entries.length.toLocaleString("en-US")} entries</span
+          >
+          ${total}`
+      : total;
+  return listCard(rows, foot.text.trim() === "" ? {} : { foot });
 }
 
 /**
@@ -397,6 +470,78 @@ export function directoryTotal(entries: readonly TreeEntry[]): Html {
 }
 
 /**
+ * Rendered README cards by blob oid. An oid names its bytes for good, so an
+ * entry never goes stale; the cache is bounded by the bytes of source behind
+ * the entries it holds, oldest out first.
+ */
+const README_CACHE_BYTES = 8_000_000;
+const readmeCache = new Map<string, { card: Html; bytes: number }>();
+let readmeCacheBytes = 0;
+
+function remember(key: string, card: Html, bytes: number): void {
+  if (bytes > README_CACHE_BYTES) return;
+  const old = readmeCache.get(key);
+  if (old) {
+    readmeCacheBytes -= old.bytes;
+    readmeCache.delete(key);
+  }
+  readmeCache.set(key, { card, bytes });
+  readmeCacheBytes += bytes;
+  for (const [k, v] of readmeCache) {
+    if (readmeCacheBytes <= README_CACHE_BYTES) break;
+    readmeCache.delete(k);
+    readmeCacheBytes -= v.bytes;
+  }
+}
+
+/**
+ * Whose bytes an entry holds: the repository being read, then the oid and
+ * name. An origin's oid is whatever the remote host sent, so it is never
+ * trusted alone, and one that is not a real object id is not cached at all.
+ */
+function readmeKey(source: RepoSource, entry: TreeEntry): string | null {
+  if (!/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(entry.oid)) return null;
+  const w = source.where;
+  const repo =
+    w.kind === "local"
+      ? `local:${w.repo.id}`
+      : `origin:${w.origin.id}:${w.fullName}`;
+  return `${repo}:${entry.oid}:${entry.name}`;
+}
+
+/** How much README source the repository home draws before linking the rest. */
+export const README_HOME_BYTES = 64 * 1024;
+
+/**
+ * The README source up to `limit` bytes, cut between top-level blocks: at the
+ * last blank line outside a fenced code block, so no fence is ever split.
+ * Null when the whole text fits.
+ */
+export function cutAtBlock(text: string, limit: number): string | null {
+  const bytes = new TextEncoder().encode(text);
+  if (bytes.length <= limit) return null;
+  const head = new TextDecoder().decode(bytes.subarray(0, limit));
+  const lines = head.split("\n");
+  lines.pop(); // the last line may be cut mid-way
+  let fence = "";
+  let cut = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^ {0,3}(`{3,}|~{3,})/.exec(lines[i]!);
+    if (m) {
+      if (fence === "") fence = m[1]!;
+      else if (m[1]![0] === fence[0] && m[1]!.length >= fence.length) fence = "";
+    } else if (fence === "" && lines[i]!.trim() === "") cut = i;
+  }
+  return cut < 0 ? "" : lines.slice(0, cut).join("\n");
+}
+
+/** Empties the README cache; for tests. */
+export function clearReadmeCache(): void {
+  readmeCache.clear();
+  readmeCacheBytes = 0;
+}
+
+/**
  * The README under a directory listing, read through whichever source is
  * answering. It is found in the entries we already have rather than by asking
  * for the tree again — `RepoSource.readme` only knows the root, and a README
@@ -407,25 +552,43 @@ export async function readmeFor(
   ref: string,
   entries: readonly TreeEntry[],
   prefix: string,
+  /** The blob base of the whole README; when given, a long one is cut and links there. */
+  whole?: string,
 ): Promise<Html> {
   const readme = entries.find(
     (e) =>
       e.type === "blob" && /^readme(\.md|\.markdown|\.txt)?$/i.test(e.name),
   );
   if (!readme) return html``;
+  const baseKey = readmeKey(source, readme);
+  const key = baseKey === null || whole === undefined ? baseKey : `${baseKey}:${whole}`;
+  const cached = key === null ? undefined : readmeCache.get(key);
+  if (key !== null && cached) {
+    readmeCache.delete(key);
+    readmeCache.set(key, cached);
+    return cached.card;
+  }
   const at = prefix === "" ? readme.name : `${prefix}/${readme.name}`;
   const blob = await source.blob(ref, at);
   if (!blob.ok || blob.value.kind !== "text") return html``;
   if (blob.value.size > MAX_RENDER_BYTES) return html``;
-  const text = new TextDecoder().decode(blob.value.body);
+  const full = new TextDecoder().decode(blob.value.body);
+  const cut = whole === undefined ? null : cutAtBlock(full, README_HOME_BYTES);
+  const text = cut ?? full;
   const rendered = /\.(md|markdown)$/i.test(readme.name)
     ? renderMarkdown(text)
     : html`<pre>${text}</pre>`;
-  return card(html`<div class="prose">${rendered}</div>`, {
+  const more =
+    cut === null
+      ? html``
+      : html`<p><a href="${`${whole}/${at.split("/").map(encodeURIComponent).join("/")}`}">Read the whole README</a></p>`;
+  const made = card(html`<div class="prose">${rendered}${more}</div>`, {
     pad: false,
     head: html`${icon("file")}
       <h2>${readme.name}</h2>`,
   });
+  if (key !== null) remember(key, made, blob.value.size + key.length);
+  return made;
 }
 
 /**
@@ -585,7 +748,10 @@ function aboutCard(
         </ul>
         ${when(
           o.fetchError !== "",
-          () => html`<p class="error-note mt">${o.fetchError}</p>`,
+          () => html`<div class="toast" data-tone="danger" role="status">
+            ${icon("alert")}
+            <div class="toast-body">${o.fetchError}</div>
+          </div>`,
         )}
         ${when(
           admin,
@@ -663,25 +829,17 @@ function aboutCard(
             </p>`,
         )}
         <p class="mt small muted">Clone over HTTPS</p>
-        <span class="clone"
-          ><span class="clone-text" id="clone-https">${cloneUrl}</span>
-          ${iconBtn("copy", "Copy clone URL", {
-            size: "sm",
-            type: "button",
-            copy: "clone-https",
-          })}</span
-        >
+        ${copyField("clone-https", cloneUrl, "HTTPS clone address", "Copy clone URL")}
         ${when(
           sshPort !== undefined,
           () =>
             html`<p class="mt small muted">Clone over SSH</p>
-              <span class="clone"
-                ><span class="clone-text" id="clone-ssh"
-                  >ssh://git@${ctx.app.config.host ??
-                  ctx.url
-                    .hostname}:${sshPort}/${repo.ownerName}/${repo.name}.git</span
-                ></span
-              >`,
+              ${copyField(
+                  "clone-ssh",
+                  `ssh://git@${ctx.app.config.host ?? ctx.url.hostname}:${sshPort}/${repo.ownerName}/${repo.name}.git`,
+                  "SSH clone address",
+                  "Copy SSH clone URL",
+                )}`,
         )}`,
       { head: html`<h2>About</h2>` },
   )}`;
@@ -722,6 +880,8 @@ export async function renderCode(
     ref: string;
     path: string;
     entries: readonly TreeEntry[];
+    /** List every entry, not the first TREE_WINDOW (`?all=1`). */
+    all?: boolean;
     extra?: Html;
     rail?: Html;
     /** The README, when the caller has already read it (and timed the read). */
@@ -730,7 +890,9 @@ export async function renderCode(
 ): Promise<Html> {
   const base = scope.base;
   const { ref, path } = o;
-  const readme = o.readme ?? (await readmeFor(scope.source, ref, o.entries, path));
+  const readme =
+    o.readme ??
+    (await readmeFor(scope.source, ref, o.entries, path, `${base}/blob/${encodeURIComponent(ref)}`));
   const historyParams = new URLSearchParams({ ref });
   if (path !== "") historyParams.set("path", path);
   const bar =
@@ -746,7 +908,7 @@ export async function renderCode(
           <span class="spacer"></span>
           ${finderButton()}
         </div>`
-      : html`<div class="path-head">
+      : html`<div class="bar mb">
           ${refMenu(
             o.refs,
             ref,
@@ -763,11 +925,11 @@ export async function renderCode(
           })}
         </div>`;
   const main = html`${bar} ${o.extra ?? null}
-    ${treeListing(base, ref, path, o.entries)}
+    ${treeListing(base, ref, path, o.entries, o.all === true)}
     <div class="mt">${readme}</div>`;
   return o.rail === undefined
     ? main
-    : html`<div class="repo-layout">
+    : html`<div class="split">
         <div>${main}</div>
         <aside aria-label="About">${o.rail}</aside>
       </div>`;
@@ -850,7 +1012,7 @@ export function renderBlob(
     o.blob.kind === "too_large" ? "" : sizeWithTokens(o.blob.size, o.path);
   const fileHref = `${base}/blob/${encoded}/${o.path}`;
   return html`<div class="code-pane" id="code-pane" data-path="${o.path}">
-    <div class="path-head">
+    <div class="bar mb">
       ${refMenu(
         o.refs,
         o.ref,
@@ -1007,6 +1169,7 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
   const refs = await timePhaseAsync(ctx.request, "refs", () => refSetFrom(scope.source));
 
   if (refs.branches.length === 0) {
+    const emptyRendering = performance.now();
     const body = html`${scopeHeader(ctx, scope, "code")}${archivedLine(ctx, repo)}${noApp}
       <div class="mt">
         ${empty({
@@ -1015,24 +1178,19 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
           note: "Point a local repository at it and push — the first branch you push becomes the code you see here.",
         })}
         ${card(
-          html`<span class="clone"
-            ><span class="clone-text" id="clone-https"
-              >git remote add origin ${cloneUrl} &amp;&amp; git push -u origin
-              ${repo.defaultBranch}</span
-            >
-            ${iconBtn("copy", "Copy", {
-              size: "sm",
-              type: "button",
-              copy: "clone-https",
-            })}</span
-          >`,
+          copyField(
+            "clone-https",
+            `git remote add origin ${cloneUrl} && git push -u origin ${repo.defaultBranch}`,
+            "Get started command",
+            "Copy the get started command",
+          ),
           {
             head: html`${icon("command")}
               <h2>Get started</h2>`,
           },
         )}
       </div>`;
-    return page({
+    const emptyResponse = page({
       ctx,
       title: repo.name,
       description: repo.description,
@@ -1045,6 +1203,8 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
       palette: scope.palette,
       body,
     });
+    notePhase(ctx.request, "render", performance.now() - emptyRendering);
+    return emptyResponse;
   }
 
   const wanted = ctx.url.searchParams.get("ref");
@@ -1060,18 +1220,35 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
   const parent = forkParent(ctx, repo);
   const [entries, drift] = await Promise.all([
     timePhaseAsync(ctx.request, "tree", () => scope.source.tree(ref, "")),
-    parent === undefined ? undefined : forkDrift(ctx.app, repo, parent),
+    parent === undefined
+      ? undefined
+      : timePhaseAsync(ctx.request, "drift", () => forkDrift(ctx.app, repo, parent)),
   ]);
   const tree = entries.ok ? entries.value : [];
 
   const readme = await timePhaseAsync(ctx.request, "readme", () =>
-    readmeFor(scope.source, ref, tree, ""),
+    readmeFor(scope.source, ref, tree, "", `${scope.base}/blob/${encodeURIComponent(ref)}`),
   );
   const following = await timePhaseAsync(ctx.request, "following", () => followingOf(ctx, repo));
+  const latest = await timePhaseAsync(ctx.request, "wave", () =>
+    latestWave(repoDir(ctx.app.reposRoot, repo.ownerName, repo.name), repo.defaultBranch),
+  );
+  // The Following card's "Propose upstream" is a writer's route to the same
+  // pull; a writer who has the card is not offered a second button.
+  const offer =
+    following !== undefined && canWrite(ctx.app.db, repo, ctx.auth.user)
+      ? null
+      : upstreamOffer(ctx.app, ctx.auth.user, repo, parent, drift?.ahead);
   const rendering = performance.now();
   const body = html`${scopeHeader(ctx, scope, "code", {
     branchCount: refs.branches.length,
-  })}${archivedLine(ctx, repo)}${noApp}
+  })}${timePhase(ctx.request, "behind", () => behindLine(ctx, repo))}${archivedLine(ctx, repo)}${noApp}
+  ${offerUpstream(repo, parent, offer)}
+  ${latest === null
+    ? ""
+    : html`<p class="muted latest-wave">Latest:
+        <a href="${repoBase(repo)}/waves/${encodeURIComponent(latest.version)}">${latest.version}</a>
+        · ${latest.headline} · ${latest.date}</p>`}
   ${frozenBlock(ctx, repo)} ${appStrip(ctx, repo)}
   ${following === undefined
     ? forkBar(ctx, repo)
@@ -1227,6 +1404,7 @@ export async function treePage(ctx: Ctx): Promise<Response> {
       ref,
       path,
       entries: entries.value,
+      all: ctx.url.searchParams.get("all") === "1",
     }),
   });
   notePhase(ctx.request, "render", performance.now() - began);

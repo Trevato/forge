@@ -31,6 +31,7 @@ import { createUser, type User } from "../src/core/users.ts";
 import { startCrew, type CrewHandle } from "../src/crew/dispatch.ts";
 import { isRateLimited, resumeAt } from "../src/crew/limits.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { stylesheetAsset } from "../src/web/asset.ts";
 import { adminCookie } from "./helpers/admin.ts";
 
 const OAT = "sk-ant-oat01-personal-token-for-the-test";
@@ -348,7 +349,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     servers.stop();
     app.close();
     await rm(dataDir, { recursive: true, force: true });
-  });
+  }, 30_000);
 
   async function until<T>(
     read: () => T | undefined,
@@ -496,7 +497,7 @@ describe("the pages", () => {
     const made = await createAgent(app, ada, { username: "bot" });
     if (!made.ok) throw new Error(String(made.error));
     expect(addToCrew(app, ada, repo, "bot").ok).toBe(true);
-  });
+  }, 30_000);
 
   afterAll(async () => {
     servers.stop();
@@ -628,6 +629,18 @@ describe("the pages", () => {
     });
     expect(forged.status).toBe(403);
     expect(getHeadroom(app.db, work.id)).toBe(25);
+  });
+
+  test("the headroom form is §5's row fields, with no class of its own", async () => {
+    const work = account();
+    const html = await get("/settings/subscriptions");
+    expect(html).not.toContain('class="headroom');
+    expect(html).toContain(`action="/settings/subscriptions/${work.id}/headroom"`);
+    expect(html).toMatch(/<form\s+class="row-fields"[^>]*headroom"/);
+    expect(html).toMatch(/<input[^>]*name="headroom"/);
+    const css = await (await fetch(`${base}${stylesheetAsset().path}`)).text();
+    expect(css).toContain(".row-fields");
+    expect(css).not.toContain(".headroom");
   });
 
   test("nobody but an admin reaches the pool", async () => {

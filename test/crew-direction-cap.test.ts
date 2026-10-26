@@ -28,7 +28,6 @@ describe("the direction is paced, not capped", () => {
   let repo: Repo;
   let direction: Issue;
   const fresh = () => getRepoById(app.db, repo.id)!;
-  const hour = 60 * 60_000;
 
   /** A finished planning pass, `ago` ms before now. */
   function pass(ago: number, state: "ok" | "failed" = "ok"): void {

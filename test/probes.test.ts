@@ -21,7 +21,7 @@ import {
   untilNightly,
   type ProbesHandle,
 } from "../src/contract/probes.ts";
-import { getAppByRepo, type AppRecord } from "../src/core/apps.ts";
+import type { AppRecord } from "../src/core/apps.ts";
 import { listIssues } from "../src/core/issues.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { listRuns } from "../src/core/runs.ts";

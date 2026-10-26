@@ -39,19 +39,20 @@ import { liveClientJs, liveMount } from "../live.ts";
 import { followingCard, followingOf } from "../pages/following.ts";
 import {
   avatar,
+  badge,
   btn,
   card,
   envPhrase,
   icon,
   listCard,
   row,
-  time,
   userTag,
 } from "../ui.ts";
 import { changesHref, tellsHref } from "./nouns.ts";
 import { answersRegion } from "./answers.ts";
 import { nowCard, nowRegion } from "./now.ts";
 import { repoAsks } from "./asks.ts";
+import { notesCard } from "./notes.ts";
 import { appPanels } from "./previews.ts";
 import { noCrewLine, servingHistory, type WordCtx } from "./words.ts";
 import { crewKeyNote } from "./crew.ts";
@@ -159,6 +160,11 @@ function previewLatencyWords(
     <span class="muted">· ${split}${latency.n} deploys${failedSuffix}</span>`;
 }
 
+/** The policy line's card: `setting-list` lets the title wrap and the trail drop under it on a phone. */
+function policyLineCard(line: Html): Html {
+  return card(html`<ul class="list setting-list">${line}</ul>`, { pad: false });
+}
+
 /**
  * One line about the app's policy, when it has one: what it opens to
  * anyone and what the running app said when the forge last knocked, with
@@ -174,14 +180,14 @@ async function policyLine(
   if (standing.kind === "unread") return html``;
   const href = `/audit#${repo.ownerName}-${repo.name}`;
   if (standing.kind === "unsound")
-    return html`<p class="policy-line">
-      ${icon("alert")}
-      <span
-        ><b>Its contract does not read</b>, so an app built on it does not
-        boot.</span
-      >
-      <a href="${href}">See why</a>
-    </p>`;
+    return policyLineCard(
+      row({
+        lead: icon("alert"),
+        title: html`<b>Its contract does not read</b>, so an app built on it
+          does not boot.`,
+        trail: html`<a href="${href}">See why</a>`,
+      }),
+    );
   const last = latestProbes(ctx.app.db, [record.id]).get(record.id);
   const open = standing.open.length;
   const said =
@@ -194,23 +200,37 @@ async function policyLine(
           : last.verdict === "down"
             ? "was not running when knocked on"
             : "has no door to knock on";
-  return html`<p class="policy-line" data-tone="${last?.verdict ?? "none"}">
-    ${icon("shield")}
-    <span
-      ><b
-        >${Object.keys(standing.contract.resources).length === 1
-          ? "One resource"
-          : `${Object.keys(standing.contract.resources).length} resources`}</b
-      >,
-      ${open === 0
-        ? "nothing open to anyone"
-        : open === 1
-          ? "one door open to anyone"
-          : `${open} doors open to anyone`};
-      ${said}.</span
-    >
-    <a href="${href}">The table</a>
-  </p>`;
+  const resources = Object.keys(standing.contract.resources).length;
+  const tone =
+    last?.verdict === "ok"
+      ? "success"
+      : last?.verdict === "mismatch"
+        ? "danger"
+        : "default";
+  const short =
+    last === undefined
+      ? "not knocked"
+      : last.verdict === "ok"
+        ? "obeys"
+        : last.verdict === "mismatch"
+          ? "disobeys"
+          : last.verdict === "down"
+            ? "down"
+            : "no door";
+  return policyLineCard(
+    row({
+      lead: icon("shield"),
+      title: html`<b>${resources === 1 ? "One resource" : `${resources} resources`}</b>,
+        ${open === 0
+          ? "nothing open to anyone"
+          : open === 1
+            ? "one door open to anyone"
+            : `${open} doors open to anyone`}`,
+      meta: html`${said}`,
+      trail: html`${badge(short, { tone })}
+        <a href="${href}">The table</a>`,
+    }),
+  );
 }
 
 export async function studioApp(
@@ -495,14 +515,15 @@ export async function studioApp(
           egressSetting(ctx.app.db),
         )
       : null}
-    <div class="dash">
-      <div class="dash-main stack">
+    <div class="split" data-rail="wide">
+      <div class="stack">
         ${tell}
         ${ownerFacts && ctx.auth.user ? answersRegion(ctx, repo, ctx.auth.user) : null}
         <div id="app-previews">${previews}</div>
         ${nowRegion(repo, now)}
+        ${notesCard(ctx, repo, record)}
       </div>
-      <aside class="dash-rail stack">
+      <aside class="stack">
         ${crewCard} ${weekCard} ${ownCard} ${more}
       </aside>
     </div>

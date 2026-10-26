@@ -188,9 +188,12 @@ describe("guard_new_accounts", () => {
         headers: { authorization: `Bearer ${token}` },
       }).then(
         (r) =>
-          r.json() as Promise<{ settings: { key: string; value: string }[] }>,
+          r.json() as Promise<{
+            items: { key: string; value: string }[];
+            next_cursor: null;
+          }>,
       );
-    const keys = (await get()).settings.map((s) => s.key);
+    const keys = (await get()).items.map((s) => s.key);
     expect(keys).toContain("guard_new_accounts");
 
     const put = (value: string) =>

@@ -15,7 +15,7 @@ export const SITEMAP_ROWS = 5000;
 export const LLMS_ROWS = 200;
 
 interface Kept {
-  readonly sitemap: Fresh<readonly string[]>;
+  readonly sitemap: Fresh<readonly SitemapRepo[]>;
   readonly llms: Fresh<readonly string[]>;
 }
 const kept = new WeakMap<Database, Kept>();
@@ -42,11 +42,36 @@ export function forgetListings(db: Database): void {
   k?.llms.clear();
 }
 
-/** `owner/name` of the newest public repositories, at most `SITEMAP_ROWS`. */
-export function sitemapRepos(db: Database): readonly string[] {
+/** A listed repository: `owner/name` and its last push (ISO time), or null. */
+export interface SitemapRepo {
+  readonly path: string;
+  readonly pushedAt: string | null;
+}
+
+/**
+ * The newest public repositories, at most `SITEMAP_ROWS`, each with the time
+ * of its last push. Who may be listed is `listReposVisibleTo`'s answer, so a
+ * private, archived or suspended owner's repository is never here.
+ */
+export function sitemapRepos(db: Database): readonly SitemapRepo[] {
   return holders(db).sitemap.get("", () => {
     listingBuilds.sitemap++;
-    return names(db, SITEMAP_ROWS);
+    const repos = listReposVisibleTo(db, undefined, {
+      limit: SITEMAP_ROWS,
+      withoutArchived: true,
+    });
+    const pushed = new Map(
+      db
+        .query<{ repo_id: string; at: string }, []>(
+          "SELECT repo_id, MAX(created_at) AS at FROM event WHERE kind = 'push' AND repo_id IS NOT NULL GROUP BY repo_id",
+        )
+        .all()
+        .map((r) => [r.repo_id, r.at]),
+    );
+    return repos.map((r) => ({
+      path: `${r.ownerName}/${r.name}`,
+      pushedAt: pushed.get(r.id) ?? null,
+    }));
   });
 }
 

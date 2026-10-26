@@ -10,11 +10,11 @@
 
 import type { Database } from "bun:sqlite";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { getIssuesByIds, type CloseReason, type Issue } from "./issues.ts";
-import { pillarsOf, structuralIds } from "./pillars.ts";
+import { getIssuesByIds, getIssuesOfRepo, type CloseReason, type Issue } from "./issues.ts";
+import { pillarsOf, structuralIds, type Pillars } from "./pillars.ts";
 import { getRepoById } from "./repos.ts";
 import { unadoptedAmong } from "../crew/direct.ts";
-import { raisedAt } from "./thought_links.ts";
+import { raisedAt, raisedInRepo } from "./thought_links.ts";
 import { limbRanks, limbTree, readPlaces } from "./limb_order.ts";
 
 export type DependencyError = "self" | "cross_repo" | "cycle" | "not_an_issue";
@@ -278,11 +278,43 @@ export function deferredIn(
 
 const GRAPH_MAX = 400;
 
+/**
+ * Which of these issues sit on either end of a dependency edge, in one read
+ * of the edges themselves. An issue on no edge can only be deferred by being
+ * the Later umbrella (`pillars.ts` finds it by a title starting "Later"), so
+ * a page that words a few tells can skip the whole-repository graph for them.
+ */
+export function linkedIssueIds(db: Database, ids: readonly string[]): Set<string> {
+  const out = new Set<string>();
+  if (ids.length === 0) return out;
+  const rows = db
+    .query<{ a: string; b: string }, [string]>(
+      `SELECT issue_id AS a, blocked_by_id AS b FROM issue_dependency
+        WHERE issue_id IN (SELECT value FROM json_each(?1))
+        UNION
+       SELECT issue_id, blocked_by_id FROM issue_dependency
+        WHERE blocked_by_id IN (SELECT value FROM json_each(?1))`,
+    )
+    .all(JSON.stringify(ids));
+  for (const r of rows) {
+    out.add(r.a);
+    out.add(r.b);
+  }
+  return out;
+}
+
 export function repoGraph(
   db: Database,
   repoId: string,
   /** Include sealed issues (`sealed.ts`): for a viewer who may see them, and the crew. */
-  options: { readonly sealed?: boolean; readonly sealedBy?: string } = {},
+  options: {
+    readonly sealed?: boolean;
+    readonly sealedBy?: string;
+    /** The repository's pillars, when the caller has read them already. */
+    readonly pillars?: Pillars;
+    /** Issues come without their bodies, when the caller shows none (a plan). */
+    readonly lean?: boolean;
+  } = {},
 ): Graph {
   const edges = db
     .query<{ issue_id: string; blocked_by_id: string }, [string]>(
@@ -305,19 +337,37 @@ export function repoGraph(
         ORDER BY b.number`,
     )
     .all(repoId);
-  const open = db
-    .query<{ id: string }, [string, number]>(
-      `SELECT id FROM issue WHERE repo_id = ?1 AND kind = 'issue' AND state = 'open'
-       ORDER BY number LIMIT ?2`,
-    )
-    .all(repoId, GRAPH_MAX)
-    .map((r) => r.id);
+  // A big graph wants most of its repository: one read of it beats chunked
+  // lookups, and the open issues are found in it.
+  const whole = edges.length > GRAPH_MAX ? getIssuesOfRepo(db, repoId, "issue", options.lean) : undefined;
+  const open =
+    whole === undefined
+      ? db
+          .query<{ id: string }, [string, number]>(
+            `SELECT id FROM issue WHERE repo_id = ?1 AND kind = 'issue' AND state = 'open'
+             ORDER BY number LIMIT ?2`,
+          )
+          .all(repoId, GRAPH_MAX)
+          .map((r) => r.id)
+      : [...whole.values()]
+          .filter((i) => i.kind === "issue" && i.state === "open")
+          .sort((a, b) => a.number - b.number)
+          .slice(0, GRAPH_MAX)
+          .map((i) => i.id);
   const ids = new Set<string>(open);
   for (const e of edges) {
     ids.add(e.issueId);
     ids.add(e.blockedById);
   }
-  const issues = [...getIssuesByIds(db, [...ids]).values()]
+  const found = new Map<string, Issue>();
+  const strays: string[] = [];
+  for (const id of ids) {
+    const issue = whole?.get(id);
+    if (issue === undefined) strays.push(id);
+    else found.set(id, issue);
+  }
+  for (const [id, issue] of getIssuesByIds(db, strays)) found.set(id, issue);
+  const issues = [...found.values()]
     .filter(
       (i) =>
         options.sealed === true ||
@@ -330,7 +380,8 @@ export function repoGraph(
     (e) => present.has(e.issueId) && present.has(e.blockedById),
   );
   const repo = getRepoById(db, repoId);
-  const set = repo === undefined ? undefined : pillarsOf(db, repo);
+  const set =
+    repo === undefined ? undefined : (options.pillars ?? pillarsOf(db, repo));
   const places = readPlaces(db, repoId);
   return {
     ...(set === undefined || places.size === 0
@@ -341,7 +392,10 @@ export function repoGraph(
             places,
           ),
         }),
-    raised: raisedAt(db, issues.map((i) => i.id)),
+    raised:
+      whole === undefined
+        ? raisedAt(db, issues.map((i) => i.id))
+        : raisedInRepo(db, repoId),
     issues,
     unadopted:
       repo === undefined ? new Set() : unadoptedAmong(db, repo, issues),

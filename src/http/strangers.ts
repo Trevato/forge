@@ -37,7 +37,10 @@ export interface StrangerLimits {
    * kept for pushes and signed-in clones. At least one permit.
    */
   readonly transferShare: number;
-  /** A stranger's transfer is killed after this long (a signed-in one: 600 s). */
+  /**
+   * A stranger's fetch is killed after this long, however well it moves.
+   * It is killed sooner once it stalls (`git/progress.ts`), as anyone's is.
+   */
   readonly transferTimeoutMs: number;
   /** A fetch's request body that stops arriving for this long ends the fetch. */
   readonly transferIdleMs: number;
@@ -60,7 +63,7 @@ export const STRANGER_LIMITS: StrangerLimits = {
   forge: { api: 6000, git: 600, code: 60, plan: 60 },
   transfersPerAddress: 4,
   transferShare: 0.5,
-  transferTimeoutMs: 300_000,
+  transferTimeoutMs: 7_200_000,
   transferIdleMs: 30_000,
   codeAtOnce: 1,
   streamsPerAddress: 8,
@@ -87,6 +90,10 @@ interface State {
   readonly forge: Map<Door, RateLimiter>;
   /** What is held right now, by key: "transfer:<bucket>", "code", "stream:*". */
   readonly held: Map<string, number>;
+  /** The time the rate windows are counted by; a test hands in its own. */
+  now: () => number;
+  /** Woken, once, by the next hold or release: what a waiting test sleeps on. */
+  changed: (() => void)[];
 }
 
 const states = new WeakMap<App, State>();
@@ -99,23 +106,29 @@ function stateOf(app: App): State {
       perAddress: new Map(),
       forge: new Map(),
       held: new Map(),
+      now: Date.now,
+      changed: [],
     };
     states.set(app, state);
   }
   return state;
 }
 
-const minute = (perMinute: number): RateLimiter =>
-  new RateLimiter({ perMinute, adminPerMinute: perMinute, enabled: true });
+const minute = (state: State, perMinute: number): RateLimiter =>
+  new RateLimiter(
+    { perMinute, adminPerMinute: perMinute, enabled: true },
+    () => state.now(),
+  );
 
 function limiter(
+  state: State,
   map: Map<Door, RateLimiter>,
   door: Door,
   perMinute: number,
 ): RateLimiter {
   let found = map.get(door);
   if (found === undefined) {
-    found = minute(perMinute);
+    found = minute(state, perMinute);
     map.set(door, found);
   }
   return found;
@@ -139,6 +152,26 @@ export function setStrangerLimits(
 }
 
 /**
+ * Test seam: count the rate windows by `now` instead of the wall clock, so a
+ * slow request never slides one. Counted minutes start over.
+ */
+export function setStrangerClock(app: App, now: () => number): void {
+  const state = stateOf(app);
+  state.now = now;
+  state.perAddress.clear();
+  state.forge.clear();
+}
+
+/** Resolves at the next hold or release on this forge — for tests to wait on. */
+export const heldChanged = (app: App): Promise<void> =>
+  new Promise((resolve) => stateOf(app).changed.push(resolve));
+
+function wake(state: State): void {
+  const waiting = state.changed.splice(0);
+  for (const resolve of waiting) resolve();
+}
+
+/**
  * Count one stranger's request through `door`: refused when its address or
  * every stranger together has spent the minute. A refusal is not counted
  * (`RateLimiter.take`), and one refused forge-wide gives back the address's
@@ -153,10 +186,10 @@ export const takeDoor = (app: App, door: Door, request: Request): Verdict =>
  */
 export function takeDoorAt(app: App, door: Door, bucket: string): Verdict {
   const state = stateOf(app);
-  const mine = limiter(state.perAddress, door, state.limits.perAddress[door]);
+  const mine = limiter(state, state.perAddress, door, state.limits.perAddress[door]);
   const own = mine.take(bucket, "ro");
   if (!own.allowed) return own;
-  const all = limiter(state.forge, door, state.limits.forge[door]).take("*", "ro");
+  const all = limiter(state, state.forge, door, state.limits.forge[door]).take("*", "ro");
   if (!all.allowed) {
     mine.refund(bucket);
     return all;
@@ -169,6 +202,7 @@ function hold(state: State, key: string, max: number): (() => void) | undefined 
   const now = state.held.get(key) ?? 0;
   if (now >= max) return undefined;
   state.held.set(key, now + 1);
+  wake(state);
   let released = false;
   return () => {
     if (released) return;
@@ -176,6 +210,7 @@ function hold(state: State, key: string, max: number): (() => void) | undefined 
     const left = (state.held.get(key) ?? 1) - 1;
     if (left <= 0) state.held.delete(key);
     else state.held.set(key, left);
+    wake(state);
   };
 }
 

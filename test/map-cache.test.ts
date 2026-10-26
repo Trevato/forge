@@ -57,20 +57,36 @@ const MANY: Shape = {
 /** What the page around the lanes reads, however many lanes there are. */
 const CHROME = 26;
 
-const dirs: string[] = [];
-const fixtures: Fixture[] = [];
+/**
+ * A fixture lives only as long as its describe: three held to the end of the
+ * file were ~19 MB of repositories on a check machine that ran out of disk
+ * (pull #5178), where a seed fails `git_init_failed` with nothing wrong here.
+ */
+const dirs = new Set<string>();
 afterAll(() => {
-  for (const f of fixtures) f.app.close();
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 }, 60_000);
 
-async function boot(shape: Shape): Promise<{ f: Fixture; servers: Servers }> {
+async function boot(shape: Shape): Promise<{ f: Fixture; servers: Servers; release: () => void }> {
   const dir = mkdtempSync(join(tmpdir(), "forge-map-cache-"));
-  dirs.push(dir);
+  dirs.add(dir);
   clearMapCache();
-  const f = await seedFixture(dir, shape);
-  fixtures.push(f);
-  return { f, servers: await serve(f.app) };
+  let f: Fixture | undefined;
+  let servers: Servers | undefined;
+  const release = () => {
+    servers?.stop();
+    f?.app.close();
+    rmSync(dir, { recursive: true, force: true });
+    dirs.delete(dir);
+  };
+  try {
+    f = await seedFixture(dir, shape);
+    servers = await serve(f.app);
+  } catch (error) {
+    release();
+    throw error;
+  }
+  return { f, servers, release };
 }
 
 const get = async (servers: Servers, path: string, cookie: string): Promise<string> =>
@@ -81,10 +97,12 @@ const lanesIn = (page: string): number => page.split('<details id="lane-').lengt
 describe("/map on a many-lane fixture, warm", () => {
   let servers: Servers;
   let f: Fixture;
+  let release: (() => void) | undefined;
   beforeAll(async () => {
-    ({ f, servers } = await boot(MANY));
+    ({ f, servers, release } = await boot(MANY));
   }, 120_000);
-  afterAll(() => servers.stop(), 60_000);
+  // A boot that failed has nothing to stop: its own error is the one reported.
+  afterAll(() => release?.(), 60_000);
 
   for (const who of ["owner", "stranger"] as const) {
     test(`${who}: a warm hit does a fraction of a cold build's work, statements within a fixed cost + 2 per lane`, async () => {
@@ -140,15 +158,17 @@ describe("/map on a many-lane fixture, warm", () => {
 describe("/map after a write", () => {
   let servers: Servers;
   let f: Fixture;
+  let release: (() => void) | undefined;
   let owner: User;
   let stranger: User;
   const repoOf = (name: string): Repo => getRepo(f.app.db, "keeper", name)!;
   beforeAll(async () => {
-    ({ f, servers } = await boot(SMALL));
+    ({ f, servers, release } = await boot(SMALL));
     owner = getUserByName(f.app.db, "keeper")!;
     stranger = getUserByName(f.app.db, "passerby")!;
   }, 60_000);
-  afterAll(() => servers.stop(), 60_000);
+  // A boot that failed has nothing to stop: its own error is the one reported.
+  afterAll(() => release?.(), 60_000);
 
   test("an issue opened, then closed, shows on the next /map", async () => {
     const repo = repoOf("plan-0");
@@ -234,10 +254,12 @@ describe("the layout key", () => {
 describe("/map's Server-Timing names its phases", () => {
   let servers: Servers;
   let f: Fixture;
+  let release: (() => void) | undefined;
   beforeAll(async () => {
-    ({ f, servers } = await boot(SMALL));
+    ({ f, servers, release } = await boot(SMALL));
   }, 120_000);
-  afterAll(() => servers.stop(), 60_000);
+  // A boot that failed has nothing to stop: its own error is the one reported.
+  afterAll(() => release?.(), 60_000);
 
   for (const who of ["owner", "stranger"] as const) {
     test(`${who}: session, lanes, layout and render follow app, and sum to no more than it`, async () => {
@@ -252,9 +274,14 @@ describe("/map's Server-Timing names its phases", () => {
         const names = [...dur.keys()];
         expect(names.slice(-4), `${pass}: ${header}`).toEqual(["session", "lanes", "layout", "render"]);
         expect(header.split(", ").every((p) => /^[a-z-]+;dur=\d+\.\d$/.test(p))).toBe(true);
-        const sum = ["session", "lanes", "layout", "render"].reduce((n, k) => n + dur.get(k)!, 0);
-        // Each is printed to a tenth of a millisecond, so allow that rounding.
-        expect(sum).toBeLessThanOrEqual(dur.get("app")! + 0.4);
+        const phases = ["session", "lanes", "layout", "render"];
+        const sum = phases.reduce((n, k) => n + dur.get(k)!, 0);
+        // The phases are disjoint stretches inside `app`, so their true sum is
+        // at most app's. `serverTiming` prints each with toFixed(1), off by at
+        // most half a tenth: four phases rounded up and app rounded down is
+        // the whole slack, 5 × 0.05 ms, with a hair for binary fractions.
+        const slack = (phases.length + 1) * 0.05 + 1e-9;
+        expect(sum, header).toBeLessThanOrEqual(dur.get("app")! + slack);
         // No repository name rides in the header.
         expect(header).not.toMatch(/\//);
       }

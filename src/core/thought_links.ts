@@ -45,6 +45,19 @@ export function raiseIssue(db: Database, issueId: string, now = new Date()): voi
   ).run(issueId, now.toISOString());
 }
 
+/** When each issue of one repository was raised, in one read: for a graph that wants them all. */
+export function raisedInRepo(db: Database, repoId: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const r of db
+    .query<{ issue_id: string; raised_at: string }, [string]>(
+      `SELECT r.issue_id, r.raised_at FROM issue_raise r
+         JOIN issue i ON i.id = r.issue_id WHERE i.repo_id = ?1`,
+    )
+    .all(repoId))
+    out.set(r.issue_id, r.raised_at);
+  return out;
+}
+
 /**
  * When each of these issues was last raised: one query per chunk, never one
  * per issue — the map asks this for every open issue it draws (#2675).

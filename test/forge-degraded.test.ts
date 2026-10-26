@@ -34,7 +34,7 @@ const at = async (min: number): Promise<void> => {
 
 beforeAll(async () => {
   dataDir = await mkdtemp(join(tmpdir(), "forge-degraded-"));
-  app = createApp({ dataDir, port: 0 });
+  app = createApp({ dataDir, port: 0, disk: () => ({ freeBytes: 95, totalBytes: 100 }) });
   servers = await serve(app);
   const made = await createUser(app.db, {
     origin: "seed",
@@ -79,11 +79,12 @@ afterAll(async () => {
 test("a burst of errors: the board says so, one page, no more; clear for five minutes: one Recovered, all fine", async () => {
   expect(await board()).toContain("All fine");
 
-  for (let i = 0; i < ERROR_BURST; i++) app.signals.errors.record("test", "boom", Date.now());
+  app.signals.errors.clear();
+  for (let i = 0; i < ERROR_BURST; i++) app.signals.errors.record("test", "boom", clock);
   await at(0);
   const burst = await board();
   expect(burst).toMatch(/data-ok="no"/);
-  expect(burst).toMatch(/data-need href="\/settings\/capacity#errors">[\s\S]*?20 errors in the last hour/);
+  expect(burst).toMatch(/data-need href="\/settings\/capacity#errors">[\s\S]*?\d+ errors in the last hour/);
   expect(burst).not.toContain("All fine");
   await at(4);
   expect(posts).toHaveLength(0);

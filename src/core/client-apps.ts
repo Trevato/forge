@@ -54,58 +54,68 @@ export async function clientAppRows(
   });
 }
 
-/** What one app's agents are doing, in words a client can read. */
-export type ClientDoing =
-  | { readonly kind: "working"; readonly title: string }
-  | { readonly kind: "landed"; readonly title: string; readonly at: string };
-
-const WEEK_MS = 7 * 24 * 3600 * 1000;
+/** What one app's agents are doing now, in words a client can read. */
+export interface ClientDoing {
+  readonly title: string;
+}
 
 /**
- * For each of `appIds` (repo ids), the title of the work running now, else of
- * the last change landed in the 7 days before `now`; an app with neither is
- * left out. One query, at most one row per app.
+ * For each of `appIds` (repo ids), the title of the work running now; an app
+ * with none is left out. What landed is `clientFinished`'s. One query, at most
+ * one row per app.
  */
 export function clientDoings(
   db: Database,
   appIds: readonly string[],
-  now: Date,
 ): ReadonlyMap<string, ClientDoing> {
   const doings = new Map<string, ClientDoing>();
   if (appIds.length === 0) return doings;
-  const marks = appIds.map((_, i) => `?${i + 3}`).join(",");
   const rows = db
-    .query<
-      { repo_id: string; kind: string; title: string; at: string },
-      (string | number)[]
-    >(
-      `SELECT repo_id, kind, title, at FROM (
-         SELECT repo_id, kind, title, at,
-                ROW_NUMBER() OVER (PARTITION BY repo_id ORDER BY rank, at DESC) AS n
-         FROM (
-           SELECT r.repo_id AS repo_id, 'working' AS kind, i.title AS title,
-                  COALESCE(r.started_at, r.created_at) AS at, 0 AS rank
-           FROM run r JOIN issue i ON i.id = r.issue_id
-           WHERE r.kind = 'agent' AND r.state = 'running'
-             AND r.repo_id IN (${marks})
-           UNION ALL
-           SELECT i.repo_id, 'landed', i.title, p.merged_at, 1
-           FROM issue i JOIN pull p ON p.issue_id = i.id
-           WHERE i.kind = 'pull' AND i.state = 'closed'
-             AND i.repo_id IN (${marks}) AND p.merged_at >= ?1
-         )
-       ) WHERE n = 1 LIMIT ?2`,
+    .query<{ repo_id: string; title: string }, string[]>(
+      `SELECT repo_id, title FROM (
+         SELECT r.repo_id AS repo_id, i.title AS title,
+                ROW_NUMBER() OVER (
+                  PARTITION BY r.repo_id ORDER BY COALESCE(r.started_at, r.created_at) DESC
+                ) AS n
+         FROM run r JOIN issue i ON i.id = r.issue_id
+         WHERE r.kind = 'agent' AND r.state = 'running'
+           AND r.repo_id IN (${appIds.map((_, i) => `?${i + 1}`).join(",")})
+       ) WHERE n = 1`,
     )
-    .all(new Date(now.getTime() - WEEK_MS).toISOString(), appIds.length, ...appIds);
-  for (const row of rows) {
-    doings.set(
-      row.repo_id,
-      row.kind === "working"
-        ? { kind: "working", title: row.title }
-        : { kind: "landed", title: row.title, at: row.at },
-    );
-  }
+    .all(...appIds);
+  for (const row of rows) doings.set(row.repo_id, { title: row.title });
   return doings;
+}
+
+/** What one app last had finished: the title of its newest merged pull and when. */
+export interface ClientFinished {
+  readonly title: string;
+  readonly at: string;
+}
+
+/**
+ * For each of `appIds` (repo ids), its most recently merged pull, however old;
+ * an app with none is left out. One query, at most one row per app.
+ */
+export function clientFinished(
+  db: Database,
+  appIds: readonly string[],
+): ReadonlyMap<string, ClientFinished> {
+  const finished = new Map<string, ClientFinished>();
+  if (appIds.length === 0) return finished;
+  const rows = db
+    .query<{ repo_id: string; title: string; at: string }, string[]>(
+      `SELECT repo_id, title, at FROM (
+         SELECT i.repo_id AS repo_id, i.title AS title, p.merged_at AS at,
+                ROW_NUMBER() OVER (PARTITION BY i.repo_id ORDER BY p.merged_at DESC) AS n
+         FROM issue i JOIN pull p ON p.issue_id = i.id
+         WHERE i.kind = 'pull' AND p.merged_at IS NOT NULL
+           AND i.repo_id IN (${appIds.map((_, i) => `?${i + 1}`).join(",")})
+       ) WHERE n = 1`,
+    )
+    .all(...appIds);
+  for (const row of rows) finished.set(row.repo_id, { title: row.title, at: row.at });
+  return finished;
 }
 
 const TITLE_MAX = 80;
@@ -119,15 +129,16 @@ export function cutTitle(title: string): string {
   return `${(space > 0 ? head.slice(0, space) : head).trimEnd()}…`;
 }
 
-/** The sentence about what an app's agents are on, or "" for a quiet app. */
-export function doingLine(doing: ClientDoing | undefined, now: number): string {
-  if (!doing) return "";
-  const title = cutTitle(doing.title);
-  if (title === "") return "";
-  switch (doing.kind) {
-    case "working":
-      return `Working on: ${title}`;
-    case "landed":
-      return `Last change: ${title}, ${ago(Date.parse(doing.at), now)}`;
-  }
+/** The sentence about what an app's agents are on, or "" when none is running. */
+export function doingLine(doing: ClientDoing | undefined): string {
+  const title = doing === undefined ? "" : cutTitle(doing.title);
+  return title === "" ? "" : `Working on: ${title}`;
+}
+
+/** `Finished 3 days ago: Fix the menu`, or "" for an app with nothing finished; both doors word it so. */
+export function finishedLine(finished: ClientFinished | undefined, now: number): string {
+  const title = finished === undefined ? "" : cutTitle(finished.title);
+  if (finished === undefined || title === "") return "";
+  const at = Date.parse(finished.at);
+  return Number.isNaN(at) ? "" : `Finished ${ago(at, now)}: ${title}`;
 }

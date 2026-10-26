@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { commitToBranch, forkRepo } from "../src/actions/repos.ts";
+import { recordFetch } from "../src/core/origins.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { getUserByName } from "../src/core/users.ts";
 import { settled } from "../src/origins/jobs.ts";
@@ -403,9 +404,11 @@ describe("origins: connecting, mirroring, writing through", () => {
     expect(repo.pinned).toBe(false);
 
     // The git objects really arrived.
-    const branches = (await (
-      await api("/api/v1/repos/alice/widgets/branches")
-    ).json()) as { name: string }[];
+    const branches = (
+      (await (await api("/api/v1/repos/alice/widgets/branches")).json()) as {
+        items: { name: string }[];
+      }
+    ).items;
     expect(branches.map((b) => b.name)).toEqual(["main"]);
     const readme = (await (
       await api("/api/v1/repos/alice/widgets/contents/README.md")
@@ -569,6 +572,24 @@ describe("origins: connecting, mirroring, writing through", () => {
     expect(upstream?.pull?.head).toBe("loosen");
   });
 
+  test("a mirror's fetch error is drawn in the danger notice, not .error-note", async () => {
+    const mirror = getRepo(app.db, "alice", "widgets")!;
+    recordFetch(app.db, mirror.id, {
+      at: "2026-01-01T00:00:00.000Z",
+      error: "fetch failed <b>badly</b>",
+    });
+    try {
+      const text = await (await api("/alice/widgets")).text();
+      expect(text).toContain(
+        '<div class="toast" data-tone="danger" role="status">',
+      );
+      expect(text).toContain("fetch failed &lt;b&gt;badly&lt;/b&gt;");
+      expect(text).not.toContain("error-note");
+    } finally {
+      recordFetch(app.db, mirror.id, { at: "2026-01-01T00:00:00.000Z" });
+    }
+  });
+
   test("a fork proposing its main upstream travels under its owner's name, never onto the origin's main", async () => {
     const alice = getUserByName(app.db, "alice")!;
     const mirror = getRepo(app.db, "alice", "widgets")!;
@@ -581,9 +602,11 @@ describe("origins: connecting, mirroring, writing through", () => {
     });
     if (!committed.ok) throw new Error(JSON.stringify(committed.error));
     const branchesOf = async (): Promise<Map<string, string>> => {
-      const listed = (await (
-        await fetch(`${originServers.url}/api/v1/repos/octo/widgets/branches`)
-      ).json()) as { name: string; oid: string }[];
+      const listed = (
+        (await (
+          await fetch(`${originServers.url}/api/v1/repos/octo/widgets/branches`)
+        ).json()) as { items: { name: string; oid: string }[] }
+      ).items;
       return new Map(listed.map((b) => [b.name, b.oid]));
     };
     const before = await branchesOf();
@@ -677,11 +700,13 @@ describe("origins: connecting, mirroring, writing through", () => {
     expect(
       (await api("/api/v1/user/pins/alice/widgets", { method: "PUT" })).status,
     ).toBe(200);
-    const pins = (await (await api("/api/v1/user/pins")).json()) as {
-      owner: string;
-      name: string;
-      cloneUrl: string;
-    }[];
+    const { items: pins, next_cursor } = (await (
+      await api("/api/v1/user/pins")
+    ).json()) as {
+      items: { owner: string; name: string; cloneUrl: string }[];
+      next_cursor: string | null;
+    };
+    expect(next_cursor).toBeNull();
     expect(pins).toHaveLength(1);
     expect(pins[0]).toMatchObject({ owner: "alice", name: "widgets" });
     expect(pins[0]!.cloneUrl.endsWith("/alice/widgets.git")).toBe(true);
@@ -707,7 +732,8 @@ describe("origins: connecting, mirroring, writing through", () => {
         .status,
     ).toBe(204);
     expect(
-      ((await (await api("/api/v1/user/pins")).json()) as unknown[]).length,
+      ((await (await api("/api/v1/user/pins")).json()) as { items: unknown[] })
+        .items.length,
     ).toBe(0);
   });
 

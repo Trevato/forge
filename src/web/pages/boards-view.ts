@@ -16,19 +16,19 @@ import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { liveRegionsJs } from "../client.ts";
 import { notFoundPage } from "../chrome.ts";
-import { html, raw, when, type Html } from "../html.ts";
+import { html, when, type Html } from "../html.ts";
 import { fragment, page } from "../layout.ts";
-import { btn, card, empty } from "../ui.ts";
+import { btn, card, chartBox, empty, field, selectField } from "../ui.ts";
 import { flowPanel } from "./flow-panel.ts";
 import { isPinned, listPins } from "../../boards/pins.ts";
 import { panelData, runFor } from "../../boards/panel_data.ts";
-import { cellsOf, chartBox, paramsOf, queryFields, readParams } from "./boards.ts";
+import { cellsOf, paramsOf, queryFields, readParams } from "./boards.ts";
 
 /** The events the panels' queries read (runs, pulls, checks, issues, usage): any of them may change a chart. */
 const READS = "run.queued,run.started,run.finished,pull.*,check.*,issue.*,usage.*";
 
-const option = (value: string, selected: boolean) =>
-  html`<option value="${value}" ${selected ? raw("selected") : null}>${value}</option>`;
+const sizes = (max: number, word: string, now: number) =>
+  [1, 2, 3].slice(0, max).map((n) => ({ value: String(n), label: `${String(n)} ${word}`, selected: n === now }));
 
 /** Where a panel lives: its board's slug and its place on it, which name its data door. */
 export type PanelAt = { slug: string; index: number };
@@ -83,8 +83,8 @@ export async function boardsList(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const listed = await timePhaseAsync(ctx.request, "boards", () => listAllBoards(ctx.app, ctx.auth.user));
   if (!listed.ok) return notFoundPage(ctx);
-  const make = html`<form method="post" action="/boards/new" class="bform">
-    <label class="qf"><span>New board</span><input class="input" name="title" required maxlength="${String(MAX_TITLE)}" placeholder="Title" /></label>
+  const make = html`<form method="post" action="/boards/new" class="bar">
+    ${field({ label: "New board", name: "title", id: "new-board-title", required: true, maxlength: MAX_TITLE, placeholder: "Title" })}
     ${btn("Make board", { variant: "primary" })}
   </form>`;
   const body =
@@ -115,15 +115,12 @@ export async function boardsList(ctx: Ctx): Promise<Response> {
 }
 
 function panelForm(slug: string, op: string, p: Panel | undefined, index: number, fields: Html): Html {
-  return html`<form method="post" action="/boards/${slug}/${op}" class="bform">
+  const id = op === "edit" ? `panel-${String(index)}` : "panel-new";
+  return html`<form method="post" action="/boards/${slug}/${op}" class="bar">
     ${op === "edit" ? html`<input type="hidden" name="index" value="${String(index)}" />` : null}
-    <label class="qf"><span>Panel title</span><input class="input" name="title" required maxlength="${String(MAX_TITLE)}" value="${p?.title ?? ""}" placeholder="Panel title" /></label>
-    <label class="qf"><span>Width</span><select class="input" name="w">
-      ${[1, 2, 3].slice(0, MAX_W).map((n) => html`<option value="${String(n)}" ${n === (p?.w ?? 1) ? raw("selected") : null}>${String(n)} wide</option>`)}
-    </select></label>
-    <label class="qf"><span>Height</span><select class="input" name="h">
-      ${[1, 2, 3].slice(0, MAX_H).map((n) => html`<option value="${String(n)}" ${n === (p?.h ?? 1) ? raw("selected") : null}>${String(n)} high</option>`)}
-    </select></label>
+    ${field({ label: "Panel title", name: "title", id: `${id}-title`, required: true, maxlength: MAX_TITLE, value: p?.title ?? "", placeholder: "Panel title" })}
+    ${selectField({ label: "Width", name: "w", id: `${id}-w`, options: sizes(MAX_W, "wide", p?.w ?? 1) })}
+    ${selectField({ label: "Height", name: "h", id: `${id}-h`, options: sizes(MAX_H, "high", p?.h ?? 1) })}
     ${fields}
     ${btn(op === "edit" ? "Save panel" : "Add panel", { variant: "primary" })}
   </form>`;
@@ -167,17 +164,20 @@ function manage(slug: string, board: Board, adding: Html, pins: ReturnType<typeo
       () => card(panelForm(slug, "add", undefined, 0, adding), { head: html`<h2>Add a panel</h2>` }),
     )}
     ${card(
-      html`<form method="post" action="/boards/${slug}/rename" class="bform">
-          <label class="qf"><span>Board title</span><input class="input" name="title" required maxlength="${String(MAX_TITLE)}" value="${board.title}" /></label>
+      html`<div class="bar"><form method="post" action="/boards/${slug}/rename" class="bar">
+          ${field({ label: "Board title", name: "title", id: "board-title", required: true, maxlength: MAX_TITLE, value: board.title })}
           ${btn("Rename")}
         </form>
-        <form method="post" action="/boards/${slug}/settings" class="bform">
-          <label class="qf"><span>Range</span><select class="input" name="range">${RANGES.map((r) => option(r, r === board.range))}</select></label>
-          <label class="qf"><span>Live</span><select class="input" name="refresh"><option value="off" ${board.refresh === "off" ? raw("selected") : null}>off</option><option value="10s" ${board.refresh === "off" ? null : raw("selected")}>on: redraw when events arrive</option></select></label>
+        <form method="post" action="/boards/${slug}/settings" class="bar">
+          ${selectField({ label: "Range", name: "range", id: "board-range", options: RANGES.map((r) => ({ value: r, label: r, selected: r === board.range })) })}
+          ${selectField({ label: "Live", name: "refresh", id: "board-refresh", options: [
+            { value: "off", label: "off", selected: board.refresh === "off" },
+            { value: "10s", label: "on: redraw when events arrive", selected: board.refresh !== "off" },
+          ] })}
           ${btn("Save settings")}
         </form>
-        <form method="post" action="/boards/${slug}/duplicate" class="bform">${btn("Duplicate")}</form>
-        <form method="post" action="/boards/${slug}/delete" class="bform">${btn("Delete this board", { variant: "danger" })}</form>`,
+        <form method="post" action="/boards/${slug}/duplicate">${btn("Duplicate")}</form>
+        <form method="post" action="/boards/${slug}/delete">${btn("Delete this board", { variant: "danger" })}</form></div>`,
       { head: html`<h2>Board</h2>` },
     )}`;
 }

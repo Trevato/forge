@@ -41,6 +41,8 @@ export interface CheckDetail {
   readonly passed: number;
   readonly failed: number;
   readonly names: readonly string[];
+  /** The check machine's free disk share (0..1) when a red finished (#5453). */
+  readonly diskFree?: number;
 }
 
 export interface Run {
@@ -459,6 +461,9 @@ export const REQUEUED_SUMMARY = "interrupted by a restart; queued again";
 /** What a check whose cluster Job vanished says as it is queued again. */
 export const VANISHED_SUMMARY = "interrupted: its cluster job vanished; queued again";
 
+/** What a check whose install the machine failed twice says as it is queued again (#5093). */
+export const INFRA_SUMMARY = "failed: infrastructure — the install failed twice on a transient error; queued again";
+
 /**
  * How many times one check may be cut off by its forge going away and be
  * queued again. Past it the check fails once, saying so: a check that kills
@@ -519,6 +524,11 @@ export function overranBefore(db: Database, run: Run): boolean {
 /** Whether the attempt just before this one lost its cluster Job: it is queued again once. */
 export function vanishedBefore(db: Database, run: Run): boolean {
   return cutOffBefore(db, run, VANISHED_SUMMARY);
+}
+
+/** Whether the attempt just before this one failed on infrastructure: it is queued again once. */
+export function infraBefore(db: Database, run: Run): boolean {
+  return cutOffBefore(db, run, INFRA_SUMMARY);
 }
 
 function cutOffBefore(db: Database, run: Run, prefix: string): boolean {
@@ -742,6 +752,63 @@ export function activeRunFor(
 }
 
 /**
+ * `listRuns(…, { kind, issueId, limit: 1 })` for many issues at once: each
+ * issue's newest run of `kind`, one query per chunk. Issues with none are absent.
+ */
+export function latestRunsOfKind(
+  db: Database,
+  kind: RunKind,
+  issueIds: readonly string[],
+): Map<string, Run> {
+  const out = new Map<string, Run>();
+  const unique = [...new Set(issueIds)];
+  const CHUNK = 400;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const rows = db
+      .query<RunRow, string[]>(
+        `SELECT * FROM run WHERE kind = ?1
+           AND issue_id IN (${batch.map((_, n) => `?${n + 2}`).join(",")})
+         ORDER BY id DESC`,
+      )
+      .all(kind, ...batch);
+    for (const row of rows)
+      if (row.issue_id && !out.has(row.issue_id)) out.set(row.issue_id, toRun(row));
+  }
+  return out;
+}
+
+/**
+ * `checksForHead` for many pulls at once: each pull's runs at its own head,
+ * newest first, one query per chunk. Pulls with none are absent.
+ */
+export function checksForHeads(
+  db: Database,
+  heads: ReadonlyMap<string, string>,
+): Map<string, Run[]> {
+  const out = new Map<string, Run[]>();
+  const ids = [...heads.keys()];
+  const CHUNK = 400;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const batch = ids.slice(i, i + CHUNK);
+    const rows = db
+      .query<RunRow, string[]>(
+        `SELECT * FROM run WHERE kind IN ('deploy','check')
+           AND issue_id IN (${batch.map((_, n) => `?${n + 1}`).join(",")})
+         ORDER BY id DESC`,
+      )
+      .all(...batch);
+    for (const row of rows) {
+      if (!row.issue_id || row.commit_oid !== heads.get(row.issue_id)) continue;
+      const list = out.get(row.issue_id) ?? [];
+      list.push(toRun(row));
+      out.set(row.issue_id, list);
+    }
+  }
+  return out;
+}
+
+/**
  * `activeRunFor` for many issues at once: each issue's earliest queued or
  * running run of `kind`, one query per chunk. Issues with none are absent.
  */
@@ -805,13 +872,14 @@ export function checksForHead(
   db: Database,
   issueId: string,
   headOid: string,
+  limit = -1,
 ): Run[] {
   return db
     .query<
       RunRow,
-      [string, string]
-    >("SELECT * FROM run WHERE kind IN ('deploy','check') AND issue_id = ?1 AND commit_oid = ?2 ORDER BY id DESC")
-    .all(issueId, headOid)
+      [string, string, number]
+    >("SELECT * FROM run WHERE kind IN ('deploy','check') AND issue_id = ?1 AND commit_oid = ?2 ORDER BY id DESC LIMIT ?3")
+    .all(issueId, headOid, limit)
     .map(toRun);
 }
 
@@ -844,7 +912,13 @@ export function checkSummary(
   issueId: string,
   headOid: string,
 ): CheckSummary {
-  const latest = checksForHead(db, issueId, headOid)[0];
+  const row = db
+    .query<
+      RunRow,
+      [string, string]
+    >("SELECT * FROM run WHERE kind IN ('deploy','check') AND issue_id = ?1 AND commit_oid = ?2 ORDER BY id DESC LIMIT 1")
+    .get(issueId, headOid);
+  const latest = row ? toRun(row) : undefined;
   return latest
     ? { state: latest.state, run: latest }
     : { state: "none", run: null };
@@ -1251,4 +1325,19 @@ export function listRunning(
     repo: r.slug,
     issue: r.issue_number,
   }));
+}
+
+/** Keep a finished run's first error line (see `runs/error_line.ts`) beside it. */
+export function setRunErrorLine(db: Database, runId: string, text: string, at: number): void {
+  db.query("UPDATE run SET error_line = ?2, error_at = ?3 WHERE id = ?1").run(runId, text, at);
+}
+
+/** That line and its number in the log, when one was kept. */
+export function getRunErrorLine(db: Database, runId: string): { text: string; at: number } | undefined {
+  const row = db
+    .query<{ error_line: string; error_at: number }, [string]>(
+      "SELECT error_line, error_at FROM run WHERE id = ?1",
+    )
+    .get(runId);
+  return row === null || row === undefined || row.error_line === "" ? undefined : { text: row.error_line, at: row.error_at };
 }

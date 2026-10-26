@@ -31,11 +31,17 @@ import type {
   RemoteReviewState,
   RemoteTreeEntry,
 } from "../types.ts";
+import {
+  NO_ACCOUNT,
+  NO_REVIEW,
+  NOT_A_PATH,
+  PATH_IS_DIRECTORY,
+  PATH_IS_FILE,
+} from "../words.ts";
 import { basicHeader, gitAuthEnv } from "../credentials.ts";
 import {
   ApiClient,
   COMMIT_PAGE,
-  MAX_BLOB_BYTES,
   MAX_DIFF_BYTES,
   anchorFromHunk,
   asArray,
@@ -46,7 +52,6 @@ import {
   asState,
   asString,
   asTime,
-  decodeContent,
   dig,
   fail,
   field,
@@ -94,7 +99,7 @@ export class GitHubProvider implements Provider {
     if (!result.ok) return result;
     const login = asString(field(result.value.data, "login"));
     if (login === "")
-      return fail("invalid_response", "the origin named no account");
+      return fail("invalid_response", NO_ACCOUNT);
     return succeed({
       login,
       displayName: asString(field(result.value.data, "name")) || login,
@@ -186,7 +191,7 @@ export class GitHubProvider implements Provider {
     const named = splitFullName(fullName);
     if (!named) return fail("not_found", `not a repository name: ${fullName}`);
     if (!isSafeRemoteRef(ref) || !isSafeRemotePath(path))
-      return fail("not_found", "not a path in a repository");
+      return fail("not_found", NOT_A_PATH);
     const result = await this.api.call({
       path:
         `/repos/${seg(named.owner)}/${seg(named.name)}/contents` +
@@ -196,7 +201,7 @@ export class GitHubProvider implements Provider {
     });
     if (!result.ok) return result;
     if (!Array.isArray(result.value.data))
-      return fail("not_found", "that path is a file, not a directory");
+      return fail("not_found", PATH_IS_FILE);
     return succeed(
       sortEntries(result.value.data.map((r) => toTreeEntry(r, path))),
     );
@@ -210,14 +215,14 @@ export class GitHubProvider implements Provider {
     const named = splitFullName(fullName);
     if (!named) return fail("not_found", `not a repository name: ${fullName}`);
     if (!isSafeRemoteRef(ref) || path === "" || !isSafeRemotePath(path))
-      return fail("not_found", "not a path in a repository");
+      return fail("not_found", NOT_A_PATH);
     const result = await this.api.call({
       path: `/repos/${seg(named.owner)}/${seg(named.name)}/contents/${pathSegments(path)}`,
       query: { ref },
     });
     if (!result.ok) return result;
     if (Array.isArray(result.value.data))
-      return fail("not_found", "that path is a directory, not a file");
+      return fail("not_found", PATH_IS_DIRECTORY);
     return succeed(toBlob(result.value.data));
   }
 
@@ -566,7 +571,7 @@ export class GitHubProvider implements Provider {
     if (!result.ok) return result;
     const state = toReviewState(result.value.data);
     return state === undefined
-      ? fail("invalid_response", "the origin returned no review")
+      ? fail("invalid_response", NO_REVIEW)
       : succeed(state);
   }
 

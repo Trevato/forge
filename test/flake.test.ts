@@ -30,6 +30,7 @@ import {
   ROOT_CAUSES,
   shuffled,
   tightBounds,
+  rawBudgets,
   WALL_CLOCK_FLOOR_MS,
 } from "../scripts/flake.ts";
 
@@ -348,6 +349,25 @@ describe("no tight wall-clock bound in a test", () => {
       .map((name) => `test/${name}`);
     expect(files.flatMap((path) => tightBounds(path, read(path)))).toEqual([]);
   }, 120_000); // reads every test file: past the 5 s default on a loaded machine
+});
+
+describe("no raw wall-clock budget in a test (#4429)", () => {
+  test("the detector sees a raw ms bound and a title promising one", () => {
+    expect(rawBudgets("x", "expect(dur(\"app\")).toBeLessThan(50);")).toHaveLength(1);
+    expect(rawBudgets("x", "expect(total).toBeLessThan(50);")).toHaveLength(1);
+    expect(rawBudgets("x", "test(`GET /a answers under 50 ms`, () => {});")).toHaveLength(1);
+    expect(rawBudgets("x", "expectBudget(dur(\"app\"), { ms: 50, against });")).toEqual([]);
+    expect(rawBudgets("x", "expect(elapsed).toBeLessThan(5_000);")).toEqual([]); // a hang guard
+    expect(rawBudgets("x", "expect(res.status).toBeLessThan(400);")).toEqual([]);
+    expect(rawBudgets("x", "expect(lines.length).toBeLessThan(20);")).toEqual([]);
+  });
+
+  test("no test file holds a speed to a raw ms number", () => {
+    const files = readdirSync(`${root}test`)
+      .filter((name) => name.endsWith(".test.ts") && name !== "flake.test.ts")
+      .map((name) => `test/${name}`);
+    expect(files.flatMap((path) => rawBudgets(path, read(path)))).toEqual([]);
+  }, 120_000);
 });
 
 describe("the scheduled run of the files outside the gate", () => {

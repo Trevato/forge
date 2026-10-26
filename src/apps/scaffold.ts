@@ -15,6 +15,7 @@
 import { readFileSync } from "node:fs";
 import type { FileWrite } from "../git/write.ts";
 import { beaconJs } from "../web/beacon.ts";
+import { SIGNIN_EXPIRED, SIGNIN_NOT_THIS_BROWSER } from "../kernel/signin_words.ts";
 
 /**
  * The evaluator an app decides with is the forge's own, carried as text:
@@ -667,14 +668,14 @@ export async function finish(
   const state = url.searchParams.get("state") ?? "";
   const code = url.searchParams.get("code") ?? "";
   if (state === "" || code === "" || state !== cookieOf(request, LOGIN_COOKIE))
-    return refuse("This sign-in did not start in this browser.");
+    return refuse(${JSON.stringify(SIGNIN_NOT_THIS_BROWSER)});
   const row = db
     .query<{ verifier: string; nonce: string; expires_at: number }, [string]>(
       "DELETE FROM login WHERE state = ?1 RETURNING verifier, nonce, expires_at",
     )
     .get(hash(state));
   if (row === null || row.expires_at <= now)
-    return refuse("This sign-in took too long or was already used.");
+    return refuse(${JSON.stringify(SIGNIN_EXPIRED)});
   try {
     const res = await fetcher(s)(\`\${issuer(s)}/oauth/token\`, {
       method: "POST",
@@ -2674,7 +2675,7 @@ const SITE_TEST = `/**
  * inherits every one of these and fails its own \`bun test\` if it loses one.
  */
 import { afterAll, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { compress, MIN_BYTES } from "./compress.ts";
@@ -2685,13 +2686,17 @@ import { CARD, websiteLd } from "./site.ts";
 import { serve } from "./server.ts";
 import { ANON } from "./who.ts";
 
+const dataDir = mkdtempSync(join(tmpdir(), "app-"));
 const server = serve({
   port: 0,
-  dataDir: mkdtempSync(join(tmpdir(), "app-")),
+  dataDir,
   identityKey: "a-key-only-the-forge-holds",
 });
 const base = \`http://\${server.hostname}:\${server.port}\`;
-afterAll(() => server.stop(true));
+afterAll(() => {
+  server.stop(true);
+  rmSync(dataDir, { recursive: true, force: true });
+});
 const get = (path: string, headers: Record<string, string> = {}) =>
   fetch(base + path, { headers, redirect: "manual" });
 
@@ -3481,8 +3486,8 @@ test("the terminal trusts its environment", () => {
 });
 `;
 
-const SIGNIN_TEST = `import { beforeAll, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+const SIGNIN_TEST = `import { afterAll, beforeAll, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb } from "./db.ts";
@@ -3490,6 +3495,10 @@ import { begin, finish, sessionWho, verify, type Signin } from "./signin.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "app-"));
 const db = openDb(dir);
+afterAll(() => {
+  db.close();
+  rmSync(dir, { recursive: true, force: true });
+});
 const ISS = "https://forge.test";
 const b64 = (v: unknown): string => Buffer.from(JSON.stringify(v)).toString("base64url");
 const generate = () =>
@@ -3639,7 +3648,7 @@ test("a session is a cookie that names a person, and only until it expires", () 
 `;
 
 const DB_TEST = `import { expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { check, migrate, migrations, openDb } from "./db.ts";
@@ -3647,31 +3656,41 @@ import { check, migrate, migrations, openDb } from "./db.ts";
 test("migrations apply once, in order, and the file checks out", () => {
   const dir = mkdtempSync(join(tmpdir(), "app-db-"));
   const db = openDb(dir);
-  expect(check(db).version).toBe(migrations.length);
-  // Opening again finds nothing to do — a migration that has run is history.
-  expect(migrate(db)).toBe(migrations.length);
-  expect(() => openDb(dir)).not.toThrow();
-  expect(check(db)).toEqual({ version: migrations.length, integrity: "ok" });
-  expect(
-    db.query<{ journal_mode: string }, []>("PRAGMA journal_mode").get()
-      ?.journal_mode,
-  ).toBe("wal");
-  expect(
-    db.query<{ foreign_keys: number }, []>("PRAGMA foreign_keys").get()
-      ?.foreign_keys,
-  ).toBe(1);
+  try {
+    expect(check(db).version).toBe(migrations.length);
+    // Opening again finds nothing to do — a migration that has run is history.
+    expect(migrate(db)).toBe(migrations.length);
+    expect(() => openDb(dir)).not.toThrow();
+    expect(check(db)).toEqual({ version: migrations.length, integrity: "ok" });
+    expect(
+      db.query<{ journal_mode: string }, []>("PRAGMA journal_mode").get()
+        ?.journal_mode,
+    ).toBe("wal");
+    expect(
+      db.query<{ foreign_keys: number }, []>("PRAGMA foreign_keys").get()
+        ?.foreign_keys,
+    ).toBe(1);
+  } finally {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 `;
 
-const ACTIONS_TEST = `import { expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+const ACTIONS_TEST = `import { afterAll, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { addNote, deleteNote, listNotes } from "./actions.ts";
 import { openDb } from "./db.ts";
 import type { Who } from "./who.ts";
 
-const db = openDb(mkdtempSync(join(tmpdir(), "app-actions-")));
+const dir = mkdtempSync(join(tmpdir(), "app-actions-"));
+const db = openDb(dir);
+afterAll(() => {
+  db.close();
+  rmSync(dir, { recursive: true, force: true });
+});
 const anon: Who = { role: "anon" };
 const alice: Who = { role: "user", id: "u1", name: "alice" };
 const bob: Who = { role: "user", id: "u2", name: "bob" };
@@ -3729,8 +3748,8 @@ const CONTRACT_TEST = `/**
  * someone else — and calls the real actions. A rule written by hand in an
  * action, or a cell changed without its door, fails here.
  */
-import { expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { afterAll, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -3748,7 +3767,12 @@ import { contract } from "./contract.ts";
 import { openDb } from "./db.ts";
 import type { Who } from "./who.ts";
 
-const db = openDb(mkdtempSync(join(tmpdir(), "app-contract-")));
+const dir = mkdtempSync(join(tmpdir(), "app-contract-"));
+const db = openDb(dir);
+afterAll(() => {
+  db.close();
+  rmSync(dir, { recursive: true, force: true });
+});
 
 /** The identity the evaluator acts as, as the forge would have signed it. */
 function whoIs(identity: string): Who {
@@ -3843,7 +3867,7 @@ test("every door answers as the table says, as every identity", () => {
 `;
 
 const SERVER_TEST = `import { afterAll, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb } from "./db.ts";
@@ -3855,7 +3879,10 @@ const KEY = "a-key-only-the-forge-holds";
 const dataDir = mkdtempSync(join(tmpdir(), "app-"));
 const server = serve({ port: 0, dataDir, identityKey: KEY });
 const base = \`http://\${server.hostname}:\${server.port}\`;
-afterAll(() => server.stop(true));
+afterAll(() => {
+  server.stop(true);
+  rmSync(dataDir, { recursive: true, force: true });
+});
 
 /** The headers the forge sends for a signed-in person. */
 const as = (
@@ -4925,7 +4952,7 @@ const DESIGN_TEST = `/**
  * anywhere but design/tokens.json.
  */
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { lint, rawColours, unknownTokens } from "../scripts/lint-design.ts";
@@ -5022,13 +5049,17 @@ test("the lint refuses a raw colour and a token that is not there", () => {
     ),
   ).toEqual(["a.css:1: --spcae-2 is not a token in design/tokens.json"]);
   const root = mkdtempSync(join(tmpdir(), "app-lint-"));
-  mkdirSync(join(root, "static"));
-  mkdirSync(join(root, "src"));
-  writeFileSync(join(root, "static", "extra.css"), "a {\\n  color: #fff;\\n}\\n");
-  writeFileSync(join(root, "src", "ok.test.ts"), "const red = '#f00';\\n");
-  expect(lint(root)).toEqual([
-    "static/extra.css:2: raw colour #fff — name it in design/tokens.json and use var(--…)",
-  ]);
+  try {
+    mkdirSync(join(root, "static"));
+    mkdirSync(join(root, "src"));
+    writeFileSync(join(root, "static", "extra.css"), "a {\\n  color: #fff;\\n}\\n");
+    writeFileSync(join(root, "src", "ok.test.ts"), "const red = '#f00';\\n");
+    expect(lint(root)).toEqual([
+      "static/extra.css:2: raw colour #fff — name it in design/tokens.json and use var(--…)",
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 `;
 
@@ -5038,7 +5069,7 @@ const AUDIT_TEST = `/**
  * written costs a log line, never the request.
  */
 import { afterAll, expect, spyOn, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { addNote } from "./actions.ts";
@@ -5048,13 +5079,13 @@ import { serve } from "./server.ts";
 import { sign } from "./who.ts";
 
 const KEY = "a-key-only-the-forge-holds";
-const server = serve({
-  port: 0,
-  dataDir: mkdtempSync(join(tmpdir(), "app-audit-")),
-  identityKey: KEY,
-});
+const dataDir = mkdtempSync(join(tmpdir(), "app-audit-"));
+const server = serve({ port: 0, dataDir, identityKey: KEY });
 const base = \`http://\${server.hostname}:\${server.port}\`;
-afterAll(() => server.stop(true));
+afterAll(() => {
+  server.stop(true);
+  rmSync(dataDir, { recursive: true, force: true });
+});
 
 const as = (
   id: string,
@@ -5196,7 +5227,7 @@ test("only an admin reads the trail, at every door the table names", async () =>
 });
 
 test("a trail that cannot be written is a log line, and the change still happens", () => {
-  const db = openDb(mkdtempSync(join(tmpdir(), "app-audit-broken-")));
+  const db = openDb(mkdtempSync(join(dataDir, "broken-")));
   db.exec("DROP TABLE audit");
   const said = spyOn(console, "error").mockImplementation(() => {});
   try {
@@ -5227,7 +5258,7 @@ const SECURITY_TEST = `/**
  * table says could never pass — and nobody it would let through.
  */
 import { afterAll, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readContract } from "./can.ts";
@@ -5245,13 +5276,13 @@ import { serve } from "./server.ts";
 import { sign } from "./who.ts";
 
 const KEY = "a-key-only-the-forge-holds";
-const server = serve({
-  port: 0,
-  dataDir: mkdtempSync(join(tmpdir(), "app-door-")),
-  identityKey: KEY,
-});
+const dataDir = mkdtempSync(join(tmpdir(), "app-door-"));
+const server = serve({ port: 0, dataDir, identityKey: KEY });
 const base = \`http://\${server.hostname}:\${server.port}\`;
-afterAll(() => server.stop(true));
+afterAll(() => {
+  server.stop(true);
+  rmSync(dataDir, { recursive: true, force: true });
+});
 const as = (id: string, role: "user" | "admin"): Record<string, string> => {
   const identity = \`\${id}|\${id}|\${role}|\${Date.now() + 60_000}\`;
   return {
@@ -5366,7 +5397,7 @@ test("the API's description is shut to strangers when the table opens them no do
 });
 
 test("strangers are rationed at the API, reads too", () => {
-  const db = openDb(mkdtempSync(join(tmpdir(), "app-door-rate-")));
+  const db = openDb(mkdtempSync(join(dataDir, "rate-")));
   const knock = () =>
     door(
       db,
@@ -5417,7 +5448,7 @@ const OPENAPI_TEST = `/**
  * app serves exactly that file.
  */
 import { afterAll, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { emit, openapi } from "./openapi.ts";
@@ -5474,12 +5505,12 @@ test("every API route is described, and every door names its cell of the table",
 });
 
 test("GET /openapi.json serves the committed file", async () => {
-  const server = serve({
-    port: 0,
-    dataDir: mkdtempSync(join(tmpdir(), "app-openapi-")),
-    identityKey: "k",
+  const dataDir = mkdtempSync(join(tmpdir(), "app-openapi-"));
+  const server = serve({ port: 0, dataDir, identityKey: "k" });
+  afterAll(() => {
+    server.stop(true);
+    rmSync(dataDir, { recursive: true, force: true });
   });
-  afterAll(() => server.stop(true));
   const response = await fetch(
     \`http://\${server.hostname}:\${server.port}/openapi.json\`,
   );

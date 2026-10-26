@@ -49,13 +49,6 @@ describe("the studio, continued", () => {
       headers: { cookie: `${cookie}; forge_mode=studio`, ...extra },
       redirect: "manual",
     });
-  const post = (path: string, body: Record<string, string>, extra = "") =>
-    fetch(`${base}${path}`, {
-      method: "POST",
-      headers: { cookie: `${cookie}${extra}`, origin: base },
-      body: new URLSearchParams(body),
-      redirect: "manual",
-    });
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-studio-"));
@@ -707,6 +700,7 @@ describe("the studio, continued", () => {
     expect(changeHtml).toContain(`href="/alice/notes/pulls/${p}/files"`);
     expect(changeHtml).toContain('id="comment-body"');
     expect(changeHtml).toContain('class="page-head"');
+    expect(changeHtml).toContain('class="page-head-sub bar muted small"');
     expect(changeHtml).not.toContain("issue-head");
     expect(changeHtml).not.toContain("issue-meta");
     // The tabs are §5's bar, not the retired .filters wrapper.

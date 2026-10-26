@@ -62,10 +62,11 @@ import { reviewWaitsFor, type ReviewWait } from "../../crew/review.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
-import { btn, card, icon, row } from "../ui.ts";
+import { btn, row } from "../ui.ts";
 import { lookUrl } from "../../core/looks.ts";
-import { lookThumb, thumbLook } from "../pages/looks.ts";
+import { thumbLook } from "../pages/looks.ts";
 import { changeHref } from "./nouns.ts";
+import { NO_LONGER_ASKS } from "../../actions/asks_words.ts";
 import { testsClause } from "./words.ts";
 
 /** Repos narrowed to those with an app record, with the records — the one
@@ -851,7 +852,7 @@ export function repoAsks(
 }
 
 /** What asks the viewer now: candidates, less what they set aside. */
-function waitingOn(
+export function waitingOn(
   db: Database,
   user: User | undefined,
   repos: readonly Repo[],
@@ -1018,6 +1019,8 @@ export function askLinesFor(
   link: string;
   /** The pull's or issue's number, for a row of one that is about one. */
   number?: number;
+  /** Whether `number` is a pull's or an issue's. */
+  numberOf?: "pull" | "issue";
   /** For a wave proposal: what it says, as plain text (the reader escapes it). */
   proposal?: { id: string; title: string; why: string; issues: string[] };
   items: string[];
@@ -1074,12 +1077,14 @@ export function askLinesFor(
         ...about,
         line,
         number: only.issue!.number,
+        numberOf: "issue",
         link: `${base}/issues/${only.issue!.number}`,
       };
     return {
       ...about,
       line,
       number: only.pull!.number,
+      numberOf: "pull",
       link: `${base}/pulls/${only.pull!.number}`,
     };
   });
@@ -1506,7 +1511,7 @@ export function askTargetsFor(
     const ask = asks.get(item);
     const mine = assigned.get(item);
     if (mine !== undefined) issueIds.push(mine.id);
-    else if (ask === undefined) refused.push({ item, reason: "it no longer asks you" });
+    else if (ask === undefined) refused.push({ item, reason: NO_LONGER_ASKS });
     else if (ask.kind === "paused")
       refused.push({ item, reason: "a ceiling is raised in the app's settings" });
     else if (ask.kind === "proposal")

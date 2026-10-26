@@ -177,6 +177,20 @@ export function primaryDomain(
   return row ? toDomain(row) : undefined;
 }
 
+/** `primaryDomain` for many apps in one read: app id to host, apps with none left out. */
+export function primaryHosts(db: Database, appIds: readonly string[]): Map<string, string> {
+  const out = new Map<string, string>();
+  if (appIds.length === 0) return out;
+  const marks = appIds.map(() => "?").join(",");
+  const rows = db
+    .query<{ app_id: string; host: string }, string[]>(
+      `SELECT app_id, host FROM app_domain WHERE app_id IN (${marks}) AND verified_at IS NOT NULL ORDER BY verified_at, host`,
+    )
+    .all(...appIds);
+  for (const r of rows) if (!out.has(r.app_id)) out.set(r.app_id, r.host);
+  return out;
+}
+
 export function removeDomain(db: Database, host: string): boolean {
   return (
     db.query("DELETE FROM app_domain WHERE host = ?1").run(normalizeHost(host))

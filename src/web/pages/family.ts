@@ -49,6 +49,7 @@ function standingNode(c: FamilyChild): Node {
   const follow = followLine(c);
   if (follow !== null) meta.push(html`<span data-follow>${follow}</span>`);
   if (c.apps !== null) meta.push(html`<span data-apps>${c.apps}</span>`);
+  if (c.placement !== null) meta.push(html`<span data-placement>${c.placement}</span>`);
   return {
     label: c.name,
     href: c.url,

@@ -37,6 +37,8 @@ import {
   setRunBase,
   vanishedBefore,
   VANISHED_SUMMARY,
+  infraBefore,
+  INFRA_SUMMARY,
   requeueCheck,
   REQUEUED_SUMMARY,
   sweepAbandonedChecks,
@@ -45,15 +47,17 @@ import {
 import { Gate, runGit } from "../git/env.ts";
 import { resolveOid } from "../git/merge.ts";
 import { mergeForCheck } from "./merged.ts";
+import { checkOnApproval } from "./approval.ts";
 import { checkKey, provenBy, recordProven } from "./proven.ts";
 import { giveHistory } from "./history.ts";
 import { readLearned } from "./learned.ts";
 import { keepCache, restoreCache } from "./cache.ts";
 import { MAX_FILED, clearedFiles, fileOrderDependent } from "./order_dependent.ts";
+import { withDisk } from "./disk_red.ts";
 import { ASKED, redMain, unheld } from "./red_main.ts";
+import { rebasesFirst } from "./finishing_first.ts";
 import { IMPACT_FILE, keepImpact, seedImpact } from "./impact-store.ts";
 import { getIssueById } from "../core/issues.ts";
-import { repoDir } from "../git/repos.ts";
 import { BUDGETS, budgetSummary } from "../kernel/budgets.ts";
 import { transact } from "../kernel/db.ts";
 import { createLog } from "../kernel/log.ts";
@@ -84,6 +88,7 @@ import { summariseCheckFailure } from "./summary.ts";
 import type { Result } from "../kernel/result.ts";
 import { placementFromEnv, type Placement } from "./placement.ts";
 import { JOB_VANISHED, runJobStep } from "./job_step.ts";
+import { checkInstallCache, installWithRetry, withLock } from "./install.ts";
 import { extraGates } from "./queue.ts";
 import type { JobOptions } from "../cluster/jobs.ts";
 import type { CheckDetail } from "../core/runs.ts";
@@ -128,6 +133,8 @@ export interface ChecksOptions {
   readonly placement?: Placement | undefined;
   /** The kube client a `job` placement speaks through; tests stand one in. */
   readonly job?: JobOptions | undefined;
+  /** How long a transient install failure waits for its retry. @default INSTALL_RETRY_MS */
+  readonly installRetryMs?: number | undefined;
 }
 
 export interface ChecksHandle {
@@ -428,6 +435,18 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
    * opens up. Claiming is what decides between two forges, so calling this
    * from both never runs the same check twice.
    */
+  /** `pickNext` among `queued`, passing over any whose account is at its limit. */
+  function startable(queued: readonly Run[]): Run | undefined {
+    let rest = queued;
+    let next = pickNext(rest);
+    while (next !== undefined && atLimit(next)) {
+      const held = next;
+      rest = rest.filter((run) => run !== held);
+      next = pickNext(rest);
+    }
+    return next;
+  }
+
   function schedule(): void {
     if (stopped) return;
     const limit = capacity();
@@ -447,14 +466,10 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       );
       // The limit is asked at the point of starting, one pick at a time:
       // a started check is in flight before the next is asked about, so a
-      // burst of one account's checks cannot pass together.
-      let rest = queued;
-      let next = pickNext(rest);
-      while (next !== undefined && atLimit(next)) {
-        const held = next;
-        rest = rest.filter((run) => run !== held);
-        next = pickNext(rest);
-      }
+      // burst of one account's checks cannot pass together. A rebase's
+      // check goes before any other (`finishing_first.ts`, #6140).
+      const { rebases, rest: others } = rebasesFirst(app.db, queued);
+      const next = startable(rebases) ?? startable(others);
       if (!next) return;
       const repo = getRepoById(app.db, next.repoId);
       if (!repo) return;
@@ -594,6 +609,16 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           return;
         }
       }
+      // The install failed twice on what the machine did, not the code: the
+      // check is queued once more and nothing reads it as red (#5093).
+      if (!outcome.ok && outcome.infrastructure === true && !infraBefore(app.db, claimed)) {
+        const moved = requeueCheck(app.db, run.id, undefined, INFRA_SUMMARY);
+        if (moved) {
+          write(INFRA_SUMMARY);
+          announceRun(app, moved.again, run.actorId ?? undefined);
+          return;
+        }
+      }
       const seconds = Math.round((Date.now() - started) / 1000);
       const done = finishRun(app.db, run.id, {
         state: outcome.ok ? "ok" : "failed",
@@ -602,9 +627,9 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
             ? `check passed in ${seconds}s`
             : `already proven green by ${outcome.proven}`
           : `check failed: ${outcome.error}`,
-        ...(outcome.ok || outcome.detail === undefined
+        ...(outcome.ok
           ? {}
-          : { checkDetail: outcome.detail }),
+          : { checkDetail: withDisk(outcome.detail, app.config.dataDir) }),
       });
       write(outcome.ok ? `passed in ${seconds}s` : `failed: ${outcome.error}`);
       if (done) announceRun(app, done);
@@ -620,7 +645,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     signal: AbortSignal,
   ): Promise<
     | { ok: true; proven?: string }
-    | { ok: false; error: string; detail?: CheckDetail | undefined }
+    | { ok: false; error: string; detail?: CheckDetail | undefined; infrastructure?: boolean }
   > {
     const bare = await runDir(app.db, app.reposRoot, repo, run.issueId);
     // A pull's check is the fast tier, judged against where the pull left
@@ -670,7 +695,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     x: Execution,
   ): Promise<
     | { ok: true; proven?: string }
-    | { ok: false; error: string; detail?: CheckDetail | undefined }
+    | { ok: false; error: string; detail?: CheckDetail | undefined; infrastructure?: boolean }
   > {
     const { bare, repo, write, signal } = x;
     // A pull's fast check is of the pull as it would land: its head merged
@@ -896,15 +921,31 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         });
       } else {
         if (manifest.install !== null) {
-          const installed = await runStep("install", manifest.install, {
-            cwd: dir,
-            env,
-            log: write,
-            signal,
-            timeoutMs: manifest.timeout * 1000,
-            cell,
-          });
-          if (!installed.ok) return { ok: false, error: installed.error };
+          const install = manifest.install;
+          // A cell's home is its own cache. Uncontained, the repository's
+          // cache is shared, so installs into it take turns (`checks/install.ts`).
+          const shared =
+            cell === undefined ? checkInstallCache(app.config.dataDir, repo.id) : undefined;
+          const once = (log: (line: string) => void): Promise<Result<void, string>> =>
+            runStep("install", install, {
+              cwd: dir,
+              env: shared === undefined ? env : { ...env, BUN_INSTALL_CACHE_DIR: shared },
+              log,
+              signal,
+              timeoutMs: manifest.timeout * 1000,
+              cell,
+            });
+          const installed = await installWithRetry(
+            async (log) => {
+              if (shared === undefined) return once(log);
+              mkdirSync(shared, { recursive: true });
+              const held = await withLock(`${shared}.lock`, () => once(log), { signal });
+              return held.ok ? held.value : held;
+            },
+            { log: write, signal, retryMs: options.installRetryMs },
+          );
+          if (!installed.ok)
+            return { ok: false, error: installed.error, infrastructure: installed.infrastructure };
         }
         // The check step's own lines are kept beside what `write` already
         // logs, so a failure can be summarised once here — never by reading
@@ -1093,15 +1134,16 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         const pull = getPull(app.db, repo.id, number);
         if (!pull || pull.state !== "open") return;
         const head = await headOf(repo, pull);
-        if (head !== undefined)
-          await request(
-            repo,
-            `pull-${pull.number}`,
-            head,
-            "approved",
-            pull.id,
-            actor,
-          );
+        if (head === undefined) return;
+        // A head already green is not checked again for nothing (#4391).
+        const env = `pull-${pull.number}`;
+        const dir = await pullDir(app.db, app.reposRoot, repo, pull);
+        const tip = await resolveOid(dir, `refs/heads/${pull.baseBranch}`);
+        // The merge queue gates only an autonomous repository's lands (`crew/autonomy.ts` admit).
+        const landGated = repo.autonomy === "autonomous" && repo.autonomyBy !== null;
+        if (!checkOnApproval(checksForHead(app.db, pull.id, head), env, tip, landGated))
+          return;
+        await request(repo, env, head, "approved", pull.id, actor);
         return;
       }
       // Landed or closed: nothing left to check, so nothing waits in the lane.
@@ -1184,9 +1226,15 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           signal: controller.signal,
         });
         if (done.ok) return { ok: true, error: "", lines };
-        // Cut off by this forge stopping, or the Job lost under it: the
-        // code was not judged, so this is no red.
-        if (stopped || controller.signal.aborted || done.error === JOB_VANISHED)
+        // Cut off by this forge stopping, the Job lost under it, or an
+        // install the machine failed twice: the code was not judged, so
+        // this is no red.
+        if (
+          stopped ||
+          controller.signal.aborted ||
+          done.error === JOB_VANISHED ||
+          done.infrastructure === true
+        )
           return { ok: false, error: done.error, lines, interrupted: true };
         return { ok: false, error: done.error, lines };
       } finally {

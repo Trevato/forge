@@ -12,10 +12,10 @@ import {
   DECIDER_PILES,
   PILE_EMPTY,
   deciderCounts,
-  deciderWords,
   listDeciderPile,
   type DeciderPile,
 } from "../../core/decisions.ts";
+import { deciderSentence } from "../../story/words.ts";
 import { getIssuesByIds } from "../../core/issues.ts";
 import { getReposByIds } from "../../core/repos.ts";
 import type { User } from "../../core/users.ts";
@@ -40,10 +40,10 @@ export interface DeciderRow extends ListRow {
 const owned = (app: App, viewer: User | undefined): string[] =>
   viewer === undefined ? [] : returnsRepos(app, viewer).map((r) => r.id);
 
-/** "The decider closed 4, deferred 2, asked you about 1"; null on a quiet day. */
+/** `deciderSentence` with today's counts; null on a quiet day. */
 export function deciderLine(app: App, viewer: User | undefined, now = new Date()): string | null {
   const n = deciderCounts(app.db, owned(app, viewer), startOfTodayUtc(now).toISOString());
-  return n.closed + n.deferred + n.asked === 0 ? null : `The decider ${deciderWords(n)}.`;
+  return n.closed + n.deferred + n.asked === 0 ? null : deciderSentence((pile) => n[pile]).join("");
 }
 
 /** The ledger rows behind one pile's count today, newest first. */

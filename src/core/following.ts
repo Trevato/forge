@@ -21,9 +21,14 @@
 import type { Database } from "bun:sqlite";
 import type { EventBus, ForgeEvent } from "./events.ts";
 import { getPull, listOpenPullsFromHead, type Pull } from "./pulls.ts";
-import { getRepoById, listForks, type Repo } from "./repos.ts";
 import {
-  aheadCount,
+  getRepoById,
+  listAncestors,
+  listDescendants,
+  listForks,
+  type Repo,
+} from "./repos.ts";
+import {
   fetchInto,
   merge,
   mergeBase,
@@ -32,6 +37,8 @@ import {
   writeRef,
   type MergeIdentity,
 } from "../git/merge.ts";
+import { runGit } from "../git/env.ts";
+import { readTipOrAbsent } from "../git/tip.ts";
 import { repoDir } from "../git/repos.ts";
 import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -128,8 +135,9 @@ export function follow(forge: Following): () => void {
  * nobody has touched; `behind` has nothing of its own and can simply move;
  * `ahead` has its own work and the parent has not moved; `diverged` has
  * both, and git says whether they still merge cleanly and, if not, which
- * files need a decision. Every number is read from git each time — the
- * database never caches a relationship it could get wrong.
+ * files need a decision. The tips are read from the ref files each time and
+ * the comparison is memoized on that pair of tips, so a relationship is
+ * recomputed only when either side moves; the database never holds it.
  */
 export type RelationState = "synced" | "behind" | "ahead" | "diverged";
 
@@ -152,6 +160,7 @@ export async function forkRelation(
   forge: Pick<Following, "db" | "reposRoot">,
   fork: Repo,
   parent?: Repo,
+  tips: TipReads = new Map(),
 ): Promise<ForkRelation | undefined> {
   const p =
     parent ??
@@ -162,8 +171,8 @@ export async function forkRelation(
   const parentDir = repoDir(forge.reposRoot, p.ownerName, p.name);
   const forkDir = repoDir(forge.reposRoot, fork.ownerName, fork.name);
   const [parentTip, forkTip] = await Promise.all([
-    resolveOid(parentDir, `refs/heads/${p.defaultBranch}`),
-    resolveOid(forkDir, `refs/heads/${fork.defaultBranch}`),
+    tipOf(parentDir, `refs/heads/${p.defaultBranch}`, tips),
+    tipOf(forkDir, `refs/heads/${fork.defaultBranch}`, tips),
   ]);
   const at = (
     state: RelationState,
@@ -184,24 +193,103 @@ export async function forkRelation(
   // An empty side has nothing to follow or to differ by.
   if (parentTip === undefined || forkTip === undefined || parentTip === forkTip)
     return at("synced", 0, 0);
+  // The answer is a function of the two tips: git is asked again only when
+  // either moves (#6127).
+  const key = `${forkDir}\0${parentDir}\0${forkTip}\0${parentTip}`;
+  const known = relationCache.get(key);
+  if (known !== undefined) return at(...known);
+  const { standing, sure } = await compare(forkDir, forkTip, parentTip);
+  // Only what git actually answered is kept: a timeout or a spawn failure
+  // is wrong for this read, not for as long as the tips stand.
+  if (sure) {
+    if (relationCache.size >= RELATION_CACHE_MAX) relationCache.clear();
+    relationCache.set(key, standing);
+  }
+  return at(...standing);
+}
+
+/** Tips already asked for in one read, so a parent is read once for all its forks. */
+export type TipReads = Map<string, Promise<string | undefined>>;
+
+/** The tip from the ref files; git is asked only when they cannot say. */
+function tipOf(
+  dir: string,
+  ref: string,
+  reads: TipReads,
+): Promise<string | undefined> {
+  const key = `${dir}\0${ref}`;
+  let read = reads.get(key);
+  if (read === undefined) {
+    read = readTipOrAbsent(dir, ref).then((tip) =>
+      // An unborn branch is nothing to spawn git for.
+      tip === null ? undefined : (tip ?? resolveOid(dir, ref)),
+    );
+    reads.set(key, read);
+  }
+  return read;
+}
+
+type Standing = [
+  RelationState,
+  behind: number,
+  ahead: number,
+  clean: boolean,
+  conflicts: readonly string[],
+];
+
+const RELATION_CACHE_MAX = 500;
+const relationCache = new Map<string, Standing>();
+
+/** How many times git was asked to compare two tips (for tests). */
+export const comparisons = { count: 0 };
+
+async function compare(
+  forkDir: string,
+  forkTip: string,
+  parentTip: string,
+): Promise<{ standing: Standing; sure: boolean }> {
+  comparisons.count++;
+  const at = (
+    state: RelationState,
+    behind: number,
+    ahead: number,
+    clean = true,
+    conflicts: readonly string[] = [],
+    sure = true,
+  ) => ({
+    standing: [state, behind, ahead, clean, conflicts] as Standing,
+    sure,
+  });
   // The parent's objects reach the fork through its alternates, so every
   // question here is answered inside the fork without a fetch.
-  const base = await mergeBase(forkDir, forkTip, parentTip);
-  if (base === undefined) return at("diverged", 0, 0, false);
-  const [behind, ahead] = await Promise.all([
-    aheadCount(forkDir, forkTip, parentTip),
-    aheadCount(forkDir, parentTip, forkTip),
+  const base = await runGit(["merge-base", forkTip, parentTip], { cwd: forkDir });
+  if (!base.ok) {
+    // Exit 1 with nothing said is git's answer for histories with no common
+    // ancestor; any other failure is not an answer.
+    const unrelated = base.error.code === 1 && base.error.stderr === "";
+    return at("diverged", 0, 0, false, [], unrelated);
+  }
+  const count = (from: string, to: string) =>
+    runGit(["rev-list", "--count", `${from}..${to}`], { cwd: forkDir });
+  const [b, a] = await Promise.all([
+    count(forkTip, parentTip),
+    count(parentTip, forkTip),
   ]);
-  if (ahead === 0) return at("behind", behind, 0);
-  if (behind === 0) return at("ahead", 0, ahead);
+  const sure = b.ok && a.ok;
+  const behind = b.ok ? Number(b.value) || 0 : 0;
+  const ahead = a.ok ? Number(a.value) || 0 : 0;
+  if (ahead === 0) return at("behind", behind, 0, true, [], sure);
+  if (behind === 0) return at("ahead", 0, ahead, true, [], sure);
   const merged = await mergeable(forkDir, forkTip, parentTip);
-  if (merged.ok) return at("diverged", behind, ahead, true);
+  if (merged.ok) return at("diverged", behind, ahead, true, [], sure);
+  const conflict = merged.error.kind === "conflict";
   return at(
     "diverged",
     behind,
     ahead,
     false,
-    merged.error.kind === "conflict" ? merged.error.files : [],
+    conflict ? merged.error.files : [],
+    sure && conflict,
   );
 }
 
@@ -454,15 +542,26 @@ export async function lineageOf(
   repo: Repo,
   mayRead: (r: Repo) => boolean,
 ): Promise<Lineage> {
-  // Up: as far as the viewer may see, and never in circles.
+  // Up: as far as the viewer may see, and never in circles. One read for
+  // the whole chain; the viewer's predicate cuts it afterwards.
   let top = repo;
   const seen = new Set<string>([repo.id]);
-  while (top.forkParentId !== null && seen.size <= LINEAGE_MAX_DEPTH) {
-    const parent = getRepoById(forge.db, top.forkParentId);
-    if (parent === undefined || !mayRead(parent) || seen.has(parent.id)) break;
+  for (const parent of listAncestors(forge.db, repo.id, LINEAGE_MAX_DEPTH)) {
+    if (!mayRead(parent) || seen.has(parent.id)) break;
     seen.add(parent.id);
     top = parent;
   }
+  // Down: one read for every fork below, one generation past the bound so
+  // "more below" can be told, grouped by parent here.
+  const below = new Map<string, Repo[]>();
+  for (const fork of listDescendants(forge.db, top.id, LINEAGE_MAX_DEPTH + 1)) {
+    const parentId = fork.forkParentId;
+    if (parentId === null) continue;
+    const siblings = below.get(parentId);
+    if (siblings === undefined) below.set(parentId, [fork]);
+    else siblings.push(fork);
+  }
+  const forksOf = (id: string): readonly Repo[] => below.get(id) ?? [];
   // Down: breadth first, so a bound cuts the deepest and newest, not a
   // whole branch of the family.
   let size = 1;
@@ -475,31 +574,38 @@ export async function lineageOf(
   }
   const root: Draft = { repo: top, relation: undefined, children: [] };
   let level: Draft[] = [root];
+  const tips: TipReads = new Map();
   for (let depth = 0; depth < LINEAGE_MAX_DEPTH && level.length > 0; depth++) {
     const next: Draft[] = [];
+    const asked: Promise<void>[] = [];
     for (const node of level) {
-      for (const fork of listForks(forge.db, node.repo.id)) {
+      for (const fork of forksOf(node.repo.id)) {
         if (!mayRead(fork)) continue;
         if (size >= LINEAGE_MAX_NODES) {
           truncated = true;
           break;
         }
         size++;
-        const relation =
-          relations < LINEAGE_MAX_RELATIONS
-            ? await forkRelation(forge, fork, node.repo)
-            : undefined;
-        if (relation !== undefined) relations++;
-        const child: Draft = { repo: fork, relation, children: [] };
+        const child: Draft = { repo: fork, relation: undefined, children: [] };
+        // The budget is spent in order; the reads themselves run together.
+        if (relations < LINEAGE_MAX_RELATIONS) {
+          relations++;
+          asked.push(
+            forkRelation(forge, fork, node.repo, tips).then((r) => {
+              child.relation = r;
+            }),
+          );
+        }
         node.children.push(child);
         next.push(child);
       }
     }
+    await Promise.all(asked);
     level = next;
   }
   // "More below" only for forks this viewer could see: a private fork past
   // the bound is not hinted at, any more than one inside it is shown.
-  if (level.some((n) => listForks(forge.db, n.repo.id).some(mayRead)))
+  if (level.some((n) => forksOf(n.repo.id).some(mayRead)))
     truncated = true;
   return { root, size, truncated };
 }

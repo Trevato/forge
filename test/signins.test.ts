@@ -273,7 +273,7 @@ describe("sign-ins: tokens and browsers, seen and ended", () => {
   // `DELETE /api/v1/users/:username/tokens/:id`; this pull adds the browsers.
   test("the owner does the same over the API, with an admin token", async () => {
     const ownerToken = createToken(app.db, owner.id, "o", "admin").token;
-    const token = createToken(app.db, bo.id, "phone", "ro");
+    createToken(app.db, bo.id, "phone", "ro");
     const browser = cookieFor(bo);
     const seen = (await (await api("/api/v1/users/bo/signins", ownerToken)).json()) as {
       tokens: { id: string; name: string }[];

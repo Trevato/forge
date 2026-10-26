@@ -6,7 +6,9 @@
  */
 
 import {
+  behindWords,
   checkedWords,
+  checkLine,
   checkUpstreamNow,
   clockWords,
   FOLLOW_REFUSALS,
@@ -16,14 +18,14 @@ import {
   upstreamLabel,
 } from "../../actions/upstream_follow.ts";
 import { canAdmin, type Repo } from "../../core/repos.ts";
-import { getFollow } from "../../core/upstream_follow.ts";
+import { getFollow, listChecks } from "../../core/upstream_follow.ts";
 import type { Ctx } from "../../http/context.ts";
 import { loadRepo, repoBase, repoNotFound } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
 import { flashTo } from "../layout.ts";
-import { btn, card, field as formField } from "../ui.ts";
+import { btn, card, field as formField, row, timeAgo } from "../ui.ts";
 
 /** HH:MM in UTC, with the instant for machines and the title for people. */
 function clock(iso: string): Html {
@@ -44,6 +46,40 @@ export function followingLine(ctx: Ctx, repo: Repo): Html | null {
     ${follow.checkedAt === null ? null : html`· last checked ${clock(follow.checkedAt)}`}
     · ${standing(follow)}
   </p>`;
+}
+
+/**
+ * Under the head of a followed repository: how far behind the last check
+ * found it, or that it conflicts. Read from the stored check, never git;
+ * null when level, unchecked, failed for another reason, or following
+ * nothing. Admins only, like the page it links to.
+ */
+export function behindLine(ctx: Ctx, repo: Repo): Html | null {
+  const follow = followShown(ctx.app, repo, ctx.auth.user);
+  const words = follow === undefined ? null : behindWords(follow);
+  if (follow === undefined || words === null || follow.checkedAt === null) return null;
+  const base = repoBase(repo);
+  return html`<div class="small muted" data-behind-upstream>
+    ${icon("sync")}
+    ${words.conflict
+      ? html`<a href="${base}/settings#upstream">${words.text}</a>`
+      : html`${words.text} ·`}
+    checked ${timeAgo(follow.checkedAt)}
+    <form method="post" action="${base}/settings/upstream/check" class="inline">
+      <input type="hidden" name="back" value="${base}" />
+      ${btn("Update", { size: "sm", icon: "sync" })}
+    </form>
+    <a href="${base}/settings#upstream">details</a>
+  </div>`;
+}
+
+/** The last five checks, newest first; nothing when there are none. */
+function historyList(ctx: Ctx, repo: Repo): Html | null {
+  const checks = listChecks(ctx.app.db, repo.id, 5);
+  if (checks.length === 0) return null;
+  return html`<ul class="list" data-following-history>
+    ${checks.map((c) => row({ title: checkLine(c, timeAgo(c.at)) }))}
+  </ul>`;
 }
 
 /** The settings card: on or off, the URL and branch, and "Check upstream now". */
@@ -85,6 +121,7 @@ export function followUpstreamCard(ctx: Ctx, repo: Repo): Html | null {
             f.checkedAt === null ? "" : html` · last checked ${clock(f.checkedAt)}`
           }${f.error === "" ? "" : html` · ${f.error}`} · ${f.opened} proposed so far</p>`,
         )}
+        ${historyList(ctx, repo)}
         <div class="form-actions">${btn("Save")}</div>
       </form>
       ${when(
@@ -128,9 +165,10 @@ export async function followUpstreamCheck(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
   const checked = await checkUpstreamNow(ctx.app, ctx.auth.user, repo);
+  const back = field(form, "back");
   return flashTo(
     ctx,
-    `${repoBase(repo)}/settings#upstream`,
+    back === repoBase(repo) ? back : `${repoBase(repo)}/settings#upstream`,
     checked.ok
       ? { message: checkedWords(checked.value) }
       : { tone: "danger", message: FOLLOW_REFUSALS[checked.error] },

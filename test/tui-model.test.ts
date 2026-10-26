@@ -14,7 +14,7 @@ import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import type { TuiIdentity } from "../src/tui/session.ts";
 import { quietLogs } from "./helpers/globals.ts";
-import { settleApp } from "./helpers/tui.ts";
+import { settleApp, settleUntil } from "./helpers/tui.ts";
 
 quietLogs();
 
@@ -43,6 +43,8 @@ describe("model budget in the terminal", () => {
         for (const ch of t) key(ch);
         await settleApp(app);
       },
+      // Under bun's 5 s test timeout, so a miss shows the screen, not a bare timeout.
+      until: (what: string) => settleUntil(app, what, { timeoutMs: 4_000 }),
       stop: () => app.stop(),
     };
   }
@@ -67,15 +69,19 @@ describe("model budget in the terminal", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  const open = async (h: ReturnType<typeof boot>, title: string) => {
+  const open = async (h: ReturnType<typeof boot>, title: string, hint: string, opens = "account name") => {
     await h.ctrl("k");
     await h.type(title);
+    // Wait for the row to be drawn, then for the prompt Enter opens, rather
+    // than trusting that the frames have caught up.
+    await h.until(hint);
     await h.press("enter");
+    await h.until(opens);
   };
 
   test("a person sees budget zero and adds their own subscription", async () => {
     const h = boot("bob");
-    await open(h, "Model budget");
+    await open(h, "Model budget", "what your crew may spend", "Model budget: $0.");
     expect(h.text()).toContain("Model budget: $0.");
     await h.press("a");
     await h.type("sk-ant-api03-bobkey");
@@ -91,13 +97,13 @@ describe("model budget in the terminal", () => {
   test("an admin sets and takes back a grant; a person has no such command", async () => {
     const bob = getUserByName(forge.db, "bob")!;
     const h = boot("alice");
-    await open(h, "Model grant");
+    await open(h, "Model grant", "give an account dollars");
     await h.type("bob");
     await h.press("enter");
     await h.type("12.5");
     await h.press("enter");
     expect(getModelGrant(forge.db, bob.id)?.usdPerMonth).toBe(12.5);
-    await open(h, "Model grant");
+    await open(h, "Model grant", "give an account dollars");
     await h.type("bob");
     await h.press("enter");
     await h.type("none");
@@ -108,6 +114,7 @@ describe("model budget in the terminal", () => {
     const p = boot("bob");
     await p.ctrl("k");
     await p.type("Model grant");
+    await p.until("Model grant"); // the palette has drawn the query
     expect(p.text()).not.toContain("give an account dollars");
     p.stop();
   });
@@ -115,13 +122,13 @@ describe("model budget in the terminal", () => {
   test("an admin sets an account's ceilings in the terminal; a person has no such command", async () => {
     const bob = getUserByName(forge.db, "bob")!;
     const h = boot("alice");
-    await open(h, "Model ceiling");
+    await open(h, "Model ceiling", "set an account's dollars");
     await h.type("bob");
     await h.press("enter");
     await h.type("20 5");
     await h.press("enter");
     expect(getAccountCeiling(forge.db, bob.id)).toEqual({ dailyUsd: 20, perRunUsd: 5 });
-    await open(h, "Model ceiling");
+    await open(h, "Model ceiling", "set an account's dollars");
     await h.type("bob");
     await h.press("enter");
     expect(h.text()).toContain("now $20.00 a day, $5.00 a run");
@@ -135,6 +142,7 @@ describe("model budget in the terminal", () => {
     const p = boot("bob");
     await p.ctrl("k");
     await p.type("Model ceiling");
+    await p.until("Model ceiling");
     expect(p.text()).not.toContain("set an account's dollars");
     p.stop();
   });

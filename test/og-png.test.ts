@@ -184,7 +184,6 @@ describe("og cards with a look", () => {
   let servers: Servers;
   let base: string;
   let appId = "";
-  let owner: { id: string };
 
   /** A 1280×800 page-like picture: bands and blocks, so it compresses as a screenshot does. */
   const screenshot = (hue: number): Uint8Array => {
@@ -224,7 +223,6 @@ describe("og cards with a look", () => {
       adminIfFirst: true,
     });
     if (!u.ok) throw new Error(u.error);
-    owner = u.value;
     const made = await createRepo(app, u.value, { name: "peek", visibility: "public" });
     if (!made.ok) throw new Error(String(made.error));
     const rec = createApp(app.db, { repoId: made.value.id, slug: "peek-app", access: "public" });

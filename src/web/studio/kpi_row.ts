@@ -8,13 +8,17 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { backupAge, backupFull, backupOverdue, buildersValue, checkTime, reactNote, speedWords, spendFull, spendValue, usersValue, visitorsNote, visitorsValue } from "../../flow/kpi_words.ts";
+import { backupAge, backupFull, backupOverdue, buildersValue, checkTime, reactNote, speedWords, spendCeilingWords, spendFull, spendValue, usersValue, visitorsNote, visitorsValue, waitingWords } from "../../flow/kpi_words.ts";
 import type { Kpis } from "../../flow/kpis.ts";
-import { cachedKpis } from "./home_cache.ts";
+import { vitalsLine } from "../../flow/vitals.ts";
+import { cachedKpis, cachedVitals, cachedWaiting } from "./home_cache.ts";
 import { escapeHtml, html, raw, type Html } from "../html.ts";
 import { BOOTED } from "../../release/gate.ts";
 import { running } from "../../kernel/version.ts";
 import { sha, stat, time } from "../ui.ts";
+import { listReposVisibleTo } from "../../core/repos.ts";
+import type { User } from "../../core/users.ts";
+import { waitingOn } from "./asks.ts";
 
 const W = 96;
 const H = 24;
@@ -88,6 +92,7 @@ export function liveNow(): { sha: string; at: string } | null {
 
 export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null, now: Date = new Date()): Html {
   const overdue = backupOverdue(k.backupAt, now);
+  const spendWords = spendCeilingWords(k.spend);
   const rate = k.landed / k.landedHours.length;
   return html`<section class="stats mb" aria-label="The last 24 hours, as of this page load">
     ${tile(
@@ -128,8 +133,10 @@ export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null, now
       "/settings/crew",
       spendValue(k.spend),
       spendFull(k.spend),
-      k.spend.ceilingUsd === null ? "no ceiling" : "of the daily ceiling",
-      k.spend.ceilingUsd === null ? "No daily ceiling is set" : "Crew spend today (UTC), of the daily ceiling",
+      spendWords.note,
+      spendWords.title,
+      null,
+      spendWords.attn ? "attn" : null,
     )}
     ${tile(
       "Last off-box backup",
@@ -159,4 +166,28 @@ export function kpiRow(db: Database, opts: { ceilingUsd?: number; dataDir?: stri
   const now = opts.now ?? new Date();
   const forge = { ceilingUsd: opts.ceilingUsd ?? null, ...(opts.dataDir === undefined ? {} : { dataDir: opts.dataDir }) };
   return kpiRowFor(cachedKpis(db, now, forge), liveNow(), now);
+}
+
+/**
+ * One `.small .muted` line over `/review`: how many asks wait on the viewer
+ * (the very rows /review lists) and how long the oldest has. Empty at zero.
+ */
+export function waitingLine(db: Database, user: User, now: Date = new Date()): Html {
+  const { count, oldest } = cachedWaiting(db, user.id, () => {
+    const repos = listReposVisibleTo(db, user, { limit: 200, withoutArchived: true });
+    const asks = waitingOn(db, user, repos);
+    return {
+      count: asks.length,
+      oldest: asks.reduce<string | null>((o, a) => (o === null || Date.parse(a.since) < Date.parse(o) ? a.since : o), null),
+    };
+  });
+  const words = waitingWords(count, oldest, now);
+  return words === null ? html`` : html`<p class="small muted"><a href="/review">${words}</a></p>`;
+}
+
+/** Home's flow vitals for an admin (#5935): one muted line of counts; the open count links to the boards. */
+export function vitalsRow(db: Database, now: Date = new Date()): Html {
+  const v = cachedVitals(db, now);
+  const rest = vitalsLine(v).split(" · ").slice(1).join(" · ");
+  return html`<p class="small muted"><a href="/boards">${v.open} open pulls</a> · ${rest}</p>`;
 }

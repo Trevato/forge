@@ -1,5 +1,5 @@
 /** The thin plugins name only MCP tools the forge lists, so a rename there fails here. */
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { toolNames } from "../src/http/mcp.ts";
 
@@ -19,7 +19,7 @@ const opencodeText = (): string => {
 const backticked = (text: string): string[] => [...text.matchAll(/`([a-z][a-z0-9_]*)`/g)].map((m) => m[1]!);
 
 /** Backticked words that are the server or an argument, not a tool. */
-const NOT_TOOLS = new Set(["forge", "repo", "text", "context", "page", "run", "commit", "said", "action", "ship", "close", "status"]);
+const NOT_TOOLS = new Set(["forge", "repo", "text", "context", "page", "run", "commit", "said", "action", "ship", "close", "status", "words", "id", "verb", "proposal", "approve", "later"]);
 
 /** Tools the command text tells the agent to call: every backticked name that is not an argument. */
 const toolsNamed = (text: string): string[] => [...new Set(backticked(text))].filter((n) => !NOT_TOOLS.has(n));
@@ -40,4 +40,72 @@ for (const [label, text] of [
 test("a renamed tool is caught", () => {
   expect(toolsNamed("call `tell_renamed` with `repo`").filter((n) => !tools.has(n))).toEqual(["tell_renamed"]);
   expect(backticked("`a_b` and `C`")).toEqual(["a_b"]);
+});
+
+test("the Claude Code command names plan's tools, and the forge lists them", () => {
+  const named = toolsNamed(claudeText());
+  for (const tool of ["asks", "asks_proposal"]) {
+    expect(named).toContain(tool);
+    expect(tools.has(tool)).toBe(true);
+  }
+  expect(claudeText()).toContain("`proposal.id`");
+});
+
+describe("the OpenCode plan command", () => {
+  test("steers the planner's wave through asks_proposal, after a yes", () => {
+    const text = opencodeText();
+    expect(text).toContain("plan [approve|redirect <words>|later]");
+    expect(toolsNamed(text)).toContain("asks_proposal");
+    expect(tools.has("asks_proposal")).toBe(true);
+    expect(text).toMatch(/only after the person says yes/);
+  });
+});
+
+describe("the OpenCode plugin module", () => {
+  test("loads and registers a forge command whose template has plan", async () => {
+    const saved = { url: process.env["FORGE_URL"], token: process.env["FORGE_TOKEN"] };
+    process.env["FORGE_URL"] = "https://forge.example";
+    process.env["FORGE_TOKEN"] = "t";
+    try {
+      // A computed specifier: the plugin's type-only import of OpenCode's package is not a dependency here, so tsc must not follow it.
+      const file = "../plugins/opencode/forge.ts";
+      const { Forge } = await import(file);
+      const config: Record<string, any> = {};
+      const hooks: any = await (Forge as any)({});
+      await hooks.config(config);
+      const template: string = config["command"].forge.template;
+      expect(template).toContain("plan [approve|redirect <words>|later]");
+      expect(template).toContain("`asks_proposal`");
+      expect(template).toEndWith("a person lands changes.");
+    } finally {
+      for (const [k, v] of [["FORGE_URL", saved.url], ["FORGE_TOKEN", saved.token]] as const) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+});
+
+/** The verbs a command offers: the first word of each `- <verb>` line. */
+const verbsOf = (text: string): string[] => [...text.matchAll(/^- `?([a-z]+)/gm)].map((m) => m[1]!).sort();
+
+/** The verbs in one command but not the other, either way. */
+const verbDiff = (a: string, b: string): { onlyA: string[]; onlyB: string[] } => {
+  const va = verbsOf(a);
+  const vb = verbsOf(b);
+  return { onlyA: va.filter((v) => !vb.includes(v)), onlyB: vb.filter((v) => !va.includes(v)) };
+};
+
+describe("the two plugin commands offer the same verbs", () => {
+  test("Claude Code and OpenCode have the same set", () => {
+    expect(verbsOf(claudeText())).toEqual(["decide", "plan", "status", "tell"]);
+    expect(verbDiff(claudeText(), opencodeText())).toEqual({ onlyA: [], onlyB: [] });
+  });
+
+  test("a command missing a verb fails the comparison", () => {
+    const full = "- tell <app>: x\n- status: y\n- plan [approve]: z";
+    const missing = "- tell <app>: x\n- status: y";
+    expect(verbDiff(full, missing)).toEqual({ onlyA: ["plan"], onlyB: [] });
+    expect(verbDiff(missing, full)).toEqual({ onlyA: [], onlyB: ["plan"] });
+  });
 });

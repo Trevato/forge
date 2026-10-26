@@ -15,7 +15,7 @@ import { isActive } from "../core/users.ts";
 import { canSeeSealed } from "../core/sealed.ts";
 import type { App } from "../app.ts";
 import { listOrigins } from "../core/origins.ts";
-import { listReposVisibleTo } from "../core/repos.ts";
+import { canRead, listReposVisibleTo } from "../core/repos.ts";
 import {
   cleanQuery,
   grepRepos,
@@ -26,6 +26,8 @@ import {
   MAX_CODE_HITS,
   MAX_SEARCH_REPOS,
   type IssueHit,
+  type RepoHit,
+  type CodeHit,
   type SearchKind,
   type SearchResults,
 } from "../core/search.ts";
@@ -214,4 +216,32 @@ async function liveIssues(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Search only `repos`, the ones a repository-scoped credential reaches, and
+ * only those the actor can read. Nothing outside them is searched, so
+ * nothing outside them can appear; origins are never asked.
+ */
+export async function searchWithin(
+  app: App,
+  actor: User | undefined,
+  repos: readonly Repo[],
+  input: SearchInput,
+): Promise<SearchResults> {
+  const hits = { repos: [] as RepoHit[], issues: [] as IssueHit[], code: [] as CodeHit[] };
+  const truncated = { repos: false, issues: false, code: false };
+  let moreCode = false;
+  for (const repo of repos) {
+    if (!canRead(app.db, repo, actor)) continue;
+    const one = await search(app, actor, { ...input, live: false, repo });
+    hits.repos.push(...one.repos);
+    hits.issues.push(...one.issues);
+    hits.code.push(...one.code);
+    truncated.repos ||= one.truncated.repos;
+    truncated.issues ||= one.truncated.issues;
+    truncated.code ||= one.truncated.code;
+    moreCode ||= one.moreCode;
+  }
+  return { ...hits, truncated, moreCode };
 }

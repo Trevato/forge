@@ -11,6 +11,7 @@
 
 import {
   checkInput,
+  FLAGS_ADMIN_ONLY,
   flagRegistry,
   mayManageFlags,
   usesLine,
@@ -111,7 +112,7 @@ export function flagsScreen(f: Session, ctx: Ctx): Screen {
         note !== ""
           ? note
           : !allowed
-            ? "Flags are set by a forge admin."
+            ? FLAGS_ADMIN_ONLY
             : names().length === 0
               ? "No flag is declared yet."
               : usesOf(names()[state.index] ?? names()[0]!);

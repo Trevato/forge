@@ -21,19 +21,23 @@ import { parentReleases, releasesSentence } from "../../core/parent_releases.ts"
 import { running } from "../../kernel/version.ts";
 import { checkMemoryAt } from "../../apps/check-memory.ts";
 import { repoDir } from "../../git/repos.ts";
+import { forkDrift } from "../../actions/forks.ts";
+import { upstreamOffer, type UpstreamOffer } from "../../actions/offer_upstream.ts";
 import { listRefs } from "../../git/read.ts";
 import { updateRepoSettings } from "../../actions/repos.ts";
 import { showProvenance } from "../../actions/provenance.ts";
 import {
+  checkLine,
   checkedWords,
   checkUpstreamNow,
   FOLLOW_REFUSALS,
+  behindWords,
   followShown,
   setFollowUpstream,
   standing,
   upstreamLabel,
 } from "../../actions/upstream_follow.ts";
-import { getFollow } from "../../core/upstream_follow.ts";
+import { getFollow, listChecks } from "../../core/upstream_follow.ts";
 import {
   getProvenance,
   shownTrail,
@@ -54,7 +58,9 @@ import { badge, card } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
 import { PIN_MARK, ago, drawFacts, plural } from "./common.ts";
 import { connectionsScreen, egressScreen } from "./egress.ts";
-import { forkOf, hostOf, liveOrigin, localRepo, sourceName } from "./where.ts";
+import { newPullScreen } from "./newpull.ts";
+import { pullScreen } from "./pull.ts";
+import { forkOf, hostOf, liveOrigin, local, localRepo, sourceName } from "./where.ts";
 
 /**
  * `I` — everything a repository is, in one card: what it is for, whether it
@@ -75,6 +81,7 @@ export function aboutScreen(
   const may = (): boolean =>
     repo !== undefined && f.user !== undefined && canAdmin(f.db, repo, f.user);
   let cell: [string, string][] = [];
+  let offered: UpstreamOffer | null = null;
   // The trail's switch (#3293) is a person's, an admin's, and only where
   // there is a trail to switch: the same rule as the settings page.
   const mayTrail = (): boolean =>
@@ -92,9 +99,25 @@ export function aboutScreen(
     ...aboutFacts(f, src, facts, ref),
     ...trailRows(f, repo),
     ...upstreamRows(f, repo),
+    ...offerRows(offered),
     ...cell,
   ];
   let rows = factRows();
+  // A fork ahead of its parent offers its commits upstream: the page's
+  // button, read the same way (`upstreamOffer`), pressed here with `o`.
+  const forkParent =
+    repo === undefined ? undefined : forkParentFor(f.db, repo, f.user);
+  if (repo !== undefined && forkParent !== undefined) {
+    const at = repo;
+    void forkDrift(f.app, at, forkParent)
+      .then((drift) => {
+        offered = upstreamOffer(f.app, f.user, at, forkParent, drift.ahead);
+        if (offered === null) return;
+        rows = factRows();
+        ctx.invalidate();
+      })
+      .catch(() => {});
+  }
   // An admin also sees the check cell's memory, read once from forge.json.
   if (may() && repo !== undefined) {
     const at = repo;
@@ -151,6 +174,16 @@ export function aboutScreen(
         ...(f.user?.isAdmin === true && repo !== undefined
           ? [binding(["e"], "egress"), binding(["c"], "connections")]
           : []),
+        ...(offered === null
+          ? []
+          : [
+              binding(
+                ["o"],
+                offered.openNumber === null
+                  ? `offer ${plural(offered.ahead, "commit")} upstream`
+                  : `see #${offered.openNumber} upstream`,
+              ),
+            ]),
         binding(["esc"], "close"),
       ];
     },
@@ -237,6 +270,15 @@ export function aboutScreen(
       );
     },
     key(e) {
+      if (e.key === "o" && repo !== undefined && offered !== null && forkParent !== undefined) {
+        ctx.pop();
+        ctx.push(
+          offered.openNumber === null
+            ? newPullScreen(f, ctx, repo)
+            : pullScreen(f, ctx, local(f, forkParent), offered.openNumber),
+        );
+        return true;
+      }
       if (e.key === "y" && cloneUrl !== "") {
         ctx.copy(cloneUrl);
         ctx.toast("copied the clone URL", "success");
@@ -335,6 +377,19 @@ export function trailRows(
   ];
 }
 
+/** The offer row: what the fork has for its parent, and where it stands. */
+export function offerRows(offer: UpstreamOffer | null): [string, string][] {
+  if (offer === null) return [];
+  return [
+    [
+      "offer",
+      offer.openNumber === null
+        ? `${plural(offer.ahead, "commit")} ahead · o opens the pull`
+        : `${plural(offer.ahead, "commit")} ahead · offered in #${offer.openNumber}`,
+    ],
+  ];
+}
+
 /**
  * The upstream row, as the web About line has it: for an admin only, with
  * the address, branch and last check while following is on, and "off" when
@@ -349,6 +404,7 @@ export function upstreamRows(
   const follow = getFollow(f.db, repo.id);
   if (follow === undefined || !follow.enabled)
     return [["upstream", "off"]];
+  const behind = behindWords(follow);
   const checked =
     follow.checkedAt === null ? "" : ` · checked ${ago(follow.checkedAt)}`;
   return [
@@ -356,6 +412,8 @@ export function upstreamRows(
       "upstream",
       `${upstreamLabel(follow.url)} ${follow.branch}${checked} · ${standing(follow)}`,
     ],
+    ...(behind === null ? [] : [["behind", `${behind.text} · u updates`] as [string, string]]),
+    ...listChecks(f.db, repo.id).map((c): [string, string] => ["", checkLine(c, ago(c.at))]),
   ];
 }
 

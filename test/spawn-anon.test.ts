@@ -17,6 +17,7 @@ import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { childDirOf } from "../src/actions/spawn.ts";
+import { bootHostedChild } from "../src/spawn/host.ts";
 import { ok } from "../src/kernel/result.ts";
 
 describe("anonymous spawn", () => {
@@ -36,6 +37,18 @@ describe("anonymous spawn", () => {
       },
       body: JSON.stringify(payload),
     });
+  // A spawn boots its child in the background (`void bootHostedChild`). Wait
+  // for each boot once, so it neither competes with the next test for the
+  // machine nor outlives the data directory. Only the first call per child
+  // joins the boot in flight; a later one would start the child's apps again.
+  const settled = new Set<string>();
+  const settle = async (...names: string[]) => {
+    for (const name of names) {
+      if (settled.has(name)) continue;
+      settled.add(name);
+      await bootHostedChild(app, name);
+    }
+  };
   const getPage = () => fetch(`${base}/forges/new`);
 
   beforeAll(async () => {
@@ -78,6 +91,9 @@ describe("anonymous spawn", () => {
   }, 30_000);
 
   afterAll(async () => {
+    // Before the servers stop: stopping empties the child cache, and a
+    // boot started after that would open a child nothing closes.
+    await settle("kid", "kid2", "kid3", "grown");
     servers.stop();
     app.close();
     await rm(dataDir, { recursive: true, force: true });
@@ -127,6 +143,9 @@ describe("anonymous spawn", () => {
     expect(body.dryRun).toBe(false);
     expect(typeof body.claimUrl).toBe("string");
 
+    // Let its background boot finish before this test opens the same
+    // directory (the two share the repo's git readers).
+    await settle("kid");
     // The child's forge-code fork: the repo, its history, and the upstream.
     const { createApp: openChild } = await import("../src/app.ts");
     const child = openChild({ dataDir: childDirOf(app, body.bodyId) });
@@ -186,11 +205,14 @@ describe("anonymous spawn", () => {
   });
 
   test("a signed-in spawn still works (regression)", async () => {
+    // The anonymous children above are still booting; let them finish.
+    await settle("kid", "kid2", "kid3");
     const res = await post({ name: "grown", apps: ["alice/notes"], dryRun: false }, rw);
     expect(res.status).toBe(201);
     const body = (await res.json()) as any;
     expect(typeof body.claimUrl).toBe("string");
     // The signed-in child forks the code too.
+    await settle("grown");
     const { createApp: openChild } = await import("../src/app.ts");
     const child = openChild({ dataDir: childDirOf(app, body.bodyId) });
     try {

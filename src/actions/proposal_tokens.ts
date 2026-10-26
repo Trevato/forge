@@ -16,14 +16,12 @@ import {
 import { canWrite, getRepo, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { NOT_FOUND_WORDS, UNAUTHORIZED_WORDS } from "../http/respond.ts";
 
 export interface ProposalTokenError {
   readonly code: "unauthorized" | "not_found" | "invalid_child" | "invalid_origin";
   readonly message: string;
 }
-
-/** The API's own words for a repository that is missing or not yours. */
-export const NOT_FOUND_WORDS = "no such resource here, or it is not visible to you";
 
 const fail = (code: ProposalTokenError["code"], message: string) =>
   err<ProposalTokenError>({ code, message });
@@ -36,7 +34,7 @@ function mine(
   actor: User | undefined,
   repo: Repo | undefined,
 ): Result<{ repo: Repo; actor: User }, ProposalTokenError> {
-  if (!actor) return fail("unauthorized", "authenticate with a bearer token or account credentials");
+  if (!actor) return fail("unauthorized", UNAUTHORIZED_WORDS);
   if (!repo || !canWrite(app.db, repo, actor)) return fail("not_found", NOT_FOUND_WORDS);
   return ok({ repo, actor });
 }

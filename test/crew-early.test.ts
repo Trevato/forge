@@ -17,7 +17,6 @@ import {
   setIssueState,
 } from "../src/actions/issues.ts";
 import { pullOfBranch, watchForPull } from "../src/crew/early.ts";
-import type { CrewHandle } from "../src/crew/dispatch.ts";
 import { resolveOid } from "../src/git/merge.ts";
 import { abortAgentRun } from "../src/crew/running.ts";
 import { getAgentByName } from "../src/core/agents.ts";
@@ -39,7 +38,6 @@ describe("the crew, with a stand-in Claude Code: the early pull", () => {
   let standIn: StandInCrew;
   let dataDir: string;
   let app: App;
-  let crew: CrewHandle;
   let alice: User;
   let bot: User;
   let repo: Repo;
@@ -49,7 +47,7 @@ describe("the crew, with a stand-in Claude Code: the early pull", () => {
 
   beforeAll(async () => {
     standIn = await startStandInCrew();
-    ({ dataDir, app, crew, alice, bot, repo } = standIn);
+    ({ dataDir, app, alice, bot, repo } = standIn);
   }, 30_000);
 
   afterAll(() => stopStandInCrew(standIn));

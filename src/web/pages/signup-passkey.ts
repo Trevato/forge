@@ -11,27 +11,28 @@ import { givenEmail, signUpWithPasskey, signupClosed, HUMAN_CHECK_MESSAGE, SIGNU
 import { createSession } from "../../core/sessions.ts";
 import { getUserByName } from "../../core/users.ts";
 import { isSafeName } from "../../git/guard.ts";
-import { edgeStrangerLogin } from "../../http/edge.ts";
 import { crossOrigin, type Ctx } from "../../http/context.ts";
 import { STRANGER_MAX } from "../../http/limits.ts";
 import { clientAddress, clientBucket } from "../../http/peer.ts";
 import { boundedBody, json, str } from "../../http/respond.ts";
 import { relying, store } from "./passkeys.ts";
 import { EDGE_NAME_MESSAGE, inviteOf, pinnedTo, safeNext, sessionCookie, signinAllowed, signupSlot } from "./site.ts";
+import { EMAIL_TAKEN_MESSAGE, INVALID_USERNAME_MESSAGE, NAME_RESERVED, USERNAME_TAKEN } from "../../actions/signup_words.ts";
+import { PASSKEY_EXPIRED, PASSKEY_REJECTED, PASSKEY_TAKEN } from "../passkey-words.ts";
 
 const refuse = (status: number, message: string) =>
   json({ error: "refused", message }, status);
 
 /** The words for each way a sign-up can fail, written for anyone. */
 const WORDS: Record<string, string> = {
-  invalid_username: "Usernames are letters, digits, dots and dashes.",
-  username_taken: "That username is taken.",
-  username_reserved: "That name is reserved.",
-  email_taken: "That email already has an account.",
+  invalid_username: INVALID_USERNAME_MESSAGE,
+  username_taken: USERNAME_TAKEN,
+  username_reserved: NAME_RESERVED,
+  email_taken: EMAIL_TAKEN_MESSAGE,
   invalid_email: "That does not look like an email address.",
   edge_name: EDGE_NAME_MESSAGE,
   human_check: HUMAN_CHECK_MESSAGE,
-  passkey_taken: "That passkey is already registered.",
+  passkey_taken: PASSKEY_TAKEN,
   signup_closed: SIGNUP_CLOSED_MESSAGE,
 };
 
@@ -87,12 +88,12 @@ export async function signupPasskey(ctx: Ctx): Promise<Response> {
   if (bad) return refuse(422, bad);
   const challenge = str(data.challenge);
   if (!store(ctx.app).signup.consume(challenge))
-    return refuse(400, "That request expired. Try again.");
+    return refuse(400, PASSKEY_EXPIRED);
   const made = await verifyRegistration(
     { clientDataJSON: str(data.clientDataJSON), attestationObject: str(data.attestationObject) },
     { challenge, ...relying(ctx) },
   );
-  if (!made.ok) return refuse(400, "That passkey was not accepted.");
+  if (!made.ok) return refuse(400, PASSKEY_REJECTED);
   // The slot is taken once the key is proven, before the account is tried:
   // a taken name or a closed door found there still spends it. Cheap
   // validation above has already refused what it can.

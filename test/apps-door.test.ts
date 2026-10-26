@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { newApp } from "../src/actions/apps.ts";
+import { doorPage } from "../src/apps/door.ts";
+import type { PillWhere } from "../src/apps/toolbar.ts";
 import { signGrant, type AppTarget } from "../src/apps/proxy.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import { getAppByRepo, type AppRecord } from "../src/core/apps.ts";
@@ -102,10 +104,48 @@ test("a preview says the pull, and a signed-in director gets the tell link", asy
   const html = await (
     await door(`notes--${pull}.${DOMAIN}`, `forge_grant_${record.id.slice(-8)}=${grant}`)
   ).text();
-  expect(html).toContain(`<p>preview of pull #${pull}</p>`);
+  expect(html).toContain(`preview of <a href="${servers.url}/alice/notes/pulls/${pull}">pull #${pull}</a>`);
   expect(html).toContain(`href="${servers.url}/alice/notes/tell"`);
   expect(html).toContain(">Tell the crew<");
   expect(html).not.toContain("<b>t</b>");
+});
+
+test("a preview links the pull and shows its escaped title to a reader; a private repo shows neither", async () => {
+  const html = await (await door(`notes--${pull}.${DOMAIN}`)).text();
+  expect(html).toContain(
+    `<a href="${servers.url}/alice/notes/pulls/${pull}">pull #${pull}</a>: &lt;b&gt;t&lt;/b&gt;`,
+  );
+  const owner = getUserById(app.db, alice)!;
+  const made = await newApp(app, owner, { name: "hush", description: "x", visibility: "private" });
+  if (!made.ok) throw new Error(String(made.error));
+  const hush = getAppByRepo(app.db, made.value.repo.id)!;
+  const p = createIssue(app.db, {
+    repoId: made.value.repo.id,
+    authorId: alice,
+    title: "secret plan",
+    kind: "pull",
+  });
+  if (!p.ok) throw new Error(p.error);
+  const n = p.value.number;
+  const target = { app: hush, env: `pull-${n}` } as AppTarget;
+  const grant = signGrant(dataDir, target, 60_000, Date.now(), {
+    id: alice,
+    name: "alice",
+    role: "admin",
+  });
+  const mine = await (
+    await door(`hush--${n}.${DOMAIN}`, `forge_grant_${hush.id.slice(-8)}=${grant}`)
+  ).text();
+  expect(mine).toContain("secret plan");
+  // Same facts without the reader's rights: number only.
+  const bare = doorPage(
+    { where: { app: "hush", env: `pull-${n}`, pull: n }, forgeUrl: servers.url },
+    false,
+  );
+  const text = await bare.text();
+  expect(text).toContain(`<p>preview of pull #${n}</p>`);
+  expect(text).not.toContain("<a href=\"" + servers.url + "/alice/hush/pulls");
+  expect(text).not.toContain("secret plan");
 });
 
 test("a nested host is the guest's: not found", async () => {
@@ -130,21 +170,45 @@ test("a private repository is linked only to who may read it", async () => {
     password: "a-good-passphrase",
   });
   if (!b.ok) throw new Error(b.error);
+  const secret = createIssue(app.db, {
+    repoId: vault.repoId,
+    authorId: alice,
+    title: "secret plan",
+    kind: "pull",
+  });
+  if (!secret.ok) throw new Error(secret.error);
+  app.db
+    .query(
+      "INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid) VALUES (?, 'main', 'h', 'b', 'x')",
+    )
+    .run(secret.value.id);
   const target = { app: vault, env: "production" } as AppTarget;
   const cookie = `forge_grant_${vault.id.slice(-8)}`;
   const as = (id: string, name: string, role: "admin" | "user") =>
     `${cookie}=${signGrant(dataDir, target, 60_000, Date.now(), { id, name, role })}`;
   const host = `vault.${DOMAIN}`;
 
+  // Not here to a stranger: the very answer a name nobody holds gets.
+  const unknown = await door(`nothing.${DOMAIN}`);
+  const unknownBody = await unknown.text();
+  expect(unknown.status).toBe(404);
   for (const cookies of [undefined, as(b.value.id, "bob", "user")]) {
-    const html = await (await door(host, cookies)).text();
-    expect(html).toContain("<h1>vault</h1>");
-    expect(html).not.toContain("alice/vault");
-    expect(html).not.toContain("The repository");
+    const res = await door(host, cookies);
+    const body = await res.text();
+    expect(res.status).toBe(unknown.status);
+    expect(body).toBe(unknownBody);
+    expect(body).not.toContain("vault");
+    expect(body).not.toContain("secret plan");
+    expect([...res.headers].filter(([k]) => k !== "date")).toEqual(
+      [...unknown.headers].filter(([k]) => k !== "date"),
+    );
+    const post = await fetch(`${servers.url}/__forge/`, { method: "POST", headers: { host } });
+    expect(post.status).toBe(404);
   }
   const mine = await (await door(host, as(alice, "alice", "admin"))).text();
   expect(mine).toContain(`href="${servers.url}/alice/vault"`);
   expect(mine).toContain("alice/vault");
+  expect(mine).toContain("secret plan · check running");
 });
 
 test("HEAD answers the headers with no body; POST is a 405 that says what is allowed", async () => {
@@ -164,4 +228,197 @@ test("HEAD answers the headers with no body; POST is a 405 that says what is all
   expect(post.status).toBe(405);
   expect(post.headers.get("allow")).toBe("GET, HEAD");
   expect(post.headers.get("x-content-type-options")).toBe("nosniff");
+});
+
+test("the terminal: a writer sees the exact command, a reader and a visitor see nothing", async () => {
+  const cfg = app.config as { sshPort?: number | undefined };
+  const was = cfg.sshPort;
+  const b = await createUser(app.db, {
+    origin: "seed",
+    trusted: true,
+    username: "carol",
+    email: "carol@forge.local",
+    password: "a-good-passphrase",
+  });
+  if (!b.ok) throw new Error(b.error);
+  const cookieFor = (env: string, id: string, name: string, role: "admin" | "user") =>
+    `forge_grant_${record.id.slice(-8)}=${signGrant(dataDir, { app: record, env } as AppTarget, 60_000, Date.now(), { id, name, role })}`;
+  try {
+    cfg.sshPort = 2222;
+    const prod = await (
+      await door(`notes.${DOMAIN}`, cookieFor("production", alice, "alice", "admin"))
+    ).text();
+    expect(prod).toContain("<code>ssh -p 2222 notes@forge.test</code>");
+    const prev = await (
+      await door(`notes--${pull}.${DOMAIN}`, cookieFor(`pull-${pull}`, alice, "alice", "admin"))
+    ).text();
+    expect(prev).toContain(`<code>ssh -p 2222 notes--${pull}@forge.test</code>`);
+    for (const cookie of [undefined, cookieFor("production", b.value.id, "carol", "user")]) {
+      const html = await (await door(`notes.${DOMAIN}`, cookie)).text();
+      expect(html).not.toContain("ssh");
+      expect(html).not.toContain("terminal is off");
+    }
+    cfg.sshPort = undefined;
+    const off = await (
+      await door(`notes.${DOMAIN}`, cookieFor("production", alice, "alice", "admin"))
+    ).text();
+    expect(off).toContain("The terminal is off.");
+    expect(off).not.toContain("ssh");
+  } finally {
+    cfg.sshPort = was;
+  }
+});
+
+test("every name the door draws is escaped, for production and a preview", () => {
+  const evil = `<script>alert("x")</script>'`;
+  const out = (where: PillWhere) =>
+    doorPage({ where, forgeUrl: "http://forge.test", signin: "/s" }, false).text();
+  return Promise.all([
+    out({ app: evil, env: "production", repo: evil }),
+    out({ app: evil, env: `pull-${evil}`, repo: evil, pull: evil as unknown as number }),
+  ]).then((pages) => {
+    for (const html of pages) {
+      expect(html).not.toContain("<script>");
+      expect(html).toContain("&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;&#39;");
+    }
+  });
+});
+
+const phasesOf = async (host: string, path: string, cookie?: string) => {
+  let header = "";
+  for (let i = 0; i < 2; i++) {
+    const res = await fetch(`${servers.url}${path}`, {
+      headers: { host, ...(cookie === undefined ? {} : { cookie }) },
+    });
+    expect(res.status).toBe(200);
+    await res.text();
+    header = res.headers.get("server-timing") ?? "";
+  }
+  return new Map(
+    header.split(", ").map((p) => {
+      const [name, dur] = p.split(";dur=");
+      return [name!, Number(dur)] as const;
+    }),
+  );
+};
+
+test("the door and the crew line name the phases they read, signed in, on production and a preview", async () => {
+  const who = { id: alice, name: "alice", role: "admin" } as const;
+  const name = `forge_grant_${record.id.slice(-8)}`;
+  const grantFor = (env: string) =>
+    `${name}=${signGrant(dataDir, { app: record, env } as AppTarget, 60_000, Date.now(), who)}`;
+  const hosts: [string, string][] = [
+    [`notes.${DOMAIN}`, grantFor("production")],
+    [`notes--${pull}.${DOMAIN}`, grantFor(`pull-${pull}`)],
+  ];
+  const reads: Record<string, string[]> = {
+    "/__forge/": ["session", "app", "pull", "serving", "pulls", "render"],
+    "/__forge/crew": ["session", "app", "pull", "working", "render"],
+  };
+  for (const [host, cookie] of hosts)
+    for (const [path, names] of Object.entries(reads)) {
+      const phases = await phasesOf(host, path, cookie);
+      expect([...phases.keys()].sort()).toEqual([...names].sort());
+      for (const ms of phases.values()) expect(Number.isFinite(ms)).toBe(true);
+    }
+});
+
+test("a guest names session and render, and the crew line stops before the reads it never makes", async () => {
+  for (const host of [`notes.${DOMAIN}`, `notes--${pull}.${DOMAIN}`]) {
+    // No cookie: the crew line has no viewer, so no app, pull or working read.
+    const crew = await phasesOf(host, "/__forge/crew");
+    expect([...crew.keys()].sort()).toEqual(["render", "session"]);
+    for (const ms of crew.values()) expect(Number.isFinite(ms)).toBe(true);
+    // The door still looks the app and pull up for its words.
+    const page = await phasesOf(host, "/__forge/");
+    expect([...page.keys()].sort()).toEqual(["app", "pull", "pulls", "render", "serving", "session"]);
+  }
+});
+
+test("the door lists open pulls with their check word: a preview link when it is up or asleep, the forge's page otherwise, titles escaped", async () => {
+  const repoId = record.repoId;
+  const addPull = (n: number, head: string) => {
+    const id = (
+      app.db.query("SELECT id FROM issue WHERE repo_id = ? AND number = ?").get(repoId, n) as {
+        id: string;
+      }
+    ).id;
+    app.db
+      .query(
+        "INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid) VALUES (?, 'main', ?, 'b', ?)",
+      )
+      .run(id, `h${n}`, head);
+    return id;
+  };
+  const sleeping = addPull(pull, "head1");
+  app.db
+    .query(
+      "INSERT INTO run (id, repo_id, kind, issue_id, commit_oid, state) VALUES (?, ?, 'check', ?, 'head1', 'ok')",
+    )
+    .run(crypto.randomUUID(), repoId, sleeping);
+  const cold = createIssue(app.db, {
+    repoId,
+    authorId: alice,
+    title: "cold <i>one</i>",
+    kind: "pull",
+  });
+  if (!cold.ok) throw new Error(cold.error);
+  addPull(cold.value.number, "head2");
+  (runtime as unknown as { envs: Map<string, unknown> }).envs.set(
+    `${record.id}/pull-${pull}`,
+    {
+      app: record,
+      env: `pull-${pull}`,
+      chain: Promise.resolve(),
+      restarts: [],
+      asleep: { commitOid: "head1", runId: "r", since: new Date().toISOString() },
+    },
+  );
+  const html = await (await door(`notes.${DOMAIN}`)).text();
+  const live = runtime.urlFor(record, `pull-${pull}`);
+  expect(html).toContain(
+    `<a href="${live}">#${pull} &lt;b&gt;t&lt;/b&gt; · check green</a>`,
+  );
+  expect(html).toContain(
+    `<a href="${servers.url}/alice/notes/pulls/${cold.value.number}">#${cold.value.number} cold &lt;i&gt;one&lt;/i&gt; · check none</a>`,
+  );
+  expect(html).not.toContain("<b>t</b>");
+  expect(html).not.toContain("<i>");
+});
+
+test("the door links a dormant preview to itself, and says so when more than five pulls are open", async () => {
+  const repoId = record.repoId;
+  const mk = (title: string) => {
+    const r = createIssue(app.db, { repoId, authorId: alice, title, kind: "pull" });
+    if (!r.ok) throw new Error(r.error);
+    const id = (
+      app.db.query("SELECT id FROM issue WHERE repo_id = ? AND number = ?").get(repoId, r.value.number) as {
+        id: string;
+      }
+    ).id;
+    app.db
+      .query(
+        "INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid) VALUES (?, 'main', ?, 'b', 'h')",
+      )
+      .run(id, `d${r.value.number}`);
+    return r.value.number;
+  };
+  const dormant = mk("quiet one");
+  (runtime as unknown as { envs: Map<string, unknown> }).envs.set(
+    `${record.id}/pull-${dormant}`,
+    {
+      app: record,
+      env: `pull-${dormant}`,
+      chain: Promise.resolve(),
+      restarts: [],
+      dormant: { since: new Date().toISOString(), idleSince: new Date().toISOString(), commitOid: "h" },
+    },
+  );
+  let html = await (await door(`notes.${DOMAIN}`)).text();
+  expect(html).toContain(`<a href="${runtime.urlFor(record, `pull-${dormant}`)}">#${dormant} quiet one`);
+  expect(html).not.toContain("More pulls are open");
+  for (let i = 0; i < 5; i++) mk(`extra ${i}`);
+  html = await (await door(`notes.${DOMAIN}`)).text();
+  expect(html).toContain("More pulls are open on the forge.");
+  expect((html.match(/ · check /g) ?? []).length).toBe(5);
 });

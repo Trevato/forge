@@ -1,0 +1,4 @@
+# Review
+
+- A pull's row on `/review` carries its look under it as `<li data-look>` in the row's children: a `.looks` strip of `.look[data-slot=thumb]` frames (production, then the pull's preview). It reuses the look component; no new class. The strip stays side by side under 640px (the stacking rule excludes `[data-look] .looks`), the item is inset like a row (8px 14px), and the preview thumb's link has a 44px hit area (a `::after` outset by 7px).
+- A row on `/review` carries its actions as `<li data-act-forms>` in the row's children: a `.form-actions` line with the Merge and Close buttons (each its own form) and one or two `.input` textareas (Request changes, Reply) with their own buttons. No new class. `m`, `c` and `r` act on the row the cursor is on (`j`/`k`); the key line under the list carries them as `data-shortcut` so the `?` help lists them.

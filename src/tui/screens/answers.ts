@@ -6,6 +6,7 @@
  */
 
 import { answersFor, canSeeAnswers } from "../../web/studio/answers.ts";
+import { CREW_WORKING } from "../../actions/ask_state_words.ts";
 import type { Repo } from "../../core/repos.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -33,7 +34,7 @@ export function answerLines(f: Session, repo: Repo): AnswerLine[] {
     secondary:
       said === undefined
         ? working
-          ? "The crew is working on it."
+          ? CREW_WORKING
           : "Waiting for the crew."
         : `${plain(said.who)}: ${plain(said.text)}`,
     meta: metaOf(said === undefined ? (working ? "working" : "waiting") : "answered", relTime(said?.at ?? issue.createdAt)),

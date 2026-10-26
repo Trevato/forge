@@ -98,6 +98,14 @@ const SELECT = `
   FROM issue JOIN user ON user.id = issue.author_id
   LEFT JOIN user AS assignee ON assignee.id = issue.assignee_id`;
 
+/** `SELECT` without the body: a plan reads titles and states, and a body is most of a row's bytes. */
+const SELECT_LEAN = SELECT.replace(
+  "issue.*,",
+  `issue.id, issue.repo_id, issue.number, issue.kind, issue.title, '' AS body, issue.author_id,
+         issue.state, issue.created_at, issue.updated_at, issue.closed_at, issue.close_reason,
+         issue.parked, issue.origin_author, issue.origin_html_url, issue.assignee_id, issue.sealed,`,
+);
+
 function toIssue(row: IssueRow): Issue {
   return {
     id: row.id,
@@ -162,6 +170,28 @@ export function getIssuesByIds(
       .all(...batch);
     for (const row of rows) out.set(row.id, toIssue(row));
   }
+  return out;
+}
+
+/**
+ * Every conversation of one repository in one read, by id: cheaper than
+ * `getIssuesByIds` once most of a repository is wanted.
+ */
+export function getIssuesOfRepo(
+  db: Database,
+  repoId: string,
+  /** Only issues, or only pulls: a pull's body is the bulk of a repository's rows. */
+  kind?: IssueKind,
+  /** Leave the bodies empty: for a reader that never shows one. */
+  lean = false,
+): Map<string, Issue> {
+  const out = new Map<string, Issue>();
+  for (const row of db
+    .query<IssueRow, [string, string]>(
+      `${lean ? SELECT_LEAN : SELECT} WHERE issue.repo_id = ?1 AND (?2 = '' OR issue.kind = ?2)`,
+    )
+    .all(repoId, kind ?? ""))
+    out.set(row.id, toIssue(row));
   return out;
 }
 
@@ -639,6 +669,26 @@ export interface ListCommentsOptions {
   limit?: number;
 }
 
+/** How many timeline items a thread page shows before it folds the earlier ones behind `?all=1`. */
+export const THREAD_WINDOW = 50;
+
+/**
+ * Where a comment's own anchor lands on its thread page: `#c-<id>` when it
+ * is among the newest comments the page shows, `?all=1#c-<id>` when it is
+ * folded away. One COUNT, not the whole thread. The page cuts its window on
+ * comments too (`conversation()`, web/pages/thread.ts): the newest
+ * THREAD_WINDOW comments, with the state lines between them riding along.
+ * Both count the same thing, so the anchor always lands.
+ */
+export function commentAnchor(db: Database, issueId: string, commentId: string): string {
+  const after = db
+    .query<{ n: number }, [string, string]>(
+      "SELECT COUNT(*) AS n FROM comment WHERE issue_id = ?1 AND kind = 'comment' AND id > ?2",
+    )
+    .get(issueId, commentId)!.n;
+  return `${after >= THREAD_WINDOW ? "?all=1" : ""}#c-${commentId}`;
+}
+
 export function listComments(
   db: Database,
   issueId: string,
@@ -899,9 +949,6 @@ const chunked = <T>(items: readonly T[]): T[][] => {
     out.push(items.slice(i, i + CHUNK));
   return out;
 };
-
-const placeholders = (n: number): string =>
-  Array.from({ length: n }, (_, i) => `?${i + 1}`).join(",");
 
 /**
  * Open and closed counts for one repo and kind, in a single pass over the

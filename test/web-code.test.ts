@@ -515,6 +515,16 @@ describe("the code browser on the web", () => {
     expect(live).toContain("Use the cache");
   });
 
+  test("the live line is drawn with §5's row, not a live-toggle class", async () => {
+    const off = await text("/search?q=lamp", alice);
+    expect(off).not.toContain("live-toggle");
+    expect(off).toContain('<p class="row small muted">');
+    expect(off).toMatch(/<a href="[^"]*live=1[^"]*"\s*>\s*Search live on origins/);
+    const on = await text("/search?q=lamp&live=1", alice);
+    expect(on).not.toContain("live-toggle");
+    expect(on).toMatch(/<a href="[^"]*"\s*>Use the cache\s*<\/a/);
+  });
+
   test("a stranger's search never names a private repository", async () => {
     const html = await text("/search?q=vault", kim);
     expect(html).not.toContain("alice/vault");

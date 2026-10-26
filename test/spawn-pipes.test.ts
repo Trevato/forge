@@ -16,6 +16,7 @@ import { join } from "node:path";
 const PIPING: Record<string, { sites: string[]; reason: string }> = {
   "src/apps/contain.ts": { sites: ["stderr"], reason: "stderr awaited with the exit; stdout ignored" },
   "src/apps/process.ts": { sites: ["stdout+stderr", "stdout+stderr"], reason: "pump() reads stdout and stderr of the app until exit" },
+  "src/spawn/cell.ts": { sites: ["stdout+stderr"], reason: "drain() reads the child forge's stdout and stderr to its log until exit" },
   "src/chaos/faults.ts": { sites: ["stdout"], reason: "stdout is read until the kill closes it, then cancelled; stderr is ignored" },
   "src/crew/claude.ts": { sites: ["stdout+stderr", "stdout"], reason: "session pumps stdout and stderr; --version awaits stdout, stderr ignored" },
   "src/crew/plan.ts": { sites: ["stdout"], reason: "stdout awaited with the exit; stderr ignored" },
@@ -24,8 +25,8 @@ const PIPING: Record<string, { sites: string[]; reason: string }> = {
   "src/git/env.ts": { sites: ["stdout+stderr", "stdout+stderr"], reason: "stdout and stderr both read to the end, finally clears the timer" },
   "src/git/local.ts": { sites: ["stdout+stderr", "stdout+stderr"], reason: "stdout and stderr both read to the end" },
   "src/git/read.ts": { sites: ["stdout"], reason: "cat-file stdout is read by the long-lived reader; stderr ignored" },
-  "src/git/smart-http.ts": { sites: ["stdout"], reason: "stdout is the response body; stderr ignored" },
-  "src/git/smart-ssh.ts": { sites: ["stdout+stderr"], reason: "pump() drains stdout and stderr into the channel" },
+  "src/git/smart-http.ts": { sites: ["stdout"], reason: "stdout is a pull-pipe FIFO (the response body, read on demand); stderr ignored" },
+  "src/git/smart-ssh.ts": { sites: ["stdout+stderr"], reason: "pump() drains stdout (a pull-pipe FIFO) and stderr into the channel" },
   "src/kernel/data_home.ts": { sites: ["stdout"], reason: "spawnSync buffers stdout; stderr ignored" },
   "src/looks/capture.ts": { sites: ["stderr"], reason: "stderr read in a background loop; stdout ignored" },
   "src/release/axe.ts": { sites: ["stderr"], reason: "stderr read for the DevTools address, then drained in a background loop; stdout ignored" },

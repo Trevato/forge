@@ -236,7 +236,7 @@ describe("the manifest: what you can do here, as who you are", () => {
     }
     const q = (await manifest("/search?q=a%20b%26c")).body;
     expect(q.actions[0].http).toBe("GET /api/v1/search?q=a%20b%26c");
-    const other = (await manifest("/elsewhere")).body;
+    const other = (await manifest("/settings")).body;
     expect(other.here).toEqual({ kind: "forge" });
     expect(other.actions[0].do).toBe("explore apps and repositories");
   });
@@ -307,10 +307,64 @@ describe("the manifest: what you can do here, as who you are", () => {
     expect(carol.actions.find((a: any) => a.do === "offer a change").verify).toBeUndefined();
   });
 
-  test("an org's own pages are the forge's, not a missing repository", async () => {
+  test("an org's own pages are the org's, not a missing repository", async () => {
     const res = await here("/acme/-/teams/Writers", "alice");
     expect(res.status).toBe(200);
-    expect(((await res.json()) as any).here.kind).toBe("forge");
+    expect(((await res.json()) as any).here).toEqual({ kind: "org", org: "acme" });
+  });
+
+  test("a suspended person's page is not_found like an unknown name, except to an admin", async () => {
+    const made = await createUser(app.db, {
+      origin: "seed",
+      trusted: true,
+      username: "gone",
+      email: "gone@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!made.ok) throw new Error(made.error);
+    app.db.run("UPDATE user SET suspended_at = ?1 WHERE id = ?2", [
+      new Date().toISOString(),
+      made.value.id,
+    ]);
+    const unknown = await (await here("/nope")).json();
+    for (const who of [undefined, "carol"]) {
+      const res = await here("/gone", who);
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual(unknown);
+    }
+    const { body } = await manifest("/gone", "alice");
+    expect(body.here).toEqual({ kind: "person", username: "gone" });
+  });
+
+  test("one segment is a person, an org, nobody, or one of the forge's own names", async () => {
+    const person = (await manifest("/wes")).body;
+    expect(person.here).toEqual({ kind: "person", username: "wes" });
+    expect(person.actions[0].http).toBe("GET /api/v1/users/wes/repos");
+    const org = (await manifest("/ACME", "carol")).body;
+    expect(org.here).toEqual({ kind: "org", org: "acme" });
+    expect(org.actions[0].http).toBe("GET /api/v1/orgs/acme/teams");
+    const nobody = await here("/nope");
+    expect(nobody.status).toBe(404);
+    expect(await nobody.json()).toEqual(await (await here("/acme/nothing")).json());
+    expect((await manifest("/settings")).body.here.kind).toBe("forge");
+    expect((await manifest("/explore")).body.here.kind).toBe("explore");
+    expect((await manifest("/search?q=x")).body.here.kind).toBe("search");
+    const mcp = (await (
+      await fetch(`${base}/mcp`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${tokens["carol"]}`,
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 9,
+          method: "tools/call",
+          params: { name: "here", arguments: { url: `${base}/wes` } },
+        }),
+      })
+    ).json()) as any;
+    expect(JSON.parse(mcp.result.content[0].text).here.kind).toBe("person");
   });
 
   test("a pull page says whether the pull's code runs, or waits for a writer's approval", async () => {

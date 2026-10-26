@@ -38,7 +38,7 @@ import { listSessions, type SessionInfo } from "../../core/sessions.ts";
 import { ADMIN_TOKEN_WORDS, listTokens, type TokenScope } from "../../core/tokens.ts";
 import type { CommitEmail, User } from "../../core/users.ts";
 import { isStandInEmail } from "../../core/users.ts";
-import { cookieValue, type Ctx } from "../../http/context.ts";
+import { cookieValue, isAccountItself, type Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { sshCommand } from "../../ssh/command.ts";
 import {
@@ -50,11 +50,13 @@ import { accountSections } from "./origins.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
+import { readFlash } from "../flash.ts";
 import {
   badge,
   btn,
   card,
   confirmAction,
+  copyField,
   empty,
   selectField,
   terminalCommand,
@@ -585,6 +587,31 @@ export function sessionsCard(
   );
 }
 
+/**
+ * The two lines that connect a harness to this forge: its own public address,
+ * and the token just minted when there is one (else a placeholder).
+ */
+export function connectCard(ctx: Ctx, token: string | undefined): Html {
+  const url = (ctx.app.config.url ?? ctx.url.origin).replace(/\/+$/, "");
+  const env = `FORGE_URL=${url} FORGE_TOKEN=${token ?? "<token>"}`;
+  return card(
+    html`<p class="muted small mb">
+        ${token ? "Your new token is filled in." : "Make a token below, then replace <token>."}
+        See plugins/claude-code and plugins/opencode.
+      </p>
+      <p class="small">Claude Code</p>
+      ${copyField("connect-claude", `${env} claude --plugin-dir plugins/claude-code`, "Claude Code command", "Copy command")}
+      <p class="small">OpenCode</p>
+      ${copyField(
+        "connect-opencode",
+        `mkdir -p .opencode/plugin && cp plugins/opencode/forge.ts .opencode/plugin/ && ${env} opencode`,
+        "OpenCode command",
+        "Copy command",
+      )}`,
+    { head: html`<h3>Connect your harness</h3>` },
+  );
+}
+
 function tokensView(ctx: Ctx): Html {
   const tokens = timePhase(ctx.request, "tokens", () => listTokens(ctx.app.db, ctx.auth.user!.id));
   const sessions = timePhase(ctx.request, "sessions", () =>
@@ -595,6 +622,7 @@ function tokensView(ctx: Ctx): Html {
       <span class="mono">Bearer</span> token for the API. Your account password
       works for git too — tokens are for scoped or automated access.
     </p>
+    ${connectCard(ctx, readFlash(ctx.request)?.code)}
     ${tokens.length === 0
       ? empty({
           icon: "key",
@@ -688,9 +716,10 @@ export function tokensPage(ctx: Ctx): Response {
 // POST /settings/tokens
 export async function tokenCreate(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return signInFirst(ctx);
-  // Minting a token must come from a browser session or the password — never
-  // from another token (no privilege bootstrapping).
-  if (ctx.auth.via !== "session" && ctx.auth.via !== "password") {
+  // Minting a token must come from the account itself — a browser session,
+  // the platform edge's sign-in, or the password — never from another token
+  // (no privilege bootstrapping). readForm below refuses a cross-site post.
+  if (!isAccountItself(ctx.auth)) {
     return new Response("forbidden", { status: 403 });
   }
   const form = await readForm(ctx, "admin");

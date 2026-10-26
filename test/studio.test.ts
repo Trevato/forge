@@ -34,7 +34,6 @@ import {
   createRun,
   finishRun,
   noteRunProgress,
-  type Run,
 } from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { CHECK_FAILED_LIMIT } from "../src/crew/dispatch.ts";
@@ -119,13 +118,14 @@ describe("the studio", () => {
     const scout = await createAgent(app, alice, { username: "scout" });
     if (!scout.ok) throw new Error(String(scout.error));
     repo = await makeApp("notes", "a place for notes");
-  });
+  }, 60_000);
 
   afterAll(async () => {
     servers.stop();
     app.close();
-    await rm(dataDir, { recursive: true, force: true });
-  });
+    // Git children may still be writing as the suite ends on a loaded machine.
+    await rm(dataDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  }, 60_000);
 
   test("there is one forge (#603): no mode toggle, no POST /mode, and a ?mode= address is the same page without it, the old cookie let go", async () => {
     const plainResponse = await fetch(`${base}/`, { headers: { cookie } });
@@ -270,6 +270,16 @@ describe("the studio", () => {
     const studio = await (await get("/alice/notes")).text();
     expect(studio).toMatch(/<div class="page-head">\s*<div class="stack stack-tight">\s*<h1 class="bar">/);
     expect(studio).toContain('class="card comment-form"');
+  });
+
+  test("the home and an app's page lay main and rail with .split's wide rail; no dash class is left (#4748)", async () => {
+    for (const path of ["/", "/alice/notes"]) {
+      const page = await (await get(path)).text();
+      expect(page).not.toMatch(/class="[^"]*\bdash(?:-main|-rail)?\b/);
+      expect(page).toContain('<div class="split" data-rail="wide">');
+    }
+    const css = await (await fetch(`${base}${stylesheetAsset().path}`)).text();
+    expect(css).not.toMatch(/\.dash\b/);
   });
 
   test("telling the crew opens an issue and hands it to a builder", async () => {

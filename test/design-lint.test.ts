@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { areaFiles, classesIn, compare, countFile, documentedClasses, locate, registeredClasses, scan, webCss } from "../scripts/design-lint.ts";
+import { readdirSync, readFileSync } from "node:fs";
+import { areaFiles, classesIn, compare, countFile, designText, documentedClasses, locate, registeredClasses, scan, sectionLinks, webCss } from "../scripts/design-lint.ts";
 
 /** A DESIGN.md in miniature: the §5 table, a §5d register, and a §6 that names a class too. */
 const DESIGN = [
@@ -25,7 +25,7 @@ const SLOW = 60_000;
 describe("design check: nothing added outside the system (#2678)", () => {
   test("the tree is no worse than its baseline", () => {
     const base = JSON.parse(readFileSync("docs/design/baseline.json", "utf8"));
-    expect(compare(base, treeNow(), readFileSync("docs/DESIGN.md", "utf8"), areaFiles("."))).toEqual([]);
+    expect(compare(base, treeNow(), designText("."), areaFiles("."))).toEqual([]);
   }, SLOW);
 
   test("counts colour literals and off-scale sizes, not on-scale ones", () => {
@@ -72,6 +72,35 @@ describe("design check: nothing added outside the system (#2678)", () => {
     expect(documentedClasses("## 4. Space\n`.a`")).toEqual([]);
   });
 
+  test("§5d's one-class-per-line sub-list reads as the same set as the inline run (#4888)", () => {
+    const inline = [
+      "## 5. The component vocabulary",
+      "### 5d. Page-local classes",
+      "- **`style/base.ts`** — the shell: `.bar` `.bare` `.foot`",
+      "  A `.field` inside a `.bar` drops its margin",
+      "- **`pages/x.ts`** — the x page. Classes: `.x-card` `.x-row`",
+      "## 6. Keyboard",
+    ].join("\n");
+    const listed = [
+      "## 5. The component vocabulary",
+      "### 5d. Page-local classes",
+      "- **`style/base.ts`** — the shell:",
+      "  - `.bar`",
+      "  - `.bare`",
+      "  - `.foot`",
+      "",
+      "  A `.field` inside a `.bar` drops its margin",
+      "- **`pages/x.ts`** — the x page. Classes:",
+      "  - `.x-card`",
+      "  - `.x-row`",
+      "## 6. Keyboard",
+    ].join("\n");
+    const fixed = ["bar", "bare", "field", "foot", "x-card", "x-row"];
+    expect(registeredClasses(inline)).toEqual(fixed);
+    expect(registeredClasses(listed)).toEqual(fixed);
+    expect(documentedClasses(listed)).toEqual(fixed);
+  });
+
   test("fails a pull that adds a colour, a size or a component", () => {
     const base = { files: { "src/web/x.ts": { colour: 1, size: 1 } } };
     const now = { ...base, classes: ["btn", "run-log", "x-card", "x-row", "x-wrapped"] };
@@ -87,11 +116,11 @@ describe("design check: nothing added outside the system (#2678)", () => {
   test("fails a register entry whose last rule is gone, so §5d only shrinks (#2700)", () => {
     const base = { files: {} };
     const problems = compare(base, { files: {}, classes: ["btn", "x-card", "x-wrapped"] }, DESIGN);
-    expect(problems).toEqual([".x-row: no stylesheet defines it any more — strike it from docs/DESIGN.md §5d"]);
+    expect(problems).toEqual([".x-row: no stylesheet defines it any more — strike it from §5d, docs/design/sections/5d-page-local-classes.md"]);
   });
 
   test("every class the stylesheets define is one DESIGN.md §5 names (#2700)", () => {
-    const named = new Set(documentedClasses(readFileSync("docs/DESIGN.md", "utf8"), areaFiles(".")));
+    const named = new Set(documentedClasses(designText("."), areaFiles(".")));
     expect(treeNow().classes.filter((k) => !named.has(k))).toEqual([]);
   }, SLOW);
 
@@ -137,3 +166,24 @@ describe("design check: nothing added outside the system (#2678)", () => {
 });
 
 const namedFromReadme = (text: string) => documentedClasses("## 5. x\n" + text);
+
+describe("docs/DESIGN.md", () => {
+  test("carries no merge conflict markers, in the spine or a section", () => {
+    expect(designText(".")).not.toMatch(/^(<<<<<<<|=======$|>>>>>>>)/m);
+  });
+
+  test("the spine links every section file once, and each link is a file (#5937)", () => {
+    const linked = sectionLinks(readFileSync("docs/DESIGN.md", "utf8"));
+    expect(new Set(linked).size).toBe(linked.length);
+    expect([...linked].sort()).toEqual(readdirSync("docs/design/sections").filter((n) => n.endsWith(".md")).sort());
+  });
+
+  test("reads the sections in the spine's order, so §5 runs from its file to §6's (#5937)", () => {
+    const text = designText(".");
+    const at = (h: string) => text.search(new RegExp(`^${h}`, "m"));
+    expect(at("## 5\\.")).toBeGreaterThan(at("## 4\\."));
+    expect(at("### 5d\\.")).toBeGreaterThan(at("## 5\\."));
+    expect(at("## 6\\.")).toBeGreaterThan(at("### 5d\\."));
+    expect(registeredClasses(text).length).toBeGreaterThan(0);
+  });
+});

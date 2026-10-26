@@ -28,11 +28,12 @@ import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../cor
 import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, notFoundPage, repoBase, repoPalette, repoHeader } from "../chrome.ts";
 import { FINISH_REFUSALS, finishConflicts } from "../../actions/finish-conflicts.ts";
+import { RESOLUTION_ASKED } from "../../actions/pull_ask_words.ts";
 import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
-import { btn, card, icon } from "../ui.ts";
+import { btn, card } from "../ui.ts";
 import { changeHead, changeTabs, pullContext } from "../studio/change.ts";
 
 /** More blocks or longer words than this are not a hand's work. */
@@ -78,7 +79,7 @@ export async function proposeSubmit(ctx: Ctx): Promise<Response> {
   const made = await proposeResolution(ctx.app, ctx.auth.user, repo, pull);
   if (!made.ok) return flashTo(ctx, dest, { tone: "danger", message: PROPOSE_WHY[made.error] });
   return flashTo(ctx, dest, {
-    message: "Asked: the crew is resolving it on the pull's own branch.",
+    message: RESOLUTION_ASKED,
   });
 }
 

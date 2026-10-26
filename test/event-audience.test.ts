@@ -187,8 +187,8 @@ describe("who an event is for", () => {
     });
     const read = (headers: Record<string, string>) =>
       fetch(`${base}/api/v1/repos/alice/open/events`, { headers })
-        .then((r) => r.json() as Promise<{ kind: string; payload: Record<string, unknown> }[]>)
-        .then((all) => all.find((e) => e.kind === "run.finished")!);
+        .then((r) => r.json() as Promise<{ items: { kind: string; payload: Record<string, unknown> }[] }>)
+        .then((all) => all.items.find((e) => e.kind === "run.finished")!);
     for (const headers of [{}, { authorization: `Bearer ${bobToken}` }]) {
       const seen = await read(headers);
       expect(seen.payload["runId"]).toBe("r1");
@@ -201,6 +201,87 @@ describe("who an event is for", () => {
     expect(owner.payload["turns"]).toBe(7);
     expect(owner.payload["placement"]).toBe("job");
     expect(owner.payload["node"]).toBe("vx-secret-node");
+  });
+
+  test("MCP `events` keeps the reader's view: no webhook URL or variable name for a reader, all for an admin", async () => {
+    const call = async (token: string, args: unknown) => {
+      const res = await fetch(`${base}/mcp`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "events", arguments: args },
+        }),
+      });
+      return ((await res.json()) as any).result as { isError?: boolean; content: { text: string }[] };
+    };
+    const reader = await call(bobToken, { repo: "alice/open" });
+    expect(reader.isError).not.toBe(true);
+    const text = reader.content[0]!.text;
+    expect(text).toContain('"push"');
+    expect(text).toContain("next_cursor");
+    expect(text).not.toContain("hooks.example.test");
+    expect(text).not.toContain("STRIPE_SECRET_KEY");
+    const admin = (await call(aliceToken, { repo: "alice/open" })).content[0]!.text;
+    expect(admin).toContain("webhook.created");
+    expect(admin).toContain("app.env_set");
+    expect((await call(bobToken, { repo: "alice/open", limit: 0 })).isError).toBe(true);
+    expect((await call(bobToken, { repo: "alice/open", limit: 201 })).isError).toBe(true);
+  });
+
+  test("the API pages events: limit cuts, next_cursor reaches the end, a bad limit is a 422", async () => {
+    const get = (qs: string) =>
+      fetch(`${base}/api/v1/repos/alice/open/events${qs}`, {
+        headers: { authorization: `Bearer ${aliceToken}` },
+      });
+    type Page = { items: { id: string }[]; next_cursor: string | null };
+    const everything = (await (await get("")).json()) as Page;
+    expect(everything.next_cursor).toBeNull();
+    expect(everything.items.length).toBeGreaterThan(3);
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    let pages = 0;
+    do {
+      const page = (await (await get(`?limit=2${cursor ? `&cursor=${cursor}` : ""}`)).json()) as Page;
+      expect(page.items.length).toBeLessThanOrEqual(2);
+      seen.push(...page.items.map((e) => e.id));
+      cursor = page.next_cursor;
+      pages++;
+    } while (cursor !== null && pages < 100);
+    expect(cursor).toBeNull();
+    expect(pages).toBeGreaterThan(1);
+    expect(seen).toEqual(everything.items.map((e) => e.id));
+    for (const bad of ["limit=0", "limit=201", "limit=abc", "limit=1.5", "cursor=a%20b"])
+      expect((await get(`?${bad}`)).status).toBe(422);
+  });
+
+  test("a reader's page of a mostly hidden outbox is bounded and paging reaches the same end", async () => {
+    for (let i = 0; i < 1100; i++)
+      app.bus.append({ kind: "webhook.deleted", repoId: repo.id, actorId: alice.id, payload: { n: i } });
+    app.bus.append({ kind: "push", repoId: repo.id, actorId: alice.id, payload: { late: true } });
+    type Page = { items: { id: string; kind: string }[]; next_cursor: string | null };
+    const get = (qs: string) => fetch(`${base}/api/v1/repos/alice/open/events${qs}`).then((r) => r.json() as Promise<Page>);
+    const first = await get("?limit=200");
+    // The newest are visible, but 1,100 hidden rows lie before the older ones: the scan stops.
+    expect(first.items.length).toBeLessThan(200);
+    expect(first.next_cursor).not.toBeNull();
+    const seen: string[] = [];
+    let page = first;
+    for (let i = 0; i < 50; i++) {
+      seen.push(...page.items.map((e) => e.id));
+      if (page.next_cursor === null) break;
+      page = await get(`?limit=200&cursor=${page.next_cursor}`);
+    }
+    expect(page.next_cursor).toBeNull();
+    const all = listEvents(app.db, { repoId: repo.id, limit: 100_000 }).filter(audienceFilter(app.db, undefined));
+    expect(seen).toEqual(all.map((e) => e.id));
+    expect(seen.length).toBeGreaterThan(0);
   });
 
   test("the activity rail on the front page says nothing of it to a visitor", async () => {

@@ -57,7 +57,7 @@ test("the branches list names session, git, render in order", async () => {
   const got = await phases("/api/v1/repos/alice/r/branches");
   expect(got.status).toBe(200);
   expect(got.names).toEqual(["session", "git", "render"]);
-  expect(Array.isArray(JSON.parse(got.body))).toBe(true);
+  expect(Array.isArray(JSON.parse(got.body).items)).toBe(true);
 });
 
 test("a missing repository is a 404 naming session", async () => {

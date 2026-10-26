@@ -24,7 +24,6 @@ import { mergePull, openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
 import { relationOf, takeUpdates } from "../src/actions/forks.ts";
 import {
-  convergeFork,
   convergeState,
   convergeTitle,
   followDivergence,
@@ -730,12 +729,14 @@ describe("a fork that follows its parent", () => {
       expect(page).toContain("fay/game-fay");
       expect(page).toMatch(
         new RegExp(
-          `aria-current="page"[\\s\\S]{0,2000}${here}[\\s\\S]{0,80}you are here`,
+          `aria-current="true"[\\s\\S]{0,2000}${here}[\\s\\S]{0,600}you are here`,
         ),
       );
-      const bobAt = page.indexOf('href="/bob/game"');
-      const nested = page.indexOf("lineage-children", bobAt);
-      const fayAt = page.indexOf('href="/fay/game-fay"');
+      expect(page).not.toMatch(/class="[^"]*\blineage(-children|-here)?\b/);
+      const family = page.indexOf("The family");
+      const bobAt = page.indexOf('href="/bob/game"', family);
+      const nested = page.indexOf("row-children", bobAt);
+      const fayAt = page.indexOf('href="/fay/game-fay"', family);
       expect(bobAt).toBeGreaterThan(-1);
       expect(nested).toBeGreaterThan(bobAt);
       expect(fayAt).toBeGreaterThan(nested);

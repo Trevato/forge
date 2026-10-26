@@ -41,7 +41,6 @@ import { adminCookie } from "./helpers/admin.ts";
 
 quietLogs();
 
-const words = (html: string): string => html.replace(/\s+/g, " ");
 
 // ============================================================================
 // Web
@@ -54,7 +53,6 @@ describe("surfaces adversarial: web", () => {
   let base = "";
   let alice = "";
   let alicePassword = "alice-adversarial-pass";
-  let hello: { id: string; ownerName: string; name: string };
 
   const web = (
     cookie: string,

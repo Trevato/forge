@@ -6,8 +6,14 @@
 export const passkeyJs = /* js */ `
 (function () {
   var doc = document;
-  // Controls marked passkey-on show only where a passkey can actually run.
+  // Controls marked data-passkey="on" show only where a passkey can actually run.
+  function each(sel, fn) { if (doc.querySelectorAll) Array.prototype.forEach.call(doc.querySelectorAll(sel), fn); }
   if (window.PublicKeyCredential && navigator.credentials) doc.documentElement.classList.add('passkey');
+  if (window.PublicKeyCredential && navigator.credentials) {
+    each('[data-passkey="on"]', function (el) { el.hidden = false; });
+    each('[data-passkey="off"]', function (el) { el.hidden = true; });
+    each('[data-passkey-state] .badge', function (el) { el.textContent = 'Passkey on'; el.setAttribute('data-variant', 'success'); });
+  }
   function bytes(s) {
     s = s.replace(/-/g, '+').replace(/_/g, '/');
     while (s.length % 4) s += '=';

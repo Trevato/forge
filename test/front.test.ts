@@ -427,10 +427,10 @@ describe("the front page", () => {
     forgetFrontScores(app);
     const body = await door();
     // The most-forked app is featured — a stranger's, ahead of the owner's.
-    const featured = body.slice(
-      body.indexOf('class="front-featured"'),
-      body.indexOf("</section>", body.indexOf('class="front-featured"')),
-    );
+    const start = body.indexOf('aria-label="Featured"');
+    expect(start).toBeGreaterThan(-1);
+    const next = body.indexOf('class="card', start);
+    const featured = body.slice(start, next === -1 ? undefined : next);
     expect(featured).toContain('href="/zed/loved"');
     expect(body).not.toContain('href="/owner/down"');
     expect(body).not.toContain('href="/owner/bare"');
@@ -444,7 +444,7 @@ describe("the front page", () => {
     // still links, the picture still links, and the words are there.
     for (const old of ["app-tile", "app-tile-body", "app-tile-desc", "app-tile-look", "app-tile-name"])
       expect(body).not.toContain(old);
-    const shelf = body.slice(body.indexOf('class="mt app-shelf"'));
+    const shelf = body.slice(body.indexOf(' data-shelf'));
     expect(shelf).toMatch(/<div\s+class="card"/);
     expect(shelf).toContain('<a class="look" href="/owner/one"');
     expect(shelf).toMatch(/<a href="\/owner\/one"><strong>one<\/strong><\/a>/);
@@ -569,7 +569,7 @@ describe("the front page", () => {
   });
 
   test("never a letter tile: a pin without a stranger's picture, or one that is down, waits; the sweep wakes a pinned app asleep to picture it", async () => {
-    const bare = await make(admin, "pinned-bare", { picture: false });
+    await make(admin, "pinned-bare", { picture: false });
     const down = await make(admin, "pinned-down");
     states.set(down.record.id, "failed");
     const sleepy = await make(admin, "pinned-sleepy", { picture: false });

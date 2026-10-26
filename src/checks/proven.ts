@@ -22,6 +22,8 @@ export interface KeyInputs {
   /** The fast tier's base tip and learned tests; absent for the others. */
   readonly base?: string | undefined;
   readonly learned?: string | undefined;
+  /** The Bun that runs the tests; the running one when not said. The lockfile is in the tree. */
+  readonly bun?: string | undefined;
 }
 
 /** The key two runs share exactly when nothing that could change the verdict differs. */
@@ -37,6 +39,7 @@ export function checkKey(x: KeyInputs): string {
       x.limits,
       x.base ?? "",
       x.learned ?? "",
+      x.bun ?? Bun.version,
     ]),
   );
 }

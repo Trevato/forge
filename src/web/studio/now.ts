@@ -30,9 +30,11 @@ import { changeHref, tellHref } from "./nouns.ts";
 import { LOG_TAIL_CAP, logBox } from "./log.ts";
 import { appPanels } from "./previews.ts";
 import { stopForm } from "./run.ts";
-import { tellWord } from "./tell.ts";
+import { tellWords } from "./tell.ts";
 import { voiceFor, type Actor } from "./voice.ts";
 import {
+  knowPulls,
+  knowRunPulls,
   pullWord,
   runWord,
   servingHistory,
@@ -151,6 +153,10 @@ export async function nowCard(
       (r, idx, all) => all.findIndex((x) => x.issueId === r.issueId) === idx,
     )
     .slice(0, 6);
+  // The words below ask per open change and per finished run; read them for
+  // all the rows at once, so the card is a handful of queries, not one apiece.
+  knowPulls(wordCtx, openPulls);
+  knowRunPulls(wordCtx, rowsNow);
   // Who signs a "Now" row is the one rule for it, `voiceFor`
   // (`studio/voice.ts`): a person is named to anyone who can see the row —
   // the same name `/pulls` and the pull request's own page give — and only the
@@ -228,6 +234,24 @@ export async function nowCard(
     ];
   });
 
+  const heldWords = await tellWords(wordCtx, repo, held, new Map());
+  const heldRows = held.map((i, n) => {
+    const { word, note } = heldWords[n] ?? { word: "told" as const, note: "held" };
+    const who = voiceFor(
+      { name: i.assigneeName ?? undefined, isAgent: false },
+      ownerFacts,
+      "someone",
+    );
+    return row({
+      href: tellHref(base, i.number),
+      nav: true,
+      lead: avatar(who),
+      title: i.title,
+      meta: html`${who} · ${note} · ${time(i.createdAt)}`,
+      trail: wordBadge(word),
+    });
+  });
+
   const nowRows: Html[] = [
     ...busyRows,
     ...(await Promise.all(
@@ -267,32 +291,7 @@ export async function nowCard(
     // note the issue's own page and the issues list already show for it.
     // `personHeld` has already established the holder is a person, so
     // `voiceFor` names them to every viewer who can see the row.
-    ...(await Promise.all(
-      held.map(async (i) => {
-        const { word, note } = (await tellWord(
-          wordCtx,
-          repo,
-          i,
-          undefined,
-        )) ?? {
-          word: "told" as const,
-          note: "held",
-        };
-        const who = voiceFor(
-          { name: i.assigneeName ?? undefined, isAgent: false },
-          ownerFacts,
-          "someone",
-        );
-        return row({
-          href: tellHref(base, i.number),
-          nav: true,
-          lead: avatar(who),
-          title: i.title,
-          meta: html`${who} · ${note} · ${time(i.createdAt)}`,
-          trail: wordBadge(word),
-        });
-      }),
-    )),
+    ...heldRows,
     ...stuck.map((i) => {
       return row({
         lead: avatar("crew"),

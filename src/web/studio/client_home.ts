@@ -7,7 +7,7 @@
  */
 
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
-import { clientAppRows, clientDoings, doingLine } from "../../core/client-apps.ts";
+import { clientAppRows, clientDoings, clientFinished, doingLine, finishedLine } from "../../core/client-apps.ts";
 import type { User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { mayDirectCrew } from "../../crew/direct.ts";
@@ -31,11 +31,15 @@ export async function clientApps(ctx: Ctx, user: User): Promise<Html> {
   const apps = await timePhaseAsync(ctx.request, "apps", () => clientAppRows(ctx.app, user));
   const now = new Date();
   const doings = timePhase(ctx.request, "doing", () =>
-    clientDoings(ctx.app.db, apps.map((a) => a.repo.id), now),
+    clientDoings(ctx.app.db, apps.map((a) => a.repo.id)),
+  );
+  const finished = timePhase(ctx.request, "finished", () =>
+    clientFinished(ctx.app.db, apps.map((a) => a.repo.id)),
   );
   const rendering = performance.now();
   const rows = apps.map(({ repo, working, queued, live }) => {
-    const doing = doingLine(doings.get(repo.id), now.getTime());
+    const doing = doingLine(doings.get(repo.id));
+    const done = finishedLine(finished.get(repo.id), now.getTime());
     const about = repo.description !== "" ? repo.description : "An app of yours.";
     // The tell form with this app chosen; it sends the person back to `/`.
     const ask = mayDirectCrew(ctx.app.db, repo, user)
@@ -57,6 +61,7 @@ export async function clientApps(ctx: Ctx, user: User): Promise<Html> {
       <span class="client-app-agents muted" data-agents="${working > 0 ? "working" : "waiting"}"
         >${agentsLine(working, queued)}</span
       >
+      ${done !== "" ? html`<span class="client-app-finished muted">${done}</span>` : ""}
       ${doing !== "" ? html`<span class="client-app-doing muted">${doing}</span>` : ""}
     </li>`;
   });

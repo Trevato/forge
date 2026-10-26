@@ -18,7 +18,7 @@ import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../cor
 import type { Ctx } from "../../http/context.ts";
 import type { Commit } from "../../view/source.ts";
 import { loadRepo, notFoundPage, scopeHeader } from "../chrome.ts";
-import { diffSyntax } from "../diff-syntax.ts";
+import { hunkSyntax } from "../diff-syntax.ts";
 import { renderDiff, type SyntaxMap } from "../diff-view.ts";
 import { html, when, type Html } from "../html.ts";
 import { page } from "../layout.ts";
@@ -269,11 +269,8 @@ export async function commitPage(ctx: Ctx): Promise<Response> {
   const diff = diffResult.ok
     ? diffResult.value
     : { files: [], additions: 0, deletions: 0 };
-  // Old side is the first parent (or the empty tree for a root commit, where
-  // every file is an addition and no old blob is read).
-  const parent = commit.parents[0] ?? commit.oid;
   const highlighting = performance.now();
-  const syntax = await diffSyntax(dir, diff, parent, commit.oid);
+  const syntax = hunkSyntax(diff);
   notePhase(ctx.request, "highlight", performance.now() - highlighting);
 
   const rendering = performance.now();

@@ -178,7 +178,9 @@ describe("limits", () => {
       });
     const listed = await api(adminToken, "GET", "/admin/limits");
     expect(listed.status).toBe(200);
-    expect(((await listed.json()) as { limits: unknown[] }).limits).toHaveLength(LIMIT_KEYS.length);
+    const body = (await listed.json()) as { items: unknown[]; next_cursor: unknown };
+    expect(body.items).toHaveLength(LIMIT_KEYS.length);
+    expect(body.next_cursor).toBeNull();
     expect((await api(bobToken, "GET", "/admin/limits")).status).toBe(403);
     expect((await api(bobToken, "PUT", "/admin/limits/share.daily_max", { value: "9" })).status).toBe(403);
     expect((await api(adminToken, "PUT", "/admin/limits/share.daily_max", { value: "0" })).status).toBe(422);
@@ -187,6 +189,11 @@ describe("limits", () => {
     const put = await api(adminToken, "PUT", "/admin/limits/share.daily_max", { value: "9" });
     expect(put.status).toBe(200);
     expect(limitValue(app.db, "share.daily_max")).toBe(9);
+    const afterPut = (await (await api(adminToken, "GET", "/admin/limits")).json()) as {
+      changes: { key: string }[];
+    };
+    expect(Array.isArray(afterPut.changes)).toBe(true);
+    expect(afterPut.changes[0]?.key).toBe("share.daily_max");
     expect((await api(adminToken, "PUT", "/admin/limits/share.daily_max", { value: 11 })).status).toBe(200);
     expect(limitValue(app.db, "share.daily_max")).toBe(11);
     expect((await api(adminToken, "PUT", "/admin/limits/share.daily_max", { value: null })).status).toBe(200);

@@ -150,10 +150,41 @@ function scoresFor(app: App, repoIds: readonly string[], now: number): Scores {
 /** Forget the remembered ranking: the picks changed. */
 export function forgetFrontScores(app: App): void {
   remembered.delete(app);
+  built.delete(app);
+}
+
+/** How long a built page is kept when nothing in the database changed: an app's state is not in it. */
+const PAGE_MS = 3_000;
+
+/**
+ * The built page, kept for `PAGE_MS` while the database is untouched: any
+ * write on this connection, or by another, changes the key, so a repository
+ * made private, a pick, a picture or a suspension shows on the next request.
+ */
+const built = new WeakMap<App, { key: string; at: number; page: FrontPage }>();
+
+function dbKey(app: App): string {
+  const row = app.db
+    .query<{ c: number; v: number }, []>(
+      "SELECT total_changes() AS c, (SELECT data_version FROM pragma_data_version) AS v",
+    )
+    .get();
+  return `${row?.c}:${row?.v}`;
 }
 
 /** The front page as a stranger is shown it. */
 export function frontPage(app: App, now = Date.now()): FrontPage {
+  const key = dbKey(app);
+  const kept = built.get(app);
+  const wall = performance.now();
+  if (kept !== undefined && kept.key === key && wall - kept.at < PAGE_MS)
+    return kept.page;
+  const page = buildFrontPage(app, now);
+  built.set(app, { key, at: wall, page });
+  return page;
+}
+
+function buildFrontPage(app: App, now: number): FrontPage {
   const db = app.db;
   const picks = frontPicks(db);
   const records = listPublicApps(db, READ);

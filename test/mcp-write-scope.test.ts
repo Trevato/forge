@@ -1,0 +1,151 @@
+/**
+ * Every MCP tool that writes, called with a read-only token, is refused
+ * before it writes; every tool that needs an admin token is refused to an
+ * `rw` one. The event log and every table's row count stay as they were.
+ */
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createApp, type App } from "../src/app.ts";
+import { createToken } from "../src/core/tokens.ts";
+import { createRepo } from "../src/actions/repos.ts";
+import { createUser } from "../src/core/users.ts";
+import { toolRegistry, toolNames } from "../src/http/mcp.ts";
+import { serve, type Servers } from "../src/http/server.ts";
+
+/** Tools this test cannot call as a write, by name, and why. */
+const SKIPPED: Record<string, string> = {};
+
+/** Valid arguments for each admin-scope tool: were its gate gone, the call would act. */
+const ADMIN_ARGS: Record<string, Record<string, unknown>> = {
+  repo_settings: { repo: "alice/game", visibility: "public" },
+  mirror_set: { action: "forget" },
+  org_teams: { org: "acme", action: "create", team: "core", permission: "read" },
+  agent: { action: "create", username: "robo", displayName: "Robo", model: "m", brief: "b" },
+  subscription_budget: { id: "u1", usd: 5 },
+  prompts: { repo: "alice/game", action: "remove", id: "p1" },
+  telemetry_grant: { agent: "robo", on: true },
+  hooks: { repo: "alice/game", action: "add", url: "https://example.com/h", secret: "0123456789abcdef0123" },
+};
+
+/** What `visible()` answers for a tool the token's scope does not open. */
+const notListed = (body: any): boolean =>
+  body.error?.code === -32602 && String(body.error.message).startsWith("no tool named");
+
+describe("a token that may only read cannot write through any tool", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let ro = "";
+  let rw = "";
+  let id = 1;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-mcp-scope-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    const made = await createUser(app.db, {
+      origin: "seed",
+      trusted: true,
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!made.ok) throw new Error(made.error);
+    const repo = await createRepo(app, made.value, { name: "game", visibility: "private" });
+    if (!repo.ok) throw new Error(String(repo.error));
+    ro = createToken(app.db, made.value.id, "ro", "ro").token;
+    rw = createToken(app.db, made.value.id, "rw", "rw").token;
+  }, 30_000);
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  const rpc = async (token: string, name: string, args: Record<string, unknown>) => {
+    const res = await fetch(`${servers.url}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: id++,
+        method: "tools/call",
+        params: { name, arguments: args },
+      }),
+    });
+    return (await res.json()) as any;
+  };
+
+  /** Minimal arguments that make the call a real write, not a plan or a list. */
+  const writing = (t: ReturnType<typeof toolRegistry>[number]) => {
+    if (t.name in ADMIN_ARGS) return ADMIN_ARGS[t.name]!;
+    const args: Record<string, unknown> = { dryRun: false, action: "x" };
+    if (t.readsWithout !== undefined) args[t.readsWithout] = "x";
+    return args;
+  };
+
+  const snapshot = () => {
+    const tables = app.db
+      .query<{ name: string }, []>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+      )
+      .all()
+      .map((r) => r.name);
+    return Object.fromEntries(
+      tables.map((n) => [
+        n,
+        app.db.query<{ c: number }, []>(`SELECT count(*) AS c FROM "${n}"`).get()!.c,
+      ]),
+    );
+  };
+
+  test("the list of skipped tools names only tools that exist", () => {
+    const names = new Set(toolNames());
+    for (const name of Object.keys(SKIPPED)) expect(names.has(name)).toBe(true);
+  });
+
+  test("each write is refused for a read-only token, and nothing changes", async () => {
+    const writes = toolRegistry().filter((t) => t.writes && !(t.name in SKIPPED));
+    expect(writes.length).toBeGreaterThan(50);
+    const before = snapshot();
+    const events = app.db.query("SELECT * FROM event ORDER BY rowid").all();
+    const unrefused: string[] = [];
+    for (const t of writes) {
+      const args = writing(t);
+      expect(t.plansOnly(args)).toBe(false);
+      const body = await rpc(ro, t.name, args);
+      const text: string | undefined = body.result?.content?.[0]?.text;
+      const refused = t.needsAdminScope
+        ? notListed(body)
+        : body.result?.isError === true && text === "forbidden: this token may read, not act";
+      if (!refused) unrefused.push(t.name);
+    }
+    expect(unrefused).toEqual([]);
+    expect(snapshot()).toEqual(before);
+    expect(app.db.query("SELECT * FROM event ORDER BY rowid").all()).toEqual(events);
+  }, 8_000);
+
+  test("each admin-scope tool is refused for an rw token, and nothing changes", async () => {
+    const admin = toolRegistry().filter((t) => t.needsAdminScope);
+    expect(admin.length).toBeGreaterThan(0);
+    // A new admin-scope tool must be given valid arguments here.
+    expect(admin.map((t) => t.name).sort()).toEqual(Object.keys(ADMIN_ARGS).sort());
+    const before = snapshot();
+    const events = app.db.query("SELECT * FROM event ORDER BY rowid").all();
+    const answered: string[] = [];
+    for (const t of admin) {
+      const body = await rpc(rw, t.name, writing(t));
+      if (!notListed(body)) answered.push(t.name);
+    }
+    expect(answered).toEqual([]);
+    expect(snapshot()).toEqual(before);
+    expect(app.db.query("SELECT * FROM event ORDER BY rowid").all()).toEqual(events);
+  }, 8_000);
+});

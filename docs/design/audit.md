@@ -33,7 +33,7 @@ their own vocabulary instead of composing the named one.
 
 ## Finding 2 — the pages, and what each is for
 
-There are 61 top-level pages, one entry each: every static `GET` route in `src/http/server.ts`
+There are 62 top-level pages, one entry each: every static `GET` route in `src/http/server.ts`
 that returns a page (`test/design-audit.test.ts` holds this list to the router,
 both ways). Each entry reads `route` — module · what it is for · what
 duplicates it · what breaks `docs/DESIGN.md`. "Breaks" counts colour literals
@@ -57,6 +57,7 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/boards/data` — `pages/boards.ts` · the boards' query/data surface · `/board` · none seen.
 - `/asks` — `studio/asks_page.ts` · what the crew is waiting on me for · `/` "needs me" list · colours 2.
 - `/asked` — `studio/asked_page.ts` · what I answered, as a record · `/asks` · none seen.
+- `/review` — `studio/review_page.ts` · every ask waiting on me, one row each, newest first · `/asks` (same asks, with buttons) · none seen.
 - `/flow` — `pages/flow.ts` · the pipeline from ready issue to live deploy, and the bottleneck · `/system`, `/board`, `/` · none seen. A topbar button points here.
 - `/map` — `pages/map.ts` (1,806 lines) · the dependency map of work across the forge · `/board`, issue dependency lists, `/:owner/:name/map` · colours 3, sizes 12: the largest private vocabulary.
 - `/audit` — `pages/audit.ts` · every app's contract, who can do what · the app page's one-line policy · none seen. Names the audit of apps, not this document.

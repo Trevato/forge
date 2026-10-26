@@ -437,7 +437,7 @@ describe("web pages end to end", () => {
     const path = match![1]!;
     expect(
       (await fetch(base, { headers: { cookie } })).headers.get("cache-control"),
-    ).toBe("no-cache");
+    ).toBe("private, no-cache");
 
     const response = await fetch(`${base}${path}`);
     expect(response.status).toBe(200);
@@ -519,6 +519,12 @@ describe("web pages end to end", () => {
     expect(repoPage).not.toContain("<script>alert"); // and defanged
     expect(repoPage).toContain("src"); // tree listing
     expect(repoPage).toContain("/ada/engine.git"); // clone url
+    // the address is a read-only input (selectable with no JS) beside a copy button
+    expect(repoPage).toMatch(
+      /<input[^>]*class="input[^"]*"[^>]*id="clone-https"[^>]*readonly[^>]*value="[^"]*\/ada\/engine\.git"/,
+    );
+    expect(repoPage).toContain('data-copy="clone-https"');
+    expect(repoPage).not.toContain('class="clone');
 
     const treePage = await (
       await fetch(`${base}/ada/engine/tree/main/src`)
@@ -604,6 +610,27 @@ describe("web pages end to end", () => {
     const apiBody = (await api.json()) as { error: string };
     expect(apiBody.error).toBe("no_route");
   });
+
+  test("a page's 404 is JSON for a caller whose Accept prefers JSON, HTML otherwise", async () => {
+    const agent = await fetch(`${base}/nope`, {
+      headers: { accept: "application/json" },
+    });
+    expect(agent.status).toBe(404);
+    expect(agent.headers.get("content-type")).toContain("application/json");
+    expect(agent.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(agent.headers.get("referrer-policy")).toBeTruthy();
+    expect(agent.headers.get("content-security-policy")).toBeTruthy();
+    const body = (await agent.json()) as { error: string; message: string; docs: string };
+    expect(body.error).toBe("not_found");
+    expect(body.message.length).toBeGreaterThan(0);
+    expect(body.docs).toBe(`${base}/llms.txt`);
+
+    for (const accept of ["text/html,application/xhtml+xml,*/*;q=0.8", "*/*", undefined]) {
+      const other = await fetch(`${base}/nope`, accept ? { headers: { accept } } : {});
+      expect(other.status).toBe(404);
+      expect(other.headers.get("content-type")).toContain("text/html");
+    }
+  });
 });
 
 describe("themes", () => {
@@ -649,6 +676,15 @@ describe("themes", () => {
     for (const name of THEME_NAMES) {
       expect(text).toContain(`value="${name}"`);
     }
+    // §5: each choice is a labelled radio, the button a plain btn; no bespoke classes.
+    const form = text.slice(text.indexOf('action="/theme"'));
+    const end = form.indexOf("</form>");
+    const panel = form.slice(0, end);
+    expect(panel.match(/<label class="check">/g)?.length).toBe(THEME_NAMES.length + 1);
+    expect(panel.match(/type="radio"/g)?.length).toBe(THEME_NAMES.length + 1);
+    expect(panel).toMatch(/<button\s+type="submit"[\s\S]*class="btn"[\s\S]*Apply/);
+    expect(text).not.toContain("theme-option");
+    expect(text).not.toContain("theme-apply");
     // Critical paint before the stylesheet: system pair (light default + dark
     // media), then a rule per theme so a toggle repaints without a reload.
     const boot = text.match(/<style nonce="[^"]+">([^<]*)<\/style>/)?.[1];

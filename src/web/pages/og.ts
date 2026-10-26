@@ -43,6 +43,7 @@ import { mayView, mayViewId, sealedScope } from "../../core/sealed.ts";
 import { isSafeName } from "../../git/guard.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFound } from "../../http/respond.ts";
+import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { auditInput, type AuditRow } from "../og/audit.ts";
 import { renderCard, signature, type CardInput } from "../og/card.ts";
 import { appImages, embedShots, pullImages } from "../og/looks.ts";
@@ -290,12 +291,16 @@ function mapCardInput(ctx: Ctx, ref: string): CardInput | undefined {
   const repo = twoPart(ctx, ref);
   if (!repo) return undefined;
   const db = ctx.app.db;
-  const graph = repoGraph(db, repo.id, sealedScope(db, repo, undefined));
-  // A run on a sealed report is not shown to who may not see the report.
-  const runs = listActiveRuns(db, [repo.id]).filter((r) =>
-    mayViewId(db, repo, r.issueId, undefined),
-  );
-  return mapInput(`${repo.ownerName}/${repo.name}`, graph, marksFor(db, repo.id, graph, runs));
+  const stretch = <T>(name: string, work: () => T): T => timePhase(ctx.request, name, work);
+  const graph = stretch("graph", () => repoGraph(db, repo.id, sealedScope(db, repo, undefined)));
+  const marks = stretch("marks", () => {
+    // A run on a sealed report is not shown to who may not see the report.
+    const runs = listActiveRuns(db, [repo.id]).filter((r) =>
+      mayViewId(db, repo, r.issueId, undefined),
+    );
+    return marksFor(db, repo.id, graph, runs);
+  });
+  return mapInput(`${repo.ownerName}/${repo.name}`, graph, marks, stretch);
 }
 
 /** The public apps, read the way the audit page reads them for someone signed out. */
@@ -409,7 +414,10 @@ function cacheFor(app: App): PngCache {
 
 export function ogCard(kind: OgKind, format: "svg" | "png" = "svg") {
   return async (ctx: Ctx): Promise<Response> => {
-    const input = await resolve(ctx, kind, ctx.params.ref ?? "");
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const input = await timePhaseAsync(ctx.request, "resolve", () =>
+      resolve(ctx, kind, ctx.params.ref ?? ""),
+    );
     if (!input) return notFound();
     const etag = `"${createHash("sha256").update(signature(input)).digest("hex")}${format === "png" ? "-png" : ""}"`;
     const headers = {
@@ -422,9 +430,16 @@ export function ogCard(kind: OgKind, format: "svg" | "png" = "svg") {
     };
     if (ctx.request.headers.get("if-none-match") === etag)
       return new Response(null, { status: 304, headers });
-    if (format === "svg") return new Response(renderCard(embedShots(input)), { headers });
+    if (format === "svg")
+      return new Response(
+        timePhase(ctx.request, "render", () => renderCard(embedShots(input))),
+        { headers },
+      );
     try {
-      return new Response(await cacheFor(ctx.app).get(embedShots(input)), { headers });
+      const png = await timePhaseAsync(ctx.request, "raster", () =>
+        cacheFor(ctx.app).get(embedShots(input)),
+      );
+      return new Response(png, { headers });
     } catch (error) {
       if (!(error instanceof Busy))
         ctx.app.log.error("og card could not be rasterized", { kind, error: String(error) });

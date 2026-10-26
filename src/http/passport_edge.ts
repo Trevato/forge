@@ -18,6 +18,7 @@ import { verify } from "../kernel/passport.ts";
 import type { Handler } from "./context.ts";
 import { apiError, json } from "./respond.ts";
 import type { Router } from "./router.ts";
+import { timePhase } from "../core/route_timing.ts";
 
 export const PASSPORT_AUDIENCE = "forge";
 export const HEALTH_SCOPE = "health:read";
@@ -25,15 +26,18 @@ export const HEALTH_SCOPE = "health:read";
 export function passportRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/passport/health", (ctx) => {
     const header = ctx.request.headers.get("authorization") ?? "";
-    const seen = header.startsWith("Passport ")
-      ? verify(ctx.app.config.dataDir, header.slice(9).trim(), {
-          audience: PASSPORT_AUDIENCE,
-          scope: HEALTH_SCOPE,
-          now: Date.now(),
-        })
-      : undefined;
+    const seen = timePhase(ctx.request, "session", () =>
+      header.startsWith("Passport ")
+        ? verify(ctx.app.config.dataDir, header.slice(9).trim(), {
+            audience: PASSPORT_AUDIENCE,
+            scope: HEALTH_SCOPE,
+            now: Date.now(),
+          })
+        : undefined,
+    );
     if (!seen?.ok)
       return apiError("unauthorized", 401, "a valid passport for this is needed");
-    return json(readHealth(ctx.app, undefined), 200, { "cache-control": "no-store" });
+    const health = timePhase(ctx.request, "read", () => readHealth(ctx.app, undefined));
+    return json(health, 200, { "cache-control": "no-store" });
   });
 }

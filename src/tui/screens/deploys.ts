@@ -5,9 +5,13 @@
  * a pull or an issue shows holds one. This is the list that does, read
  * through `listRepoRuns` (so it is gated like every other run read) and
  * joined to `deploy_pull` in one grouped read for `carries #3 #5`.
+ *
+ * Below the deploys, a signed-in viewer sees the app's open pulls, one line
+ * each: `#N title · check <word> · <preview address or none>`. A guest sees
+ * none.
  */
 
-import { appPace, appVisitors } from "../../actions/apps.ts";
+import { appPace, appPullLines, appVisitors, type AppPullLine } from "../../actions/apps.ts";
 import { trendLine, visitorsLine } from "../../apps/vitals.ts";
 import { listRepoRuns } from "../../actions/runs.ts";
 import { carriedByRuns, carriesText } from "../../core/carried.ts";
@@ -35,6 +39,12 @@ function readDeploys(f: Session, repo: Repo): Run[] {
   return listed.ok ? listed.value : [];
 }
 
+/** `#N title · check <word> · <preview address or none>` */
+function pullLine(p: AppPullLine): string {
+  const title = p.title.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, "").trim();
+  return `#${p.number} ${title} · check ${p.check} · ${p.preview ?? "none"}`;
+}
+
 export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   const list = new RunList(f);
   let carries = new Map<string, number[]>();
@@ -42,6 +52,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   let visitors = "";
   let trend = "";
   let pace = "";
+  let pulls: AppPullLine[] = [];
 
   const read = (): void => {
     const runs = readDeploys(f, repo);
@@ -54,6 +65,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     visitors = seen === undefined ? "" : visitorsLine(seen);
     trend = seen === undefined ? "" : trendLine(seen.loadDays);
     pace = appPace(f.app, f.user, repo);
+    pulls = appPullLines(f.app, f.user, repo);
     loaded = true;
     ctx.invalidate();
   };
@@ -65,12 +77,28 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     keys: [
       binding(["j", "k"], "move"),
       binding(["enter"], "open the log"),
-      binding(["r"], "refresh"),
+      binding(["r"], "refresh (the open pulls below the deploys: check, preview)"),
     ],
     load: async () => read(),
     render(area, s) {
       const c = ctx.theme.c;
-      const [head, body] = split(area, "v", [len(1 + (visitors === "" ? 0 : 1) + (trend === "" ? 0 : 1) + (pace === "" ? 0 : 1)), fill(1)]);
+      const [head, upper, tail] = split(area, "v", [
+        len(1 + (visitors === "" ? 0 : 1) + (trend === "" ? 0 : 1) + (pace === "" ? 0 : 1)),
+        fill(1),
+        len(pulls.length === 0 ? 0 : pulls.length + 1),
+      ]);
+      const body = upper;
+      pulls.forEach((p, i) =>
+        s.text(
+          tail!.x,
+          tail!.y + 1 + i,
+          truncate(pullLine(p), tail!.w),
+          style(c.mutedFg, c.bg),
+          tail!.x + tail!.w,
+        ),
+      );
+      if (pulls.length > 0)
+        s.text(tail!.x, tail!.y, truncate("Open pulls", tail!.w), style(c.mutedFg, c.bg), tail!.x + tail!.w);
       s.text(
         head!.x,
         head!.y,

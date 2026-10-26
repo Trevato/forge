@@ -6,6 +6,7 @@
 
 import { resolveOpen } from "../core/decisions.ts";
 import type { App } from "../app.ts";
+import { landVision } from "../crew/vision.ts";
 import { isCrew } from "../core/agents.ts";
 import {
   getIssueById,
@@ -33,7 +34,7 @@ import {
 } from "../core/pulls.ts";
 import { isStructural, pillarsOf } from "../core/pillars.ts";
 import type { Repo } from "../core/repos.ts";
-import { canRead, getRepoById } from "../core/repos.ts";
+import { canRead } from "../core/repos.ts";
 import { sealedByNumber } from "../core/sealed.ts";
 import {
   addReviewComment,
@@ -60,7 +61,6 @@ import { grantRun } from "../core/run_grant.ts";
 import { commitIdentity } from "../core/commit_identity.ts";
 import { getUserById, getUserByName, type User } from "../core/users.ts";
 import type { MergeStrategy } from "../git/merge.ts";
-import { fetchInto, resolveOid, writeRef } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { importIssue, importReviewStates } from "../origins/import.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -436,6 +436,8 @@ export async function mergePull(
       mergeOid: merged.value.mergeOid,
     },
   });
+  // A vision pull, landed by an admin, rewrites the direction's fenced block.
+  await landVision(app, writer.value, repo, pull);
   // What the pull said it closes, closes: the issue is done when the change
   // lands, as the person who landed it — which is what frees the map. Not
   // the plan's own issues: no change finishes an umbrella or opens the

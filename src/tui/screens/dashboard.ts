@@ -20,7 +20,7 @@ import { forgeLane, forgeNeeds } from "../../actions/health.ts";
 import { ownerWaits, waitLine, withMore } from "../../actions/owner_waits.ts";
 import { forgeHealth } from "../../kernel/guard.ts";
 import { coveredByVerdict, forgeVerdict, verdictLine } from "../../kernel/guard_verdict.ts";
-import { clientAppRows, clientDoings, doingLine } from "../../core/client-apps.ts";
+import { clientAppRows, clientDoings, clientFinished, doingLine, finishedLine } from "../../core/client-apps.ts";
 import { nextStepsFor } from "../../core/next-steps.ts";
 import { agentsLine } from "../../web/studio/client_home.ts";
 import { askForSomething } from "./tell.ts";
@@ -88,6 +88,7 @@ import {
   plural,
   linkScreen,
 } from "./common.ts";
+import { readVitals, vitalsLine } from "../../flow/vitals.ts";
 import { readKpis } from "../../flow/kpis.ts";
 import { kpiLines } from "../../flow/kpi_words.ts";
 import { BOOTED } from "../../release/gate.ts";
@@ -97,6 +98,7 @@ import { issueScreen } from "./issue.ts";
 import { listPinned } from "../../actions/board-pins.ts";
 import { migrateScreen } from "./migrate.ts";
 import { newRepoScreen } from "./newrepo.ts";
+import { forgeCeiling } from "../../flow/ceiling.ts";
 import { pullScreen } from "./pull.ts";
 import { repoScreen } from "./repo.ts";
 import { local } from "./where.ts";
@@ -107,7 +109,7 @@ const FIGURES_ROOM = 6;
 
 /** The forge-wide daily ceiling, from config, for the spend figure; the data directory, for the backup's age. */
 export const kpiForge = (app: { config: { crewCeilingUsd?: number; dataDir: string } }) => ({
-  ceilingUsd: app.config.crewCeilingUsd ?? null,
+  ceilingUsd: forgeCeiling(app.config),
   dataDir: app.config.dataDir,
 });
 
@@ -199,12 +201,19 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     clientRepoIds = new Set(apps.map((a) => a.repo.id));
     clientLive = new Map(apps.flatMap((a) => (a.live === undefined ? [] : [[a.repo.id, a.live] as const])));
     const now = new Date();
-    const doings = clientDoings(f.app.db, apps.map((a) => a.repo.id), now);
+    const ids = apps.map((a) => a.repo.id);
+    const doings = clientDoings(f.app.db, ids);
+    const finished = clientFinished(f.app.db, ids);
     clientLines =
       apps.length === 0
         ? ["Your apps will appear here."]
         : apps.map((a) => {
-            const doing = doingLine(doings.get(a.repo.id), now.getTime());
+            const doing = [
+              finishedLine(finished.get(a.repo.id), now.getTime()),
+              doingLine(doings.get(a.repo.id)),
+            ]
+              .filter((x) => x !== "")
+              .join(" ");
             const mark = a.live === undefined ? "" : " (running, o opens it)";
             const line = `${a.repo.name}${mark}: ${agentsLine(a.working, a.queued)}`;
             return doing === "" ? line : `${line} ${doing}`;
@@ -257,7 +266,10 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     figures =
       f.user?.isAdmin !== true
         ? []
-        : kpiLines(readKpis(f.db, now, kpiForge(f.app)), commit === null ? null : { sha: commit, since: ago(BOOTED) });
+        : [
+            ...kpiLines(readKpis(f.db, now, kpiForge(f.app)), commit === null ? null : { sha: commit, since: ago(BOOTED) }),
+            vitalsLine(readVitals(f.db, now)),
+          ];
     // "Yours" is ownership plus the orgs you are on a team of; typing in the
     // filter reaches every repository you can see.
     const orgs = f.user

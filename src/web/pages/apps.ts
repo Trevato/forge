@@ -14,6 +14,7 @@
 
 import { storageLimitMessage } from "../../core/storage.ts";
 import { repositoryLimitMessage } from "../../actions/repos.ts";
+import { REPO_INIT_FAILED, REPO_NAME_RULES } from "../../actions/repo_words.ts";
 import { appLimitWords } from "../../actions/app_limit.ts";
 import { getUserByName } from "../../core/users.ts";
 import {
@@ -74,7 +75,6 @@ import {
   icon,
   listCard,
   previewDataNote,
-  row,
   seg,
   selectField,
   sha,
@@ -434,8 +434,8 @@ const MAX_NAME_ATTEMPTS = 30;
 
 const NEW_APP_ERRORS: Record<string, string> = {
   name_taken: "That owner already has a repository by that name.",
-  invalid_name: "Names start with a letter or digit; no spaces, no .git.",
-  git_init_failed: "The repository could not be initialised on disk.",
+  invalid_name: REPO_NAME_RULES,
+  git_init_failed: REPO_INIT_FAILED,
   invalid_slug:
     "That name makes no usable hostname — start it with a letter or digit.",
   slug_taken:
@@ -794,6 +794,7 @@ export async function appRedeploy(ctx: Ctx): Promise<Response> {
   // there (`envBack`); the run itself is one link away on that card.
   return redirect(envBack(ctx, repo), {
     url: ctx.url,
+    forgeUrl: ctx.app.config.url,
     flash: {
       message:
         run === undefined

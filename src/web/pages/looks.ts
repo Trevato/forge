@@ -31,6 +31,7 @@ import { canEnterApp, canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFound } from "../../http/respond.ts";
 import { keepLook } from "../../looks/service.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { loadRepo, repoBase } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import { card, disclosure, icon, sha, time } from "../ui.ts";
@@ -65,21 +66,27 @@ export function thumbLook(
 // really a slot (`lookSlot`): the kind alone for the home page, the page
 // and the kind for any other.
 export function lookImage(ctx: Ctx): Response {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const repo = loadRepo(ctx);
   const env = ctx.params.env ?? "";
   const commit = ctx.params.commit ?? "";
   const slot = ctx.params.kind ?? "";
   if (!repo || !isEnvName(env) || !/^[0-9a-f]{40}$/.test(commit) || slot === "")
     return notFound();
-  const record = getAppByRepo(ctx.app.db, repo.id);
-  if (!record) return notFound();
-  const look = looksForEnv(ctx.app.db, record.id, env, "any").find(
-    (l) => l.commitOid === commit && lookSlot(l.page, l.kind, l.theme) === slot,
-  );
-  if (look === undefined || look.error !== null) return notFound();
-  if (!mayFetchLook(ctx, repo, record, look)) return notFound();
+  const found = timePhase(ctx.request, "look", () => {
+    const record = getAppByRepo(ctx.app.db, repo.id);
+    if (!record) return undefined;
+    const look = looksForEnv(ctx.app.db, record.id, env, "any").find(
+      (l) => l.commitOid === commit && lookSlot(l.page, l.kind, l.theme) === slot,
+    );
+    if (look === undefined || look.error !== null) return undefined;
+    if (!mayFetchLook(ctx, repo, record, look)) return undefined;
+    return look;
+  });
+  if (found === undefined) return notFound();
+  const look = found;
   const path = join(ctx.app.config.dataDir, look.path);
-  if (!existsSync(path)) return notFound();
+  if (!timePhase(ctx.request, "read", () => existsSync(path))) return notFound();
   const headers = {
     "content-type": path.endsWith(".jpg") ? "image/jpeg" : "image/png",
     // Named by this taking (`lookVersion`), so a retake at the same commit
@@ -367,9 +374,16 @@ export function lookNow(ctx: Ctx, repo: Repo, record: AppRecord): Html {
   </a>`;
 }
 
-/** A small picture as a thumbnail that opens the pull. */
-export function lookThumb(href: string, src: string): Html {
-  return html`<a class="look" data-slot="thumb" href="${href}"
+/** A small picture as a thumbnail that opens the pull; `label` names the link for a screen reader. */
+export function lookThumb(href: string, src: string, label?: string): Html {
+  return html`<a class="look" data-slot="thumb" href="${href}" ${label === undefined ? html`` : html`aria-label="${label}"`}
     ><img src="${src}" width="30" height="40" alt="" loading="lazy"
   /></a>`;
+}
+
+/** A small picture that is only a picture: named, not a link. */
+export function lookThumbPlain(src: string, label: string): Html {
+  return html`<span class="look" data-slot="thumb"
+    ><img src="${src}" width="30" height="40" alt="${label}" loading="lazy"
+  /></span>`;
 }

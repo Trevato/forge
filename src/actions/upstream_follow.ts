@@ -18,6 +18,7 @@
  * repository at a time, whoever asks.
  */
 
+import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import { getIssueById, setAssignee, updateIssueText } from "../core/issues.ts";
 import { listCrewRoles } from "../core/agents.ts";
@@ -34,6 +35,7 @@ import {
   noteCheck,
   putFollow,
   upstreamUrl,
+  type FollowCheck,
   type UpstreamFollow,
 } from "../core/upstream_follow.ts";
 import { getUserById, type User } from "../core/users.ts";
@@ -302,7 +304,7 @@ async function checkOnce(app: App, repo: Repo): Promise<Result<Checked, CheckErr
   const merged = await mergeable(dir, main, staged);
   if (!merged.ok) {
     if (merged.error.kind !== "conflict") return failed("git");
-    noteCheck(app.db, repo.id, { at, tip: staged, behind, error: "conflict" });
+    noteCheck(app.db, repo.id, { at, tip: staged, behind, error: "conflict", files: merged.error.files.length });
     convergeConflict(app, repo, by, follow, staged, merged.error.files);
     return ok({ tip: staged, behind, outcome: "conflict" });
   }
@@ -425,6 +427,31 @@ export function followJson(f: UpstreamFollow): Record<string, unknown> {
   };
 }
 
+/**
+ * What a repository's stored follow check says, for the repository read
+ * (API and MCP alike): the upstream, how far behind, when last checked, and
+ * whether the last check found a conflict. Null for one that follows nothing,
+ * and for anyone who may not administer it: the follow is an admin's to see.
+ */
+export function upstreamFacts(db: Database, repo: Repo, user: User | undefined): UpstreamFacts | null {
+  if (!canAdmin(db, repo, user)) return null;
+  const f = getFollow(db, repo.id);
+  if (f === undefined || !f.enabled) return null;
+  return {
+    repo: upstreamLabel(f.url),
+    behind: f.behind,
+    checkedAt: f.checkedAt,
+    conflict: f.error === "conflict",
+  };
+}
+
+export interface UpstreamFacts {
+  readonly repo: string;
+  readonly behind: number;
+  readonly checkedAt: string | null;
+  readonly conflict: boolean;
+}
+
 /** `host/path` of an upstream, for a line of prose. */
 export function upstreamLabel(url: string): string {
   try {
@@ -433,6 +460,32 @@ export function upstreamLabel(url: string): string {
   } catch {
     return url;
   }
+}
+
+/** `owner/name` of an upstream address, else its host and path. */
+export function upstreamShort(url: string): string {
+  try {
+    const path = new URL(url).pathname.replace(/\.git$/, "").replace(/^\/|\/$/g, "");
+    return path.split("/").length === 2 ? path : upstreamLabel(url);
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * What the last stored check found, in a few words, for the home's line and
+ * the terminal: "12 commits behind a/b", or a conflict that says what to do.
+ * null when level, unchecked, failed for another reason, or not following.
+ */
+export function behindWords(follow: UpstreamFollow): { text: string; conflict: boolean } | null {
+  if (!follow.enabled || follow.checkedAt === null) return null;
+  const name = upstreamShort(follow.url);
+  if (follow.error === "conflict") return { text: `conflicts with ${name}: resolve`, conflict: true };
+  if (follow.error !== "" || follow.behind === 0) return null;
+  return {
+    text: `${follow.behind} commit${follow.behind === 1 ? "" : "s"} behind ${name}`,
+    conflict: false,
+  };
 }
 
 /** HH:MM, UTC. */
@@ -447,6 +500,19 @@ export function standing(f: UpstreamFollow): string {
   if (f.error !== "") return f.error === "conflict" ? `${f.behind} behind, conflicts` : "last check failed";
   if (f.checkedAt === null) return "not checked yet";
   return f.behind === 0 ? "up to date" : `${f.behind} behind`;
+}
+
+/** One line of the record: `2 h ago · 3 behind · merged`. */
+export function checkLine(c: FollowCheck, ago: string): string {
+  const what =
+    c.outcome === "conflict"
+      ? `conflict in ${c.detail} file${c.detail === "1" ? "" : "s"}`
+      : c.outcome === "error"
+        ? `error: ${c.detail}`
+        : c.outcome === "uptodate"
+          ? "up to date"
+          : "merged";
+  return `${ago} · ${c.behind} behind · ${what}`;
 }
 
 /** What "Check upstream now" found, in a sentence. */

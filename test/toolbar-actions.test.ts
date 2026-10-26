@@ -88,10 +88,12 @@ describe("toolbar actions", () => {
 
   test("the bar links to the forge page and never posts or reads the app", () => {
     expect(toolbarJs).toContain('"/toolbar"');
-    // Its one request is the crew line (#2233): a GET of the app's own origin.
-    expect(toolbarJs.match(/fetch\(/g)?.length).toBe(1);
+    // Its requests are all to the app's own origin: the crew line (#2233) and,
+    // for the feedback door (#4758), the sender's notes and their status.
+    expect(toolbarJs.match(/fetch\(/g)?.length).toBe(2);
     expect(toolbarJs).toContain('fetch("/__forge/crew"');
-    expect(toolbarJs).not.toMatch(/method:|FormData|\.send\(/);
+    expect(toolbarJs).toContain('call("/__forge/note"');
+    expect(toolbarJs).not.toMatch(/FormData|\.send\(/);
     expect(toolbarJs).not.toContain("XMLHttpRequest");
     expect(toolbarJs).not.toContain("document.cookie");
     expect(toolbarTag("https://forge.test", { app: "notes", repo: "alice/notes", env: "production" })).toContain(

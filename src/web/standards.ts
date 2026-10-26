@@ -3,6 +3,9 @@
  * by default so a forge is a good citizen the moment it boots:
  *
  *   /.well-known/security.txt     who to tell about a vulnerability (RFC 9116)
+ *   /.well-known/mcp.json         the MCP server card: endpoint, sign-in, the
+ *                                 tool that needs no token (a draft format:
+ *                                 only fields we keep true)
  *   /.well-known/change-password  where a password manager sends someone
  *   /robots.txt                   what a crawler may index, and the sitemap
  *   /sitemap.xml                  every public repository
@@ -24,11 +27,15 @@ import releases from "../core/releases.json" with { type: "json" };
 import { markPng, type MarkShape } from "../design/mark.ts";
 import { metaThemeColor } from "../design/themes.ts";
 import { BODY_MAX, TITLE_MAX } from "../core/reports.ts";
+import { sshTellCommand } from "../ssh/command.ts";
 import { llmsRepos, sitemapRepos } from "../core/listings.ts";
 import { canRead, getRepo } from "../core/repos.ts";
-import type { App } from "../app.ts";
 import type { Ctx } from "../http/context.ts";
 import { notFound } from "../http/respond.ts";
+import { SITE_LINE } from "./site_line.ts";
+import { mcpCard, mcpPointers } from "../core/mcp_card.ts";
+import { running } from "../kernel/version.ts";
+import { timePhase } from "../core/route_timing.ts";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -84,6 +91,13 @@ export function securityTxt(ctx: Ctx): Response {
       "",
     ].join("\n"),
   );
+}
+
+/** GET /.well-known/mcp.json — the MCP server card (a draft format; see docs/MCP.md). */
+export function mcpJson(ctx: Ctx): Response {
+  const res = text(JSON.stringify(mcpCard(ctx.url.origin), null, 2), "application/json");
+  res.headers.set("access-control-allow-origin", "*");
+  return res;
 }
 
 /** GET /.well-known/change-password — where a password manager sends a person. */
@@ -162,22 +176,45 @@ function xml(s: string): string {
   );
 }
 
+/** The sitemap and its ETag per origin, valid while the listing read is the same one. */
+const sitemapBodies = new Map<string, { rows: unknown; body: string; etag: string }>();
+
 /** GET /sitemap.xml — the front page and every public repository. */
 export function sitemapXml(ctx: Ctx): Response {
-  // Kept without an origin, and the origin is put on per answer, so a
-  // caller who varies `Host` cannot make the forge read the rows again.
-  const paths = sitemapRepos(ctx.app.db).map((r) => xml(`/${r}`));
-  // Escaping is per character, so the escaped origin and the escaped path
-  // join into the escaped URL.
-  const origin = xml(ctx.url.origin);
-  const urls = [
-    `<url><loc>${origin}/</loc></url>`,
-    ...paths.map((path) => `<url><loc>${origin}${path}</loc></url>`),
-  ];
-  return text(
-    `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join("\n")}\n</urlset>\n`,
-    "application/xml; charset=utf-8",
-  );
+  // The rows are kept without an origin, and the origin is put on per answer,
+  // so a caller who varies `Host` cannot make the forge read the rows again.
+  const repos = timePhase(ctx.request, "repos", () => sitemapRepos(ctx.app.db));
+  const origin = ctx.url.origin;
+  let kept = sitemapBodies.get(origin);
+  if (kept === undefined || kept.rows !== repos) {
+    // Escaping is per character, so the escaped origin and the escaped path
+    // join into the escaped URL.
+    const body = timePhase(ctx.request, "render", () => {
+      const o = xml(origin);
+      const urls = [
+        `<url><loc>${o}/</loc></url>`,
+        `<url><loc>${o}/explore</loc></url>`,
+        ...repos.map((r) => {
+          const mod = r.pushedAt === null ? "" : `<lastmod>${r.pushedAt.slice(0, 10)}</lastmod>`;
+          return `<url><loc>${o}${xml(`/${r.path}`)}</loc>${mod}</url>`;
+        }),
+      ];
+      return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join("\n")}\n</urlset>\n`;
+    });
+    const etag = timePhase(ctx.request, "etag", () => `"${new Bun.CryptoHasher("sha256").update(body).digest("hex").slice(0, 32)}"`);
+    kept = { rows: repos, body, etag };
+    // Origins come from the Host header: keep a handful, not one per guess.
+    if (sitemapBodies.size >= 16) sitemapBodies.clear();
+    sitemapBodies.set(origin, kept);
+  }
+  const cache = "public, max-age=300";
+  const sent = ctx.request.headers.get("if-none-match");
+  if (sent !== null && sent.split(",").some((t) => t.trim() === kept.etag))
+    return new Response(null, { status: 304, headers: { etag: kept.etag, "cache-control": cache } });
+  const res = text(kept.body, "application/xml; charset=utf-8");
+  res.headers.set("etag", kept.etag);
+  res.headers.set("cache-control", cache);
+  return res;
 }
 
 /** GET /manifest.webmanifest — the forge as an app on a home screen. */
@@ -188,7 +225,7 @@ export function webManifest(ctx: Ctx): Response {
       {
         name,
         short_name: name,
-        description: "Your code, your machine.",
+        description: SITE_LINE,
         start_url: "/",
         scope: "/",
         id: "/",
@@ -249,6 +286,14 @@ export function iconPng(ctx: Ctx): Response {
   });
 }
 
+/** `Running 0.7.51 at a1b2c3d`: which build these instructions describe. */
+function runningSentence(): string {
+  const r = running();
+  return r.commit === null
+    ? `Running ${r.version}`
+    : `Running ${r.version} at ${r.commit.slice(0, 7)}`;
+}
+
 /**
  * GET /llms.txt — the forge as an agent should meet it (llmstxt.org): what
  * this is, how to report a problem with no account, how to offer a change,
@@ -257,10 +302,14 @@ export function iconPng(ctx: Ctx): Response {
  */
 export function llmsTxt(ctx: Ctx): Response {
   const o = ctx.url.origin;
-  const repos = llmsRepos(ctx.app.db);
-  return text(
+  const mcp = mcpPointers(o);
+  const tell = sshTellCommand(ctx.app);
+  const repos = timePhase(ctx.request, "repos", () => llmsRepos(ctx.app.db));
+  return timePhase(ctx.request, "render", () => text(
     [
       `# forge at ${ctx.url.host}`,
+      "",
+      runningSentence(),
       "",
       "> Git repositories, their issues and pulls, and the apps they run. Anyone may read a public repository, and report a problem in it without an account.",
       "",
@@ -275,10 +324,24 @@ export function llmsTxt(ctx: Ctx): Response {
       "",
       `- Needs an account. Fork: POST ${o}/api/v1/repos/{owner}/{name}/forks; push a branch to your fork over git; then POST ${o}/api/v1/repos/{owner}/{name}/pulls with {"title", "body", "base", "head", "headRepo": "you/name"}.`,
       "",
+      "## Use it from your harness",
+      "",
+      `- MCP endpoint: ${mcp.url} (streamable HTTP; OAuth metadata at ${mcp.oauth}). Or send a token as Authorization: Bearer.`,
+      "- Claude Code plugin: `claude --plugin-dir plugins/claude-code` in a clone of this forge's repository (set FORGE_URL and FORGE_TOKEN).",
+      "- OpenCode plugin: copy plugins/opencode/forge.ts into .opencode/plugin/ (set FORGE_URL and FORGE_TOKEN).",
+      "",
       "## What you can do on any page",
       "",
       `- GET ${o}/api/v1/here?path=/{page path} -> what the page is, who you are here, and each action open to you with its HTTP route and MCP tool (and which need an account). Every page links to it: rel="alternate" type="application/json". MCP: the tool "here" with the page URL.`,
       "",
+      ...(tell === undefined
+        ? []
+        : [
+            "## Tell the crew from a shell",
+            "",
+            `- With an account and an SSH key added under Settings -> Keys: \`${tell}\` tells the crew in one line and prints where it went.`,
+            "",
+          ]),
       "## Find things (no account)",
       "",
       `- Explore repositories: GET ${o}/api/v1/explore?q=kind:app+sort:forks+garden. MCP: the tool "explore" with {"q"}. In q, kind: is app, person or forge; sort: is score, forks, ships, use, fresh or name; any other word is free text matched against name, owner and description.`,
@@ -287,7 +350,7 @@ export function llmsTxt(ctx: Ctx): Response {
       "",
       "## For agents with an account",
       "",
-      `- MCP: ${o}/mcp (OAuth discovery: ${o}/.well-known/oauth-protected-resource)`,
+      `- MCP: ${mcp.url} (OAuth discovery: ${mcp.oauth}; server card, a draft format: ${o}/.well-known/mcp.json)`,
       `- API: ${o}/api/v1, Authorization: Bearer <token>`,
       `- OpenAPI: GET ${o}/api/v1/openapi.json (redirects to ${o}/contract/openapi.json)`,
       "",
@@ -302,7 +365,7 @@ export function llmsTxt(ctx: Ctx): Response {
       "",
     ].join("\n"),
     "text/markdown; charset=utf-8",
-  );
+  ));
 }
 
 export interface PageLink {

@@ -76,9 +76,10 @@ const plans = new ViewCache({ maxEntries: 64 });
 let planBuilds = 0;
 
 /**
- * The milestones page's plan: `build()` once per write stamp (the forge's
- * write clock, which also moves for runs, their cost and limb places, none
- * of which write an event), spend visibility and UTC day, for at most a lane's lifetime. The plan holds no
+ * The milestones page's plan: `build()` once per plan stamp (`planStamp`:
+ * what the plan reads of this repository, so a write elsewhere on the forge
+ * leaves it warm), spend visibility and UTC day, for at most a lane's
+ * lifetime. The plan holds no
  * viewer: who may read the repository and the seats are the caller's, every
  * request.
  */

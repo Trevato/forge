@@ -20,6 +20,7 @@ import { createUser, type User } from "../src/core/users.ts";
 import { forgetListings, listingBuilds } from "../src/core/listings.ts";
 import { createOrg, retireOrg } from "../src/core/orgs.ts";
 import { getRepo, moveArchived } from "../src/core/repos.ts";
+import { SITE_LINE } from "../src/web/site_line.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
 describe("what the open web expects", () => {
@@ -52,7 +53,9 @@ describe("what the open web expects", () => {
       visibility: "private",
     });
     if (!priv.ok) throw new Error(String(priv.error));
-  });
+    // Password hashing and two repo creations are the setup's cost: a loaded
+    // check machine gets the same generous bound as the tests (#6025).
+  }, 60_000);
 
   afterAll(async () => {
     servers.stop();
@@ -99,11 +102,17 @@ describe("what the open web expects", () => {
     // A child reads the newest MAX_RELEASES; the record itself keeps every release,
     // and every entry, past those too, is in the child's shape.
     expect(read!.length).toBe(Math.min(doc.releases.length, MAX_RELEASES));
-    const rest = doc.releases.slice(MAX_RELEASES);
-    expect(parseReleases({ releases: rest }, true)!.length).toBe(rest.length);
+    // Read past the newest in pages, as a child would: one page holds at most
+    // MAX_RELEASES, and the record outgrows two pages as releases ship.
+    for (let at = MAX_RELEASES; at < doc.releases.length; at += MAX_RELEASES) {
+      const page = doc.releases.slice(at, at + MAX_RELEASES);
+      expect(parseReleases({ releases: page }, true)!.length).toBe(page.length);
+    }
     expect(read![0]!.name).toBe(releasesFile.releases[0]!.version);
     expect(read![0]!.url).toStartWith(`${base}/releases.json#`);
-  });
+    // The verdict is the document's shape, not the machine's speed: a loaded
+    // check machine gets a generous bound rather than a red lane (#5966).
+  }, 30_000);
 
   test("releases.json carries a strong ETag, and a matching If-None-Match is a 304 with no body", async () => {
     const res = await fetch(`${base}/releases.json`);
@@ -142,6 +151,17 @@ describe("what the open web expects", () => {
     expect(body).not.toContain("alice/closed");
   });
 
+  test("llms.txt says how to use the forge from a harness, with the endpoint built from the URL", async () => {
+    const body = await fetch(`${base}/llms.txt`).then((r) => r.text());
+    const section = body.slice(body.indexOf("## Use it from your harness"));
+    expect(body.indexOf("## Offer a change")).toBeLessThan(body.indexOf("## Use it from your harness"));
+    expect(section).toContain(`${base}/mcp`);
+    expect(section).toContain(`${base}/.well-known/oauth-protected-resource`);
+    expect(section).toContain("streamable HTTP");
+    expect(section).toContain("Claude Code plugin");
+    expect(section).toContain("OpenCode plugin");
+  });
+
   test("sitemap and llms.txt are each built once for 50 requests, and a repository made private drops out at once", async () => {
     const mid = await createRepo(app, alice, {
       name: "midway",
@@ -165,6 +185,34 @@ describe("what the open web expects", () => {
       const body = await fetch(`${base}${path}`).then((r) => r.text());
       expect(body).not.toContain("alice/midway");
       expect(body).toContain("alice/open");
+    }
+  });
+
+  test("llms.txt opens with the version, and the short commit only when one is known", async () => {
+    const saved = {
+      v: process.env["FORGE_VERSION"],
+      c: process.env["FORGE_COMMIT"],
+      a: process.env["FORGE_APP_COMMIT"],
+    };
+    try {
+      process.env["FORGE_VERSION"] = "v1.2.3";
+      delete process.env["FORGE_COMMIT"];
+      process.env["FORGE_APP_COMMIT"] = "0123456789abcdef0123";
+      let body = await fetch(`${base}/llms.txt`).then((r) => r.text());
+      expect(body.split("\n")[2]).toBe("Running 1.2.3 at 0123456");
+      delete process.env["FORGE_APP_COMMIT"];
+      body = await fetch(`${base}/llms.txt`).then((r) => r.text());
+      expect(body.split("\n")[2]).toBe("Running 1.2.3");
+      expect(body.split("\n")[2]).not.toContain(" at ");
+    } finally {
+      for (const [k, v] of [
+        ["FORGE_VERSION", saved.v],
+        ["FORGE_COMMIT", saved.c],
+        ["FORGE_APP_COMMIT", saved.a],
+      ] as const) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
     }
   });
 
@@ -321,5 +369,14 @@ describe("what the open web expects", () => {
     expect(csp).toContain("default-src 'none'");
     expect(csp).toContain("manifest-src 'self'");
     expect(csp).toMatch(/img-src [^;]*'self'/);
+  });
+
+  test("the manifest and the front page carry the same sentence", async () => {
+    const manifest = (await (await fetch(`${base}/manifest.webmanifest`)).json()) as { description: string };
+    const html = await (await fetch(`${base}/`)).text();
+    expect(manifest.description).toBe(SITE_LINE);
+    expect(html).toContain(`<meta name="description" content="${SITE_LINE}"`);
+    expect(html).toContain(`<meta property="og:description" content="${SITE_LINE}"`);
+    expect(html).toContain(SITE_LINE);
   });
 });

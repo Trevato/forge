@@ -193,7 +193,7 @@ export function streamJson(t: StreamThought) {
     placedAt: t.placedAt,
     placed: t.placed.map((x) =>
       x.readable
-        ? { action: x.action, repo: x.repo, number: x.number, title: x.title }
+        ? { action: x.action, repo: x.repo, number: x.number, title: x.title, ...(x.pull === undefined ? {} : { pull: x.pull }) }
         : { action: x.action, repo: null, number: null, title: null },
     ),
     state: t.state,

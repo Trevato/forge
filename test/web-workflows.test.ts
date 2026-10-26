@@ -392,9 +392,11 @@ describe("fork at the origin, and propose a change through it", () => {
     expect(flash).toContain("octo/gears#1");
 
     // The branch really landed on the fork's git.
-    const branches = (await (
-      await fetch(`${upServers.url}/api/v1/repos/me/gears/branches`)
-    ).json()) as { name: string }[];
+    const branches = (
+      (await (
+        await fetch(`${upServers.url}/api/v1/repos/me/gears/branches`)
+      ).json()) as { items: { name: string }[] }
+    ).items;
     expect(branches.map((b) => b.name)).toContain("alice/fix-typo");
 
     // And the pull went upstream with the cross-repository head form.
@@ -432,7 +434,43 @@ describe("fork at the origin, and propose a change through it", () => {
     expect(html).toContain("second go");
     expect(html).toContain("the body I typed");
     expect(html).toContain('value="alice/second-go"');
-    expect(html).toContain("error-note");
+    // A refusal that is the whole form's sits in a danger toast, and no
+    // field claims to be invalid.
+    expect(html).toMatch(/class="toast" data-tone="danger"/);
+    expect(html.match(/class="toast"/g)).toHaveLength(1);
+    expect(html).not.toContain("data-invalid");
+    expect(html).not.toContain("aria-invalid");
+    expect(html).not.toContain("error-note");
+  });
+
+  test("a missing commit message or file path is the error of that field", async () => {
+    const form = {
+      ref: "main",
+      path: "a.txt",
+      content: "x\n",
+      message: "",
+      branch: "alice/x",
+    };
+    const noMessage = await (
+      await web(alice, `${browse}/contribute`, { form })
+    ).text();
+    expect(noMessage).toMatch(
+      /<div class="field" data-invalid>[\s\S]*?id="f-message"[^>]*aria-invalid="true"[\s\S]*?class="error"[^>]*>\s*A commit needs a message/,
+    );
+    expect(noMessage).not.toContain("data-tone=\"danger\"");
+
+    const noPath = await (
+      await web(alice, `${browse}/contribute`, {
+        form: { ...form, path: "", message: "m", creating: "1" },
+      })
+    ).text();
+    expect(noPath).toMatch(
+      /name="path"[^>]*aria-invalid="true"[^>]*aria-describedby="f-path-err"/,
+    );
+    expect(noPath).toMatch(
+      /<span class="error" id="f-path-err">Give the file a path/,
+    );
+    expect(noPath).not.toContain("error-note");
   });
 
   test("contribute refuses a cross-origin form, and anonymous is sent to sign in", async () => {

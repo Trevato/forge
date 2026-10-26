@@ -6,6 +6,7 @@
  */
 
 import { openPull } from "../../actions/pulls.ts";
+import { BODY_TOO_LONG, TITLE_TOO_LONG } from "../../actions/thread_limits_words.ts";
 import type { Label } from "../../core/issues.ts";
 import type { Pull } from "../../core/pulls.ts";
 import {
@@ -67,7 +68,6 @@ function composeForm(
   const cross = parent !== undefined;
   return html`<form method="post" action="${repoBase(repo)}/pulls/new">
     <input type="hidden" name="baseRepo" value="${cross ? "parent" : "self"}" />
-    ${when(error, (message) => html`<p class="error-note">${message}</p>`)}
     ${card(
       html`<div class="field-row">
         <div class="field">
@@ -102,6 +102,7 @@ function composeForm(
         value: values.title,
         required: true,
         autofocus: true,
+        ...(error ? { error } : {}),
       })}
       ${formField({
         label: "Description",
@@ -215,8 +216,8 @@ export async function newPullPage(ctx: Ctx): Promise<Response> {
 
 const COMPOSE_ERRORS: Record<string, string> = {
   empty_title: "A title is required.",
-  title_too_long: "That title is too long (256 characters at most).",
-  body_too_long: "That description is too long (64 KB at most).",
+  title_too_long: TITLE_TOO_LONG,
+  body_too_long: BODY_TOO_LONG,
   same_branch: "Base and compare branches must differ.",
   unknown_base: "That base branch does not exist.",
   unknown_head: "That compare branch does not exist.",

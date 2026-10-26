@@ -21,17 +21,6 @@ quietLogs();
 /** Pages without named phases yet → the issue that will name them. */
 const UNNAMED: Array<[path: string, issue: string]> = [
   ["/-/confirm", "#3390"],
-  ["/alice/forge", "#3325"],
-  ["/alice/forge/changes", "#3323"],
-  ["/alice/forge/map", "#3320"],
-  ["/alice/forge/settings", "#3390"],
-  ["/alice/forge/settings/danger", "#3390"],
-  ["/alice/forge/settings/hooks", "#3390"],
-  ["/alice/forge/settings/labels", "#3390"],
-  ["/alice/forge/settings/prompts", "#3390"],
-  ["/alice/forge/tells", "#3322"],
-  ["/live/apps", "#3390"],
-  ["/live/on-you", "#3390"],
   ["/signin/parent", "#3390"],
   ["/signin/parent/callback", "#3390"],
 ];
@@ -44,6 +33,22 @@ const NOT_PAGES = new Set([
   "/fleet/graph/live",
   "/settings/backups/live",
   "/:owner/:name/stream",
+]);
+
+/** Routes that answer 3xx for the sweep's signed-in user: not pages, no phases. A page may not join by redirecting. */
+const REDIRECTS = new Set([
+  "/.well-known/change-password",
+  "/alice/forge/changes",
+  "/alice/forge/files",
+  "/alice/forge/following",
+  "/alice/forge/settings/autonomy",
+  "/alice/forge/settings/crew",
+  "/alice/forge/tells",
+  "/alice/forge/tells/new",
+  "/big",
+  "/flow",
+  "/settings/origins/callback",
+  "/settings/resilience",
 ]);
 
 /** Every GET pattern the router source registers, one-line or wrapped. */
@@ -104,26 +109,39 @@ test("every GET page names session and render in Server-Timing, bar the listed d
 
   const named: string[] = [];
   const bare: string[] = [];
-  await Promise.all(
-    paths.map(async (path) => {
+  const redirected: string[] = [];
+  // A few at a time with a generous abort: the verdict is about headers, not
+  // about how fast a loaded check machine answers every page at once.
+  const queue = [...paths];
+  const worker = async () => {
+    for (let path = queue.shift(); path !== undefined; path = queue.shift()) {
       const res = await fetch(`${servers.url}${path}`, {
         headers: { cookie },
         redirect: "manual",
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(60_000),
       });
       await res.arrayBuffer();
-      if (!(res.headers.get("content-type") ?? "").startsWith("text/html")) return;
+      if (res.status >= 300 && res.status < 400) {
+        redirected.push(path);
+        continue;
+      }
+      if (!(res.headers.get("content-type") ?? "").startsWith("text/html")) continue;
       const names = (res.headers.get("server-timing") ?? "").split(",").map((p) => p.trim().split(";")[0]);
       expect(names).toContain("app");
       (names.includes("session") && names.includes("render") ? named : bare).push(path);
-    }),
-  );
+    }
+  };
+  await Promise.all(Array.from({ length: 4 }, worker));
+
+  const started = redirected.filter((p) => !REDIRECTS.has(p)).sort();
+  const stopped = [...REDIRECTS].filter((p) => !redirected.includes(p)).sort();
+  expect({ startedRedirecting: started, stoppedRedirecting: stopped }).toEqual({ startedRedirecting: [], stoppedRedirecting: [] });
 
   const debt = new Set(UNNAMED.map(([p]) => p));
   expect(bare.filter((p) => !debt.has(p)).sort()).toEqual([]);
   expect(named.filter((p) => debt.has(p)).sort()).toEqual([]);
   for (const [, issue] of UNNAMED) expect(issue).toMatch(/^#\d+$/);
-});
+}, 120_000);
 
 test("the sweep reads wrapped router.add registrations, so a reformat cannot shrink it", () => {
   const found = registeredGets();

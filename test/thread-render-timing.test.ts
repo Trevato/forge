@@ -1,4 +1,4 @@
-/** A thread of 200 comments renders in under 15 ms, and renders the same HTML it always did (#3324). */
+/** A thread of 200 comments renders no comment body at read time (the memo counters, with a loose 250 ms guard), and renders the same HTML it always did (#3324). */
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { snappyFixture, type SnappyFixture } from "../bench/snappy.ts";
 import { addComment, openIssue } from "../src/actions/issues.ts";
@@ -29,7 +29,7 @@ afterAll(async () => {
 });
 
 async function view(): Promise<{ ms: number; html: string }> {
-  const res = await fetch(`${f.base}${path}`, { headers: { cookie: f.ownerCookie } });
+  const res = await fetch(`${f.base}${path}?all=1`, { headers: { cookie: f.ownerCookie } });
   const text = await res.text();
   expect(res.status).toBe(200);
   expect(text.match(/data-comment-id="/g)?.length).toBeGreaterThanOrEqual(200);

@@ -21,6 +21,7 @@ import {
   tokenNote,
   type TokenBasis,
 } from "../kernel/tokens-format.ts";
+import { drawChart, type Cell, type Chart } from "../boards/chart.ts";
 import { icon, type IconName } from "./icons.ts";
 import { Html, html, raw, when } from "./html.ts";
 
@@ -132,7 +133,7 @@ export function tokenCount(
   basis: TokenBasis,
   kind?: "prose" | "code" | "data",
 ): Html {
-  return html`<span class="tok" title="${tokenNote(n, basis, kind)}"
+  return html`<span class="num nowrap" title="${tokenNote(n, basis, kind)}"
     >${formatTokens(n, basis)}</span
   >`;
 }
@@ -220,6 +221,36 @@ export function iconBtn(
     extra: `btn-icon${o.extra ? ` ${o.extra}` : ""}`,
   };
   return btn(icon(name), opts);
+}
+
+/**
+ * A string people copy — a clone address, a redirect URI, a command: a
+ * read-only `.input` beside a copy button. The value is plain text in the
+ * markup, so it selects and copies with no JavaScript; the button is the
+ * shortcut. `id` is what the copy script looks up; `label` names the field
+ * and `copyLabel` the button, each written out so acronyms keep their case.
+ */
+export function copyField(
+  id: string,
+  value: string,
+  label: string,
+  copyLabel: string,
+): Html {
+  return html`<span class="bar"
+    ><input
+      class="input grow mono"
+      id="${id}"
+      type="text"
+      readonly
+      value="${value}"
+      aria-label="${label}"
+      data-size="sm"
+    />${iconBtn("copy", copyLabel, {
+      size: "sm",
+      type: "button",
+      copy: id,
+    })}</span
+  >`;
 }
 
 // ---- badges, labels, pills, dots ----
@@ -724,6 +755,14 @@ export function meter(percent: number, label: string, tone?: "attn"): Html {
   >${value}%</meter>`;
 }
 
+/**
+ * A drawn chart in the box that holds its space: `drawChart`'s svg `.chart`
+ * inside `.chart-box`, which a table panel marks `.is-table`.
+ */
+export function chartBox(chart: Chart, cells: readonly Cell[], title: string): Html {
+  return html`<div class="chart-box${chart === "table" ? " is-table" : ""}">${raw(drawChart(chart, cells, title))}</div>`;
+}
+
 /** A short object id in a monospace chip — always the first 7 characters. */
 export function sha(oid: string, href?: string): Html {
   const short = oid.slice(0, 7);
@@ -879,11 +918,15 @@ export interface RowOptions {
   href?: string;
   title: Html | string;
   meta?: Html;
+  /** Draw `.row-meta` even when `meta` is empty, for a script to write into. */
+  metaSlot?: boolean;
   lead?: Html;
   trail?: Html;
   state?: "open" | "closed" | "merged" | "draft";
   /** The row joins `j`/`k` keyboard traversal. */
   nav?: boolean;
+  /** An anchor for the row's `<li>`, so a redirect can land on it. */
+  id?: string;
   titleAttr?: string;
   /** `data-*` hooks on the row's `<li>` (a script's filter, a test's
    * handle). Keys are lower-case words and dashes; others are dropped. */
@@ -911,7 +954,7 @@ export function row(o: RowOptions): Html {
         ${o.titleAttr ? html`title="${o.titleAttr}"` : null}
         >${o.title}</span
       >
-      ${o.meta ? html`<span class="row-meta">${o.meta}</span>` : null}
+      ${o.meta || o.metaSlot ? html`<span class="row-meta">${o.meta}</span>` : null}
     </span>
     ${o.trail && o.trail.text.trim() !== ""
       ? html`<span class="row-trail">${o.trail}</span>`
@@ -922,7 +965,7 @@ export function row(o: RowOptions): Html {
   const data = Object.entries(o.data ?? {})
     .filter(([key]) => /^[a-z][a-z-]*$/.test(key))
     .map(([key, value]) => html` data-${raw(key)}="${value}"`);
-  return html`<li${data}${o.current ? raw(' aria-current="true"') : null}>
+  return html`<li${o.id === undefined ? null : html` id="${o.id}"`}${data}${o.current ? raw(' aria-current="true"') : null}>
     ${o.fold !== undefined
       ? html`<details id="${o.fold.id}" ${o.fold.open ? raw("open") : null}>
           <summary ${attrs}>${inner}</summary>
@@ -1155,16 +1198,22 @@ ${o.value ?? ""}</textarea
   </div>`;
 }
 
-/** A `<select>` with the same anatomy as `field`. */
+/** A `<select>` with the same anatomy as `field`: hint and error are linked and marked. */
 export function selectField(
   o: Omit<FieldOptions, "type"> & {
     options: { value: string; label: string; selected?: boolean }[];
   },
 ): Html {
   const id = o.id ?? `f-${o.name}`;
-  return html`<div class="field">
+  const described = [o.hint ? `${id}-hint` : "", o.error ? `${id}-err` : ""]
+    .filter(Boolean)
+    .join(" ");
+  return html`<div class="field" ${o.error ? raw("data-invalid") : null}>
     <label for="${id}">${o.label}</label>
-    <select class="input" id="${id}" name="${o.name}">
+    <select class="input" id="${id}" name="${o.name}"
+      ${described !== "" ? html`aria-describedby="${described}"` : null}
+      ${o.error ? raw('aria-invalid="true"') : null}
+    >
       ${o.options.map(
         (opt) =>
           html`<option
@@ -1175,7 +1224,10 @@ export function selectField(
           </option>`,
       )}
     </select>
-    ${o.hint ? html`<span class="hint">${o.hint}</span>` : null}
+    ${o.hint ? html`<span class="hint" id="${id}-hint">${o.hint}</span>` : null}
+    ${o.error
+      ? html`<span class="error" id="${id}-err">${o.error}</span>`
+      : null}
   </div>`;
 }
 

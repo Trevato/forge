@@ -75,6 +75,7 @@ import {
   time,
   field as uiField,
   type IconName,
+  copyField,
 } from "../ui.ts";
 
 export type AccountSection =
@@ -335,7 +336,11 @@ function originCard(origin: Origin, mirrors: number): Html {
       </ul>
       ${when(
         origin.lastError !== "",
-        () => html`<p class="error-note mt">${origin.lastError}</p>`,
+        () => html`<div class="field mt" data-invalid>
+          <span class="error" role="alert" id="origin-${origin.id}-err"
+            >${origin.lastError}</span
+          >
+        </div>`,
       )}
       ${when(origin.needsReauth, () => reauthNote(origin, mirrors))}
       <div class="bar mt">
@@ -446,13 +451,13 @@ function forgejoSection(
 ): Html {
   const back = callbackUri(ctx);
   if (back === "") {
-    return html`<p class="error-note">
-        This forge does not know its own public URL, so it cannot register a
-        callback for the code flow. Set
-        <span class="mono">FORGE_URL</span> to the base URL people reach it at
-        (or <span class="mono">FORGE_HOST</span> to the hostname it is served
-        on) and this path lights up. A pasted token works either way.
-      </p>`;
+    return html`<p class="muted small" id="origin-callback-note">
+      This forge does not know its own public URL, so it cannot register a
+      callback for the code flow. Set <span class="mono">FORGE_URL</span> to the
+      base URL people reach it at (or <span class="mono">FORGE_HOST</span> to
+      the hostname it is served on) and this path lights up. A pasted token
+      works either way.
+    </p>`;
   }
   // Two verbs, two endpoints, and HTML forbids nesting one form in another —
   // so the "forget" form sits beside the authorize form and its button joins
@@ -506,19 +511,7 @@ function forgejoSection(
             </li>
             <li>
               Set the redirect URI to exactly:
-              <span class="clone"
-                ><span class="clone-text" id="redirect-uri">${back}</span>
-                <button
-                  class="btn btn-icon"
-                  data-size="sm"
-                  type="button"
-                  data-copy="redirect-uri"
-                  aria-label="Copy the redirect URI"
-                  title="Copy"
-                >
-                  ${icon("copy")}
-                </button></span
-              >
+              ${copyField("redirect-uri", back, "Redirect URI", "Copy the redirect URI")}
             </li>
             <li>
               Leave "confidential client" off — a public client is fine, and

@@ -38,6 +38,7 @@ import {
   signInFirst,
 } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
+import { pageAddress } from "../studio/toolbar.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import { btn, card, empty, field as formField, time } from "../ui.ts";
@@ -60,7 +61,7 @@ function reportForm(
   ctx: Ctx,
   repo: Repo,
   values: FormValues,
-  error?: string,
+  error?: { on?: "title" | "body"; message: string },
   status = 200,
 ): Response {
   const base = repoBase(repo);
@@ -68,6 +69,9 @@ function reportForm(
     {
       ctx,
       title: `Report a problem · ${repo.ownerName}/${repo.name}`,
+      ...(error && !error.on
+        ? { flash: { tone: "danger" as const, message: error.message } }
+        : {}),
       crumbs: crumbsFor(repo),
       body: html`${repoHeader(ctx, repo, "issues", {
           compact: true,
@@ -80,8 +84,8 @@ function reportForm(
             something is wrong. You need no account. A person reads it first;
             nothing acts on it before they do.
           </p>
+          ${when(values.page !== "", () => html`<p class="small mono">About this page: ${values.page}</p>`)}
           <form class="mt" method="post" action="${base}/report">
-            ${when(error, (m) => html`<p class="error-note">${m}</p>`)}
             ${formField({
               label: "What is wrong",
               name: "title",
@@ -89,6 +93,7 @@ function reportForm(
               required: true,
               autofocus: true,
               hint: `One line, at most ${TITLE_MAX} characters.`,
+              ...(error?.on === "title" ? { error: error.message } : {}),
             })}
             ${formField({
               label: "What happened",
@@ -96,6 +101,7 @@ function reportForm(
               type: "textarea",
               rows: 8,
               value: values.body,
+              ...(error?.on === "body" ? { error: error.message } : {}),
               hint: `Plain text, at most ${BODY_MAX} characters. What you did, what you saw, what you expected.`,
             })}
             <input type="hidden" name="page" value="${values.page}" />
@@ -148,15 +154,21 @@ function reportBody(ctx: Ctx, repo: Repo): Response {
   return reportForm(ctx, repo, {
     title: "",
     body: "",
-    page: ctx.url.searchParams.get("from") ?? "",
+    page: pageAddress(ctx.url.searchParams.get("from") ?? ""),
   });
 }
 
-const REFUSED: Record<string, string> = {
-  empty_title: "Say in one line what is wrong.",
-  title_too_long: `That line is too long (${TITLE_MAX} characters at most).`,
-  body_too_long: `That is too long (${BODY_MAX} characters at most).`,
-  queue_full: "Many reports are waiting here already. Try again later.",
+const REFUSED: Record<string, { on?: "title" | "body"; message: string }> = {
+  empty_title: { on: "title", message: "Say in one line what is wrong." },
+  title_too_long: {
+    on: "title",
+    message: `That line is too long (${TITLE_MAX} characters at most).`,
+  },
+  body_too_long: {
+    on: "body",
+    message: `That is too long (${BODY_MAX} characters at most).`,
+  },
+  queue_full: { message: "Many reports are waiting here already. Try again later." },
 };
 
 // POST /:owner/:name/report
@@ -185,7 +197,9 @@ export async function reportSubmit(ctx: Ctx): Promise<Response> {
       ctx,
       repo,
       values,
-      `Too many reports just now. Try again in ${refusal.retryAfter} seconds.`,
+      {
+        message: `Too many reports just now. Try again in ${refusal.retryAfter} seconds.`,
+      },
       429,
     );
     response.headers.set("retry-after", String(refusal.retryAfter));

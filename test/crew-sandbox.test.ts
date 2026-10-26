@@ -192,6 +192,8 @@ describe("the sandbox on a run's record", () => {
     expect(text).toContain("Unsandboxed");
     expect(text).toContain("&lt;b&gt;bwrap&lt;/b&gt; is not installed");
     expect(text).not.toContain("<b>");
+    expect(text).not.toContain("error-note");
+    expect(text).toContain('data-variant="danger"');
 
     const on = agentRun();
     noteRunProgress(app.db, on.id, { sandbox: { enforced: true, note: "" } });

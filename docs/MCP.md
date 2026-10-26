@@ -18,65 +18,179 @@ for a tunnel and a forge that sleeps.
 - **A token, never a cookie.** `Authorization: Bearer <forge token>`. A
   browser session is refused even when signed in: a cookie is what a
   cross-site page could ride, and this door has no page. An `ro` token reads;
-  an `rw` token acts; the tools say which they are (`readOnlyHint`).
+  an `rw` token acts; a reading tool says so (`readOnlyHint: true`), and a tool without it writes, by MCP's default.
 - **What you may not do on a page you may not do here.** A private app is
   "no such app" to someone who cannot write its repository; stopping a run, and knocking
   on an app with `probe`, are a writer's.
 
 ## Tools
 
-| tool           | does                                                                                              | writes |
-| -------------- | ------------------------------------------------------------------------------------------------- | ------ |
-| `apps`         | the apps you can see: live or not, where served, how each runs itself, what is working            |        |
-| `new_app`      | `{ name, description?, owner?, visibility?, agent?, pick? }`: make an app from a sentence; answers `{ repo, url, issue, agent, run }` (`run` is the first run's state, or `none`) and draws the `ui://forge/app` card: name, production URL, first issue, agent, first run; refused as `POST /api/v1/apps` is (unverified, app_limit, no_such_agent, name_taken) | yes    |
-| `repo`         | `{ repo }`: one repository's description, visibility, autonomy, `audience { level, sentence }` and `provenance` (where a migrated one came from, `null` when hidden), the same as `GET /api/v1/repos/:owner/:name` |        |
-| `tell`         | a sentence becomes an issue, a builder is picked, a run starts on the crew's next tick            | yes    |
-| `say`          | speak on an issue or a pull; a working builder hears it as its next step                          | yes    |
-| `issue`        | `{ repo, number }`: one issue's title, state, closeReason, body, labels, assignee, comments (author, authorIsAgent, body, at) and blockedBy/blocks, as `GET …/issues/:number`; a sealed one you cannot see is not found |        |
-| `pull`         | `{ repo, number }`: a pull's title, state, head and base, and for an open pull whether it merges into the base's current head (`mergeable`) and the paths that stop it (`conflicts`), and `check: { state, baseOid }`: the latest check's state and the base tip it was merged with (empty when it merged nothing); `mergeable` and `conflicts` are the same fields as `GET …/pulls/:number`, `check` is `state` and `run.baseOid` from `GET …/pulls/:number/checks` |        |
-| `edit`         | a new title or body for an issue or a pull: its author's, or a writer's; an agent edits only what it wrote | yes    |
-| `close`        | `{ repo, number, state?, reason?, into? }`: close an issue or a pull (`state` closed by default) or reopen it (`open`); the same rules and refusals as `PATCH …/issues/:number`: an agent closes only what the rules give it and reopens nothing; answers `state` and `closeReason` | yes    |
-| `pulls`        | `{ repo, state?, limit? }`: a repository's pulls, newest first, one brief line each: `number`, `title`, `author`, `head`, `check` (state), `approvals`, `changesRequested`, `mergeable` (null once closed); `state` open (default) or closed, `limit` 1-50 (default 20); no bodies, no diffs | no     |
-| `read_file`    | a file (utf-8, or base64 for binary) or a directory listing at a ref, as GET …/contents | no     |
-| `seal`         | `{ repo, number, sealed }`: seal a security report (and the pull that fixes it) so only writers and the crew see it, or unseal it for every reader; a writer's, recorded | yes    |
-| `now`          | what the crew is doing right now: who, on what, since when, at what cost; a planner that declined the direction and waits for you comes first (`run: null`, its words in `says`) |        |
-| `stop`         | stop one run by its id from `now`                                                                 | yes    |
-| `health`       | how this forge is: the version and commit it runs, draining or not, the rollout and its incidents |        |
-| `audit`        | who can do what, per app, read from its contract.json in git: yes, own or no per door, and whether outsiders may direct its crew (`crewOutsiders`) |        |
-| `outsiders`    | `{ repo, on?, dryRun? }`: whether people who cannot write may direct the crew; with `on`, planned first (`dryRun` is true unless `false`); set only by the app's admin with an admin token, never an agent | yes    |
-| `decisions_by` | `{ repo, by?, dryRun? }`: the standing rule for a repository's hand-overs (`me`, `decider`, `decider_tell`); with `by`, planned first (`dryRun` is true unless `false`); set only by the app's admin with an admin token, never an agent | yes    |
-| `archive`      | `{ repo | repos, archived?, dryRun? }`: archive (true) or wake (false) a repository, by name; planned first (`dryRun` is true unless `false`); only the repository's admin with an admin token, never an agent. `repos` (at most 50) runs the fleet `archive` operation over them, answers each one's outcome and the `operation` id; `limb` with `action: "undo"`, that `operation` and any one of the repositories as `app` reverts it for a day | yes    |
-| `trail`        | `{ repo, shown?, dryRun? }`: where a migrated repository came from (`provenance`: source, sourceUrl, parents, migratedAt) and whether it is shown; with `shown`, shows or hides the trail — planned first (`dryRun` is true unless `false`), only the repository's admin with an admin token, never an agent. Hiding keeps the record; a hidden one reads `null` to anyone but an admin | yes    |
-| `branches`     | `{ repo, name?, action?, from? }`: without `name`, lists the branches; with `name` and `action` (`create` from `from`, or `delete`) it does what the branches page does: the default branch is never deleted, only a writer may act | yes    |
-| `commits`      | `{ repo, ref?, limit? }`: a branch's recent commits, newest first (`limit` 1–100, default 30; refused outside that, where REST clamps), as `GET …/commits` answers |        |
-| `probe`        | knock on a running app's doors as nobody, a user and an admin; the ones that disobey its contract |        |
-| `following`    | where a fork stands against what it follows, and what the crew is doing about it                  |        |
-| `spawn`        | `{ name, apps?, crew?, dryRun? }`: a child forge, planned first (`dryRun` is true unless `false`); an admin's, and an `ro` token may plan but not make | yes    |
-| `claim_link`   | `{ name }`: a new claim link for a child you spawned that nobody has claimed; the old one stops working. An admin's | yes    |
-| `take_updates` | a fork takes its parent's updates when git can do it alone; a conflict is refused. On a spawned forge's code repository it opens the one `forge/take-updates` pull and never moves the default branch | yes    |
-| `converge`     | the fork's crew merges where both sides changed the same files; comes back as a pull              | yes    |
-| `asked`        | `{ repo?, show?, order? }`: what people asked the crew for, by default nothing merged yet and oldest first: who and when, the pulls that close it, the crew's last activity, waiting/building/shipped/closed, stale when not shipped in three days and flagged when stale with nothing built; repositories you can write |        |
-| `app_members`  | `{ repo, members?, dryRun? }`: the people a private app names, who may enter it and its previews and nothing else; a writer (never an agent) changes the list with an admin-scope token | yes    |
-| `explore`      | `{ query? }`: the apps and people you can see, ranked by forks, ships, use and freshness, with their numbers; `kind:` `sort:` and words in one line |        |
-| `search`       | `{ q, kind?, repo? }`: issues, pulls, repositories and code you can read, the same results as /search; `repo` keeps to one | |
-| `feed`         | `{ limit?, cursor? }`: your home timeline — tells, replies, runs, changes and looks — ranked, with who, what, why and a link; the same items as `GET /api/v1/feed` |        |
-| `make_it_yours` | `{ repo, name?, visibility?, dryRun? }`: a fork of an app you can see, as your own app, following the original; code and history copied, data and secrets not; private unless `visibility` is public (a public original only); at most 5 copies an account a day; plans unless `dryRun` is false | yes    |
-| `front_page`   | `{ pinned?, hidden?, weights?, dryRun? }`: the front page as a stranger sees it, ranked, with numbers; a site admin sets what is pinned (first public one featured), hidden, and what counts (weights of forks, ships, use, fresh, 0 to 10) | yes    |
-| `map`          | an app's plan: ready now, waiting on what, the critical path, where the crew is, parked twice and why (`app`); draws the `ui://forge/map` card |        |
-| `milestones`   | `{ app, issue? }`: how far each thing asked for is (and, with `issue`, whether you watch it: `watching`), from the dependency tree: the plan's limbs with their weights, or one milestone opened (who is building, what is blocked and on what, what merged in 7 days, an estimate, and for an owner `spend`: dollars, changes landed ever, the costliest three issues) |        |
-| `limb`         | `{ app, issue, action, reason?, pillar?, operation?, dryRun? }`: defer, resume or close a whole limb as not doing, or undo an operation; plans unless `dryRun` is false, and applying takes an admin token | yes    |
-| `watch`        | `{ app, issue, watch? }`: watch a milestone, or stop with `watch: false`: one item in your feed that follows it, and one push to your phone when it lands | yes    |
-| `runs`         | `{ repo, limit? }`: the repository's recent runs, newest first (id, kind, state, issue or pull number, started, ended), 1–50, default 20; read as the runs page reads them |        |
-| `run_log`      | `{ repo, run, tail? }`: a run's log, or its last `tail` lines (1–2000), with the REST route's access: a hidden log or unreadable repository is not found |        |
-| `review`       | `{ repo, number, verdict, reason? }`: approve a pull (`approve`) or request changes (`changes`, with a `reason`), as the page does; a writer's or the crew's, and never your own pull | yes    |
-| `usage`        | `{ repo, days? }`: what the crew's runs spent — tokens, cost, wall time — by subscription, agent, issue, and each account's 5-hour and weekly standing; a writer's |        |
-| `labels`       | `{ repo, number, labels }`: set an issue's or a pull's labels to exactly these (`[]` clears); only labels the repository has, by a writer | yes    |
-| `wait_for`     | `{ app, issue, blockedBy, stop? }`: the issue waits for another, or stops with `stop: true`; the page's rules, and the answer carries the issue's URL | yes    |
-| `hold`         | `{ app, pull, why?, release?, dryRun? }`: hold a pull so no rule reviews or lands it, or let it go; a person who can write, never an agent; plans unless `dryRun: false` | yes    |
-| `plan`         | `{ app, issues }`: open up to 12 linked issues, all or none (see below)                           | yes    |
+<!-- tools:begin: generated by `bun scripts/mcp-tools.ts` from each tool's `doc` -->
+
+| tool | does | writes |
+| ---- | ---- | ------ |
+| `access` | `{ since?, ua?, path? }`: what outside agents tried: the redacted log of non-browser requests to public paths, newest first; `since` an ISO time (default a day, at most 14 days), `ua` part of the user agent, `path` a prefix; a forge admin's | yes |
+| `account_role` | `{ username, role, usdPerMonth?, dryRun? }`: make a person a `member`, or a `guest` again, with an optional starter allowance (`usdPerMonth`, 0.01 to 10000, promoting only); planned first (`dryRun` is true unless `false`) | yes |
+| `account_suspend` | `{ username, suspended }`: suspend a person's account, or unsuspend it with `false`; their sessions and tokens stop at once; the API's rules (not yourself, another admin or an agent; not the only owner of an organization); an admin token | yes |
+| `account_verify` | `{ username }`: mark a person's email verified, as `POST …/admin/accounts/:username/verify` does; a person admin's, with an admin token | yes |
+| `accounts` | `{ cursor?, limit? }`: the forge's accounts, newest first: `username`, `role`, `verified`, `suspended`, `created`, and `next` (a cursor, or null); `limit` 1-50 (default 20); a person admin's |  |
+| `agent` | `{ action, username, … }`: `create` a crew agent, `update` its `model`, `brief` or `budgetUsd`, or `remove` it; an admin's, with an `admin` token, as `/api/v1/agents` | yes |
+| `app_deploy` | `{ repo, env, action }`: `redeploy` or `stop` an app's `production` or a pull's `pull-N` preview; a writer's, queued as `POST …/app/:env/redeploy` and `…/stop` are; answers `{ queued, run }` or `{ stopped }` | yes |
+| `app_env` | `{ repo, action, name?, value?, scope? }`: `list` an app's variable names and scopes, `set` one, or `unset` it, in `all` (default), `production` or `preview`; the API's rules and errors, an admin of the repository with an admin-scope token; a value is never read back | yes |
+| `app_members` | `{ repo, members?, dryRun? }`: the people a private app names, who may enter it and its previews and nothing else; a writer (never an agent) changes the list with an admin-scope token | yes |
+| `apps` | the apps you can see: live or not, where served, how each runs itself, what is working |  |
+| `archive` | `{ repo | repos, archived?, dryRun? }`: archive (true) or wake (false) a repository, by name; planned first (`dryRun` is true unless `false`); only the repository's admin with an admin token, never an agent. `repos` (at most 50) runs the fleet `archive` operation over them, answers each one's outcome and the `operation` id; `limb` with `action: "undo"`, that `operation` and any one of the repositories as `app` reverts it for a day | yes |
+| `asked` | `{ repo?, show?, order? }`: what people asked the crew for, by default nothing merged yet and oldest first: who and when, the pulls that close it, the crew's last activity, waiting/building/shipped/closed, stale when not shipped in three days and flagged when stale with nothing built; repositories you can write |  |
+| `assign` | `{ repo, number, kind, assignee }`: assign an issue or pull (`kind` is `issue` or `pull`) to a user, or clear it with `null`, as `PUT …/assignee` and with its refusals | yes |
+| `assigned` | `{ limit? }`: the open issues and pulls assigned to you in every repository you can still read (repository, number, title, kind, state), as `GET /api/v1/user/assigned` |  |
+| `attach_look` | `{ app, pull, width, says, image, dryRun? }`: attach a look to an open pull: a PNG or JPEG (at most 5 MB, base64 in `image`), `width` phone or desktop, one line in `says`; planned first (`dryRun` is true unless `false`) | yes |
+| `audit` | who can do what, per app, read from its contract.json in git: yes, own or no per door, and whether outsiders may direct its crew (`crewOutsiders`) |  |
+| `board_delete` | `{ slug }` (person admins): delete a board by slug; its history keeps it | yes |
+| `board_pins` | `{ op?, slug?, title?, by? }` (person admins): without `op`, the panels pinned to your home (`slug`, `title`); `pin` or `unpin` a panel by board `slug` and panel `title`, or `move` it up or down with `by` (-1 or 1) | yes |
+| `board_write` | `{ slug, board }` (person admins): write a whole board under a slug, made or replaced: `{ title, range, refresh, panels: [{ title, chart, query, w, h }] }` | yes |
+| `boards` | `{ slug?, panel?, from?, to?, step? }` (person admins): without `slug`, lists the forge's boards (slug, title, range, refresh, panels); with `slug`, that board; with `panel` (place from 0, up to 23), that panel's data over the `from`/`to` window and `step` |  |
+| `branches` | `{ repo, name?, action?, from?, kind? }`: without `name`, lists the branches; `kind: "tags"` lists the tags instead (as GET `/api/v1/repos/:owner/:name/tags` does, newest first; no `name` or `action`); with `name` and `action` (`create` from `from`, or `delete`) it does what the branches page does: the default branch is never deleted, only a writer may act | yes |
+| `claim_link` | `{ name }`: a new claim link for a child you spawned that nobody has claimed; the old one stops working. An admin's | yes |
+| `close` | `{ repo, number, state?, reason?, into? }`: close an issue or a pull (`state` closed by default) or reopen it (`open`); the same rules and refusals as `PATCH …/issues/:number`: an agent closes only what the rules give it and reopens nothing; answers `state` and `closeReason` | yes |
+| `cloud_account` | `{ verb, provider, name, value?, to?, allowed?, repo? }`: change a cloud account: `attach` or `rotate` a token (`value`), `verify` it, `rename` it (`to`), `remove` it, `allow_writes` (`allowed` true or false) or `audit` (`repo` owner/name); a forge admin with an admin-scope token; answers a one-line `says` | yes |
+| `cloud_accounts` | the forge's cloud accounts, each attached provider token with its use, verification, write permission and today's calls; a forge admin only (counted as a write so a `ro` token never lists them) | yes |
+| `commits` | `{ repo, ref?, limit?, oid? }`: a branch's recent commits, newest first (`limit` 1–100, default 30; refused outside that, where REST clamps), as `GET …/commits` answers; with `oid` (4–64 hex) one commit with its diff and its check, as `GET …/commits/{oid}` and `…/check` answer |  |
+| `confirm_wait` | `{ app, issue, blocker }`: a person says `issue` may go ahead although `blocker` closed as dropped or split; the API's confirm action, so writers only and never the crew | yes |
+| `contribute` | for any arriving agent: what this forge is, its bottleneck, open “help wanted” issues, how to propose |  |
+| `converge` | the fork's crew merges where both sides changed the same files; comes back as a pull | yes |
+| `decisions_by` | `{ repo, by?, dryRun? }`: the standing rule for a repository's hand-overs (`me`, `decider`, `decider_tell`); with `by`, planned first (`dryRun` is true unless `false`); set only by the app's admin with an admin token, never an agent | yes |
+| `drills` | each failure domain: `key`, what breaks, its last drill's time, green or red and why (or why it is not drilled), and the `command` that runs it; a forge admin who is a person only (`forbidden` otherwise), as Settings → Backups says them |  |
+| `edit` | a new title or body for an issue or a pull: its author's, or a writer's; an agent edits only what it wrote | yes |
+| `egress_grants` | `{ repo, op?, destination? }`: the private `host:port` destinations an app's forge.json asks for and which are granted; `op` grant or revoke by a site admin (never an agent), and every op needs an admin-scope token; the same as the settings page and `/api/v1/repos/:owner/:name/egress-grants` | yes |
+| `email_verify` | no input: send the caller a new verification email, with the API's rate limit and errors; the answer never carries the link | yes |
+| `events` | `{ repo, limit?, cursor? }`: the repository's events, newest first, as you may see them (a webhook's URL and an app's variable names are the admins'): `{ items, next_cursor }`, `limit` 1 to 200 (default 50), `cursor` from `next_cursor` |  |
+| `explore` | `{ query? }`: the apps and people you can see, ranked by forks, ships, use and freshness, with their numbers; `kind:` `sort:` and words in one line |  |
+| `family` | the forge that sent this one and, for a site admin, those it sent, with state and version |  |
+| `feed` | `{ limit?, cursor? }`: your home timeline — tells, replies, runs, changes and looks — ranked, with who, what, why and a link; the same items as `GET /api/v1/feed`; `quietRuns` counts agent runs of the last 24 h that pushed, opened or said nothing, which the timeline leaves out |  |
+| `feed_chips` | `{ kind?, value?, hidden? }`: the feed chips you switched off, which `feed` and `asks` leave out; with `kind` (`kind` or `person`), `value` and `hidden` it switches one off or on | yes |
+| `flow` | the forge's pipeline (a forge admin's, or an agent the owner granted `telemetry:read`; private repositories cut out): per stage counts, `oldestWaiting`, `capacity`, the bottleneck, the merge `queue` and what each reviewer has `reviewing` |  |
+| `follow_mode` | `{ repo, … }`: choose how a spawned forge follows its parent, `tell-me` or `take-updates`; its `forge` repository's admin only | yes |
+| `following` | where a fork stands against what it follows, and what the crew is doing about it |  |
+| `forge_proposals` | `{ repo }`: what this forge proposed to its parent, newest first; `reachable` is false if the parent did not answer |  |
+| `forges` | an admin's list of the forges sent from here: name, address, whom for, apps, claimed or not, last activity |  |
+| `front_page` | `{ pinned?, hidden?, weights?, dryRun? }`: the front page as a stranger sees it, ranked, with numbers; a site admin sets what is pinned (first public one featured), hidden, and what counts (weights of forks, ships, use, fresh, 0 to 10) | yes |
+| `health` | how this forge is: the version and commit it runs, draining or not, the rollout and its incidents |  |
+| `hold` | `{ app, pull, why?, release?, dryRun? }`: hold a pull so no rule reviews or lands it, or let it go; a person who can write, never an agent; plans unless `dryRun: false` | yes |
+| `hooks` | `{ repo, action, url, secret, kinds, id }`: `list`, `add` (`secret`, 16–200 characters, is required) or `remove` the repository's webhooks, as `…/hooks`; an admin-scope token on a repository you administer, and a secret is never shown | yes |
+| `invites` | `{ action, id? }`: `list` the outstanding invites (state and expiry, never a link) or `revoke` one by `id`; a person admin with an admin token, stricter than the API's list, which an `ro` token may read | yes |
+| `issue` | `{ repo, number }`: one issue's title, state, closeReason, body, labels, assignee, comments (author, authorIsAgent, body, at) and blockedBy/blocks, as `GET …/issues/:number`; a sealed one you cannot see is not found |  |
+| `labels` | `{ repo, number, labels }`: set an issue's or a pull's labels to exactly these (`[]` clears); only labels the repository has, by a writer | yes |
+| `limb` | `{ app, issue, action, reason?, pillar?, operation?, dryRun? }`: defer, resume or close a whole limb as not doing, or undo an operation; plans unless `dryRun` is false, and applying takes an admin token | yes |
+| `make_it_yours` | `{ repo, name?, visibility?, dryRun? }`: a fork of an app you can see, as your own app, following the original; code and history copied, data and secrets not; private unless `visibility` is public (a public original only); at most 5 copies an account a day; plans unless `dryRun` is false | yes |
+| `map` | an app's plan: ready now, waiting on what, the critical path, where the crew is, parked twice and why (`app`); draws the `ui://forge/map` card |  |
+| `migrate` | `{ url, name?, crew? }` brings a public repository in by URL (history only; nothing reaches back) and answers `{ job, state, url }`; `{ job }` alone reads that job. Same validation, scope (`rw`) and private-address refusal as `POST /api/v1/migrate` | yes |
+| `milestones` | `{ app, issue? }`: how far each thing asked for is (and, with `issue`, whether you watch it: `watching`), from the dependency tree: the plan's limbs with their weights, or one milestone opened (who is building, what is blocked and on what, what merged in 7 days, an estimate, and for an owner `spend`: dollars, changes landed ever, the costliest three issues) |  |
+| `mint_invite` | `{ days? }`: mint a single-use invite link that expires in `days` (1–30, default 7) and is shown once; a person admin's, with an admin token | yes |
+| `mirror_set` | `{ action, endpoint?, bucket?, region?, accessKey?, secretKey? }` (forge admin, admin-scope token): `set` seals the off-box snapshot mirror, `forget` clears it; the Backups page's rules and refusals, a blank field keeps what was sealed; answers `{ place, says }`, never a key | yes |
+| `new_app` | `{ name, description?, owner?, visibility?, agent?, pick? }`: make an app from a sentence; answers `{ repo, url, issue, agent, run }` (`run` is the first run's state, or `none`) and draws the `ui://forge/app` card: name, production URL, first issue, agent, first run; refused as `POST /api/v1/apps` is (unverified, app_limit, no_such_agent, name_taken) | yes |
+| `next_steps` | on a spawned forge, your first three steps and whether each is done; empty elsewhere or for anyone but its owner |  |
+| `now` | what the crew is doing right now: who, on what, since when, at what cost; a planner that declined the direction and waits for you comes first (`run: null`, its words in `says`) |  |
+| `org_teams` | `{ org, action, team, user?, permission? }` (admin-scope token, an org owner): `create` a team (`permission` read, write or admin; read by default), `add_member` a `user`, or `remove` the team; the same as POST/DELETE `/api/v1/orgs/:org/teams` | yes |
+| `orgs` | `{ org? }`: without `org`, the organizations you belong to; with it, the organization, the teams you may see and each team's members; the same as GET `/api/v1/user/orgs`, `/api/v1/orgs/:org`, `…/teams` and `…/members` |  |
+| `origin_apps` | `{ action, id?, host?, kind?, clientId?, clientSecret? }`: `list` your OAuth apps for connecting origins, `add` one (a `host`, or `kind` github), or `remove` one by `id`; the API's rules and errors, an admin-scope token; a secret is never read back, only `hasSecret` | yes |
+| `origins` | `{ action, id? }`: `list` your connected origins, `repos` the repositories one holds (`id`; `mirroredAs` says which are already here), or `sync` one now; the same as `GET /api/v1/user/origins`, `…/:id/repos` and `POST …/:id/sync`, for you only, an admin token as there; never a credential in an answer | yes |
+| `outsiders` | `{ repo, on?, dryRun? }`: whether people who cannot write may direct the crew; with `on`, planned first (`dryRun` is true unless `false`); set only by the app's admin with an admin token, never an agent | yes |
+| `parent_unlink` | no input: stop signing in through the parent forge, as Settings does; refused when it is the account's last way in, and "Nothing to unlink." when nothing is linked; an admin token | yes |
+| `plan` | `{ app, issues }`: open up to 12 linked issues, all or none (see below) | yes |
+| `preview` | `{ url }`: what the forge pill says of an app host's URL (production or a pull's preview): `{ app, environment, pull: { number, title } \| null, check: "green" \| "red" \| "running" \| null, firstFailure, logUrl, working: [names] }`; `firstFailure` is the check's first failing test or its summary, `logUrl` is set only for someone who may read the log (a writer), `working` names the agents with a run going; a URL that is not one of this forge's app hosts is `invalid`, an app you cannot read is `not_found` and a pull you cannot see is `no_such_pull`, as `repo` and `pull` say |  |
+| `probe` | knock on a running app's doors as nobody, a user and an admin; the ones that disobey its contract |  |
+| `prompts` | `{ repo, action, kind?, token?, at?, id? }`: list, add, run or remove an app's prompt sources (Instagram), as the `…/prompts` API does; the token goes in once and is never shown; listed only for an admin-scope token, and only the repository's admin may use it | yes |
+| `proposal_tokens` | `{ repo, verb, child?, origin?, childRepo?, id? }`: give a child forge a propose-only credential: `mint` one (`child`, `origin`), `list` them, or `revoke` one by `id`; writers only | yes |
+| `propose_to_parent_forge` | `{ repo }`: offer this forge's landed change to its parent as a pull on `child/<name>/…`; the same tip answers with that pull | yes |
+| `pull` | `{ repo, number }`: a pull's title, state, head and base, and for an open pull whether it merges into the base's current head (`mergeable`) and the paths that stop it (`conflicts`), and `check: { state, baseOid }`: the latest check's state and the base tip it was merged with (empty when it merged nothing); `mergeable` and `conflicts` are the same fields as `GET …/pulls/:number`, `check` is `state` and `run.baseOid` from `GET …/pulls/:number/checks`; draws the `ui://forge/pull` card: `#N title`, state with check and conflicts while open, `head → base` linked to the pull, and the preview link when the pull has an environment |  |
+| `pulls` | `{ repo, state?, limit? }`: a repository's pulls, newest first, one brief line each: `number`, `title`, `author`, `head`, `check` (state), `approvals`, `changesRequested`, `mergeable` (null once closed); `state` open (default) or closed, `limit` 1-50 (default 20); no bodies, no diffs |  |
+| `read_file` | a file (utf-8, or base64 for binary) or a directory listing at a ref, as GET …/contents |  |
+| `repo` | `{ repo }`: one repository's description, visibility, autonomy, `audience { level, sentence }` and `provenance` (where a migrated one came from, `null` when hidden), the same as `GET /api/v1/repos/:owner/:name` |  |
+| `repo_labels` | `{ repo, action?, name?, color?, id? }`: list (`list`, the default; a read-only token may), create (`create`, `name`, `color` six hex digits) or remove (`remove`, `id`) the repository's labels, as `GET`/`POST …/labels` and `DELETE …/labels/:id`; create and remove need an admin token and a repository admin | yes |
+| `repo_settings` | `{ repo, description?, visibility? }` (admin token): change a repository's description and visibility as `PATCH /api/v1/repos/:owner/:name` does, for the same callers (a repository admin); answers `{ repo, description, visibility }`; a visibility other than public or private is `invalid` | yes |
+| `reports` | `{ repo, id?, action? }`: the waiting reports from outsiders, each `from: "outside"` (their words are unchecked); with `id` and `action` (`accept` opens it as an issue marked as from outside, `dismiss` closes it). A person who writes the repository only; needs an `rw` token | yes |
+| `restore_drill` | no input: restore the newest snapshot as a drill and answer `{ verdict, failedStep?, says }`, worded as the Backups page's button; no store, a failure or a red drill is an answer, not an error; a forge admin's, with an admin token | yes |
+| `returns` | `{ repo?, days? }`: what the crew's tokens bought over the last `days` (1–90, default 7): dollars, runs, changes landed, cost per change; `repo` narrows it to one app of yours |  |
+| `review` | `{ repo, number, verdict, reason? }`: approve a pull (`approve`) or request changes (`changes`, with a `reason`), as the page does; a writer's or the crew's, and never your own pull | yes |
+| `run_log` | `{ repo, run, tail? }`: a run's log, or its last `tail` lines (1–2000), with the REST route's access: a hidden log or unreadable repository is not found |  |
+| `runs` | `{ repo, limit? }`: the repository's recent runs, newest first (id, kind, state, issue or pull number, started, ended), 1–50, default 20; read as the runs page reads them |  |
+| `say` | speak on an issue or a pull; a working builder hears it as its next step | yes |
+| `seal` | `{ repo, number, sealed }`: seal a security report (and the pull that fixes it) so only writers and the crew see it, or unseal it for every reader; a writer's, recorded | yes |
+| `search` | `{ q, kind?, repo? }`: issues, pulls, repositories and code you can read, the same results as /search; `repo` keeps to one |  |
+| `secrets` | `{ scope, ref?, action, name?, value? }` (forge admin): `list` the names and timestamps of the forge's sealed secrets, `set` or `remove` one; `scope` is forge, org or repo, `ref` the org or `owner/name`; a value is never read back | yes |
+| `sever` | `{ repo }`: cut a spawned forge's link to the forge its code came from; its `forge` repository's owner only; deletes nothing | yes |
+| `share` | `{ item, to? }`: share a feed item (`item` is its id); with no `to` it goes to the app's crew and owners, else to up to 10 named usernames' followers; a daily budget each; answers `{ sent }` | yes |
+| `signup` | `{ mode?, dryRun? }`: who may sign up: `open` (default), `invite` (only a person with an open invite link) or `closed` (no new accounts); without `mode` it reads the setting, with `mode` it plans first (`dryRun` is true unless `false`), and applying needs an admin token | yes |
+| `spawn` | `{ name, apps?, crew?, dryRun? }`: a child forge, planned first (`dryRun` is true unless `false`); an admin's, and an `ro` token may plan but not make | yes |
+| `ssh_keys` | `{ action?, title?, key?, id? }`: list your own SSH keys (default), add one (`key` is an authorized_keys line, `title` optional) or remove one by `id`; the API's rules and errors, add and remove need an `rw` token | yes |
+| `stop` | stop one run by its id from `now` | yes |
+| `subscription_budget` | `{ id, usd }`: set an account's whole-life budget in dollars (up to the `subscription.budget_max_usd` limit), or clear it with `usd: null`, as the Subscriptions page does; a locked budget can only be lowered; a forge admin with an admin token | yes |
+| `system` | the machine the forge runs on, now: CPU, load, memory, disk, network, processes; a forge admin, or an agent granted `telemetry:read` |  |
+| `take_updates` | a fork takes its parent's updates when git can do it alone; a conflict is refused. On a spawned forge's code repository it opens the one `forge/take-updates` pull and never moves the default branch | yes |
+| `telemetry_grant` | `{ agent, on }`: grant an agent `telemetry:read`, or take it back with `false`, as the Telemetry page does; a person admin's, with an admin token; answers `says` | yes |
+| `telemetry_history` | `{ hours? }` (1–72, default 6): the node's and the forge's CPU cores, memory and load over the window, `{ hours, points: [{ target, at, cpuCores, cpuCoresMax (the bucket's peak), memoryBytes, load }] }`, at most 300 points a series (15-s samples to 24 h, 5-min beyond, averaged down); a forge admin or `telemetry:read`, as `system`; the machine records no disk history |  |
+| `tell` | a sentence becomes an issue, a builder is picked, a run starts on the crew's next tick | yes |
+| `thought` | `{ id }`: where one of your thoughts went (its id comes from `tell` without a repo): the placement, and the earlier thoughts it repeats or takes back and the later ones that did the same; not yours and not there answer alike, `not_found` |  |
+| `threads` | `{ repo, number, anchor?, resolved? }`: a pull's review threads with their comments; with `anchor` (from the list) resolve it (`resolved` true, the default) or reopen it (false), by the API's rules: a writer or someone who commented in the thread | yes |
+| `trail` | `{ repo, shown?, dryRun? }`: where a migrated repository came from (`provenance`: source, sourceUrl, parents, migratedAt) and whether it is shown; with `shown`, shows or hides the trail — planned first (`dryRun` is true unless `false`), only the repository's admin with an admin token, never an agent. Hiding keeps the record; a hidden one reads `null` to anyone but an admin | yes |
+| `upstream` | `{ repo, enabled?, url?, branch?, check? }`: the repository a fork follows (an admin reads it); with `enabled` sets it, with `check: true` checks it now; setting and checking need an admin token | yes |
+| `usage` | `{ repo, days? }`: what the crew's runs spent — tokens, cost, wall time — by subscription, agent, issue, and each account's 5-hour and weekly standing; a writer's |  |
+| `variant` | `{ repo, number, answer, reason? }`: like or dislike one pull among its variants (`answer` like or dislike); a later vote replaces the earlier; a dislike closes the pull with `reason` | yes |
+| `vision` | `{ repo, number? }`: `{ purpose, order: [{ n, name, text }], rules, direction, directionParts, preview, updatedAt }` from docs/VISION.md on the default branch; without the document `purpose` is null and `order` empty; `direction` (the autonomy direction) and `directionParts` (it cut into `{ kind: vision|owner, text }`: the fenced block that follows docs/VISION.md, and the owner's words) only for those who may read the repository's settings, else null; with `number` (an open vision pull) those same people get `preview`: `{ today, after }`, the direction as it stands and as an admin's merge will write it, or `{ why }` it would stay; else null |  |
+| `wait_for` | `{ app, issue, blockedBy, stop? }`: the issue waits for another, or stops with `stop: true`; the page's rules, and the answer carries the issue's URL | yes |
+| `watch` | `{ app, issue, watch? }`: watch a milestone, or stop with `watch: false`: one item in your feed that follows it, and one push to your phone when it lands | yes |
+| `whoami_can` | `{ kind? }`: your role and that role's row of the roles table, each ability yes or no; `kind: "passkeys"` lists your own passkeys (`{ items }`: id, name, created, lastUsed), people only |  |
+| `write_file` | `{ repo, branch, path, content, message }`: commit one file to an existing branch as `POST …/contents` does, for the same callers and with the same refusals (protected default, too large, a path with `..`), said in `edit_words`' sentences; answers `{ commit, says }` | yes |
+
+<!-- tools:end -->
+
+### Adding a tool
+
+One tool, one file (#5924): `src/http/mcp/tools/<name>.ts` exports `tool`,
+its definition and `run`, and nothing else; its arguments' shared helpers
+are in `src/http/mcp/shared.ts`. Its row in the table above is its `doc`.
+Then run `bun scripts/mcp-tools.ts`: it adds one line to the sorted
+`tools/index.ts` and one row to the table, so two pulls adding two tools
+edit no line in common. `test/mcp-tools.test.ts` holds every tool file to
+the same contract and goes red when either generated file is stale; the
+tool's own behaviour is tested in `test/mcp-<name>.test.ts`.
+
+### Room for a new tool
+
+Every session pays for `tools/list` first, so `test/mcp-size.test.ts` holds it
+to a 40,000-byte ceiling and a 37,000-byte headroom (the answer an admin gets,
+the largest). Measure before you push with `bun test test/mcp-size.test.ts`;
+a failure names the bytes over and the longest descriptions.
+
+- A new door is an `action` or `kind` on the tool that already owns the
+  resource before it is a new tool.
+- A new tool's description is one sentence.
+- A `dryRun` argument is bare `{ type: "boolean" }`: the server's
+  `instructions` say once that a tool with `dryRun` plans unless it is `false`.
+- The ceiling is the owner's: never raise it in a feature pull.
 
 Answers are JSON in a text block; most carry a `says` sentence short enough
 to relay as it is.
+
+## Arguments, in full
+
+`tools/list` keeps every argument description to 60 bytes (`test/mcp-size.test.ts`
+enforces it); `dryRun` reads `false to apply` on every tool that takes it. The
+longer sentences:
+
+- `dryRun`: plans unless it is `false`; anything else changes nothing. `limb` applying takes an admin token.
+- `tell.from`: a path on this forge the issue links to, like `/alice/notes/pulls/3`. `tell.context`: where this was told from, for the builder.
+- `spawn.reveal`, `claim_link.reveal`: put the live claim link in the answer (default false); it is a secret, only when its person reads it. `spawn.fresh`: a fresh app beside the copied ones. `spawn.followMode`: `tell-me` (default) or `take-updates`. `spawn.size`: recorded only, not enforced. `spawn.keepAccess`: stay an owner once claimed.
+- `commits.ref`: branch, tag or commit; the default branch when absent. `report.page`: the http(s) address where the problem was seen. `plan.issues.pillar`: the pillar served, as `"P0"` or `"P0 Trust"`; `later: true` means no pillar and needs `why`.
+- `explore.query`: words, plus `kind:app|person|forge` and `sort:score|forks|ships|use|fresh|name`.
+- `archive.repos`: several repositories, as `owner/name`, to archive in one operation.
+- `milestones.issue`: the number of an issue that waits for others; the limbs when absent. `watch.issue` is the same number; `watch.watch` false stops watching, anything else watches.
+- `limb.reason` (close): why it is not being done, in one sentence. `limb.pillar` (resume): the pillar to return it under. `limb.under` (raise, lower): `top` or a milestone number, only when the limb sits in several places.
+- `asks.hide_kinds`, `asks.hide_people`, `feed.*`: leave out these kinds or usernames; replaces your saved filter.
+- `audit.repo`: one app, as `owner/name`; every app you can see when absent.
+- `model_ceiling.dailyUsd`/`perRunUsd`: 0.01–10000; both null clears; one null is refused. `model_grant.usdPerMonth`: 0 takes the grant back. `account_role.usdPerMonth`: omit or null for none.
+- `hold.why`: why, in one line; it shows on the pull. `runs.limit`: how many, 1 to 50; 20 when absent.
+- `boards.step`: with `panel`, seconds per bucket, or a count of `s`, `m`, `h` or `d`. `access.since`: ISO time; default a day, max 14 days.
 
 ## Connecting
 
@@ -123,7 +237,7 @@ can call `apps` and is refused `tell`.
 `src/http/oauth.ts`, `src/core/oauth.ts`, `src/web/pages/oauth.ts`,
 `test/oauth-flow.test.ts`.
 
-`src/http/mcp.ts`, `src/actions/tell.ts`, `test/mcp.test.ts`.
+`src/http/mcp.ts`, `src/http/mcp/tools/`, `src/actions/tell.ts`, `test/mcp.test.ts`.
 
 ## `plan`
 
@@ -179,11 +293,16 @@ answers
 
 ## Cards, the contract and the plugins (#1116)
 
-- **Cards.** `apps`, `new_app`, `now`, `asks`, `milestones`, `map` and `feed` name a `ui://` resource in
+- **Cards.** `apps`, `new_app`, `now`, `asks`, `milestones`, `map`, `feed` and `pull` name a `ui://` resource in
   `_meta.ui.resourceUri` (MCP Apps, SEP-1865): `ui://forge/app`, `run`,
-  `decision`, `wave`, `map`, `feed`. The Plan card (`map`) shows one row per pillar with
+  `decision`, `wave`, `map`, `feed`, `pull`. The Plan card (`map`) shows one row per pillar with
   its ready, working and waiting counts, and the first five ready issues linked
-  to their pages; it has no actions. `resources/list` and `resources/read` serve one small
+  to their pages; it has no actions. The decision card's rows link to the pull or issue
+  they are about (a paused repository's row has none).
+  The Apps card (`apps`) links each `owner/name` row to the app's page on the forge and adds a
+  linked production row when the app has an http(s) URL; the `new_app` card links its
+  Production row the same way. Any other address stays plain text, never a link.
+  `resources/list` and `resources/read` serve one small
   sandboxed page, which draws the `structuredContent.card` model that the
   tool result carries, with `textContent` only. The model is built in
   `src/web/studio/cards.ts`. A card's

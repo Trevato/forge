@@ -123,6 +123,12 @@ describe("home is the feed", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
+  test("the composer is a §5 card, and no .composer class remains", async () => {
+    const text = await (await get("/", aliceCookie)).text();
+    expect(text).toMatch(/<form id="composer" class="card" method="post" action="\/tell">\s*<div class="card-body/);
+    expect(text).not.toContain('class="composer');
+  });
+
   test("the composer's action bar is §5's bar, not .composer-bar", async () => {
     const text = await (await get("/", aliceCookie)).text();
     const form = text.slice(text.indexOf('id="composer"'), text.indexOf("</form>", text.indexOf('id="composer"')));
@@ -350,6 +356,33 @@ describe("home is the feed", () => {
     const after = await get("/", bobCookie).then((r) => r.text());
     expect(after).toContain("fresh musing");
     expect(after).not.toContain("ancient musing");
+  });
+
+  test("a release post reads the version and first pull, links the commit, and falls back without a version", async () => {
+    const oid = "a".repeat(40);
+    const serving = (payload: Record<string, unknown>) =>
+      app.bus.append({ kind: "app.serving", repoId: garden.id, payload: { app: "garden", env: "production", commitOid: oid, ...payload } });
+    serving({ version: "0.7.251", pulls: [{ title: "Water <b>early</b>", number: 1 }, { title: "Mulch", number: 2 }, { title: "Weed", number: 3 }] });
+    const page = await get("/", aliceCookie).then((r) => r.text());
+    expect(page).toContain("0.7.251 is serving: Water &lt;b&gt;early&lt;/b&gt; and 2 more");
+    expect(page).not.toContain("<b>early</b>");
+    expect(page).toContain(`href="/alice/garden/commit/${oid}"`);
+    const mcp = async () => {
+      const token = createToken(app.db, alice.id, "rel", "ro").token;
+      const res = await fetch(`${servers.url}/mcp`, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${token}` },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "feed", arguments: { limit: 50 } } }),
+      });
+      return JSON.parse(((await res.json()) as any).result.content[0].text).items as any[];
+    };
+    const rel = (await mcp()).filter((i) => i.what.includes("is serving"));
+    expect(rel[0].what).toBe("0.7.251 is serving: Water <b>early</b> and 2 more");
+    expect(rel[0].link).toBe(`/alice/garden/commit/${oid}`);
+    serving({ version: "not-a-version", pulls: [{ title: "Nope", number: 4 }] });
+    const items = (await mcp()).filter((i) => i.what === "a new version is serving");
+    expect(items.length).toBe(1);
+    expect(items[0].link).toBe("/alice/garden");
   });
 
   test("the MCP feed answers the same posts, page by page", async () => {

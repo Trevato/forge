@@ -1,5 +1,6 @@
-/** `/asked` names session, each read and render in Server-Timing, and answers a person with 500 asks in under 50 ms (#3358). */
+/** `/asked` names session, each read and render in Server-Timing, and answers a person with 500 asks within budget (#3358). */
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { baselineMs, expectBudget } from "./helpers/budget.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -71,7 +72,8 @@ afterAll(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-test("GET /asked names its phases and answers under 50 ms with 500 asks", async () => {
+test("GET /asked names its phases and answers within its budget with 500 asks", async () => {
+  const against = await baselineMs(servers.url);
   const get = () => fetch(`${servers.url}/asked?show=all`, { headers: { cookie } });
   await (await get()).text();
   // The best of three: a shared runner's stall hits one request, not the page's cost.
@@ -86,5 +88,5 @@ test("GET /asked names its phases and answers under 50 ms with 500 asks", async 
       expect(parts.find((p) => p.startsWith(`${name};`))).toMatch(/^[a-z]+;dur=\d+\.\d$/);
     best = Math.min(best, Number(/app;dur=([\d.]+)/.exec(parts.join(", "))![1]));
   }
-  expect(best).toBeLessThan(50);
+  expectBudget(best, { ms: 50, against });
 });

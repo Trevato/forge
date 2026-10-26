@@ -273,6 +273,31 @@ export function takePhases(request: Request): Phase[] {
   return list;
 }
 
+const startTimes = new WeakMap<Request, number>();
+
+/** The server stamps when it took a request, so the work before the handler can be named `route`. */
+export function noteStart(request: Request, at: number): void {
+  startTimes.set(request, at);
+}
+
+const framed = new WeakSet<Request>();
+
+/**
+ * A page that sums its phases to `app` calls this first: it names `route`, the
+ * server's work before the handler less the session, and asks the server to
+ * name `compress`, the work after it. Pages that don't call it are unchanged.
+ */
+export function nameFrame(request: Request): void {
+  const at = startTimes.get(request);
+  if (at !== undefined) notePhase(request, "route", Math.max(0, performance.now() - at - (sessionTimes.get(request) ?? 0)));
+  framed.add(request);
+}
+
+/** Whether the page asked for `compress` to be named. */
+export function namesFrame(request: Request): boolean {
+  return framed.has(request);
+}
+
 const sessionTimes = new WeakMap<Request, number>();
 
 /** The server says how long resolving the session took; a page may name it. */

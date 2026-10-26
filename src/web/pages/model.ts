@@ -7,6 +7,7 @@
  */
 
 import { ADD_MESSAGES, addOwnModel, setAccountCeilings, setAccountGrant } from "../../actions/model_grant.ts";
+import { SUBSCRIPTION_ADDED } from "../../actions/model_words.ts";
 import { CEILING_MAX_USD, dailyLeft, getAccountCeiling } from "../../core/account_ceiling.ts";
 import {
   budgetLine,
@@ -90,7 +91,7 @@ export async function modelAdd(ctx: Ctx): Promise<Response> {
     ctx,
     "/settings/model",
     added.ok
-      ? { message: "Your subscription is added, for your own repositories." }
+      ? { message: SUBSCRIPTION_ADDED }
       : { tone: "danger", message: ADD_MESSAGES[added.error] },
   );
 }

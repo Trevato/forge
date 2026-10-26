@@ -38,6 +38,7 @@ import { html, raw, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
 import { crewReadiness } from "../pages/crew.ts";
 import { grantsSection } from "../pages/subscriptions.ts";
+import { directionMarked } from "./direction.ts";
 import { markOf } from "../../core/marks.ts";
 import {
   btn,
@@ -305,6 +306,7 @@ function autonomyCard(ctx: Ctx, repo: Repo, base: string, admin: boolean): Html 
         })}
         <div class="field">
           <label for="f-direction">Direction</label>
+          ${directionMarked(repo.autonomyDirection)}
           <textarea
             class="input"
             id="f-direction"

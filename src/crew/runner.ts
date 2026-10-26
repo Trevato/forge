@@ -29,6 +29,7 @@ import {
 } from "./early.ts";
 import { forkRepo, sealedForkFor } from "../actions/repos.ts";
 import { announceRun } from "../actions/runs.ts";
+import { Stopwatch } from "../apps/timing.ts";
 import { previewEnv } from "../apps/data.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import { ownApp, ownAppUrls } from "./app_hosts.ts";
@@ -175,6 +176,8 @@ export interface CrewOptions {
   readonly sandboxNote?: string | undefined;
   /** Milliseconds between the crew's ticks; tests pass a small one. @default 5000 */
   readonly tickMs?: number | undefined;
+  /** The clock a run's timing line reads; tests pass a fake. @default Date.now */
+  readonly now?: (() => number) | undefined;
 }
 
 export { crewRoot, workdirFor } from "./workdir.ts";
@@ -289,6 +292,13 @@ export function settleReview(
     : { state: "ok", summary: `reviewed: ${verdict.state.replace("_", " ")}` };
 }
 
+/** How far a run got, for the timing line an early return would cut short. */
+interface Ran {
+  claimed: boolean;
+  inHarness: boolean;
+  inWrapUp: boolean;
+}
+
 /**
  * Claim and execute a queued agent run. Never throws. A run the provider
  * turned away ends cancelled with a `paused:` summary and returns when its
@@ -298,6 +308,31 @@ export async function executeAgentRun(
   app: App,
   run: Run,
   options: CrewOptions,
+): Promise<Pause | undefined> {
+  const watch = new Stopwatch(options.now ?? Date.now);
+  const began = { claimed: false, inHarness: false, inWrapUp: false };
+  try {
+    return await runClaimed(app, run, options, watch, began);
+  } finally {
+    // The log's last line, on every path that started: where the time went.
+    // A step an early return cut short still owns the time it held.
+    if (began.inHarness) watch.lap("harness");
+    if (began.inWrapUp) watch.lap("wrap-up");
+    if (began.claimed)
+      appendRunLog(
+        app.config.dataDir,
+        run.id,
+        watch.line("run ended", "the run started"),
+      );
+  }
+}
+
+async function runClaimed(
+  app: App,
+  run: Run,
+  options: CrewOptions,
+  watch: Stopwatch,
+  began: Ran,
 ): Promise<Pause | undefined> {
   // A follow-up queued behind a run that has since answered everything:
   // nothing new to act on, so nothing starts (`guard.ts`).
@@ -314,6 +349,7 @@ export async function executeAgentRun(
   }
   const claimed = claimRun(app.db, run.id);
   if (!claimed) return undefined;
+  began.claimed = true;
   const lease = holdLease(app.db, run.id);
   // A resolve run keeps the head it started from, to tell a push from none.
   const startedAt =
@@ -352,6 +388,8 @@ export async function executeAgentRun(
       write,
       controller.signal,
       meter,
+      watch,
+      began,
     );
   } catch (error) {
     log.error("agent run threw", { run: run.id, error: String(error) });
@@ -776,6 +814,8 @@ async function work(
   write: (line: string) => void,
   signal: AbortSignal,
   meter: Meter,
+  watch: Stopwatch,
+  ran: Ran,
 ): Promise<Outcome> {
   const began = new Date().toISOString();
   const repo = getRepoById(app.db, run.repoId);
@@ -938,6 +978,7 @@ async function work(
       signal,
       run.attempt > 0,
     );
+    watch.lap("clone");
     if (!prepared.ok) return { state: "failed", summary: prepared.error };
 
     // What the agent is told.
@@ -1283,6 +1324,8 @@ async function work(
       write(
         `sandbox: off here${options.sandboxNote === undefined ? "" : ` — ${options.sandboxNote}`}; the shell runs unrestricted`,
       );
+    watch.lap("brief");
+    ran.inHarness = true;
     const working = budget - reserve;
     if (!reviewing)
       early = watchForPull({
@@ -1299,6 +1342,8 @@ async function work(
         write,
         variantGroup: run.variantGroup,
         continuing: pullStands,
+        onOpened: () =>
+          write(watch.line("first push", "the run started", "harness to first push")),
       });
     let result = await invoke(
       prompt,
@@ -1466,6 +1511,8 @@ async function work(
       limitLifts = resumeAt(result.result, new Date());
     }
 
+    watch.lap("harness");
+    ran.inHarness = false;
     // The reserve: the same session gets one more turn, to land what exists
     // rather than to keep working. Its ending is the run's ending, with the
     // whole spend; the pull says where the work stopped.
@@ -1477,6 +1524,7 @@ async function work(
       Date.now() < deadline
     ) {
       stoppedAt = result.costUsd;
+      ran.inWrapUp = true;
       write(`claude: wrapping up with the reserve, $${reserve.toFixed(2)}`);
       const wrapped = await retrying(
         await invoke(wrapUpPrompt(), reserve, result.sessionId),
@@ -1501,6 +1549,8 @@ async function work(
         turns: result.turns + wrapped.turns,
       };
       noteRunProgress(app.db, run.id, { costUsd: result.costUsd });
+      watch.lap("wrap-up");
+      ran.inWrapUp = false;
     }
     if (signal.aborted)
       return {

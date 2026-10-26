@@ -38,6 +38,13 @@ describe("layout", () => {
     expect(css).toContain("#summary { display: flex; flex-wrap: wrap");
     expect(read("src/web/pages/system.ts")).toContain('<div class="table-scroll"><table class="table" aria-label="Forge memory by hour">');
   });
+  test("the processes table scrolls in §5's .table-scroll and .table-wrap is gone", () => {
+    const sys = read("src/web/pages/system.ts");
+    expect(sys).toContain('<div class="table-scroll"><table class="table" data-dense aria-label="Processes by what launched them">');
+    expect(sys).not.toContain("table-wrap");
+    expect(css).not.toContain("table-wrap");
+    expect(css).toMatch(/\.table-scroll \{[^}]*overflow-x: auto/);
+  });
   test("a pressed button looks pressed", () => {
     expect(css).toContain('.btn[aria-pressed="true"]');
   });

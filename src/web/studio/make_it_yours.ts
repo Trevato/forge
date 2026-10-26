@@ -165,6 +165,7 @@ export async function makeItYoursSubmit(ctx: Ctx): Promise<Response> {
   }
   return redirect(repoBase(made.value.made.repo), {
     url: ctx.url,
+    forgeUrl: ctx.app.config.url,
     flash: {
       message: made.value.existing
         ? `This is your ${made.value.repo}.`

@@ -15,7 +15,8 @@ import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { getIssueById } from "../src/core/issues.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
-import { claimRun, finishRun, listRuns } from "../src/core/runs.ts";
+import { claimRun, createRun, finishRun, listRuns } from "../src/core/runs.ts";
+import { setCapacity } from "../src/core/capacity.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { parkedCount } from "../src/crew/parks.ts";
 import { createToken } from "../src/core/tokens.ts";
@@ -355,4 +356,48 @@ test("the same main tip asks the crew at most twice", async () => {
   expect(await sweepConflicts(app, fresh())).toBe(0);
   expect(runs().length).toBe(2);
   expect(getIssueById(app.db, pull.id)!.state).toBe("open");
+});
+
+test("one landing that conflicts many pulls starts only as many runs as the check lane has room for, oldest first (#4459)", async () => {
+  // Only this test's pulls are open, so the slots are theirs alone.
+  app.db.query("UPDATE issue SET state = 'closed' WHERE repo_id = ?1 AND kind = 'pull'").run(repo.id);
+  const pulls = [await pullOn("lane-a.ts"), await pullOn("lane-b.ts"), await pullOn("lane-c.ts")];
+  const shared = await commitToBranch(app, alice, repo, {
+    branch: "main",
+    message: "One landing under all three",
+    files: pulls.map((_, i) => ({
+      path: `lane-${"abc"[i]}.ts`,
+      content: "export const v = 'main';\n",
+    })),
+  });
+  if (!shared.ok) throw new Error(JSON.stringify(shared.error));
+  setCapacity(app.db, "checks.concurrency", "3", alice.id);
+  // A rebase's check already waits: two slots are left for the pushes to
+  // come. Another kind of check does not stand in front of them (#6140).
+  const mainCheck = createRun(app.db, { repoId: repo.id, kind: "check", env: "main" });
+  const rebased = openIssue(app, alice, repo, { title: "Rebased elsewhere" });
+  if (!rebased.ok) throw new Error(String(rebased.error));
+  const pushedBy = createRun(app.db, { repoId: repo.id, kind: "agent", issueId: rebased.value.id, reason: "conflict" });
+  claimRun(app.db, pushedBy.id);
+  finishRun(app.db, pushedBy.id, { state: "ok", summary: "pushed" });
+  const waiting = createRun(app.db, { repoId: repo.id, kind: "check", issueId: rebased.value.id });
+  try {
+    expect(await sweepConflicts(app, fresh())).toBe(2);
+    expect(pulls.map((p) => p.runs().length)).toEqual([1, 1, 0]);
+    // Nothing is free until a run or the check finishes.
+    expect(await sweepConflicts(app, fresh())).toBe(0);
+    claimRun(app.db, waiting.id);
+    finishRun(app.db, waiting.id, { state: "ok", summary: "" });
+    expect(await sweepConflicts(app, fresh())).toBe(1);
+    expect(pulls.map((p) => p.runs().length)).toEqual([1, 1, 1]);
+  } finally {
+    for (const p of pulls)
+      for (const run of p.runs()) {
+        claimRun(app.db, run.id);
+        finishRun(app.db, run.id, { state: "ok", summary: "" });
+      }
+    claimRun(app.db, mainCheck.id);
+    finishRun(app.db, mainCheck.id, { state: "ok", summary: "" });
+    setCapacity(app.db, "checks.concurrency", null, alice.id);
+  }
 });

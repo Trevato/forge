@@ -24,6 +24,8 @@ import {
   textKind,
   tokenNote,
 } from "../src/kernel/tokens-format.ts";
+import { css } from "../src/web/style.ts";
+import { tokenCount } from "../src/web/ui.ts";
 
 describe("the formatter", () => {
   test("writes counts the way storage is written", () => {
@@ -80,6 +82,20 @@ describe("the estimate", () => {
     expect(estimateTokens(1.5, "a.ts")).toBeUndefined();
     expect(textKind(".bashrc")).toBe("code"); // a leading dot is a name
     expect(textKind("notes.MD")).toBe("prose");
+  });
+});
+
+describe("the markup", () => {
+  test("a count wears the base text utilities, not a class of its own", () => {
+    const markup = String(tokenCount(1200, "estimated", "code"));
+    expect(markup).toContain('class="num nowrap"');
+    expect(markup).not.toContain('class="tok"');
+    expect(css).not.toMatch(/\.tok\s*\{/);
+  });
+
+  test("the stylesheet defines .break and .nowrap once each", () => {
+    expect(css.match(/\.break\s*\{/g)).toHaveLength(1);
+    expect(css.match(/\.nowrap\s*\{/g)).toHaveLength(1);
   });
 });
 
@@ -199,7 +215,7 @@ describe("token counts on the pages", () => {
     const page = await get("/alice/one/blob/main/src/a.ts", cookie);
     // 700 B; 700 ÷ 3.5 = 200 tokens.
     expect(page).toMatch(
-      /1 lines · 700 B · <span class="tok" title="About 200 tokens — an estimate at 3\.5 bytes per token for code/,
+      /1 lines · 700 B · <span class="num nowrap" title="About 200 tokens — an estimate at 3\.5 bytes per token for code/,
     );
     expect(page).toContain(">~200 tok</span");
   });
@@ -208,14 +224,14 @@ describe("token counts on the pages", () => {
     const page = await get("/alice/one/edit/main/data.json", cookie);
     expect(page).toContain('id="editor-size"');
     // 3000 B = 2.9 KB; 3000 ÷ 3.0 = 1000 tokens.
-    expect(page).toMatch(/2\.9 KB · <span class="tok"[^>]*>~1\.0k tok</);
+    expect(page).toMatch(/2\.9 KB · <span class="num nowrap"[^>]*>~1\.0k tok</);
   });
 
   test("a run shows tokens in and out beside its cost, to the owner only", async () => {
     const page = await get(`/alice/one/runs/${runId}`, cookie);
     // 46,500 in → 47k; 800 out. Counted, so no tilde.
     expect(page).toMatch(
-      /id="run-tokens"\s*><span class="tok" title="46,500 tokens, as counted by Claude&#39;s tokenizer"\s*>47k tok<\/span\s*>\s*in ·/,
+      /id="run-tokens"\s*><span class="num nowrap" title="46,500 tokens, as counted by Claude&#39;s tokenizer"\s*>47k tok<\/span\s*>\s*in ·/,
     );
     expect(page).toContain(">800 tok</span");
     const read = await get(`/alice/one/runs/${runId}`, bobCookie);

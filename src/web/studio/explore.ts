@@ -16,9 +16,9 @@ import {
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { pageHead } from "../chrome.ts";
-import { html, when, type Html } from "../html.ts";
+import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { btn, empty, listCard, nameMark, seg, timeAgo } from "../ui.ts";
+import { btn, empty, listCard, nameMark, row as rowOf, seg, timeAgo } from "../ui.ts";
 
 const href = (query: ExploreQuery): string => {
   const line = exploreLine(query);
@@ -26,49 +26,83 @@ const href = (query: ExploreQuery): string => {
 };
 
 /** A row's numbers as a person reads them; nothing that is zero. */
-function numbers(row: ExploreRow): string {
+function numbers(row: ExploreRow): { apps: string; rest: string } {
   const n = row.numbers;
-  const parts = [
-    row.kind === "person" ? `${n.apps} app${n.apps === 1 ? "" : "s"}` : "",
+  const rest = [
     n.forks > 0 ? `${n.forks} fork${n.forks === 1 ? "" : "s"}` : "",
     n.ships > 0 ? `${n.ships} shipped this month` : "",
     n.awakeHours > 0 ? `${n.awakeHours} h in use` : "",
     row.shippedAt !== null ? `last shipped ${timeAgo(row.shippedAt)}` : "",
   ];
-  return parts.filter((p) => p !== "").join(" · ");
+  return {
+    apps: row.kind === "person" ? `${n.apps} app${n.apps === 1 ? "" : "s"}` : "",
+    rest: rest.filter((p) => p !== "").join(" · "),
+  };
 }
 
 function rowHtml(row: ExploreRow): Html {
-  const said = numbers(row);
-  return html`<li class="row explore-row">
-    <span class="explore-main">
-      <a class="explore-name" href="${row.url}">${row.name}</a
-      >${nameMark(row.mark)}
-      ${when(
-        row.description,
-        (d) => html`<span class="muted small truncate">${d}</span>`,
-      )}
-      ${when(said, (s) => html`<span class="muted small">${s}</span>`)}
-    </span>
-    ${when(
-      row.copyable === true ? row.repo : undefined,
-      (repo) =>
-        btn("Make it yours", {
-          href: `/${repo.owner}/${repo.name}/make-it-yours`,
-          size: "sm",
-          icon: "fork",
-        }),
-    )}
-  </li>`;
+  const { apps, rest } = numbers(row);
+  // One tap from a person to their apps; with none, the count is plain text.
+  const theirs = href({ kind: "app", sort: "score", text: "", archived: false, owner: row.name });
+  const count = apps === "" ? html`` : row.numbers.apps > 0 ? html`<a href="${theirs}">${apps}</a>` : html`${apps}`;
+  const parts = [
+    row.description === "" ? html`` : html`${row.description}`,
+    count,
+    rest === "" ? html`` : html`${rest}`,
+  ].filter((p) => p.toString() !== "");
+  const metaHtml = parts.reduce((all, p, i) => (i === 0 ? p : html`${all} · ${p}`), html``);
+  return rowOf({
+    title: html`<a href="${row.url}">${row.name}</a>${nameMark(row.mark)}`,
+    ...(parts.length === 0 ? {} : { meta: metaHtml }),
+    ...(row.copyable === true && row.repo !== undefined
+      ? {
+          trail: btn("Make it yours", {
+            href: `/${row.repo.owner}/${row.repo.name}/make-it-yours`,
+            size: "sm",
+            icon: "fork",
+          }),
+        }
+      : {}),
+  });
+}
+
+/** A button label that cannot push the page wider; the whole term is its title. */
+const shorten = (term: string): string =>
+  term.length > 24 ? `${term.slice(0, 23)}…` : term;
+
+/** Each term of a missed line, with the query that is the line without it. */
+function terms(query: ExploreQuery): { term: string; without: ExploreQuery }[] {
+  const out: { term: string; without: ExploreQuery }[] = [];
+  if (query.kind !== "all")
+    out.push({ term: `kind:${query.kind}`, without: { ...query, kind: "all" } });
+  if (query.sort !== "score")
+    out.push({ term: `sort:${query.sort}`, without: { ...query, sort: "score" } });
+  if (query.archived)
+    out.push({ term: "archived:yes", without: { ...query, archived: false } });
+  const words = query.text.split(/\s+/).filter((w) => w !== "");
+  words.forEach((word, i) =>
+    out.push({
+      term: word,
+      without: { ...query, text: words.filter((_, j) => j !== i).join(" ") },
+    }),
+  );
+  return out;
 }
 
 /** Nothing to list: a bare line means nothing is public yet, not a miss. */
 function emptyState(signedIn: boolean, query: ExploreQuery): Html {
-  if (exploreLine(query) !== "")
+  const line = exploreLine(query);
+  if (line !== "")
     return empty({
       icon: "search",
-      title: "Nothing matches",
-      note: "Clear the line to see everything you can.",
+      title: `Nothing matches ${line}`,
+      note: "Drop a term to step back:",
+      action: html`<div class="form-actions">
+        ${terms(query).map(
+          (t) => btn(shorten(t.term), { href: href(t.without), size: "sm", title: `Drop ${t.term}` }),
+        )}
+        ${btn("Clear all", { href: "/explore", size: "sm" })}
+      </div>`,
     });
   return empty({
     icon: "search",
@@ -95,6 +129,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
     { label: "All", kind: "all" as const },
     { label: "Apps", kind: "app" as const },
     { label: "People", kind: "person" as const },
+    // Forges are a site admin's to see (explore.ts in actions): no chip onto an empty page.
     ...(ctx.auth.user?.isAdmin === true
       ? [{ label: "Forges", kind: "forge" as const }]
       : []),
@@ -109,9 +144,9 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
   const body = html`${pageHead("Explore", {
       sub: "Apps and their makers, ranked by forks, ships, use and how lately — the numbers on every row.",
     })}
-    <form method="get" action="/explore" class="bar mb explore-line">
+    <form method="get" action="/explore" class="bar mb">
       <input
-        class="input mono"
+        class="input mono search"
         name="q"
         value="${exploreLine(query)}"
         placeholder="kind:app sort:forks garden"
@@ -121,7 +156,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
       />
       ${btn("Go", { size: "sm" })}
     </form>
-    <div class="filters mb explore-filters">
+    <div class="bar mb">
       ${seg(
         kinds.map((k) => ({
           label: k.label,

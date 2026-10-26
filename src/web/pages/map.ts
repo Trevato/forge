@@ -33,7 +33,7 @@ import {
   type Ranked,
 } from "../../core/dependencies.ts";
 import type { Issue } from "../../core/issues.ts";
-import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { cachedLane, cachedLayout, repoHeads, scopeKey } from "../map_cache.ts";
 import { holdsFor } from "../../core/holds.ts";
 import {
@@ -930,7 +930,10 @@ export function countWords(words: readonly Word[]): Record<Word, number> {
   return out;
 }
 
-function countsLine(counts: Record<Word, number>): Html {
+function countsLine(
+  counts: Record<Word, number>,
+  toggle?: { readonly base: string; readonly showDone: boolean },
+): Html {
   const always = new Set<Word>(["ready", "working", "blocked", "done"]);
   const tone: Partial<Record<Word, string>> = {
     ready: "success",
@@ -945,6 +948,13 @@ function countsLine(counts: Record<Word, number>): Html {
       (w) =>
         html`<span class="badge" data-variant="${tone[w] ?? "secondary"}" data-state="${w}">${w} <b>${counts[w]}</b></span> `,
     )}
+    ${toggle === undefined || counts.done === 0
+      ? null
+      : html`<a
+          class="map-toggle"
+          href="${toggle.showDone ? toggle.base : `${toggle.base}?done=1`}"
+          >${toggle.showDone ? "Open only" : "Show done"}</a
+        >`}
   </span>`;
 }
 
@@ -1121,11 +1131,6 @@ export const mapCss = /* css */ `
 .map-canvas.is-view .map-svg { height: 100%; }
 .map-svg text { font-family: var(--font); pointer-events: none; }
 .map-canvas > [role="group"] { position: absolute; top: 8px; right: 8px; gap: 4px; }
-.map-tools { position: absolute; top: 8px; right: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--card); box-shadow: var(--shadow-1); overflow: hidden; }
-.map-tool { min-width: 26px; height: 24px; padding: 0 7px; border: 0; background: transparent; color: var(--muted-fg); font-size: 12.5px; font-weight: 550; line-height: 1; cursor: pointer; }
-.map-tool + .map-tool { border-left: 1px solid var(--border); }
-.map-tool:hover { background: var(--muted); color: var(--fg); }
-.map-tool:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* ---- cards ---- */
 .map-node { cursor: pointer; outline: none; }
@@ -1171,38 +1176,21 @@ export const mapCss = /* css */ `
 .map-rule line { stroke: var(--border); stroke-width: 1; }
 .map-rule text { font-size: var(--fs-min); fill: var(--faint); letter-spacing: .02em; }
 
-/* ---- the line under a drawing ---- */
-.map-counts { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 8px 2px 0; font-size: 12.5px; color: var(--muted-fg); }
-.map-counts b { font-weight: 550; color: var(--fg); font-variant-numeric: tabular-nums; }
-.map-counts i { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; background: var(--faint); }
-.map-counts i[data-state="ready"] { background: var(--success); }
-.map-counts i[data-state="working"] { background: var(--accent); }
-.map-counts i[data-state="waiting"] { background: var(--merged); }
-.map-counts i[data-state="parked"] { background: var(--attn); }
-.map-counts i[data-state="held"] { background: var(--attn); }
-.map-counts i[data-state="done"] { background: transparent; border: 1px solid var(--faint); }
-
 /* ---- beside the drawing ---- */
-.map-list h2 { font-size: 13px; margin: 0 0 6px; }
-.map-list ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 14px; list-style: decimal; }
-.map-list ol li::marker { color: var(--faint); font-variant-numeric: tabular-nums; }
-.map-list li span { display: block; }
-.map-list + .map-list { margin-top: 18px; }
 .map-ask { display: inline; }
-.map-empty { display: grid; justify-items: center; gap: 8px; padding: 40px 16px; border: 1px dashed var(--border); border-radius: var(--radius); color: var(--muted-fg); text-align: center; }
+.map-toggle { display: inline-block; padding: 2px 8px; font-size: 12.5px; }
+@media (pointer: coarse) { .map-toggle { display: inline-flex; align-items: center; min-height: 44px; padding: 0 12px; } }
 
 /* ---- lanes: §5 list rows that fold ---- */
 #lanes { margin-top: 16px; }
-#lanes .row-meta .map-counts { margin: 0; }
 #lanes li[data-autonomy="autonomous"] .row-title .badge { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 34%, transparent); }
 #lanes li[data-idle] .row-title { color: var(--muted-fg); }
 #lanes details > .card.empty { border: 0; border-top: 1px solid var(--border); border-radius: 0; }
-#lanes details > .map-canvas, #lanes details > .map-empty { border: 0; border-top: 1px solid var(--border); border-radius: 0; }
+#lanes details > .map-canvas { border: 0; border-top: 1px solid var(--border); border-radius: 0; }
 @media (prefers-reduced-motion: reduce) {
   .map-card, .map-title { transition: none; }
 }
 @media (forced-colors: active) {
-  .map-tool:focus-visible { outline: 2px solid Highlight; }
   .map-node:focus-visible .map-card { stroke: Highlight; stroke-width: 3; }
 }
 `;
@@ -1373,26 +1361,51 @@ const studioEmpty = (base: string): MapEmpty => ({
   action: btn("Say one", { href: `${base}#tell`, variant: "primary" }),
 });
 
-/** GET /:owner/:name/map */
+/**
+ * The graph as the page draws it by default: open issues and the edges
+ * between them. Readiness is judged on the whole graph, not on this.
+ */
+function openOnly(graph: Graph): Graph {
+  const issues = graph.issues.filter((i) => i.state === "open");
+  const kept = new Set(issues.map((i) => i.id));
+  return {
+    ...graph,
+    issues,
+    edges: graph.edges.filter(
+      (e) => kept.has(e.blockedById) && kept.has(e.issueId),
+    ),
+  };
+}
+
+/** GET /:owner/:name/map (`?done=1` draws the closed issues too) */
 export async function mapPage(ctx: Ctx): Promise<Response> {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
   const db = ctx.app.db;
   const studio = studioRecord(ctx, repo) !== undefined;
-  const graph = repoGraph(db, repo.id, {
-    ...sealedScope(db, repo, ctx.auth.user),
-  });
-  const ready = readyNow(graph);
-  const blocked = blockedOn(graph);
-  const critical = criticalPath(graph);
-  const placed = cachedLayout(graph, layout);
-  const marks = marksFor(db, repo.id, graph, listActiveRuns(db, [repo.id]));
-  const readySet = new Set(ready.map((r) => r.issue.id));
-  const counts = countWords(
-    graph.issues.map((i) => wordFor(i, readySet, marks)),
-  );
-  const pillars = pillarView(db, repo);
-  const ask = askToLiveFor(ctx.app, repo, pillars, ctx.auth.user);
+  const showDone = ctx.url.searchParams.get("done") === "1";
+  // The read: graph, marks and pillars, one phase; `render` is the page's own.
+  const { shown, graph, ready, blocked, critical, placed, marks, readySet, counts, pillars, ask } =
+    timePhase(ctx.request, "map", () => {
+      const graph = repoGraph(db, repo.id, {
+        ...sealedScope(db, repo, ctx.auth.user),
+      });
+      const ready = readyNow(graph);
+      const blocked = blockedOn(graph);
+      const critical = criticalPath(graph);
+      const shown = showDone ? graph : openOnly(graph);
+      const placed = cachedLayout(shown, layout);
+      const marks = marksFor(db, repo.id, graph, listActiveRuns(db, [repo.id]));
+      const readySet = new Set(ready.map((r) => r.issue.id));
+      const counts = countWords(
+        graph.issues.map((i) => wordFor(i, readySet, marks)),
+      );
+      const pillars = pillarView(db, repo);
+      const ask = askToLiveFor(ctx.app, repo, pillars, ctx.auth.user);
+      return { shown, graph, ready, blocked, critical, placed, marks, readySet, counts, pillars, ask };
+    });
+  const rendering = performance.now();
   const body = html`${repoHeader(ctx, repo, "map")}
     <div class="page-head mt">
       <h1>Map</h1>
@@ -1409,13 +1422,13 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
       data-live-repo="${repo.ownerName}/${repo.name}"
     >
       <div class="map-main">
-        ${drawMap(repo, graph, placed, emphasisFor(ready, critical, marks), {
+        ${drawMap(repo, shown, placed, emphasisFor(ready, critical, marks), {
           id: "map-canvas",
           cap: 1,
           issueHref: tellHref,
           ...(studio ? { empty: studioEmpty(repoBase(repo)) } : {}),
         })}
-        ${placed.nodes.length === 0 ? null : countsLine(counts)}
+        ${placed.nodes.length === 0 && counts.done === 0 ? null : countsLine(counts, { base: `${repoBase(repo)}/map`, showDone })}
       </div>
       <aside class="stack">
         ${pillars === undefined
@@ -1447,7 +1460,7 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
         )}
       </aside>
     </div>`;
-  return page({
+  const response = page({
     ctx,
     title: `Map · ${repo.name}`,
     crumbs: crumbsFor(repo),
@@ -1460,6 +1473,8 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
     styleCss: mapCss,
     scriptJs: `${liveRegionsJs}\n${mapViewJs}`,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 /**
@@ -1657,7 +1672,7 @@ export function globalLanes(
   const db = app.db;
   const now = new Date();
   // Access first, every request, and into the key (docs/CACHING.md rule 1).
-  const repos = listReposVisibleTo(db, viewer, { limit: 200 });
+  const repos = listReposVisibleTo(db, viewer, { limit: 200, withoutArchived: true });
   const heads = repoHeads(
     db,
     repos.map((r) => r.id),

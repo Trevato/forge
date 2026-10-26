@@ -29,7 +29,6 @@ import {
   updateRepoSettings,
 } from "../src/actions/repos.ts";
 import { recordDecision } from "../src/core/decisions.ts";
-import type { Issue } from "../src/core/issues.ts";
 import { getPull, mergedPullCount, type Pull } from "../src/core/pulls.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
 import {
@@ -37,7 +36,6 @@ import {
   claimRun,
   createRun,
   finishRun,
-  listRuns,
   markServing,
   previewLatency,
   STOPPED_SUMMARY,
@@ -47,7 +45,6 @@ import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { NOBODY_ON_CREW } from "../src/web/studio/words.ts";
 import { servedPhrase } from "../src/web/ui.ts";
-import { serving } from "./helpers/studio.ts";
 
 describe("a stranger sees the app, not the owner's books", () => {
   let dataDir: string;

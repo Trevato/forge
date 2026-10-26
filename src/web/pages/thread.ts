@@ -9,7 +9,9 @@
  */
 
 import { mayView } from "../../core/sealed.ts";
+import { THREAD_SAYS } from "../../actions/thread_words.ts";
 import { ISSUE_TEAMS_SAY, nameTeams } from "../../actions/issue_teams.ts";
+import { MIRRORED_DO_IT_THERE } from "../../actions/mirror_words.ts";
 import { teamsOfIssue, TEAMS_MAX } from "../../core/issue_teams.ts";
 import { listTeams } from "../../core/teams.ts";
 import { listCrew } from "../../actions/crew.ts";
@@ -38,6 +40,7 @@ import {
   getIssue,
   labelsFor,
   listComments,
+  THREAD_WINDOW,
   MAX_BODY,
   MAX_TITLE,
 } from "../../core/issues.ts";
@@ -54,6 +57,7 @@ import type { Ctx } from "../../http/context.ts";
 import { commentCard } from "../comments.ts";
 import { backTo, field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
+import { NOT_CHANGED } from "../edit_words.ts";
 import { flashOrJson, flashTo } from "../layout.ts";
 import {
   btn,
@@ -81,8 +85,7 @@ import { interruptionsOn } from "../../crew/interrupted.ts";
  */
 export function originError(error: string): string | undefined {
   const words: Record<string, string> = {
-    mirrored:
-      "This repository mirrors an origin — do it there, and the next sync brings it back.",
+    mirrored: MIRRORED_DO_IT_THERE,
     origin_owner_only:
       "Only the person who connected this origin can write through it. Your comment would otherwise appear upstream under their name.",
     origin_refused: "The origin refused that. Nothing was changed here either.",
@@ -128,6 +131,8 @@ export function threadContext(
 export interface Entry {
   at: string;
   node: Html;
+  /** A conversation comment: the window is cut on these (`commentAnchor`, core/issues.ts, counts the same). */
+  comment?: true;
 }
 
 const EVENT_LOOK: Record<string, { icon: IconName; tone: Tone; verb: string }> =
@@ -226,6 +231,20 @@ function interruptionEntries(ctx: Ctx, issue: Issue): Entry[] {
   }));
 }
 
+/** The forge's own line where a vision pull landed without an admin: the direction was kept as it was. */
+function forgeEntries(ctx: Ctx, repo: Repo, issue: Issue): Entry[] {
+  if (issue.kind !== "pull") return [];
+  return listEvents(ctx.app.db, { repoId: repo.id, kind: "repo.vision_kept", limit: 50 })
+    .filter((e) => e.payload["pull"] === issue.number)
+    .map((e) => ({
+      at: e.createdAt,
+      node: tlEvent({
+        icon: "merge",
+        body: html`<span>the forge kept the repository's direction as it was: only ${String(e.payload["why"] ?? "an admin's merge rewrites it")}</span> ${time(e.createdAt)}`,
+      }),
+    }));
+}
+
 export interface ConversationOptions {
   /** The verb on the opening card ("opened this", "wants to merge …"). */
   openVerb: Html | string;
@@ -303,6 +322,7 @@ export function conversation(
   ]);
   const entries: Entry[] = comments.map((c) => ({
     at: c.createdAt,
+    comment: true as const,
     node: threadComment(c.id, c.authorName, c.createdAt, c.body, {
       originAuthor: c.originAuthor,
       originKind: glyph,
@@ -311,8 +331,34 @@ export function conversation(
   }));
   entries.push(...stateEvents(ctx, repo, issue));
   entries.push(...interruptionEntries(ctx, issue));
+  entries.push(...forgeEntries(ctx, repo, issue));
   entries.push(...(options.extra ?? []));
   entries.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+  // The opening post and the newest THREAD_WINDOW comments with the state
+  // changes between them; everything before the oldest of those waits behind
+  // `?all=1` (a plain link, so it works without JavaScript). The cut is on
+  // comments so that `commentAnchor` counts the very same thing and every
+  // link the forge writes to a comment lands.
+  const everything = ctx.url.searchParams.get("all") === "1";
+  let hidden = 0;
+  if (!everything) {
+    let seen = 0;
+    for (let i = entries.length - 1; i >= 0; i--) {
+      if (entries[i]!.comment && ++seen === THREAD_WINDOW) {
+        hidden = i;
+        break;
+      }
+    }
+  }
+  const shown = hidden === 0 ? entries : entries.slice(hidden);
+  const more = new URLSearchParams(ctx.url.searchParams);
+  more.set("all", "1");
+  const earlier =
+    hidden === 0
+      ? null
+      : html`<p class="tl-earlier small">
+          <a href="${ctx.url.pathname}?${more.toString()}">Show ${String(hidden)} earlier items</a>
+        </p>`;
 
   const opening = tlComment(
     commentCard({
@@ -332,7 +378,7 @@ export function conversation(
     node: html`<div class="timeline" id="conversation">
       ${opening}${when(options.editAction, (action) =>
         editForm(issue, action),
-      )}${entries.map((e) => e.node)}
+      )}${earlier}${shown.map((e) => e.node)}
     </div>`,
     lastCommentId: comments.length > 0 ? comments[comments.length - 1]!.id : "",
   };
@@ -351,7 +397,7 @@ export function threadComment(
     mark?: Mark | undefined;
   } = {},
 ): Html {
-  return html`<div class="tl-item" data-kind="comment" data-comment-id="${id}">
+  return html`<div class="tl-item" id="c-${id}" data-kind="comment" data-comment-id="${id}">
     <span class="tl-dot">${icon("comment")}</span>${commentCard({
       id,
       author,
@@ -820,7 +866,7 @@ export async function stateSubmit(
         ? merged
         : changed.error === "forbidden"
           ? "Only the author or someone with write access can do that."
-          : "That could not be changed.");
+          : NOT_CHANGED);
     return flashOrJson(ctx, dest, { tone: "danger", message });
   }
   return flashOrJson(ctx, dest, {
@@ -857,7 +903,7 @@ export async function wordsSubmit(
             ? `A title is at most ${MAX_TITLE} characters.`
             : edited.error === "body_too_long"
               ? "That description is too long."
-              : "That could not be changed.");
+              : NOT_CHANGED);
     return flashOrJson(ctx, dest, { tone: "danger", message });
   }
   return flashOrJson(ctx, dest, { message: "Saved." });
@@ -891,8 +937,8 @@ export async function labelsSubmit(
       message:
         originError(applied.error) ??
         (applied.error === "unknown_label"
-          ? "One of those labels no longer exists."
-          : "You need write access to change labels."),
+          ? THREAD_SAYS.unknownLabel
+          : THREAD_SAYS.labelsForbidden),
     });
   }
   return flashTo(ctx, dest, {
@@ -946,7 +992,7 @@ export async function teamsSubmit(ctx: Ctx): Promise<Response> {
   const chosen = form.getAll("teams").filter((v): v is string => typeof v === "string");
   const set = nameTeams(ctx.app, ctx.auth.user, found.repo, found.issue, chosen);
   if (!set.ok)
-    return flashTo(ctx, dest, { tone: "danger", message: ISSUE_TEAMS_SAY[set.error] ?? "That could not be changed." });
+    return flashTo(ctx, dest, { tone: "danger", message: ISSUE_TEAMS_SAY[set.error] ?? NOT_CHANGED });
   return flashTo(ctx, dest, {
     message: set.value.length === 0 ? "Teams cleared." : `Teams set to ${set.value.join(", ")}.`,
   });
@@ -1095,7 +1141,7 @@ export async function dependencySubmit(ctx: Ctx): Promise<Response> {
       cycle: `#${other.number} already waits for this one, directly or through others; linking would make a loop.`,
       cross_repo: "Dependencies stay inside one repository.",
       not_an_issue: "Only issues can depend on issues.",
-      forbidden: "You need write access, or a place on the crew, to plan here.",
+      forbidden: THREAD_SAYS.planForbidden,
     };
     return flashTo(ctx, dest, {
       tone: "danger",

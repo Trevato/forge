@@ -19,7 +19,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { enableApp } from "../src/actions/apps.ts";
 import { createToken } from "../src/actions/users.ts";
-import { listOrigins } from "../src/core/origins.ts";
+import { listOrigins, recordSync } from "../src/core/origins.ts";
 import { listPins } from "../src/core/pins.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { getUserByName } from "../src/core/users.ts";
@@ -274,6 +274,17 @@ describe("origins on the web", () => {
     expect(stored[0]!.login).toBe(ORIGIN_LOGIN);
   });
 
+  test("an origin whose last sync failed shows the error as a field error on its card", async () => {
+    const id = listOrigins(app.db, getUserByName(app.db, "alice")!.id)[0]!.id;
+    recordSync(app.db, id, { at: new Date().toISOString(), error: "upstream said 502" });
+    const html = await (await asUser(alice, "/settings/origins")).text();
+    expect(html).toMatch(
+      /<div class="field mt" data-invalid>\s*<span class="error" role="alert" id="origin-[^"]+-err"\s*>upstream said 502/,
+    );
+    expect(html).not.toContain("error-note");
+    recordSync(app.db, id, { at: new Date().toISOString() });
+  });
+
   test("a bad token comes back inline with the host preserved and no secret", async () => {
     const response = await asUser(alice, "/settings/origins/token", {
       form: { host: forgejo.url, token: "not-the-right-token" },
@@ -281,6 +292,8 @@ describe("origins on the web", () => {
     expect(response.status).toBe(422);
     const html = await response.text();
     expect(html).toContain("refused by the origin");
+    expect(html).toMatch(/class="error"[^>]*>[^<]*refused by the origin/);
+    expect(html).not.toContain("error-note");
     expect(html).toContain(forgejo.url);
     expect(html).not.toContain("not-the-right-token");
   });
@@ -822,6 +835,10 @@ describe("origins on the web", () => {
     const html = await page.text();
     expect(html).toContain("does not know its own public URL");
     expect(html).toContain("FORGE_URL");
+    // Configuration guidance, not a failed input: a muted note, never an alert.
+    expect(html).toMatch(/<p class="muted small" id="origin-callback-note">/);
+    expect(html).not.toContain("error-note");
+    expect(html).not.toContain("origin-callback-err");
     // The token path is unaffected, and still offered.
     expect(html).toContain("Personal access token");
 

@@ -198,7 +198,13 @@ describe("capacity: only a forge admin reads or changes it", () => {
   });
 
   test("an admin with a read-only token may read, not change", async () => {
-    expect((await api(aliceRo, "GET", "/admin/capacity")).status).toBe(200);
+    const read = await api(aliceRo, "GET", "/admin/capacity");
+    expect(read.status).toBe(200);
+    const body = (await read.json()) as { items: unknown[]; changes: unknown[]; next_cursor: null };
+    expect(Array.isArray(body.items)).toBe(true);
+    expect(Array.isArray(body.changes)).toBe(true);
+    expect(body.next_cursor).toBeNull();
+    expect("settings" in body).toBe(false);
     expect(
       (
         await api(aliceRo, "PUT", "/admin/capacity/checks.concurrency", {

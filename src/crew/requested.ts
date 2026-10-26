@@ -36,6 +36,7 @@ import { queueAgentRun } from "./dispatch.ts";
 import { HANDOVER_NOTE, handoverOf } from "./guard.ts";
 import { greenHead, sendToReview } from "./review.ts";
 import { pickBuilder } from "./route.ts";
+import { NO_BUILDER_ON_CREW, WAITS_FOR_BUILDER_SLOT } from "./words.ts";
 
 const log = createLog("crew");
 
@@ -60,7 +61,7 @@ function reasonOf(why: string): string {
   if (why === "a run is in flight" || why.startsWith("a review of the new head")) return "a run is in flight";
   if (why === "a person holds it" || why.startsWith("held,")) return "held";
   if (why.includes("a person")) return "handed to a person";
-  if (why === "waits for a builder slot") return "waits for a slot";
+  if (why === WAITS_FOR_BUILDER_SLOT) return "waits for a slot";
   if (why === "the new head is not green yet") return "waits for a check";
   if (why.startsWith("past the review rounds") || why.startsWith("a verdict is already") || why.startsWith("a run since"))
     return "settled";
@@ -114,7 +115,7 @@ export async function moveRequested(
     const move = verdictIsStale(requested)
       ? await askAgain(app, repo, requested, now)
       : slots <= 0
-        ? notMoved(requested, "waits for a builder slot")
+        ? notMoved(requested, WAITS_FOR_BUILDER_SLOT)
         : followUp(app, repo, requested, builders);
     if (move.did === "queued feedback") slots--;
     moves.push(move);
@@ -180,7 +181,7 @@ function followUp(
   // run counted here ended without one: one is asked again, two go to a person.
   const tried = startedSince(app, pull.id, requested.at);
   if (tried >= FOLLOW_UPS) return handOverPushless(app, repo, requested, issue);
-  if (builders.length === 0) return notMoved(requested, "no builder on the crew");
+  if (builders.length === 0) return notMoved(requested, NO_BUILDER_ON_CREW);
   const assignee = issue.assigneeId;
   let builder = builders.find((b) => b.user.id === assignee);
   let assigned = false;

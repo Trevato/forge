@@ -150,7 +150,9 @@ describe("commit via API (no git client)", () => {
         headers: { authorization: `Bearer ${token}` },
       })
     ).json();
-    const list = events as { kind: string; payload: { viaApi?: boolean } }[];
+    const list = (
+      events as { items: { kind: string; payload: { viaApi?: boolean } }[] }
+    ).items;
     expect(
       list.some((e) => e.kind === "push" && e.payload.viaApi === true),
     ).toBe(true);

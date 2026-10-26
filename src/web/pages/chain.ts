@@ -6,7 +6,9 @@
  */
 
 import { FOLLOW_MODE_REFUSALS, setFollowMode, severForge, takeForgeCode, takeForgeWords } from "../../actions/follow.ts";
+import { FOLLOWS_NOTHING, PROPOSE_NEEDS_WRITE } from "../../actions/follow_words.ts";
 import { forgeProposals, proposeToParentForge, type ForgeProposal } from "../../actions/upstream.ts";
+import { SEVER_CONFIRM } from "../../actions/sever_invite_words.ts";
 import { canAdmin, canWrite } from "../../core/repos.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -191,12 +193,12 @@ export async function severSubmit(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
   const to = `${repoBase(repo)}/following`;
   if (field(form, "confirm") !== "sever")
-    return flashOrJson(ctx, to, { tone: "danger", message: "Type sever to confirm." });
+    return flashOrJson(ctx, to, { tone: "danger", message: SEVER_CONFIRM });
   const cut = await severForge(ctx.app, ctx.auth.user, repo);
   if (!cut.ok)
     return flashOrJson(ctx, to, {
       tone: "danger",
-      message: cut.error === "forbidden" ? "Only this forge's owner can sever it." : "This repository follows nothing.",
+      message: cut.error === "forbidden" ? "Only this forge's owner can sever it." : FOLLOWS_NOTHING,
     });
   return flashOrJson(ctx, to, { message: `Severed: following nothing since ${cut.value.slice(0, 10)}. Nothing was deleted.` });
 }
@@ -228,7 +230,7 @@ export async function takeSubmit(ctx: Ctx): Promise<Response> {
   if (!took.ok)
     return flashOrJson(ctx, to, {
       tone: "danger",
-      message: took.error === "not_following" ? "This repository follows nothing." : "Only this forge's owner can take updates.",
+      message: took.error === "not_following" ? FOLLOWS_NOTHING : "Only this forge's owner can take updates.",
     });
   return flashOrJson(ctx, to, takeForgeWords(took.value));
 }
@@ -265,7 +267,7 @@ export async function proposeParentSubmit(ctx: Ctx): Promise<Response> {
           : e === "nothing_to_propose"
             ? "Nothing here is ahead of the parent forge."
             : typeof e === "string"
-              ? "You need write access to propose from here."
+              ? PROPOSE_NEEDS_WRITE
               : e.kind === "unreachable"
                 ? "Parent unreachable: nothing was proposed."
                 : `The parent forge did not take the proposal: ${e.reason}.`,

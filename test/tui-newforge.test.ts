@@ -191,4 +191,25 @@ describe("the new forge screen", () => {
         delete (app.config as { forgeRepo?: string }).forgeRepo;
       }
     }));
+
+  test("the size is a field: medium reaches parent.json, small is not sent", () =>
+    withScreen(admin, async ({ tui, terminal }) => {
+      terminal.feed("tuisize" + "\t".repeat(9) + "medium\x10");
+      await settleApp(tui);
+      terminal.feed("\r");
+      await settleApp(tui);
+      const docs = await Promise.all(
+        (await readdir(join(dir, "children"))).map((d) =>
+          Bun.file(join(dir, "children", d, "parent.json")).json().catch(() => undefined),
+        ),
+      );
+      expect(docs.find((d) => d?.name === "tuisize")?.size).toBe("medium");
+    }));
+
+  test("an unknown size is refused beside the field", () =>
+    withScreen(admin, async ({ tui, terminal }) => {
+      terminal.feed("tuibig" + "\t".repeat(9) + "huge\x10");
+      await settleApp(tui);
+      expect(tui.screen.toText()).toContain("size must be small, medium or large");
+    }));
 });

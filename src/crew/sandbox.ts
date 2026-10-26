@@ -34,7 +34,7 @@
 
 import { mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { basename, isAbsolute, join, relative, sep } from "node:path";
+import { basename, isAbsolute, join, relative } from "node:path";
 import { cacheRoot, crewRoot, installCacheDir } from "./workdir.ts";
 
 export interface SandboxPolicy {
@@ -180,7 +180,6 @@ export function dataInTemp(data: string): boolean {
 
 function tempDenied(data: string): string[] {
   const temp = tmpdir();
-  const rel = relative(temp, data);
   if (!dataInTemp(data)) return [temp];
   return [
     join(temp, `claude-${process.getuid?.() ?? 0}`),

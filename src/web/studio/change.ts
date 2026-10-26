@@ -29,11 +29,10 @@ import {
   type Pull,
   pullDir,
 } from "../../core/pulls.ts";
-import { canWrite, type Repo } from "../../core/repos.ts";
+import { canAdmin, canWrite, type Repo } from "../../core/repos.ts";
 import { listReviews, type Review } from "../../core/reviews.ts";
 import { wallOf, wallSentence, type Wall } from "../../contract/policy.ts";
 import { checkSummary } from "../../core/runs.ts";
-import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
   crumbsFor,
@@ -85,6 +84,8 @@ import {
   type Decision,
 } from "./asks.ts";
 import { tellLine, tellsAnswered } from "./branch_tell.ts";
+import { previewVision } from "../../crew/vision.ts";
+import { visionPreviewCard } from "./direction.ts";
 import { holdCard } from "./hold.ts";
 import { pullMayRun } from "../../core/pull_trust.ts";
 import { changeHref } from "./nouns.ts";
@@ -110,25 +111,26 @@ export function pullContext(ctx: Ctx): { repo: Repo; pull: Pull } | Response {
  */
 export function wallCard(wall: Wall): Html {
   return card(
-    html`${icon("shield")}
-      <div class="grow">
-        <div class="merge-headline">
-          ${wall.unsound !== undefined
-            ? "This pull's contract does not read."
-            : `This pull changes the policy: ${wall.loosened.length === 1 ? "one door opens" : `${wall.loosened.length} doors open`} wider.`}
-        </div>
-        <p class="merge-sub">
-          ${wall.unsound !== undefined
-            ? "An app built on it does not boot. A person decides this one."
-            : "A cell loosened is a decision undone, so the crew leaves this to a person: read the cells, then land or say what is off."}
-        </p>
-        <ul class="wall-cells">
-          ${(wall.unsound ?? wall.loosened.map(wallSentence)).map(
-            (line) => html`<li>${line}</li>`,
-          )}
-        </ul>
+    html`<p class="muted small">
+        ${wall.unsound !== undefined
+          ? "An app built on it does not boot. A person decides this one."
+          : "A cell loosened is a decision undone, so the crew leaves this to a person: read the cells, then land or say what is off."}
+      </p>
+      <div class="stack stack-tight mono">
+        ${(wall.unsound ?? wall.loosened.map(wallSentence)).map(
+          (line) => html`<div>${line}</div>`,
+        )}
       </div>`,
-    { tone: "attn", extra: "merge-box wall" },
+    {
+      tone: "attn",
+      extra: "wall mt",
+      head: html`${icon("shield")}
+        <strong
+          >${wall.unsound !== undefined
+            ? "This pull's contract does not read."
+            : `This pull changes the policy: ${wall.loosened.length === 1 ? "one door opens" : `${wall.loosened.length} doors open`} wider.`}</strong
+        >`,
+    },
   );
 }
 
@@ -193,8 +195,8 @@ export function changeHead(ctx: Ctx, repo: Repo, pull: Pull): Html {
   const who = toldBy(ctx.app.db, pull);
   const marks = marksByName(ctx.app.db, [pull.authorName, who ?? ""]);
   return html`<div class="page-head">
-    <h1>${pull.title} <span class="number">#${pull.number}</span></h1>
-    <div class="sub bar">
+    <h1>${pull.title} <span class="num">#${pull.number}</span></h1>
+    <div class="page-head-sub bar muted small">
       ${stateBadge(
         pullState(pull),
         getIssueById(ctx.app.db, pull.id)?.closeReason === "parked",
@@ -532,6 +534,10 @@ async function changeConversation(
       : ownNotReadyNote !== undefined
         ? html`<p class="muted small">Not ready to ship — ${ownNotReadyNote}.</p>`
         : undefined;
+  const visionPreview =
+    ctx.auth.user !== undefined && canAdmin(db, repo, ctx.auth.user)
+      ? await previewVision(ctx.app, repo, pull)
+      : null;
   const decisionSection = when(decisionBody, (body) =>
     card(body, {
       head: html`${icon("alert")}
@@ -604,6 +610,7 @@ async function changeConversation(
     ${approveHereCard(ctx, repo, pull, headOid, `${thread}/approve-here`)}
     ${teamsCard(teamVerdicts(db, { ...pull, headOid }))}
     ${when(wall, (w) => wallCard(w))} ${decisionSection}
+    ${when(visionPreview, (v) => visionPreviewCard(v))}
     ${takeBackSection}
     ${when(record, (r) => lookCard(ctx, repo, r, pull, pull.headOid))}
     <div class="split">

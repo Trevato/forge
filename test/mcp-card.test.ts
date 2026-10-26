@@ -1,0 +1,72 @@
+/** The MCP server card at /.well-known/mcp.json agrees with the live routes. */
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createApp, type App } from "../src/app.ts";
+import { serve, type Servers } from "../src/http/server.ts";
+import { running } from "../src/kernel/version.ts";
+
+describe("the MCP server card", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-mcp-card-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+  });
+  afterAll(async () => {
+    await servers.stop();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("names the server, endpoint, sign-in and the tokenless tool, each true", async () => {
+    const res = await fetch(`${base}/.well-known/mcp.json`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    expect(res.headers.get("access-control-allow-origin")).toBe("*");
+    const card = (await res.json()) as any;
+    expect(card.name).toBe("forge");
+    expect(card.version).toBe(running().version);
+    expect(card.transport).toBe("streamable-http");
+    expect(card.endpoint).toBe(`${base}/mcp`);
+    expect(card.tokenFreeTools).toEqual(["report"]);
+
+    // Without a token the endpoint refuses everything but `report`.
+    const report = await fetch(card.endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "report", arguments: { repo: "nobody/none", title: "x" } } }),
+    });
+    expect(report.status).not.toBe(401);
+    const other = await fetch(card.endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "here", arguments: {} } }),
+    });
+    expect(other.status).toBe(401);
+
+    // The protected-resource metadata is live and names this endpoint.
+    const prm = await fetch(card.protectedResourceMetadata);
+    expect(prm.status).toBe(200);
+    expect(((await prm.json()) as any).resource).toBe(card.endpoint);
+
+    // The documentation link is live.
+    expect((await fetch(card.documentation)).status).toBe(200);
+  });
+
+  test("the `mcp` block of /api/v1/here gives the same url and oauth", async () => {
+    const card = (await (await fetch(`${base}/.well-known/mcp.json`)).json()) as any;
+    const here = (await (await fetch(`${base}/api/v1/here?path=/`)).json()) as any;
+    expect(here.mcp).toEqual({ url: card.endpoint, oauth: card.protectedResourceMetadata });
+  });
+
+  test("/llms.txt links the card", async () => {
+    const txt = await (await fetch(`${base}/llms.txt`)).text();
+    expect(txt).toContain(`${base}/.well-known/mcp.json`);
+  });
+});

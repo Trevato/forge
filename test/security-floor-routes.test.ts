@@ -1,0 +1,187 @@
+/**
+ * The security floor (`securityFloor` in src/http/respond.ts) on every GET
+ * route the two routers register, signed out and signed in, 404s included.
+ * The route table is read from the routers themselves; each pattern's
+ * parameters are filled from one seeded repository, issue, pull, run and app.
+ * A pattern that needs a parameter the seed cannot supply is named in
+ * `UNSEEDED` with why — it is still requested, with a placeholder, so its
+ * miss answers carry the floor too — and the list is checked both ways.
+ */
+import { afterAll, beforeAll, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createApp, type App } from "../src/app.ts";
+import { commitToBranch } from "../src/actions/repos.ts";
+import { createApp as insertApp } from "../src/core/apps.ts";
+import { createIssue } from "../src/core/issues.ts";
+import { createPull } from "../src/core/pulls.ts";
+import { createRepo } from "../src/core/repos.ts";
+import { createRun } from "../src/core/runs.ts";
+import { createSession } from "../src/core/sessions.ts";
+import { repoDir } from "../src/git/repos.ts";
+import { buildApiRouter, buildRouter, serve, type Servers } from "../src/http/server.ts";
+import { seedAdmin } from "./helpers/admin.ts";
+import { quietLogs } from "./helpers/globals.ts";
+
+quietLogs();
+
+/** Parameters the seed supplies; any other parameter makes a pattern unseeded. */
+const SEEDED = new Set(["owner", "name", "username", "number", "ref", "oid", "path", "env", "slug", "spec"]);
+
+const ORIGIN = "needs a connected origin account and a mirror job; the seed connects none";
+const MIGRATE = "needs a migration job, which only an import creates";
+const ORG = "needs an organization and a team, which the seed does not create";
+const BOARD = "needs a board with a panel; the seed makes no board";
+const LOOK = "needs a captured look; looks come from a running app's screenshot";
+const WAVE = "needs a wave of a milestone; the seed has no milestone";
+const VARIANT = "needs a variant group of agent tries; the seed has none";
+const LIMB = "needs a milestone with a limb; the seed has no milestone";
+const FLEET = "needs a fleet operation, started by an operator action";
+const SECRET = "needs a secret scope an operator has set";
+const GO = "needs a short code minted by a share; the seed shares nothing";
+const ARCH = "needs an archived-home operation id; the seed archives nothing";
+
+/** GET patterns the seed cannot fill → why. Requested with a placeholder all the same. */
+const UNSEEDED: Record<string, string> = {
+  "/:owner/-/teams/:team": ORG,
+  "/:owner/:name/looks/:env/:commit/:kind.png": LOOK,
+  "/:owner/:name/milestones/:number/limb/:op": LIMB,
+  "/:owner/:name/variants/:group": VARIANT,
+  "/:owner/:name/waves/:version": WAVE,
+  "/api/v1/boards/:slug/panels/:id": BOARD,
+  "/api/v1/fleet/ops/:id": FLEET,
+  "/api/v1/migrate/:job": MIGRATE,
+  "/api/v1/migrate/:job/stream": MIGRATE,
+  "/api/v1/orgs/:org": ORG,
+  "/api/v1/orgs/:org/teams": ORG,
+  "/api/v1/orgs/:org/teams/:team/members": ORG,
+  "/api/v1/repos/:owner/:name/waves/:version": WAVE,
+  "/api/v1/secrets/:scope": SECRET,
+  "/api/v1/user/origins/:id/browse/:owner/:name": ORIGIN,
+  "/api/v1/user/origins/:id/browse/:owner/:name/blob/:ref/*path": ORIGIN,
+  "/api/v1/user/origins/:id/browse/:owner/:name/branches": ORIGIN,
+  "/api/v1/user/origins/:id/browse/:owner/:name/commits": ORIGIN,
+  "/api/v1/user/origins/:id/browse/:owner/:name/commits/:oid": ORIGIN,
+  "/api/v1/user/origins/:id/browse/:owner/:name/issues": ORIGIN,
+  "/api/v1/user/origins/:id/browse/:owner/:name/issues/:number": ORIGIN,
+  "/api/v1/user/origins/:id/browse/:owner/:name/labels": ORIGIN,
+  "/api/v1/user/origins/:id/browse/:owner/:name/paths/:ref": ORIGIN,
+  "/api/v1/user/origins/:id/browse/:owner/:name/pulls": ORIGIN,
+  "/api/v1/user/origins/:id/browse/:owner/:name/pulls/:number": ORIGIN,
+  "/api/v1/user/origins/:id/browse/:owner/:name/tags": ORIGIN,
+  "/api/v1/user/origins/:id/browse/:owner/:name/tree/:ref": ORIGIN,
+  "/api/v1/user/origins/:id/browse/:owner/:name/tree/:ref/*path": ORIGIN,
+  "/api/v1/user/origins/:id/mirror/:job": ORIGIN,
+  "/api/v1/user/origins/:id/mirror/:job/stream": ORIGIN,
+  "/api/v1/user/origins/:id/repos": ORIGIN,
+  "/api/v1/user/origins/oauth/:id": ORIGIN,
+  "/go/:code": GO,
+  "/home/archived/:op": ARCH,
+  "/migrate/jobs/:job": MIGRATE,
+  "/origins/:id/r/:owner/:name": ORIGIN,
+  "/origins/:id/r/:owner/:name/blob/:ref/*path": ORIGIN,
+  "/origins/:id/r/:owner/:name/branches": ORIGIN,
+  "/origins/:id/r/:owner/:name/commit/:oid": ORIGIN,
+  "/origins/:id/r/:owner/:name/commits": ORIGIN,
+  "/origins/:id/r/:owner/:name/edit/:ref/*path": ORIGIN,
+  "/origins/:id/r/:owner/:name/issues": ORIGIN,
+  "/origins/:id/r/:owner/:name/issues/:number": ORIGIN,
+  "/origins/:id/r/:owner/:name/new/:ref": ORIGIN,
+  "/origins/:id/r/:owner/:name/new/:ref/*path": ORIGIN,
+  "/origins/:id/r/:owner/:name/paths/:ref": ORIGIN,
+  "/origins/:id/r/:owner/:name/pulls": ORIGIN,
+  "/origins/:id/r/:owner/:name/pulls/:number": ORIGIN,
+  "/origins/:id/r/:owner/:name/raw/:ref/*path": ORIGIN,
+  "/origins/:id/r/:owner/:name/tree/:ref": ORIGIN,
+  "/origins/:id/r/:owner/:name/tree/:ref/*path": ORIGIN,
+  "/settings/origins/:id/mirror/:job": ORIGIN,
+  "/settings/origins/:id/repos": ORIGIN,
+  "/settings/origins/flows/:id": ORIGIN,
+};
+
+let dataDir = "";
+let app: App, servers: Servers;
+let cookie = "";
+const fill: Record<string, string> = {};
+
+beforeAll(async () => {
+  dataDir = await mkdtemp(join(tmpdir(), "forge-floor-"));
+  app = createApp({ dataDir, port: 0 });
+  servers = await serve(app);
+  const admin = await seedAdmin(app, { username: "ada", email: "ada@forge.local", password: "correct-horse-battery" });
+  if (!admin.ok) throw new Error(admin.error);
+  const ada = admin.value;
+  const made = await createRepo(app.db, app.reposRoot, { ownerId: ada.id, name: "notes", visibility: "public" });
+  if (!made.ok) throw new Error(String(made.error));
+  const repo = made.value;
+  const seed = await commitToBranch(app, ada, repo, { message: "seed", files: [{ path: "a.txt", content: "a\n" }] });
+  if (!seed.ok) throw new Error(String(seed.error));
+  const branch = await commitToBranch(app, ada, repo, {
+    message: "one", branch: "one", files: [{ path: "one.txt", content: "one\n" }],
+  } as never);
+  if (!branch.ok) throw new Error(String(branch.error));
+  const issue = createIssue(app.db, { repoId: repo.id, title: "an issue", body: "b", authorId: ada.id });
+  if (!issue.ok) throw new Error(String(issue.error));
+  const pull = await createPull(app.db, repoDir(app.reposRoot, ada.username, repo.name), {
+    repoId: repo.id, authorId: ada.id, title: "a pull", baseBranch: "main", headBranch: "one",
+  });
+  if (!pull.ok) throw new Error(String(pull.error));
+  const run = createRun(app.db, { repoId: repo.id, kind: "check", issueId: pull.value.id, commitOid: pull.value.headOid });
+  const inserted = insertApp(app.db, { repoId: repo.id, slug: "notes", access: "public" });
+  if (!inserted.ok) throw new Error(inserted.error);
+  Object.assign(fill, {
+    owner: "ada", name: "notes", username: "ada", ref: "main", oid: pull.value.headOid,
+    path: "a.txt", env: "prod", slug: "notes", spec: "192",
+    issue: String(issue.value.number), pull: String(pull.value.number), run: run.id,
+  });
+  cookie = `forge_session=${createSession(app.db, ada.id).token}`;
+}, 30_000);
+
+afterAll(async () => {
+  servers?.stop();
+  app?.close();
+  await rm(dataDir, { recursive: true, force: true });
+});
+
+const paramsOf = (pattern: string): string[] =>
+  [...pattern.matchAll(/[:*]([a-z_]+)/g)].map((m) => m[1]!);
+
+const getPatterns = (): string[] =>
+  [...new Set([buildRouter(), buildApiRouter()].flatMap((r) => r.routes()).filter((r) => r.method === "GET").map((r) => r.pattern))];
+
+function pathFor(pattern: string): string {
+  const number = pattern.includes("/pulls/") ? fill.pull : fill.issue;
+  const runId = pattern.includes("/runs/:id") ? fill.run : "x";
+  return pattern
+    .replace(/[:*]([a-z_]+)/g, (_, key: string) => {
+      if (key === "number") return number!;
+      if (key === "id") return runId!;
+      return SEEDED.has(key) ? fill[key]! : "x";
+    });
+}
+
+const unseeded = (pattern: string): boolean =>
+  paramsOf(pattern).some((key) => !SEEDED.has(key) && !(key === "id" && pattern.includes("/runs/:id")));
+
+async function floor(path: string, headers: Record<string, string>): Promise<string[]> {
+  const res = await fetch(`${servers.url}${path}`, { headers, redirect: "manual", signal: AbortSignal.timeout(5_000) });
+  await res.body?.cancel();
+  return ["content-security-policy", "x-content-type-options", "referrer-policy"]
+    .filter((h) => !res.headers.get(h))
+    .map((h) => `${res.status} ${path} lacks ${h}`);
+}
+
+test("every GET route, and an unknown path, carries the floor signed out and signed in", async () => {
+  const paths = [...getPatterns().map(pathFor), "/no/such/path/at/all", "/api/v1/no-such-route"];
+  const missing: string[] = [];
+  for (const headers of [{}, { cookie }])
+    for (const path of paths) missing.push(...(await floor(path, headers)));
+  expect(missing).toEqual([]);
+}, 9_000);
+
+test("the patterns the seed cannot fill are exactly the ones named, each with a reason", () => {
+  const computed = getPatterns().filter(unseeded).sort();
+  expect(computed).toEqual(Object.keys(UNSEEDED).sort());
+  for (const why of Object.values(UNSEEDED)) expect(why.length).toBeGreaterThan(10);
+});

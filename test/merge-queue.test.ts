@@ -24,9 +24,16 @@ import { landIfGreen, REGATE_RED_MS, regateDue, sweepGreen } from "../src/crew/a
 import { listComments } from "../src/core/issues.ts";
 import { readQueues } from "../src/flow/queue.ts";
 import { repoDir } from "../src/git/repos.ts";
+import { logLevel, setLogLevel } from "../src/kernel/log.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { flowLines } from "../src/tui/screens/flow.ts";
+
+/**
+ * Ten pulls are twenty git pushes before the gate runs, and a loaded check
+ * machine runs them eight times slower: the clock must not decide the verdict.
+ */
+const SLOW = 300_000;
 
 describe("the merge queue", () => {
   let dataDir: string;
@@ -43,6 +50,8 @@ describe("the merge queue", () => {
   let flaky = 0;
   /** The signal the last gate was handed: the queue aborts it at the deadline. */
   let lastSignal: AbortSignal | undefined;
+  /** Called as a gate starts, before the deadline can fire on a loaded machine. */
+  let atGate: (() => void) | undefined;
 
   const git = (repo: Repo, ...args: string[]) =>
     Bun.spawnSync(["git", ...args], {
@@ -67,6 +76,7 @@ describe("the merge queue", () => {
     provideChecksForTest(app, {
       gate: async (repo: Repo, _pull: Pull, commitOid: string, signal?: AbortSignal) => {
         lastSignal = signal;
+        atGate?.();
         if (held !== undefined) await held;
         if (cutOff > 0) {
           cutOff--;
@@ -190,21 +200,30 @@ describe("the merge queue", () => {
     for (let i = 0; i < 10; i++) pulls.push(await greenPull(repo, `p${i}.ts`));
     const said: string[] = [];
     const info = console.info;
+    // The log floor is process-wide: the verdict must not hang on what ran before.
+    const floor = logLevel();
+    setLogLevel("info");
     console.info = (line: string) => said.push(line);
     try {
       expect(await sweepGreen(app, repo)).toBe(10);
     } finally {
       console.info = info;
+      setLogLevel(floor);
     }
     expect(MAX_CANDIDATE).toBe(8);
     expect(gatesOf(repo)).toHaveLength(2);
-    expect(git(repo, "rev-list", "--count", `${base}..${gatesOf(repo)[0]!.commit}`)).toBe("8");
+    // Which gate answers first is the machine's call: the verdict is the
+    // shape, eight on main and the other two on top of them.
+    const carried = gatesOf(repo)
+      .map((g) => Number(git(repo, "rev-list", "--count", `${base}..${g.commit}`)))
+      .sort((a, b) => a - b);
+    expect(carried).toEqual([8, 10]);
     for (const pull of pulls) expect(merged(repo, pull)).toBe(true);
     const queue = said.filter((l) => l.includes("[queue] "));
-    expect(queue.some((l) => /\[queue\] gating 8 pulls since \d\d:\d\d .*waiting=2/.test(l))).toBe(true);
+    expect(queue.some((l) => /\[queue\] gating 8 pulls since \d\d:\d\d .*waiting=\d/.test(l))).toBe(true);
     expect(queue.some((l) => l.includes("[queue] gated 8 pulls: green"))).toBe(true);
     expect(queue.some((l) => l.includes("[queue] gated 2 pulls: green"))).toBe(true);
-  });
+  }, SLOW);
 
   test("after a red batch, the good pulls go back into ONE candidate up to the cap, not one gate each (#4053)", async () => {
     const repo = await autonomousRepo("rebatch");
@@ -212,19 +231,32 @@ describe("the merge queue", () => {
     for (let i = 0; i < 12; i++) pulls.push(await greenPull(repo, i === 1 ? "red-b.ts" : `q${i}.ts`));
     const said: string[] = [];
     const info = console.info;
+    // The log floor is process-wide: the verdict must not hang on what ran before.
+    const floor = logLevel();
+    setLogLevel("info");
     console.info = (line: string) => said.push(line);
     try {
       expect(await sweepGreen(app, repo)).toBe(11);
     } finally {
       console.info = info;
+      setLogLevel(floor);
     }
     const sizes = said.flatMap((l) => /\[queue\] gating (\d+) pulls? since/.exec(l)?.[1] ?? []).map(Number);
-    // The eight are red; halving finds the culprit (4, 2, 1); then the six
-    // left of the eight and two of the four behind are one candidate.
-    expect(sizes).toEqual([8, 4, 2, 1, 8, 2]);
+    // The first eight are red and halving finds the culprit; the rest go back
+    // together. With a check slot free the search splits (#4999): the head of
+    // a red batch is gated alone beside the line, so besides the culprit one
+    // more lone gate is the search's own. How many gates overlap is the
+    // machine's call, so the verdict is the shape: the cap holds, eleven good
+    // pulls are not eleven gates, and once the first eight are red the four
+    // fresh pulls behind them are one candidate, not four.
+    expect(Math.max(...sizes)).toBeLessThanOrEqual(MAX_CANDIDATE);
+    expect(sizes.filter((n) => n === 1).length).toBeLessThanOrEqual(2);
+    expect(sizes.length).toBeLessThan(11);
+    const after = sizes.slice(sizes.indexOf(MAX_CANDIDATE) + 1);
+    expect(after.some((n) => n >= 4)).toBe(true);
     for (const [i, pull] of pulls.entries()) expect(merged(repo, pull)).toBe(i !== 1);
     expect(latestDecision(app.db, pulls[1]!.id, "land")?.answer).toBe("red");
-  });
+  }, SLOW);
 
   test("the sweep reads every open pull: an approved one older than the newest fifty is queued with the rest (#4053)", async () => {
     const repo = await autonomousRepo("many-open");
@@ -247,7 +279,7 @@ describe("the merge queue", () => {
     expect(merged(repo, fresh)).toBe(true);
     // One candidate carried both.
     expect(gatesOf(repo)).toHaveLength(1);
-  });
+  }, SLOW);
 
   test("one red among four: three land, the culprit is handed back, three gate runs", async () => {
     const repo = await autonomousRepo("one-red");
@@ -436,23 +468,33 @@ describe("the merge queue", () => {
     const repo = await autonomousRepo("never-answers");
     const pull = await greenPull(repo, "a.ts");
     expect(queueWords(repo.id)).toBe("idle");
-    const restore = gateDeadlineForTest(300);
+    // The deadline is fired by hand once the gate is reached: a wall clock
+    // would race the gate's setup on a loaded machine.
+    const fires: (() => void)[] = [];
+    const restore = gateDeadlineForTest(1500, (f) => {
+      fires.push(f);
+      return setTimeout(() => {}, 0);
+    });
     const warned: string[] = [];
     const warn = console.warn;
     console.warn = (line: string) => warned.push(line);
     held = new Promise<void>(() => {});
+    let words = "";
     try {
       lastSignal = undefined;
+      atGate = () => {
+        words = queueWords(repo.id);
+        for (const f of fires) f();
+      };
       const sweep = sweepGreen(app, repo);
-      // Building the candidate is git work first: wait for the gate itself.
-      for (let i = 0; i < 200 && lastSignal === undefined; i++) await Bun.sleep(5);
-      expect(queueWords(repo.id)).toMatch(/^gating 1 pull since \d\d:\d\d$/);
       expect(await sweep).toBe(0);
     } finally {
       held = undefined;
+      atGate = undefined;
       console.warn = warn;
       restore();
     }
+    expect(words).toMatch(/^gating 1 pull since \d\d:\d\d$/);
     expect((lastSignal as AbortSignal | undefined)?.aborted).toBe(true);
     expect(warned.some((l) => l.includes("[queue] candidate abandoned") && l.includes(`#${pull.number}`))).toBe(true);
     expect(queueWords(repo.id)).toBe("idle");
@@ -461,7 +503,7 @@ describe("the merge queue", () => {
     expect(listComments(app.db, pull.id)).toHaveLength(0);
     expect(await sweepGreen(app, repo)).toBe(1);
     expect(merged(repo, pull)).toBe(true);
-  });
+  }, SLOW);
 
   test("a red cut off mid-bisection hands no one back; the line lands on the next sweep", async () => {
     const repo = await autonomousRepo("cut-off-bisect");

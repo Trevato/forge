@@ -1,5 +1,5 @@
 /**
- * The forge offers the eight starting boards on boot: every panel runs, an
+ * The forge offers the ten starting boards on boot: every panel runs, an
  * edit survives the next boot, and a deletion is not undone.
  */
 import { afterAll, beforeAll, expect, test } from "bun:test";
@@ -36,10 +36,10 @@ test("a forge with no person to found the repo writes nothing", async () => {
   expect(await offerStartingBoards(bare)).toEqual([]);
 });
 
-test("a fresh boot writes the eight starting boards, and every panel runs", async () => {
-  expect((await offerStartingBoards(app)).sort()).toEqual(["apps", "crew", "forges", "reach", "releases", "security", "throughput", "usage"]);
+test("a fresh boot writes the ten starting boards, and every panel runs", async () => {
+  expect((await offerStartingBoards(app)).sort()).toEqual(["apps", "crew", "forges", "reach", "releases", "restarts", "security", "serving", "throughput", "usage"]);
   const boards = await listBoards(app.reposRoot);
-  expect(boards.map((b) => b.slug)).toEqual(["apps", "crew", "forges", "reach", "releases", "security", "throughput", "usage"]);
+  expect(boards.map((b) => b.slug)).toEqual(["apps", "crew", "forges", "reach", "releases", "restarts", "security", "serving", "throughput", "usage"]);
   let panels = 0;
   for (const { board } of boards) {
     for (const p of board.panels) {

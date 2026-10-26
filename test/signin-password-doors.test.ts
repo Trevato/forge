@@ -19,20 +19,17 @@ const PASSWORD = "a-long-family-passphrase";
 const TRIES = 3;
 
 let dir = "";
-let app: App | undefined;
 let servers: Servers | undefined;
 
 afterEach(async () => {
   servers?.stop();
   servers = undefined;
-  app = undefined;
   await rm(dir, { recursive: true, force: true });
 });
 
 async function forge(): Promise<{ app: App; url: string }> {
   dir = await mkdtemp(join(tmpdir(), "signin-doors-"));
   const made = createApp({ dataDir: dir, port: 0 });
-  app = made;
   servers = await serve(made);
   const pat = await seedAdmin(made, { username: "pat", email: "pat@forge.test", password: PASSWORD });
   if (!pat.ok) throw new Error("setup");
@@ -83,7 +80,14 @@ describe("password doors share the sign-in windows", () => {
     const made = (await forge()).app;
     const session = new Session(made, { sshUsername: "pat", remoteAddress: "203.0.113.9" });
     for (let i = 0; i < TRIES; i++) {
-      const wrong = await session.signIn("pat", `wrong-${i}`);
+      // The hash gate is process-wide: a busy machine, or a hash another
+      // suite left running, can turn a guess away unhashed (and uncounted).
+      // That is not the window under test, so ask again until it is checked.
+      let wrong = await session.signIn("pat", `wrong-${i}`);
+      for (let again = 0; !wrong.ok && wrong.error === "throttled" && again < 50; again++) {
+        await Bun.sleep(100);
+        wrong = await session.signIn("pat", `wrong-${i}`);
+      }
       expect(wrong.ok ? "signed in" : wrong.error).toBe("bad_credentials");
     }
     const right = await session.signIn("pat", PASSWORD);
@@ -92,10 +96,18 @@ describe("password doors share the sign-in windows", () => {
 
   test("the doors count in one window: tries at /signin close the API door", async () => {
     const { url } = await forge();
-    for (let i = 0; i < TRIES; i++)
-      await fetch(`${url}/signin`, { method: "POST", body: new URLSearchParams({ username: "pat", password: `wrong-${i}` }), redirect: "manual" });
+    // The process-wide hash gate refuses (and does not count) a try made while
+    // other hashes fill it, as a busy check machine can: a counted try answers
+    // 422, so repeat until three have been counted.
+    for (let i = 0; i < TRIES; i++) {
+      for (let attempt = 0; attempt < 50; attempt++) {
+        const res = await fetch(`${url}/signin`, { method: "POST", body: new URLSearchParams({ username: "pat", password: `wrong-${i}` }), redirect: "manual" });
+        if (res.status === 422) break;
+        await Bun.sleep(50);
+      }
+    }
     expect((await post(`${url}/api/v1/sessions`, { username: "pat", password: PASSWORD })).status).toBe(429);
-  });
+  }, 30_000);
 });
 
 describe("no door verifies a password around the windows", () => {

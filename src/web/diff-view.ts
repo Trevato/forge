@@ -21,7 +21,7 @@ import {
 import { composeLine } from "./code.ts";
 import type { Token } from "./highlight.ts";
 import { escapeHtml, html, raw, when, type Html } from "./html.ts";
-import { icon, time, userLink } from "./ui.ts";
+import { btn, card, disclosure, icon, time, userLink } from "./ui.ts";
 import { renderMarkdown } from "./markdown.ts";
 import { wordDiff, type Segment } from "./worddiff.ts";
 
@@ -367,11 +367,13 @@ function reviewRows(
   // A settled thread collapses to one line: who settled it and when, with
   // the conversation itself one click away. The point of resolving is to get
   // an answered question out of the way of the unanswered ones, and a
-  // "resolved" badge above the same wall of text does not do that.
-  const body =
-    state?.resolvedAt != null
-      ? html`<div class="rc-resolved">
-          <span class="muted small"
+  // "resolved" badge above the same wall of text does not do that. It is the
+  // card's muted state; the control to take it back sits in the card's foot.
+  const resolved = state?.resolvedAt != null;
+  const toggle = threadToggle(opts, state, !resolved);
+  const body = resolved
+    ? card(
+        html`<span class="muted small"
             >${icon("check")}
             resolved${state.resolvedBy === null
               ? null
@@ -381,18 +383,17 @@ function reviewRows(
                   })}`}
             · ${time(state.resolvedAt)}</span
           >
-          ${threadToggle(opts, state, false)}
-          <details class="rc-hidden">
-            <summary>
-              Show ${comments.length}
-              ${comments.length === 1 ? "comment" : "comments"}
-            </summary>
-            ${thread}
-          </details>
-        </div>`
-      : html`${thread}${threadToggle(opts, state, true)}`;
+          ${disclosure(
+            html`Show ${comments.length}
+            ${comments.length === 1 ? "comment" : "comments"}`,
+            html`${thread}`,
+            { small: true },
+          )}`,
+        toggle ? { foot: toggle } : {},
+      )
+    : card(html`${thread}`, toggle ? { foot: toggle } : {});
 
-  return html`<tr class="dl-review">
+  return html`<tr>
     <td class="dn"></td>
     <td class="dn"></td>
     <td class="dc-review">${body}${form}</td>
@@ -408,18 +409,15 @@ function threadToggle(
   opts: DiffViewOptions,
   state: ThreadView | undefined,
   resolve: boolean,
-): Html {
+): Html | undefined {
   if (state === undefined || !state.mayResolve || !opts.reviewBase)
-    return html``;
+    return undefined;
   const verb = resolve ? "resolve" : "unresolve";
   return html`<form
-    class="rc-resolve"
     method="post"
     action="${opts.reviewBase}/threads/${state.anchor}/${verb}"
   >
-    <button class="btn" data-size="sm" data-variant="outline" type="submit">
-      ${resolve ? "Resolve" : "Unresolve"}
-    </button>
+    ${btn(resolve ? "Resolve" : "Unresolve", { size: "sm", variant: "outline" })}
   </form>`;
 }
 

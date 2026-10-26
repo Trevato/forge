@@ -21,6 +21,9 @@ import {
 } from "../core/interactions.ts";
 import { chipsOf, isKindChip, setChip } from "../core/feed_chips.ts";
 import { getUserByName, getUsersByIds } from "../core/users.ts";
+import { drainQueue } from "../core/shares.ts";
+import { feedTag, hasQueuedShares } from "../feed/feed_tag.ts";
+import { holds } from "../web/feeds.ts";
 import { share, RECIPIENTS_MAX } from "../feed/share.ts";
 import { canRead, getRepo, getRepoById } from "../core/repos.ts";
 import {
@@ -37,6 +40,7 @@ import {
   previewAsksBulk,
 } from "../actions/asks_bulk.ts";
 import type { FleetError } from "../actions/fleet.ts";
+import { notePhase, takeSessionTime, timePhase } from "../core/route_timing.ts";
 import type { Handler } from "./context.ts";
 import type { Router } from "./router.ts";
 import {
@@ -51,6 +55,7 @@ import {
 
 export function feedRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/feed", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const viewer = ctx.auth.user;
     if (!viewer) return unauthorized();
     const q = ctx.url.searchParams;
@@ -65,13 +70,37 @@ export function feedRoutes(router: Router<Handler>): void {
     const cursor = rawCursor === null ? undefined : parseCursor(rawCursor);
     if (rawCursor !== null && cursor === undefined)
       return apiError("invalid_cursor", 422, "that cursor was not issued here");
-    return json(
+    // A 304 only when nothing the viewer would read has changed (`feedTag`).
+    // The queue drains first, as `readFeed` would; shares still waiting
+    // depend on the clock, so they always get a page.
+    const now = Date.now();
+    drainQueue(ctx.app.db, viewer.id, now);
+    const tag = feedTag(ctx.app.db, viewer, {
+      chips: chipsOf(ctx.app.db, viewer.id),
+      cursor: rawCursor,
+      limit: limit ?? null,
+      now,
+    });
+    const headers: Record<string, string> = {
+      "cache-control": "private, no-store",
+      vary: "authorization, cookie",
+      ...(tag === undefined ? {} : { etag: tag }),
+    };
+    if (
+      tag !== undefined &&
+      holds(ctx.request.headers.get("if-none-match"), tag) &&
+      !hasQueuedShares(ctx.app.db, viewer.id)
+    )
+      return new Response(null, { status: 304, headers });
+    const page = timePhase(ctx.request, "feed", () =>
       readFeed(ctx.app.db, viewer, {
+        phase: (name, ms) => notePhase(ctx.request, name, ms),
         ...(limit === undefined ? {} : { limit }),
         ...(cursor === undefined ? {} : { cursor }),
       }),
-      200,
-      { "cache-control": "private, no-store" },
+    );
+    return timePhase(ctx.request, "render", () =>
+      json(page, 200, headers),
     );
   });
 
@@ -87,8 +116,12 @@ export function feedRoutes(router: Router<Handler>): void {
     };
   };
   router.add("GET", "/api/v1/feed/chips", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     if (!ctx.auth.user) return unauthorized();
-    return json(chipsAnswer(ctx), 200, { "cache-control": "private, no-store" });
+    const answer = timePhase(ctx.request, "chips", () => chipsAnswer(ctx));
+    return timePhase(ctx.request, "render", () =>
+      json(answer, 200, { "cache-control": "private, no-store" }),
+    );
   });
   router.add("POST", "/api/v1/feed/chips", async (ctx) => {
     const denied = requireScope(ctx, "rw");
@@ -111,11 +144,13 @@ export function feedRoutes(router: Router<Handler>): void {
 
   // What asks the viewer, ranked, with the week's measure (`asksAnswer`).
   router.add("GET", "/api/v1/asks", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const viewer = ctx.auth.user;
     if (!viewer) return unauthorized();
-    return json(asksAnswer(ctx, viewer), 200, {
-      "cache-control": "private, no-store",
-    });
+    const answer = timePhase(ctx.request, "asks", () => asksAnswer(ctx, viewer));
+    return timePhase(ctx.request, "render", () =>
+      json(answer, 200, { "cache-control": "private, no-store" }),
+    );
   });
 
   // Many asks, one action (`actions/asks_bulk.ts`): a preview by default,

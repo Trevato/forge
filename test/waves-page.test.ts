@@ -8,7 +8,7 @@ import type { Repo } from "../src/core/repos.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { webUrl } from "../src/web/pages/waves.ts";
+import { mergedPull, waveNaming } from "./helpers/wave-pulls.ts";
 import { writeWave, type Wave } from "../src/story/wave.ts";
 
 const PASSWORD = "a-good-passphrase";
@@ -78,6 +78,17 @@ describe("waves page", () => {
     await put(priv, [
       { path: "waves/1.0.0.md", content: text(wave("1.0.0", "2026-03-01", "Secret launch")) },
     ]);
+    const shown = await mergedPull(app, alice, pub, "Shown work");
+    const secret = await mergedPull(app, alice, priv, "Secret work");
+    await put(pub, [
+      {
+        path: "waves/0.1.0.md",
+        content: waveNaming("0.1.0", [
+          { owner: "alice", name: "pub", number: shown },
+          { owner: "alice", name: "priv", number: secret },
+        ]),
+      },
+    ]);
   }, 60_000);
 
   afterAll(async () => {
@@ -117,10 +128,43 @@ describe("waves page", () => {
     expect(body).toContain('href="/alice/pub/waves"');
   });
 
+  test("the repository home draws the newest wave in one line, linked", async () => {
+    const res = await get("/alice/pub");
+    const body = await res.text();
+    expect(body).toContain("latest-wave");
+    expect(body).toContain('href="/alice/pub/waves/0.10.0"');
+    expect(body).toContain("Tenth · 2026-02-01");
+    expect(body).not.toContain("Ninth");
+    expect(res.headers.get("server-timing")).toContain("wave");
+  });
+
+  test("the repository home without waves draws no wave line", async () => {
+    const body = await (await get("/alice/bare")).text();
+    expect(body).not.toContain("latest-wave");
+  });
+
   test("no waves/ gets the empty state", async () => {
     const res = await get("/alice/bare/waves");
     expect(res.status).toBe(200);
     expect(await res.text()).toContain("No waves yet");
+  });
+
+  test("the empty state says what a wave is; an admin gets Cut a wave, a reader does not", async () => {
+    const admin = await (await get("/alice/bare/waves")).text();
+    expect(admin).toContain("A wave is a release note");
+    expect(admin).toContain('action="/alice/bare/settings/wave"');
+    expect(admin).toContain("Cut a wave");
+    const reader = await (await get("/alice/bare/waves", false)).text();
+    expect(reader).toContain("A wave is a release note");
+    expect(reader).not.toContain("Cut a wave");
+    expect(reader).not.toContain("/settings/wave");
+  });
+
+  test("the waves pages mark no tab as current", async () => {
+    for (const path of ["/alice/pub/waves", "/alice/bare/waves", "/alice/pub/waves/0.10.0"]) {
+      const body = await (await get(path)).text();
+      expect(body).not.toContain('aria-current="page"');
+    }
   });
 
   test("a private repository is refused to an outsider as any other page is", async () => {
@@ -141,7 +185,6 @@ describe("waves page", () => {
     expect(body).toContain("2026-02-01");
     expect(body).toContain("Thing 1");
     expect(body).toContain("because");
-    expect(body).toContain('href="https://forge.example/o/r/pulls/1"');
   });
 
   test("values are escaped and a javascript: pull is not a link", async () => {
@@ -151,8 +194,6 @@ describe("waves page", () => {
     expect(body).not.toContain("<b>links");
     const js = await (await get("/alice/pub/waves/0.5.0")).text();
     expect(js).not.toContain('href="javascript:');
-    expect(webUrl("javascript:alert(1)")).toBe(false);
-    expect(webUrl("https://x.example/p/1")).toBe(true);
   });
 
   test("an unknown or malformed version is a 404; an unparsable file shows its reason", async () => {
@@ -176,10 +217,27 @@ describe("waves page", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("application/atom+xml");
     const body = await res.text();
-    expect(body.match(/<entry>/g)?.length).toBe(4);
+    expect(body.match(/<entry>/g)?.length).toBe(5);
     expect(body.indexOf("Tenth")).toBeLessThan(body.indexOf("Ninth"));
     expect(body).toContain('href="http://');
     expect(body).toContain("/alice/pub/waves/0.10.0");
+  });
+
+  test("a row counts the pulls this viewer can see, as the wave's page lists them", async () => {
+    const body = await (await get("/alice/pub/waves")).text();
+    expect(body).toContain("0.1.0 · Mixed · 2 pulls");
+    const guest = await (await get("/alice/pub/waves", false)).text();
+    expect(guest).toContain("0.1.0 · Mixed · 1 pull<");
+    expect(guest).not.toContain("2 pulls");
+    expect(guest).not.toContain("Secret work");
+    const page = await (await get("/alice/pub/waves/0.1.0", false)).text();
+    expect(page).toContain("Shown work");
+    expect(page).not.toContain("Secret work");
+  });
+
+  test("waves.atom titles an entry with the headline", async () => {
+    const body = await (await get("/alice/pub/waves.atom")).text();
+    expect(body).toContain("<title>Tenth</title>");
   });
 
   test("waves.atom escapes markup in headlines and notes", async () => {

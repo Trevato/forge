@@ -17,6 +17,7 @@ import { clientAddress } from "../../http/peer.ts";
 import { verifyEmail } from "../../actions/verify.ts";
 import { STRANGER_MAX } from "../../http/limits.ts";
 import { createRepo, repositoryLimitMessage, resolveOwner } from "../../actions/repos.ts";
+import { REPO_INIT_FAILED, REPO_NAME_RULES } from "../../actions/repo_words.ts";
 import { HUMAN_CHECK_MESSAGE, INVITE_SPENT_MESSAGE, PASSKEY_REQUIRED_MESSAGE, SIGNUP_CLOSED_MESSAGE, signUp, signupClosed } from "../../actions/users.ts";
 import { accessAllows, listOrgsForUser, orgAccess } from "../../core/orgs.ts";
 import { listPins } from "../../core/pins.ts";
@@ -34,6 +35,7 @@ import { SignupSlot, signupWindow } from "../../actions/signup-window.ts";
 import { signinWindow } from "../../core/signin-window.ts";
 import { field, readForm } from "../form.ts";
 import { passkeyJs } from "../passkey-client.ts";
+import { passkeyNote, passkeyState } from "../passkey-state.ts";
 import { html, when, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
 import { flashTo, page, redirect } from "../layout.ts";
@@ -46,11 +48,14 @@ import {
   row,
   selectField,
   terminalCommand,
+  copyField,
 } from "../ui.ts";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { secureFor } from "../../http/cookie_secure.ts";
 import { hasAdmin } from "../../spawn/claim.ts";
 import { getSignup, type SignupMode } from "../../settings/signup.ts";
+import { EMAIL_TAKEN_MESSAGE, NAME_RESERVED, USERNAME_TAKEN } from "../../actions/signup_words.ts";
 
 export function sessionCookie(
   value: string,
@@ -60,10 +65,7 @@ export function sessionCookie(
 ): string {
   // Secure when the request or the forge's own address is https: behind a
   // proxy that ends TLS the request itself arrives as http.
-  const secure =
-    url.protocol === "https:" || forgeUrl?.startsWith("https://")
-      ? "; Secure"
-      : "";
+  const secure = secureFor(url, forgeUrl) ? "; Secure" : "";
   return `forge_session=${value}; Path=/; HttpOnly; SameSite=Lax; Expires=${expires.toUTCString()}${secure}`;
 }
 
@@ -150,14 +152,7 @@ export function downloadsCard(ctx: Ctx, user: User): Html {
       html`<li>
         <div class="row">
           <span class="row-main">
-            <span class="clone"
-              ><span class="clone-text" id="forge-sync">forge sync</span>
-              ${iconBtn("copy", "Copy the sync command", {
-                size: "sm",
-                type: "button",
-                copy: "forge-sync",
-              })}</span
-            >
+            ${copyField("forge-sync", "forge sync", "Sync command", "Copy the sync command")}
             <span class="row-meta"
               >Clones what is missing, fetches the rest, and reports
               ahead/behind/dirty. See "Origins" in the README.</span
@@ -289,16 +284,19 @@ function authForm(
 
   // Sign-in leads with the passkey: one press, nothing typed; the password
   // form below stays for accounts that were given one. The button needs a
-  // script and a browser with passkeys, so the block is `passkey-on`: shown
+  // script and a browser with passkeys, so the block is `data-passkey="on"`: shown
   // only once `passkey-client.ts` marks `:root.passkey`. The form's Sign in
   // comes in both variants, outline beside the lead and primary everywhere
   // else, so the page always has one primary action. The sentence tells a
   // newcomer before they look for a door that is not there.
   const passkeyFirst = when(
     kind === "signin",
-    () => html`<div class="passkey-on stack stack-tight mb">
+    () => html`<div class="stack stack-tight mb">
+      ${passkeyState()}
+      <div class="stack stack-tight" data-passkey="on" hidden>
       <button type="button" id="passkey-signin" class="btn" data-variant="primary" data-size="lg">Sign in with a passkey</button>
-      <p class="muted small break" id="passkey-signin-note" data-fail="error-note" role="status"></p>
+      ${passkeyNote("passkey-signin-note")}
+      </div>
     </div>
     ${when(SIGNUP_SENTENCES[timePhase(ctx.request, "settings", () => getSignup(ctx.app.db))], (said) => html`<p class="muted small mb" id="signup-mode">${said}</p>`)}`,
   );
@@ -361,17 +359,17 @@ function authForm(
           A passkey signs you in with a fingerprint, face or device PIN; there
           is no password to remember.
         </p>
-        <p class="error-note mb" id="passkey-signup-note" role="alert">${errors.password ?? ""}</p>
+        ${passkeyNote("passkey-signup-note")}
         <noscript><p class="muted small">Signing up needs JavaScript for the passkey.</p></noscript>`,
       )}
       ${when(
         kind === "signup" && !byPasskey,
-        () => html`<div class="passkey-on">
+        () => html`<div data-passkey="on" hidden>
           <p class="muted small mb">
             Or skip the password: a passkey signs you in with a fingerprint,
             face or device PIN. An email address above is optional.
           </p>
-          <p class="error-note mb" id="passkey-signup-note" role="alert"></p>
+          ${passkeyNote("passkey-signup-note")}
           <button type="button" id="passkey-signup" class="btn" data-variant="outline">Create account with a passkey</button>
         </div>`,
       )}
@@ -391,7 +389,7 @@ function authForm(
         ${byPasskey
           ? html`<button type="button" id="passkey-signup" class="btn" data-variant="primary">Create account with a passkey</button>`
           : kind === "signin"
-            ? html`${btn("Sign in", { variant: "outline", extra: "passkey-on" })}${btn("Sign in", { variant: "primary", extra: "passkey-off" })}`
+            ? html`<button type="submit" class="btn" data-variant="outline" data-passkey="on" hidden>Sign in</button><button type="submit" class="btn" data-variant="primary" data-passkey="off">Sign in</button>`
             : btn("Create account", { variant: "primary" })}
         <span class="spacer"></span>
         ${kind === "signin"
@@ -661,9 +659,9 @@ export async function signupSubmit(ctx: Ctx): Promise<Response> {
       invalid_username: {
         username: "Usernames are letters, digits, dots, dashes.",
       },
-      username_taken: { username: "That username is taken." },
-      username_reserved: { username: "That name is reserved." },
-      email_taken: { email: "That email already has an account." },
+      username_taken: { username: USERNAME_TAKEN },
+      username_reserved: { username: NAME_RESERVED },
+      email_taken: { email: EMAIL_TAKEN_MESSAGE },
       password_too_long: { password: PASSWORD_TOO_LONG },
       weak_password: { password: "Passwords need at least 12 characters." },
       invalid_email: { email: "That does not look like an email address." },
@@ -696,7 +694,7 @@ export async function themeSubmit(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, undefined, STRANGER_MAX);
   if (form instanceof Response) return form;
   const choice = field(form, "theme");
-  const secure = ctx.url.protocol === "https:" ? "; Secure" : "";
+  const secure = secureFor(ctx.url, ctx.app.config.url) ? "; Secure" : "";
   const cookie = isThemeName(choice)
     ? `forge_theme=${choice}; Path=/; Max-Age=31536000; SameSite=Lax; HttpOnly${secure}`
     : `forge_theme=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly${secure}`;
@@ -844,8 +842,8 @@ export async function newRepoSubmit(ctx: Ctx): Promise<Response> {
       repository_limit: `Not made: ${repositoryLimitMessage(ctx.app, ctx.auth.user)}.`,
       storage_limit: `Not made: ${storageLimitMessage(ctx.app, resolveOwner(ctx.app, ctx.auth.user, values.owner) ?? ctx.auth.user.id)}.`,
       name_taken: "That owner already has a repository by that name.",
-      invalid_name: "Names start with a letter or digit; no spaces, no .git.",
-      git_init_failed: "The repository could not be initialised on disk.",
+      invalid_name: REPO_NAME_RULES,
+      git_init_failed: REPO_INIT_FAILED,
     };
     return page(
       {

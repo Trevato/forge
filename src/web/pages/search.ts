@@ -12,7 +12,7 @@
 
 import { strangerCodeSearch } from "../../http/strangers.ts";
 import { search } from "../../actions/search.ts";
-import { appsRuntime, envsFor } from "../../apps/runtime.ts";
+import { envsFor } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { getPull } from "../../core/pulls.ts";
 import { canWrite, enterableApps, getRepo } from "../../core/repos.ts";
@@ -30,6 +30,7 @@ import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { notFoundPage, pageHead } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
+import { DELETE_REPO, STOP_APP } from "../danger_words.ts";
 import { icon } from "../icons.ts";
 import { page } from "../layout.ts";
 import { browseBase } from "../scope.ts";
@@ -357,7 +358,7 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
   };
 
   const form = html`<form
-    class="filters"
+    class="bar mb"
     method="get"
     action="/search"
     role="search"
@@ -428,7 +429,7 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
   const liveToggle = when(
     ctx.auth.user !== undefined,
     () =>
-      html`<p class="live-toggle small">
+      html`<p class="row small muted">
         ${icon("globe")}
         ${a.live
           ? html`<span
@@ -473,7 +474,7 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
   );
 
   const body = html`${pageHead(html`Results for “${a.query}”`)} ${form}
-  <div class="filters">${chips}</div>
+  <div class="bar mb">${chips}</div>
   ${liveToggle}
   ${when(
     busy !== undefined,
@@ -518,7 +519,7 @@ const DESTRUCTIVE: {
   {
     pattern: /^\/([^/]+)\/([^/]+)\/settings\/delete$/,
     describe: (m) => ({
-      verb: "Delete this repository",
+      verb: DELETE_REPO,
       title: `Delete ${m[1]}/${m[2]}?`,
       detail:
         "Every issue, pull request, comment and webhook goes with it, and the git objects are removed from disk. Forks are detached first and keep working. This cannot be undone.",
@@ -638,7 +639,7 @@ const DESTRUCTIVE: {
   {
     pattern: /^\/([^/]+)\/([^/]+)\/settings\/app\/disable$/,
     describe: (m) => ({
-      verb: "Stop running as an app",
+      verb: STOP_APP,
       title: `Stop running ${m[1]}/${m[2]} as an app?`,
       detail:
         "Production and every preview stop, and their data directories and checkouts are removed from disk. The repository and its code are untouched. Run it as an app again later and it starts from empty data.",

@@ -192,7 +192,7 @@ describe("/boards", () => {
     expect(grid).toMatch(/data-live="[^"]+"/);
     expect(grid).toContain('data-live="run.queued,run.started,run.finished,pull.*,check.*,issue.*,usage.*"');
     expect(body).toContain('data-live-src="/boards/fleet-health/live"');
-    expect(body).toMatch(/<option value="10s" selected>on: redraw when events arrive<\/option>/);
+    expect(body).toMatch(/<option\s+value="10s"\s+selected\s*>\s*on: redraw when events arrive\s*<\/option>/);
     expect(body).not.toContain(">1m</option>");
     const live = await asAdmin("/boards/fleet-health/live");
     expect(live.status).toBe(200);
@@ -250,7 +250,7 @@ describe("/boards", () => {
     // runs in range: three days × three kinds for the heat strip; three days of bars, the series set aside
     expect(page.match(/<rect class="cell"/g)?.length).toBe(9);
     expect(page.match(/<rect class="bar"/g)?.length).toBe(3);
-    expect(page).toContain('<option value="heat" selected>heat strip</option>');
+    expect(page).toMatch(/<option\s+value="heat"\s+selected\s*>\s*heat strip/);
     expect(parseBoard({ ...board, panels: [{ ...board.panels[0], chart: "pie" }] }).ok).toBe(false);
     await deleteBoard(app, alice, "charts");
   });

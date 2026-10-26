@@ -16,6 +16,7 @@
 import type { Database } from "bun:sqlite";
 import { listEgressGrants } from "../core/egress_grants.ts";
 import { recordCarried } from "../core/carried.ts";
+import { releaseOfCommit } from "../core/release_subject.ts";
 import { pullDir, runDir } from "../core/pulls.ts";
 import { accountActive } from "../core/accounts.ts";
 import { sshCommand } from "../ssh/command.ts";
@@ -38,6 +39,7 @@ import { runningLimitSentence } from "../settings/quotas.ts";
 import type { User } from "../core/users.ts";
 import {
   cancelRun,
+  getRun,
   listRuns,
   claimRun,
   createRun,
@@ -55,7 +57,7 @@ import { createLog } from "../kernel/log.ts";
 import type { Result } from "../kernel/result.ts";
 import { holdLease, STALE_AFTER_MS } from "../runs/lease.ts";
 import { appendRunLog } from "../runs/log.ts";
-import { primaryDomain } from "../core/domains.ts";
+import { primaryDomain, primaryHosts } from "../core/domains.ts";
 import {
   beatAwake,
   closeAllAwake,
@@ -71,6 +73,7 @@ import { dirBytes } from "./bytes.ts";
 import { BUSY_WORDS, busyReason, type BusyReason } from "./busy.ts";
 import { exportTree, readFileAt } from "./checkout.ts";
 import { seconds, Stopwatch } from "./timing.ts";
+import { DRAIN_BUDGET_MS, drainPort } from "./handoff.ts";
 import type { DomainResolver } from "./domains.ts";
 import {
   appsRoot,
@@ -391,6 +394,14 @@ export function envsFor(
   return runtime.status(record);
 }
 
+/** Production first, then previews by pull number — a number, so `pull-10` follows `pull-9`. */
+const byEnv = (a: EnvStatus, b: EnvStatus): number =>
+  a.env === "production"
+    ? -1
+    : b.env === "production"
+      ? 1
+      : (envPull(a.env) ?? 0) - (envPull(b.env) ?? 0);
+
 export class AppsRuntime {
   private readonly envs = new Map<string, Environment>();
   /** Whether this host can hold an app in a cell (`apps/contain.ts`), asked once at start. */
@@ -446,10 +457,16 @@ export class AppsRuntime {
    * domain carries no port: it reaches the forge through whatever fronts
    * it, which holds its own.
    */
-  urlFor(record: AppRecord, env: EnvName): string {
+  urlFor(
+    record: AppRecord,
+    env: EnvName,
+    hosts?: ReadonlyMap<string, string>,
+  ): string {
     if (env === "production") {
-      const own = primaryDomain(this.app.db, record.id);
-      if (own !== undefined) return `${this.options.scheme}://${own.host}`;
+      const host = hosts
+        ? hosts.get(record.id)
+        : primaryDomain(this.app.db, record.id)?.host;
+      if (host !== undefined) return `${this.options.scheme}://${host}`;
     }
     const port =
       this.options.publicPort === undefined ||
@@ -468,6 +485,22 @@ export class AppsRuntime {
     return this.describe(state);
   }
 
+  /**
+   * `status` for many apps in one pass over the environments and one read
+   * of their domains; nothing per app touches the database. The caller has
+   * already decided which apps the viewer may see (`envsFor`'s rule).
+   */
+  statusMany(records: readonly AppRecord[]): Map<string, EnvStatus[]> {
+    const out = new Map<string, EnvStatus[]>();
+    const wanted = new Set(records.map((r) => r.id));
+    const hosts = primaryHosts(this.app.db, [...wanted]);
+    for (const id of wanted) out.set(id, []);
+    for (const state of this.envs.values())
+      out.get(state.app.id)?.push(this.describe(state, hosts));
+    for (const list of out.values()) list.sort(byEnv);
+    return out;
+  }
+
   /** Every environment of an app, production first. */
   status(record: AppRecord): EnvStatus[] {
     const out: EnvStatus[] = [];
@@ -476,17 +509,14 @@ export class AppsRuntime {
     }
     // Production first, then previews by pull number — a number, not a
     // string, so `pull-10` follows `pull-9`.
-    return out.sort((a, b) =>
-      a.env === "production"
-        ? -1
-        : b.env === "production"
-          ? 1
-          : (envPull(a.env) ?? 0) - (envPull(b.env) ?? 0),
-    );
+    return out.sort(byEnv);
   }
 
-  private describe(state: Environment): EnvStatus {
-    const url = this.urlFor(state.app, state.env);
+  private describe(
+    state: Environment,
+    hosts?: ReadonlyMap<string, string>,
+  ): EnvStatus {
+    const url = this.urlFor(state.app, state.env, hosts);
     // Once a deploy's own commit has answered and swapped in, it is
     // "running" from here — even though its run stays open, checking its
     // tests, until they finish. Only a build still short of that point (no
@@ -609,6 +639,26 @@ export class AppsRuntime {
 
   // ---- lifecycle ----
 
+  /** Each production environment the boot asked to deploy, and the run that does it. */
+  private readonly bootRuns = new Map<Environment, string>();
+
+  /**
+   * How many of the productions this boot asked for are neither serving
+   * nor settled yet. Until it reads 0 the forge is not ready (`/readyz`),
+   * so in a rollout the forge it replaces keeps proxying to its own copy
+   * of each app and no request finds an app that is still starting (#4496).
+   */
+  startingCount(): number {
+    let count = 0;
+    for (const [state, runId] of this.bootRuns) {
+      const run = state.live?.runId === runId ? undefined : getRun(this.app.db, runId);
+      const pending = run?.state === "queued" || run?.state === "running";
+      if (pending) count++;
+      else this.bootRuns.delete(state);
+    }
+    return count;
+  }
+
   /** Rebuild every environment from git and the open pulls, then listen. */
   async start(): Promise<void> {
     this.cells = await cellsAvailable();
@@ -670,7 +720,11 @@ export class AppsRuntime {
         cancelRun(this.app.db, state.queued.id, STOPPED_SUMMARY);
       if (state.live) {
         revokeAppToken(this.app.db, state.live.tokenId);
-        stops.push(state.live.handle.stop());
+        // A forge leaving (a rollout) lets its sockets reconnect to the
+        // forge that replaced it, and answers what it took, before it
+        // stops the app (#4496).
+        const handle = state.live.handle;
+        stops.push(drainPort(handle.port).then(() => handle.stop()));
       }
       // Abort only cancels the step in flight; the `execute()` continuation
       // chained onto `state.chain` still runs afterwards to record the
@@ -956,6 +1010,7 @@ export class AppsRuntime {
       state.deploying === undefined &&
       state.queued === undefined &&
       reason !== "restart" &&
+      reason !== "oom" &&
       reason !== "redeploy"
     ) {
       return undefined;
@@ -983,6 +1038,7 @@ export class AppsRuntime {
       );
     }
     state.queued = run;
+    if (reason === "boot" && env === "production") this.bootRuns.set(state, run.id);
     state.chain = state.chain.then(async () => {
       if (state.queued?.id !== run.id) return; // superseded
       state.queued = undefined;
@@ -1162,6 +1218,11 @@ export class AppsRuntime {
         `stopping the previous deployment (${previous.commitOid.slice(0, 7)})`,
       );
       revokeAppToken(this.app.db, previous.tokenId);
+      // Traffic already goes to the new one: the old one's sockets are told
+      // to reconnect (1012), and what it was answering is answered (#4496).
+      const unanswered = await drainPort(previous.handle.port);
+      if (unanswered > 0)
+        write(`${unanswered} request(s) to the previous deployment were still waiting after ${seconds(DRAIN_BUDGET_MS)}`);
       await previous.handle.stop();
       if (previous.dir !== live.dir)
         rmSync(previous.dir, { recursive: true, force: true });
@@ -1177,6 +1238,11 @@ export class AppsRuntime {
     // subscriber (the looks service) must never be able to take the
     // deploy path down with it.
     try {
+      const release = await releaseOfCommit(
+        repoDir(this.app.reposRoot, repo.ownerName, repo.name),
+        state.env,
+        live.commitOid,
+      );
       this.app.bus.append({
         kind: "app.serving",
         repoId: repo.id,
@@ -1187,6 +1253,7 @@ export class AppsRuntime {
           servingAt,
           ...(deployStartedAt === null ? {} : { deployStartedAt }),
           testsRunning: live.manifest.test !== null,
+          ...(release === undefined ? {} : { version: release.version, pulls: release.pulls }),
         },
       });
     } catch (error) {
@@ -1477,6 +1544,10 @@ export class AppsRuntime {
         state.live = undefined;
         this.resting(state);
         revokeAppToken(this.app.db, live.tokenId);
+        // The cell's memory cap — its own watch or the kernel's OOM killer —
+        // is a cause of its own on the restarts board (`boards/sources.ts`).
+        const breach = live.handle.breach?.();
+        const oom = breach !== undefined && /memory/.test(breach);
         state.lastError = `exited with code ${code}`;
         appendRunLog(
           this.app.config.dataDir,
@@ -1503,7 +1574,7 @@ export class AppsRuntime {
               fresh,
               state.env,
               live.commitOid,
-              "restart",
+              oom ? "oom" : "restart",
             );
         }, delay);
       })

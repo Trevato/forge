@@ -7,7 +7,9 @@
  * dialog, and kept nowhere. Any signed-in person's, as the page is.
  */
 
+import { DEFAULT_SIZE, SIZES, type Size } from "../../spawn/sizes.ts";
 import { childUrlOf, spawnDoor } from "../../spawn/door.ts";
+import { quotaFull } from "../../spawn/quota.ts";
 import { MAX_BUDGET_USD, MIN_BUDGET_USD } from "../../spawn/plan.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -22,7 +24,11 @@ interface Spec {
   readonly label: string;
   readonly hint: string;
   readonly secret?: boolean;
+  /** A choice, not text: left, right and space move through it. */
+  readonly choices?: readonly string[];
 }
+
+const SIZE_CHOICES = Object.keys(SIZES) as Size[];
 
 const SPECS: readonly Spec[] = [
   { key: "name", label: "Name", hint: "Lowercase letters, digits and dashes." },
@@ -34,6 +40,7 @@ const SPECS: readonly Spec[] = [
   { key: "modelEndpoint", label: "API base URL", hint: "A gateway for the key; empty for Anthropic. Optional." },
   { key: "budgetUsd", label: "Budget in dollars", hint: `${MIN_BUDGET_USD}–${MAX_BUDGET_USD}, for the key's whole life. Needed with a key.` },
   { key: "followMode", label: "Follows this forge's code", hint: "tell-me (default) or take-updates. Recorded for now: nothing tells you or takes updates yet." },
+  { key: "size", label: "Size", hint: "small (default), medium or large: left and right choose, or type it.", choices: SIZE_CHOICES },
 ];
 
 /** The door's "field: reason" refusal, as the field it names and the reason. */
@@ -50,6 +57,8 @@ export function newForgeScreen(f: Session, ctx: Ctx): Screen {
   let error: string | undefined;
   let plan: string[] | undefined;
   let busy = false;
+  // Said when the screen opens, before anything is typed: the host's child quota has no room even for small.
+  const quota = quotaFull(f.app.config.dataDir);
 
   const val = (k: string): string => (values[k] ?? "").trim();
 
@@ -65,6 +74,8 @@ export function newForgeScreen(f: Session, ctx: Ctx): Screen {
       ...(val("modelKey") === "" ? {} : { modelKey: val("modelKey") }),
       ...(val("modelEndpoint") === "" ? {} : { modelEndpoint: val("modelEndpoint") }),
       ...(val("budgetUsd") === "" ? {} : { budgetUsd: Number(val("budgetUsd")) }),
+      // Small is the default: it is not recorded, as on the page.
+      ...(val("size") === "" || val("size") === DEFAULT_SIZE ? {} : { size: val("size") }),
       dryRun,
     };
   };
@@ -107,6 +118,7 @@ export function newForgeScreen(f: Session, ctx: Ctx): Screen {
           const copied = (body["copied"] as string[] | undefined) ?? [];
           const bytes = Number(body["bytes"] ?? 0);
           const budget = (body["plan"] as { budgetUsd?: number | null } | undefined)?.budgetUsd ?? null;
+          const size = (body["plan"] as { size?: string } | undefined)?.size;
           plan = [
             `A forge at ${childUrlOf(f.app, val("name"))}.`,
             `Recorded for now, not acted on: it follows this forge's code as ${val("followMode") === "" ? "tell-me" : val("followMode")}.`,
@@ -114,6 +126,7 @@ export function newForgeScreen(f: Session, ctx: Ctx): Screen {
             ...(budget === null ? [] : [`Its crew runs on your key, up to $${budget} for the key's whole life.`]),
             "Copied into it:",
             ...copied.map((c) => `  ${c}`),
+            ...(size === undefined ? [] : [`Size: ${size}.`]),
             `About ${Math.max(1, Math.round(bytes / 1024))} KB. Nothing is made until you press enter.`,
             ...(typeof body["keyNote"] === "string" ? [body["keyNote"]] : []),
           ];
@@ -144,8 +157,13 @@ export function newForgeScreen(f: Session, ctx: Ctx): Screen {
       binding(["enter"], "spawn (on the plan)"),
       binding(["esc"], "back"),
     ],
-    render(area, s) {
+    render(full, s) {
       const c = ctx.theme.c;
+      let area = full;
+      if (quota !== undefined) {
+        s.text(full.x, full.y, truncate(`This forge cannot hold another child: ${quota}.`, full.w), style(c.attn, c.bg), full.x + full.w);
+        area = { ...full, y: full.y + 2, h: Math.max(1, full.h - 2) };
+      }
       if (plan !== undefined) {
         s.text(area.x, area.y, truncate("The plan", area.w), style(c.accent, c.bg), area.x + area.w);
         plan.forEach((line, i) => {
@@ -161,7 +179,7 @@ export function newForgeScreen(f: Session, ctx: Ctx): Screen {
       let cursor: { x: number; y: number } | null = null;
       SPECS.slice(first, first + rows).forEach((spec, n) => {
         const i = first + n;
-        const raw = values[spec.key] ?? "";
+        const raw = spec.choices === undefined ? (values[spec.key] ?? "") : (values[spec.key] || DEFAULT_SIZE);
         const shown = spec.secret === true ? "•".repeat([...raw].length) : raw;
         const at = field(s, { x: area.x, y: area.y + n * 3, w: Math.min(70, area.w), h: 3 }, c, {
           label: spec.label,
@@ -194,6 +212,16 @@ export function newForgeScreen(f: Session, ctx: Ctx): Screen {
       }
       if (e.key === "tab" || e.key === "enter") {
         focus = (focus + 1) % SPECS.length;
+        return true;
+      }
+      const choices = SPECS[focus]!.choices;
+      const step = e.key === "left" ? -1 : e.key === "right" || e.key === " " || e.key === "space" ? 1 : 0;
+      if (choices !== undefined && step !== 0) {
+        // A choice can be cycled or typed; both end in a value the door checks.
+        const k = SPECS[focus]!.key;
+        const at = Math.max(0, choices.indexOf(values[k] || DEFAULT_SIZE));
+        values[k] = choices[(at + step + choices.length) % choices.length]!;
+        error = undefined;
         return true;
       }
       if (e.key === "backspace") {

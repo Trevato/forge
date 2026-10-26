@@ -6,6 +6,7 @@
  * best of what is public (`actions/front.ts`).
  */
 
+import { forgeCeiling } from "../../flow/ceiling.ts";
 import { liveLine } from "../pages/releases.ts";
 import {
   frontPage,
@@ -19,7 +20,7 @@ import { appsRuntime } from "../../apps/runtime.ts";
 import { appsForRepos } from "../../core/apps.ts";
 import { WEIGHT_MAX, WEIGHT_NAMES } from "../../core/front.ts";
 import { LOOK_SIZES } from "../../core/looks.ts";
-import { canRead, getRepo, type Repo } from "../../core/repos.ts";
+import { canRead, getRepo } from "../../core/repos.ts";
 import { type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { activeEdgeToken, edgeLoginUrl, edgeStrangerLogin } from "../../http/edge.ts";
@@ -51,10 +52,10 @@ import { writableAppsOf } from "./asks.ts";
 import { needsYouSection } from "./asks_page.ts";
 import { flowCards } from "./flow_card.ts";
 import { composer, feedJs, feedNote, feedRegion } from "./feed.ts";
-import { kpiRow } from "./kpi_row.ts";
+import { kpiRow, vitalsRow, waitingLine } from "./kpi_row.ts";
 import { feedCandidateCache } from "../../feed/feed.ts";
 import { notePhase, notePhaseRest, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
-import { kpiCache, panelCache } from "./home_cache.ts";
+import { kpiCache, panelCache, waitingCache } from "./home_cache.ts";
 import { pinnedPanels } from "./pinned.ts";
 import { homeTabs } from "./home_tabs.ts";
 import { crewKeyNote } from "./crew.ts";
@@ -63,6 +64,7 @@ import { nextStepsCard, nextStepsOf } from "../pages/next-steps.ts";
 import { spawnedOrg } from "../../spawn/claim.ts";
 import { clientApps } from "./client_home.ts";
 import { passkeyJs } from "../passkey-client.ts";
+import { SITE_LINE } from "../site_line.ts";
 
 /** The events that can change what is on you. */
 const ON_YOU_LIVE =
@@ -77,8 +79,8 @@ const RAIL_APPS = 8;
  * name and how production is — and the verbs that were the shelf's head.
  * The apps' full rows are `/apps`.
  */
-function yourApps(ctx: Ctx, user: User): Html {
-  const { repos } = writableAppsOf(ctx, user);
+function yourApps(ctx: Ctx, user: User, apps = writableAppsOf(ctx, user)): Html {
+  const { repos } = apps;
   const runtime = appsRuntime(ctx.app);
   const records = appsForRepos(
     ctx.app.db,
@@ -144,9 +146,9 @@ function yourApps(ctx: Ctx, user: User): Html {
  * so an event fetches that region — your apps, or what is on you — and not
  * the page; the fragment answers with the same element, id and all.
  */
-const appsRegion = (ctx: Ctx, user: User): Html =>
+const appsRegion = (ctx: Ctx, user: User, apps?: ReturnType<typeof writableAppsOf>): Html =>
   html`<div id="live-apps" data-live="${APPS_LIVE}" data-live-src="/live/apps">
-    ${yourApps(ctx, user)}
+    ${yourApps(ctx, user, apps)}
   </div>`;
 
 export const onYouRegion = (
@@ -168,7 +170,12 @@ export const onYouRegion = (
 export function liveAppsFragment(ctx: Ctx): Response {
   const user = ctx.auth.user;
   if (!user) return fragment(html``, { status: 404 });
-  return fragment(appsRegion(ctx, user), { request: ctx.request });
+  const rendering = performance.now();
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const apps = timePhase(ctx.request, "apps", () => writableAppsOf(ctx, user));
+  const body = fragment(appsRegion(ctx, user, apps), { request: ctx.request });
+  notePhaseRest(ctx.request, "render", rendering, ["apps"]);
+  return body;
 }
 
 /**
@@ -183,7 +190,11 @@ export function onYouAnswer(ctx: Ctx, user: User, note?: string): Response {
 export function liveOnYouFragment(ctx: Ctx): Response {
   const user = ctx.auth.user;
   if (!user) return fragment(html``, { status: 404 });
-  return fragment(onYouRegion(ctx, user), { request: ctx.request });
+  const rendering = performance.now();
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const body = fragment(onYouRegion(ctx, user), { request: ctx.request }); // needsYouSection times "asks"
+  notePhaseRest(ctx.request, "render", rendering, ["asks"]);
+  return body;
 }
 
 /**
@@ -244,12 +255,14 @@ export async function studioHome(
   const rendering = performance.now();
   const ask = firstSteps ?? everydayCard(ctx, user);
   const figures = user.isAdmin && steps === undefined;
-  const ceilingUsd = ctx.app.config.crewCeilingUsd;
-  const kpiOpts = { dataDir: ctx.app.config.dataDir, ...(ceilingUsd === undefined ? {} : { ceilingUsd }) };
+  const ceilingUsd = forgeCeiling(ctx.app.config);
+  const kpiOpts = { dataDir: ctx.app.config.dataDir, ...(ceilingUsd === null ? {} : { ceilingUsd }) };
   const body = html`<h1 class="sr-only">Home</h1>
     ${ask} ${address} ${figures
       ? timePhase(ctx.request, "kpis", () => kpiRow(ctx.app.db, kpiOpts), () => kpiCache(ctx.app.db))
       : liveLine(ctx)}
+    ${figures ? timePhase(ctx.request, "vitals", () => vitalsRow(ctx.app.db)) : null}
+    ${timePhase(ctx.request, "waiting", () => waitingLine(ctx.app.db, user), () => waitingCache(ctx.app.db))}
     ${figures
       ? await timePhaseAsync(ctx.request, "panels", () => pinnedPanels(ctx.app, user), () => panelCache(ctx.app.db))
       : null}
@@ -260,8 +273,8 @@ export async function studioHome(
       </p>`,
     )}
     ${homeTabs("feed")}
-    <div class="dash">
-      <div class="dash-main stack">
+    <div class="split" data-rail="wide">
+      <div class="stack">
         ${composer(ctx, user)}
         <div class="bar feed-head">
           <span class="spacer"></span>
@@ -271,7 +284,7 @@ export async function studioHome(
         ${feedNote()}
         ${timePhase(ctx.request, "feed", () => feedRegion(user, ctx), () => feedCandidateCache(ctx.app.db))}
       </div>
-      <aside class="dash-rail stack">
+      <aside class="stack">
         ${
           // The crew's missing key is the owner's to fix, not the first
           // thing above every post: beside the timeline on a desk, after it
@@ -289,7 +302,7 @@ export async function studioHome(
     body,
     scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${feedJs}${ask ? `\n${passkeyJs}` : ""}`,
   });
-  notePhaseRest(ctx.request, "render", rendering, ["kpis", "panels", "feed"]);
+  notePhaseRest(ctx.request, "render", rendering, ["kpis", "vitals", "waiting", "panels", "feed"]);
   return res;
 }
 
@@ -357,25 +370,26 @@ function featuredCard(featured: NonNullable<FrontPage["featured"]>): Html {
             }),
           ])
         : null;
-  return html`<section class="front-featured" aria-label="Featured">
-    ${when(
-      picture,
-      (src) =>
-        html`<a class="front-featured-look" href="${base}"
-          ><img
-            src="${src}"
-            width="${LOOK_SIZES.thumb.width}"
-            height="${LOOK_SIZES.thumb.height}"
-            alt="${repo.name} as it looks now"
-        /></a>`,
-    )}
-    <div class="front-featured-body">
-      <span class="small muted">Featured</span>
-      <h2><a href="${base}">${repo.ownerName}/${repo.name}</a></h2>
-      ${when(repo.description, (d) => html`<p>${d}</p>`)} ${work}
-      <div class="bar">${btn("Open", { href: base, variant: "primary" })}</div>
-    </div>
-  </section>`;
+  return card(
+    html`${when(
+        picture,
+        (src) =>
+          html`<a class="look" href="${base}"
+            ><img
+              src="${src}"
+              width="${LOOK_SIZES.thumb.width}"
+              height="${LOOK_SIZES.thumb.height}"
+              alt="${repo.name} as it looks now"
+          /></a>`,
+      )}
+      <div class="card-body stack stack-tight">
+        <span class="small muted">Featured</span>
+        <h2><a href="${base}">${repo.ownerName}/${repo.name}</a></h2>
+        ${when(repo.description, (d) => html`<p class="muted">${d}</p>`)} ${work}
+        <div class="bar">${btn("Open", { href: base, variant: "primary" })}</div>
+      </div>`,
+    { pad: false, attrs: html`role="region" aria-label="Featured"` },
+  );
 }
 
 /** A weight's name as the controls say it. */
@@ -432,7 +446,7 @@ function frontControls(ctx: Ctx, front: FrontPage): Html {
           row(`${repo} (hidden)`, act("show", repo, "Show")),
         )}
       </ul>
-      <form method="post" action="/front" class="bar front-pin-any">
+      <form method="post" action="/front" class="bar">
         <input type="hidden" name="action" value="pin" />
         <input
           class="input"
@@ -443,7 +457,7 @@ function frontControls(ctx: Ctx, front: FrontPage): Html {
         />
         ${btn("Pin", { size: "sm" })}
       </form>
-      <form method="post" action="/front" class="front-weights">
+      <form method="post" action="/front" class="bar">
         <input type="hidden" name="action" value="weights" />
         <span class="small muted">What counts, 0 to ${WEIGHT_MAX}:</span>
         ${WEIGHT_NAMES.map(
@@ -471,7 +485,7 @@ function frontControls(ctx: Ctx, front: FrontPage): Html {
     {
       head: html`${icon("settings")}
         <h2>The front page</h2>`,
-      extra: "front-controls",
+      attrs: html`data-front-settings`,
     },
   );
 }
@@ -490,10 +504,9 @@ function frontControls(ctx: Ctx, front: FrontPage): Html {
 export function studioDoor(ctx: Ctx): Response {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   let tiles: Html[] = [];
-  const front = timePhase(ctx.request, "shelf", () => {
-    const found = frontPage(ctx.app);
-    tiles = found.shelf.map(tile);
-    return found;
+  const front = timePhase(ctx.request, "shelf", () => frontPage(ctx.app));
+  timePhase(ctx.request, "tiles", () => {
+    tiles = front.shelf.map(tile);
   });
   // Render is what is left of the page once the shelf read is taken out.
   const rendering = performance.now();
@@ -505,7 +518,7 @@ export function studioDoor(ctx: Ctx): Response {
   const ssh = sshCommand(ctx.app);
   const body = html`<section class="narrow narrow-wide stack">
       <h1>Apps, live.</h1>
-      <p class="muted">A software forge that builds and serves its own apps.</p>
+      <p class="muted">${SITE_LINE}</p>
       <div class="bar">
         ${ctx.auth.user !== undefined
           ? null
@@ -534,7 +547,7 @@ export function studioDoor(ctx: Ctx): Response {
     </section>
     ${when(front.featured, (f) => html`<div class="mt">${featuredCard(f)}</div>`)}
     ${tiles.length > 0
-      ? html`<div class="mt app-shelf">${tiles}</div>
+      ? html`<div class="mt stack" data-shelf>${tiles}</div>
           ${when(
             front.total > tiles.length + (front.featured === undefined ? 0 : 1),
             () =>
@@ -616,6 +629,7 @@ export async function frontUpdate(ctx: Ctx): Promise<Response> {
   const set = setFront(ctx.app, ctx.auth.user, next);
   return redirect("/front", {
     url: ctx.url,
+    forgeUrl: ctx.app.config.url,
     flash: set.ok
       ? { message: "The front page is updated." }
       : {

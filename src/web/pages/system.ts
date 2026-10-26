@@ -10,7 +10,6 @@
  * (RSS) beside its JS heap, hourly for 24 h (#2151): RSS climbing while the
  * heap stays flat is native memory growth. Drawn on the server as SVG.
  */
-import { drawChart } from "../../boards/chart.ts";
 import { canSeeMemory, memoryHours } from "../../boards/memory.ts";
 import { telemetryReader } from "../../actions/telemetry.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -24,7 +23,7 @@ import { notFoundPage, signInFirst } from "../chrome.ts";
 import { html, raw, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { systemLiveJs } from "../system-live.ts";
-import { badge, card, empty, meter, pill, row } from "../ui.ts";
+import { badge, card, chartBox, empty, meter, pill, row } from "../ui.ts";
 
 /** A group's memory, and a cell's beside its cap and who holds the cap. */
 const memoryOf = (g: { rssBytes: number; capBytes: number | null; capBy: "kernel" | "watch" | null }): Html =>
@@ -56,7 +55,7 @@ const figureRow = (name: string, figure: string, data: Record<string, string> = 
 const KIND_ORDER = ["forge", "crew", "check", "app", "host"] as const;
 function procTable(v: SystemView): Html {
   const groups = KIND_ORDER.flatMap((k) => v.groups.filter((g) => g.kind === k));
-  return html`<div class="table-wrap"><table class="table" data-dense aria-label="Processes by what launched them">
+  return html`<div class="table-scroll"><table class="table" data-dense aria-label="Processes by what launched them">
     <thead><tr><th scope="col">pid</th><th scope="col">command</th><th scope="col" class="num">cpu</th><th scope="col" class="num">mem</th><th scope="col" class="num">age</th></tr></thead>
     ${groups.map(
       (g) => html`<tbody data-kind="${g.kind}" data-cpu="${String(g.cpuCores ?? 0)}" data-mem="${String(g.rssBytes)}">
@@ -80,7 +79,7 @@ function memorySection(ctx: Ctx): Html {
   const hours = timePhase(ctx.request, "memory", () => memoryHours(ctx.app.db, Date.now()));
   const series = (title: string, pick: (h: (typeof hours)[number]) => number) =>
     card(
-      html`<div class="chart-box">${raw(drawChart("line", hours.map((h) => ({ label: hhmm(h.at).slice(11), value: pick(h) / 1_048_576 })), title))}</div>`,
+      chartBox("line", hours.map((h) => ({ label: hhmm(h.at).slice(11), value: pick(h) / 1_048_576 })), title),
       { head: html`<h2>${title}</h2>` },
     );
   return hours.length === 0

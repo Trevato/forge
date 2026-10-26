@@ -37,6 +37,7 @@ import { availableParallelism, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { portInsteadOfSocket } from "../git/hook-address.ts";
 import { relay, startEgress, type Egress } from "./egress.ts";
+import { BACKGROUND_CPU_WEIGHT } from "./background.ts";
 import { cgroupHost, enterArgv, openCellCgroup } from "./cgroup.ts";
 
 /** `ceiling`: a declaration was cut to the machine's maximum; `declared`: forge.json's own; `default`: neither. */
@@ -188,6 +189,8 @@ export interface CellSpec {
   /** Origins always reachable: the forge's own URL. */
   readonly reach: readonly string[];
   readonly limits: Limits;
+  /** Read-only paths to keep visible when they sit under a hidden directory (a forge's own code). */
+  readonly reveal?: readonly string[] | undefined;
   /** The port an app listens on; the forge relays `127.0.0.1:<port>` in. */
   readonly listen?: number | undefined;
   /** Keep the controlling terminal (an app's `tty`). */
@@ -206,6 +209,12 @@ export interface CellSpec {
    * the same, and never sampled.
    */
   readonly label?: string | undefined;
+  /**
+   * A step, not an app: its cgroup weighs less than an app's and the
+   * forge's, and the kernel holds it to `limits.cpus` cores
+   * (`apps/background.ts`). The step runner sets it.
+   */
+  readonly background?: boolean | undefined;
 }
 
 /**
@@ -259,6 +268,35 @@ async function probe(): Promise<{ ok: true } | { ok: false; reason: string }> {
   for (const tool of ["bwrap", "socat"])
     if (Bun.which(tool) === null)
       return { ok: false, reason: `${tool} is not installed` };
+  return askUntilBelieved(tryOnce);
+}
+
+type Verdict = { ok: true } | { ok: false; reason: string };
+
+/**
+ * A loaded machine makes a healthy host slow, or briefly out of processes or
+ * namespaces, while other checks hold theirs: a refusal is asked again after
+ * a pause before it is believed. A host that really refuses therefore costs
+ * the pauses (1.5 s in all) before it is reported; the last reason is kept.
+ */
+export async function askUntilBelieved(
+  ask: () => Promise<Verdict>,
+  pause: (ms: number) => Promise<unknown> = (ms) => Bun.sleep(ms),
+): Promise<Verdict> {
+  let last = await ask();
+  for (let i = 1; i < PROBE_TRIES && !last.ok; i++) {
+    await pause(PROBE_PAUSE_MS * i);
+    last = await ask();
+  }
+  return last;
+}
+
+const PROBE_TRIES = 3;
+const PROBE_PAUSE_MS = 500;
+const PROBE_TIMEOUT_MS = 10_000;
+
+async function tryOnce(): Promise<Verdict> {
+  let timedOut = false;
   try {
     const proc = Bun.spawn(
       [
@@ -280,7 +318,10 @@ async function probe(): Promise<{ ok: true } | { ok: false; reason: string }> {
       ],
       { stdin: "ignore", stdout: "ignore", stderr: "pipe" },
     );
-    const timer = setTimeout(() => proc.kill("SIGKILL"), 5_000);
+    const timer = setTimeout(() => {
+      timedOut = true;
+      proc.kill("SIGKILL");
+    }, PROBE_TIMEOUT_MS);
     const [text, code] = await Promise.all([
       new Response(proc.stderr).text(),
       proc.exited,
@@ -290,7 +331,9 @@ async function probe(): Promise<{ ok: true } | { ok: false; reason: string }> {
     const line = text.trim().split("\n").pop() ?? "";
     return {
       ok: false,
-      reason: `this host refuses the namespaces a cell needs${line === "" ? "" : ` (${line})`}`,
+      reason: timedOut
+        ? `the namespace probe took over ${PROBE_TIMEOUT_MS} ms`
+        : `this host refuses the namespaces a cell needs${line === "" ? "" : ` (${line})`}`,
     };
   } catch (error) {
     return {
@@ -398,7 +441,7 @@ export function openCell(
   const blank = hidden.filter((path) => !isDirectory(path));
   // The runtime itself must stay visible when it lives in a hidden home
   // (`~/.bun/bin/bun` on a developer's machine).
-  const reveal = [dirname(process.execPath)].filter((path) =>
+  const reveal = [dirname(process.execPath), ...(spec.reveal ?? [])].filter((path) =>
     hide.some((h) => path === h || path.startsWith(`${h}/`)),
   );
   const writable = [...new Set([spec.dir, spec.home, ...spec.writable])];
@@ -407,7 +450,11 @@ export function openCell(
   // small and bounded, and the ones that only exist to hide are read-only.
   const SMALL = String(1 << 20);
 
-  const cgroup = openCellCgroup(spec.limits.memoryMiB);
+  const cgroup = openCellCgroup(
+    spec.limits.memoryMiB,
+    cgroupHost(),
+    spec.background === true ? { weight: BACKGROUND_CPU_WEIGHT, cpus: spec.limits.cpus } : undefined,
+  );
   const argv = (command: string): string[] => {
     const inner = bwrapArgv(command);
     return cgroup === undefined ? inner : enterArgv(join(cgroup.dir, "cgroup.procs"), inner);

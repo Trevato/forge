@@ -18,18 +18,16 @@ import { createIssue } from "../src/core/issues.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { getUserByName } from "../src/core/users.ts";
-import { markVerified } from "../src/core/verify.ts";
 import type { Ctx } from "../src/http/context.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { setCapacity, storedCapacity } from "../src/core/capacity.ts";
-import { createOrigin } from "../src/core/origins.ts";
-import { hunt } from "../src/crew/sentinel.ts";
 import { decisionsFor } from "../src/web/studio/asks.ts";
 import { quietLogs } from "./helpers/globals.ts";
-import { promote } from "./helpers/members.ts";
 import { adminCookie } from "./helpers/admin.ts";
 
 quietLogs();
+
+const roomy = () => ({ freeBytes: 95, totalBytes: 100 });
 
 const PASSWORD = "a-long-asks-passphrase";
 
@@ -78,7 +76,8 @@ describe("the asks page", () => {
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-asks-"));
-    app = createApp({ dataDir, port: 0 });
+    // The disk is the host's, not the case's: a loaded check machine near full would ask for room.
+    app = createApp({ dataDir, port: 0, disk: roomy });
     servers = await serve(app);
     alice = `${await adminCookie(app, { username: "alice", email: "alice@forge.test", password: PASSWORD })}; forge_mode=studio`;
     bob = await signUp("bob");

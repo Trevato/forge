@@ -9,7 +9,7 @@ import type { Database } from "bun:sqlite";
 export const KINDS = ["work", "amendment", "vision", "decision", "reversal"] as const;
 export type Kind = (typeof KINDS)[number];
 
-export type Action = "opened" | "amended" | "deferred" | "superseded" | "linked";
+export type Action = "opened" | "amended" | "deferred" | "superseded" | "linked" | "proposed";
 
 /** One thing done on the map: an issue of `repo` (owner/name), and the pillar it serves. */
 export interface Placed {
@@ -17,6 +17,8 @@ export interface Placed {
   repo: string;
   number: number;
   pillar?: string;
+  /** For `proposed`: `number` is a pull of `repo`, and this is its number again. It marks a vision pull. */
+  pull?: number;
 }
 
 export interface Placement {
@@ -61,6 +63,14 @@ function toPlacement(r: Row): Placement {
 export function placementOf(db: Database, thoughtId: string): Placement | undefined {
   const row = db.query<Row, [string]>("SELECT * FROM placement WHERE thought_id = ?1").get(thoughtId);
   return row ? toPlacement(row) : undefined;
+}
+
+/** Whether a placement of kind `vision` proposed pull `number` of `repo` (owner/name): the one mark of a vision pull. */
+export function isVisionPull(db: Database, repo: string, number: number): boolean {
+  const rows = db
+    .query<Row, [string]>("SELECT * FROM placement WHERE kind = 'vision' AND placed LIKE ?1")
+    .all(`%"pull":${number}%`);
+  return rows.some((r) => toPlacement(r).placed.some((p) => p.action === "proposed" && p.repo === repo && p.pull === number));
 }
 
 export function placementsOf(db: Database, thoughtIds: readonly string[]): Map<string, Placement> {

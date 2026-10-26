@@ -16,6 +16,7 @@ import { sha256 } from "../kernel/hash.ts";
 import type { ChildAppsSummary } from "./child-apps.ts";
 import { hostedChildApps } from "./host.ts";
 import { hasAdmin, spawnedOrg } from "./claim.ts";
+import { lastHeard, type Beat } from "./heartbeat.ts";
 
 /** What a spawned forge says about itself to anyone: nothing more. */
 export interface ForgeState {
@@ -36,6 +37,34 @@ export interface ClientRow {
   readonly lastActivityAt: string | null;
   /** The apps this parent runs for the child; null when it runs none here. */
   readonly running: ChildAppsSummary | null;
+  /** Why this forge needs its owner now; null when it does not. */
+  readonly attention: Attention | null;
+  /** Dollars the child's crew spent today, from its last heartbeat; null when it has not said. */
+  readonly spendTodayUsd: number | null;
+  /** The child's forge cap in dollars; null when none or unsaid. */
+  readonly ceilingUsd: number | null;
+  /** The first step its person has not taken, read from the child's heartbeat. */
+  readonly nextStep: NextStep;
+}
+
+export type NextStepKey = "unreported" | "claim" | "everyday" | "tell" | "going";
+
+export interface NextStep {
+  readonly key: NextStepKey;
+  readonly words: string;
+  /** When the person last told the crew something; set only while going. */
+  readonly lastTellAt: string | null;
+}
+
+/** The first step not yet taken, from the claim state and the child's last beat. */
+export function nextStepOf(claimed: boolean | null, beat: Beat | undefined): NextStep {
+  const known = beat?.claimed ?? claimed;
+  if (beat === undefined || known === null || beat.everyday === undefined || beat.lastTellAt === undefined)
+    return { key: "unreported", words: "has not reported yet", lastTellAt: null };
+  if (!known) return { key: "claim", words: "not claimed yet", lastTellAt: null };
+  if (!beat.everyday) return { key: "everyday", words: "no everyday account yet", lastTellAt: null };
+  if (beat.lastTellAt === null) return { key: "tell", words: "no tell yet", lastTellAt: null };
+  return { key: "going", words: `going: last tell ${beat.lastTellAt}`, lastTellAt: beat.lastTellAt };
 }
 
 type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
@@ -153,8 +182,9 @@ export async function clientRows(app: App): Promise<ClientRow[]> {
       return last.state;
     }),
   );
-  return children
-    .map((c, i) => ({
+  const beats = await Promise.all(children.map((c) => lastHeard(app, c.name)));
+  return orderRows(
+    children.map((c, i) => ({
       name: c.name,
       url: c.url,
       for: c.for,
@@ -164,9 +194,51 @@ export async function clientRows(app: App): Promise<ClientRow[]> {
       claimed: states[i]?.claimed ?? null,
       lastActivityAt: states[i]?.lastActivityAt ?? null,
       running: hostedChildApps(app, c.name) ?? null,
-    }))
+      spendTodayUsd: beats[i]?.beat.spendTodayUsd ?? null,
+      ceilingUsd: beats[i]?.beat.ceilingUsd ?? null,
+      nextStep: nextStepOf(states[i]?.claimed ?? null, beats[i]?.beat),
+    })),
+    now,
+  );
+}
+
+/** Why a row needs its owner, in the order that matters; null when it does not. */
+export type Attention = "silent" | "down" | "unclaimed";
+
+export const ATTENTION_WORDS: Record<Attention, string> = {
+  silent: "Not reporting",
+  down: "App down",
+  unclaimed: "Unclaimed",
+};
+
+const ATTENTION_ORDER: readonly Attention[] = ["silent", "down", "unclaimed"];
+const SILENT_MS = 24 * 3_600_000;
+const UNCLAIMED_MS = 3 * 86_400_000;
+
+/**
+ * The first reason this row needs the owner: no word from it in 24 h (it
+ * did not answer, or its last activity is older), an app not running, or
+ * unclaimed three days after it was sent. A forge still being made waits.
+ */
+export function attentionOf(r: ClientRow, now: number): Attention | null {
+  if (!r.made) return null;
+  const last = r.lastActivityAt === null ? NaN : Date.parse(r.lastActivityAt);
+  if (r.claimed === null || (!Number.isNaN(last) && now - last > SILENT_MS)) return "silent";
+  if (r.running !== null && r.running.notRunning.length > 0) return "down";
+  const sent = r.sentAt === null ? NaN : Date.parse(r.sentAt);
+  if (r.claimed === false && !Number.isNaN(sent) && now - sent > UNCLAIMED_MS) return "unclaimed";
+  return null;
+}
+
+/** Rows that need the owner first, by reason; then by last activity, newest first. */
+export function orderRows(rows: readonly Omit<ClientRow, "attention">[], now: number): ClientRow[] {
+  const tier = (a: Attention | null) => (a === null ? ATTENTION_ORDER.length : ATTENTION_ORDER.indexOf(a));
+  return rows
+    .map((r) => ({ ...r, attention: attentionOf(r as ClientRow, now) }))
     .sort(
       (a, b) =>
+        tier(a.attention) - tier(b.attention) ||
+        (b.lastActivityAt ?? "").localeCompare(a.lastActivityAt ?? "") ||
         (b.sentAt ?? "").localeCompare(a.sentAt ?? "") ||
         a.name.localeCompare(b.name),
     );
@@ -192,4 +264,21 @@ export function runningWords(r: ClientRow): string | null {
   const word = `${a.running} ${a.running === 1 ? "app" : "apps"} running`;
   if (a.notRunning.length === 0) return word;
   return `${word} · ${a.notRunning.map((n) => `${n.slug}: ${n.why}`).join("; ")}`;
+}
+
+const money = (n: number): string => (Number.isInteger(n) ? String(n) : n.toFixed(2));
+
+/**
+ * "$3.20 of $10 today", with "ceiling reached" at the cap; `warn` from 80%.
+ * Null when the child has not reported spend.
+ */
+export function spendWords(r: ClientRow): { words: string; warn: boolean } | null {
+  if (r.spendTodayUsd === null) return null;
+  const spent = `$${r.spendTodayUsd.toFixed(2)}`;
+  if (r.ceilingUsd === null) return { words: `${spent} today`, warn: false };
+  const share = r.spendTodayUsd / r.ceilingUsd;
+  const base = `${spent} of $${money(r.ceilingUsd)} today`;
+  return share >= 1
+    ? { words: `${base} · ceiling reached`, warn: true }
+    : { words: base, warn: share >= 0.8 };
 }

@@ -26,6 +26,7 @@ import { getAppById, getAppBySlug, type AppRecord } from "../core/apps.ts";
 import { getVerifiedDomain } from "../core/domains.ts";
 import {
   canEnterApp,
+  canWrite,
   canRead,
   getRepoById,
   ownerInStanding,
@@ -36,10 +37,22 @@ import { loadKey } from "../kernel/secret.ts";
 import { previewEnv, type EnvName } from "./data.ts";
 import type { AppsRuntime, EnvStatus } from "./runtime.ts";
 import { crewNow, tellLink } from "./crew.ts";
-import { doorPage } from "./door.ts";
-import { notFound } from "../http/respond.ts";
+import { feedback, mintProof } from "./feedback.ts";
+import { clientBucket } from "../http/peer.ts";
+import { DOOR_PULL_LIMIT, doorPage, type DoorPullLine } from "./door.ts";
+import { checkWord } from "./check_word.ts";
+import { openPulls } from "./door_pulls.ts";
+import { takePhases, timePhase } from "../core/route_timing.ts";
+import { readServing } from "./serving.ts";
+import { notFound, securityFloor } from "../http/respond.ts";
 import { appMeasure } from "./measure.ts";
+import { holdPortRequest, holdPortSocket } from "./handoff.ts";
+import { secureFor } from "../http/cookie_secure.ts";
 import { htmlAnswer, readPage, rewritable, withToolbar, type PillWhere } from "./toolbar.ts";
+
+const proxySecure = (request: Request, url: URL, forgeUrl: string): boolean =>
+  secureFor(url, forgeUrl) ||
+  request.headers.get("x-forwarded-proto") === "https";
 
 export interface AppTarget {
   readonly app: AppRecord;
@@ -372,6 +385,17 @@ function sealedPull(runtime: AppsRuntime, target: AppTarget): Issue | undefined 
   return pull?.sealed === true ? pull : undefined;
 }
 
+/** The response with the phases the request named, as `Server-Timing`. */
+function withPhases(request: Request, res: Response): Response {
+  const phases = takePhases(request);
+  if (phases.length > 0)
+    res.headers.set(
+      "server-timing",
+      phases.map((p) => `${p.name};dur=${p.ms.toFixed(1)}`).join(", "),
+    );
+  return res;
+}
+
 /**
  * What the pill says: the app, the environment and, for a preview, the pull
  * and its title. The title goes only to a viewer who may read the pull.
@@ -397,6 +421,62 @@ export function pillWhere(
   if (pull === undefined) return where;
   if (reads && mayView(db, repo, pull, user)) where.title = pull.title;
   return where;
+}
+
+/**
+ * What the door says of the terminal: for a viewer who may write the
+ * repository, the exact command (the preview's login on a preview), or null
+ * when the terminal is off; for anyone else, nothing.
+ */
+function doorSsh(
+  runtime: AppsRuntime,
+  target: AppTarget,
+  who: GrantWho | undefined,
+): string | null | undefined {
+  if (who === undefined) return undefined;
+  const db = runtime.app.db;
+  const viewer = getUserById(db, who.id);
+  const repo = getRepoById(db, target.app.repoId);
+  if (viewer === undefined || !isActive(viewer) || repo === undefined) return undefined;
+  if (!canWrite(db, repo, viewer)) return undefined;
+  if (runtime.envStatus(target.app, target.env)?.tty === null) return null;
+  return runtime.sshFor(target.app, target.env) ?? null;
+}
+
+/**
+ * The door's open pulls: a preview that is running or asleep links to itself,
+ * every other pull to its page on the forge. Empty for whoever may not read.
+ * Reads one more than the door draws, so it can say there are others.
+ */
+function doorPulls(
+  runtime: AppsRuntime,
+  target: AppTarget,
+  who: GrantWho | undefined,
+): DoorPullLine[] {
+  const db = runtime.app.db;
+  const repo = getRepoById(db, target.app.repoId);
+  if (repo === undefined) return [];
+  const viewer = who === undefined ? undefined : getUserById(db, who.id);
+  return openPulls(db, repo, viewer, DOOR_PULL_LIMIT + 1).map((p) => {
+    const env = previewEnv(p.number);
+    const state = runtime.envStatus(target.app, env);
+    const live =
+      state !== undefined &&
+      (state.state === "running" ||
+        state.state === "asleep" ||
+        state.dormant !== undefined);
+    return {
+      number: p.number,
+      title: p.title,
+      check: checkWord(p.run, p.headOid),
+      href: live
+        ? runtime.urlFor(target.app, env)
+        : new URL(
+            `/${repo.ownerName}/${repo.name}/pulls/${p.number}`,
+            runtime.options.forgeUrl,
+          ).href,
+    };
+  });
 }
 
 /** Whether the person a grant names may enter this app now. */
@@ -545,7 +625,7 @@ export async function proxyApp(
       !target.nested ||
       verifyGrant(runtime.app.config.dataDir, token, target)
     )
-      return grant(runtime, request, url, target);
+      return securityFloor(grant(runtime, request, url, target));
   }
   // The two doors an app links to: sign in sends the visitor to the forge,
   // which vouches for them and sends them back named; sign out drops the
@@ -554,38 +634,42 @@ export async function proxyApp(
     const open = new URL("/apps/open", runtime.options.forgeUrl);
     open.searchParams.set("host", request.headers.get("host") ?? "");
     open.searchParams.set("to", safePath(url.searchParams.get("to")));
-    return new Response(null, {
-      status: 303,
-      headers: { location: open.toString(), "cache-control": "no-store" },
-    });
+    return securityFloor(
+      new Response(null, {
+        status: 303,
+        headers: { location: open.toString(), "cache-control": "no-store" },
+      }),
+    );
   }
   if (url.pathname === "/__forge/signout" && !target.nested) {
-    const secure =
-      url.protocol === "https:" ||
-      request.headers.get("x-forwarded-proto") === "https";
-    return new Response(null, {
-      status: 303,
-      headers: {
-        location: safePath(url.searchParams.get("to")),
-        "set-cookie": `${grantCookieName(target)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure ? "; Secure" : ""}`,
-        "cache-control": "no-store",
-      },
-    });
+    const secure = proxySecure(request, url, runtime.options.forgeUrl);
+    return securityFloor(
+      new Response(null, {
+        status: 303,
+        headers: {
+          location: safePath(url.searchParams.get("to")),
+          "set-cookie": `${grantCookieName(target)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure ? "; Secure" : ""}`,
+          "cache-control": "no-store",
+        },
+      }),
+    );
   }
   // The pill's fourth door: who of the crew is working on this app now,
   // for the person the app's own grant names, read once as the pill opens.
   if (url.pathname === "/__forge/crew" && !target.nested) {
-    const cookie = cookieValue(request, grantCookieName(target));
-    const signed =
-      cookie === undefined
+    const signed = timePhase(request, "session", () => {
+      const cookie = cookieValue(request, grantCookieName(target));
+      return cookie === undefined
         ? undefined
         : readGrant(runtime.app.config.dataDir, cookie, target);
+    });
     const crew = crewNow(
       runtime.app.db,
       runtime.options.forgeUrl,
       target.app,
       target.env,
       signed?.who?.id,
+      request,
     );
     const tell = tellLink(
       runtime.app.db,
@@ -593,41 +677,79 @@ export async function proxyApp(
       target.app,
       signed?.who?.id,
     );
-    return Response.json({ ...crew, ...(tell === undefined ? {} : { tell }) }, {
-      headers: {
-        "cache-control": "no-store",
-        "x-content-type-options": "nosniff",
-      },
-    });
+    const body = timePhase(request, "render", () =>
+      JSON.stringify({ ...crew, ...(tell === undefined ? {} : { tell }) }),
+    );
+    return withPhases(
+      request,
+      securityFloor(
+        new Response(body, {
+          headers: {
+            "content-type": "application/json;charset=utf-8",
+            "cache-control": "no-store",
+          },
+        }),
+      ),
+    );
   }
   // The forge's small page on the app's own host: the way back when the pill
   // is not shown. A nested host is its guest's, and has no such page.
   if (url.pathname === "/__forge/") {
     if (target.nested) return notFound();
-    if (request.method !== "GET" && request.method !== "HEAD")
-      return new Response(null, {
-        status: 405,
-        headers: { allow: "GET, HEAD", "x-content-type-options": "nosniff" },
-      });
-    const cookie = cookieValue(request, grantCookieName(target));
-    const signed =
-      cookie === undefined
+    const signed = timePhase(request, "session", () => {
+      const cookie = cookieValue(request, grantCookieName(target));
+      return cookie === undefined
         ? undefined
         : readGrant(runtime.app.config.dataDir, cookie, target);
-    const tell = tellLink(
-      runtime.app.db,
-      runtime.options.forgeUrl,
-      target.app,
-      signed?.who?.id,
+    });
+    // A private app (or a sealed pull's preview) is not here to anyone it
+    // does not admit: the answer is the one a name nobody holds gets, byte
+    // for byte, before the method is even looked at.
+    if (
+      (target.app.access === "private" ||
+        sealedPull(runtime, target) !== undefined) &&
+      (signed === undefined || !stillEntitled(runtime, target, signed))
+    )
+      return securityFloor(new Response("not found", { status: 404 }));
+    if (request.method !== "GET" && request.method !== "HEAD")
+      return securityFloor(
+        new Response(null, {
+          status: 405,
+          headers: { allow: "GET, HEAD" },
+        }),
+      );
+    const tell = timePhase(request, "app", () =>
+      tellLink(
+        runtime.app.db,
+        runtime.options.forgeUrl,
+        target.app,
+        signed?.who?.id,
+      ),
     );
-    return doorPage(
-      {
-        where: pillWhere(runtime, target, signed?.who),
-        forgeUrl: runtime.options.forgeUrl,
-        ...(tell === undefined ? { signin: "/__forge/signin" } : { tell }),
-      },
-      request.method === "HEAD",
+    const ssh = doorSsh(runtime, target, signed?.who);
+    const where = timePhase(request, "pull", () =>
+      pillWhere(runtime, target, signed?.who),
     );
+    const serving = timePhase(request, "serving", () =>
+      readServing(runtime.app.db, target.app.repoId, target.env),
+    );
+    const pulls = timePhase(request, "pulls", () =>
+      doorPulls(runtime, target, signed?.who),
+    );
+    const page = timePhase(request, "render", () =>
+      doorPage(
+        {
+          where,
+          pulls,
+          ...(serving === undefined ? {} : { serving }),
+          forgeUrl: runtime.options.forgeUrl,
+          ...(ssh === undefined ? {} : { ssh }),
+          ...(tell === undefined ? { signin: "/__forge/signin" } : { tell }),
+        },
+        request.method === "HEAD",
+      ),
+    );
+    return withPhases(request, page);
   }
   // The third door: a problem report, answered without waking or even
   // reaching the app — the app being down is the usual reason to ask. The
@@ -640,11 +762,45 @@ export async function proxyApp(
         originFor(runtime, target, request.headers.get("host") ?? undefined) +
           safePath(url.searchParams.get("from")),
       );
-      return new Response(null, {
-        status: 303,
-        headers: { location: report.toString(), "cache-control": "no-store" },
-      });
+      return securityFloor(
+        new Response(null, {
+          status: 303,
+          headers: { location: report.toString(), "cache-control": "no-store" },
+        }),
+      );
     }
+  }
+  // The forge button's feedback door: notes from visitors, their status, the
+  // owner's moderation. Answered here, never reaching the app. A path under
+  // /__forge/note that is none of its doors (`/__forge/notebook`) is the
+  // app's own, and goes through below with the app's headers, not the floor.
+  if (url.pathname.startsWith("/__forge/note") && !target.nested) {
+    const cookie = cookieValue(request, grantCookieName(target));
+    const signed =
+      cookie === undefined
+        ? undefined
+        : readGrant(runtime.app.config.dataDir, cookie, target);
+    // A private app or a sealed preview knows only the people it admits, as
+    // /__forge/measure does; a lapsed grant is no grant.
+    const sealed = sealedPull(runtime, target) !== undefined;
+    const viewerId =
+      (sealed || target.app.access === "private") && signed !== undefined && !stillEntitled(runtime, target, signed)
+        ? undefined
+        : signed?.who?.id;
+    const answer = await feedback({
+      app: runtime.app,
+      forgeUrl: runtime.options.forgeUrl,
+      request,
+      url,
+      record: target.app,
+      env: target.env,
+      sealed,
+      viewerId,
+      grantCookie: cookie,
+      secure: proxySecure(request, url, runtime.options.forgeUrl),
+      source: clientBucket(request),
+    });
+    if (answer !== undefined) return securityFloor(answer);
   }
   // The beacon's report: filed against this app, never waking it. A private
   // app (or a sealed pull's preview) admits only the people it admits, so
@@ -652,16 +808,19 @@ export async function proxyApp(
   if (url.pathname === "/__forge/measure" && !target.nested) {
     if (target.app.access === "private" || sealedPull(runtime, target) !== undefined) {
       const admitted = admit(runtime, request, target);
-      if (!admitted.ok) return admitted.error;
+      if (!admitted.ok) return securityFloor(admitted.error);
     }
-    return appMeasure(runtime.app, request, target);
+    return securityFloor(await appMeasure(runtime.app, request, target));
   }
   // An environment asleep wakes for the request that wants it, and the
   // request waits the second that takes rather than seeing a closed door.
   if (runtime.envStatus(target.app, target.env)?.state === "asleep")
     await runtime.wake(target.app, target.env);
   const admitted = admit(runtime, request, target);
-  if (!admitted.ok) return admitted.error;
+  if (!admitted.ok)
+    return url.pathname.startsWith("/__forge/")
+      ? securityFloor(admitted.error)
+      : admitted.error;
   const { status, port, grant: vouched } = admitted.value;
   runtime.touch(target.app, target.env);
 
@@ -705,7 +864,14 @@ export async function proxyApp(
   }
 
   // Held from here until the answer begins: a slow answer is not idle.
-  const answered = runtime.holdRequest(target.app, target.env);
+  // And held against this deployment's port, so one being replaced
+  // answers it before it is stopped (`apps/handoff.ts`).
+  const envAnswered = runtime.holdRequest(target.app, target.env);
+  const portAnswered = holdPortRequest(port);
+  const answered = (): void => {
+    envAnswered();
+    portAnswered();
+  };
   let response: Response;
   try {
     response = await fetch(upstream, {
@@ -770,10 +936,20 @@ export async function proxyApp(
     } catch {
       return unavailable(runtime, target, status, "the app stopped answering");
     }
+    // A signed-in person's page load gets the panel's one-use proof, and so
+    // is theirs alone: never stored or shared. A page the app's own script
+    // fetched (dest "empty", or a same-origin frame) gets none.
+    const grantCookie = cookieValue(request, grantCookieName(target));
+    const proof =
+      vouched?.who !== undefined && grantCookie !== undefined && proofWanted(request)
+        ? mintProof(grantCookie, request.headers.get("host") ?? "")
+        : undefined;
+    if (proof !== undefined) out.set("cache-control", "private, no-store");
     const page = withToolbar(
       bytes,
       runtime.options.forgeUrl,
       pillWhere(runtime, target, vouched?.who),
+      proof,
     );
     let sent = page;
     // Whether it is gzipped depends on the client, so every copy says so.
@@ -804,6 +980,13 @@ export async function proxyApp(
       headers: out,
     },
   );
+}
+
+/** Whether a request is a page load the panel may be proved on (see `mintProof`). */
+export function proofWanted(request: Request): boolean {
+  const dest = request.headers.get("sec-fetch-dest");
+  if (dest === null || dest === "document") return true;
+  return dest === "iframe" && request.headers.get("sec-fetch-site") === "cross-site";
 }
 
 /**
@@ -859,6 +1042,8 @@ export interface AppSocket {
   readonly userId: string | undefined;
   /** The forge the socket is held open on. */
   readonly db: Database;
+  /** The deployment's loopback port, which a handoff drains (`apps/handoff.ts`). */
+  readonly port: number;
 }
 
 /**
@@ -867,6 +1052,9 @@ export interface AppSocket {
  * from the database, closes it.
  */
 const heldSockets = new WeakMap<Bun.ServerWebSocket<AppSocket>, () => void>();
+
+/** Each proxied socket's place among its deployment's, released when it closes. */
+const portSockets = new WeakMap<Bun.ServerWebSocket<AppSocket>, () => void>();
 
 /**
  * The most one frame may carry, in either direction. The browser's side is
@@ -936,7 +1124,7 @@ async function proxyWebSocket(
     runtime.holdStream(target.app, target.env),
   );
   const upgraded = server.upgrade(request, {
-    data: { upstream, userId: who?.id, db: runtime.app.db },
+    data: { upstream, userId: who?.id, db: runtime.app.db, port: Number(url.port) },
     // The app's choice of subprotocol is what the browser hears; without
     // one Bun echoes the first the browser offered, which is what the app
     // itself would have done on Bun.
@@ -1018,7 +1206,8 @@ export const appWebSocket: Bun.WebSocketHandler<AppSocket> = {
   idleTimeout: WS_IDLE_SECONDS,
 
   open(ws) {
-    const { upstream, userId, db } = ws.data;
+    const { upstream, userId, db, port } = ws.data;
+    portSockets.set(ws, holdPortSocket(port, ws));
     if (userId !== undefined)
       heldSockets.set(
         ws,
@@ -1078,6 +1267,8 @@ export const appWebSocket: Bun.WebSocketHandler<AppSocket> = {
     const { upstream } = ws.data;
     heldSockets.get(ws)?.();
     heldSockets.delete(ws);
+    portSockets.get(ws)?.();
+    portSockets.delete(ws);
     if (upstream.readyState === WebSocket.CLOSED) return;
     // 1006 here is the browser gone without a close frame.
     if (code === 1006) upstream.close(1001, "the browser went away");
@@ -1104,9 +1295,7 @@ function grant(
     vouched.who,
   );
   const path = safePath(url.searchParams.get("to"));
-  const secure =
-    url.protocol === "https:" ||
-    request.headers.get("x-forwarded-proto") === "https";
+  const secure = proxySecure(request, url, runtime.options.forgeUrl);
   return new Response(null, {
     status: 303,
     headers: {

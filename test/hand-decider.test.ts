@@ -116,7 +116,9 @@ describe("let the decider answer a hand-over", () => {
 
   afterAll(async () => {
     await servers.stop();
-    await rm(dataDir, { recursive: true, force: true });
+    // Stops the pollers and the pooled git readers before their directory goes.
+    app.close();
+    await rm(dataDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   });
 
   test("without a decider there is no third tap, and a post is refused", async () => {
@@ -329,7 +331,7 @@ describe("let the decider answer a hand-over", () => {
     test("the terminal's door: a parked row is on the On you card, D hands it over, U takes it back", async () => {
       app.config.decider = standIn;
       says = 0.9;
-      const issue = parked("tui card");
+      parked("tui card");
       const terminal = headlessTerminal(140, 40);
       const { app: ui } = createForgeApp(
         app,

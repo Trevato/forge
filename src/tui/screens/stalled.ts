@@ -6,6 +6,7 @@
  * step under the cursor; the list is live, and a step that moves on leaves it.
  */
 
+import { CHECK_ASKED } from "../../actions/pull_ask_words.ts";
 import { readStalled, type StalledStep } from "../../flow/stalled.ts";
 import { unblock } from "../../flow/unblock.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -37,7 +38,7 @@ export function stalledScreen(f: Session, ctx: Ctx): Screen {
     if (step === undefined || user === undefined) return;
     runAsync(ctx, async () => {
       const done = await unblock(f.app, user, step);
-      ctx.toast(done.ok ? "Check asked for at the current head." : done.message, done.ok ? "default" : "danger");
+      ctx.toast(done.ok ? CHECK_ASKED : done.message, done.ok ? "default" : "danger");
       reload();
     });
   };

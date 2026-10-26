@@ -3,7 +3,7 @@
  * person runs the round trip and the callback writes the federated_identity
  * row for their own account, never a new one.
  */
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,6 +15,8 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
+// Each test is a few round trips between two servers; a loaded check machine outruns bun's 5 s default.
+setDefaultTimeout(30_000);
 
 describe("link the parent forge from settings", () => {
   const dirs: string[] = [];
@@ -76,7 +78,8 @@ describe("link the parent forge from settings", () => {
     await mk(child, "olive", true);
     ({ id: carolId, cookie: carolCookie } = await mk(child, "carol"));
     ({ id: dougId, cookie: dougCookie } = await mk(child, "doug"));
-  });
+    // Four argon2 hashes and two servers: on a loaded check machine that outruns bun's 5 s hook default.
+  }, 60_000);
   afterAll(async () => {
     parentServers.stop();
     childServers.stop();

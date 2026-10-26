@@ -5,7 +5,7 @@
  * repository's own page. Unmuting brings them back.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,10 +24,12 @@ import { createToken } from "../src/core/tokens.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { mcpTool } from "./helpers/mcp.ts";
-import { askCountFor, askLinesFor, repoAsks } from "../src/web/studio/asks.ts";
+import { askCountFor, askLinesFor, forgeNeedsFor, repoAsks } from "../src/web/studio/asks.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
+// Every test here is HTTP round trips against a server on a shared machine: the 5s default measures its load, not the code.
+setDefaultTimeout(30_000);
 
 const PASSWORD = "a-long-mute-passphrase";
 
@@ -73,7 +75,8 @@ describe("muting a repository's asks", () => {
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-asks-mute-"));
-    app = createApp({ dataDir, port: 0 });
+    // The forge's own needs ride in the count: a fixed disk reading keeps the machine's free space out of it.
+    app = createApp({ dataDir, port: 0, disk: () => ({ freeBytes: 500e9, totalBytes: 1000e9 }) });
     servers = await serve(app);
     for (const name of ["alice", "bob"]) {
       const made = await createUser(app.db, {
@@ -124,7 +127,7 @@ describe("muting a repository's asks", () => {
     claimRun(app.db, run.id);
     finishRun(app.db, run.id, { state: "ok", summary: "ok" });
     expect(assignIssue(app, alice, repo, getIssueById(app.db, pullId)!, alice).ok).toBe(true);
-  }, 30_000);
+  });
 
   afterAll(async () => {
     await servers.stop();
@@ -152,7 +155,9 @@ describe("muting a repository's asks", () => {
     expect(await onYou()).not.toContain("Muted work");
     expect(await apiAsks()).toHaveLength(0);
     expect(askLinesFor(app.db, alice)).toHaveLength(0);
-    expect(askCountFor({ app, auth: { user: alice } } as never, alice)).toBe(0);
+    // The count also carries the forge's own needs, which an admin has and muting does not touch.
+    const ctx = { app, auth: { user: alice } } as never;
+    expect(askCountFor(ctx, alice)).toBe(forgeNeedsFor(ctx, alice).length);
     // Said, never silent: the home names what it is holding back.
     const muted = await home();
     expect(muted).not.toContain('action="/asks/mute"');
@@ -224,6 +229,10 @@ describe("muting a repository's asks", () => {
 
   test("MCP asks applies the saved filter, and takes the same filter as arguments", async () => {
     const token = createToken(app.db, alice.id, "ro", "ro").token;
+    // Its own preconditions, not the earlier tests' leftovers: listening, and no chip saved.
+    app.db.query("DELETE FROM interaction WHERE viewer_id = ?1 AND kind = 'muted'").run(alice.id);
+    for (const c of [{ kind: "kind", value: "reviews" }, { kind: "kind", value: "crew" }, { kind: "kind", value: "decisions" }, { kind: "person", value: getUserByName(app.db, "bot")!.id }, { kind: "person", value: bob.id }] as const)
+      setChip(app.db, alice.id, c, false);
 
     const tool = (token: string, name: string, args: unknown = {}) =>
       mcpTool(servers.url, token, name, args);

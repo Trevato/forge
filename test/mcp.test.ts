@@ -33,6 +33,12 @@ import { promote } from "./helpers/members.ts";
 import { showBoard } from "../src/actions/boards.ts";
 import { panelData } from "../src/boards/panel_data.ts";
 
+/** tools/list's order: the tools by name, then `report`. */
+const sortedThenReport = (names: string[]): string[] => [
+  ...names.filter((n) => n !== "report").sort((a, b) => a.localeCompare(b)),
+  "report",
+];
+
 describe("the forge over MCP", () => {
   let dataDir: string;
   let app: App;
@@ -169,9 +175,12 @@ describe("the forge over MCP", () => {
 
     const listed = await call(rw, "tools/list");
     const names = listed.body.result.tools.map((t: { name: string }) => t.name);
-    expect(names).toEqual([
+    // Listed by name, one file each (#5924), and `report` last.
+    expect(names).toEqual(sortedThenReport([
+      "drills",
       "sizes",
       "apps",
+      "app_deploy",
       "new_app",
       "repo",
       "here",
@@ -180,11 +189,13 @@ describe("the forge over MCP", () => {
       "say",
       "issue",
       "pull",
+      "preview",
       "pulls",
       "variant",
       "edit",
       "close",
       "read_file",
+      "write_file",
       "asks",
       "asks_act",
       "asks_decide",
@@ -192,20 +203,31 @@ describe("the forge over MCP", () => {
       "proposal_tokens",
       "asks_undecide",
       "seal",
+      "secrets",
       "issue_teams",
+      "orgs",
       "now",
       "stop",
       "health",
       "audit",
       "model_grant",
+      "accounts",
       "whoami_can",
       "mint_invite",
+      "invites",
       "account_role",
+      "account_suspend",
+      "restore_drill",
       "model_ceiling",
+      "account_verify",
       "outsiders",
+      "origins",
       "decisions_by",
       "archive",
       "trail",
+      "migrate",
+      "events",
+      "reports",
       "branches",
       "commits",
       "probe",
@@ -216,6 +238,7 @@ describe("the forge over MCP", () => {
       "take_updates",
       "sever",
       "follow_mode",
+      "upstream",
       "propose_to_parent_forge",
       "forge_proposals",
       "converge",
@@ -223,12 +246,16 @@ describe("the forge over MCP", () => {
       "next_steps",
       "thought",
       "asked",
+      "assigned",
+      "assign",
       "app_members",
+      "egress_grants",
       "explore",
       "search",
       "feed",
       "feed_chips",
       "make_it_yours",
+      "origin_apps",
       "front_page",
       "map",
       "milestones",
@@ -238,10 +265,13 @@ describe("the forge over MCP", () => {
       "limb",
       "returns",
       "review",
+      "threads",
       "spend",
       "usage",
       "labels",
+      "repo_labels",
       "wait_for",
+      "confirm_wait",
       "attach_look",
       "hold",
       "plan",
@@ -250,23 +280,30 @@ describe("the forge over MCP", () => {
       "scorecard",
       "flow",
       "system",
+      "telemetry_history",
       "contribute",
       "limits",
+      "app_env",
       "teams",
       "cloud_accounts",
       "cloud_account",
       "quotas",
       "signup",
+      "ssh_keys",
+      "email_verify",
+      "parent_unlink",
+      "vision",
       "boards",
       "board_write",
       "board_pins",
       "board_delete",
       "report",
-    ]);
+    ]));
     const byName = new Map<string, any>(
       listed.body.result.tools.map((t: any) => [t.name, t]),
     );
-    expect(byName.get("tell").annotations.readOnlyHint).toBe(false);
+    // A write leaves readOnlyHint to its default, false.
+    expect(byName.get("tell").annotations).toBeUndefined();
     // The signup tool says what the setting does today, not that nothing reads it.
     const signup: string = byName.get("signup").description;
     expect(signup).not.toContain("Nothing reads it yet");
@@ -664,7 +701,7 @@ describe("the forge over MCP", () => {
     const hints = Object.fromEntries(
       listed.body.result.tools.map((t: any) => [
         t.name,
-        t.annotations.readOnlyHint,
+        t.annotations?.readOnlyHint ?? false,
       ]),
     );
     expect(hints["probe"]).toBe(true);
@@ -811,7 +848,7 @@ describe("the forge over MCP", () => {
     const hints = Object.fromEntries(
       listed.body.result.tools.map((t: any) => [
         t.name,
-        t.annotations.readOnlyHint,
+        t.annotations?.readOnlyHint ?? false,
       ]),
     );
     expect([hints.map, hints.wait_for]).toEqual([true, false]);
@@ -987,6 +1024,62 @@ describe("the forge over MCP", () => {
     expect(limitChanges(app.db)[0]).toMatchObject({ key });
   });
 
+  test("egress_grants: list, grant and revoke for a site admin; a non-admin is refused as the API refuses", async () => {
+    const dest = "100.89.95.68:8101";
+    const committed = await commitToBranch(app, alice, game, {
+      message: "Ask for the arm",
+      files: [{ path: "forge.json", content: JSON.stringify({ app: { run: "bun run src/server.ts" }, egress: [dest] }) }],
+    });
+    if (!committed.ok) throw new Error(JSON.stringify(committed.error));
+    const admin = createToken(app.db, alice.id, "admin", "admin").token;
+    const bobAdmin = createToken(app.db, bob.id, "bobadmin", "admin").token;
+    const repo = "alice/game";
+
+    const listed = await tool(admin, "egress_grants", { repo });
+    expect(listed.value.items).toEqual([
+      { destination: dest, asked: true, granted: false, grantedBy: null, grantedAt: null },
+    ]);
+
+    // Bob is no admin of the repository: told nothing of it.
+    expect((await tool(bobAdmin, "egress_grants", { repo })).error).toContain("not_found");
+    // A token below admin scope may not read or change.
+    expect((await tool(ro, "egress_grants", { repo })).error).toContain("forbidden");
+    expect((await tool(rw, "egress_grants", { repo, op: "grant", destination: dest })).error).toContain("forbidden");
+
+    const granted = await tool(admin, "egress_grants", { repo, op: "grant", destination: dest });
+    expect(granted.value).toMatchObject({ destination: dest, granted: true, grantedBy: "alice" });
+    expect((await tool(admin, "egress_grants", { repo, op: "grant", destination: "10.0.0.1:1" })).error).toContain("not_asked");
+
+    // The same words the API gives a repository admin who is no site admin.
+    const arm = await createRepo(app, bob, { name: "arm", visibility: "public", description: "" });
+    if (!arm.ok) throw new Error(String(arm.error));
+    await commitToBranch(app, bob, arm.value, {
+      message: "Ask for the arm",
+      files: [{ path: "forge.json", content: JSON.stringify({ app: { run: "bun run src/server.ts" }, egress: [dest] }) }],
+    });
+    const refused = await tool(bobAdmin, "egress_grants", { repo: "bob/arm", op: "grant", destination: dest });
+    const api = await fetch(`${base}/api/v1/repos/bob/arm/egress-grants`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${bobAdmin}`, "content-type": "application/json" },
+      body: JSON.stringify({ destination: dest }),
+    });
+    expect(api.status).toBe(403);
+    expect(refused.error).toBe(`forbidden: ${((await api.json()) as any).message}`);
+
+    // An agent, even one marked site admin, may not change a grant.
+    const bot = await createAgent(app, alice, { username: "egressbot", brief: "x" });
+    if (!bot.ok) throw new Error(String(bot.error));
+    app.db.query("UPDATE user SET is_admin = 1 WHERE id = ?1").run(bot.value.user.id);
+    const botToken = createToken(app.db, bot.value.user.id, "bot", "admin").token;
+    const botGrant = await tool(botToken, "egress_grants", { repo: "bob/arm", op: "grant", destination: dest });
+    expect(botGrant.error).toContain("forbidden");
+
+    const revoked = await tool(admin, "egress_grants", { repo, op: "revoke", destination: dest });
+    expect(revoked.value).toEqual({ revoked: dest });
+    expect((await tool(admin, "egress_grants", { repo, op: "revoke", destination: dest })).error).toContain("no_such_grant");
+    expect((await tool(admin, "egress_grants", { repo })).value.items[0].granted).toBe(false);
+  });
+
   test("board_pins: list, pin, move, unpin for an admin person; an agent and a non-admin are refused", async () => {
     const board = { title: "Pinnable", range: "24h", refresh: "off", panels: [
       { title: "One", chart: "number", query: { source: "runs", aggregate: "count" }, w: 1, h: 1 },
@@ -1086,8 +1179,10 @@ describe("the forge over MCP", () => {
     expect(uris).toEqual([
       "ui://forge/app",
       "ui://forge/decision",
+      "ui://forge/explore",
       "ui://forge/feed",
       "ui://forge/map",
+      "ui://forge/pull",
       "ui://forge/run",
       "ui://forge/wave",
     ]);
@@ -1107,6 +1202,120 @@ describe("the forge over MCP", () => {
     expect(meta("milestones")).toBe("ui://forge/wave");
     expect(meta("map")).toBe("ui://forge/map");
     expect(meta("feed")).toBe("ui://forge/feed");
+    expect(meta("explore")).toBe("ui://forge/explore");
+    expect(meta("pull")).toBe("ui://forge/pull");
+  });
+
+  test("tools/call pull carries the card beside an unchanged text answer", async () => {
+    const branched = await commitToBranch(app, alice, game, {
+      branch: "card-wire",
+      message: "a change",
+      files: [{ path: "card.txt", content: "c\n" }],
+    });
+    if (!branched.ok) throw new Error(JSON.stringify(branched.error));
+    const opened = await openPull(app, alice, game, {
+      title: "Card wire",
+      baseBranch: "main",
+      headBranch: "card-wire",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const n = opened.value.number;
+    const { body } = await call(rw, "tools/call", { name: "pull", arguments: { repo: "alice/game", number: n } });
+    const card = body.result.structuredContent.card;
+    expect(card.kind).toBe("pull");
+    expect(card.title).toBe(`#${n} Card wire`);
+    const branches = card.rows.find((r: any) => r.label === "Branches");
+    expect(branches.value).toBe("card-wire → main");
+    expect(branches.link).toBe(`${base}/alice/game/pulls/${n}`);
+    // No environment for this pull in the test runtime, so no preview to link.
+    expect(card.rows.some((r: any) => r.label === "Preview")).toBe(false);
+    const text = JSON.parse(body.result.content[0].text);
+    expect(text.title).toBe("Card wire");
+    expect("card" in text).toBe(false);
+  });
+
+  test("the pull card shows title, state, check, branches and the preview; a merged pull has no check or preview", async () => {
+    const { cardFor } = await import("../src/web/studio/cards.ts");
+    const origin = "https://forge.test";
+    const open = cardFor(
+      "pull",
+      {
+        number: 7,
+        title: "<b>Add</b> a thing",
+        state: "open",
+        base: "main",
+        head: "scout/7",
+        check: { state: "ok" },
+        mergeable: false,
+        conflicts: ["a.ts"],
+      },
+      origin,
+      { repo: "alice/game", preview: "https://p.example/" },
+    )!;
+    expect(open.kind).toBe("pull");
+    expect(open.title).toBe("#7 <b>Add</b> a thing");
+    expect(open.status).toBe("open · check green · conflicts");
+    expect(open.rows.find((r) => r.label === "Branches")).toMatchObject({
+      value: "scout/7 → main",
+      link: "https://forge.test/alice/game/pulls/7",
+    });
+    expect(open.rows.find((r) => r.label === "Preview")?.link).toBe("https://p.example/");
+    const merged = cardFor(
+      "pull",
+      { number: 8, title: "Done", state: "merged", base: "main", head: "x", check: { state: "ok" } },
+      origin,
+      { repo: "alice/game" },
+    )!;
+    expect(merged.status).toBe("merged");
+    expect(merged.rows.some((r) => r.label === "Preview")).toBe(false);
+    const hostile = cardFor("pull", { number: 1, state: "open", check: { state: "running" } }, origin, {
+      repo: "a/b",
+      preview: "javascript:alert(1)",
+    })!;
+    expect(hostile.status).toBe("open · check running");
+    expect(hostile.rows.some((r) => r.label === "Preview")).toBe(false);
+  });
+
+  test("the decision card links each ask to its pull or issue, and to nothing unsafe", async () => {
+    const { cardFor } = await import("../src/web/studio/cards.ts");
+    const words = { decision: "Ship it?", options: ["ship", "close"] };
+    const rows = [
+      { line: "a", repo: "alice/game", number: 3, numberOf: "pull", words },
+      { line: "b", repo: "alice/game", number: 4, numberOf: "issue", words },
+      { line: "c", repo: "alice/game", words },
+      { line: "d", repo: "alice", number: 5, numberOf: "pull", words },
+      { line: "e", repo: "alice/game", number: 0, numberOf: "pull", words },
+    ];
+    const card = cardFor("asks", { rows }, "https://forge.test")!;
+    expect(card.rows.map((r) => r.link)).toEqual([
+      "https://forge.test/alice/game/pulls/3",
+      "https://forge.test/alice/game/issues/4",
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    expect(cardFor("asks", { rows }, "javascript:x")!.rows.every((r) => r.link === undefined)).toBe(true);
+  });
+
+  test("the real asks result carries a link on a pull row and an issue row", async () => {
+    await commitToBranch(app, alice, game, { branch: "ask-links", message: "x", files: [{ path: "ask.txt", content: "a\n" }] });
+    const pull = await openPull(app, alice, game, { title: "Ask link pull", baseBranch: "main", headBranch: "ask-links" });
+    const issue = await openIssue(app, alice, game, { title: "Ask link issue", body: "" });
+    if (!pull.ok || !issue.ok) throw new Error("seed");
+    const { setAssignee } = await import("../src/core/issues.ts");
+    setAssignee(app.db, pull.value.id, alice.id);
+    setAssignee(app.db, issue.value.id, alice.id);
+    const { body } = await call(rw, "tools/call", { name: "asks", arguments: {} });
+    const rows: any[] = body.result.structuredContent.card.rows;
+    const linkOf = (label: string) => rows.find((r) => r.label.includes(label))?.link;
+    expect(linkOf("Ask link pull")).toMatch(new RegExp(`^https?://[^/]+/alice/game/pulls/${pull.value.number}$`));
+    expect(linkOf("Ask link issue")).toMatch(new RegExp(`^https?://[^/]+/alice/game/issues/${issue.value.number}$`));
+    const { askLinesFor } = await import("../src/web/studio/asks.ts");
+    const { cardFor } = await import("../src/web/studio/cards.ts");
+    const lines = askLinesFor(app.db, alice);
+    expect(lines.find((l) => l.id === `assigned:${pull.value.id}`)?.numberOf).toBe("pull");
+    expect(lines.find((l) => l.id === `assigned:${issue.value.id}`)?.numberOf).toBe("issue");
+    expect(cardFor("asks", { rows: lines }, "javascript:x")!.rows.every((r) => r.link === undefined)).toBe(true);
   });
 
   test("the feed card draws one linked row per item, ten at most, escaped as text", async () => {
@@ -1132,6 +1341,29 @@ describe("the forge over MCP", () => {
     expect(cardFor("feed", { items: [{ what: "x", link: "//evil.test/" }] }, "https://forge.test")!.rows[0]!.link).toBeUndefined();
     const { body } = await call(rw, "tools/call", { name: "feed", arguments: {} });
     expect(body.result.structuredContent.card.kind).toBe("feed");
+  });
+
+  test("runs answers with the run card, newest first, twelve rows at most", async () => {
+    const { cardFor } = await import("../src/web/studio/cards.ts");
+    const runs = Array.from({ length: 15 }, (_, i) => ({
+      id: `r${i}`, kind: "agent", state: "done", number: i === 0 ? null : i, startedAt: 1, endedAt: 2,
+    }));
+    const id = "01m23vygyffx5hg2f5vm8r74sr";
+    runs[1]!.id = id;
+    const card = cardFor("runs", { runs }, "https://f.example", { repo: "alice/game" })!;
+    expect(card.kind).toBe("run");
+    expect(card.title).toBe("Runs");
+    expect(card.rows[1]!.link).toBe(`https://f.example/alice/game/runs/${id}`);
+    expect(card.rows[0]!.link).toBeUndefined();
+    const nolink = cardFor("runs", { runs }, "https://f.example", { repo: "alice" })!;
+    expect(nolink.rows[1]!.link).toBeUndefined();
+    expect(card.rows).toHaveLength(12);
+    expect(card.rows[0]).toEqual({ label: "agent r0", value: "done" });
+    expect(card.rows[1]).toMatchObject({ label: `agent ${id}`, value: "#1 — done" });
+    const { body } = await call(rw, "tools/call", { name: "runs", arguments: { repo: "alice/game" } });
+    expect(body.result.structuredContent.card.kind).toBe("run");
+    const tools = (await call(rw, "tools/list")).body.result.tools;
+    expect(tools.find((t: any) => t.name === "runs")._meta?.ui?.resourceUri).toBe("ui://forge/run");
   });
 
   test("a tool result carries the card it renders", async () => {
@@ -1204,6 +1436,15 @@ describe("the forge over MCP", () => {
     const doc = (await res.json()) as any;
     expect(doc.openapi).toBe("3.1.0");
     expect(doc.paths["/mcp"].post).toBeDefined();
+  });
+  test("GET /contract/openapi.json serves the triage routes", async () => {
+    const doc = (await (await fetch(`${base}/contract/openapi.json`)).json()) as any;
+    const R = "/api/v1/repos/{owner}/{name}";
+    expect(doc.paths[`${R}/issues/{number}/teams`].get).toBeDefined();
+    expect(doc.paths[`${R}/issues/{number}/teams`].put).toBeDefined();
+    expect(doc.paths[`${R}/issues/{number}/labels`].put).toBeDefined();
+    expect(doc.paths[`${R}/pulls/{number}/labels`].put).toBeDefined();
+    expect(doc.paths[`${R}/issues/{number}/private`].post.responses["201"]).toBeDefined();
   });
   test("GET /api/v1/openapi.json redirects to the document", async () => {
     const res = await fetch(`${base}/api/v1/openapi.json`, { redirect: "manual" });

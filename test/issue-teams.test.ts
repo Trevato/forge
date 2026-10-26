@@ -75,41 +75,65 @@ describe("cross-team work", () => {
   const reviewRuns = (pull: Pull) =>
     listRuns(app.db, repo.id, { issueId: pull.id }).filter((r) => r.reason === "review");
 
-  beforeAll(async () => {
-    dataDir = await mkdtemp(join(tmpdir(), "forge-issue-teams-"));
-    app = createApp({ dataDir, port: 0 });
-    const made = await createUser(app.db, {
-      origin: "seed",
-      trusted: true,
-      username: "alice",
-      email: "alice@forge.local",
-      password: "a-good-passphrase",
-      adminIfFirst: true,
-    });
-    if (!made.ok) throw new Error(made.error);
-    alice = made.value;
-    const r = await createRepo(app, alice, { name: "garden", visibility: "private" });
-    if (!r.ok) throw new Error(String(r.error));
-    repo = r.value;
-    const seeded = await commitToBranch(app, alice, repo, {
-      message: "seed",
-      files: [{ path: "README.md", content: "# garden\n" }],
-    });
-    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
-    for (const name of ["quill", "pike"]) {
-      const agent = await createAgent(app, alice, { username: name });
-      if (!agent.ok) throw new Error(String(agent.error));
-      addToCrew(app, alice, repo, name);
-      setCrewRole(app.db, repo.id, id(name), "reviewer");
+  /** Run one setup or teardown step; a failure names the step, so a red check says which. */
+  const step = async <T>(name: string, work: () => T | Promise<T>): Promise<T> => {
+    try {
+      return await work();
+    } catch (error) {
+      throw new Error(`issue-teams ${name} failed: ${error instanceof Error ? error.message : String(error)}`, {
+        cause: error,
+      });
     }
-    saveTeam(app.db, "design", { charter: "", dial: 0, members: [id("quill")] });
-    saveTeam(app.db, "data-science", { charter: "", dial: 0, members: [id("pike")] });
-  }, 30_000);
+  };
+
+  beforeAll(async () => {
+    await step("seed", async () => {
+      dataDir = await mkdtemp(join(tmpdir(), "forge-issue-teams-"));
+      app = createApp({ dataDir, port: 0 });
+      const made = await createUser(app.db, {
+        origin: "seed",
+        trusted: true,
+        username: "alice",
+        email: "alice@forge.local",
+        password: "a-good-passphrase",
+        adminIfFirst: true,
+      });
+      if (!made.ok) throw new Error(made.error);
+      alice = made.value;
+      const r = await createRepo(app, alice, { name: "garden", visibility: "private" });
+      if (!r.ok) throw new Error(String(r.error));
+      repo = r.value;
+      const seeded = await commitToBranch(app, alice, repo, {
+        message: "seed",
+        files: [{ path: "README.md", content: "# garden\n" }],
+      });
+      if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    });
+    await step("agents", async () => {
+      for (const name of ["quill", "pike"]) {
+        const agent = await createAgent(app, alice, { username: name });
+        if (!agent.ok) throw new Error(String(agent.error));
+        addToCrew(app, alice, repo, name);
+        setCrewRole(app.db, repo.id, id(name), "reviewer");
+      }
+    });
+    await step("teams", () => {
+      saveTeam(app.db, "design", { charter: "", dial: 0, members: [id("quill")] });
+      saveTeam(app.db, "data-science", { charter: "", dial: 0, members: [id("pike")] });
+    });
+  }, 120_000);
 
   afterAll(async () => {
-    app.close();
-    await rm(dataDir, { recursive: true, force: true });
-  });
+    await step("close", async () => {
+      // A push starts work nobody holds a handle to (pull heads following it,
+      // reader processes); let it finish before the database closes under it
+      // and the data dir goes, so load cannot turn it into a hook failure.
+      for (let i = 0; i < 20; i++) await new Promise((done) => setImmediate(done));
+      await Bun.sleep(100);
+      app?.close();
+      if (dataDir !== "") await rm(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    });
+  }, 30_000);
 
   test("an issue names at most two real teams", () => {
     const o = openIssue(app, alice, repo, { title: "Chart" });

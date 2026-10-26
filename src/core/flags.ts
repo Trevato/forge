@@ -323,3 +323,6 @@ export function useFlagRegistry(next: Registry | undefined): void {
 export function mayManageFlags(user: { isAdmin: boolean; kind: string } | undefined): boolean {
   return user !== undefined && user.isAdmin && user.kind !== "agent";
 }
+
+/** What a person who may not manage flags is told, by the action, the page and the terminal alike. */
+export const FLAGS_ADMIN_ONLY = "Flags are set by a forge admin.";

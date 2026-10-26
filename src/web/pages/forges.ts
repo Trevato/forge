@@ -7,7 +7,7 @@
  */
 
 import type { Ctx } from "../../http/context.ts";
-import { CLAIM_WORDS, claimState, clientRows, runningWords, type ClientRow } from "../../spawn/clients.ts";
+import { ATTENTION_WORDS, CLAIM_WORDS, claimState, clientRows, runningWords, spendWords, type ClientRow } from "../../spawn/clients.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { notFoundPage, pageHead } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
@@ -28,6 +28,15 @@ function runningNote(r: ClientRow): Html | null {
   >`;
 }
 
+/** The crew's spend today against its cap; attention-toned from 80%. */
+function spendNote(r: ClientRow): Html | null {
+  const s = spendWords(r);
+  if (s === null) return null;
+  return s.warn
+    ? html`<span data-spend="warn">${badge(s.words, { tone: "attn" })}</span>`
+    : html`<span data-spend="ok">${s.words}</span>`;
+}
+
 function forgeRow(r: ClientRow): Html {
   const state = claimState(r);
   const meta = [
@@ -35,16 +44,22 @@ function forgeRow(r: ClientRow): Html {
     r.for === null ? null : html`for ${r.for}`,
     r.apps.length === 0 ? null : html`${r.apps.join(", ")}`,
     runningNote(r),
+    spendNote(r),
     r.sentAt === null ? null : html`sent ${time(r.sentAt)}`,
     r.lastActivityAt === null
       ? null
       : html`last activity ${time(r.lastActivityAt)}`,
+    badge(r.nextStep.key === "going" ? html`going: last tell ${time(r.nextStep.lastTellAt!)}` : r.nextStep.words, {
+      variant: "outline",
+    }),
   ].filter((m): m is Html => m !== null);
   return row({
     title: html`<a href="${r.url}">${r.name}</a>`,
     meta: html`${meta.map((m, i) => html`${i > 0 ? " · " : ""}${m}`)}`,
     data: { forge: r.name, claimed: state },
-    trail: html`${badge(CLAIM_WORDS[state], {
+    trail: html`${r.attention === null
+        ? null
+        : html`<span data-attention="${r.attention}">${badge(ATTENTION_WORDS[r.attention], { tone: "attn" })}</span>`}${badge(CLAIM_WORDS[state], {
         ...(state === "yes" ? { tone: "success" as const } : { variant: "outline" as const }),
       })}${state === "no"
         ? html`<form method="post" action="/forges/${r.name}/claim-link">

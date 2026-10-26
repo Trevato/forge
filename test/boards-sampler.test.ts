@@ -123,9 +123,19 @@ describe("the 5-min roll-up", () => {
     pts.push({ at: T0 + 315_000, target: "forge", cpuCores: null, memoryBytes: 42, load: null });
     expect(rollUp(pts)).toEqual([
       // (0 + 1 + … + 19) / 4 / 20 = 190 / 80 = 2.375; max 19 / 4 = 4.75
-      { at: T0, target: "forge", cpuCores: 2.375, cpuCoresMax: 4.75, memoryBytes: 9500, memoryBytesMax: 19000, load: null, celsius: null, celsiusMax: null },
-      { at: T0 + 300_000, target: "forge", cpuCores: 7, cpuCoresMax: 7, memoryBytes: 42, memoryBytesMax: 42, load: null, celsius: null, celsiusMax: null },
+      { at: T0, target: "forge", cpuCores: 2.375, cpuCoresMax: 4.75, memoryBytes: 9500, memoryBytesMax: 19000, load: null, celsius: null, celsiusMax: null, lagMs: null, lagMsMax: null, checks: null, agents: null },
+      { at: T0 + 300_000, target: "forge", cpuCores: 7, cpuCoresMax: 7, memoryBytes: 42, memoryBytesMax: 42, load: null, celsius: null, celsiusMax: null, lagMs: null, lagMsMax: null, checks: null, agents: null },
     ]);
+  });
+
+  test("the forge's event-loop lag rolls up as mean and max, its checks and crew runs as the mean", () => {
+    const pts: Point[] = [];
+    for (let i = 0; i < 20; i++) {
+      pts.push({ at: T0 + i * 15_000, target: "forge", cpuCores: null, memoryBytes: 1, load: null, lagMs: i, checks: i < 10 ? 9 : 12, agents: 3 });
+    }
+    const [r] = rollUp(pts);
+    // (0 + … + 19) / 20 = 9.5 ms, worst 19 ms; checks (10 × 9 + 10 × 12) / 20 = 10.5
+    expect([r!.lagMs, r!.lagMsMax, r!.checks, r!.agents]).toEqual([9.5, 19, 10.5, 3]);
   });
 
   test("record rolls a window up once it has closed, and only then", () => {
@@ -279,5 +289,36 @@ describe("startSampler", () => {
       { target: "package:0", cpu_cores: null, celsius: 64 },
     ]);
     expect(warnings).toEqual([]);
+  });
+
+  test("the forge's point carries the event loop's p99 lag and the checks and crew runs running", () => {
+    const db = fresh();
+    db.run("PRAGMA foreign_keys = OFF");
+    const run = db.query("INSERT INTO run (id, repo_id, kind, state) VALUES (?, 'r', ?, ?)");
+    for (const [id, kind, state] of [
+      ["a", "check", "running"], ["b", "check", "running"], ["c", "check", "ok"], ["d", "check", "queued"],
+      ["e", "agent", "running"], ["f", "deploy", "running"],
+    ]) run.run(id!, kind!, state!);
+    const app = { db, log: { warn: () => {} } } as unknown as App;
+    let stopped = false;
+    const lags = [7.5, null];
+    const s = startSampler(app, {
+      paths, everyMs: 3_600_000, cells: () => [],
+      lag: { take: () => lags.shift() ?? null, stop: () => void (stopped = true) },
+    });
+    s.tick(T0 + 30_000);
+    s.stop();
+    expect(stopped).toBe(true);
+    const rows = db.query(
+      "SELECT at = ? AS later, lag_ms, lag_ms_max, checks, agents FROM machine_sample WHERE target = 'forge' AND step = 15 ORDER BY later",
+    ).all(new Date(T0 + 30_000).toISOString());
+    // The first tick (at start) took 7.5 ms; the second, a window with no wake, has no lag and still counts.
+    expect(rows).toEqual([
+      { later: 0, lag_ms: 7.5, lag_ms_max: 7.5, checks: 2, agents: 1 },
+      { later: 1, lag_ms: null, lag_ms_max: null, checks: 2, agents: 1 },
+    ]);
+    expect(runQuery(db, {
+      source: "machine", aggregate: "max", column: "lag_ms_max", filter: [{ column: "target", op: "eq", value: "forge" }],
+    }, { repoIds: "all" })).toEqual({ ok: true, rows: [{ group: null, value: 7.5 }] });
   });
 });

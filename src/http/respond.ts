@@ -9,6 +9,7 @@ import { scopeAllows, type TokenScope } from "../core/tokens.ts";
 import { ARCHIVED_WHY } from "../core/repos.ts";
 import { NOT_A_MEMBER } from "../core/roles.ts";
 import { NEW_ACCOUNT_GUARD_MESSAGE } from "../core/capacity.ts";
+import { VERIFY_FIRST } from "../actions/verify_words.ts";
 import type { User } from "../core/users.ts";
 import { crossOrigin, type Ctx } from "./context.ts";
 
@@ -34,6 +35,11 @@ export const apiError = (
   message: string,
 ): Response => json({ error: code, message }, status);
 
+/** The API's own words for a resource that is missing or not visible to you. */
+export const NOT_FOUND_WORDS = "no such resource here, or it is not visible to you";
+/** The API's own words for a request that carries no credential. */
+export const UNAUTHORIZED_WORDS = "authenticate with a bearer token or account credentials";
+
 // `not_found` deliberately conflates "no such resource" with "not visible to
 // you" so a private repo never leaks its existence — the message keeps that
 // ambiguity intact.
@@ -41,13 +47,13 @@ export const notFound = () =>
   apiError(
     "not_found",
     404,
-    "no such resource here, or it is not visible to you",
+    NOT_FOUND_WORDS,
   );
 export const unauthorized = () =>
   apiError(
     "unauthorized",
     401,
-    "authenticate with a bearer token or account credentials",
+    UNAUTHORIZED_WORDS,
   );
 // A password door past the sign-in windows (`core/signin-window.ts`).
 export const tooManyAttempts = (retryAfter: number) =>
@@ -59,8 +65,8 @@ export const tooManyAttempts = (retryAfter: number) =>
     429,
     { "retry-after": String(retryAfter) },
   );
-export const forbidden = () =>
-  apiError("forbidden", 403, "your credentials lack the scope for this action");
+export const FORBIDDEN_MESSAGE = "your credentials lack the scope for this action";
+export const forbidden = () => apiError("forbidden", 403, FORBIDDEN_MESSAGE);
 // A path matching no route at all — distinct from a missing resource, so a
 // client can tell a typo'd URL from a resource that genuinely isn't there.
 // The message survives into the HTML 404 too (`src/web/chrome.ts`), as a
@@ -107,6 +113,29 @@ export function prefersHtml(request: Request, pathname: string): boolean {
     acceptQuality(accept, "text/html") > acceptQuality(accept, "application/json")
   );
 }
+
+/**
+ * Whether a request, judged by `Accept` alone, names JSON and ranks it above
+ * HTML. A tie — curl's curl's wildcard — is not a preference, and never the user agent.
+ */
+export function prefersJson(request: Request): boolean {
+  const accept = request.headers.get("accept");
+  if (!accept) return false;
+  return (
+    acceptQuality(accept, "application/json") > acceptQuality(accept, "text/html")
+  );
+}
+
+/** A page's 404 for a caller that asked for JSON: a refusal it can read. */
+export const pageNotFoundAsJson = (origin: string) =>
+  json(
+    {
+      error: "not_found",
+      message: "no page here, or it is not visible to you",
+      docs: `${origin}/llms.txt`,
+    },
+    404,
+  );
 
 /**
  * The policy for a body that is not a document: nothing loads, nothing
@@ -178,6 +207,30 @@ export function securityFloor(response: Response): Response {
 }
 
 /**
+ * An answer to a request that carried a session cookie or an Authorization
+ * header is one person's: a shared cache must not keep it. It leaves
+ * `private`, with any `public` or `s-maxage` taken out. Content-addressed
+ * assets (`immutable`) are the same bytes for everyone and keep their year,
+ * though a browser sends its cookie for them too.
+ */
+export function privateWhenSignedIn(request: Request, response: Response): Response {
+  if (!request.headers.has("cookie") && !request.headers.has("authorization")) return response;
+  try {
+    const control = response.headers.get("cache-control") ?? "";
+    if (/\bimmutable\b/i.test(control)) return response;
+    const kept = control
+      .split(",")
+      .map((part) => part.trim())
+      .filter((part) => part !== "" && !/^(public|s-maxage\b)/i.test(part));
+    if (!kept.some((part) => /^(private|no-store)$/i.test(part))) kept.unshift("private");
+    response.headers.set("cache-control", kept.join(", "));
+  } catch {
+    // An immutable header set keeps the headers it came with.
+  }
+  return response;
+}
+
+/**
  * Map an action's error to a response: the three access errors have fixed
  * shapes; anything else is a validation code the caller chose a status for.
  */
@@ -186,7 +239,7 @@ export function respondAccess(error: string, status: number): Response {
   // An account whose email is unproven may read, not create or cost: the
   // same words on every surface (\`actions/verify.ts\`).
   if (error === "unverified")
-    return json({ error, message: "verify your email first" }, 403);
+    return json({ error, message: VERIFY_FIRST }, 403);
   // The new-account guard (\`guard_new_accounts\`): refused the way the
   // hand-installed database trigger used to refuse, in its own words, so
   // clients see no difference between the trigger and the setting.

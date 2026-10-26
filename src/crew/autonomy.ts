@@ -14,6 +14,7 @@
 
 import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
+import { ceilingReached, forgeCeiling } from "../flow/ceiling.ts";
 import {
   addComment,
   assignIssue,
@@ -26,8 +27,8 @@ import { addLearned } from "../checks/learned.ts";
 import { enqueue, type GateCandidate, type Queued, type QueueOptions, queueClashes, queueWords } from "../checks/queue.ts";
 import { checksFor } from "../checks/service.ts";
 import { queueDepth } from "../core/capacity.ts";
+import { readConflictLane, readConflictRoom } from "./conflict_room.ts";
 import { mergeable, resolveOid, treeOf } from "../git/merge.ts";
-import { repoDir } from "../git/repos.ts";
 import { CLOSED_NOTE } from "../core/done_on_main.ts";
 import { mergePull } from "../actions/pulls.ts";
 import { carriesUpstream } from "../actions/upstream_follow.ts";
@@ -98,9 +99,12 @@ import { BREAKER_NOTE, breakerTripped } from "./breaker.ts";
 import { given, pendingReplans } from "../core/limb_replan.ts";
 import { handedOverPulls, SKIP_SUMMARY, skipsReplan } from "./guard.ts";
 import { atRunCap, type Held, heldBy, heldWords, replannable } from "./held.ts";
+import { holdHot, hotFiles, hotWords, learnPullFiles } from "./hot_files.ts";
 import { NO_PULL, shunnedBy, stallReason, unstickOwed } from "./stalls.ts";
-import { BY_CREW, DONE_LIKE } from "../core/done_on_main.ts";
+import { alreadyDone, BY_CREW, DONE_LIKE } from "../core/done_on_main.ts";
+import { repoDir } from "../git/repos.ts";
 import { ALREADY_NOTE, alreadyDoneOids } from "./already.ts";
+import { removedBy, retiredNames } from "./retired.ts";
 import { interruptionOf } from "./interrupted.ts";
 import {
   PARK_NOTE,
@@ -121,6 +125,7 @@ import {
 } from "./direct.ts";
 import { crewOffInPreview } from "./preview.ts";
 import { approvedOnHead, finishApproved, finishFields } from "./finishing.ts";
+import { readVitals, vitalsMisses, vitalsWords } from "../flow/vitals.ts";
 import { moveRequested, tallyRequested, tallyWords } from "./requested.ts";
 import { reviewersOf, sendToReview, sweepReviews } from "./review.ts";
 import { lastWaits, noteWaits, tallyWaits, type Wait, waitWords } from "./waits.ts";
@@ -279,7 +284,7 @@ export function autonomyStatus(
 ): AutonomyStatus {
   const spent = spentToday(app.db, repo.id, now);
   const crew = listCrewRoles(app.db, repo.id);
-  const forgeCap = app.config.crewCeilingUsd;
+  const forgeCap = forgeCeiling(app.config);
   const paused: Paused | null =
     repo.autonomy === "off"
       ? null
@@ -289,8 +294,7 @@ export function autonomyStatus(
           ? "no crew"
           : spent >= repo.autonomyCeilingUsd
             ? "ceiling"
-            : forgeCap !== undefined &&
-                spentTodayEverywhere(app.db, now) >= forgeCap
+            : ceilingReached(spentTodayEverywhere(app.db, now), forgeCap)
               ? "forge ceiling"
               : null;
   const tomorrow = startOfTodayUtc(now);
@@ -359,17 +363,24 @@ export async function driveRepo(
   const by = getUserById(app.db, repo.autonomyBy!);
   if (!by) return "paused";
   const crew = listCrewRoles(app.db, repo.id);
-  const builders = crew.filter((c) => c.role === "builder").map((c) => c.agent);
-  const planner = crew.find((c) => c.role === "planner")?.agent;
   const active = activeRuns(app, repo.id);
   const slotted = slottedRuns(active, crew);
   // Slots follow the subscriptions' remaining windows, never past the
   // operator's; at a wall nothing new starts until the reset.
   const paced = repoPace(app, repo, now);
   if (paced.slots === 0 && slotted.length === 0) return "waiting";
+  // The files the open pulls touch, read before the sort: a build that
+  // names a hot one waits for its pile to drain (#5934).
+  await learnPullFiles(app, repo).catch((error) =>
+    log.warn("could not read the open pulls' files", {
+      repo: `${repo.ownerName}/${repo.name}`,
+      error: String(error),
+    }),
+  );
   const sorted = () => heldBy(app, repo, readyNow(repoGraph(app.db, repo.id, { sealed: true })), crew, active);
   let held = sorted();
   if (freeParked(app, repo, by, held) > 0) held = sorted();
+  holdHot(repo.id, held.by.hot_file, now);
   const ready = held.startable;
   if (slotted.length >= paced.slots) {
     // The builders are busy; the planner can still refill the map, when
@@ -390,7 +401,13 @@ export async function driveRepo(
     const shunned = shunnedBy(app.db, repo, issue.id, now);
     return crew.filter((c) => c.role !== "builder" || !shunned.has(c.agent.user.id));
   };
-  const pickable = ready.filter((r) => crewFor(r.issue).some((c) => c.role === "builder"));
+  const pickable = (
+    await withoutRetired(
+      app,
+      repo,
+      ready.filter((r) => crewFor(r.issue).some((c) => c.role === "builder")),
+    )
+  );
   const next = await nextOf(app, repo, pickable);
   if (next !== undefined) {
     const routed = await routeIssue(app, repo, next.issue, crewFor(next.issue), inFlight);
@@ -1263,12 +1280,18 @@ export async function autonomyTick(
         // The standing reserve the planner keeps: startable/target (#3237).
         reserve: reserveWords(reserveOf(held.startable.length, status.slots)),
         held: heldWords(held),
+        // The files 5 or more open pulls touch, which no new build starts on (#5934).
+        ...(held.by.hot_file.length === 0 ? {} : { hot: hotWords(hotFiles(current.id)) }),
         // Stalled issues this tick parked and freed for another builder (#4073).
         unstuck,
+        // Open pulls, opened/landed per hour and per 6 h, conflicted (#5935).
+        ...flowVitals(app.db, now),
         active: status.active,
         slots: status.slots,
-        // Approved pulls being brought up to date, and those still waiting (#3682).
-        ...finishFields(finishing),
+        // Approved conflicted pulls: queued, in flight, and why each other is
+        // skipped (#3682, #6237); and the lane for rebases: conflicted N,
+        // rebasing M, room R (#6140).
+        ...finishFields(finishing, readConflictLane(app.db)),
         ...(requested.length === 0
           ? {}
           : {
@@ -1312,6 +1335,13 @@ export async function autonomyTick(
   } catch (error) {
     log.error("review sweep failed", { error: String(error) });
   }
+}
+
+/** The tick line's flow vitals (#5935): the counts in words, and the targets they miss. */
+export function flowVitals(db: App["db"], now: Date): { pulls: string; offTarget?: string } {
+  const v = readVitals(db, now);
+  const misses = vitalsMisses(v);
+  return { pulls: vitalsWords(v), ...(misses.length === 0 ? {} : { offTarget: misses.join("; ") }) };
 }
 
 /**
@@ -1367,6 +1397,34 @@ export function readyState(
             : { untrusted: issue.untrusted }),
         },
   );
+}
+
+/**
+ * The ready issues, less those that retire names already gone from the base
+ * (`retired.ts`): each gets the already-done note, once, and is not handed out.
+ */
+async function withoutRetired(
+  app: App,
+  repo: Repo,
+  ready: readonly Ranked[],
+): Promise<Ranked[]> {
+  const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+  const kept: Ranked[] = [];
+  for (const r of ready) {
+    const names = retiredNames(r.issue);
+    if (names.length === 0) {
+      kept.push(r);
+      continue;
+    }
+    const oids = await removedBy(dir, repo.defaultBranch, names);
+    if (oids.length === 0) {
+      kept.push(r);
+      continue;
+    }
+    if (!alreadyDone(app.db, [r.issue.id]).has(r.issue.id))
+      noteAlreadyDone(app, repo, r.issue, oids);
+  }
+  return kept;
 }
 
 async function nextOf(
@@ -1554,11 +1612,14 @@ export function releaseConflicted(
  * bring-up-to-date run (one in flight per pull). After two finished
  * attempts, or 24 h since the first, it is closed and its issue is ready
  * again. An approved pull is not this sweep's but `finishApproved`'s.
+ * Runs start oldest pull first, only as many as the check lane has room
+ * for (`conflict_room.ts`); the rest wait for a later tick (#4459).
  * Returns how many pulls were acted on.
  */
 export async function sweepConflicts(app: App, repo: Repo): Promise<number> {
   if (repo.autonomy !== "autonomous") return 0;
   let acted = 0;
+  let room = readConflictRoom(app.db);
   // Forget pulls that are no longer open: closed, merged or released.
   for (const id of new Set([...checked.keys(), ...cleanAt.keys()]))
     if (getIssueById(app.db, id)?.state !== "open") {
@@ -1566,7 +1627,8 @@ export async function sweepConflicts(app: App, repo: Repo): Promise<number> {
       cleanAt.delete(id);
       asked.delete(id);
     }
-  for (const pull of listPulls(app.db, repo.id, { sealed: true, state: "open", limit: 50 })) {
+  const open = listPulls(app.db, repo.id, { sealed: true, state: "open", limit: 50 });
+  for (const pull of open.sort((a, b) => a.number - b.number)) {
     if (!pull.authorIsAgent || pull.mergedAt !== null) continue;
     if (getHold(app.db, pull.id) !== undefined) continue;
     const dir = await pullDir(app.db, app.reposRoot, repo, pull);
@@ -1641,7 +1703,10 @@ export async function sweepConflicts(app: App, repo: Repo): Promise<number> {
     // push must not be queued again on every tick.
     const tried = asked.get(pull.id);
     if (tried?.tip === baseTip && tried.n >= RUNS_PER_TIP) continue;
+    // Its push is a check: none starts that the lane has no slot for (#4459).
+    if (room <= 0) continue;
     if (bringUpToDate(app, repo, pull, files, since) !== undefined) {
+      room--;
       acted++;
       asked.set(pull.id, {
         tip: baseTip,

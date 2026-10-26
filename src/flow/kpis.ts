@@ -15,6 +15,7 @@
 
 import type { Database } from "bun:sqlite";
 import { spentTodayEverywhere } from "../crew/autonomy.ts";
+import { ceilingHitAt, ceilingReached } from "./ceiling.ts";
 import { lastOffBox } from "../snapshot/off_box.ts";
 import { readReach, type Reach } from "./reach.ts";
 import { HOURS, median } from "./throughput.ts";
@@ -33,7 +34,7 @@ export interface Kpis {
   /** Crew builders running now, of the slots the autonomous repositories are set to. */
   readonly builders: { readonly running: number; readonly slots: number };
   /** What the crew's runs cost since UTC midnight, and the forge's daily ceiling (null: none set). */
-  readonly spend: { readonly todayUsd: number; readonly ceilingUsd: number | null };
+  readonly spend: { readonly todayUsd: number; readonly ceilingUsd: number | null; /** When the run that crossed the cap was created (ISO); null while under it. */ readonly hitAt?: string | null };
   /** When a snapshot was last known off the machine (a bucket destination or the mirror, `off_box.ts`); null when never. */
   readonly backupAt: string | null;
   /** Accounts, visitors and page speed (`reach.ts`). */
@@ -100,7 +101,7 @@ export function readKpis(
     backupAt,
     builders,
     reach: readReach(db, now),
-    spend: { todayUsd, ceilingUsd: forge.ceilingUsd },
+    spend: { todayUsd, ceilingUsd: forge.ceilingUsd, hitAt: ceilingReached(todayUsd, forge.ceilingUsd) ? ceilingHitAt(db, now, forge.ceilingUsd) : null },
     landedHours,
     landed: landedHours.reduce((a, b) => a + b, 0),
     live: live ?? null,

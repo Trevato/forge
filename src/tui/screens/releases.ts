@@ -10,6 +10,7 @@ import { getRepoById } from "../../core/repos.ts";
 import { running } from "../../kernel/version.ts";
 import { BOOTED, canRollBackTo, mayRead, mayRollBack, rollBackTo } from "../../release/gate.ts";
 import { listReleases, type Release } from "../../release/record.ts";
+import { liveSince, NO_RELEASES_YET, plain } from "../../release/words.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import type { Session } from "../session.ts";
@@ -26,10 +27,10 @@ export interface ReleaseLine {
   readonly rollable: boolean;
 }
 
-/** "live: <sha> since <time>", or nothing when no release is known to be live. */
+/** The live line (`liveSince`), or nothing when no release is known to be live. */
 export function liveText(f: Session): string | undefined {
   const live = running().commit;
-  return live === null || !mayRead(f.app, f.user) ? undefined : `live: ${live.slice(0, 7)} since ${ago(BOOTED)}`;
+  return live === null || !mayRead(f.app, f.user) ? undefined : liveSince(plain, live.slice(0, 7), ago(BOOTED));
 }
 
 /** The kept releases this person may see; none at all for anyone the page would 404. */
@@ -87,7 +88,7 @@ export function releasesScreen(f: Session, ctx: Ctx): Screen {
       if (lines.length === 0) {
         emptyState(s, body!, c, {
           title: loaded ? "No releases yet" : "Reading…",
-          body: "A pull landed on the forge's own repository is recorded here.",
+          body: NO_RELEASES_YET,
         });
         return;
       }

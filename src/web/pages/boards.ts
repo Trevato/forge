@@ -7,7 +7,7 @@
  * narrowed to that point's window and listed by the source's first column.
  * Anyone else gets the not-found page.
  */
-import { CHART_NAMES, CHARTS, drawChart, usesSeries, type Cell, type Chart } from "../../boards/chart.ts";
+import { CHART_NAMES, CHARTS, type Cell, type Chart } from "../../boards/chart.ts";
 import { runFor } from "../../boards/panel_data.ts";
 import { runQuery, type Query, type Row } from "../../boards/query.ts";
 import { gaps, SYSTEM } from "../../boards/sampler.ts";
@@ -16,9 +16,9 @@ import { listAllBoards } from "../../actions/boards.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { notFoundPage } from "../chrome.ts";
-import { html, raw, when } from "../html.ts";
+import { html, when } from "../html.ts";
 import { page } from "../layout.ts";
-import { btn, card, empty } from "../ui.ts";
+import { btn, card, chartBox, empty, field, selectField } from "../ui.ts";
 
 const BUCKET_MS = { minute: 60_000, hour: 3_600_000, day: 86_400_000 } as const;
 const AGGREGATES = ["count", "sum", "avg", "max"] as const;
@@ -82,10 +82,6 @@ export const cellsOf = (rows: readonly Row[], hrefs: readonly (string | null)[] 
     ...(hrefs[i] ? { href: hrefs[i]! } : {}),
   }));
 
-/** A drawn chart in the box that holds its space. */
-export const chartBox = (chart: Chart, cells: readonly Cell[], title: string) =>
-  html`<div class="chart-box${chart === "table" ? " is-table" : ""}">${raw(drawChart(chart, cells, title))}</div>`;
-
 const link = (p: Params) => {
   const s = new URLSearchParams();
   for (const [k, v] of Object.entries(p)) if (v !== "") s.set(k, v);
@@ -137,68 +133,35 @@ export function machineLinks(now: number): { label: string; href: string }[] {
   ];
 }
 
-const option = (value: string, label: string, selected: boolean) =>
-  html`<option value="${value}" ${selected ? raw("selected") : null}>${label}</option>`;
-
 /** The inputs that say a query, filled from `p`; the page's form and a panel's share them. */
+let fieldSeq = 0;
+
 export function queryFields(p: Params) {
   const src = Object.hasOwn(SOURCES, p.source) ? SOURCES[p.source]! : undefined;
   const cols = src ? Object.keys(src.columns) : [];
+  // A page can hold several forms (one per panel), so each call gets its own ids.
+  const n = ++fieldSeq;
+  const sel = (name: string, label: string, options: [string, string][], now: string, hint?: string) =>
+    selectField({ label, name, ...(hint ? { hint } : {}), id: `f-${name}-${n}`, options: options.map(([value, text]) => ({ value, label: text, selected: value === now })) });
+  const text = (name: string, label: string, value: string, placeholder: string) =>
+    field({ label, name, value, placeholder, mono: true, maxlength: MAX_PARAM, spellcheck: false, id: `f-${name}-${n}` });
+  const colOpts = (first: [string, string][], pick: (c: string) => string, keep = (_c: string) => true): [string, string][] => [
+    ...first,
+    ...cols.filter(keep).map((c) => [c, pick(c)] as [string, string]),
+  ];
   return html`
-      <label class="qf"><span>Chart</span>
-      <select class="input" name="chart">
-        ${CHARTS.map((c) => option(c, CHART_NAMES[c], c === p.chart))}
-      </select>
-    </label>
-    <label class="qf"><span>Source</span>
-      <select class="input" name="source">
-        ${Object.keys(SOURCES).map((n) => option(n, n, n === p.source))}
-      </select>
-    </label>
-    <label class="qf"><span>Aggregate</span>
-      <select class="input" name="aggregate">
-        ${AGGREGATES.map((a) => option(a, a, a === p.aggregate))}
-      </select>
-    </label>
-    <label class="qf" title="Column to aggregate"><span>Column</span>
-      <select class="input" name="column">
-        ${option("", "(rows)", p.column === "")}
-        ${cols.filter((c) => src!.columns[c] === "number").map((c) => option(c, c, c === p.column))}
-      </select>
-    </label>
-    <label class="qf" title="Group by"><span>Group by</span>
-      <select class="input" name="by">
-        ${(Object.keys(BUCKET_MS) as Bucket[]).map((b) => option(b, `per ${b}`, b === p.by))}
-        ${cols.map((c) => option(c, `by ${c}`, c === p.by))}
-      </select>
-    </label>
-    <label class="qf" title="Series (stacked area, heat strip, table)"><span>Series</span>
-      <select class="input" name="series">
-        ${option("", "(one series)", p.series === "")}
-        ${cols.map((c) => option(c, `split by ${c}`, c === p.series))}
-      </select>
-    </label>
-    <label class="qf"><span>From</span>
-      <input class="input mono" name="from" value="${p.from}" placeholder="from 2026-10-01" maxlength="${MAX_PARAM}" />
-    </label>
-    <label class="qf"><span>To</span>
-      <input class="input mono" name="to" value="${p.to}" placeholder="to 2026-10-08" maxlength="${MAX_PARAM}" />
-    </label>
-    <label class="qf"><span>Filter column</span>
-      <select class="input" name="fcolumn">
-        ${option("", "(no filter)", p.fcolumn === "")}
-        ${cols.map((c) => option(c, c, c === p.fcolumn))}
-      </select>
-    </label>
-    <label class="qf"><span>Filter operator</span>
-      <select class="input" name="fop">
-        ${OPS.map((o) => option(o, o, o === p.fop))}
-      </select>
-    </label>
-    <label class="qf"><span>Filter value</span>
-      <input class="input mono" name="fvalue" value="${p.fvalue}" placeholder="value" maxlength="${MAX_PARAM}" />
-    </label>
-`;
+    ${sel("chart", "Chart", CHARTS.map((c) => [c, CHART_NAMES[c]]), p.chart)}
+    ${sel("source", "Source", Object.keys(SOURCES).map((s) => [s, s]), p.source)}
+    ${sel("aggregate", "Aggregate", AGGREGATES.map((a) => [a, a]), p.aggregate)}
+    ${sel("column", "Column", colOpts([["", "(rows)"]], (c) => c, (c) => src!.columns[c] === "number"), p.column, "Column to aggregate")}
+    ${sel("by", "Group by", [...(Object.keys(BUCKET_MS) as Bucket[]).map((b): [string, string] => [b, `per ${b}`]), ...colOpts([], (c) => `by ${c}`)], p.by)}
+    ${sel("series", "Series", colOpts([["", "(one series)"]], (c) => `split by ${c}`), p.series, "Stacked area, heat strip, table")}
+    ${text("from", "From", p.from, "from 2026-10-01")}
+    ${text("to", "To", p.to, "to 2026-10-08")}
+    ${sel("fcolumn", "Filter column", colOpts([["", "(no filter)"]], (c) => c), p.fcolumn)}
+    ${sel("fop", "Filter operator", OPS.map((o) => [o, o]), p.fop)}
+    ${text("fvalue", "Filter value", p.fvalue, "value")}
+  `;
 }
 
 /** The form's fields back from a stored query and its chart; what a form cannot say is dropped. */
@@ -251,7 +214,7 @@ export async function boardsPage(ctx: Ctx): Promise<Response> {
   );
 
   const form = card(
-    html`<form method="get" action="/boards/data" class="bform">
+    html`<form method="get" action="/boards/data" class="bar">
       ${queryFields(p)}
       ${btn("Draw", { variant: "primary" })}
     </form>`,
@@ -294,15 +257,13 @@ export async function boardsPage(ctx: Ctx): Promise<Response> {
     boards.length === 0 || !answer.ok
       ? null
       : card(
-          html`<form method="post" action="/boards/pin" class="bform">
+          html`<form method="post" action="/boards/pin" class="bar">
             ${PANEL_FIELDS.map(
               (k) => html`<input type="hidden" name="${k}" value="${p[k as keyof Params]}" />`,
             )}
             <input type="hidden" name="w" value="1" /><input type="hidden" name="h" value="1" />
-            <label class="qf"><span>Board</span><select class="input" name="slug">
-              ${boards.map((b) => html`<option value="${b.slug}">${b.board.title}</option>`)}
-            </select></label>
-            <label class="qf"><span>Panel title</span><input class="input" name="title" required maxlength="80" value="${`${p.aggregate} of ${p.source}`}" /></label>
+            ${selectField({ label: "Board", name: "slug", id: "f-pin-slug", options: boards.map((b) => ({ value: b.slug, label: b.board.title })) })}
+            ${field({ label: "Panel title", name: "title", id: "f-pin-title", required: true, maxlength: 80, value: `${p.aggregate} of ${p.source}` })}
             ${btn("Pin to board")}
           </form>`,
           { head: html`<h2>Pin this query</h2>` },

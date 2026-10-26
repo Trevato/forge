@@ -92,7 +92,7 @@ describe("asks that expire, hold and collapse", () => {
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-asks-expiry-"));
-    app = createApp({ dataDir, port: 0 });
+    app = createApp({ dataDir, port: 0, disk: () => ({ freeBytes: 500e9, totalBytes: 1000e9 }) });
     servers = await serve(app);
     alice = `${await adminCookie(app, { username: "alice", email: "alice@forge.test", password: PASSWORD })}; forge_mode=studio`;
     aliceUser = getUserByName(app.db, "alice")!;

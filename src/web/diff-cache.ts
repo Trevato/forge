@@ -11,6 +11,7 @@
  */
 
 import type { Diff } from "../git/diff.ts";
+import type { Html } from "./html.ts";
 import type { SyntaxMap } from "./diff-view.ts";
 
 export interface KeptDiff {
@@ -86,7 +87,34 @@ export async function keptDiff(key: string, make: () => Promise<KeptDiff>): Prom
 /** Forget everything (tests). */
 export function clearDiffCache(): void {
   kept.clear();
+  rendered.clear();
   total = 0;
   hits = 0;
   misses = 0;
+}
+
+const RENDER_ENTRIES = 16;
+const RENDER_MAX_CHARS = 2 * 1024 * 1024;
+const rendered = new Map<string, Html>();
+
+/**
+ * The diff's markup, kept for a view that has nothing viewer-specific in it:
+ * the caller offers a key only when no comment, thread or form is drawn, and
+ * the key carries every link base the markup contains. Small and bounded by
+ * entries and by size per entry, least recently used out first.
+ */
+export function keptRender(key: string | undefined, make: () => Html): Html {
+  if (key === undefined) return make();
+  const known = rendered.get(key);
+  if (known !== undefined) {
+    rendered.delete(key);
+    rendered.set(key, known);
+    return known;
+  }
+  const value = make();
+  if (value.text.length <= RENDER_MAX_CHARS) {
+    rendered.set(key, value);
+    while (rendered.size > RENDER_ENTRIES) rendered.delete(rendered.keys().next().value as string);
+  }
+  return value;
 }

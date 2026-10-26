@@ -244,3 +244,16 @@ export function touchKey(db: Database, keyId: string): void {
     keyId,
   );
 }
+
+/** What the API and MCP answer for a key: one shape for both. */
+export function publicKey(key: UserKey) {
+  return {
+    id: key.id,
+    name: key.name,
+    algo: key.algo,
+    fingerprint: key.fingerprint,
+    key: key.key,
+    createdAt: key.createdAt,
+    lastUsedAt: key.lastUsedAt,
+  };
+}

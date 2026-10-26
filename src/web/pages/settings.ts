@@ -59,7 +59,7 @@ import {
   updateRepoSettings,
 } from "../../actions/repos.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
-import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
+import { nameFrame, notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { appVitals, shiftText, speedText as ms, type AppVitals } from "../../apps/vitals.ts";
 import type { PreviewData } from "../../apps/data.ts";
 import {
@@ -96,6 +96,8 @@ import { pageTitle } from "../studio/nouns.ts";
 import { appHref } from "./apps.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
+import { NOT_CHANGED } from "../edit_words.ts";
+import { DELETE_REPO, STOP_APP } from "../danger_words.ts";
 import { icon } from "../icons.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import type { Flash } from "../flash.ts";
@@ -121,6 +123,7 @@ import { secretsSection } from "./secrets.ts";
 import { checkMemoryAt } from "../../apps/check-memory.ts";
 import { followUpstreamCard } from "./upstream-follow.ts";
 import { saveGrants } from "./subscriptions.ts";
+import { LABEL_WORDS } from "../../actions/label_words.ts";
 
 type Section =
   | "general"
@@ -136,6 +139,13 @@ function loadAdminRepo(ctx: Ctx): Repo | undefined {
   const repo = loadRepo(ctx);
   if (!repo || !canAdmin(ctx.app.db, repo, ctx.auth.user)) return undefined;
   return repo;
+}
+
+/** `loadAdminRepo` for a GET page: names the session, then the repo read as `repo`. */
+function timedAdminRepo(ctx: Ctx): Repo | undefined {
+  nameFrame(ctx.request);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  return timePhase(ctx.request, "repo", () => loadAdminRepo(ctx));
 }
 
 function sections(base: string, active: Section) {
@@ -225,31 +235,41 @@ async function adminForm(
  * webhooks, the danger zone — one quiet section over in the same frame.
  */
 export async function settingsPage(ctx: Ctx): Promise<Response> {
-  const readable = loadRepo(ctx);
+  nameFrame(ctx.request);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const [readable, repo] = timePhase(ctx.request, "repo", () => {
+    const r = loadRepo(ctx);
+    return [r, r ? loadAdminRepo(ctx) : undefined] as const;
+  });
   if (!readable) return repoNotFound(ctx);
-  const lead = settingsLead(ctx, readable);
-  const repo = loadAdminRepo(ctx);
+  const lead = timePhase(ctx.request, "lead", () => settingsLead(ctx, readable));
   if (!repo) {
-    const proposals = proposalTokensSection(ctx, readable);
-    return page({
-      ctx,
-      title: pageTitle("settings", readable, true),
-      crumbs: crumbsFor(readable),
-      palette: repoPalette(ctx, readable),
-      body: html`${repoHeader(ctx, readable, "settings", { compact: true })}
+    return timePhase(ctx.request, "render", () => {
+      const proposals = proposalTokensSection(ctx, readable);
+      return page({
+        ctx,
+        title: pageTitle("settings", readable, true),
+        crumbs: crumbsFor(readable),
+        palette: repoPalette(ctx, readable),
+        body: html`${repoHeader(ctx, readable, "settings", { compact: true })}
       ${lead}${proposals ? html`<div class="mt">${proposals}</div>` : null}`,
+      });
     });
   }
   const base = repoBase(repo);
   const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
-  const refs = await listRefs(dir, "refs/heads/");
+  const refs = await timePhaseAsync(ctx.request, "refs", () => listRefs(dir, "refs/heads/"));
+  let renderMs = 0;
+  let since = performance.now();
   const branches = refs.ok
     ? refs.value.map((r) => r.name.replace("refs/heads/", "")).sort()
     : [];
   const tip = refs.ok
     ? refs.value.find((r) => r.name === `refs/heads/${repo.defaultBranch}`)?.oid
     : undefined;
-  const cellMemory = await checkMemoryAt(dir, tip);
+  renderMs += performance.now() - since;
+  const cellMemory = await timePhaseAsync(ctx.request, "check", () => checkMemoryAt(dir, tip));
+  since = performance.now();
   if (!branches.includes(repo.defaultBranch))
     branches.unshift(repo.defaultBranch);
 
@@ -372,7 +392,9 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
     </form>`,
     { head: html`${icon("folder")}<h2>Archive</h2>` },
   );
-  const held = getMirrorTarget(ctx.app.db, repo.id);
+  renderMs += performance.now() - since;
+  const held = timePhase(ctx.request, "mirror", () => getMirrorTarget(ctx.app.db, repo.id));
+  since = performance.now();
   const mirror =
     held === undefined
       ? null
@@ -388,7 +410,7 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
           </form>`,
           { head: html`${icon("branch")}<h2>Mirror</h2>` },
         );
-  return settingsPageResponse(
+  const response = settingsPageResponse(
     ctx,
     repo,
     "general",
@@ -401,6 +423,8 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
       ? html`<div class="mt">${secrets}</div>`
       : null}`,
   );
+  notePhase(ctx.request, "render", renderMs + performance.now() - since);
+  return response;
 }
 
 export async function settingsUpdate(ctx: Ctx): Promise<Response> {
@@ -465,7 +489,7 @@ export async function archiveSubmit(ctx: Ctx): Promise<Response> {
   if (asked !== "0" && asked !== "1")
     return flashTo(ctx, `${repoBase(repo)}/settings`, {
       tone: "danger",
-      message: "That could not be changed.",
+      message: NOT_CHANGED,
     });
   const archived = asked === "1";
   const updated = await updateRepoSettings(ctx.app, ctx.auth.user, repo, {
@@ -477,7 +501,7 @@ export async function archiveSubmit(ctx: Ctx): Promise<Response> {
     back,
     updated.ok
       ? { message: archived ? "Archived." : "Awake again." }
-      : { tone: "danger", message: "That could not be changed." },
+      : { tone: "danger", message: NOT_CHANGED },
   );
 }
 
@@ -526,14 +550,14 @@ export async function provenanceSubmit(ctx: Ctx): Promise<Response> {
   const asked = field(form, "shown");
   const back = `${repoBase(repo)}/settings`;
   if (asked !== "0" && asked !== "1")
-    return flashTo(ctx, back, { tone: "danger", message: "That could not be changed." });
+    return flashTo(ctx, back, { tone: "danger", message: NOT_CHANGED });
   const set = showProvenance(ctx.app, ctx.auth.user, repo, asked === "1");
   return flashTo(
     ctx,
     back,
     set.ok
       ? { message: set.value.shown ? "Where this came from is shown." : "Where this came from is hidden." }
-      : { tone: "danger", message: "That could not be changed." },
+      : { tone: "danger", message: NOT_CHANGED },
   );
 }
 
@@ -712,13 +736,13 @@ function appSettingsView(
           <div class="form-actions">
             ${confirmAction({
               action: `${base}/settings/app/disable`,
-              verb: "Stop running as an app",
+              verb: STOP_APP,
             })}
           </div>`,
         {
           tone: "danger",
           head: html`${icon("alert")}
-            <h2>Stop running as an app</h2>`,
+            <h2>${STOP_APP}</h2>`,
         },
       )}
     </div>`;
@@ -899,7 +923,7 @@ function appDomainsView(
       html`<li>
         <div class="row">
           <span class="row-lead">${icon("globe")}</span>
-          <span class="row-main">
+          <div class="row-main">
             <span class="row-title"
               ><span class="mono">${d.host}</span> ${d.verified
                 ? badge("live", { tone: "success" })
@@ -911,8 +935,8 @@ function appDomainsView(
                 ? null
                 : html` · checked ${time(d.checkedAt)}`}</span
             >
-            ${when(!d.verified, () => recordsToPublish(d.records))}
-          </span>
+            ${when(!d.verified, () => recordsToPublish(d.host, d.records))}
+          </div>
           <span class="row-trail">
             <form method="post" action="${at(d.host)}/check">
               ${btn("Check now", { size: "sm", icon: "globe" })}
@@ -937,7 +961,7 @@ function appDomainsView(
       ${when(
         rows.length > 0,
         () =>
-          html`<ul class="list">
+          html`<ul class="list setting-list">
             ${rows}
           </ul>`,
       )}
@@ -981,14 +1005,41 @@ function appDomainsView(
 }
 
 /** The records as a person copies them into a zone: type, name, value. */
-function recordsToPublish(records: DnsRecord[]): Html {
-  const width = Math.max(...records.map((r) => r.name.length)) + 2;
-  const lines = records
-    .map((r) => `${r.type.padEnd(6)} ${r.name.padEnd(width)} ${r.value}`)
-    .join("\n");
-  const notes = records.filter((r) => r.note !== undefined);
-  return html`<pre class="domain-records">${lines}</pre>
-    ${notes.map((r) => html`<span class="row-meta">${r.note}</span>`)}`;
+function recordsToPublish(host: string, records: DnsRecord[]): Html {
+  return html`<div
+      class="table-scroll"
+      role="region"
+      tabindex="0"
+      aria-label="DNS records for ${host}"
+    >
+      <table class="table" data-dense>
+        <caption class="sr-only">
+          DNS records for ${host}
+        </caption>
+        <thead>
+          <tr>
+            <th>Type</th>
+            <th>Name</th>
+            <th>Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${records.map(
+            (r) =>
+              html`<tr>
+                <td>${badge(r.type, { variant: "outline" })}</td>
+                <td class="mono">${r.name}</td>
+                <td class="mono record-value" title="${r.value}">
+                  ${r.value}
+                </td>
+              </tr>`,
+          )}
+        </tbody>
+      </table>
+    </div>
+    ${records
+      .filter((r) => r.note !== undefined)
+      .map((r) => html`<span class="row-meta">${r.note}</span>`)}`;
 }
 
 const appValues = (repo: Repo, record: AppRecord | undefined): AppValues => ({
@@ -1538,15 +1589,17 @@ function promptsView(base: string, sources: PromptSourceView[]): Html {
 
 // GET /:owner/:name/settings/prompts
 export function promptsSettingsPage(ctx: Ctx): Response {
-  const repo = loadAdminRepo(ctx);
+  const repo = timedAdminRepo(ctx);
   if (!repo) return repoNotFound(ctx);
-  const listed = listPromptSources(ctx.app, ctx.auth.user, repo);
-  return settingsPageResponse(
-    ctx,
-    repo,
-    "prompts",
-    "Prompts",
-    promptsView(repoBase(repo), listed.ok ? listed.value : []),
+  const listed = timePhase(ctx.request, "sources", () => listPromptSources(ctx.app, ctx.auth.user, repo));
+  return timePhase(ctx.request, "render", () =>
+    settingsPageResponse(
+      ctx,
+      repo,
+      "prompts",
+      "Prompts",
+      promptsView(repoBase(repo), listed.ok ? listed.value : []),
+    ),
   );
 }
 
@@ -1707,7 +1760,7 @@ function colorField(value: string, label: string): Html {
       name="color"
       value="#${value}"
       aria-label="${label}"
-    /><span class="hex">#${value}</span></span
+    /><span class="mono muted" data-hex>#${value}</span></span
   >`;
 }
 
@@ -1739,10 +1792,11 @@ function labelEditor(base: string, label: Label): Html {
 }
 
 export function labelsPage(ctx: Ctx): Response {
-  const repo = loadAdminRepo(ctx);
+  const repo = timedAdminRepo(ctx);
   if (!repo) return repoNotFound(ctx);
+  const labels = timePhase(ctx.request, "labels", () => listLabels(ctx.app.db, repo.id));
+  const rendering = performance.now();
   const base = repoBase(repo);
-  const labels = listLabels(ctx.app.db, repo.id);
 
   const list =
     labels.length === 0
@@ -1775,7 +1829,7 @@ export function labelsPage(ctx: Ctx): Response {
 
   const body = html`${list}
     <div class="mt">${create}</div>`;
-  return settingsPageResponse(
+  const response = settingsPageResponse(
     ctx,
     repo,
     "labels",
@@ -1783,6 +1837,8 @@ export function labelsPage(ctx: Ctx): Response {
     body,
     labelCss(labels),
   );
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 export async function labelCreate(ctx: Ctx): Promise<Response> {
@@ -1806,7 +1862,7 @@ export async function labelCreate(ctx: Ctx): Promise<Response> {
           message:
             created.error === "taken"
               ? "This repository already has a label by that name."
-              : "A label needs a name and a six-digit hex color.",
+              : LABEL_WORDS.shape,
         },
   );
 }
@@ -1835,7 +1891,7 @@ export async function labelUpdate(ctx: Ctx): Promise<Response> {
               ? "This repository already has a label by that name."
               : updated.error === "not_found"
                 ? "That label no longer exists."
-                : "A label needs a name and a six-digit hex color.",
+                : LABEL_WORDS.shape,
         },
   );
 }
@@ -1862,10 +1918,16 @@ export async function labelDelete(ctx: Ctx): Promise<Response> {
 // ---- webhooks ----
 
 export function hooksPage(ctx: Ctx): Response {
-  const repo = loadAdminRepo(ctx);
+  const repo = timedAdminRepo(ctx);
   if (!repo) return repoNotFound(ctx);
+  const hooks = timePhase(ctx.request, "hooks", () => listWebhooks(ctx.app.db, repo.id));
+  const recent = timePhase(
+    ctx.request,
+    "deliveries",
+    () => new Map(hooks.map((h) => [h.id, recentDeliveries(ctx.app.db, h.id, 10)] as const)),
+  );
+  const rendering = performance.now();
   const base = repoBase(repo);
-  const hooks = listWebhooks(ctx.app.db, repo.id);
 
   const list =
     hooks.length === 0
@@ -1875,7 +1937,7 @@ export function hooksPage(ctx: Ctx): Response {
           note: "Every event this repository produces can be POSTed to a URL you control, signed and retried.",
         })
       : html`${hooks.map((hook) => {
-          const deliveries = recentDeliveries(ctx.app.db, hook.id, 10);
+          const deliveries = recent.get(hook.id) ?? [];
           return card(
             deliveries.length === 0
               ? html`<p class="muted small">No deliveries yet.</p>`
@@ -1972,7 +2034,9 @@ export function hooksPage(ctx: Ctx): Response {
 
   const body = html`${list}
     <div class="mt">${create}</div>`;
-  return settingsPageResponse(ctx, repo, "hooks", "Webhooks", body);
+  const response = settingsPageResponse(ctx, repo, "hooks", "Webhooks", body);
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 export async function webhookCreate(ctx: Ctx): Promise<Response> {
@@ -2021,8 +2085,9 @@ export async function webhookDelete(ctx: Ctx): Promise<Response> {
 // ---- danger zone ----
 
 export function dangerPage(ctx: Ctx): Response {
-  const repo = loadAdminRepo(ctx);
+  const repo = timedAdminRepo(ctx);
   if (!repo) return repoNotFound(ctx);
+  const rendering = performance.now();
   const base = repoBase(repo);
   const full = `${repo.ownerName}/${repo.name}`;
 
@@ -2039,16 +2104,18 @@ export function dangerPage(ctx: Ctx): Response {
       <div class="form-actions">
         ${confirmAction({
           action: `${base}/settings/delete`,
-          verb: "Delete this repository",
+          verb: DELETE_REPO,
         })}
       </div>`,
     {
       tone: "danger",
       head: html`${icon("alert")}
-        <h2>Delete this repository</h2>`,
+        <h2>${DELETE_REPO}</h2>`,
     },
   );
-  return settingsPageResponse(ctx, repo, "danger", "Danger zone", body);
+  const response = settingsPageResponse(ctx, repo, "danger", "Danger zone", body);
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 /**

@@ -17,6 +17,70 @@ const FAIL_LINE = /^\(fail\) (.+?)(?: \[[0-9.]+m?s\])?(?: \[shard [0-9]+\])?$/;
 const PASS_COUNT = /^\s*(\d+) pass$/;
 const FAIL_COUNT = /^\s*(\d+) fail$/;
 
+const HEADER = /^(\S+\.test\.[cm]?[jt]sx?):$/;
+const UNNAMED_FAIL = /^\(fail\) ((?:.* > )?)\(unnamed\)/;
+/** bun's own caret line under a hook that timed out, printed right after its `(fail)`. */
+const HOOK_TIMEOUT = /^\s*\^ a (\S+) hook timed out/;
+/** bun prints what a hook or stray promise threw just above its `(fail)`. */
+const THROWN = /^(?:[A-Za-z]*Error|error): .+/;
+const RESULT_LINE = /^\((?:fail|pass)\) /;
+const MAX_THROWN = 120;
+/** The tail that ends a file's report; bun's recap of `(fail)` lines can follow, headerless. */
+const SUMMARY = /^\s*\d+ pass$|^\d+ tests? failed:$/;
+
+/**
+ * The first error bun printed since the previous result line, printable only,
+ * with any directory prefix of a path dropped so no machine path is shown.
+ */
+function thrownSince(lines: readonly string[], from: number, to: number): string {
+  for (let j = from; j < to; j++) {
+    if (!THROWN.test(lines[j]!)) continue;
+    const text = lines[j]!
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
+      .replace(/(?<![\w.])\/(?:[\w.@-]+\/)+/g, "")
+      .trim();
+    return `: ${text.slice(0, MAX_THROWN)}`;
+  }
+  return "";
+}
+
+/**
+ * bun labels a failure that belongs to no test — a hook that timed out or
+ * threw — `(unnamed)`, so every such red looked like one. Each is renamed
+ * for the file whose header precedes it, and for the hook when bun's caret
+ * line under it says one: `a.test.ts > beforeEach/afterEach (timeout)`.
+ * A hook that threw keeps bun's own describe prefix and gains the error bun
+ * printed above it: `a.test.ts > s > (unnamed): error: database is closed`.
+ * Once the summary starts no file is current until the next header, so a
+ * recap's `(fail)` lines are never given the last file's name.
+ */
+export function nameUnnamed(lines: readonly string[]): string[] {
+  let file: string | undefined;
+  let segment = 0;
+  return lines.map((line, i) => {
+    const header = HEADER.exec(line);
+    if (header) {
+      file = header[1];
+      segment = i + 1;
+      return line;
+    }
+    if (SUMMARY.test(line)) file = undefined;
+    const unnamed = UNNAMED_FAIL.exec(line);
+    if (RESULT_LINE.test(line)) {
+      const from = segment;
+      segment = i + 1;
+      if (!unnamed || file === undefined) return line;
+      const timeout = HOOK_TIMEOUT.exec(lines[i + 1] ?? "");
+      const what = timeout
+        ? `${timeout[1]} (timeout)`
+        : `${unnamed[1]}(unnamed)${thrownSince(lines, from, i)}`;
+      return `(fail) ${file} > ${what}${line.slice(unnamed[0].length)}`;
+    }
+    return line;
+  });
+}
+
 /** How many failing names are kept — a run with forty failures still fits on one line. */
 export const MAX_FAILING_NAMES = 3;
 
@@ -33,7 +97,7 @@ export function parseBunTestFailure(
   const names: string[] = [];
   let passed: number | undefined;
   let failed: number | undefined;
-  for (const line of lines) {
+  for (const line of nameUnnamed(lines)) {
     const fail = FAIL_LINE.exec(line);
     if (fail) {
       if (names.length < MAX_FAILING_NAMES && !names.includes(fail[1]!))

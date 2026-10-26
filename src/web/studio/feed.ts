@@ -15,12 +15,16 @@ import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { placementsOf, type Placement } from "../../core/placements.ts";
 import { recentThoughts, type Thought } from "../../core/thoughts.ts";
-import { readFeed } from "../../feed/feed.ts";
+import { parseCursor, readFeedPage } from "../../feed/feed.ts";
 import type { FeedItem } from "../../feed/rank.ts";
+import { getAppByRepo } from "../../core/apps.ts";
+import { getRepo, getRepoById } from "../../core/repos.ts";
+import { DEFAULT_PAGE, looksForEnv, lookUrl } from "../../core/looks.ts";
+import { mayFetchLook, pictured } from "../pages/looks.ts";
 import { html, type Html } from "../html.ts";
 import { fragment } from "../layout.ts";
 import { outboxJs } from "../outbox.ts";
-import { avatar, btn, card, disclosure, empty, nameMark, timeAgo } from "../ui.ts";
+import { avatar, btn, card, disclosure, empty, nameMark, stateBadge, time, timeAgo } from "../ui.ts";
 import { writableAppsOf } from "./asks.ts";
 
 /** Events that can change what the feed says. */
@@ -55,6 +59,44 @@ const saysMore = (item: FeedItem): boolean =>
   !item.reason.startsWith(item.what) &&
   !/^because you (own|work on|pinned) /.test(item.reason);
 
+/** A look post's thumbnail: its address and the size it is drawn at, so nothing shifts. */
+export interface FeedPicture {
+  readonly src: string;
+  readonly width: number;
+  readonly height: number;
+}
+
+/** The thumbnail is drawn at 160×100, the thumb's 8:5. */
+export const FEED_PICTURE = { width: 160, height: 100 } as const;
+
+/**
+ * The thumbnail each look post shows, by post id — only one this viewer
+ * may fetch (`mayFetchLook`), so a post never carries a broken image.
+ */
+export function picturesFor(ctx: Ctx, items: readonly FeedItem[]): Map<string, FeedPicture> {
+  const out = new Map<string, FeedPicture>();
+  for (const item of items) {
+    if (item.kind !== "look" || item.look === undefined) continue;
+    const [owner = "", name = ""] = item.app.split("/");
+    const repo = getRepo(ctx.app.db, owner, name);
+    const record = repo && getAppByRepo(ctx.app.db, repo.id);
+    if (!repo || !record) continue;
+    const home = looksForEnv(ctx.app.db, record.id, item.look.env).filter(
+      (l) => l.page === DEFAULT_PAGE && l.commitOid === item.look!.commitOid,
+    );
+    const thumb = pictured(home, "thumb");
+    if (thumb === undefined || !mayFetchLook(ctx, repo, record, thumb)) continue;
+    out.set(item.id, { src: lookUrl(`/${repo.ownerName}/${repo.name}`, thumb), ...FEED_PICTURE });
+  }
+  return out;
+}
+
+/** How a pull or an issue ended, as the quiet word beside a post's time. */
+function settledBadge(settled: FeedItem["settled"]): Html | null {
+  if (settled === undefined) return null;
+  return stateBadge(settled === "merged" ? "merged" : "closed", settled === "parked");
+}
+
 /**
  * One post: who, where and when; what it says, as a link into the thing;
  * why, when that is news; and one quiet control for the rest — say
@@ -63,6 +105,7 @@ const saysMore = (item: FeedItem): boolean =>
 export function feedCard(
   item: FeedItem,
   marks: ReadonlyMap<string, Mark> = new Map(),
+  picture?: FeedPicture,
 ): Html {
   const steer = item.kind === "run" || item.kind === "cost";
   const target = steer && RUN_LINK.test(item.link) ? `${item.link}/steer` : null;
@@ -70,9 +113,15 @@ export function feedCard(
       <strong>${item.actor ?? item.app}</strong
       >${nameMark(item.actor === null ? undefined : marks.get(item.actor))}
       <span class="muted small">${item.app} · ${timeAgo(item.at)}</span>
+      ${settledBadge(item.settled)}
       <span class="spacer"></span>
       <span class="badge">${KIND_LABEL[item.kind]}</span>`;
   const body = html`<p class="break"><a href="${item.link}" data-feed-open>${item.what}</a></p>
+    ${picture === undefined
+      ? null
+      : html`<a class="look" data-slot="feed" href="${item.link}" tabindex="-1" aria-hidden="true"
+          ><img src="${picture.src}" width="${picture.width}" height="${picture.height}" alt="" loading="lazy" decoding="async"
+        /></a>`}
     ${saysMore(item) ? html`<p class="small muted break">${item.reason}</p>` : null}`;
   const foot = disclosure(
     `${target ? "Steer" : "Tell"} · more`,
@@ -125,10 +174,10 @@ export function thoughtCard(thought: Thought, who: string, placement?: Placement
 
 /** The planner's answer under a thought: one or two lines, `#N` linking to the issue it names. */
 export function replyUnder(placement: Placement): Html {
-  const where = new Map(placement.placed.map((p) => [p.number, p.repo]));
+  const where = new Map(placement.placed.map((p) => [p.number, `${p.repo}/${p.pull === p.number ? "pulls" : "issues"}`]));
   const parts = placement.reply.split(/(#\d+)/).map((part) => {
     const repo = /^#(\d+)$/.test(part) ? where.get(Number(part.slice(1))) : undefined;
-    return repo === undefined ? part : html`<a href="/${repo}/issues/${part.slice(1)}">${part}</a>`;
+    return repo === undefined ? part : html`<a href="/${repo}/${part.slice(1)}">${part}</a>`;
   });
   return html`<p class="small break" data-placement="${placement.kind}"><span class="muted">Planner · ${placement.kind}</span> ${parts}</p>`;
 }
@@ -169,7 +218,8 @@ export function composer(ctx: Ctx, user: User): Html {
     action: html`${btn("New app", { href: "/apps/new", variant: "primary" })}
       ${btn("Repositories", { href: `/${user.username}` })}`,
   })}`;
-  const form = html`<form id="composer" class="composer" method="post" action="/tell">
+  const form = html`<form id="composer" class="card" method="post" action="/tell">
+    <div class="card-body stack">
     <textarea class="input" name="text" rows="2" maxlength="2000" required placeholder="Tell the crew what should change" aria-label="Tell the crew">${sharedDraft(ctx.url.searchParams)}</textarea>
     <div class="bar">
       ${repos.length === 0
@@ -180,6 +230,7 @@ export function composer(ctx: Ctx, user: User): Html {
       </select>`}
       <span class="spacer"></span>
       ${btn("Post", { variant: "primary" })}
+    </div>
     </div>
   </form>`;
   return repos.length === 0 ? html`${form}${noApps}` : form;
@@ -240,7 +291,15 @@ function chipsBar(user: User, ctx: Ctx, items: readonly FeedItem[]): Html {
 function readRegion(user: User, ctx: Ctx) {
   // What needs you is pinned above the timeline (`needsYouSection`), so an
   // ask is never a second time a post below it; the feed API keeps them.
-  const items = readFeed(ctx.app.db, user, { limit: FEED_FIRST_PAGE, withoutAsks: true }).items;
+  // `?cursor=` is a page the line below the last post pointed at; one not issued here is the first page.
+  const cursor = parseCursor(ctx.url.searchParams.get("cursor") ?? "");
+  const page = readFeedPage(ctx.app.db, user, {
+    limit: FEED_FIRST_PAGE,
+    withoutAsks: true,
+    phase: (name, ms) => notePhase(ctx.request, name, ms),
+    ...(cursor === undefined ? {} : { cursor }),
+  });
+  const items = page.items;
   const thoughts = recentThoughts(ctx.app.db, user.id, THOUGHTS_SHOWN, new Date(Date.now() - THOUGHT_AGE_MS).toISOString());
   const placed = placementsOf(ctx.app.db, thoughts.map((t) => t.id));
   // Who each poster is, asked once for the page (`core/marks.ts`).
@@ -248,7 +307,10 @@ function readRegion(user: User, ctx: Ctx) {
     ctx.app.db,
     items.map((item) => item.actor ?? ""),
   );
-  return { items, thoughts, placed, marks };
+  const quiet = page.quiet;
+  const quietRepo = quiet.repoId === null ? undefined : getRepoById(ctx.app.db, quiet.repoId);
+  const quietLink = quietRepo === undefined ? "/explore" : `/${quietRepo.ownerName}/${quietRepo.name}/runs?kind=agent`;
+  return { items, next: page.next_cursor, cursor, thoughts, placed, marks, pictures: picturesFor(ctx, items), quiet: quiet.count, quietLink };
 }
 
 /** The region: cards, or one line saying there is nothing to do. */
@@ -256,14 +318,33 @@ export function feedRegion(user: User, ctx: Ctx): Html {
   return drawRegion(user, ctx, readRegion(user, ctx));
 }
 
+/**
+ * The line under the last post: how far back the page reaches and the way
+ * to older ones, or that there is nothing older.
+ */
+export function caughtUp(items: readonly FeedItem[], next: string | null, cursor?: unknown): Html | null {
+  // Ranked by score, not time: the last card is not always the oldest.
+  const oldest = items.reduce<string | undefined>((min, item) => (min === undefined || item.at < min ? item.at : min), undefined);
+  if (oldest === undefined) return null;
+  const newest = cursor === undefined ? html`` : html`<a href="/">Newest</a>`;
+  return next === null
+    ? html`<p class="bar muted small" data-caught-up="end"><span>That's everything</span><span class="spacer"></span>${newest}</p>`
+    : html`<p class="bar muted small" data-caught-up="more">
+        <span>You're caught up to ${time(oldest)}</span>
+        <span class="spacer"></span>
+        ${newest}
+        <a href="/?cursor=${encodeURIComponent(next)}">Older posts</a>
+      </p>`;
+}
+
 function drawRegion(user: User, ctx: Ctx, read: ReturnType<typeof readRegion>): Html {
-  const { items, thoughts, placed, marks } = read;
+  const { items, next, cursor, thoughts, placed, marks, pictures, quiet, quietLink } = read;
   return html`<section
     id="live-feed"
     class="feed"
     aria-label="Feed"
     data-live="${FEED_LIVE}"
-    data-live-src="/live/feed"
+    data-live-src="/live/feed${cursor === undefined ? "" : `?cursor=${encodeURIComponent(`${cursor.score}|${cursor.id}`)}`}"
   >
     ${chipsBar(user, ctx, items)}
     ${thoughts.map((t) => thoughtCard(t, user.username, placed.get(t.id)))}
@@ -273,7 +354,11 @@ function drawRegion(user: User, ctx: Ctx, read: ReturnType<typeof readRegion>): 
           title: "Nothing new",
           note: "When something happens in your apps, it lands here.",
         })
-      : items.map((item) => feedCard(item, marks))}
+      : items.map((item) => feedCard(item, marks, pictures.get(item.id)))}
+    ${quiet === 0
+      ? ""
+      : html`<p class="small muted"><a href="${quietLink}">${quiet} quiet ${quiet === 1 ? "run" : "runs"} in the last 24 h</a></p>`}
+    ${caughtUp(items, next, cursor)}
   </section>`;
 }
 
@@ -375,7 +460,7 @@ ${outboxJs}
       .catch(function () { fail(c, was, 'The filter was not saved because there is no connection. Check it and press the chip again.'); });
   }
   function refetch(kind, value) {
-    return fetch('/live/feed', { headers: { accept: 'text/html' }, credentials: 'same-origin' })
+    return fetch(feed.getAttribute('data-live-src') || '/live/feed', { headers: { accept: 'text/html' }, credentials: 'same-origin' })
       .then(function (r) { if (!r.ok) throw r; return r.text(); })
       .then(function (text) {
         var holder = document.createElement('template');

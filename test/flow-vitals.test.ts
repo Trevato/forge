@@ -1,0 +1,129 @@
+/** The flow vitals (#5935): home, the tick line and the MCP `flow` tool read the same three numbers from seeded pulls. */
+import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createApp } from "../src/app.ts";
+import { createRepo } from "../src/core/repos.ts";
+import { createUser } from "../src/core/users.ts";
+import { serve } from "../src/http/server.ts";
+import { id } from "../src/kernel/id.ts";
+import { flowVitals } from "../src/crew/autonomy.ts";
+import { flowFor } from "../src/system/telemetry.ts";
+import { flowLines } from "../src/tui/screens/flow.ts";
+import { vitalsLine, readVitals, vitalsMisses, vitalsWords } from "../src/flow/vitals.ts";
+
+const NOW = new Date();
+const ago = (h: number) => new Date(NOW.getTime() - h * 3_600_000).toISOString();
+
+describe("flow vitals", () => {
+  test("home, the tick line and the MCP flow tool say the same numbers", async () => {
+    const root = mkdtempSync(join(tmpdir(), "forge-vitals-"));
+    const app = createApp({ dataDir: root, port: 0 });
+    const servers = await serve(app);
+    try {
+      const made = await createUser(app.db, { username: "alice", email: "alice@forge.test", password: "a-good-passphrase", origin: "seed", trusted: true, adminIfFirst: true });
+      if (!made.ok) throw new Error(made.error);
+      const repo = await createRepo(app.db, app.reposRoot, { ownerId: made.value.id, name: "v", visibility: "public", description: "v" });
+      if (!repo.ok) throw new Error(repo.error);
+      const branch = repo.value.defaultBranch;
+      let n = 0;
+      const pull = (opened: string, merged: string | null, state: string) => {
+        const issueId = id();
+        n++;
+        app.db
+          .query(`INSERT INTO issue (id, repo_id, number, kind, title, body, author_id, state, created_at) VALUES (?1, ?2, ?3, 'pull', ?4, '', ?5, ?6, ?7)`)
+          .run(issueId, repo.value.id, n, `P${n}`, made.value.id, state, opened);
+        app.db
+          .query(`INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, head_repo_id, merged_at) VALUES (?1, ?2, ?3, '', '', ?4, ?5)`)
+          .run(issueId, branch, `b/${n}`, repo.value.id, merged);
+        return issueId;
+      };
+      pull(ago(0.5), null, "open"); // open, opened in the hour
+      const clash = pull(ago(3), null, "open"); // open, opened in 6 h, conflicted
+      pull(ago(20), null, "open"); // open, old
+      pull(ago(4), ago(0.2), "closed"); // landed in the hour
+      pull(ago(30), ago(5), "closed"); // landed in 6 h only
+      pull(ago(30), ago(10), "closed"); // landed long ago
+      app.db
+        .query(`INSERT INTO run (id, repo_id, kind, issue_id, state, reason, created_at) VALUES (?1, ?2, 'agent', ?3, 'queued', 'conflict', ?4)`)
+        .run(id(), repo.value.id, clash, ago(1));
+
+      const v = readVitals(app.db, NOW);
+      expect(v).toEqual({ open: 3, opened1h: 1, landed1h: 1, opened6h: 3, landed6h: 2, conflicted: 1 });
+      expect(vitalsMisses(v)).toEqual(["landed 2 < opened 3 over 6 h"]);
+
+      const tick = flowVitals(app.db, NOW);
+      expect(tick.pulls).toBe("open 3, opened/landed 1/1 in 1 h, 3/2 in 6 h, conflicted 1");
+      expect(tick.pulls).toBe(vitalsWords(v));
+      expect(tick.offTarget).toBe("landed 2 < opened 3 over 6 h");
+
+      const mcp = flowFor(app, { kind: "owner" } as Parameters<typeof flowFor>[1], NOW).vitals;
+      expect(mcp).toMatchObject(v);
+      expect(mcp.says).toContain("3 open pulls");
+
+      const signin = await fetch(`${servers.url}/signin`, {
+        method: "POST",
+        headers: { origin: servers.url },
+        body: new URLSearchParams({ username: "alice", password: "a-good-passphrase" }),
+        redirect: "manual",
+      });
+      const cookie = (signin.headers.get("set-cookie") ?? "").split(";")[0]!;
+      const home = await (await fetch(`${servers.url}/`, { headers: { cookie } })).text();
+      expect(home).toContain(">3 open pulls</a> · 1 opened, 1 landed in 1 h · 3 opened, 2 landed in 6 h · 1 conflicted");
+    } finally {
+      await servers.stop();
+      app.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test("an agent reads public repositories alone; the owner reads all", async () => {
+    const root = mkdtempSync(join(tmpdir(), "forge-vitals-"));
+    const app = createApp({ dataDir: root, port: 0 });
+    try {
+      const made = await createUser(app.db, { username: "alice", email: "alice@forge.test", password: "a-good-passphrase", origin: "seed", trusted: true, adminIfFirst: true });
+      if (!made.ok) throw new Error(made.error);
+      let n = 0;
+      for (const visibility of ["public", "private"] as const) {
+        const repo = await createRepo(app.db, app.reposRoot, { ownerId: made.value.id, name: visibility, visibility, description: "v" });
+        if (!repo.ok) throw new Error(repo.error);
+        for (const merged of [null, ago(0.2)]) {
+          const issueId = id();
+          n++;
+          app.db
+            .query(`INSERT INTO issue (id, repo_id, number, kind, title, body, author_id, state, created_at) VALUES (?1, ?2, ?3, 'pull', ?4, '', ?5, ?6, ?7)`)
+            .run(issueId, repo.value.id, n, `P${n}`, made.value.id, merged === null ? "open" : "closed", ago(0.5));
+          app.db
+            .query(`INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, head_repo_id, merged_at) VALUES (?1, ?2, ?3, '', '', ?4, ?5)`)
+            .run(issueId, repo.value.defaultBranch, `b/${n}`, repo.value.id, merged);
+        }
+      }
+      const owner = flowFor(app, { kind: "owner" } as Parameters<typeof flowFor>[1], NOW).vitals;
+      const agent = flowFor(app, { kind: "agent" } as Parameters<typeof flowFor>[1], NOW).vitals;
+      expect(owner).toMatchObject({ open: 2, opened1h: 4, landed1h: 2 });
+      expect(agent).toMatchObject({ open: 1, opened1h: 2, landed1h: 1 });
+      // The terminal's Flow dialog says the same: whole for the owner, public alone for an agent.
+      expect(flowLines(app.db, NOW).join(" ").replace(/\s+/g, " ")).toContain(vitalsLine(owner));
+      const cut = flowLines(app.db, NOW, [], { queues: [] }).join(" ").replace(/\s+/g, " ");
+      expect(cut).toContain(vitalsLine(agent));
+      expect(cut).not.toContain(vitalsLine(owner));
+    } finally {
+      app.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test("an empty forge reads zeros and misses nothing", async () => {
+    const root = mkdtempSync(join(tmpdir(), "forge-vitals-"));
+    const app = createApp({ dataDir: root, port: 0 });
+    try {
+      const v = readVitals(app.db, NOW);
+      expect(Object.values(v)).toEqual([0, 0, 0, 0, 0, 0]);
+      expect(vitalsMisses(v)).toEqual([]);
+    } finally {
+      app.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

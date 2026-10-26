@@ -140,24 +140,13 @@ fieldset.field > .check + .check { margin-top: 8px; }
 .field-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; }
 .field-row .field { flex: 1; min-width: 160px; margin-bottom: 0; }
 .form-actions { margin-top: 16px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-/* A passkey ceremony's note slot looks like an error only once it says one. */
-.error-note, .passkey-note:not(:empty) {
+.error-note {
   display: block; color: var(--danger); font-size: 13px; font-weight: 500;
   padding: 8px 12px; margin: 0 0 12px;
   border: 1px solid color-mix(in srgb, var(--danger) 32%, transparent);
   background: color-mix(in srgb, var(--danger) 10%, transparent);
   border-radius: var(--radius-sm);
 }
-/* Where a passkey can run — a script, and a browser with WebAuthn, which
-   passkey-client.ts marks as :root.passkey — .passkey-on shows and
-   .passkey-off hides; everywhere else the other way round. Only ever hides,
-   so each element keeps its own display. */
-:root:not(.passkey) .passkey-on, :root.passkey .passkey-off { display: none; }
-/* /signin's passkey lead: a full-width button whose note takes no room until
-   it says something. */
-.passkey-lead { margin-bottom: 16px; }
-.passkey-lead > .btn { width: 100%; }
-.passkey-lead > .passkey-note:not(:empty) { margin: 8px 0 0; }
 
 /* ---- stat tile ---- fixed heights: a changing value shifts nothing */
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
@@ -348,7 +337,7 @@ a.sha:hover { color: var(--accent); }
 /* Cards stacked in normal flow space themselves. Inside a container that
    already manages its own spacing with gap, that margin would double it. */
 .card + .card { margin-top: 12px; }
-:is(.stack, .dash, .split, .timeline) > .card + .card { margin-top: 0; }
+:is(.stack, .split, .timeline) > .card + .card { margin-top: 0; }
 .card-head {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--muted);
@@ -378,6 +367,8 @@ a.sha:hover { color: var(--accent); }
 .look img { display: block; width: 100%; height: auto; }
 .look[data-slot="thumb"] { flex: none; width: 30px; height: 40px; border-radius: 4px; }
 .look[data-slot="thumb"] img { height: 100%; object-fit: cover; object-position: top; }
+.look[data-slot="feed"] { width: 160px; height: 100px; margin-top: 6px; }
+.look[data-slot="feed"] img { height: 100%; object-fit: cover; object-position: top; }
 .look[data-slot="now"] { flex: none; width: 168px; }
 .looks { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
 .looks > [data-slot="phone"] { flex: 0 0 200px; }
@@ -386,7 +377,7 @@ a.sha:hover { color: var(--accent); }
 .looks[data-compare] { gap: 20px; }
 .looks[data-compare] > * { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 @media (max-width: 640px) {
-  .looks:not([data-compare]) { flex-direction: column; }
+  .looks:not([data-compare]):not([data-look] .looks) { flex-direction: column; }
   .looks > [data-slot="phone"] { flex-basis: auto; width: 200px; }
 }
 
@@ -404,6 +395,11 @@ a.row:hover, .row[data-nav]:hover { background: var(--muted); color: inherit; }
 .row-children { list-style: none; margin: 0 0 0 22px; padding: 0; border-left: 1px solid var(--border); }
 .row-children > li { border-top: 1px solid var(--border); }
 @media (max-width: 719px) { .row-children { margin-left: 12px; } }
+/* A row's look thumbs (/review): inset like a row, side by side at any width; the link's hit area grows to 44px. */
+.row-children > [data-look] { padding: 8px 14px; }
+[data-look] .looks { flex-wrap: nowrap; gap: 10px; align-items: center; }
+[data-look] a.look { position: relative; overflow: visible; }
+[data-look] a.look::after { content: ""; position: absolute; inset: -7px; }
 a.row:hover .row-title { color: var(--accent); }
 .row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .row-title {
@@ -447,10 +443,13 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
    they wrap under the text before they would clip, at any width. */
 .row-fields { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .row-fields .input { min-width: 0; max-width: 100%; }
+/* A number beside its label in a settings row stays a few digits wide. */
+.row-fields .input[type="number"] { width: 5em; }
 .row-fields .check { align-items: center; }
 .setting-list .row { flex-wrap: wrap; align-items: flex-start; }
 .setting-list .row-main { flex: 1 1 18rem; }
 .setting-list .row-title, .setting-list .row-meta { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+.setting-list .record-value { user-select: all; }
 .setting-list .row-trail { flex: 0 1 auto; max-width: 100%; }
 @media (max-width: 640px) { .setting-list .row-trail { flex-basis: 100%; } }
 @media (pointer: coarse) { .row-actions { opacity: 1; } .row { min-height: 44px; } }
@@ -480,7 +479,6 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 .color-field input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
 .color-field input[type="color"]::-webkit-color-swatch { border: 1px solid var(--border-strong); border-radius: 999px; }
 .color-field input[type="color"]::-moz-color-swatch { border: 1px solid var(--border-strong); border-radius: 999px; }
-.color-field .hex { font-family: var(--mono); font-size: 12.5px; color: var(--muted-fg); }
 @media (pointer: coarse) { .color-field { min-height: 44px; } }
 @media (max-width: 719px) {
   .edit-row { align-items: stretch; }
@@ -638,29 +636,13 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 }
 .topbar-search kbd { flex: none; }
 
-/* ---- theme switcher ---- */
-.theme-option {
-  display: flex; align-items: center; gap: 10px;
-  padding: 6px 10px; margin: 0; border-radius: var(--radius-sm);
-  font-size: 14px; font-weight: 400; cursor: pointer;
-  transition: background-color 100ms var(--ease);
-}
-.theme-option:hover { background: var(--muted); }
-.theme-option input { position: absolute; opacity: 0; pointer-events: none; }
-.theme-option .tick {
-  margin-left: auto; color: var(--accent); opacity: 0;
-  transition: opacity 140ms var(--ease);
-}
-.theme-option:has(input:checked) { background: color-mix(in srgb, var(--accent) 10%, transparent); }
-.theme-option:has(input:checked) .tick { opacity: 1; }
-.theme-option:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* ---- theme swatch: the colour chip beside each theme in the menu's picker ---- */
 .swatch {
   display: inline-block; flex: none; position: relative;
   width: 20px; height: 20px; border-radius: 999px;
   border: 1px solid var(--border-strong);
 }
 .swatch::after { content: ""; position: absolute; inset: 6px; border-radius: 999px; }
-.theme-apply { margin: 6px 10px 8px; }
 
 /* ---- dialog (progressive: every dialog has a real page behind it) ---- */
 .dialog {
@@ -765,7 +747,7 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 }
 .toast[data-tone="attn"] .ico { color: var(--attn); }
 .toast .toast-body { flex: 1; min-width: 0; }
-.toast code, .toast .clone { display: block; margin-top: 6px; }
+.toast code { display: block; margin-top: 6px; }
 
 /* ---- tooltip ---- */
 [data-tip] { position: relative; }
@@ -826,6 +808,7 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
   min-height: 32px;
 }
+.tl-earlier { margin: 0; padding-left: 36px; color: var(--muted-fg); font-size: 13px; }
 .tl-item[data-kind="comment"] .card { margin: 0; }
 .tl-item[data-kind="event"] > .card { flex-basis: 100%; margin: 4px 0 0; color: var(--fg); font-size: 14px; }
 .tl-item[data-kind="event"] > .card .comment-body { padding: 8px 12px; }
@@ -844,10 +827,18 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 .empty .ico { color: var(--faint); width: 20px; height: 20px; }
 .empty h2, .empty .empty-title {
   font-size: 15px; font-weight: 600; color: var(--fg); text-wrap: balance; margin: 0;
+  overflow-wrap: anywhere;
 }
 .empty p { font-size: 13px; max-width: 320px; text-wrap: pretty; margin: 0; }
 .empty .btn { margin-top: 8px; }
 .card.empty { border-style: dashed; box-shadow: none; }
+
+/* ---- board panel grid: a board's panels, on /boards and pinned in the studio ---- */
+.bgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.bp-w2 { grid-column: span 2; }
+.bp-w3 { grid-column: span 3; }
+.bgrid h2 { font-size: 14px; }
+@media (max-width: 720px) { .bgrid { grid-template-columns: minmax(0, 1fr); } .bp-w2, .bp-w3 { grid-column: auto; } }
 
 /* ---- settings shell ---- */
 .settings { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; margin-top: 16px; }
@@ -872,19 +863,6 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
   }
 }
 
-/* ---- clone strip ---- */
-.clone {
-  display: flex; align-items: center; gap: 6px;
-  font-family: var(--mono); font-size: 12.5px;
-  padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm);
-  background: var(--muted); min-width: 0;
-}
-.clone > .clone-text {
-  flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap;
-  scrollbar-width: none; user-select: all;
-}
-.clone > .clone-text::-webkit-scrollbar { display: none; }
-
 /* ---- sticky primary action (thumb reach on a phone) ---- */
 .sticky-action {
   position: sticky; bottom: 0; z-index: 8;
@@ -896,15 +874,15 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 @media (min-width: 720px) { .sticky-action { position: static; background: none; padding: 0; } .sticky-action .btn { flex: none; } }
 
 /* ---- live updates ---- */
-.live-pill {
-  position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 25;
-  padding: 0 14px; min-height: 36px; display: inline-flex; align-items: center; gap: 6px;
-  background: var(--primary); color: var(--primary-fg); border-radius: 999px;
-  font-size: 13px; font-weight: 500; box-shadow: var(--shadow-2);
+.live-news {
+  position: fixed; left: 0; right: 0; bottom: 20px; z-index: 25;
+  display: flex; justify-content: center; pointer-events: none;
+}
+.live-news .badge {
+  pointer-events: auto; min-height: 36px; padding: 0 14px; font-size: 13px;
+  background: var(--card); box-shadow: var(--shadow-2);
   animation: pop 200ms var(--ease) both;
 }
-.live-pill:hover { color: var(--primary-fg); opacity: .92; }
-.live-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 
 }
 

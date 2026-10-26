@@ -54,6 +54,18 @@ describe("the one line", () => {
   });
 });
 
+describe("owner:", () => {
+  test("is parsed as a username, written back, and ignored when hostile", () => {
+    const q = parseExploreQuery("kind:app owner:alice garden");
+    expect(q.owner).toBe("alice");
+    expect(q.text).toBe("garden");
+    expect(exploreLine(q)).toBe("kind:app owner:alice garden");
+    for (const bad of ["owner:", "owner:../x", "owner:<script>", "owner:a/b"]) {
+      expect(parseExploreQuery(bad).owner).toBeUndefined();
+    }
+  });
+});
+
 describe("explore", () => {
   let dataDir: string;
   let app: App;
@@ -237,6 +249,30 @@ describe("explore", () => {
     expect(names(told.items)).toEqual(names((await api("kind:app sort:ships", bobToken)).items));
   });
 
+  test("owner: keeps one account's apps; a person row links its apps there", async () => {
+    expect(names((await api("kind:app owner:alice")).items).sort()).toEqual(["alice/gated", "alice/loved", "alice/quiet"]);
+    expect(names((await api("kind:app owner:bob")).items)).toEqual(["bob/busy"]);
+    expect(names((await api("owner:bob")).items).sort()).toEqual(["bob", "bob/busy"]);
+    expect((await api("kind:app owner:..")).items).toEqual([]);
+    const page = await (await fetch(`${base}/explore?q=kind:person`)).text();
+    expect(page).toContain(`href="/explore?q=${encodeURIComponent("kind:app owner:bob")}">1 app</a>`);
+  });
+
+  test("a hostile owner stays escaped text on the page", async () => {
+    const page = await (await fetch(`${base}/explore?q=${encodeURIComponent("owner:<script>alert(1)</script>")}`)).text();
+    expect(page).not.toContain("<script>alert(1)");
+    expect(page).toContain("&lt;script&gt;alert(1)");
+  });
+
+  test("the page draws §5's row and filters, and no explore- class", async () => {
+    const page = await (await fetch(`${base}/explore`)).text();
+    expect(page).toContain('class="row"');
+    expect(page).toContain('class="row-title"');
+    expect(page).toContain(`<div class="bar mb">`);
+    expect(page).not.toMatch(/class="[^"]*\bfilters\b/);
+    expect(page).not.toContain("explore-");
+  });
+
   test("a suspended account's apps and the account itself are offered to nobody", async () => {
     const sus = await user("sus");
     await appOf(sus, "susapp");
@@ -302,6 +338,18 @@ describe("explore on a forge with nothing public", () => {
       })
     ).text();
 
+  test("the Forges chip is a site admin's: current on kind:forge, sort kept, absent for a guest", async () => {
+    const chip = (q: string) => new RegExp(`<a[^>]*href="/explore\\?q=${q}"[^>]*>\\s*Forges</a\\s*>`);
+    const sorted = await get(`/explore?q=${encodeURIComponent("sort:forks")}`, true);
+    expect(sorted).toContain(`href="/explore?q=${encodeURIComponent("kind:forge sort:forks")}"`);
+    const page = await get(`/explore?q=${encodeURIComponent("kind:forge")}`, true);
+    const tag = page.match(chip("kind%3Aforge"))?.[0] ?? "";
+    expect(tag).toContain("aria-current");
+    const guest = await get(`/explore?q=${encodeURIComponent("kind:forge")}`, false);
+    expect(guest).not.toMatch(/>\s*Forges</);
+    expect(guest).toContain("Nothing");
+  });
+
   test("no query says nothing is public yet and how to make the first app", async () => {
     const out = await get("/explore", false);
     expect(out).toContain("Nothing public yet");
@@ -317,8 +365,34 @@ describe("explore on a forge with nothing public", () => {
     for (const signedIn of [false, true]) {
       const out = await get(`/explore?q=${encodeURIComponent("zzz-no-such")}`, signedIn);
       expect(out).toContain("Nothing matches");
-      expect(out).toContain("Clear the line");
+      expect(out).toContain("Nothing matches zzz-no-such");
+      expect(out).toContain("Clear all");
       expect(out).not.toContain("Nothing public yet");
     }
+  });
+
+  test("a miss names the line and offers each term as a link that drops it", async () => {
+    const out = await get(`/explore?q=${encodeURIComponent("kind:app zzz-no-such")}`, false);
+    expect(out).toContain("Nothing matches kind:app zzz-no-such");
+    expect(out).toContain(`href="/explore?q=${encodeURIComponent("zzz-no-such")}"`);
+    expect(out).toContain(`href="/explore?q=${encodeURIComponent("kind:app")}"`);
+    expect(out).toContain('href="/explore"');
+  });
+
+  test("many words and a long one sit in a wrapping group, not a list row", async () => {
+    const words = Array.from({ length: 10 }, (_, i) => `w${i}`).join(" ");
+    const long = "x".repeat(60);
+    const out = await get(`/explore?q=${encodeURIComponent(`${words} ${long}`)}`, false);
+    const group = out.slice(out.indexOf("Drop a term"));
+    expect(group).toContain('class="form-actions"');
+    expect(group.slice(0, group.indexOf("Clear all"))).not.toContain('class="row"');
+    expect(group).toContain(`>${"x".repeat(23)}…</a`);
+    expect(group).toContain(`title="Drop ${long}"`);
+  });
+
+  test("a hostile word is escaped in the title and the links", async () => {
+    const out = await get(`/explore?q=${encodeURIComponent("<script>x</script>")}`, false);
+    expect(out).not.toContain("<script>x");
+    expect(out).toContain("Nothing matches &lt;script&gt;x&lt;/script&gt;");
   });
 });

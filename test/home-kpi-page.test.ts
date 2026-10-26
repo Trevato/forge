@@ -76,7 +76,7 @@ test("home renders the nine tiles; only an admin sees them", async () => {
   expect((a.match(/class="stat" href="\/boards\/reach"/g) ?? []).length).toBe(3);
 
   // The figures count every repository, so a non-admin sees none.
-  expect(a).toContain("no ceiling");
+  expect(a).toContain("no forge ceiling");
   expect(a).toContain("last 30 days");
   expect(await home(bob)).not.toContain('class="stats mb"');
   expect(await home(bob)).not.toContain("last 30 days");
@@ -104,8 +104,8 @@ test("home passes the forge's daily ceiling to the spend tile", async () => {
     });
     const body = await res.text();
     expect(body).toContain("of $40");
-    expect(body).toContain("of the daily ceiling");
-    expect(body).not.toContain("no ceiling");
+    expect(body).toContain("of the forge ceiling");
+    expect(body).not.toContain("no forge ceiling");
   } finally {
     s.stop();
     capped.close();

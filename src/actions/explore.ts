@@ -25,8 +25,10 @@ import {
   frontWeights,
   type FrontSignals,
 } from "../core/front.ts";
+import { isSafeName } from "../git/guard.ts";
 import { canEnterApp, listReposVisibleTo, type Repo } from "../core/repos.ts";
 import { getUsersByIds, isActive, type User } from "../core/users.ts";
+import { rankInputs } from "../core/rank_inputs.ts";
 import { writeStamp } from "../core/write_clock.ts";
 import { Stamped } from "../kernel/stamped.ts";
 import { listChildren } from "./spawn.ts";
@@ -47,6 +49,8 @@ export interface ExploreQuery {
   readonly text: string;
   /** `archived:yes` — put-away repositories are in the list; off, they are not. */
   readonly archived: boolean;
+  /** `owner:<name>` — only this account's apps, and the person themself. */
+  readonly owner?: string;
 }
 
 const KINDS: Record<string, ExploreKind> = {
@@ -79,6 +83,7 @@ export function parseExploreQuery(line: string): ExploreQuery {
   let kind: ExploreKind | "all" = "all";
   let sort: ExploreSort = "score";
   let archived = false;
+  let owner: string | undefined;
   const words: string[] = [];
   for (const word of line
     .trim()
@@ -94,10 +99,17 @@ export function parseExploreQuery(line: string): ExploreQuery {
       sort = value.toLowerCase() as ExploreSort;
     else if (k === "archived" && ["yes", "no"].includes(value.toLowerCase()))
       archived = value.toLowerCase() === "yes";
+    else if (k === "owner" && isSafeName(value)) owner = value;
     else if (k === "q" && value !== "") words.push(value);
     else words.push(word);
   }
-  return { kind, sort, text: words.join(" ").slice(0, 100), archived };
+  return {
+    kind,
+    sort,
+    text: words.join(" ").slice(0, 100),
+    archived,
+    ...(owner === undefined ? {} : { owner }),
+  };
 }
 
 /** The line a query reads as, for links and the query box. */
@@ -106,6 +118,7 @@ export function exploreLine(query: ExploreQuery): string {
     query.kind === "all" ? "" : `kind:${query.kind}`,
     query.sort === "score" ? "" : `sort:${query.sort}`,
     query.archived ? "archived:yes" : "",
+    query.owner === undefined ? "" : `owner:${query.owner}`,
     query.text,
   ]
     .filter((p) => p !== "")
@@ -141,14 +154,20 @@ export interface ExploreRow {
 
 /**
  * The ranking as last computed, per viewer (id and admin standing) and line
- * (#3394). Valid while the forge's write clock has not moved — a new star,
- * push or merge moves it, so it shows on the next request — and for 5 seconds
- * at most, because a score ages with the clock. Admins' answers are kept too;
- * the spawned forges, which no write clock sees, are read fresh on every call
- * and added to a copy after the kept read. A call at a given `now` is never kept.
+ * (#3394, #6129). A signed-out viewer has the one key every stranger shares;
+ * a signed-in one is keyed by id, which fixes their readable set — so a
+ * private app is never served from an entry built for someone who could not
+ * read it. Two tiers: while the forge's write clock has not moved, the answer
+ * stands without a query; when it has (it moves on every write, ranked or
+ * not), `rankInputs` says whether anything the ranking reads changed, and
+ * only then is it ranked again. A score ages with the clock, so the answer
+ * is ranked again after a minute at most. The spawned forges, which no write
+ * clock sees, are read fresh on every call and added to a copy after the kept
+ * read. A call at a given `now` is never kept.
  */
-const RANK_MAX_AGE_MS = 5_000;
-const ranked = new WeakMap<Database, Stamped<ExploreRow[]>>();
+const RANK_MAX_AGE_MS = 60_000;
+const CLOCK_MAX_AGE_MS = 5_000;
+const ranked = new WeakMap<Database, { clock: Stamped<ExploreRow[]>; inputs: Stamped<ExploreRow[]> }>();
 
 export async function explore(
   app: App,
@@ -159,20 +178,25 @@ export async function explore(
   const forgeRows = await forges(app, viewer, query);
   const stamp = now === undefined ? writeStamp(app.db) : undefined;
   if (stamp === undefined) return place(rank(app, viewer, query, now ?? Date.now()), forgeRows, query);
-  let cache = ranked.get(app.db);
-  if (cache === undefined) {
-    cache = new Stamped<ExploreRow[]>({ maxEntries: 64, maxAgeMs: RANK_MAX_AGE_MS });
-    ranked.set(app.db, cache);
+  let tiers = ranked.get(app.db);
+  if (tiers === undefined) {
+    tiers = {
+      clock: new Stamped<ExploreRow[]>({ maxEntries: 64, maxAgeMs: CLOCK_MAX_AGE_MS }),
+      inputs: new Stamped<ExploreRow[]>({ maxEntries: 64, maxAgeMs: RANK_MAX_AGE_MS }),
+    };
+    ranked.set(app.db, tiers);
   }
-  const kept = cache.get(`${viewer?.id ?? ""}\n${viewer?.isAdmin === true ? "admin" : ""}\n${exploreLine(query)}`, stamp, () =>
-    rank(app, viewer, query, Date.now()),
+  const { clock, inputs } = tiers;
+  const key = `${viewer?.id ?? ""}\n${viewer?.isAdmin === true ? "admin" : ""}\n${exploreLine(query)}`;
+  const kept = clock.get(key, stamp, () =>
+    inputs.get(key, rankInputs(app.db), () => rank(app, viewer, query, Date.now())),
   );
   return place(kept, forgeRows, query);
 }
 
 /** The forges this forge spawned, for a site admin asking for them. */
 async function forges(app: App, viewer: User | undefined, query: ExploreQuery): Promise<ExploreRow[]> {
-  if (viewer?.isAdmin !== true || (query.kind !== "all" && query.kind !== "forge")) return [];
+  if (query.owner !== undefined || viewer?.isAdmin !== true || (query.kind !== "all" && query.kind !== "forge")) return [];
   return (await listChildren(app)).map((child) => ({
     kind: "forge",
     name: child.name,
@@ -292,6 +316,7 @@ function rank(
   });
 
   const text = query.text.toLowerCase();
+  const only = query.owner?.toLowerCase();
   // Kept rows are shared by every request that reads them: none may change.
   const freeze = (row: ExploreRow): ExploreRow => {
     Object.freeze(row.numbers);
@@ -301,6 +326,7 @@ function rank(
     [...appRows, ...people.values()].map(freeze).filter(
       (row) =>
         (query.kind === "all" || row.kind === query.kind) &&
+        (only === undefined || (row.repo?.owner ?? row.name).toLowerCase() === only) &&
         (text === "" || `${row.name} ${row.description}`.toLowerCase().includes(text)),
     ),
     query,

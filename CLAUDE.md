@@ -4,6 +4,12 @@ Orientation for an agent editing forge. Read this first, then `README.md` (what
 it is) and `docs/ARCHITECTURE.md` (why it's shaped this way). This file is the
 rulebook: the invariants you must not break, and how to work here.
 
+**Read docs/VISION.md first: it says what the forge is for and the order of work.**
+
+**Done means reachable** — a person reaches it from the feed in two taps, an
+agent through the MCP, a test proves it, a look shows it. A function nobody can
+call is not done.
+
 The whole point of forge is that **one person can hold it in their head**. Every
 change should leave it that way. When something fights you, step up and
 understand the system before adding code — a workaround usually means the system
@@ -60,7 +66,7 @@ canAdmin`), token scope (`readForm` floor + `minScope`), and branch
 
 ```sh
 bun test              # full suite — must stay green
-bun x tsc --noEmit    # zero type errors is the standard (strict, exact-optional)
+bun x tsc --noEmit    # zero type errors is the standard (strict, exact-optional; an unused import or local fails it)
 bun run src/main.ts   # boots on :3000, data in ./data
 ```
 
@@ -98,7 +104,11 @@ bun run src/main.ts   # boots on :3000, data in ./data
   `EXCLUDED`, so never hand-edit that move. Never add `retry` — fix the
   cause: a shared port, a real clock, order dependence, a leaked server, a
   timeout near the real duration, a wall-clock bound under 200 ms on a
-  request or a spawn (`test/flake.test.ts` refuses one).
+  request or a spawn (`test/flake.test.ts` refuses one). A speed is bounded only
+  with `expectBudget` (`test/helpers/budget.ts`): relative to a same-run
+  baseline, absolute only when `FORGE_TEST_QUIET=1` (set by hand on a quiet machine; no
+  lane sets it yet, so absolute budgets are not enforced anywhere);
+  `test/flake.test.ts` refuses a raw `under N ms` title or bound.
 - **Every non-trivial change ships with a test.** Prefer protocol-level tests
   that boot a real app (`createApp` + `serve`) over unit mocks. Adversarial
   tests (can this be bypassed?) are worth more than happy-path ones.
@@ -151,6 +161,8 @@ src/
               scope floors, pagination, `securityFloor` — the headers every
               response leaves with), api (every /api/v1 route), server
               (auth resolution, git smart HTTP, web routes, hook socket), sse
+              mcp (the MCP protocol and dispatch; one file per tool under
+              mcp/tools/, gathered by a generated index)
   design/     shared design tokens: themes (palettes both surfaces render)
   origins/    other forges as one Provider interface: discover (version-endpoint
               probe), providers/{github,forgejo} (+ http: paging, ETags, rate
@@ -238,8 +250,15 @@ flag exists only in the stdio dev runner and is never reachable over SSH.
   scope floor (`requireScope`, or `requireAccount` for account-level changes),
   call the action, and map its Result with `respondAccess(error, status)` —
   access errors have fixed shapes, anything else is a 422 code. Lists are
-  `{ items, next_cursor }` via `paged(...)`. Web forms follow the same shape
+  `{ items, next_cursor }` via `paged(...)`, never a bare array
+  (`test/api-list-shape.test.ts` fails on one). Web forms follow the same shape
   via `readForm(ctx, scope)`.
+  Describe it in OpenAPI as one file, `contract/openapi/routes/<operationId>.ts`,
+  exporting `route`; then `bun scripts/openapi-routes.ts` writes its line in the
+  generated index. Never list it by hand.
+- **Add an MCP tool:** one file, `http/mcp/tools/<name>.ts`, exporting `tool`;
+  then `bun scripts/mcp-tools.ts` writes its line in the index and its row in
+  docs/MCP.md (docs/MCP.md, "Adding a tool"). Never list it by hand.
 - **Add a TUI screen:** one file under `tui/screens/`, exporting
   `(f: Session, ctx: Ctx, …) => Screen`. Compose `ui/widgets`; take navigation
   from `screens/common.ts` (`ListState`, `Scroll`, `Filter`, `drawList`,

@@ -10,9 +10,10 @@ import { getRepoById } from "./repos.ts";
 import { repoDir } from "../git/repos.ts";
 import { sealedByNumber } from "./sealed.ts";
 import type { Database } from "bun:sqlite";
-import { diffRange, type Diff } from "../git/diff.ts";
+import { diffRange, type Diff, type DiffLaps } from "../git/diff.ts";
 import { isSafeRef } from "../git/guard.ts";
-import { listRefs } from "../git/read.ts";
+import { refTip } from "../git/read.ts";
+import { readTips } from "../git/tips.ts";
 import {
   aheadCount,
   fetchInto,
@@ -345,6 +346,44 @@ export function pullForBranch(
 }
 
 /**
+ * `pullForBranch` for many branches of one repository: each branch's newest
+ * pull, in two queries per chunk. Branches with none are absent.
+ */
+export function pullsForBranches(
+  db: Database,
+  repoId: string,
+  branches: readonly string[],
+): Map<string, Pull> {
+  const out = new Map<string, Pull>();
+  const unique = [...new Set(branches)].filter((b) => b !== "");
+  const CHUNK = 400;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const rows = db
+      .query<{ id: string; branch: string }, string[]>(
+        `SELECT issue.id AS id, pull.head_branch AS branch
+           FROM pull JOIN issue ON issue.id = pull.issue_id
+          WHERE issue.repo_id = ?1
+            AND pull.head_branch IN (${batch.map((_, n) => `?${n + 2}`).join(",")})
+          ORDER BY issue.created_at DESC`,
+      )
+      .all(repoId, ...batch);
+    const newest = new Map<string, string>();
+    for (const r of rows) if (!newest.has(r.branch)) newest.set(r.branch, r.id);
+    const pulls = new Map(
+      joinMany(db, [...getIssuesByIds(db, [...newest.values()]).values()]).map(
+        (pull) => [pull.id, pull] as const,
+      ),
+    );
+    for (const [branch, id] of newest) {
+      const pull = pulls.get(id);
+      if (pull !== undefined) out.set(branch, pull);
+    }
+  }
+  return out;
+}
+
+/**
  * Bring a same-repo pull's stored head up to its branch's new tip. Every seam
  * that lands a commit on a branch — a git push, the web editor, the API —
  * calls this one function, so `pull.headOid` never names a commit the branch
@@ -428,6 +467,27 @@ export function listOpenPullsFromHead(
     .all(headRepoId, branch)
     .map((r) => r.issue_id);
   return joinMany(db, [...getIssuesByIds(db, ids).values()]);
+}
+
+/**
+ * The one open pull into `baseRepoId` whose head is this branch of this
+ * repository, asked of the database rather than found in a page of pulls.
+ */
+export function openPullFromHead(
+  db: Database,
+  baseRepoId: string,
+  headRepoId: string,
+  branch: string,
+): Pull | undefined {
+  const row = db
+    .query<{ number: number }, [string, string, string]>(
+      `SELECT issue.number FROM pull JOIN issue ON issue.id = pull.issue_id
+       WHERE issue.repo_id = ?1 AND pull.head_repo_id = ?2 AND pull.head_branch = ?3
+         AND issue.state = 'open'
+       ORDER BY issue.number DESC LIMIT 1`,
+    )
+    .get(baseRepoId, headRepoId, branch);
+  return row === null || row === undefined ? undefined : getPull(db, baseRepoId, row.number);
 }
 
 /**
@@ -625,9 +685,12 @@ export async function diffBetween(
   dir: string,
   baseOid: string,
   headOid: string,
+  laps?: DiffLaps,
 ): Promise<{ from: string; diff: Diff; failed: boolean }> {
+  const started = performance.now();
   const from = (await mergeBase(dir, baseOid, headOid)) ?? baseOid;
-  const result = await diffRange(dir, from, headOid);
+  if (laps) laps.git = performance.now() - started;
+  const result = await diffRange(dir, from, headOid, laps);
   return result.ok
     ? { from, diff: result.value, failed: false }
     : { from, diff: { files: [], additions: 0, deletions: 0 }, failed: true };
@@ -702,12 +765,19 @@ export async function pullStatus(
   pull: Pull,
   gate?: ReviewGate,
 ): Promise<PullStatus> {
-  const baseOid =
-    (await resolveOid(dir, `refs/heads/${pull.baseBranch}`)) ?? pull.baseOid;
   const headRef = pull.crossRepo
     ? `refs/pull/${pull.number}/head`
     : `refs/heads/${pull.headBranch}`;
-  const headOid = (await resolveOid(dir, headRef)) ?? pull.headOid;
+  // The tips come from the ref files (no process); git is asked only when
+  // they cannot be read that way.
+  const tip = async (ref: string): Promise<string | undefined> =>
+    (await refTip(dir, ref)) ?? (await resolveOid(dir, ref));
+  const [liveBase, liveHead] = await Promise.all([
+    tip(`refs/heads/${pull.baseBranch}`),
+    tip(headRef),
+  ]);
+  const baseOid = liveBase ?? pull.baseOid;
+  const headOid = liveHead ?? pull.headOid;
   const reviews = gate === undefined ? null : reviewGate(gate, pull, headOid);
   const { ahead, mergeable: clean, conflicts } = await mergeReading(
     dir,
@@ -774,26 +844,14 @@ export async function pullMergeState(
 const READ_AT_ONCE = 4;
 
 /**
- * `pullMergeState` for a page of pulls: one `for-each-ref` per repository
- * directory instead of two `rev-parse` per pull, and at most `READ_AT_ONCE`
+ * `pullMergeState` for a page of pulls: tips read from the ref files (no git
+ * process), each answer remembered by (base tip, head tip) in `mergeReading`
+ * so git runs only for a pair that moved, and at most `READ_AT_ONCE`
  * readings in flight. Same answers, same order as the input.
  */
 export async function pullMergeStates(
   items: readonly { dir: string; pull: Pull }[],
 ): Promise<({ mergeable: boolean; conflicts: string[] } | null)[]> {
-  const tips = new Map<string, Promise<Map<string, string>>>();
-  const tipsOf = (dir: string): Promise<Map<string, string>> => {
-    let known = tips.get(dir);
-    if (known === undefined) {
-      known = listRefs(dir).then((refs) => {
-        const out = new Map<string, string>();
-        if (refs.ok) for (const r of refs.value) out.set(r.name, r.oid);
-        return out;
-      });
-      tips.set(dir, known);
-    }
-    return known;
-  };
   const out: ({ mergeable: boolean; conflicts: string[] } | null)[] =
     new Array(items.length).fill(null);
   let next = 0;
@@ -801,11 +859,12 @@ export async function pullMergeStates(
     for (let i = next++; i < items.length; i = next++) {
       const { dir, pull } = items[i]!;
       if (pull.state !== "open" || pull.mergedAt !== null) continue;
-      const live = await tipsOf(dir);
-      const baseOid = live.get(`refs/heads/${pull.baseBranch}`) ?? pull.baseOid;
+      const baseRef = `refs/heads/${pull.baseBranch}`;
       const headRef = pull.crossRepo
         ? `refs/pull/${pull.number}/head`
         : `refs/heads/${pull.headBranch}`;
+      const live = await readTips(dir, [baseRef, headRef]);
+      const baseOid = live.get(baseRef) ?? pull.baseOid;
       const headOid = live.get(headRef) ?? pull.headOid;
       const r = await mergeReading(dir, baseOid, headOid);
       out[i] = { mergeable: r.mergeable, conflicts: r.conflicts };
@@ -1023,6 +1082,25 @@ export function closesFromBody(body: string): number[] {
     if (Number.isInteger(n) && n > 0) out.add(n);
   }
   return [...out];
+}
+
+/**
+ * The newest merged pull whose description closes issue `number`: the pull
+ * that shipped it. Undefined when it was closed by hand.
+ */
+export function mergedPullClosing(db: Database, repoId: string, number: number): Pull | undefined {
+  const rows = db
+    .query<{ number: number }, [string, string]>(
+      `SELECT issue.number AS number FROM pull JOIN issue ON issue.id = pull.issue_id
+       WHERE issue.repo_id = ?1 AND pull.merged_at IS NOT NULL AND issue.body LIKE ?2
+       ORDER BY pull.merged_at DESC LIMIT 50`,
+    )
+    .all(repoId, `%#${number}%`);
+  for (const row of rows) {
+    const pull = getPull(db, repoId, row.number);
+    if (pull !== undefined && closesFromBody(pull.body).includes(number)) return pull;
+  }
+  return undefined;
 }
 
 /**

@@ -166,6 +166,8 @@ export const utilities = /* css */ `
 .grow { flex: 1; min-width: 0; }
 .spacer { flex: 1; }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nowrap { white-space: nowrap; }
+.break { overflow-wrap: anywhere; }
 .stack { display: flex; flex-direction: column; gap: 12px; }
 .stack-tight { gap: 4px; }
 .bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -222,7 +224,7 @@ export const utilities = /* css */ `
 }
 
 @media print {
-  .topbar, .foot, .live-pill, .sticky-action, .toast { display: none !important; }
+  .topbar, .foot, .live-news, .sticky-action, .toast { display: none !important; }
   .card { box-shadow: none; }
 }
 }

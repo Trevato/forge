@@ -55,9 +55,19 @@ export function summariseCheckFailure(
   const detail = parseBunTestFailure(lines);
   if (detail !== undefined) {
     const total = detail.passed + detail.failed;
-    const name = detail.names[0] ?? "";
+    const names = [...new Set(detail.names)].slice(0, 3);
+    const quoted = names.map((n) => `"${n}"`);
+    const more = detail.failed - names.length;
+    const list =
+      names.length === 0
+        ? '""'
+        : more > 0
+          ? `${quoted.join(", ")} and ${more} more`
+          : quoted.length > 1
+            ? `${quoted.slice(0, -1).join(", ")} and ${quoted.at(-1)}`
+            : quoted[0]!;
     return {
-      summary: truncate(`${detail.failed} of ${total} tests — "${name}"`),
+      summary: truncate(`${detail.failed} of ${total} tests — ${list}`),
       detail,
     };
   }

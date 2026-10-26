@@ -595,6 +595,21 @@ describe("an app gets its own domain", () => {
       `forge-verify=${getDomain(app.db, "example.com")!.token}`,
     );
     expect(page).toContain("ALIAS");
+    expect(page).not.toContain("domain-records");
+    // The table is named, and its scroller is a focusable labelled region.
+    expect(page).toContain("<caption");
+    expect(page).toMatch(
+      /<div\s+class="table-scroll"\s+role="region"\s+tabindex="0"\s+aria-label="DNS records for example\.com"/,
+    );
+    expect(page).toMatch(/<table class="table" data-dense>[\s\S]*?<th>Type<\/th>/);
+    // The records wrap instead of truncating (.row-meta only wraps inside
+    // .setting-list), carry the type badge, and the whole value is selectable.
+    const token = getDomain(app.db, "example.com")!.token;
+    expect(page).toContain('<ul class="list setting-list">');
+    expect(page).toMatch(/badge[^>]*>\s*TXT\s*</);
+    expect(page).toMatch(
+      new RegExp(`class="mono record-value" title="forge-verify=${token}"`),
+    );
     expect(page).toContain(`${settings}/domains/example.com/check`);
     expect(page).toContain(
       encodeURIComponent(`${settings}/domains/example.com/delete`),

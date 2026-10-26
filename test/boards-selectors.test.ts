@@ -56,20 +56,19 @@ test("every query selector has a visible label and sits outside .row-actions", a
   const form = html.match(/<form method="get" action="\/boards\/data"[^>]*>([\s\S]*?)<\/form>/);
   expect(form).not.toBeNull();
   expect(form![0]).not.toContain("row-actions");
-  expect(form![0]).toContain('class="bform"');
+  expect(form![0]).toContain('class="bar"');
+  expect(html).not.toContain("bform");
   for (const name of ["chart", "source", "aggregate", "column", "by", "series", "from", "to", "fcolumn", "fop", "fvalue"]) {
-    const m = form![1]!.match(new RegExp(`<label class="qf"[^>]*><span>([^<]+)</span>\\s*<(?:select|input)[^>]* name="${name}"`));
+    const m = form![1]!.match(new RegExp(`<label for="f-${name}-\\d+">([^<]+)</label>\\s*<(?:select|input)[^>]* name="${name}"`));
     expect(m, name).not.toBeNull();
     expect(m![1]!.trim().length, name).toBeGreaterThan(0);
   }
 });
 
-test("the selector styles never hide or collapse a control", () => {
-  const css = components + content;
-  const rules = [...css.matchAll(/(^|\})\s*([^{}]*\.(?:bform|qf)[^{}]*)\{([^}]*)\}/g)].map((m) => m[3]!);
-  expect(rules.length).toBeGreaterThan(0);
-  for (const body of rules) {
-    expect(body).not.toMatch(/opacity:\s*0\b|display:\s*none|visibility:\s*hidden|height:\s*0\b/);
+test("no .bform rule is left in the stylesheet or the boards pages", async () => {
+  expect(components + content).not.toContain("bform");
+  for (const f of ["boards-view.ts", "boards.ts"]) {
+    expect(await Bun.file(`${import.meta.dir}/../src/web/pages/${f}`).text()).not.toContain("bform");
   }
 });
 

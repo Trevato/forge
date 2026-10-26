@@ -60,32 +60,9 @@ import {
   runLogListenerCount,
   subscribeRunLog,
 } from "../src/runs/log.ts";
-import { gitClientEnv } from "./helpers/git-client.ts";
 import { portInsteadOfSocket } from "../src/git/hook-address.ts";
 
 const testBySocket = portInsteadOfSocket() ? test.skip : test;
-
-const clientEnv = gitClientEnv({
-  GIT_AUTHOR_NAME: "Agent",
-  GIT_AUTHOR_EMAIL: "agent@forge.local",
-  GIT_COMMITTER_NAME: "Agent",
-  GIT_COMMITTER_EMAIL: "agent@forge.local",
-});
-
-async function sh(args: string[], cwd: string) {
-  const proc = Bun.spawn(args, {
-    cwd,
-    env: clientEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [out, err, code] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-  return { code, out: out.trim(), err: err.trim() };
-}
 
 // ---------------------------------------------------------------------------
 // Pure units: no server, no filesystem beyond what the function itself does.
@@ -1067,6 +1044,7 @@ describe("boot: a forge addressed by IP hands every app a host that works (issue
     repoId: string,
     where: (run: Run) => boolean,
     timeoutMs = 60_000,
+    live = false,
   ): Promise<Run> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
@@ -1075,7 +1053,8 @@ describe("boot: a forge addressed by IP hands every app a host that works (issue
       );
       if (
         run &&
-        (run.state === "ok" ||
+        ((live && run.servingAt !== null) ||
+          run.state === "ok" ||
           run.state === "failed" ||
           run.state === "cancelled")
       )
@@ -1137,10 +1116,15 @@ describe("boot: a forge addressed by IP hands every app a host that works (issue
     if (!made.ok) return;
     const repo = made.value.repo;
     const record = made.value.app;
-    const run = await settled(repo.id, (r) => r.env === "production");
+    // The deploy reports live the moment the app has answered its health
+    // path and been swapped in — the state the page below is asked in. The
+    // run itself only ends after the scaffold's whole test suite, which on a
+    // loaded machine is far slower than the app's boot; it is awaited after.
+    const live = await settled(repo.id, (r) => r.env === "production", 60_000, true);
     // Before this fix: "start: exited with code 1 before answering" — the
     // scaffold's own src/env.ts throwing on `new URL(FORGE_APP_URL)`.
-    expect(run.state).toBe("ok");
+    expect(live.summary).not.toContain("exited with code");
+    expect(live.servingAt).not.toBeNull();
     const url = runtime.urlFor(record, "production");
     // The exact check the scaffold makes at import time on FORGE_APP_URL.
     expect(() => new URL(url)).not.toThrow();
@@ -1148,6 +1132,8 @@ describe("boot: a forge addressed by IP hands every app a host that works (issue
     const page = await viaHost(host);
     expect(page.status).toBe(200);
     expect(await page.text()).toContain("<h1>ip-forge</h1>");
+    const run = await settled(repo.id, (r) => r.id === live.id, 30_000);
+    expect(run.state).toBe("ok");
   }, 90_000);
 });
 

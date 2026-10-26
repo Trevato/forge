@@ -9,7 +9,7 @@ import { childDirOf } from "../actions/spawn.ts";
 import { createApp, type App } from "../app.ts";
 import { appsRuntime, type AppsRuntime } from "../apps/runtime.ts";
 import { resolveAppHost, type AppTarget } from "../apps/proxy.ts";
-import { childAppsSummary, startChildApps, stopChildApps, type ChildAppsSummary } from "./child-apps.ts";
+import { childAppsSummary, startChildApps, stopChildApps } from "./child-apps.ts";
 import { childHost } from "./door.ts";
 import { firstBoot } from "./first-boot.ts";
 import {
@@ -19,14 +19,19 @@ import {
   parentOrigin,
   parseHostedChildAppLabel,
   parseHostedChildName,
+  type PlacementKind,
 } from "./placement.ts";
-import { readdirSync, readFileSync } from "node:fs";
+import { DEFAULT_SIZE, isSize, type Size } from "./sizes.ts";
+import { cellChildren, forward } from "./cell.ts";
+import { readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 interface ChildLedger {
   readonly name: string;
   readonly bodyId: string;
   readonly done: boolean;
+  readonly placement: PlacementKind;
+  readonly size: Size;
 }
 
 function readLedgerSync(app: App, name: string): ChildLedger | undefined {
@@ -36,9 +41,17 @@ function readLedgerSync(app: App, name: string): ChildLedger | undefined {
       name?: unknown;
       bodyId?: unknown;
       done?: unknown;
+      placement?: unknown;
+      size?: unknown;
     };
     if (typeof parsed.name !== "string" || typeof parsed.bodyId !== "string") return undefined;
-    return { name: parsed.name, bodyId: parsed.bodyId, done: parsed.done === true };
+    return {
+      name: parsed.name,
+      bodyId: parsed.bodyId,
+      done: parsed.done === true,
+      placement: parsed.placement === "cell" ? "cell" : "hosted",
+      size: isSize(parsed.size) ? parsed.size : DEFAULT_SIZE,
+    };
   } catch {
     return undefined;
   }
@@ -92,20 +105,47 @@ async function openChild(parent: App, ledger: ChildLedger): Promise<App> {
  * Resolve a request Host to a hosted child's App.
  * - `undefined` — not a child host (parent / app / other continues).
  * - `"unknown"` — shaped like a child host but no finished ledger.
+ * - `"cell"` — a process of its own: `answerFromCell` carries the request.
  * - `App` — answer with this child's routes.
  */
 export async function resolveHostedChild(
   parent: App,
   request: Request,
-): Promise<App | "unknown" | undefined> {
+): Promise<App | "cell" | "unknown" | undefined> {
   const host = request.headers.get("host");
   if (host === null) return undefined;
   const name = parseHostedChildName(host, childHost(parent));
   if (name === undefined) return undefined;
   const ledger = readLedgerSync(parent, name);
   if (ledger === undefined || !ledger.done) return "unknown";
-
+  // A child in its own cell is not an App here: the request is carried to it.
+  if (ledger.placement === "cell") return settleCell(parent, ledger);
   return openOnce(parent, ledger);
+}
+
+/**
+ * Start a child's cell. When the cell cannot come up the child is not left
+ * dead: the ledger turns it hosted, says why (`placementNote`, which
+ * `/forges` lists), and the child is opened in this process.
+ */
+async function settleCell(parent: App, ledger: ChildLedger): Promise<App | "cell"> {
+  const cells = cellChildren(parent);
+  if ((await cells.start(ledger)) !== undefined) return "cell";
+  const why = cells.failure(ledger.bodyId) ?? "its cell did not start";
+  demote(parent, ledger.name, why);
+  parent.log.warn("child forge placed hosted instead", { name: ledger.name, why });
+  return openOnce(parent, { ...ledger, placement: "hosted" });
+}
+
+function demote(parent: App, name: string, why: string): void {
+  const path = join(parent.config.dataDir, "spawn", `${name}.json`);
+  try {
+    const raw = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    writeFileSync(`${path}.tmp`, JSON.stringify({ ...raw, placement: "hosted", placementNote: `hosted: ${why}` }));
+    renameSync(`${path}.tmp`, path);
+  } catch (error) {
+    parent.log.error("could not record the placement", { name, error: String(error) });
+  }
 }
 
 function openOnce(parent: App, ledger: ChildLedger): Promise<App> | App {
@@ -131,8 +171,13 @@ function openOnce(parent: App, ledger: ChildLedger): Promise<App> | App {
  * the first visit after a claim finds them awake. Never throws.
  */
 export async function bootHostedChild(parent: App, name: string): Promise<void> {
-  const ledger = readLedgerSync(parent, name);
+  let ledger = readLedgerSync(parent, name);
   if (ledger === undefined || !ledger.done) return;
+  if (ledger.placement === "cell") {
+    const settled = await settleCell(parent, ledger);
+    if (settled === "cell") return;
+    ledger = { ...ledger, placement: "hosted" };
+  }
   try {
     await startChildApps(parent, await openOnce(parent, ledger), name);
   } catch (error) {
@@ -198,3 +243,17 @@ export async function resolveHostedChildApp(
 
 /** What a child's apps are doing, for `/forges`; undefined when none run here. */
 export const hostedChildApps = childAppsSummary;
+
+/**
+ * Answer a request for a child that runs in its own cell: start it if it is
+ * not up (a parent that restarted, a child that stopped), then forward.
+ */
+export async function answerFromCell(parent: App, request: Request): Promise<Response> {
+  const name = parseHostedChildName(request.headers.get("host") ?? "", childHost(parent));
+  const ledger = name === undefined ? undefined : readLedgerSync(parent, name);
+  if (ledger === undefined || ledger.placement !== "cell") return new Response("not found", { status: 404 });
+  const child = await cellChildren(parent).start(ledger);
+  // Unreachable once a cell has failed (the ledger turned hosted), but never a hang.
+  if (child === undefined) return new Response("this forge is starting", { status: 503, headers: { "retry-after": "5" } });
+  return forward(child, request, parent.config.clientIpHeader);
+}

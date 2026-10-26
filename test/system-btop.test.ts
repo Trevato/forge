@@ -11,6 +11,7 @@ import { createLive } from "../src/system/live.ts";
 import { parseDiskstats, type Proc, type Raw } from "../src/system/proc.ts";
 import { buildSystem, forAgent } from "../src/system/view.ts";
 import { regions } from "../src/web/pages/system.ts";
+import { content } from "../src/web/style/content.ts";
 import { systemLines } from "../src/tui/screens/system.ts";
 import { procSortJs, systemLiveJs } from "../src/web/system-live.ts";
 
@@ -114,6 +115,11 @@ describe("/system as btop", () => {
     expect(r["sys-disks"]).toContain('data-net="eth0"');
     expect(r["sys-procs"]).toContain('class="table"');
     expect(r["sys-procs"]).toContain("2 procs");
+  });
+
+  test("the stylesheet no longer carries the retired .bt-* rules (#5250)", () => {
+    expect(content).not.toMatch(/\.bt-[a-z]/);
+    for (const old of ["bt-bar", "bt-grid", "bt-group", "bt-hist", "bt-name", "bt-procs", "bt-row", "bt-val"]) expect(content).not.toContain(old);
   });
 
   test("diskstats keep whole devices only", () => {

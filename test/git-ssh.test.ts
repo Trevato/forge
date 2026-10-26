@@ -181,6 +181,43 @@ describe.skipIf(NO_OPENSSH)("git over ssh", () => {
     expect(run.err).not.toContain("permission");
   });
 
+  test("a guest's partial clone leaves the blobs behind, and checkout fetches them (#4482)", async () => {
+    for (const version of [0, 2]) {
+      const dir = `guest-partial-v${version}`;
+      const run = await git(
+        ["-c", `protocol.version=${version}`, "clone", "--no-checkout", "--filter=blob:none", url("alice", "beacon"), dir],
+        { cwd: work, key: strangerKey },
+      );
+      expect(run.err).not.toContain("filtering not recognized");
+      expect(run.code).toBe(0);
+      const clone = join(work, dir);
+      const readme = await git(["rev-parse", "HEAD:README.md"], { cwd: clone, key: strangerKey });
+      const missing = await git(["rev-list", "--objects", "--missing=print", "--all"], {
+        cwd: clone,
+        key: strangerKey,
+      });
+      expect(missing.out.split("\n")).toContain(`?${readme.out}`);
+      const reset = await git(["-c", `protocol.version=${version}`, "reset", "-q", "--hard", "HEAD"], {
+        cwd: clone,
+        key: strangerKey,
+      });
+      expect(reset.code).toBe(0);
+      expect(await readFile(join(clone, "README.md"), "utf8")).toContain("Beacon");
+    }
+  });
+
+  test("a guest cannot fetch a private repo's blob by its id (#4482)", async () => {
+    const vault = repoDir(forge.reposRoot, "alice", "vault");
+    const oid = await runGit(["rev-parse", "main:secret"], { cwd: vault });
+    if (!oid.ok) throw new Error("no secret blob");
+    const dir = join(work, "guest-oid");
+    expect((await git(["init", "-q", dir], { cwd: work, key: strangerKey })).code).toBe(0);
+    const run = await git(["fetch", url("alice", "vault"), oid.value], { cwd: dir, key: strangerKey });
+    expect(run.code).not.toBe(0);
+    expect(run.err).toContain("repository not found");
+    expect((await git(["cat-file", "-e", oid.value], { cwd: dir, key: strangerKey })).code).not.toBe(0);
+  });
+
   test("a writer pushes, and the push lands in the outbox", async () => {
     const clone = await git(["clone", url("alice", "beacon"), "alice-beacon"], {
       cwd: work,

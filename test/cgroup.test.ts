@@ -15,8 +15,10 @@ import { join } from "node:path";
 import {
   cgroupHost,
   cgroupRoot,
+  cpuMax,
   enterArgv,
   oomKills,
+  tryEnterArgv,
   openCellCgroup,
   prepare,
 } from "../src/apps/cgroup.ts";
@@ -76,7 +78,8 @@ describe("the layout, on a directory shaped like cgroupfs", () => {
   });
 
   test("the forge's processes move to a leaf, cells get the memory controller, and a crash's leftovers go", () => {
-    const dir = fake("rw", "cpuset cpu memory pids\n");
+    // No cpu or io controller: the fake's files hold the last write, and this is about memory.
+    const dir = fake("rw", "cpuset memory pids\n");
     // A forge that is gone left one; a forge still draining a roll (this process) keeps its own.
     const gone = Bun.spawnSync(["/bin/true"]).pid;
     mkdirSync(join(dir, "cells", `c7-${gone}`), { recursive: true });
@@ -94,6 +97,45 @@ describe("the layout, on a directory shaped like cgroupfs", () => {
     writeFileSync(join(dir, "forge", "cgroup.procs"), "");
     expect(prepare({ ok: true, root: dir }).ok).toBe(true);
     expect(readFileSync(join(dir, "forge", "cgroup.procs"), "utf8")).toBe("");
+  });
+
+  test("where cpu and io are delegated, the forge weighs 1000, a step's cell 10 and an app's the default", () => {
+    const dir = fake("weights", "cpu io memory\n");
+    const host = prepare({ ok: true, root: dir });
+    expect(host.ok).toBe(true);
+    // The fake holds the last write; cgroupfs adds each: memory, then cpu, then io.
+    expect(readFileSync(join(dir, "cgroup.subtree_control"), "utf8")).toBe("+io");
+    expect(readFileSync(join(dir, "cells", "cgroup.subtree_control"), "utf8")).toBe("+io");
+    expect(readFileSync(join(dir, "forge", "cpu.weight"), "utf8")).toBe("1000");
+    expect(readFileSync(join(dir, "forge", "io.weight"), "utf8")).toBe("default 1000");
+    const step = openCellCgroup(64, host, { weight: 10, cpus: 16 })!;
+    expect(readFileSync(join(step.dir, "memory.max"), "utf8")).toBe(String(64 * 1024 * 1024));
+    expect(readFileSync(join(step.dir, "cpu.weight"), "utf8")).toBe("10");
+    expect(readFileSync(join(step.dir, "io.weight"), "utf8")).toBe("default 10");
+    // 16 cores: 16 × 100 000 µs of CPU in each 100 000 µs period.
+    expect(readFileSync(join(step.dir, "cpu.max"), "utf8")).toBe("1600000 100000");
+    const app = openCellCgroup(64, host)!;
+    expect(existsSync(join(app.dir, "cpu.weight"))).toBe(false);
+    expect(existsSync(join(app.dir, "cpu.max"))).toBe(false);
+  });
+
+  test("a crew run's cell has no memory cap, weighs 10 and is held to its cores", () => {
+    const dir = fake("crew", "cpu io memory\n");
+    const host = prepare({ ok: true, root: dir });
+    const run = openCellCgroup(undefined, host, { weight: 10, cpus: 4 })!;
+    expect(run.maxBytes).toBe(Infinity);
+    for (const file of ["memory.max", "memory.swap.max", "memory.oom.group"])
+      expect(existsSync(join(run.dir, file))).toBe(false);
+    expect(readFileSync(join(run.dir, "cpu.weight"), "utf8")).toBe("10");
+    expect(readFileSync(join(run.dir, "cpu.max"), "utf8")).toBe("400000 100000");
+    // Named like any cell, so a restart sweeps it once this forge is gone.
+    expect(run.dir).toMatch(/\/cells\/c\d+-\d+$/);
+  });
+
+  test("cpu.max by hand: 2 cores, half a core, and the kernel's 1 ms floor", () => {
+    expect(cpuMax(2)).toBe("200000 100000");
+    expect(cpuMax(0.5)).toBe("50000 100000");
+    expect(cpuMax(0.001)).toBe("1000 100000");
   });
 
   test("a cell's cgroup is capped at its limit, swapless, killed whole; its OOM kills read back", () => {
@@ -144,6 +186,26 @@ describe("entering the cgroup before the cell starts", () => {
       expect(await proc.exited).toBe(125);
       expect(text).toContain("cannot enter its memory cgroup");
       expect(existsSync(marker)).toBe(false);
+      expect(existsSync(join(dir, "injected"))).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("a crew run enters its cell if it can", () => {
+  test("it enters, then becomes the command; a cell it cannot enter runs it anyway, and the path is never script", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "forge-cgroup-try-"));
+    try {
+      const procs = join(dir, "cgroup.procs");
+      writeFileSync(procs, "");
+      const inside = Bun.spawn(tryEnterArgv(procs, ["/bin/sh", "-c", "echo $$"]), { stdout: "pipe" });
+      expect((await new Response(inside.stdout).text()).trim()).toBe(String(inside.pid));
+      expect(readFileSync(procs, "utf8").trim()).toBe(String(inside.pid));
+      const gone = join(dir, "gone", `$(touch ${join(dir, "injected")})`, "cgroup.procs");
+      const outside = Bun.spawn(tryEnterArgv(gone, ["/bin/sh", "-c", "exit 3"]), { stderr: "pipe" });
+      expect(await outside.exited).toBe(3);
+      expect(await new Response(outside.stderr).text()).toBe("");
       expect(existsSync(join(dir, "injected"))).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });

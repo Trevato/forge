@@ -33,7 +33,7 @@ import {
   type Issue,
 } from "../core/issues.ts";
 import { closesFromBody, listPulls, type Pull } from "../core/pulls.ts";
-import { getRepoById, listAllForks, type Repo } from "../core/repos.ts";
+import { canWrite, getRepoById, listAllForks, type Repo } from "../core/repos.ts";
 import { activeRunFor, cancelRun, listRuns } from "../core/runs.ts";
 import { commitIdentity } from "../core/commit_identity.ts";
 import { getUserById, type User } from "../core/users.ts";
@@ -276,6 +276,8 @@ export async function settleConverge(
   app: App,
   fork: Repo,
   parent: Repo,
+  /** Whoever moved the fork's branch (a merge, a push): the only name the close may be said under. */
+  by?: User,
 ): Promise<boolean> {
   const issue = convergeIssue(app, fork, parent);
   if (issue === undefined) return false;
@@ -294,20 +296,23 @@ export async function settleConverge(
       cancelRun(app.db, run.id, "parent's tip already in the fork");
   const closed = setIssueState(app.db, issue.id, "closed", "done");
   if (closed === undefined) return false;
-  const said = insertComment(app.db, {
-    issueId: issue.id,
-    authorId: issue.authorId,
-    body,
-  });
+  // Said as whoever moved the branch, and only if they may write here; with
+  // none (the tick) nothing is said as the issue's author, who did not act.
+  const said =
+    by !== undefined && canWrite(app.db, fork, by)
+      ? insertComment(app.db, { issueId: issue.id, authorId: by.id, body })
+      : undefined;
   app.bus.append({
     kind: "issue.closed",
     repoId: fork.id,
+    ...(by === undefined ? {} : { actorId: by.id }),
     payload: { number: issue.number, reason: "done" },
   });
-  if (said.ok)
+  if (said?.ok)
     app.bus.append({
       kind: "issue.commented",
       repoId: fork.id,
+      actorId: said.value.authorId,
       payload: { number: issue.number, body, commentId: said.value.id },
     });
   log.info("converge already done", {
@@ -348,7 +353,11 @@ export function settleOnPush(app: App): () => void {
     if (fork === undefined || fork.forkParentId === null) return;
     const parent = getRepoById(app.db, fork.forkParentId);
     if (parent === undefined) return;
-    settleConverge(app, fork, parent).catch((error) =>
+    const by =
+      event.actorId === null || event.actorId === undefined
+        ? undefined
+        : getUserById(app.db, event.actorId);
+    settleConverge(app, fork, parent, by).catch((error) =>
       log.error("could not settle a converge issue", {
         fork: `${fork.ownerName}/${fork.name}`,
         error: String(error),

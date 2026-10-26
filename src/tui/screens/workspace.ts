@@ -37,6 +37,7 @@
 import { editFiles } from "../../actions/contents.ts";
 import { err, ok } from "../../kernel/result.ts";
 import { createBranch } from "../../actions/branches.ts";
+import { NAME_THE_BRANCH } from "../../actions/branch_words.ts";
 import { pinRepo, syncRepoNow, unpinRepo } from "../../actions/origins.ts";
 import { isPinned } from "../../core/pins.ts";
 import { setDecisionsBy } from "../../actions/repos.ts";
@@ -114,6 +115,7 @@ import {
   slug,
   openOnWeb,
 } from "./common.ts";
+import { noteCommands } from "./notes.ts";
 import { reportCommands } from "./report.ts";
 import { tellCommands } from "./tell.ts";
 import { workingCommands } from "./working.ts";
@@ -124,10 +126,10 @@ import { issuesScreen } from "./issues.ts";
 import { liveBindings, liveKey } from "./mirror.ts";
 import { forkScreen } from "./newrepo.ts";
 import { pullScreen } from "./pull.ts";
+import { forksScreen } from "./forks.ts";
 import { branchesScreen } from "./refs.ts";
 import { wavesScreen } from "./waves.ts";
 import {
-  hostOf,
   knownDefaultRef,
   liveOrigin,
   local,
@@ -579,6 +581,8 @@ export function workspaceScreen(
 
   // ---- reads ----
 
+  // A directory is listed whole, unlike the web page: `drawTree` paints only
+  // the rows on screen, and filtering and reveal need every entry to be there.
   const listDir = async (path: string): Promise<Node[]> => {
     const result = await src.tree(ref, path);
     if (!result.ok) {
@@ -997,7 +1001,7 @@ export function workspaceScreen(
             ? "created here, and the workspace switches to it"
             : `created on ${repo.origin.fullName} first, then here`,
         onSubmit: (name) => {
-          if (name === "") return "give the branch a name";
+          if (name === "") return NAME_THE_BRANCH;
           return (async () => {
             const made = await createBranch(f.app, f.user, repo, {
               name,
@@ -1276,6 +1280,7 @@ export function workspaceScreen(
       ...workingCommands(f, ctx, repo),
       ...tellCommands(f, ctx, () => screen, repo),
       ...reportCommands(f, ctx, () => screen, repo),
+      ...noteCommands(f, ctx, () => screen, repo),
       ...yoursCommands(f, ctx, repo),
     ],
     get title() {
@@ -1296,6 +1301,7 @@ export function workspaceScreen(
                 disabled: !editable(),
               }),
               binding(["b", "B"], "switch ref / new branch"),
+              ...(repo === undefined ? [] : [binding(["f"], "forks, most work first")]),
               binding(["t", "ctrl+p"], "find file"),
               binding(["y"], "copy path"),
               binding(["i", "p", "C"], "issues / pulls / commits"),
@@ -1591,6 +1597,10 @@ export function workspaceScreen(
         ctx.push(
           branchesScreen(f, ctx, src, { current: ref, onPick: switchRef }),
         );
+        return true;
+      }
+      if (plain && e.key === "f" && repo !== undefined) {
+        ctx.push(forksScreen(f, ctx, repo));
         return true;
       }
       if (plain && e.key === "B") {

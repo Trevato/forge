@@ -7,6 +7,8 @@
  * is disjoint and covering, and that one red shard makes the run red.
  */
 
+import { nameUnnamed } from "../src/checks/bun-test.ts";
+
 /**
  * No more than this many `bun test` processes at once, whatever the host:
  * a ceiling for a big shared machine, not the check cell's number. The cell
@@ -389,7 +391,7 @@ export function tally(results: readonly ShardResult[], seconds: number): Tally {
       tests += Number(ran[1]);
       files += Number(ran[2]);
     }
-    const named = result.output.match(FAIL) ?? [];
+    const named = nameUnnamed(result.output.split("\n")).join("\n").match(FAIL) ?? [];
     for (const line of new Set(named)) failing.push(`${line} [shard ${i + 1}]`);
     if (result.code !== 0 && named.length === 0)
       unnamed.push(
@@ -443,7 +445,8 @@ export function sliceFiles(
 
 /**
  * Parses `--shard N/M` (or the same shape from env). Empty / undefined means
- * no matrix slice — run every named file.
+ * no matrix slice — run every named file. Four digits a side: the gate
+ * passed 999 files, and a slice per file must still be nameable.
  */
 export function parseShardSpec(
   spec: string | undefined,
@@ -452,7 +455,7 @@ export function parseShardSpec(
   | { ok: true; none: true }
   | { ok: false; error: string } {
   if (spec === undefined || spec.trim() === "") return { ok: true, none: true };
-  const m = /^([1-9][0-9]{0,2})\/([1-9][0-9]{0,2})$/.exec(spec.trim());
+  const m = /^([1-9][0-9]{0,3})\/([1-9][0-9]{0,3})$/.exec(spec.trim());
   if (!m)
     return {
       ok: false,

@@ -110,7 +110,14 @@ const afterEvent = (n: number): string =>
       THEN event.seq > (SELECT c.seq FROM event AS c WHERE c.id = ?${n})
       ELSE event.id > ?${n} END)`;
 
+const beforeEvent = (n: number): string =>
+  `(CASE WHEN EXISTS (SELECT 1 FROM event AS c WHERE c.id = ?${n})
+      THEN event.seq < (SELECT c.seq FROM event AS c WHERE c.id = ?${n})
+      ELSE event.id < ?${n} END)`;
+
 export interface ListEventsOptions {
+  /** Return events written before this one (exclusive; the next page of a newest-first read). */
+  beforeId?: string;
   repoId?: string;
   /** Restrict to events of this kind. */
   kind?: string;
@@ -205,6 +212,10 @@ export function listEvents(
   if (options.afterId !== undefined) {
     params.push(options.afterId);
     clauses.push(afterEvent(params.length));
+  }
+  if (options.beforeId !== undefined) {
+    params.push(options.beforeId);
+    clauses.push(beforeEvent(params.length));
   }
   params.push(options.limit ?? 100);
   const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";

@@ -14,6 +14,7 @@ import { listReposVisibleTo } from "../../core/repos.ts";
 import type { User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
+import { quotaFull } from "../../spawn/quota.ts";
 import { childHost, childUrlOf, noRoom, spawnDoor, type Door } from "../../spawn/door.ts";
 import {
   LEFT_BEHIND,
@@ -22,11 +23,12 @@ import {
   MAX_BUDGET_USD,
   MIN_BUDGET_USD,
 } from "../../spawn/plan.ts";
+import { DEFAULT_SIZE, SIZES, sizesView } from "../../spawn/sizes.ts";
 import { notFoundPage, pageHead } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { btn, card, field as formField, row } from "../ui.ts";
+import { btn, card, field as formField, row, selectField } from "../ui.ts";
 
 interface Values {
   readonly name: string;
@@ -39,6 +41,7 @@ interface Values {
   readonly keepAccess: boolean;
   readonly budgetUsd: string;
   readonly modelEndpoint: string;
+  readonly size: string;
   /** The last post carried a key: it is never sent back, so it is asked for again. */
   readonly hadKey: boolean;
 }
@@ -54,6 +57,7 @@ const EMPTY: Values = {
   keepAccess: false,
   budgetUsd: "",
   modelEndpoint: "",
+  size: DEFAULT_SIZE,
   hadKey: false,
 };
 
@@ -98,13 +102,16 @@ function checks(
 /** What the form reads before it draws: room, then (when there is room) the repositories and the crew. */
 interface Reads {
   readonly full: string | undefined;
+  /** Why even a small forge would pass the host's child quota; the form still draws. */
+  readonly quota: string | undefined;
   readonly repos: ReturnType<typeof listReposVisibleTo>;
   readonly crew: ReturnType<typeof listAgents>;
 }
 
 function readsFor(ctx: Ctx, user: User | undefined): Reads {
   const full = timePhase(ctx.request, "room", () => noRoom(ctx.app));
-  if (full) return { full, repos: [], crew: [] };
+  if (full) return { full, quota: undefined, repos: [], crew: [] };
+  const quota = quotaFull(ctx.app.config.dataDir);
   // A stranger sees only public repositories, and no crew: nothing private
   // travels to a child they have not claimed.
   const repos = timePhase(ctx.request, "repos", () =>
@@ -114,7 +121,20 @@ function readsFor(ctx: Ctx, user: User | undefined): Reads {
     user === undefined
       ? []
       : timePhase(ctx.request, "crew", () => listAgents(ctx.app.db));
-  return { full, repos, crew };
+  return { full, quota, repos, crew };
+}
+
+/** The three sizes, the one asked for chosen (small when the value is not one of them). */
+const lower = (t: string): string => t.charAt(0).toLowerCase() + t.slice(1);
+
+function sizeOptions(chosen: string): { value: string; label: string; selected?: boolean }[] {
+  const says = new Map(sizesView().sizes.map((s) => [s.size, s.says]));
+  const at = Object.hasOwn(SIZES, chosen) ? chosen : DEFAULT_SIZE;
+  return Object.keys(SIZES).map((size) => ({
+    value: size,
+    label: `${size}: ${lower(says.get(size as keyof typeof SIZES) ?? "")}`,
+    selected: size === at,
+  }));
 }
 
 function formView(
@@ -125,7 +145,7 @@ function formView(
   plan: Html | null,
   reads: Reads,
 ): Html {
-  const { full, repos, crew } = reads;
+  const { full, quota, repos, crew } = reads;
   if (full)
     return html`<div class="narrow-wide">
       ${pageHead("New forge")}
@@ -144,6 +164,7 @@ function formView(
         : "Your own forge, or one for someone else: the apps you choose, a crew, and one link to claim.",
       actions: btn("Forges you sent", { href: "/forges", size: "sm" }),
     })}
+    ${quota ? html`<p role="status" id="quota-full">This forge cannot hold another child: ${quota}.</p>` : null}
     ${errors["form"]
       ? html`<p class="error mb" role="alert">${errors["form"]}</p>`
       : null}
@@ -290,6 +311,13 @@ function formView(
               hint: "For the key's whole life; the child cannot raise it. Needed with a key.",
               ...(errors["budgetUsd"] ? { error: errors["budgetUsd"] } : {}),
             })}
+        ${selectField({
+          label: "Size (optional)",
+          name: "size",
+          hint: "Room for the child to grow into. Small is the default and is not recorded.",
+          options: sizeOptions(values.size),
+          ...(errors["size"] ? { error: errors["size"] } : {}),
+        })}
         <p class="muted small">
           Never copied: ${LEFT_BEHIND.join(", ")}. The child mints its own.
         </p>
@@ -421,6 +449,7 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
     keepAccess: asBool(form, "keepAccess"),
     budgetUsd: field(form, "budgetUsd").trim(),
     modelEndpoint: field(form, "modelEndpoint").trim(),
+    size: field(form, "size").trim() || DEFAULT_SIZE,
     hadKey: field(form, "modelKey").trim() !== "",
   };
   const key = field(form, "modelKey").trim();
@@ -437,6 +466,8 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
     ...(key === "" ? {} : { modelKey: key }),
     ...(values.modelEndpoint === "" ? {} : { modelEndpoint: values.modelEndpoint }),
     ...(values.budgetUsd === "" ? {} : { budgetUsd: Number(values.budgetUsd) }),
+    // Small is the default: it is not recorded, so the plan stays as it was.
+    ...(values.size === DEFAULT_SIZE ? {} : { size: values.size }),
     dryRun: planOnly,
   });
   if (door.status >= 400)

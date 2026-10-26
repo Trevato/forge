@@ -25,6 +25,7 @@
 
 import { undoFleetOp } from "../../actions/fleet.ts";
 import { previewReplan, replanLimb, takeBackLimb } from "../../actions/limb_replan.ts";
+import { IN_HAND } from "../../actions/plan_words.ts";
 import { pendingReplans } from "../../core/limb_replan.ts";
 import { applyLimb, previewLimb, type LimbPreview } from "../../actions/limbs.ts";
 import { canAdmin, canRead, canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
@@ -197,7 +198,7 @@ export function limbsScreen(
     }
     const p = seen.value;
     if (p.withPlanner && !p.takeBack) {
-      ctx.toast("the planner has it in hand already", "danger");
+      ctx.toast(IN_HAND, "danger");
       return;
     }
     if (!p.withPlanner && p.blocked !== undefined) {

@@ -5,160 +5,22 @@
  * forge without a hand-written wrapper. Plain data in, plain data out;
  * `GET /contract/openapi.json` serves it. A route added to the manifest is
  * added here, and `test/openapi.test.ts` fails until it is.
+ *
+ * Each row is its own file, `openapi/routes/<operationId>.ts`, gathered by
+ * the generated `openapi/routes/index.ts` (`bun scripts/openapi-routes.ts`),
+ * so pulls describing different routes do not collide (#5936).
  */
 
-interface Route {
-  readonly method: "get" | "post" | "patch" | "delete";
-  readonly path: string;
-  readonly summary: string;
-  /** Whether it needs a token; reads of public things do not. */
-  readonly auth: boolean;
-  /** A JSON body's fields, when it takes one. */
-  readonly body?: Readonly<Record<string, string>>;
-  /** The query parameters its handler reads, by name and type. */
-  readonly query?: Readonly<Record<string, string>>;
-  /** The success status, when it is not 200. */
-  readonly status?: number;
-  /** The refusals it answers, by stable `error` code. */
-  readonly refusals?: Readonly<Record<string, string>>;
+import type { Route } from "./openapi/shared.ts";
+import * as each from "./openapi/routes/index.ts";
+
+/** Every row, sorted by operationId: the index's order. */
+export const ROUTES: readonly Route[] = Object.values(each);
+
+/** A route's operationId, and the name of the file that holds it. */
+export function operationId(r: Pick<Route, "method" | "path">): string {
+  return `${r.method}${r.path.replace(/[^A-Za-z0-9]+(.)?/g, (_, c: string | undefined) => (c ?? "").toUpperCase())}`;
 }
-
-/** What `listQuery` in `http/api.ts` reads from a list of issues or pulls. */
-const LIST_QUERY = { state: "string", limit: "integer", cursor: "integer", label: "string", author: "string" };
-
-/** What `POST /api/v1/apps` reads from its body, and the refusals it answers. */
-const APP_BODY = { name: "string", owner: "string", description: "string", visibility: "string", agent: "string", pick: "boolean" };
-const APP_REFUSALS = {
-  unverified: "the account has not verified its email",
-  app_limit: "the owner is at the app limit",
-  no_such_agent: "`agent` names no one on the crew",
-  slug_taken: "another app already has this name's slug",
-  name_taken: "the owner already has a repository of this name",
-};
-
-const REPO = "/api/v1/repos/{owner}/{name}";
-
-export const ROUTES: readonly Route[] = [
-  { method: "get", path: "/api/v1/apps", summary: "List the apps whose repositories you can read; answers { items, next_cursor }", auth: false },
-  {
-    method: "post",
-    path: "/api/v1/apps",
-    summary: "Make an app: a repository, its app and a first issue; answers 201 with { repo, app, issue }",
-    auth: true,
-    status: 201,
-    body: APP_BODY,
-    refusals: APP_REFUSALS,
-  },
-  { method: "get", path: "/api/v1/explore", summary: "Explore apps and repositories; `q` takes words and `kind:`/`owner:` filters; answers { query, items }", auth: false, query: { q: "string" } },
-  { method: "get", path: "/api/v1/search", summary: "Search issues, pulls, repositories and code; `kind` narrows it", auth: false, query: { q: "string", kind: "string" } },
-  { method: "get", path: "/api/v1/repos", summary: "List public repositories", auth: false },
-  {
-    method: "get",
-    path: REPO,
-    summary:
-      "Read one repository; `provenance` is where a migrated one came from ({ source, sourceUrl, parents: [{ fullName, url }], migratedAt }), null when it was not migrated or its owner hid it",
-    auth: false,
-  },
-  {
-    method: "post",
-    path: `${REPO}/reports`,
-    summary: "Report a problem in a public repository, without an account",
-    auth: false,
-    body: { title: "string", body: "string", page: "string" },
-  },
-  { method: "get", path: `${REPO}/issues`, summary: "List a repository's issues; fields=brief leaves out bodies and comments, any other fields value is a 422 invalid_fields", auth: false, query: { ...LIST_QUERY, fields: "string" } },
-  { method: "get", path: `${REPO}/pulls`, summary: "List a repository's pulls", auth: false, query: LIST_QUERY },
-  {
-    method: "post",
-    path: `${REPO}/issues`,
-    summary: "Open an issue",
-    auth: true,
-    body: { title: "string", body: "string" },
-  },
-  { method: "get", path: `${REPO}/issues/{number}`, summary: "Read one issue with its comments; comments=N (0 to 200) answers only the newest N and commentCount, any other value is a 422 invalid_comments", auth: false, query: { comments: "integer" } },
-  {
-    method: "patch",
-    path: `${REPO}/issues/{number}`,
-    summary: "Close or reopen an issue (state, with a reason and the issue it went into)",
-    auth: true,
-    body: { state: "string", reason: "string", into: "integer" },
-  },
-  { method: "get", path: `${REPO}/pulls/{number}`, summary: "Read one pull with its diff and review gate (diff=0 leaves the diff out)", auth: false, query: { diff: "string" } },
-  { method: "get", path: `${REPO}/issues/{number}/comments`, summary: "Page through an issue's or pull's comments, oldest first: {comments, next}; limit 1 to 100 (default 50), after a comment id", auth: false, query: { after: "string", limit: "integer" } },
-  {
-    method: "post",
-    path: `${REPO}/issues/{number}/comments`,
-    summary: "Comment on an issue or pull",
-    auth: true,
-    body: { body: "string" },
-  },
-  { method: "post", path: `${REPO}/forks`, summary: "Fork a repository", auth: true },
-  {
-    method: "post",
-    path: `${REPO}/pulls`,
-    summary: "Offer a change as a pull",
-    auth: true,
-    body: { title: "string", head: "string", headRepo: "string" },
-  },
-  {
-    method: "post",
-    path: `${REPO}/pulls/{number}/reviews`,
-    summary: "Give a verdict on a pull",
-    auth: true,
-    body: { verdict: "string", body: "string" },
-  },
-  { method: "post", path: `${REPO}/pulls/{number}/merge`, summary: "Merge a pull (a person's)", auth: true },
-  {
-    method: "patch",
-    path: REPO,
-    summary:
-      "Change a repository's settings (an admin's); `showProvenance` shows or hides where a migrated one came from (a person's, never an agent's)",
-    auth: true,
-    body: {
-      description: "string",
-      visibility: "string",
-      archived: "boolean",
-      showProvenance: "boolean",
-    },
-  },
-  { method: "get", path: `${REPO}/app/production/open`, summary: "Open the running app", auth: false },
-  { method: "get", path: `${REPO}/map`, summary: "Read the plan: issues, their dependency edges and pillars", auth: false },
-  {
-    method: "post",
-    path: `${REPO}/plan`,
-    summary: "Open a plan of issues and their dependencies, all or nothing",
-    auth: true,
-    body: { issues: "array" },
-  },
-  {
-    method: "post",
-    path: `${REPO}/issues/{number}/dependencies`,
-    summary: "Make an issue wait for another",
-    auth: true,
-    body: { blockedBy: "integer" },
-  },
-  {
-    method: "delete",
-    path: `${REPO}/issues/{number}/dependencies/{blocker}`,
-    summary: "Stop an issue waiting for another",
-    auth: true,
-  },
-  {
-    method: "post",
-    path: "/api/v1/migrate",
-    summary: "Migrate a repository here: source is { url } (needs rw scope) or { originId, fullName } (needs admin scope); after is leave, archive or mirror; answers 202 with the repo and its clone job",
-    auth: true,
-    body: { source: "object", owner: "string", name: "string", visibility: "string", branch: "string", after: "string", crew: "object" },
-  },
-  { method: "get", path: "/api/v1/migrate/{job}", summary: "Read a migration job's stage", auth: true },
-  {
-    method: "post",
-    path: "/mcp",
-    summary: "The forge as an MCP server (JSON-RPC 2.0); see docs/MCP.md",
-    auth: true,
-    body: { jsonrpc: "string", id: "integer", method: "string", params: "object" },
-  },
-];
 
 const schema = (t: string) => (t === "object" ? { type: "object" } : t === "array" ? { type: "array", items: { type: "object" } } : { type: t });
 
@@ -186,7 +48,7 @@ export function openapi(origin: string, version: string): Record<string, unknown
               : schema(t),
     }));
     (paths[r.path] ??= {})[r.method] = {
-      operationId: `${r.method}${r.path.replace(/[^A-Za-z0-9]+(.)?/g, (_, c: string | undefined) => (c ?? "").toUpperCase())}`,
+      operationId: operationId(r),
       summary: r.summary,
       parameters: [...params, ...query],
       ...(r.body === undefined
@@ -208,7 +70,21 @@ export function openapi(origin: string, version: string): Record<string, unknown
           }),
       ...(r.auth ? { security: [{ token: [] }] } : {}),
       responses: {
-        [String(r.status ?? 200)]: { description: "Done" },
+        [String(r.status ?? 200)]: {
+          description: "Done",
+          ...(r.reply === undefined
+            ? {}
+            : {
+                content: {
+                  "application/json": {
+                    schema: {
+                      type: "object",
+                      properties: Object.fromEntries(Object.entries(r.reply).map(([k, t]) => [k, schema(t)])),
+                    },
+                  },
+                },
+              }),
+        },
         default: {
           description:
             "An error: { error, message }; `error` is a stable code" +

@@ -18,11 +18,11 @@ import { serve, type Servers } from "../src/http/server.ts";
 const esc = (s: string): string =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
-/** The audience element of a page: its tag, link and text. */
+/** The audience line of a page: the settings link if any, the Split badge if any, and the sentence. */
 function audienceOn(page: string) {
-  const m = /<(a|span) class="repo-audience"(?: href="([^"]*)")? title="([^"]*)"\s*>([^<]*)<\/\1\s*>/.exec(page);
-  if (m === null) throw new Error("no audience element on the page");
-  return { tag: m[1], href: m[2], title: m[3], text: m[4] };
+  const m = /<p class="repo-desc"\s*>\s*(?:<span\s+class="badge"\s+data-variant="attn"\s*>(Split)<\/span\s*>)?\s*(?:<a href="([^"]*)"\s*>)?([^<]*Public: anyone[^<]*|The code is public[^<]*)(?:<\/a\s*>)?\s*<\/p\s*>/.exec(page);
+  if (m === null) throw new Error("no audience line on the page");
+  return { badge: m[1], href: m[2], text: m[3]!.trim() };
 }
 
 describe("one sentence on every surface", () => {
@@ -82,9 +82,8 @@ describe("one sentence on every surface", () => {
     const page = await (await fetch(`${servers.url}/olive/garden`, { headers: auth })).text();
     const said = esc(body.audience.sentence);
     expect(audienceOn(page)).toEqual({
-      tag: "a",
+      badge: "Split",
       href: "/olive/garden/settings",
-      title: said,
       text: said,
     });
   });
@@ -98,7 +97,7 @@ describe("one sentence on every surface", () => {
     expect(api.audience.sentence).toStartWith("Public: anyone can read this");
     const said = esc(api.audience.sentence);
     const out = await (await fetch(`${servers.url}/olive/meadow`)).text();
-    expect(audienceOn(out)).toEqual({ tag: "span", href: undefined, title: said, text: said });
+    expect(audienceOn(out)).toEqual({ badge: undefined, href: undefined, text: said });
 
     const wren = await createUser(app.db, {
       origin: "seed",
@@ -114,6 +113,6 @@ describe("one sentence on every surface", () => {
         headers: { authorization: `Bearer ${token}` },
       })
     ).text();
-    expect(audienceOn(seen)).toEqual({ tag: "span", href: undefined, title: said, text: said });
+    expect(audienceOn(seen)).toEqual({ badge: undefined, href: undefined, text: said });
   });
 });

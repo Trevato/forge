@@ -10,7 +10,9 @@
  * behaviour that a page depends on to be usable.
  */
 
+import { STAGE_BADGE_JS } from "./stage-row.ts";
 import { paletteHelpersJs } from "./palette.ts";
+import { NOT_TOLD_WORDS } from "../actions/tell_words.ts";
 
 /**
  * A native `<dialog>` opened as a modal that owns its Escape. Shared by the
@@ -105,7 +107,7 @@ export const mirrorJs = /* js */ `
 
   var rows = Array.prototype.slice.call(list.querySelectorAll('li[data-stage-name]'));
   var order = rows.map(function (li) { return li.getAttribute('data-stage-name'); });
-  var glyph = { done: '\\u25CF', now: '\\u25D0', failed: '\\u2715', todo: '\\u25CB' };
+  var badges = ${STAGE_BADGE_JS};
 
   function paint(stage, detail) {
     list.setAttribute('data-stage', stage);
@@ -116,9 +118,12 @@ export const mirrorJs = /* js */ `
         : i === there ? (stage === 'done' ? 'done' : 'now')
         : 'todo';
       li.setAttribute('data-state', state);
-      var dot = li.querySelector('.stage-dot');
-      if (dot) dot.textContent = glyph[state];
-      var note = li.querySelector('.stage-detail');
+      var badge = li.querySelector('.badge');
+      if (badge) {
+        badge.textContent = badges[state][0];
+        badge.setAttribute('data-variant', badges[state][1]);
+      }
+      var note = li.querySelector('.row-meta');
       if (note) note.textContent = state === 'now' ? (detail || '') : '';
     });
   }
@@ -194,31 +199,39 @@ const elapsedTickJs = /* js */ `
 
 const logLineJs = /* js */ `
   var FORGE = /^(claude:|done:|failed:|paused|declined:|cloning |branch |forked |pushing |push refused|clone kept|nothing to propose|opened pull|updated pull|committed the|could not|checking out|deploy |data: |\\$ |session |the session|interrupted|passed in|install |test |start |ready |process |timing: )/;
-  function line(kind, speaker, fill) {
+  function line(kind, speaker, fill, variant) {
     var el = document.createElement('div');
-    el.className = 'ln ln-' + kind;
+    el.className = 'row';
+    el.setAttribute('data-line', kind);
+    var lead = document.createElement('span');
+    lead.className = 'row-lead';
     var w = document.createElement('span');
-    w.className = 'who';
+    w.className = 'badge';
+    if (variant) w.setAttribute('data-variant', variant);
     w.textContent = speaker;
+    lead.appendChild(w);
+    var main = document.createElement('span');
+    main.className = 'row-main';
     var t = document.createElement('span');
-    t.className = 'txt';
+    t.className = 'row-title';
     fill(t);
-    el.appendChild(w);
-    el.appendChild(t);
+    main.appendChild(t);
+    el.appendChild(lead);
+    el.appendChild(main);
     return el;
   }
   function draw(text) {
-    if (text.indexOf('you: ') === 0) return line('you', 'you', function (t) { t.textContent = text.slice(5); });
+    if (text.indexOf('you: ') === 0) return line('you', 'you', function (t) { t.textContent = text.slice(5); }, 'secondary');
     if (text.indexOf('\\u2192 ') === 0) {
       var rest = text.slice(2), at = rest.indexOf(' ');
-      return line('tool', '', function (t) {
+      return line('tool', 'tool', function (t) {
         var b = document.createElement('b');
         b.textContent = at === -1 ? rest : rest.slice(0, at);
         t.appendChild(b);
         t.appendChild(document.createTextNode(at === -1 ? '' : ' ' + rest.slice(at + 1)));
       });
     }
-    if (FORGE.test(text)) return line('forge', 'forge', function (t) { t.textContent = text; });
+    if (FORGE.test(text)) return line('forge', 'forge', function (t) { t.textContent = text; }, 'outline');
     return line('say', who, function (t) { t.textContent = text; });
   }
 `;
@@ -298,8 +311,8 @@ export const studioRunJs = /* js */ `
   function add(el) {
     log.insertBefore(el, pulse && pulse.parentNode === log ? pulse : jump);
     if (cap) {
-      var kept = log.querySelectorAll('.ln:not(#run-pulse)');
-      while (kept.length > cap) { log.removeChild(kept[0]); kept = log.querySelectorAll('.ln:not(#run-pulse)'); }
+      var kept = log.querySelectorAll('.row[data-line]:not(#run-pulse)');
+      while (kept.length > cap) { log.removeChild(kept[0]); kept = log.querySelectorAll('.row[data-line]:not(#run-pulse)'); }
     }
     if (follow) toEnd(); else if (jump) jump.hidden = false;
   }
@@ -462,8 +475,8 @@ export const appTailJs = /* js */ `
   function add(el) {
     tail.appendChild(el);
     if (cap) {
-      var kept = tail.querySelectorAll('.ln');
-      while (kept.length > cap) { tail.removeChild(kept[0]); kept = tail.querySelectorAll('.ln'); }
+      var kept = tail.querySelectorAll('.row[data-line]');
+      while (kept.length > cap) { tail.removeChild(kept[0]); kept = tail.querySelectorAll('.row[data-line]'); }
     }
     tail.scrollTop = tail.scrollHeight;
   }
@@ -1293,13 +1306,13 @@ export const shellJs = /* js */ `
     if (!m || !m.matches || !m.matches('details.menu[open]')) return;
     closeMenus(m);
     var first = m.querySelector('.menu-panel .menu-item, .menu-panel input');
-    if (first && !first.closest('.theme-option')) first.focus();
+    if (first && !first.closest('.theme-form')) first.focus();
   }, true);
   doc.addEventListener('keydown', function (e) {
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
     var panel = e.target && e.target.closest ? e.target.closest('.menu-panel') : null;
     if (!panel) return;
-    var items = Array.prototype.slice.call(panel.querySelectorAll('.menu-item, .theme-option input'));
+    var items = Array.prototype.slice.call(panel.querySelectorAll('.menu-item, .theme-form input'));
     var at = items.indexOf(doc.activeElement);
     var next = items[(at + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length];
     if (next) { next.focus(); e.preventDefault(); }
@@ -1308,7 +1321,7 @@ export const shellJs = /* js */ `
   // ---- theme: apply instantly, persist once the choice settles ----
   var themeForm = doc.querySelector('.theme-form');
   if (themeForm) {
-    var apply = themeForm.querySelector('.theme-apply');
+    var apply = themeForm.querySelector('button[type=submit]');
     if (apply) apply.hidden = true;
     var pending = 0;
     themeForm.addEventListener('change', function () {
@@ -1333,6 +1346,7 @@ export const shellJs = /* js */ `
   // retype, and the button never does nothing.
   function selectText(el) {
     try {
+      if (el.select) { el.focus(); el.select(); return true; }
       var range = doc.createRange();
       range.selectNodeContents(el);
       var sel = window.getSelection();
@@ -1356,7 +1370,7 @@ export const shellJs = /* js */ `
       done(selectText(src) ? 'Selected — press Ctrl/Cmd+C' : 'Copy it by hand');
     }
     if (!navigator.clipboard) { fallback(); return; }
-    navigator.clipboard.writeText(src.textContent.trim()).then(function () {
+    navigator.clipboard.writeText((src.value !== undefined ? src.value : src.textContent).trim()).then(function () {
       done('Copied');
     }, fallback);
   });
@@ -1648,7 +1662,7 @@ export const shellJs = /* js */ `
           if (note) note.textContent = d.ok ? d.flash : d.error;
           if (d.ok) { ta.value = ''; window.setTimeout(function () { box.remove(); }, 2500); }
         }).catch(function () {
-          if (note) note.textContent = 'That could not be told.';
+          if (note) note.textContent = '${NOT_TOLD_WORDS}';
         }).then(function () { sending = false; });
       }
       form.addEventListener('submit', function (e) { e.preventDefault(); send(); });
@@ -1858,7 +1872,7 @@ export const shellJs = /* js */ `
 
   // ---- colour pickers show the hex they are about to submit ----
   doc.querySelectorAll('.color-field input[type="color"]').forEach(function (i) {
-    var out = i.parentNode.querySelector('.hex');
+    var out = i.parentNode.querySelector('[data-hex]');
     if (!out) return;
     i.addEventListener('input', function () { out.textContent = i.value; });
   });

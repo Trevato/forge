@@ -26,8 +26,10 @@ import { serveSsh, type SshServer, type SshSession } from "../ssh/server.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { createForgeApp } from "./forge.ts";
 import { appForLogin, attachAppTty } from "../apps/tty.ts";
+import { servePulls } from "../apps/tty_pulls.ts";
 import type { Terminal } from "./term/terminal.ts";
 import type { TuiIdentity } from "./session.ts";
+import { parseTellCommand, serveTell } from "./ssh-tell.ts";
 
 const CRLF = "\r\n";
 
@@ -190,9 +192,15 @@ export function endOnSuspension(
   });
 }
 
+/** The execs an app's login answers besides git, by command word. */
+const appExecs: Record<string, typeof servePulls> = Object.assign(
+  Object.create(null) as Record<string, typeof servePulls>,
+  { pulls: servePulls },
+);
+
 /**
  * What a forge does with an inbound SSH session: a shell is the TUI, an exec
- * is git or nothing. Never throws — a fault here would take the listener with
+ * is git, `tell`, or nothing. Never throws — a fault here would take the listener with
  * it, and one bad client must not.
  */
 export function forgeSshSession(forge: Forge): (session: SshSession) => void {
@@ -208,6 +216,26 @@ export function forgeSshSession(forge: Forge): (session: SshSession) => void {
         const app = appForLogin(forge, session.username);
         if (app !== undefined) attachAppTty(forge, session, identity.user, app);
         else attachTui(forge, session, identity);
+        return;
+      }
+      // An exec on an app's login that git does not speak: a small table.
+      const door = appForLogin(forge, session.username);
+      const verb = session.command === undefined ? undefined : appExecs[session.command.trim()];
+      if (door !== undefined && verb !== undefined) {
+        verb(forge, session, identity.user, door);
+        return;
+      }
+      // `tell <words>`: the crew, in one line. On an app's login it is the
+      // app's crew, said from the app (through the terminal's own gate).
+      const said = parseTellCommand(session.command);
+      if (said !== undefined) {
+        void serveTell(forge, session, identity.user, said, door).catch(
+          (error: unknown) => {
+            forge.log.error("tell over ssh failed", { error: String(error) });
+            session.writeStderr(`forge: internal error${CRLF}`);
+            session.exit(1);
+          },
+        );
         return;
       }
       void serveGitCommand(forge, session, identity.user).catch(

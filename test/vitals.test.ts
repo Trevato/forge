@@ -1,5 +1,6 @@
 /** The forge's standing: its shape, the admin gate, and what it flags. */
 
+import { laneSentence } from "../src/kernel/vitals.ts";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -167,7 +168,7 @@ test("the number of queries does not grow with runs", () => {
     if (i % 2) app.db.query("UPDATE run SET state='running' WHERE id=?1").run(r.id);
   }
   expect(count()).toBe(before);
-  // The queue, the running runs, the runs killed twice for their budget, the lane's depth and finished checks, the red mains holding pulls' checks, the tests red on many pulls, and the newest drill of every domain, and the checks no red main holds.
+  // The queue, the running runs, the runs killed twice for their budget, the lane's depth and finished checks, the red mains holding pulls' checks, the tests red on many pulls, (the checks red on a full disk only while the disk is full), and the newest drill of every domain, and the checks no red main holds.
   expect(before).toBe(9);
 });
 
@@ -463,4 +464,26 @@ test("only the disk need sees the disk: a 5% reading raises it, and nothing else
   expect(v.degraded.map((d) => d.cause)).toEqual(["disk"]);
   expect(v.needs).toEqual(["Disk is nearly full: 5% free."]);
   expect(vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy }).needs).toEqual([]);
+});
+
+test("laneSentence says one lane for one slot and names the slots in force for several", () => {
+  const now = Date.parse("2026-01-01T02:00:00Z");
+  const oldest = "2026-01-01T01:04:00Z";
+  const iso = (min: number) => new Date(now - min * 60_000).toISOString();
+  const runs = [
+    { pull: 4656, since: iso(5) },
+    { pull: 4700, since: iso(2) },
+  ];
+  expect(laneSentence(3, oldest, [runs[0]!], 1, now)).toBe(
+    "3 checks wait behind one lane; the oldest since 01:04; the lane runs #4656 for 5 min (limit 60).",
+  );
+  expect(laneSentence(11, oldest, runs, 2, now)).toBe(
+    "11 checks wait for 2 slots, all busy; the oldest since 01:04; the longest running is #4656 at 5 min (limit 60).",
+  );
+  expect(laneSentence(1, oldest, [runs[1]!], 7, now, 2)).toBe(
+    "1 check waits for 7 slots, 1 busy; the oldest since 01:04; the longest running is #4700 at 2 min (limit 60); 2 more held by a red main.",
+  );
+  expect(laneSentence(4, oldest, [], 3, now)).toBe(
+    "4 checks wait for 3 slots, none busy; the oldest since 01:04; nothing runs.",
+  );
 });

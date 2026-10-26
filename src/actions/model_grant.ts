@@ -7,7 +7,6 @@
 import type { App } from "../app.ts";
 import {
   addOwnSubscription,
-  ownSubscription,
   setModelGrant,
   validGrant,
 } from "../core/model_grant.ts";
@@ -16,15 +15,18 @@ import { getUserByName, type User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { requireUser } from "./access.ts";
 import type { SubscriptionError } from "../core/subscriptions.ts";
+import { SUBSCRIPTION_WORDS } from "../core/subscriptions_words.ts";
 
-/** What a refused add says, on every surface that adds one. */
+/**
+ * What a refused add says, on every surface that adds one. The token and
+ * API base sentences are the Subscriptions page's own; the name sentences
+ * differ on purpose, since a person has one subscription of their own.
+ */
 export const ADD_MESSAGES = {
   invalid_name: "That name will not do.",
   name_taken: "You already added your own subscription.",
-  invalid_token:
-    "That is not a model token: one line, no spaces. One from `claude setup-token` begins sk-ant-oat; anything else is taken as an API key.",
-  invalid_api_base:
-    "The API base URL must be https, with no credentials, query, or hash (a Claude subscription token takes none).",
+  invalid_token: SUBSCRIPTION_WORDS.invalid_token,
+  invalid_api_base: SUBSCRIPTION_WORDS.invalid_api_base,
   not_allowed: "Only a person adds their own subscription.",
 };
 
