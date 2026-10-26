@@ -67,7 +67,8 @@ import {
   signInFirst,
 } from "../chrome.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
-import { diffCacheCounts, diffKey, keptDiff } from "../diff-cache.ts";
+import { diffCacheCounts, diffKey, keptDiff, keptRender } from "../diff-cache.ts";
+import { keptRead } from "../head-reads.ts";
 import { diffSyntax } from "../diff-syntax.ts";
 import {
   renderDiff,
@@ -781,7 +782,7 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
   const { repo, pull } = found;
   const began = performance.now();
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-  const spent = { diff: 0, checks: 0, reviews: 0 };
+  const spent = { diff: 0, git: 0, checks: 0, reviews: 0 };
   /** Run `work`, adding the time it took to `spent[key]`. */
   const lap = async <T>(key: keyof typeof spent, work: () => T | Promise<T>): Promise<T> => {
     const started = performance.now();
@@ -807,7 +808,7 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
 
   // The review gate travels with the status, so the merge box and
   // `mergePull` are answering the same question from the same numbers.
-  const status = await lap("diff", () =>
+  const status = await lap("git", () =>
     pullStatus(dir, pull, {
       db: ctx.app.db,
       requireReview: repo.requireReview,
@@ -816,7 +817,7 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
   // The diff and its highlighting depend on two oids and nothing else, so
   // the next reader of this head gets them from memory (`diff-cache.ts`).
   const cacheBefore = diffCacheCounts();
-  const { diff, syntax } = await lap("diff", () =>
+  const { diff, syntax, failed } = await lap("diff", () =>
     keptDiff(diffKey(status.baseOid, status.headOid), async () => {
       const { from, diff, failed } = await diffBetween(dir, status.baseOid, status.headOid);
       return { from, diff, failed, syntax: await diffSyntax(dir, diff, from, status.headOid) };
@@ -827,7 +828,9 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
   // A merged or closed pull is history; the wall is a question about landing.
   const wall =
     pull.mergedAt === null && pull.state === "open"
-      ? await lap("diff", () => wallOf(dir, status.baseOid, status.headOid))
+      ? await lap("git", () =>
+          keptRead(`wall:${status.baseOid}:${status.headOid}`, () => wallOf(dir, status.baseOid, status.headOid)),
+        )
       : undefined;
   const reviewLines = tick("reviews", () => listReviewComments(ctx.app.db, pull.id));
   const reviewComments = byAnchor(reviewLines);
@@ -868,6 +871,13 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     ...(active ? { active } : {}),
   };
 
+  // Nothing viewer-specific is drawn when no comment, thread or form is; then
+  // the markup is a function of the diff and the link bases (`keptRender`).
+  const renderKey =
+    reviewLines.length === 0 && threadViews.size === 0 && active === undefined && !failed
+      ? `${diffKey(status.baseOid, status.headOid)}|${diffOptions.fileLinkBase}|${diffOptions.reviewBase ?? ""}|${diffOptions.reviewPage ?? ""}`
+      : undefined;
+
   const headRepo = pull.crossRepo
     ? getRepoById(ctx.app.db, pull.headRepoId)
     : undefined;
@@ -875,10 +885,13 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     ? `${headRepo.ownerName}/${headRepo.name}:${pull.headBranch}`
     : pull.headBranch;
 
-  const log = await lap("diff", () =>
-    commitLog(dir, status.headOid, {
-      limit: Math.min(Math.max(status.ahead, 1), 100),
-    }),
+  const logLimit = Math.min(Math.max(status.ahead, 1), 100);
+  const log = await lap("git", () =>
+    keptRead(
+      `log:${status.headOid}:${logLimit}`,
+      () => commitLog(dir, status.headOid, { limit: logLimit }),
+      (r) => r.ok,
+    ),
   );
   const commits = log.ok ? log.value : [];
   const commitsCard = card(
@@ -950,7 +963,7 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
         ${crewActivityCard(ctx, repo, pull)}
       </aside>
     </div>
-    <div class="mt">${renderDiff(diff, diffOptions)}</div>
+    <div class="mt">${keptRender(renderKey, () => renderDiff(diff, diffOptions))}</div>
     ${liveMount({ repo: base })}`;
 
   const response = page({
@@ -962,14 +975,15 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     styleCss: labelCss([...allLabels, ...applied]),
     scriptJs: `${liveClientJs}\n${liveRegionsJs}`,
   });
-  const { diff: diffMs, checks, reviews } = spent;
+  const { diff: diffMs, git, checks, reviews } = spent;
   notePhase(ctx.request, "diff", diffMs, diffHit);
+  notePhase(ctx.request, "git", git);
   notePhase(ctx.request, "checks", checks);
   notePhase(ctx.request, "reviews", reviews);
   notePhase(
     ctx.request,
     "render",
-    Math.max(0, performance.now() - began - diffMs - checks - reviews),
+    Math.max(0, performance.now() - began - diffMs - git - checks - reviews),
   );
   return response;
 }

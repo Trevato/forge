@@ -872,13 +872,14 @@ export function checksForHead(
   db: Database,
   issueId: string,
   headOid: string,
+  limit = -1,
 ): Run[] {
   return db
     .query<
       RunRow,
-      [string, string]
-    >("SELECT * FROM run WHERE kind IN ('deploy','check') AND issue_id = ?1 AND commit_oid = ?2 ORDER BY id DESC")
-    .all(issueId, headOid)
+      [string, string, number]
+    >("SELECT * FROM run WHERE kind IN ('deploy','check') AND issue_id = ?1 AND commit_oid = ?2 ORDER BY id DESC LIMIT ?3")
+    .all(issueId, headOid, limit)
     .map(toRun);
 }
 
@@ -911,7 +912,13 @@ export function checkSummary(
   issueId: string,
   headOid: string,
 ): CheckSummary {
-  const latest = checksForHead(db, issueId, headOid)[0];
+  const row = db
+    .query<
+      RunRow,
+      [string, string]
+    >("SELECT * FROM run WHERE kind IN ('deploy','check') AND issue_id = ?1 AND commit_oid = ?2 ORDER BY id DESC LIMIT 1")
+    .get(issueId, headOid);
+  const latest = row ? toRun(row) : undefined;
   return latest
     ? { state: latest.state, run: latest }
     : { state: "none", run: null };
