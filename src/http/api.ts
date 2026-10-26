@@ -467,6 +467,7 @@ import {
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
 import { REPORT_RECEIVED } from "../actions/report_words.ts";
 import { ADMIN_WORDS } from "../actions/admin_words.ts";
+import { SETTING_WORDS } from "../actions/setting_words.ts";
 import { SPEND_WORDS } from "../actions/spend_words.ts";
 
 /** Take the parent's updates for `repo` and answer as the API does, for every route that asks. */
@@ -1260,7 +1261,7 @@ function membersAnswer<T>(result: Result<T, AppMembersError>): Response {
     case "invalid":
       return apiError("invalid", 422, result.error.message);
     case "forbidden":
-      return apiError("forbidden", 403, "the people an app names are its writers' to choose");
+      return apiError("forbidden", 403, SETTING_WORDS.appMembersForbidden);
     case "unauthorized":
       return unauthorized();
     default:
@@ -1690,7 +1691,7 @@ export function apiRoutes(router: Router<Handler>): void {
       422,
       changed.error === "no_such_setting"
         ? "no such capacity setting"
-        : "that value is outside what this setting takes",
+        : SETTING_WORDS.outOfRange,
     );
   });
 

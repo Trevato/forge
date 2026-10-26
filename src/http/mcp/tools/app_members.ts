@@ -1,5 +1,6 @@
 import { scopeAllows } from "../../../core/tokens.ts";
 import { readAppMembers, setAppMembersThrough } from "../../../actions/app_members.ts";
+import { SETTING_WORDS } from "../../../actions/setting_words.ts";
 import { type Answer, good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
 
 export const tool: Tool = {
@@ -30,7 +31,7 @@ export const tool: Tool = {
         : result.error.kind === "invalid"
           ? bad("invalid", result.error.message)
           : result.error.kind === "forbidden"
-            ? bad("forbidden", "the people an app names are its writers' to choose")
+            ? bad("forbidden", SETTING_WORDS.appMembersForbidden)
             : bad("not_found", "no such app or repository (owner/name)");
     if (members === undefined) return answer(readAppMembers(ctx.app, user, repo));
     if (!Array.isArray(members) || !members.every((m) => typeof m === "string"))
