@@ -139,4 +139,17 @@ describe("a page of issues, worded in one batch", () => {
       (app.db as { query: unknown }).query = real;
     }
   });
+
+  test("a page of fifty is worded in under 5 ms", async () => {
+    const all = page();
+    const closing = openPullsClosing(app.db, repo.id);
+    await tellWords(ctx(), repo, all, closing);
+    const laps: number[] = [];
+    for (let n = 0; n < 5; n++) {
+      const at = performance.now();
+      await tellWords(ctx(), repo, all, closing);
+      laps.push(performance.now() - at);
+    }
+    expect(Math.min(...laps)).toBeLessThan(5);
+  });
 });
