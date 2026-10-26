@@ -124,6 +124,7 @@ import {
 } from "./direct.ts";
 import { crewOffInPreview } from "./preview.ts";
 import { approvedOnHead, finishApproved, finishFields } from "./finishing.ts";
+import { recheckRedApproved } from "./red_approved.ts";
 import { readVitals, vitalsMisses, vitalsWords } from "../flow/vitals.ts";
 import { moveRequested, tallyRequested, tallyWords } from "./requested.ts";
 import { reviewersOf, sendToReview, sweepReviews } from "./review.ts";
@@ -1210,6 +1211,13 @@ export async function autonomyTick(
       // First of all: a slot freed goes to an approved pull that no longer
       // merges, before a changes-requested one or a new issue (#3682).
       const finishing = await finishApproved(app, repo, freeSlots(app, repo, now));
+      // An approved pull red for a day gets one re-check, then goes back (#6349).
+      await recheckRedApproved(app, repo, now).catch((error) =>
+        log.error("red approved re-check failed", {
+          repo: `${repo.ownerName}/${repo.name}`,
+          error: String(error),
+        }),
+      );
       // Quick, and before the picks: a pull main moved under is brought up
       // to date within this tick, not after a landing gate (#2039).
       await sweepConflicts(app, repo).catch((error) =>
