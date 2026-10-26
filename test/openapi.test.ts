@@ -345,6 +345,24 @@ test("mirroring and forking from an origin, its job and stream, and origin apps 
   expect(row.summary).toContain("mirror.done");
 });
 
+test("the caller's origins are described, from listing to removal, with no token in the document", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const O = "/api/v1/user/origins";
+  const want: Record<string, string[]> = {
+    [O]: ["get", "post"],
+    [`${O}/oauth`]: ["post"],
+    [`${O}/oauth/{id}`]: ["get"],
+    [`${O}/{id}`]: ["delete"],
+    [`${O}/{id}/sync`]: ["post"],
+    [`${O}/{id}/repos`]: ["get"],
+  };
+  for (const [path, methods] of Object.entries(want))
+    for (const m of methods) expect(doc.paths[path]?.[m], `${m} ${path}`).toBeDefined();
+  expect(doc.paths[O].post.responses["201"]).toBeDefined();
+  expect(doc.paths[`${O}/oauth`].post.responses["201"]).toBeDefined();
+  expect(JSON.stringify(doc.paths[O])).not.toMatch(/ghp_|github_pat_/);
+});
+
 test("the admin's writes are described: a capacity setting, a limit and a team", () => {
   const doc = openapi("https://f.test", "1") as any;
   for (const path of ["capacity/{key}", "limits/{key}", "teams/{slug}"]) {
