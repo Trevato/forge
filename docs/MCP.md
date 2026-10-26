@@ -120,7 +120,7 @@ for a tunnel and a forge that sleeps.
 | `run_log` | `{ repo, run, tail? }`: a run's log, or its last `tail` lines (1–2000), with the REST route's access: a hidden log or unreadable repository is not found |  |
 | `runs` | `{ repo, limit? }`: the repository's recent runs, newest first (id, kind, state, issue or pull number, started, ended), 1–50, default 20; read as the runs page reads them |  |
 | `say` | speak on an issue or a pull; a working builder hears it as its next step | yes |
-| `seal` | `{ repo, number, sealed }`: seal a security report (and the pull that fixes it) so only writers and the crew see it, or unseal it for every reader; a writer's, recorded | yes |
+| `seal` | `{ repo, number, sealed }`: seal a security report (and the pull that fixes it) so only writers and the crew see it, or unseal it for every reader; a writer's, recorded; with `action: "private"` instead of `sealed`, the private repository a writer fixes a sealed report in, made on first need, with its name and clone URL (the API's `POST …/issues/:number/private`, same rules) | yes |
 | `search` | `{ q, kind?, repo? }`: issues, pulls, repositories and code you can read, the same results as /search; `repo` keeps to one |  |
 | `secrets` | `{ scope, ref?, action, name?, value? }` (forge admin): `list` the names and timestamps of the forge's sealed secrets, `set` or `remove` one; `scope` is forge, org or repo, `ref` the org or `owner/name`; a value is never read back | yes |
 | `sever` | `{ repo }`: cut a spawned forge's link to the forge its code came from; its `forge` repository's owner only; deletes nothing | yes |
