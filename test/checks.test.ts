@@ -230,6 +230,29 @@ describe("summariseCheckFailure: what a failed check's summary says first", () =
     });
   });
 
+  const failing = (n: number) => [
+    ...Array.from({ length: n }, (_, i) => `(fail) t${i + 1} [1.00ms]`),
+    " 5 pass",
+    ` ${n} fail`,
+  ];
+
+  test("three failures name all three; five name three and how many more", () => {
+    expect(summariseCheckFailure(failing(3), "x").summary).toBe(
+      '3 of 8 tests — "t1", "t2" and "t3"',
+    );
+    expect(summariseCheckFailure(failing(5), "x").summary).toBe(
+      '5 of 10 tests — "t1", "t2", "t3" and 2 more',
+    );
+  });
+
+  test("a name list longer than the limit is still bounded to one line", () => {
+    const long = "y".repeat(100);
+    const lines = ["a", "b", "c", "d"].map((c) => `(fail) ${c}${long} [1.00ms]`);
+    const { summary } = summariseCheckFailure([...lines, " 0 pass", " 4 fail"], "x");
+    expect(summary.length).toBe(200);
+    expect(summary.endsWith("…")).toBe(true);
+  });
+
   test("a very long name is bounded to one line", () => {
     const long = "x".repeat(500);
     const lines = [`(fail) ${long} [1.00ms]`, " 0 pass", " 1 fail"];
@@ -549,7 +572,7 @@ describe("checks", () => {
       names: ["first failing test", "second failing test"],
     });
     expect(failed.summary).toBe(
-      'check failed: 2 of 3 tests — "first failing test"',
+      'check failed: 2 of 3 tests — "first failing test" and "second failing test"',
     );
   }, 30_000);
 
