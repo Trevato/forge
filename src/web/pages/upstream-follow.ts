@@ -6,6 +6,7 @@
  */
 
 import {
+  behindWords,
   checkedWords,
   checkLine,
   checkUpstreamNow,
@@ -45,6 +46,31 @@ export function followingLine(ctx: Ctx, repo: Repo): Html | null {
     ${follow.checkedAt === null ? null : html`· last checked ${clock(follow.checkedAt)}`}
     · ${standing(follow)}
   </p>`;
+}
+
+/**
+ * Under the head of a followed repository: how far behind the last check
+ * found it, or that it conflicts. Read from the stored check, never git;
+ * null when level, unchecked, failed for another reason, or following
+ * nothing. Admins only, like the page it links to.
+ */
+export function behindLine(ctx: Ctx, repo: Repo): Html | null {
+  const follow = followShown(ctx.app, repo, ctx.auth.user);
+  const words = follow === undefined ? null : behindWords(follow);
+  if (follow === undefined || words === null || follow.checkedAt === null) return null;
+  const base = repoBase(repo);
+  return html`<div class="small muted" data-behind-upstream>
+    ${icon("sync")}
+    ${words.conflict
+      ? html`<a href="${base}/settings#upstream">${words.text}</a>`
+      : html`${words.text} ·`}
+    checked ${timeAgo(follow.checkedAt)}
+    <form method="post" action="${base}/settings/upstream/check" class="inline">
+      <input type="hidden" name="back" value="${base}" />
+      ${btn("Update", { size: "sm", icon: "sync" })}
+    </form>
+    <a href="${base}/settings#upstream">details</a>
+  </div>`;
 }
 
 /** The last five checks, newest first; nothing when there are none. */
@@ -139,9 +165,10 @@ export async function followUpstreamCheck(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
   const checked = await checkUpstreamNow(ctx.app, ctx.auth.user, repo);
+  const back = field(form, "back");
   return flashTo(
     ctx,
-    `${repoBase(repo)}/settings#upstream`,
+    back === repoBase(repo) ? back : `${repoBase(repo)}/settings#upstream`,
     checked.ok
       ? { message: checkedWords(checked.value) }
       : { tone: "danger", message: FOLLOW_REFUSALS[checked.error] },

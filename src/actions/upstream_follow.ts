@@ -462,6 +462,32 @@ export function upstreamLabel(url: string): string {
   }
 }
 
+/** `owner/name` of an upstream address, else its host and path. */
+export function upstreamShort(url: string): string {
+  try {
+    const path = new URL(url).pathname.replace(/\.git$/, "").replace(/^\/|\/$/g, "");
+    return path.split("/").length === 2 ? path : upstreamLabel(url);
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * What the last stored check found, in a few words, for the home's line and
+ * the terminal: "12 commits behind a/b", or a conflict that says what to do.
+ * null when level, unchecked, failed for another reason, or not following.
+ */
+export function behindWords(follow: UpstreamFollow): { text: string; conflict: boolean } | null {
+  if (!follow.enabled || follow.checkedAt === null) return null;
+  const name = upstreamShort(follow.url);
+  if (follow.error === "conflict") return { text: `conflicts with ${name}: resolve`, conflict: true };
+  if (follow.error !== "" || follow.behind === 0) return null;
+  return {
+    text: `${follow.behind} commit${follow.behind === 1 ? "" : "s"} behind ${name}`,
+    conflict: false,
+  };
+}
+
 /** HH:MM, UTC. */
 export const clockWords = (iso: string): string => {
   const at = new Date(iso);

@@ -1909,6 +1909,8 @@ longer hollow turns the check red, so the list only shrinks.
 
 ## Following an upstream
 
+A followed repository's home shows admins "N commits behind owner/name" (or "conflicts with owner/name: resolve") from the last stored check, with an **Update** button: a same-origin POST form to the settings page's check action that returns to the home, no JS. The terminal's About card (`I`) has the same words as a `behind` row, and `u` is the same update (`behindWords`, `src/actions/upstream_follow.ts`).
+
 A repository can follow an outside git branch (`repo_upstream`, https or
 http only, no credentials in the address). The clock checks each following
 repository every 30 minutes (`checkDue`); the result is the follow row:

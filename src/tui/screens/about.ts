@@ -31,6 +31,7 @@ import {
   checkedWords,
   checkUpstreamNow,
   FOLLOW_REFUSALS,
+  behindWords,
   followShown,
   setFollowUpstream,
   standing,
@@ -403,6 +404,7 @@ export function upstreamRows(
   const follow = getFollow(f.db, repo.id);
   if (follow === undefined || !follow.enabled)
     return [["upstream", "off"]];
+  const behind = behindWords(follow);
   const checked =
     follow.checkedAt === null ? "" : ` · checked ${ago(follow.checkedAt)}`;
   return [
@@ -410,6 +412,7 @@ export function upstreamRows(
       "upstream",
       `${upstreamLabel(follow.url)} ${follow.branch}${checked} · ${standing(follow)}`,
     ],
+    ...(behind === null ? [] : [["behind", `${behind.text} · u updates`] as [string, string]]),
     ...listChecks(f.db, repo.id).map((c): [string, string] => ["", checkLine(c, ago(c.at))]),
   ];
 }

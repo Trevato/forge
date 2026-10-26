@@ -8,7 +8,7 @@
  * path segment and can never smuggle a path of its own.
  */
 
-import { followingLine } from "./upstream-follow.ts";
+import { behindLine, followingLine } from "./upstream-follow.ts";
 import { upstreamOffer } from "../../actions/offer_upstream.ts";
 import { offerUpstream } from "./offer-upstream.ts";
 import { NOT_A_MEMBER } from "../../core/roles.ts";
@@ -1104,7 +1104,7 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
   const rendering = performance.now();
   const body = html`${scopeHeader(ctx, scope, "code", {
     branchCount: refs.branches.length,
-  })}${archivedLine(ctx, repo)}${noApp}
+  })}${timePhase(ctx.request, "behind", () => behindLine(ctx, repo))}${archivedLine(ctx, repo)}${noApp}
   ${offerUpstream(repo, parent, offer)}
   ${latest === null
     ? ""
