@@ -124,6 +124,45 @@ export async function readWaves(
   return [...good, ...bad];
 }
 
+export interface PullRef {
+  owner: string;
+  name: string;
+  number: number;
+}
+
+const PULL_PATH = /^\/([^/]+)\/([^/]+)\/pulls\/([1-9]\d{0,8})\/?$/;
+
+/**
+ * The pulls a wave names, as `owner/name#number`, in the file's order and
+ * each once. A link that is not a pull's is not a reference and is left out.
+ */
+export function pullRefs(wave: Wave): PullRef[] {
+  const seen = new Set<string>();
+  const out: PullRef[] = [];
+  for (const p of wave.pulls) {
+    let path: string;
+    try {
+      path = new URL(p.url).pathname;
+    } catch {
+      continue;
+    }
+    const m = PULL_PATH.exec(path);
+    if (!m) continue;
+    let owner: string;
+    let name: string;
+    try {
+      owner = decodeURIComponent(m[1]!);
+      name = decodeURIComponent(m[2]!);
+    } catch {
+      continue;
+    }
+    const key = `${owner}/${name}#${m[3]}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ owner, name, number: Number(m[3]) });
+  }
+  return out;
+}
 
 /** Unreadable files tried before giving up on finding the newest good wave. */
 const LATEST_TRIES = 5;

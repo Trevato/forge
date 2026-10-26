@@ -13,7 +13,8 @@ import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../cor
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { VERSION } from "../../story/wave.ts";
-import { readWave, readWaves } from "../../story/waves.ts";
+import { carriedPulls, pullPath } from "../../story/wave_pulls.ts";
+import { pullRefs, readWave, readWaves } from "../../story/waves.ts";
 import { NO_WAVES } from "../../story/words.ts";
 import { loadRepo, notFoundPage, repoBase, scopeHeader } from "../chrome.ts";
 import { escapeHtml, html } from "../html.ts";
@@ -135,9 +136,6 @@ ${entries.join("\n")}
   });
 }
 
-/** Only http(s) becomes a link; anything else is shown as plain text. */
-export const webUrl = (s: string): boolean => /^https?:\/\//i.test(s);
-
 // GET /:owner/:name/waves/:version
 export async function wavePage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
@@ -151,6 +149,11 @@ export async function wavePage(ctx: Ctx): Promise<Response> {
     ),
   );
   if (!entry) return notFoundPage(ctx);
+  const carried = entry.ok
+    ? timePhase(ctx.request, "pulls", () =>
+        carriedPulls(ctx.app.db, pullRefs(entry.wave), ctx.auth.user),
+      )
+    : [];
   const rendering = performance.now();
   const scope = localScope(ctx, repo);
   const back = html`<a href="${repoBase(repo)}/waves">All waves</a>`;
@@ -164,14 +167,19 @@ export async function wavePage(ctx: Ctx): Promise<Response> {
             (h) => html`<li><strong>${h.title}</strong> — ${h.why}</li>`,
           )}
         </ul>
-        <h2>Pulls</h2>
-        <ul>
-          ${entry.wave.pulls.map((p) =>
-            webUrl(p.url)
-              ? html`<li><a href="${p.url}" rel="noopener noreferrer">${p.title}</a></li>`
-              : html`<li>${p.title}</li>`,
-          )}
-        </ul>`
+        ${carried.length === 0
+          ? html`<p class="muted">No pulls to show here.</p>`
+          : listCard(
+              carried.map((p) =>
+                row({
+                  href: pullPath(p),
+                  title: html`#${p.number} ${p.title}`,
+                  meta: html`${p.mergedAt === null ? p.state : `merged ${p.mergedAt.slice(0, 10)}`}`,
+                  state: p.mergedAt === null ? p.state : ("merged" as const),
+                }),
+              ),
+              { head: html`<h2>Pulls</h2>` },
+            )}`
     : html`<h1>${entry.file}</h1>
         <p class="muted">Not a wave: ${entry.reason}</p>`;
 

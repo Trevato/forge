@@ -388,7 +388,8 @@ import { carriedBy } from "../core/carried.ts";
 import { readRunLog, subscribeRunLog } from "../runs/log.ts";
 import { blobForRender, commitLog, listRefs, listTree } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
-import { readWave, readWaves } from "../story/waves.ts";
+import { carriedPulls, pullPath } from "../story/wave_pulls.ts";
+import { pullRefs, readWave, readWaves } from "../story/waves.ts";
 import type { Result } from "../kernel/result.ts";
 import { sizesView } from "../spawn/sizes.ts";
 import { holds, weakEtag } from "./etag.ts";
@@ -3699,19 +3700,23 @@ export function apiRoutes(router: Router<Handler>): void {
     );
     if (!entry?.ok) return notFound();
     const w = entry.wave;
-    // A pull line is `#12 Title` linking to the pull; the number is whichever
-    // of the two names it, or null.
-    const number = (p: { title: string; url: string }): number | null => {
-      const m = /^#(\d+)\b/.exec(p.title) ?? /\/pulls\/(\d+)\/?$/.exec(p.url);
-      return m ? Number(m[1]) : null;
-    };
+    // The page's gate on each pull: one the viewer cannot read is not named.
+    const pulls = timePhase(ctx.request, "pulls", () =>
+      carriedPulls(ctx.app.db, pullRefs(w), ctx.auth.user),
+    );
     return timePhase(ctx.request, "render", () =>
       json({
         version: w.version,
         date: w.date,
         headline: w.headline,
         highlights: w.highlights,
-        pulls: w.pulls.map((p) => ({ number: number(p), title: p.title, url: p.url })),
+        pulls: pulls.map((p) => ({
+          number: p.number,
+          title: p.title,
+          url: `${ctx.url.origin}${pullPath(p)}`,
+          state: p.mergedAt === null ? p.state : "merged",
+          merged_at: p.mergedAt,
+        })),
       }),
     );
   });

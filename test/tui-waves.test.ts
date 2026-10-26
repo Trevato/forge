@@ -14,6 +14,7 @@ import type { RepoSource } from "../src/view/source.ts";
 import { local } from "../src/tui/screens/where.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { mergedPull, waveNaming } from "./helpers/wave-pulls.ts";
 import { settleApp } from "./helpers/tui.ts";
 import { fixtureSlot } from "./helpers/slot.ts";
 import { seedAdmin } from "./helpers/admin.ts";
@@ -63,6 +64,7 @@ describe("waves in the terminal", () => {
   let bob: User;
   let pub: Repo;
   let priv: Repo;
+  let mix: Repo;
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-tui-waves-"));
@@ -75,14 +77,30 @@ describe("waves in the terminal", () => {
     const p = await createRepo(forge, alice, { name: "pub", visibility: "public" });
     const q = await createRepo(forge, alice, { name: "priv", visibility: "private" });
     if (!p.ok || !q.ok) throw new Error("repo failed");
+    const m = await createRepo(forge, alice, { name: "mix", visibility: "public" });
+    if (!m.ok) throw new Error("repo failed");
     pub = p.value;
     priv = q.value;
+    mix = m.value;
     const put = (repo: Repo, files: { path: string; content: string }[]) =>
       commitToBranch(forge, alice, repo, { message: "waves", files });
     await put(pub, [
       { path: "waves/0.9.0.md", content: text(wave("0.9.0", "2026-01-01", "Ninth")) },
       { path: "waves/0.10.0.md", content: text(wave("0.10.0", "2026-02-01", "Tenth")) },
       { path: "waves/broken.md", content: "no front matter\n" },
+    ]);
+    for (const r of [mix, priv])
+      await commitToBranch(forge, alice, r, { message: "init", files: [{ path: "README.md", content: "hi\n" }] });
+    const shown = await mergedPull(forge, alice, mix, "Shown work");
+    const secret = await mergedPull(forge, alice, priv, "Secret work");
+    await put(mix, [
+      {
+        path: "waves/0.1.0.md",
+        content: waveNaming("0.1.0", [
+          { owner: "alice", name: "mix", number: shown },
+          { owner: "alice", name: "priv", number: secret },
+        ]),
+      },
     ]);
     await put(priv, [
       { path: "waves/1.0.0.md", content: text(wave("1.0.0", "2026-03-01", "Secret launch")) },
@@ -142,8 +160,20 @@ describe("waves in the terminal", () => {
     expect(h.text).toContain("Tenth");
     expect(h.text).toContain("0.10.0  2026-02-01");
     expect(h.text).toContain("Thing 1 - because");
-    expect(h.text).toContain("#1 A pull");
-    expect(h.text).toContain("https://forge.example/o/r/pulls/1");
+    expect(h.text).toContain("No pulls to show here.");
+  });
+
+  test("a wave's pulls are the page's: the owner sees the private one, an outsider does not", async () => {
+    const owner = await open(alice, mix, ["enter"]);
+    owner.stop();
+    expect(owner.text).toContain("Shown work  merged 2026-03-04");
+    expect(owner.text).toContain("/alice/mix/pulls/");
+    expect(owner.text).toContain("Secret work");
+    const outsider = await open(bob, mix, ["enter"]);
+    outsider.stop();
+    expect(outsider.text).toContain("Shown work");
+    expect(outsider.text).not.toContain("Secret work");
+    expect(outsider.text).not.toContain("/alice/priv/pulls/");
   });
 
   test("enter on an unparsable row shows its reason", async () => {
@@ -154,7 +184,8 @@ describe("waves in the terminal", () => {
   });
 
   test("wave text carries no escape or control characters", () => {
-    const lines = waveLines({
+    const lines = waveLines(
+      {
       ok: true,
       file: "1.0.0.md",
       wave: {
@@ -162,9 +193,11 @@ describe("waves in the terminal", () => {
         date: "2026-01-01",
         headline: "Hi\u001b[31m red\u0007\u202e",
         highlights: [{ title: "T\u001b]0;x\u0007", why: "w\nz" }],
-        pulls: [{ title: "P", url: "https://x.example/\u001b[2J" }],
+        pulls: [],
       },
-    });
+    },
+    [{ owner: "o", name: "r", number: 1, title: "P\u001b[2J", mergedAt: null, state: "open" }],
+    );
     expect(lines.join("\n")).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/);
   });
 

@@ -5,11 +5,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import type { Repo } from "../src/core/repos.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { writeWave, type Wave } from "../src/story/wave.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { mergedPull, waveNaming } from "./helpers/wave-pulls.ts";
 
 quietLogs();
 
@@ -17,6 +19,9 @@ let dataDir: string;
 let app: App;
 let servers: Servers;
 let cookie = "";
+let bobCookie = "";
+let shown = 0;
+let secret = 0;
 const cells = process.env["FORGE_CELLS"];
 
 const wave = (version: string, date: string, headline: string): Wave => ({
@@ -52,12 +57,47 @@ beforeAll(async () => {
   if (!made.ok) throw new Error(String(made.error));
   const alice = made.value;
   cookie = `forge_session=${createSession(app.db, alice.id).token}`;
+  const bob = await createUser(app.db, {
+    origin: "seed",
+    trusted: true,
+    username: "bob",
+    email: "bob@forge.local",
+    password: "a-good-passphrase",
+  });
+  if (!bob.ok) throw new Error(String(bob.error));
+  bobCookie = `forge_session=${createSession(app.db, bob.value.id).token}`;
   for (const [name, visibility] of [["pub", "public"], ["priv", "private"]] as const) {
     const repo = await createRepo(app, alice, { name, visibility });
     if (!repo.ok) throw new Error(String(repo.error));
     const c = await commitToBranch(app, alice, repo.value, { message: "waves", files });
     if (!c.ok) throw new Error(JSON.stringify(c.error));
   }
+  const repos = new Map<string, Repo>();
+  for (const [name, visibility] of [["mix", "public"], ["hid", "private"]] as const) {
+    const r = await createRepo(app, alice, { name, visibility });
+    if (!r.ok) throw new Error(String(r.error));
+    const c = await commitToBranch(app, alice, r.value, {
+      message: "init",
+      files: [{ path: "README.md", content: "hi\n" }],
+    });
+    if (!c.ok) throw new Error(JSON.stringify(c.error));
+    repos.set(name, r.value);
+  }
+  shown = await mergedPull(app, alice, repos.get("mix")!, "Shown work");
+  secret = await mergedPull(app, alice, repos.get("hid")!, "Secret work");
+  const c = await commitToBranch(app, alice, repos.get("mix")!, {
+    message: "wave",
+    files: [
+      {
+        path: "waves/0.1.0.md",
+        content: waveNaming("0.1.0", [
+          { owner: "alice", name: "mix", number: shown },
+          { owner: "alice", name: "hid", number: secret },
+        ]),
+      },
+    ],
+  });
+  if (!c.ok) throw new Error(JSON.stringify(c.error));
 });
 
 afterAll(async () => {
@@ -68,8 +108,10 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-async function get(path: string, withCookie = true) {
-  const res = await fetch(`${servers.url}${path}`, { headers: withCookie ? { cookie } : {} });
+async function get(path: string, withCookie: boolean | string = true) {
+  const res = await fetch(`${servers.url}${path}`, {
+    headers: withCookie === false ? {} : { cookie: withCookie === true ? cookie : withCookie },
+  });
   const body = await res.text();
   const names = (res.headers.get("server-timing") ?? "").split(", ").map((p) => p.split(";")[0]!);
   return { status: res.status, names: names.slice(names.indexOf("app") + 1), body };
@@ -93,9 +135,19 @@ test("one wave carries highlights with their why, and its pull numbers", async (
   const w = JSON.parse(got.body);
   expect(w.headline).toBe("Ninth");
   expect(w.highlights[0]).toEqual({ title: "Thing 1", why: "because 1" });
-  expect(w.pulls).toEqual([
-    { number: 12, title: "#12 A pull", url: "https://forge.example/o/r/pulls/12" },
-  ]);
+  expect(w.pulls).toEqual([]);
+});
+
+test("a wave's pulls are the page's: the owner sees the private one, an outsider does not", async () => {
+  const owner = JSON.parse((await get("/api/v1/repos/alice/mix/waves/0.1.0")).body);
+  expect(owner.pulls.map((p: { title: string }) => p.title)).toEqual(["Shown work", "Secret work"]);
+  expect(owner.pulls[0]).toMatchObject({ number: shown, state: "merged", merged_at: "2026-03-04T10:00:00.000Z" });
+  expect(owner.pulls[0].url).toBe(`${servers.url}/alice/mix/pulls/${shown}`);
+  const outsider = await get("/api/v1/repos/alice/mix/waves/0.1.0", bobCookie);
+  expect(outsider.status).toBe(200);
+  expect(outsider.body).toContain("Shown work");
+  expect(outsider.body).not.toContain("Secret work");
+  expect(outsider.body).not.toContain("/alice/hid/pulls/");
 });
 
 test("an unknown or malformed version is 404", async () => {
@@ -112,5 +164,5 @@ test("a stranger gets 404 for a private repository, an owner 200", async () => {
 
 test("the reads name their Server-Timing phases", async () => {
   expect((await get("/api/v1/repos/alice/pub/waves")).names).toEqual(["session", "waves", "render"]);
-  expect((await get("/api/v1/repos/alice/pub/waves/0.9.0")).names).toEqual(["session", "wave", "render"]);
+  expect((await get("/api/v1/repos/alice/pub/waves/0.9.0")).names).toEqual(["session", "wave", "pulls", "render"]);
 });

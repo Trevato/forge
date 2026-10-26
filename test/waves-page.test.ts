@@ -8,7 +8,6 @@ import type { Repo } from "../src/core/repos.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { webUrl } from "../src/web/pages/waves.ts";
 import { writeWave, type Wave } from "../src/story/wave.ts";
 
 const PASSWORD = "a-good-passphrase";
@@ -156,7 +155,6 @@ describe("waves page", () => {
     expect(body).toContain("2026-02-01");
     expect(body).toContain("Thing 1");
     expect(body).toContain("because");
-    expect(body).toContain('href="https://forge.example/o/r/pulls/1"');
   });
 
   test("values are escaped and a javascript: pull is not a link", async () => {
@@ -166,8 +164,6 @@ describe("waves page", () => {
     expect(body).not.toContain("<b>links");
     const js = await (await get("/alice/pub/waves/0.5.0")).text();
     expect(js).not.toContain('href="javascript:');
-    expect(webUrl("javascript:alert(1)")).toBe(false);
-    expect(webUrl("https://x.example/p/1")).toBe(true);
   });
 
   test("an unknown or malformed version is a 404; an unparsable file shows its reason", async () => {
