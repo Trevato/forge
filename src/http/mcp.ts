@@ -355,6 +355,22 @@ const visible = (tool: Tool, ctx: Ctx, user: User): boolean =>
   (tool.adminOnly !== true || user.isAdmin) &&
   (tool.needsAdminScope !== true || scopeAllows(ctx.auth.scope ?? "ro", "admin"));
 
+/** Whether this call only plans or reads, so a read-only token may make it. */
+const plansOnly = (tool: Tool, args: Args): boolean =>
+  (tool.dryByDefault === true && args["dryRun"] !== false) ||
+  (tool.readsWithout !== undefined && args[tool.readsWithout] === undefined) ||
+  tool.readsWhen?.(args) === true;
+
+/** What each tool declares about itself, for the test that walks them all. */
+export const toolRegistry = () =>
+  TOOLS.map((t) => ({
+    name: t.name,
+    writes: t.writes,
+    needsAdminScope: t.needsAdminScope === true,
+    readsWithout: t.readsWithout,
+    plansOnly: (args: Args) => plansOnly(t, args),
+  }));
+
 const CHIP_ARGS = {
   hide_kinds: {
     type: "array",
@@ -5127,11 +5143,7 @@ function rpcOne(
         typeof params["arguments"] === "object" && params["arguments"] !== null
           ? (params["arguments"] as Args)
           : {};
-      const plansOnly =
-        (tool.dryByDefault === true && args["dryRun"] !== false) ||
-        (tool.readsWithout !== undefined && args[tool.readsWithout] === undefined) ||
-        tool.readsWhen?.(args) === true;
-      if (tool.writes && !plansOnly && !scopeAllows(ctx.auth.scope ?? "ro", "rw"))
+      if (tool.writes && !plansOnly(tool, args) && !scopeAllows(ctx.auth.scope ?? "ro", "rw"))
         return reply({
           content: [
             { type: "text", text: "forbidden: this token may read, not act" },
