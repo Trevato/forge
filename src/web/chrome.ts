@@ -311,8 +311,8 @@ export function scopeHeader(
     )}
     <span
       >${scope.kind === "local"
-        ? html`<a class="owner" href="/${owner}">${owner}</a>`
-        : html`<span class="owner">${owner}</span>`}<span class="slash">/</span
+        ? html`<a class="muted" href="/${owner}">${owner}</a>`
+        : html`<span class="muted">${owner}</span>`}<span class="sep">/</span
       ><a href="${base}">${facts.name}</a></span
     >
     ${facts.visibility === "private"
@@ -329,7 +329,7 @@ export function scopeHeader(
     ${repo === undefined ? null : audienceLine(ctx, repo, admin, base)}
     ${when(
       !options.compact && facts.description !== "",
-      () => html`<p class="repo-desc">${facts.description}</p>`,
+      () => html`<p class="muted small">${facts.description}</p>`,
     )}
     ${repo === undefined ? null : lineageLine(ctx.app.db, repo, parent)}
     ${when(

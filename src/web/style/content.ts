@@ -23,12 +23,12 @@ export const content = /* css */ `
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   font-size: 20px; font-weight: 620; letter-spacing: -0.02em; line-height: 1.3;
 }
-.repo-title .owner { font-weight: 400; color: var(--muted-fg); }
-.repo-title .slash { color: var(--faint); font-weight: 400; }
+.repo-title .muted, .repo-title .sep { font-weight: 400; }
 /* A phone has no hover: the settings link is a full 44px line. */
 @media (max-width: 640px) {
   .repo-head .repo-desc a { display: block; padding: 12px 0; min-height: 44px; box-sizing: border-box; }
 }
+.repo-head p.muted.small { margin-top: 4px; text-wrap: pretty; }
 .repo-desc { margin-top: 4px; color: var(--muted-fg); font-size: 13px; text-wrap: pretty; }
 .repo-head .tabs { margin-top: 12px; }
 
