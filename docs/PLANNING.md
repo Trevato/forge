@@ -430,7 +430,10 @@ asked, under **Settings → Autonomy**:
   two updates ended without a push is handed to the person who turned
   autonomy on — assigned to them, not closed (`crew/finishing.ts`; the
   tick line says `finishing="queued Q, in flight F, skipped S: <why>×k"`,
-  and each skipped pull is logged once per reason as `finishing: skip pull=N why="…"`). The planner's next pass splits or rewrites a parked
+  or `finishing="0 candidates of N open"`; each skipped pull is logged
+  once per reason as `finishing: skip pull=N why="…"`, and every open pull
+  that is not a candidate as `finishing: drop pull=N why="…"`; it reads every
+  open pull, not the newest fifty). The planner's next pass splits or rewrites a parked
   issue, and one parked twice is handed to the planner (below). The planner
   keeps a standing reserve of startable work — two issues per builder
   slot, never fewer than three — and is asked whenever fewer than that can

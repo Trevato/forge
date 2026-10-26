@@ -12,7 +12,7 @@
  */
 
 import { capacityEnv } from "../core/capacity.ts";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { addComment } from "../actions/issues.ts";
@@ -1700,6 +1700,15 @@ export async function forkFor(
   return ok(made.value);
 }
 
+/** Whether `dir` is empty, or a work tree git can read: its `.git` resolves. */
+async function readsAsClone(dir: string, env: Record<string, string>): Promise<boolean> {
+  if (readdirSync(dir).length === 0) return true;
+  if (!existsSync(join(dir, ".git"))) return false;
+  // Its own `.git`, named: never a repository above it that git would find.
+  const top = await runGit(["--git-dir", join(dir, ".git"), "rev-parse", "--git-dir"], { cwd: dir, env });
+  return top.ok;
+}
+
 /**
  * A clone on `branch`, matching what the forge holds. The clone is the
  * triangle git was built for: it fetches from the repository and pushes to
@@ -1731,6 +1740,14 @@ async function prepareClone(
   const agentUrl = `${options.forgeUrl}/${repo.ownerName}/${repo.name}.git`;
   const agentForkUrl = `${options.forgeUrl}/${fork.ownerName}/${fork.name}.git`;
   if (signal.aborted) return { ok: false, error: "cancelled" };
+  // A kept clone git no longer reads as one — a clone a network blip cut
+  // short — is moved aside, never reused, and cloned afresh (#6263).
+  if (!fresh && existsSync(dir) && !(await readsAsClone(dir, env))) {
+    const aside = `${dir}.broken-${Date.now()}`;
+    renameSync(dir, aside);
+    write(`the kept clone is not a git repository; moved aside to ${aside}, cloning afresh`);
+    return prepareClone(app, options, repo, fork, branch, dir, env, write, signal, false, true);
+  }
   if (!existsSync(join(dir, ".git"))) {
     mkdirSync(dir, { recursive: true });
     write(`cloning ${repo.ownerName}/${repo.name}`);

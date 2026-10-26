@@ -33,6 +33,7 @@ import {
   getIssue,
   getIssueById,
   getIssuesByIds,
+  LIST_LIMIT_MAX,
   listIssues,
   setIssueState,
   type Issue,
@@ -529,6 +530,29 @@ export function listPulls(
   options: ListPullsOptions = {},
 ): Pull[] {
   return joinMany(db, listIssues(db, repoId, { ...options, kind: "pull" }));
+}
+
+/**
+ * Every open pull of the repository, sealed ones too, oldest first. All of
+ * them, page by page: a pass that read only the newest page never saw an
+ * older pull — the green sweep's approved ones (#4053), the finishing
+ * pass's approved, conflicted ones (#6263).
+ */
+export function listOpenPulls(db: Database, repoId: string): Pull[] {
+  const all: Pull[] = [];
+  let cursor: number | undefined;
+  for (;;) {
+    const page = listPulls(db, repoId, {
+      sealed: true,
+      state: "open",
+      limit: LIST_LIMIT_MAX,
+      ...(cursor === undefined ? {} : { cursor }),
+    });
+    all.push(...page);
+    if (page.length < LIST_LIMIT_MAX) break;
+    cursor = page.at(-1)!.number;
+  }
+  return all.sort((a, b) => a.number - b.number);
 }
 
 /**

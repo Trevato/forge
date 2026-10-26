@@ -494,6 +494,15 @@ export interface LogOptions {
   path?: string;
 }
 
+/** When `oid` was committed, as an ISO time; undefined when git cannot say. */
+export async function committedAt(dir: string, oid: string): Promise<string | undefined> {
+  assertBatchSafe(oid);
+  const result = await runGitRaw(["show", "-s", "--format=%cI", oid, "--"], { cwd: dir });
+  if (!result.ok) return undefined;
+  const when = new Date(new TextDecoder().decode(result.value).trim());
+  return Number.isNaN(when.getTime()) ? undefined : when.toISOString();
+}
+
 export async function commitLog(
   dir: string,
   rev: string,

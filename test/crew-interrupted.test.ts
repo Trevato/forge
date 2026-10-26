@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { addComment, assignIssue, openIssue } from "../src/actions/issues.ts";
 import { listComments } from "../src/core/issues.ts";
@@ -401,12 +401,24 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Done.","to
   }, 60_000);
 
   test("a young lock that blocks checkout is recovered by a fresh clone", async () => {
-    const { repo, clone } = await keptClone("orchard");
+    const { repo, clone } = await keptClone("copse");
     const lock = join(clone, ".git", "index.lock");
     writeFileSync(lock, "");
     const next = await followUp(repo);
     expect(next.state).toBe("ok");
     expect(existsSync(lock)).toBe(false);
+  }, 60_000);
+
+  test("a kept clone git no longer reads is moved aside and cloned afresh (#6263)", async () => {
+    const { repo, clone } = await keptClone("hedgerow");
+    // What a clone cut short by a network blip leaves: `.git` without its HEAD.
+    rmSync(join(clone, ".git", "HEAD"));
+    const next = await followUp(repo);
+    expect(next.summary ?? "").not.toContain("not a git repository");
+    expect(next.state).toBe("ok");
+    expect(existsSync(join(clone, ".git", "HEAD"))).toBe(true);
+    const parent = dirname(clone);
+    expect(readdirSync(parent).some((name) => name.startsWith(`${basename(clone)}.broken-`))).toBe(true);
   }, 60_000);
 
   test("a young lock is not worked around when the clone holds unpushed commits", async () => {

@@ -57,7 +57,6 @@ import { wallOf, wallSentence } from "../contract/policy.ts";
 import {
   getIssue,
   getIssueById,
-  LIST_LIMIT_MAX,
   listComments,
   MAX_TITLE,
   type Issue,
@@ -65,7 +64,7 @@ import {
 import {
   getPull,
   closesFromBody,
-  listPulls,
+  listOpenPulls,
   type MergePullError,
   type Pull,
   pullDir,
@@ -1110,7 +1109,7 @@ export async function sweepGreen(app: App, repo: Repo): Promise<number> {
   const entries: Queued[] = [];
   // Why each approved pull waits, for the tick line (#3055).
   const waits: Wait[] = [];
-  for (const pull of openPulls(app, repo)) {
+  for (const pull of listOpenPulls(app.db, repo.id)) {
     const admitted = await admit(app, repo, pull);
     if (admitted.ok) entries.push(admitted.value);
     const seen = reviewSummary(app.db, pull.id, pull.headOid);
@@ -1121,29 +1120,6 @@ export async function sweepGreen(app: App, repo: Repo): Promise<number> {
   if (entries.length === 0) return 0;
   const landed = await enqueue(repo.id, entries, gateFor(app, repo), queueOptions(app));
   return landed.filter(Boolean).length;
-}
-
-/**
- * Every open pull of the repository, oldest first. All of them, page by
- * page: a sweep that read only the newest page never queued an approved
- * pull older than it, which then joined the line alone, on its own event,
- * one gate at a time (#4053).
- */
-function openPulls(app: App, repo: Repo): Pull[] {
-  const all: Pull[] = [];
-  let cursor: number | undefined;
-  for (;;) {
-    const page = listPulls(app.db, repo.id, {
-      sealed: true,
-      state: "open",
-      limit: LIST_LIMIT_MAX,
-      ...(cursor === undefined ? {} : { cursor }),
-    });
-    all.push(...page);
-    if (page.length < LIST_LIMIT_MAX) break;
-    cursor = page.at(-1)!.number;
-  }
-  return all.sort((a, b) => a.number - b.number);
 }
 
 /** The sweep each repository has in flight, by repository id. */
@@ -1289,9 +1265,9 @@ export async function autonomyTick(
         active: status.active,
         slots: status.slots,
         // Approved conflicted pulls: queued, in flight, and why each other is
-        // skipped (#3682, #6237); and the lane for rebases: conflicted N,
+        // skipped (#3682, #6237), or "0 candidates of N open" (#6263); and the lane for rebases: conflicted N,
         // rebasing M, room R (#6140).
-        ...finishFields(finishing, readConflictLane(app.db)),
+        ...finishFields(finishing.moves, readConflictLane(app.db), finishing.open),
         ...(requested.length === 0
           ? {}
           : {
@@ -1627,8 +1603,9 @@ export async function sweepConflicts(app: App, repo: Repo): Promise<number> {
       cleanAt.delete(id);
       asked.delete(id);
     }
-  const open = listPulls(app.db, repo.id, { sealed: true, state: "open", limit: 50 });
-  for (const pull of open.sort((a, b) => a.number - b.number)) {
+  // Every open pull, not the newest page: an old one main moved under is
+  // the crew's too (#6263).
+  for (const pull of listOpenPulls(app.db, repo.id)) {
     if (!pull.authorIsAgent || pull.mergedAt !== null) continue;
     if (getHold(app.db, pull.id) !== undefined) continue;
     const dir = await pullDir(app.db, app.reposRoot, repo, pull);

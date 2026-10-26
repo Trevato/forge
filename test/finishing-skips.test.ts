@@ -37,7 +37,7 @@ async function pass(free: number): Promise<{ moves: FinishMove[]; skips: string[
     lines.push(String(line));
   });
   try {
-    const moves = await finishApproved(app, getRepoById(app.db, repo.id)!, free);
+    const { moves } = await finishApproved(app, getRepoById(app.db, repo.id)!, free);
     return { moves, skips: lines.filter((l) => l.includes("finishing: skip")) };
   } finally {
     spy.mockRestore();
