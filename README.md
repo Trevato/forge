@@ -947,6 +947,16 @@ says how the rule is set, with `by` it plans unless `dryRun: false`); in the
 terminal with `R` in the repository's workspace, which cycles me → decider →
 decider_tell.
 
+**The terminal explorer lists every entry of a directory, on purpose.** The
+web directory page and its side column are windowed because they send every row
+as HTML; the workspace's explorer sends nothing. It holds one small node per
+entry and draws only the rows that fit the screen (`drawTree`,
+`src/tui/screens/workspace.ts`), so a directory of thousands costs a list in
+memory, not a page. A window would hide files from a person who is searching
+the tree with `t` or revealing a path, and it would need a "show the rest" key
+for no saving. Revisit it if a directory's listing, not its drawing, is ever
+measured slow.
+
 ## On your machine
 
 The forge holds the truth; `forge` keeps a copy of the parts you work on, the

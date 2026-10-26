@@ -581,6 +581,8 @@ export function workspaceScreen(
 
   // ---- reads ----
 
+  // A directory is listed whole, unlike the web page: `drawTree` paints only
+  // the rows on screen, and filtering and reveal need every entry to be there.
   const listDir = async (path: string): Promise<Node[]> => {
     const result = await src.tree(ref, path);
     if (!result.ok) {
