@@ -29,6 +29,7 @@ import {
 } from "../core/issues.ts";
 import { getPull, type Pull } from "../core/pulls.ts";
 import { claimedClones, sweepOrphanClones } from "./orphans.ts";
+import { pruneRunFiles } from "../runs/prune.ts";
 import { crewRoot } from "./workdir.ts";
 import { resolveOpen } from "../core/decisions.ts";
 import { accountActive } from "../core/accounts.ts";
@@ -229,6 +230,8 @@ export async function startCrew(
         if (count > 0) log.info("removed clones nothing claims", { count });
       })
       .catch((error) => log.warn("clone sweep failed", { error: String(error) }));
+    const pruned = pruneRunFiles(app.config.dataDir);
+    if (pruned > 0) log.info("removed old run logs", { count: pruned });
   };
   sweepClones();
   const cloneTimer = setInterval(() => !stopped && sweepClones(), 60 * 60_000);
