@@ -178,6 +178,45 @@ test("HEAD answers the headers with no body; POST is a 405 that says what is all
   expect(post.headers.get("x-content-type-options")).toBe("nosniff");
 });
 
+test("the terminal: a writer sees the exact command, a reader and a visitor see nothing", async () => {
+  const cfg = app.config as { sshPort?: number | undefined };
+  const was = cfg.sshPort;
+  const b = await createUser(app.db, {
+    origin: "seed",
+    trusted: true,
+    username: "carol",
+    email: "carol@forge.local",
+    password: "a-good-passphrase",
+  });
+  if (!b.ok) throw new Error(b.error);
+  const cookieFor = (env: string, id: string, name: string, role: "admin" | "user") =>
+    `forge_grant_${record.id.slice(-8)}=${signGrant(dataDir, { app: record, env } as AppTarget, 60_000, Date.now(), { id, name, role })}`;
+  try {
+    cfg.sshPort = 2222;
+    const prod = await (
+      await door(`notes.${DOMAIN}`, cookieFor("production", alice, "alice", "admin"))
+    ).text();
+    expect(prod).toContain("<code>ssh -p 2222 notes@forge.test</code>");
+    const prev = await (
+      await door(`notes--${pull}.${DOMAIN}`, cookieFor(`pull-${pull}`, alice, "alice", "admin"))
+    ).text();
+    expect(prev).toContain(`<code>ssh -p 2222 notes--${pull}@forge.test</code>`);
+    for (const cookie of [undefined, cookieFor("production", b.value.id, "carol", "user")]) {
+      const html = await (await door(`notes.${DOMAIN}`, cookie)).text();
+      expect(html).not.toContain("ssh");
+      expect(html).not.toContain("terminal is off");
+    }
+    cfg.sshPort = undefined;
+    const off = await (
+      await door(`notes.${DOMAIN}`, cookieFor("production", alice, "alice", "admin"))
+    ).text();
+    expect(off).toContain("The terminal is off.");
+    expect(off).not.toContain("ssh");
+  } finally {
+    cfg.sshPort = was;
+  }
+});
+
 test("every name the door draws is escaped, for production and a preview", () => {
   const evil = `<script>alert("x")</script>'`;
   const out = (where: PillWhere) =>

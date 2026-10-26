@@ -26,6 +26,7 @@ import { getAppById, getAppBySlug, type AppRecord } from "../core/apps.ts";
 import { getVerifiedDomain } from "../core/domains.ts";
 import {
   canEnterApp,
+  canWrite,
   canRead,
   getRepoById,
   ownerInStanding,
@@ -414,6 +415,26 @@ export function pillWhere(
   return where;
 }
 
+/**
+ * What the door says of the terminal: for a viewer who may write the
+ * repository, the exact command (the preview's login on a preview), or null
+ * when the terminal is off; for anyone else, nothing.
+ */
+function doorSsh(
+  runtime: AppsRuntime,
+  target: AppTarget,
+  who: GrantWho | undefined,
+): string | null | undefined {
+  if (who === undefined) return undefined;
+  const db = runtime.app.db;
+  const viewer = getUserById(db, who.id);
+  const repo = getRepoById(db, target.app.repoId);
+  if (viewer === undefined || !isActive(viewer) || repo === undefined) return undefined;
+  if (!canWrite(db, repo, viewer)) return undefined;
+  if (runtime.envStatus(target.app, target.env)?.tty === null) return null;
+  return runtime.sshFor(target.app, target.env) ?? null;
+}
+
 /** Whether the person a grant names may enter this app now. */
 function stillEntitled(
   runtime: AppsRuntime,
@@ -656,6 +677,7 @@ export async function proxyApp(
         signed?.who?.id,
       ),
     );
+    const ssh = doorSsh(runtime, target, signed?.who);
     const where = timePhase(request, "pull", () =>
       pillWhere(runtime, target, signed?.who),
     );
@@ -664,6 +686,7 @@ export async function proxyApp(
         {
           where,
           forgeUrl: runtime.options.forgeUrl,
+          ...(ssh === undefined ? {} : { ssh }),
           ...(tell === undefined ? { signin: "/__forge/signin" } : { tell }),
         },
         request.method === "HEAD",

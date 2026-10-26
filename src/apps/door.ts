@@ -14,10 +14,15 @@ export type DoorFacts = {
   tell?: string;
   /** This host's own sign-in door, offered when nobody is signed in. */
   signin?: string;
+  /**
+   * The terminal, only for someone who may write the repository: the exact
+   * `ssh …` command, or null when the terminal is off. Unset shows nothing.
+   */
+  ssh?: string | null;
 };
 
 const STYLE =
-  "body{font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem}li{margin:.4rem 0}";
+  "body{font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem}li{margin:.4rem 0}pre{overflow-x:auto;padding:.6rem;background:#eee;color:#111;user-select:all}";
 const STYLE_HASH = createHash("sha256").update(STYLE).digest("base64");
 
 /** The same words as the pill's accessible name. */
@@ -42,9 +47,15 @@ export function doorPage(facts: DoorFacts, head: boolean): Response {
   if (facts.tell !== undefined) links.push(link(facts.tell, "Tell the crew"));
   else if (facts.signin !== undefined)
     links.push(link(facts.signin, "Sign in to tell the crew"));
+  const terminal =
+    facts.ssh === undefined
+      ? ""
+      : facts.ssh === null
+        ? "<p>The terminal is off.</p>"
+        : `<p>Terminal:</p><pre><code>${escapeAttr(facts.ssh)}</code></pre>`;
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>${escapeAttr(where.app)}, ${escapeAttr(doorWhere(where))}</title><style>${STYLE}</style></head>
-<body><main><h1>${escapeAttr(where.app)}</h1><p>${escapeAttr(doorWhere(where))}</p><ul>${links.join("")}</ul></main></body></html>
+<body><main><h1>${escapeAttr(where.app)}</h1><p>${escapeAttr(doorWhere(where))}</p><ul>${links.join("")}</ul>${terminal}</main></body></html>
 `;
   return new Response(head ? null : html, {
     headers: {
