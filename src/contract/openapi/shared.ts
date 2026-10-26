@@ -48,3 +48,9 @@ export const BROWSE_REFUSALS = {
   origin_unauthorized: "502: the origin refused this forge's credential; reconnect it",
   origin_unreachable: "502: the origin could not be reached",
 };
+
+/** The refusals every live browse of an origin's code can answer (`sourceFailure` in `http/api.ts`); the connecting user only. */
+export const BROWSE_CODE_REFUSALS = {
+  ...BROWSE_REFUSALS,
+  not_found: "404: no such origin of yours, or the origin has no such repository, ref or path",
+};

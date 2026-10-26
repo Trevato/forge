@@ -250,6 +250,39 @@ test("an app's routes are described, and env values are never read back", () => 
   expect(doc.paths[`${A}/{env}/redeploy`].post.responses["202"]).toBeDefined();
 });
 
+test("browsing an origin's code is described, and a refusal matches what the route answers", async () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const B = "/api/v1/user/origins/{id}/browse/{owner}/{name}";
+  for (const tail of ["branches", "tags", "labels", "paths/{ref}", "tree/{ref}", "tree/{ref}/{path}", "blob/{ref}/{path}", "commits", "commits/{sha}"]) {
+    const op = doc.paths[`${B}/${tail}`]?.get;
+    expect(op, tail).toBeDefined();
+    expect(op.security, tail).toBeDefined();
+    expect(op.responses.default.description, tail).toContain("`origin_unreachable`");
+    expect(op.summary, tail).toContain("(the connecting user only)");
+  }
+  expect(doc.paths[`${B}/tree/{ref}/{path}`].get.summary).toContain("src/a/b:");
+  expect(doc.paths[`${B}/commits`].get.parameters.map((p: any) => p.name)).toContain("cursor");
+  expect(doc.paths[`${B}/blob/{ref}/{path}`].get.responses.default.description).toContain("`too_large`");
+
+  const dir = await mkdtemp(join(tmpdir(), "forge-openapi-"));
+  const app = createApp({ dataDir: dir, port: 0 });
+  const servers = await serve(app);
+  try {
+    const live = ["branches", "tags", "labels", "paths/main", "tree/main", "tree/main/a", "blob/main/a/b", "commits", "commits/abc"];
+    const docTails = ["branches", "tags", "labels", "paths/{ref}", "tree/{ref}", "tree/{ref}/{path}", "blob/{ref}/{path}", "commits", "commits/{sha}"];
+    for (const [i, tail] of live.entries()) {
+      const res = await fetch(`${servers.url}/api/v1/user/origins/x/browse/o/n/${tail}`);
+      expect(res.status, tail).toBe(401);
+      expect(((await res.json()) as any).error, tail).toBe("unauthorized");
+      expect(doc.paths[`${B}/${docTails[i]}`].get.responses.default.description, tail).toContain("`unauthorized`");
+    }
+  } finally {
+    servers.stop();
+    app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("mirroring and forking from an origin, its job and stream, and origin apps are described", () => {
   const doc = openapi("https://f.test", "1") as any;
   const want: [string, string][] = [
