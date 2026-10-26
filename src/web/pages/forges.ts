@@ -7,7 +7,7 @@
  */
 
 import type { Ctx } from "../../http/context.ts";
-import { CLAIM_WORDS, claimState, clientRows, runningWords, spendWords, type ClientRow } from "../../spawn/clients.ts";
+import { ATTENTION_WORDS, CLAIM_WORDS, claimState, clientRows, runningWords, spendWords, type ClientRow } from "../../spawn/clients.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { notFoundPage, pageHead } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
@@ -57,7 +57,9 @@ function forgeRow(r: ClientRow): Html {
     title: html`<a href="${r.url}">${r.name}</a>`,
     meta: html`${meta.map((m, i) => html`${i > 0 ? " · " : ""}${m}`)}`,
     data: { forge: r.name, claimed: state },
-    trail: html`${badge(CLAIM_WORDS[state], {
+    trail: html`${r.attention === null
+        ? null
+        : html`<span data-attention="${r.attention}">${badge(ATTENTION_WORDS[r.attention], { tone: "attn" })}</span>`}${badge(CLAIM_WORDS[state], {
         ...(state === "yes" ? { tone: "success" as const } : { variant: "outline" as const }),
       })}${state === "no"
         ? html`<form method="post" action="/forges/${r.name}/claim-link">

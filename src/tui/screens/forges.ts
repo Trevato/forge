@@ -6,16 +6,16 @@
 
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
-import { CLAIM_WORDS, claimState, runningWords, spendWords, type ClientRow } from "../../spawn/clients.ts";
+import { ATTENTION_WORDS, CLAIM_WORDS, claimState, runningWords, spendWords, type ClientRow } from "../../spawn/clients.ts";
 import { card } from "../ui/widgets.ts";
 import { drawFacts } from "./common.ts";
 
-/** [name, "for Maria · Claimed · 3 apps running"] per row; an empty line when none. */
+/** [name, "Not reporting · for Maria · Claimed · 3 apps running"] per row; an empty line when none. */
 export function forgeLines(rows: readonly ClientRow[]): [string, string][] {
   if (rows.length === 0) return [["", "You have not sent a forge yet"]];
   return rows.map((r) => [
     r.name,
-    [r.for === null ? null : `for ${r.for}`, CLAIM_WORDS[claimState(r)], runningWords(r), r.nextStep.words, spendWords(r)?.words ?? null]
+    [r.attention === null ? null : ATTENTION_WORDS[r.attention], r.for === null ? null : `for ${r.for}`, CLAIM_WORDS[claimState(r)], runningWords(r), r.nextStep.words, spendWords(r)?.words ?? null]
       .filter((m): m is string => m !== null)
       .join(" · "),
   ]);

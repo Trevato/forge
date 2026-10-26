@@ -37,6 +37,8 @@ export interface ClientRow {
   readonly lastActivityAt: string | null;
   /** The apps this parent runs for the child; null when it runs none here. */
   readonly running: ChildAppsSummary | null;
+  /** Why this forge needs its owner now; null when it does not. */
+  readonly attention: Attention | null;
   /** Dollars the child's crew spent today, from its last heartbeat; null when it has not said. */
   readonly spendTodayUsd: number | null;
   /** The child's forge cap in dollars; null when none or unsaid. */
@@ -181,8 +183,8 @@ export async function clientRows(app: App): Promise<ClientRow[]> {
     }),
   );
   const beats = await Promise.all(children.map((c) => lastHeard(app, c.name)));
-  return children
-    .map((c, i) => ({
+  return orderRows(
+    children.map((c, i) => ({
       name: c.name,
       url: c.url,
       for: c.for,
@@ -195,9 +197,48 @@ export async function clientRows(app: App): Promise<ClientRow[]> {
       spendTodayUsd: beats[i]?.beat.spendTodayUsd ?? null,
       ceilingUsd: beats[i]?.beat.ceilingUsd ?? null,
       nextStep: nextStepOf(states[i]?.claimed ?? null, beats[i]?.beat),
-    }))
+    })),
+    now,
+  );
+}
+
+/** Why a row needs its owner, in the order that matters; null when it does not. */
+export type Attention = "silent" | "down" | "unclaimed";
+
+export const ATTENTION_WORDS: Record<Attention, string> = {
+  silent: "Not reporting",
+  down: "App down",
+  unclaimed: "Unclaimed",
+};
+
+const ATTENTION_ORDER: readonly Attention[] = ["silent", "down", "unclaimed"];
+const SILENT_MS = 24 * 3_600_000;
+const UNCLAIMED_MS = 3 * 86_400_000;
+
+/**
+ * The first reason this row needs the owner: no word from it in 24 h (it
+ * did not answer, or its last activity is older), an app not running, or
+ * unclaimed three days after it was sent. A forge still being made waits.
+ */
+export function attentionOf(r: ClientRow, now: number): Attention | null {
+  if (!r.made) return null;
+  const last = r.lastActivityAt === null ? NaN : Date.parse(r.lastActivityAt);
+  if (r.claimed === null || (!Number.isNaN(last) && now - last > SILENT_MS)) return "silent";
+  if (r.running !== null && r.running.notRunning.length > 0) return "down";
+  const sent = r.sentAt === null ? NaN : Date.parse(r.sentAt);
+  if (r.claimed === false && !Number.isNaN(sent) && now - sent > UNCLAIMED_MS) return "unclaimed";
+  return null;
+}
+
+/** Rows that need the owner first, by reason; then by last activity, newest first. */
+export function orderRows(rows: readonly Omit<ClientRow, "attention">[], now: number): ClientRow[] {
+  const tier = (a: Attention | null) => (a === null ? ATTENTION_ORDER.length : ATTENTION_ORDER.indexOf(a));
+  return rows
+    .map((r) => ({ ...r, attention: attentionOf(r as ClientRow, now) }))
     .sort(
       (a, b) =>
+        tier(a.attention) - tier(b.attention) ||
+        (b.lastActivityAt ?? "").localeCompare(a.lastActivityAt ?? "") ||
         (b.sentAt ?? "").localeCompare(a.sentAt ?? "") ||
         a.name.localeCompare(b.name),
     );

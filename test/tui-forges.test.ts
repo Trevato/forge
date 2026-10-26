@@ -25,6 +25,7 @@ const row = (over: Partial<ClientRow>): ClientRow => ({
   claimed: false,
   lastActivityAt: null,
   running: null,
+  attention: null,
   spendTodayUsd: null,
   ceilingUsd: null,
   nextStep: { key: "unreported", words: "has not reported yet", lastTellAt: null },
@@ -113,6 +114,10 @@ describe("forges you sent in the terminal", () => {
     ]);
     expect(forgeLines([row({ claimed: null })])[0]![1]).toContain("Unknown");
     expect(forgeLines([row({ made: false })])[0]![1]).toContain("Still being made");
+    expect(forgeLines([row({ attention: "down", claimed: true, for: null })])).toEqual([
+      ["maria", "App down · Claimed · has not reported yet"],
+    ]);
+    expect(forgeLines([row({})])[0]![1]).not.toMatch(/Not reporting|App down|Unclaimed/);
     expect(forgeLines([row({ nextStep: { key: "tell", words: "no tell yet", lastTellAt: null } })])[0]![1]).toContain("no tell yet");
     expect(JSON.stringify(forgeLines([row({})]))).not.toContain("http");
     expect(runningWords(row({ running: { total: 0, running: 0, notRunning: [] } }))).toBeNull();

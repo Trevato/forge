@@ -208,6 +208,11 @@ describe("the client list", () => {
     expect(maria).toContain('class="row"');
     expect(maria).toContain("Send a fresh link");
     expect(lou).toContain("it did not answer just now");
+    // It did not answer, so it carries the one attention badge and leads the list.
+    expect(lou).toContain('data-attention="silent"');
+    expect(lou).toContain("Not reporting");
+    expect(html.indexOf('data-forge="lou"')).toBeLessThan(html.indexOf('data-forge="maria"'));
+    expect(maria).not.toContain("data-attention");
     // Neither has reported yet.
     expect(maria).toContain("has not reported yet");
     expect(lou).toContain("has not reported yet");
