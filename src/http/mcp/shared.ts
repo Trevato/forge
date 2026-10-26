@@ -44,8 +44,8 @@ export interface Tool {
   readonly adminOnly?: true;
   /** Listed, and callable, only with a token of this scope. */
   readonly needsAdminScope?: true;
-  /** With this argument absent the tool only reads, whatever the token. */
-  readonly readsWithout?: string;
+  /** With this argument (or all of these) absent the tool only reads, whatever the token. */
+  readonly readsWithout?: string | readonly string[];
   /** A call this accepts only reads, whatever the token. */
   readonly readsWhen?: (args: Args) => boolean;
   /** A write that only plans (`dryRun` not false) is a read: `ro` may ask. */
@@ -61,7 +61,7 @@ export const visible = (tool: Tool, ctx: Ctx, user: User): boolean =>
 /** Whether this call only plans or reads, so a read-only token may make it. */
 export const plansOnly = (tool: Tool, args: Args): boolean =>
   (tool.dryByDefault === true && args["dryRun"] !== false) ||
-  (tool.readsWithout !== undefined && args[tool.readsWithout] === undefined) ||
+  (tool.readsWithout !== undefined && [tool.readsWithout].flat().every((k) => args[k] === undefined)) ||
   tool.readsWhen?.(args) === true;
 
 export const CHIP_ARGS = {

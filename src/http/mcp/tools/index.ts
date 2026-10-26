@@ -83,6 +83,7 @@ export { tool as person } from "./person.ts";
 export { tool as plan } from "./plan.ts";
 export { tool as preview } from "./preview.ts";
 export { tool as probe } from "./probe.ts";
+export { tool as profile } from "./profile.ts";
 export { tool as prompts } from "./prompts.ts";
 export { tool as proposal_tokens } from "./proposal_tokens.ts";
 export { tool as propose_to_parent_forge } from "./propose_to_parent_forge.ts";

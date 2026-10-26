@@ -213,6 +213,7 @@ describe("the forge over MCP", () => {
       "model_grant",
       "accounts",
       "whoami_can",
+      "profile",
       "mint_invite",
       "invites",
       "account_role",

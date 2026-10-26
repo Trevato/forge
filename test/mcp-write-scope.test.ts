@@ -89,7 +89,7 @@ describe("a token that may only read cannot write through any tool", () => {
   const writing = (t: ReturnType<typeof toolRegistry>[number]) => {
     if (t.name in ADMIN_ARGS) return ADMIN_ARGS[t.name]!;
     const args: Record<string, unknown> = { dryRun: false, action: "x" };
-    if (t.readsWithout !== undefined) args[t.readsWithout] = "x";
+    if (t.readsWithout !== undefined) args[[t.readsWithout].flat()[0]!] = "x";
     return args;
   };
 
