@@ -15,12 +15,12 @@ import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { placementsOf, type Placement } from "../../core/placements.ts";
 import { recentThoughts, type Thought } from "../../core/thoughts.ts";
-import { readFeed } from "../../feed/feed.ts";
+import { parseCursor, readFeed } from "../../feed/feed.ts";
 import type { FeedItem } from "../../feed/rank.ts";
 import { html, type Html } from "../html.ts";
 import { fragment } from "../layout.ts";
 import { outboxJs } from "../outbox.ts";
-import { avatar, btn, card, disclosure, empty, nameMark, stateBadge, timeAgo } from "../ui.ts";
+import { avatar, btn, card, disclosure, empty, nameMark, stateBadge, time, timeAgo } from "../ui.ts";
 import { writableAppsOf } from "./asks.ts";
 
 /** Events that can change what the feed says. */
@@ -249,11 +249,15 @@ function chipsBar(user: User, ctx: Ctx, items: readonly FeedItem[]): Html {
 function readRegion(user: User, ctx: Ctx) {
   // What needs you is pinned above the timeline (`needsYouSection`), so an
   // ask is never a second time a post below it; the feed API keeps them.
-  const items = readFeed(ctx.app.db, user, {
+  // `?cursor=` is a page the line below the last post pointed at; one not issued here is the first page.
+  const cursor = parseCursor(ctx.url.searchParams.get("cursor") ?? "");
+  const page = readFeed(ctx.app.db, user, {
     limit: FEED_FIRST_PAGE,
     withoutAsks: true,
     phase: (name, ms) => notePhase(ctx.request, name, ms),
-  }).items;
+    ...(cursor === undefined ? {} : { cursor }),
+  });
+  const items = page.items;
   const thoughts = recentThoughts(ctx.app.db, user.id, THOUGHTS_SHOWN, new Date(Date.now() - THOUGHT_AGE_MS).toISOString());
   const placed = placementsOf(ctx.app.db, thoughts.map((t) => t.id));
   // Who each poster is, asked once for the page (`core/marks.ts`).
@@ -261,7 +265,7 @@ function readRegion(user: User, ctx: Ctx) {
     ctx.app.db,
     items.map((item) => item.actor ?? ""),
   );
-  return { items, thoughts, placed, marks };
+  return { items, next: page.next_cursor, cursor, thoughts, placed, marks };
 }
 
 /** The region: cards, or one line saying there is nothing to do. */
@@ -269,14 +273,33 @@ export function feedRegion(user: User, ctx: Ctx): Html {
   return drawRegion(user, ctx, readRegion(user, ctx));
 }
 
+/**
+ * The line under the last post: how far back the page reaches and the way
+ * to older ones, or that there is nothing older.
+ */
+export function caughtUp(items: readonly FeedItem[], next: string | null, cursor?: unknown): Html | null {
+  // Ranked by score, not time: the last card is not always the oldest.
+  const oldest = items.reduce<string | undefined>((min, item) => (min === undefined || item.at < min ? item.at : min), undefined);
+  if (oldest === undefined) return null;
+  const newest = cursor === undefined ? html`` : html`<a href="/">Newest</a>`;
+  return next === null
+    ? html`<p class="bar muted small" data-caught-up="end"><span>That's everything</span><span class="spacer"></span>${newest}</p>`
+    : html`<p class="bar muted small" data-caught-up="more">
+        <span>You're caught up to ${time(oldest)}</span>
+        <span class="spacer"></span>
+        ${newest}
+        <a href="/?cursor=${encodeURIComponent(next)}">Older posts</a>
+      </p>`;
+}
+
 function drawRegion(user: User, ctx: Ctx, read: ReturnType<typeof readRegion>): Html {
-  const { items, thoughts, placed, marks } = read;
+  const { items, next, cursor, thoughts, placed, marks } = read;
   return html`<section
     id="live-feed"
     class="feed"
     aria-label="Feed"
     data-live="${FEED_LIVE}"
-    data-live-src="/live/feed"
+    data-live-src="/live/feed${cursor === undefined ? "" : `?cursor=${encodeURIComponent(`${cursor.score}|${cursor.id}`)}`}"
   >
     ${chipsBar(user, ctx, items)}
     ${thoughts.map((t) => thoughtCard(t, user.username, placed.get(t.id)))}
@@ -287,6 +310,7 @@ function drawRegion(user: User, ctx: Ctx, read: ReturnType<typeof readRegion>): 
           note: "When something happens in your apps, it lands here.",
         })
       : items.map((item) => feedCard(item, marks))}
+    ${caughtUp(items, next, cursor)}
   </section>`;
 }
 
@@ -388,7 +412,7 @@ ${outboxJs}
       .catch(function () { fail(c, was, 'The filter was not saved because there is no connection. Check it and press the chip again.'); });
   }
   function refetch(kind, value) {
-    return fetch('/live/feed', { headers: { accept: 'text/html' }, credentials: 'same-origin' })
+    return fetch(feed.getAttribute('data-live-src') || '/live/feed', { headers: { accept: 'text/html' }, credentials: 'same-origin' })
       .then(function (r) { if (!r.ok) throw r; return r.text(); })
       .then(function (text) {
         var holder = document.createElement('template');
