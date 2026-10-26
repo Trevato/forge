@@ -12,9 +12,11 @@
  * audit that leaves out what it cannot read reads as a clean bill.
  */
 
+import { readFileSync } from "node:fs";
 import { readFileAt } from "../apps/checkout.ts";
 import type { Repo } from "../core/repos.ts";
 import { resolveOid } from "../git/merge.ts";
+import { isSafeOid, isSafeRef } from "../git/guard.ts";
 import { repoDir } from "../git/repos.ts";
 import {
   VERBS,
@@ -108,14 +110,44 @@ export async function policyBrief(
   return { identities: standing.identities, lines };
 }
 
-/** Read one repository's policy at the tip of its default branch. */
+/** Most (repository, tip) pairs remembered; the oldest is dropped first. */
+const CACHE_MAX = 512;
+
+/** A standing is a pure function of (directory, tip), so it is safe to keep. */
+const remembered = new Map<string, Standing>();
+
+/**
+ * The tip of a branch without spawning git: a loose ref is one small file.
+ * Anything else (packed, symbolic, odd) answers undefined and git is asked.
+ */
+function looseTip(dir: string, branch: string): string | undefined {
+  if (!isSafeRef(`refs/heads/${branch}`)) return undefined;
+  try {
+    const text = readFileSync(`${dir}/refs/heads/${branch}`, "utf8").trim();
+    return isSafeOid(text) ? text : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Read one repository's policy at the tip of its default branch. The result
+ * is kept by (repository, tip): a push moves the tip and so the next read
+ * reads again; a tip that has not moved costs one small file read.
+ */
 export async function audit(reposRoot: string, repo: Repo): Promise<Audited> {
   const dir = repoDir(reposRoot, repo.ownerName, repo.name);
-  const oid = await resolveOid(dir, `refs/heads/${repo.defaultBranch}`);
+  const oid =
+    looseTip(dir, repo.defaultBranch) ??
+    (await resolveOid(dir, `refs/heads/${repo.defaultBranch}`));
   if (oid === undefined) return { repo, standing: { kind: "unread" } };
-  return {
-    repo,
-    oid,
-    standing: standingOf(await readFileAt(dir, oid, "contract.json")),
-  };
+  const key = `${dir}\0${oid}`;
+  let standing = remembered.get(key);
+  if (standing === undefined) {
+    standing = standingOf(await readFileAt(dir, oid, "contract.json"));
+    if (remembered.size >= CACHE_MAX)
+      remembered.delete(remembered.keys().next().value!);
+    remembered.set(key, standing);
+  }
+  return { repo, oid, standing };
 }
