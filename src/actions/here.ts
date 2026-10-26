@@ -26,6 +26,7 @@ import {
   getRepo,
   type Repo,
 } from "../core/repos.ts";
+import { getUserByName, hiddenFrom } from "../core/users.ts";
 import { SYSTEM_NAMES } from "../core/reserved.ts";
 import { scopeAllows, type TokenScope } from "../core/tokens.ts";
 import type { User } from "../core/users.ts";
@@ -54,6 +55,8 @@ export interface Action {
 export interface Manifest {
   readonly here:
     | { readonly kind: "forge" | "explore" | "search" }
+    | { readonly kind: "person"; readonly username: string }
+    | { readonly kind: "org"; readonly org: string }
     | {
         readonly kind: "repository";
         readonly name: string;
@@ -111,6 +114,49 @@ export function manifestFor(
     name === undefined && (owner === "explore" || owner === "search")
       ? owner
       : undefined;
+  // One segment, or `/:owner/-/…`, that is not a page the forge keeps for
+  // itself names an account: a person, an organization, or nobody.
+  if (
+    owner !== undefined &&
+    page === undefined &&
+    (name === undefined || name === "-") &&
+    !SYSTEM.has(owner.toLowerCase())
+  ) {
+    const account = getUserByName(app.db, owner);
+    if (account === undefined || hiddenFrom(account, viewer))
+      return err("not_found");
+    const you = youFor(viewer, scope, undefined, app);
+    const rest = forgeActions(app, viewer, scope);
+    if (account.kind === "org")
+      return ok({
+        here: { kind: "org", org: account.username },
+        you,
+        actions: [
+          {
+            do: "list the organization's teams",
+            http: `GET /api/v1/orgs/${account.username}/teams`,
+          },
+          {
+            do: "list its public repositories",
+            http: `GET /api/v1/users/${account.username}/repos`,
+          },
+          ...rest,
+        ],
+        ...common,
+      });
+    return ok({
+      here: { kind: "person", username: account.username },
+      you,
+      actions: [
+        {
+          do: "read their public repositories",
+          http: `GET /api/v1/users/${account.username}/repos`,
+        },
+        ...rest,
+      ],
+      ...common,
+    });
+  }
   // Two segments under a name the forge keeps for itself are its own page,
   // never a repository (`core/reserved.ts`).
   // `/:owner/-/…` is an account's or an org's own page (its teams), never

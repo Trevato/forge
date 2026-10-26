@@ -13,7 +13,10 @@ test("every http route the manifest names is described", () => {
   const named = [...src.matchAll(/http: [`"]([^`"]+)[`"]/g)].flatMap((m) =>
     m[1]!.split(", then ").map((one) => {
       const [method, path] = one.replace(" {headRepo}", "").replace(/\?.*/, "").split(" ");
-      return [method!.toLowerCase(), path!.replaceAll("${r}", "/api/v1/repos/{owner}/{name}")] as const;
+      return [method!.toLowerCase(), path!
+        .replaceAll("${r}", "/api/v1/repos/{owner}/{name}")
+        .replace("/orgs/${account.username}/", "/orgs/{org}/")
+        .replace("/users/${account.username}/", "/users/{username}/")] as const;
     }),
   );
   expect(named.length).toBeGreaterThan(5);
