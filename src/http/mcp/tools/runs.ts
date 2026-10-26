@@ -6,7 +6,7 @@ export const tool: Tool = {
   name: "runs",
   doc: "`{ repo, limit? }`: the repository's recent runs, newest first (id, kind, state, issue or pull number, started, ended), 1–50, default 20; read as the runs page reads them",
   description:
-    "A repository's runs, newest first: id, kind, state, issue or pull, started and ended.",
+    "A repository's runs, newest first: id, kind, state, issue or pull number, start, end.",
   inputSchema: {
     type: "object",
     properties: {
@@ -15,7 +15,7 @@ export const tool: Tool = {
         type: "integer",
         minimum: 1,
         maximum: 50,
-        description: "1–50, default 20.",
+        description: "Default 20.",
       },
     },
     required: ["repo"],
@@ -29,7 +29,7 @@ export const tool: Tool = {
     if (isAnswer(repo)) return repo;
     const runs = listRepoRuns(ctx.app, user, repo, { limit });
     if (!runs.ok) return bad("not_found", "no such app or repository (owner/name)");
-    return good({
+    const answer = good({
       runs: runs.value.map((r) => ({
         id: r.id,
         kind: r.kind,
@@ -40,5 +40,6 @@ export const tool: Tool = {
         endedAt: r.finishedAt,
       })),
     });
+    return { ...answer, card: { repo: `${repo.ownerName}/${repo.name}` } };
   },
 };

@@ -1340,6 +1340,29 @@ describe("the forge over MCP", () => {
     expect(body.result.structuredContent.card.kind).toBe("feed");
   });
 
+  test("runs answers with the run card, newest first, twelve rows at most", async () => {
+    const { cardFor } = await import("../src/web/studio/cards.ts");
+    const runs = Array.from({ length: 15 }, (_, i) => ({
+      id: `r${i}`, kind: "agent", state: "done", number: i === 0 ? null : i, startedAt: 1, endedAt: 2,
+    }));
+    const id = "01m23vygyffx5hg2f5vm8r74sr";
+    runs[1]!.id = id;
+    const card = cardFor("runs", { runs }, "https://f.example", { repo: "alice/game" })!;
+    expect(card.kind).toBe("run");
+    expect(card.title).toBe("Runs");
+    expect(card.rows[1]!.link).toBe(`https://f.example/alice/game/runs/${id}`);
+    expect(card.rows[0]!.link).toBeUndefined();
+    const nolink = cardFor("runs", { runs }, "https://f.example", { repo: "alice" })!;
+    expect(nolink.rows[1]!.link).toBeUndefined();
+    expect(card.rows).toHaveLength(12);
+    expect(card.rows[0]).toEqual({ label: "agent r0", value: "done" });
+    expect(card.rows[1]).toMatchObject({ label: `agent ${id}`, value: "#1 — done" });
+    const { body } = await call(rw, "tools/call", { name: "runs", arguments: { repo: "alice/game" } });
+    expect(body.result.structuredContent.card.kind).toBe("run");
+    const tools = (await call(rw, "tools/list")).body.result.tools;
+    expect(tools.find((t: any) => t.name === "runs")._meta?.ui?.resourceUri).toBe("ui://forge/run");
+  });
+
   test("a tool result carries the card it renders", async () => {
     const { body } = await call(rw, "tools/call", { name: "apps", arguments: {} });
     const card = body.result.structuredContent.card;

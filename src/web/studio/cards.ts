@@ -45,6 +45,7 @@ export const CARD_KINDS: readonly CardKind[] = ["app", "run", "decision", "wave"
 export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   apps: "app",
   now: "run",
+  runs: "run",
   asks: "decision",
   milestones: "wave",
   map: "map",
@@ -166,6 +167,21 @@ export function cardFor(
     for (const a of apps.slice(0, 3))
       if (text(a["app"]) !== "")
         actions.push({ label: `Tell ${text(a["app"])}`, tool: "tell", args: { repo: text(a["app"]), context: {} }, words: true });
+  } else if (tool === "runs") {
+    // `runs` answers `{ runs: [{ id, kind, state, number, startedAt, endedAt }] }`,
+    // newest first; the repo comes in `extra`; past runs, so the card offers no stop.
+    const runs = list(obj(value)["runs"]).map(obj);
+    status = runs.length === 0 ? "no runs" : `${runs.length} run${runs.length === 1 ? "" : "s"}`;
+    const slug = text(extra["repo"]);
+    for (const r of runs.slice(0, LIMIT))
+      rows.push({
+        label: `${text(r["kind"])} ${text(r["id"])}`,
+        value: `${r["number"] == null ? "" : `#${text(r["number"])} — `}${text(r["state"])}`,
+        ...(web(origin) && slugOf(slug) && RUN_ID.test(text(r["id"]))
+          ? { link: `${origin}/${slug}/runs/${text(r["id"])}` }
+          : {}),
+      });
+    return { kind, title: "Runs", status, rows, actions };
   } else if (kind === "run") {
     const runs = list(value).map(obj);
     status = runs.length === 0 ? "nothing running" : `${runs.length} going`;
