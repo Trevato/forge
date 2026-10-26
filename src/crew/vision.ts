@@ -7,12 +7,18 @@
  */
 
 import type { App } from "../app.ts";
+import { isVisionPull } from "../core/placements.ts";
+import { parseVision, type Vision } from "../core/vision.ts";
+import { canAdmin, getRepoById, updateRepoSettings } from "../core/repos.ts";
+import { createLog } from "../kernel/log.ts";
 import { editFiles } from "../actions/contents.ts";
 import type { Pull } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { listTree, readerFor } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
+
+const log = createLog("vision");
 
 export const VISION_PATH = "docs/VISION.md";
 export const SECTION = "Changes of direction";
@@ -76,4 +82,89 @@ export async function proposeVision(
   });
   if (!edited.ok || !edited.value.pull) return { ok: false, why: "the edit could not be opened" };
   return { ok: true, pull: edited.value.pull };
+}
+
+/** The fenced block's markers; the owner's words outside them are never touched. */
+export const BLOCK_START = "<!-- forge:vision:start -->";
+export const BLOCK_END = "<!-- forge:vision:end -->";
+export const DIRECTION_LIMIT = 2000;
+
+const clip = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s);
+
+/** The block for a vision, markers included, no longer than `room` characters; null when not even its head fits. */
+export function visionBlock(vision: Vision, room = DIRECTION_LIMIT): string | null {
+  const flat = (s: string): string => s.replace(/\s+/g, " ").trim();
+  const parts: string[] = [];
+  if (vision.purpose) parts.push(`Purpose: ${clip(flat(vision.purpose), 400)}`);
+  if (vision.order.length > 0) parts.push(`Order of work: ${vision.order.map((o) => `${o.n}. ${o.name}`).join("; ")}.`);
+  for (const rule of vision.rules) parts.push(`Rule: ${clip(flat(rule), 160)}`);
+  const kept: string[] = [];
+  for (const part of parts) {
+    const next = `${BLOCK_START}\n${[...kept, part].join("\n")}\n${BLOCK_END}`;
+    if (next.length > room) break;
+    kept.push(part);
+  }
+  return kept.length === 0 ? null : `${BLOCK_START}\n${kept.join("\n")}\n${BLOCK_END}`;
+}
+
+const count = (s: string, needle: string): number => s.split(needle).length - 1;
+
+/**
+ * `direction` with the fenced block regenerated, everything outside it kept
+ * byte for byte. No block yet: it is appended after the owner's words. An
+ * orphan, doubled or reversed marker changes nothing and says why.
+ */
+export function withVisionBlock(
+  direction: string,
+  vision: Vision,
+): { ok: true; text: string } | { ok: false; why: string } {
+  const starts = count(direction, BLOCK_START);
+  const ends = count(direction, BLOCK_END);
+  const from = direction.indexOf(BLOCK_START);
+  const to = direction.indexOf(BLOCK_END);
+  if (starts !== ends || starts > 1) return { ok: false, why: "the start and end markers do not pair up" };
+  if (starts === 1 && to < from) return { ok: false, why: "the end marker comes before the start marker" };
+  if (starts === 0) {
+    const sep = direction === "" ? "" : direction.endsWith("\n\n") ? "" : direction.endsWith("\n") ? "\n" : "\n\n";
+    const block = visionBlock(vision, DIRECTION_LIMIT - direction.length - sep.length);
+    return block === null ? { ok: false, why: "the owner's words leave no room for the block" } : { ok: true, text: `${direction}${sep}${block}` };
+  }
+  const before = direction.slice(0, from);
+  const after = direction.slice(to + BLOCK_END.length);
+  const block = visionBlock(vision, DIRECTION_LIMIT - before.length - after.length);
+  return block === null ? { ok: false, why: "the owner's words leave no room for the block" } : { ok: true, text: `${before}${block}${after}` };
+}
+
+/**
+ * After a pull lands: when it is a vision pull (its placement says so, never
+ * its branch name) and the merger administers the repository, regenerate the
+ * fenced block of the direction from the landed VISION.md. Anyone else's merge
+ * leaves the direction alone and writes a `repo` event the pull page shows.
+ */
+export async function landVision(app: App, merger: User, repo: Repo, pull: Pull): Promise<void> {
+  if (!isVisionPull(app.db, `${repo.ownerName}/${repo.name}`, pull.number)) return;
+  if (!canAdmin(app.db, repo, merger)) {
+    app.bus.append({
+      kind: "repo.vision_kept",
+      repoId: repo.id,
+      payload: { pull: pull.number, why: "an admin's merge rewrites it" },
+    });
+    return;
+  }
+  const fresh = getRepoById(app.db, repo.id) ?? repo;
+  const md = await readVision(app, fresh);
+  if (md === null) return;
+  const next = withVisionBlock(fresh.autonomyDirection, parseVision(md));
+  if (!next.ok) {
+    log.warn("left the direction unchanged", { repo: `${repo.ownerName}/${repo.name}`, pull: pull.number, why: next.why });
+    return;
+  }
+  if (next.text === fresh.autonomyDirection) return;
+  updateRepoSettings(app.db, fresh, { autonomyDirection: next.text });
+  app.bus.append({
+    kind: "repo.settings_updated",
+    repoId: repo.id,
+    actorId: merger.id,
+    payload: { changed: ["autonomyDirection"], pull: pull.number },
+  });
 }

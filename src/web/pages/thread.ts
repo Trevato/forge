@@ -231,6 +231,20 @@ function interruptionEntries(ctx: Ctx, issue: Issue): Entry[] {
   }));
 }
 
+/** The forge's own line where a vision pull landed without an admin: the direction was kept as it was. */
+function forgeEntries(ctx: Ctx, repo: Repo, issue: Issue): Entry[] {
+  if (issue.kind !== "pull") return [];
+  return listEvents(ctx.app.db, { repoId: repo.id, kind: "repo.vision_kept", limit: 50 })
+    .filter((e) => e.payload["pull"] === issue.number)
+    .map((e) => ({
+      at: e.createdAt,
+      node: tlEvent({
+        icon: "merge",
+        body: html`<span>the forge kept the repository's direction as it was: only ${String(e.payload["why"] ?? "an admin's merge rewrites it")}</span> ${time(e.createdAt)}`,
+      }),
+    }));
+}
+
 export interface ConversationOptions {
   /** The verb on the opening card ("opened this", "wants to merge …"). */
   openVerb: Html | string;
@@ -317,6 +331,7 @@ export function conversation(
   }));
   entries.push(...stateEvents(ctx, repo, issue));
   entries.push(...interruptionEntries(ctx, issue));
+  entries.push(...forgeEntries(ctx, repo, issue));
   entries.push(...(options.extra ?? []));
   entries.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
   // The opening post and the newest THREAD_WINDOW comments with the state

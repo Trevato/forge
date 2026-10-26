@@ -6,6 +6,7 @@
 
 import { resolveOpen } from "../core/decisions.ts";
 import type { App } from "../app.ts";
+import { landVision } from "../crew/vision.ts";
 import { isCrew } from "../core/agents.ts";
 import {
   getIssueById,
@@ -435,6 +436,8 @@ export async function mergePull(
       mergeOid: merged.value.mergeOid,
     },
   });
+  // A vision pull, landed by an admin, rewrites the direction's fenced block.
+  await landVision(app, writer.value, repo, pull);
   // What the pull said it closes, closes: the issue is done when the change
   // lands, as the person who landed it — which is what frees the map. Not
   // the plan's own issues: no change finishes an umbrella or opens the

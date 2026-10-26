@@ -65,6 +65,14 @@ export function placementOf(db: Database, thoughtId: string): Placement | undefi
   return row ? toPlacement(row) : undefined;
 }
 
+/** Whether a placement of kind `vision` proposed pull `number` of `repo` (owner/name): the one mark of a vision pull. */
+export function isVisionPull(db: Database, repo: string, number: number): boolean {
+  const rows = db
+    .query<Row, [string]>("SELECT * FROM placement WHERE kind = 'vision' AND placed LIKE ?1")
+    .all(`%"pull":${number}%`);
+  return rows.some((r) => toPlacement(r).placed.some((p) => p.action === "proposed" && p.repo === repo && p.pull === number));
+}
+
 export function placementsOf(db: Database, thoughtIds: readonly string[]): Map<string, Placement> {
   const out = new Map<string, Placement>();
   for (const id of thoughtIds) {
