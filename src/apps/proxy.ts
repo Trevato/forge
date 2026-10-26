@@ -39,7 +39,9 @@ import type { AppsRuntime, EnvStatus } from "./runtime.ts";
 import { crewNow, tellLink } from "./crew.ts";
 import { feedback, mintProof } from "./feedback.ts";
 import { clientBucket } from "../http/peer.ts";
-import { doorPage } from "./door.ts";
+import { DOOR_PULL_LIMIT, doorPage, type DoorPullLine } from "./door.ts";
+import { checkWord } from "./check_word.ts";
+import { openPulls } from "./door_pulls.ts";
 import { takePhases, timePhase } from "../core/route_timing.ts";
 import { readServing } from "./serving.ts";
 import { notFound, securityFloor } from "../http/respond.ts";
@@ -436,6 +438,42 @@ function doorSsh(
   return runtime.sshFor(target.app, target.env) ?? null;
 }
 
+/**
+ * The door's open pulls: a preview that is running or asleep links to itself,
+ * every other pull to its page on the forge. Empty for whoever may not read.
+ * Reads one more than the door draws, so it can say there are others.
+ */
+function doorPulls(
+  runtime: AppsRuntime,
+  target: AppTarget,
+  who: GrantWho | undefined,
+): DoorPullLine[] {
+  const db = runtime.app.db;
+  const repo = getRepoById(db, target.app.repoId);
+  if (repo === undefined) return [];
+  const viewer = who === undefined ? undefined : getUserById(db, who.id);
+  return openPulls(db, repo, viewer, DOOR_PULL_LIMIT + 1).map((p) => {
+    const env = previewEnv(p.number);
+    const state = runtime.envStatus(target.app, env);
+    const live =
+      state !== undefined &&
+      (state.state === "running" ||
+        state.state === "asleep" ||
+        state.dormant !== undefined);
+    return {
+      number: p.number,
+      title: p.title,
+      check: checkWord(p.run, p.headOid),
+      href: live
+        ? runtime.urlFor(target.app, env)
+        : new URL(
+            `/${repo.ownerName}/${repo.name}/pulls/${p.number}`,
+            runtime.options.forgeUrl,
+          ).href,
+    };
+  });
+}
+
 /** Whether the person a grant names may enter this app now. */
 function stillEntitled(
   runtime: AppsRuntime,
@@ -692,10 +730,14 @@ export async function proxyApp(
     const serving = timePhase(request, "serving", () =>
       readServing(runtime.app.db, target.app.repoId, target.env),
     );
+    const pulls = timePhase(request, "pulls", () =>
+      doorPulls(runtime, target, signed?.who),
+    );
     const page = timePhase(request, "render", () =>
       doorPage(
         {
           where,
+          pulls,
           ...(serving === undefined ? {} : { serving }),
           forgeUrl: runtime.options.forgeUrl,
           ...(ssh === undefined ? {} : { ssh }),

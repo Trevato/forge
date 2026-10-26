@@ -330,6 +330,8 @@ ssh -p 2222 localhost tell make the header blue # tell the crew in one line
 
 An app's open pulls, newest five first, one line each (`#n title · green|red|running|none`), need no tty: run `pulls` on the app's login — `ssh <app>@<forge> pulls`, with the app's page printing the exact command as `FORGE_APP_SSH` (the terminal is off when that is unset). A private app answers only a key its gate admits; sealed pulls show to their author, writers and the crew (`src/apps/door_pulls.ts`).
 
+The app's `/__forge/` door on its own host lists the same five pulls with their check word (`#n title · check green`). A running, asleep or dormant preview links to itself, any other pull to its page on the forge. Who sees which is the rule in `src/apps/door_pulls.ts`; a stranger at a private app gets the same 404 as for an unknown app. When more than five are open the door says so in one line; the rest are on the forge.
+
 A big repository clones over either transport. To skip its large files until a
 checkout needs them, run `git clone --filter=blob:none <url>`. See
 [`docs/GIT.md`](docs/GIT.md).

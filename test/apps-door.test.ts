@@ -132,6 +132,18 @@ test("a private repository is linked only to who may read it", async () => {
     password: "a-good-passphrase",
   });
   if (!b.ok) throw new Error(b.error);
+  const secret = createIssue(app.db, {
+    repoId: vault.repoId,
+    authorId: alice,
+    title: "secret plan",
+    kind: "pull",
+  });
+  if (!secret.ok) throw new Error(secret.error);
+  app.db
+    .query(
+      "INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid) VALUES (?, 'main', 'h', 'b', 'x')",
+    )
+    .run(secret.value.id);
   const target = { app: vault, env: "production" } as AppTarget;
   const cookie = `forge_grant_${vault.id.slice(-8)}`;
   const as = (id: string, name: string, role: "admin" | "user") =>
@@ -148,6 +160,7 @@ test("a private repository is linked only to who may read it", async () => {
     expect(res.status).toBe(unknown.status);
     expect(body).toBe(unknownBody);
     expect(body).not.toContain("vault");
+    expect(body).not.toContain("secret plan");
     expect([...res.headers].filter(([k]) => k !== "date")).toEqual(
       [...unknown.headers].filter(([k]) => k !== "date"),
     );
@@ -157,6 +170,7 @@ test("a private repository is linked only to who may read it", async () => {
   const mine = await (await door(host, as(alice, "alice", "admin"))).text();
   expect(mine).toContain(`href="${servers.url}/alice/vault"`);
   expect(mine).toContain("alice/vault");
+  expect(mine).toContain("secret plan · check running");
 });
 
 test("HEAD answers the headers with no body; POST is a 405 that says what is allowed", async () => {
@@ -260,7 +274,7 @@ test("the door and the crew line name the phases they read, signed in, on produc
     [`notes--${pull}.${DOMAIN}`, grantFor(`pull-${pull}`)],
   ];
   const reads: Record<string, string[]> = {
-    "/__forge/": ["session", "app", "pull", "serving", "render"],
+    "/__forge/": ["session", "app", "pull", "serving", "pulls", "render"],
     "/__forge/crew": ["session", "app", "pull", "working", "render"],
   };
   for (const [host, cookie] of hosts)
@@ -279,6 +293,94 @@ test("a guest names session and render, and the crew line stops before the reads
     for (const ms of crew.values()) expect(Number.isFinite(ms)).toBe(true);
     // The door still looks the app and pull up for its words.
     const page = await phasesOf(host, "/__forge/");
-    expect([...page.keys()].sort()).toEqual(["app", "pull", "render", "serving", "session"]);
+    expect([...page.keys()].sort()).toEqual(["app", "pull", "pulls", "render", "serving", "session"]);
   }
+});
+
+test("the door lists open pulls with their check word: a preview link when it is up or asleep, the forge's page otherwise, titles escaped", async () => {
+  const repoId = record.repoId;
+  const addPull = (n: number, head: string) => {
+    const id = (
+      app.db.query("SELECT id FROM issue WHERE repo_id = ? AND number = ?").get(repoId, n) as {
+        id: string;
+      }
+    ).id;
+    app.db
+      .query(
+        "INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid) VALUES (?, 'main', ?, 'b', ?)",
+      )
+      .run(id, `h${n}`, head);
+    return id;
+  };
+  const sleeping = addPull(pull, "head1");
+  app.db
+    .query(
+      "INSERT INTO run (id, repo_id, kind, issue_id, commit_oid, state) VALUES (?, ?, 'check', ?, 'head1', 'ok')",
+    )
+    .run(crypto.randomUUID(), repoId, sleeping);
+  const cold = createIssue(app.db, {
+    repoId,
+    authorId: alice,
+    title: "cold <i>one</i>",
+    kind: "pull",
+  });
+  if (!cold.ok) throw new Error(cold.error);
+  addPull(cold.value.number, "head2");
+  (runtime as unknown as { envs: Map<string, unknown> }).envs.set(
+    `${record.id}/pull-${pull}`,
+    {
+      app: record,
+      env: `pull-${pull}`,
+      chain: Promise.resolve(),
+      restarts: [],
+      asleep: { commitOid: "head1", runId: "r", since: new Date().toISOString() },
+    },
+  );
+  const html = await (await door(`notes.${DOMAIN}`)).text();
+  const live = runtime.urlFor(record, `pull-${pull}`);
+  expect(html).toContain(
+    `<a href="${live}">#${pull} &lt;b&gt;t&lt;/b&gt; · check green</a>`,
+  );
+  expect(html).toContain(
+    `<a href="${servers.url}/alice/notes/pulls/${cold.value.number}">#${cold.value.number} cold &lt;i&gt;one&lt;/i&gt; · check none</a>`,
+  );
+  expect(html).not.toContain("<b>t</b>");
+  expect(html).not.toContain("<i>");
+});
+
+test("the door links a dormant preview to itself, and says so when more than five pulls are open", async () => {
+  const repoId = record.repoId;
+  const mk = (title: string) => {
+    const r = createIssue(app.db, { repoId, authorId: alice, title, kind: "pull" });
+    if (!r.ok) throw new Error(r.error);
+    const id = (
+      app.db.query("SELECT id FROM issue WHERE repo_id = ? AND number = ?").get(repoId, r.value.number) as {
+        id: string;
+      }
+    ).id;
+    app.db
+      .query(
+        "INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid) VALUES (?, 'main', ?, 'b', 'h')",
+      )
+      .run(id, `d${r.value.number}`);
+    return r.value.number;
+  };
+  const dormant = mk("quiet one");
+  (runtime as unknown as { envs: Map<string, unknown> }).envs.set(
+    `${record.id}/pull-${dormant}`,
+    {
+      app: record,
+      env: `pull-${dormant}`,
+      chain: Promise.resolve(),
+      restarts: [],
+      dormant: { since: new Date().toISOString(), idleSince: new Date().toISOString(), commitOid: "h" },
+    },
+  );
+  let html = await (await door(`notes.${DOMAIN}`)).text();
+  expect(html).toContain(`<a href="${runtime.urlFor(record, `pull-${dormant}`)}">#${dormant} quiet one`);
+  expect(html).not.toContain("More pulls are open");
+  for (let i = 0; i < 5; i++) mk(`extra ${i}`);
+  html = await (await door(`notes.${DOMAIN}`)).text();
+  expect(html).toContain("More pulls are open on the forge.");
+  expect((html.match(/ · check /g) ?? []).length).toBe(5);
 });

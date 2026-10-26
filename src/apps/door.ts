@@ -22,7 +22,14 @@ export type DoorFacts = {
    * `ssh …` command, or null when the terminal is off. Unset shows nothing.
    */
   ssh?: string | null;
+  /** Open pulls a viewer may see, each with where to go: its preview or the forge. */
+  pulls?: DoorPullLine[] | undefined;
 };
+
+/** How many pulls the door lists; one more read than this means there are others. */
+export const DOOR_PULL_LIMIT = 5;
+
+export type DoorPullLine = { number: number; title: string; check: string; href: string };
 
 const STYLE =
   "body{font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem}li{margin:.4rem 0}pre{overflow-x:auto;padding:.6rem;background:#eee;color:#111;user-select:all}";
@@ -75,6 +82,15 @@ function servingHtml(facts: DoorFacts): string {
   return `<p>Serving ${sha(now)} since ${stamp(now.at)}</p>${older === "" ? "" : `<h2>Before it</h2><ul>${older}</ul>`}`;
 }
 
+function pullsHtml(pulls: DoorPullLine[] | undefined): string {
+  if (pulls === undefined || pulls.length === 0) return "";
+  const items = pulls.slice(0, DOOR_PULL_LIMIT).map((p) =>
+    link(p.href, `#${p.number} ${[...p.title].slice(0, 120).join("")} · check ${p.check}`),
+  );
+  const more = pulls.length > DOOR_PULL_LIMIT ? "<p>More pulls are open on the forge.</p>" : "";
+  return `<h2>Open pulls</h2><ul>${items.join("")}</ul>${more}`;
+}
+
 export function doorPage(facts: DoorFacts, head: boolean): Response {
   const { where, forgeUrl } = facts;
   const links = [link(forgeUrl, "Home")];
@@ -93,7 +109,7 @@ export function doorPage(facts: DoorFacts, head: boolean): Response {
         : `<p>Terminal:</p><pre><code>${escapeAttr(facts.ssh)}</code></pre>`;
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>${escapeAttr(where.app)}, ${escapeAttr(doorWhere(where))}</title><style>${STYLE}</style></head>
-<body><main><h1>${escapeAttr(where.app)}</h1><p>${escapeAttr(doorWhere(where))}</p>${servingHtml(facts)}<ul>${links.join("")}</ul>${terminal}</main></body></html>
+<body><main><h1>${escapeAttr(where.app)}</h1><p>${escapeAttr(doorWhere(where))}</p>${servingHtml(facts)}${pullsHtml(facts.pulls)}<ul>${links.join("")}</ul>${terminal}</main></body></html>
 `;
   return new Response(head ? null : html, {
     headers: {
