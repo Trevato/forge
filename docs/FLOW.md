@@ -63,3 +63,14 @@ tick logs as `held=`, read through `flow/held.ts`, which keeps the rows 5 s.
 The terminal's Flow command prints the same rows, one line per repository
 (`alice/engine startable=0 stalled=4 run_cap=1`). A granted agent sees
 public repositories only, on both.
+
+One of those filters is the hot-file WIP limit (#5934, `crew/hot_files.ts`):
+a ready issue that names a file 5 or more open pulls already touch is held as
+`hot_file` until that pile drains under 5, so a sixth pull never joins a
+file every landing would make the rest rebase. An issue's expected files are
+the repository paths its title and body name (`src/http/mcp.ts`,
+`` `README.md` ``); an open pull's files are read from git once per head
+before the picker sorts. The tick line names the hot files (`hot=src/http/mcp.ts=61`),
+and each repository's writers see one post on the feed — on the web and
+through the MCP `feed` tool — saying which build waits on which file, gone
+when the hold lifts.

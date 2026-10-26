@@ -27,6 +27,7 @@ import {
 import { getUserById, type User } from "../core/users.ts";
 import { watchedBy } from "../core/watches.ts";
 import { chooseCandidates } from "./choose.ts";
+import { hotSays, standingHot } from "../crew/hot_files.ts";
 import { ago } from "./rank.ts";
 import { askLinesFor } from "../web/studio/asks.ts";
 
@@ -197,6 +198,35 @@ function frozenCandidates(
   return out;
 }
 
+/**
+ * Builds the picker holds because a file they name is in 5 or more open
+ * pulls (#5934): one post per repository the viewer writes to, read from
+ * what the picker said last, so it goes when the pile drains.
+ */
+function hotCandidates(writable: readonly Repo[]): Candidate[] {
+  const out: Candidate[] = [];
+  for (const repo of writable) {
+    const standing = standingHot(repo.id);
+    if (standing === undefined) continue;
+    const n = standing.holds.length;
+    const first = standing.holds[0]!;
+    const what = `${n === 1 ? "1 build waits" : `${n} builds wait`} on hot files: ${hotSays(first)}${n > 1 ? ` And ${n - 1} more.` : ""}`;
+    out.push({
+      id: `hot:${repo.id}`,
+      kind: "map",
+      repoId: repo.id,
+      app: slug(repo),
+      actorId: null,
+      actor: null,
+      at: standing.at,
+      link: `${base(repo)}/map`,
+      what: clip(what),
+      urgency: 0,
+    });
+  }
+  return out;
+}
+
 export function candidatesFor(
   db: Database,
   viewer: User,
@@ -297,6 +327,7 @@ export function candidatesFor(
   out.push(...watchedCandidates(db, viewer, now));
   out.push(...frozenCandidates(db, viewer, now));
   out.push(...chooseCandidates(db, writable));
+  out.push(...hotCandidates(writable));
   for (const d of decided) {
     const repo = repos.get(d.repoId);
     if (!repo) continue;

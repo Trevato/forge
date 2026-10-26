@@ -20,6 +20,8 @@
  * - `run_cap`: it has used its runs for the day (`guard.ts`).
  * - `parked_twice`: the crew parked it twice; it is the planner's (`parks.ts`).
  * - `red_fix`: a fix for a red main already covers it (`red_fix.ts`).
+ * - `hot_file`: a file it names is touched by `HOT_PULLS` or more open
+ *   pulls; it starts when that pile drains under the limit (`hot_files.ts`).
  *
  * The direction issue is the planner's standing issue and never a
  * builder's; it is left out, not counted.
@@ -39,6 +41,7 @@ import { proposedWork, speaksForCrew } from "./direct.ts";
 import { capReached, runCapOf } from "./guard.ts";
 import { interruptionOf } from "./interrupted.ts";
 import { PARK_STRIKES, parkedCount } from "./parks.ts";
+import { hotFiles, hotOverlap } from "./hot_files.ts";
 import { coveredByRedFix } from "./red_fix.ts";
 
 export const HOLDS = [
@@ -51,6 +54,7 @@ export const HOLDS = [
   "run_cap",
   "parked_twice",
   "red_fix",
+  "hot_file",
 ] as const;
 
 export type HoldName = (typeof HOLDS)[number];
@@ -120,6 +124,7 @@ export function heldBy(
     crew.filter((c) => c.role !== "builder").map((c) => c.agent.user.id),
   );
   const handed = withPlanner(app.db, repo);
+  const hot = hotFiles(repo.id);
   const holdOf = (issue: Issue): HoldName | null => {
     if (busyIssues.has(issue.id)) return "running";
     if (proposed.has(issue.number)) return "open_pull";
@@ -130,6 +135,7 @@ export function heldBy(
     if (atRunCap(app, repo, issue)) return "run_cap";
     if (parkedCount(app.db, repo, issue.id) >= PARK_STRIKES) return "parked_twice";
     if (coveredByRedFix(app.db, repo.id, issue)) return "red_fix";
+    if (hotOverlap(issue, hot).length > 0) return "hot_file";
     return null;
   };
   const by = Object.fromEntries(HOLDS.map((h) => [h, [] as Issue[]])) as Record<

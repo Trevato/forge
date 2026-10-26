@@ -99,6 +99,7 @@ import { BREAKER_NOTE, breakerTripped } from "./breaker.ts";
 import { given, pendingReplans } from "../core/limb_replan.ts";
 import { handedOverPulls, SKIP_SUMMARY, skipsReplan } from "./guard.ts";
 import { atRunCap, type Held, heldBy, heldWords, replannable } from "./held.ts";
+import { holdHot, hotFiles, hotWords, learnPullFiles } from "./hot_files.ts";
 import { NO_PULL, shunnedBy, stallReason, unstickOwed } from "./stalls.ts";
 import { alreadyDone, BY_CREW, DONE_LIKE } from "../core/done_on_main.ts";
 import { repoDir } from "../git/repos.ts";
@@ -367,9 +368,18 @@ export async function driveRepo(
   // operator's; at a wall nothing new starts until the reset.
   const paced = repoPace(app, repo, now);
   if (paced.slots === 0 && slotted.length === 0) return "waiting";
+  // The files the open pulls touch, read before the sort: a build that
+  // names a hot one waits for its pile to drain (#5934).
+  await learnPullFiles(app, repo).catch((error) =>
+    log.warn("could not read the open pulls' files", {
+      repo: `${repo.ownerName}/${repo.name}`,
+      error: String(error),
+    }),
+  );
   const sorted = () => heldBy(app, repo, readyNow(repoGraph(app.db, repo.id, { sealed: true })), crew, active);
   let held = sorted();
   if (freeParked(app, repo, by, held) > 0) held = sorted();
+  holdHot(repo.id, held.by.hot_file, now);
   const ready = held.startable;
   if (slotted.length >= paced.slots) {
     // The builders are busy; the planner can still refill the map, when
@@ -1269,6 +1279,8 @@ export async function autonomyTick(
         // The standing reserve the planner keeps: startable/target (#3237).
         reserve: reserveWords(reserveOf(held.startable.length, status.slots)),
         held: heldWords(held),
+        // The files 5 or more open pulls touch, which no new build starts on (#5934).
+        ...(held.by.hot_file.length === 0 ? {} : { hot: hotWords(hotFiles(current.id)) }),
         // Stalled issues this tick parked and freed for another builder (#4073).
         unstuck,
         active: status.active,
