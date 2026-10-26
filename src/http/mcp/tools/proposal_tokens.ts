@@ -3,6 +3,7 @@ import { good, bad, type Tool, REPO_ARG } from "../shared.ts";
 
 export const tool: Tool = {
   name: "proposal_tokens",
+  doc: "`{ repo, verb, child?, origin?, childRepo?, id? }`: give a child forge a propose-only credential: `mint` one (`child`, `origin`), `list` them, or `revoke` one by `id`; writers only",
   description:
     "A child's propose-only credential: `mint` (`child`, `origin`), `list`, `revoke` (`id`). Writers.",
   inputSchema: {

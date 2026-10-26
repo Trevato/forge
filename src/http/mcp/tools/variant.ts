@@ -6,6 +6,7 @@ import { good, bad, type Tool, str, REPO_ARG, repoArg, isAnswer } from "../share
 
 export const tool: Tool = {
   name: "variant",
+  doc: "`{ repo, number, answer, reason? }`: like or dislike one pull among its variants (`answer` like or dislike); a later vote replaces the earlier; a dislike closes the pull with `reason`",
   description:
     "Like or dislike a pull among its variants; a later vote replaces it; dislike closes it (`reason`).",
   inputSchema: {
