@@ -7,7 +7,7 @@
  */
 
 import type { Ctx } from "../../http/context.ts";
-import { CLAIM_WORDS, claimState, clientRows, runningWords, type ClientRow } from "../../spawn/clients.ts";
+import { CLAIM_WORDS, claimState, clientRows, runningWords, spendWords, type ClientRow } from "../../spawn/clients.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { notFoundPage, pageHead } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
@@ -28,6 +28,15 @@ function runningNote(r: ClientRow): Html | null {
   >`;
 }
 
+/** The crew's spend today against its cap; attention-toned from 80%. */
+function spendNote(r: ClientRow): Html | null {
+  const s = spendWords(r);
+  if (s === null) return null;
+  return s.warn
+    ? html`<span data-spend="warn">${badge(s.words, { tone: "attn" })}</span>`
+    : html`<span data-spend="ok">${s.words}</span>`;
+}
+
 function forgeRow(r: ClientRow): Html {
   const state = claimState(r);
   const meta = [
@@ -35,6 +44,7 @@ function forgeRow(r: ClientRow): Html {
     r.for === null ? null : html`for ${r.for}`,
     r.apps.length === 0 ? null : html`${r.apps.join(", ")}`,
     runningNote(r),
+    spendNote(r),
     r.sentAt === null ? null : html`sent ${time(r.sentAt)}`,
     r.lastActivityAt === null
       ? null

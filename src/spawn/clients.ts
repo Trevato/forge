@@ -37,6 +37,10 @@ export interface ClientRow {
   readonly lastActivityAt: string | null;
   /** The apps this parent runs for the child; null when it runs none here. */
   readonly running: ChildAppsSummary | null;
+  /** Dollars the child's crew spent today, from its last heartbeat; null when it has not said. */
+  readonly spendTodayUsd: number | null;
+  /** The child's forge cap in dollars; null when none or unsaid. */
+  readonly ceilingUsd: number | null;
   /** The first step its person has not taken, read from the child's heartbeat. */
   readonly nextStep: NextStep;
 }
@@ -188,6 +192,8 @@ export async function clientRows(app: App): Promise<ClientRow[]> {
       claimed: states[i]?.claimed ?? null,
       lastActivityAt: states[i]?.lastActivityAt ?? null,
       running: hostedChildApps(app, c.name) ?? null,
+      spendTodayUsd: beats[i]?.beat.spendTodayUsd ?? null,
+      ceilingUsd: beats[i]?.beat.ceilingUsd ?? null,
       nextStep: nextStepOf(states[i]?.claimed ?? null, beats[i]?.beat),
     }))
     .sort(
@@ -217,4 +223,21 @@ export function runningWords(r: ClientRow): string | null {
   const word = `${a.running} ${a.running === 1 ? "app" : "apps"} running`;
   if (a.notRunning.length === 0) return word;
   return `${word} · ${a.notRunning.map((n) => `${n.slug}: ${n.why}`).join("; ")}`;
+}
+
+const money = (n: number): string => (Number.isInteger(n) ? String(n) : n.toFixed(2));
+
+/**
+ * "$3.20 of $10 today", with "ceiling reached" at the cap; `warn` from 80%.
+ * Null when the child has not reported spend.
+ */
+export function spendWords(r: ClientRow): { words: string; warn: boolean } | null {
+  if (r.spendTodayUsd === null) return null;
+  const spent = `$${r.spendTodayUsd.toFixed(2)}`;
+  if (r.ceilingUsd === null) return { words: `${spent} today`, warn: false };
+  const share = r.spendTodayUsd / r.ceilingUsd;
+  const base = `${spent} of $${money(r.ceilingUsd)} today`;
+  return share >= 1
+    ? { words: `${base} · ceiling reached`, warn: true }
+    : { words: base, warn: share >= 0.8 };
 }

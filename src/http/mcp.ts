@@ -2708,7 +2708,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "forges",
     description:
-      "The forges sent from here (admin): name, address, whom for, apps, claimed or not, last activity.",
+      "The forges sent from here (admin): name, address, for, apps, claimed, spendTodayUsd, ceilingUsd.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     async run(ctx, user) {

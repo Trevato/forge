@@ -1,12 +1,12 @@
 /**
  * The forges this one sent (#2211) in a card: one row per client with its
- * claim state and the apps-running note, in the words /forges uses. Never a
+ * claim state, the apps-running note and the crew's spend today, in the words /forges uses. Never a
  * claim link; that stays on the page.
  */
 
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
-import { CLAIM_WORDS, claimState, runningWords, type ClientRow } from "../../spawn/clients.ts";
+import { CLAIM_WORDS, claimState, runningWords, spendWords, type ClientRow } from "../../spawn/clients.ts";
 import { card } from "../ui/widgets.ts";
 import { drawFacts } from "./common.ts";
 
@@ -15,7 +15,7 @@ export function forgeLines(rows: readonly ClientRow[]): [string, string][] {
   if (rows.length === 0) return [["", "You have not sent a forge yet"]];
   return rows.map((r) => [
     r.name,
-    [r.for === null ? null : `for ${r.for}`, CLAIM_WORDS[claimState(r)], runningWords(r), r.nextStep.words]
+    [r.for === null ? null : `for ${r.for}`, CLAIM_WORDS[claimState(r)], runningWords(r), r.nextStep.words, spendWords(r)?.words ?? null]
       .filter((m): m is string => m !== null)
       .join(" · "),
   ]);

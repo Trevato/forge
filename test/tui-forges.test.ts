@@ -25,6 +25,8 @@ const row = (over: Partial<ClientRow>): ClientRow => ({
   claimed: false,
   lastActivityAt: null,
   running: null,
+  spendTodayUsd: null,
+  ceilingUsd: null,
   nextStep: { key: "unreported", words: "has not reported yet", lastTellAt: null },
   ...over,
 });
@@ -92,6 +94,12 @@ describe("forges you sent in the terminal", () => {
       expect(await h.palette()).not.toContain("each forge sent");
       h.stop();
     }
+  });
+
+  test("a row carries the crew's spend today, and says when the ceiling is reached", () => {
+    expect(forgeLines([row({ spendTodayUsd: 10, ceilingUsd: 10 })])[0]![1]).toContain("ceiling reached");
+    expect(forgeLines([row({ spendTodayUsd: 3.2, ceilingUsd: 10 })])[0]![1]).toContain("$3.20 of $10 today");
+    expect(forgeLines([row({})])[0]![1]).not.toContain("today");
   });
 
   test("a row says who, the claim state and the apps note; never a link", () => {
