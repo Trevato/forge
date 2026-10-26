@@ -1549,7 +1549,8 @@ for both pages, warm and cold. The content-addressed assets answer a
 revalidation with `304`.
 
 `docs/PLANNING.md` is how issues depend on issues: the edge, the map, and
-what "ready now" means to a person and to the crew. The map also shows each
+what "ready now" means to a person and to the crew. The map draws open
+issues by default; `?done=1` ("Show done") draws the closed ones on an edge too. The map also shows each
 pillar's ask-to-live: the median hours from an issue opening to its change live
 in production, over the last 7 days (also in the map and milestones API and MCP).
 It reads the `deploy_pull` record a production deploy writes when it finishes,

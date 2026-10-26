@@ -23,4 +23,5 @@ is `data-state` on `.map-node`, not a class.
 - `.map-edge` — one dependency edge between two cards.
 - `.map-edge-crit` — an edge on the critical path, in the accent.
 - `.map-edge-done` — an edge with a closed issue at either end, faded.
+- `.map-toggle` — the link beside the counts that swaps between "Show done" (`?done=1`) and "Open only"; padded, 44px tall under `pointer: coarse`. It is a link, not a badge.
 - `.map-ask` — a pillar row's lead-time figures in the side column, inline, with the hover title saying what they measure.

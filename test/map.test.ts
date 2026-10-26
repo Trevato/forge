@@ -347,7 +347,16 @@ describe("the map, per app and across the forge", () => {
     expect(card("Extract renderer")).toContain('class="map-breath"');
     expect(card("Scene graph")).toContain('data-state="blocked"');
     expect(card("Write the docs")).toContain('data-state="ready"');
-    expect(card("Old bootstrap")).toContain('data-state="done"');
+    // Done cards are drawn only on `?done=1` (#6174).
+    expect(card("Old bootstrap")).toBe("");
+    const withDone = await (
+      await fetch(`${base}/alice/engine/map?done=1`, { headers: { cookie } })
+    ).text();
+    expect(
+      withDone.match(
+        /<a[^>]*class="map-node"[^>]*>(?:(?!<\/a>)[\s\S])*Old bootstrap/,
+      )?.[0],
+    ).toContain('data-state="done"');
     expect(card("Input mapping")).toContain('data-state="ready"');
     expect(card("Physics step")).toContain('data-state="waiting"');
     expect(card("Shader hot reload")).toContain('data-state="parked"');
@@ -357,7 +366,7 @@ describe("the map, per app and across the forge", () => {
     // The chain 1 → 2 is the critical path, in the accent.
     expect(page).toContain('class="map-edge map-edge-crit"');
     // The edge from a done issue recedes with it.
-    expect(page).toContain('class="map-edge map-edge-done"');
+    expect(withDone).toContain('class="map-edge map-edge-done"');
     // The line under the drawing counts the words.
     expect(page).toMatch(
       /data-state="ready"[^>]*>ready <b>2<\/b><\/span>/,

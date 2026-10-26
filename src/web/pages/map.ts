@@ -930,7 +930,10 @@ export function countWords(words: readonly Word[]): Record<Word, number> {
   return out;
 }
 
-function countsLine(counts: Record<Word, number>): Html {
+function countsLine(
+  counts: Record<Word, number>,
+  toggle?: { readonly base: string; readonly showDone: boolean },
+): Html {
   const always = new Set<Word>(["ready", "working", "blocked", "done"]);
   const tone: Partial<Record<Word, string>> = {
     ready: "success",
@@ -945,6 +948,13 @@ function countsLine(counts: Record<Word, number>): Html {
       (w) =>
         html`<span class="badge" data-variant="${tone[w] ?? "secondary"}" data-state="${w}">${w} <b>${counts[w]}</b></span> `,
     )}
+    ${toggle === undefined || counts.done === 0
+      ? null
+      : html`<a
+          class="map-toggle"
+          href="${toggle.showDone ? toggle.base : `${toggle.base}?done=1`}"
+          >${toggle.showDone ? "Open only" : "Show done"}</a
+        >`}
   </span>`;
 }
 
@@ -1168,6 +1178,8 @@ export const mapCss = /* css */ `
 
 /* ---- beside the drawing ---- */
 .map-ask { display: inline; }
+.map-toggle { display: inline-block; padding: 2px 8px; font-size: 12.5px; }
+@media (pointer: coarse) { .map-toggle { display: inline-flex; align-items: center; min-height: 44px; padding: 0 12px; } }
 
 /* ---- lanes: §5 list rows that fold ---- */
 #lanes { margin-top: 16px; }
@@ -1349,15 +1361,32 @@ const studioEmpty = (base: string): MapEmpty => ({
   action: btn("Say one", { href: `${base}#tell`, variant: "primary" }),
 });
 
-/** GET /:owner/:name/map */
+/**
+ * The graph as the page draws it by default: open issues and the edges
+ * between them. Readiness is judged on the whole graph, not on this.
+ */
+function openOnly(graph: Graph): Graph {
+  const issues = graph.issues.filter((i) => i.state === "open");
+  const kept = new Set(issues.map((i) => i.id));
+  return {
+    ...graph,
+    issues,
+    edges: graph.edges.filter(
+      (e) => kept.has(e.blockedById) && kept.has(e.issueId),
+    ),
+  };
+}
+
+/** GET /:owner/:name/map (`?done=1` draws the closed issues too) */
 export async function mapPage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
   const db = ctx.app.db;
   const studio = studioRecord(ctx, repo) !== undefined;
+  const showDone = ctx.url.searchParams.get("done") === "1";
   // The read: graph, marks and pillars, one phase; `render` is the page's own.
-  const { graph, ready, blocked, critical, placed, marks, readySet, counts, pillars, ask } =
+  const { shown, graph, ready, blocked, critical, placed, marks, readySet, counts, pillars, ask } =
     timePhase(ctx.request, "map", () => {
       const graph = repoGraph(db, repo.id, {
         ...sealedScope(db, repo, ctx.auth.user),
@@ -1365,7 +1394,8 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
       const ready = readyNow(graph);
       const blocked = blockedOn(graph);
       const critical = criticalPath(graph);
-      const placed = cachedLayout(graph, layout);
+      const shown = showDone ? graph : openOnly(graph);
+      const placed = cachedLayout(shown, layout);
       const marks = marksFor(db, repo.id, graph, listActiveRuns(db, [repo.id]));
       const readySet = new Set(ready.map((r) => r.issue.id));
       const counts = countWords(
@@ -1373,7 +1403,7 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
       );
       const pillars = pillarView(db, repo);
       const ask = askToLiveFor(ctx.app, repo, pillars, ctx.auth.user);
-      return { graph, ready, blocked, critical, placed, marks, readySet, counts, pillars, ask };
+      return { shown, graph, ready, blocked, critical, placed, marks, readySet, counts, pillars, ask };
     });
   const rendering = performance.now();
   const body = html`${repoHeader(ctx, repo, "map")}
@@ -1392,13 +1422,13 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
       data-live-repo="${repo.ownerName}/${repo.name}"
     >
       <div class="map-main">
-        ${drawMap(repo, graph, placed, emphasisFor(ready, critical, marks), {
+        ${drawMap(repo, shown, placed, emphasisFor(ready, critical, marks), {
           id: "map-canvas",
           cap: 1,
           issueHref: tellHref,
           ...(studio ? { empty: studioEmpty(repoBase(repo)) } : {}),
         })}
-        ${placed.nodes.length === 0 ? null : countsLine(counts)}
+        ${placed.nodes.length === 0 && counts.done === 0 ? null : countsLine(counts, { base: `${repoBase(repo)}/map`, showDone })}
       </div>
       <aside class="stack">
         ${pillars === undefined
