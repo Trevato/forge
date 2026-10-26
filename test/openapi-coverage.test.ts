@@ -10,7 +10,6 @@ import { ROUTES } from "../src/contract/openapi.ts";
 const NOT_YET_DESCRIBED: readonly string[] = [
   "DELETE /api/v1/orgs/{}/teams/{}/members/{}",
   "DELETE /api/v1/repos/{}/{}/labels/{}",
-  "DELETE /api/v1/repos/{}/{}/pulls/{}/hold",
   "DELETE /api/v1/user/keys/{}",
   "DELETE /api/v1/user/origins/{}",
   "DELETE /api/v1/user/pins/{}/{}",
@@ -73,7 +72,6 @@ const NOT_YET_DESCRIBED: readonly string[] = [
   "POST /api/v1/user/origins/{}/sync",
   "PUT /api/v1/front",
   "PUT /api/v1/repos/{}/{}/crew/{}",
-  "PUT /api/v1/repos/{}/{}/pulls/{}/hold",
   "PUT /api/v1/repos/{}/{}/pulls/{}/labels",
   "PUT /api/v1/user/pins/{}/{}",
 ];

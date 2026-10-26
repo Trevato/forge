@@ -17,6 +17,7 @@ export { route as deleteApiV1ReposOwnerNameHooksId } from "./deleteApiV1ReposOwn
 export { route as deleteApiV1ReposOwnerNameIssuesNumberDependenciesBlocker } from "./deleteApiV1ReposOwnerNameIssuesNumberDependenciesBlocker.ts";
 export { route as deleteApiV1ReposOwnerNameMilestonesNumberWatch } from "./deleteApiV1ReposOwnerNameMilestonesNumberWatch.ts";
 export { route as deleteApiV1ReposOwnerNamePromptsId } from "./deleteApiV1ReposOwnerNamePromptsId.ts";
+export { route as deleteApiV1ReposOwnerNamePullsNumberHold } from "./deleteApiV1ReposOwnerNamePullsNumberHold.ts";
 export { route as deleteApiV1ReposOwnerNamePullsNumberThreadsAnchorResolve } from "./deleteApiV1ReposOwnerNamePullsNumberThreadsAnchorResolve.ts";
 export { route as deleteApiV1SecretsScopeName } from "./deleteApiV1SecretsScopeName.ts";
 export { route as deleteApiV1Sessions } from "./deleteApiV1Sessions.ts";
@@ -230,6 +231,7 @@ export { route as putApiV1ReposOwnerNameIssuesNumberLabels } from "./putApiV1Rep
 export { route as putApiV1ReposOwnerNameIssuesNumberTeams } from "./putApiV1ReposOwnerNameIssuesNumberTeams.ts";
 export { route as putApiV1ReposOwnerNameMilestonesNumberWatch } from "./putApiV1ReposOwnerNameMilestonesNumberWatch.ts";
 export { route as putApiV1ReposOwnerNamePullsNumberAssignee } from "./putApiV1ReposOwnerNamePullsNumberAssignee.ts";
+export { route as putApiV1ReposOwnerNamePullsNumberHold } from "./putApiV1ReposOwnerNamePullsNumberHold.ts";
 export { route as putApiV1ReposOwnerNamePullsNumberLabels } from "./putApiV1ReposOwnerNamePullsNumberLabels.ts";
 export { route as putApiV1ReposOwnerNameUpstream } from "./putApiV1ReposOwnerNameUpstream.ts";
 export { route as putApiV1SecretsScopeName } from "./putApiV1SecretsScopeName.ts";
