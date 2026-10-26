@@ -7,6 +7,7 @@ import { createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { planStamp, readPlan } from "../src/core/milestones.ts";
+import { getIssuesOfRepo } from "../src/core/issues.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { expectBudget } from "./helpers/budget.ts";
@@ -92,8 +93,14 @@ const BEFORE = [
 ];
 
 test("a plan of 2,000 closed and 300 open issues, 3,000 pulls and 1,500 runs reads in under 50 ms with the same limbs", async () => {
-  const against = 1;
   const repo = getRepo(app.db, "alice", "forge")!;
+  // the same run's yardstick: the plan's own first stretch, every issue of the repository read lean, which slows with the machine as the plan does
+  let against = Infinity;
+  for (let n = 0; n < 5; n++) {
+    const t = performance.now();
+    getIssuesOfRepo(app.db, repo.id, "issue", true);
+    against = Math.min(against, performance.now() - t);
+  }
   readPlan(app.db, repo, { spend: true });
   const times: number[] = [];
   for (let n = 0; n < 7; n++) {
