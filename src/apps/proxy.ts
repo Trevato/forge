@@ -20,6 +20,7 @@ import { getIssue, type Issue } from "../core/issues.ts";
 import { mayView } from "../core/sealed.ts";
 import { holdOpen } from "../http/caller.ts";
 import { appHostSuffix } from "./host.ts";
+import { REPORT_LINK_TITLE } from "../actions/report_words.ts";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { App } from "../app.ts";
 import { getAppById, getAppBySlug, type AppRecord } from "../core/apps.ts";
@@ -648,7 +649,7 @@ function reportUrl(runtime: AppsRuntime, target: AppTarget): URL | undefined {
 
 /** The link relation a public app's pages carry to `/__forge/report`. */
 const REPORT_LINK =
-  '</__forge/report>; rel="help"; title="Report a problem (no account needed)"';
+  `</__forge/report>; rel="help"; title="${REPORT_LINK_TITLE}"`;
 
 const isHtml = (headers: Headers): boolean =>
   (headers.get("content-type") ?? "").toLowerCase().startsWith("text/html");

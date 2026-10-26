@@ -81,6 +81,7 @@ import {
 import { resendVerification } from "../actions/verify.ts";
 import { PROVE_FIRST } from "../actions/verify_words.ts";
 import { CAPPED_WORDS } from "../actions/mail.ts";
+import { REPORT_LINK_TITLE } from "../actions/report_words.ts";
 import { VERIFY_WORDS } from "../actions/verify_words.ts";
 import { editMessage } from "../actions/edit_words.ts";
 import { emailVerified } from "../core/verify.ts";
@@ -517,7 +518,7 @@ function reportInstead(ctx: Ctx, repo: Repo): Response {
       report: { page, api, method: "POST", fields: ["title", "body", "page"] },
     },
     401,
-    { link: `<${page}>; rel="help"; title="Report a problem (no account needed)"` },
+    { link: `<${page}>; rel="help"; title="${REPORT_LINK_TITLE}"` },
   );
 }
 

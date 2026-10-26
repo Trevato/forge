@@ -27,6 +27,7 @@ import releases from "../core/releases.json" with { type: "json" };
 import { markPng, type MarkShape } from "../design/mark.ts";
 import { metaThemeColor } from "../design/themes.ts";
 import { BODY_MAX, TITLE_MAX } from "../core/reports.ts";
+import { REPORT_LINK_TITLE } from "../actions/report_words.ts";
 import { sshTellCommand } from "../ssh/command.ts";
 import { llmsRepos, sitemapRepos } from "../core/listings.ts";
 import { canRead, getRepo } from "../core/repos.ts";
@@ -406,7 +407,7 @@ export function pageLinks(ctx: Ctx): PageLink[] {
       links.push({
         rel: "help",
         href: `/${repo.ownerName}/${repo.name}/report`,
-        title: "Report a problem (no account needed)",
+        title: REPORT_LINK_TITLE,
       });
   }
   return links;
