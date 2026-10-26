@@ -282,6 +282,7 @@ import {
 import {
   frontUpdate,
   liveAppsFragment,
+  liveClientAppsFragment,
   liveOnYouFragment,
   studioDoor,
 } from "../web/studio/home.ts";
@@ -798,6 +799,7 @@ export function buildRouter(): Router<Handler> {
   // fetches a region and not the page. Literal, above /:owner.
   router.add("GET", "/live/apps", liveAppsFragment);
   router.add("GET", "/live/on-you", liveOnYouFragment);
+  router.add("GET", "/live/client-apps", liveClientAppsFragment);
   router.add("GET", "/live/feed", liveFeedFragment);
   // Whether a hostname is an app's verified domain — what Caddy's
   // `on_demand_tls { ask … }` asks before it fetches a certificate for a

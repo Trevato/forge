@@ -178,6 +178,18 @@ export function liveAppsFragment(ctx: Ctx): Response {
   return body;
 }
 
+// GET /live/client-apps — a client's apps card alone; 404 to anyone else.
+export async function liveClientAppsFragment(ctx: Ctx): Promise<Response> {
+  const user = ctx.auth.user;
+  const steps = user ? await nextStepsOf(ctx, user) : undefined;
+  if (!user || steps === undefined) {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    notePhase(ctx.request, "render", 0);
+    return fragment(html``, { status: 404 });
+  }
+  return fragment(await clientApps(ctx, user), { request: ctx.request }); // names session and render itself
+}
+
 /**
  * What a bulk step on the On you list answers its own script with: the
  * region as it is now and the asks page's list.

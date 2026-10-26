@@ -335,6 +335,21 @@ describe("a client's first screen", () => {
     child.db.query("DELETE FROM run WHERE id = 'r-client-1'").run();
   });
 
+  test("the card refreshes itself: /live/client-apps answers it, to a client only", async () => {
+    const repo = child.db
+      .query<{ id: string }, []>("SELECT id FROM repo WHERE name = 'bakery'")
+      .get()!;
+    expect(await page(owner)).toContain('data-live-src="/live/client-apps"');
+    child.db
+      .query("INSERT INTO run (id, repo_id, kind, state) VALUES ('r-client-2', ?1, 'agent', 'running')")
+      .run(repo.id);
+    const live = await page(owner, "/live/client-apps");
+    expect(live).toContain('id="client-apps"');
+    expect(live).toContain("One agent is working on it now.");
+    child.db.query("DELETE FROM run WHERE id = 'r-client-2'").run();
+    expect((await fetch(url("/live/client-apps"))).status).toBe(404);
+  });
+
   test("none of the developer's words appear on it, composer included", async () => {
     const text = words(await page(owner));
     expect(text).toContain("Your apps");
@@ -359,6 +374,8 @@ describe("a client's first screen", () => {
     if (!reader.ok) throw new Error("reader");
     const session = createSession(child.db, reader.value.id);
     expect(await page(`forge_session=${session.token}`)).not.toContain('id="client-apps"');
+    const live = await fetch(url("/live/client-apps"), { headers: { cookie: `forge_session=${session.token}` } });
+    expect(live.status).toBe(404);
   });
 
   const visibleWords = async (cookie: string): Promise<string> => {
