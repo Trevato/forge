@@ -833,6 +833,13 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 .empty .btn { margin-top: 8px; }
 .card.empty { border-style: dashed; box-shadow: none; }
 
+/* ---- board panel grid: a board's panels, on /boards and pinned in the studio ---- */
+.bgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.bp-w2 { grid-column: span 2; }
+.bp-w3 { grid-column: span 3; }
+.bgrid h2 { font-size: 14px; }
+@media (max-width: 720px) { .bgrid { grid-template-columns: minmax(0, 1fr); } .bp-w2, .bp-w3 { grid-column: auto; } }
+
 /* ---- settings shell ---- */
 .settings { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; margin-top: 16px; }
 .settings-nav {

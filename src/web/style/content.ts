@@ -181,18 +181,15 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .chart-box circle { fill: var(--accent); }
 .chart-box .big { fill: var(--fg); font-family: inherit; }
 .chart-box.is-table { aspect-ratio: auto; height: 260px; overflow: auto; }
+/* A board panel sizes its chart from here, after .chart-box: the grid itself
+   is §5's board (components.ts), but this layer is where .chart-box is drawn. */
+.bgrid .chart-box { max-width: none; }
+.bp-h2 .chart-box { aspect-ratio: 720 / 400; }
+.bp-h3 .chart-box { aspect-ratio: 720 / 540; }
 .bp-h2 .chart-box.is-table { height: 400px; }
 .bp-h3 .chart-box.is-table { height: 540px; }
 #summary { display: flex; flex-wrap: wrap; gap: 6px; }
 #summary .pill { max-width: 100%; white-space: normal; }
-.bgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
-.bp-w2 { grid-column: span 2; }
-.bp-w3 { grid-column: span 3; }
-.bgrid .chart-box { max-width: none; }
-.bp-h2 .chart-box { aspect-ratio: 720 / 400; }
-.bp-h3 .chart-box { aspect-ratio: 720 / 540; }
-.bgrid h2 { font-size: 14px; }
-@media (max-width: 720px) { .bgrid { grid-template-columns: minmax(0, 1fr); } .bp-w2, .bp-w3 { grid-column: auto; } }
 /* The stacked bar chart's series colours, for its bars (fleet-graph.ts).
    Okabe–Ito, told apart with common colour-vision deficiencies; the eighth,
    the folded "others", is grey. */
