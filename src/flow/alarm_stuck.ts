@@ -18,6 +18,9 @@ export interface StuckAlarm {
   readonly fired: boolean;
   /** When the oldest stuck pull's last event happened; set only when fired. */
   readonly since?: string;
+  /** The pull it names, `owner/name` and number; set only when fired. */
+  readonly repo?: string;
+  readonly number?: number;
   readonly says: string;
 }
 
@@ -129,6 +132,8 @@ export function alarmStuck(from: App | Database, now: Date, scope: StuckScope = 
   return {
     fired: true,
     since: last.at,
+    repo,
+    number,
     says: `${repo}#${number} has sat approved for ${sat(now.getTime() - Date.parse(last.at))}; its last event was ${last.what} at ${hhmm}.`,
   };
 }

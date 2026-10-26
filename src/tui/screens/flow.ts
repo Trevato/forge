@@ -18,6 +18,7 @@ import { HOLDS } from "../../crew/held.ts";
 import type { HeldRow } from "../../flow/held.ts";
 import { conflictedPulls, conflictedSays, rebaseLane, rebaseLaneSays } from "../../flow/conflicted.ts";
 import { readPipeline, STAGE_LABEL, verdict } from "../../flow/pipeline.ts";
+import { firedAlarms } from "../../flow/alarms.ts";
 import { readVitals, vitalsLine } from "../../flow/vitals.ts";
 import { readQueues, redBatchWords } from "../../flow/queue.ts";
 import { reviewersBusy, reviewingSays } from "../../flow/reviewing.ts";
@@ -41,6 +42,8 @@ export function flowLines(
   agent?: { queues: ReturnType<typeof readQueues> } | undefined,
   /** Why ready issues wait, per autonomous repository (`readHeld`, already cut to what the reader may see). */
   held?: readonly HeldRow[],
+  /** The forge's daily ceiling, which the idle-crew alarm needs to know it is not paused on purpose. */
+  ceilingUsd: number | null = null,
 ): string[] {
   const stages = readPipeline(db, now);
   const flow = readThroughput(db, stages.map((s) => s.key), now);
@@ -61,6 +64,7 @@ export function flowLines(
     ...wrap(verdict(stages, now.getTime()), inner),
     "",
     ...wrap(vitalsLine(readVitals(db, now, agent !== undefined)), inner),
+    ...firedAlarms(db, now, { publicOnly: agent !== undefined, ceilingUsd }).flatMap((a) => wrap(a.says, inner)),
     "",
     ...wrap(throughputSays(flow), inner),
     "",

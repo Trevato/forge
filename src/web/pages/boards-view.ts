@@ -20,6 +20,8 @@ import { html, when, type Html } from "../html.ts";
 import { fragment, page } from "../layout.ts";
 import { btn, card, chartBox, empty, field, selectField } from "../ui.ts";
 import { flowPanel } from "./flow-panel.ts";
+import { forgeCeiling } from "../../flow/ceiling.ts";
+import { alarmLines, cachedAlarms } from "../studio/alarm_lines.ts";
 import { isPinned, listPins } from "../../boards/pins.ts";
 import { panelData, runFor } from "../../boards/panel_data.ts";
 import { cellsOf, paramsOf, queryFields, readParams } from "./boards.ts";
@@ -108,6 +110,7 @@ export async function boardsList(ctx: Ctx): Promise<Response> {
     title: "Boards",
     body: html`<div class="page-head"><h1>Boards</h1>
         ${btn("Explore the data", { href: "/boards/data", variant: "ghost" })}</div>
+      ${alarmLines(cachedAlarms(ctx.app.db, new Date(), forgeCeiling(ctx.app.config)))}
       ${card(make)} ${body} ${flow}`,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);

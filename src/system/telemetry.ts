@@ -8,6 +8,7 @@
 import type { App } from "../app.ts";
 import { SOURCES } from "../boards/sources.ts";
 import { conflictedPulls, conflictedSays, rebaseLane, rebaseLaneSays } from "../flow/conflicted.ts";
+import { firedAlarms } from "../flow/alarms.ts";
 import { readVitals, vitalsLine, vitalsMisses } from "../flow/vitals.ts";
 import { readPipeline, verdict } from "../flow/pipeline.ts";
 import { type QueueReading, readQueues } from "../flow/queue.ts";
@@ -36,6 +37,8 @@ export function flowFor(app: App, reader: Reader, now = new Date()) {
     says: verdict(stages, now.getTime()),
     // Open pulls, opened and landed in 1 h and 6 h, and conflicted, against #5924's targets (#5935).
     vitals: { says: vitalsLine(vitals), misses: vitalsMisses(vitals), ...vitals },
+    // The four alarms (#5930) that are firing now; empty when none is.
+    alarms: firedAlarms(app.db, now, { publicOnly: reader.kind === "agent" }),
     // Review runs in flight per reviewer, cut to public repositories for an agent (#4733).
     reviewing: { says: reviewingSays(busy), reviewers: busy },
     conflicted: { says: conflictedSays(conflicted, now.getTime()), pulls: conflicted },

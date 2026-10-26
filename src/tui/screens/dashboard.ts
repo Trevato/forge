@@ -99,6 +99,7 @@ import { issueScreen } from "./issue.ts";
 import { listPinned } from "../../actions/board-pins.ts";
 import { migrateScreen } from "./migrate.ts";
 import { newRepoScreen } from "./newrepo.ts";
+import { firedAlarms } from "../../flow/alarms.ts";
 import { forgeCeiling } from "../../flow/ceiling.ts";
 import { pullScreen } from "./pull.ts";
 import { repoScreen } from "./repo.ts";
@@ -270,6 +271,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         : [
             ...kpiLines(readKpis(f.db, now, kpiForge(f.app)), commit === null ? null : { sha: commit, since: ago(BOOTED) }),
             vitalsLine(readVitals(f.db, now)),
+            ...firedAlarms(f.db, now, { ceilingUsd: forgeCeiling(f.app.config) }).map((a) => a.says),
           ];
     // "Yours" is ownership plus the orgs you are on a team of; typing in the
     // filter reaches every repository you can see.

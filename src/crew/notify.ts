@@ -40,6 +40,8 @@ import { newestDrills } from "../core/domain_drills.ts";
 import { health } from "../http/health.ts";
 import { forgeVitals } from "../actions/health.ts";
 import { RECOVERED, drainIncident, nextPage, observe, recoveredLine, type Watch } from "./incidents.ts";
+import { firedAlarms, type FiredAlarm } from "../flow/alarms.ts";
+import { forgeCeiling } from "../flow/ceiling.ts";
 import { askLinesFor } from "../web/studio/asks.ts";
 
 const KEY = "notify_url";
@@ -241,6 +243,25 @@ export function redLines(
   return out;
 }
 
+/**
+ * The owner hears once when a flow alarm (#5930) starts firing. The id is the
+ * alarm and when it began, so a standing alarm is the same ask on every tick
+ * and a later one is new. Admin only: the words name private repositories.
+ */
+export function alarmLines(
+  app: App,
+  user: User,
+  now = Date.now(),
+  fired?: readonly FiredAlarm[],
+): { id: string; line: string; items: readonly string[]; link: string }[] {
+  if (!user.isAdmin || user.kind !== "user") return [];
+  const alarms = fired ?? firedAlarms(app.db, new Date(now), { ceilingUsd: forgeCeiling(app.config) });
+  return alarms.map((a) => {
+    const id = `alarm:${a.key}@${a.since}`;
+    return { id, line: a.says, items: [id], link: a.href };
+  });
+}
+
 export interface Notifier {
   /** Resolves when the work queued so far is done. For tests and shutdown. */
   settled(): Promise<void>;
@@ -263,6 +284,8 @@ export interface NotifyOptions {
   drainingSince?: () => number | null;
   /** The causes the vitals hold now; the live vitals unless a test says. */
   causes?: () => readonly { cause: string; sentence: string }[];
+  /** The alarms firing now; the live four unless a test says. */
+  alarms?: () => readonly FiredAlarm[];
 }
 
 /** Long enough for a domain drill line to keep every command it names. */
@@ -424,6 +447,7 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
       ...domainDrillLines(app, user, now(), options.forgeUrl),
       ...mirrorLines(app, user, now()),
       ...redLines(app, user, now()),
+      ...alarmLines(app, user, now(), options.alarms?.()),
     ];
     const before = seen.get(userId);
     // What is gone may ask again later, and then it is new again. Seen by

@@ -64,6 +64,7 @@ import { teamsScreen } from "./screens/teams.ts";
 import { domainsScreen } from "./screens/domains.ts";
 import { ownerScreen } from "./screens/owner.ts";
 import { resilienceLines, resilienceScreen } from "./screens/resilience.ts";
+import { forgeCeiling } from "../flow/ceiling.ts";
 import { flowLines, flowScreen } from "./screens/flow.ts";
 import { readHeld } from "../flow/held.ts";
 import { memoryScreen, systemLines, systemScreen } from "./screens/system.ts";
@@ -289,6 +290,7 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
               systemFor(session.app, flowReader).duplicates,
               flowReader.kind === "agent" ? { queues: queuesFor(session.app, flowReader, new Date(), { batches: true }) } : undefined,
               readHeld(session.app, flowReader.kind === "owner"),
+              forgeCeiling(session.app.config),
             )));
         },
       });
