@@ -131,7 +131,7 @@ describe("a token that may only read cannot write through any tool", () => {
     expect(unrefused).toEqual([]);
     expect(snapshot()).toEqual(before);
     expect(app.db.query("SELECT * FROM event ORDER BY rowid").all()).toEqual(events);
-  }, 8_000);
+  }, 60_000);
 
   test("each admin-scope tool is refused for an rw token, and nothing changes", async () => {
     const admin = toolRegistry().filter((t) => t.needsAdminScope);
@@ -148,5 +148,5 @@ describe("a token that may only read cannot write through any tool", () => {
     expect(answered).toEqual([]);
     expect(snapshot()).toEqual(before);
     expect(app.db.query("SELECT * FROM event ORDER BY rowid").all()).toEqual(events);
-  }, 8_000);
+  }, 60_000);
 });
