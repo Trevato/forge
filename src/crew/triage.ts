@@ -35,6 +35,7 @@ import { autonomyStatus, ensureDirectionIssue } from "./autonomy.ts";
 import { certain, decideOr, type Answers, type Questions } from "./decide.ts";
 import { linkThoughts, raiseIssue } from "../core/thought_links.ts";
 import { crewOffInPreview } from "./preview.ts";
+import { proposeVision } from "./vision.ts";
 
 const log = createLog("triage");
 
@@ -345,6 +346,14 @@ export async function placeThought(
     comment(direction, kind === "vision" ? "The direction changes:" : "A decision:");
     placed.push({ action: "amended", repo: slug, number: direction.number });
     say.push(`${kind === "vision" ? "Noted as direction" : "Recorded as a decision"} on #${direction.number}.`);
+    if (kind === "vision") {
+      const proposed = await proposeVision(app, by, repo, thought, now);
+      if (proposed.ok) {
+        const n = proposed.pull.number;
+        placed.push({ action: "proposed", repo: slug, number: n, pull: n });
+        say.push(`Proposed the edit to docs/VISION.md as #${n}; you land it.`);
+      } else log.warn("could not propose the vision edit", { thought: thought.id, why: proposed.why });
+    }
   }
   if (say.length === 0) say.push("Kept; nothing on the map changed.");
   return finish(app, thought, kind, decided.by, question !== "", placed, [say.join(" "), question].filter(Boolean).join(" "), now);

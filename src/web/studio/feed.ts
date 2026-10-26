@@ -174,10 +174,10 @@ export function thoughtCard(thought: Thought, who: string, placement?: Placement
 
 /** The planner's answer under a thought: one or two lines, `#N` linking to the issue it names. */
 export function replyUnder(placement: Placement): Html {
-  const where = new Map(placement.placed.map((p) => [p.number, p.repo]));
+  const where = new Map(placement.placed.map((p) => [p.number, `${p.repo}/${p.pull === p.number ? "pulls" : "issues"}`]));
   const parts = placement.reply.split(/(#\d+)/).map((part) => {
     const repo = /^#(\d+)$/.test(part) ? where.get(Number(part.slice(1))) : undefined;
-    return repo === undefined ? part : html`<a href="/${repo}/issues/${part.slice(1)}">${part}</a>`;
+    return repo === undefined ? part : html`<a href="/${repo}/${part.slice(1)}">${part}</a>`;
   });
   return html`<p class="small break" data-placement="${placement.kind}"><span class="muted">Planner · ${placement.kind}</span> ${parts}</p>`;
 }

@@ -9,7 +9,7 @@ import type { Database } from "bun:sqlite";
 export const KINDS = ["work", "amendment", "vision", "decision", "reversal"] as const;
 export type Kind = (typeof KINDS)[number];
 
-export type Action = "opened" | "amended" | "deferred" | "superseded" | "linked";
+export type Action = "opened" | "amended" | "deferred" | "superseded" | "linked" | "proposed";
 
 /** One thing done on the map: an issue of `repo` (owner/name), and the pillar it serves. */
 export interface Placed {
@@ -17,6 +17,8 @@ export interface Placed {
   repo: string;
   number: number;
   pillar?: string;
+  /** For `proposed`: `number` is a pull of `repo`, and this is its number again. It marks a vision pull. */
+  pull?: number;
 }
 
 export interface Placement {
