@@ -6,7 +6,9 @@
  * drains under the limit.
  *
  * - An issue's expected files are the repository paths its title and body
- *   name (`expectedFiles`): `src/http/mcp.ts`, `docs/MCP.md`.
+ *   name (`expectedFiles`): `src/http/mcp.ts`, `docs/MCP.md`. When the body
+ *   has a line that starts with `Files:`, only the paths on that line count;
+ *   a path named elsewhere as context does not hold the build.
  * - The files an open pull touches are read from git once per head
  *   (`learnPullFiles`, asked by the picker before it sorts), and kept in
  *   memory: a cache git rebuilds, never state of its own.
@@ -40,7 +42,8 @@ const QUOTED = /`([\w-][\w.-]*\.[A-Za-z0-9]+)`/g;
 
 /** The repository paths an issue names, in the order it names them, each once. */
 export function expectedFiles(issue: Pick<Issue, "title" | "body">): string[] {
-  const text = `${issue.title}\n${issue.body}`;
+  const listed = issue.body.match(/^Files:(.*)$/m);
+  const text = listed ? listed[1]! : `${issue.title}\n${issue.body}`;
   const found = new Set<string>();
   for (const pattern of [PATH, QUOTED])
     for (const match of text.matchAll(pattern)) {

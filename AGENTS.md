@@ -3,3 +3,5 @@
 Read `CLAUDE.md` first: it is the rulebook for agents editing this repo.
 
 README.md is capped: a new feature's how-to goes in `docs/features/<name>.md`, not a new README section.
+
+When you write an issue, end it with a `Files:` line naming the files the work touches (`Files: src/a.ts, docs/b.md`). The hot-file hold reads only that line when it is there; without it, every path the issue mentions counts.
