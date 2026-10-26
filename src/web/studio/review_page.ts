@@ -12,6 +12,7 @@ import { appsForRepos } from "../../core/apps.ts";
 import { lookUrl, looksForApps } from "../../core/looks.ts";
 import { latestRunsForIssues, type Run } from "../../core/runs.ts";
 import type { Ctx } from "../../http/context.ts";
+import { checkWord } from "../../apps/check_word.ts";
 import { repoBase, signInFirst } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
@@ -22,9 +23,16 @@ import { diffStatFor, sizeLine } from "./review_evidence.ts";
 
 /** The check on a pull's head, as the pull page wears it; only a run of this very head counts. */
 function verdict(run: Run | undefined, headOid: string): Html {
-  return run === undefined || run.commitOid !== headOid
-    ? badge("No check", { variant: "outline" })
-    : runStateBadge(run.state, "check");
+  switch (checkWord(run, headOid)) {
+    case "green":
+      return runStateBadge("ok", "check");
+    case "red":
+      return runStateBadge("failed", "check");
+    case "running":
+      return runStateBadge("running", "check");
+    case "none":
+      return badge("No check", { variant: "outline" });
+  }
 }
 
 /**

@@ -93,6 +93,10 @@ beforeAll(async () => {
       .query(`INSERT INTO run (id, repo_id, kind, issue_id, commit_oid, state) VALUES (?1, ?2, 'check', ?3, ?4, ?5)`)
       .run(id(), repo.id, fresh, ZERO, state);
   }
+  const older = stale;
+  app.db
+    .query(`INSERT INTO run (id, repo_id, kind, issue_id, commit_oid, state) VALUES (?1, ?2, 'check', ?3, ?4, 'running')`)
+    .run(id(), repo.id, older, "1".repeat(40));
   const made2 = createAppRow(app.db, { repoId: repo.id, slug: "wait", access: "public" });
   if (!made2.ok) throw new Error(String(made2.error));
   const record = made2.value;
@@ -178,8 +182,10 @@ test("a pull's row shows its check verdict; one with no check says none", async 
   expect(find("Stale pull")).toContain("No check");
   expect(find("Fresh ok pull")).toContain("Passed");
   expect(find("Fresh failed pull")).toContain("Failed");
-  expect(find("Fresh cancelled pull")).toContain("Cancelled");
-  expect(find("Fresh cancelled pull")).not.toContain("No check");
+  expect(find("Fresh cancelled pull")).toContain("No check");
+  expect(find("Fresh cancelled pull")).not.toContain("Cancelled");
+  expect(find("Stale pull")).toContain("No check");
+  expect(find("Stale pull")).not.toContain("Running");
 });
 
 test("a pull of an app links its preview beside the row, not inside it; an issue row has neither", async () => {
