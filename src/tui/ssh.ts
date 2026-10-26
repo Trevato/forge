@@ -225,10 +225,11 @@ export function forgeSshSession(forge: Forge): (session: SshSession) => void {
         verb(forge, session, identity.user, door);
         return;
       }
-      // `tell <words>` on a login that names no app: the crew, in one line.
+      // `tell <words>`: the crew, in one line. On an app's login it is the
+      // app's crew, said from the app (through the terminal's own gate).
       const said = parseTellCommand(session.command);
-      if (said !== undefined && door === undefined) {
-        void serveTell(forge, session, identity.user, said).catch(
+      if (said !== undefined) {
+        void serveTell(forge, session, identity.user, said, door).catch(
           (error: unknown) => {
             forge.log.error("tell over ssh failed", { error: String(error) });
             session.writeStderr(`forge: internal error${CRLF}`);

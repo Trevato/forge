@@ -13,6 +13,7 @@ import { MAX_BODY } from "../src/core/issues.ts";
 import { TOO_LONG_WORDS, UNVERIFIED_WORDS } from "../src/actions/tell.ts";
 import { addKey, fingerprint, parseAuthorizedKey } from "../src/core/keys.ts";
 import { getRepo } from "../src/core/repos.ts";
+import { AppsRuntime } from "../src/apps/runtime.ts";
 import { appForLogin } from "../src/apps/tty.ts";
 import { createUser } from "../src/core/users.ts";
 import { forgeSshSession } from "../src/tui/ssh.ts";
@@ -176,15 +177,50 @@ describe("ssh forge tell", () => {
     expect(issues().length).toBe(1);
   });
 
-  test("an app's login is never a tell: it goes the git way and records nothing", async () => {
+  test("on an app's login a tell goes through the app gate to the app's crew, said from the app", async () => {
     const repo = getRepo(app.db, "alice", "forge")!;
     app.db
       .query("INSERT INTO app (id, repo_id, slug, access, preview_data) VALUES ('app-tell-1', ?1, 'notes', 'public', 'copy')")
       .run(repo.id);
-    expect(appForLogin(app, "notes")).toBeDefined();
-    const r = await exec(KEY_A, "tell hello", "notes");
-    expect(r.code).toBe(1);
-    expect(r.err).toContain("only git");
-    expect(issues().length).toBe(1);
+    const record = appForLogin(app, "notes")!.app;
+    const address = new AppsRuntime(app, { domain: "forge.test", scheme: "https", publicPort: 443, forgeUrl: "https://forge.test" }).urlFor(record, "production");
+    expect(address).toBe("https://notes.forge.test");
+    const before = issues().length;
+    // A writer.
+    const w = await exec(KEY_A, "tell make the header blue", "notes");
+    expect([w.code, w.err]).toEqual([0, ""]);
+    expect(w.out).toContain("https://forge.test/alice/forge/issues/");
+    const row = app.db.query<{ body: string }, []>("SELECT body FROM issue ORDER BY number DESC LIMIT 1").get()!;
+    expect(row.body).toContain(`Told from [${address}](${address})`);
+    expect(issues().length).toBe(before + 1);
+    // A reader who may tell: verified, and the crew takes outsiders.
+    app.db.query("UPDATE email_check SET verified_at = ?1 WHERE user_id = (SELECT id FROM user WHERE username = 'bob')").run(new Date().toISOString());
+    const r = await exec(KEY_B, "tell and the footer", "notes");
+    expect([r.code, r.err]).toEqual([0, ""]);
+    expect(issues().length).toBe(before + 2);
+    // /asked shows it.
+    const asked = app.db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM issue WHERE body LIKE ?1").get(`%${address}%`)!;
+    expect(asked.n).toBe(2);
+    // Words still refused on the app's login are refused as before.
+    const empty = await exec(KEY_A, "tell", "notes");
+    expect([empty.code, empty.err]).toEqual([1, `forge: ${SAY_SOMETHING_WORDS}\r\n`]);
+    expect(issues().length).toBe(before + 2);
+  });
+
+  test("a viewer who cannot enter the app gets `no app named`, and nothing is recorded", async () => {
+    const alice = getRepo(app.db, "alice", "forge")!;
+    app.db.query("UPDATE repo SET visibility = 'private' WHERE id = ?1").run(alice.id);
+    app.db.query("UPDATE repo SET crew_outsiders = 0 WHERE id = ?1").run(alice.id);
+    const before = issues().length;
+    try {
+      const bob = await exec(KEY_B, "tell hello", "notes");
+      expect([bob.code, bob.err, bob.out]).toEqual([1, "forge: no app named notes\r\n", ""]);
+      const stranger = await exec(KEY_STRANGER, "tell hello", "notes");
+      expect(stranger.code).toBe(1);
+      expect(stranger.err).toContain("notes");
+      expect(issues().length).toBe(before);
+    } finally {
+      app.db.query("UPDATE repo SET visibility = 'public', crew_outsiders = 1 WHERE id = ?1").run(alice.id);
+    }
   });
 });

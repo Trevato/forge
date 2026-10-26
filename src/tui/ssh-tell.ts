@@ -1,17 +1,23 @@
 /**
  * `ssh <forge> tell <words>`: the crew told in one line from any shell. An
- * exec of `tell` on a non-app login calls the same `tell()` the web composer
+ * exec of `tell` calls the same `tell()` the web composer
  * and the terminal use, as the account the presented key belongs to, with
- * `from` null, and prints the told line and the full address of the issue.
+ * `from` null (on an app's login: through the app terminal's gate, to the
+ * app's repository, `from` the app's production address), and prints the told line and the full address of the issue.
  * The words are the rest of the command line as given: no shell, no
  * expansion, no `eval`; a control character is refused before anything runs.
  */
 
 import { tell } from "../actions/tell.ts";
 import { SAY_SOMETHING_WORDS } from "../actions/tell_words.ts";
+import { appGate, ttyRefusalText } from "../apps/tty.ts";
+import { appsRuntime } from "../apps/runtime.ts";
 import type { App } from "../app.ts";
-import { getRepo } from "../core/repos.ts";
+import type { AppRecord } from "../core/apps.ts";
+import { getRepo, getRepoById } from "../core/repos.ts";
+import type { Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
+import type { EnvName } from "../apps/data.ts";
 import type { SshSession } from "../ssh/server.ts";
 import { tellAnswer } from "./screens/tell.ts";
 
@@ -45,20 +51,42 @@ export async function serveTell(
   session: SshSession,
   user: User | undefined,
   words: string,
+  door?: { app: AppRecord; env: EnvName },
+): Promise<void> {
+  // On an app's login the app terminal's gate decides first, in its words:
+  // an app the viewer cannot enter is not there, and nothing is recorded.
+  if (door !== undefined) {
+    const refusal = appGate(app, user, door);
+    const crew = getRepoById(app.db, door.app.repoId);
+    const runtime = appsRuntime(app);
+    if (refusal !== undefined || crew === undefined || runtime === undefined)
+      return refuse(session, ttyRefusalText(refusal ?? "not_found", session.username));
+    return told(app, session, user, words, crew, runtime.urlFor(door.app, "production"));
+  }
+  return told(app, session, user, words, undefined, null);
+}
+
+async function told(
+  app: App,
+  session: SshSession,
+  user: User | undefined,
+  words: string,
+  appRepo: Repo | undefined,
+  from: string | null,
 ): Promise<void> {
   if (user === undefined) return refuse(session, ACCOUNT_NEEDED_WORDS);
   if (/[\x00-\x1f\x7f-\x9f\u2028\u2029]/.test(words)) return refuse(session, CONTROL_WORDS);
   const said = words.trim();
   if (said === "") return refuse(session, SAY_SOMETHING_WORDS);
   const [owner = "", name = ""] = (app.config.forgeRepo ?? "").split("/");
-  const repo = getRepo(app.db, owner, name);
+  const repo = appRepo ?? getRepo(app.db, owner, name);
   if (repo === undefined) return refuse(session, NO_CREW_WORDS);
-  const told = await tell(app, user, repo, said);
-  const answer = tellAnswer(told);
-  if (!told.ok) return refuse(session, answer.text);
+  const result = await tell(app, user, repo, said, 1, from, from !== null);
+  const answer = tellAnswer(result);
+  if (!result.ok) return refuse(session, answer.text);
   const base = app.config.url ?? `http://localhost:${app.config.port ?? 3000}`;
   session.write(
-    `${answer.text}${CRLF}${base}/${repo.ownerName}/${repo.name}/issues/${told.value.issue.number}${CRLF}`,
+    `${answer.text}${CRLF}${base}/${repo.ownerName}/${repo.name}/issues/${result.value.issue.number}${CRLF}`,
   );
   session.exit(0);
 }

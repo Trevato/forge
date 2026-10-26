@@ -61,6 +61,13 @@ export function parseFrom(raw: unknown): string | null | undefined {
   return raw;
 }
 
+/**
+ * An app's own address as a place a tell was said: scheme and host (and
+ * port) only. Only the app terminal's door builds one and says `fromApp`; every other
+ * caller takes `parseFrom`'s paths alone.
+ */
+const APP_ADDRESS = /^https?:\/\/[a-z0-9][a-z0-9.-]*(?::\d{1,5})?$/i;
+
 /** What a bad `from` is refused with, at every door. */
 export const FROM_WORDS =
   "from is a path on this forge, like /alice/notes/pulls/3, at most 512 characters";
@@ -88,6 +95,7 @@ export async function tell(
   said: string,
   variants = 1,
   from: string | null = null,
+  fromApp = false,
 ): Promise<Result<Told, TellError>> {
   // A tell is a run: only someone who may direct the crew here says one,
   // and a refused tell opens nothing (`crew/direct.ts`).
@@ -101,7 +109,8 @@ export async function tell(
   if (text === "") return err("empty");
   // One long line becomes only a title, so the body cap never sees it.
   if (text.length > MAX_BODY) return err("body_too_long");
-  if (from !== null && parseFrom(from) !== from) return err("bad_from");
+  if (from !== null && parseFrom(from) !== from && !(fromApp && APP_ADDRESS.test(from)))
+    return err("bad_from");
   const firstLine = text.split(/\n/)[0]!.trim();
   const title =
     firstLine.length <= 80 ? firstLine : `${firstLine.slice(0, 77).trimEnd()}…`;
