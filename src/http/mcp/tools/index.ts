@@ -125,3 +125,4 @@ export { tool as vision } from "./vision.ts";
 export { tool as wait_for } from "./wait_for.ts";
 export { tool as watch } from "./watch.ts";
 export { tool as whoami_can } from "./whoami_can.ts";
+export { tool as write_file } from "./write_file.ts";

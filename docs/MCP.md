@@ -138,6 +138,7 @@ for a tunnel and a forge that sleeps.
 | `wait_for` | `{ app, issue, blockedBy, stop? }`: the issue waits for another, or stops with `stop: true`; the page's rules, and the answer carries the issue's URL | yes |
 | `watch` | `{ app, issue, watch? }`: watch a milestone, or stop with `watch: false`: one item in your feed that follows it, and one push to your phone when it lands | yes |
 | `whoami_can` | `{ kind? }`: your role and that role's row of the roles table, each ability yes or no; `kind: "passkeys"` lists your own passkeys (`{ items }`: id, name, created, lastUsed), people only |  |
+| `write_file` | `{ repo, branch, path, content, message }`: commit one file to an existing branch as `POST …/contents` does, for the same callers and with the same refusals (protected default, too large, a path with `..`), said in `edit_words`' sentences; answers `{ commit, says }` | yes |
 
 <!-- tools:end -->
 

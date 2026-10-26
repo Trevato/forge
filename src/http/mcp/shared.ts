@@ -166,12 +166,13 @@ export async function archiveMany(ctx: Ctx, user: User, args: Args): Promise<Ans
 }
 
 // tools/list is held under 40 KB (test/mcp-size.test.ts). The server checks
-// every length at the boundary, so the listing leaves the maxLength hints out.
+// every length and count at the boundary, so the listing leaves those hints out.
+const LENGTH_HINTS = new Set(["maxLength", "minLength", "maxItems", "minItems"]);
 export function lean(schema: unknown): unknown {
   if (Array.isArray(schema)) return schema.map(lean);
   if (schema === null || typeof schema !== "object") return schema;
   return Object.fromEntries(
-    Object.entries(schema).filter(([k]) => k !== "maxLength").map(([k, v]) => [k, lean(v)]),
+    Object.entries(schema).filter(([k]) => !LENGTH_HINTS.has(k)).map(([k, v]) => [k, lean(v)]),
   );
 }
 

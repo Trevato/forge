@@ -5,7 +5,7 @@ import { good, bad, type Tool, APP_ARG, planRepo, issueArg, isAnswer } from "../
 export const tool: Tool = {
   name: "wait_for",
   doc: "`{ app, issue, blockedBy, stop? }`: the issue waits for another, or stops with `stop: true`; the page's rules, and the answer carries the issue's URL",
-  description: "Make an issue wait for another; `stop` ends it.",
+  description: "An issue waits for another; `stop` ends it.",
   inputSchema: {
     type: "object",
     properties: {

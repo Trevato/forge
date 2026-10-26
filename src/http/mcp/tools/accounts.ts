@@ -6,7 +6,7 @@ import { good, bad, type Tool } from "../shared.ts";
 export const tool: Tool = {
   name: "accounts",
   doc: "`{ cursor?, limit? }`: the forge's accounts, newest first: `username`, `role`, `verified`, `suspended`, `created`, and `next` (a cursor, or null); `limit` 1-50 (default 20); a person admin's",
-  description: "Accounts, newest first: role, verified, suspended. `cursor` pages.",
+  description: "Accounts, newest first: role, verified, suspended; `cursor` pages.",
   inputSchema: {
     type: "object",
     properties: {

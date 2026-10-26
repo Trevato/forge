@@ -11,10 +11,10 @@ export const tool: Tool = {
     type: "object",
     properties: {
       slug: { type: "string", maxLength: 40 },
-      panel: { type: "integer", minimum: 0, maximum: 23, description: "One panel, from 0." },
+      panel: { type: "integer", minimum: 0, maximum: 23, description: "Panel from 0." },
       from: { type: "string", maxLength: 64 },
       to: { type: "string", maxLength: 64 },
-      step: { type: "string", maxLength: 16, description: "With panel: seconds per bucket, or 5m." },
+      step: { type: "string", maxLength: 16, description: "With panel: bucket seconds, or 5m." },
     },
   },
   writes: false,

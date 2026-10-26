@@ -646,6 +646,8 @@ export interface CommitToBranchInput {
   /** @default "Update files" */
   message?: string;
   files: readonly FileWrite[];
+  /** Refuse with branch_moved unless the branch is at this commit now. */
+  expectTip?: string;
 }
 
 /**
@@ -691,6 +693,7 @@ export async function commitToBranch(
       ...(branch !== startPoint ? { startPoint } : {}),
       message: input.message || "Update files",
       files: input.files,
+      ...(input.expectTip !== undefined ? { expectTip: input.expectTip } : {}),
       author: commitIdentity(app.config, writer.value),
     },
   );

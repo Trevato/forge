@@ -5,7 +5,7 @@ import { good, bad, type Tool } from "../shared.ts";
 export const tool: Tool = {
   name: "subscription_budget",
   doc: "`{ id, usd }`: set an account's whole-life budget in dollars (up to the `subscription.budget_max_usd` limit), or clear it with `usd: null`, as the Subscriptions page does; a locked budget can only be lowered; a forge admin with an admin token",
-  description: "Admin: set an account's whole-life budget in dollars, or null to clear.",
+  description: "Admin: set an account's lifetime USD budget; null clears.",
   inputSchema: {
     type: "object",
     properties: { id: { type: "string" }, usd: { type: ["number", "null"] } },

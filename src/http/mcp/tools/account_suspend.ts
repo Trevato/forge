@@ -7,7 +7,7 @@ import { good, bad, type Tool, mayBoards } from "../shared.ts";
 export const tool: Tool = {
   name: "account_suspend",
   doc: "`{ username, suspended }`: suspend a person's account, or unsuspend it with `false`; their sessions and tokens stop at once; the API's rules (not yourself, another admin or an agent; not the only owner of an organization); an admin token",
-  description: "Suspend an account, or `suspended: false` to lift it.",
+  description: "Suspend an account; `suspended: false` lifts.",
   inputSchema: {
     type: "object",
     properties: { username: { type: "string" }, suspended: { type: "boolean" } },

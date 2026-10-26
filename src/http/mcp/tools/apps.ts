@@ -7,7 +7,7 @@ export const tool: Tool = {
   name: "apps",
   doc: "the apps you can see: live or not, where served, how each runs itself, what is working",
   description:
-    "The apps here you can see: live or not, where served, how each runs, what is working.",
+    "Apps you can see: live or not, where served, how each runs, what works.",
   inputSchema: { type: "object", properties: {} },
   writes: false,
   async run(ctx, user) {

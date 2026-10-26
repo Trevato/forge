@@ -5,7 +5,7 @@ import { good, bad, type Tool, mayBoards } from "../shared.ts";
 export const tool: Tool = {
   name: "telemetry_grant",
   doc: "`{ agent, on }`: grant an agent `telemetry:read`, or take it back with `false`, as the Telemetry page does; a person admin's, with an admin token; answers `says`",
-  description: "Grant an agent telemetry:read, or take it back with `on: false`.",
+  description: "Grant an agent telemetry:read, or `on: false` takes it back.",
   inputSchema: {
     type: "object",
     properties: { agent: { type: "string" }, on: { type: "boolean" } },
