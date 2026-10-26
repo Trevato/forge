@@ -215,13 +215,16 @@ export { route as postApiV1ReposOwnerNameHooks } from "./postApiV1ReposOwnerName
 export { route as postApiV1ReposOwnerNameIssues } from "./postApiV1ReposOwnerNameIssues.ts";
 export { route as postApiV1ReposOwnerNameIssuesNumberComments } from "./postApiV1ReposOwnerNameIssuesNumberComments.ts";
 export { route as postApiV1ReposOwnerNameIssuesNumberDependencies } from "./postApiV1ReposOwnerNameIssuesNumberDependencies.ts";
+export { route as postApiV1ReposOwnerNameIssuesNumberDependenciesBlockerConfirm } from "./postApiV1ReposOwnerNameIssuesNumberDependenciesBlockerConfirm.ts";
 export { route as postApiV1ReposOwnerNameIssuesNumberPrivate } from "./postApiV1ReposOwnerNameIssuesNumberPrivate.ts";
 export { route as postApiV1ReposOwnerNameLabels } from "./postApiV1ReposOwnerNameLabels.ts";
 export { route as postApiV1ReposOwnerNameMakeItYours } from "./postApiV1ReposOwnerNameMakeItYours.ts";
+export { route as postApiV1ReposOwnerNameMilestonesNumberLimb } from "./postApiV1ReposOwnerNameMilestonesNumberLimb.ts";
 export { route as postApiV1ReposOwnerNameOriginReconnect } from "./postApiV1ReposOwnerNameOriginReconnect.ts";
 export { route as postApiV1ReposOwnerNamePlan } from "./postApiV1ReposOwnerNamePlan.ts";
 export { route as postApiV1ReposOwnerNamePrompts } from "./postApiV1ReposOwnerNamePrompts.ts";
 export { route as postApiV1ReposOwnerNamePromptsIdRun } from "./postApiV1ReposOwnerNamePromptsIdRun.ts";
+export { route as postApiV1ReposOwnerNameProposalTokens } from "./postApiV1ReposOwnerNameProposalTokens.ts";
 export { route as postApiV1ReposOwnerNamePulls } from "./postApiV1ReposOwnerNamePulls.ts";
 export { route as postApiV1ReposOwnerNamePullsNumberApproveHere } from "./postApiV1ReposOwnerNamePullsNumberApproveHere.ts";
 export { route as postApiV1ReposOwnerNamePullsNumberChecks } from "./postApiV1ReposOwnerNamePullsNumberChecks.ts";
@@ -233,6 +236,8 @@ export { route as postApiV1ReposOwnerNamePullsNumberReviews } from "./postApiV1R
 export { route as postApiV1ReposOwnerNamePullsNumberThreadsAnchorResolve } from "./postApiV1ReposOwnerNamePullsNumberThreadsAnchorResolve.ts";
 export { route as postApiV1ReposOwnerNamePullsNumberVariant } from "./postApiV1ReposOwnerNamePullsNumberVariant.ts";
 export { route as postApiV1ReposOwnerNameReports } from "./postApiV1ReposOwnerNameReports.ts";
+export { route as postApiV1ReposOwnerNameReportsIdAccept } from "./postApiV1ReposOwnerNameReportsIdAccept.ts";
+export { route as postApiV1ReposOwnerNameReportsIdDismiss } from "./postApiV1ReposOwnerNameReportsIdDismiss.ts";
 export { route as postApiV1ReposOwnerNameRunsIdCancel } from "./postApiV1ReposOwnerNameRunsIdCancel.ts";
 export { route as postApiV1ReposOwnerNameRunsIdSteer } from "./postApiV1ReposOwnerNameRunsIdSteer.ts";
 export { route as postApiV1ReposOwnerNameSpend } from "./postApiV1ReposOwnerNameSpend.ts";

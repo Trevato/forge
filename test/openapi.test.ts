@@ -291,6 +291,27 @@ test("an app's routes are described, and env values are never read back", () => 
   expect(doc.paths[`${A}/{env}/redeploy`].post.responses["202"]).toBeDefined();
 });
 
+test("triage, confirming a wait, a limb and proposal tokens are described", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const R = "/api/v1/repos/{owner}/{name}";
+  for (const [path, status] of [
+    [`${R}/reports/{id}/accept`, "201"],
+    [`${R}/reports/{id}/dismiss`, "200"],
+    [`${R}/issues/{number}/dependencies/{blocker}/confirm`, "204"],
+    [`${R}/milestones/{number}/limb`, "200"],
+    [`${R}/proposal-tokens`, "201"],
+  ] as const) {
+    const op = doc.paths[path]?.post;
+    expect(op, path).toBeDefined();
+    expect(op.security, path).toBeDefined();
+    expect(op.responses[status], `${path} ${status}`).toBeDefined();
+  }
+  expect(doc.paths[`${R}/milestones/{number}/limb`].post.responses["201"]).toBeDefined();
+  const confirm = doc.paths[`${R}/issues/{number}/dependencies/{blocker}/confirm`].post.responses.default.description;
+  expect(confirm).toContain("no account (401)");
+  expect(confirm).not.toContain("422");
+});
+
 test("browsing an origin's code is described, and a refusal matches what the route answers", async () => {
   const doc = openapi("https://f.test", "1") as any;
   const B = "/api/v1/user/origins/{id}/browse/{owner}/{name}";
