@@ -28,7 +28,6 @@ the same line (#4888).
   - `.preview`
   - `.swatch`
 - **`style/content.ts`, page furniture** — what frames a page's content: page and repo heads, the front page and its tiles, explore, backups, boards, the fleet chart's series colours, lineage:
-  - `.filters`
   - `.page-head`
   - `.repo-actions`
   - `.repo-desc`

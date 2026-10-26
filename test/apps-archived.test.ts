@@ -129,5 +129,5 @@ test("the stylesheet sizes .search and .seg inside .bar, without needing .filter
 test("the stylesheet carries no merge-conflict markers", async () => {
   const { content } = await import("../src/web/style/content.ts");
   expect(content).not.toMatch(/^(<<<<<<<|=======|>>>>>>>)/m);
-  expect(content).toContain("The same three reaches for a filter bar drawn with §5's .bar.");
+  expect(content).not.toContain(".filters");
 });
