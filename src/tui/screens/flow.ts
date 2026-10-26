@@ -17,6 +17,7 @@ import type { Database } from "bun:sqlite";
 import { HOLDS } from "../../crew/held.ts";
 import type { HeldRow } from "../../flow/held.ts";
 import { conflictedPulls, conflictedSays, rebaseLane, rebaseLaneSays } from "../../flow/conflicted.ts";
+import { pileSays, readPile } from "../../flow/pile.ts";
 import { readPipeline, STAGE_LABEL, verdict } from "../../flow/pipeline.ts";
 import { firedAlarms } from "../../flow/alarms.ts";
 import { readVitals, vitalsLine } from "../../flow/vitals.ts";
@@ -67,6 +68,8 @@ export function flowLines(
     ...firedAlarms(db, now, { publicOnly: agent !== undefined, ceilingUsd }).flatMap((a) => wrap(a.says, inner)),
     "",
     ...wrap(throughputSays(flow), inner),
+    "",
+    ...wrap(pileSays(readPile(db, agent !== undefined)), inner),
     "",
     `${pad("Out", 12)} ${pad("last hour", 9, "right")} ${pad("24 h", 5, "right")}`,
     ...flow.stages.map(stageOut).map(

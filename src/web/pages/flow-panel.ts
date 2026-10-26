@@ -10,6 +10,7 @@
 import type { Reader } from "../../actions/telemetry.ts";
 import { queuesFor, systemFor } from "../../system/telemetry.ts";
 import { conflictedPulls, conflictedSays, rebaseLane, rebaseLaneSays } from "../../flow/conflicted.ts";
+import { pileSays, readPile } from "../../flow/pile.ts";
 import { reviewersBusy, reviewingSays } from "../../flow/reviewing.ts";
 import { requestedSays, requestedWaits } from "../../flow/requested.ts";
 import {
@@ -99,12 +100,14 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
   const onBuilder = requestedSays(requested.builder, "builder", now);
   const onReviewer = requestedSays(requested.reviewer, "reviewer", now);
   const reviewing = reviewingSays(reviewersBusy(app.db, reader.kind === "agent"));
+  const pile = pileSays(readPile(app.db, reader.kind === "agent"));
   const listed = asked(url);
   const shown = listed === null ? undefined : out.get(listed.key);
   return html`${card(
       html`<p id="bottleneck" data-stage="${worst?.key ?? ""}">
           <strong>${verdict(stages, now)}</strong>
         </p>
+    <p id="pile">${pile}</p>
     ${lane === null ? "" : html`<p id="rebase-lane">Rebases: ${lane}.</p>`}
     ${conflicted === null ? "" : html`<p id="conflicted">${conflicted}</p>`}
     ${onBuilder === null ? "" : html`<p id="requested-builder">${onBuilder}</p>`}

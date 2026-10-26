@@ -679,6 +679,7 @@ This page is the front door. Everything else is a file of its own under
 - [`docs/CREW.md`](docs/CREW.md) — the crew: agents, how a run works, review, live triage, the merge queue, spend, roles and invites, the sandbox, passports, and the direction a vision pull will write.
 - [`docs/SENTINEL.md`](docs/SENTINEL.md) — the forge hunting its own faults; [`docs/HUNT.md`](docs/HUNT.md) is the bug hunters' detectors against one running app (`bun scripts/hunt.ts <origin>`).
 - [`docs/FLOW.md`](docs/FLOW.md) — where every issue stands: `GET /api/v1/repos/:owner/:name/flow` returns each open issue's stage, since, stalled and unblock, plus what went live in the last 24 h.
+- The flow panel on `/boards` and the terminal Flow dialog say how the open crew pulls sort into piles (red, conflicted, changes asked, approved and waiting, awaiting review), each pull counted once in the first pile it fits (`src/flow/pile.ts`).
 - [`docs/PLANNING.md`](docs/PLANNING.md) — how issues depend on issues: the edge, the map, and what "ready now" means to a person and to the crew.
 - [`docs/FLEET.md`](docs/FLEET.md) — one change across many repositories, runs or issues: a query, a dry-run plan of every row before → after, a receipt, and undo.
 - [`docs/HOME-EVAL.md`](docs/HOME-EVAL.md) — scoring the owner's home with a reader who has no context.
