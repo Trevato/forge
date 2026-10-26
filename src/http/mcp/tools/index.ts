@@ -121,6 +121,7 @@ export { tool as trail } from "./trail.ts";
 export { tool as upstream } from "./upstream.ts";
 export { tool as usage } from "./usage.ts";
 export { tool as variant } from "./variant.ts";
+export { tool as vision } from "./vision.ts";
 export { tool as wait_for } from "./wait_for.ts";
 export { tool as watch } from "./watch.ts";
 export { tool as whoami_can } from "./whoami_can.ts";

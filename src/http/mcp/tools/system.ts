@@ -6,7 +6,7 @@ export const tool: Tool = {
   name: "system",
   doc: "the machine the forge runs on, now: CPU, load, memory, disk, network, processes; a forge admin, or an agent granted `telemetry:read`",
   description:
-    "The forge's machine now: CPU, memory, disk, network, processes. Admin or telemetry:read.",
+    "The forge machine now: CPU, memory, disk, network. Admin or telemetry:read.",
   inputSchema: { type: "object", properties: {} },
   writes: false,
   run(ctx, user) {

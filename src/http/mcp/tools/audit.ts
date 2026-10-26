@@ -6,7 +6,7 @@ export const tool: Tool = {
   name: "audit",
   doc: "who can do what, per app, read from its contract.json in git: yes, own or no per door, and whether outsiders may direct its crew (`crewOutsiders`)",
   description:
-    "Who can do what in each app you see, from contract.json: resource × verb, yes, own or no.",
+    "Who can do what per app: resource × verb, yes, own or no.",
   inputSchema: {
     type: "object",
     properties: {
