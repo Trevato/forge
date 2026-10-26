@@ -333,7 +333,8 @@ issue, which is also what the board's line above its regions offers), and, for a
 forge's health (`needs` in `/api/v1/health`). What counts as an ask is
 defined once, in `src/web/studio/asks.ts`: the header's **Asks** count, the
 page, the dashboard's _Needs you_ link and the phone notifier all read it,
-so the numbers agree. It is server-rendered and every button is a form post,
+so the numbers agree. Each card's words, forms and buttons are drawn in
+`src/web/studio/decisions.ts`. It is server-rendered and every button is a form post,
 so it works without JavaScript.
 
 ## What you asked for

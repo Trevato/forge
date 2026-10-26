@@ -28,7 +28,8 @@ import { startCrew, queueAgentRun, type CrewHandle } from "../src/crew/dispatch.
 import { getAgent } from "../src/core/agents.ts";
 import type { Ctx } from "../src/http/context.ts";
 import { setIssueState } from "../src/actions/issues.ts";
-import { ASK_WORDS, KIND_TIER, askLinesFor, decisionActions, decisionForm, decisionsFor, endOf } from "../src/web/studio/asks.ts";
+import { ASK_WORDS, KIND_TIER, askLinesFor, endOf } from "../src/web/studio/asks.ts";
+import { decisionActions, decisionForm, decisionsFor } from "../src/web/studio/decisions.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { settleApp } from "./helpers/tui.ts";

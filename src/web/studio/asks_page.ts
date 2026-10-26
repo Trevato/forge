@@ -50,9 +50,6 @@ import {
   askSentence,
   ASK_WORDS,
   ROW_PLURAL,
-  decisionButtons,
-  decisionForm,
-  decisionsFor,
   forgeNeedsFor,
   silencedRepos,
   putAsideWaves,
@@ -60,6 +57,7 @@ import {
   type Consequence,
   type Decision,
 } from "./asks.ts";
+import { decisionButtons, decisionForm, decisionsFor } from "./decisions.ts";
 import { changeHref } from "./nouns.ts";
 
 /** The kinds, in a word each, for "select by kind". */

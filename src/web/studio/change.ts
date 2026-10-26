@@ -76,13 +76,8 @@ import {
   parseNumber,
   type Entry,
 } from "../pages/thread.ts";
-import {
-  decisionActions,
-  decisionForm,
-  decisionsFor,
-  KIND_TIER,
-  type Decision,
-} from "./asks.ts";
+import { KIND_TIER, type Decision } from "./asks.ts";
+import { decisionActions, decisionForm, decisionsFor } from "./decisions.ts";
 import { tellLine, tellsAnswered } from "./branch_tell.ts";
 import { previewVision } from "../../crew/vision.ts";
 import { visionPreviewCard } from "./direction.ts";
