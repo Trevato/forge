@@ -763,6 +763,14 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 [data-tip]:hover::after, [data-tip]:focus-visible::after { opacity: 1; }
 @media (pointer: coarse) { [data-tip]::after { display: none; } }
 
+/* ---- page head: title, actions, subtitle ---- */
+.page-head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 20px 0 14px;
+}
+.page-head h1 { min-width: 0; }
+.page-head > .page-head-sub { flex-basis: 100%; margin-top: -4px; }
+
 /* ---- breadcrumbs ---- */
 .crumbs {
   display: flex; align-items: center; gap: 4px; min-width: 0;

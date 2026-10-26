@@ -1,6 +1,6 @@
 /**
  * What pages put inside the components: rendered prose, a file's source, and
- * the diff — plus the page furniture that frames them (page head, repo
+ * the diff — plus the page furniture that frames them (repo
  * header, merge box, file tree). The diff is the product, so it gets the most
  * attention here: hairline gutters, an opaque sticky file header, a `+`/`−`
  * glyph that survives copy-paste, and an intra-line change signalled by two
@@ -11,13 +11,6 @@ export const content = /* css */ `
 @layer content {
 
 /* ---- page furniture ---- */
-.page-head {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  margin: 20px 0 14px;
-}
-.page-head h1 { min-width: 0; }
-.page-head > .page-head-sub { flex-basis: 100%; margin-top: -4px; }
-
 .repo-head { margin: 18px 0 0; view-transition-name: repo-head; }
 .repo-title {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
