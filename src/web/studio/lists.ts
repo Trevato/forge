@@ -60,7 +60,7 @@ import { changeHref, PAGE_TITLES, pageTitle, tellHref } from "./nouns.ts";
 import { tellLine, tellsAnswered } from "./branch_tell.ts";
 import { knowMergeClosings, tellWords } from "./tell.ts";
 import {
-  pullWord,
+  pullWords,
   runWord,
   wordBadge,
   type Word,
@@ -503,9 +503,7 @@ export async function changesList(ctx: Ctx): Promise<Response> {
     ...sealedScope(db, repo, ctx.auth.user),
   });
   lap("pulls");
-  const words = await Promise.all(
-    fetched.map((pull) => pullWord(wordCtx, pull)),
-  );
+  const words = await pullWords(wordCtx, fetched);
   lap("words");
   const answered = tellsAnswered(db, repo.id, fetched);
   lap("tells");
