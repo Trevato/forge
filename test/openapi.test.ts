@@ -311,3 +311,20 @@ test("the tell row names its body, its answer and the refusals of its handler", 
   for (const w of ["app", "text", "variants", "from", "invalid_text", "invalid_variants", "invalid_from", "unverified", "forbidden"])
     expect(text).toContain(w);
 });
+
+test("the origin applications are described, and a client secret is written, never read back", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const list = doc.paths["/api/v1/user/origin-apps"];
+  const add = list.post;
+  expect(add.requestBody).toBeDefined();
+  expect(Object.keys(add.responses)).toContain("201");
+  expect(JSON.stringify(add.responses.default)).toContain("private_host");
+  expect(JSON.stringify(doc.paths["/api/v1/user/origin-apps/{id}"].delete.responses)).toContain("not_found");
+  const reply = JSON.stringify(list.get.responses["200"]);
+  expect(reply).not.toContain("clientSecret");
+  // A bare array, so the 200 must not claim to be one application object.
+  expect(reply).not.toContain('"id"');
+  expect(list.get.summary).toContain("bare array [{ id,");
+  expect(list.get.summary).toContain("hasSecret");
+  expect(JSON.stringify(add.responses["201"])).not.toContain("clientSecret");
+});
