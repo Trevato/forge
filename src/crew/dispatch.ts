@@ -28,6 +28,8 @@ import {
   type Issue,
 } from "../core/issues.ts";
 import { getPull, type Pull } from "../core/pulls.ts";
+import { claimedClones, sweepOrphanClones } from "./orphans.ts";
+import { crewRoot } from "./workdir.ts";
 import { resolveOpen } from "../core/decisions.ts";
 import { accountActive } from "../core/accounts.ts";
 import { runningLimitSentence, runningRuns } from "../settings/quotas.ts";
@@ -220,6 +222,16 @@ export async function startCrew(
     }
     pump(app, ready, inFlight);
   }, options.tickMs ?? TICK_MS);
+  // Clones no open issue, pull or run claims fill the volume (#5697).
+  const sweepClones = (): void => {
+    sweepOrphanClones(crewRoot(app.config.dataDir), claimedClones(app.db))
+      .then((count) => {
+        if (count > 0) log.info("removed clones nothing claims", { count });
+      })
+      .catch((error) => log.warn("clone sweep failed", { error: String(error) }));
+  };
+  sweepClones();
+  const cloneTimer = setInterval(() => !stopped && sweepClones(), 60 * 60_000);
   requeueInterrupted(app);
   sweepAssigned(app);
   pump(app, ready, inFlight);
@@ -231,6 +243,7 @@ export async function startCrew(
     stop: async (options = {}) => {
       stopped = true;
       clearInterval(timer);
+      clearInterval(cloneTimer);
       unsubscribe();
       unfollow();
       unsettle();
