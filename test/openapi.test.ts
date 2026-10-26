@@ -128,6 +128,20 @@ test("making and listing apps is described with every field the route reads", ()
     expect(post.responses.default.description).toContain(`\`${code}\``);
 });
 
+test("the boards routes are described", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const B = "/api/v1/boards";
+  const want: [string, string][] = [
+    ["get", B], ["get", `${B}/{slug}`], ["put", `${B}/{slug}`], ["delete", `${B}/{slug}`],
+    ["get", `${B}/{slug}/panels/{id}`], ["get", `${B}/pins`], ["post", `${B}/pins`],
+    ["get", `${B}/sources`], ["post", `${B}/query`],
+  ];
+  for (const [m, p] of want) expect(doc.paths[p]?.[m]?.security, `${m} ${p}`).toBeDefined();
+  const q = doc.paths[`${B}/query`].post;
+  expect(q.requestBody.content["application/json"].schema.properties.source.type).toBe("string");
+  expect(q.responses.default.description).toContain("unknown source");
+});
+
 test("a repository's reads are described: branches, commits, contents, labels, milestones", () => {
   const doc = openapi("https://f.test", "1") as any;
   const R = "/api/v1/repos/{owner}/{name}";

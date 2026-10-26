@@ -8,7 +8,6 @@ import { ROUTES } from "../src/contract/openapi.ts";
  * a route, then delete its line. An entry that is now described is ignored.
  */
 const NOT_YET_DESCRIBED: readonly string[] = [
-  "DELETE /api/v1/boards/{}",
   "DELETE /api/v1/orgs/{}/teams/{}/members/{}",
   "DELETE /api/v1/repos/{}/{}/labels/{}",
   "DELETE /api/v1/repos/{}/{}/pulls/{}/hold",
@@ -17,11 +16,6 @@ const NOT_YET_DESCRIBED: readonly string[] = [
   "DELETE /api/v1/user/pins/{}/{}",
   "GET /api/v1/agents",
   "GET /api/v1/asks",
-  "GET /api/v1/boards",
-  "GET /api/v1/boards/pins",
-  "GET /api/v1/boards/sources",
-  "GET /api/v1/boards/{}",
-  "GET /api/v1/boards/{}/panels/{}",
   "GET /api/v1/feed",
   "GET /api/v1/feed/chips",
   "GET /api/v1/migrate/{}/stream",
@@ -67,8 +61,6 @@ const NOT_YET_DESCRIBED: readonly string[] = [
   "POST /api/v1/asks/decide",
   "POST /api/v1/asks/decide/{}/undo",
   "POST /api/v1/asks/proposal/{}/{}",
-  "POST /api/v1/boards/pins",
-  "POST /api/v1/boards/query",
   "POST /api/v1/feed/chips",
   "POST /api/v1/feed/interactions",
   "POST /api/v1/repos/{}/{}/issues/{}/dependencies/{}/confirm",
@@ -88,7 +80,6 @@ const NOT_YET_DESCRIBED: readonly string[] = [
   "POST /api/v1/user/origins",
   "POST /api/v1/user/origins/oauth",
   "POST /api/v1/user/origins/{}/sync",
-  "PUT /api/v1/boards/{}",
   "PUT /api/v1/front",
   "PUT /api/v1/repos/{}/{}/crew/{}",
   "PUT /api/v1/repos/{}/{}/pulls/{}/hold",
