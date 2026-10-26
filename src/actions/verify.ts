@@ -23,9 +23,10 @@ import { sendMail, type Mailer } from "../kernel/mail.ts";
 import { mayMail, sendCapped } from "./mail.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { requireUser } from "./access.ts";
+import { VERIFY_FIRST } from "./verify_words.ts";
 
 /** The words every refusal carries, on every surface. */
-export const UNVERIFIED_MESSAGE = "verify your email first";
+export const UNVERIFIED_MESSAGE = VERIFY_FIRST;
 
 /** An account that may create and cost: its email is proven. */
 export function requireVerified(

@@ -1,3 +1,13 @@
+// The words a door says about email verification. Every surface (page, API,
+// MCP, terminal) reads them from here, so the sentence cannot drift between
+// doors.
+
+/** Refuses a create or a cost (an app, a tell, a token) to an unverified account. */
+export const VERIFY_FIRST = "verify your email first";
+
+/** Refuses making an app your own to an unverified account. */
+export const PROVE_FIRST = "prove your email first";
+
 /**
  * What a person asking for another email-verification link is told when it
  * is refused, keyed by the refusal. Every door — POST

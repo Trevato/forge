@@ -1,6 +1,7 @@
 import { APP_ALREADY_YOURS } from "../../../actions/origin_app_words.ts";
 import { NOT_A_MEMBER } from "../../../core/roles.ts";
 import { COPIES_PER_DAY, makeItYours } from "../../../actions/make_it_yours.ts";
+import { PROVE_FIRST } from "../../../actions/verify_words.ts";
 import { good, bad, type Tool, str, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
 
 export const tool: Tool = {
@@ -46,7 +47,7 @@ export const tool: Tool = {
           : made.error.kind === "not_member"
             ? bad("not_member", NOT_A_MEMBER)
           : made.error.kind === "unverified"
-            ? bad("unverified", "prove your email first")
+            ? bad("unverified", PROVE_FIRST)
             : bad("not_found", "no such app or repository (owner/name)");
     const { made: done, ...plan } = made.value;
     return good(

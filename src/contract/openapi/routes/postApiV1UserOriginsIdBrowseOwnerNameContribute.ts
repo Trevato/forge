@@ -1,3 +1,4 @@
+import { PROVE_FIRST } from "../../../actions/verify_words.ts";
 import { BROWSE, type Route } from "../shared.ts";
 
 export const route: Route = {
@@ -10,7 +11,7 @@ export const route: Route = {
   body: { branch: "string", base: "string", message: "string", files: "array", openPull: "object" },
   refusals: {
     not_found: "404: no such origin of yours, or no such repository there",
-    unverified: "403: prove your email first",
+    unverified: `403: ${PROVE_FIRST}`,
     origin_unreachable: "422: the origin could not be reached",
     invalid_branch: "422: that branch is not one this forge can use",
     unknown_base: "422: that base branch is not one this forge can use",

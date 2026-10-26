@@ -5,6 +5,7 @@ import { repositoryLimitMessage } from "../../../actions/repos.ts";
 import { newApp } from "../../../actions/apps.ts";
 import { appLimitWords } from "../../../actions/app_limit.ts";
 import { storageLimitMessage } from "../../../core/storage.ts";
+import { VERIFY_FIRST } from "../../../actions/verify_words.ts";
 import { good, bad, type Tool, str } from "../shared.ts";
 
 export const tool: Tool = {
@@ -42,7 +43,7 @@ export const tool: Tool = {
     if (!made.ok) {
       switch (made.error) {
         case "unverified":
-          return bad("unverified", "verify your email first");
+          return bad("unverified", VERIFY_FIRST);
         case "app_limit": {
           const who = getUserByName(ctx.app.db, owner || user.username);
           return bad("app_limit", who ? appLimitWords(ctx.app, who.id) : "App limit reached.");

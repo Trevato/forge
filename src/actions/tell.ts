@@ -18,6 +18,7 @@ import { err, ok, type Result } from "../kernel/result.ts";
 import { requireParticipant } from "./access.ts";
 import { assignIssue, openIssue, type MirrorError } from "./issues.ts";
 import { requireVerified } from "./verify.ts";
+import { VERIFY_FIRST } from "./verify_words.ts";
 
 export interface Told {
   readonly issue: Issue;
@@ -153,7 +154,7 @@ export async function tell(
 }
 
 /** What every door says when a tell is refused for an unverified address. */
-export const UNVERIFIED_WORDS = "verify your email first";
+export const UNVERIFIED_WORDS = VERIFY_FIRST;
 
 /** What both doors say when `tell` refuses a text over `MAX_BODY`. */
 export const TOO_LONG_WORDS = "That is too long to tell in one go.";

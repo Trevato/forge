@@ -79,6 +79,7 @@ import {
   verifyAccount,
 } from "../actions/accounts.ts";
 import { resendVerification } from "../actions/verify.ts";
+import { PROVE_FIRST } from "../actions/verify_words.ts";
 import { CAPPED_WORDS } from "../actions/mail.ts";
 import { VERIFY_WORDS } from "../actions/verify_words.ts";
 import { editMessage } from "../actions/edit_words.ts";
@@ -5399,7 +5400,7 @@ export function apiRoutes(router: Router<Handler>): void {
         : made.error.kind === "own"
           ? apiError("own", 409, APP_ALREADY_YOURS)
           : made.error.kind === "unverified"
-            ? apiError("unverified", 403, "prove your email first")
+            ? apiError("unverified", 403, PROVE_FIRST)
             : made.error.kind === "unauthorized"
               ? unauthorized()
               : notFound();

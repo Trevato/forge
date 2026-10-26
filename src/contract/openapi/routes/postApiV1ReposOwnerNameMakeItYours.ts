@@ -1,3 +1,4 @@
+import { PROVE_FIRST } from "../../../actions/verify_words.ts";
 import { REPO, type Route } from "../shared.ts";
 
 export const route: Route = {
@@ -10,7 +11,7 @@ export const route: Route = {
   refusals: {
     invalid: "422: visibility is public or private",
     own: "409: this app is already yours",
-    unverified: "403: prove your email first",
+    unverified: `403: ${PROVE_FIRST}`,
     limit: "429: at most so many copies a day; { resetsAt }",
     repository_limit: "403: at the repository limit",
     storage_limit: "403: at the storage limit",
