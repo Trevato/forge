@@ -229,6 +229,10 @@ describe("muting a repository's asks", () => {
 
   test("MCP asks applies the saved filter, and takes the same filter as arguments", async () => {
     const token = createToken(app.db, alice.id, "ro", "ro").token;
+    // Its own preconditions, not the earlier tests' leftovers: listening, and no chip saved.
+    app.db.query("DELETE FROM interaction WHERE viewer_id = ?1 AND kind = 'muted'").run(alice.id);
+    for (const c of [{ kind: "kind", value: "reviews" }, { kind: "kind", value: "crew" }, { kind: "kind", value: "decisions" }, { kind: "person", value: getUserByName(app.db, "bot")!.id }, { kind: "person", value: bob.id }] as const)
+      setChip(app.db, alice.id, c, false);
 
     const tool = (token: string, name: string, args: unknown = {}) =>
       mcpTool(servers.url, token, name, args);
