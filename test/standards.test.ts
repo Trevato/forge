@@ -151,6 +151,17 @@ describe("what the open web expects", () => {
     expect(body).not.toContain("alice/closed");
   });
 
+  test("llms.txt says how to use the forge from a harness, with the endpoint built from the URL", async () => {
+    const body = await fetch(`${base}/llms.txt`).then((r) => r.text());
+    const section = body.slice(body.indexOf("## Use it from your harness"));
+    expect(body.indexOf("## Offer a change")).toBeLessThan(body.indexOf("## Use it from your harness"));
+    expect(section).toContain(`${base}/mcp`);
+    expect(section).toContain(`${base}/.well-known/oauth-protected-resource`);
+    expect(section).toContain("streamable HTTP");
+    expect(section).toContain("Claude Code plugin");
+    expect(section).toContain("OpenCode plugin");
+  });
+
   test("sitemap and llms.txt are each built once for 50 requests, and a repository made private drops out at once", async () => {
     const mid = await createRepo(app, alice, {
       name: "midway",
