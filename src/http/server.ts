@@ -482,7 +482,7 @@ import {
   type RouteTiming,
 } from "../core/route_timing.ts";
 import { methodOf, noteUsage, roleOf, surfaceOf, takeUsage } from "./usage_tag.ts";
-import { oauthRoutes } from "./oauth.ts";
+import { bearerChallenge, oauthRoutes } from "./oauth.ts";
 import { flushAccess, recordAccess } from "./access_log.ts";
 import { carryPeer, clientAddress, notePeer, type ProxyTrust } from "./peer.ts";
 import { isProbe } from "../kernel/probe.ts";
@@ -2221,6 +2221,11 @@ export async function serve(app: App): Promise<Servers> {
     const work = run().then(
       async (response) => {
         const compressing = performance.now();
+        if (response.status === 401 && !response.headers.has("www-authenticate")) {
+          const url = publicUrl(request, owner.config.url);
+          if (url.pathname.startsWith("/api/v1/"))
+            response.headers.set("www-authenticate", bearerChallenge(url.origin));
+        }
         const done = await compress(request, response).then(securityFloor);
         if (namesFrame(request)) notePhase(request, "compress", performance.now() - compressing);
         return done;

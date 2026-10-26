@@ -70,6 +70,47 @@ describe("oauth discovery and registration", () => {
     );
   });
 
+  test("a 401 from the API carries the same challenge as /mcp", async () => {
+    const want = `Bearer realm="forge", resource_metadata="${base}/.well-known/oauth-protected-resource"`;
+    const mcp = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(mcp.headers.get("www-authenticate")).toBe(want);
+    const feed = await fetch(`${base}/api/v1/feed`);
+    expect(feed.status).toBe(401);
+    expect(feed.headers.get("www-authenticate")).toBe(want);
+    const write = await fetch(`${base}/api/v1/repos`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "x" }),
+    });
+    expect(write.status).toBe(401);
+    expect(write.headers.get("www-authenticate")).toBe(want);
+  });
+
+  test("behind a proxy the API challenge names the public origin, as /mcp does", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-oauth-public-"));
+    const proxied = createApp({ dataDir: dir, port: 0, url: "https://forge.example" });
+    const behind = await serve(proxied);
+    try {
+      const mcp = await fetch(`${behind.url}/mcp`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
+      const feed = await fetch(`${behind.url}/api/v1/feed`);
+      expect(feed.status).toBe(401);
+      const want = mcp.headers.get("www-authenticate");
+      expect(want).toContain('resource_metadata="https://forge.example/');
+      expect(feed.headers.get("www-authenticate")).toBe(want);
+    } finally {
+      behind.stop();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("a valid registration is stored and returns a client_id", async () => {
     const res = await register({
       client_name: "Inspector",
