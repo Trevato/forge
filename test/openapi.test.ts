@@ -131,6 +131,44 @@ test("making and listing apps is described with every field the route reads", ()
     expect(post.responses.default.description).toContain(`\`${code}\``);
 });
 
+test("the caller's own routes are described, pinning included", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const want: Record<string, string[]> = {
+    "/api/v1/user": ["get", "patch"],
+    "/api/v1/user/keys": ["get", "post"],
+    "/api/v1/user/keys/{id}": ["delete"],
+    "/api/v1/user/pins": ["get"],
+    "/api/v1/user/pins/{owner}/{name}": ["put", "delete"],
+    "/api/v1/user/assigned": ["get"],
+    "/api/v1/user/orgs": ["get"],
+  };
+  for (const [path, methods] of Object.entries(want))
+    for (const m of methods) {
+      expect(doc.paths[path]?.[m], `${m} ${path}`).toBeDefined();
+      expect(doc.paths[path][m].security).toBeDefined();
+    }
+  expect(doc.paths["/api/v1/user/keys"].post.summary).toContain("scope rw");
+  const refusals = (path: string, m: string): string => doc.paths[path][m].responses.default.description;
+  for (const code of ["forbidden", "invalid_commit_email", "invalid_email", "email_taken", "display_name_reserved", "display_name_mixed_script"])
+    expect(refusals("/api/v1/user", "patch")).toContain(`\`${code}\``);
+  for (const code of ["invalid_key", "key_exists"]) expect(refusals("/api/v1/user/keys", "post")).toContain(`\`${code}\``);
+  expect(refusals("/api/v1/user/keys/{id}", "delete")).toContain("`not_found`");
+  expect(refusals("/api/v1/user/keys/{id}", "delete")).toContain("404");
+  for (const m of ["put", "delete"]) expect(refusals("/api/v1/user/pins/{owner}/{name}", m)).toContain("`not_found`");
+  for (const [path, m] of [["/api/v1/user/keys", "post"], ["/api/v1/user/keys/{id}", "delete"], ["/api/v1/user/pins/{owner}/{name}", "put"], ["/api/v1/user/pins/{owner}/{name}", "delete"]] as [string, string][])
+    for (const code of ["unauthorized", "forbidden"]) expect(refusals(path, m), `${m} ${path}`).toContain(`\`${code}\``);
+  const assigned = doc.paths["/api/v1/user/assigned"].get;
+  expect(assigned.summary).toContain("next_cursor is always null");
+  expect(assigned.parameters?.map((p: any) => p.name) ?? []).not.toContain("limit");
+  for (const path of ["/api/v1/user/keys", "/api/v1/user/orgs", "/api/v1/user/pins"]) {
+    const get = doc.paths[path].get;
+    expect(get.summary, path).toContain("{ items");
+    expect(get.summary, path).toContain("next_cursor");
+    expect(get.summary, path).not.toContain("array");
+    expect(get.parameters.map((p: any) => p.name), path).toEqual(expect.arrayContaining(["limit", "cursor"]));
+  }
+});
+
 test("the boards routes are described", () => {
   const doc = openapi("https://f.test", "1") as any;
   const B = "/api/v1/boards";
