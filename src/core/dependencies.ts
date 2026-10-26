@@ -278,6 +278,31 @@ export function deferredIn(
 
 const GRAPH_MAX = 400;
 
+/**
+ * Which of these issues sit on either end of a dependency edge, in one read
+ * of the edges themselves. An issue on no edge can only be deferred by being
+ * the Later umbrella (`pillars.ts` finds it by a title starting "Later"), so
+ * a page that words a few tells can skip the whole-repository graph for them.
+ */
+export function linkedIssueIds(db: Database, ids: readonly string[]): Set<string> {
+  const out = new Set<string>();
+  if (ids.length === 0) return out;
+  const rows = db
+    .query<{ a: string; b: string }, [string]>(
+      `SELECT issue_id AS a, blocked_by_id AS b FROM issue_dependency
+        WHERE issue_id IN (SELECT value FROM json_each(?1))
+        UNION
+       SELECT issue_id, blocked_by_id FROM issue_dependency
+        WHERE blocked_by_id IN (SELECT value FROM json_each(?1))`,
+    )
+    .all(JSON.stringify(ids));
+  for (const r of rows) {
+    out.add(r.a);
+    out.add(r.b);
+  }
+  return out;
+}
+
 export function repoGraph(
   db: Database,
   repoId: string,

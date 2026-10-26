@@ -50,6 +50,8 @@ export interface Pillars {
 const PILLAR = /^(P\d+) [^:]+(?=:)/;
 const GATE = /^Later gate:/i;
 const LATER_UMBRELLA = /^Later:/i;
+/** A title that may be the Later gate or umbrella: what `TITLED` selects for below. */
+export const LATER_TITLED = /^later/i;
 /** More umbrellas than a direction has pillars. */
 const MAX = 64;
 

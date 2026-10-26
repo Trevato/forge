@@ -16,7 +16,8 @@ import { threadNote } from "../../crew/direct.ts";
 import { alreadyDone } from "../../core/done_on_main.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { getAppByRepo } from "../../core/apps.ts";
-import { repoGraph } from "../../core/dependencies.ts";
+import { LATER_TITLED } from "../../core/pillars.ts";
+import { linkedIssueIds, repoGraph } from "../../core/dependencies.ts";
 import {
   getIssuesByNumbers,
   labelsFor,
@@ -155,6 +156,10 @@ const told = new WeakMap<
     active: Map<string, Run | undefined>;
     last: Map<string, Run | undefined>;
     shipped: Map<number, Pull | undefined>;
+    /** The page's issues that sit on a dependency edge; the rest are never deferred. */
+    linked: Set<string>;
+    /** The ids the batch covered: only these may skip the graph. */
+    covered: Set<string>;
   }
 >();
 
@@ -175,6 +180,8 @@ export async function tellWords(
     active: new Map<string, Run | undefined>(),
     last: new Map<string, Run | undefined>(),
     shipped: new Map<number, Pull | undefined>(),
+    linked: linkedIssueIds(db, issues.map((i) => i.id)),
+    covered: new Set(issues.map((i) => i.id)),
   };
   const pulls: Pull[] = [];
   const closed = issues.filter((i) => i.state === "closed");
@@ -259,7 +266,10 @@ export async function tellWord(
     return { word: "working", note: "working now" };
   // Deferred work is not waiting to be picked up: the crew will not take
   // it, and the page says why, as the map does.
-  const deferred = deferredWhy(wordCtx, repo, issue);
+  const deferred =
+    read?.covered.has(issue.id) === true && !read.linked.has(issue.id) && !LATER_TITLED.test(issue.title)
+      ? undefined
+      : deferredWhy(wordCtx, repo, issue);
   if (deferred !== undefined)
     return { word: "told", note: `deferred: ${deferred}` };
   const last = read?.last.has(issue.id)
