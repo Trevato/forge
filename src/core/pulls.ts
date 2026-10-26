@@ -431,6 +431,27 @@ export function listOpenPullsFromHead(
 }
 
 /**
+ * The one open pull into `baseRepoId` whose head is this branch of this
+ * repository, asked of the database rather than found in a page of pulls.
+ */
+export function openPullFromHead(
+  db: Database,
+  baseRepoId: string,
+  headRepoId: string,
+  branch: string,
+): Pull | undefined {
+  const row = db
+    .query<{ number: number }, [string, string, string]>(
+      `SELECT issue.number FROM pull JOIN issue ON issue.id = pull.issue_id
+       WHERE issue.repo_id = ?1 AND pull.head_repo_id = ?2 AND pull.head_branch = ?3
+         AND issue.state = 'open'
+       ORDER BY issue.number DESC LIMIT 1`,
+    )
+    .get(baseRepoId, headRepoId, branch);
+  return row === null || row === undefined ? undefined : getPull(db, baseRepoId, row.number);
+}
+
+/**
  * The newest open pull of each repository, in one query — what a shelf row
  * shows when nothing about the app is moving otherwise: a change waits for
  * a look whether an agent opened it or a person did, and the row is about

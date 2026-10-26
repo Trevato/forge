@@ -9,9 +9,11 @@
  */
 
 import { followingLine } from "./upstream-follow.ts";
+import { upstreamOffer } from "../../actions/offer_upstream.ts";
+import { offerUpstream } from "./offer-upstream.ts";
 import { NOT_A_MEMBER } from "../../core/roles.ts";
 import { storageLimitMessage } from "../../core/storage.ts";
-import { canRead, listForks, type Repo } from "../../core/repos.ts";
+import { canRead, canWrite, listForks, type Repo } from "../../core/repos.ts";
 import { FORKS_PER_DAY, forkRepo, repositoryLimitMessage } from "../../actions/repos.ts";
 import {
   type RankedFork,
@@ -1080,7 +1082,9 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
   const parent = forkParent(ctx, repo);
   const [entries, drift] = await Promise.all([
     timePhaseAsync(ctx.request, "tree", () => scope.source.tree(ref, "")),
-    parent === undefined ? undefined : forkDrift(ctx.app, repo, parent),
+    parent === undefined
+      ? undefined
+      : timePhaseAsync(ctx.request, "drift", () => forkDrift(ctx.app, repo, parent)),
   ]);
   const tree = entries.ok ? entries.value : [];
 
@@ -1091,10 +1095,17 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
   const latest = await timePhaseAsync(ctx.request, "wave", () =>
     latestWave(repoDir(ctx.app.reposRoot, repo.ownerName, repo.name), repo.defaultBranch),
   );
+  // The Following card's "Propose upstream" is a writer's route to the same
+  // pull; a writer who has the card is not offered a second button.
+  const offer =
+    following !== undefined && canWrite(ctx.app.db, repo, ctx.auth.user)
+      ? null
+      : upstreamOffer(ctx.app, ctx.auth.user, repo, parent, drift?.ahead);
   const rendering = performance.now();
   const body = html`${scopeHeader(ctx, scope, "code", {
     branchCount: refs.branches.length,
   })}${archivedLine(ctx, repo)}${noApp}
+  ${offerUpstream(repo, parent, offer)}
   ${latest === null
     ? ""
     : html`<p class="muted latest-wave">Latest:

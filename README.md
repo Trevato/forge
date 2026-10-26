@@ -290,6 +290,8 @@ each, under the forge strip; a list cut to three says "+N more".
 The line is the shared `.quiet-details` disclosure, and the "need you" count
 carries the attention dot.
 
+A fork ahead of its parent offers its commits upstream: on its home a signed-in reader of the parent sees "Offer N commits upstream" (into the new-pull form with both branches chosen) or "Offered in #M" once a pull is open; a writer who has the Following card gets its "Propose upstream" instead, one route not two. In the terminal the fork's About card (`I`) has an `offer` row and `o` opens the same pull form (or the open pull). Both read `upstreamOffer` (`src/actions/offer_upstream.ts`), the open pull by one SQL lookup.
+
 ## Live in the terminal
 
 `ssh` into the forge and you get the whole thing — repositories, code, issues,
