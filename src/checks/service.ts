@@ -47,6 +47,7 @@ import {
 import { Gate, runGit } from "../git/env.ts";
 import { resolveOid } from "../git/merge.ts";
 import { mergeForCheck } from "./merged.ts";
+import { approvedOnce } from "./approved_first.ts";
 import { checkOnApproval } from "./approval.ts";
 import { checkKey, provenBy, recordProven } from "./proven.ts";
 import { giveHistory } from "./history.ts";
@@ -219,30 +220,31 @@ export function holdsLastSlot(free: number, gateWaits: boolean): boolean {
  * recently, so a push's own check is never stuck behind pulls that queued
  * hours earlier — unless something has already waited `STARVATION_MS` or
  * more, in which case the longest-waiting check goes first regardless of
- * how fresh the rest are. Ties (down to the same instant) fall back to id
- * order, which is itself creation order (`kernel/id.ts`).
+ * how fresh the rest are. Checks of approved pulls (`approved`) go before
+ * the rest, newest first among themselves (#6396): a check that is the last
+ * thing between a pull and landing is not held up by a new pull's. Ties
+ * (down to the same instant) fall back to id order, which is itself
+ * creation order (`kernel/id.ts`).
  */
 export function pickNext(
   queued: readonly Run[],
   now: number = Date.now(),
+  approved: (run: Run) => boolean = () => false,
 ): Run | undefined {
   if (queued.length === 0) return undefined;
+  const newer = (a: Run, b: Run): boolean =>
+    a.createdAt > b.createdAt || (a.createdAt === b.createdAt && a.id > b.id);
   let oldest = queued[0]!;
-  let newest = queued[0]!;
+  let newest: Run | undefined;
+  let newestApproved: Run | undefined;
   for (const run of queued) {
-    if (
-      run.createdAt < oldest.createdAt ||
-      (run.createdAt === oldest.createdAt && run.id < oldest.id)
-    )
-      oldest = run;
-    if (
-      run.createdAt > newest.createdAt ||
-      (run.createdAt === newest.createdAt && run.id > newest.id)
-    )
-      newest = run;
+    if (newer(oldest, run)) oldest = run;
+    if (newest === undefined || newer(run, newest)) newest = run;
+    if (approved(run) && (newestApproved === undefined || newer(run, newestApproved)))
+      newestApproved = run;
   }
   if (now - Date.parse(oldest.createdAt) >= STARVATION_MS) return oldest;
-  return newest;
+  return newestApproved ?? newest;
 }
 
 /**
@@ -448,11 +450,12 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   /** `pickNext` among `queued`, passing over any whose account is at its limit. */
   function startable(queued: readonly Run[]): Run | undefined {
     let rest = queued;
-    let next = pickNext(rest);
+    const isApproved = approvedOnce(app.db);
+    let next = pickNext(rest, Date.now(), isApproved);
     while (next !== undefined && atLimit(next)) {
       const held = next;
       rest = rest.filter((run) => run !== held);
-      next = pickNext(rest);
+      next = pickNext(rest, Date.now(), isApproved);
     }
     return next;
   }

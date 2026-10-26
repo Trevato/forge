@@ -878,6 +878,27 @@ describe("checks", () => {
     for (const run of [a, b, c]) cancelRun(app.db, run.id);
   });
 
+  test("pickNext puts an approved pull's check first, newest among them, and the starved before all", () => {
+    const a = createRun(app.db, { repoId: repo.id, kind: "check", env: "a" });
+    const b = createRun(app.db, { repoId: repo.id, kind: "check", env: "b" });
+    const c = createRun(app.db, { repoId: repo.id, kind: "check", env: "c" });
+    const now = Date.parse(c.createdAt);
+    const only = (...ids: string[]) => (run: { id: string }) => ids.includes(run.id);
+    // An older approved check beats a newer unapproved one.
+    expect(pickNext([a, b, c], now, only(a.id))?.id).toBe(a.id);
+    // Newest first among the approved.
+    expect(pickNext([a, b, c], now, only(a.id, b.id))?.id).toBe(b.id);
+    // With none approved, the order is unchanged.
+    expect(pickNext([a, b, c], now, () => false)?.id).toBe(c.id);
+    // A starved unapproved check still goes first.
+    const later = now + STARVATION_MS + 1_000;
+    const old = { ...a, createdAt: new Date(now - 1_000).toISOString() };
+    const fresh = { ...b, createdAt: new Date(later).toISOString() };
+    const approvedFresh = { ...c, createdAt: new Date(later + 1).toISOString() };
+    expect(pickNext([fresh, approvedFresh, old], later, only(approvedFresh.id))?.id).toBe(old.id);
+    for (const run of [a, b, c]) cancelRun(app.db, run.id);
+  });
+
   test("when a slot frees, the newest of several queued checks runs first", async () => {
     // Three checks, on three environments so none supersedes another. Their
     // commits are written before the slot is taken: written after, on a
