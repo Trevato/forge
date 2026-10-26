@@ -388,6 +388,33 @@ test("the origin applications are described, and a client secret is written, nev
   expect(JSON.stringify(add.responses["201"])).not.toContain("clientSecret");
 });
 
+test("the served document is tagged by version and origin and answers 304 to its tag", async () => {
+  const { openapiText } = await import("../src/contract/served.ts");
+  const { weakEtag } = await import("../src/http/etag.ts");
+  const a = openapiText("https://a.example", "1");
+  expect(openapiText("https://a.example", "1")).toBe(a);
+  expect(a.etag).toBe(weakEtag(a.text));
+  expect(openapiText("https://a.example", "2").etag).not.toBe(a.etag);
+  expect(openapiText("https://b.example", "1").etag).not.toBe(a.etag);
+
+  const dir = await mkdtemp(join(tmpdir(), "forge-openapi-"));
+  const app = createApp({ dataDir: dir, port: 0 });
+  const servers = await serve(app);
+  try {
+    const first = await fetch(`${servers.url}/contract/openapi.json`);
+    const etag = first.headers.get("etag")!;
+    expect(etag).toBeTruthy();
+    await first.text();
+    const again = await fetch(`${servers.url}/contract/openapi.json`, { headers: { "if-none-match": etag } });
+    expect(again.status).toBe(304);
+    expect(await again.text()).toBe("");
+  } finally {
+    servers.stop();
+    app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("people, organizations and agents are described", () => {
   const doc = openapi("https://f.test", "1") as any;
   for (const path of [

@@ -469,6 +469,7 @@ import { runGate } from "./run_gate.ts";
 import { feedRoutes } from "./feed.ts";
 import type { Database } from "bun:sqlite";
 import { mcpRoutes } from "./mcp.ts";
+import { openapiRoute } from "../contract/served.ts";
 import { createUsageCounter, type UsageCounter } from "../core/usage_count.ts";
 import {
   createRouteTiming,
@@ -1092,6 +1093,8 @@ export function buildRouter(): Router<Handler> {
   // reclaim a path under `/api/`.
   // The forge as an MCP server: the studio's verbs for an assistant.
   mcpRoutes(router);
+  // The public API as OpenAPI, for any client that reads it.
+  openapiRoute(router);
   oauthRoutes(router);
 
   // Issues (web). The literal /new is registered before /:number so it can

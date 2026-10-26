@@ -21,7 +21,6 @@ import { CARD_KINDS, CARD_MIME, CARD_OF_TOOL, CARD_SHELL, CARD_URI, cardFor } fr
 import { getRepo } from "../core/repos.ts";
 import { scopeAllows } from "../core/tokens.ts";
 import type { User } from "../core/users.ts";
-import { openapi } from "../contract/openapi.ts";
 import type { Ctx, Handler } from "./context.ts";
 import { running } from "../kernel/version.ts";
 import { resourceMetadataUrl } from "./oauth.ts";
@@ -331,10 +330,4 @@ export function mcpRoutes(router: Router<Handler>): void {
   // for a proxy to cut.
   router.add("GET", "/mcp", () => NOT_HERE("POST"));
   router.add("DELETE", "/mcp", () => NOT_HERE("POST"));
-  // The public API as OpenAPI, for any client that reads it.
-  router.add("GET", "/contract/openapi.json", (ctx) =>
-    json(openapi(ctx.url.origin, running().version), 200, {
-      "cache-control": "public, max-age=300",
-    }),
-  );
 }
