@@ -32,6 +32,7 @@ import { getProposal } from "../../core/proposals.ts";
 import { getIssueById, listAssignedTo, type Issue } from "../../core/issues.ts";
 import { askLinesFor } from "../../web/studio/asks.ts";
 import { waitingFor, type WaitingFor } from "../../core/waiting_for.ts";
+import { giveBack } from "../../actions/give_back.ts";
 import { decideAsk, undoDecideAsk } from "../../actions/asks_decide.ts";
 import { actOnProposal, type ProposalVerb } from "../../actions/proposals.ts";
 import { putAsideWaves } from "../../web/studio/asks.ts";
@@ -597,6 +598,22 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     });
   };
 
+  /** Give the handed-over pull under the cursor back to its builder, through the action the web uses. */
+  const giveBackHere = (): void => {
+    const here = onYou[at("onyou").index];
+    if (here === undefined) return;
+    if (here.over !== true) {
+      ctx.toast("only a handed-over pull goes back to the crew", "attn");
+      return;
+    }
+    const done = giveBack(f.app, f.user, `handover:${here.issue.id}`);
+    reload();
+    ctx.toast(
+      done.ok ? `#${done.value.pull} given back to @${done.value.builder}` : done.error.message,
+      done.ok ? "success" : "danger",
+    );
+  };
+
   const undoHand = (): void => {
     const id = lastHand;
     if (id === undefined) {
@@ -755,6 +772,9 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         // The On you verbs show only where they act, so the bar stays short.
         ...(focus === "onyou" && onYou[at("onyou").index]?.hand === true
           ? [binding(["D"], "let the decider")]
+          : []),
+        ...(focus === "onyou" && onYou[at("onyou").index]?.over === true
+          ? [binding(["b"], "give back to the crew")]
           : []),
         ...(focus === "onyou" && waveHere() !== undefined
           ? [binding(["y"], "approve wave"), binding(["R"], "redirect"), binding(["l"], "later")]
@@ -934,6 +954,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         if (e.key === "m") return clear("mute"), true;
         if (e.key === "S") return shipSet(), true;
         if (e.key === "D" && item !== undefined) return handToDecider(), true;
+        if (e.key === "b" && item !== undefined) return giveBackHere(), true;
         if (e.key === "h") return hideAuthor(), true;
         if (e.key === "y") return actOnWave("approve"), true;
         if (e.key === "R") return redirectWave(), true;
@@ -1092,6 +1113,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     if (lastSet !== undefined) parts.push(`u undo ${lastSet.verb}`);
     if (lastHand !== undefined) parts.push("U undo decider");
     if (onYou[at("onyou").index]?.hand === true) parts.push("D let the decider");
+    if (onYou[at("onyou").index]?.over === true) parts.push("b give back to the crew");
     if (asideWaves.length > 0) parts.push(`${asideWaves.length} ${asideWaves.length === 1 ? "wave" : "waves"} put aside · B bring back`);
     return parts.length > 0 ? parts.join(" · ") : undefined;
   }

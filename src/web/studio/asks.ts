@@ -141,6 +141,8 @@ export interface Decision {
   readonly waiting: WaitingFor;
   readonly why?: string | undefined;
   readonly recommendation?: Recommendation | undefined;
+  /** For "handover": the builder the pull can be given back to, if any. */
+  readonly giveBack?: string | undefined;
 }
 
 /** What an ask asks, the answers it takes, and what happens if nobody gives one. */
@@ -289,6 +291,8 @@ interface AskCandidate {
   readonly decline?: { readonly runId: string; readonly words: string };
   /** For "handover": the reviews that asked for changes. */
   readonly handover?: Handover;
+  /** For "handover": the crew member that opened the pull, when it can be given back. */
+  readonly builder?: string;
   /** For "handover" and "waiting": one sentence on why a person must decide. */
   readonly why?: string;
   /** For "handover" and "waiting": what the crew advised, when it wrote one. */
@@ -371,6 +375,7 @@ function askCandidatesFor(
     handedOver,
   );
   const first = out.length;
+  let crews: Map<string, string[]> | undefined;
   for (const issue of pulls) {
     const repo = byId.get(issue.repoId)!;
     const pull = joined.get(issue.id);
@@ -391,6 +396,10 @@ function askCandidatesFor(
     if (over !== undefined && repo.autonomy === "autonomous" && issue.authorIsAgent)
       continue;
     if (over !== undefined) {
+      // Whoever opened it, while still on the crew, is who it can go back to.
+      crews ??= crewForRepos(db, [...byId.keys()]);
+      const builder =
+        issue.authorIsAgent && crews.get(repo.id)?.includes(issue.authorName) ? issue.authorName : undefined;
       out.push({
         kind: "handover",
         id: `handover:${pull.id}`,
@@ -400,6 +409,7 @@ function askCandidatesFor(
         who,
         authorIsAgent: issue.authorIsAgent,
         handover: over,
+        ...(builder === undefined ? {} : { builder }),
         why: HANDOVER_WHY,
       });
       continue;
@@ -1179,6 +1189,7 @@ export function decisionsFor(
         short: `"${c.pull.title}" had three reviews asking for changes`,
         why: c.why,
         recommendation: c.recommendation,
+        giveBack: c.builder,
       };
     if (c.kind === "waiting" && c.pull)
       return {
@@ -1279,6 +1290,13 @@ export function decisionForm(d: Decision, back?: string): Html | null {
   if (pull === undefined) return null;
   const base = repoBase(d.repo);
   const where = back === undefined ? null : html`<input type="hidden" name="back" value="${back}" />`;
+  if (d.kind === "handover" && d.giveBack !== undefined)
+    return html`<form ${own} action="${base}/pulls/${pull.number}/state">
+        <input type="hidden" name="state" value="closed" />${where}
+      </form>
+      <form id="${askFormId(d)}-back" method="post" hidden action="/asks/give-back">
+        <input type="hidden" name="ask" value="${d.id}" />${where}
+      </form>`;
   if (d.kind === "stopped" || d.kind === "handover")
     return html`<form ${own} action="${base}/pulls/${pull.number}/state">
       <input type="hidden" name="state" value="closed" />${where}
@@ -1321,6 +1339,9 @@ export function decisionButtons(ctx: Ctx, d: Decision): { primary: Html; others:
         variant: "primary",
       }),
       others: [
+        ...(d.kind === "handover" && d.giveBack !== undefined
+          ? [btn("Give back to the crew", { size: "sm", form: `${askFormId(d)}-back` })]
+          : []),
         btn("Close", { size: "sm", form: askFormId(d) }),
         btn("See", { href: changeHref(base, pull.number), size: "sm" }),
       ],
