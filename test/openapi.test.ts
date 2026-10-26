@@ -328,3 +328,26 @@ test("the origin applications are described, and a client secret is written, nev
   expect(list.get.summary).toContain("hasSecret");
   expect(JSON.stringify(add.responses["201"])).not.toContain("clientSecret");
 });
+
+test("people, organizations and agents are described", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  for (const path of [
+    "/api/v1/users/{username}",
+    "/api/v1/users/{username}/repos",
+    "/api/v1/orgs/{org}",
+    "/api/v1/orgs/{org}/teams",
+    "/api/v1/orgs/{org}/teams/{team}/members",
+    "/api/v1/agents",
+  ])
+    expect(doc.paths[path]?.get, `get ${path}`).toBeDefined();
+  for (const path of [
+    "/api/v1/users/{username}/repos",
+    "/api/v1/orgs/{org}/teams",
+    "/api/v1/orgs/{org}/teams/{team}/members",
+  ]) {
+    const get = doc.paths[path].get;
+    expect(get.parameters.filter((p: any) => p.in === "query").map((p: any) => p.name), path).toEqual(["limit", "cursor"]);
+    expect(get.summary, path).toContain("next_cursor");
+    expect(get.summary, path).not.toContain("bare array");
+  }
+});
