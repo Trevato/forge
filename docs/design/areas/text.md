@@ -17,6 +17,11 @@ quiet line under a card), and a page reaches for them instead of setting a colou
 - `.truncate` — one line that ends in an ellipsis rather than wrapping. Written by `ui.ts` (`envFacts()`'s URL) and
   pages such as `pages/apps.ts`, `pages/refs.ts` and `pages/explorer.ts`; styled in `style/base.ts`, capped at 34ch
   inside `.table` by `style/content.ts`.
+- `.nowrap` — keeps a short run (a token count, a figure with its unit) on one line without clipping it. Written by
+  `ui.ts` (`tokenCount()`, with `.num`); styled in `style/base.ts`.
+- `.break` — lets a long unbroken string (a URL, a hash, a path) wrap anywhere rather than overflow its box. Written by
+  `ui.ts`, `scope.ts` and pages such as `pages/backups.ts`, `pages/origins.ts` and `studio/feed.ts`; styled in
+  `style/base.ts`.
 - `.sr-only` — text for a screen reader only: a table's caption, a select's label, a fieldset's legend. Written by
   pages such as `pages/audit.ts`, `pages/pull.ts` and `pages/thread.ts`, and by `studio/app.ts` and
   `studio/review_act.ts`; styled in `style/base.ts`.

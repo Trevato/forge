@@ -133,7 +133,7 @@ export function tokenCount(
   basis: TokenBasis,
   kind?: "prose" | "code" | "data",
 ): Html {
-  return html`<span class="tok" title="${tokenNote(n, basis, kind)}"
+  return html`<span class="num nowrap" title="${tokenNote(n, basis, kind)}"
     >${formatTokens(n, basis)}</span
   >`;
 }

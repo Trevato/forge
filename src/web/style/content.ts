@@ -150,14 +150,12 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
   font-variant-numeric: tabular-nums; letter-spacing: 0.14em;
   text-align: center; user-select: all; word-break: break-all;
 }
-.break { overflow-wrap: anywhere; }
 [data-apps] { overflow-wrap: anywhere; }
 
 .bar > .device-code { flex: 1 1 auto; }
 
 .repo-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 
-.tok { white-space: nowrap; }
 
 .filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .filters form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
