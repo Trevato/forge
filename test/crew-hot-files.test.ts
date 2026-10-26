@@ -26,9 +26,13 @@ import {
   expectedFiles,
   HOT_PULLS,
   hotFiles,
+  holdHot,
   hotOverlap,
   learnPullFiles,
   standingHot,
+  WIDE_PULL,
+  widePulls,
+  wideSays,
 } from "../src/crew/hot_files.ts";
 import { readFeed } from "../src/feed/feed.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -191,5 +195,57 @@ describe("the picker holds a build on a hot file", () => {
     await driveRepo(app, fresh(repo));
     expect(standingHot(repo.id)).toBeUndefined();
     expect(readFeed(app.db, alice, { limit: 50 }).items.some((i) => i.id === `hot:${repo.id}`)).toBe(false);
+  });
+
+  test("a pull wider than WIDE_PULL counts toward no file's heat and is named", async () => {
+    const made = await createRepo(app, alice, { name: "wide", visibility: "private" });
+    if (!made.ok) throw new Error(String(made.error));
+    const repo = fresh(made.value);
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "src/hot.ts", content: "export const n = 0;\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const wide = async (n: number): Promise<Pull> => {
+      const files = Array.from({ length: WIDE_PULL + 1 }, (_, k) => ({
+        path: k === 0 ? "src/hot.ts" : `gen/${n}/f${k}.ts`,
+        content: `export const n = ${n};\n`,
+      }));
+      const branch = await commitToBranch(app, alice, fresh(repo), {
+        branch: `wide/${n}`,
+        base: "main",
+        message: `Wide ${n}`,
+        files,
+      });
+      if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+      const pull = await openPull(app, alice, fresh(repo), {
+        title: `Wide ${n}`,
+        body: "",
+        baseBranch: "main",
+        headBranch: `wide/${n}`,
+      });
+      if (!pull.ok) throw new Error(String(pull.error));
+      return pull.value;
+    };
+    const wides: Pull[] = [];
+    for (let n = 1; n <= HOT_PULLS; n++) wides.push(await wide(n));
+    wides.push(await pullOn(repo, 90, "src/hot.ts"));
+    await learnPullFiles(app, fresh(repo));
+    expect(hotFiles(repo.id).size).toBe(0);
+    expect(widePulls(repo.id)).toHaveLength(HOT_PULLS);
+    // No build is held, yet the feed still names them.
+    const work = issue(repo, "Add a flag to src/hot.ts");
+    expect(heldNow(app, fresh(repo)).by.hot_file).toEqual([]);
+    holdHot(repo.id, []);
+    const said = widePulls(repo.id).map((w) => `#${w.number} (${w.files} files)`).join(", ");
+    const post = readFeed(app.db, alice, { limit: 50 }).items.find((i) => i.id === `hot:${repo.id}`);
+    expect(post?.what).toBe(`too wide to count: ${said} - close or rebase.`);
+    expect(wideSays([{ number: 4840, files: 1081 }])).toBe("too wide to count: #4840 (1,081 files)");
+
+    // Four ordinary pulls plus one more on the same file still hold it.
+    for (let n = 91; n <= 94; n++) await pullOn(repo, n, "src/hot.ts");
+    await learnPullFiles(app, fresh(repo));
+    expect(hotFiles(repo.id)).toEqual(new Map([["src/hot.ts", 5]]));
+    expect(heldNow(app, fresh(repo)).by.hot_file.map((i) => i.number)).toEqual([work.number]);
   });
 });

@@ -33,7 +33,7 @@ import { chooseCandidates } from "./choose.ts";
 import { writeStamp } from "../core/write_clock.ts";
 import { Stamped } from "../kernel/stamped.ts";
 import { QUIET_WINDOW_MS, quietRunEventIds } from "./quiet.ts";
-import { hotSays, standingHot } from "../crew/hot_files.ts";
+import { hotSays, standingHot, standingWide, wideSays } from "../crew/hot_files.ts";
 import { ago } from "./rank.ts";
 import { askLinesFor } from "../web/studio/asks.ts";
 
@@ -278,10 +278,18 @@ function hotCandidates(writable: readonly Repo[]): Candidate[] {
   const out: Candidate[] = [];
   for (const repo of writable) {
     const standing = standingHot(repo.id);
-    if (standing === undefined) continue;
-    const n = standing.holds.length;
-    const first = standing.holds[0]!;
-    const what = `${n === 1 ? "1 build waits" : `${n} builds wait`} on hot files: ${hotSays(first)}${n > 1 ? ` And ${n - 1} more.` : ""}`;
+    const wide = standingWide(repo.id);
+    if (standing === undefined && wide === undefined) continue;
+    const wideSuffix = wide === undefined ? "" : wideSays(wide.wide);
+    let what: string;
+    if (standing === undefined) {
+      what = `${wideSuffix} - close or rebase.`;
+    } else {
+      const n = standing.holds.length;
+      const more = n > 1 ? ` And ${n - 1} more.` : "";
+      const held = `${n === 1 ? "1 build waits" : `${n} builds wait`} on hot files: ${hotSays(standing.holds[0]!)}${more}`;
+      what = wideSuffix === "" ? held : `${held} ${wideSuffix}.`;
+    }
     out.push({
       id: `hot:${repo.id}`,
       kind: "map",
@@ -289,7 +297,7 @@ function hotCandidates(writable: readonly Repo[]): Candidate[] {
       app: slug(repo),
       actorId: null,
       actor: null,
-      at: standing.at,
+      at: (standing ?? wide!).at,
       link: `${base(repo)}/map`,
       what: clip(what),
       urgency: 0,

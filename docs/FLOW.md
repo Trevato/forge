@@ -92,4 +92,6 @@ the repository paths its title and body name (`src/http/mcp.ts`,
 before the picker sorts. The tick line names the hot files (`hot=src/http/mcp.ts=61`),
 and each repository's writers see one post on the feed — on the web and
 through the MCP `feed` tool — saying which build waits on which file, gone
-when the hold lifts.
+when the hold lifts. A pull whose diff touches more than 60 files counts
+toward no file's heat and is named on the feed (`too wide to count: #4840
+(1,081 files)`), even when no build is held.

@@ -23,6 +23,13 @@ import { runGitCapture } from "../git/env.ts";
 /** A file this many open pulls touch is hot: no new build starts on it. */
 export const HOT_PULLS = 5;
 
+/**
+ * A pull whose diff touches more than this many files counts toward no file's
+ * heat (#6235): such a diff carries the base's history (a conflicted pull
+ * never rebased), not its own work, and would make every file hot.
+ */
+export const WIDE_PULL = 60;
+
 /** The most paths read from one issue: a list longer than this is a manifest, not a plan. */
 const MAX_EXPECTED = 40;
 
@@ -52,7 +59,7 @@ export interface HotFile {
 }
 
 /** Per repository, per open pull: the head and base it was read at, and the files. */
-const touched = new Map<string, Map<string, { at: string; files: readonly string[] }>>();
+const touched = new Map<string, Map<string, { at: string; number: number; files: readonly string[] }>>();
 
 const OID = /^[0-9a-f]{40,64}$/;
 
@@ -71,7 +78,7 @@ export async function learnPullFiles(app: App, repo: Repo): Promise<void> {
     .map((r) => r.id);
   const pulls = joinMany(app.db, [...getIssuesByIds(app.db, ids).values()]);
   const before = touched.get(repo.id) ?? new Map();
-  const after = new Map<string, { at: string; files: readonly string[] }>();
+  const after = new Map<string, { at: string; number: number; files: readonly string[] }>();
   for (const pull of pulls) {
     if (!OID.test(pull.headOid)) continue;
     const dir = await pullDir(app.db, app.reposRoot, repo, pull);
@@ -89,7 +96,7 @@ export async function learnPullFiles(app: App, repo: Repo): Promise<void> {
     }
     const out = await runGitCapture(["diff", "--name-only", "-z", at], { cwd: dir });
     if (out.code !== 0) continue;
-    after.set(pull.id, { at, files: out.stdout.split("\0").filter((f) => f !== "") });
+    after.set(pull.id, { at, number: pull.number, files: out.stdout.split("\0").filter((f) => f !== "") });
   }
   touched.set(repo.id, after);
 }
@@ -97,10 +104,33 @@ export async function learnPullFiles(app: App, repo: Repo): Promise<void> {
 /** Every file of `repo` that `HOT_PULLS` or more open pulls touch, with how many. */
 export function hotFiles(repoId: string): Map<string, number> {
   const counts = new Map<string, number>();
-  for (const { files } of touched.get(repoId)?.values() ?? [])
+  for (const { files } of touched.get(repoId)?.values() ?? []) {
+    if (files.length > WIDE_PULL) continue;
     for (const file of files) counts.set(file, (counts.get(file) ?? 0) + 1);
+  }
   for (const [file, n] of counts) if (n < HOT_PULLS) counts.delete(file);
   return counts;
+}
+
+/** An open pull too wide to count toward heat, with the files its diff touches. */
+export interface WidePull {
+  readonly number: number;
+  readonly files: number;
+}
+
+/** The open pulls of `repoId` wider than `WIDE_PULL`, widest first. */
+export function widePulls(repoId: string): WidePull[] {
+  return [...(touched.get(repoId)?.values() ?? [])]
+    .filter((p) => p.files.length > WIDE_PULL)
+    .map((p) => ({ number: p.number, files: p.files.length }))
+    .sort((a, b) => b.files - a.files || a.number - b.number);
+}
+
+/** `too wide to count: #4840 (1,081 files), #5460 (898 files)`, or "" when none. */
+export function wideSays(wide: readonly WidePull[]): string {
+  if (wide.length === 0) return "";
+  const list = wide.map((w) => `#${w.number} (${w.files.toLocaleString("en-US")} files)`).join(", ");
+  return `too wide to count: ${list}`;
 }
 
 /** The hot files `issue` expects to touch, hottest first. */
@@ -124,11 +154,22 @@ export interface HotHold {
   readonly files: readonly HotFile[];
 }
 
+/** The pulls too wide to count as the picker last saw them, per repository, held builds or not. */
+const standingWideBy = new Map<string, { at: string; wide: readonly WidePull[] }>();
+
+/** The pulls too wide to count in `repoId` as the picker last saw them, if any. */
+export function standingWide(repoId: string): { at: string; wide: readonly WidePull[] } | undefined {
+  return standingWideBy.get(repoId);
+}
+
 /** What the picker last held on hot files, per repository, and when. */
-const standing = new Map<string, { at: string; holds: readonly HotHold[] }>();
+const standing = new Map<string, { at: string; holds: readonly HotHold[]; wide: readonly WidePull[] }>();
 
 /** Remember the builds the picker holds on hot files in `repoId` now; none clears it. */
 export function holdHot(repoId: string, issues: readonly Issue[], at = new Date()): void {
+  const wide = widePulls(repoId);
+  if (wide.length === 0) standingWideBy.delete(repoId);
+  else standingWideBy.set(repoId, { at: at.toISOString(), wide });
   if (issues.length === 0) {
     standing.delete(repoId);
     return;
@@ -137,11 +178,14 @@ export function holdHot(repoId: string, issues: readonly Issue[], at = new Date(
   standing.set(repoId, {
     at: at.toISOString(),
     holds: issues.map((i) => ({ number: i.number, title: i.title, files: hotOverlap(i, hot) })),
+    wide,
   });
 }
 
 /** The builds held on hot files in `repoId` as the picker last said, if any. */
-export function standingHot(repoId: string): { at: string; holds: readonly HotHold[] } | undefined {
+export function standingHot(
+  repoId: string,
+): { at: string; holds: readonly HotHold[]; wide: readonly WidePull[] } | undefined {
   return standing.get(repoId);
 }
 
