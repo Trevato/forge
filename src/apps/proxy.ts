@@ -582,7 +582,7 @@ export async function proxyApp(
       !target.nested ||
       verifyGrant(runtime.app.config.dataDir, token, target)
     )
-      return grant(runtime, request, url, target);
+      return securityFloor(grant(runtime, request, url, target));
   }
   // The two doors an app links to: sign in sends the visitor to the forge,
   // which vouches for them and sends them back named; sign out drops the
@@ -591,23 +591,27 @@ export async function proxyApp(
     const open = new URL("/apps/open", runtime.options.forgeUrl);
     open.searchParams.set("host", request.headers.get("host") ?? "");
     open.searchParams.set("to", safePath(url.searchParams.get("to")));
-    return new Response(null, {
-      status: 303,
-      headers: { location: open.toString(), "cache-control": "no-store" },
-    });
+    return securityFloor(
+      new Response(null, {
+        status: 303,
+        headers: { location: open.toString(), "cache-control": "no-store" },
+      }),
+    );
   }
   if (url.pathname === "/__forge/signout" && !target.nested) {
     const secure =
       url.protocol === "https:" ||
       request.headers.get("x-forwarded-proto") === "https";
-    return new Response(null, {
-      status: 303,
-      headers: {
-        location: safePath(url.searchParams.get("to")),
-        "set-cookie": `${grantCookieName(target)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure ? "; Secure" : ""}`,
-        "cache-control": "no-store",
-      },
-    });
+    return securityFloor(
+      new Response(null, {
+        status: 303,
+        headers: {
+          location: safePath(url.searchParams.get("to")),
+          "set-cookie": `${grantCookieName(target)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure ? "; Secure" : ""}`,
+          "cache-control": "no-store",
+        },
+      }),
+    );
   }
   // The pill's fourth door: who of the crew is working on this app now,
   // for the person the app's own grant names, read once as the pill opens.
@@ -637,13 +641,14 @@ export async function proxyApp(
     );
     return withPhases(
       request,
-      new Response(body, {
-        headers: {
-          "content-type": "application/json;charset=utf-8",
-          "cache-control": "no-store",
-          "x-content-type-options": "nosniff",
-        },
-      }),
+      securityFloor(
+        new Response(body, {
+          headers: {
+            "content-type": "application/json;charset=utf-8",
+            "cache-control": "no-store",
+          },
+        }),
+      ),
     );
   }
   // The forge's small page on the app's own host: the way back when the pill
@@ -666,10 +671,12 @@ export async function proxyApp(
     )
       return securityFloor(new Response("not found", { status: 404 }));
     if (request.method !== "GET" && request.method !== "HEAD")
-      return new Response(null, {
-        status: 405,
-        headers: { allow: "GET, HEAD", "x-content-type-options": "nosniff" },
-      });
+      return securityFloor(
+        new Response(null, {
+          status: 405,
+          headers: { allow: "GET, HEAD" },
+        }),
+      );
     const tell = timePhase(request, "app", () =>
       tellLink(
         runtime.app.db,
@@ -710,14 +717,18 @@ export async function proxyApp(
         originFor(runtime, target, request.headers.get("host") ?? undefined) +
           safePath(url.searchParams.get("from")),
       );
-      return new Response(null, {
-        status: 303,
-        headers: { location: report.toString(), "cache-control": "no-store" },
-      });
+      return securityFloor(
+        new Response(null, {
+          status: 303,
+          headers: { location: report.toString(), "cache-control": "no-store" },
+        }),
+      );
     }
   }
   // The forge button's feedback door: notes from visitors, their status, the
-  // owner's moderation. Answered here, never reaching the app.
+  // owner's moderation. Answered here, never reaching the app. A path under
+  // /__forge/note that is none of its doors (`/__forge/notebook`) is the
+  // app's own, and goes through below with the app's headers, not the floor.
   if (url.pathname.startsWith("/__forge/note") && !target.nested) {
     const cookie = cookieValue(request, grantCookieName(target));
     const signed =
@@ -746,7 +757,7 @@ export async function proxyApp(
         request.headers.get("x-forwarded-proto") === "https",
       source: clientBucket(request),
     });
-    if (answer !== undefined) return answer;
+    if (answer !== undefined) return securityFloor(answer);
   }
   // The beacon's report: filed against this app, never waking it. A private
   // app (or a sealed pull's preview) admits only the people it admits, so
@@ -754,16 +765,19 @@ export async function proxyApp(
   if (url.pathname === "/__forge/measure" && !target.nested) {
     if (target.app.access === "private" || sealedPull(runtime, target) !== undefined) {
       const admitted = admit(runtime, request, target);
-      if (!admitted.ok) return admitted.error;
+      if (!admitted.ok) return securityFloor(admitted.error);
     }
-    return appMeasure(runtime.app, request, target);
+    return securityFloor(await appMeasure(runtime.app, request, target));
   }
   // An environment asleep wakes for the request that wants it, and the
   // request waits the second that takes rather than seeing a closed door.
   if (runtime.envStatus(target.app, target.env)?.state === "asleep")
     await runtime.wake(target.app, target.env);
   const admitted = admit(runtime, request, target);
-  if (!admitted.ok) return admitted.error;
+  if (!admitted.ok)
+    return url.pathname.startsWith("/__forge/")
+      ? securityFloor(admitted.error)
+      : admitted.error;
   const { status, port, grant: vouched } = admitted.value;
   runtime.touch(target.app, target.env);
 

@@ -589,4 +589,37 @@ describe("the forge button takes notes from anyone", () => {
     expect(toolbarJs).toContain("What is this?");
     expect(toolbarJs).toContain("font:16px");
   });
+
+  test("an unknown /__forge/note* path is the app's, not the forge's", async () => {
+    const res = await at("notes", "/__forge/notebook");
+    // No app runs behind it here, so the proxy's own "unavailable" answers;
+    // what matters is that the notes door did not claim it.
+    expect(await res.text()).not.toContain("not_found");
+    expect(res.headers.get("content-type") ?? "").not.toContain("json");
+  });
+
+  test("every /__forge/ answer wears the security floor, signed in and out", async () => {
+    const signedIn = cookieOf(await post("Hello", "", "10.0.0.77"));
+    const paths = ["/__forge/", "/__forge/crew", "/__forge/notes", "/__forge/note", "/__forge/note/moderate", "/__forge/measure", "/__forge/signin", "/__forge/signout", "/__forge/report", "/__forge/grant", "/__forge/grant?t=bad"];
+    for (const slug of ["notes", "diary"]) {
+      for (const cookie of ["", signedIn]) {
+        for (const path of paths) {
+          for (const method of ["GET", "POST"]) {
+            const res = await at(slug, path, { method, ...(method === "POST" ? { body: "{}" } : {}) }, cookie, "10.0.0.78");
+            const who = `${method} ${slug}${path} ${cookie ? "in" : "out"} -> ${res.status}`;
+            expect(res.headers.get("x-content-type-options"), who).toBe("nosniff");
+            expect(res.headers.get("referrer-policy"), who).toBeTruthy();
+            const csp = res.headers.get("content-security-policy");
+            expect(csp, who).toBeTruthy();
+            if (!(res.headers.get("content-type") ?? "").startsWith("text/html"))
+              expect(csp, who).toBe("default-src 'none'; frame-ancestors 'none'; base-uri 'none'");
+            else {
+              expect(csp, who).toContain("default-src");
+              expect(csp, who).toContain("frame-ancestors 'none'");
+            }
+          }
+        }
+      }
+    }
+  });
 });
