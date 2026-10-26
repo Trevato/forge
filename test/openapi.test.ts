@@ -447,6 +447,24 @@ test("the origin applications are described, and a client secret is written, nev
   expect(JSON.stringify(add.responses["201"])).not.toContain("clientSecret");
 });
 
+test("labels made and removed, a commit's check and a file read by path are described", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const R = "/api/v1/repos/{owner}/{name}";
+  const make = doc.paths[`${R}/labels`].post;
+  expect(make.security).toBeDefined();
+  expect(Object.keys(make.requestBody.content["application/json"].schema.properties)).toEqual(["name", "color"]);
+  expect(make.responses["201"]).toBeDefined();
+  const del = doc.paths[`${R}/labels/{id}`].delete;
+  expect(del.security).toBeDefined();
+  expect(del.responses["204"]).toBeDefined();
+  const check = doc.paths[`${R}/commits/{oid}/check`].get;
+  expect(check.security).toBeUndefined();
+  expect(check.parameters.find((p: any) => p.name === "oid").in).toBe("path");
+  const read = doc.paths[`${R}/contents/{path}`].get;
+  expect(read.security).toBeUndefined();
+  expect(read.parameters.map((p: any) => p.name)).toEqual(["owner", "name", "path", "ref"]);
+});
+
 test("the feed, chips and asks routes are described, and the bulk default is a preview", () => {
   const doc = openapi("https://f.test", "1") as any;
   const want: Record<string, string[]> = {

@@ -9,7 +9,6 @@ import { ROUTES } from "../src/contract/openapi.ts";
  */
 const NOT_YET_DESCRIBED: readonly string[] = [
   "DELETE /api/v1/orgs/{}/teams/{}/members/{}",
-  "DELETE /api/v1/repos/{}/{}/labels/{}",
   "DELETE /api/v1/user/keys/{}",
   "DELETE /api/v1/user/pins/{}/{}",
   "GET /api/v1/agents",
@@ -22,8 +21,6 @@ const NOT_YET_DESCRIBED: readonly string[] = [
   "GET /api/v1/orgs/{}/teams",
   "GET /api/v1/orgs/{}/teams/{}/members",
   "GET /api/v1/repos/{}/{}/app/{}/open",
-  "GET /api/v1/repos/{}/{}/commits/{}/check",
-  "GET /api/v1/repos/{}/{}/contents/{}",
   "GET /api/v1/repos/{}/{}/labels",
   "GET /api/v1/repos/{}/{}/milestones",
   "GET /api/v1/repos/{}/{}/milestones/{}",
@@ -49,7 +46,6 @@ const NOT_YET_DESCRIBED: readonly string[] = [
   "POST /api/v1/asks/proposal/{}/{}",
   "POST /api/v1/feed/chips",
   "POST /api/v1/repos/{}/{}/issues/{}/dependencies/{}/confirm",
-  "POST /api/v1/repos/{}/{}/labels",
   "POST /api/v1/repos/{}/{}/milestones/{}/limb",
   "POST /api/v1/repos/{}/{}/prompts/{}/run",
   "POST /api/v1/repos/{}/{}/proposal-tokens",

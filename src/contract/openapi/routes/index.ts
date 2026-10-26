@@ -15,6 +15,7 @@ export { route as deleteApiV1ReposOwnerNameCrewUsername } from "./deleteApiV1Rep
 export { route as deleteApiV1ReposOwnerNameEgressGrants } from "./deleteApiV1ReposOwnerNameEgressGrants.ts";
 export { route as deleteApiV1ReposOwnerNameHooksId } from "./deleteApiV1ReposOwnerNameHooksId.ts";
 export { route as deleteApiV1ReposOwnerNameIssuesNumberDependenciesBlocker } from "./deleteApiV1ReposOwnerNameIssuesNumberDependenciesBlocker.ts";
+export { route as deleteApiV1ReposOwnerNameLabelsId } from "./deleteApiV1ReposOwnerNameLabelsId.ts";
 export { route as deleteApiV1ReposOwnerNameMilestonesNumberWatch } from "./deleteApiV1ReposOwnerNameMilestonesNumberWatch.ts";
 export { route as deleteApiV1ReposOwnerNamePromptsId } from "./deleteApiV1ReposOwnerNamePromptsId.ts";
 export { route as deleteApiV1ReposOwnerNamePullsNumberHold } from "./deleteApiV1ReposOwnerNamePullsNumberHold.ts";
@@ -78,7 +79,9 @@ export { route as getApiV1ReposOwnerNameAppProductionOpen } from "./getApiV1Repo
 export { route as getApiV1ReposOwnerNameBranches } from "./getApiV1ReposOwnerNameBranches.ts";
 export { route as getApiV1ReposOwnerNameCommits } from "./getApiV1ReposOwnerNameCommits.ts";
 export { route as getApiV1ReposOwnerNameCommitsOid } from "./getApiV1ReposOwnerNameCommitsOid.ts";
+export { route as getApiV1ReposOwnerNameCommitsOidCheck } from "./getApiV1ReposOwnerNameCommitsOidCheck.ts";
 export { route as getApiV1ReposOwnerNameContents } from "./getApiV1ReposOwnerNameContents.ts";
+export { route as getApiV1ReposOwnerNameContentsPath } from "./getApiV1ReposOwnerNameContentsPath.ts";
 export { route as getApiV1ReposOwnerNameCrew } from "./getApiV1ReposOwnerNameCrew.ts";
 export { route as getApiV1ReposOwnerNameDecisions } from "./getApiV1ReposOwnerNameDecisions.ts";
 export { route as getApiV1ReposOwnerNameEgressGrants } from "./getApiV1ReposOwnerNameEgressGrants.ts";
@@ -212,6 +215,7 @@ export { route as postApiV1ReposOwnerNameIssues } from "./postApiV1ReposOwnerNam
 export { route as postApiV1ReposOwnerNameIssuesNumberComments } from "./postApiV1ReposOwnerNameIssuesNumberComments.ts";
 export { route as postApiV1ReposOwnerNameIssuesNumberDependencies } from "./postApiV1ReposOwnerNameIssuesNumberDependencies.ts";
 export { route as postApiV1ReposOwnerNameIssuesNumberPrivate } from "./postApiV1ReposOwnerNameIssuesNumberPrivate.ts";
+export { route as postApiV1ReposOwnerNameLabels } from "./postApiV1ReposOwnerNameLabels.ts";
 export { route as postApiV1ReposOwnerNameMakeItYours } from "./postApiV1ReposOwnerNameMakeItYours.ts";
 export { route as postApiV1ReposOwnerNameOriginReconnect } from "./postApiV1ReposOwnerNameOriginReconnect.ts";
 export { route as postApiV1ReposOwnerNamePlan } from "./postApiV1ReposOwnerNamePlan.ts";
