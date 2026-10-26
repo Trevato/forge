@@ -58,7 +58,6 @@ the same line (#4888).
   - `.policy-line`
   - `.repo-actions`
   - `.repo-desc`
-  - `.repo-title`
   - `.slash`
 - **`style/content.ts`, apps, runs, and the crew** — run pages, their logs and checks (a pull's look is §5's **look**).
 - **`pages/board.ts`** — the board itself is §5's **board**; the spend tables `spend.ts` draws wear §5's `.table` and `.stack`, no class of their own
