@@ -1,5 +1,6 @@
 import { listPinned as listPinnedPanels, movePinned, pinPanel, unpinPanel } from "../../../actions/board-pins.ts";
 import { good, bad, type Tool, boardRefused, mayBoards } from "../shared.ts";
+import { PIN_OP_WORDS } from "../../../core/arg_words.ts";
 
 export const tool: Tool = {
   name: "board_pins",
@@ -29,7 +30,7 @@ export const tool: Tool = {
       : op === "unpin" ? unpinPanel(ctx.app, user, slug, title)
       : op === "move" ? movePinned(ctx.app, user, slug, title, args["by"])
       : undefined;
-    if (!done) return bad("invalid", "op must be pin, unpin or move");
+    if (!done) return bad("invalid", PIN_OP_WORDS);
     return done.ok ? good({ ...done.value }) : bad(done.error, "that could not be pinned");
   },
 };

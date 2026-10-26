@@ -473,6 +473,7 @@ import { REPORT_RECEIVED } from "../actions/report_words.ts";
 import { ADMIN_WORDS } from "../actions/admin_words.ts";
 import { SETTING_WORDS } from "../actions/setting_words.ts";
 import { SPEND_WORDS } from "../actions/spend_words.ts";
+import { ANSWER_WORDS, ENABLED_WORDS, ORDER_WORDS, PIN_OP_WORDS, SIGNUP_WORDS, VISIBILITY_WORDS } from "../core/arg_words.ts";
 
 /** Take the parent's updates for `repo` and answer as the API does, for every route that asks. */
 async function respondTake(ctx: Ctx, repo: Repo): Promise<Response> {
@@ -1598,7 +1599,7 @@ export function apiRoutes(router: Router<Handler>): void {
       : op === "unpin" ? unpinPanel(ctx.app, ctx.auth.user, slug, title)
       : op === "move" ? movePinned(ctx.app, ctx.auth.user, slug, title, by)
       : undefined;
-    if (!done) return apiError("invalid", 422, "op must be pin, unpin or move");
+    if (!done) return apiError("invalid", 422, PIN_OP_WORDS);
     if (done.ok) return json({ ...done.value });
     const e: PinError = done.error;
     return e === "not_found" ? notFound() : apiError(e, 422, e === "too_many" ? "too many pins" : "that is not a panel");
@@ -1796,7 +1797,7 @@ export function apiRoutes(router: Router<Handler>): void {
       const set = changeSignup(ctx.app, ctx.auth.user, input.signup);
       if (set.ok) return json({ signup: set.value });
       if (set.error === "not_found") return notFound();
-      return apiError(set.error, 422, "signup is open, invite or closed");
+      return apiError(set.error, 422, SIGNUP_WORDS);
     }
     const quotas = input.quotas;
     if (typeof quotas !== "object" || quotas === null || Array.isArray(quotas))
@@ -2463,7 +2464,7 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!repo) return notFound();
     const input = await body(ctx.request);
     if (typeof input.enabled !== "boolean")
-      return apiError("bad_enabled", 422, "enabled is true or false");
+      return apiError("bad_enabled", 422, ENABLED_WORDS);
     const saved = setFollowUpstream(ctx.app, ctx.auth.user, repo, {
       url: str(input.url),
       branch: str(input.branch),
@@ -3874,7 +3875,7 @@ export function apiRoutes(router: Router<Handler>): void {
       return apiError("invalid_show", 422, "show is all, unshipped or flagged");
     const order = ctx.url.searchParams.get("order");
     if (order !== null && !isAskedOrder(order))
-      return apiError("invalid_order", 422, "order is oldest or newest");
+      return apiError("invalid_order", 422, ORDER_WORDS);
     const read = timePhase(ctx.request, "asked", () => {
       const repos = askedRepos(ctx.app.db, ctx.auth.user, ctx.url.searchParams.get("repo"));
       return {
@@ -4572,7 +4573,7 @@ export function apiRoutes(router: Router<Handler>): void {
       const input = await body(ctx.request);
       const answer = str(input.answer);
       if (answer !== "like" && answer !== "dislike")
-        return apiError("invalid_answer", 422, "answer is like or dislike");
+        return apiError("invalid_answer", 422, ANSWER_WORDS);
       const voted = voteVariant(
         ctx.app,
         ctx.auth.user,
@@ -5404,7 +5405,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const name = str(input.name);
     const visibility = str(input.visibility);
     if (visibility !== "" && visibility !== "public" && visibility !== "private")
-      return apiError("invalid", 422, "visibility is public or private");
+      return apiError("invalid", 422, VISIBILITY_WORDS);
     const made = await makeItYours(ctx.app, ctx.auth.user, repo, {
       dryRun,
       ...(name === "" ? {} : { name }),

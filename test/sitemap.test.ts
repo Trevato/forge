@@ -34,7 +34,8 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-const phases = (h: string) => [...h.matchAll(/(\w+);dur=([\d.]+)/g)].reduce((n, m) => n + Number(m[2]), 0);
+/** The whole request's time: `app` already holds the named phases, so they are not added again. */
+const total = (h: string) => Number(/(?:^|, )app;dur=([\d.]+)/.exec(h)?.[1] ?? Infinity);
 
 test("lists the 100 public repositories and none of the 20 private ones, built in under 15 ms", async () => {
   let best = Infinity;
@@ -44,7 +45,7 @@ test("lists the 100 public repositories and none of the 20 private ones, built i
     forgetListings(app.db);
     res = await fetch(`${servers.url}/sitemap.xml`);
     body = await res.text();
-    best = Math.min(best, phases(res.headers.get("server-timing") ?? ""));
+    best = Math.min(best, total(res.headers.get("server-timing") ?? ""));
   }
   expect(body.match(/\/alice\/pub\d+</g)?.length).toBe(100);
   expect(body).not.toContain("priv");

@@ -1,5 +1,6 @@
 import { updateRepoSettings } from "../../../actions/repos.ts";
 import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
+import { VISIBILITY_WORDS } from "../../../core/arg_words.ts";
 
 export const tool: Tool = {
   name: "repo_settings",
@@ -24,7 +25,7 @@ export const tool: Tool = {
     if (description !== undefined && typeof description !== "string")
       return bad("invalid", "description is text");
     if (visibility !== undefined && visibility !== "public" && visibility !== "private")
-      return bad("invalid", "visibility is public or private");
+      return bad("invalid", VISIBILITY_WORDS);
     const updated = await updateRepoSettings(ctx.app, user, repo, {
       ...(visibility !== undefined ? { visibility } : {}),
       ...(description !== undefined ? { description } : {}),

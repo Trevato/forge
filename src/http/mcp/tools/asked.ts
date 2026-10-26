@@ -1,6 +1,7 @@
 import { askedIn, askedJson, askedRepos, isAskedOrder, isAskedShow } from "../../../core/asked.ts";
 import { streamJson, thoughtStream } from "../../../core/thought_stream.ts";
 import { good, bad, type Tool, str, REPO_ARG } from "../shared.ts";
+import { ORDER_WORDS } from "../../../core/arg_words.ts";
 
 export const tool: Tool = {
   name: "asked",
@@ -22,7 +23,7 @@ export const tool: Tool = {
       return bad("invalid_show", "show is unshipped, flagged or all");
     const order = args["order"] ?? "oldest";
     if (!isAskedOrder(order))
-      return bad("invalid_order", "order is oldest or newest");
+      return bad("invalid_order", ORDER_WORDS);
     const spec = args["repo"] === undefined ? null : str(args["repo"]);
     const repos = askedRepos(ctx.app.db, user, spec);
     if (spec !== null && repos.length === 0)

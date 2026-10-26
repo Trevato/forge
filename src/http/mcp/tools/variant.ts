@@ -3,6 +3,7 @@ import { mayView } from "../../../core/sealed.ts";
 import { getPull } from "../../../core/pulls.ts";
 import { VOTE_NOT_RECORDED } from "../../../actions/board_words.ts";
 import { good, bad, type Tool, str, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
+import { ANSWER_WORDS } from "../../../core/arg_words.ts";
 
 export const tool: Tool = {
   name: "variant",
@@ -32,7 +33,7 @@ export const tool: Tool = {
       return bad("no_such_pull", `no pull #${String(n)}`);
     const answer = args["answer"];
     if (answer !== "like" && answer !== "dislike")
-      return bad("invalid_answer", "answer is like or dislike");
+      return bad("invalid_answer", ANSWER_WORDS);
     const voted = voteVariant(
       ctx.app,
       user,

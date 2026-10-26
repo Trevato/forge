@@ -43,6 +43,7 @@ import type { FleetError } from "../actions/fleet.ts";
 import { notePhase, takeSessionTime, timePhase } from "../core/route_timing.ts";
 import type { Handler } from "./context.ts";
 import type { Router } from "./router.ts";
+import { HIDDEN_WORDS } from "../core/arg_words.ts";
 import {
   apiError,
   body,
@@ -129,7 +130,7 @@ export function feedRoutes(router: Router<Handler>): void {
     const input = await body(ctx.request);
     const value = str(input.value);
     if (typeof input.hidden !== "boolean")
-      return apiError("invalid_hidden", 422, "hidden is true or false");
+      return apiError("invalid_hidden", 422, HIDDEN_WORDS);
     if (input.kind === "kind") {
       if (!isKindChip(value))
         return apiError("invalid_chip", 422, "that kind has no chip");
