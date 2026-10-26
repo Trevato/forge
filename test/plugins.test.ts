@@ -85,3 +85,27 @@ describe("the OpenCode plugin module", () => {
     }
   });
 });
+
+/** The verbs a command offers: the first word of each `- <verb>` line. */
+const verbsOf = (text: string): string[] => [...text.matchAll(/^- `?([a-z]+)/gm)].map((m) => m[1]!).sort();
+
+/** The verbs in one command but not the other, either way. */
+const verbDiff = (a: string, b: string): { onlyA: string[]; onlyB: string[] } => {
+  const va = verbsOf(a);
+  const vb = verbsOf(b);
+  return { onlyA: va.filter((v) => !vb.includes(v)), onlyB: vb.filter((v) => !va.includes(v)) };
+};
+
+describe("the two plugin commands offer the same verbs", () => {
+  test("Claude Code and OpenCode have the same set", () => {
+    expect(verbsOf(claudeText())).toEqual(["decide", "plan", "status", "tell"]);
+    expect(verbDiff(claudeText(), opencodeText())).toEqual({ onlyA: [], onlyB: [] });
+  });
+
+  test("a command missing a verb fails the comparison", () => {
+    const full = "- tell <app>: x\n- status: y\n- plan [approve]: z";
+    const missing = "- tell <app>: x\n- status: y";
+    expect(verbDiff(full, missing)).toEqual({ onlyA: ["plan"], onlyB: [] });
+    expect(verbDiff(missing, full)).toEqual({ onlyA: [], onlyB: ["plan"] });
+  });
+});
