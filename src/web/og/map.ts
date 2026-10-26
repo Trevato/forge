@@ -109,8 +109,14 @@ export function mapInput(title: string, graph: Graph, marks: Marks): CardInput {
   const readySet = new Set(ready.map((r) => r.issue.id));
   const words = new Map(graph.issues.map((i) => [i.id, wordFor(i, readySet, marks)]));
   const open = graph.issues.filter((i) => i.state === "open").length;
+  // The thumbnail draws what is open: done issues are counted in the caption, not drawn.
+  const live = new Set(graph.issues.filter((i) => i.state === "open").map((i) => i.id));
   const figure = graphFigure(
-    graph,
+    {
+      ...graph,
+      issues: graph.issues.filter((i) => live.has(i.id)),
+      edges: graph.edges.filter((e) => live.has(e.issueId) && live.has(e.blockedById)),
+    },
     words,
     path.map((i) => i.id),
   );
