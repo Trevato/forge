@@ -104,6 +104,7 @@ import { previewEnv } from "../../apps/data.ts";
 import { specFindings } from "./pull-spec.ts";
 import { pullPreviewFindings } from "../../core/preview_findings.ts";
 import { crewActivityCard } from "./runs.ts";
+import { nextOfPull } from "../../flow/next_actor.ts";
 import { holdCard } from "../studio/hold.ts";
 import {
   changeHead,
@@ -949,7 +950,8 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
       compact: true,
       ownTitle: true,
     })}
-    ${changeHead(ctx, repo, pull)} ${changeTabs(repo, pull, "files")}
+    ${changeHead(ctx, repo, pull, nextOfPull(ctx.app.db, pull, { headOid: status.headOid, conflicts: status.conflicts.length }))}
+    ${changeTabs(repo, pull, "files")}
     <p class="files-where muted small" id="files">
       <span class="mono">${headLabel} → ${pull.baseBranch}</span>
       <span class="sep" aria-hidden="true">·</span>

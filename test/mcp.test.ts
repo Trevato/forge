@@ -1231,6 +1231,7 @@ describe("the forge over MCP", () => {
     expect(card.rows.some((r: any) => r.label === "Preview")).toBe(false);
     const text = JSON.parse(body.result.content[0].text);
     expect(text.title).toBe("Card wire");
+    expect(text.next).toEqual({ who: "reviewer", why: "no review yet" });
     expect("card" in text).toBe(false);
   });
 

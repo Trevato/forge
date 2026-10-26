@@ -88,6 +88,7 @@ import { previewVision } from "../../crew/vision.ts";
 import { visionPreviewCard } from "./direction.ts";
 import { holdCard } from "./hold.ts";
 import { pullMayRun } from "../../core/pull_trust.ts";
+import { nextOfPull, type Next } from "../../flow/next_actor.ts";
 import { changeHref } from "./nouns.ts";
 import { pullWord, servingHistory, wordBadge, type WordCtx } from "./words.ts";
 
@@ -191,7 +192,7 @@ function reviewEntry(
 /** A change's head, the same on both of its tabs: the title, its state,
  * who opened it and in answer to whom, where it came from, and what the
  * crew spent on it. */
-export function changeHead(ctx: Ctx, repo: Repo, pull: Pull): Html {
+export function changeHead(ctx: Ctx, repo: Repo, pull: Pull, next: Next | null = null): Html {
   const who = toldBy(ctx.app.db, pull);
   const marks = marksByName(ctx.app.db, [pull.authorName, who ?? ""]);
   return html`<div class="page-head">
@@ -229,6 +230,10 @@ export function changeHead(ctx: Ctx, repo: Repo, pull: Pull): Html {
           >`,
       )}
     </div>
+    ${when(
+      next,
+      (n) => html`<p class="next-actor muted small">Next: ${n.who}, ${n.why}.</p>`,
+    )}
   </div>`;
 }
 
@@ -597,7 +602,8 @@ async function changeConversation(
       compact: true,
       ownTitle: true,
     })}
-    ${changeHead(ctx, repo, pull)} ${changeTabs(repo, pull, "change")}
+    ${changeHead(ctx, repo, pull, status === undefined ? null : nextOfPull(db, pull, { headOid, conflicts: status.conflicts.length }))}
+    ${changeTabs(repo, pull, "change")}
     ${when(siblings.length > 0, () =>
       html`<p class="muted small variant-link">
         <a href="${base}/variants/${pull.variantGroup ?? ""}"

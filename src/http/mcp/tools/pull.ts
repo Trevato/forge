@@ -5,12 +5,13 @@ import { getPull, pullDir, pullMergeState } from "../../../core/pulls.ts";
 import { previewEnv } from "../../../apps/data.ts";
 import { checkStale } from "../../../checks/stale.ts";
 import { checkSummary } from "../../../core/runs.ts";
+import { nextOfPull } from "../../../flow/next_actor.ts";
 import { appView } from "../../../actions/apps.ts";
 import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
 
 export const tool: Tool = {
   name: "pull",
-  doc: "`{ repo, number }`: a pull's title, state, head and base, and for an open pull whether it merges into the base's current head (`mergeable`) and the paths that stop it (`conflicts`), and `check: { state, baseOid }`: the latest check's state and the base tip it was merged with (empty when it merged nothing); `mergeable` and `conflicts` are the same fields as `GET …/pulls/:number`, `check` is `state` and `run.baseOid` from `GET …/pulls/:number/checks`; draws the `ui://forge/pull` card: `#N title`, state with check and conflicts while open, `head → base` linked to the pull, and the preview link when the pull has an environment",
+  doc: "`{ repo, number }`: a pull's title, state, head and base, and for an open pull whether it merges into the base's current head (`mergeable`) and the paths that stop it (`conflicts`), and `next: { who, why }` (open only; who acts next: builder, reviewer, queue or person), and `check: { state, baseOid }`: the latest check's state and the base tip it was merged with (empty when it merged nothing); `mergeable` and `conflicts` are the same fields as `GET …/pulls/:number`, `check` is `state` and `run.baseOid` from `GET …/pulls/:number/checks`; draws the `ui://forge/pull` card: `#N title`, state with check and conflicts while open, `head → base` linked to the pull, and the preview link when the pull has an environment",
   description:
     "A pull: title, state, head, base; open: `mergeable`, `conflicts`, `proposal`, `checkStale`, `check`.",
   inputSchema: {
@@ -48,6 +49,10 @@ export const tool: Tool = {
       proposal: pullProposalOf(ctx.app.db, pull.id) ?? null,
       check: { state: check.state, baseOid: check.run?.baseOid ?? "" },
       checkStale: stale,
+      next: nextOfPull(ctx.app.db, pull, {
+        headOid: pull.headOid,
+        conflicts: state?.conflicts?.length ?? 0,
+      }),
       ...(state ?? {}),
     });
     // What the card needs and the text does not say: where the pull lives
