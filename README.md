@@ -411,4 +411,6 @@ This page is the front door. Everything else is a file of its own under
 - [`docs/DESIGN.md`](docs/DESIGN.md) — the design system's spine; its sections are under `docs/design/sections/`.
 - [`docs/SPIKE-CLOUDFLARE.md`](docs/SPIKE-CLOUDFLARE.md), [`docs/AUDIT-MANY-HANDS.md`](docs/AUDIT-MANY-HANDS.md), [`docs/BACKLOG.md`](docs/BACKLOG.md) and [`docs/research/`](docs/research/) — a spike, an audit, a backlog and research notes, kept as written.
 
+The terminal's palette has `Signed in` for anyone signed in: your browsers, tokens and this terminal's key, with when each was last seen; `d` signs the selected browser out after a confirm, as `/settings` and MCP `sessions` do (`docs/CREW.md`, "Where you are signed in").
+
 `/changelog` lists the last 30 releases of `FORGE_REPO` (public only) with their pulls, for anyone; the terminal's palette has `Changelog` for the same list (`docs/features/changelog.md`).

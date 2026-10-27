@@ -60,6 +60,7 @@ import { peopleScreen } from "./screens/people.ts";
 import { modelCeilingPrompt, modelGrantPrompt, modelScreen } from "./screens/model.ts";
 import { proposalTokensPrompt } from "./screens/proposal_tokens.ts";
 import { invitesScreen } from "./screens/invites.ts";
+import { signInsScreen } from "./screens/signins.ts";
 import { quotasScreen } from "./screens/quotas.ts";
 import { teamsScreen } from "./screens/teams.ts";
 import { domainsScreen } from "./screens/domains.ts";
@@ -248,6 +249,13 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
           id: "account",
           title: "Account settings",
           run: () => openOnWeb(session, ctx, "/settings", "Account settings"),
+        },
+        // Settings → Sessions and MCP `sessions`, in the terminal (#7237).
+        {
+          id: "signins",
+          title: "Signed in",
+          hint: "your browsers and tokens; d signs a browser out",
+          run: () => ctx.push(signInsScreen(session, ctx)),
         },
       );
     // The forge's own faults, as the board's strip shows them: a site admin's.
