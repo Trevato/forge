@@ -44,7 +44,7 @@ import {
   type Origin,
 } from "../core/origins.ts";
 import { getPull, type Pull } from "../core/pulls.ts";
-import { getRepoById, type Repo } from "../core/repos.ts";
+import { deleteRepo as destroyRepo, getRepoById, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { isSafeRef } from "../git/guard.ts";
 import { repoDir } from "../git/repos.ts";
@@ -70,6 +70,13 @@ import { requireUser } from "./access.ts";
  * request does not hang on the pathological one.
  */
 const FORK_DEADLINE_MS = 30_000;
+
+/**
+ * The deadline `forkOrigin` uses when its caller names none. Mutable for the
+ * same reason `firstFetchRetry` is: a test that wants the timeout shortens it
+ * and puts back what it found.
+ */
+export const forkDeadline: { ms: number } = { ms: FORK_DEADLINE_MS };
 
 /** Backoff between polls, in ms; the last value repeats until the deadline. */
 const FORK_BACKOFF = [250, 500, 1_000, 2_000, 3_000] as const;
@@ -160,7 +167,7 @@ export async function forkOrigin(
           ? await awaitFork(
               provider.value,
               `${origin.login}/${name}`,
-              options.waitMs ?? FORK_DEADLINE_MS,
+              options.waitMs ?? forkDeadline.ms,
             )
           : undefined;
       if (
@@ -179,7 +186,7 @@ export async function forkOrigin(
       const ready = await awaitFork(
         provider.value,
         asked.value.fullName,
-        options.waitMs ?? FORK_DEADLINE_MS,
+        options.waitMs ?? forkDeadline.ms,
       );
       if (!ready.ok) return ready;
       remote = ready.value;
@@ -230,6 +237,13 @@ export async function forkOrigin(
   }
 
   const done = await settled(job.id);
+  // A clone that failed leaves an empty repository behind, which is right for
+  // a mirror someone asked for (they can retry it) and wrong for a workbench
+  // nobody will see: the work cannot start, so none of it stays.
+  if (done?.stage === "failed" && done.repo !== undefined) {
+    await destroyRepo(app.db, app.reposRoot, done.repo);
+    return ok({ remote, mirror: undefined, job, existed });
+  }
   const mirror = done?.repo
     ? getRepoById(app.db, done.repo.id)
     : localMirror(app, origin, remote.fullName);
