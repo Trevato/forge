@@ -33,6 +33,10 @@ child's heartbeat last reported it.
 Each agent's scorecard — pulls landed of opened, review rounds, red checks,
 reverts, time to land — is on Settings → Crew (`/settings/crew`) and in the
 terminal's palette as "Crew scorecard per agent"; both are a forge admin's only.
+The terminal's scorecard also ends each agent's row with `spend $ 5h · today · 7d`,
+its cost over the last 5 hours, since 00:00 UTC and the last 7 days, as
+`/settings/spend` reads it; `—` means nothing was spent in that span (`spend —`,
+in all three).
 Settings → Crew also shows, each only when it has something, a "Handed to the
 planner" card (issues the crew parked twice: repo, issue link, when last
 parked, why) and a "Restore drill" card (the last drill's pass or fail and

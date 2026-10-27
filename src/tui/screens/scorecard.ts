@@ -8,6 +8,7 @@
  */
 
 import { listAllAgents } from "../../actions/crew.ts";
+import { readSpend, type SpanName, type Spend } from "../../actions/spend.ts";
 import {
   crewScorecards,
   crewScorecardSplits,
@@ -36,11 +37,35 @@ const rounds = (s: Scorecard | undefined) =>
 const red = (s: Scorecard | undefined) =>
   s?.redCheckRate == null ? "—" : `${Math.round(100 * s.redCheckRate)}%`;
 
+/** An agent's spend over 5h, today and 7d, as /settings/spend reads it; `—` for a span of none. */
+export type AgentSpend = readonly [number, number, number];
+const spendText = (v: AgentSpend | undefined): string =>
+  v === undefined || v.every((n) => !(n > 0))
+    ? "spend —"
+    : `spend $ ${v.map((n) => (n > 0 ? n.toFixed(2) : "—")).join(" · ")}`;
+
+/** Each agent's cost per span, by username, matched on the span's name and not its place. */
+export function spendByAgent(spans: Spend["spans"]): Map<string, AgentSpend> {
+  const cost = (span: SpanName, name: string): number =>
+    spans.find((x) => x.span === span)?.byAgent.find((l) => l.name === name)?.costUsd ?? 0;
+  const names = new Set(spans.flatMap((x) => x.byAgent.map((l) => l.name)));
+  return new Map(
+    [...names].map((n): [string, AgentSpend] => [
+      n,
+      [cost("5h", n), cost("today", n), cost("week", n)],
+    ]),
+  );
+}
+
+/** One `readSpend` for the whole screen. */
+const agentSpend = (f: Session) => spendByAgent(readSpend(f.app).spans);
+
 /** The figures of one scorecard, as a list row's second and third lines. */
 function figures(
   title: string,
   r: Scorecard | undefined,
   s: Scorecard,
+  spend?: string,
 ): ListRow {
   const d = `${RECENT_DAYS}d`;
   return {
@@ -51,6 +76,7 @@ function figures(
       `red checks ${d} ${red(r)} · all ${red(s)}`,
       `reverts ${s.reverts}`,
       `time to land ${s.meanLandMs === null ? "—" : spanText(s.meanLandMs)}`,
+      ...(spend === undefined ? [] : [spend]),
     ].join("  "),
   };
 }
@@ -72,16 +98,28 @@ export function scorecardRows(
   teams: readonly Team[] = [],
   teamCards: ReadonlyMap<string, Scorecard> = new Map(),
   recentTeamCards: ReadonlyMap<string, Scorecard> = new Map(),
+  spend: ReadonlyMap<string, AgentSpend> = new Map(),
 ): ListRow[] {
   const agentRows = agents.flatMap((agent) => {
     const s = cards.get(agent.user.id);
     if (s === undefined)
-      return [{ title: agent.user.username, secondary: "no pull yet" }];
+      return [
+        {
+          title: agent.user.username,
+          secondary: "no pull yet",
+          meta: spendText(spend.get(agent.user.username)),
+        },
+      ];
     const lately = new Map(
       (recentSplits.get(agent.user.id) ?? []).map((p) => [splitLabel(p), p]),
     );
     return [
-      figures(agent.user.username, recent.get(agent.user.id), s),
+      figures(
+        agent.user.username,
+        recent.get(agent.user.id),
+        s,
+        spendText(spend.get(agent.user.username)),
+      ),
       ...(splits.get(agent.user.id) ?? []).map((p) =>
         figures(`  ↳ ${splitLabel(p)}`, lately.get(splitLabel(p)), p),
       ),
@@ -112,6 +150,7 @@ export function scorecardScreen(f: Session, ctx: Ctx): Screen {
           listTeams(f.db),
           teamScorecards(f.db),
           teamScorecards(f.db, recentWindow()),
+          agentSpend(f),
         )
       : [];
   return {
