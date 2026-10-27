@@ -63,7 +63,7 @@ describe("flow panel cache", () => {
     const b = await createUser(app.db, { origin: "seed", trusted: true, username: "scout", email: "scout@forge.local", password: "a-good-passphrase" });
     if (!b.ok) throw new Error(b.error);
     app.db.run("UPDATE user SET is_agent = 1 WHERE id = ?1", [b.value.id]);
-    const ago = new Date(Date.now() - 3_600_000).toISOString();
+    const ago = new Date(Date.now() - 1_800_000).toISOString();
     for (const [id, n, repo] of [["a1", 1, "pub"], ["a2", 2, "priv"]] as const) {
       app.db.run("INSERT INTO issue (id, repo_id, number, kind, title, body, author_id, state, created_at) VALUES (?1, ?2, ?3, 'pull', 't', '', ?5, 'open', ?4)", [id, repo, n, ago, b.value.id]);
       app.db.run("INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid) VALUES (?1, 'main', 'b', '', 'h')", [id]);
