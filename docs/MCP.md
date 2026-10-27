@@ -171,7 +171,7 @@ tool's own behaviour is tested in `test/mcp-<name>.test.ts`.
 ### Room for a new tool
 
 Every session pays for `tools/list` first, so `test/mcp-size.test.ts` holds it
-to a 40,000-byte ceiling and a 37,000-byte headroom (the answer an admin gets,
+to a 40,000-byte ceiling and a 38,500-byte headroom (the answer an admin gets,
 the largest). Measure before you push with `bun test test/mcp-size.test.ts`;
 a failure names the bytes over and the longest descriptions.
 

@@ -27,7 +27,14 @@ const CEILING = 40_000;
 // At 36,741 bytes with 259 left, every pull adding a tool went red (#6013);
 // `dryRun`'s 17 descriptions moved to the instructions and the longest tool
 // descriptions were cut, so it is back at 37,000 with room for the next tool.
-const HEADROOM_CEILING = 37_000;
+// #6217: pulls that each add a tool clashed: the first to land passed and the
+// rest went red. Measured on 13 open pulls adding a tool (head minus its merge
+// base): 7 to 201 bytes each, 1,350 in all, about 104 apiece; the two that
+// measured 0 are budgeted at 200 each. 1,750 needed. `front_page` dropped
+// 76 bytes of range the server already enforces, and this pull proposes 38,500
+// (the owner confirms): 1,500 under the hard ceiling, ~1,800 of room today.
+// Past it, trim the costliest tools the failure names; do not raise.
+const HEADROOM_CEILING = 38_500;
 // One sentence a tool: past this, a description is a paragraph and belongs in
 // docs/MCP.md, which keeps the detail.
 const DESCRIPTION_CEILING = 120;
@@ -62,7 +69,7 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-test(`tools/list stays under 40 KB, with 3 KB of headroom (${HEADROOM_CEILING.toLocaleString("en-US")} bytes)`, async () => {
+test(`tools/list stays under 40 KB, with 1.5 KB of headroom (${HEADROOM_CEILING.toLocaleString("en-US")} bytes)`, async () => {
   const res = await fetch(`${servers.url}/mcp`, {
     method: "POST",
     headers: {
