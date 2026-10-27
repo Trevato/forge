@@ -77,6 +77,15 @@ test("a stuck approved pull draws the stuck line for an admin; a non-admin reads
   expect(await firstScreen(bob)).toContain("alice/open#1 has sat approved");
 });
 
+test("a cleared clog's note is on the admin's home line and nobody else's", async () => {
+  forge.db.run(
+    "INSERT INTO event (id, kind, repo_id, actor_id, payload, created_at) VALUES ('clog1', 'clog.cleared', NULL, NULL, ?1, ?2)",
+    [JSON.stringify({ note: "Clog cleared. Cause: the pile.\n\n- Time to clear: 3 min\n" }), new Date().toISOString()],
+  );
+  expect(await firstScreen(alice)).toContain("Clog cleared. Cause: the pile.");
+  expect(await firstScreen(bob)).not.toContain("Clog cleared");
+});
+
 test("the dashboard's since-you-were-here shows a release and a failed gate", async () => {
   const db = forge.db;
   const now = new Date().toISOString();

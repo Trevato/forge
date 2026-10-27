@@ -107,6 +107,7 @@ import { listPinned } from "../../actions/board-pins.ts";
 import { migrateScreen } from "./migrate.ts";
 import { newRepoScreen } from "./newrepo.ts";
 import { firedAlarms } from "../../flow/alarms.ts";
+import { lastClearedNote } from "../../flow/clog_tick.ts";
 import { forgeCeiling } from "../../flow/ceiling.ts";
 import { alarmIdleCrew } from "../../flow/alarm_idle_crew.ts";
 import { noReleaseAlarm } from "../../flow/alarm_no_release.ts";
@@ -302,6 +303,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     lane = forgeLane(f.app, f.user);
     decider = deciderLine(f.app, f.user);
     const commit = running().commit;
+    const cleared = lastClearedNote(f.db, now);
     figures =
       f.user?.isAdmin !== true
         ? []
@@ -309,6 +311,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
             ...kpiLines(readKpis(f.db, now, kpiForge(f.app)), commit === null ? null : { sha: commit, since: ago(BOOTED) }),
             vitalsLine(readVitals(f.db, now)),
             ...firedAlarms(f.db, now, { ceilingUsd: forgeCeiling(f.app.config) }).map((a) => a.says),
+            ...(cleared === undefined ? [] : [cleared]),
           ];
     // "Yours" is ownership plus the orgs you are on a team of; typing in the
     // filter reaches every repository you can see.

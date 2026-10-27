@@ -54,6 +54,7 @@ import { typeSafeDecider } from "./crew/decide.ts";
 import { graphInstagram } from "./crew/instagram.ts";
 import { peopleOnCrews } from "./core/agents.ts";
 import { startNotifier } from "./crew/notify.ts";
+import { tickClog } from "./flow/clog_tick.ts";
 import { sweepStaleAsks } from "./crew/stale_asks.ts";
 import { recordAskLedger } from "./web/studio/asks.ts";
 import { startPromptRoutine } from "./crew/prompts.ts";
@@ -550,6 +551,15 @@ const processTick = (): void => {
     app.log.warn("process census failed", { error: String(error) });
   }
 };
+// The clog watch (#6524) reads the flow every minute; its state is the database's.
+const clogTick = (): void => {
+  try {
+    tickClog(app.db, app.bus);
+  } catch (error) {
+    app.log.warn("clog tick failed", { error: String(error) });
+  }
+};
+const clogTimer = setInterval(clogTick, 60_000);
 const processTimer = setInterval(processTick, 60_000);
 processTick();
 // A new version proves itself against the public URL once (release/prove.ts).
@@ -668,6 +678,7 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
   clearInterval(staleTimer);
   clearInterval(followTimer);
   clearInterval(processTimer);
+  clearInterval(clogTimer);
   clearInterval(leaseTimer);
   // The platform's SIGTERM: the listener stays open while routers learn
   // this process is going. A person's Ctrl-C does not wait for routers.

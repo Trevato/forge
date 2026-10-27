@@ -30,6 +30,7 @@ import {
 import { getRunErrorLine } from "../core/runs.ts";
 import { getUserById, type User } from "../core/users.ts";
 import { watchedBy } from "../core/watches.ts";
+import { CLOG_NOTE_WINDOW_MS, flattenNote } from "../flow/clog_note.ts";
 import { chooseCandidates } from "./choose.ts";
 import { writeStamp } from "../core/write_clock.ts";
 import { Stamped } from "../kernel/stamped.ts";
@@ -379,6 +380,7 @@ export function candidatesFor(
     if (!repo) continue;
     const fold = folded.get(e.id);
     if (fold === "skip") continue;
+    if (e.kind === "clog.cleared" && now - Date.parse(e.createdAt) > CLOG_NOTE_WINDOW_MS) continue;
     const c = fromEvent(db, e, repo, owns(repo), readsLogs(repo), subjects);
     if (c)
       out.push({
@@ -685,6 +687,12 @@ function fromEvent(
             : change) + anchor,
         what: said === "" ? `replied on “${on}”` : `on “${on}”: ${clip(said)}`,
       };
+    }
+    case "clog.cleared": {
+      const note = typeof p["note"] === "string" ? p["note"] : "";
+      if (note === "") return undefined;
+      const what = clip(flattenNote(note), 300);
+      return { ...common, kind: "map", link: base(repo), what, said: what };
     }
     case "issue.blocked":
     case "issue.unblocked":

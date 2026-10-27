@@ -31,3 +31,9 @@ test("a negative span reads as zero", () => {
 test("no reasons still reads", () => {
   expect(clogNote({ ...base, reasons: [] })).toContain("Cause: not recorded.");
 });
+
+test("a detection that was not measured prints no time to detect", () => {
+  const note = clogNote({ ...base, detectedAt: base.startedAt });
+  expect(note).not.toContain("Time to detect");
+  expect(note).toContain("- Time to clear: 70 min");
+});

@@ -41,6 +41,7 @@ import { health } from "../http/health.ts";
 import { forgeVitals } from "../actions/health.ts";
 import { RECOVERED, drainIncident, nextPage, observe, recoveredLine, type Watch } from "./incidents.ts";
 import { firedAlarms, type FiredAlarm } from "../flow/alarms.ts";
+import { loadClog } from "../flow/clog_tick.ts";
 import { forgeCeiling } from "../flow/ceiling.ts";
 import { askLinesFor } from "../web/studio/asks.ts";
 
@@ -56,6 +57,7 @@ const BACKOFF_MAX_MS = HOUR_MS;
 
 /** Events after which the set of asks may have changed. */
 const WAKES = new Set([
+  "clog.started",
   "run.finished",
   "pull.opened",
   "pull.pushed",
@@ -262,6 +264,22 @@ export function alarmLines(
   });
 }
 
+/**
+ * The owner hears once when a clog (#6524) starts: the id is the clog's own
+ * start, so the one standing clog is the same ask on every tick and a later
+ * one is new. The state is the database's, so a restart never says it twice.
+ */
+export function clogLines(
+  app: App,
+  user: User,
+): { id: string; line: string; items: readonly string[]; link: string }[] {
+  if (!user.isAdmin || user.kind !== "user") return [];
+  const clog = loadClog(app.db);
+  if (clog === null) return [];
+  const id = `clog:${clog.since}`;
+  return [{ id, line: `Clogged: ${clog.firstReasons.join("; ")}.`, items: [id], link: "/" }];
+}
+
 export interface Notifier {
   /** Resolves when the work queued so far is done. For tests and shutdown. */
   settled(): Promise<void>;
@@ -448,6 +466,7 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
       ...mirrorLines(app, user, now()),
       ...redLines(app, user, now()),
       ...alarmLines(app, user, now(), options.alarms?.()),
+      ...clogLines(app, user),
     ];
     const before = seen.get(userId);
     // What is gone may ask again later, and then it is new again. Seen by

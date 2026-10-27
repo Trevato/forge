@@ -1,6 +1,6 @@
 /**
  * The note posted when a clog clears (#5930): the cause on one line, how long
- * the clog took to be noticed and to clear, and the dollars stranded at the
+ * the clog took to be noticed (only when that was measured) and to clear, and the dollars stranded at the
  * peak. Pure: plain data in, markdown out. Posting it is another module's job.
  */
 
@@ -25,14 +25,23 @@ export function duration(ms: number): string {
   return `${(Math.round(min / 6) / 10).toString()} h`;
 }
 
+/** How long a cleared clog's note stays on the feed and the terminal's home line. */
+export const CLOG_NOTE_WINDOW_MS = 24 * 3_600_000;
+
+/** The note on one line: its blank line and bullets become " · ". */
+export function flattenNote(note: string): string {
+  return note.replace(/\s*\n+\s*-?\s*/g, " · ").trim();
+}
+
 export function clogNote(input: ClogNoteInput): string {
   const why = input.reasons.map((r) => r.trim()).filter(Boolean);
   const lines = [
     `Clog cleared. Cause: ${why.length ? why.join("; ") : "not recorded"}.`,
     "",
-    `- Time to detect: ${duration(input.detectedAt - input.startedAt)}`,
-    `- Time to clear: ${duration(input.clearedAt - input.detectedAt)}`,
   ];
+  // Detected the moment it started means detection was not measured: print no figure rather than a false 0.
+  if (input.detectedAt !== input.startedAt) lines.push(`- Time to detect: ${duration(input.detectedAt - input.startedAt)}`);
+  lines.push(`- Time to clear: ${duration(input.clearedAt - input.detectedAt)}`);
   const usd = input.strandedUsd;
   if (typeof usd === "number" && Number.isFinite(usd) && usd > 0) {
     lines.push(`- Stranded at peak: $${usd.toLocaleString("en-US", { maximumFractionDigits: 2 })}`);

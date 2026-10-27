@@ -14,6 +14,8 @@ export interface ClogState {
   readonly firstReasons: readonly string[];
   /** Quiet readings in a row so far; absent when zero. */
   readonly quiet?: number;
+  /** The most stranded dollars seen while it stood; kept by the tick, not by the step. */
+  readonly peakUsd?: number;
 }
 
 export type ClogEvent = "started" | "cleared";
@@ -30,7 +32,8 @@ export function clogStep(prev: ClogState | null, reading: readonly string[], now
     if (reading.length === 0) return { state: null, event: null };
     return { state: { since: now, firstReasons: [...reading] }, event: "started" };
   }
-  if (reading.length > 0) return { state: { since: prev.since, firstReasons: prev.firstReasons }, event: null };
+  if (reading.length > 0)
+    return { state: { since: prev.since, firstReasons: prev.firstReasons, ...(prev.peakUsd === undefined ? {} : { peakUsd: prev.peakUsd }) }, event: null };
   const quiet = (prev.quiet ?? 0) + 1;
   if (quiet >= QUIET_TO_CLEAR) return { state: null, event: "cleared", since: prev.since };
   return { state: { ...prev, quiet }, event: null };

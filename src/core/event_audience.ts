@@ -170,6 +170,8 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     kind === "repo.upstream_follow" ||
     kind === "repo.upstream_checked" ||
     kind === "repo.crew_outsiders" ||
+    // A clog starting names the forge's own pile-up: the owner's to hear (#6524).
+    kind.startsWith("clog.") ||
     // A file held against new work is its admins' book-keeping (#6522).
     kind === "repo.file_held" ||
     kind === "repo.file_released"
