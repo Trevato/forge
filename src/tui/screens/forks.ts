@@ -2,7 +2,8 @@
  * A repository's forks, ranked: the same order and words as the forks page
  * (`actions/forks.ts` decides both), so the best of the tree rises here too.
  * Forks that are ahead come first, with the one that has the most to offer on
- * top; those with nothing new follow under their count.
+ * top; those with nothing new follow under their count. A fork's own parent
+ * leads, read as MCP `following` reads it (`relationOf`, `convergeState`).
  */
 
 import {
@@ -10,8 +11,12 @@ import {
   nothingNewHeading,
   rankedForksOf,
   MAX_RANKED_FORKS,
+  relationOf,
   type ForkRanking,
+  type ForkRelation,
 } from "../../actions/forks.ts";
+import { convergeWords } from "../../actions/follow.ts";
+import { convergeState, type Converge } from "../../crew/converge.ts";
 import { canRead, forkTree, listForks, type ForkNode, type Repo } from "../../core/repos.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -50,18 +55,55 @@ export function forkRows(
   ];
 }
 
+/**
+ * What the repository follows, in at most two rows: where it stands against
+ * its parent, in MCP `following`'s states and counts, and — only when the
+ * crew has something in hand — what it is doing about it. A parent the
+ * viewer may not read never reaches here: `relationOf` hides it.
+ */
+export function followingRows(
+  relation: ForkRelation | undefined,
+  converge: Converge | undefined,
+): { repo: Repo; name: string; words: string; heading: string }[] {
+  if (relation === undefined) return [];
+  const { parent } = relation;
+  const name = `${parent.ownerName}/${parent.name}`;
+  const counts = `${relation.ahead} ahead · ${relation.behind} behind`;
+  const words =
+    parent.detached !== null
+      ? "parent frozen"
+      : relation.state === "synced"
+        ? "in step"
+        : relation.state === "diverged"
+          ? `diverged · ${counts}${relation.clean ? " · merges cleanly" : ""}`
+          : `${relation.state} · ${counts}`;
+  return [
+    { repo: parent, name: `follows ${name}`, words, heading: "" },
+    ...(converge === undefined
+      ? []
+      : [{ repo: parent, name: `  ${convergeWords(converge, name).message}`, words: "", heading: "" }]),
+  ];
+}
+
 export function forksScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   let ranked: ForkRanking | undefined;
   let tree: ForkNode[] = [];
+  let following: ReturnType<typeof followingRows> = [];
   const state = new ListState();
-  const rows = () => (ranked === undefined ? [] : forkRows(ranked, tree));
+  const rows = () => [...following, ...(ranked === undefined ? [] : forkRows(ranked, tree))];
   return {
     title: "Forks",
-    keys: [binding(["j", "k"], "move"), binding(["enter"], "open this fork"), binding(["esc"], "close")],
+    keys: [binding(["j", "k"], "move"), binding(["enter"], "open"), binding(["esc"], "close")],
     async load() {
       const forks = listForks(f.db, repo.id).filter((r) => canRead(f.db, r, f.user));
       ranked = await rankedForksOf(f.app, repo, forks);
       tree = forkTree(f.db, repo.id, f.user);
+      const relation = await relationOf(f.app, f.user, repo);
+      const converge =
+        relation !== undefined && relation.state === "diverged" && !relation.clean
+          ? convergeState(f.app, repo, relation.parent)
+          : undefined;
+      following = followingRows(relation, converge);
       ctx.invalidate();
     },
     render(area, s) {

@@ -209,6 +209,15 @@ page and in the terminal alike); the forks below those are a count, `and N more
 forks below`, linking on the page to that fork's forks page. A private fork is
 never named or counted to someone who cannot read it.
 
+In the terminal, a repository that follows another opens its forks screen
+with `follows owner/name` and MCP `following`'s standing: `in step`, or the
+state with `N ahead · M behind` (`parent frozen` behind a disconnected
+origin). When the crew has a converge in hand, a second line says what it is
+doing, in the words the following page uses; a fork that merges cleanly needs
+no crew and has no such line. `enter` on either opens the parent. A parent the
+viewer may not read is never named (`relationOf` hides it), and a repository
+that follows nothing shows neither line.
+
 Forks with nothing ahead (or whose standing git cannot read) follow under
 `N forks with nothing new`. At most 60 forks are ranked per view; past that
 the page says `Ranking the first 60 of N forks`. A fork's standing is cached
