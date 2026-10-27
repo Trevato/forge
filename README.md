@@ -418,6 +418,19 @@ map has never seen fall back to the import-hop guess, and a change to
 `forge.json`, `package.json`, `scripts/**` or `src/kernel/**` runs
 everything. With no map yet the line says `by imports (no impact map)`.
 
+Before you push, ask what the fast tier would run for your change:
+`files=$(bun scripts/fast.ts) && bun test $files`. `bun scripts/fast.ts
+[--base origin/main] [--why | --null | --json]` lists the picked test files
+for the diff from the base's merge-base to the working tree (committed,
+uncommitted, untracked), one per line on stdout and nothing else there;
+`--why` adds a tab and the reason, `--null` ends each path with NUL (for
+`xargs -0 -r bun test`), `--json` is `{full, files:[{file, why}]}`. Exit 0:
+files listed. Exit 3: the change reaches no test (stdout empty). Exit 2: the
+diff cannot be bounded (`forge.json`, `package.json`, `scripts/**`…, said on
+stderr as `full tier: … changed`), or the arguments or git failed. The
+`&&` is what keeps an empty or unbounded answer from becoming a bare
+`bun test`, which would run the whole suite.
+
 Files go to shards by how long they take, not how big they are: longest
 first onto the least-loaded shard, weighed from `scripts/test-times.json`
 (file → seconds, from one recorded run). A file the table does not name

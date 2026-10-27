@@ -68,7 +68,8 @@ import {
 import { gateFiles, gateRefusal, presentTests } from "./gate.ts";
 import { cgroupMemory, summaryLines } from "./gate-summary.ts";
 import { GATE_FILE, executedFiles, formatImpact, gateListAdds, handedImpact, mergeImpact, parseImpact } from "../src/checks/impact.ts";
-import { fastSet, importsOf, duration } from "../src/checks/tiers.ts";
+import { importsReader, readImpact } from "./tier-input.ts";
+import { fastSet, duration } from "../src/checks/tiers.ts";
 import { CHECK_CACHE } from "../src/checks/cache.ts";
 import { parseCheck } from "../src/apps/manifest.ts";
 
@@ -259,29 +260,8 @@ if (tier === "fast") {
     );
     if (gateDiff.exitCode === 0) gateAdds = gateListAdds(gateDiff.stdout.toString());
   }
-  const cache = new Map<string, string[]>();
-  const imports = (file: string): string[] => {
-    let found = cache.get(file);
-    if (found === undefined) {
-      try {
-        found = importsOf(readFileSync(file, "utf8"), file).flatMap((path) =>
-          /\.[cm]?[jt]sx?$/.test(path) ? [path] : [path, `${path}.ts`],
-        );
-      } catch {
-        found = [];
-      }
-      cache.set(file, found);
-    }
-    return found;
-  };
-  let impact: Map<string, string[]> | undefined;
-  try {
-    const parsed = parseImpact(readFileSync(IMPACT, "utf8"));
-    if (parsed.ok) impact = parsed.value;
-    else console.log(`test-shards: ${IMPACT_NAME} refused (${parsed.error}); guessing by imports`);
-  } catch {
-    // no map yet: the import guess stands
-  }
+  const imports = importsReader();
+  const impact = readImpact(IMPACT, IMPACT_NAME, (line) => console.log(`test-shards: ${line}`));
   const plan = fastSet({
     ...(impact === undefined ? {} : { impact }),
     changed,
