@@ -32,7 +32,8 @@ export const DOOR_PULL_LIMIT = 5;
 export type DoorPullLine = { number: number; title: string; check: string; href: string };
 
 const STYLE =
-  "body{font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem}li{margin:.4rem 0}pre{overflow-x:auto;padding:.6rem;background:#eee;color:#111;user-select:all}";
+  "html{color-scheme:light dark}body{font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem}li{margin:.4rem 0}pre{overflow-x:auto;padding:.6rem;background:#eee;color:#111;user-select:all}" +
+  "@media (prefers-color-scheme: dark){body{background:#111;color:#eee}a{color:#8ab4f8}a:visited{color:#c4a7e7}pre{background:#222;color:#eee}}";
 const STYLE_HASH = createHash("sha256").update(STYLE).digest("base64");
 
 /** The same words as the pill's accessible name. */
