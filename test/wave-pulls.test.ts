@@ -1,5 +1,5 @@
 /** A wave's page lists the pulls it names: title, date, link; the unseen are left out (#5942). */
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +9,7 @@ import type { Repo } from "../src/core/repos.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { carriedPulls } from "../src/story/wave_pulls.ts";
 import { pullRefs } from "../src/story/waves.ts";
 import { writeWave } from "../src/story/wave.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -143,4 +144,38 @@ test("refs are read from the file and the phase is named", async () => {
   const res = await fetch(`${servers.url}/alice/pub/waves/0.1.0`, { headers: { cookie } });
   await res.text();
   expect(res.headers.get("server-timing") ?? "").toMatch(/pulls;dur=\d+\.\d/);
+});
+
+describe("carriedPulls", () => {
+  const numberOf = (repo: string, title: string): number =>
+    app.db
+      .query<{ number: number }, [string, string]>(
+        "SELECT issue.number FROM issue JOIN repo ON repo.id = issue.repo_id WHERE repo.name = ? AND issue.title = ?",
+      )
+      .get(repo, title)!.number;
+  const refs = () => [
+    { owner: "alice", name: "pub", number: numberOf("pub", "Fix the other") },
+    { owner: "alice", name: "priv", number: numberOf("priv", "Secret work") },
+    { owner: "alice", name: "pub", number: 999 },
+  ];
+  const titles = (viewer: User | undefined) => carriedPulls(app.db, refs(), viewer).map((p) => p.title);
+
+  test("a guest and a stranger get the public pull only; the private repository's owner gets both", () => {
+    expect(titles(undefined)).toEqual(["Fix the other"]);
+    expect(titles(bob)).toEqual(["Fix the other"]);
+    expect(titles(alice)).toEqual(["Fix the other", "Secret work"]);
+  });
+
+  test("a reference to a pull that does not exist is left out, not an error", () => {
+    const ghost = [{ owner: "alice", name: "pub", number: 999 }, { owner: "nobody", name: "nothing", number: 1 }];
+    expect(carriedPulls(app.db, ghost, alice)).toEqual([]);
+  });
+
+  test("the titles are the live ones", () => {
+    const n = numberOf("pub", "Dropped idea");
+    const ref = [{ owner: "alice", name: "pub", number: n }];
+    expect(carriedPulls(app.db, ref, undefined)[0]?.title).toBe("Dropped idea");
+    app.db.query("UPDATE issue SET title = 'Renamed idea' WHERE title = 'Dropped idea'").run();
+    expect(carriedPulls(app.db, ref, undefined)[0]?.title).toBe("Renamed idea");
+  });
 });
