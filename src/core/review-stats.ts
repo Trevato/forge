@@ -57,7 +57,7 @@ export function reviewStats(
        FROM review
        JOIN issue ON issue.id = review.issue_id
        JOIN user ON user.id = review.author_id AND user.is_agent = 1
-       WHERE issue.repo_id = ?1 AND review.created_at >= ?2`,
+       WHERE issue.repo_id = ?1 AND review.created_at >= ?2 AND review.state <> 'commented'`,
     )
     .all(repoId, since)
     .map((r) => r.ms)
@@ -67,7 +67,7 @@ export function reviewStats(
       `SELECT user.username AS name, COUNT(*) AS count FROM review
        JOIN issue ON issue.id = review.issue_id
        JOIN user ON user.id = review.author_id AND user.is_agent = 1
-       WHERE issue.repo_id = ?1 AND review.created_at >= ?2
+       WHERE issue.repo_id = ?1 AND review.created_at >= ?2 AND review.state <> 'commented'
        GROUP BY user.username ORDER BY count DESC, name`,
     )
     .all(repoId, since);
