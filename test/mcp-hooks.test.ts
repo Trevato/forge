@@ -66,11 +66,30 @@ describe("MCP hooks", () => {
     expect(added.value.kinds).toBe("*");
     expect(JSON.stringify(added)).not.toContain("s3cret-value-long-enough");
     const listed = await tool(aliceAdmin, { repo: "alice/game", action: "list" });
-    expect(listed.value.map((h: any) => h.id)).toEqual([added.value.id]);
+    expect(listed.value.items.map((h: any) => h.id)).toEqual([added.value.id]);
     expect(JSON.stringify(listed)).not.toContain("s3cret-value-long-enough");
     expect((await tool(aliceAdmin, { repo: "alice/game", action: "remove", id: added.value.id })).value).toEqual({});
-    expect((await tool(aliceAdmin, { repo: "alice/game", action: "list" })).value).toEqual([]);
+    expect((await tool(aliceAdmin, { repo: "alice/game", action: "list" })).value).toEqual({ items: [], next_cursor: null });
     expect((await tool(aliceAdmin, { repo: "alice/game", action: "remove", id: added.value.id })).error).toContain("not_found");
+  });
+
+  test("list pages by limit and cursor, and refuses what the route refuses", async () => {
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const a = await tool(aliceAdmin, { repo: "alice/game", action: "add", url: `https://example.com/p${i}`, secret: "0123456789abcdef" });
+      ids.push(a.value.id);
+    }
+    ids.sort();
+    const first = await tool(aliceAdmin, { repo: "alice/game", action: "list", limit: 2 });
+    expect(first.value.items.map((h: any) => h.id)).toEqual(ids.slice(0, 2));
+    expect(first.value.next_cursor).toBe(ids[1]);
+    const second = await tool(aliceAdmin, { repo: "alice/game", action: "list", limit: 2, cursor: first.value.next_cursor });
+    expect(second.value.items.map((h: any) => h.id)).toEqual([ids[2]]);
+    expect(second.value.next_cursor).toBeNull();
+    for (const limit of [0, 201, 1.5, "5"])
+      expect((await tool(aliceAdmin, { repo: "alice/game", action: "list", limit })).error).toContain("invalid_limit");
+    expect((await tool(aliceAdmin, { repo: "alice/game", action: "list", cursor: "gone" })).error).toContain("invalid_cursor");
+    for (const id of ids) await tool(aliceAdmin, { repo: "alice/game", action: "remove", id });
   });
 
   test("a reader is refused and nothing is added", async () => {
@@ -79,7 +98,7 @@ describe("MCP hooks", () => {
       { repo: "alice/game", action: "list" },
     ])
       expect((await tool(bobAdmin, args)).error).toContain("not_found");
-    expect((await tool(aliceAdmin, { repo: "alice/game", action: "list" })).value).toEqual([]);
+    expect((await tool(aliceAdmin, { repo: "alice/game", action: "list" })).value).toEqual({ items: [], next_cursor: null });
   });
 
   test("an invalid URL is refused with the API's error", async () => {
@@ -98,7 +117,7 @@ describe("MCP hooks", () => {
     expect((await tool(aliceAdmin, { repo: "alice/game", action: "remove", id: "i".repeat(65) })).error).toContain("id is text");
     for (const secret of [undefined, "short"])
       expect((await tool(aliceAdmin, { repo: "alice/game", action: "add", url: "https://example.com/h", secret })).error).toContain("secret is required");
-    expect((await tool(aliceAdmin, { repo: "alice/game", action: "list" })).value).toEqual([]);
+    expect((await tool(aliceAdmin, { repo: "alice/game", action: "list" })).value).toEqual({ items: [], next_cursor: null });
   });
 
   test("it is listed, and callable, only with an admin-scope token", async () => {

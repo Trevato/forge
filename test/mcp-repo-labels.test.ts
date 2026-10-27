@@ -105,6 +105,21 @@ describe("MCP repo_labels", () => {
     expect((await call(admin, { repo: R, action: "remove", id: "nope" })).error).toContain("not_found");
   });
 
+  test("list pages by limit and cursor, and refuses what the route refuses", async () => {
+    for (const name of ["pa", "pb", "pc"]) await call(admin, { repo: R, action: "create", name, color: "aabbcc" });
+    const first = await call(admin, { repo: R, action: "list", limit: 2 });
+    expect(first.value.items.map((l: any) => l.name)).toEqual(["pa", "pb"]);
+    expect(first.value.next_cursor).toBe(first.value.items[1].id);
+    const second = await call(admin, { repo: R, action: "list", limit: 3, cursor: first.value.next_cursor });
+    expect(second.value.items.map((l: any) => l.name)).toEqual(["pc", "ui"]);
+    expect(second.value.next_cursor).toBeNull();
+    for (const limit of [0, 201, 1.5, "5"])
+      expect((await call(admin, { repo: R, action: "list", limit })).error).toContain("invalid_limit");
+    expect((await call(admin, { repo: R, action: "list", cursor: "gone" })).error).toContain("invalid_cursor");
+    for (const l of (await call(admin, { repo: R, action: "list" })).value.items)
+      await call(admin, { repo: R, action: "remove", id: l.id });
+  });
+
   test("a read-only token lists, named or by default, and cannot change", async () => {
     expect(Array.isArray((await call(ro, { repo: R })).value.items)).toBe(true);
     expect(Array.isArray((await call(ro, { repo: R, action: "list" })).value.items)).toBe(true);
