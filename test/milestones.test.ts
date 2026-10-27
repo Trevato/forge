@@ -437,13 +437,14 @@ describe("milestones", () => {
   test("the API and the MCP's `milestones` return the same numbers", async () => {
     const limbs = (await (
       await api("/api/v1/repos/alice/engine/milestones")
-    ).json()) as { limbs: Record<string, unknown>[] };
-    expect(limbs.limbs.map((l) => l["name"])).toEqual([
+    ).json()) as { items: Record<string, unknown>[]; next_cursor: string | null };
+    expect(limbs.next_cursor).toBeNull();
+    expect(limbs.items.map((l) => l["name"])).toEqual([
       "P0 Trust",
       "P1 Feed",
       "Later",
     ]);
-    expect(limbs.limbs[0]).toMatchObject({
+    expect(limbs.items[0]).toMatchObject({
       number: trust.number,
       done: 1,
       total: 5,
@@ -453,10 +454,25 @@ describe("milestones", () => {
       spentUsd: 1.5,
       deferred: false,
     });
-    expect(limbs.limbs[1]).toMatchObject({
+    expect(limbs.items[1]).toMatchObject({
       trim: "12 open and nobody building",
     });
-    expect((await tool({ app: "alice/engine" })).value).toEqual(limbs);
+    expect(((await tool({ app: "alice/engine" })).value as any).limbs).toEqual(limbs.items);
+
+    const first = (await (
+      await api("/api/v1/repos/alice/engine/milestones?limit=2")
+    ).json()) as { items: unknown[]; next_cursor: string | null };
+    expect(first.items).toEqual(limbs.items.slice(0, 2));
+    expect(first.next_cursor).toBe("2");
+    const last = (await (
+      await api(`/api/v1/repos/alice/engine/milestones?limit=2&cursor=${first.next_cursor}`)
+    ).json()) as { items: unknown[]; next_cursor: string | null };
+    expect(last.items).toEqual(limbs.items.slice(2));
+    expect(last.next_cursor).toBeNull();
+    for (const bad of ["limit=0", "limit=201", "limit=x", "cursor=abc"]) {
+      const res = await api(`/api/v1/repos/alice/engine/milestones?${bad}`);
+      expect(res.status).toBe(422);
+    }
 
     const one = (await (
       await api(`/api/v1/repos/alice/engine/milestones/${ship.number}`)

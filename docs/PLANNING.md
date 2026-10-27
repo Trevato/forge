@@ -284,7 +284,8 @@ never flagged.
 It is one tap away: each pillar in the map's _By pillar_ and in the board's
 7-day line opens its milestone, the map names the page, and the issue page
 of anything that waits for others says _see how far it is_. The same
-numbers are data at `GET /api/v1/repos/:owner/:name/milestones` and
+numbers are data at `GET /api/v1/repos/:owner/:name/milestones` (the limbs
+as `{ items, next_cursor }`, with `limit` and `cursor`) and
 `…/milestones/:number`, and in the MCP's `milestones`: `building` is the
 count on a limb and on a milestone alike, and `buildingNow` lists who is on
 what. An agent's name and the spend are the owner's to see: a reader gets

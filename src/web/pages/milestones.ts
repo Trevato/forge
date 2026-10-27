@@ -612,11 +612,15 @@ export async function milestoneWatch(ctx: Ctx): Promise<Response> {
   return redirect(milestoneHref(repoBase(repo), number));
 }
 
-/** The plan's limbs as data: `GET /api/v1/repos/:owner/:name/milestones`, and the MCP's `milestones`. */
+/**
+ * The plan's limbs as data: the MCP's `milestones` answers it whole as
+ * `{ repo, limbs }`; `GET /api/v1/repos/:owner/:name/milestones` pages `limbs`
+ * as `{ items, next_cursor }`.
+ */
 export async function milestonesJson(
   ctx: Ctx,
   repo: Repo,
-): Promise<Record<string, unknown>> {
+): Promise<{ repo: { owner: string; name: string }; limbs: Record<string, unknown>[] }> {
   const plan = readPlan(ctx.app.db, repo, {
     spend: canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user),
   });

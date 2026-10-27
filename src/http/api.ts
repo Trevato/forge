@@ -3322,10 +3322,14 @@ export function apiRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
+    const query = offsetQuery(ctx.url.searchParams);
+    if ("error" in query) return offsetRefused(query.error);
     const data = await timePhaseAsync(ctx.request, "read", () =>
       milestonesJson(ctx, repo),
     );
-    return timePhase(ctx.request, "render", () => json(data));
+    return timePhase(ctx.request, "render", () =>
+      json(offsetPage(data.limbs, query.limit, query.offset)),
+    );
   });
   router.add(
     "GET",
