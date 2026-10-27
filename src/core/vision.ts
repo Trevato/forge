@@ -39,3 +39,6 @@ export function parseVision(md: string): Vision {
     .map(strip);
   return { purpose: purpose || null, order, rules };
 }
+
+/** What a door says when the default branch has no docs/VISION.md: one line, never an empty screen. */
+export const NO_VISION_LINE = "No docs/VISION.md on the default branch: nothing says what this repository is for yet.";

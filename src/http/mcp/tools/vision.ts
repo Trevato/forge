@@ -1,8 +1,7 @@
 import { getPull } from "../../../core/pulls.ts";
-import { directionParts, previewVision } from "../../../crew/vision.ts";
+import { directionParts, previewVision, readDefaultVision } from "../../../crew/vision.ts";
 import { canAdmin } from "../../../core/repos.ts";
-import { NO_VISION, parseVision } from "../../../core/vision.ts";
-import { blobForRender } from "../../../git/read.ts";
+import { NO_VISION } from "../../../core/vision.ts";
 import { runGit } from "../../../git/env.ts";
 import { repoDir } from "../../../git/repos.ts";
 import { good, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
@@ -22,9 +21,9 @@ export const tool: Tool = {
     const repo = repoArg(ctx, user, args);
     if (isAnswer(repo)) return repo;
     const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
-    const blob = await blobForRender(dir, repo.defaultBranch, "docs/VISION.md", 1_000_000);
-    const found = blob.kind === "text";
-    const vision = found ? parseVision(new TextDecoder().decode(blob.body)) : NO_VISION;
+    const read = await readDefaultVision(ctx.app.reposRoot, repo);
+    const found = read !== null;
+    const vision = read ?? NO_VISION;
     const last = found
       ? await runGit(["log", "-1", "--format=%cI", repo.defaultBranch, "--", "docs/VISION.md"], { cwd: dir })
       : undefined;

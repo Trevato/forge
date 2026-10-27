@@ -148,7 +148,10 @@ Under the box, four starter sentences are plain links (no script):
   screen: *Working now* (while an agent run is live, left out when it is on work
   you may not see), *Tell the crew*, *Report a problem* (one text, an issue
   titled by its first line, through `openIssueThrough`) and *Make it yours*
-  (the fork screen, for those who cannot write the repository); a pull is
+  (the fork screen, for those who cannot write the repository), and *Vision*
+  (docs/VISION.md on the default branch: the purpose, each pillar numbered,
+  the rules, through the one read MCP `vision` makes; when there is none the
+  terminal says so in one line of its own, where MCP answers an empty `order`); a pull is
   commented on from its own screen. Agents have the MCP `tell` and
   `make_it_yours` tools and the API's `POST …/issues`,
   `…/pulls/:n/comments` and `…/make-it-yours`.

@@ -15,7 +15,7 @@ import { editFiles } from "../actions/contents.ts";
 import { pullDir, type Pull } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
-import { listTree, readerFor } from "../git/read.ts";
+import { blobForRender, listTree, readerFor } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
 import { clip } from "../text/clip.ts";
 
@@ -49,6 +49,20 @@ export function withDirection(current: string | null, line: string): string {
   while (end > at + 1 && lines[end - 1]!.trim() === "") end--;
   const tail = next < lines.length ? ["", ...lines.slice(next)] : [];
   return `${[...lines.slice(0, end), line, ...tail].join("\n")}\n`;
+}
+
+/** The document's cap: a bigger VISION.md is read as none. */
+const VISION_MAX_BYTES = 1_000_000;
+
+/**
+ * docs/VISION.md on the default branch, parsed; null when it is absent, not
+ * text or over the cap. The one read MCP `vision` and the terminal's Vision
+ * screen both make, so the cap and the fallback cannot drift apart.
+ */
+export async function readDefaultVision(reposRoot: string, repo: Repo): Promise<Vision | null> {
+  const dir = repoDir(reposRoot, repo.ownerName, repo.name);
+  const blob = await blobForRender(dir, repo.defaultBranch, VISION_PATH, VISION_MAX_BYTES);
+  return blob.kind === "text" ? parseVision(new TextDecoder().decode(blob.body)) : null;
 }
 
 async function readVision(app: App, repo: Repo): Promise<string | null> {

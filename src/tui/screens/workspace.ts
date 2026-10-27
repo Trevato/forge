@@ -122,6 +122,7 @@ import { reportsCommands } from "./reports.ts";
 import { tellCommands } from "./tell.ts";
 import { workingCommands } from "./working.ts";
 import { yoursCommands } from "./yours.ts";
+import { visionCommands } from "./vision.ts";
 import { appEnvCommands } from "./appenv.ts";
 import { externalEditor, editorHint, hasExternalEditor } from "./external.ts";
 import { finderScreen } from "./finder.ts";
@@ -1286,6 +1287,7 @@ export function workspaceScreen(
       ...reportsCommands(f, ctx, repo),
       ...noteCommands(f, ctx, () => screen, repo),
       ...yoursCommands(f, ctx, repo),
+      ...visionCommands(f, ctx, repo),
       ...appEnvCommands(f, ctx, repo),
     ],
     get title() {
