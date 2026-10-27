@@ -326,7 +326,9 @@ describe("reviews, threads and the merge gate", () => {
       await admin.press("enter");
       await admin.until("#1");
       // The box says what is missing, and `m` says it out loud.
-      await admin.until("review");
+      // Wait for the gate's own line, not the word "review" (the footer
+      // wears it from the first paint, before the setting has loaded).
+      await admin.until("Needs an approval of this head", 30_000);
       await admin.press("m");
       await admin.until("approval");
       expect(getPull(forge.db, repo.id, 1)?.mergedAt).toBeNull();
