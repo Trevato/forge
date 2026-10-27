@@ -8,6 +8,7 @@
  * `ui.ts` may not. That is the line between the two files.
  */
 
+import { flowOnlyLine } from "./flow_only_line.ts";
 import { sshCommand } from "../ssh/command.ts";
 import { mayReadRuns } from "../actions/runs.ts";
 import { getAppByRepo } from "../core/apps.ts";
@@ -336,6 +337,7 @@ export function scopeHeader(
       () => html`<p class="muted small">${facts.description}</p>`,
     )}
     ${repo === undefined ? null : lineageLine(ctx.app.db, repo, parent)}
+    ${repo === undefined ? null : flowOnlyLine(repo, admin)}
     ${when(
       scope.upstream !== undefined && upstreamHref(scope) === undefined,
       // The where strip carries "fork of octo/widgets" and links it, which

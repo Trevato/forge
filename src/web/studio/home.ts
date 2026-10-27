@@ -6,6 +6,7 @@
  * best of what is public (`actions/front.ts`).
  */
 
+import { flowOnlyHomeLines } from "../flow_only_line.ts";
 import { forgeCeiling } from "../../flow/ceiling.ts";
 import { liveLine } from "../pages/releases.ts";
 import {
@@ -302,6 +303,7 @@ export async function studioHome(
         <a href="/">Just my apps</a>
       </p>`,
     )}
+    ${flowOnlyHomeLines(ctx.app.db, user)}
     ${since}
     ${homeTabs("feed", asking)}
     <div class="split" data-rail="wide">
