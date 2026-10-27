@@ -71,6 +71,9 @@ import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, fragment, page, redirect } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
+import { fileKind, HEAD_BYTES, RENDER_CAP } from "../render/kinds.ts";
+import { RENDERERS } from "../render/renderers.ts";
+import { mediaHref } from "./media.ts";
 import { browseBase, localScope, type RepoScope } from "../scope.ts";
 import { repoForkOf } from "../../core/origins.ts";
 import {
@@ -602,8 +605,9 @@ export async function readmeFor(
  */
 export type BlobView = "source" | "rendered";
 
-export const isMarkdownPath = (path: string): boolean =>
-  /\.(md|markdown|mdx)$/i.test(path);
+/** The file saved under its own name, streamed at any size. */
+const downloadHref = (base: string, ref: string, path: string): string =>
+  `${mediaHref(base, ref, path)}?download=1`;
 
 export function blobView(value: string | null): BlobView {
   return value === "source" ? "source" : "rendered";
@@ -627,7 +631,7 @@ export function blobBody(
         title: "Binary file",
         note: `${fileSize(blob.size)} — not shown, but you can download it.`,
         action: btn("Download", {
-          href: `${base}/raw/${encoded}/${path}`,
+          href: downloadHref(base, ref, path),
           variant: "primary",
           icon: "download",
         }),
@@ -640,10 +644,11 @@ export function blobBody(
       content: empty({
         icon: "alert",
         title: "Too large to render",
-        note: `${fileSize(blob.size)} — over the render cap. Fetch the raw bytes instead.`,
-        action: btn("View raw", {
-          href: `${base}/raw/${encoded}/${path}`,
+        note: `${fileSize(blob.size)} — over the render cap. Download it instead.`,
+        action: btn("Download", {
+          href: downloadHref(base, ref, path),
           variant: "primary",
+          icon: "download",
         }),
       }),
     };
@@ -1017,14 +1022,28 @@ export function renderBlob(
 ): Html {
   const base = scope.base;
   const encoded = encodeURIComponent(o.ref);
-  const markdown = o.blob.kind === "text" && isMarkdownPath(o.path);
-  const view: BlobView = markdown ? (o.view ?? "rendered") : "source";
+  const blob = o.blob;
+  // The registry decides what this file is and whether anything draws it;
+  // a kind with no renderer yet, or one over its cap, keeps the source view.
+  const renderer =
+    blob.kind === "too_large"
+      ? undefined
+      : (() => {
+          const kind = fileKind(o.path, blob.body.subarray(0, HEAD_BYTES));
+          return blob.size <= RENDER_CAP[kind] ? RENDERERS[kind] : undefined;
+        })();
+  const view: BlobView = renderer ? (o.view ?? "rendered") : "source";
   const { content, lines } =
-    view === "rendered" && o.blob.kind === "text"
-      ? renderedMarkdown(o.blob)
-      : blobBody(base, o.ref, o.path, o.blob, o.highlighted, o.all);
+    view === "rendered" && renderer && blob.kind !== "too_large"
+      ? renderer({
+          path: o.path,
+          size: blob.size,
+          body: blob.body,
+          media: mediaHref(base, o.ref, o.path),
+        })
+      : blobBody(base, o.ref, o.path, blob, o.highlighted, o.all);
   const sizeText =
-    o.blob.kind === "too_large" ? "" : sizeWithTokens(o.blob.size, o.path);
+    blob.kind === "too_large" ? "" : sizeWithTokens(blob.size, o.path);
   const fileHref = `${base}/blob/${encoded}/${o.path}`;
   return html`<div class="code-pane" id="code-pane" data-path="${o.path}">
     <div class="bar mb">
@@ -1044,19 +1063,19 @@ export function renderBlob(
           >`,
       )}
       ${when(
-        markdown,
+        renderer !== undefined,
         () =>
           html`<span class="blob-view"
             >${seg([
               {
-                label: "Source",
-                href: `${fileHref}?view=source`,
-                current: view === "source",
-              },
-              {
                 label: "Rendered",
                 href: fileHref,
                 current: view === "rendered",
+              },
+              {
+                label: "Source",
+                href: `${fileHref}?view=source`,
+                current: view === "source",
               },
             ])}</span
           >`,
@@ -1065,6 +1084,12 @@ export function renderBlob(
         href: `${base}/raw/${encoded}/${o.path}`,
         size: "sm",
         variant: "outline",
+      })}
+      ${btn("Download", {
+        href: downloadHref(base, o.ref, o.path),
+        size: "sm",
+        variant: "outline",
+        icon: "download",
       })}
       ${btn("History", {
         href: `${base}/commits?ref=${encoded}&path=${encodeURIComponent(o.path)}`,
@@ -1076,18 +1101,6 @@ export function renderBlob(
     </div>
     ${content}
   </div>`;
-}
-
-/** A Markdown file as prose, framed exactly the way a README is. */
-function renderedMarkdown(blob: Blob & { kind: "text" }): {
-  content: Html;
-  lines: number;
-} {
-  const text = new TextDecoder().decode(blob.body);
-  return {
-    lines: text === "" ? 0 : text.replace(/\n$/, "").split("\n").length,
-    content: html`<div class="card prose">${renderMarkdown(text)}</div>`,
-  };
 }
 
 /** The bytes, with the headers that stop them ever executing as a page. */

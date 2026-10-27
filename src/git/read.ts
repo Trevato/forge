@@ -7,8 +7,8 @@
 
 import { defect } from "../kernel/error.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { gitEnv, runGit, runGitRaw, type GitFailure } from "./env.ts";
-import { isSafeRef } from "./guard.ts";
+import { gitEnv, mediaGate, runGit, runGitRaw, type GitFailure } from "./env.ts";
+import { isSafeOid, isSafeRef } from "./guard.ts";
 
 export type ObjectType = "blob" | "tree" | "commit" | "tag";
 
@@ -602,4 +602,96 @@ export async function refTip(dir: string, ref: string): Promise<string | undefin
     // no packed-refs
   }
   return undefined;
+}
+
+/** How many requests may wait for a media permit before the next is turned away. */
+export const MEDIA_QUEUE_MAX = 32;
+/** A stream nobody has pulled from for this long is ended and its permit returned. */
+export const MEDIA_IDLE_MS = 30_000;
+
+/**
+ * Bytes `start`..`end` (inclusive) of the blob `oid`, streamed straight off
+ * `git cat-file` and never held whole: a 2 GB video costs a pipe, not 2 GB
+ * of memory. Git cannot seek inside a blob, so the bytes before `start` are
+ * read and dropped; past `end` the process is killed.
+ *
+ * The permit is taken before the stream exists, so there is no stream to
+ * cancel while it is waiting; a reader whose `signal` aborts in the queue
+ * gets `"gone"` and the permit goes back unspent. With `MEDIA_QUEUE_MAX`
+ * already waiting, the answer is `"busy"` (a 503) rather than one more
+ * waiter. Once open, the stream gives its permit back when it ends, when its
+ * reader hangs up or its signal aborts, or when nothing has pulled from it
+ * for `idleMs`, which keeps a reader that never reads from holding a permit
+ * for good.
+ */
+export async function blobStream(
+  dir: string,
+  oid: string,
+  start: number,
+  end: number,
+  limits: { idleMs?: number; queueMax?: number; signal?: AbortSignal } = {},
+): Promise<ReadableStream<Uint8Array> | "busy" | "gone"> {
+  if (!isSafeOid(oid)) defect("git.unsafe_oid", `unsafe oid: ${JSON.stringify(oid)}`);
+  const free = mediaGate.stats();
+  if (free.active >= free.limit && free.waiting >= (limits.queueMax ?? MEDIA_QUEUE_MAX))
+    return "busy";
+  const release = await mediaGate.acquire();
+  // The reader left while it waited: the permit goes straight back, unspent.
+  if (limits.signal?.aborted) {
+    release();
+    return "gone";
+  }
+  const proc = Bun.spawn(["git", "cat-file", "blob", oid], {
+    cwd: dir,
+    env: gitEnv(),
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const source = proc.stdout.getReader();
+  const idleMs = limits.idleMs ?? MEDIA_IDLE_MS;
+  let idle: ReturnType<typeof setTimeout> | undefined;
+  let offset = 0;
+  let ended = false;
+  const finish = (): void => {
+    if (ended) return;
+    ended = true;
+    clearTimeout(idle);
+    limits.signal?.removeEventListener("abort", finish);
+    proc.kill("SIGKILL");
+    release();
+  };
+  limits.signal?.addEventListener("abort", finish, { once: true });
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      // Armed from the first moment, so a response nobody ever reads ends too.
+      idle = setTimeout(() => {
+        finish();
+        controller.error(new Error("media stream idle"));
+      }, idleMs);
+    },
+    async pull(controller) {
+      idle?.refresh();
+      while (true) {
+        const next = await source.read();
+        const chunk = next.value;
+        if (next.done || chunk === undefined) break;
+        const from = offset;
+        offset += chunk.length;
+        if (offset <= start) continue;
+        // A copy, not a view: Bun may recycle the pipe's buffer.
+        controller.enqueue(
+          chunk.slice(Math.max(0, start - from), Math.min(chunk.length, end + 1 - from)),
+        );
+        if (offset > end) break;
+        return;
+      }
+      if (ended) return;
+      finish();
+      controller.close();
+    },
+    cancel() {
+      finish();
+    },
+  });
 }

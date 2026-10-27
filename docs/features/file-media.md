@@ -1,0 +1,60 @@
+# Files in the browser: the media route and the kind registry
+
+The foundation for rendering files on the blob page (#7329, #7330).
+
+## The media route
+
+`GET /:owner/:name/media/:ref/*path` serves a file's bytes under a real
+media type, for `<img>`, `<video>`, `<audio>`, `<object>` and `fetch()`.
+
+- **Types** come only from the allowlist in `src/web/render/kinds.ts`
+  (png, jpeg, gif, webp, avif, bmp, ico, svg, pdf, mp3, ogg/oga, wav, flac,
+  m4a, aac, mp4, m4v, webm, mov, stl, glb). The extension proposes a type and
+  the file's first bytes confirm it; a mismatch, or any other file, is
+  `application/octet-stream`. Never HTML, never script.
+- **Headers:** `X-Content-Type-Options: nosniff` and
+  `Content-Security-Policy: sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'`,
+  so an SVG with a `<script>` is drawn and never runs.
+- **Range:** one `bytes=` range answers 206 with `Content-Range`; a suffix
+  (`bytes=-N`) is the last N bytes; past the end is 416. A list of ranges is
+  answered whole, which the RFC allows. `If-Range` is honoured.
+- **Caching:** `ETag` is the blob id, and `If-None-Match` answers 304. A
+  full commit id as `:ref` is `private, max-age=31536000, immutable`; a
+  branch or tag is `private, max-age=0` and revalidates.
+- **Access** is `/raw`'s: a repository you cannot see is the same 404 as one
+  that is not there.
+- **Streaming:** a file over 1 MB streams off `git cat-file` and is never
+  held whole. Streams take permits from their own gate (`mediaGate`,
+  `FORGE_MEDIA_CONCURRENCY`, default 16), so a page of videos never takes
+  the plumbing permits every page needs. The permit is taken before the
+  stream exists; a stream gives it back when it ends, when its reader hangs
+  up, or when nothing has been pulled for 30 s (`MEDIA_IDLE_MS`), so a
+  reader that never reads cannot hold one for good. With 32 requests
+  already waiting (`MEDIA_QUEUE_MAX`) the next is a 503 with
+  `Retry-After: 5`. A file of 1 MB or less never waits: it is read through
+  the pooled reader.
+- A 304 is answered from the blob id alone, before any byte is read.
+- `?download=1` sends the file as an attachment under its own name, at any
+  size. The blob page's Download button points here.
+
+## The kind registry
+
+`fileKind(path, firstBytes)` answers `image | svg | pdf | audio | video |
+csv | model3d | config | markdown | text | binary`. `RENDER_CAP` is the
+largest file each kind draws inline; over it, the page offers Download.
+
+`kinds.ts` is plain data with no web dependency: the editor and the
+terminal ask it whether a path is Markdown, as the blob page does.
+
+`renderBlob` asks `render/renderers.ts`. A kind in `RENDERERS` is drawn by
+its module; a kind with none yet keeps the source or binary view it always
+had. Where a renderer exists the header offers `Rendered | Source`; every
+file's header has the **Raw** and **Download** buttons.
+
+## Adding a renderer
+
+Write `src/web/render/<kind>.ts` exporting a `Renderer` (plain data in:
+path, size, body, and `media`, the media route's address; HTML out), and
+name it once in `RENDERERS` (`render/renderers.ts`). Point any element
+that needs the bytes at `input.media`, never at an inline copy, so
+repository content only ever runs under the media route's sandbox. `render/markdown.ts` is the example.

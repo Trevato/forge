@@ -196,6 +196,13 @@ const limitFromEnv = (name: string, fallback: number): number => {
 export const gitGate = new Gate(limitFromEnv("FORGE_GIT_CONCURRENCY", 8));
 
 /**
+ * Blob streams for the media route: a video seeks for minutes, so a stream
+ * holds its permit until the last byte or the reader hangs up. A pool of its
+ * own, so a page of videos never takes the plumbing permits every page needs.
+ */
+export const mediaGate = new Gate(limitFromEnv("FORGE_MEDIA_CONCURRENCY", 16));
+
+/**
  * How many pack transfers a host of `bytes` memory runs at once by default:
  * one per 64 MiB, at least two, at most sixteen. A push is not one process
  * but three while it runs: `receive-pack`, the pre-receive hook (a whole Bun

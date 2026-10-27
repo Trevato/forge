@@ -180,7 +180,8 @@ src/
               header, settings shell, the one 404), flash, layout (CSP+nonce,
               topbar, theme switcher), client (progressive enhancement, as a
               string), style/{base,components,content} assembled by style.ts,
-              markdown, highlight, code, worddiff, diff-view, live, and
+              markdown, highlight, code, worddiff, diff-view, live, render/ (the
+              file-kind registry, kinds.ts, and one renderer per kind), and
               pages/{site,repo,issues,pulls,pull,thread,commits,refs,search,
               org,account,settings}, and studio/ — the app-as-the-unit
               surface, one module per concept: words (the vocabulary every

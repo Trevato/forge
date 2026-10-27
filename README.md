@@ -377,6 +377,7 @@ This page is the front door. Everything else is a file of its own under
 - [`docs/FEED.md`](docs/FEED.md) — the feed: what happened, ranked, each item with why it is there. The home composer keeps your draft across a reload.
 - [`docs/PULLS.md`](docs/PULLS.md) — resolving a conflicted pull without a clone.
 - [`docs/GIT.md`](docs/GIT.md) — cloning over HTTPS and SSH, and partial clones of big repositories.
+- [`docs/features/file-media.md`](docs/features/file-media.md) — a file in the browser: every file page has **Raw** and **Download** (any size), and `/:owner/:name/media/:ref/*path` serves images, audio, video and PDFs under their real type, sandboxed, with byte ranges.
 - [`docs/ROLES.md`](docs/ROLES.md) — guest, member and admin, and what each may do.
 - [`docs/MCP.md`](docs/MCP.md) — the forge as a connector; [`docs/STANDARDS.md`](docs/STANDARDS.md) is what it answers by default: `.well-known`, feeds, cards, the manifest.
 

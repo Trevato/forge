@@ -206,6 +206,7 @@ import {
   repoSyncSubmit,
   treePage,
 } from "../web/pages/repo.ts";
+import { mediaBlob } from "../web/pages/media.ts";
 import {
   branchCreate,
   branchDelete,
@@ -1326,6 +1327,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/tree/:ref/*path", treePage);
   router.add("GET", "/:owner/:name/blob/:ref/*path", blobPage);
   router.add("GET", "/:owner/:name/raw/:ref/*path", rawBlob);
+  router.add("GET", "/:owner/:name/media/:ref/*path", mediaBlob);
   // Every file path at a ref, for the fuzzy finder. JSON, `canRead`-gated.
   router.add("GET", "/:owner/:name/paths/:ref", pathsJson);
 

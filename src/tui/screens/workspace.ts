@@ -45,6 +45,7 @@ import { stopMirroring } from "../../actions/mirror_target.ts";
 import { getMirrorTarget, mirrorLine } from "../../core/migrate_mirror.ts";
 import { canAdmin, DECISIONS_BY, getRepoById, type Repo } from "../../core/repos.ts";
 import type { TreeEntry } from "../../git/read.ts";
+import { fileKind, NO_BYTES } from "../../web/render/kinds.ts";
 import type { RepoFacts, RepoSource } from "../../view/source.ts";
 import { detectLanguage, highlightLines } from "../../web/highlight.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -260,7 +261,7 @@ type TabKind = "image" | "markdown" | "code";
 /** `README.md`, `NOTES.markdown`, `readme` — the prose a repo opens on. */
 function isMarkdownPath(path: string): boolean {
   const name = path.slice(path.lastIndexOf("/") + 1);
-  return /\.(md|markdown)$/i.test(name) || /^readme(\.|$)/i.test(name);
+  return fileKind(name, NO_BYTES) === "markdown" || /^readme(\.|$)/i.test(name);
 }
 
 class Tab {
