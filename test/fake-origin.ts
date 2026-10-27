@@ -36,6 +36,8 @@ export type FakeKind = "github" | "forgejo" | "gitea";
 export interface FakeRepo {
   id: number;
   fullName: string;
+  /** Names it answered to before a rename; a real forge redirects them. */
+  formerNames?: string[];
   description?: string;
   private?: boolean;
   fork?: boolean;
@@ -422,7 +424,9 @@ function route(
   if (!repoMatch) return new Response("no route", { status: 404 });
   const fullName = `${repoMatch[1]}/${repoMatch[2]}`;
   const tail = repoMatch[3] ?? "";
-  const repo = state.repos.find((r) => r.fullName === fullName);
+  const repo = state.repos.find(
+    (r) => r.fullName === fullName || r.formerNames?.includes(fullName),
+  );
   if (!repo) return jsonResponse({ message: "Not Found" }, 404);
 
   // A fork the origin has accepted but not finished making is a 404 for as
