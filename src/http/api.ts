@@ -93,7 +93,6 @@ import { forgeState, PARENT_HEADER } from "../spawn/clients.ts";
 import { familyView } from "../spawn/family.ts";
 import { receiveBeat, SIGNATURE_HEADER } from "../spawn/heartbeat.ts";
 import { reissueDoor, spawnDoor } from "../spawn/door.ts";
-import { listSecrets, putSecret, removeSecret } from "../actions/secrets.ts";
 import { forgeProposals, proposeToParentForge, proposeUpstream } from "../actions/upstream.ts";
 import { FOLLOW_MODE_REFUSALS, setFollowMode, severForge, takeForgeCode, takeForgeWords, takeOrTell } from "../actions/follow.ts";
 import { relationOf } from "../actions/forks.ts";
@@ -455,6 +454,7 @@ import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
 import { passportRoutes } from "./passport_edge.ts";
 import { egressGrantRoutes } from "./api/egress_grants.ts";
+import { secretRoutes } from "./api/secrets.ts";
 import type { Router } from "./router.ts";
 import { clientAddress, clientBucket } from "./peer.ts";
 import { manifestFor } from "../actions/here.ts";
@@ -5941,55 +5941,7 @@ export function apiRoutes(router: Router<Handler>): void {
     return json({}, 200);
   });
 
-  // Forge-level secrets: a sealed, write-only slot for the operator's own
-  // credentials. Admins only; the list is names and timestamps, never a
-  // value. `ref` names the owner: an org's name, or a repository's
-  // `owner/name`; the forge scope takes none.
-  router.add("GET", "/api/v1/secrets/:scope", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const listed = timePhase(ctx.request, "secrets", () =>
-      listSecrets(
-        ctx.app,
-        ctx.auth.user,
-        ctx.params.scope ?? "",
-        ctx.url.searchParams.get("ref") ?? "",
-      ),
-    );
-    if (!listed.ok) return respondAccess(listed.error, 422);
-    return timePhase(ctx.request, "render", () => json({ items: listed.value, next_cursor: null }));
-  });
-
-  router.add("PUT", "/api/v1/secrets/:scope/:name", async (ctx) => {
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const input = await body(ctx.request);
-    const set = putSecret(
-      ctx.app,
-      ctx.auth.user,
-      ctx.params.scope ?? "",
-      str(input.ref),
-      ctx.params.name ?? "",
-      str(input.value),
-    );
-    if (!set.ok) return respondAccess(set.error, 422);
-    return json(set.value);
-  });
-
-  router.add("DELETE", "/api/v1/secrets/:scope/:name", (ctx) => {
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const removed = removeSecret(
-      ctx.app,
-      ctx.auth.user,
-      ctx.params.scope ?? "",
-      ctx.url.searchParams.get("ref") ?? "",
-      ctx.params.name ?? "",
-    );
-    if (!removed.ok) return respondAccess(removed.error, 422);
-    return json({}, 200);
-  });
+  secretRoutes(router);
 
   // The app's environment: names in, names out, and never a value back.
   // `:var`, not `:name` — `:name` is the repository's.
