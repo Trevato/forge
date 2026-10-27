@@ -243,7 +243,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   };
 
   const loadSinceLines = (): void => {
-    const d = f.user ? sinceDigest(f.app.db, lastVisit(f.app.db, f.user.id), Date.now()) : undefined;
+    const d = f.user ? sinceDigest(f.app.db, f.user, lastVisit(f.app.db, f.user.id), Date.now()) : undefined;
     sinceLines = d === undefined ? [] : [d.heading, ...d.lines.map((l) => `  ${l.says}`)];
     ctx.invalidate();
   };

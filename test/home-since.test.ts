@@ -6,7 +6,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { lastVisit, noteVisit } from "../src/core/home_visit.ts";
 import { DIGEST_WINDOW_MS, headingOf, windowOf } from "../src/feed/digest.ts";
-import { landedSince } from "../src/web/studio/since.ts";
+import { eventsSince } from "../src/web/studio/since.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { dashboardScreen } from "../src/tui/screens/dashboard.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
@@ -49,10 +49,10 @@ test("a visit is written at most once a minute and answers the one before", () =
   expect(lastVisit(f.app.db, id)).toBe(now + 61_000);
 });
 
-test("home heads the digest with the window, lists only public landed pulls, and records the visit", async () => {
+test("home heads the digest with the window, lists only landed pulls the viewer can read, and records the visit", async () => {
   const db = f.app.db;
   const pub = f.repos.find((r) => r.visibility === "public")!;
-  const priv = f.repos.find((r) => r.visibility === "private")!;
+  const priv = { id: f.app.db.query<{ id: string }, []>("SELECT id FROM repo WHERE name = 'notes'").get()!.id, name: "notes" };
   const land = (repoId: string, number: number, ago: number): void => {
     const id = `since-${repoId}-${number}`;
     db.query("INSERT INTO issue (id, repo_id, number, kind, title, author_id) VALUES (?1, ?2, ?3, 'pull', 't', ?4)").run(id, repoId, 9000 + number, f.owner.id);
@@ -61,8 +61,10 @@ test("home heads the digest with the window, lists only public landed pulls, and
   land(pub.id, 1, 2 * H);
   land(pub.id, 2, 5 * 24 * H);
   land(priv.id, 3, H);
-  expect(landedSince(db, Date.now() - 3 * H, Date.now())).toHaveLength(1);
-  expect(landedSince(db, Date.now() - 10 * 24 * H, Date.now())).toHaveLength(2);
+  expect(eventsSince(db, f.peer, Date.now() - 3 * H, Date.now())).toHaveLength(2);
+  expect(eventsSince(db, f.peer, Date.now() - 10 * 24 * H, Date.now())).toHaveLength(3);
+  // The admin owner reads the peer's private repository too; keep it out of the owner's page below.
+  db.query("DELETE FROM pull WHERE issue_id = ?1").run(`since-${priv.id}-3`);
 
   db.query("INSERT INTO home_visit (user_id, at) VALUES (?1, ?2) ON CONFLICT(user_id) DO UPDATE SET at = excluded.at").run(f.owner.id, Date.now() - 3 * H);
   const res = await fetch(`${f.base}/?all=1`, { headers: { cookie: f.ownerCookie } });

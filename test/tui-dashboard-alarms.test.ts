@@ -76,3 +76,15 @@ test("a stuck approved pull draws the stuck line for an admin; a non-admin reads
   stuckPull("open", "public");
   expect(await firstScreen(bob)).toContain("alice/open#1 has sat approved");
 });
+
+test("the dashboard's since-you-were-here shows a release and a failed gate", async () => {
+  const db = forge.db;
+  const now = new Date().toISOString();
+  db.run("INSERT INTO repo (id, owner_id, name, visibility) VALUES ('shipped', ?1, 'shipped', 'public')", [alice.id]);
+  db.run("INSERT INTO release (sha, repo_id, pull_number, ok, line, created_at) VALUES ('abc1234', 'shipped', 1, 1, 'ok', ?1)", [now]);
+  db.run("INSERT INTO gate_result (id, repo_id, run_id, tip_oid, state, started_at, finished_at) VALUES ('g1', 'shipped', 'r', 't', 'red', ?1, ?1)", [now]);
+  const text = await firstScreen(bob);
+  expect(text).toContain("alice/shipped");
+  expect(text).toContain("1 released");
+  expect(text).toContain("1 failed");
+});

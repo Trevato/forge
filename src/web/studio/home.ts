@@ -279,7 +279,7 @@ export async function studioHome(
   const before = timePhase(ctx.request, "visit", () =>
     isNavigation(ctx.request) ? noteVisit(ctx.app.db, user.id, visitedAt) : lastVisit(ctx.app.db, user.id),
   );
-  const since = timePhase(ctx.request, "since", () => sinceYouWere(ctx.app.db, before, visitedAt));
+  const since = timePhase(ctx.request, "since", () => sinceYouWere(ctx.app.db, user, before, visitedAt));
   const ask = firstSteps ?? everydayCard(ctx, user);
   const figures = user.isAdmin && steps === undefined;
   const ceilingUsd = forgeCeiling(ctx.app.config);
