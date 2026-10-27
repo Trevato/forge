@@ -76,6 +76,7 @@ import {
 import { tell, toldWords } from "./tell.ts";
 import { putFollow, upstreamUrl } from "../core/upstream_follow.ts";
 import { pinFor, remoteGitEnv, type Pin } from "../git/remote-env.ts";
+import { AT_REPOSITORY_LIMIT, NO_SUCH_AGENT } from "./crew_limit_words.ts";
 
 /** The whole clone — the HEAD probe and the fetch — gets this long. */
 export const MIGRATE_TIMEOUT_MS = 120_000;
@@ -255,7 +256,7 @@ export function migrationJobFor(
 }
 
 /** A refusal in words a person can act on. */
-export function migrateMessage(error: MigrateError, limit = "at the repositories limit"): string {
+export function migrateMessage(error: MigrateError, limit = AT_REPOSITORY_LIMIT): string {
   switch (error) {
     case "invalid_url":
       return "That is not a URL this forge will clone from. Paste an https:// (or http://) address of a public repository, with no password in it. A git:// address is not supported: use its https:// address.";
@@ -266,7 +267,7 @@ export function migrateMessage(error: MigrateError, limit = "at the repositories
     case "unreachable":
       return "The origin could not be reached. Try again, or reconnect it under Settings → Origins.";
     case "no_such_agent":
-      return "That agent is not on this forge.";
+      return NO_SUCH_AGENT;
     case "invalid_branch":
       return "That is not a branch name git would take.";
     case "name_taken":

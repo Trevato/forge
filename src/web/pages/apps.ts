@@ -16,6 +16,7 @@ import { storageLimitMessage } from "../../core/storage.ts";
 import { repositoryLimitMessage } from "../../actions/repos.ts";
 import { REPO_INIT_FAILED, REPO_NAME_RULES } from "../../actions/repo_words.ts";
 import { appLimitWords } from "../../actions/app_limit.ts";
+import { NO_SUCH_AGENT } from "../../actions/crew_limit_words.ts";
 import { getUserByName } from "../../core/users.ts";
 import {
   appView,
@@ -442,7 +443,7 @@ const NEW_APP_ERRORS: Record<string, string> = {
     "Another app already answers to that hostname. Pick another name.",
   already_app: "That repository is already an app.",
   scaffold_failed: "The starter app could not be committed.",
-  no_such_agent: "That agent is not on this forge.",
+  no_such_agent: NO_SUCH_AGENT,
 };
 
 // POST /apps/new

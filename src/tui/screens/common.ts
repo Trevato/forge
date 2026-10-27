@@ -10,6 +10,7 @@
 import { PASSWORD_TOO_LONG } from "../../core/hash-gate.ts";
 import { refusalText } from "../../http/refusal.ts";
 import { NOT_A_MEMBER } from "../../core/roles.ts";
+import { AGENT_NOT_ON_CREW } from "../../actions/crew_limit_words.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding, type Binding } from "../app/keys.ts";
 import type { KeyEvent } from "../term/input.ts";
@@ -906,7 +907,7 @@ const MESSAGES: Record<string, string> = {
   no_such_agent: "no such agent",
   scaffold_failed: "the repository was made, but the app could not be started",
   assignee_cannot_read: "they cannot see this repository",
-  agent_not_on_crew: "that agent is not on this repository's crew",
+  agent_not_on_crew: AGENT_NOT_ON_CREW,
   invalid_model: "that model name is not valid",
   brief_too_long: "that brief is too long (4000 characters at most)",
   invalid_budget: "the budget must be between 0 and 100 dollars",

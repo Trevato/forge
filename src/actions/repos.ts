@@ -13,6 +13,7 @@ import { canSeeSealed } from "../core/sealed.ts";
 import { capacityValue } from "../core/capacity.ts";
 import { NEW_FOR_MS } from "./accounts.ts";
 import { repositoryLimitSentence } from "../settings/quotas.ts";
+import { AT_REPOSITORY_LIMIT } from "./crew_limit_words.ts";
 import { storageChanged, storageRefusal, storageSentence } from "../core/storage.ts";
 import {
   createLabel as insertLabel,
@@ -104,7 +105,7 @@ export function repositoryLimitMessage(app: App, user: User, ownerId = user.id):
   return (
     repositoryLimitRefusal(app, user, ownerId) ??
     storageSentence(app, ownerId) ??
-    "at the repositories limit"
+    AT_REPOSITORY_LIMIT
   );
 }
 
