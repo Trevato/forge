@@ -491,7 +491,12 @@ export function quoteCut(text: string): string {
   let end = -1;
   for (const m of head.matchAll(/[.!?](?=\s|$)/g))
     if (m.index! >= QUOTE_MAX - QUOTE_WINDOW) end = m.index! + 1;
-  return end > 0 ? head.slice(0, end) : `${head.trimEnd()}…`;
+  if (end > 0) return head.slice(0, end);
+  // The mark takes a unit of the max, and a pair is never left half.
+  let room = QUOTE_MAX - 1;
+  const last = t.charCodeAt(room - 1);
+  if (last >= 0xd800 && last <= 0xdbff) room--;
+  return `${t.slice(0, room).trimEnd()}…`;
 }
 
 const quoted = (text: string): string[] =>
