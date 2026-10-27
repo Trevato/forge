@@ -15,6 +15,7 @@ import {
   detachFork,
   forkBareRepo,
   initBareRepo,
+  repoExists,
   repoDir,
 } from "../git/repos.ts";
 import { id } from "../kernel/id.ts";
@@ -866,7 +867,10 @@ export function listReposByOwner(
 }
 
 /**
- * Delete a repo. Row first, then disk — inverse of creation, same invariant.
+ * Delete a repo. Disk first, then the row: when the directory will not go,
+ * the repository stays listed and a retry finds it (`delete_failed`). A
+ * directory that is already missing leaves nothing to orphan, so the row still
+ * goes and `delete_failed` is still reported.
  * Before removing the objects, detach every fork that borrows them (repack so
  * the fork owns its objects, then drop its alternates link) — otherwise a
  * fork would be silently corrupted. This is the detach-before-delete rule.
@@ -893,14 +897,20 @@ export async function deleteRepo(
     );
   }
 
-  db.query("DELETE FROM repo WHERE id = ?1").run(repo.id);
-  forgetListings(db);
   const dir = repoDir(reposRoot, repo.ownerName, repo.name);
   // A pooled `cat-file` holds this directory open. Closing it first is what
   // keeps the space actually free after the unlink instead of pinned to a
   // descriptor nobody will ever read again.
   closeReader(dir);
+  const present = await repoExists(dir);
+  // The directory goes first: when it will not, the row stays, so the
+  // repository is still listed and a retry finds it. With no directory there
+  // is nothing to orphan, so the row goes and the missing repository is
+  // still reported.
   const removed = await deleteRepoDir(dir);
+  if (!removed.ok && present) return err("delete_failed");
+  db.query("DELETE FROM repo WHERE id = ?1").run(repo.id);
+  forgetListings(db);
   if (!removed.ok) return err("delete_failed");
   return ok();
 }

@@ -128,6 +128,10 @@ export async function deleteRepoDir(
   }
   if (!(await repoExists(dir)))
     return err({ message: `not a repository: ${dir}` });
-  await rm(dir, { recursive: true, force: true });
+  try {
+    await rm(dir, { recursive: true, force: true });
+  } catch (e) {
+    return err({ message: e instanceof Error ? e.message : String(e) });
+  }
   return ok();
 }
