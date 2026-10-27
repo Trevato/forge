@@ -15,11 +15,14 @@ import type { App } from "../app.ts";
 import {
   cleanWhy,
   getHold,
+  releaseGreenHold,
   releaseHold,
   setHold,
   type Hold,
 } from "../core/holds.ts";
-import type { Pull } from "../core/pulls.ts";
+import { getIssueById } from "../core/issues.ts";
+import { getPull, type Pull } from "../core/pulls.ts";
+import type { Run } from "../core/runs.ts";
 import { canRead, canWrite, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -54,6 +57,7 @@ export function holdPull(
   pull: Pull,
   why: string,
   dry = false,
+  until?: "green",
 ): Result<Hold, HoldError> {
   const holder = requireHolder(app, actor, repo, pull);
   if (!holder.ok) return holder;
@@ -67,8 +71,9 @@ export function holdPull(
       heldByName: holder.value.username,
       why: reason.value,
       heldAt: getHold(app.db, pull.id)?.heldAt ?? new Date().toISOString(),
+      ...(until ? { until } : {}),
     });
-  const hold = setHold(app.db, pull.id, holder.value.id, reason.value);
+  const hold = setHold(app.db, pull.id, holder.value.id, reason.value, until);
   app.bus.append({
     kind: "pull.held",
     repoId: repo.id,
@@ -101,4 +106,30 @@ export function releasePull(
       payload: { number: pull.number },
     });
   return ok(released);
+}
+
+/**
+ * A check finished green: a hold set "until green" on that pull is let go
+ * when the check was of the pull's current head. The pull's timeline gets
+ * the one line. A plain hold, a red check and a check of an older head
+ * change nothing.
+ */
+export function releaseOnGreen(app: App, run: Run): boolean {
+  if (run.kind !== "check" || run.state !== "ok" || run.issueId === null)
+    return false;
+  const issue = getIssueById(app.db, run.issueId);
+  if (!issue || issue.kind !== "pull") return false;
+  const pull = getPull(app.db, issue.repoId, issue.number);
+  if (!pull || pull.state !== "open" || pull.headOid !== run.commitOid)
+    return false;
+  if (!releaseGreenHold(app.db, pull.id)) return false;
+  app.bus.append({
+    kind: "pull.released",
+    repoId: pull.repoId,
+    payload: {
+      number: pull.number,
+      note: `hold released: green on ${run.commitOid.slice(0, 7)}`,
+    },
+  });
+  return true;
 }

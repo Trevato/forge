@@ -41,6 +41,10 @@ export function holdCard(
           })}
           holds this, ${time(hold.heldAt)}: ${hold.why}
         </p>
+        ${when(
+          hold.until === "green",
+          () => html`<p class="muted small">Releases on green.</p>`,
+        )}
         <p class="muted small">
           No rule sends it to review or lands it until it is released. A person
           can still ship it.
@@ -71,6 +75,10 @@ export function holdCard(
         placeholder="Why, in one line"
         aria-label="Why it is held, in one line"
       />
+      <label class="check"
+        ><input type="checkbox" name="until" value="green" />
+        <span>until green</span></label
+      >
       ${btn("Hold", { size: "sm" })}
     </form>
     <p class="muted small">

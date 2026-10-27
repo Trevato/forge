@@ -168,6 +168,11 @@ const EVENT_LOOK: Record<string, { icon: IconName; tone: Tone; verb: string }> =
       verb: "let this head run",
     },
     "pull.edited": { icon: "pencil", tone: "default", verb: "edited this" },
+    "pull.released": {
+      icon: "check",
+      tone: "success",
+      verb: "released the hold",
+    },
   };
 
 /**
@@ -199,12 +204,22 @@ function stateEvents(ctx: Ctx, repo: Repo, issue: Issue): Entry[] {
     const look = EVENT_LOOK[event.kind]!;
     const actor =
       event.actorId !== null ? actors.get(event.actorId) : undefined;
+    // The forge's own release of an until-green hold carries its line and no actor.
+    const note =
+      event.kind === "pull.released" && typeof event.payload.note === "string"
+        ? event.payload.note
+        : undefined;
     entries.push({
       at: event.createdAt,
       node: tlEvent({
         icon: look.icon,
         tone: look.tone,
-        body: html`${actor
+        body:
+          note !== undefined && !actor
+            ? html`<span>the forge</span> <span>${note}</span> ${time(
+                event.createdAt,
+              )}`
+            : html`${actor
             ? userLink(actor.username, { mark: markOf(actor) })
             : html`<span>someone</span>`} <span>${look.verb}</span> ${time(
             event.createdAt,

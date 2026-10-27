@@ -89,7 +89,8 @@ export function eventActor(
   if (actorName !== undefined) return actorName;
   return event.kind.startsWith("run.") ||
     event.kind.startsWith("app.") ||
-    event.kind.startsWith("prompt.")
+    event.kind.startsWith("prompt.") ||
+    (event.kind === "pull.released" && event.actorId === null)
     ? "the forge"
     : "someone";
 }

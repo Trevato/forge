@@ -47,7 +47,7 @@ function fileHold(ctx: Ctx, user: User, repo: Repo, args: Args): Answer {
 
 export const tool: Tool = {
   name: "hold",
-  doc: "`{ app, pull | path, why?, release?, dryRun? }`: hold a pull so no rule reviews or lands it, or let it go; a person who can write, never an agent; or with `path` (no `pull`) hold new work on a file so the picker starts no build whose issue names it, or list the holds and who set each; an admin of the app; plans unless `dryRun: false`",
+  doc: "`{ app, pull | path, why?, until?, release?, dryRun? }`: hold a pull so no rule reviews or lands it, or let it go; a person who can write, never an agent; or with `path` (no `pull`) hold new work on a file so the picker starts no build whose issue names it, or list the holds and who set each; an admin of the app; plans unless `dryRun: false`",
   description:
     "Hold a pull (`why`) or `release` it; or `path`: hold new work on a file. Neither: list file holds.",
   inputSchema: {
@@ -59,6 +59,11 @@ export const tool: Tool = {
       why: {
         type: "string",
         description: "Why, one line.",
+      },
+      until: {
+        type: "string",
+        enum: ["green"],
+        description: "green: released when a check passes.",
       },
       release: {
         type: "boolean",
@@ -100,7 +105,17 @@ export const tool: Tool = {
         dryRun: dry,
       });
     }
-    const held = holdPull(ctx.app, user, repo, pull, str(args["why"]), dry);
+    if (args["until"] !== undefined && args["until"] !== "green")
+      return bad("bad_until", 'until, when given, is "green"');
+    const held = holdPull(
+      ctx.app,
+      user,
+      repo,
+      pull,
+      str(args["why"]),
+      dry,
+      args["until"] === "green" ? "green" : undefined,
+    );
     if (!held.ok)
       return bad(
         held.error,

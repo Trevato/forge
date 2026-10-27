@@ -346,6 +346,8 @@ export async function holdSubmit(ctx: Ctx): Promise<Response> {
     repo,
     found.pull,
     field(form, "why"),
+    false,
+    field(form, "until") === "green" ? "green" : undefined,
   );
   if (!held.ok && (held.error === "not_found" || held.error === "forbidden"))
     return notFoundPage(ctx);

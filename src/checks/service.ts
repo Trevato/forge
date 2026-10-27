@@ -16,6 +16,7 @@ import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { App } from "../app.ts";
+import { releaseOnGreen } from "../actions/holds.ts";
 import { announceRun } from "../actions/runs.ts";
 import { announceShard } from "./shard_event.ts";
 import type { ForgeEvent } from "../core/events.ts";
@@ -669,6 +670,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       });
       write(outcome.ok ? `passed in ${seconds}s` : `failed: ${outcome.error}`);
       if (done) announceRun(app, done);
+      if (done && outcome.ok) releaseOnGreen(app, done);
       if (!outcome.ok && run.issueId === null && run.env === repo.defaultBranch)
         proposeRevert(app, repo.id).catch((error) =>
           log.error("revert proposal failed", { error: String(error) }),

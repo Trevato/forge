@@ -1223,6 +1223,7 @@ const holdJson = (hold: Hold) => ({
   by: hold.heldByName,
   why: hold.why,
   at: hold.heldAt,
+  ...(hold.until ? { until: hold.until } : {}),
 });
 
 function loadPull(ctx: Ctx): Found<{ pull: Pull }> {
@@ -4290,12 +4291,16 @@ export function apiRoutes(router: Router<Handler>): void {
       const found = loadPull(ctx);
       if ("error" in found) return found.error;
       const input = await body(ctx.request);
+      if (input.until !== undefined && input.until !== "green")
+        return respondAccess("bad_until", 422);
       const held = holdPull(
         ctx.app,
         ctx.auth.user,
         found.repo,
         found.pull,
         str(input.why),
+        false,
+        input.until === "green" ? "green" : undefined,
       );
       if (!held.ok)
         return respondAccess(held.error, held.error === "not_open" ? 409 : 422);

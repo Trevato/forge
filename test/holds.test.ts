@@ -9,7 +9,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
-import { holdPull, releasePull } from "../src/actions/holds.ts";
+import { holdPull, releaseOnGreen, releasePull } from "../src/actions/holds.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { mergePull, openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
@@ -781,6 +781,56 @@ describe("a hold is set, shown and lifted", () => {
     // She said "not yet"; dana is still asked.
     expect([how(f.alice), how(dana)]).toEqual([["acted"], [null]]);
   });
+
+  test("until green: the form sets it, the card says it, and the release shows on the pull page as the forge's line", async () => {
+    const cookie = await signIn("alice");
+    const mine = await f.pullOn("until-green-page");
+    const change = `/alice/garden/pulls/${mine.number}`;
+    expect(await page(change, cookie)).toContain('name="until"');
+    const sent = await form(`${change}/hold`, cookie, {
+      why: "red alone",
+      until: "green",
+    });
+    expect(sent.status).toBe(303);
+    expect(getHold(f.app.db, mine.id)?.until).toBe("green");
+    expect(await page(change, cookie)).toContain("Releases on green.");
+    // The MCP door sets it too.
+    releaseHold(f.app.db, mine.id, f.alice.id);
+    const planned = await mcp("hold", {
+      app: "alice/garden",
+      pull: mine.number,
+      why: "red alone",
+      until: "green",
+      dryRun: false,
+    });
+    expect(planned.error).toBeUndefined();
+    expect(getHold(f.app.db, mine.id)?.until).toBe("green");
+    releaseHold(f.app.db, mine.id, f.alice.id);
+    const typo = await mcp("hold", {
+      app: "alice/garden",
+      pull: mine.number,
+      why: "red alone",
+      until: "red",
+      dryRun: false,
+    });
+    expect(typo.error).toContain("bad_until");
+    expect(getHold(f.app.db, mine.id)).toBeUndefined();
+    holdPull(f.app, f.alice, f.repo, mine, "red alone", false, "green");
+    const check = createRun(f.app.db, {
+      repoId: f.repo.id,
+      kind: "check",
+      issueId: mine.id,
+      env: `pull-${mine.number}`,
+      commitOid: mine.headOid,
+      reason: "pull",
+    });
+    claimRun(f.app.db, check.id);
+    const done = finishRun(f.app.db, check.id, { state: "ok", summary: "ok" })!;
+    expect(releaseOnGreen(f.app, done)).toBe(true);
+    const text = await page(change, cookie);
+    expect(text).toContain(`hold released: green on ${mine.headOid.slice(0, 7)}`);
+    expect(text).toContain("the forge");
+  });
 });
 
 describe("a hold, as it is kept", () => {
@@ -849,5 +899,79 @@ describe("a hold, as it is kept", () => {
     setHold(app.db, pull.id, alice.id, "once more");
     expect(getHold(app.db, pull.id)?.why).toBe("once more");
     expect(lastRelease(app.db, pull.id)).toBe(released);
+  });
+});
+
+describe("a hold set until green", () => {
+  let f: Awaited<ReturnType<typeof forge>>;
+  let app: App;
+
+  beforeAll(async () => {
+    f = await forge("forge-holds-green-", "private");
+    app = f.app;
+  }, 30_000);
+
+  afterAll(() => f.close());
+
+  /** A finished check on the pull's head, as the verdict leaves it. */
+  const verdict = (pull: Pull, state: "ok" | "failed", oid = pull.headOid) => {
+    const check = createRun(app.db, {
+      repoId: f.repo.id,
+      kind: "check",
+      issueId: pull.id,
+      env: `pull-${pull.number}`,
+      commitOid: oid,
+      reason: "pull",
+    });
+    claimRun(app.db, check.id);
+    return finishRun(app.db, check.id, { state, summary: state })!;
+  };
+  const notes = (pull: Pull) =>
+    (
+      app.db
+        .query("SELECT payload FROM event WHERE kind = 'pull.released'")
+        .all() as { payload: string }[]
+    )
+      .map((r) => JSON.parse(r.payload))
+      .filter((p) => p.number === pull.number)
+      .map((p) => p.note);
+
+  test("a green check on the head releases it, with one line saying so", async () => {
+    const pull = await f.pullOn("green-one");
+    const held = setHold(app.db, pull.id, f.alice.id, "red alone", "green");
+    expect(held.until).toBe("green");
+    expect(releaseOnGreen(app, verdict(pull, "failed"))).toBe(false);
+    expect(getHold(app.db, pull.id)).toBeDefined();
+    expect(releaseOnGreen(app, verdict(pull, "ok", "0".repeat(40)))).toBe(false);
+    expect(getHold(app.db, pull.id)).toBeDefined();
+    expect(releaseOnGreen(app, verdict(pull, "ok"))).toBe(true);
+    expect(getHold(app.db, pull.id)).toBeUndefined();
+    expect(lastRelease(app.db, pull.id)).toBeDefined();
+    expect(notes(pull)).toEqual([
+      `hold released: green on ${pull.headOid.slice(0, 7)}`,
+    ]);
+  });
+
+  test("a plain hold stays through a green check", async () => {
+    const pull = await f.pullOn("green-two");
+    setHold(app.db, pull.id, f.alice.id, "waiting");
+    expect(getHold(app.db, pull.id)?.until).toBeUndefined();
+    expect(releaseOnGreen(app, verdict(pull, "ok"))).toBe(false);
+    expect(getHold(app.db, pull.id)?.why).toBe("waiting");
+    expect(notes(pull)).toEqual([]);
+  });
+
+  test("holding a held pull again sets whether it waits for green", async () => {
+    const pull = await f.pullOn("green-three");
+    setHold(app.db, pull.id, f.alice.id, "waiting", "green");
+    expect(setHold(app.db, pull.id, f.alice.id, "waiting").until).toBeUndefined();
+    expect(releaseOnGreen(app, verdict(pull, "ok"))).toBe(false);
+  });
+
+  test("holdPull takes until: green", async () => {
+    const pull = await f.pullOn("green-four");
+    const held = holdPull(app, f.alice, f.repo, pull, "red alone", false, "green");
+    expect(held.ok && held.value.until).toBe("green");
+    expect(releaseOnGreen(app, verdict(pull, "ok"))).toBe(true);
   });
 });
