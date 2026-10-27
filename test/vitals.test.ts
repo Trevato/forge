@@ -2,6 +2,8 @@
 
 import { laneSentence } from "../src/kernel/vitals.ts";
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
+import { accessDir, flushAccess, recordAccess } from "../src/http/access_log.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -91,6 +93,7 @@ test("a site admin with a read-only token gets the shape; others get the short o
   const v = (await res.json()) as Record<string, any>;
   expect(Object.keys(v).sort()).toEqual(
     [
+      "accessLog",
       "apps", "at", "checkedAt", "commit", "degraded", "disk", "draining", "errors", "flakes",
       "incidents", "lane", "memory", "needs", "ok", "queue", "rollout", "stale", "stuck",
       "version",
@@ -486,4 +489,33 @@ test("laneSentence says one lane for one slot and names the slots in force for s
   expect(laneSentence(4, oldest, [], 3, now)).toBe(
     "4 checks wait for 3 slots, none busy; the oldest since 01:04; nothing runs.",
   );
+});
+
+test("an access log that cannot write is a need past five minutes; an idle forge is not (#6841)", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "vitals-access-"));
+  const at = new Date();
+  try {
+    flushAccess();
+    const later = (ms: number) =>
+      vitals({ db: app.db, signals: app.signals, dataDir: dir, disk: roomy, now: Date.now() + ms });
+    // ten idle minutes: nothing recorded, nothing to say
+    const idle = later(600_000);
+    expect(idle.degraded.some((d) => d.cause === "access-log")).toBe(false);
+    expect(idle.accessLog.unwrittenSecondsAgo).toBeNull();
+    // a recorded line whose append fails
+    writeFileSync(accessDir(dir), "not a directory");
+    recordAccess(dir, { request: new Request("http://forge.test/issues/a"), status: 200, ms: 1, client: "1.1.1.1" }, at);
+    flushAccess(at);
+    expect(later(0).degraded.some((d) => d.cause === "access-log")).toBe(false);
+    const late = later(600_000);
+    expect(late.degraded.find((d) => d.cause === "access-log")?.sentence).toContain("not writing");
+    expect(late.accessLog.unwrittenSecondsAgo).toBeGreaterThan(300);
+    // once a line lands the mark clears
+    await rm(accessDir(dir));
+    recordAccess(dir, { request: new Request("http://forge.test/issues/b"), status: 200, ms: 1, client: "1.1.1.1" }, at);
+    flushAccess(at);
+    expect(later(600_000).accessLog.unwrittenSecondsAgo).toBeNull();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
