@@ -351,7 +351,7 @@ describe("home waiting line", () => {
     expect(waitingWords(1, "2026-10-21T11:40:00.000Z", now)).toBe("1 waiting on you, oldest under 1 h");
   });
 
-  async function homeWith(stale: number[]): Promise<string> {
+  async function homeWith(stale: number[], title?: string): Promise<string> {
     const root = mkdtempSync(join(tmpdir(), "forge-home-wait-"));
     const app = createApp({ dataDir: root, port: 0 });
     const servers = await serve(app);
@@ -365,7 +365,7 @@ describe("home waiting line", () => {
         const number = app.db.query<{ issue_seq: number }, [string]>("UPDATE repo SET issue_seq = issue_seq + 1 WHERE id = ?1 RETURNING issue_seq").get(repo.value.id)!.issue_seq;
         app.db
           .query(`INSERT INTO issue (id, repo_id, number, kind, title, body, author_id, state, created_at) VALUES (?1, ?2, ?3, 'pull', ?4, '', ?5, 'open', ?6)`)
-          .run(issueId, repo.value.id, number, `Stale ${i}`, made.value.id, new Date(Date.now() - h * 3_600_000).toISOString());
+          .run(issueId, repo.value.id, number, title ?? `Stale ${i}`, made.value.id, new Date(Date.now() - h * 3_600_000).toISOString());
         app.db
           .query(`INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, head_repo_id) VALUES (?1, 'main', ?2, ?3, ?3, ?4)`)
           .run(issueId, `b/${i}`, "0".repeat(40), repo.value.id);
@@ -389,7 +389,16 @@ describe("home waiting line", () => {
 
   test("three asks show one line linking to /review", async () => {
     const body = await homeWith([30, 40, 50]);
-    expect(body).toMatch(/<p class="small muted"><a href="\/review">3 waiting on you, oldest 5\d h<\/a><\/p>/);
+    expect(body).toMatch(/<p class="small muted break stack stack-tight"><span>3 waiting on you, oldest 5\d h<\/span><a href="\/review">Review them<\/a><\/p>/);
+  }, 30_000);
+
+  test("a 120-character title with no spaces: the line breaks, the link below, the title stays off home", async () => {
+    const long = "x".repeat(120);
+    const body = await homeWith([30], long);
+    const line = body.slice(body.indexOf('<p class="small muted break'), body.indexOf("Review them</a></p>"));
+    expect(line).toMatch(/^<p class="[^"]*\bbreak\b[^"]*\bstack\b/);
+    expect(line).toContain('</span><a href="/review">');
+    expect(line).not.toContain(long);
   }, 30_000);
 
   test("with none, the line is absent", async () => {

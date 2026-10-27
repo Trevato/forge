@@ -185,8 +185,9 @@ export function waitingLine(db: Database, user: User, now: Date = new Date()): H
   });
   const words = waitingWords(count, oldest, now);
   if (words === null && stale.length === 0) return html``;
+  // `.break` lets the words wrap; `.stack` puts the link on its own line. No ask title: the home stays bare of them.
   // The fold is a form, which cannot sit in the paragraph: it follows it.
-  return html`${words === null ? null : html`<p class="small muted"><a href="/review">${words}</a></p>`}${stale.length === 0 ? null : staleArchive(stale)}`;
+  return html`${words === null ? null : html`<p class="small muted break stack stack-tight"><span>${words}</span><a href="/review">Review them</a></p>`}${stale.length === 0 ? null : staleArchive(stale)}`;
 }
 
 /** Home's flow vitals for an admin (#5935): one muted line of counts; the open count links to the boards. */
