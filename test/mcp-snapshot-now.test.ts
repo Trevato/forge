@@ -1,12 +1,11 @@
-/** MCP `snapshot_now`: the Backups page's "take one now", for a forge admin. */
-
+/** MCP `snapshot_now` is the Backups page's button: it says when there is nowhere to keep one, and only an admin-scope admin takes one. */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { createToken } from "../src/core/tokens.ts";
-import { createUser, getUserByName } from "../src/core/users.ts";
+import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { startSnapshots, type SnapshotsHandle } from "../src/snapshot/service.ts";
 import { dirStore } from "../src/snapshot/store.ts";
@@ -15,62 +14,98 @@ import { quietLogs } from "./helpers/globals.ts";
 quietLogs();
 
 describe("MCP snapshot_now", () => {
-  let root = "";
+  let dataDir: string;
   let app: App;
   let servers: Servers;
   let svc: SnapshotsHandle | undefined;
+  let admin = "";
+  let adminRw = "";
+  let other = "";
+  let id = 1;
 
-  const token = (name: string, scope: "admin" | "rw" = "admin") =>
-    createToken(app.db, getUserByName(app.db, name)!.id, "t", scope).token;
-  const call = async (tok: string) => {
+  const call = async (token: string) => {
     const res = await fetch(`${servers.url}/mcp`, {
       method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${tok}` },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "snapshot_now", arguments: {} } }),
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: id++,
+        method: "tools/call",
+        params: { name: "snapshot_now", arguments: {} },
+      }),
     });
     const body = (await res.json()) as any;
-    return { error: body.result.isError === true, text: body.result.content[0].text as string };
+    if (body.error) return { text: JSON.stringify(body.error), isError: true };
+    return { text: body.result.content[0].text as string, isError: body.result.isError === true };
   };
 
   beforeAll(async () => {
-    root = mkdtempSync(join(tmpdir(), "forge-mcp-snap-"));
-    app = createApp({ dataDir: root, port: 0 });
-    for (const [username, isAdmin] of [["alice", true], ["bob", false]] as const) {
-      const made = await createUser(app.db, { origin: "seed", trusted: true, username, email: `${username}@x.test`, password: "a-long-snapshot-passphrase", isAdmin });
-      if (!made.ok) throw new Error(username);
-    }
+    dataDir = await mkdtemp(join(tmpdir(), "forge-mcp-snapshot-now-"));
+    app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    const b = await createUser(app.db, { origin: "seed", trusted: true,
+      username: "bob",
+      email: "bob@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!b.ok) throw new Error(b.error);
+    admin = createToken(app.db, a.value.id, "admin", "admin").token;
+    adminRw = createToken(app.db, a.value.id, "rw", "rw").token;
+    other = createToken(app.db, b.value.id, "admin", "admin").token;
   }, 30_000);
 
   afterAll(async () => {
-    servers.stop();
     await svc?.stop();
+    servers.stop();
     app.close();
-    rmSync(root, { recursive: true, force: true });
+    await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("with no store, it says the page's sentence", async () => {
-    const r = await call(token("alice"));
+  test("a forge with no snapshot store says so", async () => {
+    svc = startSnapshots(app, () => undefined, { version: "t", nightly: false });
+    const r = await call(admin);
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("no_store");
     expect(r.text).toContain("This forge has nowhere to put a snapshot.");
+    await svc.stop();
+    svc = undefined;
   });
 
-  test("a non-admin is refused and nothing is taken", async () => {
-    const r = await call(token("bob"));
-    expect(r.error).toBe(true);
-    expect(r.text).toContain("no such tool here");
-  });
-
-  test("an admin with a local store takes one, and it is listed after", async () => {
-    svc = startSnapshots(app, dirStore(join(root, "store")), { version: "t", nightly: false });
-    const weak = await call(token("alice", "rw"));
-    expect(weak.error).toBe(true);
-    expect(weak.text).toContain("admin-scope token");
+  test("a non-admin, and an admin's rw token, are refused and nothing is taken", async () => {
+    const store = dirStore(join(dataDir, "refused"));
+    svc = startSnapshots(app, store, { version: "t", nightly: false });
+    const plain = await call(other);
+    const rw = await call(adminRw);
+    expect(plain.isError).toBe(true);
+    expect(rw.isError).toBe(true);
+    expect(rw.text).toContain("forbidden");
     expect(await svc.list()).toEqual([]);
-    const r = await call(token("alice"));
-    expect(r.error).toBe(false);
+    expect(svc.last().manifest).toBeUndefined();
+    await svc.stop();
+    svc = undefined;
+  });
+
+  test("an admin-scope admin takes one, and it is in the store", async () => {
+    const store = dirStore(join(dataDir, "store"));
+    svc = startSnapshots(app, store, { version: "t", nightly: false });
+    const r = await call(admin);
+    expect(r.isError).toBe(false);
     const out = JSON.parse(r.text);
-    expect(out.says).toContain(`Snapshot ${out.name} taken`);
-    expect(typeof out.bytes).toBe("number");
-    expect((await svc.list()).map((m) => m.name)).toContain(out.name);
+    expect(Object.keys(out).sort()).toEqual(["apps", "bytes", "name", "repos", "says"]);
+    expect(out.says).toStartWith(`Snapshot ${out.name} taken: `);
+    const kept = await svc.list();
+    expect(kept.map((m) => m.name)).toEqual([out.name]);
+    expect((await store.list(`snapshots/${out.name}/`)).length).toBeGreaterThan(0);
   });
 });
