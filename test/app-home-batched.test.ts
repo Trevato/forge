@@ -1,4 +1,4 @@
-/** An app home's `now` and `following` read in batches: 200 issues, 40 pulls, 5 runs (#6184). */
+/** An app home's `now` and `following` read in batches: 200 issues, 40 pulls, 5 runs (#6184); no statement grows with the rows (#6819). */
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,6 +14,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { proveAll } from "./helpers/verified.ts";
 import { baselineMs, expectBudget } from "./helpers/budget.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { quiet } from "./helpers/statements.ts";
 
 quietLogs();
 
@@ -67,13 +68,9 @@ let cookie = "";
 const PAGES = ["/alice/vault", "/alice/vault-fork"];
 /** Statements a page cost with few rows. */
 const small: Record<string, number> = {};
-
-/**
- * Per-row probes the page makes today (#6819 batches them and removes this list),
- * one per visible pull and per run: the repo-visibility check, the sealed check
- * and the issue-by-id read. They are a known cost this test does not pin; every other statement must not grow with the rows.
- */
-const PER_ROW_TODAY = [/^\s*SELECT 1 AS n FROM repo WHERE repo\.id = \?1 AND NOT EXISTS/, /^SELECT sealed, author_id FROM issue WHERE id = \?1/, /^\s*SELECT issue\.\*, user\.username AS author_name.* WHERE issue\.id = \?1\s*$/s];
+/** Every statement of the home, by text, after each seed step. */
+let fewStatements = new Map<string, number>();
+let manyStatements = new Map<string, number>();
 
 /** SQL statements one signed-in GET prepares: load-independent, unlike its milliseconds. */
 async function queriesFor(path: string): Promise<number> {
@@ -81,7 +78,7 @@ async function queriesFor(path: string): Promise<number> {
   const real = db.query;
   let n = 0;
   db.query = function (this: unknown, sql: string) {
-    if (!PER_ROW_TODAY.some((re) => re.test(sql))) n++;
+    n++;
     return real.call(this, sql);
   };
   try {
@@ -150,6 +147,26 @@ beforeAll(async () => {
   const agent = db.query<{ id: string }, []>("SELECT id FROM user WHERE kind = 'agent' LIMIT 1").get();
   const assignee = agent?.id ?? u.value.id;
   const repoIds = [made.value.id, forked.value.id];
+  // A public repository the viewer does not follow: work assigned to them there
+  // needs a real read per repository, not per row (the `canRead` memo in asks.ts).
+  const bob = await createUser(app.db, {
+    origin: "seed",
+    trusted: true,
+    username: "bob",
+    email: "bob@forge.local",
+    password: "a-good-passphrase",
+  });
+  if (!bob.ok) throw new Error(bob.error);
+  const elsewhere = await createRepo(app, { id: bob.value.id, username: "bob" } as never, { name: "elsewhere" });
+  if (!elsewhere.ok) throw new Error(String(elsewhere.error));
+  const seedElsewhere = (from: number, to: number) =>
+    db.transaction(() => {
+      for (let i = from; i < to; i++)
+        db.query(
+          `INSERT INTO issue (id, repo_id, number, kind, title, body, author_id, assignee_id, state)
+           VALUES (?1, ?2, ?3, 'issue', ?4, '', ?5, ?6, 'open')`,
+        ).run(`${elsewhere.value.id}i${i}`, elsewhere.value.id, 1 + i, `Away ${i}`, bob.value.id, u.value.id);
+    })();
   // Rows are added in two steps: a few, measured; then up to 200/40/5, measured again.
   const seed = (issues: [number, number], pulls: [number, number], runs: [number, number]) =>
     db.transaction(() => {
@@ -177,6 +194,7 @@ beforeAll(async () => {
       }
     })();
   seed([0, 10], [0, 2], [0, 1]);
+  seedElsewhere(0, 2);
   servers = await serve(app);
   const signin = await fetch(`${servers.url}/signin`, {
     method: "POST",
@@ -188,7 +206,10 @@ beforeAll(async () => {
   for (const path of PAGES) {
     small[path] = await costOf(path);
   }
+  fewStatements = await statementsByText(PAGES[0]!);
   seed([10, 200], [2, 40], [1, 5]);
+  seedElsewhere(2, 30);
+  manyStatements = await statementsByText(PAGES[0]!);
 });
 afterAll(() => {
   servers.stop();
@@ -251,4 +272,37 @@ test("the lean deferred read says what the whole graph says, and something is de
   const whole = repoGraph(app.db, repo.id).deferred;
   expect(whole.size).toBeGreaterThan(0);
   expect([...deferredOf(app.db, repo)].sort()).toEqual([...whole].sort());
+});
+
+/** Every statement the page runs, by its text, with how many times. */
+async function statementsByText(path: string): Promise<Map<string, number>> {
+  const door = app.db as unknown as { query: (sql: string) => unknown };
+  const original = app.db.query.bind(app.db);
+  let best: Map<string, number> | undefined;
+  for (let run = 0; run < 5; run++) {
+    await quiet(app.db);
+    const seen = new Map<string, number>();
+    door.query = (sql: string) => {
+      const key = sql.replace(/IN \((\?\d*,?)+\)/g, "IN (?…)").replace(/\s+/g, " ");
+      seen.set(key, (seen.get(key) ?? 0) + 1);
+      return original(sql);
+    };
+    try {
+      const res = await fetch(`${servers.url}${path}`, { headers: { cookie } });
+      expect(res.status).toBe(200);
+      await res.text();
+    } finally {
+      door.query = original;
+    }
+    const total = (m: Map<string, number>) => [...m.values()].reduce((a, b) => a + b, 0);
+    if (best === undefined || total(seen) < total(best)) best = seen;
+  }
+  return best!;
+}
+
+test("every statement the home runs costs the same with 200 issues, 40 pulls and 5 runs as with a few", () => {
+  const grown: string[] = [];
+  for (const [sql, n] of manyStatements)
+    if (n !== (fewStatements.get(sql) ?? 0)) grown.push(`${fewStatements.get(sql) ?? 0} -> ${n}: ${sql}`);
+  expect(grown).toEqual([]);
 });

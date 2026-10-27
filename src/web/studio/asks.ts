@@ -587,8 +587,15 @@ function askCandidatesFor(
     [...new Set(mine.map((i) => i.repoId))].filter((id) => !visible.has(id)),
   );
   // An assignment can outlive the access that made it: each repo needs a real read.
-  const readable = (repo: Repo | undefined): repo is Repo =>
-    repo !== undefined && (visible.has(repo.id) || canRead(db, repo, user));
+  // Asked once per repository, not once per assigned row.
+  const reads = new Map<string, boolean>();
+  const readable = (repo: Repo | undefined): repo is Repo => {
+    if (repo === undefined) return false;
+    if (visible.has(repo.id)) return true;
+    let ok = reads.get(repo.id);
+    if (ok === undefined) reads.set(repo.id, (ok = canRead(db, repo, user)));
+    return ok;
+  };
   const joinedMine = new Map(
     joinMany(db, mine.filter((i) => i.kind === "pull")).map((p) => [p.id, p]),
   );
