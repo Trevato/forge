@@ -17,7 +17,7 @@ export interface RenderInput {
   readonly size: number;
   /**
    * The whole body, when the page read it; empty for a file over the page's
-   * read ceiling, which only a `STREAMED` kind is drawn from.
+   * read ceiling, which only a media kind (`MEDIA_KINDS`) is drawn from.
    */
   readonly body: Uint8Array;
   /** `/:owner/:name/media/:ref/*path`, for `<img>`, `<video>` and `fetch()`. */
@@ -42,23 +42,35 @@ export const RENDERERS: Partial<Readonly<Record<FileKind, Renderer>>> = {
 
 /**
  * Kinds drawn wholly from the media route, never from the body: a file of
- * one of these too large for the page to read is still drawn, by its name,
- * and the media route confirms its bytes before it serves them as media.
+ * one of these too large for the page to read is still drawn up to its
+ * `RENDER_CAP`, decided by its first bytes (or by its name, when the source
+ * gave none), and the media route confirms its bytes before it serves them.
+ * Every other kind is bounded by the page's own read ceiling.
  */
-const STREAMED: ReadonlySet<FileKind> = new Set<FileKind>(["audio", "video"]);
+const MEDIA_KINDS: ReadonlySet<FileKind> = new Set<FileKind>([
+  "image",
+  "svg",
+  "pdf",
+  "audio",
+  "video",
+  "model3d",
+]);
 
 /** The renderer for a file and the bytes it is handed, or none: the source view. */
 export function rendererFor(
   path: string,
   blob: Blob,
+  renderers: Partial<Readonly<Record<FileKind, Renderer>>> = RENDERERS,
 ): { render: Renderer; body: Uint8Array } | undefined {
   const kind =
-    blob.kind === "too_large"
-      ? claimedMedia(path)?.kind
-      : fileKind(path, blob.body.subarray(0, HEAD_BYTES));
+    blob.kind !== "too_large"
+      ? fileKind(path, blob.body.subarray(0, HEAD_BYTES))
+      : blob.head !== undefined
+        ? fileKind(path, blob.head)
+        : claimedMedia(path)?.kind;
   if (kind === undefined || blob.size > RENDER_CAP[kind]) return undefined;
-  if (blob.kind === "too_large" && !STREAMED.has(kind)) return undefined;
-  const render = RENDERERS[kind];
+  if (blob.kind === "too_large" && !MEDIA_KINDS.has(kind)) return undefined;
+  const render = renderers[kind];
   if (render === undefined) return undefined;
   return { render, body: blob.kind === "too_large" ? NO_BYTES : blob.body };
 }

@@ -372,6 +372,44 @@ async function viaReader(
   }
 }
 
+/**
+ * A blob's first `bytes` bytes, and never one more off the pipe: `cat-file`
+ * is stopped once they are in, so a 4 GB file costs what its head does. For
+ * a page that must say what a file too large to read is.
+ */
+export async function blobHead(
+  dir: string,
+  rev: string,
+  path: string,
+  bytes: number,
+): Promise<Uint8Array | undefined> {
+  const spec = `${rev}:${path}`;
+  assertBatchSafe(spec);
+  const proc = Bun.spawn(["git", "cat-file", "blob", spec], {
+    cwd: dir,
+    env: gitEnv(),
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const reader = proc.stdout.getReader();
+  const head = new Uint8Array(bytes);
+  let filled = 0;
+  try {
+    while (filled < bytes) {
+      const next = await reader.read();
+      if (next.done || next.value === undefined) break;
+      const take = Math.min(next.value.length, bytes - filled);
+      head.set(next.value.subarray(0, take), filled);
+      filled += take;
+    }
+  } finally {
+    proc.kill("SIGKILL");
+  }
+  if (filled === 0 && (await proc.exited) !== 0) return undefined;
+  return head.subarray(0, filled);
+}
+
 function classify(body: Uint8Array, size: number, oid: string): BlobForRender {
   // NUL in the first 8KB is git's own binary heuristic.
   if (body.subarray(0, 8000).includes(0))

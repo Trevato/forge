@@ -71,6 +71,7 @@ import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, fragment, page, redirect } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
+import { HEAD_BYTES } from "../render/kinds.ts";
 import { rendererFor } from "../render/renderers.ts";
 import { mediaHref } from "./media.ts";
 import { browseBase, localScope, type RepoScope } from "../scope.ts";
@@ -1514,10 +1515,13 @@ export async function pathsJson(ctx: Ctx): Promise<Response> {
   );
 }
 
-/** The page's own render ceiling, under the source's fetch ceiling. */
-function capped(blob: Blob): Blob {
+/**
+ * The page's own render ceiling, under the source's fetch ceiling. A body
+ * over it is dropped and only its head kept, so a media kind is still drawn.
+ */
+export function capped(blob: Blob): Blob {
   return blob.kind !== "too_large" && blob.size > MAX_RENDER_BYTES
-    ? { kind: "too_large", size: blob.size }
+    ? { kind: "too_large", size: blob.size, head: blob.body.slice(0, HEAD_BYTES) }
     : blob;
 }
 

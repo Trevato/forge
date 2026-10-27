@@ -72,12 +72,20 @@ QuickTime files are inside, for browsers that refuse `video/quicktime`.
 - **In the terminal** an audio or video file is not played; the file pane
   says so, names the format and size, and prints the media route on the
   forge's address (`src/tui/ui/media-note.ts`).
-- **A long file:** the page reads at most 1 MB of a file. Audio and video are
-  drawn from the media route alone (`STREAMED` in `render/renderers.ts`), so
-  past that a file is drawn by its extension (`claimedMedia`) and its bytes
-  are confirmed by the media route, which serves a contradicted one as
-  `application/octet-stream` and the player shows the note. Under 1 MB, the
-  bytes decide first, and a `.mp4` that is text keeps the source view.
+- **A long file:** the page reads at most 1 MB of a file's body. Media
+  kinds (image, svg, pdf, audio, video, model3d — `MEDIA_KINDS` in
+  `render/renderers.ts`) are drawn from the media route alone, so they are
+  bounded by `RENDER_CAP`, not by that ceiling: past it the page reads only
+  the first `HEAD_BYTES` (`blobHead` in `src/git/read.ts`, which stops
+  `cat-file` once they are in) and the size, `fileKind` decides, and the
+  renderer gets an empty `body` and the `media` address. A `.pdf` whose
+  bytes are text keeps the over-cap note. Where the source gave no bytes (a
+  mirrored origin), the extension decides (`claimedMedia`) and the media
+  route confirms the bytes, serving a contradicted file as
+  `application/octet-stream`, and the player shows the note.
+- **Text kinds** (markdown, csv, config, text) and binary keep the page's
+  1 MB ceiling: over it the page says "over the render cap" and offers
+  Download.
 - Over `RENDER_CAP` (500 MB audio, 4 GB video) the page offers Download.
 
 ## Adding a renderer
