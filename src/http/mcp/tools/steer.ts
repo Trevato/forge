@@ -1,4 +1,4 @@
-import { steerRepoRun } from "../../../actions/runs.ts";
+import { STEER_SAYS, steerRepoRun } from "../../../actions/runs.ts";
 import { good, bad, type Tool, str, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
 
 export const tool: Tool = {
@@ -23,10 +23,7 @@ export const tool: Tool = {
           : `refused: ${steered.error}`,
       );
     return good({
-      says:
-        steered.value === "sent"
-          ? "The agent hears it at its next step."
-          : "No session was listening; it went on the conversation for the next run.",
+      says: STEER_SAYS[steered.value],
       outcome: steered.value,
     });
   },

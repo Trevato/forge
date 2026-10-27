@@ -203,6 +203,17 @@ export { crewRoot, workdirFor } from "./workdir.ts";
 /** Runs with an agent listening: what a person says reaches it next. */
 const steering = new Map<string, (text: string) => boolean>();
 
+/** A session starts listening to a run; the answer stops it. */
+export function listenForSteer(
+  runId: string,
+  send: (text: string) => boolean,
+): () => void {
+  steering.set(runId, send);
+  return () => {
+    if (steering.get(runId) === send) steering.delete(runId);
+  };
+}
+
 /**
  * Say something to an agent while its run goes. Written to the run's log
  * as the person's line first, so the record holds it whether or not the
@@ -1347,7 +1358,9 @@ async function work(
           timeoutMs: Math.max(deadline - Date.now(), 0),
           log: write,
           signal,
-          onSteer: (send) => steering.set(run.id, send),
+          onSteer: (send) => {
+            listenForSteer(run.id, send);
+          },
           onUsage: (so) =>
             meterLive(
               app,

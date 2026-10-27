@@ -320,6 +320,13 @@ export type SteerOutcome =
   /** No session was listening; it went on the conversation for the next run. */
   | "commented";
 
+/** What each outcome means, said the same on every surface that steers. */
+export const STEER_SAYS: Record<SteerOutcome, string> = {
+  sent: "The agent hears it at its next step.",
+  commented:
+    "No session was listening; it went on the conversation for the next run.",
+};
+
 /**
  * Say something to an agent mid-run. A running agent hears it as its next
  * user turn. A run that is queued, paused, or over has nobody listening,

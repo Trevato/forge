@@ -67,7 +67,7 @@ import {
 } from "./common.ts";
 import { assignPicker, assignedText, queuedText } from "./assign.ts";
 import { liveBindings, liveKey } from "./mirror.ts";
-import { RunList, openRunLog } from "./runlist.ts";
+import { RunList, maySteer, openRunLog, steerPrompt } from "./runlist.ts";
 import { Composer, threadLines, type ThreadEntry } from "./thread.ts";
 import { local, localRepo, whereRows, whereStrip } from "./where.ts";
 
@@ -490,6 +490,9 @@ export function issueScreen(
         focus === "crew"
           ? binding(["enter"], "open the run")
           : binding(["j", "k"], "scroll"),
+        ...(focus === "crew" && repo !== undefined && maySteer(f, repo, crew.selected)
+          ? [binding(["s"], "steer")]
+          : []),
         ...(mayWrite()
           ? [
               binding(["c"], "comment"),
@@ -685,6 +688,12 @@ export function issueScreen(
         if (crew.state.key(e, crew.runs.length)) return true;
         if (e.key === "enter") {
           openRun();
+          return true;
+        }
+        if (e.key === "s") {
+          const run = crew.selected;
+          if (run !== undefined && repo !== undefined && maySteer(f, repo, run))
+            steerPrompt(f, ctx, screen, repo, run, () => runAsync(ctx, reload));
           return true;
         }
       }

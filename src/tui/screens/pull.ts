@@ -120,7 +120,7 @@ import { FINISH_REFUSALS, finishConflicts } from "../../actions/finish-conflicts
 import { PROPOSE_WHY, proposalOf, proposeResolution } from "../../crew/proposal.ts";
 import { conflictScreen } from "./conflicts.ts";
 import { reviewScreen } from "./review.ts";
-import { RunList, openRunLog } from "./runlist.ts";
+import { RunList, maySteer, openRunLog, steerPrompt } from "./runlist.ts";
 import { runTone } from "./runwords.ts";
 import { Composer, threadLines, type ThreadEntry } from "./thread.ts";
 import { local, localRepo, whereRows, whereStrip } from "./where.ts";
@@ -826,7 +826,13 @@ export function pullScreen(
         ...(tab === 1
           ? view.keys
           : tab === 2
-            ? [binding(["j", "k"], "move"), binding(["enter"], "open the run")]
+            ? [
+                binding(["j", "k"], "move"),
+                binding(["enter"], "open the run"),
+                ...(repo !== undefined && maySteer(f, repo, crew.selected)
+                  ? [binding(["s"], "steer")]
+                  : []),
+              ]
             : [binding(["j", "k"], "scroll")]),
         ...(isApp && preview !== undefined
           ? [binding(["O"], "open the preview")]
@@ -1135,13 +1141,19 @@ export function pullScreen(
         seeConflicts();
         return true;
       }
-      // The crew tab is a list: the cursor moves, enter opens the run.
+      // The crew tab is a list: the cursor moves, enter opens the run, `s` steers it.
       if (tab === 2) {
         if (crew.state.key(e, crew.runs.length)) return true;
         if (e.key === "enter") {
           const run = crew.selected;
           if (run !== undefined && repo !== undefined)
             openRunLog(f, ctx, repo, run);
+          return true;
+        }
+        if (e.key === "s") {
+          const run = crew.selected;
+          if (run !== undefined && repo !== undefined && maySteer(f, repo, run))
+            steerPrompt(f, ctx, screen, repo, run, () => runAsync(ctx, reload));
           return true;
         }
       }
