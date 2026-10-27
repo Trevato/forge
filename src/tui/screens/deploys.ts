@@ -62,6 +62,8 @@ import {
 } from "../../actions/domain_words.ts";
 import { envLabel, envRefusalText, redeployedText, stoppedText } from "../../actions/env_words.ts";
 import { trendLine, visitorsLine } from "../../apps/vitals.ts";
+import { egressModeSentence, undeclaredHosts } from "../../apps/egress_report.ts";
+import { egressSetting } from "../../core/capacity.ts";
 import { listRepoRuns } from "../../actions/runs.ts";
 import { carriedByRuns, carriesText } from "../../core/carried.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
@@ -79,6 +81,7 @@ import { fill, len, split } from "../ui/layout.ts";
 import { emptyState } from "../ui/widgets.ts";
 import {
   ListState,
+  ago,
   confirmScreen,
   drawList,
   hitList,
@@ -128,6 +131,26 @@ function pullLine(p: AppPullLine): string {
   return `#${p.number} ${title} · check ${p.check} · ${p.preview ?? "none"}`;
 }
 
+/**
+ * "Reached, not declared": the hosts the app's code called that `forge.json`
+ * does not declare, as the app's page says them, then the line to add them.
+ * Only a writer is told; nothing is drawn with none.
+ */
+function egressLines(f: Session, repo: Repo): string[] {
+  if (!canWrite(f.db, repo, f.user)) return [];
+  const record = getAppByRepo(f.db, repo.id);
+  if (record === undefined) return [];
+  const declared = appsRuntime(f.app)?.liveFor(record, "production")?.cell?.egress ?? [];
+  const { reached, entries } = undeclaredHosts(f.app.config.dataDir, repo.id, declared);
+  if (reached.length === 0) return [];
+  return [
+    "Reached, not declared",
+    ...reached.map((r) => `  ${r.host}:${r.port} · ${r.count}× · last seen ${ago(r.last)}`),
+    egressModeSentence(egressSetting(f.db)),
+    `Add them to the egress list in forge.json: ${JSON.stringify(entries)}`,
+  ];
+}
+
 export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   const list = new RunList(f);
   let carries = new Map<string, number[]>();
@@ -136,6 +159,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   let trend = "";
   let pace = "";
   let side: string[] = [];
+  let egress: string[] = [];
   let pulls: AppPullLine[] = [];
   let production: Production = { state: "", redeploy: false, stop: false };
   let members = false;
@@ -154,6 +178,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     trend = seen === undefined ? "" : trendLine(seen.loadDays);
     pace = appPace(f.app, f.user, repo);
     side = appSideLines(f.app, f.user, repo);
+    egress = egressLines(f, repo);
     pulls = appPullLines(f.app, f.user, repo);
     production = readProduction(f, repo);
     // The action's gate: a person who can write, never an agent.
@@ -232,6 +257,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
             (trend === "" ? 0 : 1) +
             (pace === "" ? 0 : 1) +
             side.length +
+            egress.length +
             (named === "" ? 0 : 1),
         ),
         fill(1),
@@ -259,7 +285,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         style(c.mutedFg, c.bg),
         head!.x + head!.w,
       );
-      [visitors, trend, pace, ...side, named]
+      [visitors, trend, pace, ...side, named, ...egress]
         .filter((line) => line !== "")
         .forEach((line, i) =>
           s.text(head!.x, head!.y + 1 + i, truncate(line, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w),
