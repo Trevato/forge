@@ -388,7 +388,7 @@ This page is the front door. Everything else is a file of its own under
 - [`docs/STUDIO.md`](docs/STUDIO.md) — the front door in full: the five words and where each is decided, the box, the three lists, a tell, a run and a change each on its own page, and the board.
 - [`docs/TOUR.md`](docs/TOUR.md) — every other page and screen, with each of its doors: the terminal over SSH, the home and its figures, review, signing in, the page-view beacon, the board's notes, long threads, who can see a repository, archive, where a repository came from, big directories, search, sharing to the forge, link-preview cards and choosing among variants.
 - [`docs/ASKS.md`](docs/ASKS.md) — what waits on you and how to answer it: waiting pulls, mutes, wave proposals, feed chips and the decider.
-- [`docs/FEED.md`](docs/FEED.md) — the feed: what happened, ranked, each item with why it is there.
+- [`docs/FEED.md`](docs/FEED.md) — the feed: what happened, ranked, each item with why it is there. The home composer keeps your draft across a reload.
 - [`docs/PULLS.md`](docs/PULLS.md) — resolving a conflicted pull without a clone.
 - [`docs/GIT.md`](docs/GIT.md) — cloning over HTTPS and SSH, and partial clones of big repositories.
 - [`docs/ROLES.md`](docs/ROLES.md) — guest, member and admin, and what each may do.

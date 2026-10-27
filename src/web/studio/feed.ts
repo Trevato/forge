@@ -24,6 +24,7 @@ import { mayFetchLook, pictured } from "../pages/looks.ts";
 import { dividers } from "./day_divider.ts";
 import { html, type Html } from "../html.ts";
 import { fragment } from "../layout.ts";
+import { draftJs } from "../draft.ts";
 import { outboxJs } from "../outbox.ts";
 import { avatar, btn, card, disclosure, empty, nameMark, stateBadge, time, timeAgo } from "../ui.ts";
 import { writableAppsOf } from "./asks.ts";
@@ -221,7 +222,7 @@ export function composer(ctx: Ctx, user: User): Html {
   })}`;
   const form = html`<form id="composer" class="card" method="post" action="/tell">
     <div class="card-body stack">
-    <textarea class="input" name="text" rows="2" maxlength="2000" required placeholder="Tell the crew what should change" aria-label="Tell the crew">${sharedDraft(ctx.url.searchParams)}</textarea>
+    <textarea class="input" name="text" rows="2" maxlength="2000" required placeholder="Tell the crew what should change" aria-label="Tell the crew" data-draft="${user.id}">${sharedDraft(ctx.url.searchParams)}</textarea>
     <div class="bar">
       ${repos.length === 0
         ? html`<input type="hidden" name="app" value="${FORGE_TARGET}" /><span class="muted small">the forge</span>`
@@ -419,6 +420,7 @@ function keepDay(card) {
  */
 export const feedJs = /* js */ `
 ${outboxJs}
+${draftJs}
 ${dayKeepJs}
 (function () {
   var feed = document.getElementById('live-feed');
@@ -545,15 +547,27 @@ ${dayKeepJs}
   // The composer is a tell too: kept and sent the same way; the box clears
   // at once, and the post arrives in the timeline when the forge says so.
   var composer = document.getElementById('composer');
+  var draft = null;
+  if (composer && composer.elements.text && outbox) {
+    var draftBox = composer.elements.text;
+    draft = forgeDraft(window.localStorage, draftBox, 'draft.' + draftBox.dataset.draft + location.pathname, function (fn, ms) { setTimeout(fn, ms); });
+    draft.restore();
+    draftBox.addEventListener('input', draft.typed);
+  }
   if (composer) composer.addEventListener('submit', function (e) {
     var box = composer.elements.text;
     var app = composer.elements.app;
     var text = box ? box.value.trim() : '';
-    if (!text || !app || app.value === '${FORGE_TARGET}') return;
+    if (!text || !app) return;
+    // Sent from here, or posted natively (the forge target): either way the
+    // words are gone from the box, so the saved copy goes too.
+    if (draft) draft.clear();
+    if (app.value === '${FORGE_TARGET}') return;
     if (!queue('/api/v1/feed/tells', { app: app.value, text: text })) return;
     e.preventDefault();
     box.value = '';
     box.focus();
+    outbox.flush().then(function (r) { if (r.refused && draft) draft.refused(text); });
   });
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'x' || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -571,6 +585,7 @@ ${dayKeepJs}
   document.addEventListener('submit', function (e) {
     if (e.target && e.target.getAttribute && e.target.getAttribute('action') === '/logout') {
       if (outbox) outbox.clear();
+      if (draft) draft.forgetAll();
       if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage('clear');
     }
   });

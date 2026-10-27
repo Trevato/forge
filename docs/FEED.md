@@ -142,3 +142,13 @@ one `POST /api/v1/asks/bulk` (`action`, `items`, `reason`, `preview: false`);
 still names one). The list swaps in place and the top bar's count follows. One undo link
 (`POST /api/v1/asks/bulk/<id>/undo`) is kept for a day. The MCP's `asks_act`
 takes the same set, verb and reason.
+
+## The composer keeps your draft
+
+What you type in the home composer is saved in the browser's localStorage
+(per signed-in user and page, at most once a second) and is back after a
+reload. Sending clears it; a send the forge refuses puts the words back and
+keeps them; signing out clears every draft. It lives in the feed's existing
+script (no new script, no dependency). Not covered: the "the forge" thought
+target posts as a plain form, so its draft is dropped on submit, and the
+lean client home has no feed script, so no draft.
