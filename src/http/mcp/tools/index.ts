@@ -47,6 +47,7 @@ export { tool as explore } from "./explore.ts";
 export { tool as family } from "./family.ts";
 export { tool as feed } from "./feed.ts";
 export { tool as feed_chips } from "./feed_chips.ts";
+export { tool as flag_set } from "./flag_set.ts";
 export { tool as flow } from "./flow.ts";
 export { tool as follow_mode } from "./follow_mode.ts";
 export { tool as following } from "./following.ts";

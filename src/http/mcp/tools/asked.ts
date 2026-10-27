@@ -7,7 +7,7 @@ export const tool: Tool = {
   name: "asked",
   doc: "`{ repo?, show?, order? }`: what people asked the crew for, by default nothing merged yet and oldest first: who and when, the pulls that close it, the crew's last activity, waiting/building/shipped/closed, stale when not shipped in three days and flagged when stale with nothing built; repositories you can write",
   description:
-    "What people asked the crew for where you write: by default unmerged, oldest first.",
+    "What people asked the crew for: unmerged by default, oldest first.",
   inputSchema: {
     type: "object",
     properties: {

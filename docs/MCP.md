@@ -71,6 +71,7 @@ for a tunnel and a forge that sleeps.
 | `family` | the forge that sent this one and, for a site admin, those it sent, with state and version |  |
 | `feed` | `{ limit?, cursor? }`: your home timeline — tells, replies, runs, changes and looks — ranked, with who, what, why and a link; the same items as `GET /api/v1/feed`; `quietRuns` counts agent runs of the last 24 h that pushed, opened or said nothing, which the timeline leaves out |  |
 | `feed_chips` | `{ kind?, value?, hidden? }`: the feed chips you switched off, which `feed` and `asks` leave out; with `kind` (`kind` or `person`), `value` and `hidden` it switches one off or on | yes |
+| `flag_set` | `{ name, value?, clear? }`: set a declared flag's live value (`value` is `{ forge?, users?, roles?, percent? }`) or `clear` it to its default, with the Flags page's checks and refusals; a forge admin's (never an agent), an admin token; answers `{ name, value, says }` | yes |
 | `flow` | the forge's pipeline (a forge admin's, or an agent the owner granted `telemetry:read`; private repositories cut out): per stage counts, `oldestWaiting`, `capacity`, the bottleneck, the merge `queue` and what each reviewer has `reviewing` |  |
 | `follow_mode` | `{ repo, … }`: choose how a spawned forge follows its parent, `tell-me` or `take-updates`; its `forge` repository's admin only | yes |
 | `following` | where a fork stands against what it follows, and what the crew is doing about it |  |

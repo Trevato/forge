@@ -240,6 +240,7 @@ describe("the forge over MCP", () => {
       "claim_link",
       "take_updates",
       "sever",
+      "flag_set",
       "follow_mode",
       "upstream",
       "propose_to_parent_forge",
