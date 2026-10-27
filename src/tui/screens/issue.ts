@@ -33,7 +33,9 @@ import { teamsOfIssue, TEAMS_MAX } from "../../core/issue_teams.ts";
 import { listTeams } from "../../core/teams.ts";
 import { listRepoRuns } from "../../actions/runs.ts";
 import { privateRepoForSealed } from "../../actions/repos.ts";
-import { dependenciesOf } from "../../core/dependencies.ts";
+import { confirmIssue } from "../../actions/dependencies.ts";
+import { isCrew } from "../../core/agents.ts";
+import { dependenciesOf, heldBlockers } from "../../core/dependencies.ts";
 import { alreadyDone } from "../../core/done_on_main.ts";
 import { hasPicture } from "../../core/note_pictures.ts";
 import { isMirror } from "../../origins/write-through.ts";
@@ -154,6 +156,8 @@ export function issueScreen(
   let issueRow: Issue | undefined;
   /** The commits the crew found this issue done by on main; `x` closes it. */
   let doneBy: readonly string[] = [];
+  /** Closed-as-dropped-or-split blockers nobody has said may be passed. */
+  let held: Issue[] = [];
   /** Which issues this one waits for and holds up; a line when any. */
   let waits: Waits = { blockedBy: [], blocks: [] };
   /** What the crew has done here, newest first; a card when there is any. */
@@ -165,6 +169,13 @@ export function issueScreen(
   /** The text `e` opened the editor with; set while the composer edits, not comments. */
   let editing: string | undefined;
   const mayWrite = (): boolean => src.capabilities.write && repo !== undefined;
+  /** `g` is a person's: the crew parked the issue and may not unpark itself. */
+  const mayGoAhead = (): boolean =>
+    mayWrite() &&
+    held.length > 0 &&
+    f.user !== undefined &&
+    repo !== undefined &&
+    !isCrew(f.db, repo.id, f.user.id);
   scroll.top = keep.top ?? 0;
 
   const reload = async (): Promise<void> => {
@@ -188,6 +199,8 @@ export function issueScreen(
       issueRow?.state === "open"
         ? (alreadyDone(f.db, [issueRow.id]).get(issueRow.id) ?? [])
         : [];
+    held =
+      issueRow?.state === "open" ? heldBlockers(f.db, issueRow.id) : [];
     const deps = issueRow === undefined ? undefined : dependenciesOf(f.db, issueRow.id);
     waits = {
       blockedBy: deps?.blockedBy.map((i) => i.number) ?? [],
@@ -330,6 +343,61 @@ export function issueScreen(
     });
   };
 
+  /** `g` — say the issue may go ahead without its dropped or split blockers. */
+  const goAhead = (): void => {
+    const at = row();
+    if (at?.issue === undefined || held.length === 0) return;
+    const { repo: target, issue } = at;
+    const ask = (blockers: Issue[]): Screen => {
+      const names = blockers.map((b) => `#${b.number}`).join(", ");
+      return confirmScreen(ctx, screen, {
+        title: "Let it go ahead?",
+        body: [`#${issue.number} waited for ${names}, closed without being done.`],
+        actions: [{ label: "Go ahead" }, { label: "Cancel" }],
+        selected: 1,
+        onChoose: (index) => {
+          if (index !== 0) return;
+          runAsync(ctx, async () => {
+            for (const b of blockers) {
+              const done = confirmIssue(f.app, f.user, target, issue, b);
+              if (!done.ok) {
+                ctx.toast(errorText(done.error), "danger");
+                return;
+              }
+            }
+            await reload();
+            ctx.toast("may go ahead", "success");
+          });
+        },
+      });
+    };
+    if (held.length === 1) {
+      ctx.push(ask(held));
+      return;
+    }
+    // Several held: name one, or all of them.
+    const all = "all";
+    const blockers = held;
+    ctx.push(
+      pickerScreen(ctx, screen, {
+        title: "Go ahead without",
+        items: [
+          ...blockers.map((b) => ({
+            id: String(b.number),
+            label: `#${b.number} ${b.title}`,
+            hint: b.closeReason ?? "closed",
+          })),
+          { id: all, label: "all of them" },
+        ],
+        onPick: (ids) => {
+          const picked =
+            ids[0] === all ? blockers : blockers.filter((b) => String(b.number) === ids[0]);
+          if (picked.length > 0) void later(ctx, () => ask(picked));
+        },
+      }),
+    );
+  };
+
   /** `p` — the private repository to fix this sealed report in. */
   const privateRepo = (): void => {
     const at = row();
@@ -435,6 +503,7 @@ export function issueScreen(
               }),
               binding(["l"], "labels"),
               binding(["t"], "teams"),
+              ...(mayGoAhead() ? [binding(["g"], "go ahead")] : []),
               binding(["w"], "waits for"),
               ...(issueRow?.sealed === true
                 ? [binding(["p"], "private repo")]
@@ -465,12 +534,13 @@ export function issueScreen(
         crew.runs.length === 0 ? 0 : Math.min(crew.runs.length, CREW_ROWS) + 2;
       const waitsLine = waitsParts(waits);
       const headH = waitsLine.length === 0 ? 3 : 4;
-      const [strip, head, crewRow, body, box] = split(area, "v", [
+      const [strip, head, waitRow, crewRow, body, box] = split(area, "v", [
         len(whereRows(src)),
         len(headH),
+        len(held.length === 0 ? 0 : 1),
         len(crewH),
         fill(1),
-        len(Math.min(foot, Math.max(0, area.h - 4 - headH - crewH - whereRows(src)))),
+        len(Math.min(foot, Math.max(0, area.h - 4 - headH - crewH - whereRows(src) - (held.length === 0 ? 0 : 1)))),
       ]);
       whereStrip(s, strip!, c, f, src);
       const right = head!.x + head!.w;
@@ -540,6 +610,17 @@ export function issueScreen(
             ctx.push(issueScreen(f, ctx, src, opens)),
           );
       }
+      if (held.length > 0)
+        s.text(
+          waitRow!.x,
+          waitRow!.y,
+          truncate(
+            `waits for ${held.map((b) => `#${b.number} (${b.closeReason ?? "closed"})`).join(", ")}, closed without being done${mayGoAhead() ? " · g lets it go ahead" : ""}`,
+            waitRow!.w,
+          ),
+          style(c.fg, c.bg),
+          waitRow!.x + waitRow!.w,
+        );
       if (crewH > 0) {
         const inner = card(s, crewRow!, c, {
           title: `Crew · ${plural(crew.runs.length, "run")}`,
@@ -671,6 +752,10 @@ export function issueScreen(
             },
           }),
         );
+        return true;
+      }
+      if (e.key === "g" && mayGoAhead()) {
+        goAhead();
         return true;
       }
       if (e.key === "w" && mayWrite()) {

@@ -182,6 +182,27 @@ export function dependenciesOf(
   return { blockedBy: pick(blockedBy), blocks: pick(blocks) };
 }
 
+/** An edge `d` whose blocker `b` closed without being done and nobody confirmed. */
+const HELD_EDGE = "d.confirmed = 0 AND b.close_reason IN ('dropped','split')";
+
+/**
+ * The blockers of `issueId` that closed as dropped or split and that no
+ * person has confirmed, by number: what holds the issue though it is closed.
+ */
+export function heldBlockers(db: Database, issueId: string): Issue[] {
+  const ids = db
+    .query<{ blocked_by_id: string }, [string]>(
+      `SELECT d.blocked_by_id FROM issue_dependency d
+         JOIN issue b ON b.id = d.blocked_by_id AND b.state = 'closed'
+        WHERE d.issue_id = ?1 AND ${HELD_EDGE}
+        ORDER BY b.number`,
+    )
+    .all(issueId)
+    .map((r) => r.blocked_by_id);
+  const found = getIssuesByIds(db, ids);
+  return ids.map((id) => found.get(id)).filter((i): i is Issue => i !== undefined);
+}
+
 // ---- the graph of one repository ----
 
 /** An open issue held by a blocker that closed without being done. */
@@ -365,8 +386,7 @@ export function repoGraph(
          FROM issue_dependency d
          JOIN issue i ON i.id = d.issue_id AND i.state = 'open'
          JOIN issue b ON b.id = d.blocked_by_id AND b.state = 'closed'
-        WHERE i.repo_id = ?1 AND d.confirmed = 0
-          AND b.close_reason IN ('dropped','split')
+        WHERE i.repo_id = ?1 AND ${HELD_EDGE}
         ORDER BY b.number`,
     )
     .all(repoId);
