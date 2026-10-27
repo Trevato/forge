@@ -264,6 +264,7 @@ describe("the forge over MCP", () => {
       "assigned",
       "assign",
       "app_members",
+      "app_notes",
       "egress_grants",
       "explore",
       "person",

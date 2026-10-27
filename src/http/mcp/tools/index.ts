@@ -11,6 +11,7 @@ export { tool as app_deploy } from "./app_deploy.ts";
 export { tool as app_domains } from "./app_domains.ts";
 export { tool as app_env } from "./app_env.ts";
 export { tool as app_members } from "./app_members.ts";
+export { tool as app_notes } from "./app_notes.ts";
 export { tool as apps } from "./apps.ts";
 export { tool as archive } from "./archive.ts";
 export { tool as asked } from "./asked.ts";
