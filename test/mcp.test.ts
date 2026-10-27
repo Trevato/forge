@@ -282,6 +282,7 @@ describe("the forge over MCP", () => {
       "threads",
       "snapshot_now",
       "spend",
+      "subscriptions",
       "usage",
       "labels",
       "repo_labels",

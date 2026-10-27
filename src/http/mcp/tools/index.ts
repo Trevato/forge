@@ -127,6 +127,7 @@ export { tool as subscription_add } from "./subscription_add.ts";
 export { tool as subscription_budget } from "./subscription_budget.ts";
 export { tool as subscription_delete } from "./subscription_delete.ts";
 export { tool as subscription_wake } from "./subscription_wake.ts";
+export { tool as subscriptions } from "./subscriptions.ts";
 export { tool as sync } from "./sync.ts";
 export { tool as system } from "./system.ts";
 export { tool as take_updates } from "./take_updates.ts";
