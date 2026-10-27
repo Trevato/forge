@@ -1,4 +1,5 @@
 import { FEED_LIMIT_DEFAULT, FEED_LIMIT_MAX, parseCursor, readFeed } from "../../../feed/feed.ts";
+import { CURSOR_NOT_ISSUED } from "../../../actions/feed_words.ts";
 import { good, bad, type Tool, CHIP_ARGS, chipArgs, str } from "../shared.ts";
 
 export const tool: Tool = {
@@ -25,7 +26,7 @@ export const tool: Tool = {
     const given = args["cursor"];
     const cursor = given === undefined ? undefined : parseCursor(str(given));
     if (given !== undefined && cursor === undefined)
-      return bad("invalid", "that cursor was not issued here");
+      return bad("invalid", CURSOR_NOT_ISSUED);
     return good(
       readFeed(ctx.app.db, user, {
         limit,

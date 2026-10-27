@@ -1,4 +1,5 @@
 import { EVENTS_LIMIT_MAX, eventsLimit, eventsPage, validEventsCursor } from "../../../core/events_page.ts";
+import { CURSOR_NOT_ISSUED } from "../../../actions/feed_words.ts";
 import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
 
 export const tool: Tool = {
@@ -22,7 +23,7 @@ export const tool: Tool = {
     if (limit === undefined) return bad("invalid", `limit is 1 to ${EVENTS_LIMIT_MAX}`);
     const given = args["cursor"];
     if (given !== undefined && (typeof given !== "string" || !validEventsCursor(given)))
-      return bad("invalid", "that cursor was not issued here");
+      return bad("invalid", CURSOR_NOT_ISSUED);
     return good(eventsPage(ctx.app.db, repo.id, user, limit, given));
   },
 };

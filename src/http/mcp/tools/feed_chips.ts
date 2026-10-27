@@ -1,5 +1,6 @@
 import { getUserByName, getUsersByIds } from "../../../core/users.ts";
 import { chipsOf, isKindChip, setChip } from "../../../core/feed_chips.ts";
+import { KIND_HAS_NO_CHIP } from "../../../actions/feed_words.ts";
 import { good, bad, type Tool, str } from "../shared.ts";
 import { HIDDEN_WORDS } from "../../../core/arg_words.ts";
 
@@ -24,7 +25,7 @@ export const tool: Tool = {
       const hidden = args["hidden"];
       if (typeof hidden !== "boolean") return bad("invalid", HIDDEN_WORDS);
       if (args["kind"] === "kind") {
-        if (!isKindChip(value)) return bad("invalid", "that kind has no chip");
+        if (!isKindChip(value)) return bad("invalid", KIND_HAS_NO_CHIP);
         setChip(ctx.app.db, user.id, { kind: "kind", value }, hidden);
       } else if (args["kind"] === "person") {
         const who = getUserByName(ctx.app.db, value);

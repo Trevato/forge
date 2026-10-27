@@ -20,6 +20,7 @@ import {
   recordInteraction,
 } from "../core/interactions.ts";
 import { chipsOf, isKindChip, setChip } from "../core/feed_chips.ts";
+import { CURSOR_NOT_ISSUED, KIND_HAS_NO_CHIP } from "../actions/feed_words.ts";
 import { getUserByName, getUsersByIds } from "../core/users.ts";
 import { drainQueue } from "../core/shares.ts";
 import { feedTag, hasQueuedShares } from "../feed/feed_tag.ts";
@@ -70,7 +71,7 @@ export function feedRoutes(router: Router<Handler>): void {
     const rawCursor = q.get("cursor");
     const cursor = rawCursor === null ? undefined : parseCursor(rawCursor);
     if (rawCursor !== null && cursor === undefined)
-      return apiError("invalid_cursor", 422, "that cursor was not issued here");
+      return apiError("invalid_cursor", 422, CURSOR_NOT_ISSUED);
     // A 304 only when nothing the viewer would read has changed (`feedTag`).
     // The queue drains first, as `readFeed` would; shares still waiting
     // depend on the clock, so they always get a page.
@@ -133,7 +134,7 @@ export function feedRoutes(router: Router<Handler>): void {
       return apiError("invalid_hidden", 422, HIDDEN_WORDS);
     if (input.kind === "kind") {
       if (!isKindChip(value))
-        return apiError("invalid_chip", 422, "that kind has no chip");
+        return apiError("invalid_chip", 422, KIND_HAS_NO_CHIP);
       setChip(ctx.app.db, ctx.auth.user!.id, { kind: "kind", value }, input.hidden);
     } else if (input.kind === "person") {
       const who = getUserByName(ctx.app.db, value);
