@@ -2,10 +2,15 @@
  * Runs: every run of a repository, newest first, narrowed by state with `s`
  * (All, Failed, Running, Succeeded) — the web runs page's `?state=` row.
  * Read through `listRepoRuns`, so it is gated like every other run read.
+ * `x` cancels a run that has not finished; `a` queues a failed or cancelled
+ * agent run's task again (`requeueRepoRun`), each after a confirm.
  */
 
-import { cancelRepoRun, listRepoRuns } from "../../actions/runs.ts";
+import { cancelRepoRun, listRepoRuns, requeueRepoRun } from "../../actions/runs.ts";
+import { lacks } from "../../core/roles.ts";
 import { canWrite, type Repo } from "../../core/repos.ts";
+import { taskOf } from "../../crew/dispatch.ts";
+import { words } from "../../fleet/verbs.ts";
 import type { Run, RunState } from "../../core/runs.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -52,6 +57,44 @@ export function runsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     return canWrite(f.app.db, repo, f.user) ? run : undefined;
   };
 
+  /**
+   * The selected run, when it is a failed or cancelled agent run whose task
+   * is still there and the viewer is a person who may run the crew — the
+   * cases `requeueRepoRun` would not refuse before asking the crew.
+   */
+  const requeueable = (): Run | undefined => {
+    const run = list.selected;
+    const user = f.user;
+    if (run === undefined || user === undefined || user.kind !== "user") return undefined;
+    if (run.kind !== "agent" || (run.state !== "failed" && run.state !== "cancelled"))
+      return undefined;
+    if (repo.archivedAt !== null || !canWrite(f.app.db, repo, user)) return undefined;
+    if (lacks(f.app.db, user, "run_crew")) return undefined;
+    return taskOf(f.app, run) === undefined ? undefined : run;
+  };
+
+  const askRequeue = (): void => {
+    const run = requeueable();
+    if (run === undefined) return;
+    const names = new Map<string, { username: string }>();
+    const what = `${runTitle(run, names)} (${run.id.slice(0, 8)})`;
+    ctx.push(
+      confirmScreen(ctx, self, {
+        title: "Run again",
+        body: [`Queue ${what} again?`, "The new run reads the whole conversation and carries on."],
+        actions: [{ label: "Run again", variant: "default" }, { label: "Keep" }],
+        selected: 1,
+        onChoose: (choice) => {
+          if (choice !== 0) return;
+          const done = requeueRepoRun(f.app, f.user, repo, run.id);
+          if (done.ok) ctx.toast(`Queued ${what} again.`);
+          else ctx.toast(`Could not run it again: ${words(done.error)}.`, "danger");
+          read();
+        },
+      }),
+    );
+  };
+
   const ask = (): void => {
     const run = cancellable();
     if (run === undefined) return;
@@ -87,6 +130,7 @@ export function runsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         binding(["j", "k"], "move"),
         binding(["enter"], "open the log"),
         ...(cancellable() === undefined ? [] : [binding(["x"], "cancel")]),
+        ...(requeueable() === undefined ? [] : [binding(["a"], "run again")]),
         binding(["s"], "state: All, Failed, Running, Succeeded (cycle)"),
         binding(["r"], "refresh"),
       ];
@@ -124,6 +168,10 @@ export function runsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       }
       if (e.key === "x") {
         ask();
+        return true;
+      }
+      if (e.key === "a") {
+        askRequeue();
         return true;
       }
       if (e.key === "s") {

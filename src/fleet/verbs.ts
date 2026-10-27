@@ -129,7 +129,8 @@ const WORDS: Record<string, string> = {
   unknown_branch: "unknown branch",
 };
 
-const words = (code: string): string => WORDS[code] ?? code;
+/** An action's refusal code in words; the terminal says the same (#7294). */
+export const words = (code: string): string => WORDS[code] ?? code;
 
 /** A Result from an action, as a verb's answer. */
 const done = (result: Result<unknown, string>): string | undefined =>
