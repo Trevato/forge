@@ -115,6 +115,26 @@ test("the one-call counts equal the per-branch rev-list counts", async () => {
   expect(listed.value.branches[1]).toMatchObject({ name: "feat/b000", ahead: 1, behind: 1 });
 }, 60_000);
 
+test("the API returns the first 30 of 200 branches with the whole list's counts, and its git phase fits the budget", async () => {
+  const dir = repoDir(app.reposRoot, "alice", "app");
+  const full = await listBranches(dir, "main");
+  if (!full.ok) throw new Error("listBranches failed");
+  const path = "/api/v1/repos/alice/app/branches?limit=30";
+  await get(path);
+  const { text, timing } = await get(path);
+  const dur = Number(/(?:^|, )git;dur=([0-9.]+)/.exec(timing)?.[1]);
+  expectBudget(dur, { ms: 60, against: await baselineMs(servers.url) });
+  const page = JSON.parse(text) as { items: { name: string; ahead: number | null; behind: number | null }[]; next_cursor: string | null };
+  // Rows, order and cursor are the whole list's first 30.
+  expect(page.items.map((i) => [i.name, i.ahead, i.behind])).toEqual(
+    full.value.branches.slice(0, 30).map((b) => [b.name, b.ahead, b.behind]),
+  );
+  expect(page.next_cursor).toBe(page.items[29]!.name);
+  const next = JSON.parse((await get(`${path}&cursor=${encodeURIComponent(page.next_cursor!)}`)).text) as typeof page;
+  expect(next.items[0]!.name).toBe(full.value.branches[30]!.name);
+  expect(next.items[0]).toMatchObject({ ahead: 1, behind: 1 });
+}, 30_000);
+
 test("the per-branch fallback gives the same rows, and the one-call path is faster", async () => {
   const dir = repoDir(app.reposRoot, "alice", "app");
   // Best of three each, so one stalled run on a loaded machine cannot flip it.

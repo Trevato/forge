@@ -237,7 +237,7 @@ import { runGit } from "../git/env.ts";
 import { appLimitWords, appsOwnedBy } from "../actions/app_limit.ts";
 import { getQuota } from "../settings/quotas.ts";
 import { isSafeRef, isSafeTreePath } from "../git/guard.ts";
-import { listBranches } from "../git/branches.ts";
+import { compareBranches, listBranchRows } from "../git/branches.ts";
 import {
   appView,
   appVisitors,
@@ -2253,25 +2253,29 @@ export function apiRoutes(router: Router<Handler>): void {
     const cursor = q.get("cursor");
     if (cursor !== null && (cursor === "" || cursor.length > 255))
       return apiError("invalid_cursor", 422, "cursor is the next_cursor of a page before");
-    const listed = await timePhaseAsync(ctx.request, "git", () =>
-      listBranches(dirOf(ctx, repo), repo.defaultBranch),
-    );
-    const rows = listed.ok
-      ? listed.value.branches.map((b) => ({
-          name: b.name,
-          oid: b.oid,
-          isDefault: b.isDefault,
-          ahead: b.ahead,
-          behind: b.behind,
-          protected: b.isDefault && repo.protectDefault,
-        }))
-      : [];
-    // The cursor is the name of the last branch of the page before.
-    const start = cursor === null ? 0 : rows.findIndex((r) => r.name === cursor) + 1;
-    if (start === 0 && cursor !== null)
+    // List the refs (cheap), take the page, and compare only its rows.
+    const dir = dirOf(ctx, repo);
+    const page = await timePhaseAsync(ctx.request, "git", async () => {
+      const listed = await listBranchRows(dir, repo.defaultBranch);
+      const all = listed.ok ? listed.value : [];
+      // The cursor is the name of the last branch of the page before.
+      const start = cursor === null ? 0 : all.findIndex((r) => r.name === cursor) + 1;
+      if (start === 0 && cursor !== null) return undefined;
+      const slice = all.slice(start, start + limit);
+      const compared = await compareBranches(dir, repo.defaultBranch, slice, all.length);
+      return { branches: compared.branches, more: start + limit < all.length };
+    });
+    if (page === undefined)
       return apiError("invalid_cursor", 422, "cursor is the next_cursor of a page before");
-    const items = rows.slice(start, start + limit);
-    const more = start + limit < rows.length;
+    const items = page.branches.map((b) => ({
+      name: b.name,
+      oid: b.oid,
+      isDefault: b.isDefault,
+      ahead: b.ahead,
+      behind: b.behind,
+      protected: b.isDefault && repo.protectDefault,
+    }));
+    const more = page.more;
     return timePhase(ctx.request, "render", () =>
       json({ items, next_cursor: more ? items[items.length - 1]!.name : null }),
     );
