@@ -15,7 +15,7 @@ export type Role = (typeof ROLES)[number];
 export const ABILITIES = {
   read: "Read what is public",
   comment: "Comment and open issues",
-  make_it_yours: "Make an app their own",
+  make_it_yours: "Create a repository, fork one or copy an app",
   run_crew: "Run a crew on a model allowance",
   administer: "Administer the forge",
 } as const;
@@ -50,6 +50,27 @@ export const NOT_A_MEMBER = "the owner has not made this account a member";
 
 /** The words a member (or guest) is refused admin settings and releases with. */
 export const NOT_AN_ADMIN = "only an admin can change the forge's settings or its releases";
+
+const lower = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
+const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/**
+ * What a role means, in two sentences built from `CAN` and the refusal
+ * words, so the page that explains roles says what the guards enforce:
+ * what a guest is refused, and what only an admin may do. `guestLacks` and
+ * `adminOnly` name the rows each sentence stands for.
+ */
+export const guestLacks = (): Ability[] =>
+  (Object.keys(ABILITIES) as Ability[]).filter((a) => !can("guest", a) && can("member", a));
+export const adminOnly = (): Ability[] =>
+  (Object.keys(ABILITIES) as Ability[]).filter((a) => can("admin", a) && !can("member", a));
+
+export function roleLimits(): string {
+  const withheld = guestLacks().map((a) => lower(ABILITIES[a]));
+  // A label may hold its own "or", so the last item is set off with ", or".
+  const list = withheld.length < 2 ? withheld.join("") : `${withheld.slice(0, -1).join(", ")}, or ${withheld.at(-1)}`;
+  return `A guest cannot ${list}. ${capital(NOT_AN_ADMIN)}.`;
+}
 
 /**
  * Whether the table withholds `ability` from this account. Only a person
