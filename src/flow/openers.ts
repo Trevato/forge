@@ -61,3 +61,6 @@ export function readOpeners(db: Database, now = new Date(), publicOnly = false):
   }
   return [...by].map(([author, t]) => ({ author, ...t })).sort((a, b) => b.opened - a.opened || a.author.localeCompare(b.author));
 }
+
+/** One opener as both doors say it: "scout 4 (3 flow)". */
+export const openerCounts = (o: Opener): string => `${o.opened} (${o.flow} flow)`;

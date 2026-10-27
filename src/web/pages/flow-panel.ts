@@ -36,6 +36,8 @@ import { type QueueRow, redBatchWords } from "../../flow/queue.ts";
 import { HOT_PULLS, pullCounts, warmFiles } from "../../crew/hot_files.ts";
 import { warmingLine } from "../../crew/hot_history.ts";
 import { getRepoById } from "../../core/repos.ts";
+import { hoursWords, readLeadTime } from "../../flow/lead_time.ts";
+import { openerCounts, readOpeners } from "../../flow/openers.ts";
 import { readHeld } from "../../flow/held.ts";
 import type { App } from "../../app.ts";
 import { html, type Html } from "../html.ts";
@@ -101,6 +103,9 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
   const onBuilder = requestedSays(requested.builder, "builder", now);
   const onReviewer = requestedSays(requested.reviewer, "reviewer", now);
   const reviewing = reviewingSays(reviewersBusy(app.db, reader.kind === "agent"));
+  const agent = reader.kind === "agent";
+  const lead = readLeadTime(app.db, new Date(now), agent);
+  const openers = readOpeners(app.db, new Date(now), agent);
   const pile = pileSays(readPile(app.db, reader.kind === "agent"));
   const listed = asked(url);
   const shown = listed === null ? undefined : out.get(listed.key);
@@ -122,6 +127,18 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
       in 24 h · median ask→live
       <span data-median>${flow.medianAskToLiveMs === null ? "—" : hoursSpan(flow.medianAskToLiveMs)}</span>
       (24 h)
+    </p>
+    <p id="lead-time" class="muted">
+      time to land:
+      ${lead.medianHours === null
+        ? "nothing landed in 24 h"
+        : html`median <span data-median-hours>${hoursWords(lead.medianHours)}</span>, slowest <span data-max-hours>${hoursWords(lead.maxHours ?? 0)}</span>`}
+    </p>
+    <p id="openers" class="muted small">
+      opened in the last hour:
+      ${openers.length === 0
+        ? "no pulls"
+        : openers.map((o, i) => html`${i === 0 ? "" : " · "}<a href="/${o.author}">${o.author}</a> ${openerCounts(o)}`)}
     </p>
     <p id="duplicate-work" data-count="${String(dups.length)}" class="${dups.length === 0 ? "muted" : ""}">
       ${dups.length === 0
