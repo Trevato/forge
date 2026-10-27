@@ -8,6 +8,8 @@ import { createApp, type App } from "../src/app.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { createUser } from "../src/core/users.ts";
 import { rememberPullFiles } from "../src/crew/hot_files.ts";
+import { forgetHeat, sampleHeat } from "../src/crew/hot_history.ts";
+import { flowLines } from "../src/tui/screens/flow.ts";
 import { flowPanel } from "../src/web/pages/flow-panel.ts";
 
 describe("flow panel hot files", () => {
@@ -70,5 +72,48 @@ describe("flow panel hot files", () => {
     expect(draw("agent")).not.toContain("secret/plan.ts");
     app.db.query("UPDATE repo SET visibility = 'public' WHERE id = ?1").run(repoId);
     expect(draw("agent")).toContain("secret/plan.ts");
+  });
+
+  describe("warming files (#6547)", () => {
+    const HOUR = 3_600_000;
+    const seed = () => {
+      sampleHeat(repoId, new Map([["src/a.ts", 1]]), Date.now() - HOUR);
+      rememberPullFiles(repoId, [1, 2, 3].map((number) => ({ number, files: ["src/a.ts"] })));
+    };
+    afterEach(forgetHeat);
+
+    test("the page and the terminal name a file that gained pulls in the hour", () => {
+      seed();
+      expect(draw("owner")).toContain("warming: src/a.ts 1 → 3 pulls in alice/shop");
+      expect(flowLines(app.db).join("\n")).toContain("warming: src/a.ts 1 → 3 pulls in alice/shop");
+    });
+
+    test("two repositories sharing a path are told apart", async () => {
+      const u = app.db.query<{ id: string }, []>("SELECT id FROM user LIMIT 1").get()!;
+      const other = await createRepo(app, { id: u.id } as never, { name: "blog" });
+      if (!other.ok) throw new Error(String(other.error));
+      seed();
+      sampleHeat(other.value.id, new Map([["src/a.ts", 0]]), Date.now() - HOUR);
+      rememberPullFiles(other.value.id, [1, 2].map((number) => ({ number, files: ["src/a.ts"] })));
+      const page = draw("owner");
+      expect(page).toContain("src/a.ts 1 → 3 pulls in alice/shop");
+      expect(page).toContain("src/a.ts 0 → 2 pulls in alice/blog");
+      rememberPullFiles(other.value.id, []);
+    });
+
+    test("without an hour of history nothing is said", () => {
+      sampleHeat(repoId, new Map(), Date.now() - 60_000);
+      rememberPullFiles(repoId, [1, 2, 3].map((number) => ({ number, files: ["src/a.ts"] })));
+      expect(draw("owner")).not.toContain("warming:");
+      expect(flowLines(app.db).join("\n")).not.toContain("warming:");
+    });
+
+    test("a private repository's warming file is for the owner only", () => {
+      seed();
+      app.db.query("UPDATE repo SET visibility = 'private' WHERE id = ?1").run(repoId);
+      expect(draw("owner")).toContain("warming: src/a.ts");
+      expect(draw("agent")).not.toContain("warming:");
+      expect(flowLines(app.db, new Date(), undefined, { queues: [] }).join("\n")).not.toContain("warming:");
+    });
   });
 });

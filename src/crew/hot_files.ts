@@ -21,9 +21,10 @@ import { getIssuesByIds, type Issue } from "../core/issues.ts";
 import { joinMany, pullDir } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
 import { runGitCapture } from "../git/env.ts";
+import { HOT_PULLS } from "../flow/hot_trend.ts";
+import { sampleHeat } from "./hot_history.ts";
 
-/** A file this many open pulls touch is hot: no new build starts on it. */
-export const HOT_PULLS = 5;
+export { HOT_PULLS };
 
 /**
  * A pull whose diff touches more than this many files counts toward no file's
@@ -69,9 +70,10 @@ const OID = /^[0-9a-f]{40,64}$/;
 /**
  * Read the files each open pull of `repo` touches, for any pull whose head
  * moved since it was last read, and forget the pulls no longer open. A pull
- * git cannot answer for touches nothing until it can.
+ * git cannot answer for touches nothing until it can. Each pass samples the
+ * counts at `now` (`hot_history.ts`).
  */
-export async function learnPullFiles(app: App, repo: Repo): Promise<void> {
+export async function learnPullFiles(app: App, repo: Repo, now: number = Date.now()): Promise<void> {
   const ids = app.db
     .query<{ id: string }, [string]>(
       `SELECT p.issue_id AS id FROM pull p JOIN issue i ON i.id = p.issue_id
@@ -102,15 +104,22 @@ export async function learnPullFiles(app: App, repo: Repo): Promise<void> {
     after.set(pull.id, { at, number: pull.number, files: out.stdout.split("\0").filter((f) => f !== "") });
   }
   touched.set(repo.id, after);
+  sampleHeat(repo.id, pullCounts(repo.id), now);
 }
 
-/** Every file of `repo` that `HOT_PULLS` or more open pulls touch, with how many. */
-export function hotFiles(repoId: string): Map<string, number> {
+/** Every file of `repoId` with how many open pulls touch it, narrow pulls only. */
+export function pullCounts(repoId: string): Map<string, number> {
   const counts = new Map<string, number>();
   for (const { files } of touched.get(repoId)?.values() ?? []) {
     if (files.length > WIDE_PULL) continue;
     for (const file of files) counts.set(file, (counts.get(file) ?? 0) + 1);
   }
+  return counts;
+}
+
+/** Every file of `repo` that `HOT_PULLS` or more open pulls touch, with how many. */
+export function hotFiles(repoId: string): Map<string, number> {
+  const counts = pullCounts(repoId);
   for (const [file, n] of counts) if (n < HOT_PULLS) counts.delete(file);
   return counts;
 }

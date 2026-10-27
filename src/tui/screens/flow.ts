@@ -15,6 +15,8 @@
 
 import type { Database } from "bun:sqlite";
 import { HOLDS } from "../../crew/held.ts";
+import { pullCounts } from "../../crew/hot_files.ts";
+import { warmingLine } from "../../crew/hot_history.ts";
 import type { HeldRow } from "../../flow/held.ts";
 import { conflictedPulls, conflictedSays, rebaseLane, rebaseLaneSays } from "../../flow/conflicted.ts";
 import { pileSays, readPile } from "../../flow/pile.ts";
@@ -63,6 +65,7 @@ export function flowLines(
     requestedSays(requested.builder, "builder", now.getTime()),
     requestedSays(requested.reviewer, "reviewer", now.getTime()),
   ].flatMap((says) => (says === null ? [] : ["", ...wrap(says, inner)]));
+  const warming = warmingLine(db, now.getTime(), pullCounts, agent !== undefined);
   const reviewing = reviewingSays(reviewersBusy(db, agent !== undefined));
   return [
     ...wrap(verdict(stages, now.getTime()), inner),
@@ -98,6 +101,7 @@ export function flowLines(
     ...(conflicted === null ? [] : ["", ...wrap(conflicted, inner)]),
     ...waits,
     ...(reviewing === null ? [] : ["", ...wrap(reviewing, inner)]),
+    ...(warming === "" ? [] : ["", ...warming.split("\n").flatMap((l) => wrap(l, inner))]),
     ...(held === undefined ? [] : ["", ...heldLines(held, inner)]),
     "",
     ...duplicateLines(dups, inner),

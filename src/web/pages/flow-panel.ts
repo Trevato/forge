@@ -33,7 +33,8 @@ import {
   type StageThroughput,
 } from "../../flow/throughput.ts";
 import { type QueueRow, redBatchWords } from "../../flow/queue.ts";
-import { HOT_PULLS, warmFiles } from "../../crew/hot_files.ts";
+import { HOT_PULLS, pullCounts, warmFiles } from "../../crew/hot_files.ts";
+import { warmingLine } from "../../crew/hot_history.ts";
 import { getRepoById } from "../../core/repos.ts";
 import { readHeld } from "../../flow/held.ts";
 import type { App } from "../../app.ts";
@@ -262,6 +263,7 @@ function hotFilesCard(app: App, reader: Reader): Html {
   }
   rows.sort((a, b) => b.pulls - a.pulls || a.path.localeCompare(b.path) || a.repo.localeCompare(b.repo));
   const top = rows.slice(0, HOT_LISTED);
+  const warming = warmingLine(app.db, Date.now(), pullCounts, reader.kind !== "owner").split("\n").filter((l) => l !== "");
   const max = Math.max(1, ...top.map((r) => r.pulls));
   return card(
     html`<h2>Hot files</h2>
@@ -277,7 +279,8 @@ function hotFilesCard(app: App, reader: Reader): Html {
                   ${meter((r.pulls / max) * 100, `${r.pulls} open pulls touch ${r.path}`)}
                 </li>`,
             )}
-          </ul>`}`,
+          </ul>`}
+      ${warming.length === 0 ? null : html`<h3>Warming</h3><ul data-warming aria-label="Files warming up">${warming.map((l) => html`<li class="muted small">${l}</li>`)}</ul>`}`,
     { id: "hot-files" },
   );
 }
