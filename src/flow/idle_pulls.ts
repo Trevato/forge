@@ -2,7 +2,7 @@
  * Idle pulls (#6470): open, unmerged pulls opened by a crew agent whose head
  * has not moved for 72 h. A pull "moves" at its newest `pull.pushed` event, or
  * at its opening when it has none. Oldest first, at most 20. `/boards` shows it
- * through `idlePullsCached`; the read stays bounded by the open agent pulls.
+ * through `idlePullsCached`; the read is bounded by the open crew pulls plus one index lookup each.
  */
 
 import type { Database } from "bun:sqlite";
@@ -21,55 +21,36 @@ export interface IdlePull {
   readonly hours: number;
 }
 
-/** `publicOnly` reads public repositories alone, as `readOldestApproved` does. */
-export function readIdlePulls(db: Database, now = new Date(), publicOnly = false): IdlePull[] {
-  const cutoff = now.getTime() - IDLE_HOURS * HOUR_MS;
-  // The open agent pulls first: a handful, never every pull ever made (0.7.277 took the
-  // forge down by asking each pull's last push of the whole event table, #6840).
-  const open = db
-    .query<
-      { id: string; number: number; repo_id: string; owner: string; name: string; created_at: string; body: string },
-      [number]
-    >(
-      `SELECT i.id AS id, i.number AS number, i.repo_id AS repo_id, ro.username AS owner, r.name AS name,
-              i.created_at AS created_at, i.body AS body
+/** `q.number + 0` drops the column's affinity so the expression index on the event applies. */
+export const IDLE_PULLS_SQL = `SELECT i.number AS number, ro.username AS owner, r.name AS name, i.moved_at AS moved_at, i.body AS body
          FROM pull p
-         JOIN issue i ON i.id = p.issue_id
+         JOIN (SELECT q.*, COALESCE((SELECT MAX(e.created_at) FROM event e
+                                      WHERE e.repo_id = q.repo_id AND e.kind = 'pull.pushed'
+                                        AND json_extract(e.payload, '$.number') = q.number + 0), q.created_at) AS moved_at
+                 FROM issue q WHERE q.state = 'open' AND q.kind = 'pull') i ON i.id = p.issue_id
          JOIN repo r ON r.id = i.repo_id
          JOIN user ro ON ro.id = r.owner_id
          JOIN user u ON u.id = i.author_id AND u.is_agent = 1
-        WHERE (?1 = 0 OR r.visibility = 'public') AND i.state = 'open' AND p.merged_at IS NULL`,
+        WHERE (?1 = 0 OR r.visibility = 'public') AND p.merged_at IS NULL
+          AND i.moved_at <= ?2
+        ORDER BY i.moved_at ASC, i.number ASC
+        LIMIT ?3`;
+
+/** `publicOnly` reads public repositories alone, as `readOldestApproved` does. */
+export function readIdlePulls(db: Database, now = new Date(), publicOnly = false): IdlePull[] {
+  const cutoff = new Date(now.getTime() - IDLE_HOURS * HOUR_MS).toISOString();
+  const rows = db
+    .query<{ number: number; owner: string; name: string; moved_at: string; body: string }, [number, string, number]>(
+      IDLE_PULLS_SQL,
     )
-    .all(publicOnly ? 1 : 0);
-  if (open.length === 0) return [];
-  // Then their pushes, in one read: only these repositories' `pull.pushed` events since
-  // the oldest of these pulls opened, newest per pull.
-  const repos = [...new Set(open.map((o) => o.repo_id))];
-  const since = open.reduce((min, o) => (o.created_at < min ? o.created_at : min), open[0]!.created_at);
-  const pushed = new Map<string, string>();
-  const marks = repos.map(() => "?").join(", ");
-  for (const row of db
-    .query<{ repo_id: string; number: number | null; at: string }, string[]>(
-      `SELECT e.repo_id AS repo_id, json_extract(e.payload, '$.number') AS number, MAX(e.created_at) AS at
-         FROM event e
-        WHERE e.kind = 'pull.pushed' AND e.repo_id IN (${marks}) AND e.created_at >= ?
-        GROUP BY e.repo_id, number`,
-    )
-    .all(...repos, since)) {
-    if (row.number !== null) pushed.set(`${row.repo_id}#${row.number}`, row.at);
-  }
-  return open
-    .map((o) => ({ o, at: pushed.get(`${o.repo_id}#${o.number}`) ?? o.created_at }))
-    .filter(({ at }) => Date.parse(at) <= cutoff)
-    .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.o.number - b.o.number))
-    .slice(0, IDLE_LIMIT)
-    .map(({ o, at }) => ({
-      pull: o.number,
-      owner: o.owner,
-      repo: o.name,
-      issue: closesFromBody(o.body)[0] ?? null,
-      hours: Math.max(0, (now.getTime() - Date.parse(at)) / HOUR_MS),
-    }));
+    .all(publicOnly ? 1 : 0, cutoff, IDLE_LIMIT);
+  return rows.map((r) => ({
+    pull: r.number,
+    owner: r.owner,
+    repo: r.name,
+    issue: closesFromBody(r.body)[0] ?? null,
+    hours: Math.max(0, (now.getTime() - Date.parse(r.moved_at)) / HOUR_MS),
+  }));
 }
 
 /** How long `/boards` reuses one read of the idle pulls while nothing it reads has changed. */
