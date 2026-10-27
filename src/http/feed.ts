@@ -12,8 +12,7 @@ import {
   VARIANTS_MAX,
 } from "../actions/tell.ts";
 import { DIRECTION_NOTE } from "../crew/direct.ts";
-import { audienceFilter } from "../core/event_audience.ts";
-import { getEvent } from "../core/events.ts";
+import { interactionTarget } from "../feed/interact.ts";
 import {
   ITEM_ID,
   isInteractionKind,
@@ -26,7 +25,7 @@ import { drainQueue } from "../core/shares.ts";
 import { feedTag, hasQueuedShares } from "../feed/feed_tag.ts";
 import { holds } from "../web/feeds.ts";
 import { share, RECIPIENTS_MAX } from "../feed/share.ts";
-import { canRead, getRepo, getRepoById } from "../core/repos.ts";
+import { canRead, getRepo } from "../core/repos.ts";
 import {
   FEED_LIMIT_MAX,
   parseCursor,
@@ -240,33 +239,14 @@ export function feedRoutes(router: Router<Handler>): void {
     if (!isInteractionKind(kind))
       return apiError("invalid_kind", 422, "kind is not one the feed knows");
 
-    // What the act is about is read from the item when the item is an event
-    // — through the same visibility the feed used — and from the named
-    // repository otherwise. Anything the viewer cannot read is not found.
-    let repoId: string | null = null;
-    let actorId: string | null = null;
-    if (itemId.startsWith("event:")) {
-      const event = getEvent(db, itemId.slice("event:".length));
-      const repo = event?.repoId ? getRepoById(db, event.repoId) : undefined;
-      if (!event || !repo || !canRead(db, repo, viewer)) return notFound();
-      if (!audienceFilter(db, viewer)(event)) return notFound();
-      repoId = repo.id;
-      actorId = event.actorId;
-    } else {
-      const [owner, name, extra] = str(input.app).split("/");
-      const repo =
-        owner && name && extra === undefined
-          ? getRepo(db, owner, name)
-          : undefined;
-      if (!repo || !canRead(db, repo, viewer)) return notFound();
-      repoId = repo.id;
-    }
+    const target = interactionTarget(db, viewer, itemId, str(input.app));
+    if (!target) return notFound();
     const made = recordInteraction(db, {
       viewerId: viewer.id,
       itemId,
       kind,
-      repoId,
-      actorId,
+      repoId: target.repoId,
+      actorId: target.actorId,
     });
     return json({ id: made.id }, 201);
   });
