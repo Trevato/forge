@@ -169,7 +169,10 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     // address is often a private repository's.
     kind === "repo.upstream_follow" ||
     kind === "repo.upstream_checked" ||
-    kind === "repo.crew_outsiders"
+    kind === "repo.crew_outsiders" ||
+    // A file held against new work is its admins' book-keeping (#6522).
+    kind === "repo.file_held" ||
+    kind === "repo.file_released"
   )
     return "admins";
   // A fleet operation spans repositories; its receipt is its actor's. So is

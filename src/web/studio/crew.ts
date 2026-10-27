@@ -39,6 +39,7 @@ import { icon } from "../icons.ts";
 import { crewReadiness } from "../pages/crew.ts";
 import { grantsSection } from "../pages/subscriptions.ts";
 import { directionMarked } from "./direction.ts";
+import { fileHoldsCard } from "./file_holds.ts";
 import { markOf } from "../../core/marks.ts";
 import {
   btn,
@@ -401,6 +402,7 @@ export function settingsLead(ctx: Ctx, repo: Repo): Html {
     ${aboutCard(repo, base, admin, isApp)}
     ${crewCard(ctx, repo, base, admin)}
     ${autonomyCard(ctx, repo, base, admin)}
+    ${admin ? fileHoldsCard(ctx, repo, base) : null}
   </div>`;
 }
 

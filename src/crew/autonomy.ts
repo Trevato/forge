@@ -386,7 +386,14 @@ export async function driveRepo(
   const sorted = () => heldBy(app, repo, readyNow(repoGraph(app.db, repo.id, { sealed: true })), crew, active);
   let held = sorted();
   if (freeParked(app, repo, by, held) > 0) held = sorted();
-  holdHot(repo.id, held.by.hot_file, now);
+  holdHot(
+    repo.id,
+    held.by.hot_file,
+    now,
+    new Map(
+      [...held.pinned].map(([n, h]) => [n, { path: h.path, byName: getUserById(app.db, h.by)?.username ?? "someone" }]),
+    ),
+  );
   const ready = held.startable;
   if (slotted.length >= paced.slots) {
     // The builders are busy; the planner can still refill the map, when

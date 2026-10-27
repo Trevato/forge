@@ -339,6 +339,7 @@ import {
   agentUpdate,
   crewPage,
 } from "../web/pages/crew.ts";
+import { fileHoldUpdate } from "../web/pages/file_holds.ts";
 import { newPullPage, newPullSubmit } from "../web/pages/pulls.ts";
 import {
   pullPage,
@@ -1441,6 +1442,7 @@ export function buildRouter(): Router<Handler> {
   );
   router.add("GET", "/:owner/:name/settings/autonomy", autonomySettingsPage);
   router.add("POST", "/:owner/:name/settings/autonomy", autonomySettingsUpdate);
+  router.add("POST", "/:owner/:name/settings/holds", fileHoldUpdate);
   router.add("POST", "/:owner/:name/settings/upstream", followUpstreamUpdate);
   router.add("POST", "/:owner/:name/settings/upstream/check", followUpstreamCheck);
   router.add("GET", "/:owner/:name/settings/labels", labelsPage);

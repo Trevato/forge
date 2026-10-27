@@ -177,6 +177,8 @@ export interface HotHold {
   readonly number: number;
   readonly title: string;
   readonly files: readonly HotFile[];
+  /** The admin's hold (`file_holds.ts`) that keeps this build, with the setter's name. */
+  readonly pin?: { readonly path: string; readonly byName: string };
 }
 
 /** The pulls too wide to count as the picker last saw them, per repository, held builds or not. */
@@ -191,7 +193,12 @@ export function standingWide(repoId: string): { at: string; wide: readonly WideP
 const standing = new Map<string, { at: string; holds: readonly HotHold[]; wide: readonly WidePull[] }>();
 
 /** Remember the builds the picker holds on hot files in `repoId` now; none clears it. */
-export function holdHot(repoId: string, issues: readonly Issue[], at = new Date()): void {
+export function holdHot(
+  repoId: string,
+  issues: readonly Issue[],
+  at = new Date(),
+  pins: ReadonlyMap<number, { path: string; byName: string }> = new Map(),
+): void {
   const wide = widePulls(repoId);
   if (wide.length === 0) standingWideBy.delete(repoId);
   else standingWideBy.set(repoId, { at: at.toISOString(), wide });
@@ -202,7 +209,10 @@ export function holdHot(repoId: string, issues: readonly Issue[], at = new Date(
   const hot = hotFiles(repoId);
   standing.set(repoId, {
     at: at.toISOString(),
-    holds: issues.map((i) => ({ number: i.number, title: i.title, files: hotOverlap(i, hot) })),
+    holds: issues.map((i) => {
+      const pin = pins.get(i.number);
+      return { number: i.number, title: i.title, files: hotOverlap(i, hot), ...(pin === undefined ? {} : { pin }) };
+    }),
     wide,
   });
 }
@@ -224,6 +234,7 @@ export function hotWords(hot: ReadonlyMap<string, number>): string {
 
 /** One sentence for a held build: `#12 waits: src/http/mcp.ts is in 6 open pulls (hot at 5).` */
 export function hotSays(hold: HotHold): string {
+  if (hold.pin !== undefined) return `#${hold.number} waits: ${hold.pin.byName} holds new work on ${hold.pin.path}.`;
   const files = hold.files
     .slice(0, 3)
     .map((f) => `${f.path} is in ${f.pulls} open pulls`)

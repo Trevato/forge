@@ -74,6 +74,7 @@ import { queuesFor, systemFor } from "../system/telemetry.ts";
 import { live as liveMachine } from "../system/live.ts";
 import { releasesScreen } from "./screens/releases.ts";
 import { mayRead } from "../release/gate.ts";
+import { fileHoldsPrompt } from "./screens/fileholds.ts";
 import { stalledScreen } from "./screens/stalled.ts";
 import { issuesScreen, newIssueScreen } from "./screens/issues.ts";
 import { limbsScreen } from "./screens/limbs.ts";
@@ -359,6 +360,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Stalled steps",
         hint: "pulls whose check is red or was never asked for; enter re-runs",
         run: () => ctx.push(stalledScreen(session, ctx)),
+      });
+    // Hold new work on a file: the settings card's twin, admin-checked by the action itself.
+    if (session.signedIn)
+      commands.push({
+        id: "file-holds",
+        title: "Held files",
+        hint: "hold new work on a file, release it, or list the holds",
+        run: () => ctx.push(fileHoldsPrompt(session, ctx, blank("Held files"))),
       });
     // What outside agents tried, as Settings → Access says it: a site admin's (#1768).
     if (session.user?.isAdmin === true && session.user.kind !== "agent")
