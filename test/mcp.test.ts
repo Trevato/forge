@@ -313,6 +313,7 @@ describe("the forge over MCP", () => {
       "boards",
       "board_write",
       "board_pins",
+      "pins",
       "board_delete",
       "report",
     ]));
