@@ -281,7 +281,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         ? [
             alarmStuck(f.db, now),
             redMainAlarm(f.db, now),
-            alarmIdleCrew(f.db, now, { ceilingUsd: f.app.config.crewCeilingUsd ?? null }),
+            alarmIdleCrew(f.db, now, { ceilingUsd: forgeCeiling(f.app.config) }),
             noReleaseAlarm(f.db, now),
           ]
             .filter((a) => a.fired)

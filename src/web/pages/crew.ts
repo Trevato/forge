@@ -62,6 +62,7 @@ import { accountSections } from "./origins.ts";
 import { markOf } from "../../core/marks.ts";
 import { limitValue } from "../../settings/limits.ts";
 import { USERNAME_TAKEN } from "../../actions/signup_words.ts";
+import { forgeCeiling } from "../../flow/ceiling.ts";
 
 /** The admin, or the response that turns everyone else away. */
 function requireAdmin(ctx: Ctx): Response | undefined {
@@ -479,7 +480,7 @@ function crewView(
   const handover = crewHandover(ctx.app.db);
   return html`${crewReadiness(ctx)}
   ${when(spending.length > 0, () =>
-    spendingCard(spending, ctx.app.config.crewCeilingUsd),
+    spendingCard(spending, forgeCeiling(ctx.app.config) ?? undefined),
   )}
   ${agents.length === 0
     ? empty({

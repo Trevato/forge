@@ -8,9 +8,14 @@
 import type { Database } from "bun:sqlite";
 import { startOfTodayUtc } from "../crew/autonomy.ts";
 
-/** The forge cap in dollars, or null when none is set. */
+/**
+ * The forge cap in dollars, or null when none is set. Only a positive number
+ * is a cap: 0, a negative, NaN or a missing value all mean no cap (0 does not
+ * mean "no crew"; to stop the crew, pause it).
+ */
 export function forgeCeiling(config: { crewCeilingUsd?: number }): number | null {
-  return config.crewCeilingUsd ?? null;
+  const cap = config.crewCeilingUsd;
+  return typeof cap === "number" && cap > 0 ? cap : null;
 }
 
 /** Spend has reached the cap: the very test that pauses the builders. */

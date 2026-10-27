@@ -25,6 +25,7 @@ import { isParentLocal } from "./beat-door.ts";
 import { upstreamState } from "./upstream.ts";
 import { progress } from "../core/next-steps.ts";
 import { running } from "../kernel/version.ts";
+import { forgeCeiling } from "../flow/ceiling.ts";
 
 export const SIGNATURE_HEADER = "x-forge-signature";
 /** A child reports this often; one silent for three beats reads as quiet. */
@@ -254,10 +255,10 @@ export function standing(app: App, name: string, at = Date.now()): Beat {
 
 /** What the crew spent today, and the daily ceiling that pauses it (null when the forge sets none). */
 export function spendReport(app: App, now = new Date()): { spendTodayUsd: number; ceilingUsd: number | null } {
-  const cap = app.config.crewCeilingUsd;
+  const cap = forgeCeiling(app.config);
   return {
     spendTodayUsd: Math.min(Math.round(spentTodayEverywhere(app.db, now) * 100) / 100, USD_MAX),
-    ceilingUsd: cap === undefined || !(cap > 0) ? null : Math.min(cap, USD_MAX),
+    ceilingUsd: cap === null ? null : Math.min(cap, USD_MAX),
   };
 }
 
