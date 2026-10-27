@@ -68,7 +68,7 @@ export const limbHref = (
   action: LimbAction | "replan",
   under?: string,
 ): string =>
-  `${milestoneHref(base, number)}/limb?action=${action}${under === undefined ? "" : `&under=${under}`}`;
+  `${milestoneHref(base, number)}/limb?action=${action}${under === undefined ? "" : `&under=${encodeURIComponent(under)}`}`;
 
 /**
  * Raise and Lower for a limb among its siblings in one group (`top`, or a
