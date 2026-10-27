@@ -153,6 +153,7 @@ for a tunnel and a forge that sleeps.
 | `snapshot_now` | no arguments: take a snapshot now, as the Backups page's button does; a forge admin with an admin-scope token; answers `{ name, repos, apps, bytes, says }` | yes |
 | `spawn` | `{ name, apps?, crew?, dryRun? }`: a child forge, planned first (`dryRun` is true unless `false`); an admin's, and an `ro` token may plan but not make | yes |
 | `ssh_keys` | `{ action?, title?, key?, id? }`: list your own SSH keys (default), add one (`key` is an authorized_keys line, `title` optional) or remove one by `id`; the API's rules and errors, add and remove need an `rw` token | yes |
+| `steer` | `{ repo, run, text }`: say a word to one running crew run by its id, as the run page's steer box and `POST …/runs/:id/steer` do; a writer's (never an agent), the run an agent's, `text` not empty; answers `{ says, outcome }` (`sent` or `commented`) | yes |
 | `stop` | stop one run by its id from `now` | yes |
 | `subscription_add` | `{ name, token, apiBase? }` (forge admin): put a Claude account in the crew's pool, as the Subscriptions page does, with its refusals; answers `{ id, name, says }`; the token is never read back | yes |
 | `subscription_budget` | `{ id, usd }`: set an account's whole-life budget in dollars (up to the `subscription.budget_max_usd` limit), or clear it with `usd: null`, as the Subscriptions page does; a locked budget can only be lowered; a forge admin with an admin token | yes |

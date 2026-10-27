@@ -127,6 +127,7 @@ export { tool as snapshot_now } from "./snapshot_now.ts";
 export { tool as spawn } from "./spawn.ts";
 export { tool as spend } from "./spend.ts";
 export { tool as ssh_keys } from "./ssh_keys.ts";
+export { tool as steer } from "./steer.ts";
 export { tool as stop } from "./stop.ts";
 export { tool as subscription_add } from "./subscription_add.ts";
 export { tool as subscription_budget } from "./subscription_budget.ts";
