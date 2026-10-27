@@ -3,6 +3,7 @@ import { countThread, EMBEDDED_COMMENTS, getIssue, labelsFor, listComments } fro
 import { isCrew } from "../../../core/agents.ts";
 import { dependenciesOf } from "../../../core/dependencies.ts";
 import { getUsersByIds } from "../../../core/users.ts";
+import { flowOnlyQueued } from "../../../crew/flow_only.ts";
 import { markReaders } from "../../../crew/direct.ts";
 import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
 
@@ -53,6 +54,7 @@ export const tool: Tool = {
     const seen = (i: typeof issue) => mayView(db, repo, i, user);
     const flag = (x: { untrusted?: string }) =>
       x.untrusted === undefined ? {} : { untrusted: true };
+    const queued = flowOnlyQueued(db, repo, issue);
     const [self] = mark([issue]);
     const answer = good({
       number: issue.number,
@@ -65,6 +67,7 @@ export const tool: Tool = {
       ...flag(self!),
       labels: labelsFor(db, issue.id).map((l) => l.name),
       assignee: issue.assigneeName,
+      ...(queued === null ? {} : { queued }),
       comments: comments.map((c) => ({
         author: c.authorName,
         authorIsAgent: authors.get(c.authorId)?.kind === "agent",

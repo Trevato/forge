@@ -8,6 +8,7 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { flowOnlyQueued } from "../crew/flow_only.ts";
 import { homeTruth } from "../system/home_truth.ts";
 import { upstreamFacts } from "../actions/upstream_follow.ts";
 import { FAMILY_WORDS } from "../actions/family_words.ts";
@@ -492,9 +493,13 @@ function respondFleet(error: FleetError): Response {
 }
 
 export function withLabels<T extends Issue>(ctx: Ctx, issue: T) {
+  const repo = getRepoById(ctx.app.db, issue.repoId);
+  const queued = repo === undefined ? null : flowOnlyQueued(ctx.app.db, repo, issue);
   return {
     ...readerMarked(ctx, issue.repoId, [issue])[0]!,
     labels: labelsFor(ctx.app.db, issue.id),
+    // FLOW ONLY holds an assigned run: say so, so an assigner knows nothing started.
+    ...(queued === null ? {} : { queued }),
   };
 }
 

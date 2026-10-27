@@ -676,6 +676,11 @@ export function setIssueLabels(
     actorId: writer.value.id,
     payload: { number: issue.number, labels: resolved.map((l) => l.name) },
   });
+  // FLOW ONLY held this assignment; the `flow` label lets it go now.
+  // Loaded at the call: the crew's guard reaches this module through the brief,
+  // so a static import of the dispatcher would close a cycle at boot.
+  if (issue.assigneeIsAgent && repo.flowOnly)
+    (require("../crew/flow_label.ts") as typeof import("../crew/flow_label.ts")).dispatchFlowLabelled(app, repo, issue);
   return ok(labelsFor(app.db, issue.id));
 }
 

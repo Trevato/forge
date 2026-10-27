@@ -73,6 +73,7 @@ import {
 } from "../ui.ts";
 import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
 import { studioRecord, tellHref } from "../studio/nouns.ts";
+import { flowOnlyQueued } from "../../crew/flow_only.ts";
 import { interruptionsOn } from "../../crew/interrupted.ts";
 
 /**
@@ -723,6 +724,7 @@ export function assigneeCard(
   action: string,
 ): Html {
   const mayEdit = canWrite(ctx.app.db, repo, ctx.auth.user);
+  const held = flowOnlyQueued(ctx.app.db, repo, issue);
   const current =
     issue.assigneeName === null
       ? html`<p class="muted small">Nobody yet.</p>`
@@ -733,7 +735,7 @@ export function assigneeCard(
               issue.assigneeName,
             ),
           })}
-        </p>`;
+        </p>${held === null ? null : html`<p class="muted small" id="flow-only-queued">${held}</p>`}`;
   if (!mayEdit)
     return card(current, {
       head: html`${icon("user")}

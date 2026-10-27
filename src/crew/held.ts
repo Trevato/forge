@@ -14,6 +14,8 @@
  *   planner has not answered (`core/limb_replan.ts`).
  * - `done_on_main`: the crew found it done on the base branch and waits for
  *   a person to close it (`done_on_main.ts`); nothing is left to plan.
+ * - `flow_only`: the repository's FLOW ONLY switch is on and the issue is not
+ *   labelled `flow` (`flow_only.ts`).
  * - `stalled`: a builder ran on it and left without a pull, and nobody
  *   who directs the crew has spoken since. The next tick parks it in the
  *   crew's name, which frees it (`stalls.ts`).
@@ -41,6 +43,7 @@ import { getUserById } from "../core/users.ts";
 import type { Stuck } from "./brief.ts";
 import { proposedWork, speaksForCrew } from "./direct.ts";
 import { capReached, runCapOf } from "./guard.ts";
+import { flowOnlyHolds } from "./flow_only.ts";
 import { interruptionOf } from "./interrupted.ts";
 import { PARK_STRIKES, parkedCount } from "./parks.ts";
 import { heldFiles, type FileHold } from "./file_holds.ts";
@@ -53,6 +56,7 @@ export const HOLDS = [
   "planner",
   "with_planner",
   "done_on_main",
+  "flow_only",
   "stalled",
   "run_cap",
   "parked_twice",
@@ -143,6 +147,7 @@ export function heldBy(
     if (issue.assigneeId !== null && planners.has(issue.assigneeId)) return "planner";
     if (handed.has(issue.id)) return "with_planner";
     if (alreadyDone(app.db, [issue.id]).has(issue.id)) return "done_on_main";
+    if (flowOnlyHolds(app.db, repo, issue)) return "flow_only";
     if (stalled(app, repo, issue)) return "stalled";
     if (atRunCap(app, repo, issue)) return "run_cap";
     if (parkedCount(app.db, repo, issue.id) >= PARK_STRIKES) return "parked_twice";
@@ -227,6 +232,7 @@ const HOLD_WORDS: Readonly<Record<HoldName, string>> = {
   planner: "the planner or a reviewer holds it",
   with_planner: "its limb waits on the planner",
   done_on_main: "found done on the base branch; waits for a person to close it",
+  flow_only: "flow only is on and it is not labelled flow",
   stalled: "a builder ran on it and left without a pull",
   run_cap: "it has used its runs for the day",
   parked_twice: "parked twice; it is the planner's",

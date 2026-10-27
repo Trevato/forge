@@ -22,6 +22,8 @@ import {
   updateLabel as writeLabel,
   type Label,
 } from "../core/issues.ts";
+import { sweepAssigned } from "../crew/dispatch.ts";
+import { FLOW_LABEL } from "../crew/flow_only.ts";
 import { dropMirror } from "../crew/mirror.ts";
 import { accessAllows, getOrg, orgAccess } from "../core/orgs.ts";
 import {
@@ -334,9 +336,6 @@ function moveArchive(app: App, repoId: string, archived: boolean): Promise<boole
   });
 }
 
-/** The label FLOW ONLY puts in a repository. */
-const FLOW_LABEL = "flow";
-
 /**
  * Change settings. A new default branch must exist; git HEAD is moved first
  * and the row follows (git is truth, the index is derived from it).
@@ -378,6 +377,8 @@ export async function updateRepoSettings(
   // FLOW ONLY names its label (the label it makes is not in `changed`, below): on, the repository has a `flow` to put on work.
   if (settings.flowOnly === true && getLabel(app.db, repo.id, FLOW_LABEL) === undefined)
     insertLabel(app.db, repo.id, FLOW_LABEL, "d29922");
+  // Switched off: the assignments it held dispatch now.
+  if (settings.flowOnly === false && repo.flowOnly) sweepAssigned(app);
   const moved =
     archived === undefined ? false : await moveArchive(app, repo.id, archived);
   const updated = getRepoById(app.db, repo.id);

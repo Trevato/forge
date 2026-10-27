@@ -59,7 +59,7 @@ import {
   promptScreen,
   runAsync,
 } from "./common.ts";
-import { assignPicker, assignedText } from "./assign.ts";
+import { assignPicker, assignedText, queuedText } from "./assign.ts";
 import { liveBindings, liveKey } from "./mirror.ts";
 import { RunList, openRunLog } from "./runlist.ts";
 import { Composer, threadLines, type ThreadEntry } from "./thread.ts";
@@ -428,7 +428,7 @@ export function issueScreen(
         x,
         head!.y + 1,
         truncate(
-          ` ${issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)} · ${plural(detail.comments.length, "comment")}${assignedText(issueRow, ctx.icons)}${doneText(doneBy, mayWrite())}${pictureText()}`,
+          ` ${issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)} · ${plural(detail.comments.length, "comment")}${assignedText(issueRow, ctx.icons)}${queuedText(f.db, repo, issueRow)}${doneText(doneBy, mayWrite())}${pictureText()}`,
           Math.max(0, right - x),
         ),
         style(c.mutedFg, c.bg),
