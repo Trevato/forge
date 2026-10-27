@@ -76,11 +76,9 @@ import { emailVerified } from "../core/verify.ts";
 import { readHealth } from "../actions/health.ts";
 import { isProbe } from "../kernel/probe.ts";
 import { PRIVATE_ADDRESS_REFUSED } from "../kernel/address_words.ts";
-import { listChildren } from "../actions/spawn.ts";
 import { forgeState, PARENT_HEADER } from "../spawn/clients.ts";
 import { familyView } from "../spawn/family.ts";
 import { receiveBeat, SIGNATURE_HEADER } from "../spawn/heartbeat.ts";
-import { reissueDoor, spawnDoor } from "../spawn/door.ts";
 import { forgeProposals, proposeToParentForge, proposeUpstream } from "../actions/upstream.ts";
 import { FOLLOW_MODE_REFUSALS, setFollowMode, severForge, takeForgeCode, takeForgeWords, takeOrTell } from "../actions/follow.ts";
 import { relationOf } from "../actions/forks.ts";
@@ -356,8 +354,6 @@ import { repoDir } from "../git/repos.ts";
 import { carriedPulls, pullPath } from "../story/wave_pulls.ts";
 import { pullRefs, readWave, readWaves } from "../story/waves.ts";
 import type { Result } from "../kernel/result.ts";
-import { sizesView } from "../spawn/sizes.ts";
-import { holds, weakEtag } from "./etag.ts";
 import { inviteLink, list as listInviteLinks, mint as mintInviteLink, revoke as revokeInviteLink } from "../actions/invites.ts";
 import { originForRepo, type OriginRepoRow } from "../core/origins.ts";
 import { subscribe as subscribeJob, type MirrorJob } from "../origins/jobs.ts";
@@ -418,6 +414,7 @@ import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
 import { passportRoutes } from "./passport_edge.ts";
 import { egressGrantRoutes } from "./api/egress_grants.ts";
+import { forgeRoutes } from "./api/forges.ts";
 import { agentRoutes } from "./api/agents.ts";
 import { boardRoutes } from "./api/boards.ts";
 import { labelsRoutes } from "./api/labels.ts";
@@ -5061,52 +5058,7 @@ export function apiRoutes(router: Router<Handler>): void {
     return timePhase(ctx.request, "render", () => json(view));
   });
 
-  // What small, medium and large mean: public, and cacheable by ETag.
-  router.add("GET", "/api/v1/forges/sizes", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const text = timePhase(ctx.request, "sizes", () => JSON.stringify(sizesView()));
-    return timePhase(ctx.request, "render", () => {
-      const etag = weakEtag(text);
-      const headers = { etag, "cache-control": "public, max-age=300" };
-      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
-      return new Response(text, { headers: { "content-type": "application/json", ...headers } });
-    });
-  });
-
-  // A forge's children (docs/SPAWN.md): an admin's, planned before made.
-  router.add("GET", "/api/v1/forges", async (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const denied = requireScope(ctx, "ro");
-    if (denied) return denied;
-    if (!ctx.auth.user?.isAdmin) return forbidden();
-    const items = await timePhaseAsync(ctx.request, "read", () => listChildren(ctx.app));
-    return timePhase(ctx.request, "render", () => json({ items, next_cursor: null }));
-  });
-
-  // `dryRun` is true unless it is `false`: the plan, and nothing is made.
-  // A stranger may spawn too (rate-limited in the door); a signed-in
-  // caller needs an `rw` token as before.
-  router.add("POST", "/api/v1/forges", async (ctx) => {
-    const input = await body(ctx.request);
-    if (ctx.auth.user !== undefined) {
-      const denied = requireScope(ctx, "rw");
-      if (denied) return denied;
-    } else if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) {
-      return forbidden();
-    }
-    if (typeof input !== "object" || input === null || Array.isArray(input))
-      return apiError("invalid", 422, "send a JSON object: name, apps, crew, dryRun");
-    const door = await spawnDoor(ctx, ctx.auth.user, input as Record<string, unknown>);
-    return json(door.body, door.status);
-  });
-
-  // A new claim link for a child nobody has claimed (#729); the old one dies.
-  router.add("POST", "/api/v1/forges/:name/claim-link", async (ctx) => {
-    const denied = requireScope(ctx, "rw");
-    if (denied) return denied;
-    const door = await reissueDoor(ctx, ctx.auth.user!, ctx.params["name"] ?? "");
-    return json(door.body, door.status);
-  });
+  forgeRoutes(router);
 
   router.add("GET", "/api/v1/apps", (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
