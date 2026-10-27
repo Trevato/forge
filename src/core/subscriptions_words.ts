@@ -19,6 +19,8 @@ export const SUBSCRIPTION_WORDS = {
     "The API base URL must be https, with no credentials, query, or hash. For OpenRouter use https://openrouter.ai/api (a Claude subscription token cannot use a gateway).",
   headroom_range: `Headroom is a whole percent from 0 to ${HEADROOM_MAX}.`,
   not_found: "No such subscription.",
+  removed:
+    "Removed, with its grants. Runs it paid for keep it in their history.",
 } as const;
 
 /** The sentence for an add refused with `error`; `name` is what was typed. */
