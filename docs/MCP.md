@@ -46,6 +46,7 @@ for a tunnel and a forge that sleeps.
 | `assigned` | `{ limit? }`: the open issues and pulls assigned to you in every repository you can still read (repository, number, title, kind, state), as `GET /api/v1/user/assigned` |  |
 | `attach_look` | `{ app, pull, width, says, image, dryRun? }`: attach a look to an open pull: a PNG or JPEG (at most 5 MB, base64 in `image`), `width` phone or desktop, one line in `says`; planned first (`dryRun` is true unless `false`) | yes |
 | `audit` | who can do what, per app, read from its contract.json in git: yes, own or no per door, and whether outsiders may direct its crew (`crewOutsiders`) |  |
+| `backups_destination` | `{ action, endpoint?, bucket?, region?, accessKey?, secretKey? }`: `set` or `forget` where snapshots go, validated as the Backups page does; answers `{ kind, place, says }`, never a key; a person admin's, with an admin token | yes |
 | `board_delete` | `{ slug }` (person admins): delete a board by slug; its history keeps it | yes |
 | `board_pins` | `{ op?, slug?, title?, by? }` (person admins): without `op`, the panels pinned to your home (`slug`, `title`); `pin` or `unpin` a panel by board `slug` and panel `title`, or `move` it up or down with `by` (-1 or 1) | yes |
 | `board_write` | `{ slug, board }` (person admins): write a whole board under a slug, made or replaced: `{ title, range, refresh, panels: [{ title, chart, query, w, h }] }` | yes |
