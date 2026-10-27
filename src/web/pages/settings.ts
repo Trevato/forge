@@ -26,6 +26,12 @@ import {
   type AppDomainView,
 } from "../../actions/domains.ts";
 import {
+  domainAddedText,
+  domainRefusalText,
+  domainRemovedText,
+  NO_SUCH_DOMAIN,
+} from "../../actions/domain_words.ts";
+import {
   egressView,
   grantAppEgress,
   revokeAppEgress,
@@ -1213,27 +1219,6 @@ export async function appEnvDelete(ctx: Ctx): Promise<Response> {
   );
 }
 
-const APP_DOMAIN_ERRORS: Record<string, string> = {
-  invalid_host:
-    "A domain is a hostname: letters, digits and hyphens in at least two labels, like app.example.com.",
-  reserved_host: "That name is the forge's own to hand out.",
-  taken: "Another app already answers to that domain.",
-  no_runtime: "Nothing is serving apps on this forge.",
-};
-
-/** What the records say, as one flash: type, name and value, in words. */
-function recordsInWords(records: DnsRecord[]): string {
-  return records
-    .map((r) =>
-      r.type === "TXT"
-        ? `a TXT record at ${r.name} with the value ${r.value}`
-        : r.type === "CNAME"
-          ? `a CNAME from ${r.name} to ${r.value}`
-          : `an ALIAS from ${r.name} to ${r.value}`,
-    )
-    .join(" and ");
-}
-
 // POST /:owner/:name/settings/app/domains — add one.
 export async function appDomainAdd(ctx: Ctx): Promise<Response> {
   const gate = await adminForm(ctx);
@@ -1246,12 +1231,12 @@ export async function appDomainAdd(ctx: Ctx): Promise<Response> {
     `${repoBase(repo)}/settings/app`,
     added.ok
       ? {
-          message: `${added.value.host} is added. Publish ${recordsInWords(added.value.records)}, then press Check now.`,
+          message: domainAddedText(added.value),
         }
       : {
           tone: "danger",
           message:
-            APP_DOMAIN_ERRORS[added.error] ?? "That domain could not be added.",
+            domainRefusalText(added.error, "That domain could not be added."),
         },
   );
 }
@@ -1279,7 +1264,7 @@ export async function appDomainCheck(ctx: Ctx): Promise<Response> {
       : {
           tone: "danger",
           message:
-            APP_DOMAIN_ERRORS[checked.error] ?? "No domain by that name.",
+            domainRefusalText(checked.error, NO_SUCH_DOMAIN),
         },
   );
 }
@@ -1296,8 +1281,8 @@ export async function appDomainDelete(ctx: Ctx): Promise<Response> {
     ctx,
     `${repoBase(repo)}/settings/app`,
     removed.ok
-      ? { message: `${host} is removed. The forge no longer answers there.` }
-      : { tone: "danger", message: "No domain by that name." },
+      ? { message: domainRemovedText(host) }
+      : { tone: "danger", message: NO_SUCH_DOMAIN },
   );
 }
 

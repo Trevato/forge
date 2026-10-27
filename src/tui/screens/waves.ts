@@ -19,7 +19,7 @@ import { truncate } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { emptyState } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
-import { ListState, Scroll, confirmScreen, drawList, drawLines, hitList, plural, runAsync } from "./common.ts";
+import { ListState, Scroll, confirmScreen, drawList, drawLines, hitList, plural, runAsync, yesNo } from "./common.ts";
 import { pullScreen } from "./pull.ts";
 import { localRepo, sourceName, whereRows, whereStrip } from "./where.ts";
 
@@ -219,19 +219,4 @@ export function wavesScreen(f: Session, ctx: Ctx, src: RepoSource): Screen {
     },
   };
   return self;
-}
-
-/** `y` cuts and `n` cancels, whatever the selection: each chooses outright rather than pressing Enter. */
-function yesNo(ctx: Ctx, dialog: Screen, choose: (choice: number) => void): Screen {
-  return {
-    ...dialog,
-    key(e) {
-      if (e.key === "y" || e.key === "n") {
-        ctx.pop();
-        choose(e.key === "y" ? 0 : -1);
-        return true;
-      }
-      return dialog.key(e);
-    },
-  };
 }

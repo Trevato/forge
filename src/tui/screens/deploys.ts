@@ -19,6 +19,14 @@
  * A writer — whom the MCP tool `probe` lets knock — gets `p`: the same
  * `probeApp` against the running production app, every door tried as
  * nobody, a user and an admin, read-only, one line per door.
+ *
+ * The app's admin sees its own domains under the head, each with its state
+ * in the settings page's words (`domain_words.ts`), and gets `n`: a domains
+ * screen where `+` adds one, `c` checks the selected one's DNS proof now and
+ * says the record still needed, and `-` removes it after `remove <host>? y/n`
+ * — `addAppDomain`, `checkAppDomain` and `removeAppDomain`, the page's and
+ * MCP `app_domains`' actions. `listAppDomains` is the admin gate: anyone it
+ * refuses sees neither the domains nor the key.
  */
 
 import {
@@ -31,6 +39,22 @@ import {
   stopEnv,
   type AppPullLine,
 } from "../../actions/apps.ts";
+import {
+  addAppDomain,
+  checkAppDomain,
+  listAppDomains,
+  removeAppDomain,
+  type AppDomainView,
+} from "../../actions/domains.ts";
+import {
+  NO_SUCH_DOMAIN,
+  domainAddedText,
+  domainRefusalText,
+  domainRemovedText,
+  domainSaidText,
+  domainStateWord,
+  recordsInWords,
+} from "../../actions/domain_words.ts";
 import { envLabel, envRefusalText, redeployedText, stoppedText } from "../../actions/env_words.ts";
 import { trendLine, visitorsLine } from "../../apps/vitals.ts";
 import { listRepoRuns } from "../../actions/runs.ts";
@@ -48,7 +72,16 @@ import { style } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { emptyState } from "../ui/widgets.ts";
-import { ListState, confirmScreen, drawList, hitList, runAsync, type ListRow } from "./common.ts";
+import {
+  ListState,
+  confirmScreen,
+  drawList,
+  hitList,
+  promptScreen,
+  runAsync,
+  yesNo,
+  type ListRow,
+} from "./common.ts";
 import { RunList, openRunLog, runRows } from "./runlist.ts";
 
 const LIMIT = 50;
@@ -99,6 +132,8 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   let side: string[] = [];
   let pulls: AppPullLine[] = [];
   let production: Production = { state: "", redeploy: false, stop: false };
+  /** The app's domains, or undefined for anyone `listAppDomains` refuses. */
+  let domains: AppDomainView[] | undefined;
 
   const read = (): void => {
     const runs = readDeploys(f, repo);
@@ -114,6 +149,8 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     side = appSideLines(f.app, f.user, repo);
     pulls = appPullLines(f.app, f.user, repo);
     production = readProduction(f, repo);
+    const listed = listAppDomains(f.app, f.user, repo);
+    domains = listed.ok ? listed.value : undefined;
     loaded = true;
     ctx.invalidate();
   };
@@ -167,13 +204,22 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         ...(production.redeploy ? [binding(["D"], "redeploy production")] : []),
         ...(production.stop ? [binding(["S"], "stop production")] : []),
         ...(mayProbe ? [binding(["p"], "probe the running app's doors")] : []),
+        ...(domains !== undefined ? [binding(["n"], "the app's own domains")] : []),
       ];
     },
     load: async () => read(),
     render(area, s) {
       const c = ctx.theme.c;
+      const named = domainsLine(domains);
       const [head, upper, tail] = split(area, "v", [
-        len(1 + (visitors === "" ? 0 : 1) + (trend === "" ? 0 : 1) + (pace === "" ? 0 : 1) + side.length),
+        len(
+          1 +
+            (visitors === "" ? 0 : 1) +
+            (trend === "" ? 0 : 1) +
+            (pace === "" ? 0 : 1) +
+            side.length +
+            (named === "" ? 0 : 1),
+        ),
         fill(1),
         len(pulls.length === 0 ? 0 : pulls.length + 1),
       ]);
@@ -199,7 +245,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         style(c.mutedFg, c.bg),
         head!.x + head!.w,
       );
-      [visitors, trend, pace, ...side]
+      [visitors, trend, pace, ...side, named]
         .filter((line) => line !== "")
         .forEach((line, i) =>
           s.text(head!.x, head!.y + 1 + i, truncate(line, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w),
@@ -248,6 +294,10 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       }
       if (e.key === "p" && mayProbe) {
         ctx.push(probeScreen(f, ctx, repo));
+        return true;
+      }
+      if (e.key === "n" && domains !== undefined) {
+        ctx.push(domainsScreen(f, ctx, repo, read));
         return true;
       }
       return false;
@@ -377,4 +427,166 @@ function probeScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       return state.key(e, rows().length);
     },
   };
+}
+
+// ---- Domains: `n`, the MCP tool `app_domains` from the deploys screen ----
+
+/** `Domains: app.example.com live · shop.example.com waiting for DNS`, or "" with none. */
+function domainsLine(domains: readonly AppDomainView[] | undefined): string {
+  if (domains === undefined || domains.length === 0) return "";
+  return `Domains: ${domains.map((d) => `${d.host} ${domainStateWord(d)}`).join(" · ")}`;
+}
+
+/** `requireRepoAdmin` answers `not_found` to anyone else, so nothing leaks; here it is said. */
+const NOT_ADMIN = "Only the app's admin manages its domains.";
+
+const domainRow = (d: AppDomainView): ListRow => ({
+  title: `${d.host} · ${domainStateWord(d)}`,
+  tone: d.verified ? "success" : "attn",
+  secondary: clean(domainSaidText(d)),
+});
+
+/** What the proof still needs, for an unverified domain; "" once it is live. */
+function stillNeeded(d: AppDomainView): string {
+  return d.verified ? "" : `Still needed: ${recordsInWords(d.records)}.`;
+}
+
+/**
+ * The app's domains, for its admin. Every key goes through the action, which
+ * gates again; a refusal is said in the page's words. `changed` re-reads the
+ * deploys screen beneath, so its domains line follows.
+ */
+export function domainsScreen(f: Session, ctx: Ctx, repo: Repo, changed: () => void = () => {}): Screen {
+  const state = new ListState();
+  let domains: AppDomainView[] = [];
+  let refused: string | undefined;
+  let loaded = false;
+
+  const refusal = (code: string, fallback: string): string =>
+    code === "not_found" ? NOT_ADMIN : domainRefusalText(code, fallback);
+  const read = (): void => {
+    const listed = listAppDomains(f.app, f.user, repo);
+    refused = listed.ok ? undefined : refusal(listed.error, NO_SUCH_DOMAIN);
+    domains = listed.ok ? listed.value : [];
+    loaded = true;
+    ctx.invalidate();
+  };
+  const after = (): void => {
+    read();
+    changed();
+  };
+  const add = (): void => {
+    ctx.push(
+      promptScreen(ctx, self, {
+        title: "Add a domain",
+        label: "Domain",
+        placeholder: "app.example.com",
+        hint: "Publish the two records it shows, then check it with c.",
+        onSubmit: (host) => {
+          const added = addAppDomain(f.app, f.user, repo, host);
+          if (!added.ok) return refusal(added.error, "That domain could not be added.");
+          ctx.toast(domainAddedText(added.value));
+          after();
+          return undefined;
+        },
+      }),
+    );
+  };
+
+  const check = (d: AppDomainView): void =>
+    runAsync(ctx, async () => {
+      const checked = await checkAppDomain(f.app, f.user, repo, d.host);
+      if (!checked.ok) ctx.toast(refusal(checked.error, NO_SUCH_DOMAIN), "danger");
+      else
+        ctx.toast(
+          [clean(checked.value.said), stillNeeded(checked.value)].filter((t) => t !== "").join(" "),
+          checked.value.verified ? "success" : "attn",
+        );
+      after();
+    });
+
+  const remove = (d: AppDomainView): void => {
+    const choose = (choice: number): void => {
+      if (choice !== 0) return;
+      const removed = removeAppDomain(f.app, f.user, repo, d.host);
+      ctx.toast(removed.ok ? domainRemovedText(d.host) : refusal(removed.error, NO_SUCH_DOMAIN), removed.ok ? undefined : "danger");
+      after();
+    };
+    ctx.push(
+      yesNo(
+        ctx,
+        confirmScreen(ctx, self, {
+          title: "Remove domain",
+          body: [`remove ${d.host}? y/n`],
+          actions: [{ label: "Remove" }, { label: "Cancel", variant: "ghost" }],
+          selected: 1,
+          onChoose: choose,
+        }),
+        choose,
+      ),
+    );
+  };
+
+  const self: Screen = {
+    title: "Domains",
+    get keys() {
+      return refused !== undefined
+        ? [binding(["esc"], "back")]
+        : [
+            binding(["j", "k"], "move"),
+            binding(["+"], "add a domain"),
+            ...(domains.length > 0 ? [binding(["c"], "check its DNS now"), binding(["-"], "remove it")] : []),
+            binding(["r"], "refresh"),
+            binding(["esc"], "back"),
+          ];
+    },
+    load: async () => read(),
+    render(area, s) {
+      const c = ctx.theme.c;
+      const [head, body, foot] = split(area, "v", [len(1), fill(1), len(1)]);
+      s.text(
+        head!.x,
+        head!.y,
+        truncate(`${repo.ownerName}/${repo.name} · the app's own domains`, head!.w),
+        style(c.mutedFg, c.bg),
+        head!.x + head!.w,
+      );
+      if (refused !== undefined || domains.length === 0) {
+        emptyState(s, body!, c, {
+          title: refused !== undefined ? "Not yours" : loaded ? "No domains" : "Reading…",
+          body: refused ?? (loaded ? "Press + to serve the app at a name of your own." : "Reading the domains"),
+        });
+        return;
+      }
+      const rows = domains.map(domainRow);
+      drawList(s, body!, c, state, rows);
+      hitList(ctx, body!, state, rows.length, {});
+      const selected = domains[state.index];
+      if (selected !== undefined)
+        s.text(foot!.x, foot!.y, truncate(stillNeeded(selected), foot!.w), style(c.mutedFg, c.bg), foot!.x + foot!.w);
+    },
+    key(e) {
+      if (refused !== undefined) return false;
+      if (state.key(e, domains.length)) return true;
+      const selected = domains[state.index];
+      if (e.key === "+") {
+        add();
+        return true;
+      }
+      if (e.key === "c" && selected !== undefined) {
+        check(selected);
+        return true;
+      }
+      if (e.key === "-" && selected !== undefined) {
+        remove(selected);
+        return true;
+      }
+      if (e.key === "r") {
+        read();
+        return true;
+      }
+      return false;
+    },
+  };
+  return self;
 }

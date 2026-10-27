@@ -445,6 +445,24 @@ export function confirmScreen(
   };
 }
 
+/**
+ * A `… y/n` confirm: `y` chooses the first action and `n` cancels, whatever
+ * the selection — each outright, rather than pressing Enter.
+ */
+export function yesNo(ctx: Ctx, dialog: Screen, choose: (choice: number) => void): Screen {
+  return {
+    ...dialog,
+    key(e) {
+      if (e.key === "y" || e.key === "n") {
+        ctx.pop();
+        choose(e.key === "y" ? 0 : -1);
+        return true;
+      }
+      return dialog.key(e);
+    },
+  };
+}
+
 /** A one-field modal: a name to type, a username to add, a branch to create. */
 export function promptScreen(
   ctx: Ctx,

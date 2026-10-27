@@ -971,7 +971,8 @@ browser.
 An app can answer at a name you own — `app.example.com`, or an apex like
 `example.com` — beside the hostname the forge gave it. Under **Settings →
 App → Domains** an admin of the repository adds the name (or `POST
-/api/v1/repos/:owner/:name/app/domains` with a `{ "host" }` body) and is
+/api/v1/repos/:owner/:name/app/domains` with a `{ "host" }` body, MCP
+`app_domains`, or `n` then `+` on the terminal's **Deploys** screen) and is
 shown the two records to publish in the zone:
 
 - a TXT record at `_forge-verify.<host>` whose value is `forge-verify=<token>`
@@ -982,8 +983,9 @@ shown the two records to publish in the zone:
   provider's ALIAS or ANAME record instead, or A and AAAA records with the
   address the forge is served at.
 
-The forge checks when asked — **Check now** on the page, or `POST
-…/app/domains/:host/check` — never on a timer. It looks the TXT record up;
+The forge checks when asked — **Check now** on the page, `c` on a domain in
+the terminal's domains screen, or `POST …/app/domains/:host/check` — never on
+a timer. It looks the TXT record up;
 the domain is verified when some record there is exactly the value shown.
 Every check leaves one sentence a person can act on ("No TXT record at
 `_forge-verify.app.example.com` yet.", "The TXT record is there but holds a
