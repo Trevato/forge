@@ -205,27 +205,7 @@ import { appLimitWords, appsOwnedBy } from "../actions/app_limit.ts";
 import { getQuota } from "../settings/quotas.ts";
 import { isSafeRef, isSafeTreePath } from "../git/guard.ts";
 import { compareBranches, listBranchRows } from "../git/branches.ts";
-import {
-  appView,
-  appVisitors,
-  deleteAppEnvVar,
-  disableApp,
-  enableApp,
-  listAppEnv,
-  newApp,
-  openEnvUrl,
-  redeployEnv,
-  setAppEnvVar,
-  stopEnv,
-  updateAppSettings,
-  type AppSettingsInput,
-} from "../actions/apps.ts";
-import {
-  addAppDomain,
-  checkAppDomain,
-  listAppDomains,
-  removeAppDomain,
-} from "../actions/domains.ts";
+import { newApp } from "../actions/apps.ts";
 import { listDomains } from "../core/domains.ts";
 import {
   migrateMessage,
@@ -302,7 +282,6 @@ import { blobForRender, commitLog, listRefs, listTree } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
 import { carriedPulls, pullPath } from "../story/wave_pulls.ts";
 import { pullRefs, readWave, readWaves } from "../story/waves.ts";
-import type { Result } from "../kernel/result.ts";
 import { inviteLink, list as listInviteLinks, mint as mintInviteLink, revoke as revokeInviteLink } from "../actions/invites.ts";
 import { originForRepo, type OriginRepoRow } from "../core/origins.ts";
 import { subscribe as subscribeJob, type MirrorJob } from "../origins/jobs.ts";
@@ -344,11 +323,6 @@ import {
   tooManyAttempts,
 } from "./respond.ts";
 import {
-  readAppMembers,
-  setAppMembersThrough,
-  type AppMembersError,
-} from "../actions/app_members.ts";
-import {
   explorePage,
   type ExploreRow,
   exploreLine,
@@ -366,6 +340,7 @@ import { followingRoutes } from "./api/following.ts";
 import { labelsRoutes } from "./api/labels.ts";
 import { issueRoutes, labelsHandler } from "./api/issues.ts";
 import { userRoutes } from "./api/user.ts";
+import { appRoutes } from "./api/app.ts";
 import { appNoteRoutes } from "./api/app_notes.ts";
 import { reportRoutes } from "./api/reports.ts";
 import { rollbackRoutes } from "./api/rollback.ts";
@@ -966,7 +941,7 @@ function repoQuery(ctx: Ctx) {
  * An app as the API returns it, with what is running when a runtime is up
  * and the domains of its own that are verified — the ones the forge serves.
  */
-function appJson(
+export function appJson(
   ctx: Ctx,
   record: AppRecord,
   repo: Repo,
@@ -983,18 +958,6 @@ function appJson(
     serving: runtime !== undefined,
     environments:
       runtime === undefined ? [] : envsFor(ctx.app, ctx.auth.user, record),
-  };
-}
-
-function appPatch(input: Record<string, unknown>): AppSettingsInput {
-  return {
-    ...(typeof input.slug === "string" ? { slug: input.slug } : {}),
-    ...(input.access === "public" || input.access === "private"
-      ? { access: input.access }
-      : {}),
-    ...(input.previewData === "copy" || input.previewData === "empty"
-      ? { previewData: input.previewData }
-      : {}),
   };
 }
 
@@ -1027,7 +990,7 @@ export function positiveInt(raw: string | undefined): number | undefined {
 }
 
 /** 403 naming the limit and the count, for an account at its app limit. */
-function appLimitResponse(ctx: Ctx, ownerName: string): Response {
+export function appLimitResponse(ctx: Ctx, ownerName: string): Response {
   const owner = getUserByName(ctx.app.db, ownerName);
   const limit = getQuota(ctx.app.db, "apps");
   return json(
@@ -1088,21 +1051,6 @@ export function loadPull(ctx: Ctx): Found<{ pull: Pull }> {
 }
 
 // ---- routes ----
-
-/** An app-members answer: the list, or the refusal a stranger cannot read anything into. */
-function membersAnswer<T>(result: Result<T, AppMembersError>): Response {
-  if (result.ok) return json(result.value);
-  switch (result.error.kind) {
-    case "invalid":
-      return apiError("invalid", 422, result.error.message);
-    case "forbidden":
-      return apiError("forbidden", 403, SETTING_WORDS.appMembersForbidden);
-    case "unauthorized":
-      return unauthorized();
-    default:
-      return notFound();
-  }
-}
 
 /** Boards (`boards/query.ts`): a site admin who is a person, never an agent. */
 export function boardsAdmin(ctx: Ctx): Response | undefined {
@@ -3786,270 +3734,13 @@ export function apiRoutes(router: Router<Handler>): void {
     );
   });
 
-  router.add("GET", "/api/v1/repos/:owner/:name/app", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const repo = loadRepo(ctx);
-    if (!repo) return notFound();
-    const read = timePhase(ctx.request, "app", () => {
-      const view = appView(ctx.app, ctx.auth.user, repo);
-      if (!view.ok) return null;
-      return { view: view.value, vitals: appVisitors(ctx.app, ctx.auth.user, repo) };
-    });
-    if (!read) return notFound();
-    return timePhase(ctx.request, "render", () =>
-      json({
-        ...appJson(ctx, read.view.app, repo, appsRuntime(ctx.app)),
-        ...(read.vitals === undefined ? {} : { vitals: read.vitals }),
-      }),
-    );
-  });
-
-  router.add("POST", "/api/v1/repos/:owner/:name/app", async (ctx) => {
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const repo = loadRepo(ctx);
-    if (!repo) return notFound();
-    const input = await body(ctx.request);
-    const enabled = enableApp(ctx.app, ctx.auth.user, repo, appPatch(input));
-    if (!enabled.ok) {
-      if (enabled.error === "app_limit")
-        return appLimitResponse(ctx, repo.ownerName);
-      return respondAccess(enabled.error, 422);
-    }
-    return json(
-      appJson(ctx, enabled.value, repo, appsRuntime(ctx.app)),
-      201,
-    );
-  });
-
-  router.add("PATCH", "/api/v1/repos/:owner/:name/app", async (ctx) => {
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const repo = loadRepo(ctx);
-    if (!repo) return notFound();
-    const input = await body(ctx.request);
-    const updated = updateAppSettings(
-      ctx.app,
-      ctx.auth.user,
-      repo,
-      appPatch(input),
-    );
-    if (!updated.ok) return respondAccess(updated.error, 422);
-    return json(appJson(ctx, updated.value, repo, appsRuntime(ctx.app)));
-  });
-
-  router.add("DELETE", "/api/v1/repos/:owner/:name/app", (ctx) => {
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const repo = loadRepo(ctx);
-    if (!repo) return notFound();
-    const disabled = disableApp(ctx.app, ctx.auth.user, repo);
-    if (!disabled.ok) return respondAccess(disabled.error, 422);
-    return json({}, 200);
-  });
-
-  // The people a private app names (#752): they may enter it and its
-  // previews, nothing else. Read and changed by people who can write the
-  // repository, never an agent; a change is planned unless dryRun is false.
-  router.add("GET", "/api/v1/repos/:owner/:name/app/members", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const denied = requireScope(ctx, "ro");
-    if (denied) return denied;
-    const repo = loadRepo(ctx);
-    if (!repo) return notFound();
-    const read = timePhase(ctx.request, "members", () => readAppMembers(ctx.app, ctx.auth.user, repo));
-    return timePhase(ctx.request, "render", () => membersAnswer(read));
-  });
-
-  router.add("PUT", "/api/v1/repos/:owner/:name/app/members", async (ctx) => {
-    const input = await body(ctx.request);
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const repo = loadRepo(ctx);
-    if (!repo) return notFound();
-    const members = input.members;
-    if (!Array.isArray(members) || !members.every((m) => typeof m === "string"))
-      return apiError("invalid", 422, "send {members: [username, …], dryRun}");
-    return membersAnswer(
-      setAppMembersThrough(ctx.app, ctx.auth.user, repo, {
-        members,
-        dryRun: input.dryRun !== false,
-      }),
-    );
-  });
-
-  // The app's own domains (docs/APPS.md, "Your own domain"). Admin scope
-  // and admin over the repository, like the environment below; `:host` is
-  // one path segment, dots included.
-  router.add("GET", "/api/v1/repos/:owner/:name/app/domains", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const repo = loadRepo(ctx);
-    if (!repo) return notFound();
-    const listed = timePhase(ctx.request, "domains", () => listAppDomains(ctx.app, ctx.auth.user, repo));
-    if (!listed.ok) return respondAccess(listed.error, 422);
-    return timePhase(ctx.request, "render", () => json({ items: listed.value, next_cursor: null }));
-  });
-
-  router.add("POST", "/api/v1/repos/:owner/:name/app/domains", async (ctx) => {
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const repo = loadRepo(ctx);
-    if (!repo) return notFound();
-    const input = await body(ctx.request);
-    const added = addAppDomain(ctx.app, ctx.auth.user, repo, str(input.host));
-    if (!added.ok) return respondAccess(added.error, 422);
-    return json(added.value, 201);
-  });
-
-  router.add(
-    "POST",
-    "/api/v1/repos/:owner/:name/app/domains/:host/check",
-    async (ctx) => {
-      const denied = requireScope(ctx, "admin");
-      if (denied) return denied;
-      const repo = loadRepo(ctx);
-      if (!repo) return notFound();
-      const checked = await checkAppDomain(
-        ctx.app,
-        ctx.auth.user,
-        repo,
-        ctx.params.host ?? "",
-      );
-      if (!checked.ok) return respondAccess(checked.error, 422);
-      return json(checked.value);
-    },
-  );
-
-  router.add(
-    "DELETE",
-    "/api/v1/repos/:owner/:name/app/domains/:host",
-    (ctx) => {
-      const denied = requireScope(ctx, "admin");
-      if (denied) return denied;
-      const repo = loadRepo(ctx);
-      if (!repo) return notFound();
-      const removed = removeAppDomain(
-        ctx.app,
-        ctx.auth.user,
-        repo,
-        ctx.params.host ?? "",
-      );
-      if (!removed.ok) return respondAccess(removed.error, 422);
-      return json({}, 200);
-    },
-  );
+  appRoutes(router);
 
   egressGrantRoutes(router);
 
   promptRoutes(router);
 
   secretRoutes(router);
-
-  // The app's environment: names in, names out, and never a value back.
-  // `:var`, not `:name` — `:name` is the repository's.
-  router.add("GET", "/api/v1/repos/:owner/:name/app/env", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const repo = loadRepo(ctx);
-    if (!repo) return notFound();
-    const listed = timePhase(ctx.request, "env", () => listAppEnv(ctx.app, ctx.auth.user, repo));
-    if (!listed.ok) return notFound();
-    return timePhase(ctx.request, "render", () => json({ items: listed.value, next_cursor: null }));
-  });
-
-  router.add("PUT", "/api/v1/repos/:owner/:name/app/env/:var", async (ctx) => {
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const repo = loadRepo(ctx);
-    if (!repo) return notFound();
-    const input = await body(ctx.request);
-    // `scope`: all (the default), production, or preview. The same name may
-    // be set once in each; the narrower one wins where both apply.
-    const set = await setAppEnvVar(
-      ctx.app,
-      ctx.auth.user,
-      repo,
-      ctx.params.var ?? "",
-      str(input.value),
-      str(input.scope) || "all",
-    );
-    if (!set.ok) return respondAccess(set.error, 422);
-    return json(set.value);
-  });
-
-  router.add(
-    "DELETE",
-    "/api/v1/repos/:owner/:name/app/env/:var",
-    async (ctx) => {
-      const denied = requireScope(ctx, "admin");
-      if (denied) return denied;
-      const repo = loadRepo(ctx);
-      if (!repo) return notFound();
-      const removed = await deleteAppEnvVar(
-        ctx.app,
-        ctx.auth.user,
-        repo,
-        ctx.params.var ?? "",
-        ctx.url.searchParams.get("scope") ?? "all",
-      );
-      if (!removed.ok) return respondAccess(removed.error, 422);
-      return json({}, 200);
-    },
-  );
-
-  router.add(
-    "POST",
-    "/api/v1/repos/:owner/:name/app/:env/redeploy",
-    async (ctx) => {
-      const denied = requireScope(ctx, "rw");
-      if (denied) return denied;
-      const repo = loadRepo(ctx);
-      if (!repo) return notFound();
-      const queued = await redeployEnv(
-        ctx.app,
-        ctx.auth.user,
-        repo,
-        ctx.params.env ?? "",
-      );
-      if (!queued.ok) return respondAccess(queued.error, 422);
-      return json({ run: queued.value ?? null }, 202);
-    },
-  );
-
-  router.add(
-    "POST",
-    "/api/v1/repos/:owner/:name/app/:env/stop",
-    async (ctx) => {
-      const denied = requireScope(ctx, "rw");
-      if (denied) return denied;
-      const repo = loadRepo(ctx);
-      if (!repo) return notFound();
-      const stopped = await stopEnv(
-        ctx.app,
-        ctx.auth.user,
-        repo,
-        ctx.params.env ?? "",
-      );
-      if (!stopped.ok) return respondAccess(stopped.error, 422);
-      return json({}, 200);
-    },
-  );
-
-  // The URL to open an environment at. For a private app it carries a
-  // grant, so the answer is for the caller alone and is not cached.
-  router.add("GET", "/api/v1/repos/:owner/:name/app/:env/open", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const repo = timePhase(ctx.request, "repo", () => loadRepo(ctx));
-    if (!repo) return notFound();
-    const link = timePhase(ctx.request, "open", () =>
-      openEnvUrl(ctx.app, ctx.auth.user, repo, ctx.params.env ?? ""),
-    );
-    if (!link.ok) return respondAccess(link.error, 422);
-    return json({ url: link.value });
-  });
 
   // What the crew's runs here spent over a window (`core/usage.ts`):
   // tokens, cost, wall time and outcome, by subscription, agent and issue.
