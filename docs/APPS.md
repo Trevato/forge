@@ -210,8 +210,9 @@ nothing when the crew is idle.
 **When the pill is not shown** (an app whose own policy refuses foreign
 scripts), `/__forge/` on the app's host is the way back: a small page from the
 forge, never the app, with no script, saying the app and where you are
-(`production` or `preview of pull #N`) and linking Home, the repository (to
-who may read it) and *Tell the crew* (the same link `/__forge/crew` gives; signed
+(`production` or `preview of pull #N`) and linking Home, the repository and *Make it yours*
+(`<repo>/make-it-yours`; both only to who may read the repository, who also
+get the "more pulls" line linked to `<repo>/pulls`) and *Tell the crew* (the same link `/__forge/crew` gives; signed
 out it offers sign in). It also says what is serving, read from the deploy
 record (no git): production shows the newest release and the three before it
 (a redeploy of the same commit is not another release), a preview shows its

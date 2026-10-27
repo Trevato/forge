@@ -93,22 +93,31 @@ function servingHtml(facts: DoorFacts): string {
   return `<p>Serving ${sha(now)} since ${stamp(now.at)}</p>${older === "" ? "" : `<h2>Before it</h2><ul>${older}</ul>`}`;
 }
 
-function pullsHtml(pulls: DoorPullLine[] | undefined): string {
+function pullsHtml(pulls: DoorPullLine[] | undefined, morePulls: string | undefined): string {
   if (pulls === undefined || pulls.length === 0) return "";
   const items = pulls.slice(0, DOOR_PULL_LIMIT).map((p) =>
     link(p.href, `#${p.number} ${[...p.title].slice(0, 120).join("")} · check ${p.check}`),
   );
-  const more = pulls.length > DOOR_PULL_LIMIT ? "<p>More pulls are open on the forge.</p>" : "";
+  const words = "More pulls are open on the forge.";
+  const more =
+    pulls.length <= DOOR_PULL_LIMIT
+      ? ""
+      : morePulls === undefined
+        ? `<p>${words}</p>`
+        : `<p><a href="${escapeAttr(morePulls)}">${words}</a></p>`;
   return `<h2>Open pulls</h2><ul>${items.join("")}</ul>${more}`;
 }
 
 export function doorPage(facts: DoorFacts, head: boolean): Response {
   const { where, forgeUrl } = facts;
   const links = [link(forgeUrl, "Home")];
-  if (where.repo !== undefined)
-    links.push(
-      link(new URL(`/${where.repo}`, forgeUrl).href, `The repository, ${where.repo}`),
-    );
+  let morePulls: string | undefined;
+  if (where.repo !== undefined) {
+    const repoUrl = new URL(`/${where.repo}`, forgeUrl).href;
+    links.push(link(repoUrl, `The repository, ${where.repo}`));
+    links.push(link(`${repoUrl}/make-it-yours`, "Make it yours"));
+    morePulls = `${repoUrl}/pulls`;
+  }
   if (facts.tell !== undefined) links.push(link(facts.tell, "Tell the crew"));
   else if (facts.signin !== undefined)
     links.push(link(facts.signin, "Sign in to tell the crew"));
@@ -120,7 +129,7 @@ export function doorPage(facts: DoorFacts, head: boolean): Response {
         : `<p>Terminal:</p><pre><code>${escapeAttr(facts.ssh)}</code></pre>`;
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>${escapeAttr(where.app)}, ${escapeAttr(doorWhere(where))}</title><style>${STYLE}</style></head>
-<body><main><h1>${escapeAttr(where.app)}</h1><p>${whereLine(where, forgeUrl)}</p>${servingHtml(facts)}${pullsHtml(facts.pulls)}<ul>${links.join("")}</ul>${terminal}</main></body></html>
+<body><main><h1>${escapeAttr(where.app)}</h1><p>${whereLine(where, forgeUrl)}</p>${servingHtml(facts)}${pullsHtml(facts.pulls, morePulls)}<ul>${links.join("")}</ul>${terminal}</main></body></html>
 `;
   return new Response(head ? null : html, {
     headers: {
