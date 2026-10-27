@@ -15,7 +15,7 @@ import type { App } from "../../app.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { liveRegionsJs } from "../client.ts";
-import { notFoundPage } from "../chrome.ts";
+import { notFoundPage, signInFirst } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import { fragment, page } from "../layout.ts";
 import { btn, card, chartBox, empty, field, selectField } from "../ui.ts";
@@ -83,6 +83,7 @@ const denied = (ctx: Ctx) => {
 // GET /boards
 export async function boardsList(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  if (ctx.auth.user === undefined) return signInFirst(ctx);
   const listed = await timePhaseAsync(ctx.request, "boards", () => listAllBoards(ctx.app, ctx.auth.user));
   if (!listed.ok) return notFoundPage(ctx);
   const make = html`<form method="post" action="/boards/new" class="bar">

@@ -33,3 +33,12 @@ test("the front page is titled forge, once", async () => {
 test("another page keeps its suffix", async () => {
   expect(await page("/login")).toMatch(/<title>[^<]+ · forge<\/title>/);
 });
+
+test("no title ends in the suffix twice", async () => {
+  const { tabTitle } = await import("../src/web/layout.ts");
+  expect(tabTitle("Search · forge")).toBe("Search · forge");
+  expect(tabTitle("Issues · forge · forge")).toBe("Issues · forge");
+  expect(tabTitle("forge")).toBe("forge");
+  for (const path of ["/search?q=forge", "/trevato/forge/issues", "/trevato/forge/pulls"])
+    expect(await page(path)).not.toContain("· forge · forge");
+});

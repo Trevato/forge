@@ -268,7 +268,10 @@ describe("/boards", () => {
   test("a non-admin and a stranger get 404 on every board route", async () => {
     for (const path of ["/boards", "/boards/fleet-health", "/boards/fleet-health/live"]) {
       expect((await fetch(servers.url + path, { headers: { authorization: `Bearer ${tok.bob}` } })).status).toBe(404);
-      expect((await fetch(servers.url + path)).status).toBe(404);
+      const stranger = await fetch(servers.url + path, { redirect: "manual" });
+      // The list sends a stranger to sign in (#6733, so /flow is no dead end); a board itself stays a 404.
+      if (path === "/boards") expect(stranger.headers.get("location")).toContain("next=%2Fboards");
+      else expect(stranger.status).toBe(404);
     }
     expect((await post("/boards/fleet-health/delete", {}, "bob")).status).toBe(404);
     expect((await post("/boards/new", { title: "x" }, "bob")).status).toBe(404);

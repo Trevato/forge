@@ -2519,7 +2519,11 @@ async function answerGet(
     // database read on a path that, by construction, cannot belong to a
     // signed-in-only route, at the cost of the topbar reading "Sign in"
     // even for someone who is.
-    if (!isApiPath && prefersHtml(request, url.pathname)) {
+    // A plain GET (curl, a crawler, a link unfurler) names no type and gets the page too;
+    // machine paths and anyone who asks for JSON keep the JSON body.
+    const machinePath = /^\/(?:contract|mcp|oauth|\.well-known|metrics|healthz)(?:\/|$)|\.(?:json|git)(?:\/|$)|\.git\//.test(url.pathname);
+    const plainGet = (request.method === "GET" || request.method === "HEAD") && !machinePath && !prefersJson(request);
+    if (!isApiPath && (prefersHtml(request, url.pathname) || plainGet)) {
       const themeCookie = cookieValue(request, "forge_theme") ?? "";
       const anonCtx: Ctx = {
         app,

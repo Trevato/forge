@@ -512,6 +512,12 @@ function pageDescription(options: PageOptions): string {
   return line.length <= 200 ? line : `${line.slice(0, 197).trimEnd()}…`;
 }
 
+/** The tab title: the forge named once, whether or not the page's own title already ends in it. */
+export function tabTitle(title: string): string {
+  const own = title.replace(/(?: · forge)+$/, "");
+  return own === "" || own === "forge" ? "forge" : `${own} · forge`;
+}
+
 export function page(options: PageOptions, status = 200): Response {
   // A nonce lets exactly this page's <style> and <script> run while
   // everything else stays forbidden; it is random, or bound to the body when
@@ -549,7 +555,7 @@ export function page(options: PageOptions, status = 200): Response {
           name="viewport"
           content="width=device-width, initial-scale=1, viewport-fit=cover"
         />
-        <title>${options.title === "forge" ? "forge" : `${options.title} · forge`}</title>
+        <title>${tabTitle(options.title)}</title>
         <meta name="description" content="${pageDescription(options)}" />
         <meta property="og:site_name" content="forge" />
         <meta property="og:type" content="website" />
