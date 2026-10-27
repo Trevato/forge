@@ -152,6 +152,26 @@ Nothing is committed: a commit to main would void every gate in flight
 (#6640). `src/core/releases-before-tags.json` keeps the releases cut before
 this, frozen.
 
+## Gates in flight across a roll (#6722)
+
+A roll does not turn a merge-queue gate red. On SIGTERM the old forge
+starts no new gate and lets the gates under way finish for
+`FORGE_CHECKS_DRAIN_S` (660 s: a full gate takes about ten minutes). The
+chart's `terminationGracePeriodSeconds` is 720 for that reason, a minute
+past the drain; lower one and lower the other with it, or the kubelet kills
+the pod while its gates still run. The old and new pods share the node for
+up to those 12 minutes, which section 1's rule already sizes for.
+
+What the drain does not finish is no verdict, never red:
+
+- a gate cut off at the drain's end, or one whose check a signal from
+  outside ended (the pod going, the kernel's OOM killer, exit 137 or 143),
+  is `interrupted`: no red batch, no suspect, and the new pod gates the same
+  candidate again (`src/checks/queue.ts`, #6611);
+- a gate that came back `red (check)` — red with no test and no type error
+  named — is gated once more before the queue bisects it, as an install red
+  is. Red again, it is searched as the code's.
+
 ## The gate of record (#2794)
 
 A release ships on two proofs, and nothing else holds it:

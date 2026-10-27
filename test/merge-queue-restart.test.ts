@@ -190,6 +190,25 @@ describe("the merge queue across a restart", () => {
     expect(git(repo, "rev-parse", "main^{tree}")).toBe(record.treeOid);
   });
 
+  test("a red (check) the stopped forge's gate came back with is gated once more as the same candidate, nothing searched (#6722)", async () => {
+    const { repo, pulls, tip, record } = await killedMidGate("restart-red-check");
+    // The roll's drain answers red with no test named: kept, not acted on.
+    running.get(tip)!.go({ ok: false, error: "check exited with code 1", lines: [], stage: "check" });
+    for (let i = 0; i < 200 && gateRecords(app.db, repo.id)[0]?.verdict === undefined; i++) await Bun.sleep(5);
+    expect(gateRecords(app.db, repo.id)[0]?.verdict).toMatchObject({ lands: false, reason: { kind: "check" } });
+    lost = true;
+    const again = sweepGreen(app, repo);
+    await gating(1);
+    // The very commit that was gated before, gated once more before any search.
+    expect(started).toEqual([tip, tip]);
+    running.get(tip)!.go({ ok: true, error: "", lines: [] });
+    expect(await again).toBe(3);
+    expect(started).toEqual([tip, tip]);
+    for (const pull of pulls) expect(merged(repo, pull)).toBe(true);
+    expect(git(repo, "rev-parse", "main^{tree}")).toBe(record.treeOid);
+    expect(redMarks(app.db, repo.id).size).toBe(0);
+  });
+
   test("a recorded candidate whose base moved is forgotten, and the line is planned afresh", async () => {
     const { repo, pulls, tip } = await killedMidGate("restart-moved");
     running.get(tip)!.go({ ok: false, error: "cut off", lines: [], interrupted: true });

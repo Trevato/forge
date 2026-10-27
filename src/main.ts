@@ -358,8 +358,10 @@ const checks =
         concurrency: positive(process.env.FORGE_CHECKS_CONCURRENCY, Number(capacityDefault("checks.concurrency"))),
         redHoldMs: RED_HOLD_MS,
         landSettleMs: LAND_SETTLE_MS,
-        // A roll lets running checks finish this long before cutting them off.
-        drainMs: positive(process.env.FORGE_CHECKS_DRAIN_S, 300) * 1000,
+        // A roll lets running checks and merge-queue gates finish this long
+        // before cutting them off: a full gate takes about ten minutes, and
+        // the pod's grace (charts/app, 720 s) is longer still (#6722).
+        drainMs: positive(process.env.FORGE_CHECKS_DRAIN_S, 660) * 1000,
       });
 // Migrated repositories kept as a read-only mirror push to their source.
 const mirrorOut = startMirrorOut(app);

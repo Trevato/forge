@@ -71,7 +71,7 @@ import { exportTree, readFileAt } from "../apps/checkout.ts";
 import { parseCheck } from "../apps/manifest.ts";
 import { workerCpus } from "../core/capacity.ts";
 import { accountActive } from "../core/accounts.ts";
-import { childEnv, runStep } from "../apps/process.ts";
+import { childEnv, killedStep, runStep } from "../apps/process.ts";
 import { noteReached } from "../apps/egress_report.ts";
 import {
   capacityCount,
@@ -737,6 +737,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         infrastructure?: boolean;
         /** Where it stopped red (#5276); none is before any step ran. */
         stage?: GateStage;
+        /** The check step was ended by a signal from outside: no verdict (#6722). */
+        killed?: boolean;
       }
   > {
     const { bare, repo, write, signal } = x;
@@ -1041,7 +1043,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           checkLines,
           ran.error,
         );
-        return { ok: false, error: summary, detail, stage: checkStage(ran.error) };
+        const killed = killedStep(ran.error);
+        return { ok: false, error: killed ? ran.error : summary, detail, stage: checkStage(ran.error), ...(killed ? { killed } : {}) };
       }
       // Only a green check of the default branch is kept for the next.
       if (
@@ -1278,13 +1281,15 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       });
       if (done.ok) return { ok: true, error: "", lines };
       const stage = done.stage ?? "setup";
-      // Cut off by this forge stopping, the Job lost under it, or an
-      // install the machine failed twice: the code was not judged, so
-      // this is no red. A gate the drain lets finish is judged (#6611).
+      // Cut off by this forge stopping, the Job lost under it, the check
+      // killed by a signal from outside (the pod going, the OOM killer), or
+      // an install the machine failed twice: the code was not judged, so
+      // this is no red. A gate the drain lets finish is judged (#6611, #6722).
       if (
         controller.signal.aborted ||
         done.error === JOB_VANISHED ||
-        done.infrastructure === true
+        done.infrastructure === true ||
+        done.killed === true
       )
         return { ok: false, error: done.error, lines, interrupted: true, stage };
       return { ok: false, error: done.error, lines, stage };

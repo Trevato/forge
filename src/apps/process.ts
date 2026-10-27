@@ -207,6 +207,23 @@ const VERSION_BANNER_RE = /^\S+ v[\d.]+ *\(/;
  */
 const ERROR_LINE_RE = /^[A-Za-z]*Error\b/i;
 const TAIL_LINES = 20;
+/** A shell's code for a child a signal ended: 128 + the signal's number. */
+const SIGNAL_CODES: Readonly<Record<number, NodeJS.Signals>> = {
+  129: "SIGHUP",
+  130: "SIGINT",
+  137: "SIGKILL",
+  143: "SIGTERM",
+};
+/** What `runStep` says of a step a signal no one here sent ended (#6722). */
+const KILLED = / was killed by SIG[A-Z]+$/;
+
+/**
+ * Whether a step's error is a signal from outside ending it — the pod
+ * going, the kernel's OOM killer — not the step's own exit (#6722).
+ */
+export function killedStep(error: string): boolean {
+  return KILLED.test(error);
+}
 const REASON_MAX = 300;
 
 /**
@@ -330,6 +347,9 @@ export async function runStep(
     // The kernel's OOM kill at the cell's cap is a breach no watch tick saw.
     const kernel = code === 0 ? undefined : cell?.breach();
     if (kernel !== undefined) return err(`${name} stopped: it ${kernel}`);
+    // Ended by a signal this run never sent: no verdict of the step's own.
+    const killer = code === 0 ? undefined : (proc.signalCode ?? SIGNAL_CODES[code]);
+    if (killer !== undefined) return err(`${name} was killed by ${killer}`);
     if (code !== 0) {
       const reason = recent.length > 0 ? ` — ${failureReason(recent)}` : "";
       return err(`${name} exited with code ${code}${reason}`);

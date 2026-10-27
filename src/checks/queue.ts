@@ -46,8 +46,13 @@
  * `typecheck` or `check` is the code's and searched as above; `install`,
  * `setup` or `timeout` names no pull's code, so the gate runs once more and
  * red that way twice is infrastructure — no verdict, nothing handed back,
- * nothing bisected. A pull that conflicts with an earlier one of its batch
- * is never red: it is left out, the pair named, and the rest gate at once.
+ * nothing bisected. A `check` red at the line's own gate (a batch or a
+ * suspect, not a search's prefix) is gated once more before it is searched
+ * (#6722): a check cut short that printed no reason is not yet a red. A
+ * check a signal from outside ended — the pod going, the OOM killer — is
+ * no verdict at all, as a gate cut off is not. A pull that conflicts with
+ * an earlier one of its batch is never red: it is left out, the pair named,
+ * and the rest gate at once.
  *
  * What is queued is not stored: it is the pulls `landIfGreen` admitted, and
  * every sweep admits them again. The queue only orders them and remembers
@@ -649,6 +654,15 @@ function machines(verdict: LandVerdict): verdict is Red {
   return !verdict.lands && !("interrupted" in verdict) && !searched(verdict.reason);
 }
 
+/**
+ * A red that names neither a test nor a type error (#6722): the check
+ * exited red and said nothing a pull could be searched for — a check cut
+ * short by a reason it did not print. Gated once more before it is searched.
+ */
+function unproven(verdict: LandVerdict): verdict is Red {
+  return !verdict.lands && !("interrupted" in verdict) && verdict.reason?.kind === "check";
+}
+
 /** Gate runs a repository's line has made since boot. */
 export function gateRuns(repoId: string): number {
   return lines.get(repoId)?.gates ?? 0;
@@ -658,13 +672,26 @@ export function gateRuns(repoId: string): number {
  * The line's gate (`attempt`), and once more when it was red for a reason
  * that names no pull's code (#5276, #5093): an install, the gate's own
  * setup, a timeout. Red that way twice is infrastructure — no verdict, as a
- * gate cut off is not: no pull is handed back and nothing is searched.
+ * gate cut off is not: no pull is handed back and nothing is searched. A
+ * line's own `red (check)` — no test named, no type error — is gated once
+ * more too (#6722), and red again it is searched; a `search` gate is not.
  */
-function counted(line: Line, gate: GateCandidate, adopt: QueueOptions["adopt"]): Gated {
+function counted(line: Line, gate: GateCandidate, adopt: QueueOptions["adopt"], search: boolean): Gated {
   const once = attempt(line, gate, adopt);
   return async (candidate, signal, resumed) => {
     const first = await once(candidate, signal, resumed);
-    if (!machines(first) || signal?.aborted === true) return first;
+    // A stopped line gates nothing more: its verdict is kept for the next.
+    if (signal?.aborted === true || line.stopped) return first;
+    // The line's own red (check) is gated once more before the search
+    // spends a gate on it (#6722); a search's prefix is not.
+    if (!search && unproven(first)) {
+      log.info(`gated ${pullsWord(candidate.steps.length)}: red (check) named no test, gating once more`, {
+        repo: line.repoId,
+        pulls: candidate.steps.map((s) => `#${s.entry.pull.number}`).join(","),
+      });
+      return once(candidate, signal);
+    }
+    if (!machines(first)) return first;
     const again = await once(candidate, signal);
     if (!machines(again)) return again;
     log.warn(`gated ${pullsWord(candidate.steps.length)}: infrastructure (${reasonWords(again.reason)}, twice)`, {
@@ -796,7 +823,8 @@ const ARRIVED = Symbol("arrived");
  */
 async function drain(line: Line, gate: GateCandidate, options: QueueOptions): Promise<void> {
   line.draining = true;
-  const gated = counted(line, gate, options.adopt);
+  const gated = counted(line, gate, options.adopt, false);
+  const searching = counted(line, gate, options.adopt, true);
   const depth = Math.max(1, Math.floor(options.depth ?? DEFAULT_DEPTH));
   const room: Room = options.room ?? (() => 0);
   const ahead: Flight[] = [];
@@ -845,7 +873,7 @@ async function drain(line: Line, gate: GateCandidate, options: QueueOptions): Pr
       ahead.shift();
       let left: Waiting[];
       try {
-        left = await settleHead({ line, gated, room, onBatch: options.onBatch }, head, verdict, ahead);
+        left = await settleHead({ line, gated: searching, room, onBatch: options.onBatch }, head, verdict, ahead);
       } catch (error) {
         log.warn("merge queue round failed", { error: String(error) });
         for (const w of head.steps) w.settle(false);
