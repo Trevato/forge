@@ -8,6 +8,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { lastBuilderOf } from "../../actions/give_back.ts";
 import { forgeVitals, needLine } from "../../actions/health.ts";
 import { reviewSet } from "./review_set.ts";
 import type { Degraded } from "../../kernel/vitals.ts";
@@ -55,7 +56,7 @@ import {
 } from "../../crew/autonomy.ts";
 import { breakerParked, WAITING_NOTES } from "../../crew/breaker.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
-import { handoversOf, type Handover } from "../../crew/guard.ts";
+import { handoversOf, passReasonOf, type Handover } from "../../crew/guard.ts";
 import { conflictsOf, isStalePull, mergesAgainSince, staleGreen } from "../../crew/stale_asks.ts";
 import { reviewWaitsFor, type ReviewWait } from "../../crew/review.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -130,7 +131,7 @@ export interface Decision {
   readonly waiting: WaitingFor;
   readonly why?: string | undefined;
   readonly recommendation?: Recommendation | undefined;
-  /** For "handover": the builder the pull can be given back to, if any. */
+  /** For "handover" and a pass-assigned "assigned": the builder the pull can be given back to, if any. */
   readonly giveBack?: string | undefined;
 }
 
@@ -280,9 +281,9 @@ interface AskCandidate {
   readonly decline?: { readonly runId: string; readonly words: string };
   /** For "handover": the reviews that asked for changes. */
   readonly handover?: Handover;
-  /** For "handover": the crew member that opened the pull, when it can be given back. */
+  /** For "handover" and a pass-assigned "assigned": the crew member that opened or last worked on the pull, when it can be given back. */
   readonly builder?: string;
-  /** For "handover" and "waiting": one sentence on why a person must decide. */
+  /** For "handover", "waiting" and a pass-assigned "assigned": one sentence on why a person must decide. */
   readonly why?: string;
   /** For "handover" and "waiting": what the crew advised, when it wrote one. */
   readonly recommendation?: Recommendation;
@@ -597,6 +598,9 @@ function askCandidatesFor(
     if (!mayView(db, repo, issue, user)) continue;
     const pull = joinedMine.get(issue.id);
     if (issue.kind === "pull" && pull === undefined) continue;
+    // A pull a pass gave up on and assigned to this person says why, and can go back.
+    const reason = pull === undefined || issue.assigneeIsAgent ? undefined : passReasonOf(db, issue.id, issue.assigneeId!);
+    const back = reason === undefined ? undefined : lastBuilderOf(db, repo, issue)?.username;
     out.push({
       kind: "assigned",
       id: `assigned:${issue.id}`,
@@ -605,6 +609,8 @@ function askCandidatesFor(
       ...(pull === undefined ? { issue } : { pull }),
       who: issue.authorName,
       authorIsAgent: issue.authorIsAgent,
+      ...(reason === undefined ? {} : { why: reason }),
+      ...(back === undefined ? {} : { builder: back }),
     });
   }
   return out;
@@ -948,7 +954,7 @@ export function recordAskLedger(db: Database, now = new Date()): void {
 function lineOf(c: AskCandidate): string {
   if (c.kind === "paused") return "is paused at its ceiling";
   if (c.kind === "assigned")
-    return `"${c.pull?.title ?? c.issue?.title ?? ""}" is assigned to you`;
+    return `"${c.pull?.title ?? c.issue?.title ?? ""}" is assigned to you${c.why === undefined ? "" : `: ${c.why}`}`;
   if (c.kind === "parked")
     return `the crew parked #${c.issue!.number} after three failed runs`;
   if (c.kind === "proposal")

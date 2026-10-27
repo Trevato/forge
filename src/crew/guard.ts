@@ -259,6 +259,27 @@ export const HANDOVER_ROUNDS = 3;
 /** What the hand-over card starts with: the thread's own record of it, and what `handover` ignores as a person's word. */
 export const HANDOVER_NOTE = "Handed to a person by the crew:";
 
+/**
+ * Why a pass handed this pull to a person, in one line: the newest hand-over
+ * note the assignee's own name carries (the finishing pass posts as them;
+ * a reader's copy of the prefix is not the crew's word), without its prefix or the forge's "posted under your name"
+ * aside. Undefined when no pass has handed it over.
+ */
+export function passReasonOf(db: Database, pullId: string, assigneeId: string): string | undefined {
+  const row = db
+    .query<{ body: string }, [string, string, string]>(
+      "SELECT body FROM comment WHERE issue_id = ?1 AND body LIKE ?2 AND author_id = ?3 ORDER BY created_at DESC, id DESC LIMIT 1",
+    )
+    .get(pullId, `${HANDOVER_NOTE}%`, assigneeId);
+  if (row === null) return undefined;
+  const words = row.body
+    .slice(HANDOVER_NOTE.length)
+    .split(" (The forge posts")[0]!
+    .replace(/\s+/g, " ")
+    .trim();
+  return words.length > 200 ? `${words.slice(0, 199)}…` : words;
+}
+
 export interface Handover {
   /** The crew reviewer's verdicts that asked for changes, oldest first. */
   readonly reviews: readonly {

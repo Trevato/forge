@@ -69,8 +69,10 @@ export function decisionsFor(
         repo: c.repo,
         ...(c.pull === undefined ? { issue: c.issue } : { pull: c.pull }),
         who: c.who,
-        says: `"${thing.title}" is assigned to you.`,
-        short: `assigned to you · updated ${thing.updatedAt.slice(0, 10)}`,
+        says: c.why === undefined ? `"${thing.title}" is assigned to you.` : `"${thing.title}" was handed to you by the crew: ${c.why}`,
+        short: c.why ?? `assigned to you · updated ${thing.updatedAt.slice(0, 10)}`,
+        ...(c.why === undefined ? {} : { why: c.why }),
+        ...(c.builder === undefined ? {} : { giveBack: c.builder }),
       };
     }
     if (c.kind === "proposal" && c.proposal)
@@ -216,6 +218,10 @@ export function decisionForm(d: Decision, back?: string): Html | null {
   if (pull === undefined) return null;
   const base = repoBase(d.repo);
   const where = back === undefined ? null : html`<input type="hidden" name="back" value="${back}" />`;
+  if (d.kind === "assigned" && d.giveBack !== undefined)
+    return html`<form id="${askFormId(d)}-back" method="post" hidden action="/asks/give-back">
+      <input type="hidden" name="ask" value="${d.id}" />${where}
+    </form>`;
   if (d.kind === "handover" && d.giveBack !== undefined)
     return html`<form ${own} action="${base}/pulls/${pull.number}/state">
         <input type="hidden" name="state" value="closed" />${where}
@@ -301,7 +307,7 @@ export function decisionButtons(ctx: Ctx, d: Decision): { primary: Html; others:
         size: "sm",
         variant: "primary",
       }),
-      others: [],
+      others: d.giveBack === undefined ? [] : [btn("Give back to the crew", { size: "sm", form: `${askFormId(d)}-back` })],
     };
   if (d.kind === "proposal" && d.proposal)
     return {

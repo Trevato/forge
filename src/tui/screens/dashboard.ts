@@ -33,6 +33,7 @@ import { getIssueById, listAssignedTo, type Issue } from "../../core/issues.ts";
 import { askLinesFor } from "../../web/studio/asks.ts";
 import { waitingFor, type WaitingFor } from "../../core/waiting_for.ts";
 import { giveBack } from "../../actions/give_back.ts";
+import { passReasonOf } from "../../crew/guard.ts";
 import { decideAsk, undoDecideAsk } from "../../actions/asks_decide.ts";
 import { actOnProposal, type ProposalVerb } from "../../actions/proposals.ts";
 import { putAsideWaves } from "../../web/studio/asks.ts";
@@ -144,6 +145,8 @@ interface OnYouItem {
   readonly hand?: true;
   /** A pull the crew handed to a person: closed, marked and opened like any row. */
   readonly over?: true;
+  /** A pull a pass assigned to this person: why, and who it goes back to (`b`). */
+  readonly passed?: string;
   /** For a handed-over row: the crew's advice, when it wrote one. */
   readonly overAdvice?: string;
   /** A pull no person has touched for a day, with the crew's advice when it wrote one. */
@@ -351,7 +354,11 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       )
         return [];
       if (muted.has(repo.id)) return [];
-      return [{ issue, repo, waiting: waitingOf(issue.id) }];
+      const passed =
+        issue.kind === "pull" && !issue.assigneeIsAgent && issue.assigneeId === f.user?.id
+          ? passReasonOf(f.db, issue.id, issue.assigneeId)
+          : undefined;
+      return [{ issue, repo, waiting: waitingOf(issue.id), ...(passed === undefined ? {} : { passed }) }];
     });
     return [...assigned, ...handOvers(assigned, rows, waitingOf)];
   };
@@ -670,11 +677,11 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   const giveBackHere = (): void => {
     const here = onYou[at("onyou").index];
     if (here === undefined) return;
-    if (here.over !== true) {
+    if (here.over !== true && here.passed === undefined) {
       ctx.toast("only a handed-over pull goes back to the crew", "attn");
       return;
     }
-    const done = giveBack(f.app, f.user, `handover:${here.issue.id}`);
+    const done = giveBack(f.app, f.user, `${here.over === true ? "handover" : "assigned"}:${here.issue.id}`);
     reload();
     ctx.toast(
       done.ok ? `#${done.value.pull} given back to @${done.value.builder}` : done.error.message,
@@ -841,7 +848,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         ...(focus === "onyou" && onYou[at("onyou").index]?.hand === true
           ? [binding(["D"], "let the decider")]
           : []),
-        ...(focus === "onyou" && onYou[at("onyou").index]?.over === true
+        ...(focus === "onyou" && (onYou[at("onyou").index]?.over === true || onYou[at("onyou").index]?.passed !== undefined)
           ? [binding(["b"], "give back to the crew")]
           : []),
         ...(focus === "onyou" && waveHere() !== undefined
@@ -1146,7 +1153,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
               : ISSUE_MARK;
         return {
           title: `${marked.has(item.issue.id) ? "[x] " : ""}${item.hand === true ? "parked " : item.over === true ? "handed over " : item.late !== undefined ? "waiting " : ""}${mark} #${item.issue.number} ${item.issue.title} · ${item.repo.ownerName}/${item.repo.name}`,
-          meta: `${item.waiting.word} · on ${item.waiting.on}${item.late?.advice ?? item.overAdvice ?? ""}`,
+          meta: `${item.waiting.word} · on ${item.waiting.on}${item.passed === undefined ? "" : ` · handed to you: ${item.passed}`}${item.late?.advice ?? item.overAdvice ?? ""}`,
         };
       }),
         ...waves.map(
@@ -1176,9 +1183,12 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     if (waitingSet !== undefined && waitingSet.count > 0) parts.push(`${waitingSet.count} waiting on you`);
     if (waitingSet !== undefined && waitingSet.stale.length > 0) parts.push(`${staleWords(waitingSet.stale.length)} Z previews`);
     // The decider keys come first: the card clips its footer from the right.
+    // A pass's reason leads the line: a row's meta is dropped where the pane is narrow.
+    const passed = onYou[at("onyou").index]?.passed;
+    if (passed !== undefined) parts.push(`handed to you: ${passed.length > 60 ? `${passed.slice(0, 59)}…` : passed}`);
     if (lastHand !== undefined) parts.push("U undo decider");
     if (onYou[at("onyou").index]?.hand === true) parts.push("D let the decider");
-    if (onYou[at("onyou").index]?.over === true) parts.push("b give back to the crew");
+    if (onYou[at("onyou").index]?.over === true || onYou[at("onyou").index]?.passed !== undefined) parts.push("b give back to the crew");
     if (f.user !== undefined) {
       const chips = chipsOf(f.db, f.user.id);
       const off: string[] = KIND_CHIPS.filter((k) => chips.kinds.has(k));

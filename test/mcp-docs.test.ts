@@ -20,7 +20,6 @@ const undocumented = new Set<string>([
   "here",
   "asks",
   "asks_act",
-  "asks_decide",
   "asks_proposal",
   "asks_undecide",
   "spend",

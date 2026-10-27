@@ -29,6 +29,15 @@ In the terminal the same line sits above the dashboard, `C` (or the palette's
 Decider) opens the rows, and `1`, `2`, `3` switch pile. Both are for the
 repositories you own only: a reader sees nothing.
 
+**Give back to the crew** is on a pull a pass gave up on and assigned to you
+(finishing, requested, sweep, picker): its row says the pass's reason in one
+line, and one press assigns the pull to the builder that last worked on it.
+`POST /api/v1/asks/give-back` (`{"item": "assigned:<id>"}`), or the MCP tool
+`asks_decide` with `give_back: true`. In the terminal the On you row says
+`handed to you: <reason>` and `b` gives it back (the same `b` as on a
+handed-over card). Only a note posted under your own name counts as the
+pass's: a copy of its first words by anyone else shows nothing.
+
 **Let the decider** answers a hand-over card (an issue the crew parked) when
 you would rather not: the third tap on the card, `POST /api/v1/asks/decide`
 (`{"item": "parked:<id>"}`), the MCP tool `asks_decide`, or `D` on the On you

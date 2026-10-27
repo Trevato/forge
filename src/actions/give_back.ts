@@ -14,13 +14,13 @@ import { getIssue, getIssueById, type Issue } from "../core/issues.ts";
 import { closesFromBody } from "../core/pulls.ts";
 import { canWrite, getRepoById, type Repo } from "../core/repos.ts";
 import { getUserById, type User } from "../core/users.ts";
-import { handoverOf } from "../crew/guard.ts";
+import { handoverOf, passReasonOf } from "../crew/guard.ts";
 import { transact } from "../kernel/db.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import type { FleetError } from "./fleet.ts";
 import { NO_LONGER_ASKS, SIGN_IN_TO_ACT } from "./asks_words.ts";
 
-const ITEM = /^handover:[A-Za-z0-9_-]{1,64}$/;
+const ITEM = /^(?:handover|assigned):[A-Za-z0-9_-]{1,64}$/;
 
 const fail = (code: FleetError["code"], message: string) =>
   err<FleetError>({ code, message });
@@ -35,6 +35,23 @@ export function builderOf(db: Database, repo: Repo, pull: Issue): User | undefin
   return agent !== undefined && agent.kind === "agent" && isCrew(db, repo.id, agent.id)
     ? agent
     : undefined;
+}
+
+/**
+ * Who a pass handed a pull over from: the crew member whose agent run on it
+ * is the latest and who is still on the crew, else whoever opened it.
+ */
+export function lastBuilderOf(db: Database, repo: Repo, pull: Issue): User | undefined {
+  const rows = db
+    .query<{ actor_id: string }, [string]>(
+      "SELECT actor_id FROM run WHERE kind = 'agent' AND issue_id = ?1 AND actor_id IS NOT NULL ORDER BY created_at DESC, id DESC LIMIT 5",
+    )
+    .all(pull.id);
+  for (const { actor_id } of rows) {
+    const agent = getUserById(db, actor_id);
+    if (agent !== undefined && agent.kind === "agent" && isCrew(db, repo.id, agent.id)) return agent;
+  }
+  return builderOf(db, repo, pull);
 }
 
 export interface GivenBack {
@@ -56,9 +73,14 @@ export function giveBack(
   // A reader, or someone who cannot see it, is told nothing exists.
   if (pull === undefined || repo === undefined || !canWrite(app.db, repo, actor))
     return fail("not_found", NO_LONGER_ASKS);
-  if (pull.kind !== "pull" || pull.state !== "open" || handoverOf(app.db, repo, pull.id) === undefined)
-    return fail("not_found", NO_LONGER_ASKS);
-  const builder = builderOf(app.db, repo, pull);
+  if (pull.kind !== "pull" || pull.state !== "open") return fail("not_found", NO_LONGER_ASKS);
+  // Three reviews without an approval, or a pass that gave up and assigned it to a person.
+  const byPass = item.startsWith("assigned:");
+  const stillAsks = byPass
+    ? pull.assigneeId === actor.id && !pull.assigneeIsAgent && passReasonOf(app.db, pull.id, actor.id) !== undefined
+    : handoverOf(app.db, repo, pull.id) !== undefined;
+  if (!stillAsks) return fail("not_found", NO_LONGER_ASKS);
+  const builder = byPass ? lastBuilderOf(app.db, repo, pull) : builderOf(app.db, repo, pull);
   if (builder === undefined)
     return fail("bad_action", "no builder on the crew opened this pull, so there is no one to give it back to");
   // All or nothing: the pull, the issue a person holds and the comment that

@@ -175,6 +175,7 @@ export { route as postApiV1AsksBulk } from "./postApiV1AsksBulk.ts";
 export { route as postApiV1AsksBulkIdUndo } from "./postApiV1AsksBulkIdUndo.ts";
 export { route as postApiV1AsksDecide } from "./postApiV1AsksDecide.ts";
 export { route as postApiV1AsksDecideIdUndo } from "./postApiV1AsksDecideIdUndo.ts";
+export { route as postApiV1AsksGiveBack } from "./postApiV1AsksGiveBack.ts";
 export { route as postApiV1AsksProposalIdVerb } from "./postApiV1AsksProposalIdVerb.ts";
 export { route as postApiV1BoardsPins } from "./postApiV1BoardsPins.ts";
 export { route as postApiV1BoardsQuery } from "./postApiV1BoardsQuery.ts";

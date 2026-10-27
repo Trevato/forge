@@ -32,6 +32,7 @@ import {
   parseCursor,
   readFeed,
 } from "../feed/feed.ts";
+import { giveBack } from "../actions/give_back.ts";
 import { decideAsk, undoDecideAsk } from "../actions/asks_decide.ts";
 import { actOnProposal, isProposalVerb } from "../actions/proposals.ts";
 import { asksAnswer } from "../web/studio/asks.ts";
@@ -189,6 +190,16 @@ export function feedRoutes(router: Router<Handler>): void {
     if (denied) return denied;
     const input = await body(ctx.request);
     const done = await decideAsk(ctx.app, ctx.auth.user, input.item);
+    if (!done.ok) return bulkError(done.error);
+    return json(done.value, 201);
+  });
+
+  // Give a hand-over back to the crew's builder (`actions/give_back.ts`).
+  router.add("POST", "/api/v1/asks/give-back", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const done = giveBack(ctx.app, ctx.auth.user, input.item);
     if (!done.ok) return bulkError(done.error);
     return json(done.value, 201);
   });
