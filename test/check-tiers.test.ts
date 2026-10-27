@@ -575,6 +575,8 @@ describe("the tiers in the forge's own checks service", () => {
     const pull = listPulls(app.db, repo.id, { state: "open", limit: 5 })[0]!;
     const done = await checks.gate(repo, pull, red.value.commitOid);
     expect(done.ok).toBe(false);
+    // Red in the check step, not before it: the queue searches it (#5276).
+    expect(done.stage).toBe("check");
     const failed = failuresOf(done.lines);
     expect(failed).toEqual({ tests: ["boom"], files: ["test/x.test.ts"] });
     const verdict = landVerdict(false, failed.tests, failed.files);

@@ -92,6 +92,7 @@ import type { Result } from "../kernel/result.ts";
 import { placementFromEnv, type Placement } from "./placement.ts";
 import { JOB_VANISHED, runJobStep } from "./job_step.ts";
 import { checkInstallCache, installWithRetry, withLock } from "./install.ts";
+import { checkStage, type GateStage } from "./gate_reason.ts";
 import { extraGates, gateQueued, gatesInFlight, watchGates } from "./queue.ts";
 import type { JobOptions } from "../cluster/jobs.ts";
 import type { CheckDetail } from "../core/runs.ts";
@@ -163,7 +164,7 @@ export interface ChecksHandle {
     pull: Pull,
     commitOid: string,
     signal?: AbortSignal,
-  ): Promise<{ ok: boolean; error: string; lines: string[]; interrupted?: boolean }>;
+  ): Promise<{ ok: boolean; error: string; lines: string[]; interrupted?: boolean; stage?: GateStage }>;
   /**
    * Stop checking. Checks under way get `drainMs` to finish unless `drain`
    * is false (a person's Ctrl-C): then they are cut off and queued again now.
@@ -716,7 +717,14 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     x: Execution,
   ): Promise<
     | { ok: true; proven?: string }
-    | { ok: false; error: string; detail?: CheckDetail | undefined; infrastructure?: boolean }
+    | {
+        ok: false;
+        error: string;
+        detail?: CheckDetail | undefined;
+        infrastructure?: boolean;
+        /** Where it stopped red (#5276); none is before any step ran. */
+        stage?: GateStage;
+      }
   > {
     const { bare, repo, write, signal } = x;
     // A pull's fast check is of the pull as it would land: its head merged
@@ -966,7 +974,12 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
             { log: write, signal, retryMs: options.installRetryMs },
           );
           if (!installed.ok)
-            return { ok: false, error: installed.error, infrastructure: installed.infrastructure };
+            return {
+              ok: false,
+              error: installed.error,
+              infrastructure: installed.infrastructure,
+              stage: "install",
+            };
         }
         // The check step's own lines are kept beside what `write` already
         // logs, so a failure can be summarised once here — never by reading
@@ -1015,7 +1028,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           checkLines,
           ran.error,
         );
-        return { ok: false, error: summary, detail };
+        return { ok: false, error: summary, detail, stage: checkStage(ran.error) };
       }
       // Only a green check of the default branch is kept for the next.
       if (
@@ -1251,6 +1264,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           signal: controller.signal,
         });
         if (done.ok) return { ok: true, error: "", lines };
+        const stage = done.stage ?? "setup";
         // Cut off by this forge stopping, the Job lost under it, or an
         // install the machine failed twice: the code was not judged, so
         // this is no red.
@@ -1260,8 +1274,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           done.error === JOB_VANISHED ||
           done.infrastructure === true
         )
-          return { ok: false, error: done.error, lines, interrupted: true };
-        return { ok: false, error: done.error, lines };
+          return { ok: false, error: done.error, lines, interrupted: true, stage };
+        return { ok: false, error: done.error, lines, stage };
       } finally {
         endGate(app.db, traced);
         signal?.removeEventListener("abort", abandon);

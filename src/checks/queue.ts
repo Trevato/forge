@@ -42,6 +42,13 @@
  * green alone it rides at the tail of a batch, never at its head, and the
  * search finds it there if it is red on top of others.
  *
+ * Every red says why (#5276, `gate_reason.ts`): `tests: N failed`,
+ * `typecheck` or `check` is the code's and searched as above; `install`,
+ * `setup` or `timeout` names no pull's code, so the gate runs once more and
+ * red that way twice is infrastructure — no verdict, nothing handed back,
+ * nothing bisected. A pull that conflicts with an earlier one of its batch
+ * is never red: it is left out, the pair named, and the rest gate at once.
+ *
  * What is queued is not stored: it is the pulls `landIfGreen` admitted, and
  * every sweep admits them again. The queue only orders them and remembers
  * what is at the gate and what its searches found, for the tick line and
@@ -52,6 +59,7 @@ import type { Pull } from "../core/pulls.ts";
 import { runGit } from "../git/env.ts";
 import { mergeable, resolveOid, treeOf } from "../git/merge.ts";
 import { createLog } from "../kernel/log.ts";
+import { conflictWords, reasonWords, searched } from "./gate_reason.ts";
 import type { LandVerdict } from "./tiers.ts";
 
 /** The base a step must land on, and the tree it must write. */
@@ -457,10 +465,15 @@ function hhmm(ms: number): string {
   return new Date(ms).toISOString().slice(11, 16);
 }
 
-/** A gate's verdict in a word, for the log. */
+/** A gate's verdict in a few words, for the log: a red says why (#5276). */
 function outcome(verdict: LandVerdict): string {
   if (verdict.lands) return "green";
-  return "interrupted" in verdict ? "cut off" : "red";
+  return "interrupted" in verdict ? "cut off" : `red (${reasonWords(verdict.reason)})`;
+}
+
+/** A red that names no pull's code — install, setup, timeout: gated once more, never searched. */
+function machines(verdict: LandVerdict): verdict is Red {
+  return !verdict.lands && !("interrupted" in verdict) && !searched(verdict.reason);
 }
 
 /** Gate runs a repository's line has made since boot. */
@@ -469,11 +482,32 @@ export function gateRuns(repoId: string): number {
 }
 
 /**
- * The line's gate: counted, logged as it starts and ends (a gate takes
+ * The line's gate (`attempt`), and once more when it was red for a reason
+ * that names no pull's code (#5276, #5093): an install, the gate's own
+ * setup, a timeout. Red that way twice is infrastructure — no verdict, as a
+ * gate cut off is not: no pull is handed back and nothing is searched.
+ */
+function counted(line: Line, gate: GateCandidate): Gated {
+  const once = attempt(line, gate);
+  return async (candidate, signal) => {
+    const first = await once(candidate, signal);
+    if (!machines(first) || signal?.aborted === true) return first;
+    const again = await once(candidate, signal);
+    if (!machines(again)) return again;
+    log.warn(`gated ${pullsWord(candidate.steps.length)}: infrastructure (${reasonWords(again.reason)}, twice)`, {
+      repo: line.repoId,
+      pulls: candidate.steps.map((s) => `#${s.entry.pull.number}`).join(","),
+    });
+    return UNDECIDED;
+  };
+}
+
+/**
+ * One gate run: counted, logged as it starts and ends (a gate takes
  * minutes, #3430), and abandoned at the deadline or when `signal` aborts —
  * a speculative candidate discarded. Abandoned is no verdict.
  */
-function counted(line: Line, gate: GateCandidate): Gated {
+function attempt(line: Line, gate: GateCandidate): Gated {
   return async (candidate, signal) => {
     const beyond = line.flights.size > 0;
     const flight: InFlight = { pulls: candidate.steps.map((s) => s.entry.pull.id), since: Date.now() };
@@ -995,7 +1029,16 @@ async function build(batch: readonly Waiting[], on?: Candidate): Promise<Candida
   const steps: Step[] = [];
   for (const { entry } of batch) {
     const merged = await mergeable(dir, tipOid, entry.pull.headOid);
-    if (!merged.ok || merged.value.treeOid === treeOid) continue;
+    if (!merged.ok) {
+      // Left out, never red (#5276): the rest gate without it, and once the
+      // pull it clashes with lands, the conflict lane brings it up to date.
+      if (merged.error.kind === "conflict")
+        log.info(`left out of the batch: ${conflictWords(await clashesWith(dir, baseOid, steps, entry), entry.pull.number)}`, {
+          files: merged.error.files.join(","),
+        });
+      continue;
+    }
+    if (merged.value.treeOid === treeOid) continue;
     const commit = await runGit(
       ["commit-tree", merged.value.treeOid, "-p", tipOid, "-m", `merge queue: #${entry.pull.number}`],
       { cwd: dir, env: IDENTITY },
@@ -1007,4 +1050,17 @@ async function build(batch: readonly Waiting[], on?: Candidate): Promise<Candida
     treeOid = merged.value.treeOid;
   }
   return { dir, baseOid, baseTreeOid, steps, tipOid, treeOid };
+}
+
+/**
+ * The earlier step a pull that does not merge onto the chain clashes with:
+ * the first whose prefix it does not merge onto. Undefined when it does not
+ * merge onto the base itself. Read only on a conflict, so the extra merges
+ * cost nothing on a clean batch.
+ */
+async function clashesWith(dir: string, baseOid: string, steps: readonly Step[], entry: Queued): Promise<number | undefined> {
+  if (!(await mergeable(dir, baseOid, entry.pull.headOid)).ok) return undefined;
+  for (const step of steps)
+    if (!(await mergeable(dir, step.commitOid, entry.pull.headOid)).ok) return step.entry.pull.number;
+  return steps.at(-1)?.entry.pull.number;
 }

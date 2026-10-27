@@ -9,6 +9,7 @@
  * only decides.
  */
 
+import type { GateReason } from "./gate_reason.ts";
 import { GATE_FILE, needsFull, reach, reachLine, type Impact } from "./impact.ts";
 
 /** A test under this many seconds is always in the fast tier. */
@@ -250,6 +251,8 @@ export type Judged =
       readonly comment: string;
       /** Joins the pull's fast set. */
       readonly learn: readonly string[];
+      /** Why the gate went red (#5276); a red read without one is the code's. */
+      readonly reason?: GateReason;
     };
 
 /**
@@ -271,6 +274,7 @@ export function landVerdict(
   failedTests: readonly string[],
   failedFiles: readonly string[] = [],
   logLink?: string,
+  reason?: GateReason,
 ): Judged {
   if (green) return { lands: true };
   const names = failedTests.map((name) => `- ${name}`).join("\n");
@@ -283,5 +287,6 @@ export function landVerdict(
         ? `The full gate on land was red and named no test; the pull is open again.${kept}`
         : `The full gate on land was red; the pull is open again. Red tests:\n${names}${kept}`,
     learn: [...new Set(failedFiles)],
+    ...(reason === undefined ? {} : { reason }),
   };
 }
