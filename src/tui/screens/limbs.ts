@@ -29,7 +29,7 @@ import { IN_HAND } from "../../actions/plan_words.ts";
 import { pendingReplans } from "../../core/limb_replan.ts";
 import { applyLimb, previewLimb, type LimbPreview } from "../../actions/limbs.ts";
 import { canAdmin, canRead, canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
-import { readPlan, type Limb, type Milestone } from "../../core/milestones.ts";
+import { readPlan, type Limb, type Milestone, type Plan } from "../../core/milestones.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { fill, len, split } from "../ui/layout.ts";
@@ -54,8 +54,7 @@ const LIVE_KINDS = ["limb.moved", "limb.replan", "limb.replan_taken_back", "issu
 const SHOWN = 6;
 
 /** The limbs of `group` (`top`, or a milestone's number), in their set order. */
-function limbsOf(f: Session, repo: Repo, group: string): Limb[] | undefined {
-  const plan = readPlan(f.db, repo);
+function limbsOf(plan: Plan, group: string): Limb[] | undefined {
   if (group === "top") return [...plan.limbs];
   const milestone = plan.milestone(Number(group));
   return milestone === undefined ? undefined : [...milestone.limbs];
@@ -110,6 +109,8 @@ export function limbsScreen(
   let loaded = false;
   /** What each limb here cost and landed, by issue number; empty unless owner facts. */
   let spends = new Map<number, NonNullable<Milestone["spend"]>>();
+  /** Each limb's pace line, by issue number: on pace for a date, no movement, or done. */
+  let paces = new Map<number, string>();
   /** The receipt of the last move made here, which `u` reverses once. */
   let last: string | undefined;
   /** The limbs with the planner, by issue id (#761). */
@@ -122,19 +123,21 @@ export function limbsScreen(
     if (!canRead(f.db, repo, f.user)) {
       limbs = [];
       spends = new Map();
+      paces = new Map();
       loaded = true;
       ctx.invalidate();
       return;
     }
-    limbs = limbsOf(f, repo, group) ?? [];
+    const plan = readPlan(f.db, repo, { spend: canSeeOwnerFacts(f.db, repo, f.user) });
+    limbs = limbsOf(plan, group) ?? [];
     withPlanner = new Set(pendingReplans(f.db, repo).map((r) => r.limbId));
     spends = new Map();
-    if (canSeeOwnerFacts(f.db, repo, f.user)) {
-      const plan = readPlan(f.db, repo, { spend: true });
-      for (const l of limbs) {
-        const spend = plan.milestone(l.issue.number)?.spend;
-        if (spend !== undefined) spends.set(l.issue.number, spend);
-      }
+    paces = new Map();
+    for (const l of limbs) {
+      const m = plan.milestone(l.issue.number);
+      if (m === undefined) continue;
+      if (m.spend !== undefined) spends.set(l.issue.number, m.spend);
+      if (m.pace.line !== "") paces.set(l.issue.number, m.pace.line);
     }
     loaded = true;
     if (follow !== undefined) {
@@ -257,7 +260,7 @@ export function limbsScreen(
     if (limb === undefined) return;
     const number = limb.issue.number;
     // Only a limb with limbs of its own has anything to open.
-    if ((limbsOf(f, repo, String(number)) ?? []).length === 0) return;
+    if ((limbsOf(readPlan(f.db, repo), String(number)) ?? []).length === 0) return;
     ctx.push(limbsScreen(f, ctx, repo, String(number), limb.name));
   };
 
@@ -289,7 +292,12 @@ export function limbsScreen(
     render(area, s) {
       const c = ctx.theme.c;
       const spend = current() === undefined ? undefined : spends.get(current()!.issue.number);
-      const [head, list, foot] = split(area, "v", [len(1), fill(1), len(spend ? 2 : 0)]);
+      const pace = current() === undefined ? undefined : paces.get(current()!.issue.number);
+      const [head, list, foot] = split(area, "v", [
+        len(1),
+        fill(1),
+        len((pace === undefined ? 0 : 1) + (spend ? 2 : 0)),
+      ]);
       const note = !loaded
         ? "Loading…"
         : limbs.length === 0
@@ -297,8 +305,9 @@ export function limbsScreen(
           : `${plural(limbs.length, "limb")} in the order the crew takes ready work${may() ? "" : " · you can read this order, not change it"}`;
       s.text(head!.x, head!.y, truncate(note, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
       drawList(s, list!, c, state, rows());
-      if (spend !== undefined)
-        spendLines(spend).forEach((text, n) =>
+      const lines = [...(pace === undefined ? [] : [pace]), ...(spend === undefined ? [] : spendLines(spend))];
+      if (lines.length > 0)
+        lines.forEach((text, n) =>
           s.text(foot!.x, foot!.y + n, truncate(text, foot!.w), style(c.mutedFg, c.bg), foot!.x + foot!.w),
         );
       hitList(ctx, list!, state, limbs.length, { open });

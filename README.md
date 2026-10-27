@@ -333,6 +333,12 @@ work here.
 The running list of what the forge does, one bullet each, lives in
 [`docs/STATUS.md`](docs/STATUS.md).
 
+A milestone says how fast it is moving in one line — `on pace for <date>`,
+`no movement in 7 days` or `done <date>` — with issues closed per day over 14
+days drawn beside it, on its page, in the terminal's Milestones screen and in
+the MCP's `milestones` tool (`closedPerDay`, `paceDate`); `docs/PLANNING.md`
+has the rule.
+
 ## Where the rest is
 
 - [`docs/DEVELOP.md`](docs/DEVELOP.md) — developing the forge: tests, checks, the gate, lint and types.

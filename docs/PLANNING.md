@@ -267,7 +267,12 @@ dropped and split issues are neither.
 `/:owner/:name/milestones/:number` is one milestone opened: who is building
 what, what is blocked and on what, what merged this week, and a plain
 estimate — the open issues at the pace of the last 7 days, or a sentence
-saying there is no pace to estimate from. What it waits for directly shows
+saying there is no pace to estimate from. Under it, issues closed per day
+over 14 UTC days as a sparkline and one line from the same numbers:
+`on pace for <date>` (today plus the estimate's days), `no movement in 7
+days`, or `done <date>` (the day the last issue closed); a deferred milestone
+has no line. The terminal's milestone list shows the line for the limb under
+the cursor, and the MCP gives `closedPerDay`, `paceDate` and `pace`. What it waits for directly shows
 as limbs where a child brings a tree of its own, and as leaves where it
 brings none (one that only waits for its siblings is a leaf in an order).
 Leaves show only on the limb they are under, and each issue shows once:

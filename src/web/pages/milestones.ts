@@ -20,6 +20,8 @@ import {
   type Milestone,
   type Plan,
 } from "../../core/milestones.ts";
+import type { Pace } from "../../core/pace.ts";
+import { daySpark } from "../studio/kpi_row.ts";
 import type { Database } from "bun:sqlite";
 import { parseSeat, seating } from "../../core/limb_seats.ts";
 import type { Issue } from "../../core/issues.ts";
@@ -198,17 +200,18 @@ function limbLine(base: string, limb: Limb, move: Html | null = null): Html {
 }
 
 /** The repository's plan, kept while nothing it reads changes. */
-const planFor = (ctx: Ctx, repo: Repo, spend: boolean): Plan =>
+const planFor = (ctx: Ctx, repo: Repo, spend: boolean, now: Date): Plan =>
   cachedPlan(
     {
       repoId: repo.id,
       stamp: planStamp(ctx.app.db, repo),
       spend,
-      now: new Date(),
+      now,
     },
     () =>
       readPlan(ctx.app.db, repo, {
         spend,
+        now,
         stretch: (name, ms) => notePhase(ctx.request, `plan-${name}`, ms),
       }),
   );
@@ -219,7 +222,7 @@ export function milestonesPage(ctx: Ctx): Response {
   const repo = timePhase(ctx.request, "repo", () => loadRepo(ctx));
   if (!repo) return notFoundPage(ctx);
   const spend = canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user);
-  const plan = timePhase(ctx.request, "plan", () => planFor(ctx, repo, spend));
+  const plan = timePhase(ctx.request, "plan", () => planFor(ctx, repo, spend, new Date()));
   const base = repoBase(repo);
   const move = timePhase(ctx.request, "seats", () =>
     moverFor(ctx.app.db, repo, ctx.auth.user, plan.read),
@@ -358,6 +361,18 @@ function watchButton(base: string, m: Milestone, watching: boolean): Html {
   </form>`;
 }
 
+/** Issues closed per day with the design system's sparkline, and one line of what it means. */
+function paceLine(pace: Pace): Html | null {
+  if (pace.line === "") return null;
+  const spark = daySpark(
+    pace.closedPerDay,
+    `Issues closed each day over the last ${pace.closedPerDay.length} days`,
+  );
+  return html`<div class="bar" id="ms-pace">
+    <span class="muted">${spark}</span><span>${pace.line}</span>
+  </div>`;
+}
+
 function milestoneBody(
   repo: Repo,
   m: Milestone,
@@ -401,6 +416,7 @@ function milestoneBody(
         m.trim === undefined ? {} : { tone: "attn" },
       )}
       <p id="ms-estimate">${m.estimate}</p>
+      ${paceLine(m.pace)}
       ${when(
         m.trim,
         (why) => html`<p class="small">A candidate to trim: ${why}.</p>`,
@@ -535,14 +551,14 @@ function milestoneBody(
 }
 
 /** GET /:owner/:name/milestones/:number — one milestone, opened. */
-export function milestonePage(ctx: Ctx): Response {
+export function milestonePage(ctx: Ctx, now: Date = new Date()): Response {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const repo = timePhase(ctx.request, "repo", () => loadRepo(ctx));
   if (!repo) return notFoundPage(ctx);
   const number = Number(ctx.params.number);
   const owner = canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user);
   const plan = Number.isInteger(number)
-    ? timePhase(ctx.request, "plan", () => planFor(ctx, repo, owner))
+    ? timePhase(ctx.request, "plan", () => planFor(ctx, repo, owner, now))
     : undefined;
   const milestone = plan?.milestone(number);
   if (plan === undefined || milestone === undefined) return notFoundPage(ctx);
@@ -663,9 +679,10 @@ export async function milestoneData(
   ctx: Ctx,
   repo: Repo,
   number: number,
+  now: Date = new Date(),
 ): Promise<Record<string, unknown> | undefined> {
   const owner = canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user);
-  const milestone = readPlan(ctx.app.db, repo, { spend: owner }).milestone(
+  const milestone = readPlan(ctx.app.db, repo, { spend: owner, now }).milestone(
     number,
   );
   const viewer = ctx.auth.user;
