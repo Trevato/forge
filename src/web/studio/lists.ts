@@ -53,7 +53,7 @@ import {
   seg,
   time,
 } from "../ui.ts";
-import type { Run } from "../../core/runs.ts";
+import type { Run, RunState } from "../../core/runs.ts";
 import { actorsFor, durationText, issuesFor, runTitleFrom } from "../pages/runs.ts";
 import { originGlyph } from "../pages/thread.ts";
 import { changeHref, PAGE_TITLES, pageTitle, tellHref } from "./nouns.ts";
@@ -590,15 +590,39 @@ function readRunsKind(ctx: Ctx): RunsKind | undefined {
     : undefined;
 }
 
-/** The runs list's own address with a word, a kind and a cursor. */
+/** The states `?state=` narrows to; anything else is ignored. */
+const RUN_STATES: readonly RunState[] = [
+  "queued",
+  "running",
+  "ok",
+  "failed",
+  "cancelled",
+];
+
+function readRunsState(ctx: Ctx): RunState | undefined {
+  const raw = ctx.url.searchParams.get("state");
+  return RUN_STATES.find((s) => s === raw);
+}
+
+/** The row of state links above the list, in the words the badges use. */
+const STATE_LINKS: readonly [RunState | undefined, string][] = [
+  [undefined, "All"],
+  ["failed", "Failed"],
+  ["running", "Running"],
+  ["ok", "Succeeded"],
+];
+
+/** The runs list's own address with a word, a kind, a state and a cursor. */
 function runsHref(
   base: string,
   kind: RunsKind | undefined,
   word: WordFilter | undefined,
   cursor?: string,
+  state?: RunState,
 ): string {
   const params = new URLSearchParams();
   if (kind !== undefined) params.set("kind", kind);
+  if (state !== undefined) params.set("state", state);
   if (word !== undefined) params.set("word", word);
   if (cursor !== undefined) params.set("cursor", cursor);
   const text = params.toString();
@@ -627,6 +651,7 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
   const base = repoBase(repo);
   const filter = readWordFilter(ctx);
   const kind = readRunsKind(ctx);
+  const state = readRunsState(ctx);
   const cursor = ctx.url.searchParams.get("cursor") ?? undefined;
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
 
@@ -635,6 +660,7 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
   const reading = performance.now();
   const listed = listRepoRuns(ctx.app, ctx.auth.user, repo, {
     kind,
+    state,
     limit: LIST_PAGE,
     ...(cursor ? { cursor } : {}),
   });
@@ -657,7 +683,7 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
       // With no word chosen a check or a deploy that finished is news too:
       // the default list is the whole story, newest first.
       (r) =>
-        (filter === undefined && r.run.kind !== "agent") ||
+        (filter === undefined && (r.run.kind !== "agent" || state !== undefined)) ||
         inWordFilter(r.info.word, filter),
     );
 
@@ -706,15 +732,24 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
 
   const body = html`${repoHeader(ctx, repo, "runs", { compact: true })}
     <div class="mt">
+      <nav aria-label="Run state">
+        ${seg(
+          STATE_LINKS.map(([s, label]) => ({
+            label,
+            href: runsHref(base, kind, filter, undefined, s),
+            current: s === state,
+          })),
+        )}
+      </nav>
       ${wordFilterBar(
-        (word) => runsHref(base, kind, word),
+        (word) => runsHref(base, kind, word, undefined, state),
         filter,
         filter === undefined,
       )}
       ${list}
       ${pager(
         fetched.length === LIST_PAGE && last !== undefined
-          ? { next: runsHref(base, kind, filter, last.id) }
+          ? { next: runsHref(base, kind, filter, last.id, state) }
           : {},
       )}
     </div>

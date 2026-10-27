@@ -98,6 +98,7 @@ import { canSeeAnswers } from "../../web/studio/answers.ts";
 import { answersScreen } from "./answers.ts";
 import { commitsScreen } from "./commits.ts";
 import { deploysScreen } from "./deploys.ts";
+import { runsScreen } from "./runs.ts";
 import {
   Filter,
   ListState,
@@ -1308,6 +1309,7 @@ export function workspaceScreen(
               binding(["I"], "about this repository"),
               binding(["V"], "waves"),
               ...(repo === undefined ? [] : [binding(["d"], "production deploys")]),
+              ...(repo === undefined ? [] : [binding(["H"], "runs, by state")]),
               ...(repo !== undefined && canSeeAnswers(f.db, repo, f.user)
                 ? [binding(["a"], "your issues and the crew's answers")]
                 : []),
@@ -1644,6 +1646,10 @@ export function workspaceScreen(
       }
       if (plain && e.key === "d" && repo !== undefined) {
         ctx.push(deploysScreen(f, ctx, repo));
+        return true;
+      }
+      if (plain && e.key === "H" && repo !== undefined) {
+        ctx.push(runsScreen(f, ctx, repo));
         return true;
       }
       if (plain && e.key === "a" && repo !== undefined && canSeeAnswers(f.db, repo, f.user)) {

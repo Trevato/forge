@@ -540,6 +540,11 @@ work here.
 
 ## What works today
 
+- **A repository's runs page filters by state**: a row of links (All, then each
+  state) above the list, or `/:owner/:name/runs?state=failed` by hand. An unknown
+  state is ignored, and the word filter and the pager keep the chosen state. The
+  terminal does the same: `H` in a repository opens its runs, and `s` cycles
+  All, Failed, Running, Succeeded.
 - **A run page's live log** rides the page's one `/events` connection (its
   `run.log` frames); it opens no stream of its own. Known gaps, both silent: a
   frame the server cuts for size (64 lines or 16 KB) loses its omitted lines
