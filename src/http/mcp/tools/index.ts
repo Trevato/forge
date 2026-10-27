@@ -70,6 +70,7 @@ export { tool as map } from "./map.ts";
 export { tool as migrate } from "./migrate.ts";
 export { tool as milestones } from "./milestones.ts";
 export { tool as mint_invite } from "./mint_invite.ts";
+export { tool as mirror_now } from "./mirror_now.ts";
 export { tool as mirror_set } from "./mirror_set.ts";
 export { tool as model_ceiling } from "./model_ceiling.ts";
 export { tool as model_grant } from "./model_grant.ts";

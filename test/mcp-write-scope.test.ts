@@ -22,6 +22,7 @@ const ADMIN_ARGS: Record<string, Record<string, unknown>> = {
   repo_settings: { repo: "alice/game", visibility: "public" },
   sessions: { action: "end", id: "x" },
   mirror_set: { action: "forget" },
+  mirror_now: {},
   org_teams: { org: "acme", action: "create", team: "core", permission: "read" },
   agent: { action: "create", username: "robo", displayName: "Robo", model: "m", brief: "b" },
   subscription_budget: { id: "u1", usd: 5 },
