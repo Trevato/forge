@@ -138,6 +138,10 @@ refuses every form a browser posts to `localhost`: run it with
 `env -u FORGE_URL bun run src/main.ts`, or set `FORGE_URL` to wherever you
 will actually browse it.
 
+Who may sign up (open, invite or closed) is shown on the terminal's Invite
+links screen, and a forge admin who is a person changes it there with `s`,
+which shows from → to and changes it only after a confirm (as MCP `signup` does).
+
 No sign-up makes the admin, not even the forge's first, and that first one is
 held to the signup setting and Turnstile like any other. Accounts sign up with
 a passkey and an email address (there is no password signup), and the browser

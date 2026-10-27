@@ -230,6 +230,7 @@ enforces it); `dryRun` reads `false to apply` on every tool that takes it. The
 longer sentences:
 
 - `dryRun`: plans unless it is `false`; anything else changes nothing. `limb` applying takes an admin token.
+- `signup`: the terminal's Invite links screen does the same: `s` picks a mode, shows the plan (from → to) and changes it after a confirm, for a forge admin who is a person.
 - `tell.from`: a path on this forge the issue links to, like `/alice/notes/pulls/3`. `tell.context`: where this was told from, for the builder.
 - `spawn.reveal`, `claim_link.reveal`: put the live claim link in the answer (default false); it is a secret, only when its person reads it. `spawn.fresh`: a fresh app beside the copied ones. `spawn.followMode`: `tell-me` (default) tells the owner in their inbox when this forge's code moves; `take-updates` opens a pull with the new code, and a person merges it. `spawn.size`: recorded only, not enforced. `spawn.keepAccess`: stay an owner once claimed.
 - `commits.ref`: branch, tag or commit; the default branch when absent. `report.page`: the http(s) address where the problem was seen. `plan.issues.pillar`: the pillar served, as `"P0"` or `"P0 Trust"`; `later: true` means no pillar and needs `why`.
