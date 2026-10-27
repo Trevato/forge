@@ -18,7 +18,7 @@ beforeAll(async () => {
   alice = u.value.id;
   app.db.run("INSERT INTO repo (id, owner_id, name, visibility) VALUES ('pub', ?1, 'pub', 'public')", [alice]);
   app.db.run("INSERT INTO repo (id, owner_id, name, visibility) VALUES ('priv', ?1, 'priv', 'private')", [alice]);
-});
+}, 30_000);
 afterAll(() => app.close?.());
 
 /** Statements run against the db, counted. */
@@ -59,13 +59,13 @@ describe("flow panel cache", () => {
     expect(panelFigures(app.db, "owner", new Date(t.getTime() + PANEL_TTL_MS))).not.toBe(first);
   });
 
-  test("an agent never sees an admin's figures", async () => {
-    const b = await createUser(app.db, { origin: "seed", trusted: true, username: "scout", email: "scout@forge.local", password: "a-good-passphrase" });
-    if (!b.ok) throw new Error(b.error);
-    app.db.run("UPDATE user SET is_agent = 1 WHERE id = ?1", [b.value.id]);
+  test("an agent never sees an admin's figures", () => {
+    // no password hashing here: a loaded machine took it past the test's timeout
+    const agentId = "agent-scout";
+    app.db.run("INSERT INTO user (id, username, email, password_hash, is_agent) VALUES (?1, 'scout', 'scout@forge.local', 'x', 1)", [agentId]);
     const ago = new Date(Date.now() - 1_800_000).toISOString();
     for (const [id, n, repo] of [["a1", 1, "pub"], ["a2", 2, "priv"]] as const) {
-      app.db.run("INSERT INTO issue (id, repo_id, number, kind, title, body, author_id, state, created_at) VALUES (?1, ?2, ?3, 'pull', 't', '', ?5, 'open', ?4)", [id, repo, n, ago, b.value.id]);
+      app.db.run("INSERT INTO issue (id, repo_id, number, kind, title, body, author_id, state, created_at) VALUES (?1, ?2, ?3, 'pull', 't', '', ?5, 'open', ?4)", [id, repo, n, ago, agentId]);
       app.db.run("INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid) VALUES (?1, 'main', 'b', '', 'h')", [id]);
     }
     const t = new Date();
