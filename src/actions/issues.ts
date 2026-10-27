@@ -490,6 +490,7 @@ export function setIssueState(
         ? { reason }
         : {}),
       ...(children.length > 0 ? { into: children.map((c) => c.number) } : {}),
+      ...(closing.stale === true && issue.kind === "pull" ? { stale: true } : {}),
     },
   });
   // The parts serve what the whole served.
@@ -614,6 +615,8 @@ export interface Closing {
   readonly into?: readonly number[];
   /** The crew's live triage closed it, not the person whose name it carries. */
   readonly triage?: boolean;
+  /** A crew pull closed for staying conflicted 72 hours (`crew/stale_pulls.ts`). */
+  readonly stale?: boolean;
 }
 
 /**

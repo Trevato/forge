@@ -12,6 +12,7 @@
  * repository's origin.
  */
 
+import { closedToday, closeStale } from "./stale_pulls.ts";
 import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import { ceilingReached, forgeCeiling } from "../flow/ceiling.ts";
@@ -1286,6 +1287,7 @@ export async function autonomyTick(
         activeRuns(app, current.id),
       );
       const boots = bootCounts(app.config.dataDir);
+      const staleToday = closedToday(app, current.id, now);
       // Says when the governor lowers the slots (#6375); one feed item per change.
       const governor = announceGovernor(app, current, now);
       log.info("tick", {
@@ -1303,6 +1305,8 @@ export async function autonomyTick(
         ...(held.by.hot_file.length === 0 ? {} : { hot: hotWords(hotFiles(current.id)) }),
         // Stalled issues this tick parked and freed for another builder (#4073).
         unstuck,
+        // Crew pulls closed today after 3 days in conflict (#5940).
+        ...(staleToday === 0 ? {} : { staleClosed: staleToday }),
         // Open pulls, opened/landed per hour and per 6 h, conflicted (#5935).
         ...flowVitals(app.db, now),
         active: status.active,
@@ -1506,6 +1510,8 @@ const checked = new Map<
   string,
   { head: string; key: string; files: string[] | null; tree: string | null }
 >();
+/** Pull id → the head it conflicts at, and when the sweep first saw that (#5940). */
+const conflictedAt = new Map<string, { head: string; since: string }>();
 /** Pull id → when the sweep last saw it merge cleanly. */
 const cleanAt = new Map<string, string>();
 
@@ -1636,14 +1642,19 @@ export function releaseConflicted(
  * for (`conflict_room.ts`); the rest wait for a later tick (#4459).
  * Returns how many pulls were acted on.
  */
-export async function sweepConflicts(app: App, repo: Repo): Promise<number> {
+export async function sweepConflicts(
+  app: App,
+  repo: Repo,
+  now: Date = new Date(),
+): Promise<number> {
   if (repo.autonomy !== "autonomous") return 0;
   let acted = 0;
   let room = readConflictRoom(app.db);
   // Forget pulls that are no longer open: closed, merged or released.
-  for (const id of new Set([...checked.keys(), ...cleanAt.keys()]))
+  for (const id of new Set([...checked.keys(), ...cleanAt.keys(), ...conflictedAt.keys()]))
     if (getIssueById(app.db, id)?.state !== "open") {
       checked.delete(id);
+      conflictedAt.delete(id);
       cleanAt.delete(id);
       asked.delete(id);
     }
@@ -1689,15 +1700,31 @@ export async function sweepConflicts(app: App, repo: Repo): Promise<number> {
     if (seen.files === null) {
       // Merges cleanly: whatever came before was a different episode.
       cleanAt.set(pull.id, new Date().toISOString());
+      conflictedAt.delete(pull.id);
       continue;
     }
     const files = seen.files;
+    // A push moves the head and the 72-hour clock starts again.
+    let conflict = conflictedAt.get(pull.id);
+    if (conflict?.head !== pull.headOid)
+      conflictedAt.set(
+        pull.id,
+        (conflict = { head: pull.headOid, since: now.toISOString() }),
+      );
     // An approved pull is finished first, and handed to a person rather
     // than closed: the tick's finishing pass has it (`finishing.ts`).
     if (approvedOnHead(app.db, pull)) continue;
     const issue = getIssueById(app.db, pull.id);
     if (!issue || issue.state !== "open") continue;
     if (activeRunFor(app.db, "agent", issue.id) !== undefined) continue;
+    // Past 72 hours in conflict, whatever the attempts did (#5940).
+    if (closeStale(app, repo, pull, conflict.since, now)) {
+      acted++;
+      checked.delete(pull.id);
+      cleanAt.delete(pull.id);
+      conflictedAt.delete(pull.id);
+      continue;
+    }
     const since = conflictEpisodeStart(app, issue, pull.id);
     const runs = app.db
       .query<{ n: number; first: string | null }, [string, string]>(
