@@ -4,8 +4,8 @@
  * Read through `listRepoRuns`, so it is gated like every other run read.
  */
 
-import { listRepoRuns } from "../../actions/runs.ts";
-import type { Repo } from "../../core/repos.ts";
+import { cancelRepoRun, listRepoRuns } from "../../actions/runs.ts";
+import { canWrite, type Repo } from "../../core/repos.ts";
 import type { Run, RunState } from "../../core/runs.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -14,7 +14,8 @@ import { style } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { emptyState } from "../ui/widgets.ts";
-import { RunList, openRunLog } from "./runlist.ts";
+import { confirmScreen } from "./common.ts";
+import { RunList, openRunLog, runTitle } from "./runlist.ts";
 
 const LIMIT = 50;
 
@@ -43,14 +44,53 @@ export function runsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
 
   const open = (run: Run): void => openRunLog(f, ctx, repo, run);
 
-  return {
+  /** The selected run, when it has not finished and the viewer may write. */
+  const cancellable = (): Run | undefined => {
+    const run = list.selected;
+    if (run === undefined || (run.state !== "queued" && run.state !== "running"))
+      return undefined;
+    return canWrite(f.app.db, repo, f.user) ? run : undefined;
+  };
+
+  const ask = (): void => {
+    const run = cancellable();
+    if (run === undefined) return;
+    const names = new Map<string, { username: string }>();
+    const what = `${runTitle(run, names)} (${run.id.slice(0, 8)})`;
+    ctx.push(
+      confirmScreen(ctx, self, {
+        title: "Cancel run",
+        body: [`Cancel ${what}?`],
+        actions: [{ label: "Cancel run", variant: "danger" }, { label: "Keep" }],
+        selected: 1,
+        onChoose: (choice) => {
+          if (choice !== 0) return;
+          const done = cancelRepoRun(f.app, f.user, repo, run.id);
+          if (done.ok) ctx.toast(`Cancelled ${what}.`);
+          else
+            ctx.toast(
+              done.error === "finished"
+                ? "That run already finished."
+                : `Could not cancel: ${done.error}.`,
+              "danger",
+            );
+          read();
+        },
+      }),
+    );
+  };
+
+  const self: Screen = {
     title: "Runs",
-    keys: [
-      binding(["j", "k"], "move"),
-      binding(["enter"], "open the log"),
-      binding(["s"], "state: All, Failed, Running, Succeeded (cycle)"),
-      binding(["r"], "refresh"),
-    ],
+    get keys() {
+      return [
+        binding(["j", "k"], "move"),
+        binding(["enter"], "open the log"),
+        ...(cancellable() === undefined ? [] : [binding(["x"], "cancel")]),
+        binding(["s"], "state: All, Failed, Running, Succeeded (cycle)"),
+        binding(["r"], "refresh"),
+      ];
+    },
     load: async () => read(),
     render(area, s) {
       const c = ctx.theme.c;
@@ -82,6 +122,10 @@ export function runsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         if (run !== undefined) open(run);
         return true;
       }
+      if (e.key === "x") {
+        ask();
+        return true;
+      }
       if (e.key === "s") {
         at = (at + 1) % RUN_STATE_CYCLE.length;
         read();
@@ -94,4 +138,5 @@ export function runsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       return false;
     },
   };
+  return self;
 }
