@@ -302,7 +302,7 @@ import {
 } from "../core/decisions.ts";
 import { forReader } from "../crew/handover.ts";
 import { globalMapJson } from "../web/pages/global-map.ts";
-import { mapJson, marksFor } from "../web/pages/map.ts";
+import { mapJson, marksFor, withoutDone } from "../web/pages/map.ts";
 import { cachedMap } from "../web/map_snapshot.ts";
 import {
   milestoneData,
@@ -3097,7 +3097,8 @@ export function apiRoutes(router: Router<Handler>): void {
     },
   );
   // The map as data: ready now, blocked on, the critical path, every edge,
-  // and where the crew is.
+  // and where the crew is. `issues` and `edges` hold the open ones unless
+  // `?done=1`.
   router.add("GET", "/api/v1/repos/:owner/:name/map", async (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
@@ -3128,7 +3129,7 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!built)
       for (const name of ["graph", "marks", "pillars", "asktolive", "held", "render"])
         notePhase(request, name, 0, hit);
-    return json(value);
+    return json(ctx.url.searchParams.get("done") === "1" ? value : withoutDone(value));
   });
   // What people asked of the crew in the repositories the caller can write —
   // by default what has nothing merged yet, oldest first — and what became of each (core/asked.ts, the /asked page).

@@ -93,7 +93,7 @@ a level and a flow are different units: the line says whether the plan is
 converging, the bars say whether anything is moving.
 
 The same three lists are data at `GET /api/v1/repos/:owner/:name/map`,
-which is what an agent reads before it starts and what a repository in
+which is what an agent reads before it starts (`issues` and `edges` hold only open issues; `?done=1`, or `done: true` on MCP `map`, brings the closed ones back; `counts.done` always says how many) and what a repository in
 autonomous mode reads to pick the next thing. Both carry where the crew
 is: an issue with an agent run in flight is marked _working_ on the
 drawing and listed under `working` in the data; every issue in the data

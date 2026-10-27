@@ -22,7 +22,7 @@ let app: App, servers: Servers, bearer = "", repoId = "";
 
 const get = async (): Promise<{ body: string; ms: number; timing: string }> => {
   const t0 = performance.now();
-  const res = await fetch(`${servers.url}/api/v1/repos/alice/notes/map`, { headers: { authorization: `Bearer ${bearer}` } });
+  const res = await fetch(`${servers.url}/api/v1/repos/alice/notes/map?done=1`, { headers: { authorization: `Bearer ${bearer}` } });
   const body = await res.text();
   return { body, ms: performance.now() - t0, timing: res.headers.get("server-timing") ?? "" };
 };

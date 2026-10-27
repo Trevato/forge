@@ -1473,6 +1473,22 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
 }
 
 /**
+ * The map's answer without its closed history (#6176): `issues` keeps the
+ * open ones and `edges` those between them. Everything computed on the whole
+ * graph, `counts.done` included, stays as it was.
+ */
+export function withoutDone(json: Record<string, unknown>): Record<string, unknown> {
+  const issues = (json.issues as { number: number; state: string }[]).filter(
+    (i) => i.state === "open",
+  );
+  const open = new Set(issues.map((i) => i.number));
+  const edges = (json.edges as { issue?: number; blockedBy?: number }[]).filter(
+    (e) => open.has(e.issue ?? -1) && open.has(e.blockedBy ?? -1),
+  );
+  return { ...json, issues, edges };
+}
+
+/**
  * The map as data, for the crew and the tick: the same three lists,
  * `working`, the issues the crew is on right now, and every issue with its
  * word and the words counted.
