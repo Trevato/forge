@@ -15,6 +15,10 @@
  * `app_deploy`'s actions — and is told the answer in the page's words
  * (`env_words.ts`). A stopped production offers only `D`; a reader sees
  * neither key.
+ *
+ * A writer — whom the MCP tool `probe` lets knock — gets `p`: the same
+ * `probeApp` against the running production app, every door tried as
+ * nobody, a user and an admin, read-only, one line per door.
  */
 
 import {
@@ -31,7 +35,11 @@ import { envLabel, envRefusalText, redeployedText, stoppedText } from "../../act
 import { trendLine, visitorsLine } from "../../apps/vitals.ts";
 import { listRepoRuns } from "../../actions/runs.ts";
 import { carriedByRuns, carriesText } from "../../core/carried.ts";
+import { appsRuntime } from "../../apps/runtime.ts";
+import { getAppByRepo } from "../../core/apps.ts";
 import { canWrite, type Repo } from "../../core/repos.ts";
+import type { Knock } from "../../contract/probe.ts";
+import { probeApp, type ProbeRow } from "../../contract/probes.ts";
 import type { Run } from "../../core/runs.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -40,7 +48,7 @@ import { style } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { emptyState } from "../ui/widgets.ts";
-import { confirmScreen, drawList, hitList, runAsync } from "./common.ts";
+import { ListState, confirmScreen, drawList, hitList, runAsync, type ListRow } from "./common.ts";
 import { RunList, openRunLog, runRows } from "./runlist.ts";
 
 const LIMIT = 50;
@@ -111,6 +119,8 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   };
 
   const open = (run: Run): void => openRunLog(f, ctx, repo, run);
+  // The MCP tool's gate, read once: only a writer is offered the knock.
+  const mayProbe = canWrite(f.db, repo, f.user);
 
   const confirm = (verb: "Redeploy" | "Stop", act: () => Promise<{ text: string; refused: boolean }>): void => {
     ctx.push(
@@ -156,6 +166,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         binding(["r"], "refresh (the open pulls below the deploys: check, preview)"),
         ...(production.redeploy ? [binding(["D"], "redeploy production")] : []),
         ...(production.stop ? [binding(["S"], "stop production")] : []),
+        ...(mayProbe ? [binding(["p"], "probe the running app's doors")] : []),
       ];
     },
     load: async () => read(),
@@ -235,8 +246,135 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         stop();
         return true;
       }
+      if (e.key === "p" && mayProbe) {
+        ctx.push(probeScreen(f, ctx, repo));
+        return true;
+      }
       return false;
     },
   };
   return screen;
+}
+
+// ---- Probe: `p`, the MCP tool `probe` from the deploys screen ----
+
+/** Control characters out of anything the app or the OS said. */
+const clean = (text: string): string =>
+  text.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, " ").trim();
+
+/** `GET /api/notes/0 as anon · 401 · ok`, or what was wrong instead of `ok`. */
+export function knockLine(k: Knock): string {
+  const where = k.door ?? `${k.resource}.${k.verb}`;
+  const r = k.result;
+  const status = r.kind === "admitted" || r.kind === "refused" || r.kind === "no_door" ? String(r.status) : "—";
+  const said =
+    k.verdict === "ok"
+      ? "ok"
+      : k.verdict === "mismatch"
+        ? `wrong: the table says ${k.cell}, the door ${r.kind === "admitted" ? "let them in" : "refused"}`
+        : r.kind === "unprobed"
+          ? `not asked: ${r.why}`
+          : r.kind === "no_door"
+            ? "not asked: no such door"
+            : r.kind === "error"
+              ? `not asked: ${clean(r.message)}`
+              : "not asked";
+  return `${where} as ${k.as} · ${status} · ${said}`;
+}
+
+const knockRow = (k: Knock): ListRow => ({
+  title: knockLine(k),
+  tone: k.verdict === "ok" ? "success" : k.verdict === "mismatch" ? "danger" : "outline",
+});
+
+type Probing =
+  | { readonly kind: "reading" }
+  /** Nothing was tried, and why, in words. */
+  | { readonly kind: "said"; readonly title: string; readonly body: string }
+  | { readonly kind: "done"; readonly row: ProbeRow };
+
+/**
+ * Knock once, as the MCP tool does: same gate, same `probeApp`, so the row
+ * is kept and the app's mismatch issue opened or closed the same way. An app
+ * that is not running comes back `down` with no knock, and is said so.
+ */
+async function knock(f: Session, repo: Repo): Promise<Probing> {
+  if (!canWrite(f.db, repo, f.user))
+    return { kind: "said", title: "Not yours to probe", body: "You need write access to knock." };
+  const record = getAppByRepo(f.db, repo.id);
+  const runtime = appsRuntime(f.app);
+  if (record === undefined || runtime === undefined)
+    return { kind: "said", title: "Not an app here", body: "Nothing serves this repository here." };
+  // No status check of our own: `probeApp` keeps a `down` row for a stopped
+  // app, as MCP `probe` and the audit page do, and reads the status once.
+  const row = await probeApp(f.app, runtime, record);
+  if (row === undefined)
+    return { kind: "said", title: "No contract", body: "No sound contract.json to compare with." };
+  if (row.verdict === "down")
+    return {
+      kind: "said",
+      title: "Not running",
+      body: `No door was tried; it is ${runtime.envStatus(record, "production")?.state ?? "not deployed"}.`,
+    };
+  if (row.knocks.length === 0)
+    return { kind: "said", title: "No doors", body: "The contract names no door to try." };
+  return { kind: "done", row };
+}
+
+function probeScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
+  const state = new ListState();
+  let probing: Probing = { kind: "reading" };
+  const rows = (): ListRow[] => (probing.kind === "done" ? probing.row.knocks.map(knockRow) : []);
+  // A probe that throws (the app died mid-knock) is said, never left on `Knocking…`.
+  const run = async (): Promise<void> => {
+    probing = { kind: "reading" };
+    ctx.invalidate();
+    try {
+      probing = await knock(f, repo);
+    } catch {
+      probing = { kind: "said", title: "The probe failed", body: "The app stopped answering; press r to knock again." };
+    }
+    ctx.invalidate();
+  };
+  return {
+    title: "Probe",
+    keys: [binding(["j", "k"], "move"), binding(["r"], "knock again"), binding(["esc"], "back")],
+    load: async () => run(),
+    render(area, s) {
+      const c = ctx.theme.c;
+      const [head, body] = split(area, "v", [len(1), fill(1)]);
+      const summary =
+        probing.kind === "done"
+          ? (() => {
+              const k = probing.row.knocks;
+              const n = (v: Knock["verdict"]) => k.filter((x) => x.verdict === v).length;
+              return ` · ${probing.row.commitOid.slice(0, 7)} · ${n("ok")} ok · ${n("mismatch")} wrong · ${n("unprobed")} not asked`;
+            })()
+          : "";
+      s.text(
+        head!.x,
+        head!.y,
+        truncate(`${repo.ownerName}/${repo.name} · production doors as nobody, a user and an admin${summary}`, head!.w),
+        style(c.mutedFg, c.bg),
+        head!.x + head!.w,
+      );
+      if (probing.kind !== "done") {
+        emptyState(s, body!, c, {
+          title: probing.kind === "said" ? probing.title : "Knocking…",
+          body: probing.kind === "said" ? probing.body : "Trying every door, read-only",
+        });
+        return;
+      }
+      const list = rows();
+      drawList(s, body!, c, state, list);
+      hitList(ctx, body!, state, list.length, {});
+    },
+    key(e) {
+      if (e.key === "r") {
+        if (probing.kind !== "reading") void ctx.track(run());
+        return true;
+      }
+      return state.key(e, rows().length);
+    },
+  };
 }

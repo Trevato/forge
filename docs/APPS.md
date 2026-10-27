@@ -176,7 +176,10 @@ Under the box, four starter sentences are plain links (no script):
   (each with what it carries), `enter` for the log, `r` to refresh. A signed-in
   reader also sees `Production: <url>` and, when a pull's preview is up or
   asleep, `Newest preview: #N <title> <url>` — the pill's other side, same
-  gate; a guest sees neither.
+  gate; a guest sees neither. A writer presses `p` there to probe the running app's
+  doors as nobody, a user and an admin, read-only — one line per door with
+  its status and `ok` or what was wrong, `r` to knock again; the result is
+  kept and the mismatch issue opened or closed as for MCP `probe`.
 - A **private** app answers only to someone the forge has vouched for
   (`canRead` on the repository, then a signed grant); a public one to anyone.
 - **Every app has a terminal.** `ssh -p 2222 <name>@<forge>` runs the app's

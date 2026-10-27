@@ -21,7 +21,8 @@ for a tunnel and a forge that sleeps.
   an `rw` token acts; a reading tool says so (`readOnlyHint: true`), and a tool without it writes, by MCP's default.
 - **What you may not do on a page you may not do here.** A private app is
   "no such app" to someone who cannot write its repository; stopping a run, and knocking
-  on an app with `probe`, are a writer's.
+  on an app with `probe`, are a writer's; the terminal's deploys screen `p`
+  is the same knock behind the same gate.
 
 ## Tools
 
