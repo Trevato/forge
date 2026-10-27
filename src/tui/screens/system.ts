@@ -24,11 +24,13 @@ import { rolloutLine, type ForgeHealth } from "../../kernel/guard.ts";
 import { canSeeMemory, memoryHours } from "../../boards/memory.ts";
 import { binding } from "../app/keys.ts";
 import type { Session } from "../session.ts";
+import { setTelemetryGrant } from "../../actions/telemetry.ts";
+import { grantable } from "../../core/telemetry.ts";
 import { bytes, spark } from "../../system/format.ts";
 import { style } from "../term/style.ts";
 import { pad, truncate, wrap } from "../term/width.ts";
 import { dialog } from "../ui/widgets.ts";
-import { Scroll, drawLines, hitScroll } from "./common.ts";
+import { Scroll, confirmScreen, drawLines, hitScroll, later, pickerScreen } from "./common.ts";
 
 const WIDTH = 72;
 const GROUPS = 6;
@@ -101,14 +103,59 @@ export function systemLines(v: SystemView): string[] {
   ];
 }
 
-export function systemScreen(ctx: Ctx, lines: readonly string[]): Screen {
-  return {
+/** Who may grant telemetry:read: the MCP tool's gate (`mayBoards`), a forge admin who is a person. */
+const mayGrant = (session: Session | undefined): boolean => session?.user?.isAdmin === true && session.user.kind !== "agent";
+
+/** The agents holding the grant, in one line. */
+export function grantLine(session: Session): string {
+  const held = grantable(session.db).filter((a) => a.granted).map((a) => a.username);
+  return held.length === 0 ? "telemetry:read held by: no agent" : `telemetry:read held by: ${held.join(", ")}`;
+}
+
+/** The words for a refused grant, as MCP `telemetry_grant` says them. */
+const grantRefused = (error: "not_found" | "not_an_agent"): string =>
+  error === "not_an_agent" ? "Only an agent account can be granted telemetry:read." : "no such account";
+
+export function systemScreen(ctx: Ctx, lines: readonly string[], session?: Session): Screen {
+  const offered = session !== undefined && mayGrant(session);
+  const askGrant = (): void => {
+    if (!session) return;
+    if (!mayGrant(session)) return ctx.toast("telemetry:read is a forge admin's to grant", "danger");
+    const agents = grantable(session.db);
+    if (agents.length === 0) return ctx.toast("No agent accounts yet");
+    later(ctx, () =>
+      pickerScreen(ctx, screen, {
+        title: "Grant telemetry:read to",
+        items: agents.map((a) => ({ id: a.username, label: a.username, hint: a.granted ? "granted" : "not granted" })),
+        onPick: ([name]) => {
+          const target = agents.find((a) => a.username === name);
+          if (!target) return;
+          const on = !target.granted;
+          later(ctx, () =>
+            confirmScreen(ctx, screen, {
+              title: "Telemetry",
+              body: [on ? `grant ${target.username} telemetry:read? y/n` : `take back ${target.username} telemetry:read? y/n`],
+              actions: [{ label: "y" }, { label: "n" }],
+              selected: 1,
+              onChoose: (choice) => {
+                if (choice !== 0) return;
+                const set = setTelemetryGrant(session.app, session.user, target.username, on);
+                if (!set.ok) return ctx.toast(grantRefused(set.error), "danger");
+                ctx.toast(`${target.username} ${on ? "may now read" : "no longer reads"} telemetry.`);
+              },
+            }),
+          );
+        },
+      }),
+    );
+  };
+  const screen: Screen = {
     title: "System",
-    keys: [binding(["enter", "esc", "q"], "close")],
+    keys: [...(offered ? [binding(["g"], "grant or take back telemetry")] : []), binding(["enter", "esc", "q"], "close")],
     render(area, s) {
       const buttons = dialog(s, area, ctx.theme.c, {
         title: "System",
-        body: lines,
+        body: offered ? [...lines, "", grantLine(session), "g: grant or take back telemetry:read"] : lines,
         actions: [{ label: "Close" }],
         selected: 0,
         width: WIDTH,
@@ -116,10 +163,12 @@ export function systemScreen(ctx: Ctx, lines: readonly string[]): Screen {
       buttons.forEach((rect) => ctx.hit(rect, () => ctx.pop()));
     },
     key(e) {
-      if (e.key === "enter" || e.key === "esc" || e.key === "q") ctx.pop();
+      if (e.key === "g" && session) askGrant();
+      else if (e.key === "enter" || e.key === "esc" || e.key === "q") ctx.pop();
       return true;
     },
   };
+  return screen;
 }
 
 const mib = (n: number) => `${(n / 1_048_576).toFixed(1)}`;

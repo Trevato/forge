@@ -325,7 +325,7 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
           ...forgeLines(readHealth(session.app, session.user)),
           "",
           ...systemLines(liveMachine().read()),
-        ])),
+        ], session)),
       });
       commands.push({
         id: "telemetry",

@@ -13,7 +13,9 @@ import { createApp, type App } from "../src/app.ts";
 import { recordMemory } from "../src/boards/memory.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { createForgeApp, forgeCommands, Session } from "../src/tui/forge.ts";
-import { forgeLines, memoryLines, memoryScreen } from "../src/tui/screens/system.ts";
+import { setTelemetryGrant } from "../src/actions/telemetry.ts";
+import { hasGrant } from "../src/core/telemetry.ts";
+import { forgeLines, memoryLines, memoryScreen, systemScreen } from "../src/tui/screens/system.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
@@ -98,6 +100,67 @@ describe("tui system memory", () => {
       expect(doors(who)).not.toContain("system-memory");
       expect(await screenText(who)).not.toContain("123.0");
     }
+  });
+});
+
+describe("tui system telemetry grant", () => {
+  const boot = (user: User) => {
+    const { app: tui, session } = createForgeApp(app, identity(user), { terminal: headlessTerminal(120, 40), exitHooks: false });
+    tui.start();
+    tui.ctx.push(systemScreen(tui.ctx, ["CPU"], session));
+    const press = async (...keys: string[]) => {
+      for (const key of keys) tui.dispatch({ type: "key", key, ctrl: false, alt: false, shift: false });
+      await settleApp(tui);
+    };
+    return { tui, press };
+  };
+
+  test("an admin grants and takes back after a confirm", async () => {
+    const h = boot(carol);
+    await settleApp(h.tui);
+    expect(h.tui.screen.toText()).toContain("telemetry:read held by: no agent");
+    await h.press("g");
+    await h.press("enter");
+    expect(h.tui.screen.toText()).toContain("grant sysbot telemetry:read? y/n");
+    await h.press("left", "enter");
+    expect(hasGrant(app.db, bot.id)).toBe(true);
+    expect(h.tui.screen.toText()).toContain("telemetry:read held by: sysbot");
+    await h.press("g");
+    await h.press("enter");
+    expect(h.tui.screen.toText()).toContain("take back sysbot telemetry:read? y/n");
+    await h.press("enter");
+    expect(hasGrant(app.db, bot.id)).toBe(true);
+    await h.press("g");
+    await h.press("enter");
+    await h.press("left", "enter");
+    expect(hasGrant(app.db, bot.id)).toBe(false);
+    h.tui.stop?.();
+  });
+
+  test("anyone the tool refuses is not offered g and is refused in its words", async () => {
+    const h = boot(bob);
+    await settleApp(h.tui);
+    expect(h.tui.screen.toText()).not.toContain("telemetry:read");
+    await h.press("g");
+    expect(h.tui.screen.toText()).toContain("telemetry:read is a forge admin's to grant");
+    expect(h.tui.screen.toText()).not.toContain("Grant telemetry:read to");
+    expect(h.tui.screen.toText()).toContain("CPU");
+    expect(setTelemetryGrant(app, bob, "sysbot", true)).toEqual({ ok: false, error: "not_found" });
+    expect(hasGrant(app.db, bot.id)).toBe(false);
+    h.tui.stop?.();
+  });
+
+  test("the System command passes the session, so the admin has the line and g", async () => {
+    const { app: tui, session } = createForgeApp(app, identity(carol), { terminal: headlessTerminal(120, 40), exitHooks: false });
+    tui.start();
+    const system = forgeCommands(session)(tui.ctx).find((c) => c.id === "system");
+    system!.run();
+    await settleApp(tui);
+    expect(tui.screen.toText()).toContain("telemetry:read held by:");
+    tui.dispatch({ type: "key", key: "g", ctrl: false, alt: false, shift: false });
+    await settleApp(tui);
+    expect(tui.screen.toText()).toContain("Grant telemetry:read to");
+    tui.stop?.();
   });
 });
 
