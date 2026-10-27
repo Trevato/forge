@@ -77,7 +77,7 @@ describe("readIdlePulls", () => {
     pull({ openedH: 200, merged: true });
     pull({ openedH: 200, by: person });
     const rows = readIdlePulls(app.db, NOW, false);
-    expect(rows).toEqual([{ pull: idle, repo: "pub", issue: 7, hours: 80 }]);
+    expect(rows).toEqual([{ pull: idle, owner: "alice", repo: "pub", issue: 7, hours: 80 }]);
   });
 
   test("a pull with no push is idle from its opening, and 72 h is the line", () => {

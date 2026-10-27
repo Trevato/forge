@@ -389,6 +389,7 @@ a.sha:hover { color: var(--accent); }
   padding: 8px 14px; min-height: 40px;
   transition: background-color 100ms var(--ease);
 }
+a.flow-row { min-height: 44px; }
 .row:focus-visible { outline-offset: -2px; }
 a.row:hover, .row[data-nav]:hover { background: var(--muted); color: inherit; }
 .list li[aria-current="true"] > .row { background: var(--muted); }

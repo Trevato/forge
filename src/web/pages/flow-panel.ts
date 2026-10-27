@@ -36,6 +36,8 @@ import { type QueueRow, redBatchWords } from "../../flow/queue.ts";
 import { HOT_PULLS, pullCounts, warmFiles } from "../../crew/hot_files.ts";
 import { warmingLine } from "../../crew/hot_history.ts";
 import { getRepoById } from "../../core/repos.ts";
+import { IDLE_LIMIT, readIdlePulls, type IdlePull } from "../../flow/idle_pulls.ts";
+import { readParked } from "../../flow/parked.ts";
 import { hoursWords, readLeadTime } from "../../flow/lead_time.ts";
 import { openerCounts, readOpeners } from "../../flow/openers.ts";
 import { readHeld } from "../../flow/held.ts";
@@ -107,6 +109,9 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
   const lead = readLeadTime(app.db, new Date(now), agent);
   const openers = readOpeners(app.db, new Date(now), agent);
   const pile = pileSays(readPile(app.db, reader.kind === "agent"));
+  const idle = readIdlePulls(app.db, new Date(now), reader.kind === "agent");
+  const parked = readParked(app.db, new Date(now), reader.kind === "agent");
+  const newest = parked.newest[0];
   const listed = asked(url);
   const shown = listed === null ? undefined : out.get(listed.key);
   return html`${card(
@@ -119,6 +124,22 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
     ${onBuilder === null ? "" : html`<p id="requested-builder">${onBuilder}</p>`}
     ${onReviewer === null ? "" : html`<p id="requested-reviewer">${onReviewer}</p>`}
     ${reviewing === null ? "" : html`<p id="review-load">${reviewing}</p>`}
+    ${idle.length === 0
+      ? ""
+      : html`<div id="idle-pulls" data-count="${String(idle.length)}">
+          <p>${idleCount(idle)} idle pull${idle.length === 1 ? "" : "s"}:</p>
+          <ul class="list">${idle.slice(0, 3).map(idleRow)}
+            ${idle.length > 3
+              ? html`<li><a class="row flow-row small" href="${base}?idle=all#idle-list" data-more><span class="row-main">and ${String(idle.length - 3)}${idle.length >= IDLE_LIMIT ? "+" : ""} more</span></a></li>`
+              : null}
+          </ul>
+        </div>`}
+    ${parked.week === 0 || newest === undefined
+      ? ""
+      : html`<p id="parked" data-day="${String(parked.day)}" data-week="${String(parked.week)}">
+          ${String(parked.day)} parked today, ${String(parked.week)} this week; newest
+          <a href="/${newest.repo}/issues/${String(newest.issue)}">${newest.repo} #${String(newest.issue)}</a>
+        </p>`}
     <p id="throughput">
       landed
       <a href="${outHref(base, "approved", 0)}" data-landed-hour>${String(landed?.hours[0] ?? 0)}</a>
@@ -193,7 +214,24 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
     ${hotFilesCard(app, reader)}
     ${heldCard(readHeld(app, reader.kind === "owner", now))}
     ${queueCard(queuesFor(app, reader, new Date(now), { batches: true }))}
+    ${url.searchParams.get("idle") === "all" && idle.length > 0 ? idleList(idle) : null}
     ${listed === null || shown === undefined ? null : outList(shown, listed.hour, now)}`;
+}
+
+/** The count, `20+` when the read stopped at its limit. */
+const idleCount = (idle: readonly IdlePull[]): string => `${idle.length}${idle.length >= IDLE_LIMIT ? "+" : ""}`;
+
+/** One idle pull as a touch-sized row linking to the pull. */
+function idleRow(p: IdlePull): Html {
+  return html`<li><a class="row flow-row" href="/${p.owner}/${p.repo}/pulls/${String(p.pull)}"><span class="row-main"><span class="row-title">${p.repo} #${String(p.pull)}</span><span class="row-meta">idle ${String(Math.floor(p.hours))} h</span></span></a></li>`;
+}
+
+/** Every idle pull, oldest first: where "and K more" lands. */
+function idleList(idle: readonly IdlePull[]): Html {
+  return card(html`<h2>${idleCount(idle)} idle pull${idle.length === 1 ? "" : "s"}</h2><ul class="list">${idle.map(idleRow)}</ul>`, {
+    id: "idle-list",
+    pad: false,
+  });
 }
 
 /** The merge queue, one row per repository with something in it or landed. */

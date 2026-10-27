@@ -14,6 +14,7 @@ export const IDLE_LIMIT = 20;
 
 export interface IdlePull {
   readonly pull: number;
+  readonly owner: string;
   readonly repo: string;
   readonly issue: number | null;
   readonly hours: number;
@@ -23,11 +24,12 @@ export interface IdlePull {
 export function readIdlePulls(db: Database, now = new Date(), publicOnly = false): IdlePull[] {
   const cutoff = new Date(now.getTime() - IDLE_HOURS * HOUR_MS).toISOString();
   const rows = db
-    .query<{ number: number; name: string; moved_at: string; body: string }, [number, string, number]>(
-      `SELECT i.number AS number, r.name AS name, m.at AS moved_at, i.body AS body
+    .query<{ number: number; owner: string; name: string; moved_at: string; body: string }, [number, string, number]>(
+      `SELECT i.number AS number, ro.username AS owner, r.name AS name, m.at AS moved_at, i.body AS body
          FROM pull p
          JOIN issue i ON i.id = p.issue_id
          JOIN repo r ON r.id = i.repo_id
+         JOIN user ro ON ro.id = r.owner_id
          JOIN user u ON u.id = i.author_id AND u.is_agent = 1
          JOIN (SELECT p2.issue_id AS issue_id,
                       COALESCE((SELECT MAX(e.created_at) FROM event e
@@ -42,6 +44,7 @@ export function readIdlePulls(db: Database, now = new Date(), publicOnly = false
     .all(publicOnly ? 1 : 0, cutoff, IDLE_LIMIT);
   return rows.map((r) => ({
     pull: r.number,
+    owner: r.owner,
     repo: r.name,
     issue: closesFromBody(r.body)[0] ?? null,
     hours: Math.max(0, (now.getTime() - Date.parse(r.moved_at)) / HOUR_MS),
