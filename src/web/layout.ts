@@ -9,6 +9,7 @@
 
 import { OPENSEARCH_PATH, OPENSEARCH_TITLE, OPENSEARCH_TYPE } from "./opensearch.ts";
 import { protectionNotice } from "../kernel/protection.ts";
+import { administersAny } from "../core/admin_repos.ts";
 import { appsForRepos } from "../core/apps.ts";
 import { getRepo, listReposVisibleTo } from "../core/repos.ts";
 import { mayDirectCrew } from "../crew/direct.ts";
@@ -225,6 +226,9 @@ function userMenu(
     { label: "Access tokens", href: "/settings/tokens", icon: "key" },
     { label: "SSH keys", href: "/settings/keys", icon: "lock" },
     { label: "Origins", href: "/settings/origins", icon: "globe" },
+    ...(!user.isAdmin && administersAny(ctx.app.db, user)
+      ? [{ label: "Boards", href: "/boards", icon: "activity" as const }]
+      : []),
     ...(user.isAdmin
       ? [
           { label: "Crew", href: "/settings/crew", icon: "bot" as const },

@@ -6,9 +6,11 @@
  *   owner/name path           hold new work on path
  *   release owner/name path   let it go
  *   owner/name                list the holds, who set them and when
+ *   (a bare line)             list every hold in the repositories you administer
  */
 
 import { holdFileAs, listFileHolds, releaseFileAs } from "../../actions/file_holds.ts";
+import { boardHolds } from "../../core/admin_holds.ts";
 import { getRepo } from "../../core/repos.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import type { Session } from "../session.ts";
@@ -25,6 +27,13 @@ export function fileHoldLine(f: Session, text: string): { ok: boolean; says: str
   const words = text.trim().split(/\s+/).filter((w) => w !== "");
   const release = words[0] === "release";
   if (release) words.shift();
+  if (words.length === 0) {
+    if (f.user === undefined) return { ok: false, says: SAYS.unauthorized };
+    const { holds, total } = boardHolds(f.db, f.user);
+    if (holds.length === 0) return { ok: true, says: "No file is held." };
+    const cut = total > holds.length ? ` (${holds.length} of ${total})` : "";
+    return { ok: true, says: holds.map((h) => `${h.repo} ${h.path}`).join("; ") + cut };
+  }
   const [slug, path, ...extra] = words;
   const [owner, name, ...rest] = (slug ?? "").split("/");
   const repo = owner && name && rest.length === 0 ? getRepo(f.db, owner, name) : undefined;
@@ -49,7 +58,7 @@ export function fileHoldLine(f: Session, text: string): { ok: boolean; says: str
 export function fileHoldsPrompt(f: Session, ctx: Ctx, parent: Screen): Screen {
   return promptScreen(ctx, parent, {
     title: "Held files",
-    label: "owner/name path · release owner/name path · owner/name",
+    label: "owner/name path · release owner/name path · owner/name · empty lists all",
     hint: "no build starts on an issue that names a held path",
     onSubmit: (text) => {
       const done = fileHoldLine(f, text);

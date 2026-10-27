@@ -29,6 +29,7 @@ import { limitsPage, limitsSet, quotasSet, signupSet, inviteMint, inviteRevoke }
 import { measureSubmit } from "./measure.ts";
 import { boardsPage } from "../web/pages/boards.ts";
 import { boardNew, boardPin, boardPost, pinPost } from "../web/pages/boards-edit.ts";
+import { boardsHoldPost } from "../web/pages/boards-holds.ts";
 import { boardLive, boardShow, boardsList } from "../web/pages/boards-view.ts";
 import {
   closeStreamsOf,
@@ -891,6 +892,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/boards", boardsList);
   router.add("GET", "/boards/data", boardsPage);
   router.add("POST", "/boards/new", boardNew);
+  router.add("POST", "/boards/holds", boardsHoldPost);
   router.add("POST", "/boards/pin", boardPin);
   for (const op of ["pin-panel", "unpin-panel", "move-pin"]) router.add("POST", `/boards/${op}`, pinPost);
   router.add("GET", "/boards/:slug", boardShow);

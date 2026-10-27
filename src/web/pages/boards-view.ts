@@ -20,6 +20,7 @@ import { html, when, type Html } from "../html.ts";
 import { fragment, page } from "../layout.ts";
 import { btn, card, chartBox, empty, field, selectField } from "../ui.ts";
 import { flowPanel } from "./flow-panel.ts";
+import { boardsHoldsCard } from "./boards-holds.ts";
 import { forgeCeiling } from "../../flow/ceiling.ts";
 import { alarmLines, cachedAlarms } from "../studio/alarm_lines.ts";
 import { isPinned, listPins } from "../../boards/pins.ts";
@@ -85,7 +86,12 @@ export async function boardsList(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   if (ctx.auth.user === undefined) return signInFirst(ctx);
   const listed = await timePhaseAsync(ctx.request, "boards", () => listAllBoards(ctx.app, ctx.auth.user));
-  if (!listed.ok) return notFoundPage(ctx);
+  if (!listed.ok) {
+    // Not a forge admin: the page is the holds of the repositories they administer, or not found.
+    const holds = boardsHoldsCard(ctx.app.db, ctx.auth.user);
+    if (holds === null) return notFoundPage(ctx);
+    return page({ ctx, title: "Boards", body: html`<div class="page-head"><h1>Boards</h1></div>${holds}` });
+  }
   const make = html`<form method="post" action="/boards/new" class="bar">
     ${field({ label: "New board", name: "title", id: "new-board-title", required: true, maxlength: MAX_TITLE, placeholder: "Title" })}
     ${btn("Make board", { variant: "primary" })}
@@ -112,7 +118,7 @@ export async function boardsList(ctx: Ctx): Promise<Response> {
     body: html`<div class="page-head"><h1>Boards</h1>
         ${btn("Explore the data", { href: "/boards/data", variant: "ghost" })}</div>
       ${alarmLines(cachedAlarms(ctx.app.db, new Date(), forgeCeiling(ctx.app.config)))}
-      ${card(make)} ${body} ${flow}`,
+      ${card(make)} ${body} ${flow} ${boardsHoldsCard(ctx.app.db, ctx.auth.user, true)}`,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;

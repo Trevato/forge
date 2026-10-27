@@ -40,6 +40,8 @@ when). The terminal's palette has the same as "Crew hand-overs", a read-only
 list of the same rows (repo#number, title, reasons; it does not open the
 issue — use the link on the page). Both are a forge admin's only.
 
+`/boards` carries a Held files card for anyone who administers a repository (a forge admin sees every repository's): the holds of the repositories you administer, a form to hold another path, Release on each row, and "Showing 200 of N" when the list is cut. The user menu links Boards to such a person. In the terminal, a bare line on the Held files prompt lists the same holds.
+
 A hold can be set "until green" (a checkbox on the hold form, `until: "green"` on the hold API and the MCP `hold` tool): when a check passes on the pull's current head the forge releases it and the pull's timeline says `hold released: green on <short oid>`. A plain hold is never released by a check.
 
 A hold an agent placed does not stand forever: the tick releases one still standing after 24 h, in one transaction, with a comment on the pull, "Hold expired after 24 h: <why>. Back to @builder.", which shows in the pull's timeline like any comment, and the pull goes back to its builder (`expireCrewHolds` in `src/actions/holds.ts`). A person's hold is never expired. The window is fixed; a pull held again and expiring again leaves one such comment per round in its timeline.
