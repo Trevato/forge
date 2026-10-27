@@ -19,6 +19,7 @@
  * can see, one lane each.
  */
 
+import type { MapHold } from "../../crew/held.ts";
 import { sealedScope } from "../../core/sealed.ts";
 import type { Database } from "bun:sqlite";
 import {
@@ -1482,6 +1483,7 @@ export function mapJson(
   marks: Marks = NO_MARKS,
   pillars?: PillarView,
   ask: readonly AskToLiveCount[] = [],
+  held?: { holds: ReadonlyMap<number, MapHold>; startable: readonly number[] },
 ): Record<string, unknown> {
   const ready = readyNow(graph);
   const readySet = new Set(ready.map((r) => r.issue.id));
@@ -1508,7 +1510,10 @@ export function mapJson(
     ready: ready.map((r) => ({
       ...brief(r.issue),
       holdsUp: r.holdsUp,
+      ...(held === undefined ? {} : { held: held.holds.get(r.issue.number) ?? null }),
     })),
+    // The ready numbers no filter holds: what a builder may start now.
+    ...(held === undefined ? {} : { startable: held.startable }),
     blockedOn: blockedOn(graph).map((r) => ({
       ...brief(r.issue),
       holdsUp: r.holdsUp,

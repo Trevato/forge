@@ -1,5 +1,6 @@
 import { sealedScope } from "../../../core/sealed.ts";
 import { repoGraph } from "../../../core/dependencies.ts";
+import { mapHeldFor } from "../../../crew/held.ts";
 import { pillarView } from "../../../core/pillars.ts";
 import { askToLiveFor } from "../../../web/ask_to_live.ts";
 import { listActiveRuns } from "../../../core/runs.ts";
@@ -20,9 +21,8 @@ export const tool: Tool = {
   async run(ctx, user, args) {
     const repo = planRepo(ctx, user, args);
     if (isAnswer(repo)) return repo;
-    const graph = repoGraph(ctx.app.db, repo.id, {
-      ...sealedScope(ctx.app.db, repo, user),
-    });
+    const scope = sealedScope(ctx.app.db, repo, user);
+    const graph = repoGraph(ctx.app.db, repo.id, { ...scope });
     const pillars = pillarView(ctx.app.db, repo);
     return good(
       mapJson(
@@ -36,6 +36,7 @@ export const tool: Tool = {
         ),
         pillars,
         askToLiveFor(ctx.app, repo, pillars, user),
+        mapHeldFor(ctx.app, repo, graph, scope),
       ),
     );
   },

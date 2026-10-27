@@ -345,6 +345,7 @@ import {
 } from "../actions/dependencies.ts";
 import { openPlan, parsePlan, proposePlan } from "../actions/plan.ts";
 import { dependenciesOf, repoGraph } from "../core/dependencies.ts";
+import { mapHeldFor } from "../crew/held.ts";
 import { pillarView } from "../core/pillars.ts";
 import { askToLiveFor } from "../web/ask_to_live.ts";
 import { decisionStats, listDecisions } from "../core/decisions.ts";
@@ -3855,12 +3856,13 @@ export function apiRoutes(router: Router<Handler>): void {
         const ask = timePhase(request, "asktolive", () =>
           askToLiveFor(ctx.app, repo, pillars, ctx.auth.user),
         );
-        return timePhase(request, "render", () => mapJson(repo, graph, marks, pillars, ask));
+        const held = timePhase(request, "held", () => mapHeldFor(ctx.app, repo, graph, scope));
+        return timePhase(request, "render", () => mapJson(repo, graph, marks, pillars, ask, held));
       },
     );
     // A snapshot skips the phases; they are still named, as hits at no cost.
     if (!built)
-      for (const name of ["graph", "marks", "pillars", "asktolive", "render"])
+      for (const name of ["graph", "marks", "pillars", "asktolive", "held", "render"])
         notePhase(request, name, 0, hit);
     return json(value);
   });

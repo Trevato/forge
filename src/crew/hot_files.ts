@@ -108,18 +108,24 @@ export async function learnPullFiles(app: App, repo: Repo, now: number = Date.no
 }
 
 /** Every file of `repoId` with how many open pulls touch it, narrow pulls only. */
-export function pullCounts(repoId: string): Map<string, number> {
+export function pullCounts(
+  repoId: string,
+  admit: (pullNumber: number) => boolean = () => true,
+): Map<string, number> {
   const counts = new Map<string, number>();
-  for (const { files } of touched.get(repoId)?.values() ?? []) {
-    if (files.length > WIDE_PULL) continue;
+  for (const { files, number } of touched.get(repoId)?.values() ?? []) {
+    if (files.length > WIDE_PULL || !admit(number)) continue;
     for (const file of files) counts.set(file, (counts.get(file) ?? 0) + 1);
   }
   return counts;
 }
 
 /** Every file of `repo` that `HOT_PULLS` or more open pulls touch, with how many. */
-export function hotFiles(repoId: string): Map<string, number> {
-  const counts = pullCounts(repoId);
+export function hotFiles(
+  repoId: string,
+  admit?: (pullNumber: number) => boolean,
+): Map<string, number> {
+  const counts = pullCounts(repoId, admit);
   for (const [file, n] of counts) if (n < HOT_PULLS) counts.delete(file);
   return counts;
 }

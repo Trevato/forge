@@ -30,11 +30,12 @@
 
 import type { App } from "../app.ts";
 import { listCrewRoles, type Agent, type CrewRole } from "../core/agents.ts";
-import { readyNow, repoGraph, type Ranked } from "../core/dependencies.ts";
+import { readyNow, repoGraph, type Graph, type Ranked } from "../core/dependencies.ts";
 import { alreadyDone, BY_CREW, DONE_LIKE } from "../core/done_on_main.ts";
 import type { Issue } from "../core/issues.ts";
 import { withPlanner } from "../core/limb_replan.ts";
 import type { Repo } from "../core/repos.ts";
+import { sealedRowByNumber } from "../core/sealed.ts";
 import { listActive, type Run } from "../core/runs.ts";
 import { getUserById } from "../core/users.ts";
 import type { Stuck } from "./brief.ts";
@@ -120,15 +121,17 @@ export function heldBy(
   ready: readonly Ranked[],
   crew: readonly { agent: Agent; role: CrewRole }[],
   active: readonly Run[],
+  admit: (pullNumber: number) => boolean = () => true,
 ): Held {
   const busyIssues = new Set(active.map((r) => r.issueId));
-  const proposed = proposedWork(app.db, repo);
+  // Only the pulls the viewer may see count: a sealed pull holds nothing for a guest.
+  const proposed = new Map([...proposedWork(app.db, repo)].filter(([, pull]) => admit(pull.number)));
   // An issue a planner or a reviewer holds is theirs, not a builder's.
   const planners = new Set(
     crew.filter((c) => c.role !== "builder").map((c) => c.agent.user.id),
   );
   const handed = withPlanner(app.db, repo);
-  const hot = hotFiles(repo.id);
+  const hot = hotFiles(repo.id, admit);
   const pins = new Map(heldFiles(app.db, repo.id).map((h) => [h.path, h]));
   const pinned = new Map<number, FileHold>();
   // The hold an admin set on a file the issue names, if any: the first by hold order.
@@ -210,4 +213,77 @@ export function stuckOf(held: Held): Stuck | undefined {
     held.by[hold].map((issue) => ({ number: issue.number, title: issue.title, hold })),
   );
   return issues.length === 0 ? undefined : { held: heldWords(held), issues };
+}
+
+/** What holds a ready issue, as the map's API says it. */
+export interface MapHold {
+  readonly by: HoldName;
+  readonly detail: string;
+}
+
+const HOLD_WORDS: Readonly<Record<HoldName, string>> = {
+  running: "a run is in flight on it",
+  open_pull: "an open pull already proposes it",
+  planner: "the planner or a reviewer holds it",
+  with_planner: "its limb waits on the planner",
+  done_on_main: "found done on the base branch; waits for a person to close it",
+  stalled: "a builder ran on it and left without a pull",
+  run_cap: "it has used its runs for the day",
+  parked_twice: "parked twice; it is the planner's",
+  red_fix: "a fix for a red main covers it",
+  hot_file: "a file it names is hot",
+};
+
+/**
+ * The hold on each held ready issue, by number, and the numbers none holds.
+ * `hot_file` names the file and its open pulls. Memory and the database only:
+ * no git call. `issues` is the viewer's own ready list, so a sealed issue the
+ * viewer may not see is never named.
+ */
+export function mapHolds(
+  repo: Repo,
+  held: Held,
+  admit: (pullNumber: number) => boolean = () => true,
+): { holds: Map<number, MapHold>; startable: number[] } {
+  const hot = hotFiles(repo.id, admit);
+  const holds = new Map<number, MapHold>();
+  for (const name of HOLDS) {
+    for (const issue of held.by[name]) {
+      let detail = HOLD_WORDS[name];
+      if (name === "hot_file") {
+        const pin = held.pinned.get(issue.number);
+        const top = hotOverlap(issue, hot)[0];
+        if (pin !== undefined) detail = `${pin.path} is held by an admin`;
+        else if (top !== undefined)
+          detail = `${top.path} is in ${top.pulls} open ${top.pulls === 1 ? "pull" : "pulls"}`;
+      }
+      holds.set(issue.number, { by: name, detail });
+    }
+  }
+  return { holds, startable: held.startable.map((r) => r.issue.number) };
+}
+
+/** The pulls a viewer of `scope` may see: all with the sealed scope, else the unsealed and their own. */
+function admits(app: App, repo: Repo, scope: { sealed?: true; sealedBy?: string }) {
+  if (scope.sealed === true) return () => true;
+  return (n: number): boolean => {
+    const row = sealedRowByNumber(app.db, repo.id, n);
+    return row === undefined || !row.sealed || row.authorId === scope.sealedBy;
+  };
+}
+
+/** The map's holds for one viewer: shared by the route and the MCP `map` tool. */
+export function mapHeldFor(
+  app: App,
+  repo: Repo,
+  graph: Graph,
+  scope: { sealed?: true; sealedBy?: string },
+): ReturnType<typeof mapHolds> {
+  const admit = admits(app, repo, scope);
+  const active = listActive(app.db, "agent").filter((r) => r.repoId === repo.id);
+  return mapHolds(
+    repo,
+    heldBy(app, repo, readyNow(graph), listCrewRoles(app.db, repo.id), active, admit),
+    admit,
+  );
 }
