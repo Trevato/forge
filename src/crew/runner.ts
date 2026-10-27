@@ -833,6 +833,12 @@ export function convergeFollowing(
     : { parent: `${parent.ownerName}/${parent.name}`, branch: parent.defaultBranch };
 }
 
+/** The paragraphs a pull description opens with, or nothing when there are none. */
+function pullNote(...parts: (string | undefined)[]): string | undefined {
+  const present = parts.filter((part): part is string => part !== undefined);
+  return present.length === 0 ? undefined : present.join("\n\n");
+}
+
 async function work(
   app: App,
   run: Run,
@@ -881,14 +887,23 @@ async function work(
   // brief, its clone is its own fork at a scratch branch, and it pushes
   // nothing. The pull's branch is not its to move, and it never tries.
   const reviewing = reason === "review";
-  if (pull !== undefined && !reviewing && pull.headRepoId !== fork.value.id)
+  if (pull !== undefined && !reviewing && pull.headRepoId === repo.id)
     return {
       state: "failed",
-      summary:
-        pull.headRepoId === repo.id
-          ? `pull #${pull.number}'s branch lives in the repository itself; the crew works from forks now — close it and assign the issue again`
-          : "this pull's branch lives in a fork the agent cannot push to",
+      summary: `pull #${pull.number}'s branch lives in the repository itself; the crew works from forks now — close it and assign the issue again`,
     };
+  // A pull whose branch lives in someone else's fork is not the agent's to
+  // push to, and the run no longer fails for it: like a merged pull's
+  // follow-up, it starts a fresh branch in the agent's own fork and lands as
+  // a pull of its own.
+  const foreign =
+    pull !== undefined && !reviewing && pull.headRepoId !== fork.value.id
+      ? pull
+      : undefined;
+  if (foreign)
+    write(
+      `pull #${foreign.number}'s branch lives in another fork: starting a fresh branch in the agent's own, with the diff in the brief`,
+    );
   // A pull the conversation outlived. Closed without a merge, the proposal
   // was declined and there is nothing to continue. Merged before the run
   // began, its branch is spent: the follow-up starts a fresh branch from the
@@ -898,7 +913,8 @@ async function work(
       state: "failed",
       summary: `pull #${pull.number} was closed before the run began`,
     };
-  const continuing = pull !== undefined && pull.mergedAt !== null;
+  const continuing =
+    pull !== undefined && (pull.mergedAt !== null || foreign !== undefined);
   const pullStands = pull !== undefined && !continuing;
   const branch =
     pull !== undefined && !continuing && !reviewing
@@ -1096,6 +1112,14 @@ async function work(
           ? lastTryOf(app, issue.id, run, reviews)
           : undefined,
       checkSummary: failedCheck?.run?.summary,
+      foreignPull:
+        foreign
+          ? {
+              branch: foreign.headBranch,
+              diff: (await reviewInputs(app, repo, foreign, undefined, bare))
+                .reviewDiff,
+            }
+          : undefined,
       resolution:
         reason === "resolve" && pull
           ? await resolutionBrief(app, repo, pull)
@@ -1666,9 +1690,14 @@ async function work(
       bare,
       { ...gitAuth, ...identity },
       result.result,
-      stoppedAt === undefined
-        ? undefined
-        : `Budget reached at $${stoppedAt.toFixed(2)}; this is where it stopped.`,
+      pullNote(
+        foreign
+          ? `A fresh start: pull #${foreign.number}'s branch \`${foreign.headBranch}\` lives in another fork, which the crew cannot push to, so this work began from \`${repo.defaultBranch}\` and does not carry that branch's commits.`
+          : undefined,
+        stoppedAt === undefined
+          ? undefined
+          : `Budget reached at $${stoppedAt.toFixed(2)}; this is where it stopped.`,
+      ),
       write,
       Object.values(grant.env),
       run.variantGroup,
