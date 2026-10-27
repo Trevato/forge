@@ -665,9 +665,16 @@ export interface ListCommentsOptions {
   kind?: "comment" | "review" | "all";
   /** Only comments after this id (ids sort oldest first). */
   after?: string;
+  /** Only comments before this id. */
+  before?: string;
+  /** With `limit`: the newest ones, still answered oldest first. */
+  newest?: boolean;
   /** At most this many. */
   limit?: number;
 }
+
+/** How many of a thread's newest comments an issue read embeds, on the API and in the MCP (#6198). */
+export const EMBEDDED_COMMENTS = 50;
 
 /** How many timeline items a thread page shows before it folds the earlier ones behind `?all=1`. */
 export const THREAD_WINDOW = 50;
@@ -699,6 +706,11 @@ export function listComments(
     kind === "all"
       ? "comment.issue_id = ?1"
       : `comment.issue_id = ?1 AND comment.kind = '${kind}'`;
+  const args: string[] = [issueId];
+  let range = "";
+  if (options.after !== undefined) range += ` AND comment.id > ?${args.push(options.after)}`;
+  if (options.before !== undefined) range += ` AND comment.id < ?${args.push(options.before)}`;
+  const newest = options.newest === true && options.limit !== undefined;
   const rows = db
     .query<
       {
@@ -711,15 +723,16 @@ export function listComments(
         origin_author: string | null;
         heard_ok: string | null;
       },
-      [string]
+      string[]
     >(
       `SELECT comment.*, user.username AS author_name, heard.id AS heard_ok
        FROM comment JOIN user ON user.id = comment.author_id
        LEFT JOIN run heard ON heard.id = comment.heard_in AND heard.state = 'ok'
-       WHERE ${where}${options.after === undefined ? "" : " AND comment.id > ?2"}
-       ORDER BY comment.id${options.limit === undefined ? "" : ` LIMIT ${Math.trunc(options.limit)}`}`,
+       WHERE ${where}${range}
+       ORDER BY comment.id${newest ? " DESC" : ""}${options.limit === undefined ? "" : ` LIMIT ${Math.trunc(options.limit)}`}`,
     )
-    .all(...((options.after === undefined ? [issueId] : [issueId, options.after]) as [string]));
+    .all(...args);
+  if (newest) rows.reverse();
   return rows.map((row) => ({
     id: row.id,
     issueId: row.issue_id,
@@ -744,6 +757,15 @@ export function countComments(db: Database, issueId: string): number {
     >("SELECT COUNT(*) AS n FROM comment WHERE issue_id = ?1 AND kind = 'comment'")
     .get(issueId);
   return row?.n ?? 0;
+}
+
+/** Every comment a thread holds, review lines included: what the API's `commentsTotal` says. */
+export function countThread(db: Database, issueId: string): number {
+  return (
+    db
+      .query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM comment WHERE issue_id = ?1")
+      .get(issueId)?.n ?? 0
+  );
 }
 
 // ---- labels ----

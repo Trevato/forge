@@ -173,6 +173,8 @@ import {
   labelsFor,
   labelsForIssues,
   listComments,
+  countThread,
+  EMBEDDED_COMMENTS,
   listIssues,
   LIST_LIMIT,
   LIST_LIMIT_MAX,
@@ -2687,23 +2689,23 @@ export function apiRoutes(router: Router<Handler>): void {
     const found = timePhase(ctx.request, "issue", () => loadConversation(ctx));
     if ("error" in found) return found.error;
     const { repo, issue } = found;
-    // comments=N answers the newest N, oldest first, and the total (#4097).
+    // The newest 50 comments, oldest first, and a cursor for the older rest
+    // (#6198); comments=N (0 to 200) asks for another count (#4097).
     const asked = ctx.url.searchParams.get("comments");
-    let tail: number | null = null;
+    let tail = EMBEDDED_COMMENTS;
     if (asked !== null) {
       if (!/^\d{1,3}$/.test(asked) || Number(asked) > 200)
         return apiError("invalid_comments", 422, "comments must be a whole number from 0 to 200");
       tail = Number(asked);
     }
-    const { all, shown } = timePhase(ctx.request, "comments", () => {
-      const rows = listComments(ctx.app.db, found.issue.id);
+    const { total, shown } = timePhase(ctx.request, "comments", () => {
+      const rows =
+        tail === 0
+          ? []
+          : listComments(ctx.app.db, found.issue.id, { newest: true, limit: tail });
       return {
-        all: rows,
-        shown: readerMarked(
-          ctx,
-          found.repo.id,
-          tail === null ? rows : tail === 0 ? [] : rows.slice(-tail),
-        ),
+        total: countThread(ctx.app.db, found.issue.id),
+        shown: readerMarked(ctx, found.repo.id, rows),
       };
     });
     const labelled = timePhase(ctx.request, "labels", () => withLabels(ctx, issue));
@@ -2716,7 +2718,9 @@ export function apiRoutes(router: Router<Handler>): void {
             }
           : {}),
         comments: shown,
-        ...(tail === null ? {} : { commentCount: all.length }),
+        commentsTotal: total,
+        commentsNext: shown.length > 0 && shown.length < total ? shown[0]!.id : null,
+        ...(asked === null ? {} : { commentCount: total }),
       }),
     );
   });
@@ -2734,6 +2738,26 @@ export function apiRoutes(router: Router<Handler>): void {
     const after = ctx.url.searchParams.get("after");
     if (after !== null && !/^[A-Za-z0-9_-]{1,64}$/.test(after))
       return apiError("invalid_after", 422, "after is a comment id");
+    // `cursor` is what an issue's `commentsNext` hands over: the page just
+    // older than that comment, still oldest first, and `next` the cursor of
+    // the page older again (null at the first comment) (#6198).
+    const cursor = ctx.url.searchParams.get("cursor");
+    if (cursor !== null && !/^[A-Za-z0-9_-]{1,64}$/.test(cursor))
+      return apiError("invalid_cursor", 422, "cursor is a comment id from commentsNext");
+    if (cursor !== null && after !== null)
+      return apiError("invalid_cursor", 422, "cursor and after are two ways to page: send one");
+    if (cursor !== null) {
+      const older = timePhase(ctx.request, "comments", () =>
+        listComments(ctx.app.db, found.issue.id, { before: cursor, newest: true, limit: limit + 1 }),
+      );
+      const page = older.slice(older.length - Math.min(limit, older.length));
+      return timePhase(ctx.request, "render", () =>
+        json({
+          comments: readerMarked(ctx, found.repo.id, page),
+          next: older.length > limit ? page[0]!.id : null,
+        }),
+      );
+    }
     const { rows, page } = timePhase(ctx.request, "comments", () => {
       const read = listComments(ctx.app.db, found.issue.id, {
         limit: limit + 1,
