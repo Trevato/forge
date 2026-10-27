@@ -269,6 +269,7 @@ describe("the forge over MCP", () => {
       "returns",
       "review",
       "threads",
+      "snapshot_now",
       "spend",
       "usage",
       "labels",

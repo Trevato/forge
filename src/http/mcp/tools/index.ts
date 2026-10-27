@@ -110,6 +110,7 @@ export { tool as sever } from "./sever.ts";
 export { tool as share } from "./share.ts";
 export { tool as signup } from "./signup.ts";
 export { tool as sizes } from "./sizes.ts";
+export { tool as snapshot_now } from "./snapshot_now.ts";
 export { tool as spawn } from "./spawn.ts";
 export { tool as spend } from "./spend.ts";
 export { tool as ssh_keys } from "./ssh_keys.ts";

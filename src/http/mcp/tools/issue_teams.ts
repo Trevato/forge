@@ -5,7 +5,7 @@ import { good, bad, type Tool, REPO_ARG, repoArg, issueArg, isAnswer } from "../
 export const tool: Tool = {
   name: "issue_teams",
   description:
-    "Name up to two crew teams (design, data-science, security, platform) to review the pull.",
+    "Name up to two crew teams to review.",
   inputSchema: {
     type: "object",
     properties: {

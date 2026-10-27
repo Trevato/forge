@@ -133,6 +133,7 @@ for a tunnel and a forge that sleeps.
 | `share` | `{ item, to? }`: share a feed item (`item` is its id); with no `to` it goes to the app's crew and owners, else to up to 10 named usernames' followers; a daily budget each; answers `{ sent }` | yes |
 | `signup` | `{ mode?, dryRun? }`: who may sign up: `open` (default), `invite` (only a person with an open invite link) or `closed` (no new accounts); without `mode` it reads the setting, with `mode` it plans first (`dryRun` is true unless `false`), and applying needs an admin token | yes |
 | `sizes` | what a child forge's sizes mean: small, medium and large, each with CPU, memory and disk |  |
+| `snapshot_now` | no arguments: take a snapshot now, as the Backups page's button does; a forge admin with an admin-scope token; answers `{ name, repos, apps, bytes, says }` | yes |
 | `spawn` | `{ name, apps?, crew?, dryRun? }`: a child forge, planned first (`dryRun` is true unless `false`); an admin's, and an `ro` token may plan but not make | yes |
 | `ssh_keys` | `{ action?, title?, key?, id? }`: list your own SSH keys (default), add one (`key` is an authorized_keys line, `title` optional) or remove one by `id`; the API's rules and errors, add and remove need an `rw` token | yes |
 | `stop` | stop one run by its id from `now` | yes |
