@@ -290,6 +290,11 @@ forge status                     # the same report, without touching the network
 forge                            # the local UI over your clones
 ```
 
+A bare host means https; `localhost`, `127.0.0.1` and `[::1]` mean http. Plain
+`http://` to any other machine is refused — the token would cross the network in
+clear — unless you log in with `--insecure` for a host you trust; that is kept
+with that workbench only, and `FORGE_URL` to another such address is refused too.
+
 Repos land under `~/src/<host>/<owner>/<name>` — the path is the identity, so
 two forges with a `docs` repo never collide, and the filesystem is the index
 (there is no local database of "your repos"; the walk finds them). `--root`

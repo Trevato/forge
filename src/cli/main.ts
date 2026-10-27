@@ -21,6 +21,8 @@ import {
   configPath,
   loadConfig,
   normalizeUrl,
+  PLAIN_HTTP_REFUSAL,
+  plainHttpRemote,
   rootDir,
   saveConfig,
   type Config,
@@ -113,7 +115,7 @@ function usage(out: Out): void {
   out.line(`forge ${VERSION} — your workbench, on this machine`);
   out.line();
   out.line(b("  forge") + "                        the local terminal UI");
-  out.line(b("  forge login <url>") + "            [--token T]");
+  out.line(b("  forge login <url>") + "            [--token T] [--insecure]");
   out.line(b("  forge logout"));
   out.line(b("  forge whoami"));
   out.line(
@@ -149,6 +151,13 @@ async function login(out: Out, args: Args): Promise<number> {
     return EXIT.usage;
   }
   const url = normalizeUrl(raw);
+  // Before the token is asked for, let alone sent: nothing crosses the
+  // network in clear unless the person said this host is one they trust.
+  const insecure = args.flag("insecure");
+  if (plainHttpRemote(url) && !insecure) {
+    out.err(`forge login: ${PLAIN_HTTP_REFUSAL}`);
+    return EXIT.usage;
+  }
   const token = args.value("token") ?? (await askSecret(`Token for ${url}: `));
   if (token === "") {
     out.err("forge login: no token given");
@@ -162,7 +171,7 @@ async function login(out: Out, args: Args): Promise<number> {
     out.err(`forge login: ${me.error.message}`);
     return me.error.status === 401 ? EXIT.notConfigured : EXIT.failed;
   }
-  const stored = await saveConfig({ url, token });
+  const stored = await saveConfig({ url, token }, { insecure });
   out.line(
     `${out.paint(G.check, out.c.success)} signed in to ${url} as ${me.value.username}`,
   );
@@ -493,6 +502,10 @@ async function openTui(out: Out, args: Args): Promise<number> {
     return EXIT.usage;
   }
   const loaded = await loadConfig();
+  if (loaded === "plain_http") {
+    out.err(`forge: ${PLAIN_HTTP_REFUSAL}`);
+    return EXIT.usage;
+  }
   const config = typeof loaded === "string" ? null : loaded.config;
   const { runLocalTui } = await import("../tui/local/app.ts");
   await runLocalTui({
@@ -513,6 +526,10 @@ async function requireConfig(out: Out): Promise<Config | number> {
   if (loaded === "no_token") {
     out.err(`forge: ${configPath()} has no usable token — run \`forge login\``);
     return EXIT.notConfigured;
+  }
+  if (loaded === "plain_http") {
+    out.err(`forge: ${PLAIN_HTTP_REFUSAL}`);
+    return EXIT.usage;
   }
   return loaded.config;
 }
