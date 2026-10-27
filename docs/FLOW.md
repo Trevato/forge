@@ -35,10 +35,17 @@ A check on a pull whose last builder's run brought it up to date (a
 queued check (`checks/finishing_first.ts`). So the room for more rebases
 (`crew/conflict_room.ts`) is the check slots minus the rebases' checks and the
 bring-up-to-date runs in flight; a new build's check does not stand in front
-of a rebase and takes no room. When the pull's own builder already has a run
-in flight, the finishing pass (`crew/finishing.ts`) lends the update to an
-idle builder, round-robin by name; the run's agent is who rebased, and the log
-line names whose pull it was.
+of a rebase and takes no room. The finishing pass (`crew/finishing.ts`) gives
+the update to the builder who can push the pull's branch — the fork's owner,
+else its author — and when that builder already has a run in flight the
+update queues behind it: lent to another builder, it could never push
+(#7006).
+
+New work is the other way round: the decider's choice of builder is a
+ranking, and the most preferred builder with nothing in flight takes the
+issue (`rankedBuilder` in `crew/route.ts`), so the slots run more than one
+builder. The tick line's `idle` field counts the builders with nothing in
+flight beside `active` and `slots`.
 
 The tick line's `lane` field, the `Rebases:` line on `/flow` and in the
 terminal's Flow, and `rebases` in the MCP `flow` tool all read

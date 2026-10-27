@@ -282,6 +282,19 @@ export function slottedRuns(
   );
 }
 
+/**
+ * The builders with nothing in flight here. One agent runs one thing at a
+ * time, so `active` on the tick line climbs to at most
+ * min(slots, startable, idle builders + active) (#7006).
+ */
+export function idleBuilders(
+  active: readonly Run[],
+  crew: readonly { readonly agent: Agent; readonly role: CrewRole }[],
+): number {
+  const busy = new Set(active.map((r) => r.actorId));
+  return crew.filter((c) => c.role === "builder" && !busy.has(c.agent.user.id)).length;
+}
+
 export function autonomyStatus(
   app: App,
   repo: Repo,
@@ -1287,13 +1300,9 @@ export async function autonomyTick(
       const status = autonomyStatus(app, current, now);
       const approved = waitWords(lastWaits(current.id));
       const ready = readyNow(repoGraph(app.db, current.id, { sealed: true }));
-      const held = heldBy(
-        app,
-        current,
-        ready,
-        listCrewRoles(app.db, current.id),
-        activeRuns(app, current.id),
-      );
+      const crewNow = listCrewRoles(app.db, current.id);
+      const activeNow = activeRuns(app, current.id);
+      const held = heldBy(app, current, ready, crewNow, activeNow);
       const boots = bootCounts(app.config.dataDir);
       const staleToday = closedToday(app, current.id, now);
       // Says when the governor lowers the slots (#6375); one feed item per change.
@@ -1319,6 +1328,8 @@ export async function autonomyTick(
         ...flowVitals(app.db, now),
         active: status.active,
         slots: status.slots,
+        // Builders with nothing in flight: what bounds active beside slots and startable (#7006).
+        idle: idleBuilders(activeNow, crewNow),
         ...(governor === undefined ? {} : { governor }),
         // Approved conflicted pulls: queued, in flight, and why each other is
         // skipped (#3682, #6237), or "0 candidates of N open" (#6263); and the lane for rebases: conflicted N,

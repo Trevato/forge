@@ -10,12 +10,11 @@
  * - With a run already in flight on it, it is finishing: nothing more.
  * - With a slot free, a conflict run (the #2039 resolver brief: merge the
  *   base, resolve keeping both intents, re-run the check) is queued for
- *   its builder — the agent on it, else its author, else any builder —
- *   and it takes that slot. When that builder already has a run in
- *   flight, the run goes to an idle builder instead, round-robin, so one
- *   busy agent holding many pulls does not bring them up to date one at
- *   a time (#6140); the run's agent is who rebased, and the log names
- *   whose pull it was.
+ *   the builder who can push its branch — the owner of the fork it lives
+ *   in, else its author, else the agent on it, else any builder — and it
+ *   takes that slot. When that builder already has a run in flight, the
+ *   update queues behind it: lent to another builder (#6140) it could
+ *   never push, and failed every time (#7006).
  * - Its push is a check, so it also waits for room in the check lane, as
  *   the conflict sweep's runs do (`conflict_room.ts`): a landing that
  *   conflicts ten approved pulls at once must not put ten checks in the
@@ -48,7 +47,7 @@ import { getAgent, listCrewRoles, type Agent } from "../core/agents.ts";
 import { getHold } from "../core/holds.ts";
 import { getIssueById, type Issue } from "../core/issues.ts";
 import { listOpenPulls, pullDir, type Pull } from "../core/pulls.ts";
-import type { Repo } from "../core/repos.ts";
+import { getRepoById, type Repo } from "../core/repos.ts";
 import { reviewSummary } from "../core/reviews.ts";
 import { activeRunFor, listActive } from "../core/runs.ts";
 import { getUserById } from "../core/users.ts";
@@ -264,11 +263,10 @@ function finishOne(
   // A person's name on it is a person holding it — after a hand-over too.
   if (issue.assigneeId !== null && getAgent(app.db, issue.assigneeId) === undefined)
     return not("a person has it");
-  const own = ownBuilder(issue, builders, load);
-  if (own === undefined) return not(NO_BUILDER_ON_CREW);
-  // Two failed updates are counted against the pull's own builder, whoever ran them.
-  const builder = (slots > 0 && room > 0 ? lentBuilder(own, builders, load) : undefined) ?? own;
-  if (failedUpdates(app, issue, own, movedAt) >= CHECK_FAILED_LIMIT) return handOver(app, repo, pull, issue, files);
+  const forkOwner = getRepoById(app.db, pull.headRepoId)?.ownerId;
+  const builder = ownBuilder(issue, builders, load, forkOwner);
+  if (builder === undefined) return not(NO_BUILDER_ON_CREW);
+  if (failedUpdates(app, issue, builder, movedAt) >= CHECK_FAILED_LIMIT) return handOver(app, repo, pull, issue, files);
   if (slots <= 0) return not(WAITS_FOR_BUILDER_SLOT);
   if (room <= 0) return not("waits for room in the check lane");
   const run = queueAgentRun(app, repo, issue, builder, "conflict", undefined, {
@@ -277,46 +275,26 @@ function finishOne(
     summary: `main moved: ${files.join(", ")}`,
   });
   if (run === undefined) return not(`${builder.user.username}'s run was not queued (ceiling or breaker)`);
-  return {
-    pull: pull.number,
-    did: "queued update",
-    builder: builder.user.username,
-    ...(builder === own ? {} : { for: own.user.username }),
-  };
+  return { pull: pull.number, did: "queued update", builder: builder.user.username };
 }
 
-/** The pull's own builder: the agent on it, else its author, else the builder with least in flight. */
+/**
+ * The pull's own builder, the one who can push its branch: the owner of the
+ * fork it lives in, else its author, else the agent on it, else the builder
+ * with least in flight. Busy or not, it is theirs (#7006).
+ */
 export function ownBuilder(
   issue: Issue,
   builders: readonly Agent[],
   load: ReadonlyMap<string, number>,
+  forkOwner?: string,
 ): Agent | undefined {
   return (
-    builders.find((b) => b.user.id === issue.assigneeId) ??
+    builders.find((b) => b.user.id === forkOwner) ??
     builders.find((b) => b.user.id === issue.authorId) ??
+    builders.find((b) => b.user.id === issue.assigneeId) ??
     pickBuilder(issue, builders, load)
   );
-}
-
-/** Whose turn it is among the idle builders, kept across ticks so lent updates go round. */
-let turn = 0;
-
-/**
- * The builder who takes an update when `own` already has a run in flight:
- * the next idle builder, round-robin by name (#6140). Undefined when `own`
- * is idle or every builder is busy: then the update is `own`'s.
- */
-export function lentBuilder(
-  own: Agent,
-  builders: readonly Agent[],
-  load: ReadonlyMap<string, number>,
-): Agent | undefined {
-  if ((load.get(own.user.id) ?? 0) === 0) return undefined;
-  const idle = builders
-    .filter((b) => (load.get(b.user.id) ?? 0) === 0)
-    .sort((a, b) => a.user.username.localeCompare(b.user.username));
-  if (idle.length === 0) return undefined;
-  return idle[turn++ % idle.length];
 }
 
 /**
@@ -394,7 +372,6 @@ function say(repo: Repo, pull: Pull, move: FinishMove): void {
       repo: where,
       pull: pull.number,
       builder: move.builder,
-      ...(move.for === undefined ? {} : { for: move.for }),
     });
     return;
   }

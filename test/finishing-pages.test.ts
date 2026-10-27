@@ -13,6 +13,7 @@ import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { setCrewRole } from "../src/core/agents.ts";
+import { createRun } from "../src/core/runs.ts";
 import type { Pull } from "../src/core/pulls.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { submitReview } from "../src/core/reviews.ts";
@@ -125,7 +126,20 @@ test("said once per pull and reason: the same pass again logs nothing", async ()
   expect(lines).toEqual([]);
 });
 
-test("an approved, conflicted pull older than fifty newer ones is brought up to date", async () => {
+test("an approved, conflicted pull older than fifty newer ones is brought up to date, by its busy author", async () => {
+  // Its author is busy and another builder idle: the update still goes to
+  // the author, who can push the branch, queued behind that run (#7006).
+  const torque = await createAgent(app, alice, { username: "torque" });
+  if (!torque.ok) throw new Error(String(torque.error));
+  expect(addToCrew(app, alice, repo, "torque").ok).toBe(true);
+  const elsewhere = await pullOn(NEWER + 1, "export const busy = 1;\n");
+  createRun(app.db, {
+    repoId: repo.id,
+    kind: "agent",
+    issueId: elsewhere.id,
+    actorId: getUserByName(app.db, "mason")!.id,
+    reason: "assigned",
+  });
   const moved = await commitToBranch(app, alice, repo, {
     branch: "main",
     message: "Zero, main's way",
