@@ -223,7 +223,7 @@ longer sentences:
 
 - `dryRun`: plans unless it is `false`; anything else changes nothing. `limb` applying takes an admin token.
 - `tell.from`: a path on this forge the issue links to, like `/alice/notes/pulls/3`. `tell.context`: where this was told from, for the builder.
-- `spawn.reveal`, `claim_link.reveal`: put the live claim link in the answer (default false); it is a secret, only when its person reads it. `spawn.fresh`: a fresh app beside the copied ones. `spawn.followMode`: `tell-me` (default) or `take-updates`. `spawn.size`: recorded only, not enforced. `spawn.keepAccess`: stay an owner once claimed.
+- `spawn.reveal`, `claim_link.reveal`: put the live claim link in the answer (default false); it is a secret, only when its person reads it. `spawn.fresh`: a fresh app beside the copied ones. `spawn.followMode`: `tell-me` (default) tells the owner in their inbox when this forge's code moves; `take-updates` opens a pull with the new code, and a person merges it. `spawn.size`: recorded only, not enforced. `spawn.keepAccess`: stay an owner once claimed.
 - `commits.ref`: branch, tag or commit; the default branch when absent. `report.page`: the http(s) address where the problem was seen. `plan.issues.pillar`: the pillar served, as `"P0"` or `"P0 Trust"`; `later: true` means no pillar and needs `why`.
 - `explore.query`: words, plus `kind:app|person|forge` and `sort:score|forks|ships|use|fresh|name`, `updated:1d|7d|30d` (only what moved in that window) and `archived:yes`.
 - `archive.repos`: several repositories, as `owner/name`, to archive in one operation.

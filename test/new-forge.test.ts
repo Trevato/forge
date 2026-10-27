@@ -20,6 +20,7 @@ import { usePlacement, useProbe } from "../src/spawn/door.ts";
 import { childrenForMemory, maxChildren, setCapacity } from "../src/core/capacity.ts";
 import { hostedPlacement, memoryBodies } from "../src/spawn/placement.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { tool as spawnTool } from "../src/http/mcp/tools/spawn.ts";
 
 quietLogs();
 
@@ -302,11 +303,17 @@ describe("+ New forge", () => {
 
   test("the page promises no update that does not happen", async () => {
     const html = (await (await get(admin, "/forges/new")).text()).replace(/\s+/g, " ");
-    expect(html).toContain("Recorded for now: tell me");
-    expect(html).toContain("Recorded for now: take updates");
-    expect(html).toContain("nothing acts on it yet");
+    expect(html).toContain("Tell me <span class=\"muted small\">tells the owner in their inbox when this forge&#39;s code moves.</span>");
+    expect(html).toContain("Take updates <span class=\"muted small\">opens a pull with the new code, and a person merges it.</span>");
+    expect(html).toContain("<legend>How it follows this forge's code</legend>");
+    expect(html).not.toMatch(/recorded for now|nothing acts on it yet/i);
     expect(html).not.toContain("when this forge changes");
     expect(html).not.toMatch(/as long as its own changes merge/);
+  });
+
+  test("MCP spawn says what each follow mode does, as the page does", () => {
+    const followMode = (spawnTool.inputSchema.properties as Record<string, { description?: string }>)["followMode"];
+    expect(followMode?.description).toBe("tell-me: an inbox card; take-updates: a pull a person merges");
   });
 
   test("a forge at its depth limit shows no door, and its page says why", async () => {

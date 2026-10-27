@@ -1,4 +1,5 @@
 import { spawnDoor } from "../../../spawn/door.ts";
+import { FOLLOW_SHORT } from "../../../spawn/follow_words.ts";
 import { good, bad, type Tool, APP_ARG, REVEAL_ARG, LINK_KEPT, LINK_REVEALED } from "../shared.ts";
 
 export const tool: Tool = {
@@ -30,6 +31,7 @@ export const tool: Tool = {
       followMode: {
         type: "string",
         enum: ["tell-me", "take-updates"],
+        description: FOLLOW_SHORT,
       },
       size: {
         type: "string",

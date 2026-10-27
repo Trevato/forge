@@ -24,6 +24,7 @@ import {
   MIN_BUDGET_USD,
 } from "../../spawn/plan.ts";
 import { DEFAULT_SIZE, SIZES, sizesView } from "../../spawn/sizes.ts";
+import { FOLLOW_LABELS, FOLLOW_WORDS } from "../../spawn/follow_words.ts";
 import { notFoundPage, pageHead } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, type Html } from "../html.ts";
@@ -220,7 +221,7 @@ function formView(
           ...(errors["fresh"] ? { error: errors["fresh"] } : {}),
         })}
         <fieldset class="field" ${errors["followMode"] ? html`data-invalid` : null}>
-          <legend>How it follows this forge's code (recorded for now; nothing acts on it yet)</legend>
+          <legend>How it follows this forge's code</legend>
           <label class="check">
             <input
               type="radio"
@@ -229,7 +230,7 @@ function formView(
               ${values.followMode !== "take-updates" ? html`checked` : null}
             />
             <span
-              >Recorded for now: tell me <span class="muted small">your choice is kept; nothing tells you yet.</span></span
+              >${FOLLOW_LABELS["tell-me"]} <span class="muted small">${FOLLOW_WORDS["tell-me"]}</span></span
             >
           </label>
           <label class="check">
@@ -240,7 +241,7 @@ function formView(
               ${values.followMode === "take-updates" ? html`checked` : null}
             />
             <span
-              >Recorded for now: take updates <span class="muted small">your choice is kept; nothing acts on it yet.</span></span
+              >${FOLLOW_LABELS["take-updates"]} <span class="muted small">${FOLLOW_WORDS["take-updates"]}</span></span
             >
           </label>
           ${errors["followMode"]
