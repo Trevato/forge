@@ -5,7 +5,7 @@
  */
 
 import { join } from "node:path";
-import { rm } from "node:fs/promises";
+import { rm, stat } from "node:fs/promises";
 import { defect } from "../kernel/error.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { runGit, type GitFailure } from "./env.ts";
@@ -119,14 +119,26 @@ export async function setDefaultBranch(
   return result.ok ? ok() : result;
 }
 
-/** Permanently delete a repository directory. The caller owns the ceremony. */
+/** Is anything at this path? Keyed on the directory, so a half-removed repo counts. */
+export async function repoDirExists(dir: string): Promise<boolean> {
+  return await stat(dir).then(
+    () => true,
+    () => false,
+  );
+}
+
+/**
+ * Permanently delete a repository directory. The caller owns the ceremony.
+ * Presence is the directory, not HEAD: a removal that died partway leaves no
+ * HEAD but still leaves files, and a retry must finish the job.
+ */
 export async function deleteRepoDir(
   dir: string,
 ): Promise<Result<void, { message: string }>> {
   if (!dir.endsWith(".git")) {
     defect("git.refuse_delete", `refusing to delete non-repo path: ${dir}`);
   }
-  if (!(await repoExists(dir)))
+  if (!(await repoDirExists(dir)))
     return err({ message: `not a repository: ${dir}` });
   try {
     await rm(dir, { recursive: true, force: true });

@@ -15,7 +15,7 @@ import {
   detachFork,
   forkBareRepo,
   initBareRepo,
-  repoExists,
+  repoDirExists,
   repoDir,
 } from "../git/repos.ts";
 import { id } from "../kernel/id.ts";
@@ -902,7 +902,7 @@ export async function deleteRepo(
   // keeps the space actually free after the unlink instead of pinned to a
   // descriptor nobody will ever read again.
   closeReader(dir);
-  const present = await repoExists(dir);
+  const present = await repoDirExists(dir);
   // The directory goes first: when it will not, the row stays, so the
   // repository is still listed and a retry finds it. With no directory there
   // is nothing to orphan, so the row goes and the missing repository is
