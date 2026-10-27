@@ -216,6 +216,7 @@ describe("the forge over MCP", () => {
       "whoami_can",
       "profile",
       "mint_invite",
+      "tokens",
       "invites",
       "account_role",
       "account_suspend",

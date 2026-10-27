@@ -127,6 +127,7 @@ export { tool as telemetry_history } from "./telemetry_history.ts";
 export { tool as tell } from "./tell.ts";
 export { tool as thought } from "./thought.ts";
 export { tool as threads } from "./threads.ts";
+export { tool as tokens } from "./tokens.ts";
 export { tool as trail } from "./trail.ts";
 export { tool as upstream } from "./upstream.ts";
 export { tool as usage } from "./usage.ts";
