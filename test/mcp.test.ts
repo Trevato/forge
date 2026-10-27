@@ -245,6 +245,7 @@ describe("the forge over MCP", () => {
       "spawn",
       "forges",
       "claim_link",
+      "take_back",
       "take_updates",
       "sync",
       "sever",

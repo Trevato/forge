@@ -136,6 +136,7 @@ export { tool as subscription_wake } from "./subscription_wake.ts";
 export { tool as subscriptions } from "./subscriptions.ts";
 export { tool as sync } from "./sync.ts";
 export { tool as system } from "./system.ts";
+export { tool as take_back } from "./take_back.ts";
 export { tool as take_updates } from "./take_updates.ts";
 export { tool as teams } from "./teams.ts";
 export { tool as telemetry_grant } from "./telemetry_grant.ts";
