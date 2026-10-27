@@ -711,6 +711,12 @@ again — the page, the API and the event outbox carry the name and when it
 was set, nothing more. At rest each value is sealed with the data
 directory's key (`kernel/secret.ts`), bound to the app and the name.
 
+The same list is in the terminal: an admin's repository screen has
+*Variables* in its `:` palette, which lists names and scopes, sets one with
+`a` (a name, a value typed masked, a scope) and unsets one with `d` after a
+confirm, refused in the page's words (`actions/app_env_words.ts`). MCP
+`app_env` does the same for an agent.
+
 A variable has a **scope**: everywhere (`all`, the default), `production`
 only, or `preview` only — the select beside the value, or `"scope"` in the
 `PUT` body and `?scope=` on the `DELETE`. The same name may be set once in

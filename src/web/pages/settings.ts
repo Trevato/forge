@@ -36,8 +36,13 @@ import {
   listAppEnvNames,
   NAME_MAX,
   type AppEnvName,
-  type AppEnvScope,
 } from "../../core/app_env.ts";
+import {
+  APP_ENV_ERRORS,
+  APP_ENV_NO_SUCH,
+  APP_ENV_NOT_SET,
+  SCOPE_WORDS,
+} from "../../actions/app_env_words.ts";
 import { isAutonomy, isDecisionsBy } from "../../core/repos.ts";
 import { updateRepoSettings } from "../../actions/repos.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
@@ -734,17 +739,6 @@ function appSettingsView(
     </div>`;
 }
 
-/**
- * The app's environment: the names that are set, and a form for one more.
- * Values are write-only — the page shows a name and when it was set, and
- * the value input forgets what was typed the moment the form is sent.
- */
-const SCOPE_WORDS: Record<AppEnvScope, string> = {
-  all: "everywhere",
-  production: "production",
-  preview: "previews",
-};
-
 /** Production's visitors and the speed they saw, from the app's own beacon. */
 export function appVisitorsView(v: AppVitals): Html {
   const known = v.loadDays.filter((n): n is number => n !== null);
@@ -775,6 +769,11 @@ export function appVisitorsView(v: AppVitals): Html {
   );
 }
 
+/**
+ * The app's environment: the names that are set, and a form for one more.
+ * Values are write-only — the page shows a name and when it was set, and
+ * the value input forgets what was typed the moment the form is sent.
+ */
 function appEnvView(base: string, names: AppEnvName[]): Html {
   const rows = names.map((v) =>
     row({
@@ -1160,14 +1159,6 @@ export async function appDisable(ctx: Ctx): Promise<Response> {
   );
 }
 
-const APP_ENV_ERRORS: Record<string, string> = {
-  invalid_name: `A name is capital letters, digits and underscores, starting with a letter — ADMIN_PASSWORD, STRIPE_SECRET_KEY — and at most ${NAME_MAX} characters.`,
-  reserved_name:
-    "That name is the forge's own (PORT, HOST, PATH, FORGE_…); the app is already told it.",
-  invalid_value: "A value is one line or many, never empty and under 64 KiB.",
-  invalid_scope: "A variable goes everywhere, to production, or to previews.",
-};
-
 // POST /:owner/:name/settings/app/env — set one variable.
 export async function appEnvSet(ctx: Ctx): Promise<Response> {
   const gate = await adminForm(ctx);
@@ -1193,7 +1184,7 @@ export async function appEnvSet(ctx: Ctx): Promise<Response> {
       : {
           tone: "danger",
           message:
-            APP_ENV_ERRORS[set.error] ?? "That variable could not be set.",
+            APP_ENV_ERRORS[set.error] ?? APP_ENV_NOT_SET,
         },
   );
 }
@@ -1218,7 +1209,7 @@ export async function appEnvDelete(ctx: Ctx): Promise<Response> {
     `${repoBase(repo)}/settings/app`,
     removed.ok
       ? { message: `${name} is removed.${redeploying(ctx, "without it")}` }
-      : { tone: "danger", message: "No variable by that name." },
+      : { tone: "danger", message: APP_ENV_NO_SUCH },
   );
 }
 
