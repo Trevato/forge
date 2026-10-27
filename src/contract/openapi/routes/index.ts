@@ -75,6 +75,7 @@ export { route as getApiV1ReposOwnerNameAppDomains } from "./getApiV1ReposOwnerN
 export { route as getApiV1ReposOwnerNameAppEnv } from "./getApiV1ReposOwnerNameAppEnv.ts";
 export { route as getApiV1ReposOwnerNameAppEnvOpen } from "./getApiV1ReposOwnerNameAppEnvOpen.ts";
 export { route as getApiV1ReposOwnerNameAppMembers } from "./getApiV1ReposOwnerNameAppMembers.ts";
+export { route as getApiV1ReposOwnerNameAppNotes } from "./getApiV1ReposOwnerNameAppNotes.ts";
 export { route as getApiV1ReposOwnerNameAppProductionOpen } from "./getApiV1ReposOwnerNameAppProductionOpen.ts";
 export { route as getApiV1ReposOwnerNameBranches } from "./getApiV1ReposOwnerNameBranches.ts";
 export { route as getApiV1ReposOwnerNameCommits } from "./getApiV1ReposOwnerNameCommits.ts";
@@ -203,6 +204,9 @@ export { route as postApiV1ReposOwnerNameAppDomains } from "./postApiV1ReposOwne
 export { route as postApiV1ReposOwnerNameAppDomainsHostCheck } from "./postApiV1ReposOwnerNameAppDomainsHostCheck.ts";
 export { route as postApiV1ReposOwnerNameAppEnvRedeploy } from "./postApiV1ReposOwnerNameAppEnvRedeploy.ts";
 export { route as postApiV1ReposOwnerNameAppEnvStop } from "./postApiV1ReposOwnerNameAppEnvStop.ts";
+export { route as postApiV1ReposOwnerNameAppNotesIdBan } from "./postApiV1ReposOwnerNameAppNotesIdBan.ts";
+export { route as postApiV1ReposOwnerNameAppNotesIdHide } from "./postApiV1ReposOwnerNameAppNotesIdHide.ts";
+export { route as postApiV1ReposOwnerNameAppNotesIdUnban } from "./postApiV1ReposOwnerNameAppNotesIdUnban.ts";
 export { route as postApiV1ReposOwnerNameBranches } from "./postApiV1ReposOwnerNameBranches.ts";
 export { route as postApiV1ReposOwnerNameChecksRecheck } from "./postApiV1ReposOwnerNameChecksRecheck.ts";
 export { route as postApiV1ReposOwnerNameContents } from "./postApiV1ReposOwnerNameContents.ts";

@@ -318,3 +318,10 @@ export function unbanSender(app: App, record: AppRecord, repo: Repo, actor: User
   unbanVisitor(app.db, record.id, note.visitor);
   return ok(true);
 }
+
+/** One note as the owner sees it, hidden or not: what a moderation answers. Admins only. */
+export function ownerNote(app: App, record: AppRecord, repo: Repo, actor: User | undefined, noteId: string): OwnerNote | undefined {
+  if (actor === undefined || !canAdmin(app.db, repo, actor)) return undefined;
+  const note = getNote(app.db, record.id, noteId);
+  return note === undefined ? undefined : ownerView(app, repo, note, isBanned(app.db, record.id, note.visitor));
+}

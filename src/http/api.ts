@@ -414,6 +414,7 @@ import { agentRoutes } from "./api/agents.ts";
 import { boardRoutes } from "./api/boards.ts";
 import { followingRoutes } from "./api/following.ts";
 import { labelsRoutes } from "./api/labels.ts";
+import { appNoteRoutes } from "./api/app_notes.ts";
 import { reportRoutes } from "./api/reports.ts";
 import { rollbackRoutes } from "./api/rollback.ts";
 import { takeBackRoutes } from "./api/take_back.ts";
@@ -2689,6 +2690,7 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   reportRoutes(router);
+  appNoteRoutes(router);
   rollbackRoutes(router);
   takeBackRoutes(router);
 

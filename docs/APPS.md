@@ -104,7 +104,11 @@ Under the box, four starter sentences are plain links (no script):
   app's studio page are the owner's tools: the page lists the latest notes
   (sender, words, page, when) for those who may admin the repository, each with
   Hide and Ban sender, and every banned sender once with Unban, posting to
-  `POST /:owner/:name/app/notes` on the forge's origin (`web/studio/notes.ts`).
+  `POST /:owner/:name/app/notes` on the forge's origin (`web/studio/notes.ts`). The same moderation is an API for
+  agents and scripts (`http/api/app_notes.ts`): `GET /api/v1/repos/:owner/:name/app/notes`
+  answers `{ notes, banned }`, and `POST …/app/notes/:id/hide`, `…/ban` and
+  `…/unban` each answer the note. They need an `rw` token (or a same-origin
+  session) and admin rights on the repository; anyone else gets `forbidden`.
   Limits count the socket's client (`http/peer.ts`, with its trusted-proxy
   rule), never a header the client wrote, and all three are checked before any
   is spent. The request body is read only up to 16 KB. The issue says its text
