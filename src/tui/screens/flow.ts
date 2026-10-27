@@ -29,6 +29,7 @@ import { readLeadTime, type LeadTime } from "../../flow/lead_time.ts";
 import { buildYieldSays, readBuildYield } from "../../flow/build_yield.ts";
 import { readReviewLatency, reviewLatencySays } from "../../flow/review_latency.ts";
 import { readOpeners, type Opener } from "../../flow/openers.ts";
+import { clogLines, readClog } from "../../flow/clog_read.ts";
 import { readQueues, redBatchWords } from "../../flow/queue.ts";
 import { reviewersBusy, reviewingSays } from "../../flow/reviewing.ts";
 import { requestedSays, requestedWaits } from "../../flow/requested.ts";
@@ -74,6 +75,7 @@ export function flowLines(
     ...wrap(verdict(stages, now.getTime()), inner),
     "",
     ...wrap(vitalsLine(vitalsFor(readVitals(db, now, agent !== undefined), agent === undefined)), inner),
+    ...(agent === undefined ? clogLines(readClog(db, now), now.getTime()).flatMap((l) => wrap(l, inner)) : []),
     ...firedAlarms(db, now, { publicOnly: agent !== undefined, ceilingUsd }).flatMap((a) => wrap(a.says, inner)),
     "",
     ...wrap(parkedSays(readParked(db, now, agent !== undefined)), inner),

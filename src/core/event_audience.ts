@@ -154,6 +154,8 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     kind.startsWith("drill.") ||
     // A snapshot moving is the forge owner's too, and has no repository.
     kind.startsWith("backup.") ||
+    // A clog is the whole forge's flow, the owner's to hear (`flow/clog_tick.ts`).
+    kind.startsWith("clog.") ||
     // A report from outside waits for a person who decides; its arrival is
     // theirs to see, never the readers' (`actions/reports.ts`).
     kind.startsWith("report.") ||

@@ -46,6 +46,8 @@ A hand-over card on `/asks` (an agent's pull the reviewer stopped on after three
 
 Home opens with "Since you were here · 2 days": the pulls that landed in public repositories since you last loaded `/` (1 hour to 7 days back, a day on a first visit); the terminal's home shows the same lines, and MCP `feed` answers them as `digest`. See `docs/features/since-you-were-here.md`.
 
+An admin's home and the terminal's Flow dialog also say when the forge is clogged and how long the last clog took to notice and to clear: `docs/features/clog-watch.md`.
+
 A pull the merge queue holds as red alone (red on its own merge at its current head; cleared by a new head or a moved main) says so under its checks line: "red alone at <time>, waiting for a new head or a new main", on the pull page, its live checks line and the studio change step, and in the checks row of the pull's terminal screen (`redMark` in `src/checks/queue.ts`). Nothing is drawn when it is not held.
 
 On a sealed issue, a writer gets the private repository to fix it in: `POST /api/v1/repos/:owner/:name/issues/:number/private`, the issue page's button, and `p` on the issue's terminal screen, which shows the repository and its clone URL (built from the forge's origin). All three refuse alike: not found for anyone who may not see sealed reports, `not_sealed`, and `unverified`.

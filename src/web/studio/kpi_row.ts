@@ -10,6 +10,7 @@
 import type { Database } from "bun:sqlite";
 import { backupAge, backupFull, backupOverdue, buildersValue, checkTime, reactNote, speedWords, spendCeilingWords, spendFull, spendValue, usersValue, visitorsNote, visitorsValue, waitingWords } from "../../flow/kpi_words.ts";
 import type { Kpis } from "../../flow/kpis.ts";
+import { clogLines, readClog } from "../../flow/clog_read.ts";
 import { vitalsLine } from "../../flow/vitals.ts";
 import { cachedKpis, cachedVitals, cachedWaiting } from "./home_cache.ts";
 import { escapeHtml, html, raw, type Html } from "../html.ts";
@@ -195,4 +196,11 @@ export function vitalsRow(db: Database, now: Date = new Date()): Html {
   const v = cachedVitals(db, now);
   const rest = vitalsLine(v).split(" · ").slice(1).join(" · ");
   return html`<p class="small muted"><a href="/boards">${v.open} open pulls</a> · ${rest}</p>`;
+}
+
+/** Home's clog lines for an admin (#6757): the clog standing now and the last cleared note; nothing when there is neither. */
+export function clogRow(db: Database, now: Date = new Date()): Html {
+  const lines = clogLines(readClog(db, now), now.getTime());
+  if (lines.length === 0) return html``;
+  return html`${lines.map((l) => html`<p class="small muted break">${l}</p>`)}`;
 }
