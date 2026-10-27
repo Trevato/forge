@@ -214,9 +214,19 @@ with `follows owner/name` and MCP `following`'s standing: `in step`, or the
 state with `N ahead · M behind` (`parent frozen` behind a disconnected
 origin). When the crew has a converge in hand, a second line says what it is
 doing, in the words the following page uses; a fork that merges cleanly needs
-no crew and has no such line. `enter` on either opens the parent. A parent the
-viewer may not read is never named (`relationOf` hides it), and a repository
-that follows nothing shows neither line.
+no crew and has no such line. `enter` on the first opens the parent; on the
+second, the converge issue. A parent the viewer may not read is never named
+(`relationOf` hides it), and a repository that follows nothing shows neither
+line.
+
+On a fork behind a parent that is not frozen, a person who writes the fork is
+offered `t`: a confirm says what will happen (`Fast-forward to owner/name: N
+commits.`, a merge that keeps the fork's own commits, or the converge issue
+when both sides changed the same files), and `y` calls `takeOrTell`, as the
+following page and MCP `take_updates` do. The answer is the page's sentence
+(`takeWords`); on a conflict the crew's line names the converge issue opened
+or found, and `enter` opens it. A reader, an agent, a fork in step and a
+repository that follows nothing are not offered `t`.
 
 Forks with nothing ahead (or whose standing git cannot read) follow under
 `N forks with nothing new`. At most 60 forks are ranked per view; past that

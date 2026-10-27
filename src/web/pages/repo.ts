@@ -31,8 +31,8 @@ import {
   followingCard,
   followingOf,
   lineageCard,
-  nothingNew,
 } from "./following.ts";
+import { nothingNew } from "../../actions/follow.ts";
 import { frozenBlock } from "./frozen.ts";
 import { pinRepo, syncRepoNow, unpinRepo } from "../../actions/origins.ts";
 import {

@@ -37,7 +37,7 @@ import {
 } from "../../core/parent_releases.ts";
 import { running } from "../../kernel/version.ts";
 import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
-import { convergeWords, takeOrTell } from "../../actions/follow.ts";
+import { convergeWords, takeOrTell, takeWords } from "../../actions/follow.ts";
 import { FOLLOWS_NOTHING, PROPOSE_NEEDS_WRITE } from "../../actions/follow_words.ts";
 import { openProposal, proposeUpstream } from "../../actions/upstream.ts";
 import { field, readForm } from "../form.ts";
@@ -353,18 +353,6 @@ export function followingCard(
 }
 
 /**
- * What taking updates says when there was nothing to take. "Up to date"
- * only of a parent that is itself up to date: a frozen one may be far
- * behind its own upstream, and the take only knows the frozen copy.
- */
-export function nothingNew(parent: Repo): string {
-  const name = `${parent.ownerName}/${parent.name}`;
-  return parent.detached === null
-    ? `Already up to date with ${name}.`
-    : `Nothing new from ${name}, which is frozen: its origin was disconnected, so upstream may have moved. Reconnect it.`;
-}
-
-/**
  * POST /:owner/:name/following  { do: take | converge }
  * One form, two verbs: take what git can take, or hand the rest to the crew.
  */
@@ -421,35 +409,5 @@ export async function followingSubmit(ctx: Ctx): Promise<Response> {
   }
 
   const took = await takeOrTell(ctx.app, ctx.auth.user, repo);
-  if (!took.ok) {
-    const e = took.error;
-    if (typeof e === "string")
-      return flashOrJson(ctx, base, {
-        tone: "danger",
-        message:
-          e === "not_a_fork"
-            ? FOLLOWS_NOTHING
-            : "You need write access to take updates here.",
-      });
-    // A conflict is a tell for the crew (`actions/follow.ts`).
-    if (e.kind === "conflict") {
-      const files = `${e.files.length === 1 ? "One file needs" : `${e.files.length} files need`} a decision (${e.files.join(", ")})`;
-      const words = "converge" in e ? convergeWords(e.converge, parentName) : { message: "" };
-      return flashOrJson(ctx, base, { tone: "danger", message: `${files}. ${words.message}` });
-    }
-    return flashOrJson(ctx, base, {
-      tone: "danger",
-      message:
-        e.kind === "moved"
-            ? "Something moved while this was read; try again."
-            : `Git could not take the updates: ${e.message}`,
-    });
-  }
-  return flashOrJson(ctx, base, {
-    message: !took.value.updated
-      ? nothingNew(parent)
-      : took.value.merged
-        ? `Took ${parentName}'s updates: merged into ${repo.defaultBranch} at ${took.value.to.slice(0, 7)}.`
-        : `Took ${parentName}'s updates: ${repo.defaultBranch} is at ${took.value.to.slice(0, 7)}.`,
-  });
+  return flashOrJson(ctx, base, takeWords(took, repo, parent));
 }
