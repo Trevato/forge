@@ -23,6 +23,7 @@ export { tool as assigned } from "./assigned.ts";
 export { tool as attach_look } from "./attach_look.ts";
 export { tool as audit } from "./audit.ts";
 export { tool as backups_destination } from "./backups_destination.ts";
+export { tool as backups_test } from "./backups_test.ts";
 export { tool as board_delete } from "./board_delete.ts";
 export { tool as board_pins } from "./board_pins.ts";
 export { tool as board_write } from "./board_write.ts";

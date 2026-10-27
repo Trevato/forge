@@ -32,6 +32,7 @@ const ADMIN_ARGS: Record<string, Record<string, unknown>> = {
   hooks: { repo: "alice/game", action: "add", url: "https://example.com/h", secret: "0123456789abcdef0123" },
   app_domains: { repo: "alice/game", action: "add", host: "game.example.com" },
   backups_destination: { action: "set", bucket: "forge-snaps", accessKey: "AKIA", secretKey: "s3cr3t-key-0123456789" },
+  backups_test: { endpoint: "http://127.0.0.1:1", bucket: "b", accessKey: "AKIA", secretKey: "s3cr3t-key-0123456789" },
 };
 
 /** What `visible()` answers for a tool the token's scope does not open. */
