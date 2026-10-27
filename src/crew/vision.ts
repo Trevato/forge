@@ -17,6 +17,7 @@ import type { Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { listTree, readerFor } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
+import { clip } from "../text/clip.ts";
 
 const log = createLog("vision");
 
@@ -26,9 +27,7 @@ const LINE_SHOWN = 240;
 
 /** The line a thought adds: one flat, dated bullet that carries the thought's id. */
 export function directionLine(text: string, id: string, now: Date): string {
-  const flat = text.replace(/\s+/g, " ").trim();
-  const said = flat.length > LINE_SHOWN ? `${flat.slice(0, LINE_SHOWN - 1)}…` : flat;
-  return `- ${now.toISOString().slice(0, 10)}: ${said} (thought \`${id}\`)`;
+  return `- ${now.toISOString().slice(0, 10)}: ${clip(text, LINE_SHOWN)} (thought \`${id}\`)`;
 }
 
 /** `current` with `line` last under the `Changes of direction` section, made when missing. `current` null means no file. */
@@ -92,15 +91,15 @@ export const BLOCK_START = "<!-- forge:vision:start -->";
 export const BLOCK_END = "<!-- forge:vision:end -->";
 export const DIRECTION_LIMIT = 2000;
 
-const clip = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s);
+/** `clip`, never leaving a space before its "…". */
+const clipTight = (s: string, n: number): string => clip(s, n).replace(/ …$/, "…");
 
 /** The block for a vision, markers included, no longer than `room` characters; null when not even its head fits. */
 export function visionBlock(vision: Vision, room = DIRECTION_LIMIT): string | null {
-  const flat = (s: string): string => s.replace(/\s+/g, " ").trim();
   const parts: string[] = [];
-  if (vision.purpose) parts.push(`Purpose: ${clip(flat(vision.purpose), 400)}`);
+  if (vision.purpose) parts.push(`Purpose: ${clipTight(vision.purpose, 400)}`);
   if (vision.order.length > 0) parts.push(`Order of work: ${vision.order.map((o) => `${o.n}. ${o.name}`).join("; ")}.`);
-  for (const rule of vision.rules) parts.push(`Rule: ${clip(flat(rule), 160)}`);
+  for (const rule of vision.rules) parts.push(`Rule: ${clipTight(rule, 160)}`);
   const kept: string[] = [];
   for (const part of parts) {
     const next = `${BLOCK_START}\n${[...kept, part].join("\n")}\n${BLOCK_END}`;
