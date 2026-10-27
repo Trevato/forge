@@ -39,6 +39,8 @@ import {
   resolveReviewThread,
   submitReview,
 } from "../../actions/pulls.ts";
+import { holdPull, releasePull } from "../../actions/holds.ts";
+import { getHold, type Hold } from "../../core/holds.ts";
 import { revertPull } from "../../actions/revert.ts";
 import { takeBackWords } from "../../actions/revert_words.ts";
 import { openEnvUrl } from "../../actions/apps.ts";
@@ -262,6 +264,11 @@ export function pullScreen(
   /** Agent runs about this pull, newest first. */
   const crew = new RunList(f);
   const mayWrite = (): boolean => src.capabilities.write && repo !== undefined;
+  /** The hold that stands on this pull; undefined when none does. */
+  let hold: Hold | undefined;
+  /** `h` is a person's key: an agent's hold is refused by the action, so it is not offered. */
+  const mayHold = (): boolean =>
+    mayWrite() && f.user?.kind === "user" && issueRow !== undefined;
   /** A writer, on a pull that is one of several variants. */
   const mayVote = (): boolean =>
     mayWrite() &&
@@ -292,6 +299,7 @@ export function pullScreen(
         : withOutdated(listReviewComments(f.db, row.id), diff);
     threads = row === undefined ? [] : readThreads(row);
     issueRow = repo === undefined ? undefined : getIssue(f.db, repo.id, number);
+    hold = row === undefined ? undefined : getHold(f.db, row.id);
     // The app half: the preview environment (in memory, from the runtime),
     // the checks at the live head (a row), and what the crew has done here.
     const record = repo === undefined ? undefined : getAppByRepo(f.db, repo.id);
@@ -844,6 +852,9 @@ export function pullScreen(
                   ]
                 : []),
               binding(["a"], "assign"),
+              ...(mayHold() && (hold !== undefined || detail?.issue.state === "open")
+                ? [binding(["h"], hold === undefined ? "hold" : "let it go")]
+                : []),
               ...(state() === "conflicts"
                 ? [binding(["v"], "see the conflict blocks")]
                 : []),
@@ -929,7 +940,7 @@ export function pullScreen(
         x1,
         head!.y + 1,
         truncate(
-          ` ${facts?.mergedAt != null ? "merged" : issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)}${assignedText(issueRow, ctx.icons)}${facts?.proposal ? ` · ${proposedByText(facts.proposal)}` : ""}${next === null ? "" : ` · next: ${next.who}, ${next.why}`}`,
+          ` ${facts?.mergedAt != null ? "merged" : issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)}${assignedText(issueRow, ctx.icons)}${facts?.proposal ? ` · ${proposedByText(facts.proposal)}` : ""}${hold === undefined ? "" : ` · held by ${hold.heldByName}: ${hold.why}`}${next === null ? "" : ` · next: ${next.who}, ${next.why}`}`,
           Math.max(0, edge - x1),
         ),
         style(c.mutedFg, c.bg),
@@ -1072,6 +1083,51 @@ export function pullScreen(
       }
       if (e.key === "a" && mayWrite()) {
         assign();
+        return true;
+      }
+      if (e.key === "h" && mayHold() && repo !== undefined) {
+        const target = repo;
+        const user = f.user;
+        const row = getPull(f.db, target.id, number);
+        if (row === undefined) return true;
+        const done = (words: string) =>
+          runAsync(ctx, async () => {
+            ctx.toast(words, "success");
+            await reload();
+          });
+        if (hold !== undefined) {
+          ctx.push(
+            confirmScreen(ctx, screen, {
+              title: `Let #${number} go`,
+              body: [`Held by ${hold.heldByName}: ${hold.why}`],
+              actions: [
+                { label: "Cancel", variant: "ghost" },
+                { label: "Let it go" },
+              ],
+              selected: 1,
+              onChoose: (choice) => {
+                if (choice !== 1) return;
+                const out = releasePull(f.app, user, target, row);
+                if (out.ok) done("let go");
+                else ctx.toast(errorText(out.error), "danger");
+              },
+            }),
+          );
+        } else if (row.state === "open") {
+          ctx.push(
+            promptScreen(ctx, screen, {
+              title: `Hold #${number}`,
+              label: "Why",
+              hint: "One line saying why. Enter holds it; Esc cancels.",
+              onSubmit: (value) => {
+                const out = holdPull(f.app, user, target, row, value);
+                if (!out.ok) return errorText(out.error);
+                done("held");
+                return undefined;
+              },
+            }),
+          );
+        }
         return true;
       }
       if (e.key === "v" && mayWrite() && state() === "conflicts") {
