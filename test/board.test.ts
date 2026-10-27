@@ -490,6 +490,18 @@ describe("the board's forge strip", () => {
     expect(other).not.toContain("stuck.");
   });
 
+  test("the home lists the week's flaky tests, to an admin only", async () => {
+    expect(await board("root")).not.toContain("Flaky this week");
+    const made = await createRepo(app, admin, { name: "flaky" });
+    if (!made.ok) throw new Error(String(made.error));
+    app.db
+      .query("INSERT INTO check_flake (id, repo_id, run_id, commit_oid, test, file) VALUES ('f1', ?1, 'r1', 'abc1234', 'grp > flaky', 't/a.test.ts')")
+      .run(made.value.id);
+    expect(await board("root")).toContain("Flaky this week: grp &gt; flaky ×1 (root/flaky)");
+    expect(await board("bob")).not.toContain("Flaky this week");
+    app.db.query("DELETE FROM check_flake").run();
+  });
+
   test("the home says the lane when checks are queued, to an admin only", async () => {
     app.db.query("UPDATE run SET state = 'cancelled' WHERE state IN ('queued','running')").run();
     const idle = await board("root");

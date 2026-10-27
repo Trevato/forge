@@ -91,7 +91,7 @@ test("a site admin with a read-only token gets the shape; others get the short o
   const v = (await res.json()) as Record<string, any>;
   expect(Object.keys(v).sort()).toEqual(
     [
-      "apps", "at", "checkedAt", "commit", "degraded", "disk", "draining", "errors",
+      "apps", "at", "checkedAt", "commit", "degraded", "disk", "draining", "errors", "flakes",
       "incidents", "lane", "memory", "needs", "ok", "queue", "rollout", "stale", "stuck",
       "version",
     ].sort(),
@@ -168,8 +168,8 @@ test("the number of queries does not grow with runs", () => {
     if (i % 2) app.db.query("UPDATE run SET state='running' WHERE id=?1").run(r.id);
   }
   expect(count()).toBe(before);
-  // The queue, the running runs, the runs killed twice for their budget, the lane's depth and finished checks, the red mains holding pulls' checks, the tests red on many pulls, (the checks red on a full disk only while the disk is full), and the newest drill of every domain, and the checks no red main holds.
-  expect(before).toBe(9);
+  // The queue, the running runs, the runs killed twice for their budget, the lane's depth and finished checks, the red mains holding pulls' checks, the tests red on many pulls, (the checks red on a full disk only while the disk is full), and the newest drill of every domain, the checks no red main holds, and the week's flake list.
+  expect(before).toBe(10);
 });
 
 test("errors are counted, bounded, redacted, and a burst is said", async () => {

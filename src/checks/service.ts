@@ -55,6 +55,8 @@ import { giveHistory } from "./history.ts";
 import { readLearned } from "./learned.ts";
 import { keepCache, restoreCache } from "./cache.ts";
 import { MAX_FILED, clearedFiles, fileOrderDependent } from "./order_dependent.ts";
+import { parseBunTestFailure } from "./bun-test.ts";
+import { passedAlone, recordFlakes, rerunCommand, rerunnable } from "./flake.ts";
 import { withDisk } from "./disk_red.ts";
 import { ASKED, redMain, unheld } from "./red_main.ts";
 import { proposeRevert } from "./revert_red.ts";
@@ -204,6 +206,9 @@ export const PULL_RESERVE = 2;
  * the tip's is proven green by the gate.
  */
 export const LAND_SETTLE_MS = 30_000;
+
+/** The longest a failed test is given to pass alone, in seconds. */
+const RERUN_TIMEOUT_S = 300;
 
 /** How often queued checks another forge left are looked for. */
 const TICK_MS = 5_000;
@@ -700,6 +705,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       keep: run.issueId === null && run.env === repo.defaultBranch,
       keepImpact: pull === undefined && run.env === repo.defaultBranch,
       fileOrderDependent: run.issueId === null && run.env === repo.defaultBranch,
+      isMain: run.issueId === null && run.env === repo.defaultBranch,
       write,
       signal,
     });
@@ -722,6 +728,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     readonly keepImpact?: boolean;
     /** The default branch's own run: only its log may open issues. */
     readonly fileOrderDependent?: boolean;
+    /** The default branch's own run: a failure of one or two tests is re-run alone before it counts as red. */
+    readonly isMain?: boolean;
     readonly write: (line: string) => void;
     readonly signal: AbortSignal;
   }
@@ -1037,6 +1045,44 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         }
       } catch (error) {
         write(`order-dependent tests not filed: ${String(error)}`);
+      }
+      // Main's red costs the forge every pull's check (#6643): one or two
+      // failed tests are re-run alone, on this commit in this cell, before
+      // main counts as red. Passing alone is a flake: green, and recorded.
+      if (!ran.ok && job === undefined && x.isMain === true) {
+        try {
+          const tests = rerunnable(checkLines, parseBunTestFailure(checkLines));
+          if (tests !== undefined) {
+            write(`re-running ${tests.length} failed test(s) alone`);
+            let alone = true;
+            for (const test of tests) {
+              const out: string[] = [];
+              const again = await runStep("flake", rerunCommand(test), {
+                cwd: dir,
+                env,
+                log: (line) => {
+                  out.push(line);
+                  write(line);
+                },
+                signal,
+                timeoutMs: Math.min(manifest.timeout, RERUN_TIMEOUT_S) * 1000,
+                cell,
+              });
+              if (!again.ok || !passedAlone(out)) {
+                alone = false;
+                write(`"${test.name}" fails alone too: main is red`);
+                break;
+              }
+            }
+            if (alone) {
+              recordFlakes(app.db, app.bus, repo, tests, { runId: run.id, commit: run.commitOid });
+              write(`flaky: ${tests.map((t) => `"${t.name}"`).join(", ")} failed in the full run and passed alone; recorded, main stays green`);
+              ran = { ok: true, value: undefined };
+            }
+          }
+        } catch (error) {
+          write(`flake re-run failed: ${String(error)}`);
+        }
       }
       if (!ran.ok) {
         const { summary, detail } = summariseCheckFailure(

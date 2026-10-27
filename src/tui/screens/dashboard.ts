@@ -16,7 +16,7 @@
 
 import { protectionNotice } from "../../kernel/protection.ts";
 import { holdWords, plannerHold } from "../../crew/autonomy.ts";
-import { forgeLane, forgeNeeds } from "../../actions/health.ts";
+import { forgeFlakes, forgeLane, forgeNeeds } from "../../actions/health.ts";
 import { ownerWaits, waitLine, withMore } from "../../actions/owner_waits.ts";
 import { forgeHealth } from "../../kernel/guard.ts";
 import { coveredByVerdict, forgeVerdict, verdictLine } from "../../kernel/guard_verdict.ts";
@@ -197,6 +197,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   let clientLive = new Map<string, string>();
   /** The check lane, as the board's strip says it; null when nothing is queued. */
   let lane: string | null = null;
+  /** The week's flaky tests, one line; null when none flaked. */
+  let flaky: string | null = null;
   /** What the decider did today, the board's Today line; null on a quiet day or for a reader. */
   let decider: string | null = null;
   /** Home's three figures, as the web's row says them; empty unless an admin looks (they count every repository). */
@@ -301,6 +303,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     const facts = f.user === undefined ? new Set<string>() : ownerFactRepoIds(f.db, all, f.user);
     waits = ownerWaits(f.db, all.filter((r) => facts.has(r.id))).map(waitLine);
     lane = forgeLane(f.app, f.user);
+    flaky = forgeFlakes(f.app, f.user);
     decider = deciderLine(f.app, f.user);
     const commit = running().commit;
     const cleared = lastClearedNote(f.db, now);
@@ -967,6 +970,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       if (forge !== undefined) {
         const lines = forge.length === 0 ? ["All fine"] : withMore(forge, 3);
         if (lane !== null) lines.push(`Lane: ${lane}`);
+        if (flaky !== null) lines.push(`Flaky this week: ${flaky}`);
         const [strip, rest] = split(body, "v", [len(lines.length), fill(1)]);
         lines.forEach((line, i) =>
           s.text(

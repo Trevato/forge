@@ -132,4 +132,31 @@ describe("the merge queue searches a red candidate by stacked prefixes", () => {
     expect(told).toEqual([14]);
     expect(answers).toEqual([true, true, true, false]);
   });
+
+  test("prefixes [a,b] red and [a,b,c] green: a, b and c land in one step with no solo gate, the red is reported as a flake, no suspect is gated alone", async () => {
+    told.length = 0;
+    const pulls: Queued[] = [];
+    for (let i = 31; i <= 34; i++) pulls.push(entry(i, await headAdding(`v${i}`, `f${i}.txt`)));
+    const gates: number[][] = [];
+    const flaked: string[] = [];
+    const red = (name: string): LandVerdict => ({ lands: false, reopen: true, comment: "red", learn: [], tests: { passed: 0, failed: 1, failing: [{ name, file: "test/x.test.ts", errors: [] }] } });
+    const gate = async (candidate: Candidate): Promise<LandVerdict> => {
+      const numbers = candidate.steps.map((s) => s.entry.pull.number);
+      gates.push(numbers);
+      if (numbers.length === 4 || numbers.length === 2) return red(numbers.length === 4 ? "whole" : "flaky one");
+      return { lands: true };
+    };
+    let calls = 0;
+    const room = () => (calls++ === 0 ? 0 : 1);
+    const answers = await enqueue("search-flake", pulls, gate, {
+      depth: 1,
+      room,
+      onFlake: (_repo, reds) => flaked.push(...reds.flatMap((r) => ("tests" in r ? (r.tests?.failing.map((t) => t.name) ?? []) : []))),
+    });
+    expect(gates).toEqual([[31, 32, 33, 34], [31, 32], [31, 32, 33]]);
+    // The whole was red and 34 is all that is left of it: the culprit, with no gate of its own.
+    expect(answers).toEqual([true, true, true, false]);
+    expect(told).toEqual([34]);
+    expect(flaked).toEqual(["flaky one"]);
+  });
 });

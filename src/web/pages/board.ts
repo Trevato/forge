@@ -47,6 +47,7 @@ import { spendView } from "./spend.ts";
 import type { HandContext } from "../../crew/handover.ts";
 import { forgeHealth, rolloutLine } from "../../kernel/guard.ts";
 import { coveredByVerdict, forgeVerdict, verdictLine } from "../../kernel/guard_verdict.ts";
+import { flakeLine } from "../../checks/flake.ts";
 import { laneLine } from "../../kernel/vitals.ts";
 import { getIssue, getIssuesByIds, type Issue } from "../../core/issues.ts";
 import { looksForApps } from "../../core/looks.ts";
@@ -393,6 +394,7 @@ function forgeNotes(ctx: Ctx): { notes: Note[]; ok: boolean } | null {
   const others = fh.incidents.filter((i) => !said(`${i.key}: ${i.message}`));
   const ok = v.ok && fh.ok && verdict === undefined;
   const lane = laneLine(v.lane);
+  const flaky = flakeLine(v.flakes);
   const sentinel = sentinelNotice(ctx.app.db);
   const need = (key: string, line: Html): Note => ({ key, need: true, line });
   const notes: Note[] = [
@@ -412,6 +414,7 @@ function forgeNotes(ctx: Ctx): { notes: Note[]; ok: boolean } | null {
           need(`degraded:${d.cause}`, html`<a data-need href="${d.href}">${dot("attn")} ${needLine(d)}</a>`),
         )),
     ...(lane === null ? [] : [{ key: "lane", need: false, line: html`<span>Lane: ${lane}</span>` }]),
+    ...(flaky === null ? [] : [{ key: "flakes", need: false, line: html`<span data-flakes>Flaky this week: ${flaky}</span>` }]),
   ];
   return { notes, ok };
 }

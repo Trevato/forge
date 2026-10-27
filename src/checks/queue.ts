@@ -180,6 +180,11 @@ export interface QueueOptions {
    * kept beyond this process (#6427).
    */
   readonly onBatch?: (repoId: string, red: boolean) => void;
+  /**
+   * A shorter prefix was red and a longer one holding it green: the red was
+   * a flake, and its verdicts are handed here to be recorded.
+   */
+  readonly onFlake?: (repoId: string, reds: readonly Red[], tip: string) => void;
   /** Where the line's gates and red marks outlive this process (#6611). */
   readonly store?: QueueStore;
   /**
@@ -975,7 +980,12 @@ async function drain(line: Line, gate: GateCandidate, options: QueueOptions): Pr
       ahead.shift();
       let left: Waiting[];
       try {
-        left = await settleHead({ line, gated: searching, room, onBatch: options.onBatch }, head, verdict, ahead);
+        left = await settleHead(
+          { line, gated: searching, room, onBatch: options.onBatch, onFlake: options.onFlake },
+          head,
+          verdict,
+          ahead,
+        );
       } catch (error) {
         log.warn("merge queue round failed", { error: String(error) });
         for (const w of head.steps) w.settle(false);
@@ -1293,6 +1303,7 @@ interface Search {
   readonly gated: Gated;
   readonly room: Room;
   readonly onBatch: ((repoId: string, red: boolean) => void) | undefined;
+  readonly onFlake: ((repoId: string, reds: readonly Red[], tip: string) => void) | undefined;
 }
 
 /**
@@ -1344,7 +1355,9 @@ async function round(
  * top of it. All green, the culprit is in the last run. The runs after the
  * red one wait, in line order, for the next candidate. No green verdict is
  * thrown away: a disjoint segment gated on the base alone was void once
- * another landed (#6353).
+ * another landed (#6353). A longer prefix green lands whole, even when a
+ * shorter one was red: that red was a flake, reported to `onFlake`, and
+ * every pull in the green prefix is cleared as a suspect.
  *
  * However few slots are free, a search gates at least √n − 1 prefixes, so
  * the red run holds at most √n steps (#6674): a red batch blocks its line
@@ -1393,10 +1406,22 @@ async function judged(
     for (const w of steps) w.settle(false);
     return [];
   }
-  // The first red prefix, the whole when every gated one was green.
-  const found = verdicts.findIndex((v) => !v.lands);
-  const bad = found < 0 ? prefixes.length : found;
-  const known = bad < prefixes.length ? { treeOid: prefixes[bad]!.treeOid, red: verdicts[bad] as Red } : { treeOid: candidate.treeOid, red };
+  // The prefix after the longest green one, the whole when every gated one
+  // was green. A red before that green is a flake: the green holds it.
+  const bad = verdicts.findLastIndex((v) => v.lands) + 1;
+  const flaked = verdicts.slice(0, bad).filter((v): v is Red => !v.lands && "reopen" in v);
+  if (flaked.length > 0) {
+    for (const w of steps.slice(0, ends[bad - 1]!)) search.line.suspects.delete(w.entry.pull.id);
+    try {
+      search.onFlake?.(search.line.repoId, flaked, prefixes[bad - 1]!.tipOid);
+    } catch (error) {
+      log.warn("flake not kept", { repo: search.line.repoId, error: String(error) });
+    }
+  }
+  const known =
+    bad < prefixes.length
+      ? { treeOid: prefixes[bad]!.treeOid, red: verdicts[bad] as Red }
+      : { treeOid: candidate.treeOid, red };
   const green = bad > 0 ? ends[bad - 1]! : 0;
   if (green > 0) await land(prefixes[bad - 1]!, steps.slice(0, green));
   const now = [...landed, ...steps.slice(0, green).map((w) => w.entry)];

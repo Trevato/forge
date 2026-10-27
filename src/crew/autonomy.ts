@@ -129,6 +129,7 @@ import { crewOffInPreview } from "./preview.ts";
 import { approvedOnHead, finishApproved, finishFields } from "./finishing.ts";
 import { recheckRedApproved } from "./red_approved.ts";
 import { keepBatch } from "../flow/red_batches.ts";
+import { recordQueueFlakes } from "../checks/flake.ts";
 import { readVitals, vitalsMisses, vitalsWords } from "../flow/vitals.ts";
 import { moveRequested, tallyRequested, tallyWords } from "./requested.ts";
 import { reviewersOf, sendToReview, sweepReviews } from "./review.ts";
@@ -2100,6 +2101,10 @@ function queueOptions(app: App, repo: Repo): QueueOptions {
     batch: queueBatch(app.db),
     room: () => checksFor(app)?.spareSlots?.() ?? 0,
     onBatch: (repoId, red) => keepBatch(app.db, repoId, red),
+    onFlake: (repoId, reds, tip) => {
+      const owner = getRepoById(app.db, repoId);
+      if (owner !== undefined) recordQueueFlakes(app.db, app.bus, owner, reds, tip);
+    },
     store: queueStore(app.db),
     adopt: (record, signal) => adoptGate(app, repo, record, signal),
   };

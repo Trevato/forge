@@ -36,6 +36,7 @@ import { DOMAINS } from "./domains.ts";
 import { domainDrillNeeds } from "./domain_drill.ts";
 import { freeChecks, heldChecks, redHref, redSentence } from "../checks/red_main.ts";
 import { diskRedSentence, diskReds } from "../checks/disk_red.ts";
+import { flakeList, type FlakeRow } from "../checks/flake.ts";
 import { flakeHref, sharedCause, sharedSentence, sharedTests } from "../checks/shared_red.ts";
 
 /** A red in a repository other than the forge's own is not fixable from here: say so, so it reads as known. */
@@ -106,6 +107,8 @@ export interface Vitals {
   }[];
   readonly apps: { serving: number; asleep: number; previews: number };
   readonly errors: { lastHour: number; latest: ErrorLine[] };
+  /** Tests that failed in main's check and passed alone this week: a list, never a need (#6643). */
+  readonly flakes: FlakeRow[];
   readonly at: string;
 }
 
@@ -510,6 +513,7 @@ export function vitals(input: VitalsInput): Vitals {
     stuck,
     apps,
     errors: { lastHour: seen.lastHour, latest: seen.latest },
+    flakes: flakeList(input.db, now),
     at,
   };
 }
