@@ -426,10 +426,15 @@ describe("origins on the web", () => {
 
     // The job page renders the checklist, and works with no JavaScript: a
     // meta refresh keeps it current while the mirror is still running.
-    const running = await (await asUser(alice, jobPath)).text();
+    // A job nothing drives stays running, so the page cannot race the mirror.
+    const pending = createJob(id, "octo/pending");
+    const running = await (
+      await asUser(alice, `/settings/origins/${id}/mirror/${pending.id}`)
+    ).text();
     expect(running).toContain("Creating the repository");
     expect(running).toContain("Importing issues");
     expect(running).toContain('id="stages"');
+    advance(pending.id, { stage: "failed", detail: "test over" });
 
     const jobId = jobPath.split("/").pop()!;
     const done = await settled(jobId);
