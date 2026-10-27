@@ -2951,12 +2951,20 @@ export function apiRoutes(router: Router<Handler>): void {
     if (denied) return denied;
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
+    const window = keyedWindow(ctx);
+    if (window instanceof Response) return window;
     const waiting = timePhase(ctx.request, "reports", () =>
       waitingReports(ctx.app, ctx.auth.user, repo),
     );
     if (!waiting.ok) return respondAccess(waiting.error, 403);
     return timePhase(ctx.request, "render", () =>
-      json({ items: waiting.value.map((r) => ({ ...r, from: "outside" })) }),
+      json(
+        keyedPage(
+          waiting.value.map((r) => ({ ...r, from: "outside" })),
+          (r) => r.id,
+          window,
+        ),
+      ),
     );
   });
 

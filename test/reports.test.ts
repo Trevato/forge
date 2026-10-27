@@ -555,6 +555,38 @@ describe("reports from outside", () => {
     expect(count("issue")).toBe(issues);
   });
 
+  test("the reports list pages with limit and next_cursor, and refuses a bad window", async () => {
+    app.db.run("DELETE FROM report");
+    const insert = app.db.query(
+      "INSERT INTO report (id, repo_id, title, body) VALUES (?1, ?2, 't', '')",
+    );
+    for (let i = 0; i < 5; i++) insert.run(`page${i}`, game.id);
+    const path = "/api/v1/repos/alice/game/reports";
+    const whole = (await (await as(aliceToken, path)).json()) as any;
+    expect(whole.items.length).toBe(5);
+    expect(whole.next_cursor).toBeNull();
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    let pages = 0;
+    do {
+      const res = await as(aliceToken, `${path}?limit=2${cursor ? `&cursor=${cursor}` : ""}`);
+      expect(res.status).toBe(200);
+      const page = (await res.json()) as any;
+      expect(page.items.every((r: any) => r.from === "outside")).toBe(true);
+      seen.push(...page.items.map((r: any) => r.id));
+      cursor = page.next_cursor;
+      pages++;
+    } while (cursor !== null && pages < 10);
+    expect(pages).toBe(3);
+    expect(seen).toEqual(whole.items.map((r: any) => r.id));
+    for (const bad of ["0", "201", "-1", "x", ""]) {
+      const res = await as(aliceToken, `${path}?limit=${bad}`);
+      expect(res.status).toBe(422);
+      expect(await res.text()).toContain("invalid_limit");
+    }
+    app.db.run("DELETE FROM report");
+  });
+
   test("a repository holds a bounded number of waiting reports", async () => {
     app.db.run("DELETE FROM report");
     const insert = app.db.query(
