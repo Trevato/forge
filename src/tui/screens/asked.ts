@@ -10,7 +10,7 @@
 
 import type { Database } from "bun:sqlite";
 import { NOT_PLACED_YET } from "../../actions/ask_state_words.ts";
-import { askedIn, askedRepos, type Asked } from "../../core/asked.ts";
+import { askedIn, askedRepos, askedTier, outcomeText, type Asked } from "../../core/asked.ts";
 import { thoughtStream, type StreamThought } from "../../core/thought_stream.ts";
 import type { User } from "../../core/users.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -60,13 +60,15 @@ function thoughtLine(t: StreamThought): AskedLine {
   };
 }
 
+/** The words the page's badge uses, so the two doors agree. */
+const OUTCOME_WORD: Record<string, string> = { unplaced: "waiting", landed: "landed", failed: "failed", parked: "parked", building: "building", closed: "closed" };
+
 function askLine(a: Asked): AskedLine {
-  const word =
-    a.doneBy.length > 0 ? "done on main" : a.flagged ? "nothing built" : a.state;
+  const word = a.doneBy.length > 0 ? "done on main" : a.flagged ? "nothing built" : (OUTCOME_WORD[a.outcome.kind] ?? a.outcome.kind);
   return {
     title: plain(a.issue.title),
     ...toneOf(a.flagged, a.state),
-    secondary: `${a.repo.ownerName}/${a.repo.name} #${a.issue.number} · ${plain(a.askedBy)}`,
+    secondary: `${plain(outcomeText(a))} · ${a.repo.ownerName}/${a.repo.name} #${a.issue.number}`,
     meta: metaOf(word, relTime(a.askedAt)),
     path: `/${a.repo.ownerName}/${a.repo.name}/issues/${a.issue.number}`,
   };
@@ -78,7 +80,10 @@ export function askedLines(db: Database, viewer: User | undefined): { thoughts: 
   const repos = askedRepos(db, viewer, null);
   return {
     thoughts: thoughtStream(db, viewer, { limit: 50 }).map(thoughtLine),
-    asks: askedIn(db, repos, { show: "unshipped", order: "oldest" }).map(askLine),
+    // Needs the owner first, then in progress; the sort is stable, so each keeps oldest first.
+    asks: askedIn(db, repos, { show: "unshipped", order: "oldest" })
+      .sort((x, y) => askedTier(x) - askedTier(y))
+      .map(askLine),
   };
 }
 

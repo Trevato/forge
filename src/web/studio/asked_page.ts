@@ -1,23 +1,25 @@
 /**
  * `/asked`: everything a person asked for, oldest unmet first, and what
- * became of it (`core/asked.ts`). The path: the owner wonders whether something he
- * asked for was heard, opens this from the asks page or the board, and
- * opens the ask. One row per ask, one word per row; a row with nothing built
- * after the stale window says so. `?show=` narrows it, `?repo=owner/name`
- * keeps it to one repository.
+ * became of it (`core/asked.ts`). The path: the owner wonders whether something
+ * they asked for was heard, opens this from the asks page or the board, and
+ * opens the ask. One row per ask, one sentence per row: what was asked, then
+ * what became of it, each linked to its evidence. `?show=` and `?order=`
+ * choose the asks; within them, those that need the owner come first, then
+ * those in progress, then what landed, then what was closed with nothing
+ * merged. `?repo=owner/name` keeps it to one repository.
  */
 
 import {
   askedCounts,
   askedIn,
   askedRepos,
+  askedTier,
   isAskedOrder,
   isAskedShow,
-  STALE_DAYS,
+  outcomeText,
   type Asked,
   type AskedOrder,
   type AskedShow,
-  type AskedState,
 } from "../../core/asked.ts";
 import {
   flagDays,
@@ -38,17 +40,10 @@ import {
   row,
   seg,
   time,
-  timeAgo,
+  userTag,
   type Tone,
 } from "../ui.ts";
 import { homeTabs } from "./home_tabs.ts";
-
-const WORD: Record<AskedState, { text: string; tone: Tone }> = {
-  waiting: { text: "Waiting", tone: "default" },
-  building: { text: "Building", tone: "attn" },
-  shipped: { text: "Shipped", tone: "success" },
-  closed: { text: "Closed", tone: "default" },
-};
 
 const THOUGHT_WORD: Record<ThoughtState, { text: string; tone: Tone }> = {
   unplaced: { text: "Heard", tone: "default" },
@@ -103,58 +98,75 @@ function oldestFlaggedHref(stream: readonly StreamThought[]): string | null {
   return null;
 }
 
-function pullNote(a: Asked): string {
-  // The row is one link, so the commits are named here and linked on the ask.
-  if (a.doneBy.length > 0)
-    return `on main in ${a.doneBy.map((o) => o.slice(0, 7)).join(", ")}, waiting for you to close it`;
-  const merged = a.pulls.find((p) => p.state === "merged");
-  if (merged) return `pull #${merged.number} merged`;
-  const open = a.pulls.find((p) => p.state === "open");
-  if (open) return `pull #${open.number} open`;
-  return a.pulls.length > 0 ? "no pull merged" : "no pull yet";
-}
+/** The ask, cut at the last space before 80 characters (a hard cut when it has none). */
+const asking = (a: Asked): string => {
+  const text = a.issue.title.replace(/\s+/g, " ").trim();
+  if (text.length <= 80) return text;
+  const space = text.lastIndexOf(" ", 79);
+  return `${text.slice(0, space > 0 ? space : 79)}…`;
+};
 
 /**
- * The one badge a row wears. Red is for an old ask with nothing to show.
- * An old ask whose pull is open says that, and how long the pull has been
- * open, which is the next thing a person asks.
+ * What became of the ask, as the end of its sentence, linked to the pull or
+ * issue that says so. Only an ask with nothing built wears red; the rest are
+ * green for landed, amber for under way, and plain otherwise.
  */
-function wordFor(a: Asked): { text: string; tone: Tone } {
-  if (a.doneBy.length > 0) return { text: "Done on main", tone: "success" };
-  if (a.flagged) return { text: "Nothing built", tone: "danger" };
-  const open = a.pulls.find((p) => p.state === "open");
-  if (a.stale && open !== undefined)
+function outcomeOf(a: Asked): { text: Html; badge: { text: string; tone: Tone } } {
+  const base = repoBase(a.repo);
+  const issue = `${base}/issues/${a.issue.number}`;
+  const pull = (n: number) => html`<a href="${base}/pulls/${n}">#${n}</a>`;
+  const flagged: Tone = a.flagged ? "danger" : "default";
+  if (a.doneBy.length > 0)
     return {
-      text: `Pull open ${timeAgo(open.openedAt).replace(/ ago$/, "")}`,
-      tone: "attn",
+      text: html`<a href="${issue}">${outcomeText(a)}</a>`,
+      badge: { text: "Done on main", tone: "success" },
     };
-  return WORD[a.state];
+  const o = a.outcome;
+  switch (o.kind) {
+    case "landed":
+      return { text: html`landed in ${pull(o.pull)} ${time(o.at)}`, badge: { text: "Landed", tone: "success" } };
+    case "building":
+      return {
+        text: o.pull === null
+          ? html`${userTag(o.by, { avatar: false, mark: o.byMark })} <a href="${issue}">building</a>`
+          : html`${userTag(o.by, { avatar: false, mark: o.byMark })} building in ${pull(o.pull)}`,
+        badge: { text: "Building", tone: "attn" },
+      };
+    case "parked":
+      return {
+        text: html`<a href="${base}/pulls/${o.pull}">${outcomeText(a)}</a>`,
+        badge: { text: a.flagged ? "Nothing built" : "Parked", tone: flagged },
+      };
+    case "failed":
+      return {
+        text: html`${userTag(o.by, { avatar: false, mark: o.byMark })} <a href="${issue}">failed</a> ${time(o.at)}`,
+        badge: { text: a.flagged ? "Nothing built" : "Failed", tone: flagged },
+      };
+    case "closed":
+      return { text: html`<a href="${issue}">${outcomeText(a)}</a>`, badge: { text: "Closed", tone: "default" } };
+    default:
+      return {
+        text: html`<a href="${issue}">${outcomeText(a)}</a>`,
+        badge: { text: a.flagged ? "Nothing built" : "Waiting", tone: flagged },
+      };
+  }
 }
 
 function askedRow(a: Asked): Html {
-  const word = wordFor(a);
+  const out = outcomeOf(a);
   return row({
-    href: `${repoBase(a.repo)}/issues/${a.issue.number}`,
-    nav: true,
-    title: a.issue.title,
-    // What became of it comes first: the line is cut at a phone's width, and
-    // what is cut is where and who, which the ask's own page says.
-    meta: html`${a.lastCrewAt === null
-      ? "crew not on it yet"
-      : html`crew ${time(a.lastCrewAt)}`}
-    · ${pullNote(a)} · ${a.repo.ownerName}/${a.repo.name} #${a.issue.number} ·
-    ${a.askedBy} · ${time(a.askedAt)}`,
-    // One badge per row, so a phone keeps the title.
-    trail: badge(word.text, { tone: word.tone }),
-    titleAttr: a.flagged
-      ? `${WORD[a.state].text}, and nothing built in ${STALE_DAYS} days`
-      : a.issue.title,
+    title: html`<a href="${repoBase(a.repo)}/issues/${a.issue.number}">${asking(a)}</a>`,
+    titleAttr: a.issue.title,
+    meta: html`${out.text} · ${a.repo.ownerName}/${a.repo.name} #${a.issue.number}`,
+    trail: badge(out.badge.text, { tone: out.badge.tone }),
   });
 }
 
 /**
  * GET /asked — `?show=unshipped` (the default: nothing merged yet),
  * `flagged` or `all`; oldest first unless `?order=newest`; `?repo=` for one.
+ * Within the order, asks that need the owner come before those in progress,
+ * and those before what landed.
  */
 export function askedPage(ctx: Ctx): Response {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
@@ -180,6 +192,8 @@ export function askedPage(ctx: Ctx): Response {
   const stream = timePhase(ctx.request, "thoughts", () => thoughtStream(ctx.app.db, user, { limit: 50 }));
   const days = timePhase(ctx.request, "flags", () => flagDays(ctx.app.db, user.id));
   const rendering = performance.now();
+  // The sort is stable, so each group keeps the order asked for.
+  const rows = [...listed].sort((x, y) => askedTier(x) - askedTier(y));
   const next = oldestFlaggedHref(stream);
   const flaggedThoughts = stream.filter((t) => t.flagged).length;
   const thoughts =
@@ -202,7 +216,7 @@ export function askedPage(ctx: Ctx): Response {
   const sentence =
     asked === 0
       ? "Nothing asked yet"
-      : `${asked} asked · ${shipped} shipped${flagged > 0 ? ` · ${flagged} with nothing built` : ""}`;
+      : `${asked} asked · ${shipped} landed${flagged > 0 ? ` · ${flagged} with nothing built` : ""}`;
 
   const body = html`${homeTabs("asked", unshipped)}
     <h1 id="asked-sentence">What you asked for</h1>
@@ -210,31 +224,16 @@ export function askedPage(ctx: Ctx): Response {
     ${thoughts}
     <div class="bar mb mt">
       ${seg([
-        {
-          label: "Not shipped",
-          href: href("unshipped"),
-          current: show === "unshipped",
-          count: unshipped,
-        },
-        {
-          label: "Nothing built",
-          href: href("flagged"),
-          current: show === "flagged",
-          count: flagged,
-        },
-        {
-          label: "All",
-          href: href("all"),
-          current: show === "all",
-          count: asked,
-        },
+        { label: "Not shipped", href: href("unshipped"), current: show === "unshipped", count: unshipped },
+        { label: "Nothing built", href: href("flagged"), current: show === "flagged", count: flagged },
+        { label: "All", href: href("all"), current: show === "all", count: asked },
       ])}
       <span class="spacer"></span>
       <a class="small muted" href="${href(show, order === "oldest" ? "newest" : "oldest")}"
         >${order === "oldest" ? "Show newest first" : "Show oldest first"}</a
       >
     </div>
-    ${listed.length === 0
+    ${rows.length === 0
       ? empty({
           icon: "issue",
           title: asked === 0 ? "Nothing asked yet" : "Nothing here",
@@ -243,7 +242,7 @@ export function askedPage(ctx: Ctx): Response {
               ? "What a person tells the crew shows up here, with what became of it."
               : "Every ask in this view has something built for it.",
         })
-      : listCard(listed.map(askedRow))}`;
+      : listCard(rows.map(askedRow))}`;
   const response = page({ ctx, title: "What you asked for", body });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;

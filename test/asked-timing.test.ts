@@ -82,7 +82,7 @@ test("GET /asked names its phases and answers within its budget with 500 asks", 
     const res = await get();
     const body = await res.text();
     expect(res.status).toBe(200);
-    expect(body).toContain("500 asked · 250 shipped");
+    expect(body).toContain("500 asked · 250 landed");
     const parts = (res.headers.get("server-timing") ?? "").split(", ");
     for (const name of ["app", "session", "repos", "counts", "asks", "thoughts", "flags", "render"])
       expect(parts.find((p) => p.startsWith(`${name};`))).toMatch(/^[a-z]+;dur=\d+\.\d$/);

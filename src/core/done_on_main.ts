@@ -15,7 +15,8 @@ export const DONE_NOTE = "Done on main already, waiting for you to close it: ";
 export const DONE_LIKE = `${DONE_NOTE.replace(/[%_]/g, "")}%`;
 
 /** What every park note starts with, for `LIKE`. */
-export const PARK_LIKE = "Parked by the crew%";
+export const PARK_LEAD = "Parked by the crew";
+export const PARK_LIKE = `${PARK_LEAD}%`;
 
 /** What the comment on a close of such an issue starts with. */
 export const CLOSED_NOTE = "Closed: already done on main in ";
