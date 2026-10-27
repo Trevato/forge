@@ -43,6 +43,7 @@ import {
 } from "./common.ts";
 import { issueScreen } from "./issue.ts";
 import { newPullScreen } from "./newpull.ts";
+import { planScreen } from "./plan.ts";
 import { pullScreen } from "./pull.ts";
 import { verdictsForPulls, type Verdict } from "./verdicts.ts";
 import {
@@ -262,6 +263,7 @@ export function issuesScreen(
         ...(stops() > 0 ? [binding(["P"], "pillar")] : []),
         binding(["a"], mine ? "all authors" : "only mine"),
         ...(mayWrite() ? [binding(["c"], `new ${noun}`)] : []),
+        ...(kind === "issue" && repo !== undefined ? [binding(["m"], "plan")] : []),
         binding(["/"], "search"),
         binding(["r"], "refresh"),
       ];
@@ -408,6 +410,10 @@ export function issuesScreen(
             },
           }),
         );
+        return true;
+      }
+      if (e.key === "m" && kind === "issue" && repo !== undefined) {
+        ctx.push(planScreen(f, ctx, repo));
         return true;
       }
       if (e.key === "enter") {
