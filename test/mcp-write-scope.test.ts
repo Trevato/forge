@@ -29,6 +29,7 @@ const ADMIN_ARGS: Record<string, Record<string, unknown>> = {
   subscription_delete: { id: "u1" },
   subscription_add: { name: "Sneaky", token: "sk-ant-oat01-aaaaaaaaaaaaaaaaaaaa" },
   subscription_wake: { id: "u1" },
+  subscription_headroom: { id: "u1", percent: 30 },
   prompts: { repo: "alice/game", action: "remove", id: "p1" },
   telemetry_grant: { agent: "robo", on: true },
   hooks: { repo: "alice/game", action: "add", url: "https://example.com/h", secret: "0123456789abcdef0123" },
