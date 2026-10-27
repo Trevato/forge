@@ -145,6 +145,14 @@ page, `POST /api/v1/forges` and the MCP `spawn`. `Ctrl+P` shows the plan and
 makes nothing (it shows a Size line when one is chosen); `enter` on the plan spawns, and the claim link is shown once, in
 a dialog, never kept.
 
+An organization for a client's apps: `Ctrl+K`, then **New organization** (a
+signed-in person's, never an agent's) asks for a name and calls the same
+`createOrg` as `/organizations/new` and the MCP `org_create`. A taken, reserved
+or invalid name is refused with the same words on all three
+(`createOrgWords`, `src/actions/orgs.ts`) and stays in the field to fix. Once
+made, the screen says where it lives, and `n` opens New repository with it as
+the owner.
+
 The family across forges: `:` → Family in the terminal, `/family` on the web,
 `GET /api/v1/family` and the MCP `family` tool all give the same view. The
 forge that sent this one is shown to anyone; the forges it sent, only to a

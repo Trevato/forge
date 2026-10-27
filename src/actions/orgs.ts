@@ -4,7 +4,8 @@
  * gets `not_found`, the same as the pages that carry these forms.
  */
 
-import { requireVerified } from "./verify.ts";
+import { NAME_RESERVED } from "./signup_words.ts";
+import { requireVerified, UNVERIFIED_MESSAGE } from "./verify.ts";
 import type { App } from "../app.ts";
 import {
   addTeamMember as insertMember,
@@ -23,14 +24,33 @@ import { getUserByName, type User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { requireOrgAdmin, requireUser } from "./access.ts";
 
+export type CreateOrgRefusal =
+  | "unauthorized"
+  | "unverified"
+  | "agent_cannot_own"
+  | CreateOrgError;
+
+/**
+ * What `createOrg`'s refusal says, on every door: the new-organization
+ * page, MCP `org_create` and the terminal read it from here.
+ */
+export function createOrgWords(error: CreateOrgRefusal): string {
+  const words: Record<CreateOrgRefusal, string> = {
+    name_taken: "That name is already taken.",
+    name_reserved: NAME_RESERVED,
+    invalid_name: "Letters, digits, dots and dashes only.",
+    unauthorized: "Sign in to create an organization.",
+    unverified: `${UNVERIFIED_MESSAGE[0]!.toUpperCase()}${UNVERIFIED_MESSAGE.slice(1)}: an unverified account cannot make an organization.`,
+    agent_cannot_own: "An agent cannot own an organization.",
+  };
+  return words[error];
+}
+
 export function createOrg(
   app: App,
   actor: User | undefined,
   name: string,
-): Result<
-  User,
-  "unauthorized" | "unverified" | "agent_cannot_own" | CreateOrgError
-> {
+): Result<User, CreateOrgRefusal> {
   const user = requireUser(actor);
   if (!user.ok) return user;
   // Its founder is its first owner, and an agent never owns one.

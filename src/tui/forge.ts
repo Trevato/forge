@@ -86,6 +86,7 @@ import { issuesScreen, newIssueScreen } from "./screens/issues.ts";
 import { limbsScreen } from "./screens/limbs.ts";
 import { newPullScreen } from "./screens/newpull.ts";
 import { newForgeScreen } from "./screens/newforge.ts";
+import { newOrgScreen } from "./screens/neworg.ts";
 import { migrateScreen } from "./screens/migrate.ts";
 import { newRepoScreen } from "./screens/newrepo.ts";
 import { repoScreen } from "./screens/repo.ts";
@@ -222,6 +223,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
               ctx.push(signInScreen(session, ctx, () => ctx.invalidate())),
           },
     );
+    // An organization you own, as /organizations/new and MCP `org_create` make it: a person's, never an agent's (#7260).
+    if (session.user !== undefined && session.user.kind !== "agent")
+      commands.push({
+        id: "new-org",
+        title: "New organization",
+        hint: "an organization you own, for a client's apps",
+        run: () => ctx.push(newOrgScreen(session, ctx)),
+      });
     if (session.signedIn)
       commands.push({
         id: "migrate",

@@ -12,6 +12,7 @@
 import {
   addTeamMember,
   createOrg,
+  createOrgWords,
   createTeam,
   deleteTeam,
   removeTeamMember,
@@ -58,7 +59,6 @@ import {
   time,
   field as uiField,
 } from "../ui.ts";
-import { NAME_RESERVED } from "../../actions/signup_words.ts";
 
 const PER_PAGE = 20;
 
@@ -470,19 +470,7 @@ export async function newOrgSubmit(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
   const name = field(form, "name");
   const created = createOrg(ctx.app, ctx.auth.user, name);
-  if (!created.ok) {
-    const messages: Record<string, string> = {
-      name_taken: "That name is already taken.",
-      name_reserved: NAME_RESERVED,
-      invalid_name: "Letters, digits, dots and dashes only.",
-      unauthorized: "Sign in to create an organization.",
-    };
-    return orgForm(
-      ctx,
-      name,
-      messages[created.error] ?? "That name won't work.",
-    );
-  }
+  if (!created.ok) return orgForm(ctx, name, createOrgWords(created.error));
   return flashTo(ctx, `/${created.value.username}`, {
     message: `Created ${created.value.username}. You are its first owner.`,
   });

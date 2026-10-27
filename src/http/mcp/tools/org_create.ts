@@ -1,4 +1,4 @@
-import { createOrg } from "../../../actions/orgs.ts";
+import { createOrg, createOrgWords } from "../../../actions/orgs.ts";
 import { publicProfile } from "../../respond.ts";
 import { good, bad, type Tool } from "../shared.ts";
 
@@ -15,7 +15,7 @@ export const tool: Tool = {
   run(ctx, user, args) {
     const name = typeof args["name"] === "string" ? args["name"] : "";
     const made = createOrg(ctx.app, user, name);
-    if (!made.ok) return bad(made.error, made.error);
+    if (!made.ok) return bad(made.error, createOrgWords(made.error));
     return good({ id: made.value.id, ...publicProfile(made.value), kind: "org" });
   },
 };
