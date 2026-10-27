@@ -129,7 +129,7 @@ function appsForViewer(ctx: Ctx, archived: boolean): AppEntry[] {
 }
 
 /** How many archived apps the viewer can see (the "N archived" line). */
-function archivedAppCount(ctx: Ctx): number {
+export function archivedAppCount(ctx: Ctx): number {
   const repos = listReposVisibleTo(ctx.app.db, ctx.auth.user, {
     limit: 200,
     archivedOnly: true,

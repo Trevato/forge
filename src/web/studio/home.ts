@@ -57,6 +57,7 @@ import { kpiRow, vitalsRow, waitingLine } from "./kpi_row.ts";
 import { feedCandidateCache } from "../../feed/feed.ts";
 import { notePhase, notePhaseRest, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { kpiCache, panelCache, waitingCache } from "./home_cache.ts";
+import { archivedAppCount } from "../pages/apps.ts";
 import { pinnedPanels } from "./pinned.ts";
 import { homeTabs } from "./home_tabs.ts";
 import { crewKeyNote } from "./crew.ts";
@@ -108,6 +109,7 @@ function yourApps(ctx: Ctx, user: User, apps = writableAppsOf(ctx, user)): Html 
       ...(state === undefined ? {} : { trail: envStateBadge(state) }),
     });
   });
+  const archived = archivedAppCount(ctx);
   const list = html`${rows.length === 0
         ? html`<p class="muted small">No apps yet.</p>`
         : html`<ul class="list">
@@ -128,7 +130,12 @@ function yourApps(ctx: Ctx, user: User, apps = writableAppsOf(ctx, user)): Html 
           btn("Front page", { href: "/front", size: "sm", icon: "globe" }),
         )}
         ${when(user.isAdmin && rows.length > 0, () => btn("Archive", { size: "sm" }))}
-      </div>`;
+      </div>
+      ${when(
+        archived > 0,
+        () =>
+          html`<p class="muted small"><a href="/apps?archived=1">${archived} archived</a></p>`,
+      )}`;
   return card(
     // An admin's list is a form: tick apps, then Archive.
     user.isAdmin && rows.length > 0
