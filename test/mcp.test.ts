@@ -294,6 +294,7 @@ describe("the forge over MCP", () => {
       "access",
       "capacity",
       "scorecard",
+      "flags",
       "flow",
       "system",
       "telemetry_history",

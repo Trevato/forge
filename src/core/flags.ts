@@ -216,6 +216,14 @@ export function makeFlags<const D extends Record<string, FlagDecl>>(decls: D) {
     value(name: keyof D & string): FlagValue | undefined {
       return values.get(name);
     },
+    /** Every declared flag with its declaration and live value, in declaration order. */
+    entries(): { name: string; decl: FlagDecl; value: FlagValue | undefined }[] {
+      return Object.keys(decls).map((name) => ({
+        name,
+        decl: decls[name]!,
+        value: values.get(name),
+      }));
+    },
     /**
      * Store `value` for a declared flag (`undefined` clears it), keep the
      * change in `forge_setting_change`, and reload so it is live at once.
