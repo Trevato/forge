@@ -372,11 +372,6 @@ import {
   appSettingsUpdate,
   autonomySettingsPage,
   autonomySettingsUpdate,
-  crewAdd,
-  crewSubscriptionsSave,
-  crewRemove,
-  crewRoleUpdate,
-  crewSettingsPage,
   settingsPage,
   settingsUpdate,
   waveCut,
@@ -386,6 +381,13 @@ import {
 } from "../web/pages/settings.ts";
 import { dangerPage, repoDelete } from "../web/pages/danger.ts";
 import { hooksPage, webhookCreate, webhookDelete } from "../web/pages/hooks.ts";
+import {
+  crewAdd,
+  crewRemove,
+  crewRoleUpdate,
+  crewSettingsPage,
+  crewSubscriptionsSave,
+} from "../web/pages/crew-settings.ts";
 import {
   promptSourceAdd,
   promptSourceDelete,
