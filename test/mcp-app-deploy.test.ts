@@ -49,6 +49,9 @@ describe("MCP app_deploy", () => {
     return body.result.isError === true ? { error: text } : { value: JSON.parse(text) };
   };
 
+  const runCount = (): number =>
+    (app.db.query("SELECT COUNT(*) AS n FROM run").get() as { n: number }).n;
+
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-mcp-app-deploy-"));
     app = createApp({ dataDir, port: 0 });
@@ -112,17 +115,30 @@ describe("MCP app_deploy", () => {
     expect(s.value).toEqual({ stopped: true });
   }, 30_000);
 
-  test("a reader is refused", async () => {
+  test("a reader is refused, and nothing is queued", async () => {
+    const before = runCount();
     const r = await tool(bobRw, { repo: "alice/hello", env: "production", action: "redeploy" });
     expect(r.error).toContain("forbidden");
     const s = await tool(bobRw, { repo: "alice/hello", env: "production", action: "stop" });
     expect(s.error).toContain("forbidden");
+    expect(runCount()).toBe(before);
   });
 
-  test("an unknown env or action is refused", async () => {
-    const e = await tool(aliceRw, { repo: "alice/hello", env: "staging", action: "redeploy" });
-    expect(e.error).toContain("no_such_env");
-    const a = await tool(aliceRw, { repo: "alice/hello", env: "production", action: "burn" });
-    expect(a.error).toContain("redeploy or stop");
+  test("an env that is neither production nor pull-N is refused, and nothing is queued", async () => {
+    const before = runCount();
+    for (const env of ["staging", "pull-x", "pull-", "../production", ""]) {
+      const e = await tool(aliceRw, { repo: "alice/hello", env, action: "redeploy" });
+      expect(e.error).toContain("no_such_env");
+    }
+    expect(runCount()).toBe(before);
+  });
+
+  test("restart and other actions are invalid_action, and nothing is queued", async () => {
+    const before = runCount();
+    for (const action of ["restart", "burn", "", "REDEPLOY"]) {
+      const a = await tool(aliceRw, { repo: "alice/hello", env: "production", action });
+      expect(a.error).toContain("invalid_action");
+    }
+    expect(runCount()).toBe(before);
   });
 });
