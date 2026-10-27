@@ -71,11 +71,13 @@ test("a guest is offered the changelog and sees the releases newest first", asyn
   const text = tui.screen.toText();
   terminal.feed("\r");
   await settleApp(tui);
+  terminal.feed("\r");
+  await settleApp(tui);
   const opened = tui.screen.toText();
   tui.stop?.();
-  // Enter opens the first pull of the newest release: pull #2's own screen.
+  // Enter lists the newest release's pulls, Enter again opens pull #2's own screen.
   expect(opened).not.toBe(text);
-  expect(opened).toContain("Changelog › #2");
+  expect(opened).toContain("Changelog › 0.2.0 › #2");
   expect(opened).not.toContain("0.1.0");
   expect(text.indexOf("0.2.0")).toBeGreaterThan(-1);
   expect(text.indexOf("0.2.0")).toBeLessThan(text.indexOf("0.1.0"));
