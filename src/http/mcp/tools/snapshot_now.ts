@@ -1,6 +1,5 @@
-import { snapshotsOf } from "../../../snapshot/service.ts";
+import { snapshotNow } from "../../../actions/backups_now.ts";
 import { scopeAllows } from "../../../core/tokens.ts";
-import { fileSize } from "../../../web/ui.ts";
 import { good, bad, type Tool } from "../shared.ts";
 
 export const tool: Tool = {
@@ -13,20 +12,7 @@ export const tool: Tool = {
     if (!user.isAdmin) return bad("not_found", "no such tool here");
     if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
       return bad("forbidden", "a snapshot needs an admin-scope token");
-    const svc = snapshotsOf(ctx.app);
-    if (svc?.store === undefined)
-      return bad("no_store", "This forge has nowhere to put a snapshot.");
-    try {
-      const m = await svc.now();
-      return good({
-        name: m.name,
-        repos: m.repos,
-        apps: m.apps,
-        bytes: m.bytes,
-        says: `Snapshot ${m.name} taken: ${m.repos} repositories, ${m.apps} apps, ${fileSize(m.bytes)}.`,
-      });
-    } catch (error) {
-      return bad("failed", `The snapshot failed: ${String(error)}`);
-    }
+    const taken = await snapshotNow(ctx.app, user);
+    return taken.ok ? good(taken.value) : bad(taken.error.code, taken.error.says);
   },
 };

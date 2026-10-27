@@ -28,6 +28,7 @@ import { formatMinutes, formatSpan, timeByPart, type DrillResult } from "../../s
 import { lastDrill } from "../../snapshot/drills.ts";
 import type { Store } from "../../snapshot/store.ts";
 import { snapshotsOf, type SnapshotsHandle } from "../../snapshot/service.ts";
+import { mirrorNow, snapshotNow } from "../../actions/backups_now.ts";
 import { lastSnapshotOutcome } from "../../snapshot/outcome.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -626,23 +627,12 @@ export async function backupsNow(ctx: Ctx): Promise<Response> {
   if (denied) return denied;
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
-  const svc = snapshotsOf(ctx.app);
-  if (svc === undefined)
-    return flashTo(ctx, "/settings/backups", {
-      tone: "danger",
-      message: "This forge has nowhere to put a snapshot.",
-    });
-  try {
-    const m = await svc.now();
-    return flashTo(ctx, "/settings/backups", {
-      message: `Snapshot ${m.name} taken: ${m.repos} repositories, ${m.apps} apps, ${fileSize(m.bytes)}.`,
-    });
-  } catch (error) {
-    return flashTo(ctx, "/settings/backups", {
-      tone: "danger",
-      message: `The snapshot failed: ${String(error)}`,
-    });
-  }
+  const taken = await snapshotNow(ctx.app, ctx.auth.user);
+  return flashTo(
+    ctx,
+    "/settings/backups",
+    taken.ok ? { message: taken.value.says } : { tone: "danger", message: taken.error.says },
+  );
 }
 
 /** POST /settings/backups/drill — restore the newest snapshot, keep what came of it. */
@@ -708,19 +698,14 @@ export async function backupsMirrorNow(ctx: Ctx): Promise<Response> {
   if (denied) return denied;
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
-  const state = await snapshotsOf(ctx.app)?.mirrorNow();
-  if (state === undefined)
-    return flashTo(ctx, "/settings/backups", { tone: "danger", message: "This forge has no mirror to bring level." });
-  if (state.sourceError !== undefined)
-    return flashTo(ctx, "/settings/backups", {
-      tone: "danger",
-      message: `The snapshots could not be read from the destination, so the mirror was not touched: ${state.sourceError}`,
-    });
+  const level = await mirrorNow(ctx.app, ctx.auth.user);
   return flashTo(
     ctx,
     "/settings/backups",
-    state.failingSince === undefined
-      ? { message: `The mirror is level${state.newest ? ` at ${state.newest}` : ""}.` }
-      : { tone: "danger", message: `The mirror is not level: ${state.error ?? "unknown reason"}` },
+    !level.ok
+      ? { tone: "danger", message: level.error.says }
+      : level.value.level
+        ? { message: level.value.says }
+        : { tone: "danger", message: level.value.says },
   );
 }
