@@ -71,6 +71,7 @@ export { tool as limb } from "./limb.ts";
 export { tool as limits } from "./limits.ts";
 export { tool as make_it_yours } from "./make_it_yours.ts";
 export { tool as map } from "./map.ts";
+export { tool as merge } from "./merge.ts";
 export { tool as migrate } from "./migrate.ts";
 export { tool as milestones } from "./milestones.ts";
 export { tool as mint_invite } from "./mint_invite.ts";

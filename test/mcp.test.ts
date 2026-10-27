@@ -275,6 +275,7 @@ describe("the forge over MCP", () => {
       "origin_apps",
       "front_page",
       "map",
+      "merge",
       "milestones",
       "watch",
       "runs",
