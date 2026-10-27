@@ -1681,6 +1681,56 @@ export const shellJs = /* js */ `
     }).catch(function () { location.href = href; });
   }
 
+  // The palette's tell: the feed composer's own POST (same action, same
+  // same-origin check), with this page's path as where it was said. The
+  // answer is one line at the top of the page, in the flash's own classes.
+  function tellFromHere(app, text) {
+    var main = doc.getElementById('main');
+    function say(tone, message, href) {
+      if (!main) return;
+      var old = main.querySelector('.toast[data-palette-tell]');
+      if (old) old.remove();
+      var t = doc.createElement('div');
+      t.className = 'toast';
+      t.setAttribute('data-tone', tone);
+      t.setAttribute('data-palette-tell', '');
+      t.setAttribute('role', 'status');
+      var b = doc.createElement('div');
+      b.className = 'toast-body';
+      b.appendChild(doc.createTextNode(message));
+      if (href && href.charAt(0) === '/' && href.charAt(1) !== '/') {
+        b.appendChild(doc.createTextNode(' \u00b7 '));
+        var a = doc.createElement('a');
+        a.setAttribute('href', href);
+        a.textContent = 'See it';
+        b.appendChild(a);
+      }
+      t.appendChild(b);
+      var x = doc.createElement('button');
+      x.type = 'button';
+      x.className = 'btn';
+      x.setAttribute('data-variant', 'link');
+      x.setAttribute('data-size', 'sm');
+      x.setAttribute('aria-label', 'Dismiss');
+      x.textContent = '\u00d7';
+      x.onclick = function () { t.remove(); };
+      t.appendChild(x);
+      t.tabIndex = -1;
+      main.insertBefore(t, main.firstChild);
+      // The palette has just closed: the answer takes the focus, then clears itself.
+      t.focus({ preventScroll: false });
+      window.setTimeout(function () { if (t.parentNode) t.remove(); }, 12000);
+    }
+    fetch('/tell', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { accept: 'application/json' },
+      body: new URLSearchParams({ app: app, text: text, from: location.pathname })
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (d.ok) say('success', d.flash, d.href);
+      else say('danger', d.error || '${NOT_TOLD_WORDS}');
+    }).catch(function () { say('danger', '${NOT_TOLD_WORDS}'); });
+  }
+
   var closePalette = null;
   function openPalette() {
     var dlg = doc.getElementById('palette');
@@ -1691,6 +1741,7 @@ export const shellJs = /* js */ `
     var items = (loadIndex().items || []).map(function (i) {
       return { t: String(i.t), h: String(i.h), g: i.c ? String(i.c) : 'Go to' };
     });
+    var tellApp = (loadIndex().tell || {}).app;
     var recent = readRecent().map(function (r) { return { t: r.t, h: r.h, g: 'Recent', d: r.g }; });
     var recentHrefs = recent.map(function (r) { return r.h; });
     var served = [];       // rows the server found, for the query servedFor
@@ -1773,6 +1824,36 @@ export const shellJs = /* js */ `
         });
         frag.appendChild(box);
       });
+      // Tell from anywhere: once there are words, the last row says them to the crew.
+      if (tellApp && q.length >= 3) {
+        var tbox = doc.createElement('div');
+        tbox.className = 'palette-group';
+        tbox.setAttribute('role', 'group');
+        // A mutation is a button in a POST form, as /tell takes it without
+        // script too; the click is caught below and sent in place.
+        var tf = doc.createElement('form');
+        tf.method = 'post'; tf.action = '/tell';
+        [['app', tellApp], ['text', q], ['from', location.pathname]].forEach(function (kv) {
+          var hid = doc.createElement('input');
+          hid.type = 'hidden'; hid.name = kv[0]; hid.value = kv[1];
+          tf.appendChild(hid);
+        });
+        var ta = doc.createElement('button');
+        ta.type = 'submit';
+        ta.className = 'palette-item';
+        ta.id = 'palette-o' + nodes.length;
+        ta.setAttribute('role', 'option');
+        ta.setAttribute('aria-selected', 'false');
+        ta.setAttribute('data-tell', q);
+        var tt = doc.createElement('span');
+        tt.className = 'grow';
+        tt.textContent = 'Tell the crew: ' + q;
+        ta.appendChild(tt);
+        tf.appendChild(ta);
+        nodes.push(ta); shown.push({ t: tt.textContent, h: '#tell', g: 'Tell' });
+        tbox.appendChild(tf);
+        frag.appendChild(tbox);
+      }
       if (nodes.length === 0) frag.appendChild(emptyLine(q));
       list.textContent = '';
       list.appendChild(frag);
@@ -1857,6 +1938,12 @@ export const shellJs = /* js */ `
       var a = e.target && e.target.closest ? e.target.closest('.palette-item') : null;
       var i = a ? nodes.indexOf(a) : -1;
       if (i === -1) return;
+      if (a.hasAttribute('data-tell')) {
+        e.preventDefault();
+        close();
+        tellFromHere(tellApp, a.getAttribute('data-tell'));
+        return;
+      }
       remember(shown[i]);
       var h = a.getAttribute('href') || '';
       if (/^\\/[^\\/?#]+\\/[^\\/?#]+\\/tell\\?from=/.test(h) && !e.metaKey && !e.ctrlKey && !e.shiftKey) {

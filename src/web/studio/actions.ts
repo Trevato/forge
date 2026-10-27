@@ -81,14 +81,26 @@ async function tellFrom(
   // A client's "Ask for something" (named by the form, not guessed from `/`):
   // they asked for something and want nothing more than to know it went.
   if (from === "/" && field(form, "ask") === "1") return flashOrJson(ctx, back, { message: SENT_WORDS });
+  // The tell's own page, for a caller that asked for JSON (the palette's row).
+  const at = { href: `${repoBase(repo)}/issues/${told.value.issue.number}` };
   if (routed === undefined)
-    return flashOrJson(ctx, back, {
-      message: `Opened as an issue. Nobody is on the crew to take it yet — add someone under Settings → Crew.`,
-    });
+    return flashOrJson(
+      ctx,
+      back,
+      {
+        message: `Opened as an issue. Nobody is on the crew to take it yet — add someone under Settings → Crew.`,
+      },
+      at,
+    );
   const builder = routed.builder;
-  return flashOrJson(ctx, back, {
-    message: `${builder.user.username} is on it — ${routed.size} ${routed.kind}${routed.by === "rule" ? "" : `, ${routed.by} decided in ${routed.ms} ms`}.${from === null ? " Watch it work below." : ""}`,
-  });
+  return flashOrJson(
+    ctx,
+    back,
+    {
+      message: `${builder.user.username} is on it — ${routed.size} ${routed.kind}${routed.by === "rule" ? "" : `, ${routed.by} decided in ${routed.ms} ms`}.${from === null ? " Watch it work below." : ""}`,
+    },
+    at,
+  );
 }
 
 /** POST /:owner/:name/tell  { text } — a sentence becomes work. */
@@ -160,8 +172,10 @@ export async function composerSubmit(ctx: Ctx): Promise<Response> {
   const target = field(form, "app");
   // "the forge" is no app: the words are kept as a thought, exactly as typed.
   if (target === FORGE_TARGET) {
+    if (field(form, "text").trim() === "")
+      return flashOrJson(ctx, "/", { tone: "danger", message: SAY_SOMETHING_WORDS });
     const kept = keepThought(ctx.app, ctx.auth.user, field(form, "text"), "composer");
-    return flashTo(
+    return flashOrJson(
       ctx,
       "/",
       kept.ok
@@ -171,6 +185,7 @@ export async function composerSubmit(ctx: Ctx): Promise<Response> {
             message:
               kept.error === "too_long" ? "That is too long to keep." : "That could not be kept.",
           },
+      { href: "/" },
     );
   }
   const [owner = "", name = "", ...extra] = target.split("/");

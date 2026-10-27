@@ -10,7 +10,8 @@
 import { OPENSEARCH_PATH, OPENSEARCH_TITLE, OPENSEARCH_TYPE } from "./opensearch.ts";
 import { protectionNotice } from "../kernel/protection.ts";
 import { appsForRepos } from "../core/apps.ts";
-import { listReposVisibleTo } from "../core/repos.ts";
+import { getRepo, listReposVisibleTo } from "../core/repos.ts";
+import { mayDirectCrew } from "../crew/direct.ts";
 import type { User } from "../core/users.ts";
 import type { Ctx } from "../http/context.ts";
 import { activeEdgeToken, edgeLoginUrl, edgeLogoutUrl, edgeStrangerLogin } from "../http/edge.ts";
@@ -292,6 +293,32 @@ const STATIC_PALETTE: PaletteItem[] = [
   { t: "Origins", h: "/settings/origins", c: "Settings" },
 ];
 
+/** First path segments that are the forge's own pages, never an owner: no repository read for them. */
+const NOT_AN_OWNER = new Set([
+  ...STATIC_PALETTE.map((p) => p.h.split("/")[1] ?? ""),
+  "api", "releases", "audit", "admin", "tell", "login", "logout", "signup", "feed", "boards", "organizations", "static", "assets",
+]);
+
+/**
+ * Where the palette's "Tell the crew" row sends a sentence, as the feed
+ * composer's `app` field names it: the repository the page is on when the
+ * viewer may direct its crew, else the forge itself, which costs no
+ * repository read. Absent for anyone who may not tell (signed out, or an
+ * organization), and then the row is not drawn.
+ */
+function tellTarget(ctx: Ctx): { app: string } | undefined {
+  const user = ctx.auth.user;
+  if (user === undefined || user.kind === "org") return undefined;
+  const [owner, name] = ctx.url.pathname.split("/").filter((s) => s !== "");
+  const here =
+    owner !== undefined && name !== undefined && !NOT_AN_OWNER.has(owner)
+      ? getRepo(ctx.app.db, owner, name)
+      : undefined;
+  if (here !== undefined && mayDirectCrew(ctx.app.db, here, user))
+    return { app: `${here.ownerName}/${here.name}` };
+  return { app: "forge" };
+}
+
 /**
  * The palette index rides as a `<script type="application/json">` data block.
  * The HTML spec stops parsing such a block as script, so the CSP never
@@ -338,7 +365,7 @@ function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
   // API found, folded in the browser — build the same addresses the server
   // just rendered (`tellHref`/`changeHref`, `src/web/studio/nouns.ts`). The
   // palette can never hand out a noun the page behind it would not.
-  const json = JSON.stringify({ items, studio }).replaceAll("<", "\\u003c");
+  const json = JSON.stringify({ items, studio, tell: tellTarget(ctx) }).replaceAll("<", "\\u003c");
   return raw(
     `<script type="application/json" id="palette-index">${json}</script>`,
   );
@@ -491,6 +518,9 @@ function footer(ctx: Ctx): Html {
           >${reduced}</span
         >`}
     <span class="spacer"></span>
+    ${ctx.auth.user !== undefined && ctx.auth.user.kind !== "org"
+      ? html`<a class="btn" data-variant="link" data-size="sm" href="/#composer">Tell the crew</a>`
+      : ""}
     <button
       class="btn js-only"
       data-variant="link"
