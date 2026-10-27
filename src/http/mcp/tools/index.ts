@@ -116,6 +116,7 @@ export { tool as spawn } from "./spawn.ts";
 export { tool as spend } from "./spend.ts";
 export { tool as ssh_keys } from "./ssh_keys.ts";
 export { tool as stop } from "./stop.ts";
+export { tool as subscription_add } from "./subscription_add.ts";
 export { tool as subscription_budget } from "./subscription_budget.ts";
 export { tool as subscription_wake } from "./subscription_wake.ts";
 export { tool as system } from "./system.ts";
