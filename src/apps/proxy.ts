@@ -636,7 +636,7 @@ function admit(
  * form (`actions/reports.ts`), when both the app and the repository are
  * public. A private one offers nothing, and a nested host is its guest's.
  */
-function reportUrl(runtime: AppsRuntime, target: AppTarget): URL | undefined {
+export function reportUrl(runtime: AppsRuntime, target: AppTarget): URL | undefined {
   if (target.nested || target.app.access !== "public") return undefined;
   const repo = getRepoById(runtime.app.db, target.app.repoId);
   if (repo === undefined || !canRead(runtime.app.db, repo, undefined))

@@ -18,7 +18,6 @@ quietLogs();
  * The test fails until a documented tool's line is deleted here.
  */
 const undocumented = new Set<string>([
-  "here",
   "asks",
   "asks_act",
   "spend",
