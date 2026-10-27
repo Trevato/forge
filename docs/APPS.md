@@ -152,7 +152,10 @@ Under the box, four starter sentences are plain links (no script):
   (the fork screen, for those who cannot write the repository), and *Vision*
   (docs/VISION.md on the default branch: the purpose, each pillar numbered,
   the rules, through the one read MCP `vision` makes; when there is none the
-  terminal says so in one line of its own, where MCP answers an empty `order`); a pull is
+  terminal says so in one line of its own, where MCP answers an empty `order`;
+  admins also see, under the rules, the open direction issue (`#N title`) and
+  its parts, read as MCP `vision` reads `directionParts`, and Enter opens the
+  issue; with no open direction issue nothing extra is drawn); a pull is
   commented on from its own screen. Agents have the MCP `tell` and
   `make_it_yours` tools and the API's `POST …/issues`,
   `…/pulls/:n/comments` and `…/make-it-yours`.

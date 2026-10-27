@@ -5,12 +5,16 @@
  * work numbered, then the rules of how it is built. Wrapped to the width at
  * render, never cut mid-word. A repository without the document says so in
  * one line (the terminal's own words; MCP `vision` answers with an empty
- * order). Read-only; offered to, and read for, only someone who may read it.
+ * order). Under the rules, for whoever may read the repository's settings,
+ * the open direction issue (`#N title`) and its parts, as MCP `vision`
+ * answers `directionParts`; Enter opens the issue. Read-only; offered to,
+ * and read for, only someone who may read it.
  */
 
-import { canRead, type Repo } from "../../core/repos.ts";
+import { canAdmin, canRead, getRepoById, type Repo } from "../../core/repos.ts";
+import { getIssueById } from "../../core/issues.ts";
 import { NO_VISION, NO_VISION_LINE, type Vision } from "../../core/vision.ts";
-import { readDefaultVision } from "../../crew/vision.ts";
+import { directionParts, readDefaultVision, type DirectionPart } from "../../crew/vision.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import type { Command } from "../app/palette.ts";
@@ -18,10 +22,19 @@ import { BOLD, style } from "../term/style.ts";
 import { displayWidth, wrap } from "../term/width.ts";
 import type { Session } from "../session.ts";
 import { Scroll, drawLines, hitScroll } from "./common.ts";
+import { issueScreen } from "./issue.ts";
+import { local } from "./where.ts";
 
 /** What a viewer who may not read the repository sees: what the page's 404 says, nothing of the document. */
 export const NOT_FOUND_LINE = "No such repository, or you may not read it.";
 const HIDDEN: Vision = { purpose: NOT_FOUND_LINE, order: [], rules: [] };
+
+/** The open direction issue and the parts of the direction, as MCP `vision` reads them. */
+export interface Direction {
+  readonly number: number;
+  readonly title: string;
+  readonly parts: readonly DirectionPart[];
+}
 
 export interface VisionLine {
   readonly text: string;
@@ -36,12 +49,12 @@ function hanging(lead: string, text: string, width: number): string[] {
 }
 
 /** The screen's lines at `width` columns: purpose, numbered pillars, rules. */
-export function visionLines(v: Vision, width: number): VisionLine[] {
+export function visionLines(v: Vision, width: number, direction?: Direction): VisionLine[] {
   const body = (text: string): VisionLine => ({ text, head: false });
   const head = (text: string): VisionLine => ({ text, head: true });
-  if (v.purpose === null && v.order.length === 0 && v.rules.length === 0)
-    return wrap(NO_VISION_LINE, width).map(body);
-  const out: VisionLine[] = [];
+  const empty = v.purpose === null && v.order.length === 0 && v.rules.length === 0;
+  if (empty && direction === undefined) return wrap(NO_VISION_LINE, width).map(body);
+  const out: VisionLine[] = empty ? wrap(NO_VISION_LINE, width).map(body) : [];
   if (v.purpose !== null) out.push(...wrap(v.purpose, width).map(body));
   if (v.order.length > 0) {
     if (out.length > 0) out.push(body(""));
@@ -57,33 +70,57 @@ export function visionLines(v: Vision, width: number): VisionLine[] {
     out.push(head("How we build"));
     for (const r of v.rules) out.push(...hanging("- ", r, width).map(body));
   }
+  if (direction !== undefined) {
+    if (out.length > 0) out.push(body(""));
+    out.push(head("Direction"));
+    out.push(...hanging(`#${direction.number} `, direction.title, width).map(body));
+    for (const p of direction.parts) {
+      out.push(body(""));
+      out.push(...wrap(p.text, width).map(body));
+    }
+  }
   return out;
+}
+
+/** The open direction issue and its parts, for someone who may read the settings; undefined otherwise. */
+function readDirection(f: Session, repo: Repo): Direction | undefined {
+  const fresh = getRepoById(f.db, repo.id) ?? repo;
+  if (!canAdmin(f.db, fresh, f.user) || fresh.directionIssueId === null) return undefined;
+  const issue = getIssueById(f.db, fresh.directionIssueId);
+  if (!issue || issue.state !== "open") return undefined;
+  return { number: issue.number, title: issue.title, parts: directionParts(fresh.autonomyDirection) };
 }
 
 export function visionScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   const scroll = new Scroll();
   let vision: Vision | undefined;
+  let direction: Direction | undefined;
   let lines: VisionLine[] = [];
   return {
     title: "Vision",
-    keys: [binding(["j", "k"], "scroll"), binding(["esc", "q"], "back")],
+    keys: [binding(["j", "k"], "scroll"), binding(["enter"], "open direction"), binding(["esc", "q"], "back")],
     async load() {
       // Gated here as well as on the command: the screen is exported, and a
       // viewer who may not read the repository is shown nothing of it.
       vision = canRead(f.db, repo, f.user) ? ((await readDefaultVision(f.app.reposRoot, repo)) ?? NO_VISION) : HIDDEN;
+      direction = vision === HIDDEN ? undefined : readDirection(f, repo);
       ctx.invalidate();
     },
     render(area, s) {
       const c = ctx.theme.c;
       // One column for the scrollbar `drawLines` keeps, one for breathing room.
       const width = Math.max(1, area.w - 2);
-      lines = vision === undefined ? [{ text: "Reading…", head: false }] : visionLines(vision, width);
+      lines = vision === undefined ? [{ text: "Reading…", head: false }] : visionLines(vision, width, direction);
       const spans = lines.map((l) => [{ text: l.text, style: l.head ? style(c.accent, c.bg, BOLD) : style(c.fg, c.bg) }]);
       drawLines(s, area, c, scroll, spans);
       hitScroll(ctx, area, scroll, lines.length);
     },
     key(e) {
       if (scroll.key(e, lines.length)) return true;
+      if (e.key === "enter" && direction !== undefined) {
+        ctx.push(issueScreen(f, ctx, local(f, repo), direction.number));
+        return true;
+      }
       if (e.key === "esc" || e.key === "q") {
         ctx.pop();
         return true;
