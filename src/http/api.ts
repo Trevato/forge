@@ -1774,8 +1774,9 @@ export function apiRoutes(router: Router<Handler>): void {
     return apiError(changed.error, 422, TEAM_SAYS[changed.error]);
   });
 
-  // Per-account quotas (`core/quotas.ts`): null is no limit. Nothing
-  // enforces them yet.
+  // Per-account quotas (`core/quotas.ts`): null is no limit. Each is
+  // asked when the thing is made or started (`settings/quotas.ts`), never of a
+  // forge admin.
   router.add("GET", "/api/v1/admin/settings", (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = accountAdmin(ctx, "ro");
