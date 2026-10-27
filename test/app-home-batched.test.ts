@@ -97,7 +97,10 @@ async function queriesFor(path: string): Promise<number> {
  */
 async function costOf(path: string): Promise<number> {
   let least = Infinity;
-  for (let i = 0; i < 5; i++) least = Math.min(least, await queriesFor(path));
+  for (let i = 0; i < 7; i++) {
+    await quiet(app.db); // start from rest, not in the tail of the last request's work
+    least = Math.min(least, await queriesFor(path));
+  }
   return least;
 }
 
