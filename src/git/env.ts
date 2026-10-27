@@ -288,6 +288,8 @@ export interface GitCapture {
   readonly code: number;
   readonly stdout: string;
   readonly stderr: string;
+  /** The timeout killed the process. */
+  readonly timedOut?: boolean;
 }
 
 /**
@@ -307,8 +309,12 @@ export async function runGitCapture(
       stdout: "pipe",
       stderr: "pipe",
     });
+    let timedOut = false;
     const timer = setTimeout(
-      () => proc.kill("SIGKILL"),
+      () => {
+        timedOut = true;
+        proc.kill("SIGKILL");
+      },
       options.timeoutMs ?? 30_000,
     );
     try {
@@ -317,7 +323,7 @@ export async function runGitCapture(
         new Response(proc.stderr).text(),
         proc.exited,
       ]);
-      return { code, stdout, stderr };
+      return { code, stdout, stderr, ...(timedOut ? { timedOut } : {}) };
     } finally {
       clearTimeout(timer);
     }

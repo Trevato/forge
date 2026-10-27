@@ -46,6 +46,8 @@ export const MAX_HITS_PER_REPO = 20;
 export const GREP_TIMEOUT_MS = 3_000;
 /** A first code search starts no new grep after this long; `?code=all` runs the rest. */
 export const CODE_BUDGET_MS = 30;
+/** A grep in a budgeted search is given up after this long and reported as `more`: a cold clone must not hold the page (#7198). */
+export const BUDGETED_GREP_MS = 400;
 
 /** Longest line of code echoed back; the rest is off-screen anyway. */
 const MAX_LINE_CHARS = 400;
@@ -363,18 +365,24 @@ export async function grepRepo(
   query: string,
   maxCount = MAX_HITS_PER_REPO,
 ): Promise<{ path: string; line: number; text: string }[]> {
-  return (await grepRun(dir, ref, query, maxCount)) ?? [];
+  const got = await grepRun(dir, ref, query, maxCount);
+  return got === null || got === "timeout" ? [] : got;
 }
 
 type RawHit = { path: string; line: number; text: string };
 
-/** Hits, or null when the grep did not complete (so it is not worth keeping). */
+/**
+ * Hits; null when the grep failed (a repo with no commits, say), and
+ * "timeout" when the clock killed it. Neither is worth keeping, but only a
+ * timeout means a longer run might find more.
+ */
 async function grepRun(
   dir: string,
   ref: string,
   query: string,
   maxCount: number,
-): Promise<RawHit[] | null> {
+  timeoutMs = GREP_TIMEOUT_MS,
+): Promise<RawHit[] | null | "timeout"> {
   const pattern = cleanQuery(query);
   if (pattern === "" || !isSafeRef(ref)) return [];
 
@@ -394,10 +402,11 @@ async function grepRun(
       "--",
       ".",
     ],
-    { cwd: dir, timeoutMs: GREP_TIMEOUT_MS },
+    { cwd: dir, timeoutMs },
   );
   // Exit 1 is "no match" — data, not failure. Anything else (a repo with no
   // commits, a killed process) is simply no results from this repo.
+  if (run.timedOut === true) return "timeout";
   if (run.code !== 0 && run.code !== 1) return null;
 
   // `-z` makes each record `ref:path NUL line NUL text`, so a path with a
@@ -466,19 +475,20 @@ async function grepCached(
   dir: string,
   query: string,
   who: GrepWho,
-): Promise<RawHit[] | "skipped"> {
+  timeoutMs = GREP_TIMEOUT_MS,
+): Promise<RawHit[] | "skipped" | "timeout"> {
   const ref = repo.defaultBranch;
   const oid = await branchOid(dir, ref);
-  const slotted = async (at: string): Promise<RawHit[] | null | "skipped"> => {
+  const slotted = async (at: string): Promise<RawHit[] | null | "skipped" | "timeout"> => {
     const got = await (who.slots ?? grepSlots).run(who.memberId, () => {
       grepsRun++;
-      return (who.grep ?? grepRun)(dir, at, query, MAX_HITS_PER_REPO);
+      return (who.grep ?? grepRun)(dir, at, query, MAX_HITS_PER_REPO, timeoutMs);
     });
     return got.ran ? got.value : "skipped";
   };
   if (oid === null) {
     const hits = await slotted(ref);
-    return hits === "skipped" ? hits : (hits ?? []);
+    return hits ?? [];
   }
   const key = `${repo.id}\0${oid}\0${cleanQuery(query)}`;
   const kept = grepCache.get(key);
@@ -488,7 +498,7 @@ async function grepCached(
     return kept.map((h) => ({ ...h }));
   }
   const hits = await slotted(oid);
-  if (hits === "skipped") return hits;
+  if (hits === "skipped" || hits === "timeout") return hits;
   if (hits === null) return [];
   grepCache.set(key, hits.map((h) => ({ ...h })));
   if (grepCache.size > CACHE_MAX) {
@@ -528,12 +538,14 @@ export async function grepRepos(
   // starves itself of the member's own slots.
   const width = who.memberId === undefined ? batch : GREP_LIMITS.perMember;
   const started = performance.now();
+  const timeoutMs = budgetMs === Infinity ? GREP_TIMEOUT_MS : BUDGETED_GREP_MS;
+  let gaveUp = false;
   for (let i = 0; i < considered.length; i += batch) {
     if (i > 0 && performance.now() - started >= budgetMs) {
       return { hits, truncated: repos.length > MAX_SEARCH_REPOS, more: true, skipped };
     }
     const slice = considered.slice(i, i + batch);
-    const found: (RawHit[] | "skipped")[] = [];
+    const found: (RawHit[] | "skipped" | "timeout")[] = [];
     for (let k = 0; k < slice.length; k += width) {
       found.push(
         ...(await Promise.all(
@@ -545,6 +557,7 @@ export async function grepRepos(
                 repoDir(reposRoot, repo.ownerName, repo.name),
                 query,
                 who,
+                timeoutMs,
               ),
             ),
         )),
@@ -554,6 +567,10 @@ export async function grepRepos(
       const mine = found[j] ?? [];
       if (mine === "skipped") {
         skipped = true;
+        continue;
+      }
+      if (mine === "timeout") {
+        if (timeoutMs !== GREP_TIMEOUT_MS) gaveUp = true;
         continue;
       }
       for (const hit of mine) {
@@ -566,5 +583,5 @@ export async function grepRepos(
       }
     }
   }
-  return { hits, truncated: repos.length > MAX_SEARCH_REPOS, more: false, skipped };
+  return { hits, truncated: repos.length > MAX_SEARCH_REPOS, more: gaveUp, skipped };
 }

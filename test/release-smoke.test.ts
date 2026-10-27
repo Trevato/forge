@@ -4,14 +4,17 @@ import { HEAVY_PAGES, smoke } from "../src/release/smoke.ts";
 let server: ReturnType<typeof Bun.serve> | undefined;
 afterEach(() => server?.stop(true));
 
-/** A healthy forge; `over` answers some paths its own way, `/boards` waits `boardsMs`. */
-function forge(boardsMs: number, seen: string[] = [], over: (path: string) => Response | undefined = () => undefined) {
+/** A healthy forge; `delay` says how long a path waits on its nth hit; `over` answers some paths its own way, `/boards` waits `boardsMs`. */
+function forge(boardsMs: number, seen: string[] = [], over: (path: string) => Response | undefined = () => undefined, delay: (path: string, hit: number) => number = () => 0) {
+  const hits: Record<string, number> = {};
   server = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
     async fetch(req) {
       const path = new URL(req.url).pathname;
       seen.push(path);
+      const hit = (hits[path] = (hits[path] ?? 0) + 1);
+      await Bun.sleep(delay(path, hit));
       const made = over(path);
       if (made) return made;
       if (path === "/") return new Response('<link rel="stylesheet" href="/a.css">', { headers: { "content-type": "text/html" } });
@@ -70,4 +73,26 @@ test("the watch is skipped when the checks already failed", async () => {
   server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: (req) => (seen.push(new URL(req.url).pathname), new Response("x", { status: 500 })) });
   await smoke(`http://127.0.0.1:${server.port}`, "t", { heavy: { ...heavy, watchMs: 5_000 } });
   expect(seen).not.toContain("/explore");
+});
+
+test("a first load that is slow once is asked again and passes (#7198)", async () => {
+  const failures = await smoke(forge(0, [], () => undefined, (p, hit) => (p === "/boards" && hit === 1 ? 300 : 0)), "t", { heavy });
+  expect(failures).toEqual([]);
+});
+
+test("a page slow on both first-load attempts fails", async () => {
+  const failures = await smoke(forge(0, [], () => undefined, (p, hit) => (p === "/explore" && hit <= 2 ? 300 : 0)), "t", { heavy });
+  expect(failures.some((f) => f.url.endsWith("/explore") && f.why.includes("took"))).toBe(true);
+});
+
+test("a /healthz that is slow once in the watch fails, with no retry", async () => {
+  // hit 1 is the pre-watch check of /healthz by smoke; the watch's polls follow
+  const failures = await smoke(forge(0, [], () => undefined, (p, hit) => (p === "/healthz" && hit === 4 ? 300 : 0)), "t", { heavy });
+  expect(failures.some((f) => f.url.endsWith("/healthz") && f.why.includes("took"))).toBe(true);
+});
+
+test("a hung first load is not asked again", async () => {
+  const seen: string[] = [];
+  const failures = await smoke(forge(0, seen, () => undefined, (p, hit) => (p === "/boards" && hit === 1 ? 2_000 : 0)), "t", { heavy });
+  expect(failures.some((f) => f.url.endsWith("/boards") && f.why.includes("did not answer"))).toBe(true);
 });

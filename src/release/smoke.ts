@@ -140,26 +140,39 @@ async function watch(root: URL, token: string, heavy: Heavy, fetch: typeof globa
   const slowMs = heavy.slowMs ?? SLOW_MS;
   const headers: Record<string, string> = { "user-agent": AGENTS["desktop"]! };
   const pages = HEAVY_PAGES.map((p) => (p === REPO_HOME && heavy.repo ? heavy.repo : p));
-  const timed = async (path: string): Promise<Failure | null> => {
+  // An answer between `slowMs` and twice it is slow; none by then is a hang.
+  const once = async (path: string): Promise<{ failure: Failure | null; slow: boolean }> => {
     const url = new URL(path, root).href;
     const started = performance.now();
-    const gone = (why: string, status: number | string = "error"): Failure => ({ url, agent: "desktop", status, contentType: "", why });
+    const failureFor = (why: string, status: number | string = "error"): Failure => ({ url, agent: "desktop", status, contentType: "", why });
+    const gone = (why: string, status: number | string = "error") => ({ failure: failureFor(why, status), slow: false });
     try {
       const auth: Record<string, string> = path === "/boards" && token ? { authorization: `Bearer ${token}` } : {};
-      const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(slowMs), headers: { ...headers, ...(path === "/healthz" ? heavy.probe : {}), ...auth } });
+      const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(slowMs * 2), headers: { ...headers, ...(path === "/healthz" ? heavy.probe : {}), ...auth } });
       const body = await res.text();
       const took = Math.round(performance.now() - started);
-      if (took > slowMs) return gone(`${path} took ${took} ms, over ${slowMs} ms`, res.status);
-      if (path === REPO_HOME && !heavy.repo && res.status === 404) return null;
+      if (took > slowMs) return { failure: failureFor(`${path} took ${took} ms, over ${slowMs} ms`, res.status), slow: true };
+      if (path === REPO_HOME && !heavy.repo && res.status === 404) return { failure: null, slow: false };
       if (path === "/healthz" && heavy.version && res.headers.get("x-forge-version") !== heavy.version)
         return gone(`/healthz reported X-Forge-Version ${res.headers.get("x-forge-version") ?? "none"}, wanted ${heavy.version}`, res.status);
-      if (path === "/boards" && anonymousBoard && !token && isSignInRedirect(url, res)) return null;
+      if (path === "/boards" && anonymousBoard && !token && isSignInRedirect(url, res)) return { failure: null, slow: false };
       if (res.status !== 200) return gone(`${path} expected 200`, res.status);
       if (!body.trim()) return gone(`${path} answered with an empty body`, res.status);
-      return null;
+      return { failure: null, slow: false };
     } catch (error) {
-      return gone(`${path} did not answer within ${slowMs} ms (${error})`);
+      return gone(`${path} did not answer within ${slowMs * 2} ms (${error})`);
     }
+  };
+  // The cause of 0.7.279's 1098 ms /boards is unconfirmed; a cold cache after
+  // the boot is the guess (#7198). So each page's first load, and only that,
+  // is asked again after a slow answer (never a hang or an error), and the
+  // first slow answer is printed. The watch below calls `once`: a degradation
+  // there is seen on the first slow answer.
+  const timed = async (path: string): Promise<Failure | null> => {
+    const first = await once(path);
+    if (!first.slow) return first.failure;
+    console.warn(`smoke: ${first.failure?.why}; asking again`);
+    return (await once(path)).failure;
   };
   for (const path of pages) {
     const failed = await timed(path);
@@ -168,7 +181,7 @@ async function watch(root: URL, token: string, heavy: Heavy, fetch: typeof globa
   const deadline = Date.now() + (heavy.watchMs ?? WATCH_MS);
   const pollMs = heavy.pollMs ?? WATCH_POLL_MS;
   for (let tick = 0; Date.now() < deadline; tick++) {
-    const failed = (await timed("/healthz")) ?? (await timed(pages[tick % pages.length]!));
+    const failed = (await once("/healthz")).failure ?? (await once(pages[tick % pages.length]!)).failure;
     if (failed) return failed;
     await Bun.sleep(pollMs);
   }

@@ -52,3 +52,18 @@ test("no budget greps every considered repo, and nothing is left over", async ()
   expect(full.more).toBe(false);
   expect(full.hits.length).toBe(50);
 });
+
+test("a budgeted grep the clock kills is given up and offered as more; unbudgeted, it is not (#7198)", async () => {
+  const slow = [{ id: "slow", ownerName: "u", name: "r0", defaultBranch: "main" } as Repo];
+  const grep = async () => "timeout" as const;
+  expect((await grepRepos(root, slow, "budgetword", 200, 30, { grep })).more).toBe(true);
+  expect((await grepRepos(root, slow, "budgetword", 200, Infinity, { grep })).more).toBe(false);
+});
+
+test("a repo that cannot be grepped, such as one with no commits, leaves more false (#7198)", async () => {
+  await mkdir(join(root, "u", "broken.git"), { recursive: true });
+  const gone = [{ id: "gone", ownerName: "u", name: "broken", defaultBranch: "main" } as Repo];
+  const r = await grepRepos(root, gone, "budgetword", 200, 30);
+  expect(r.more).toBe(false);
+  expect(r.hits).toEqual([]);
+});
