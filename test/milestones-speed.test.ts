@@ -86,8 +86,16 @@ const list = async () => {
 };
 
 test("readPlan of 2,000 closed and 300 open issues under 10 pillars fits a 30 ms budget", async () => {
-  const against = await baselineMs(servers.url);
   const repo = getRepo(app.db, "alice", "forge")!;
+  // The yardstick is the same machine reading the same rows raw, so load
+  // stretches both and the verdict follows the code (#6690).
+  const raw = Math.min(
+    ...Array.from({ length: 7 }, () => {
+      const start = performance.now();
+      app.db.query("SELECT * FROM issue WHERE repo_id = ?1").all(repo.id);
+      return performance.now() - start;
+    }),
+  );
   readPlan(app.db, repo, { spend: true });
   const times: number[] = [];
   for (let n = 0; n < 7; n++) {
@@ -96,7 +104,7 @@ test("readPlan of 2,000 closed and 300 open issues under 10 pillars fits a 30 ms
     times.push(performance.now() - start);
     expect(plan.limbs).toHaveLength(PILLARS);
   }
-  expectBudget(Math.min(...times), { ms: 30, against });
+  expectBudget(Math.min(...times), { ms: 30, against: raw });
 });
 
 test("a write to another repository keeps the plan warm; a new issue here refreshes it", async () => {
