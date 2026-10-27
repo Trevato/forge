@@ -8,6 +8,7 @@
  * Every string on a card is plain text and is escaped here, once.
  */
 
+import { chipCounts } from "../../feed/chips.ts";
 import { chipsOf, KIND_CHIPS, type KindChip } from "../../core/feed_chips.ts";
 import { marksByName, type Mark } from "../../core/marks.ts";
 import { getUsersByIds, type User } from "../../core/users.ts";
@@ -275,6 +276,7 @@ function chipsBar(user: User, ctx: Ctx, items: readonly FeedItem[]): Html {
   ]);
   names.delete(user.username);
   const hiddenNames = new Set(hidden.map((u) => u.username));
+  const counts = chipCounts(items);
   const chip = (kind: string, value: string, label: string, shown: boolean): Html =>
     html`<button
       type="button"
@@ -284,7 +286,12 @@ function chipsBar(user: User, ctx: Ctx, items: readonly FeedItem[]): Html {
       aria-pressed="${String(shown)}"
     >${label}</button>`;
   return html`<div class="bar feed-chips" role="group" aria-label="Filter the feed">
-    ${KIND_CHIPS.map((k) => chip("kind", k, CHIP_LABEL[k], !chips.kinds.has(k)))}
+    ${KIND_CHIPS.flatMap((k) => {
+      const count = counts.get(k) ?? 0;
+      // Nothing on the page to filter: not drawn, unless switched off (it must come back on).
+      if (count === 0 && !chips.kinds.has(k)) return [];
+      return [chip("kind", k, count === 0 ? CHIP_LABEL[k] : `${CHIP_LABEL[k]} ${count}`, !chips.kinds.has(k))];
+    })}
     ${[...names].sort().map((n) => chip("person", n, n, !hiddenNames.has(n)))}
   </div>`;
 }
