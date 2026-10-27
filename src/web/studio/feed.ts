@@ -21,6 +21,7 @@ import { getAppByRepo } from "../../core/apps.ts";
 import { getRepo, getRepoById } from "../../core/repos.ts";
 import { DEFAULT_PAGE, looksForEnv, lookUrl } from "../../core/looks.ts";
 import { mayFetchLook, pictured } from "../pages/looks.ts";
+import { dividers } from "./day_divider.ts";
 import { html, type Html } from "../html.ts";
 import { fragment } from "../layout.ts";
 import { outboxJs } from "../outbox.ts";
@@ -300,6 +301,9 @@ function readRegion(user: User, ctx: Ctx) {
     ...(cursor === undefined ? {} : { cursor }),
   });
   const items = page.items;
+  // The day the page before ended on, so a continuing page draws no divider twice (`day_divider.ts`).
+  const day = cursor === undefined ? "" : (ctx.url.searchParams.get("day") ?? "");
+  const lastDayOnPage = Number.isFinite(Date.parse(day)) ? new Date(day).toISOString() : undefined;
   const thoughts = recentThoughts(ctx.app.db, user.id, THOUGHTS_SHOWN, new Date(Date.now() - THOUGHT_AGE_MS).toISOString());
   const placed = placementsOf(ctx.app.db, thoughts.map((t) => t.id));
   // Who each poster is, asked once for the page (`core/marks.ts`).
@@ -310,7 +314,7 @@ function readRegion(user: User, ctx: Ctx) {
   const quiet = page.quiet;
   const quietRepo = quiet.repoId === null ? undefined : getRepoById(ctx.app.db, quiet.repoId);
   const quietLink = quietRepo === undefined ? "/explore" : `/${quietRepo.ownerName}/${quietRepo.name}/runs?kind=agent`;
-  return { items, next: page.next_cursor, cursor, thoughts, placed, marks, pictures: picturesFor(ctx, items), quiet: quiet.count, quietLink };
+  return { items, next: page.next_cursor, cursor, lastDayOnPage, thoughts, placed, marks, pictures: picturesFor(ctx, items), quiet: quiet.count, quietLink };
 }
 
 /** The region: cards, or one line saying there is nothing to do. */
@@ -333,18 +337,32 @@ export function caughtUp(items: readonly FeedItem[], next: string | null, cursor
         <span>You're caught up to ${time(oldest)}</span>
         <span class="spacer"></span>
         ${newest}
-        <a href="/?cursor=${encodeURIComponent(next)}">Older posts</a>
+        <a href="/?cursor=${encodeURIComponent(next)}&day=${encodeURIComponent(items[items.length - 1]!.at)}">Older posts</a>
       </p>`;
 }
 
 function drawRegion(user: User, ctx: Ctx, read: ReturnType<typeof readRegion>): Html {
-  const { items, next, cursor, thoughts, placed, marks, pictures, quiet, quietLink } = read;
+  const { items, next, cursor, lastDayOnPage, thoughts, placed, marks, pictures, quiet, quietLink } = read;
+  const now = new Date();
+  // One divider per change of day between neighbours, in the order the feed already has.
+  const posts: Html[] = [];
+  let before = lastDayOnPage;
+  for (const item of items) {
+    const [label] = dividers([item.at], now, before);
+    if (label !== undefined) posts.push(html`<p class="muted small" role="separator" aria-label="${label}" data-day-divider="${label}">${label}</p>`);
+    posts.push(feedCard(item, marks, pictures.get(item.id)));
+    before = item.at;
+  }
+  const liveQuery = [
+    cursor === undefined ? "" : `cursor=${encodeURIComponent(`${cursor.score}|${cursor.id}`)}`,
+    cursor === undefined || lastDayOnPage === undefined ? "" : `day=${encodeURIComponent(lastDayOnPage)}`,
+  ].filter(Boolean).join("&");
   return html`<section
     id="live-feed"
     class="feed"
     aria-label="Feed"
     data-live="${FEED_LIVE}"
-    data-live-src="/live/feed${cursor === undefined ? "" : `?cursor=${encodeURIComponent(`${cursor.score}|${cursor.id}`)}`}"
+    data-live-src="/live/feed${liveQuery === "" ? "" : `?${liveQuery}`}"
   >
     ${chipsBar(user, ctx, items)}
     ${thoughts.map((t) => thoughtCard(t, user.username, placed.get(t.id)))}
@@ -354,7 +372,7 @@ function drawRegion(user: User, ctx: Ctx, read: ReturnType<typeof readRegion>): 
           title: "Nothing new",
           note: "When something happens in your apps, it lands here.",
         })
-      : items.map((item) => feedCard(item, marks, pictures.get(item.id)))}
+      : posts}
     ${quiet === 0
       ? ""
       : html`<p class="small muted"><a href="${quietLink}">${quiet} quiet ${quiet === 1 ? "run" : "runs"} in the last 24 h</a></p>`}
@@ -375,12 +393,33 @@ export function liveFeedFragment(ctx: Ctx): Response {
 }
 
 /**
+ * When a card is hidden, the day divider just above it goes with it, unless
+ * a later card of that day is still showing — then the divider moves down to
+ * it, so a day never reads as a heading over nothing.
+ */
+export const dayKeepJs = /* js */ `
+function keepDay(card) {
+  var div = card.previousElementSibling;
+  if (!div || !div.hasAttribute('data-day-divider')) return;
+  var next = card.nextElementSibling;
+  while (next && next.hidden) next = next.nextElementSibling;
+  if (next && next.hasAttribute('data-item')) {
+    next.parentNode.insertBefore(div, next);
+    div.hidden = false;
+  } else {
+    div.hidden = true;
+  }
+}
+`;
+
+/**
  * j/k and enter are the shell's (`data-nav`). Here: `x` dismisses the card
  * in focus, the buttons dismiss or mute, and opening a card is recorded.
  * Interactions go to the feed API, same-origin with the session cookie.
  */
 export const feedJs = /* js */ `
 ${outboxJs}
+${dayKeepJs}
 (function () {
   var feed = document.getElementById('live-feed');
   if (!feed || typeof fetch === 'undefined') return;
@@ -427,6 +466,7 @@ ${outboxJs}
     var cards = Array.prototype.slice.call(feed.querySelectorAll('[data-item]'));
     var next = cards[cards.indexOf(card) + 1] || cards[cards.indexOf(card) - 1];
     card.hidden = true;
+    keepDay(card);
     if (next) next.focus();
   }
   // Acting is instant: the card goes, the act is kept and sent.

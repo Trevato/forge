@@ -72,9 +72,9 @@ describe("the timeline's caught-up line", () => {
 
   test("a page after the first carries its own address, so a chip refetch stays on it", async () => {
     const href = /href="(\/\?cursor=[^"]+)"[^>]*>Older posts/.exec(await home())![1]!.replaceAll("&amp;", "&");
-    const cursor = href.slice("/?cursor=".length);
+    const cursor = href.slice("/?cursor=".length).split("&day=")[0];
     const older = await home(href);
-    expect(older).toContain(`data-live-src="/live/feed?cursor=${cursor}"`);
+    expect(older).toContain(`data-live-src="/live/feed?cursor=${cursor}&amp;day=`);
     expect(await home()).toContain('data-live-src="/live/feed"');
     expect(feedJs).toContain("feed.getAttribute('data-live-src')");
   });
