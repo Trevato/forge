@@ -58,6 +58,7 @@ import { usageScreen } from "./screens/usage.ts";
 import { canScreen } from "./screens/can.ts";
 import { peopleScreen } from "./screens/people.ts";
 import { modelCeilingPrompt, modelGrantPrompt, modelScreen } from "./screens/model.ts";
+import { sshKeysScreen } from "./screens/sshkeys.ts";
 import { proposalTokensPrompt } from "./screens/proposal_tokens.ts";
 import { invitesScreen } from "./screens/invites.ts";
 import { signInsScreen } from "./screens/signins.ts";
@@ -242,6 +243,13 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Decider",
         hint: "what it closed, deferred and asked you about today",
         run: () => ctx.push(deciderScreen(session, ctx)),
+      });
+    if (session.signedIn)
+      commands.push({
+        id: "ssh-keys",
+        title: "SSH keys",
+        hint: "list, add and remove the keys that sign in as you",
+        run: () => ctx.push(sshKeysScreen(session, ctx)),
       });
     if (session.signedIn)
       commands.push(

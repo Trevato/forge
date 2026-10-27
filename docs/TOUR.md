@@ -180,6 +180,8 @@ door (`s`) cannot let that person in. They add an SSH key under Settings → Key
 once signed in on the web; after that the terminal signs them straight in as
 that account, as for anyone with a key.
 
+In the terminal the palette's `SSH keys` (ctrl+k) lists your own keys; `a` adds one (a title, then the authorized_keys line) and `d` removes the selected key after a confirm that warns when it is this session's key. Refusals read in MCP `ssh_keys`'s words (`keyWords`).
+
 ## Page-view beacon
 
 Every page links one static, immutable script (`src/web/beacon.ts`, under 2 KB, no dependency) that sends, once per page view with `sendBeacon`, the route's path, TTFB, load time, LCP, INP (the worst interaction) and CLS to `POST /_measure`. The route is same-origin only, validates every field, caps the body at 512 bytes and the rate per client, and answers 204. Reports land in `page_vital` (bun:sqlite) keyed by route *pattern*; no IP and no user agent string is stored. A unique visitor is a hash under a salt that rotates daily (yesterday's salt is deleted), rows are kept 90 days. Do-Not-Track and the `forge_measure=off` cookie send nothing, and the server stores nothing for them either. The CSP is unchanged: the script is nonce'd like the shell's.

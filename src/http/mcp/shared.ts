@@ -26,6 +26,14 @@ export const attachWords = (error: string): string =>
     too_large: "the picture is over 5 MB",
   })[error] ?? "refused";
 
+/** What an SSH key refusal says, on MCP and in the terminal. */
+export const keyWords = (error: string): string =>
+  ({
+    invalid_key: "not a public key in authorized_keys form",
+    key_exists: "that key is already registered",
+    not_found: "no such key of yours",
+  })[error] ?? error;
+
 export const bad = (error: string, message: string): Answer => ({
   ok: false,
   error,
