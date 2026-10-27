@@ -10,6 +10,7 @@
 import type { CheckDetail, Run } from "../core/runs.ts";
 import { parseBunTestFailure } from "./bun-test.ts";
 import { oneLine } from "./words.ts";
+import { clip } from "../text/clip.ts";
 import { webvitals, type Entries } from "../release/webvitals.ts";
 
 /**
@@ -26,11 +27,7 @@ const UNNAMED_SHARD =
 /** A summary is one line on a card; a name from a subprocess is bounded to fit it. */
 const SUMMARY_MAX = 200;
 
-function truncate(text: string): string {
-  return text.length > SUMMARY_MAX
-    ? `${text.slice(0, SUMMARY_MAX - 1)}…`
-    : text;
-}
+const truncate = (text: string): string => clip(text, SUMMARY_MAX);
 
 export interface CheckFailure {
   /** The one line a card shows, already bounded. */
