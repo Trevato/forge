@@ -261,7 +261,14 @@ export const HANDOVER_NOTE = "Handed to a person by the crew:";
 
 export interface Handover {
   /** The crew reviewer's verdicts that asked for changes, oldest first. */
-  readonly reviews: readonly { id: string; author: string; body: string; at: string }[];
+  readonly reviews: readonly {
+    id: string;
+    author: string;
+    body: string;
+    at: string;
+    /** The line comments posted with it, oldest first. */
+    lines?: readonly { path: string; line: number; body: string }[];
+  }[];
   /** When the third one landed: the card's age. */
   readonly at: string;
 }
@@ -390,9 +397,97 @@ function handoversSince(
     if (list) list.push(round);
     else rounds.set(issueId, [round]);
   }
-  for (const [id, list] of rounds)
-    if (list.length >= HANDOVER_ROUNDS) out.set(id, { reviews: list, at: list[HANDOVER_ROUNDS - 1]!.at });
+  const handed = [...rounds].filter(([, list]) => list.length >= HANDOVER_ROUNDS);
+  const lines = linesOf(db, handed.map(([id]) => id));
+  for (const [id, list] of handed)
+    out.set(id, {
+      reviews: withLines(lines.get(id) ?? [], list.slice(0, HANDOVER_ROUNDS), since.get(id)!),
+      at: list[HANDOVER_ROUNDS - 1]!.at,
+    });
   return out;
+}
+
+/**
+ * Each review with the line comments its author posted just before it: lines
+ * go in ahead of the verdict, so a review owns its author's lines since that
+ * author's previous review (or since the thread was last reset).
+ */
+function withLines(
+  rows: readonly LineRow[],
+  reviews: readonly Handover["reviews"][number][],
+  since: string,
+): Handover["reviews"] {
+  const last = new Map<string, string>();
+  return reviews.map((r) => {
+    const from = last.get(r.author) ?? since;
+    last.set(r.author, r.at);
+    const lines = rows
+      .filter((c) => c.author === r.author && c.at > from && c.at <= r.at)
+      .map(({ path, line, body }) => ({ path, line, body }));
+    return { ...r, lines };
+  });
+}
+
+interface LineRow {
+  pull: string;
+  author: string;
+  path: string;
+  line: number;
+  body: string;
+  at: string;
+}
+
+/** The line comments of the given pulls in one read, by pull, oldest first. */
+function linesOf(db: Database, ids: readonly string[]): Map<string, LineRow[]> {
+  const out = new Map<string, LineRow[]>();
+  if (ids.length === 0) return out;
+  for (const row of db
+    .query<LineRow, string[]>(
+      `SELECT c.issue_id AS pull, u.username AS author, c.path, c.line, c.body, c.created_at AS at
+         FROM comment c JOIN user u ON u.id = c.author_id
+        WHERE c.issue_id IN (${ids.map((_, n) => `?${n + 1}`).join(",")})
+          AND c.kind = 'review' AND c.origin_author IS NULL
+        ORDER BY c.created_at, c.id`,
+    )
+    .all(...ids)) {
+    const list = out.get(row.pull);
+    if (list) list.push(row);
+    else out.set(row.pull, [row]);
+  }
+  return out;
+}
+
+/** What a review's quote may run to, and the window before it where a sentence end is preferred. */
+const QUOTE_MAX = 600;
+const QUOTE_WINDOW = 100;
+const LINE_MAX = 200;
+
+/** `text` cut to `QUOTE_MAX`, at a sentence end when one falls in the last `QUOTE_WINDOW`. */
+export function quoteCut(text: string): string {
+  const t = text.trim();
+  if (t.length <= QUOTE_MAX) return t;
+  const head = t.slice(0, QUOTE_MAX);
+  let end = -1;
+  for (const m of head.matchAll(/[.!?](?=\s|$)/g))
+    if (m.index! >= QUOTE_MAX - QUOTE_WINDOW) end = m.index! + 1;
+  return end > 0 ? head.slice(0, end) : `${head.trimEnd()}…`;
+}
+
+const quoted = (text: string): string[] =>
+  text.split("\n").map((l) => (l.trim() === "" ? ">" : `> ${l.replace(/\s+$/, "")}`));
+
+/** The note's body: each review quoted as a markdown blockquote, its line comments listed under it. */
+function handoverQuotes(h: Handover): string[] {
+  return h.reviews.slice(0, HANDOVER_ROUNDS).flatMap((r, n) => [
+    `${n + 1}. ${r.author}:`,
+    "",
+    ...quoted(quoteCut(r.body) || "no words"),
+    ...(r.lines ?? []).flatMap((l) => [
+      "",
+      `- ${l.path.replace(/\s+/g, " ")}:${l.line}: ${l.body.replace(/\s+/g, " ").trim().slice(0, LINE_MAX)}`,
+    ]),
+    "",
+  ]);
 }
 
 /** One line per review, for the card and the thread: who asked, and the first line of what. */
@@ -450,11 +545,11 @@ export function handoverNote(h: Handover, toPlanner = false): string {
     return [
       `${HANDOVER_NOTE} the reviewer asked for changes three times with no approval between, so the planner re-scopes it: split, replaced, or one more round with the reviewer's ask restated.`,
       "",
-      ...handoverLines(h),
-    ].join("\n");
+      ...handoverQuotes(h),
+    ].join("\n").trimEnd();
   return [
     `${HANDOVER_NOTE} the reviewer asked for changes three times with no approval between, so no more feedback runs start here until you say what to try.`,
     "",
-    ...handoverLines(h),
-  ].join("\n");
+    ...handoverQuotes(h),
+  ].join("\n").trimEnd();
 }
