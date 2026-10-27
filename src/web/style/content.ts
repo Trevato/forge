@@ -19,10 +19,9 @@ export const content = /* css */ `
 .repo-title .muted, .repo-title .sep { font-weight: 400; }
 /* A phone has no hover: the settings link is a full 44px line. */
 @media (max-width: 640px) {
-  .repo-head .repo-desc a { display: block; padding: 12px 0; min-height: 44px; box-sizing: border-box; }
+  .repo-head p.muted.small a { display: block; padding: 12px 0; min-height: 44px; box-sizing: border-box; }
 }
 .repo-head p.muted.small { margin-top: 4px; text-wrap: pretty; }
-.repo-desc { margin-top: 4px; color: var(--muted-fg); font-size: 13px; text-wrap: pretty; }
 .repo-head .tabs { margin-top: 12px; }
 
 /* Provenance and pinning: one line under the title, so a <form> never has to

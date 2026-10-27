@@ -401,7 +401,7 @@ export function lineageLine(
 function audienceLine(ctx: Ctx, repo: Repo, admin: boolean, base: string): Html {
   const { level, sentence } = audienceOf(audienceFacts(ctx.app.db, repo, ctx.auth.user));
   const split = level === "split" ? html`${badge("Split", { tone: "attn" })} ` : null;
-  return html`<p class="repo-desc">
+  return html`<p class="muted small">
     ${split}${admin ? html`<a href="${base}/settings">${sentence}</a>` : sentence}
   </p>`;
 }
