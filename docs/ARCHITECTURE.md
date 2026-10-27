@@ -713,9 +713,11 @@ run, and the run the check a pull's merge can require), and the crew
 (agents as accounts with nothing but a run-scoped token, dispatched off the
 outbox, working in Claude Code and proposing through pulls a person merges).
 
-Not yet: containers around app processes, custom domains, a gate that
-lands a pull on its own once review and checks agree, federation, package
-registry.
+Built since: app processes run in bubblewrap cells (`src/apps/contain.ts`),
+apps take custom domains (`src/http/mcp/tools/app_domains.ts`), and a pull
+lands on its own once review and checks agree (`src/checks/landing.ts`, the
+merge queue `src/checks/queue.ts`). Not yet: a package registry, and
+federation beyond signing in through a parent forge (`src/core/federation.ts`).
 
 ## Passports between parts
 

@@ -132,5 +132,8 @@ Pages render without a line of JavaScript and are designed thumb-first. Six
 premade themes (from warm paper to polar night) switch instantly and persist in
 a cookie — even that works script-free. Still **zero runtime dependencies**.
 
-Not yet: containers around apps, custom domains, and a gate that lands a
-pull on its own once review and checks agree.
+Built since: every app, preview and check runs in a bubblewrap cell
+(`src/apps/contain.ts`), an app can take a custom domain (MCP `app_domains`,
+`src/http/mcp/tools/app_domains.ts`), and a pull whose review and checks agree
+lands on its own (`src/checks/landing.ts`, the merge queue in
+`src/checks/queue.ts`). Not yet: a package registry.

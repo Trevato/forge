@@ -622,10 +622,11 @@ predate reasons count as done.
 ## Plans need a nod
 
 A repository setting, `plansNeedNod` (PATCH `/api/v1/repos/:owner/:name`,
-admin only, never an agent), off by default: nothing reads a stored proposal
-yet, so on would hide the planner's work. On, `POST …/plan` and the MCP
+admin only, never an agent), off by default: on, the planner's work waits for a nod
+and is not opened until then. On, `POST …/plan` and the MCP
 `plan` tool run every check as ever (`no_pillar`, loops, unknown keys) and
 then store one proposal — title, why, the ordered issues with their
 `blockedBy` — answering `proposed` with its id (HTTP 202). No issue is opened.
-Off, the plan opens its linked issues all or none. A person's nod that opens
-a stored proposal is not built yet.
+Off, the plan opens its linked issues all or none. A person's nod opens a
+stored proposal: `approve` in `src/actions/proposals.ts`, from the inbox card
+or the MCP `asks_proposal`.

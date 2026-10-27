@@ -80,8 +80,9 @@ says as a link into the thing, a small line of why, Steer (run
 cards, posts to the run's `steer`) or Tell the crew (everything else, posts to
 the app's `tell`), Dismiss and Mute app (the interactions API, same-origin).
 Keys: `j`/`k`/Enter are the shell's, `x` dismisses the focused card.
-Not yet: the `choose` deck card (nothing in the feed produces one), stop from
-a card, and paging past the first 20.
+The `choose` card comes from `src/feed/choose.ts`, a run card offers Stop
+(`src/web/studio/cards.ts`), and `?cursor=` pages past the first 20
+(`src/web/studio/feed.ts`).
 
 ## Offline (`src/web/sw.ts`, `outbox.ts`)
 
