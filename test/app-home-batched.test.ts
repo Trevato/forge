@@ -131,11 +131,13 @@ beforeAll(async () => {
     if (!moved.ok) throw new Error(JSON.stringify(moved.error));
   }
   // The parent's push is followed as it lands; wait for the fork to read diverged.
-  for (let i = 0; i < 100; i++) {
-    const relation = await forkRelation(app, forked.value);
-    if (relation?.state === "diverged") break;
-    await new Promise((r) => setTimeout(r, 30));
+  // Git may be slow on a loaded machine; the wait is for a verdict, not a clock.
+  let diverged = false;
+  for (let i = 0; i < 1000 && !diverged; i++) {
+    diverged = (await forkRelation(app, forked.value))?.state === "diverged";
+    if (!diverged) await new Promise((r) => setTimeout(r, 30));
   }
+  if (!diverged) throw new Error("the fork never read diverged");
   const db = app.db;
   const agent = db.query<{ id: string }, []>("SELECT id FROM user WHERE kind = 'agent' LIMIT 1").get();
   const assignee = agent?.id ?? u.value.id;
