@@ -12,12 +12,14 @@ import { join } from "node:path";
 import { type Candidate, enqueue, type Expect, type Queued } from "../src/checks/queue.ts";
 import type { LandVerdict } from "../src/checks/tiers.ts";
 import type { Pull } from "../src/core/pulls.ts";
+import { type LogLevel, logLevel, setLogLevel } from "../src/kernel/log.ts";
 
 describe("the merge queue gates a red (check) once more before it searches", () => {
   let dir: string;
   const told: number[] = [];
   let logged: string[] = [];
   const spies: { mockRestore(): void }[] = [];
+  let floor: LogLevel;
 
   const git = (...args: string[]) =>
     Bun.spawnSync(["git", "-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", ...args]).stdout.toString().trim();
@@ -26,6 +28,11 @@ describe("the merge queue gates a red (check) once more before it searches", () 
     dir = await mkdtemp(join(tmpdir(), "forge-merge-queue-check-retry-"));
     Bun.spawnSync(["git", "init", "-q", "-b", "main", dir]);
     git("commit", "-q", "--allow-empty", "-m", "start");
+    // The log floor is process-wide: a file before this one that raised it
+    // and never lowered it (`bench/map-home.ts`'s `seedFixture`, #7419) hid
+    // the line read below. This file sets its own and gives it back.
+    floor = logLevel();
+    setLogLevel("info");
     for (const level of ["info", "warn"] as const)
       spies.push(spyOn(console, level).mockImplementation((...args: unknown[]) => void logged.push(args.join(" "))));
   });
@@ -37,6 +44,7 @@ describe("the merge queue gates a red (check) once more before it searches", () 
 
   afterAll(async () => {
     for (const s of spies) s.mockRestore();
+    setLogLevel(floor);
     await rm(dir, { recursive: true, force: true });
   });
 
