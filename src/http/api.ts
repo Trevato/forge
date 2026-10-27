@@ -450,7 +450,8 @@ import {
   type AppMembersError,
 } from "../actions/app_members.ts";
 import {
-  explore,
+  explorePage,
+  type ExploreRow,
   exploreLine,
   parseExploreQuery,
 } from "../actions/explore.ts";
@@ -5385,19 +5386,21 @@ export function apiRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const query = parseExploreQuery(ctx.url.searchParams.get("q") ?? "");
     const mine = runRepos(ctx.app, ctx.auth);
-    const all = await timePhaseAsync(ctx.request, "explore", () =>
-      explore(ctx.app, ctx.auth.user, query),
-    );
-    // A run token is shown only the rows of its own repositories.
-    const items =
+    // A run token is shown only the rows of its own repositories; the cut
+    // and the cursor are made from those rows alone.
+    const visible =
       mine === undefined
-        ? all
-        : all.filter(
-            (row) =>
-              row.repo !== undefined &&
-              mine.some((r) => r.ownerName.toLowerCase() === row.repo!.owner.toLowerCase() && r.name.toLowerCase() === row.repo!.name.toLowerCase()),
-          );
-    return timePhase(ctx.request, "render", () => json({ query: exploreLine(query), items }));
+        ? undefined
+        : (row: ExploreRow) =>
+            row.repo !== undefined &&
+            mine.some((r) => r.ownerName.toLowerCase() === row.repo!.owner.toLowerCase() && r.name.toLowerCase() === row.repo!.name.toLowerCase());
+    const page = await timePhaseAsync(ctx.request, "explore", () =>
+      explorePage(ctx.app, ctx.auth.user, query, ctx.url.searchParams.get("cursor"), visible),
+    );
+    if (page === null)
+      return apiError("invalid_cursor", 400, "cursor is the next_cursor of a page before");
+    const items = page.items;
+    return timePhase(ctx.request, "render", () => json({ query: exploreLine(query), items, next_cursor: page.nextCursor }));
   });
 
   // Make it yours (#606): a fork with its app, planned unless dryRun is

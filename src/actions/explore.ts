@@ -189,6 +189,81 @@ export async function explore(
   query: ExploreQuery,
   now?: number,
 ): Promise<ExploreRow[]> {
+  return (await everything(app, viewer, query, now)).slice(0, ROWS);
+}
+
+export interface ExplorePage {
+  readonly items: readonly ExploreRow[];
+  /** Pass back as `cursor` for the page after; null on the last. */
+  readonly nextCursor: string | null;
+}
+
+/**
+ * One page after `cursor` (a `next_cursor` of the page before), or null when
+ * the cursor is not one. The cursor holds the last row's sort value, kind and
+ * name, so the next page starts after that place in the order even when the
+ * row itself has since gone.
+ */
+export async function explorePage(
+  app: App,
+  viewer: User | undefined,
+  query: ExploreQuery,
+  cursor: string | null,
+  visible?: (row: ExploreRow) => boolean,
+  now?: number,
+): Promise<ExplorePage | null> {
+  const after = cursor === null ? undefined : readCursor(cursor, query);
+  if (after === null) return null;
+  // The caller's narrowing comes first, so a page and its cursor only ever
+  // hold rows the caller may see.
+  const all = await everything(app, viewer, query, now);
+  const rows = visible === undefined ? all : all.filter(visible);
+  const rest = after === undefined ? rows : rows.filter((r) => compare(r, after, query) > 0);
+  const items = rest.slice(0, ROWS);
+  return {
+    items,
+    nextCursor: rest.length > ROWS ? writeCursor(items[items.length - 1]!, query) : null,
+  };
+}
+
+interface Place {
+  readonly key: number | string;
+  readonly kind: ExploreKind;
+  readonly name: string;
+}
+
+const CURSOR_MAX = 400;
+
+function writeCursor(row: ExploreRow, query: ExploreQuery): string {
+  const place: [ExploreSort, number | string, ExploreKind, string] = [query.sort, sortKey(row, query.sort), row.kind, row.name];
+  return Buffer.from(JSON.stringify(place)).toString("base64url");
+}
+
+/** The place a cursor names, undefined never; null when it is not one for this query. */
+function readCursor(cursor: string, query: ExploreQuery): Place | null {
+  if (cursor.length > CURSOR_MAX || !/^[A-Za-z0-9_-]+$/.test(cursor)) return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(value) || value.length !== 4) return null;
+  const [sort, key, kind, name] = value as unknown[];
+  if (sort !== query.sort) return null;
+  const wanted = query.sort === "name" ? "string" : "number";
+  if (typeof key !== wanted || (typeof key === "number" && !Number.isFinite(key))) return null;
+  if (kind !== "app" && kind !== "person" && kind !== "forge") return null;
+  if (typeof name !== "string" || name.length > 200) return null;
+  return { key: key as number | string, kind, name };
+}
+
+async function everything(
+  app: App,
+  viewer: User | undefined,
+  query: ExploreQuery,
+  now?: number,
+): Promise<readonly ExploreRow[]> {
   const forgeRows = await forges(app, viewer, query);
   const stamp = now === undefined ? writeStamp(app.db) : undefined;
   if (stamp === undefined) return place(rank(app, viewer, query, now ?? Date.now()), forgeRows, query);
@@ -349,6 +424,33 @@ function rank(
   );
 }
 
+function sortKey(r: ExploreRow, sort: ExploreSort): number | string {
+  switch (sort) {
+    case "score": return r.score;
+    case "forks": return r.numbers.forks;
+    case "ships": return r.numbers.ships;
+    case "use": return r.numbers.awakeHours;
+    case "fresh": return r.shippedAt === null ? 0 : Date.parse(r.shippedAt) || 0;
+    case "name": return r.name.toLowerCase();
+  }
+}
+
+/**
+ * The total order: the sort value, then kind and name, so no two rows tie and
+ * a cursor names exactly one place in it.
+ */
+function compare(a: Place | ExploreRow, b: Place | ExploreRow, query: ExploreQuery): number {
+  const x = "key" in a ? a.key : sortKey(a, query.sort);
+  const y = "key" in b ? b.key : sortKey(b, query.sort);
+  const by =
+    query.sort === "name"
+      ? String(x) < String(y) ? -1 : String(x) > String(y) ? 1 : 0
+      : (y as number) - (x as number);
+  if (by !== 0) return by;
+  if (a.kind !== b.kind) return a.kind < b.kind ? -1 : 1;
+  return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+}
+
 /** Whether the row's `shippedAt` (its last merged pull) is inside the window. */
 function movedWithin(row: ExploreRow, query: ExploreQuery, now: number): boolean {
   if (query.updated === "all") return true;
@@ -359,33 +461,19 @@ function movedWithin(row: ExploreRow, query: ExploreQuery, now: number): boolean
 
 /** Rows sorted as the query says, in place. */
 function order(rows: ExploreRow[], query: ExploreQuery): ExploreRow[] {
-  const by: Record<ExploreSort, (r: ExploreRow) => number | string> = {
-    score: (r) => r.score,
-    forks: (r) => r.numbers.forks,
-    ships: (r) => r.numbers.ships,
-    use: (r) => r.numbers.awakeHours,
-    fresh: (r) => (r.shippedAt === null ? 0 : Date.parse(r.shippedAt)),
-    name: (r) => r.name.toLowerCase(),
-  };
-  const key = by[query.sort];
-  return rows.sort((a, b) => {
-    const x = key(a);
-    const y = key(b);
-    if (query.sort === "name") return String(x).localeCompare(String(y));
-    return (y as number) - (x as number) || a.name.localeCompare(b.name);
-  });
+  return rows.sort((a, b) => compare(a, b, query));
 }
 
 /**
  * The answer: the ranked rows (kept, so never changed here) with the forge
- * rows among them, cut to a page. Only the forge rows lack a write clock,
+ * rows among them, whole (the callers cut a page). Only the forge rows lack a write clock,
  * so they are added after the kept read, to a copy.
  */
-function place(ranked: readonly ExploreRow[], forgeRows: ExploreRow[], query: ExploreQuery): ExploreRow[] {
+function place(ranked: readonly ExploreRow[], forgeRows: ExploreRow[], query: ExploreQuery): readonly ExploreRow[] {
   const text = query.text.toLowerCase();
   const own = forgeRows.filter(
     (row) => text === "" || `${row.name} ${row.description}`.toLowerCase().includes(text),
   );
-  if (own.length === 0) return ranked.slice(0, ROWS);
-  return order([...ranked, ...own], query).slice(0, ROWS);
+  if (own.length === 0) return ranked;
+  return order([...ranked, ...own], query);
 }

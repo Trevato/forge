@@ -9,7 +9,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { exploreLine, parseExploreQuery } from "../src/actions/explore.ts";
+import { explorePage, exploreLine, parseExploreQuery } from "../src/actions/explore.ts";
 import { suspendAccount } from "../src/actions/accounts.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { createApp as insertApp } from "../src/core/apps.ts";
@@ -448,5 +448,141 @@ describe("explore on a forge with nothing public", () => {
     const out = await get(`/explore?q=${encodeURIComponent("<script>x</script>")}`, false);
     expect(out).not.toContain("<script>x");
     expect(out).toContain("Nothing matches &lt;script&gt;x&lt;/script&gt;");
+  });
+});
+
+describe("explore past the first page", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let token: string;
+  const COUNT = 70;
+
+  const get = async (q: string, cursor?: string) =>
+    fetch(
+      `${servers.url}/api/v1/explore?q=${encodeURIComponent(q)}${cursor === undefined ? "" : `&cursor=${encodeURIComponent(cursor)}`}`,
+    );
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-explore-pages-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    const made = await createUser(app.db, {
+      origin: "seed",
+      username: "paged",
+      email: "paged@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!made.ok) throw new Error(made.error);
+    proveAll(app);
+    promote(app.db, made.value);
+    token = createToken(app.db, made.value.id, "ro", "ro").token;
+    for (let i = 0; i < COUNT; i++) {
+      const name = `r${String(i).padStart(3, "0")}`;
+      const repo = await createRepo(app, made.value, { name, visibility: "public", description: name });
+      if (!repo.ok) throw new Error(String(repo.error));
+      const record = insertApp(app.db, { repoId: repo.value.id, slug: `paged-${name}`, access: "public" });
+      if (!record.ok) throw new Error(record.error);
+    }
+  }, 60_000);
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  for (const sort of ["score", "name"]) {
+    test(`following next_cursor reaches every app once, in rank order (sort:${sort})`, async () => {
+      const q = `kind:app sort:${sort}`;
+      const first = (await (await get(q)).json()) as any;
+      expect(first.items.length).toBe(60);
+      expect(typeof first.next_cursor).toBe("string");
+      const seen: string[] = first.items.map((r: any) => r.name);
+      let cursor: string | null = first.next_cursor;
+      let pages = 1;
+      while (cursor !== null) {
+        const page = (await (await get(q, cursor)).json()) as any;
+        seen.push(...page.items.map((r: any) => r.name));
+        cursor = page.next_cursor;
+        pages++;
+      }
+      expect(pages).toBe(2);
+      expect(seen.length).toBe(COUNT);
+      expect(new Set(seen).size).toBe(COUNT);
+      expect(seen).toEqual([...seen].sort());
+    });
+  }
+
+  test("the last page and a short list answer next_cursor null", async () => {
+    const short = (await (await get("r001")).json()) as any;
+    expect(short.next_cursor).toBeNull();
+  });
+
+  test("a malformed cursor, or one from another sort, is refused", async () => {
+    for (const bad of ["!!", "x".repeat(500), Buffer.from("[1,2]").toString("base64url")]) {
+      const res = await get("kind:app", bad);
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as any).error).toBe("invalid_cursor");
+    }
+    const first = (await (await get("kind:app")).json()) as any;
+    expect((await get("kind:app sort:name", first.next_cursor)).status).toBe(400);
+  });
+
+  test("MCP explore takes the cursor and answers next_cursor", async () => {
+    const call = async (args: object) => {
+      const res = await fetch(`${servers.url}/mcp`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "explore", arguments: args } }),
+      });
+      return (await res.json()) as any;
+    };
+    const first = JSON.parse((await call({ query: "kind:app" })).result.content[0].text);
+    expect(first.items.length).toBe(60);
+    const second = JSON.parse((await call({ query: "kind:app", cursor: first.next_cursor })).result.content[0].text);
+    expect(second.items.length).toBe(COUNT - 60);
+    expect(second.next_cursor).toBeNull();
+    const refused = await call({ query: "kind:app", cursor: "!!" });
+    expect(JSON.stringify(refused)).toContain("invalid_cursor");
+  });
+
+  test("a cursor made under one sort is refused under every other", async () => {
+    const sorts = ["score", "forks", "ships", "use", "fresh", "name"];
+    for (const made of sorts) {
+      const first = (await (await get(`kind:app sort:${made}`)).json()) as any;
+      for (const used of sorts) {
+        const res = await get(`kind:app sort:${used}`, first.next_cursor);
+        expect(res.status).toBe(made === used ? 200 : 400);
+      }
+    }
+  });
+
+  test("a narrowed caller's pages and cursors hold only rows it may see", async () => {
+    const viewer = undefined;
+    const query = parseExploreQuery("kind:app sort:name");
+    // Hides the row each unnarrowed page would end on, and every tenth after.
+    const visible = (row: { name: string }) => !/[09]$/.test(row.name) || row.name.endsWith("r000");
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const page: Awaited<ReturnType<typeof explorePage>> = await explorePage(app, viewer, query, cursor, visible);
+      if (page === null) throw new Error("refused");
+      seen.push(...page.items.map((r) => r.name));
+      if (page.nextCursor !== null) {
+        const [, , , name] = JSON.parse(Buffer.from(page.nextCursor, "base64url").toString());
+        expect(visible({ name })).toBe(true);
+        expect(page.items.length).toBe(60);
+      }
+      cursor = page.nextCursor;
+    } while (cursor !== null);
+    expect(seen.every((n) => visible({ name: n }))).toBe(true);
+    expect(new Set(seen).size).toBe(seen.length);
+    expect(seen.length).toBe(COUNT - 14 + 1);
   });
 });
