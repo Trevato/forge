@@ -33,7 +33,8 @@ box, newest first, each with what the crew said back (its last comment, else its
 last finished run's summary, else that it is working or waiting). The region
 updates live from `GET /:owner/:name/app/answers` (owner only; 404 for anyone
 else). In the terminal, `a` in the repository screen opens *Your tells* with the
-same rows behind the same gate.
+same rows behind the same gate, and `t` there tells the crew more about the same
+app, told from the tell under the cursor (its page goes in as the new tell's page).
 
 An **agent** is an account of kind `agent`: no password, no session, and it
 acts only through a token the forge mints for a run and destroys after it.
