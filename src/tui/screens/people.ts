@@ -5,10 +5,12 @@
  * is the action's (`actions/roles.ts`). `s` suspends or lifts a suspension
  * after a confirm, with the actions and words MCP `account_suspend` uses.
  * `v` vouches for the email of the person under the cursor, after a y/n,
- * with the action MCP `account_verify` uses.
+ * with the action MCP `account_verify` uses. Without mail a line above the
+ * list says so, as the accounts page's card does.
  */
 
 import { suspendAccount, unsuspendAccount, verifyAccount } from "../../actions/accounts.ts";
+import { mailConfigured } from "../../actions/verify.ts";
 import { ADMIN_WORDS } from "../../actions/admin_words.ts";
 import { lastOwnerSays } from "../../core/orgs.ts";
 import { setRole } from "../../actions/roles.ts";
@@ -17,7 +19,15 @@ import { listPeople, type Person } from "../../core/roles.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import type { Session } from "../session.ts";
+import { style } from "../term/style.ts";
+import { truncate } from "../term/width.ts";
 import { confirmScreen, drawList, later, ListState, promptScreen, runAsync, type ListRow } from "./common.ts";
+
+/**
+ * The accounts page's no-mail card in one line that fits 80 columns: without
+ * mail a newcomer cannot prove an address, so the admin's word is the way in.
+ */
+export const NO_MAIL_LINE = "Mail is not configured: verify newcomers here with v, or set MAIL_SMTP_URL.";
 
 /** One person's row: name, role, allowance, and since when they are suspended. */
 function rowOf(p: Person): string {
@@ -28,6 +38,8 @@ function rowOf(p: Person): string {
 
 export function peopleScreen(f: Session, ctx: Ctx): Screen {
   const list = new ListState();
+  // Read once per open: the answer lists the forge's secrets.
+  const noMail = !mailConfigured(f.app);
   const verify = (name: string): void => {
     const done = verifyAccount(f.app, f.user, name);
     if (done.ok) ctx.toast(`${done.value.username}'s email is verified.`);
@@ -75,7 +87,12 @@ export function peopleScreen(f: Session, ctx: Ctx): Screen {
         title: rowOf(p),
         ...(p.verified ? {} : { meta: "unverified" }),
       }));
-      drawList(s, area, ctx.theme.c, list, rows);
+      const c = ctx.theme.c;
+      if (noMail && area.h > 1) {
+        s.text(area.x, area.y, truncate(NO_MAIL_LINE, area.w), style(c.attn, c.bg), area.x + area.w);
+        area = { ...area, y: area.y + 2, h: Math.max(0, area.h - 2) };
+      }
+      drawList(s, area, c, list, rows);
     },
     key(e) {
       const people = listPeople(f.app.db);
