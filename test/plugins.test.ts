@@ -19,7 +19,7 @@ const opencodeText = (): string => {
 const backticked = (text: string): string[] => [...text.matchAll(/`([a-z][a-z0-9_]*)`/g)].map((m) => m[1]!);
 
 /** Backticked words that are the server or an argument, not a tool. */
-const NOT_TOOLS = new Set(["forge", "repo", "text", "context", "page", "run", "commit", "said", "action", "ship", "close", "status", "words", "id", "verb", "proposal", "approve", "later", "url"]);
+const NOT_TOOLS = new Set(["forge", "repo", "text", "context", "page", "run", "commit", "said", "action", "ship", "close", "status", "words", "id", "verb", "proposal", "approve", "later", "url", "tail"]);
 
 /** Tools the command text tells the agent to call: every backticked name that is not an argument. */
 const toolsNamed = (text: string): string[] => [...new Set(backticked(text))].filter((n) => !NOT_TOOLS.has(n));
@@ -36,6 +36,28 @@ for (const [label, text] of [
     expect(named.filter((n) => !tools.has(n))).toEqual([]);
   });
 }
+
+describe("what the crew is doing on an app", () => {
+  for (const [label, text] of [
+    ["Claude Code", claudeText],
+    ["OpenCode", opencodeText],
+  ] as const) {
+    test(`${label} names runs and run_log, which the forge lists`, () => {
+      const named = toolsNamed(text());
+      for (const tool of ["runs", "run_log"]) {
+        expect(named).toContain(tool);
+        expect(tools.has(tool)).toBe(true);
+      }
+      expect(text()).toMatch(/log <app> <run>/);
+      expect(text()).toMatch(/`tail`\s*(=\s*)?40/);
+      expect(text()).toContain("verbatim");
+    });
+  }
+
+  test("a command that drops run_log is caught", () => {
+    expect(toolsNamed("- runs <app>: call `runs` with `repo`")).not.toContain("run_log");
+  });
+});
 
 test("a renamed tool is caught", () => {
   expect(toolsNamed("call `tell_renamed` with `repo`").filter((n) => !tools.has(n))).toEqual(["tell_renamed"]);
@@ -98,7 +120,7 @@ const verbDiff = (a: string, b: string): { onlyA: string[]; onlyB: string[] } =>
 
 describe("the two plugin commands offer the same verbs", () => {
   test("Claude Code and OpenCode have the same set", () => {
-    expect(verbsOf(claudeText())).toEqual(["decide", "plan", "preview", "pulls", "status", "tell"]);
+    expect(verbsOf(claudeText())).toEqual(["decide", "log", "plan", "preview", "pulls", "runs", "status", "tell"]);
     expect(verbDiff(claudeText(), opencodeText())).toEqual({ onlyA: [], onlyB: [] });
   });
 
