@@ -245,6 +245,7 @@ describe("the forge over MCP", () => {
       "forges",
       "claim_link",
       "take_updates",
+      "sync",
       "sever",
       "flag_set",
       "follow_mode",
