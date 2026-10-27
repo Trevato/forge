@@ -52,6 +52,43 @@ export async function readDrift(dir: string, branch: string, headOid: string): P
   return { landings: times.length, since: times.length > 0 && Number.isFinite(first) ? first * 1000 : null };
 }
 
+type Measure = Omit<Drift, "number">;
+export type DriftReader = (dir: string, branch: string, headOid: string) => Promise<Measure>;
+
+export const DRIFT_CACHE_MAX = 1000;
+const cache = new Map<string, Measure>();
+
+export function clearDriftCache(): void {
+  cache.clear();
+}
+
+/** The tip of `branch`, one cheap git call; null when unreadable. */
+export async function branchTip(dir: string, branch: string): Promise<string | null> {
+  if (!isSafeRef(branch)) return null;
+  const out = await runGit(["rev-parse", "--verify", "-q", `refs/heads/${branch}`], { cwd: dir });
+  const oid = out.ok ? out.value.trim() : "";
+  return isSafeOid(oid) ? oid : null;
+}
+
+/** `read` answered once per repository, head oid and main's tip; the oldest entries go past DRIFT_CACHE_MAX. */
+export async function cachedDrift(
+  read: DriftReader,
+  dir: string,
+  branch: string,
+  headOid: string,
+  tip: string | null,
+  max = DRIFT_CACHE_MAX,
+): Promise<Measure> {
+  if (tip === null) return read(dir, branch, headOid);
+  const key = `${dir}\0${branch}\0${headOid}\0${tip}`;
+  const hit = cache.get(key);
+  if (hit) return hit;
+  const fresh = await read(dir, branch, headOid);
+  cache.set(key, fresh);
+  while (cache.size > max) cache.delete(cache.keys().next().value as string);
+  return fresh;
+}
+
 const behind = (d: Drift, now: number): number => (d.since === null ? 0 : now - d.since);
 const drifting = (d: Drift, now: number): boolean => d.landings > DRIFT_LANDINGS || behind(d, now) > DRIFT_MS;
 
@@ -71,7 +108,11 @@ export function driftAlarm(drifts: readonly Drift[], now: number): DriftAlarm {
 }
 
 /** Reads every open pull's drift from its repository's main and answers the alarm. */
-export async function alarmDrift(app: App, now: Date | number = Date.now()): Promise<DriftAlarm> {
+export async function alarmDrift(
+  app: App,
+  now: Date | number = Date.now(),
+  { read = readDrift, readTip = branchTip }: { read?: DriftReader; readTip?: typeof branchTip } = {},
+): Promise<DriftAlarm> {
   const at = typeof now === "number" ? now : now.getTime();
   const rows = app.db
     .query<Row, []>(
@@ -81,11 +122,18 @@ export async function alarmDrift(app: App, now: Date | number = Date.now()): Pro
         WHERE i.kind = 'pull' AND i.state = 'open' AND p.merged_at IS NULL`,
     )
     .all();
+  const tips = new Map<string, Promise<string | null>>();
+  const tipOf = (dir: string, branch: string) => {
+    const k = `${dir}\0${branch}`;
+    let t = tips.get(k);
+    if (!t) tips.set(k, (t = readTip(dir, branch)));
+    return t;
+  };
   const drifts = await Promise.all(
-    rows.map(async (r) => ({
-      number: r.number,
-      ...(await readDrift(repoDir(app.reposRoot, r.owner, r.name), r.base_branch, r.head_oid)),
-    })),
+    rows.map(async (r) => {
+      const dir = repoDir(app.reposRoot, r.owner, r.name);
+      return { number: r.number, ...(await cachedDrift(read, dir, r.base_branch, r.head_oid, await tipOf(dir, r.base_branch))) };
+    }),
   );
   return driftAlarm(drifts, at);
 }
