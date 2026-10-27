@@ -436,8 +436,32 @@ export const toolbarJs = `(function () {
     pill.setAttribute("aria-expanded", open ? "true" : "false");
     pill.style.opacity = open ? "1" : ".85";
     watch(open);
-    if (open) panel.focus();
+    if (open) {
+      // Focus goes to the panel's first link; a bare panel only when it has none.
+      var first = stops().filter(function (el) { return el.tagName === "A"; })[0];
+      (first || panel).focus();
+    }
   }
+  // The panel's own tab stops, in order (read from the panel, never the page).
+  function stops() {
+    var all = panel.getElementsByTagName ? Array.prototype.slice.call(panel.getElementsByTagName("*")) : [];
+    return all.filter(function (el) {
+      var t = el.tagName;
+      return (t === "A" && el.hasAttribute("href")) || ((t === "BUTTON" || t === "INPUT" || t === "TEXTAREA") && !el.disabled);
+    });
+  }
+  // Tab cycles inside the open panel: the last stop wraps to the first, and back.
+  panel.addEventListener("keydown", function (e) {
+    if (e.key !== "Tab") return;
+    var s = stops();
+    if (!s.length) return;
+    var at = root.activeElement;
+    var edge = e.shiftKey ? s[0] : s[s.length - 1];
+    if (at === edge || at === panel) {
+      e.preventDefault();
+      (e.shiftKey ? s[s.length - 1] : s[0]).focus();
+    }
+  });
   pill.addEventListener("click", function () {
     if (Date.now() < until) return;
     set(panel.hidden);

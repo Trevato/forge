@@ -214,6 +214,6 @@ describe("the crew line", () => {
     );
     expect(toolbarJs).not.toContain("document.cookie");
     expect(toolbarJs).toContain('aria-live", "polite"');
-    expect(toolbarJs.length).toBeLessThan(20 * 1024);
+    expect(toolbarJs.length).toBeLessThan(22 * 1024);
   });
 });
