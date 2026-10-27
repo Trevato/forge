@@ -43,7 +43,7 @@ import { isPinned } from "../../core/pins.ts";
 import { setDecisionsBy } from "../../actions/repos.ts";
 import { stopMirroring } from "../../actions/mirror_target.ts";
 import { getMirrorTarget, mirrorLine } from "../../core/migrate_mirror.ts";
-import { canAdmin, DECISIONS_BY, getRepoById, type Repo } from "../../core/repos.ts";
+import { canAdmin, canWrite, DECISIONS_BY, getRepoById, type Repo } from "../../core/repos.ts";
 import type { TreeEntry } from "../../git/read.ts";
 import { fileKind, NO_BYTES } from "../../web/render/kinds.ts";
 import type { RepoFacts, RepoSource } from "../../view/source.ts";
@@ -124,7 +124,7 @@ import { reportCommands } from "./report.ts";
 import { reportsCommands } from "./reports.ts";
 import { tellCommands } from "./tell.ts";
 import { workingCommands } from "./working.ts";
-import { yoursCommands } from "./yours.ts";
+import { makeItYoursScreen, yoursCommands } from "./yours.ts";
 import { visionCommands } from "./vision.ts";
 import { appEnvCommands } from "./appenv.ts";
 import { externalEditor, editorHint, hasExternalEditor } from "./external.ts";
@@ -1356,6 +1356,9 @@ export function workspaceScreen(
                       { disabled: !f.signedIn },
                     ),
                   ]),
+              ...(repo === undefined || canWrite(f.db, repo, f.user)
+                ? []
+                : [binding(["Y"], "make it yours", { disabled: !f.signedIn })]),
               ...(repo === undefined
                 ? []
                 : [
@@ -1741,6 +1744,10 @@ export function workspaceScreen(
           stopped.ok && stopped.value ? "success" : "danger",
         );
         ctx.invalidate();
+        return true;
+      }
+      if (plain && e.key === "Y" && f.signedIn && repo !== undefined) {
+        ctx.push(makeItYoursScreen(f, ctx, repo));
         return true;
       }
       if (plain && e.key === "F" && f.signedIn) {

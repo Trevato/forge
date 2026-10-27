@@ -469,7 +469,7 @@ count of apps links there), `archived:yes` (put-away repositories too),
 and words to match. An agent's working fork is how the crew builds, not a
 find, and is left out; a private app's hours are told only to those who may
 enter it. Every app row offers **Make it yours** (a fork) to someone signed
-in. The same rows: `GET /api/v1/explore?q=…` and the MCP tool `explore`
+in (in the terminal, `Y` on a repository screen: name, `tab` for visibility, the plan, then a confirm). The same rows: `GET /api/v1/explore?q=…` and the MCP tool `explore`
 (`actions/explore.ts`). It is in the account menu and the palette, and the
 front page's "All public apps" leads here.
 

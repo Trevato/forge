@@ -125,8 +125,8 @@ describe("make it yours in the terminal", () => {
     expect(await palette(bob, [":", "Make it"], "Make it yours")).toContain("alice/lobby — Make it yours");
   });
 
-  test("it opens the fork screen", async () => {
-    const text = await palette(bob, [":", "make it", "\r"], "Fork");
-    expect(text).toContain("Fork");
+  test("it opens the make-it-yours screen", async () => {
+    const text = await palette(bob, [":", "make it", "\r"], "your own");
+    expect(text).toContain("Make alice/lobby your own");
   });
 });
