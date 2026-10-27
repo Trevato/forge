@@ -60,7 +60,7 @@ import {
   signInFirst,
 } from "../chrome.ts";
 import { codeJs } from "../client.ts";
-import { highlightBlob } from "../code.ts";
+import { countLines, highlightPrefix } from "../code.ts";
 import { latestWave } from "../../story/waves.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { liveClientJs, liveMount } from "../live.ts";
@@ -92,7 +92,9 @@ import {
 const MAX_RENDER_BYTES = 1_000_000;
 // A blob under the byte cap can still be pathological (a megabyte of newlines
 // is ~490k lines). Bounding rendered lines bounds the response independently.
-const MAX_RENDER_LINES = 5_000;
+/** Lines a file page draws before it links the rest (`?all=1` draws every one). */
+const FIRST_LINES = 1_000;
+const MAX_RENDER_LINES = 10_000;
 
 import { pathCrumbs, refMenu, refSetFrom, type RefSet } from "./refs.ts";
 import {
@@ -613,6 +615,7 @@ export function blobBody(
   path: string,
   blob: Blob,
   highlighted?: (ms: number) => void,
+  all = false,
 ): { content: Html; lines: number } {
   const encoded = encodeURIComponent(ref);
   if (blob.kind === "binary") {
@@ -645,32 +648,43 @@ export function blobBody(
     };
   }
   const text = new TextDecoder().decode(blob.body).replace(/\n$/, "");
-  // Highlight the whole file (multi-line constructs need full context),
-  // then take the first N lines for rendering.
+  const limit = all ? MAX_RENDER_LINES : FIRST_LINES;
+  // Highlighting runs left to right, so the first N lines highlight the same
+  // alone as inside the whole file; only that prefix is read and painted.
   const began = performance.now();
-  const highlight = highlightBlob(text, path);
+  const total = countLines(text);
+  const lines = highlightPrefix(text, path, limit);
   highlighted?.(performance.now() - began);
-  const lines = highlight.slice(0, MAX_RENDER_LINES);
-  const truncated = highlight.length > MAX_RENDER_LINES;
+  const truncated = total > lines.length;
+  const fileHref = `${base}/blob/${encoded}/${path}`;
   return {
-    lines: highlight.length,
+    lines: total,
     content: html`<div class="card code">
         <table>
           ${lines.map(
             (line, i) =>
-              html`<tr id="L${i + 1}">
-                <td class="ln"><a href="#L${i + 1}">${i + 1}</a></td>
-                <td><pre>${line}</pre></td>
-              </tr>`,
+              html`<tr id="L${i + 1}"><td class="ln"><a href="#L${i + 1}">${i + 1}</a></td><td><pre>${line}</pre></td></tr>`,
           )}
         </table>
       </div>
       ${when(truncated, () =>
         empty({
-          icon: "alert",
-          title: "Showing the first 5,000 lines",
-          note: `This file has ${highlight.length.toLocaleString()} lines. Fetch the raw bytes for all of them.`,
-          action: btn("View raw", { href: `${base}/raw/${encoded}/${path}` }),
+          icon: "file",
+          title: `Showing ${lines.length.toLocaleString()} of ${total.toLocaleString()} lines`,
+          note: all
+            ? "The rest is in the raw file."
+            : "The page draws the first lines so it opens at once. A link to a later line (#L…) lands once you show all lines.",
+          action: html`${all
+              ? html``
+              : btn("Show all lines", {
+                  href: `${fileHref}?all=1`,
+                  id: "code-cut",
+                  icon: "file",
+                })}
+            ${btn("View raw", {
+              href: `${base}/raw/${encoded}/${path}`,
+              variant: "outline",
+            })}`,
         }),
       )}`,
   };
@@ -998,6 +1012,8 @@ export function renderBlob(
     view?: BlobView;
     /** Told how long highlighting took, for Server-Timing. */
     highlighted?: (ms: number) => void;
+    /** Draw every line instead of the first thousand. */
+    all?: boolean;
   },
 ): Html {
   const base = scope.base;
@@ -1007,7 +1023,7 @@ export function renderBlob(
   const { content, lines } =
     view === "rendered" && o.blob.kind === "text"
       ? renderedMarkdown(o.blob)
-      : blobBody(base, o.ref, o.path, o.blob, o.highlighted);
+      : blobBody(base, o.ref, o.path, o.blob, o.highlighted, o.all);
   const sizeText =
     o.blob.kind === "too_large" ? "" : sizeWithTokens(o.blob.size, o.path);
   const fileHref = `${base}/blob/${encoded}/${o.path}`;
@@ -1432,6 +1448,7 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
     blob: capped(blob.value),
     view: blobView(ctx.url.searchParams.get("view")),
     highlighted: (ms) => (highlightMs = (highlightMs ?? 0) + ms),
+    all: ctx.url.searchParams.get("all") === "1",
   });
   if (highlightMs !== undefined) notePhase(ctx.request, "highlight", highlightMs);
   const paneMs = performance.now() - renderStart - (highlightMs ?? 0);

@@ -1387,6 +1387,9 @@ export const shellJs = /* js */ `
       var lo = Number(m[1]); var hi = Number(m[2] || m[1]);
       if (hi < lo) { var t = lo; lo = hi; hi = t; }
       anchor = lo;
+      // An anchor past the cut: the page that draws every line.
+      var cut = doc.getElementById('code-cut');
+      if (cut && !doc.getElementById('L' + lo)) { location.replace(cut.getAttribute('href') + location.hash); return; }
       for (var n = lo; n <= hi; n++) {
         var row = doc.getElementById('L' + n);
         if (row) row.setAttribute('data-hl', '');

@@ -1,5 +1,11 @@
 ## What works today
 
+- **A long file's page** draws its first 1,000 lines and says "Showing 1,000 of
+  N lines", with *Show all lines* (`?all=1`) and the raw file. `?all=1` stops at
+  10,000 lines (it was 5,000 for every view before); past that, the raw file is
+  the way. Highlighted lines are cached by content hash (32 files, least
+  recently used out). A `#L…` anchor past the cut is redirected to `?all=1` by
+  the page script; with scripts off the notice says to show all lines.
 - **A repository's runs page filters by state**: a row of links (All, then each
   state) above the list, or `/:owner/:name/runs?state=failed` by hand. An unknown
   state is ignored, and the word filter and the pager keep the chosen state. The

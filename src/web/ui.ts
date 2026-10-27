@@ -172,10 +172,12 @@ export interface BtnOptions {
   disabled?: boolean;
   current?: boolean;
   extra?: string;
+  /** The element's id, for a script or a fragment link that finds it. */
+  id?: string;
 }
 
 function btnAttrs(o: BtnOptions): Html {
-  return html`class="btn${o.extra ? ` ${o.extra}` : ""}"
+  return html`${o.id ? html`id="${o.id}" ` : null}class="btn${o.extra ? ` ${o.extra}` : ""}"
   ${o.variant ? html`data-variant="${o.variant}"` : null}
   ${o.size ? html`data-size="${o.size}"` : null}
   ${o.title ? html`title="${o.title}"` : null}
