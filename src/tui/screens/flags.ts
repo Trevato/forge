@@ -9,6 +9,7 @@
  * an admin who is not an agent; anyone else sees nothing and sets nothing.
  */
 
+import { readFlags } from "../../actions/flags_view.ts";
 import {
   checkInput,
   FLAGS_ADMIN_ONLY,
@@ -16,7 +17,6 @@ import {
   mayManageFlags,
   usesLine,
   winnerOffer,
-  type FlagDecl,
   type FlagInput,
   type FlagValue,
 } from "../../core/flags.ts";
@@ -87,15 +87,14 @@ export function flagsScreen(f: Session, ctx: Ctx): Screen {
     ctx.invalidate();
   };
 
-  const rows = (): ListRow[] =>
-    names().map((name) => {
-      const decl = (flagRegistry().decls as Record<string, FlagDecl>)[name]!;
-      return {
-        title: name,
-        secondary: show(flagRegistry().value(name as never)),
-        meta: `${offer(name) === undefined ? "" : `w: make ${offer(name)} the default  `}${decl.why}  default ${decl.default ? "on" : "off"}  owner #${decl.issue}`,
-      };
-    });
+  const rows = (): ListRow[] => {
+    const read = readFlags(f.user);
+    return (read.ok ? read.flags : []).map((flag) => ({
+      title: flag.name,
+      secondary: show(flag.value),
+      meta: `${offer(flag.name) === undefined ? "" : `w: make ${offer(flag.name)} the default  `}${flag.why}  default ${flag.default ? "on" : "off"}  owner #${flag.issue}`,
+    }));
+  };
 
   const screen: Screen = {
     title: "Flags",

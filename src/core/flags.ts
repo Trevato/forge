@@ -213,7 +213,7 @@ export function makeFlags<const D extends Record<string, FlagDecl>>(decls: D) {
     },
     decls,
     /** The live value of `name`, if one is set. */
-    value(name: keyof D & string): FlagValue | undefined {
+    value(name: string): FlagValue | undefined {
       return values.get(name);
     },
     /** Every declared flag with its declaration and live value, in declaration order. */
