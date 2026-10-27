@@ -96,6 +96,7 @@ const MAX_RENDER_BYTES = 1_000_000;
 const FIRST_LINES = 1_000;
 const MAX_RENDER_LINES = 10_000;
 
+import { sshCloneUrl } from "../../ssh/command.ts";
 import { pathCrumbs, refMenu, refSetFrom, type RefSet } from "./refs.ts";
 import {
   codeLayout,
@@ -726,9 +727,7 @@ function aboutCard(
   drift?: ForkDrift,
 ): Html {
   const cloneUrl = `${ctx.url.origin}/${repo.ownerName}/${repo.name}.git`;
-  // An SSH listener is not built yet; when a deployment configures one, the
-  // second clone line appears with no further change here.
-  const sshPort = (ctx.app.config as { sshPort?: number }).sshPort;
+  const sshUrl = sshCloneUrl(ctx.app, repo.ownerName, repo.name);
   const parent = forkParent(ctx, repo);
   const origin = repo.origin;
   // A fork made at the origin has no `forkParentId` — its parent is a
@@ -845,12 +844,12 @@ function aboutCard(
         <p class="mt small muted">Clone over HTTPS</p>
         ${copyField("clone-https", cloneUrl, "HTTPS clone address", "Copy clone URL")}
         ${when(
-          sshPort !== undefined,
-          () =>
+          sshUrl,
+          (url) =>
             html`<p class="mt small muted">Clone over SSH</p>
               ${copyField(
                   "clone-ssh",
-                  `ssh://git@${ctx.app.config.host ?? ctx.url.hostname}:${sshPort}/${repo.ownerName}/${repo.name}.git`,
+                  url,
                   "SSH clone address",
                   "Copy SSH clone URL",
                 )}`,

@@ -12,6 +12,7 @@ import { homeTruth } from "../system/home_truth.ts";
 import { upstreamFacts } from "../actions/upstream_follow.ts";
 import { FAMILY_WORDS } from "../actions/family_words.ts";
 import { showProvenance } from "../actions/provenance.ts";
+import { sshCloneUrl } from "../ssh/command.ts";
 import {
   APP_ALREADY_YOURS,
   ORIGIN_UNREACHABLE,
@@ -4563,8 +4564,6 @@ export function apiRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const window = keyedWindow(ctx);
     if (window instanceof Response) return window;
-    const host = ctx.app.config.host ?? ctx.url.hostname;
-    const sshPort = ctx.app.config.sshPort;
     const user = ctx.auth.user;
     const { pins, repos } = timePhase(ctx.request, "pins", () => {
       const pins = listPinned(ctx.app, user);
@@ -4588,9 +4587,7 @@ export function apiRoutes(router: Router<Handler>): void {
             defaultBranch: repo.defaultBranch,
             cloneUrl: `${ctx.url.origin}/${path}.git`,
             sshUrl:
-              sshPort !== undefined && sshPort > 0
-                ? `ssh://git@${host}:${sshPort}/${path}.git`
-                : null,
+              sshCloneUrl(ctx.app, repo.ownerName, repo.name) ?? null,
             origin: originFacts(repo),
             pinnedAt: pin.createdAt,
           },

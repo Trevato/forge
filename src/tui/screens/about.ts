@@ -19,6 +19,7 @@ import { audienceFor } from "../../core/audience.ts";
 import { isPinned } from "../../core/pins.ts";
 import { parentReleases, releasesSentence } from "../../core/parent_releases.ts";
 import { running } from "../../kernel/version.ts";
+import { sshCloneUrl } from "../../ssh/command.ts";
 import { checkMemoryAt } from "../../apps/check-memory.ts";
 import { repoDir } from "../../git/repos.ts";
 import { forkDrift } from "../../actions/forks.ts";
@@ -556,18 +557,21 @@ function originFacts(repo: Repo): [string, string][] {
   ];
 }
 
-/** The two clone URLs, from the ports this forge is actually listening on. */
+/**
+ * The two clone URLs: HTTP from the forge's public address, the same one
+ * the web page shows, and SSH from the one builder (absent when SSH is off).
+ */
 export function cloneFacts(f: Session, repo: Repo): [string, string][] {
-  const host = f.app.config.host ?? "localhost";
-  const path = `${repo.ownerName}/${repo.name}.git`;
+  const config = f.app.config;
+  const origin =
+    config.url !== undefined
+      ? new URL(config.url).origin
+      : `http://${config.host ?? "localhost"}:${config.port ?? 3000}`;
   const out: [string, string][] = [
-    ["clone (http)", `http://${host}:${f.app.config.port ?? 3000}/${path}`],
+    ["clone (http)", `${origin}/${repo.ownerName}/${repo.name}.git`],
   ];
-  if (f.app.config.sshPort !== undefined)
-    out.push([
-      "clone (ssh)",
-      `ssh://git@${host}:${f.app.config.sshPort}/${path}`,
-    ]);
+  const ssh = sshCloneUrl(f.app, repo.ownerName, repo.name);
+  if (ssh !== undefined) out.push(["clone (ssh)", ssh]);
   return out;
 }
 
