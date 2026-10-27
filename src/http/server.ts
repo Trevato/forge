@@ -470,6 +470,7 @@ import { apiRoutes } from "./api.ts";
 import { inNamespace } from "../core/proposal_token.ts";
 import { proposalTokenMint, proposalTokenRevoke } from "../web/pages/proposal-tokens.ts";
 import { adminGate } from "./admin_gate.ts";
+import { originGate } from "./origin_gate.ts";
 import { proposalGate } from "./proposal_gate.ts";
 import { runGate } from "./run_gate.ts";
 import { checksRecheckRoutes } from "./checks_recheck.ts";
@@ -2550,6 +2551,10 @@ async function answerGet(
     noteSignedIn(request);
     noteCaller(request, app.db, auth.user.id, auth.sessionId);
   }
+
+  // A cookie's identity never acts for another site: one door for every route.
+  const originRefusal = originGate(app, request, url, auth);
+  if (originRefusal !== undefined) return originRefusal;
 
   // A proposal token reaches nothing but what its gate names; every other
   // request it makes ends here, before the limiter or any handler.
