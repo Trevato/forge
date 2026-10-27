@@ -74,9 +74,9 @@ describe("flow panel cache", () => {
     expect(agent).not.toBe(owner);
     expect(owner.openers.reduce((n, o) => n + o.opened, 0)).toBe(2);
     expect(agent.openers.reduce((n, o) => n + o.opened, 0)).toBe(1);
-    // asked the other way round, still apart
-    expect(panelFigures(app.db, "owner", t)).toBe(owner);
-    expect(panelFigures(app.db, "agent", t)).toBe(agent);
+    // asked the other way round, still apart (by value: a background write on another connection may end the kept copy)
+    expect(panelFigures(app.db, "owner", t)).toEqual(owner);
+    expect(panelFigures(app.db, "agent", t)).toEqual(agent);
   });
 
   test("the panel draws from it", () => {
