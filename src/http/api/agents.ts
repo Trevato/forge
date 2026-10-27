@@ -100,7 +100,7 @@ export function agentRoutes(router: Router<Handler>): void {
  * owner's configuration (#946), for the forge's owner and the agent itself;
  * anyone else signed in sees who it is.
  */
-function agentFor(agent: Agent, viewer: User | undefined) {
+export function agentFor(agent: Agent, viewer: User | undefined) {
   if (viewer?.isAdmin === true || viewer?.id === agent.user.id)
     return agentJson(agent);
   return {
