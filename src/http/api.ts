@@ -35,16 +35,11 @@ import { voteVariant } from "../actions/variants.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../core/route_timing.ts";
 import { parentForgeFor } from "../core/parent_releases.ts";
 import { readFlow } from "../flow/read.ts";
-import { listPinned as listPinnedPanels, movePinned, pinPanel, unpinPanel, type PinError } from "../actions/board-pins.ts";
-import { deleteBoard, listAllBoards, showBoard, writeBoard, type BoardError } from "../actions/boards.ts";
-import { BOARD_NOT_SAVED, MILESTONE_WATCH_PERSON_ONLY, VOTE_NOT_RECORDED } from "../actions/board_words.ts";
-import { panelData, parseWindow, rowsCsv } from "../boards/panel_data.ts";
-import { runQuery } from "../boards/query.ts";
+import { MILESTONE_WATCH_PERSON_ONLY, VOTE_NOT_RECORDED } from "../actions/board_words.ts";
 import { recordDrill } from "../core/domain_drills.ts";
 import { drillVerdict } from "../kernel/domain_drill.ts";
 import { DOMAINS } from "../kernel/domains.ts";
-import { SOURCES } from "../boards/sources.ts";
-import { bodyCapFor, readBounded } from "./limits.ts";
+import { readBounded } from "./limits.ts";
 import { askCheck } from "../checks/again.ts";
 import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
 import { changeCapacity, listCapacity } from "../actions/capacity.ts";
@@ -438,6 +433,7 @@ import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
 import { passportRoutes } from "./passport_edge.ts";
 import { egressGrantRoutes } from "./api/egress_grants.ts";
+import { boardRoutes } from "./api/boards.ts";
 import { labelsRoutes } from "./api/labels.ts";
 import { orgRoutes } from "./api/orgs.ts";
 import { secretRoutes } from "./api/secrets.ts";
@@ -459,7 +455,7 @@ import { REPORT_RECEIVED } from "../actions/report_words.ts";
 import { ADMIN_WORDS } from "../actions/admin_words.ts";
 import { SETTING_WORDS } from "../actions/setting_words.ts";
 import { SPEND_WORDS } from "../actions/spend_words.ts";
-import { ANSWER_WORDS, ENABLED_WORDS, ORDER_WORDS, PIN_OP_WORDS, SIGNUP_WORDS, VISIBILITY_WORDS } from "../core/arg_words.ts";
+import { ANSWER_WORDS, ENABLED_WORDS, ORDER_WORDS, SIGNUP_WORDS, VISIBILITY_WORDS } from "../core/arg_words.ts";
 
 /** Take the parent's updates for `repo` and answer as the API does, for every route that asks. */
 async function respondTake(ctx: Ctx, repo: Repo): Promise<Response> {
@@ -1237,6 +1233,15 @@ function membersAnswer<T>(result: Result<T, AppMembersError>): Response {
       return notFound();
   }
 }
+
+/** Boards (`boards/query.ts`): a site admin who is a person, never an agent. */
+export function boardsAdmin(ctx: Ctx): Response | undefined {
+  if (!ctx.auth.user) return unauthorized();
+  return ctx.auth.user.isAdmin && ctx.auth.user.kind !== "agent"
+    ? undefined
+    : forbidden();
+}
+
 export function apiRoutes(router: Router<Handler>): void {
   passportRoutes(router);
   // ── accounts ─────────────────────────────────────────────────────────
@@ -1422,14 +1427,6 @@ export function apiRoutes(router: Router<Handler>): void {
   const accountAdmin = (ctx: Ctx, scope: "ro" | "admin"): Response | undefined =>
     ctx.auth.user?.isAdmin === true ? requireScope(ctx, scope) : notFound();
 
-  // Boards (`boards/query.ts`): a site admin who is a person, never an agent.
-  const boardsAdmin = (ctx: Ctx): Response | undefined => {
-    if (!ctx.auth.user) return unauthorized();
-    return ctx.auth.user.isAdmin && ctx.auth.user.kind !== "agent"
-      ? undefined
-      : forbidden();
-  };
-
   // Open read hooks (#1789): the owner, or an agent holding `telemetry:read`.
   // Anyone else is refused; every agent read is logged.
   const telemetryRead =
@@ -1457,19 +1454,7 @@ export function apiRoutes(router: Router<Handler>): void {
     return timePhase(ctx.request, "render", () => json(body));
   });
 
-  router.add("GET", "/api/v1/boards/sources", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const denied = boardsAdmin(ctx);
-    if (denied) return denied;
-    const sources = timePhase(ctx.request, "sources", () =>
-      Object.entries(SOURCES).map(([name, s]) => ({
-        name,
-        time: s.time,
-        columns: s.columns,
-        ...(s.docs ? { docs: s.docs } : {}),
-      })));
-    return timePhase(ctx.request, "render", () => json({ sources }));
-  });
+  boardRoutes(router);
 
   // A domain drill and its verdict (`kernel/domain_drill.ts`): an admin
   // person's, kept whether green or red.
@@ -1497,144 +1482,6 @@ export function apiRoutes(router: Router<Handler>): void {
     const observed = { health, board };
     const verdict = drillVerdict(domain, observed, back);
     return json(recordDrill(ctx.app.db, ctx.auth.user!.id, domain.key, observed, back, verdict), 201);
-  });
-
-  router.add("POST", "/api/v1/boards/query", async (ctx) => {
-    const denied = boardsAdmin(ctx) ?? requireAccount(ctx, { adminToken: true });
-    if (denied) return denied;
-    const bytes = await readBounded(ctx.request, bodyCapFor(ctx.request));
-    if (bytes === "too_large") return apiError("too_large", 413, "that is too large to read here");
-    let query: unknown;
-    try {
-      query = JSON.parse(new TextDecoder().decode(bytes));
-    } catch {
-      return apiError("bad_json", 400, "the body must be a JSON query object");
-    }
-    const answer = runQuery(ctx.app.db, query, { repoIds: "all" });
-    return answer.ok
-      ? json({ rows: answer.rows })
-      : apiError("bad_query", 400, answer.error);
-  });
-
-  const boardFailed = (e: BoardError): Response => {
-    if (e === "not_found") return notFound();
-    if (typeof e === "object") return apiError("refused", 422, e.refused);
-    return apiError(e, e === "exists" || e === "branch_moved" ? 409 : 422, BOARD_NOT_SAVED);
-  };
-
-  router.add("GET", "/api/v1/boards", async (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const denied = boardsAdmin(ctx);
-    if (denied) return denied;
-    const listed = await timePhaseAsync(ctx.request, "boards", () => listAllBoards(ctx.app, ctx.auth.user));
-    return timePhase(ctx.request, "render", () =>
-      listed.ok
-        ? json({ boards: listed.value.map((b) => ({ slug: b.slug, ...b.board })) })
-        : notFound());
-  });
-
-  // The signed-in admin's pins for home: GET lists them in order, POST
-  // {op: pin|unpin|move, slug, title, by?} changes them. Above `:slug`.
-  router.add("GET", "/api/v1/boards/pins", async (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const denied = boardsAdmin(ctx);
-    if (denied) return denied;
-    const listed = await timePhaseAsync(ctx.request, "boards", () => listPinnedPanels(ctx.app, ctx.auth.user));
-    return timePhase(ctx.request, "render", () =>
-      listed.ok ? json({ pins: listed.value.map((p) => ({ slug: p.slug, title: p.title, panel: p.panel })) }) : notFound());
-  });
-
-  router.add("POST", "/api/v1/boards/pins", async (ctx) => {
-    const denied = boardsAdmin(ctx) ?? requireAccount(ctx, { adminToken: true });
-    if (denied) return denied;
-    const bytes = await readBounded(ctx.request, bodyCapFor(ctx.request));
-    if (bytes === "too_large") return apiError("too_large", 413, "that is too large to read here");
-    let input: Record<string, unknown>;
-    try {
-      const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
-      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("not an object");
-      input = parsed as Record<string, unknown>;
-    } catch {
-      return apiError("bad_json", 400, "the body must be a JSON object");
-    }
-    const { op, slug, title, by } = input;
-    const done =
-      op === "pin" ? await pinPanel(ctx.app, ctx.auth.user, slug, title)
-      : op === "unpin" ? unpinPanel(ctx.app, ctx.auth.user, slug, title)
-      : op === "move" ? movePinned(ctx.app, ctx.auth.user, slug, title, by)
-      : undefined;
-    if (!done) return apiError("invalid", 422, PIN_OP_WORDS);
-    if (done.ok) return json({ ...done.value });
-    const e: PinError = done.error;
-    return e === "not_found" ? notFound() : apiError(e, 422, e === "too_many" ? "too many pins" : "that is not a panel");
-  });
-
-  router.add("GET", "/api/v1/boards/:slug", async (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const denied = boardsAdmin(ctx);
-    if (denied) return denied;
-    const shown = await timePhaseAsync(ctx.request, "boards", () => showBoard(ctx.app, ctx.auth.user, ctx.params.slug!));
-    return timePhase(ctx.request, "render", () =>
-      shown.ok ? json({ slug: ctx.params.slug, ...shown.value }) : notFound());
-  });
-
-  // One panel's data (`boards/panel_data.ts`): `:id` is its place on the
-  // board from 0; `from`, `to` and `step` (300, 5m, 1h) the window;
-  // `format=csv` the same rows as a table file.
-  router.add("GET", "/api/v1/boards/:slug/panels/:id", async (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const denied = boardsAdmin(ctx);
-    if (denied) return denied;
-    const shown = await timePhaseAsync(ctx.request, "board", () =>
-      showBoard(ctx.app, ctx.auth.user, ctx.params.slug!),
-    );
-    const id = ctx.params.id!;
-    const panel = shown.ok && /^\d{1,2}$/.test(id) ? shown.value.panels[Number(id)] : undefined;
-    if (!shown.ok || !panel) return notFound();
-    const format = ctx.url.searchParams.get("format") ?? "json";
-    if (format !== "json" && format !== "csv") return apiError("invalid_format", 422, "format must be json or csv");
-    const window = parseWindow(ctx.url.searchParams);
-    if (!window.ok) return apiError("invalid_window", 422, window.error);
-    const data = timePhase(ctx.request, "query", () =>
-      panelData(ctx.app.db, shown.value, panel, window.window),
-    );
-    if (!data.ok) return apiError("bad_query", 400, data.error);
-    const headers = { "cache-control": "private, no-store" };
-    return timePhase(ctx.request, "render", () => {
-      if (format === "csv") {
-        return new Response(rowsCsv(data.rows), {
-          headers: {
-            ...headers,
-            "content-type": "text/csv; charset=utf-8",
-            "content-disposition": `attachment; filename="${ctx.params.slug}-${id}.csv"`,
-          },
-        });
-      }
-      const { ok: _, ...out } = data;
-      return json({ board: ctx.params.slug, panel: Number(id), title: panel.title, chart: panel.chart, ...out }, 200, headers);
-    });
-  });
-
-  router.add("PUT", "/api/v1/boards/:slug", async (ctx) => {
-    const denied = boardsAdmin(ctx) ?? requireAccount(ctx, { adminToken: true });
-    if (denied) return denied;
-    const bytes = await readBounded(ctx.request, bodyCapFor(ctx.request));
-    if (bytes === "too_large") return apiError("too_large", 413, "that is too large to read here");
-    let input: unknown;
-    try {
-      input = JSON.parse(new TextDecoder().decode(bytes));
-    } catch {
-      return apiError("bad_json", 400, "the body must be a JSON board");
-    }
-    const done = await writeBoard(ctx.app, ctx.auth.user, ctx.params.slug!, input);
-    return done.ok ? json({ slug: ctx.params.slug, ...done.value }) : boardFailed(done.error);
-  });
-
-  router.add("DELETE", "/api/v1/boards/:slug", async (ctx) => {
-    const denied = boardsAdmin(ctx) ?? requireAccount(ctx, { adminToken: true });
-    if (denied) return denied;
-    const done = await deleteBoard(ctx.app, ctx.auth.user, ctx.params.slug!);
-    return done.ok ? json({ deleted: true }) : boardFailed(done.error);
   });
 
   // The forge's capacity (`core/capacity.ts`): read and changed live by an

@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   BOARD_NOT_SAVED,
@@ -15,8 +15,13 @@ import {
 import { importsFrom, mcpSource } from "./helpers/mcp.ts";
 
 const ROOT = join(import.meta.dir, "..");
+/** api.ts with the route modules moved out of it (src/http/api/), as mcpSource does for the MCP. */
+const apiSource = (): string =>
+  ["src/http/api.ts", ...readdirSync(join(ROOT, "src/http/api")).filter((f) => f.endsWith(".ts")).sort().map((f) => `src/http/api/${f}`)]
+    .map((f) => readFileSync(join(ROOT, f), "utf8"))
+    .join("\n");
 const read = (path: string): string =>
-  path === "src/http/mcp.ts" ? mcpSource(ROOT) : readFileSync(join(ROOT, path), "utf8");
+  path === "src/http/mcp.ts" ? mcpSource(ROOT) : path === "src/http/api.ts" ? apiSource() : readFileSync(join(ROOT, path), "utf8");
 
 const SENTENCES = {
   BOARD_NOT_SAVED: "that board could not be saved",
