@@ -382,6 +382,13 @@ export async function contribute(
 
   const base = (input.base ?? "").trim() || upstream.value.defaultBranch;
   if (!isSafeRef(base)) return err("unknown_base");
+  // A base the upstream does not have is refused here, before a fork, a
+  // branch or a commit exists. The default branch is the origin's own word.
+  if (base !== upstream.value.defaultBranch) {
+    const listed = await provider.value.listBranches(upstream.value.fullName);
+    if (!listed.ok) return err("origin_unreachable");
+    if (!listed.value.some((b) => b.name === base)) return err("unknown_base");
+  }
 
   return upstream.value.permissions.push
     ? await contributeDirect(app, user.value, origin, upstream.value, {
