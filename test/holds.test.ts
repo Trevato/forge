@@ -33,6 +33,7 @@ import { createToken } from "../src/core/tokens.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { landIfGreen, parkPull } from "../src/crew/autonomy.ts";
 import { sendToReview, sweepReviews } from "../src/crew/review.ts";
+import { startChecks } from "../src/checks/service.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { recordAskLedger } from "../src/web/studio/asks.ts";
 
@@ -973,5 +974,73 @@ describe("a hold set until green", () => {
     const held = holdPull(app, f.alice, f.repo, pull, "red alone", false, "green");
     expect(held.ok && held.value.until).toBe("green");
     expect(releaseOnGreen(app, verdict(pull, "ok"))).toBe(true);
+  });
+});
+
+describe("an until-green hold, through the checks service", () => {
+  let f: Awaited<ReturnType<typeof forge>>;
+  let servers: Servers;
+  let checks: ReturnType<typeof startChecks>;
+
+  beforeAll(async () => {
+    f = await forge("forge-holds-service-", "private");
+    servers = await serve(f.app);
+    checks = startChecks(f.app, { forgeUrl: servers.url, concurrency: 1 });
+    const declared = await commitToBranch(f.app, f.alice, f.repo, {
+      message: "Declare a check",
+      files: [
+        {
+          path: "forge.json",
+          content: '{"check": {"run": "true", "install": ""}}\n',
+        },
+      ],
+    });
+    if (!declared.ok) throw new Error(JSON.stringify(declared.error));
+  }, 30_000);
+
+  afterAll(async () => {
+    await checks.stop();
+    servers.stop();
+    await f.close();
+  });
+
+  const notes = (pull: Pull) =>
+    (
+      f.app.db
+        .query("SELECT payload FROM event WHERE kind = 'pull.released'")
+        .all() as { payload: string }[]
+    )
+      .map((r) => JSON.parse(r.payload))
+      .filter((p) => p.number === pull.number)
+      .map((p) => p.note);
+
+  test("a passing check run by the service releases the hold", async () => {
+    const pull = await f.pullOn("svc-one");
+    setHold(f.app.db, pull.id, f.alice.id, "red alone", "green");
+    const run = await checks.request(f.repo, `pull-${pull.number}`, pull.headOid, "pull", pull.id);
+    expect(run).toBeDefined();
+    const deadline = Date.now() + 30_000;
+    while (getHold(f.app.db, pull.id) && Date.now() < deadline) await Bun.sleep(50);
+    expect(getHold(f.app.db, pull.id)).toBeUndefined();
+    expect(notes(pull)).toEqual([
+      `hold released: green on ${pull.headOid.slice(0, 7)}`,
+    ]);
+  }, 60_000);
+
+  test("holding a head that is already green releases at once", async () => {
+    const pull = f.passCheck(await f.pullOn("svc-two"));
+    const held = holdPull(f.app, f.alice, f.repo, pull, "red alone", false, "green");
+    expect(held.ok).toBe(true);
+    expect(getHold(f.app.db, pull.id)).toBeUndefined();
+    expect(notes(pull)).toEqual([
+      `hold released: green on ${pull.headOid.slice(0, 7)}`,
+    ]);
+    // A plain hold on a green head stays; so does one on a head with no green.
+    const plain = f.passCheck(await f.pullOn("svc-three"));
+    holdPull(f.app, f.alice, f.repo, plain, "waiting");
+    expect(getHold(f.app.db, plain.id)).toBeDefined();
+    const bare = await f.pullOn("svc-four");
+    holdPull(f.app, f.alice, f.repo, bare, "red alone", false, "green");
+    expect(getHold(f.app.db, bare.id)).toBeDefined();
   });
 });

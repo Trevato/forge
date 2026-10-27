@@ -22,7 +22,7 @@ import {
 } from "../core/holds.ts";
 import { getIssueById } from "../core/issues.ts";
 import { getPull, type Pull } from "../core/pulls.ts";
-import type { Run } from "../core/runs.ts";
+import { checksForHead, type Run } from "../core/runs.ts";
 import { canRead, canWrite, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -80,6 +80,14 @@ export function holdPull(
     actorId: holder.value.id,
     payload: { number: pull.number, why: hold.why },
   });
+  // Held on a head whose latest check is already green: nothing is left to
+  // wait for, so it is let go at once, with the same line a later check gives.
+  if (until === "green") {
+    const latest = checksForHead(app.db, pull.id, pull.headOid).find(
+      (r) => r.kind === "check",
+    );
+    if (latest) releaseOnGreen(app, latest);
+  }
   return ok(hold);
 }
 
