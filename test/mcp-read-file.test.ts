@@ -10,6 +10,7 @@ import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { asciiBox, binaryBox } from "./helpers/stl.ts";
 
 quietLogs();
 
@@ -65,6 +66,17 @@ beforeAll(async () => {
           { path: "bad.json", content: '{\n "a": }' },
           { path: "good.json", content: "{}" },
         ] }));
+  ok(
+    await commitToBranch(app, owner, pub, {
+      message: "models",
+      files: [
+        { path: "cube.stl", content: binaryBox(40, 20, 10) },
+        { path: "cube-ascii.STL", content: asciiBox(40, 20, 10) },
+        { path: "broken.stl", content: binaryBox(1, 1, 1).subarray(0, 100) },
+        { path: "huge.stl", content: asciiBox(1, 1, 1).repeat(1_000_000 / 1400 + 1) },
+      ],
+    }),
+  );
   tok["owner"] = createToken(app.db, owner.id, "o", "ro").token;
   tok["stranger"] = createToken(app.db, stranger.id, "s", "ro").token;
 }, 30_000);
@@ -95,6 +107,27 @@ test("bad arguments are refused", async () => {
   expect((await read(t, { repo: "ada/pub", path: "src/a.txt", ref: "--upload-pack=x" })).error).toContain("not_found");
   expect((await read(t, { repo: "ada/pub", path: 7 })).error).toContain("invalid");
   expect((await read(t, { repo: "ada/pub", path: "nope.txt" })).error).toContain("not_found");
+});
+
+test("an STL file is described in words", async () => {
+  const t = tok["stranger"]!;
+  const bin = (await read(t, { repo: "ada/pub", path: "cube.stl" })).value;
+  expect(bin.encoding).toBe("base64");
+  expect(bin.about).toEqual({
+    kind: "stl",
+    format: "binary",
+    triangles: 12,
+    size: [40, 20, 10],
+    says: "STL (binary) · 12 triangles · 40.0 × 20.0 × 10.0",
+  });
+  const txt = (await read(t, { repo: "ada/pub", path: "cube-ascii.STL" })).value;
+  expect(txt.about.says).toBe("STL (ascii) · 12 triangles · 40.0 × 20.0 × 10.0");
+  const broken = (await read(t, { repo: "ada/pub", path: "broken.stl" })).value;
+  expect(broken.about.kind).toBe("stl");
+  expect(broken.about.says).toContain("truncated");
+  const huge = (await read(t, { repo: "ada/pub", path: "huge.stl" })).value;
+  expect(huge.size).toBeGreaterThan(1_000_000);
+  expect(huge.about).toEqual({ kind: "stl", says: "STL, too large to describe here" });
 });
 
 test("a config file says whether it parses; other files carry no about", async () => {

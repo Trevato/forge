@@ -2,6 +2,7 @@ import { repoDir } from "../../../git/repos.ts";
 import { runGit } from "../../../git/env.ts";
 import { isSafeRef, isSafeTreePath } from "../../../git/guard.ts";
 import { blobForRender, listTree } from "../../../git/read.ts";
+import { readStl, sayStl, stlSize, TOO_LARGE } from "../../../text/stl.ts";
 import { checkConfig, configKind, type ConfigKind } from "../../../text/config_check.ts";
 import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
 
@@ -47,8 +48,7 @@ export const tool: Tool = {
       return good({ type: "file", tooLarge: true, size: blob.size });
     const binary = blob.kind === "binary";
     const content = binary ? "" : new TextDecoder().decode(blob.body);
-    const kind = binary ? null : configKind(rawPath);
-    const about = kind === null ? undefined : aboutConfig(kind, content);
+    const about = aboutFile(rawPath, blob.body, binary ? undefined : content);
     return good({
       type: "file",
       ref,
@@ -60,6 +60,20 @@ export const tool: Tool = {
     });
   },
 };
+
+/** A file described in words beside its content; one branch per kind. */
+function aboutFile(path: string, body: Uint8Array, text: string | undefined): Record<string, unknown> | undefined {
+  if (/\.stl$/i.test(path)) {
+    const stl = readStl(body);
+    if (!stl.ok && stl.error === TOO_LARGE) return { kind: "stl", says: `STL, ${TOO_LARGE}` };
+    if (!stl.ok) return { kind: "stl", says: `STL, unreadable: ${stl.error}` };
+    const { format, triangles } = stl.value;
+    return { kind: "stl", format, triangles, size: stlSize(stl.value), says: sayStl(stl.value) };
+  }
+  if (text === undefined) return undefined;
+  const kind = configKind(path);
+  return kind === null ? undefined : aboutConfig(kind, text);
+}
 
 function aboutConfig(kind: ConfigKind, content: string) {
   const check = checkConfig(kind, content);
