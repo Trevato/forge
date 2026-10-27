@@ -80,10 +80,14 @@ function appsFiltered(
  * Everyone's public apps sit in this list beside the viewer's own: right
  * for search, the palette and the asks count, wrong for a shelf headed
  * "your apps" — that reading is `writableAppsOf`. */
-export function appsOf(ctx: Ctx, user: User | undefined) {
+export function appsOf(ctx: Ctx, user: User | undefined, archived = false) {
   return appsFiltered(
     ctx,
-    listReposVisibleTo(ctx.app.db, user, { limit: 200, withoutArchived: true }),
+    listReposVisibleTo(
+      ctx.app.db,
+      user,
+      archived ? { limit: 200, archivedOnly: true } : { limit: 200, withoutArchived: true },
+    ),
   );
 }
 
