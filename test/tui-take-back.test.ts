@@ -1,8 +1,8 @@
 /**
  * The terminal's pull screen takes back a shipped pull with `T` and a
  * confirm, as the page does: absent on an open pull and to an agent, No
- * changes nothing, Yes opens the revert pull, and a second take-back is
- * refused in the page's words.
+ * changes nothing, Yes opens the revert pull, and a second take-back or
+ * one that conflicts is refused in the page's words.
  */
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -159,6 +159,17 @@ test("a second take-back is refused as already taken back", async () => {
   const again = await open(pull.number);
   await again.press("T", "right", "enter");
   expect(again.text()).toContain("it has already been taken back");
+});
+
+test("a take-back that no longer applies is refused naming the file, and leaves nothing", async () => {
+  const first = await pullOf(true);
+  await pullOf(true);
+  const t = await open(first.number);
+  await t.press("T", "right", "enter");
+  expect(t.text()).toContain(
+    "That could not be taken back: it conflicts with the current code in code.txt.",
+  );
+  expect(revertOf(app.db, repo.id, first.id)).toBeUndefined();
 });
 
 test("a guest and a read-only user are shown no key and press it for nothing", async () => {

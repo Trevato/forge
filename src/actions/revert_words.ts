@@ -1,6 +1,7 @@
 /**
  * What a take-back refusal says (#7211): one place, so the studio's
- * "take it back" button and the MCP `take_back` tool read the same.
+ * "take it back" button, the MCP `take_back` tool and the terminal's
+ * pull screen (#7228) read the same.
  */
 
 import type { RevertPullError } from "./revert.ts";
