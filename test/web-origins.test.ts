@@ -10,7 +10,7 @@
  * their comment did not go upstream, not silently given a local one.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -37,6 +37,10 @@ import {
 import { adminCookie, seedAdmin } from "./helpers/admin.ts";
 
 quietLogs();
+
+// Every test here drives a real git fetch and renders real pages; on a loaded
+// check machine the 5 s default measures the machine, not the code.
+setDefaultTimeout(30_000);
 
 const ORIGIN_LOGIN = "octo";
 const ORIGIN_TOKEN = "octo-origin-secret-9f2a";
