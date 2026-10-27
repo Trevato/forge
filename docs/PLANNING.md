@@ -516,6 +516,10 @@ person: autonomy re-queues nothing a person must decide. The map page says
 how it stands: _Autonomous · $12.40 of $40 today · 1 of 2 slots_, and why
 it is paused when it is.
 
+## Relieving a hot file
+
+A planner may write a `Relieves: <path>` line in an issue only for a change whose purpose is to cut what other pulls must touch in that file (a split, an extraction), and the path must also be on its `Files:` line. Such an issue is not held by that file being hot (three paths at most), but only one at a time per file: while an open pull or a run serves another issue that relieves the path, the second waits (`waits: <path> is already being relieved by #N`), and an admin's pin on the file still holds it. The line is read from any issue body and the author is not checked, on purpose: the exemption lifts only the hot-file count, never the other holds, it admits at most three paths that the issue also lists under `Files:`, and one relieving build per file bounds what a stray `Relieves:` can pile up.
+
 ## Holding a pull
 
 A person who writes the repository can say "not this one yet" about any

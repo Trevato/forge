@@ -34,7 +34,7 @@ import type { App } from "../app.ts";
 import { listCrewRoles, type Agent, type CrewRole } from "../core/agents.ts";
 import { readyNow, repoGraph, type Graph, type Ranked } from "../core/dependencies.ts";
 import { alreadyDone, BY_CREW, DONE_LIKE } from "../core/done_on_main.ts";
-import type { Issue } from "../core/issues.ts";
+import { getIssuesByIds, getIssuesByNumbers, type Issue } from "../core/issues.ts";
 import { withPlanner } from "../core/limb_replan.ts";
 import type { Repo } from "../core/repos.ts";
 import { sealedRowByNumber } from "../core/sealed.ts";
@@ -47,7 +47,7 @@ import { flowOnlyHolds } from "./flow_only.ts";
 import { interruptionOf } from "./interrupted.ts";
 import { PARK_STRIKES, parkedCount } from "./parks.ts";
 import { heldFiles, type FileHold } from "./file_holds.ts";
-import { expectedFiles, hotFiles, hotOverlap } from "./hot_files.ts";
+import { expectedFiles, hotFiles, hotOverlap, relievedFiles } from "./hot_files.ts";
 import { coveredByRedFix } from "./red_fix.ts";
 
 export const HOLDS = [
@@ -76,6 +76,8 @@ export interface Held {
   readonly by: Readonly<Record<HoldName, readonly Issue[]>>;
   /** Of the `hot_file` ones, those an admin's hold keeps: issue number to the hold that does. */
   readonly pinned: ReadonlyMap<number, FileHold>;
+  /** Of the `hot_file` ones, those that wait because another issue already relieves the same path: issue number to that path and issue. */
+  readonly relieving: ReadonlyMap<number, { path: string; by: number }>;
 }
 
 /**
@@ -141,6 +143,36 @@ export function heldBy(
   // The hold an admin set on a file the issue names, if any: the first by hold order.
   const pinOf = (issue: Issue): FileHold | undefined =>
     pins.size === 0 ? undefined : expectedFiles(issue).map((f) => pins.get(f)).find((h) => h !== undefined);
+  // Who is relieving which path now: issues with an open pull or a run in flight (#7422).
+  const relievers = new Map<string, number>();
+  const learnRelievers = (): void => {
+    const served = [
+      ...getIssuesByNumbers(app.db, [...proposed.keys()].map((number) => ({ repoId: repo.id, number }))).values(),
+      ...getIssuesByIds(app.db, [...busyIssues].filter((id): id is string => id !== null)).values(),
+    ];
+    for (const i of served)
+      for (const path of relievedFiles(i)) if (!relievers.has(path) || i.number < relievers.get(path)!) relievers.set(path, i.number);
+  };
+  let relieversKnown = false;
+  const relieving = new Map<number, { path: string; by: number }>();
+  const waitsOnRelief = (issue: Issue): boolean => {
+    const mine = relievedFiles(issue).filter((p) => hot.has(p));
+    if (mine.length === 0) return false;
+    if (!relieversKnown) {
+      learnRelievers();
+      relieversKnown = true;
+    }
+    for (const path of mine) {
+      const by = relievers.get(path);
+      if (by !== undefined && by !== issue.number) {
+        relieving.set(issue.number, { path, by });
+        return true;
+      }
+    }
+    // It starts, so no other issue in this pass may relieve the same path.
+    for (const path of mine) relievers.set(path, issue.number);
+    return false;
+  };
   const holdOf = (issue: Issue): HoldName | null => {
     if (busyIssues.has(issue.id)) return "running";
     if (proposed.has(issue.number)) return "open_pull";
@@ -158,6 +190,7 @@ export function heldBy(
       return "hot_file";
     }
     if (hotOverlap(issue, hot).length > 0) return "hot_file";
+    if (waitsOnRelief(issue)) return "hot_file";
     return null;
   };
   const by = Object.fromEntries(HOLDS.map((h) => [h, [] as Issue[]])) as Record<
@@ -171,7 +204,7 @@ export function heldBy(
     if (hold === null) startable.push(r);
     else by[hold].push(r.issue);
   }
-  return { startable, by, pinned };
+  return { startable, by, pinned, relieving };
 }
 
 /** The count per filter, in `HOLDS` order. */
@@ -259,7 +292,10 @@ export function mapHolds(
       if (name === "hot_file") {
         const pin = held.pinned.get(issue.number);
         const top = hotOverlap(issue, hot)[0];
+        const rel = held.relieving.get(issue.number);
         if (pin !== undefined) detail = `${pin.path} is held by an admin`;
+        else if (top === undefined && rel !== undefined)
+          detail = `waits: ${rel.path} is already being relieved by #${rel.by}`;
         else if (top !== undefined)
           detail = `${top.path} is in ${top.pulls} open ${top.pulls === 1 ? "pull" : "pulls"}`;
       }

@@ -408,6 +408,7 @@ export async function driveRepo(
     new Map(
       [...held.pinned].map(([n, h]) => [n, { path: h.path, byName: getUserById(app.db, h.by)?.username ?? "someone" }]),
     ),
+    held.relieving,
   );
   const ready = held.startable;
   if (slotted.length >= paced.slots) {

@@ -44,7 +44,26 @@ const QUOTED = /`([\w-][\w.-]*\.[A-Za-z0-9]+)`/g;
 /** The repository paths an issue names, in the order it names them, each once. */
 export function expectedFiles(issue: Pick<Issue, "title" | "body">): string[] {
   const listed = issue.body.match(/^Files:(.*)$/m);
-  const text = listed ? listed[1]! : `${issue.title}\n${issue.body}`;
+  return pathsIn(listed ? listed[1]! : `${issue.title}\n${issue.body}`);
+}
+
+/** The most paths one issue may relieve. */
+const MAX_RELIEVED = 3;
+
+/**
+ * The paths an issue relieves (#7422): named on a line starting `Relieves:`
+ * and also on its `Files:` line, at most three. The change exists to shrink
+ * what other pulls must touch there, so the file being hot does not hold it.
+ */
+export function relievedFiles(issue: Pick<Issue, "body">): string[] {
+  const files = issue.body.match(/^Files:(.*)$/m);
+  const line = issue.body.match(/^Relieves:(.*)$/m);
+  if (!files || !line) return [];
+  const listed = new Set(pathsIn(files[1]!));
+  return pathsIn(line[1]!).filter((p) => listed.has(p)).slice(0, MAX_RELIEVED);
+}
+
+function pathsIn(text: string): string[] {
   const found = new Set<string>();
   for (const pattern of [PATH, QUOTED])
     for (const match of text.matchAll(pattern)) {
@@ -179,7 +198,9 @@ export function hotOverlap(
   hot: ReadonlyMap<string, number>,
 ): HotFile[] {
   if (hot.size === 0) return [];
+  const relieved = new Set(relievedFiles(issue));
   return expectedFiles(issue)
+    .filter((path) => !relieved.has(path))
     .flatMap((path) => {
       const pulls = hot.get(path);
       return pulls === undefined ? [] : [{ path, pulls }];
@@ -194,6 +215,8 @@ export interface HotHold {
   readonly files: readonly HotFile[];
   /** The admin's hold (`file_holds.ts`) that keeps this build, with the setter's name. */
   readonly pin?: { readonly path: string; readonly byName: string };
+  /** The path another issue (`#by`) is already relieving, which keeps this one waiting. */
+  readonly relieving?: { readonly path: string; readonly by: number };
 }
 
 /** The pulls too wide to count as the picker last saw them, per repository, held builds or not. */
@@ -213,6 +236,7 @@ export function holdHot(
   issues: readonly Issue[],
   at = new Date(),
   pins: ReadonlyMap<number, { path: string; byName: string }> = new Map(),
+  relieving: ReadonlyMap<number, { path: string; by: number }> = new Map(),
 ): void {
   const wide = widePulls(repoId);
   if (wide.length === 0) standingWideBy.delete(repoId);
@@ -226,7 +250,14 @@ export function holdHot(
     at: at.toISOString(),
     holds: issues.map((i) => {
       const pin = pins.get(i.number);
-      return { number: i.number, title: i.title, files: hotOverlap(i, hot), ...(pin === undefined ? {} : { pin }) };
+      const rel = relieving.get(i.number);
+      return {
+        number: i.number,
+        title: i.title,
+        files: hotOverlap(i, hot),
+        ...(pin === undefined ? {} : { pin }),
+        ...(rel === undefined ? {} : { relieving: rel }),
+      };
     }),
     wide,
   });
@@ -250,6 +281,8 @@ export function hotWords(hot: ReadonlyMap<string, number>): string {
 /** One sentence for a held build: `#12 waits: src/http/mcp.ts is in 6 open pulls (hot at 5).` */
 export function hotSays(hold: HotHold): string {
   if (hold.pin !== undefined) return `#${hold.number} waits: ${hold.pin.byName} holds new work on ${hold.pin.path}.`;
+  if (hold.relieving !== undefined)
+    return `#${hold.number} waits: ${hold.relieving.path} is already being relieved by #${hold.relieving.by}.`;
   const files = hold.files
     .slice(0, 3)
     .map((f) => `${f.path} is in ${f.pulls} open pulls`)
