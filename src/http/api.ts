@@ -109,13 +109,6 @@ import {
   setIssueStateThrough,
 } from "../actions/issues.ts";
 import {
-  addTeamMember,
-  createOrg,
-  createTeam,
-  deleteTeam,
-  removeTeamMember,
-} from "../actions/orgs.ts";
-import {
   connectOrigin,
   deleteOriginApp,
   disconnectOrigin,
@@ -214,13 +207,7 @@ import {
 } from "../core/issues.ts";
 import { listKeys, publicKey } from "../core/keys.ts";
 import {
-  getOrg,
   listOrgsForUser,
-  listTeamMembers,
-  listTeams,
-  listTeamsVisibleTo,
-  type Permission,
-  type Team,
   soleOwnedOrgs,
   lastOwnerSays,
 } from "../core/orgs.ts";
@@ -452,6 +439,7 @@ import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
 import { passportRoutes } from "./passport_edge.ts";
 import { egressGrantRoutes } from "./api/egress_grants.ts";
 import { labelsRoutes } from "./api/labels.ts";
+import { orgRoutes } from "./api/orgs.ts";
 import { secretRoutes } from "./api/secrets.ts";
 import type { Router } from "./router.ts";
 import { clientAddress, clientBucket } from "./peer.ts";
@@ -1050,7 +1038,7 @@ function offsetRefused(error: "invalid_limit" | "invalid_cursor"): Response {
  * `?limit=&cursor=` for a list paged by a name: limit 1..200 (default 50),
  * the cursor the last name of the page before. A bad one is a 422.
  */
-function keyedWindow(ctx: Ctx): { limit: number; cursor: string | null } | Response {
+export function keyedWindow(ctx: Ctx): { limit: number; cursor: string | null } | Response {
   const q = ctx.url.searchParams;
   const rawLimit = q.get("limit");
   const limit = rawLimit === null ? LIST_LIMIT : /^\d{1,4}$/.test(rawLimit) ? Number(rawLimit) : 0;
@@ -1063,7 +1051,7 @@ function keyedWindow(ctx: Ctx): { limit: number; cursor: string | null } | Respo
 }
 
 /** The page of `rows` (sorted by name) after the cursor: `{ items, next_cursor }`. */
-function keyedPage<T>(
+export function keyedPage<T>(
   rows: T[],
   keyOf: (row: T) => string,
   window: { limit: number; cursor: string | null },
@@ -1232,29 +1220,6 @@ function loadPull(ctx: Ctx): Found<{ pull: Pull }> {
     return { error: notFound() };
   return { repo, pull };
 }
-
-/** An org by name plus the team a route names (by name, case-insensitive). */
-function loadTeam(ctx: Ctx): { org: User; team: Team } | { error: Response } {
-  const org = getOrg(ctx.app.db, ctx.params.org!);
-  if (!org) return { error: notFound() };
-  const wanted = (ctx.params.team ?? "").toLowerCase();
-  const team = listTeams(ctx.app.db, org.id).find(
-    (t) => t.name.toLowerCase() === wanted,
-  );
-  return team ? { org, team } : { error: notFound() };
-}
-
-/** Whether the viewer may see this team at all (admin, or a member of it). */
-function teamVisible(ctx: Ctx, org: User, team: Team): boolean {
-  return listTeamsVisibleTo(ctx.app.db, org.id, ctx.auth.user).some(
-    (t) => t.id === team.id,
-  );
-}
-
-const permissionOf = (raw: unknown): Permission => {
-  const p = str(raw);
-  return p === "write" || p === "admin" ? p : "read";
-};
 
 // ---- routes ----
 
@@ -2222,134 +2187,7 @@ export function apiRoutes(router: Router<Handler>): void {
 
   // ── organizations & teams ────────────────────────────────────────────
 
-  router.add("POST", "/api/v1/orgs", async (ctx) => {
-    const denied = requireScope(ctx, "rw");
-    if (denied) return denied;
-    const input = await body(ctx.request);
-    const created = createOrg(ctx.app, ctx.auth.user, str(input.name));
-    if (!created.ok) return respondAccess(created.error, 422);
-    return json(
-      { id: created.value.id, username: created.value.username, kind: "org" },
-      201,
-    );
-  });
-
-  router.add("GET", "/api/v1/orgs/:org", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const org = getOrg(ctx.app.db, ctx.params.org!);
-    if (!org) return notFound();
-    const teams = timePhase(ctx.request, "org", () =>
-      listTeamsVisibleTo(ctx.app.db, org.id, ctx.auth.user),
-    );
-    return timePhase(ctx.request, "render", () =>
-      json({ id: org.id, ...publicProfile(org), teams }),
-    );
-  });
-
-  router.add("GET", "/api/v1/orgs/:org/teams", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const org = getOrg(ctx.app.db, ctx.params.org!);
-    if (!org) return notFound();
-    const window = keyedWindow(ctx);
-    if (window instanceof Response) return window;
-    const teams = timePhase(ctx.request, "teams", () =>
-      listTeamsVisibleTo(ctx.app.db, org.id, ctx.auth.user),
-    );
-    return timePhase(ctx.request, "render", () =>
-      json(keyedPage(teams, (t) => t.name, window)),
-    );
-  });
-
-  router.add("POST", "/api/v1/orgs/:org/teams", async (ctx) => {
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const org = getOrg(ctx.app.db, ctx.params.org!);
-    if (!org) return notFound();
-    const input = await body(ctx.request);
-    const team = createTeam(
-      ctx.app,
-      ctx.auth.user,
-      org,
-      str(input.name),
-      permissionOf(input.permission),
-    );
-    if (!team.ok) return respondAccess(team.error, 422);
-    return json(team.value, 201);
-  });
-
-  router.add("DELETE", "/api/v1/orgs/:org/teams/:team", (ctx) => {
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const found = loadTeam(ctx);
-    if ("error" in found) return found.error;
-    const removed = deleteTeam(ctx.app, ctx.auth.user, found.org, found.team);
-    if (!removed.ok) return respondAccess(removed.error, 409);
-    return new Response(null, { status: 204 });
-  });
-
-  router.add("GET", "/api/v1/orgs/:org/teams/:team/members", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const found = loadTeam(ctx);
-    if ("error" in found) return found.error;
-    if (!teamVisible(ctx, found.org, found.team)) return notFound();
-    const window = keyedWindow(ctx);
-    if (window instanceof Response) return window;
-    const members = timePhase(ctx.request, "members", () =>
-      listTeamMembers(ctx.app.db, found.team.id).map(publicProfile),
-    );
-    return timePhase(ctx.request, "render", () =>
-      json(keyedPage(members, (u) => u.username, window)),
-    );
-  });
-
-  router.add("POST", "/api/v1/orgs/:org/teams/:team/members", async (ctx) => {
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const found = loadTeam(ctx);
-    if ("error" in found) return found.error;
-    const input = await body(ctx.request);
-    const added = addTeamMember(
-      ctx.app,
-      ctx.auth.user,
-      found.org,
-      found.team,
-      str(input.user),
-    );
-    if (!added.ok) return respondAccess(added.error, 422);
-    return json(added.value, added.value.added ? 201 : 200);
-  });
-
-  router.add(
-    "DELETE",
-    "/api/v1/orgs/:org/teams/:team/members/:username",
-    (ctx) => {
-      const denied = requireScope(ctx, "admin");
-      if (denied) return denied;
-      const found = loadTeam(ctx);
-      if ("error" in found) return found.error;
-      const username = ctx.params.username!;
-      const isMember = listTeamMembers(ctx.app.db, found.team.id).some(
-        (m) => m.username.toLowerCase() === username.toLowerCase(),
-      );
-      const removed = removeTeamMember(
-        ctx.app,
-        ctx.auth.user,
-        found.org,
-        found.team,
-        username,
-      );
-      if (!removed.ok)
-        return removed.error === "last_owner"
-          ? apiError(
-              "last_owner",
-              409,
-              "an organization keeps at least one person who owns it; make someone else an owner first",
-            )
-          : respondAccess(removed.error, 422);
-      if (!isMember) return notFound();
-      return new Response(null, { status: 204 });
-    },
-  );
+  orgRoutes(router);
 
   // ── search ───────────────────────────────────────────────────────────
   //
