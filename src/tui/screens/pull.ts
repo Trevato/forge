@@ -39,6 +39,8 @@ import {
   resolveReviewThread,
   submitReview,
 } from "../../actions/pulls.ts";
+import { revertPull } from "../../actions/revert.ts";
+import { takeBackWords } from "../../actions/revert_words.ts";
 import { openEnvUrl } from "../../actions/apps.ts";
 import { listRepoRuns, mayReadRunLog } from "../../actions/runs.ts";
 import { previewEnv } from "../../apps/data.ts";
@@ -681,6 +683,45 @@ export function pullScreen(
   };
 
   /**
+   * Whether `T` takes this back: a shipped pull on a local repository, for a
+   * person who may write. The same gate `revertPull` holds; it decides only
+   * whether the key is shown.
+   */
+  const mayTakeBack = (): boolean => {
+    if (repo === undefined || repo.origin !== null || !mayWrite()) return false;
+    if (f.user === undefined || f.user.kind === "agent") return false;
+    return getPull(f.db, repo.id, number)?.mergedAt != null;
+  };
+
+  const takeBack = (): void => {
+    if (repo === undefined) return;
+    const target = repo;
+    const row = getPull(f.db, target.id, number);
+    if (row === undefined) return;
+    ctx.push(
+      confirmScreen(ctx, screen, {
+        title: `Take back #${number}`,
+        body: [`Open a pull that undoes "${row.title}" (#${number})?`],
+        actions: [{ label: "Cancel", variant: "ghost" }, { label: "Take it back" }],
+        onChoose: (choice) => {
+          if (choice !== 1) return;
+          runAsync(ctx, async () => {
+            const made = await revertPull(f.app, f.user, target, row);
+            if (!made.ok) {
+              ctx.toast(
+                `That could not be taken back: ${takeBackWords(made.error)}.`,
+                "danger",
+              );
+              return;
+            }
+            ctx.replace(pullScreen(f, ctx, local(f, target), made.value.number));
+          });
+        },
+      }),
+    );
+  };
+
+  /**
    * Whether `A` is on offer: an open origin-fork pull whose current head
    * nobody here has approved to run. The same condition as the page's card.
    */
@@ -770,6 +811,7 @@ export function pullScreen(
   const screen: Screen = {
     title: `#${number}`,
     get keys() {
+      const takeBackKey = mayTakeBack();
       return [
         binding(["tab"], tabCount() === 3 ? "next tab" : "conversation/files"),
         ...(tab === 1
@@ -781,7 +823,8 @@ export function pullScreen(
           ? [binding(["O"], "open the preview")]
           : []),
         ...(isApp ? [binding(["P"], "open production")] : []),
-        ...(isApp && preview !== undefined
+        ...(takeBackKey ? [binding(["T"], "take it back")] : []),
+        ...(isApp && preview !== undefined && !takeBackKey
           ? [binding(["T"], "the preview's terminal")]
           : []),
         ...(mayWrite()
@@ -1017,6 +1060,10 @@ export function pullScreen(
       }
       if (e.key === "P" && isApp) {
         openProduction();
+        return true;
+      }
+      if (e.key === "T" && mayTakeBack()) {
+        takeBack();
         return true;
       }
       if (e.key === "T" && isApp && preview !== undefined && repo) {
