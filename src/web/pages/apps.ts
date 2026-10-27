@@ -38,6 +38,7 @@ import { appsForRepos, type AppRecord } from "../../core/apps.ts";
 import { accessAllows, listOrgsForUser, orgAccess } from "../../core/orgs.ts";
 import type { Pull } from "../../core/pulls.ts";
 import {
+  canAdmin,
   canWrite,
   getRepoById,
   listReposVisibleTo,
@@ -147,6 +148,25 @@ export function envLabel(env: EnvName): string {
   return number === undefined ? "production" : `preview of #${number}`;
 }
 
+/** The archived list's Wake: a small form under each row the viewer administers. */
+function wakeForms(ctx: Ctx, repos: readonly Repo[]): Map<string, Html> {
+  const out = new Map<string, Html>();
+  for (const repo of repos) {
+    if (!canAdmin(ctx.app.db, repo, ctx.auth.user)) continue;
+    out.set(
+      repo.id,
+      html`<li>
+        <form method="post" action="${repoBase(repo)}/settings/archive">
+          <input type="hidden" name="archived" value="0" />
+          <input type="hidden" name="to" value="/apps?archived=1" />
+          ${btn(html`Wake<span class="sr-only"> ${repo.ownerName}/${repo.name}</span>`)}
+        </form>
+      </li>`,
+    );
+  }
+  return out;
+}
+
 /**
  * GET /apps: every app the viewer can land, for every viewer, drawn as the
  * shelf (`shelfRows`, `studio/shelf.ts`) — the same row the home's *Your
@@ -203,11 +223,12 @@ export async function appsList(ctx: Ctx): Promise<Response> {
             },
           ])}
         </div>`;
+  const wake = archivedView ? wakeForms(ctx, shown.map((e) => e.repo)) : undefined;
   const rows = await timePhaseAsync(ctx.request, "shelf", () =>
     shelfRows(
       ctx,
       shown.map((e) => e.repo),
-      { firstPreview: firstPreviews(ctx.app.db, shown.map((e) => e.record)) },
+      { firstPreview: firstPreviews(ctx.app.db, shown.map((e) => e.record)), under: wake },
     ),
   );
   const cost = timePhase(ctx.request, "cost", () =>

@@ -132,3 +132,47 @@ test("the stylesheet carries no merge-conflict markers", async () => {
   expect(content).not.toMatch(/^(<<<<<<<|=======|>>>>>>>)/m);
   expect(content).not.toContain(".filters");
 });
+
+test("the archived list wakes an app in place, and ignores a return address off this origin", async () => {
+  await updateRepoSettings(app, alice, getRepo(app.db, "alice", "shelved")!, { archived: true });
+  const list = (await get("/apps?archived=1")).body;
+  expect(list).toContain('action="/alice/shelved/settings/archive"');
+  expect(list).toContain('name="to" value="/apps?archived=1"');
+  // Each button names its app, so a screen reader can tell the Wakes apart.
+  expect(list).toMatch(/Wake<span class="sr-only"> alice\/shelved<\/span>/);
+  const post = (to: string, headers: Record<string, string> = { origin: servers.url }) =>
+    fetch(`${servers.url}/alice/shelved/settings/archive`, {
+      method: "POST",
+      headers: { cookie, ...headers },
+      body: new URLSearchParams({ archived: "0", to }),
+      redirect: "manual",
+    });
+  // A cross-origin post is refused and changes nothing.
+  const foreign = await post("/apps?archived=1", { origin: "https://evil.example" });
+  expect(foreign.status).toBeGreaterThanOrEqual(400);
+  expect(getRepo(app.db, "alice", "shelved")!.archivedAt).not.toBeNull();
+  const woke = await post("/apps?archived=1");
+  expect(woke.status).toBe(303);
+  const back = new URL(woke.headers.get("location")!, servers.url);
+  expect(back.pathname + back.search).toBe("/apps?archived=1");
+  expect((await get("/apps?archived=1")).body).not.toContain(ROW_SHELVED);
+  expect((await get("/apps")).body).toContain(ROW_SHELVED);
+  for (const bad of ["https://evil.example/", "//evil.example", "/\\evil.example"]) {
+    await updateRepoSettings(app, alice, getRepo(app.db, "alice", "shelved")!, { archived: true });
+    const res = await post(bad);
+    expect(res.headers.get("location")).toBe("/alice/shelved/settings");
+  }
+  await updateRepoSettings(app, alice, getRepo(app.db, "alice", "shelved")!, { archived: false });
+});
+
+test("a viewer who does not administer an archived app gets no Wake button", async () => {
+  const made = await createRepo(app, alice, { name: "openshelf", visibility: "public" });
+  if (!made.ok) throw new Error(made.error);
+  const rec = makeAppRecord(app.db, { repoId: made.value.id, slug: "openshelf", access: "public" });
+  if (!rec.ok) throw new Error(rec.error);
+  await updateRepoSettings(app, alice, getRepo(app.db, "alice", "openshelf")!, { archived: true });
+  const anon = await (await fetch(`${servers.url}/apps?archived=1`)).text();
+  expect(anon).toContain('<a href="/alice/openshelf" class="row"');
+  expect(anon).not.toContain("settings/archive");
+  expect((await get("/apps?archived=1")).body).toContain("/alice/openshelf/settings/archive");
+});

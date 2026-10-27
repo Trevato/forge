@@ -450,6 +450,15 @@ export async function settingsUpdate(ctx: Ctx): Promise<Response> {
   return flashTo(ctx, `${base}/settings`, flash);
 }
 
+/** A return address that stays on this origin, as a path; anything else is undefined. */
+function samePath(ctx: Ctx, to: string | undefined): string | undefined {
+  if (to === undefined || !to.startsWith("/") || to.startsWith("//") || /[\\\x00-\x1f]/.test(to))
+    return undefined;
+  const parsed = URL.parse(to, ctx.url.origin);
+  if (!parsed || parsed.origin !== ctx.url.origin) return undefined;
+  return parsed.pathname + parsed.search;
+}
+
 /**
  * POST /:owner/:name/settings/archive — archive or wake. The state asked
  * for travels in the form, so a double submit is idempotent.
@@ -468,7 +477,11 @@ export async function archiveSubmit(ctx: Ctx): Promise<Response> {
   const updated = await updateRepoSettings(ctx.app, ctx.auth.user, repo, {
     archived,
   });
-  const back = field(form, "to") === "repo" ? repoBase(repo) : `${repoBase(repo)}/settings`;
+  const to = field(form, "to");
+  const back =
+    to === "repo"
+      ? repoBase(repo)
+      : (samePath(ctx, to) ?? `${repoBase(repo)}/settings`);
   return flashTo(
     ctx,
     back,

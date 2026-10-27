@@ -240,7 +240,10 @@ An admin puts a repository away from **Settings → Archive**, with
 `PATCH /api/v1/repos/:owner/:name {"archived":true|false}` (admins only; anyone
 else gets 403), or in the terminal with `a` on the About card (`I`). The
 repository page and the card then say when it was archived, and an admin gets
-a Wake button or the same key to undo it. Archiving twice keeps the first date.
+a Wake button or the same key to undo it. The archived list
+(`/apps?archived=1`) has a Wake button on each row its viewer administers, and
+returns to the list; the terminal wakes from the About card with the same key
+(`src/tui/screens/about.ts`). Archiving twice keeps the first date.
 An archived repository starts no new crew run. Assigning an issue to an agent,
 queueing a run again, asking the crew to propose a resolution, redirecting a
 wave and converging a fork each answer "This repository is archived; wake it to
