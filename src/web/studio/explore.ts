@@ -146,7 +146,8 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
     })}
     <form method="get" action="/explore" class="bar mb">
       <input
-        class="input mono search"
+        type="search"
+        class="input mono"
         name="q"
         value="${exploreLine(query)}"
         placeholder="kind:app sort:forks garden"

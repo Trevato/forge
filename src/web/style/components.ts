@@ -105,6 +105,7 @@ select.input {
   background-repeat: no-repeat;
 }
 @media (pointer: coarse) { .input { min-height: 44px; } }
+.bar .input[type=search] { min-width: 180px; flex: 1; max-width: 320px; }
 
 /* One control for every boolean. A native checkbox tinted with accent-color
    is themed for free, keyboard-correct for free, and honest about what it is —

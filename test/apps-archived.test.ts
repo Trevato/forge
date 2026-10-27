@@ -119,9 +119,10 @@ test("a signed-out viewer does not see a private archived app", async () => {
   expect((await get("/apps?archived=1")).body).toContain("/alice/secret");
 });
 
-test("the stylesheet sizes .search and .seg inside .bar, without needing .filters", async () => {
+test("the stylesheet sizes search inputs and .seg inside .bar, without needing .filters", async () => {
   const { content } = await import("../src/web/style/content.ts");
-  expect(content).toMatch(/^\.bar \.search \{[^}]*min-width: 180px[^}]*max-width: 320px/m);
+  const { components } = await import("../src/web/style/components.ts");
+  expect(components).toMatch(/^\.bar \.input\[type=search\] \{[^}]*min-width: 180px[^}]*max-width: 320px/m);
   expect(content).toMatch(/^\.bar \.seg \{[^}]*overflow-x: auto/m);
   expect(content).toMatch(/\.bar \.seg > a \{ padding: 0 8px/);
 });

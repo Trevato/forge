@@ -364,7 +364,7 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
     role="search"
   >
     <input
-      class="input search"
+      class="input"
       type="search"
       name="q"
       value="${a.query}"

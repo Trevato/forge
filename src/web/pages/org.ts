@@ -104,7 +104,7 @@ function repoSection(
   return html`<div class="bar mt mb">
       <form class="bar" method="get" action="/${owner.username}" role="search">
         <input
-          class="input search"
+          class="input"
           type="search"
           name="q"
           value="${query}"

@@ -153,7 +153,6 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 /* A list's six words fit a phone without pushing the page sideways in a
    filter bar drawn with §5's .bar: a little less padding there, and a
    scroll inside the bar as the last resort. */
-.bar .search { min-width: 180px; flex: 1; max-width: 320px; }
 .bar .seg { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
 @media (max-width: 420px) { .bar .seg > a { padding: 0 8px; } }
 

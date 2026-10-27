@@ -174,7 +174,7 @@ function filterBar(
         ${when(query.label !== "", () => hidden("label", query.label))}
         ${when(query.author !== "", () => hidden("author", query.author))}
         <input
-          class="input search"
+          class="input"
           type="search"
           name="q"
           value="${query.q}"

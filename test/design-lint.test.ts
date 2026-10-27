@@ -187,3 +187,22 @@ describe("docs/DESIGN.md", () => {
     expect(registeredClasses(text).length).toBeGreaterThan(0);
   });
 });
+
+describe("search inputs (#4750)", () => {
+  test("no input carries class `search`; the bar sizes type=search once", () => {
+    const files = [
+      "src/web/pages/browse.ts",
+      "src/web/pages/origin-repos.ts",
+      "src/web/pages/search.ts",
+      "src/web/pages/org.ts",
+      "src/web/studio/explore.ts",
+    ];
+    for (const f of files) {
+      const src = readFileSync(f, "utf8");
+      expect(src).not.toMatch(/class="[^"]*\bsearch\b[^"]*"/);
+      expect(src).toContain('type="search"');
+    }
+    expect(readFileSync("src/web/style/content.ts", "utf8")).not.toContain(".bar .search");
+    expect(readFileSync("src/web/style/components.ts", "utf8")).toContain(".bar .input[type=search]");
+  });
+});

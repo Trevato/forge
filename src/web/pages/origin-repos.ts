@@ -67,7 +67,7 @@ export async function originReposPage(ctx: Ctx): Promise<Response> {
 
   const filter = html`<form class="bar mb" method="get" action="${base}">
     <input
-      class="input search"
+      class="input"
       type="search"
       name="q"
       value="${query}"
