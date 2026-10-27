@@ -267,6 +267,13 @@ page, in the terminal's pull view, and as `proposal` in the pull's JSON
 
 A spawned forge can offer its change to its parent with a proposal token, and an admin sets how it follows the parent. Details, API, MCP and terminal doors: [`docs/FOLLOWING.md`](docs/FOLLOWING.md#proposing-to-a-parent-forge).
 
+The terminal's launcher search (`/`) is the explorer when the line has a
+`kind:` or `sort:` word: `kind:app sort:forks garden` ranks as `/explore`
+does, by the same action, with each row's forks, merges, hours in use and
+freshness, and a "Read as:" line says how the line was understood. Enter on an
+app opens it; a person or forge row has no terminal page and says where the
+web has it. A plain line still matches your repositories by name.
+
 ## On your machine
 
 The forge holds the truth; `forge` keeps a copy of the parts you work on, the

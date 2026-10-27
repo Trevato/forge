@@ -14,6 +14,7 @@
  * whole of this screen's design.
  */
 
+import { exploreLine, explorePage, parseExploreQuery, type ExploreRow } from "../../actions/explore.ts";
 import { protectionNotice } from "../../kernel/protection.ts";
 import { holdWords, plannerHold } from "../../crew/autonomy.ts";
 import { forgeFlakes, forgeLane, forgeNeeds } from "../../actions/health.ts";
@@ -208,6 +209,36 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   /** The panels this admin pinned to the web home, by title and board, in their order. */
   let panelLines: string[] = [];
   const filter = new Filter();
+  /**
+   * A search line with `kind:` or `sort:` is the explorer's (#7325): the rows
+   * `/explore` ranks, answered by the same action, for the line last settled.
+   */
+  let explored: { line: string; rows: readonly ExploreRow[] } | undefined;
+  let askedLine = "";
+  const exploring = (): boolean => /(^|\s)(kind|sort):/i.test(filter.query);
+  const exploredRows = (): readonly ExploreRow[] => (exploring() ? (explored?.rows ?? []) : []);
+  const syncExplore = (): void => {
+    if (!exploring()) {
+      explored = undefined;
+      askedLine = "";
+      return;
+    }
+    const query = parseExploreQuery(filter.query);
+    const line = exploreLine(query);
+    if (line === askedLine) return;
+    askedLine = line;
+    // The rows kept belong to the old line; none are shown under the new one.
+    explored = undefined;
+    runAsync(ctx, async () => {
+      const page = await explorePage(f.app, f.user, query, null).catch(() => null);
+      // A newer line was typed while this one was ranked; its answer wins.
+      if (askedLine !== line) return;
+      const rows = page?.items ?? [];
+      explored = { line, rows };
+      at("repos").clamp(rows.length);
+      ctx.invalidate();
+    });
+  };
   /** One cursor per pane: moving in one must never move another. */
   const cursors: Record<PaneId, ListState> = {
     repos: new ListState(),
@@ -761,7 +792,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   /** Yours with an empty filter; anything you can see once you type —
    * the one way to find someone else's repository from here. */
   const shown = (): Repo[] =>
-    (filter.query !== "" ? all : repos).filter((repo) =>
+    exploring() ? [] : (filter.query !== "" ? all : repos).filter((repo) =>
       filter.matches(`${repo.ownerName}/${repo.name} ${repo.description}`),
     );
 
@@ -779,7 +810,9 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   const at = (pane: PaneId): ListState => cursors[pane];
   const size = (pane: PaneId): number =>
     pane === "repos"
-      ? shown().length
+      ? exploring()
+        ? exploredRows().length
+        : shown().length
       : pane === "onyou"
         ? onYou.length + waves.length
         : pins.length;
@@ -793,6 +826,18 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   /** `enter` on a repository row, wherever the row came from. */
   const openRepo = (repo: Repo | undefined): void => {
     if (repo !== undefined) ctx.push(repoScreen(f, ctx, local(f, repo)));
+  };
+
+  /** `enter` on an explorer row: an app opens as any repository; the rest are the web's. */
+  const openExplored = (row: ExploreRow | undefined): void => {
+    if (row === undefined) return;
+    if (row.kind === "app" && row.repo !== undefined) {
+      const repo = getRepo(f.db, row.repo.owner, row.repo.name);
+      if (repo !== undefined && canRead(f.db, repo, f.user)) return openRepo(repo);
+      ctx.toast(`${row.name} is not here any more`, "attn");
+      return;
+    }
+    ctx.toast(`${row.name} has no terminal page; the web has it at ${row.url}`, "attn");
   };
 
   const openPin = (pin: Pin | undefined): void => {
@@ -846,7 +891,10 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
 
   /** `enter` on whatever the focused pane's cursor is on. */
   const openHere = (): void => {
-    if (focus === "repos") openRepo(shown()[at("repos").index]);
+    if (focus === "repos") {
+      if (exploring()) openExplored(exploredRows()[at("repos").index]);
+      else openRepo(shown()[at("repos").index]);
+    }
     else if (focus === "onyou") openAssigned(onYou[at("onyou").index]);
     else openPin(pins[at("machine").index]);
   };
@@ -1007,7 +1055,10 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
 
       // A site admin is told once, under the filter, when the forge runs
       // with less than its default protection — the web footer's line.
-      const reduced = f.user?.isAdmin === true ? protectionNotice() : undefined;
+      const readAs = exploring()
+        ? `Read as: ${exploreLine(parseExploreQuery(filter.query)) || "everything"}`
+        : undefined;
+      const reduced = readAs ?? (f.user?.isAdmin === true ? protectionNotice() : undefined);
       const [box, warn, list] = split(
         main,
         "v",
@@ -1040,7 +1091,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     },
     key(e) {
       if (filter.key(e)) {
-        at("repos").clamp(shown().length);
+        syncExplore();
+        at("repos").clamp(exploring() ? exploredRows().length : shown().length);
         focus = "repos";
         return true;
       }
@@ -1071,6 +1123,10 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         if (e.key === "l") return actOnWave("later"), true;
       }
       if (e.key === "B" && f.user && asideWaves.length > 0) return bringBackWaves(), true;
+      if (focus === "repos" && f.user !== undefined && exploring() && (e.key === "space" || e.key === "a" || e.key === "p")) {
+        ctx.toast("pin, mark and archive act on your repositories; esc clears the explorer line", "attn");
+        return true;
+      }
       if (focus === "repos" && f.user !== undefined) {
         const repo = shown()[at("repos").index];
         if (e.key === "space" && repo !== undefined && mayArchive(repo)) {
@@ -1235,7 +1291,49 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     return parts.length > 0 ? parts.join(" · ") : undefined;
   }
 
+  /** A row's numbers as the page says them; nothing that is zero. */
+  function numbersOf(row: ExploreRow): string {
+    const n = row.numbers;
+    return metaOf(
+      row.kind === "person" ? plural(n.apps, "app") : "",
+      n.forks > 0 ? plural(n.forks, "fork") : "",
+      n.ships > 0 ? `${n.ships} shipped this month` : "",
+      n.awakeHours > 0 ? `${n.awakeHours} h in use` : "",
+      row.shippedAt !== null ? `shipped ${ago(row.shippedAt)}` : "",
+    );
+  }
+
+  function drawExplored(s: Surface, r: Rect, c: Tokens): void {
+    const rows = exploredRows();
+    const on = focus === "repos";
+    if (rows.length === 0) {
+      emptyState(s, r, c, {
+        title: explored === undefined ? "Ranking…" : `Nothing matches ${explored.line}`,
+        body: "Drop a word to step back; esc clears the line.",
+      });
+      return;
+    }
+    drawList(
+      s,
+      r,
+      c,
+      at("repos"),
+      rows.map((row): ListRow => ({ title: row.name, secondary: row.description, meta: numbersOf(row) })),
+      on,
+    );
+    hitList(ctx, r, at("repos"), rows.length, {
+      select: () => {
+        focus = "repos";
+      },
+      open: (index) => {
+        focus = "repos";
+        openExplored(rows[index]);
+      },
+    });
+  }
+
   function drawRepos(s: Surface, r: Rect, c: Tokens, set: IconSet): void {
+    if (exploring()) return drawExplored(s, r, c);
     const rows = shown();
     const on = focus === "repos";
     if (rows.length === 0) {
