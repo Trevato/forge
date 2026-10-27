@@ -426,6 +426,73 @@ describe("the decision ledger", () => {
     }
   });
 
+  test("a park after two red tries names the failing test and the files each try changed", async () => {
+    const { listComments } = await import("../src/core/issues.ts");
+    const { getAgentByName } = await import("../src/core/agents.ts");
+    const scoutAgent = getAgentByName(app.db, "scout")!;
+    const first = await commitToBranch(app, alice, repo, {
+      branch: "feature/twice",
+      base: "main",
+      message: "First try",
+      files: [{ path: "first.ts", content: "export const a = 1;\n" }],
+    });
+    if (!first.ok) throw new Error(JSON.stringify(first.error));
+    const opened = await openPull(app, scout, repo, {
+      title: "Twice",
+      baseBranch: "main",
+      headBranch: "feature/twice",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const red = (oid: string) => {
+      const r = createRun(app.db, {
+        repoId: repo.id,
+        kind: "check",
+        issueId: opened.value.id,
+        env: `pull-${opened.value.number}`,
+        commitOid: oid,
+        reason: "pull",
+      });
+      claimRun(app.db, r.id);
+      return finishRun(app.db, r.id, {
+        state: "failed",
+        summary: 'check failed: 1 of 9 tests — "adds up the cart"',
+        checkDetail: { passed: 8, failed: 1, names: ["adds up the cart"] },
+      })!;
+    };
+    red(opened.value.headOid);
+    const second = await commitToBranch(app, alice, repo, {
+      branch: "feature/twice",
+      message: "Second try",
+      files: [{ path: "second.ts", content: "export const b = 2;\n" }],
+    });
+    if (!second.ok) throw new Error(JSON.stringify(second.error));
+    const moved = getPull(app.db, repo.id, opened.value.number)!;
+    expect(moved.headOid).not.toBe(opened.value.headOid);
+    const last = red(moved.headOid);
+    script["retry"] = "stop";
+    script["cause"] = "change";
+    try {
+      expect(
+        await answerFailedCheck(app, fresh(), moved, scoutAgent, {
+          runId: last.id,
+          kind: "check",
+          commitOid: moved.headOid,
+          env: `pull-${moved.number}`,
+          since: moved.createdAt,
+        }),
+      ).toBe("parked");
+      const note = listComments(app.db, moved.id)
+        .map((c) => c.body)
+        .find((b) => b.includes("saw no point in another try"))!;
+      expect(note.split("\n").length).toBeLessThanOrEqual(3);
+      expect(note).toContain('"adds up the cart"');
+      expect(note).toContain("try 1: first.ts");
+      expect(note).toContain("try 2: second.ts");
+    } finally {
+      delete script["cause"];
+    }
+  });
+
   test("a stop the decider is not sure of (p < 0.7) is a feedback run; a sure one parks, and the pull closes as parked", async () => {
     const { getAgentByName } = await import("../src/core/agents.ts");
     const scoutAgent = getAgentByName(app.db, "scout")!;

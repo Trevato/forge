@@ -36,6 +36,7 @@ import { accountActive } from "../core/accounts.ts";
 import { runningLimitSentence, runningRuns } from "../settings/quotas.ts";
 import { appendRunLog } from "../runs/log.ts";
 import { decideAndRecord } from "./ledger.ts";
+import { triesChanged } from "./tries.ts";
 import { byDials } from "./team_share.ts";
 import { ARCHIVED_WHY, getRepoById, type Repo } from "../core/repos.ts";
 import { listReviews } from "../core/reviews.ts";
@@ -974,9 +975,18 @@ export async function answerFailedCheck(
     // The decider's stop is the crew's stop: parked, never waiting, in a
     // repository on its own.
     const pull = getPull(app.db, repo.id, issue.number);
+    const tries =
+      pull && judged.cause !== "environment"
+        ? await triesChanged(app, repo, pull, failed.since).catch(() => [])
+        : [];
     if (
       pull &&
-      parkPull(app, repo, pull, parkedReason(judged, failed.kind, head))
+      parkPull(
+        app,
+        repo,
+        pull,
+        [parkedReason(judged, failed.kind, head), ...tries].join("\n"),
+      )
     )
       return "parked";
     log.info("check failed; waiting for a person", { issue: issue.number });
