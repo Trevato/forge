@@ -110,6 +110,7 @@ export { tool as scorecard } from "./scorecard.ts";
 export { tool as seal } from "./seal.ts";
 export { tool as search } from "./search.ts";
 export { tool as secrets } from "./secrets.ts";
+export { tool as sessions } from "./sessions.ts";
 export { tool as sever } from "./sever.ts";
 export { tool as share } from "./share.ts";
 export { tool as signup } from "./signup.ts";

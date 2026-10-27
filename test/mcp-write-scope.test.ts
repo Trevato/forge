@@ -20,6 +20,7 @@ const SKIPPED: Record<string, string> = {};
 /** Valid arguments for each admin-scope tool: were its gate gone, the call would act. */
 const ADMIN_ARGS: Record<string, Record<string, unknown>> = {
   repo_settings: { repo: "alice/game", visibility: "public" },
+  sessions: {},
   mirror_set: { action: "forget" },
   org_teams: { org: "acme", action: "create", team: "core", permission: "read" },
   agent: { action: "create", username: "robo", displayName: "Robo", model: "m", brief: "b" },
