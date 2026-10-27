@@ -507,12 +507,29 @@ async function grepCached(
   return hits;
 }
 
-/** Whose slot a grep takes; `grep` and `slots` are for tests to inject. */
+/** Whose slot a grep takes; `grep`, `slots`, `now` and `timer` are for tests to inject. */
 export interface GrepWho {
   /** The signed-in actor's id; undefined is a stranger. */
   readonly memberId?: string | undefined;
   readonly slots?: GrepSlots;
   readonly grep?: typeof grepRun;
+  /** Milliseconds on a monotonic clock; `performance.now` by default. */
+  readonly now?: () => number;
+  /** Resolves after `ms`; `clear` stops it. A `setTimeout` by default. */
+  readonly timer?: (ms: number) => BudgetTimer;
+}
+
+export interface BudgetTimer {
+  readonly done: Promise<void>;
+  clear(): void;
+}
+
+function budgetTimer(ms: number): BudgetTimer {
+  let id: ReturnType<typeof setTimeout> | undefined;
+  const done = new Promise<void>((resolve) => {
+    id = setTimeout(resolve, ms);
+  });
+  return { done, clear: () => clearTimeout(id) };
 }
 
 /**
@@ -520,13 +537,20 @@ export interface GrepWho {
  * fifty small greps do not become fifty simultaneous processes, and the walk
  * stops the moment the cap is reached — a common word in a monorepo costs
  * one repo's work, not fifty.
+ *
+ * With a finite budget the first batch is always waited for, so a cold search
+ * shows what it finds however slow git is. Each later batch races the time
+ * left: when the budget runs out first the answer goes back with `more`, and
+ * the batch's greps are left to finish on their own. They keep the slot
+ * `search/grep_slots.ts` gave them until git exits — that is the only cap on
+ * abandoned greps, and it is charged to the caller who started them.
  */
 export async function grepRepos(
   reposRoot: string,
   repos: readonly Repo[],
   query: string,
   limit = MAX_CODE_HITS,
-  /** No new batch starts after this many ms; the rest is reported as `more`. */
+  /** No new batch starts after this many ms, nor is waited on past it; the rest is `more`. */
   budgetMs = Infinity,
   who: GrepWho = {},
 ): Promise<{ hits: CodeHit[]; truncated: boolean; more: boolean; skipped: boolean }> {
@@ -537,16 +561,20 @@ export async function grepRepos(
   // Within a batch a member's greps run in pairs, so a search never
   // starves itself of the member's own slots.
   const width = who.memberId === undefined ? batch : GREP_LIMITS.perMember;
-  const started = performance.now();
+  const now = who.now ?? (() => performance.now());
+  const started = now();
   const timeoutMs = budgetMs === Infinity ? GREP_TIMEOUT_MS : BUDGETED_GREP_MS;
   let gaveUp = false;
-  for (let i = 0; i < considered.length; i += batch) {
-    if (i > 0 && performance.now() - started >= budgetMs) {
-      return { hits, truncated: repos.length > MAX_SEARCH_REPOS, more: true, skipped };
-    }
-    const slice = considered.slice(i, i + batch);
+  // Set when this search answers at its budget: the batch it left behind
+  // starts no further pair. Local to this call, never shared between callers.
+  let answered = false;
+  const more = () => {
+    answered = true;
+    return { hits, truncated: repos.length > MAX_SEARCH_REPOS, more: true, skipped };
+  };
+  const grepBatch = async (slice: readonly Repo[]) => {
     const found: (RawHit[] | "skipped" | "timeout")[] = [];
-    for (let k = 0; k < slice.length; k += width) {
+    for (let k = 0; k < slice.length && !answered; k += width) {
       found.push(
         ...(await Promise.all(
           slice
@@ -562,6 +590,25 @@ export async function grepRepos(
             ),
         )),
       );
+    }
+    return found;
+  };
+  for (let i = 0; i < considered.length; i += batch) {
+    const slice = considered.slice(i, i + batch);
+    let found: (RawHit[] | "skipped" | "timeout")[];
+    if (i === 0 || budgetMs === Infinity) {
+      found = await grepBatch(slice);
+    } else {
+      const left = budgetMs - (now() - started);
+      if (left <= 0) return more();
+      const running = grepBatch(slice);
+      // An abandoned batch settles on its own; a rejection then is nobody's.
+      running.catch(() => {});
+      const timer = (who.timer ?? budgetTimer)(left);
+      const raced = await Promise.race([running, timer.done.then(() => "cut" as const)]);
+      timer.clear();
+      if (raced === "cut") return more();
+      found = raced;
     }
     for (const [j, repo] of slice.entries()) {
       const mine = found[j] ?? [];
