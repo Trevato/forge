@@ -1487,6 +1487,15 @@ export function mapJson(
 ): Record<string, unknown> {
   const ready = readyNow(graph);
   const readySet = new Set(ready.map((r) => r.issue.id));
+  const free = held === undefined ? undefined : new Set(held.startable);
+  const startable = ready
+    .filter(
+      (r) =>
+        r.issue.assigneeName === null &&
+        wordFor(r.issue, readySet, marks) === "ready" &&
+        (free === undefined || free.has(r.issue.number)),
+    )
+    .map((r) => r.issue.number);
   const brief = (i: Issue) => ({
     number: i.number,
     title: i.title,
@@ -1512,8 +1521,8 @@ export function mapJson(
       holdsUp: r.holdsUp,
       ...(held === undefined ? {} : { held: held.holds.get(r.issue.number) ?? null }),
     })),
-    // The ready numbers no filter holds: what a builder may start now.
-    ...(held === undefined ? {} : { startable: held.startable }),
+    // What a builder may start now: ready, unassigned, no filter holding it.
+    startable,
     blockedOn: blockedOn(graph).map((r) => ({
       ...brief(r.issue),
       holdsUp: r.holdsUp,
@@ -1530,7 +1539,10 @@ export function mapJson(
       title: t.title,
       reasons: t.reasons,
     })),
-    counts: countWords(graph.issues.map((i) => wordFor(i, readySet, marks))),
+    counts: {
+      ...countWords(graph.issues.map((i) => wordFor(i, readySet, marks))),
+      ready: startable.length,
+    },
     edges: graph.edges.map((e) => {
       const a = graph.issues.find((i) => i.id === e.issueId);
       const b = graph.issues.find((i) => i.id === e.blockedById);

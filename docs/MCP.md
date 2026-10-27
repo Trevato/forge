@@ -376,6 +376,16 @@ answers
   becomes the "Told from" link on the issue; a bad one is refused. It differs
   from `context.page`, which is any http(s) address appended as context, not
   linked as the origin.
+- **`ready` and `startable`.** `map` (and `GET …/map`) carries both. `ready` is
+  every open issue with nothing open in front, held or working ones included,
+  and the page's Ready now section reads it. `startable` is the numbers from
+  `ready` that a builder may begin: no assignee, not working, held, parked or
+  deferred, and no filter holding them (`ready[].held`), in `ready`'s order.
+  `counts.ready` equals `startable.length`; read `startable`, not `ready`, to
+  count what can start. The page's counts line still counts every ready
+  issue, assigned ones too. `GET /api/v1/map` (the lanes) carries `startable`
+  too but unfiltered: it skips the filter holds, so a hot-file issue is
+  startable there and not in the repository's own map.
 - **Plugins.** `plugins/opencode` and `plugins/claude-code` register this
   server and add a `forge` command (tell, status, decide, plan, preview,
   pulls). They hold no logic.
