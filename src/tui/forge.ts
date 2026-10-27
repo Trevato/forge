@@ -67,7 +67,7 @@ import { quotasScreen } from "./screens/quotas.ts";
 import { teamsScreen } from "./screens/teams.ts";
 import { domainsScreen } from "./screens/domains.ts";
 import { ownerScreen } from "./screens/owner.ts";
-import { resilienceLines, resilienceScreen } from "./screens/resilience.ts";
+import { resilienceScreen } from "./screens/resilience.ts";
 import { forgeCeiling } from "../flow/ceiling.ts";
 import { flowLines, flowScreen } from "./screens/flow.ts";
 import { readHeld } from "../flow/held.ts";
@@ -362,7 +362,7 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         id: "resilience",
         title: "Resilience",
         hint: "each protection green, red or untested",
-        run: () => ctx.push(resilienceScreen(ctx, resilienceLines(session.app.config.dataDir))),
+        run: () => ctx.push(resilienceScreen(session, ctx)),
       });
     // The last releases with their pulls, as /changelog shows them: for anyone.
     commands.push({
