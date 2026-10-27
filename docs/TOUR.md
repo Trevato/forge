@@ -76,6 +76,8 @@ with the same lines, worded by the same helpers (`src/core/client-apps.ts`).
 
 Under the figures, an admin's home, the terminal's dashboard and its Flow dialog carry one vitals line (#5935, `src/flow/vitals.ts`): open pulls, opened and landed in 1 h and 6 h, and conflicted, against #5924's targets; the autonomy tick line says the same as `pulls` (and `offTarget` when a target is missed). The MCP `flow` tool and `GET /api/v1/telemetry/flow` carry it as `vitals: { says, misses, … }`; the tool's description is unchanged because `tools/list` is at its size ceiling, so an agent finds `vitals` in the result, not the listing. An agent reader's counts cover public repositories only.
 
+Below it, one parked line (#6471, `src/flow/parked.ts`): the open issues whose newest comment is the crew's `Parked by the crew` note, counted by that note's time over the last 24 h and 7 d, with the newest three named. The terminal's Flow dialog shows it, and the MCP `flow` tool and `GET /api/v1/telemetry/flow` carry it as `parked: { says, day, week, newest }`; an agent reader's counts cover public repositories only.
+
 Home shows nine figures first, from `src/flow/kpis.ts`: shipped per hour (with
 a 24 h sparkline), the live version and since when, the median check time, the crew builders
 running of their slots, and the crew's spend today of the forge's daily

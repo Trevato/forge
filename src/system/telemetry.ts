@@ -10,6 +10,7 @@ import { SOURCES } from "../boards/sources.ts";
 import { conflictedPulls, conflictedSays, rebaseLane, rebaseLaneSays } from "../flow/conflicted.ts";
 import { firedAlarms } from "../flow/alarms.ts";
 import { readVitals, vitalsLine, vitalsMisses } from "../flow/vitals.ts";
+import { parkedSays, readParked } from "../flow/parked.ts";
 import { readPipeline, verdict } from "../flow/pipeline.ts";
 import { type QueueReading, readQueues } from "../flow/queue.ts";
 import { reviewersBusy, reviewingSays } from "../flow/reviewing.ts";
@@ -33,8 +34,11 @@ export function flowFor(app: App, reader: Reader, now = new Date()) {
   const requested = requestedWaits(app.db, reader.kind === "agent");
   const busy = reviewersBusy(app.db, reader.kind === "agent");
   const vitals = readVitals(app.db, now, reader.kind === "agent");
+  const parked = readParked(app.db, now, reader.kind === "agent");
   return {
     says: verdict(stages, now.getTime()),
+    // Issues the crew parked in the last 24 h and 7 d, the newest three named (#6471).
+    parked: { says: parkedSays(parked), ...parked },
     // Open pulls, opened and landed in 1 h and 6 h, and conflicted, against #5924's targets (#5935).
     vitals: { says: vitalsLine(vitals), misses: vitalsMisses(vitals), ...vitals },
     // The four alarms (#5930) that are firing now; empty when none is.

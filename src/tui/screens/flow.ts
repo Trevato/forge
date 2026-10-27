@@ -19,6 +19,7 @@ import type { HeldRow } from "../../flow/held.ts";
 import { conflictedPulls, conflictedSays, rebaseLane, rebaseLaneSays } from "../../flow/conflicted.ts";
 import { pileSays, readPile } from "../../flow/pile.ts";
 import { readPipeline, STAGE_LABEL, verdict } from "../../flow/pipeline.ts";
+import { parkedSays, readParked } from "../../flow/parked.ts";
 import { firedAlarms } from "../../flow/alarms.ts";
 import { readVitals, vitalsLine } from "../../flow/vitals.ts";
 import { readQueues, redBatchWords } from "../../flow/queue.ts";
@@ -66,6 +67,8 @@ export function flowLines(
     "",
     ...wrap(vitalsLine(readVitals(db, now, agent !== undefined)), inner),
     ...firedAlarms(db, now, { publicOnly: agent !== undefined, ceilingUsd }).flatMap((a) => wrap(a.says, inner)),
+    "",
+    ...wrap(parkedSays(readParked(db, now, agent !== undefined)), inner),
     "",
     ...wrap(throughputSays(flow), inner),
     "",
