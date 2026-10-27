@@ -241,6 +241,7 @@ describe("the forge over MCP", () => {
       "reports",
       "branches",
       "commits",
+      "waves",
       "probe",
       "following",
       "spawn",

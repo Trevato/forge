@@ -48,6 +48,7 @@ export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   runs: "run",
   asks: "decision",
   milestones: "wave",
+  waves: "wave",
   map: "map",
   feed: "feed",
   explore: "explore",
@@ -107,6 +108,19 @@ export function cardFor(
   const rows: CardRow[] = [];
   const actions: CardAction[] = [];
   let status = "";
+  if (tool === "waves") {
+    // Only one wave is a card; the list is text.
+    const w = obj(obj(value)["wave"]);
+    if (text(w["version"]) === "") return undefined;
+    const repo = text(obj(value)["repo"]);
+    const pulls = list(w["pulls"]).map(text);
+    rows.push({ label: "Headline", value: text(w["headline"]) });
+    for (const h of list(w["highlights"]).map(obj).slice(0, LIMIT))
+      rows.push({ label: text(h["title"]), value: text(h["why"]) });
+    if (pulls.length > 0)
+      rows.push({ label: "Pulls", value: pulls.slice(0, LIMIT).map((n) => `#${n}`).join(" ") });
+    return { kind, title: `Wave ${text(w["version"])}`, status: `${repo} · ${text(w["date"])}`.replace(/^ · /, ""), rows, actions };
+  }
   if (tool === "new_app") {
     const made = obj(value);
     const repo = text(made["repo"]);

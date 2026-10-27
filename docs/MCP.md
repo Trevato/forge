@@ -188,6 +188,7 @@ for a tunnel and a forge that sleeps.
 | `vision` | `{ repo, number? }`: `{ purpose, order: [{ n, name, text }], rules, direction, directionParts, preview, updatedAt }` from docs/VISION.md on the default branch; without the document `purpose` is null and `order` empty; `direction` (the autonomy direction) and `directionParts` (it cut into `{ kind: vision|owner, text }`: the fenced block that follows docs/VISION.md, and the owner's words) only for those who may read the repository's settings, else null; with `number` (an open vision pull) those same people get `preview`: `{ today, after }`, the direction as it stands and as an admin's merge will write it, or `{ why }` it would stay; else null |  |
 | `wait_for` | `{ app, issue, blockedBy, stop? }`: the issue waits for another, or stops with `stop: true`; the page's rules, and the answer carries the issue's URL | yes |
 | `watch` | `{ app, issue, watch? }`: watch a milestone, or stop with `watch: false`: one item in your feed that follows it, and one push to your phone when it lands | yes |
+| `waves` | `{ repo, version? }`: the repository's waves newest first (version, date, headline; a broken file is `{ version, error }`), or with `version` one wave: headline, highlights with their why, pull numbers (with the `ui://forge/wave` card); a private repository is not found to a stranger |  |
 | `whoami_can` | `{ kind?, remove? }`: your role and that role's row of the roles table, each ability yes or no; `kind: "passkeys"` lists your own passkeys (`{ items }`: id, name, created, lastUsed), people only; `remove: id` with `kind: "passkeys"` removes one of them, as Settings → Passkeys does (an admin-scope token, never an agent) | yes |
 | `write_file` | `{ repo, branch, path, content, message }`: commit one file to an existing branch as `POST …/contents` does, for the same callers and with the same refusals (protected default, too large, a path with `..`), said in `edit_words`' sentences; answers `{ commit, says }` | yes |
 
@@ -357,7 +358,7 @@ answers
 
 ## Cards, the contract and the plugins (#1116)
 
-- **Cards.** `apps`, `new_app`, `now`, `asks`, `milestones`, `map`, `feed` and `pull` name a `ui://` resource in
+- **Cards.** `apps`, `new_app`, `now`, `asks`, `milestones`, `waves` (one wave), `map`, `feed` and `pull` name a `ui://` resource in
   `_meta.ui.resourceUri` (MCP Apps, SEP-1865): `ui://forge/app`, `run`,
   `decision`, `wave`, `map`, `feed`, `pull`. The Plan card (`map`) shows one row per pillar with
   its ready, working and waiting counts, and the first five ready issues linked
