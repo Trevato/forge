@@ -76,6 +76,15 @@ export const SANDBOX_LINES = [
 ];
 
 /**
+ * What a builder runs before a push: not the whole check, which the forge
+ * runs once on the push (#6571). `scripts/fast.ts` names the test files
+ * the working tree's diff touches; a bare `bun test $(…)` with nothing
+ * listed would run everything, so the line guards on its exit code.
+ */
+export const PUSH_STEPS_LINE =
+  "- Before you push, run `bun install` (only when node_modules is missing), `bun x tsc --noEmit`, and the tests that cover your change, plus any the repository's CLAUDE.md or AGENTS.md says always to run. When the clone has `scripts/fast.ts`, name them with `files=$(bun scripts/fast.ts) && bun test $files`: exit 3 means the change reaches no test, so run none; exit 2 means the diff is too broad to name, so pick and run the test files that cover it yourself. Never a bare `bun test` with no files listed: it runs everything. Not the whole suite: the forge runs the full check once on your push, and running it here as well costs the machine twice.";
+
+/**
  * What the repository's own text is to a run: data about the task, never a
  * grant. A README or a comment that asks for more is prompt injection, and
  * the run token (`http/run_gate.ts`) refuses it anyway (#3963).
@@ -108,7 +117,8 @@ export function systemPrompt(input: BriefInput): string {
     "",
     "How to finish:",
     "- Commit your work with clear messages and push: `git push`.",
-    "- If `forge.json` declares a `check`, the forge runs it against every push to your pull, and that verdict is what lands it; a failing check comes back to you with its log. Before you push, run the type check and the tests that cover what you changed (and any the repository's CLAUDE.md or AGENTS.md says always to run) — not the whole check: the forge runs that once, and running it here as well costs the machine twice.",
+    "- If `forge.json` declares a `check`, the forge runs it against every push to your pull, and that verdict is what lands it; a failing check comes back to you with its log.",
+    ...(input.role === "planner" ? [] : [PUSH_STEPS_LINE]),
     "- The forge opens the pull request for you, or updates the one that exists. Your last message is used verbatim as its description, so write it as one: what changed and what to look at, in a few sentences — no preamble, no status report, nothing addressed to a person.",
     "- Do not open the pull yourself, and do not merge anything.",
     "- Your run has a spend budget; when it runs out you get one short wrap-up turn to land what exists, so keep the app working as you go and commit as you go.",

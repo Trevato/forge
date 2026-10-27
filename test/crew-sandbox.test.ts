@@ -140,6 +140,30 @@ describe("the shell sandbox", () => {
     expect(prompt).toContain(`${can}\n${cannot}`);
   });
 
+  test("a builder is told the steps before a push; a planner is not", () => {
+    const input = (role: "builder" | "planner") =>
+      ({
+        agent: { user: { username: "bot", displayName: "" }, brief: "" },
+        repo: { ownerName: "alice", name: "square", defaultBranch: "main" },
+        issue: { number: 1 },
+        branch: "bot/1",
+        forgeUrl: "http://forge.test",
+        isApp: false,
+        role,
+      }) as unknown as BriefInput;
+    const builder = systemPrompt(input("builder"));
+    expect(builder).toContain("bun install");
+    expect(builder).toContain("bun x tsc --noEmit");
+    expect(builder).toContain(
+      "files=$(bun scripts/fast.ts) && bun test $files",
+    );
+    expect(builder).toContain("exit 3");
+    expect(builder).toContain("exit 2");
+    expect(builder).not.toContain("bun test $(");
+    expect(builder).toContain("the forge runs the full check once");
+    expect(systemPrompt(input("planner"))).not.toContain("scripts/fast.ts");
+  });
+
   test("the probe answers with a reason when it cannot", async () => {
     const probe = await sandboxAvailable();
     if (process.platform === "darwin") expect(probe).toEqual({ ok: true });
