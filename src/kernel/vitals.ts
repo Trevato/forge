@@ -259,6 +259,18 @@ export interface LaneRun {
   readonly since: string;
 }
 
+
+/** Agent slots are held per issue (`pump` in crew/dispatch.ts); any other kind holds one per run. */
+function holders(issues: (string | null)[], perIssue: boolean): number {
+  return perIssue ? new Set(issues).size : issues.length;
+}
+
+/** What a long queue is waiting behind: how many wait, how many run, and the slots in force. */
+function queueSentence(kind: string, queued: number, running: number, slots: number | null): string {
+  const behind = slots === null ? `${running} running` : `${running} of ${slots} slots running`;
+  return `The ${kind} queue has waited over ${QUEUE_WAIT_MAX_MS / 60_000} minutes: ${queued} queued, ${behind}.`;
+}
+
 /**
  * The lane's one sentence, with its cause: how many wait, since when, and
  * what runs. With one slot: "22 checks wait behind one lane; the oldest since
@@ -373,7 +385,12 @@ export function vitals(input: VitalsInput): Vitals {
     if (waited > QUEUE_WAIT_MAX_MS)
       need(
         `queue:${row.kind}`,
-        `The ${row.kind} queue has waited over ${QUEUE_WAIT_MAX_MS / 60_000} minutes.`,
+        queueSentence(
+          row.kind,
+          row.queued,
+          holders(running.filter((r) => r.run.kind === row.kind).map((r) => r.run.issueId), row.kind === "agent"),
+          row.kind === "agent" ? Number(capacityValue(input.db, "crew.concurrency")) : null,
+        ),
         new Date(row.oldest).toISOString(),
         "/settings/capacity",
       );

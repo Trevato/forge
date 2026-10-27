@@ -324,6 +324,18 @@ test("degraded names each cause, stable, with when it began", async () => {
     const q = vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy, now: later }).degraded.find((d) => d.cause === "queue:agent");
     expect(q?.since).toBe(new Date(oldest).toISOString());
     expect(q?.href).toBe("/settings/capacity");
+    app.db.query("INSERT INTO forge_setting (key, value, updated_by, updated_at) VALUES ('crew.concurrency', '3', 'test', ?1)").run(new Date().toISOString());
+    const busy = createRun(app.db, { repoId, kind: "agent" });
+    app.db.query("UPDATE run SET state='running', started_at=?2, heartbeat_at=?2 WHERE id=?1").run(busy.id, new Date(later).toISOString());
+    const held = vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy, now: later }).degraded.find((d) => d.cause === "queue:agent");
+    expect(held?.sentence).toBe("The agent queue has waited over 30 minutes: 1 queued, 1 of 3 slots running.");
+    app.db.query("DELETE FROM run").run();
+    app.db.query("DELETE FROM forge_setting WHERE key='crew.concurrency'").run();
+    createRun(app.db, { repoId, kind: "agent" });
+    createRun(app.db, { repoId, kind: "deploy", env: "production" });
+    const d = vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy, now: later }).degraded.find((x) => x.cause === "queue:deploy");
+    expect(d?.sentence).toBe("The deploy queue has waited over 30 minutes: 1 queued, 0 running.");
+    app.db.query("DELETE FROM run WHERE kind='deploy'").run();
 
     // stuck: one per run, keyed by run id, since is when it last moved.
     const run = createRun(app.db, { repoId, kind: "deploy", env: "production" });
