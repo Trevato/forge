@@ -283,8 +283,10 @@ flag exists only in the stdio dev runner and is never reachable over SSH.
   records each name), so two pulls' migrations land in either order, and a
   database with one this build does not know boots and names it. Never edit
   an existing migration — an edited one is a new one and runs again; once
-  pinned in `core/migration-pins.json` (`bun scripts/pin-migrations.ts`, run
-  by the release agent, never by a pull) the schema test fails on an edit. It must only add
+  pinned the schema test fails on an edit: the pull that adds a migration
+  runs `bun scripts/pin-migrations.ts` and commits the one file it writes,
+  `core/migration-pins/<name>.pin` (`core/migration-pins.json` is the frozen
+  older pins); the release never touches pins. A migration must only add
   (`test/schema-additive.test.ts`). A release is an annotated tag whose
   message is its record (`bun scripts/cut-release.ts <version> --tag`,
   read by `release/shipped.ts`); no pull and no release touches
