@@ -105,6 +105,10 @@ import { migrateScreen } from "./migrate.ts";
 import { newRepoScreen } from "./newrepo.ts";
 import { firedAlarms } from "../../flow/alarms.ts";
 import { forgeCeiling } from "../../flow/ceiling.ts";
+import { alarmIdleCrew } from "../../flow/alarm_idle_crew.ts";
+import { noReleaseAlarm } from "../../flow/alarm_no_release.ts";
+import { redMainAlarm } from "../../flow/alarm_red_main.ts";
+import { alarmStuck } from "../../flow/alarm_stuck.ts";
 import { pullScreen } from "./pull.ts";
 import { repoScreen } from "./repo.ts";
 import { local } from "./where.ts";
@@ -189,6 +193,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   let decider: string | null = null;
   /** Home's three figures, as the web's row says them; empty unless an admin looks (they count every repository). */
   let figures: string[] = [];
+  /** One line per fired flow alarm; an admin reads every repository, anyone else public ones alone. */
+  let alarms: string[] = [];
   /** The panels this admin pinned to the web home, by title and board, in their order. */
   let panelLines: string[] = [];
   const filter = new Filter();
@@ -257,6 +263,17 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         return hold === null ? [] : [[repo.id, holdWords(hold)] as const];
       }),
     );
+    alarms =
+      f.user?.isAdmin === true
+        ? [
+            alarmStuck(f.db, now),
+            redMainAlarm(f.db, now),
+            alarmIdleCrew(f.db, now, { ceilingUsd: f.app.config.crewCeilingUsd ?? null }),
+            noReleaseAlarm(f.db, now),
+          ]
+            .filter((a) => a.fired)
+            .map((a) => a.says)
+        : [alarmStuck(f.db, now, { publicOnly: true })].filter((a) => a.fired).map((a) => a.says);
     forge = forgeNeeds(f.app, f.user);
     if (forge !== undefined) {
       const fh = forgeHealth();
@@ -872,6 +889,13 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       // A site admin's forge strip, as the board's: "All fine" or a line
       // per cause. Anyone else gets no rows and no reads.
       let body = area;
+      if (alarms.length > 0) {
+        const [strip, rest] = split(body, "v", [len(alarms.length), fill(1)]);
+        alarms.forEach((line, i) =>
+          s.text(strip!.x, strip!.y + i, truncate(line, strip!.w), style(c.attn, c.bg), strip!.x + strip!.w),
+        );
+        body = rest!;
+      }
       if (clientLines.length > 0) {
         const lines = clientLines.slice(0, 5);
         const [strip, rest] = split(body, "v", [len(lines.length), fill(1)]);
