@@ -32,6 +32,7 @@ import { getUserById, type User } from "../core/users.ts";
 import { watchedBy } from "../core/watches.ts";
 import { CLOG_NOTE_WINDOW_MS, flattenNote } from "../flow/clog_note.ts";
 import { chooseCandidates } from "./choose.ts";
+import type { Foldable } from "./fold.ts";
 import { writeStamp } from "../core/write_clock.ts";
 import { Stamped } from "../kernel/stamped.ts";
 import { QUIET_WINDOW_MS, quietRunEventIds } from "./quiet.ts";
@@ -77,6 +78,11 @@ export interface Candidate {
   readonly said?: string;
   /** For an ask: what it asks, the answers, what happens if nobody acts, and its rank. */
   readonly ask?: FeedAsk;
+  /** Set on a post that may fold into a burst (`fold.ts`). */
+  readonly fold?: Foldable;
+  /** On a folded post: the first titles, each linking to its own thing, and how many more. */
+  readonly lines?: readonly { readonly text: string; readonly link: string }[];
+  readonly more?: number;
   /** For a look: the picture's environment and commit; the page finds the thumbnail. */
   readonly look?: FeedLook;
 }
@@ -659,6 +665,7 @@ function fromEvent(
         kind: "tell",
         link: `${base(repo)}/issues/${number}`,
         what: `opened an issue: ${told === "" ? `#${number}` : clip(told)}`,
+        fold: { group: "issues", title: told === "" ? `#${number}` : clip(told) },
       };
     }
     case "issue.commented":

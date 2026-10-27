@@ -118,7 +118,7 @@ describe("the caches are exact", () => {
 
   test("one viewer's feed is never another's, and a write is in the next one", async () => {
     const whats = (who: typeof f.owner) =>
-      readFeed(f.app.db, who, { limit: 50 }).items.map((i) => i.what).join("\n");
+      readFeed(f.app.db, who, { limit: 50 }).items.map((i) => [i.what, ...(i.lines ?? []).map((l) => l.text)].join("\n")).join("\n");
     // Both warm, before the write.
     whats(f.owner);
     whats(f.peer);

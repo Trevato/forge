@@ -25,6 +25,9 @@ export interface FeedItem {
   readonly score: number;
   /** For an ask: the decision, options, default and rank. */
   readonly ask?: FeedAsk;
+  /** A folded post: its first titles with their links, and how many more. */
+  readonly lines?: readonly { readonly text: string; readonly link: string }[];
+  readonly more?: number;
   /** For a look: which picture it is of. */
   readonly look?: FeedLook;
   /** For a post about a pull or an issue that is over: how it ended. Absent while open. */
@@ -155,6 +158,7 @@ export function rank(
       reason: reasonOf(s!.c, aff, now),
       score: Math.round(bestScore * 1e6) / 1e6,
       ...(s!.c.ask === undefined ? {} : { ask: s!.c.ask }),
+      ...(s!.c.lines === undefined ? {} : { lines: s!.c.lines, more: s!.c.more ?? 0 }),
       ...(s!.c.look === undefined ? {} : { look: s!.c.look }),
     });
   }

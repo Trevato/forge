@@ -27,7 +27,7 @@ import { html, type Html } from "../html.ts";
 import { fragment } from "../layout.ts";
 import { draftJs } from "../draft.ts";
 import { outboxJs } from "../outbox.ts";
-import { avatar, btn, card, disclosure, empty, nameMark, stateBadge, time } from "../ui.ts";
+import { avatar, btn, card, disclosure, empty, nameMark, row, stateBadge, time } from "../ui.ts";
 import { writableAppsOf } from "./asks.ts";
 
 /** Events that can change what the feed says. */
@@ -120,6 +120,9 @@ export function feedCard(
       <span class="spacer"></span>
       <span class="badge">${KIND_LABEL[item.kind]}</span>`;
   const body = html`<p class="break"><a href="${item.link}" data-feed-open>${item.what}</a></p>
+    ${item.lines === undefined
+      ? null
+      : html`<ul class="list">${item.lines.map((l) => row({ href: l.link, title: l.text }))}${item.more ? row({ title: `and ${item.more} more` }) : null}</ul>`}
     ${picture === undefined
       ? null
       : html`<a class="look" data-slot="feed" href="${item.link}" tabindex="-1" aria-hidden="true"

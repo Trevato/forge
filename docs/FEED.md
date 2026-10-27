@@ -23,7 +23,7 @@ Anything the viewer cannot read is a 404.
   only to those who may see owner facts), `pull.opened|merged|reviewed`,
   `look.taken` (a `look`: a full set of pictures), `app.serving`,
   `issue.blocked|unblocked` (map changes), `issue.opened` (a `tell`, in its
-  title's words) and `issue.commented|pull.commented` (a `reply`, in its
+  title's words; see Bursts fold) and `issue.commented|pull.commented` (a `reply`, in its
   own words).
 - Pending asks (`askLinesFor`), only for what the viewer may decide.
 - Decision-ledger outcomes, only for repositories the viewer may write.
@@ -41,6 +41,17 @@ Anything the viewer cannot read is a 404.
 
 Runs already announce themselves on the outbox (`run.*`); looks did not, so
 `look.taken` was added.
+
+## Bursts fold (`src/feed/fold.ts`)
+
+When one author opens 3 or more issues in one repository within 2 minutes,
+`foldBursts` replaces them with one post, `planned N issues in owner/name`,
+ranked where the newest would be and linking to the repository's map. The
+first 3 titles ride on it as `lines` (`{ text, link }`), the rest as `more`;
+the web card draws them as a `.list` of rows, MCP `feed` and
+`GET /api/v1/feed` return them. One or two issues keep their own posts. The
+fold runs after the viewer's filters and before paging, so chip counts and
+cursors see the folded posts. A new kind of burst is a row in `FOLDS`.
 
 ## Ranking (`src/feed/rank.ts`, `affinity.ts`)
 

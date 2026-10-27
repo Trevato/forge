@@ -17,6 +17,7 @@ import { getUserById, type User } from "../core/users.ts";
 import { candidatesFor, quietRunsFor, type Candidate } from "./items.ts";
 import { writeStamp } from "../core/write_clock.ts";
 import { Stamped } from "../kernel/stamped.ts";
+import { foldBursts } from "./fold.ts";
 import { rank, type FeedItem } from "./rank.ts";
 import { settledOf } from "./settled.ts";
 
@@ -176,8 +177,10 @@ export function readFeedPage(
           c.kind === "choose" ||
           !muted.has(c.repoId)),
   );
-  const pageable =
-    options.withoutAsks === true ? candidates.filter((c) => c.kind !== "ask") : candidates;
+  // After every filter, so a burst folds only what the viewer would see.
+  const pageable = foldBursts(
+    options.withoutAsks === true ? candidates.filter((c) => c.kind !== "ask") : candidates,
+  ).filter((c) => !dismissed.has(c.id)); // a folded post is dismissed under its own id
   const cursor = options.cursor;
   // Without a cursor only the page and one more (to know there is a next) are placed.
   let ranked = rank(

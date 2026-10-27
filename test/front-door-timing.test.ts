@@ -4,9 +4,11 @@ import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createOrg } from "../src/core/orgs.ts";
 import { snappyFixture, type SnappyFixture } from "../bench/snappy.ts";
+import { createUser } from "../src/core/users.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { affinityFor } from "../src/feed/affinity.ts";
 import { readFeed } from "../src/feed/feed.ts";
+import { foldBursts } from "../src/feed/fold.ts";
 import { candidatesFor } from "../src/feed/items.ts";
 import { rank } from "../src/feed/rank.ts";
 
@@ -60,13 +62,29 @@ test("a spawned forge's lean home names spawned and steps once each, and reads n
   }
 });
 
-test("placing only the page leaves the order of the whole ranking untouched", () => {
+test("placing only the page leaves the order of the whole ranking untouched", async () => {
+  // The feed folds one author's bursts, so the whole ranking needs many authors
+  // with one issue each: 70 distinct posts that nothing folds.
+  for (let i = 0; i < 70; i++) {
+    const made = await createUser(f.app.db, {
+      origin: "seed",
+      trusted: true,
+      username: `lone-${i}`,
+      email: `lone-${i}@forge.local`,
+      password: "a-good-passphrase",
+    });
+    if (!made.ok) throw new Error(made.error);
+    const opened = openIssue(f.app, made.value, f.repos[0]!, { title: `A lone idea ${i}` });
+    if (!opened.ok) throw new Error(String(opened.error));
+  }
   const now = Date.now();
   const candidates = candidatesFor(f.app.db, f.owner, now, undefined, true);
   const aff = affinityFor(f.app.db, f.owner, now);
-  const whole = rank(candidates, aff, now);
+  // The feed folds bursts before it pages: the whole ranking is of the folded posts.
+  const folded = foldBursts(candidates);
+  const whole = rank(folded, aff, now);
   expect(whole.length).toBeGreaterThan(60);
-  expect(rank(candidates, aff, now, 51)).toEqual(whole.slice(0, 51));
+  expect(rank(folded, aff, now, 51)).toEqual(whole.slice(0, 51));
   const page = readFeed(f.app.db, f.owner, { limit: 50, now });
   expect(page.items).toEqual(whole.slice(0, 50));
   expect(page.next_cursor).not.toBeNull();
