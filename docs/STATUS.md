@@ -19,11 +19,14 @@
   "Reconnecting" while the connection is down.
 
 - **Cut a wave** — Settings → *Cut a wave* (repository admins, same-origin
-  POST; web-only, the terminal's settings hand over to the web) opens a pull
+  POST) opens a pull
   adding `waves/<next>.md`, listing the pulls merged since the last wave and
   not already in an earlier wave. The headline and highlights are `TODO`
   placeholders; no model is called. It refuses, writing nothing, when an
   earlier wave does not parse (naming the file) or nothing new has merged.
+  The terminal's waves screen does the same with `c`: it says how many pulls
+  would go in, asks `cut wave N? y/n`, and on `y` shows the draft pull's
+  number (Enter opens it), through the same action and refusals.
   `/:owner/:name/waves` lists the waves on the default branch, newest version
   first, each line opening `/:owner/:name/waves/<version>` (headline, date,
   highlights with why, pulls as links; linked from that settings card); in the

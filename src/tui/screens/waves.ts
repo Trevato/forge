@@ -5,6 +5,7 @@
  * opens that wave as plain text.
  */
 
+import { cutWaveFor, planCutFor } from "../../actions/cut_wave.ts";
 import { canRead } from "../../core/repos.ts";
 import { VERSION } from "../../story/wave.ts";
 import { carriedPulls, pullPath, type CarriedPull } from "../../story/wave_pulls.ts";
@@ -18,7 +19,8 @@ import { truncate } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { emptyState } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
-import { ListState, Scroll, drawList, drawLines, hitList, plural, runAsync } from "./common.ts";
+import { ListState, Scroll, confirmScreen, drawList, drawLines, hitList, plural, runAsync } from "./common.ts";
+import { pullScreen } from "./pull.ts";
 import { localRepo, sourceName, whereRows, whereStrip } from "./where.ts";
 
 /** One line per wave, as the screen draws it. */
@@ -114,11 +116,55 @@ export function wavesScreen(f: Session, ctx: Ctx, src: RepoSource): Screen {
     ctx.invalidate();
   };
 
-  return {
+  const cut = (): void => {
+    if (repo === undefined) return;
+    runAsync(ctx, async () => {
+      const plan = await planCutFor(f.app, f.user, repo);
+      if (!plan.ok) return void ctx.toast(plan.error, "danger");
+      const { version, pulls } = plan.value;
+      const choose = (choice: number): void => {
+              if (choice !== 0) return;
+              runAsync(ctx, async () => {
+                const done = await cutWaveFor(f.app, f.user, repo);
+                if (!done.ok) return void ctx.toast(done.error, "danger");
+                await reload();
+                const number = done.value.number;
+                ctx.push(
+                  confirmScreen(ctx, self, {
+                    title: "Wave drafted",
+                    body: [`Draft pull #${number} holds wave ${done.value.version}.`],
+                    actions: [{ label: "Open" }, { label: "Close" }],
+                    onChoose: (c) => {
+                      if (c === 0) ctx.push(pullScreen(f, ctx, src, number));
+                    },
+                  }),
+                );
+              });
+      };
+      ctx.push(
+        yesNo(
+          ctx,
+          confirmScreen(ctx, self, {
+            title: "Cut wave",
+            body: [
+              `${plural(pulls, "pull")} since the last wave would go into it.`,
+              `cut wave ${version}? y/n`,
+            ],
+            actions: [{ label: "Cut" }, { label: "Cancel" }],
+            onChoose: choose,
+          }),
+          choose,
+        ),
+      );
+    });
+  };
+
+  const self: Screen = {
     title: "Waves",
     keys: [
       binding(["j", "k"], "move"),
       binding(["enter"], "open"),
+      binding(["c"], "cut a wave"),
       binding(["r"], "refresh"),
     ],
     load: reload,
@@ -165,7 +211,27 @@ export function wavesScreen(f: Session, ctx: Ctx, src: RepoSource): Screen {
         runAsync(ctx, reload);
         return true;
       }
+      if (e.key === "c") {
+        cut();
+        return true;
+      }
       return false;
+    },
+  };
+  return self;
+}
+
+/** `y` cuts and `n` cancels, whatever the selection: each chooses outright rather than pressing Enter. */
+function yesNo(ctx: Ctx, dialog: Screen, choose: (choice: number) => void): Screen {
+  return {
+    ...dialog,
+    key(e) {
+      if (e.key === "y" || e.key === "n") {
+        ctx.pop();
+        choose(e.key === "y" ? 0 : -1);
+        return true;
+      }
+      return dialog.key(e);
     },
   };
 }

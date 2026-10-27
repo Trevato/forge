@@ -12,7 +12,7 @@ import type { User } from "../core/users.ts";
 import { listTree, readerFor } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { cutWave, type WaveFile } from "../story/cut.ts";
+import { cutWave, type Cut, type WaveFile } from "../story/cut.ts";
 import { editFiles } from "./contents.ts";
 
 export interface CutDone {
@@ -35,12 +35,12 @@ async function readWaves(app: App, repo: Repo): Promise<WaveFile[]> {
   return files;
 }
 
-/** The reason is a plain sentence, ready to show. */
-export async function cutWaveFor(
+/** What a cut would write, or the reason it cannot; nothing is written. */
+export async function planCutFor(
   app: App,
   actor: User | undefined,
   repo: Repo,
-): Promise<Result<CutDone, string>> {
+): Promise<Result<Cut, string>> {
   if (!actor || actor.kind === "agent" || !canAdmin(app.db, repo, actor))
     return err("Only a repository admin can cut a wave.");
   const waves = await readWaves(app, repo);
@@ -58,6 +58,16 @@ export async function cutWaveFor(
     today: new Date().toISOString().slice(0, 10),
     link: (n) => `${repoUrl}/pulls/${n}`,
   });
+  return plan.ok ? ok(plan.value) : err(plan.error);
+}
+
+/** The reason is a plain sentence, ready to show. */
+export async function cutWaveFor(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+): Promise<Result<CutDone, string>> {
+  const plan = await planCutFor(app, actor, repo);
   if (!plan.ok) return err(plan.error);
   const { version, path, text, pulls } = plan.value;
   const edited = await editFiles(app, actor, repo, {
