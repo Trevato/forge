@@ -18,7 +18,7 @@ import { canAdmin, visibleForks } from "../../core/repos.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { storageLimitMessage } from "../../core/storage.ts";
 import { getFollow } from "../../core/upstream_follow.ts";
-import { loadRepo } from "../api.ts";
+import { loadRepo, pageOf, pageParams } from "../api.ts";
 import type { Handler } from "../context.ts";
 import { apiError, body, json, notFound, requireScope, respondAccess, str } from "../respond.ts";
 import type { Router } from "../router.ts";
@@ -75,8 +75,10 @@ export function upstreamRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const forks = timePhase(ctx.request, "forks", () => visibleForks(ctx.app.db, repo.id, ctx.auth.user));
-    return timePhase(ctx.request, "render", () => json(forks));
+    const page = pageParams(ctx);
+    if (page instanceof Response) return page;
+    const rows = timePhase(ctx.request, "forks", () => visibleForks(ctx.app.db, repo.id, ctx.auth.user));
+    return timePhase(ctx.request, "render", () => pageOf(rows, page));
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/forks", async (ctx) => {

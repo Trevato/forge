@@ -1030,6 +1030,45 @@ export function keyedWindow(ctx: Ctx): { limit: number; cursor: string | null } 
   return { limit, cursor };
 }
 
+/**
+ * `?limit=&cursor=` for a list read whole and cut here: limit is a whole
+ * number from 1 to 200 (default 50), the cursor an id from a previous page.
+ * Anything else is the 422 to answer.
+ */
+export function pageParams(
+  ctx: Ctx,
+): { limit: number; cursor: string | null } | Response {
+  const q = ctx.url.searchParams;
+  const rawLimit = q.get("limit");
+  const limit =
+    rawLimit === null ? 50 : /^\d{1,4}$/.test(rawLimit) ? Number(rawLimit) : 0;
+  if (limit < 1 || limit > 200)
+    return apiError("invalid_limit", 422, "limit is a whole number from 1 to 200");
+  const cursor = q.get("cursor");
+  if (cursor !== null && !/^[A-Za-z0-9_-]{1,64}$/.test(cursor))
+    return apiError("invalid_cursor", 422, "cursor is the next_cursor of a previous page");
+  return { limit, cursor };
+}
+
+/**
+ * One page of `rows` (already in order) after the row whose id is the cursor,
+ * as a response. A cursor no row answers to (deleted between two requests, or
+ * invented) is a 422 `invalid_cursor`, as for branches: an empty last page
+ * would tell the client it had seen everything.
+ */
+export function pageOf<T extends { id: string }>(
+  rows: T[],
+  page: { limit: number; cursor: string | null },
+): Response {
+  const at = page.cursor === null ? -1 : rows.findIndex((r) => r.id === page.cursor);
+  if (page.cursor !== null && at === -1)
+    return apiError("invalid_cursor", 422, "that cursor names a row that is gone: start over");
+  const start = at + 1;
+  const items = rows.slice(start, start + page.limit);
+  const more = start + page.limit < rows.length;
+  return json({ items, next_cursor: more ? items[items.length - 1]!.id : null });
+}
+
 /** The page of `rows` (sorted by name) after the cursor: `{ items, next_cursor }`. */
 export function keyedPage<T>(
   rows: T[],
@@ -4278,8 +4317,10 @@ export function apiRoutes(router: Router<Handler>): void {
     if (denied) return denied;
     const repo = loadRepo(ctx);
     if (!repo || !canAdmin(ctx.app.db, repo, ctx.auth.user)) return notFound();
-    const hooks = timePhase(ctx.request, "hooks", () => listWebhooks(ctx.app.db, repo.id));
-    return timePhase(ctx.request, "render", () => json(hooks));
+    const page = pageParams(ctx);
+    if (page instanceof Response) return page;
+    const rows = timePhase(ctx.request, "hooks", () => listWebhooks(ctx.app.db, repo.id));
+    return timePhase(ctx.request, "render", () => pageOf(rows, page));
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/hooks", async (ctx) => {

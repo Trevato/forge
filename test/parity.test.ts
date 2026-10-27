@@ -396,7 +396,7 @@ describe("parity: full control through actions and the API", () => {
     });
     expect(queue.status).toBe(201);
     expect(
-      (await call("GET", "/api/v1/repos/alice/pub/labels")).list.map(
+      ((await call("GET", "/api/v1/repos/alice/pub/labels")).json.items as Json[]).map(
         (l) => l.name,
       ),
     ).toEqual(["bug", "queue"]);
@@ -714,7 +714,7 @@ describe("parity: full control through actions and the API", () => {
     );
     expect((detail.json.diff as Json).files).toHaveLength(1);
     const forks = await call("GET", "/api/v1/repos/alice/pub/forks");
-    expect(forks.list.map((f) => f.ownerName)).toEqual(["bob"]);
+    expect((forks.json.items as Json[]).map((f) => f.ownerName)).toEqual(["bob"]);
   });
 
   test("numbers from another repo are not_found here", async () => {

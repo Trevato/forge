@@ -7,7 +7,7 @@
 import { createLabel, deleteLabel } from "../../actions/repos.ts";
 import { listLabels } from "../../core/issues.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
-import { loadRepo } from "../api.ts";
+import { loadRepo, pageOf, pageParams } from "../api.ts";
 import type { Handler } from "../context.ts";
 import { body, json, notFound, requireScope, respondAccess, str } from "../respond.ts";
 import type { Router } from "../router.ts";
@@ -17,8 +17,10 @@ export function labelsRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const labels = timePhase(ctx.request, "labels", () => listLabels(ctx.app.db, repo.id));
-    return timePhase(ctx.request, "render", () => json(labels));
+    const page = pageParams(ctx);
+    if (page instanceof Response) return page;
+    const rows = timePhase(ctx.request, "labels", () => listLabels(ctx.app.db, repo.id));
+    return timePhase(ctx.request, "render", () => pageOf(rows, page));
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/labels", async (ctx) => {
