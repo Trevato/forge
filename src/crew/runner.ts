@@ -59,6 +59,7 @@ import {
   type Review,
 } from "../core/reviews.ts";
 import {
+  answerCancelled,
   cancelRun,
   checkSummary,
   claimRun,
@@ -81,7 +82,14 @@ import { repoDir } from "../git/repos.ts";
 import { bar } from "../cloud/gate.ts";
 import { declarationsOf } from "../cloud/declared.ts";
 import { accountOfSecret } from "../core/cloud_account.ts";
-import { alreadyDoneSummary, namedCommits, onBase } from "./already.ts";
+import {
+  alreadyDoneSummary,
+  answeredBeforeStop,
+  declineOf,
+  isAnswer,
+  namedCommits,
+  onBase,
+} from "./already.ts";
 import { touchesDesign } from "./review.ts";
 import { BUDGETS, budgetSummary } from "../kernel/budgets.ts";
 import { createLog, redactValues } from "../kernel/log.ts";
@@ -470,6 +478,14 @@ async function runClaimed(
     commitOid: left,
   });
   if (done) announceRun(app, done);
+  else if (isAnswer(outcome.summary)) {
+    // Its pull closed under it, but it had found the work done: say so.
+    const answered = answerCancelled(app.db, run.id, {
+      state: outcome.state,
+      summary,
+    });
+    if (answered) announceRun(app, answered);
+  }
   return undefined;
 }
 
@@ -1570,7 +1586,9 @@ async function work(
       watch.lap("wrap-up");
       ran.inWrapUp = false;
     }
-    if (signal.aborted)
+    // A run whose pull closed under it may still have reached its answer: an
+    // already-done decline is kept (`answerCancelled`). One the meter stopped is not.
+    if (signal.aborted && !answeredBeforeStop(meter.stoppedFor, result.result))
       return {
         state: "failed",
         summary: meter.stoppedFor ?? "cancelled",
@@ -1581,9 +1599,8 @@ async function work(
 
     // The decline contract: an agent that should not do the task says so
     // instead of guessing, and nothing it touched becomes a proposal.
-    const declined = /^\s*DECLINED\b/i.test(result.result);
-    if (declined) {
-      const why = result.result.replace(/^\s*DECLINED:?\s*/i, "").trim();
+    const why = declineOf(result.result);
+    if (why !== undefined) {
       write(`declined: ${why.split("\n")[0] ?? ""}`);
       ending = { kind: "declined", sentence: why.split("\n")[0] ?? "" };
       // Done on the base already, by a commit that is there: its own

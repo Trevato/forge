@@ -54,6 +54,7 @@ import {
   leaseLapsed,
   listActive,
   listQueued,
+  PULL_STOPPED,
   type Run,
 } from "../core/runs.ts";
 import { getUserById, type User } from "../core/users.ts";
@@ -761,7 +762,7 @@ function route(app: App, event: ForgeEvent): void {
         const cancelled = cancelRun(
           app.db,
           live.id,
-          event.kind === "pull.merged" ? "the pull landed" : "the pull closed",
+          event.kind === "pull.merged" ? PULL_STOPPED[1] : PULL_STOPPED[0],
         );
         if (cancelled) announceRun(app, cancelled);
         if (live.state === "running") {

@@ -310,6 +310,30 @@ export function finishRun(
   return changes > 0 ? getRun(db, runId) : undefined;
 }
 
+/** The summaries a run is cancelled with when its pull closes or lands under it. */
+export const PULL_STOPPED = ["the pull closed", "the pull landed"] as const;
+
+/**
+ * A run its pull closed under it, which had in fact reached its own answer
+ * (already done on main): that answer replaces the pull's
+ * summary, so the park or the note says what the builder said and not
+ * "the pull closed". Only such a cancelled run is touched.
+ */
+export function answerCancelled(
+  db: Database,
+  runId: string,
+  outcome: { state: "ok" | "failed"; summary: string },
+): Run | undefined {
+  const changes = db
+    .query(
+      `UPDATE run SET state = ?2, summary = ?3
+       WHERE id = ?1 AND state = 'cancelled' AND summary IN (?4, ?5)`,
+    )
+    .run(runId, outcome.state, outcome.summary.slice(0, 500), ...PULL_STOPPED)
+    .changes;
+  return changes > 0 ? getRun(db, runId) : undefined;
+}
+
 /** Record the base tip a pull's check merged with. */
 export function setRunBase(db: Database, runId: string, baseOid: string): void {
   db.query(`UPDATE run SET base_oid = ?2 WHERE id = ?1`).run(runId, baseOid);

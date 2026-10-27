@@ -114,7 +114,10 @@ open with a note naming the commits, the asked list and the issue page say
 "Done on main", and the person who asked closes it (the page's Close button,
 or `x` on the issue in the terminal); the close writes "Closed: already done
 on main in …" on the thread. A claim with no commit, or with one that is not
-on the base, is an ordinary decline and is parked as one.
+on the base, is an ordinary decline and is parked as one. The answer holds
+even if the builder's pull was closed while it finished: the run is then
+kept as "already done", not as cancelled. A plain decline whose pull closed
+under it stays cancelled, with no strike.
 
 **Live triage.** On each autonomy tick, an open issue carrying the crew's own
 "already done" note (a person's note counts for nothing) is closed as *done*

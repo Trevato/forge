@@ -126,6 +126,15 @@ n=0; while [ ! -f "${dataDir}/release" ] && [ $n -lt 300 ]; do sleep 0.1; n=$((n
 echo '{"type":"result","subtype":"success","is_error":false,"result":"DECLINED: this turned out to be out of scope.","total_cost_usd":0.005,"num_turns":1,"session_id":"fake-5","terminal_reason":"completed"}'
 exit 0
 fi
+if grep -q PUSH-THEN-DONE-ON-MAIN "${promptFile}"; then
+tip=$(git rev-parse HEAD)
+echo "early work $(date +%s%N)" >> CREW.md
+git add -A && git commit -qm "crew work" && git push -q -u origin HEAD
+printf '{"type":"result","subtype":"success","is_error":false,"result":"DECLINED: already done on main in %s","total_cost_usd":0.005,"num_turns":1,"session_id":"fake-7","terminal_reason":"completed"}\n' "$tip"
+touch "${dataDir}/answered"
+sleep 30
+exit 0
+fi
 if grep -q PUSH-THEN-FAIL "${promptFile}"; then
 echo "early work $(date +%s%N)" >> CREW.md
 git add -A && git commit -qm "crew work" && git push -q -u origin HEAD
