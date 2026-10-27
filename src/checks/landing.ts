@@ -27,6 +27,7 @@ import type { Repo } from "../core/repos.ts";
 import { failuresOf } from "./failures.ts";
 import { keepForgeGate } from "./gate_last.ts";
 import { gateReason } from "./gate_reason.ts";
+import { gateTests } from "./gate_tests.ts";
 import { keepGateLog } from "./gate_log.ts";
 import { GATE_DEADLINE_MS, type GateRecord } from "./queue.ts";
 import { gateRecorded, gateRunning, recordedVerdict } from "./queue_store.ts";
@@ -108,7 +109,7 @@ function gateVerdict(app: App, repo: Repo, commitOid: string, done: GateDone): L
   const link = kept === undefined ? undefined : `/api/v1/repos/${slug}/gates/${kept}/log`;
   // Why it went red, said in the queue's log and read by its search (#5276).
   const reason = done.ok ? undefined : gateReason(done.stage ?? "check", done.error, done.lines, failed.tests.length);
-  return landVerdict(done.ok, failed.tests, failed.files, link, reason);
+  return landVerdict(done.ok, failed.tests, failed.files, link, reason, done.ok ? undefined : gateTests(done.lines));
 }
 
 /**

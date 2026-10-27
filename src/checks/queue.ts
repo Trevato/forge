@@ -52,7 +52,10 @@
  * check a signal from outside ended — the pod going, the OOM killer — is
  * no verdict at all, as a gate cut off is not. A pull that conflicts with
  * an earlier one of its batch is never red: it is left out, the pair named,
- * and the rest gate at once.
+ * and the rest gate at once. A red with tests names them in the log —
+ * `red (2 failed: "a > b", "c")` — and every finished gate is kept a week
+ * with its pulls, counts and failing tests (#6739, `gate_result.ts`), read
+ * by `GET …/queue/gates`.
  *
  * What is queued is not stored: it is the pulls `landIfGreen` admitted, and
  * every sweep admits them again. The queue only orders them and remembers
@@ -65,7 +68,8 @@ import { runGit } from "../git/env.ts";
 import { mergeable, resolveOid, treeOf } from "../git/merge.ts";
 import { id } from "../kernel/id.ts";
 import { createLog } from "../kernel/log.ts";
-import { conflictWords, reasonWords, searched } from "./gate_reason.ts";
+import { conflictWords, reasonWords, redWords, searched } from "./gate_reason.ts";
+import type { GateResult } from "./gate_result.ts";
 import type { LandVerdict } from "./tiers.ts";
 
 /** The base a step must land on, and the tree it must write. */
@@ -217,6 +221,8 @@ export interface QueueStore {
   red(repoId: string, pullId: string, mark: Remembered | undefined): void;
   /** The repository's red marks, by pull id. */
   reds(repoId: string): Map<string, Remembered>;
+  /** A gate finished — green, red or cut off: what it found, kept a week (#6739). */
+  judged?(id: string, result: GateResult): void;
 }
 
 /** The check lane's run id for a gate of `tipOid` (`checks/service.ts` names it so). */
@@ -643,10 +649,31 @@ function hhmm(ms: number): string {
   return new Date(ms).toISOString().slice(11, 16);
 }
 
-/** A gate's verdict in a few words, for the log: a red says why (#5276). */
+/**
+ * A gate's verdict in a few words, for the log: a red says why (#5276),
+ * naming its failing tests when it read any (#6739).
+ */
 function outcome(verdict: LandVerdict): string {
   if (verdict.lands) return "green";
-  return "interrupted" in verdict ? "cut off" : `red (${reasonWords(verdict.reason)})`;
+  return "interrupted" in verdict ? "cut off" : `red (${redWords(verdict.reason, verdict.tests)})`;
+}
+
+/** What a finished gate found, as `gate_result` keeps it (#6739). */
+function resultOf(repoId: string, record: GateRecord, candidate: Candidate, verdict: LandVerdict, since: number): GateResult {
+  const red = !verdict.lands && !("interrupted" in verdict) ? verdict : undefined;
+  return {
+    repoId,
+    runId: record.runId,
+    tipOid: candidate.tipOid,
+    pulls: candidate.steps.map((s) => s.entry.pull.number),
+    state: verdict.lands ? "green" : red === undefined ? "cut_off" : "red",
+    ...(red?.reason === undefined ? {} : { reason: red.reason.kind }),
+    passed: red?.tests?.passed ?? 0,
+    failed: red?.tests?.failed ?? (red?.reason?.kind === "tests" ? red.reason.failed : 0),
+    failing: red?.tests?.failing ?? [],
+    startedAt: new Date(since).toISOString(),
+    finishedAt: new Date().toISOString(),
+  };
 }
 
 /** A red that names no pull's code — install, setup, timeout: gated once more, never searched. */
@@ -770,6 +797,7 @@ function attempt(line: Line, gate: GateCandidate, adopt: QueueOptions["adopt"]):
         took: `${Math.round((Date.now() - flight.since) / 1000)}s`,
         ...(adopted === undefined ? {} : { adopted: record.runId }),
       });
+      kept(() => line.store?.judged?.(id(), resultOf(line.repoId, record, candidate, verdict, flight.since)));
       // A stopped line acts on nothing: a verdict is kept for the line that
       // carries on, and so is a gate its forge stopping cut off. Anything
       // else is acted on now, or was abandoned: not to resume.

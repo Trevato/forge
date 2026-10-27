@@ -91,6 +91,7 @@ export { tool as proposal_tokens } from "./proposal_tokens.ts";
 export { tool as propose_to_parent_forge } from "./propose_to_parent_forge.ts";
 export { tool as pull } from "./pull.ts";
 export { tool as pulls } from "./pulls.ts";
+export { tool as queue_gates } from "./queue_gates.ts";
 export { tool as quotas } from "./quotas.ts";
 export { tool as read_file } from "./read_file.ts";
 export { tool as releases } from "./releases.ts";

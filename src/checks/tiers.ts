@@ -10,6 +10,7 @@
  */
 
 import type { GateReason } from "./gate_reason.ts";
+import type { GateTests } from "./gate_tests.ts";
 import { GATE_FILE, needsFull, reach, reachLine, type Impact } from "./impact.ts";
 
 /** A test under this many seconds is always in the fast tier. */
@@ -253,6 +254,8 @@ export type Judged =
       readonly learn: readonly string[];
       /** Why the gate went red (#5276); a red read without one is the code's. */
       readonly reason?: GateReason;
+      /** What its tests said: the counts and the failing tests by name (#6739). */
+      readonly tests?: GateTests;
     };
 
 /**
@@ -275,6 +278,7 @@ export function landVerdict(
   failedFiles: readonly string[] = [],
   logLink?: string,
   reason?: GateReason,
+  tests?: GateTests,
 ): Judged {
   if (green) return { lands: true };
   const names = failedTests.map((name) => `- ${name}`).join("\n");
@@ -288,5 +292,6 @@ export function landVerdict(
         : `The full gate on land was red; the pull is open again. Red tests:\n${names}${kept}`,
     learn: [...new Set(failedFiles)],
     ...(reason === undefined ? {} : { reason }),
+    ...(tests === undefined ? {} : { tests }),
   };
 }

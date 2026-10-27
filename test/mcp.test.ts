@@ -192,6 +192,7 @@ describe("the forge over MCP", () => {
       "pull",
       "preview",
       "pulls",
+      "queue_gates",
       "variant",
       "edit",
       "close",

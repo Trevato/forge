@@ -390,6 +390,7 @@ import { readReturns, reportSpend, RETURNS_DAYS } from "../actions/returns.ts";
 import { fleetSelection, readFleetGraph } from "../actions/fleet-graph.ts";
 import { carriedBy } from "../core/carried.ts";
 import { readGateLog } from "../checks/gate_log.ts";
+import { recentGates } from "../checks/gate_result.ts";
 import { readRunLog, subscribeRunLog } from "../runs/log.ts";
 import { blobForRender, commitLog, listRefs, listTree } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
@@ -6286,6 +6287,22 @@ export function apiRoutes(router: Router<Handler>): void {
     });
     if (!found) return notFound();
     return timePhase(ctx.request, "render", () => json(found));
+  });
+
+  // The merge queue's recent gates (#6739, `checks/gate_result.ts`): newest
+  // first, each with its pulls, verdict, counts and failing tests by name,
+  // a test red in two gates that share no pull flagged `flaky`.
+  router.add("GET", "/api/v1/repos/:owner/:name/queue/gates", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const q = ctx.url.searchParams;
+    const limit = Math.min(Math.max(Number(q.get("limit")) || 20, 1), 100);
+    const cursor = q.get("cursor") ?? undefined;
+    if (cursor !== undefined && !/^[0-9A-Za-z]{1,40}$/.test(cursor))
+      return json({ error: "invalid", message: "`cursor` is a gate id from `next_cursor`" }, 422);
+    const items = timePhase(ctx.request, "gates", () => recentGates(ctx.app.db, repo.id, limit, cursor));
+    return timePhase(ctx.request, "render", () => json(paged(items, limit, (g) => g.id), 200, { "cache-control": "no-store" }));
   });
 
   // A kept gate's log (`checks/gate_log.ts`): the last 200 lines, as text.

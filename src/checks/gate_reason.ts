@@ -15,6 +15,8 @@
  * Plain data in, plain data out: no I/O here.
  */
 
+import type { GateTests } from "./gate_tests.ts";
+
 /** Where in its run the gate stopped red, as the check service saw it. */
 export type GateStage = "setup" | "install" | "check" | "timeout";
 
@@ -55,6 +57,22 @@ export function searched(reason: GateReason | undefined): boolean {
 export function reasonWords(reason: GateReason | undefined): string {
   if (reason === undefined) return "check";
   return reason.kind === "tests" ? `tests: ${reason.failed} failed` : reason.kind;
+}
+
+/** The most failing tests the queue's log line names; the rest are counted. */
+export const LOG_NAMES = 5;
+
+/**
+ * A red in the queue's log (#6739): the failing tests by name when the gate
+ * named any — `2 failed: "a > b", "c > d"`, `… and 3 more` past
+ * `LOG_NAMES` — and otherwise its reason, as `reasonWords` says it.
+ */
+export function redWords(reason: GateReason | undefined, tests: GateTests | undefined): string {
+  if (tests === undefined || tests.failing.length === 0) return reasonWords(reason);
+  const failed = Math.max(tests.failed, tests.failing.length);
+  const named = tests.failing.slice(0, LOG_NAMES).map((t) => JSON.stringify(t.name));
+  const more = failed - named.length;
+  return `${failed} failed: ${named.join(", ")}${more > 0 ? ` and ${more} more` : ""}`;
 }
 
 /**

@@ -12,6 +12,8 @@
 import type { Database } from "bun:sqlite";
 import type { GateRecord, QueueStore, RecordedStep, Remembered } from "./queue.ts";
 import type { GateReason } from "./gate_reason.ts";
+import { keepGateResult } from "./gate_result.ts";
+import type { FailedTest, GateTests } from "./gate_tests.ts";
 import type { LandVerdict } from "./tiers.ts";
 
 /** How long a gate's record is kept unresumed: past it, its line has long moved on. */
@@ -43,6 +45,7 @@ export function queueStore(db: Database, now: () => Date = () => new Date()): Qu
     gates: (repoId) => gateRecords(db, repoId),
     red: (repoId, pullId, mark) => keepRed(db, repoId, pullId, mark, now()),
     reds: (repoId) => redMarks(db, repoId),
+    judged: (id, result) => keepGateResult(db, id, result, now()),
   };
 }
 
@@ -143,7 +146,30 @@ function verdictOf(text: string): Judged | undefined {
   if (!Array.isArray(learn) || !learn.every((f) => typeof f === "string")) return undefined;
   const why = reasonOf(reason);
   if (reason !== undefined && why === undefined) return undefined;
-  return { lands: false, reopen: true, comment, learn: learn as string[], ...(why === undefined ? {} : { reason: why }) };
+  const named = gateTestsOf((v as Record<string, unknown>)["tests"]);
+  return {
+    lands: false,
+    reopen: true,
+    comment,
+    learn: learn as string[],
+    ...(why === undefined ? {} : { reason: why }),
+    ...(named === undefined ? {} : { tests: named }),
+  };
+}
+
+/** A recorded red's tests (#6739), read back; undefined when they do not read. */
+function gateTestsOf(v: unknown): GateTests | undefined {
+  if (typeof v !== "object" || v === null) return undefined;
+  const { passed, failed, failing } = v as Record<string, unknown>;
+  if (!Number.isSafeInteger(passed) || !Number.isSafeInteger(failed) || !Array.isArray(failing)) return undefined;
+  const tests: FailedTest[] = [];
+  for (const item of failing as unknown[]) {
+    if (typeof item !== "object" || item === null) return undefined;
+    const { name, file, errors } = item as Record<string, unknown>;
+    if (typeof name !== "string" || !Array.isArray(errors) || !errors.every((l) => typeof l === "string")) return undefined;
+    tests.push({ name, ...(typeof file === "string" ? { file } : {}), errors: errors as string[] });
+  }
+  return { passed: passed as number, failed: failed as number, failing: tests };
 }
 
 /** Why a recorded red went red (#5276), read back; undefined when it is not one. */
