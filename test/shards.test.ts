@@ -737,11 +737,13 @@ describe("the gate audit before any shard", () => {
 describe("the gate audit alone, first in the check", () => {
   const script = new URL("../scripts/gate.ts", import.meta.url).pathname;
   const listed = presentTests();
+  // The check sets FORGE_CHECK_BASE; the scratch dir is no repo, so it has none.
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== "FORGE_CHECK_BASE"));
   const run = async (extra: string[], drop: string[] = []) => {
     const dir = mkdtempSync(join(tmpdir(), "forge-gate-"));
     mkdirSync(join(dir, "test"));
     for (const file of [...listed, ...extra]) if (!drop.includes(file)) writeFileSync(join(dir, file), "");
-    const child = Bun.spawn(["bun", script], { cwd: dir, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    const child = Bun.spawn(["bun", script], { cwd: dir, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
     const err = await new Response(child.stderr).text();
     const code = await child.exited;
     rmSync(dir, { recursive: true, force: true });
@@ -757,7 +759,8 @@ describe("the gate audit alone, first in the check", () => {
     );
     const green = await run(["test/zz-new.test.ts"]);
     expect(green.code).toBe(0);
-    expect(green.err).toBe("");
+    // The scratch dir is no git repo, so the pin check says it had no base.
+    expect(green.err).toBe("gate: no base to compare to (set FORGE_CHECK_BASE): migration pins not checked\n");
   }, 30_000);
 
   test("forge.json audits before tsc, and the native tsc runs incremental from the check's cache", async () => {
