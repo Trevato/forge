@@ -234,3 +234,34 @@ in `src/release/`:
   version that was ready, kept on the volume under `release/good/`. The forge
   that comes up shows a `release:rolled-back` card and pages the admins once.
   The next version that reads ready clears it.
+
+## A forge beside one still draining (#6957)
+
+bun:sqlite waits for the write lock on the one thread the forge serves from,
+up to `busy_timeout` (15 s) a statement. 0.7.278 booted while 0.7.276 still
+ran its gates and crew runs on the same database. It started its own work
+beside them, and `/healthz` timed out for minutes behind the old pod's writes.
+Three things keep that from happening again:
+
+- **The new forge holds its work** (`src/runs/peer.ts`). Its listener
+  answers at once. Its checks, merge queue, crew and ticks start only once
+  no running run that another process holds has renewed its lease within
+  30 s, or after 720 s (the pod's grace). The log says
+  `another forge still works this database` when the wait starts and
+  `the other forge let go of this database` when it ends.
+- **Telemetry never waits on the lock** (`withoutWaiting` in
+  `src/kernel/db.ts`). Route timings, usage counts and machine samples try
+  the lock once, keep their rows and try again on the next flush. Every
+  probe is counted, so without this a probe's own count would hold the next
+  probe up.
+- **The next stall names itself.** `event loop stalled lateMs=…` is a
+  warning whenever the loop wakes more than a second late
+  (`src/kernel/loop_lag.ts`, on from the first line of the boot). `slow
+  statement held the thread ms=… sql=… stack=…` names any statement on the
+  forge's handle that took 200 ms or more, with its callers
+  (`src/kernel/slow_sql.ts`), at most ten lines a minute.
+
+`test/boot-beside-peer.test.ts` boots `src/main.ts` beside a process that
+holds the write lock 2.5 s of every 2.65 s and keeps a batch of 8 check
+leases fresh. Every `/healthz` probe must answer within a second, and the
+forge's work must start once that process lets go.

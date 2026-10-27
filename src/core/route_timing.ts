@@ -5,7 +5,8 @@
  * key in one transaction as an upsert that adds to `n` and `sum_us`; it runs
  * by itself about a second after the first pending record, once 500 keys are
  * pending, and on `stop()`. The timer is `unref`'d. A failed write loses
- * nothing: the records go back and the timer retries. Rows older than
+ * nothing: the records go back and the timer retries. A flush never waits on
+ * another process's write lock (`withoutWaiting`): it fails and retries. Rows older than
  * `KEEP_DAYS` are deleted, checked once per hour at flush.
  *
  * `record` also adds to totals kept in memory per database for the life of
@@ -18,6 +19,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { withoutWaiting } from "../kernel/db.ts";
 
 /** Upper edges in ms; bucket `i` holds durations `<= EDGES_MS[i]`, the last is everything slower. */
 export const EDGES_MS = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500] as const;
@@ -126,7 +128,8 @@ export function createRouteTiming(
          DO UPDATE SET n = n + excluded.n, sum_us = sum_us + excluded.sum_us`,
       );
       const hourNo = Math.floor(now() / HOUR_MS);
-      db.transaction(() => {
+      // Behind another process's lock this throws at once and the records go back (#6957).
+      withoutWaiting(db, db.transaction(() => {
         for (const [key, v] of batch) {
           const [h, pattern, b] = key.split(SEP) as [string, string, string];
           upsert.run(hourText(Number(h)), pattern, Number(b), v.n, v.us);
@@ -137,7 +140,7 @@ export function createRouteTiming(
           );
           prunedHour = hourNo;
         }
-      })();
+      }));
     } catch (err) {
       prunedHour = -1;
       for (const [key, v] of batch) {

@@ -73,6 +73,10 @@ import { bootCounts, recordBoot, recordCleanExit } from "./kernel/boots.ts";
 import { census, censusWords, processRows } from "./kernel/census.ts";
 import { reapLeftoverBridges } from "./crew/leftovers.ts";
 import { crewRoot } from "./crew/workdir.ts";
+import { createLog } from "./kernel/log.ts";
+import { watchStalls } from "./kernel/loop_lag.ts";
+import { timeStatements } from "./kernel/slow_sql.ts";
+import { waitForPeer } from "./runs/peer.ts";
 
 // `forge hook <name>` re-enters here from a git hook stub. It relays to the
 // running forge over its socket and exits — it must never boot a server.
@@ -192,6 +196,11 @@ if (parentProblem !== null) {
   process.exit(1);
 }
 
+// The loop's lateness, from the first line of the boot: a stall over a
+// second is a warning that names its minute (kernel/loop_lag.ts, #6957),
+// draining included.
+watchStalls(createLog("loop"));
+
 const app = createApp({
   dataDir,
   // A new forge starts with signup = invite (FORGE_SIGNUP below still wins).
@@ -273,6 +282,8 @@ const app = createApp({
       }),
 });
 
+// A statement that holds the thread past 200 ms names its caller (#6957).
+timeStatements(app.db, createLog("sql"));
 loadFlags(app.db);
 loadTrustedHosts(app.db);
 // FORGE_SIGNUP (checked in configProblem) sets who may sign up; kept like any change.
@@ -362,6 +373,24 @@ if (apps && presence) warmBehind(app.log, presence, () => apps.startingCount());
 void backfillCarried(app.db, app.reposRoot).catch((error) =>
   app.log.error("could not backfill what deploys carried", { error: String(error) }),
 );
+// A forge still draining on this database keeps writing for its gates and
+// runs; starting ours beside it stalls the listener behind its write lock
+// (#6957). The listener answers meanwhile; a signal now stops what is up.
+const leaveEarly = (): void => {
+  void Promise.resolve(apps?.stop())
+    .catch(() => {})
+    .finally(() => {
+      presence?.stop();
+      ssh?.stop();
+      servers.stop();
+      app.close();
+      process.exit(0);
+    });
+};
+const earlySignals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+for (const signal of earlySignals) process.once(signal, leaveEarly);
+await waitForPeer(app.db, app.log);
+for (const signal of earlySignals) process.off(signal, leaveEarly);
 // A repository's own check, on every push a pull or the default branch takes.
 const checks =
   process.env.FORGE_CHECKS === "0"
