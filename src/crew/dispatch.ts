@@ -27,7 +27,7 @@ import {
   listComments,
   type Issue,
 } from "../core/issues.ts";
-import { getPull, type Pull } from "../core/pulls.ts";
+import { closesFromBody, getPull, type Pull } from "../core/pulls.ts";
 import { claimedClones, sweepOrphanClones } from "./orphans.ts";
 import { pruneRunFiles } from "../runs/prune.ts";
 import { crewRoot } from "./workdir.ts";
@@ -595,6 +595,7 @@ function route(app: App, event: ForgeEvent): void {
             reason: String(event.payload["reason"] ?? ""),
             actorId: finished?.actorId ?? null,
           });
+        decideDeferred(app, repo);
         return;
       }
       if (
@@ -645,6 +646,15 @@ function route(app: App, event: ForgeEvent): void {
       // is the agent's to look at.
       const agent = agentFor(app, issue);
       if (!agent) return;
+      // The builder's run is still at work on it: nothing is decided now,
+      // and the failure is decided again when that run ends.
+      if (builderAtWork(app, repo, issue)) {
+        deferredFailures.set(issue.id, event);
+        log.info("check failed while the builder's run is at work; deciding when it ends", {
+          issue: issue.number,
+        });
+        return;
+      }
       // A red that main shares (#1971), or that three pulls share within
       // the hour (#2266), is not the pull's: no rework, no park, no
       // strike; it waits and is checked again when main is green.
@@ -728,6 +738,45 @@ function route(app: App, event: ForgeEvent): void {
     }
     default:
       return;
+  }
+}
+
+/**
+ * Failures that arrived while the builder's run was still at work on the
+ * pull, by pull. Memory only: a restart forgets them, and the pull's next
+ * push or a person's ask checks it again.
+ */
+const deferredFailures = new Map<string, ForgeEvent>();
+
+/** Whether a build run on the pull's issue, or on an issue it closes, is queued or running. */
+function builderAtWork(app: App, repo: Repo, pull: Issue): boolean {
+  if (activeRunFor(app.db, "agent", pull.id) !== undefined) return true;
+  const row = getPull(app.db, repo.id, pull.number);
+  if (!row) return false;
+  for (const number of closesFromBody(row.body)) {
+    const about = getIssue(app.db, repo.id, number);
+    if (about && activeRunFor(app.db, "agent", about.id) !== undefined)
+      return true;
+  }
+  return false;
+}
+
+/** A run ended: decide again on the failures that waited for it, when they still stand. */
+function decideDeferred(app: App, repo: Repo): void {
+  for (const [issueId, event] of [...deferredFailures]) {
+    if (event.repoId !== repo.id) continue;
+    const issue = getIssueById(app.db, issueId);
+    if (!issue || issue.state !== "open") {
+      deferredFailures.delete(issueId);
+      continue;
+    }
+    if (builderAtWork(app, repo, issue)) continue;
+    deferredFailures.delete(issueId);
+    const pull = getPull(app.db, repo.id, issue.number);
+    const oid = event.payload["commitOid"];
+    // A push since then made a newer check; this one is history.
+    if (!pull || (typeof oid === "string" && oid !== pull.headOid)) continue;
+    route(app, event);
   }
 }
 
