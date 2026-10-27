@@ -15,8 +15,8 @@
  *
  * An input added to the ranking belongs here. `test/explore-speed.test.ts`
  * flips the forks, visibility, access, crew seats, app members and team
- * grants and watches the answer follow; pulls, user standing and the
- * weights are hashed but not flipped there.
+ * grants and watches the answer follow; `test/rank-inputs.test.ts` flips
+ * pulls, user standing and the weights and watches the hash follow.
  */
 
 import type { Database } from "bun:sqlite";
