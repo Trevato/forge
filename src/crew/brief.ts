@@ -294,6 +294,15 @@ export function taskPrompt(input: TaskInput): string {
   ].join("\n");
 }
 
+/** The shared tools/list budget (test/mcp-size.test.ts and docs/MCP.md exist only in the forge repository, so only its briefs carry this) has failed pulls only at the check; say so up front. */
+const MCP_SIZE_RULE =
+  "This issue touches the MCP. Run `bun test test/mcp-size.test.ts` before pushing; it names the five costliest tools when it fails. Prefer an `action` or `kind` on an existing tool (docs/MCP.md, \"Room for a new tool\") over a new tool, and never raise the ceilings.";
+
+/** Whether the issue's title or body names a path under src/http/mcp/ or the word MCP. */
+function namesMcp(title: string, body: string | null | undefined): boolean {
+  return /src\/http\/mcp\/|\bMCP\b/.test(`${title}\n${body ?? ""}`);
+}
+
 function taskBody(input: TaskInput): string {
   const { issue } = input;
   const out: string[] = [];
@@ -356,6 +365,8 @@ function taskBody(input: TaskInput): string {
       for (const c of talk) out.push(quote(c.authorName, c.body));
     }
     if (handed.length > 0) out.push("", ...handed);
+    if (input.pull === undefined && input.repo.name === "forge" && namesMcp(issue.title, issue.body))
+      out.push("", MCP_SIZE_RULE);
     out.push(
       "",
       `Work it on the branch \`${input.branch}\` and push when done.`,
