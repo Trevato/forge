@@ -120,13 +120,15 @@ export interface Person {
   readonly username: string;
   readonly role: Role;
   readonly usdPerMonth: number | null;
+  /** When the owner suspended the account; null while it is in good standing. */
+  readonly suspendedAt: string | null;
 }
 
 /** Every person (not an agent, not an organization) with role and model grant, newest first, in one query. */
 export function listPeople(db: Database): Person[] {
   return db
-    .query<{ username: string; is_admin: number; member: number | null; usd: number | null }, []>(
-      `SELECT u.username, u.is_admin, m.user_id AS member, g.usd_per_month AS usd
+    .query<{ username: string; is_admin: number; member: number | null; usd: number | null; suspended_at: string | null }, []>(
+      `SELECT u.username, u.is_admin, m.user_id AS member, g.usd_per_month AS usd, u.suspended_at
        FROM user u
        LEFT JOIN member m ON m.user_id = u.id
        LEFT JOIN model_grant g ON g.user_id = u.id
@@ -138,5 +140,6 @@ export function listPeople(db: Database): Person[] {
       username: r.username,
       role: r.is_admin === 1 ? "admin" : r.member !== null ? "member" : "guest",
       usdPerMonth: r.usd,
+      suspendedAt: r.suspended_at,
     }));
 }
