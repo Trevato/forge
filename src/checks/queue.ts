@@ -143,11 +143,17 @@ type Schedule = (fire: () => void, ms: number) => ReturnType<typeof setTimeout>;
 let schedule: Schedule = setTimeout;
 
 /**
- * The most pulls one candidate carries (#3430): eight keep a gate near one
- * full tier and a red's bisection three gates deep. The rest of the line
- * waits for the next candidate, in order.
+ * The most pulls one candidate carries when the line is not told (#3430):
+ * eight keep a gate near one full tier. The rest of the line waits for the
+ * next candidate, in order. A forge sets it as `queue.batch` (#6674).
  */
 export const MAX_CANDIDATE = 8;
+
+/** The largest batch a line takes, whatever it is told (`queue.batch`'s range). */
+export const MAX_BATCH = 32;
+
+/** Green gates in a row that double a shrunk batch (#6674). */
+const GREENS_TO_GROW = 2;
 
 /** Candidates gating at once by default: one on main, the next on top of it. */
 export const DEFAULT_DEPTH = 2;
@@ -156,6 +162,13 @@ export const DEFAULT_DEPTH = 2;
 export interface QueueOptions {
   /** How many candidates may gate at once, each on the one before. */
   readonly depth?: number;
+  /**
+   * The most pulls a candidate carries (`queue.batch`, #6674): the line
+   * starts here, halves after a red batch and doubles back after two green
+   * ones in a row, never past it. Read on every enqueue, so a sweep brings a
+   * change to a line already draining.
+   */
+  readonly batch?: number;
   /**
    * Check slots free now for a gate beyond a line's first, the pull
    * checks' reserve already kept back; none when not said.
@@ -312,6 +325,17 @@ interface Line {
   readonly suspects: Map<string, Suspect>;
   /** The last hour's candidate verdicts, search prefixes and re-checks not counted. */
   batches: BatchVerdict[];
+  /** The most pulls a batch may carry, as the last enqueue was told (#6674). */
+  ceiling: number;
+  /** The batch size after a red, below the ceiling; undefined when at it (#6674). */
+  size: number | undefined;
+  /** Green batch verdicts in a row since the last red or the last doubling. */
+  greens: number;
+  /**
+   * Pulls back in the line from a batch that gated: they gate together
+   * again up to the ceiling, past a size a red halved (#6674).
+   */
+  readonly back: Set<Waiting>;
   draining: boolean;
   /** Wakes a drain waiting on a gate when pulls join the line. */
   wake: (() => void) | undefined;
@@ -416,6 +440,10 @@ function lineOf(repoId: string, store: QueueStore | undefined): Line {
       reds,
       suspects: new Map(),
       batches: [],
+      ceiling: MAX_CANDIDATE,
+      size: undefined,
+      greens: 0,
+      back: new Set(),
       draining: false,
       wake: undefined,
       store,
@@ -480,6 +508,7 @@ export async function enqueue(
   options: QueueOptions = {},
 ): Promise<boolean[]> {
   const line = lineOf(repoId, options.store);
+  line.ceiling = batchCeiling(options.batch);
   // A red mark names the base it went red on; the tip is read only when a
   // mark is there to compare it with.
   const tips = new Map<string, string | undefined>();
@@ -496,20 +525,22 @@ export async function enqueue(
     if (red !== undefined && !held) clearRed(line, entry.pull.id);
     const recheck = held;
     if (line.suspects.get(entry.pull.id)?.head !== entry.pull.headOid) line.suspects.delete(entry.pull.id);
-    return new Promise<boolean>((resolve) =>
-      line.waiting.push({
+    return new Promise<boolean>((resolve) => {
+      const waiting: Waiting = {
         entry,
         recheck,
         settle: (landed) => {
           line.holds.delete(entry.pull.id);
+          line.back.delete(waiting);
           if (landed) {
             clearRed(line, entry.pull.id);
             line.suspects.delete(entry.pull.id);
           }
           resolve(landed);
         },
-      }),
-    );
+      };
+      line.waiting.push(waiting);
+    });
   });
   if (!line.draining) void drain(line, gate, options);
   else {
@@ -517,6 +548,49 @@ export async function enqueue(
     line.wake = undefined;
   }
   return Promise.all(answers);
+}
+
+/** `queue.batch` as a line takes it: a whole number from 1 to `MAX_BATCH`, else the default. */
+function batchCeiling(batch: number | undefined): number {
+  if (batch === undefined || !Number.isFinite(batch)) return MAX_CANDIDATE;
+  return Math.max(1, Math.min(MAX_BATCH, Math.floor(batch)));
+}
+
+/** How many pulls the line's next batch carries: its adapted size, never past the ceiling. */
+function batchSize(line: Line): number {
+  return Math.min(line.ceiling, line.size ?? line.ceiling);
+}
+
+/**
+ * A batch verdict moves the size (#6674): a red halves it, never below one;
+ * two greens in a row double a shrunk one, back to the ceiling at most. A
+ * clean line drains in big batches, a flaky one stays small.
+ */
+function adapt(line: Line, red: boolean): void {
+  const was = batchSize(line);
+  if (red) {
+    line.greens = 0;
+    line.size = Math.max(1, Math.floor(was / 2));
+  } else {
+    line.greens++;
+    if (line.greens < GREENS_TO_GROW) return;
+    line.greens = 0;
+    if (line.size === undefined) return;
+    line.size = line.size * 2 >= line.ceiling ? undefined : line.size * 2;
+  }
+  const now = batchSize(line);
+  if (now !== was) log.info(`batch ${now > was ? "grows" : "halves"} to ${now}`, { repo: line.repoId, from: was });
+}
+
+/**
+ * The size of a repository's next batch, for the tick line (#6674): `8`, or
+ * `4 of 16` while a red keeps it below `ceiling`, the setting in force.
+ */
+export function batchWords(repoId: string, ceiling: number): string {
+  const line = lines.get(repoId);
+  const top = batchCeiling(ceiling);
+  const size = Math.min(top, line?.size ?? top);
+  return size < top ? `${size} of ${top}` : String(top);
 }
 
 /** The pulls waiting in a repository's line, not yet in a candidate: as they joined. */
@@ -844,7 +918,7 @@ const ARRIVED = Symbol("arrived");
  * first as its verdict comes. A batch is the front of the line that shares
  * one place and one base branch; a sealed pull whose objects live
  * elsewhere is a batch of its own, and is not stacked on another. A batch
- * carries at most `MAX_CANDIDATE` pulls. A gate beyond the line's first
+ * carries at most the line's batch size (`batchSize`). A gate beyond the line's first
  * starts only on a free check slot (`room`). A suspect is gated alone,
  * beside the line and first (#4999); the line's first gate waits for a
  * free slot while one is.
@@ -908,6 +982,7 @@ async function drain(line: Line, gate: GateCandidate, options: QueueOptions): Pr
         left = await discard(ahead);
       }
       // What waits for the next candidate goes back to the front.
+      for (const w of left) line.back.add(w);
       line.waiting = [...left, ...line.waiting];
     }
   } finally {
@@ -952,6 +1027,7 @@ async function solo(line: Line, gated: Gated, w: Waiting): Promise<{ readonly do
       if (line.stopped) return w.settle(false);
       if (verdict.lands) {
         line.suspects.set(pull.id, { head: pull.headOid, reds: 0, alone: false, cleared: true });
+        line.back.add(w);
         line.waiting.unshift(w);
         return;
       }
@@ -1031,9 +1107,12 @@ async function launch(line: Line, gated: Gated, on: Flight | undefined): Promise
   const branch = first.pull.baseBranch;
   if (on !== undefined && (on.recheck || first.dir !== on.candidate.dir || branch !== on.branch)) return "apart";
   const same = open.filter((w) => !w.recheck && w.entry.dir === first.dir && w.entry.pull.baseBranch === branch);
+  // A halved size holds fresh pulls back; what came back from a batch gates together.
+  const size = Math.min(line.ceiling, Math.max(batchSize(line), same.filter((w) => line.back.has(w)).length));
   const batch = front.recheck
     ? [front]
-    : [...same.filter((w) => !cleared(w)), ...same.filter(cleared)].slice(0, MAX_CANDIDATE);
+    : [...same.filter((w) => !cleared(w)), ...same.filter(cleared)].slice(0, size);
+  for (const w of batch) line.back.delete(w);
   line.waiting = line.waiting.filter((w) => !batch.includes(w));
   let candidate: Candidate | undefined;
   line.forming++;
@@ -1148,6 +1227,7 @@ async function settleHead(search: Search, head: Flight, verdict: LandVerdict, ah
     }
   }
   if (verdict.lands) {
+    if (!head.recheck) adapt(search.line, false);
     if (await land(candidate, head.steps)) return [];
     return discard(ahead);
   }
@@ -1165,6 +1245,9 @@ async function settleHead(search: Search, head: Flight, verdict: LandVerdict, ah
   const split =
     !head.recheck && head.steps.length > 2 && suspectOf(line, head.steps[0]!) === undefined && search.room() > 0;
   suspected(line, head.steps, split);
+  // A red halves the batch (#6674) — but not a split: its rest gates again
+  // as the one batch it was, and halves the size if it is red too.
+  if (!head.recheck && !split) adapt(line, true);
   if (split) {
     log.info("red batch: its head is gated alone", {
       repo: line.repoId,
@@ -1262,6 +1345,14 @@ async function round(
  * red one wait, in line order, for the next candidate. No green verdict is
  * thrown away: a disjoint segment gated on the base alone was void once
  * another landed (#6353).
+ *
+ * However few slots are free, a search gates at least √n − 1 prefixes, so
+ * the red run holds at most √n steps (#6674): a red batch blocks its line
+ * and the flights stacked on it were stopped, so their slots are the
+ * search's. That run is then searched by leaving one out (`leftOut`): one
+ * gate per step of it, each carrying everything the search has not landed
+ * but that step. With one bad pull, 16 red ones land their 15 good in two
+ * rounds: 3 prefixes, then 4 gates.
  */
 async function judged(
   search: Search,
@@ -1289,10 +1380,11 @@ async function judged(
     return [];
   }
   const n = steps.length;
-  // One gate per free slot and one more, at least the front half, never the
-  // whole: it is known red.
+  // One gate per free slot and one more, at least the front half and √n − 1
+  // prefixes, never the whole: it is known red.
   const free = Math.max(0, room());
-  const runs = split(steps, Math.min(n - 1, 1 + free));
+  const width = Math.min(n - 1, Math.max(1 + free, Math.ceil(Math.sqrt(n)) - 1));
+  const runs = split(steps, width);
   const ends: number[] = [];
   for (const run of runs) ends.push((ends.at(-1) ?? 0) + run.length);
   const prefixes = ends.slice(0, -1).map((end) => prefixOf(candidate, end));
@@ -1309,8 +1401,58 @@ async function judged(
   if (green > 0) await land(prefixes[bad - 1]!, steps.slice(0, green));
   const now = [...landed, ...steps.slice(0, green).map((w) => w.entry)];
   const after = runs.slice(bad + 1).flat();
-  const left = await round(search, runs[bad]!, known, now);
+  const suspects = runs[bad]!;
+  // Leaving one out pays when the run is longer than two: of two, the front
+  // one gated alone settles both, in line order.
+  if (suspects.length > 2 && suspects.length <= width + 1) {
+    const left = await leftOut(search, suspects, after);
+    if (left !== undefined) return left;
+  }
+  const left = await round(search, suspects, known, now);
   return [...left, ...after];
+}
+
+/**
+ * The red run `suspects` searched by leaving one out (#6674): for each of
+ * its steps, everything left of the search but that step — the rest of the
+ * run, then `after` — built on the base's tip, all gated at once. The first
+ * green one lands, and the step it left out is a suspect gated alone beside
+ * the line (#4999), handed back on its own red. Undefined when none is
+ * green (more than one bad pull): the run is searched by prefixes as
+ * before. Each answer is what waits for the next candidate.
+ */
+async function leftOut(search: Search, suspects: readonly Waiting[], after: readonly Waiting[]): Promise<Waiting[] | undefined> {
+  const { line, gated } = search;
+  const tries: { out: Waiting; batch: Waiting[]; candidate: Candidate }[] = [];
+  for (const out of suspects) {
+    const batch = [...suspects.filter((w) => w !== out), ...after];
+    const candidate = await build(batch);
+    if (candidate !== undefined && candidate.steps.length > 0) tries.push({ out, batch, candidate });
+  }
+  const verdicts = await Promise.all(tries.map((t) => gated(t.candidate)));
+  if (line.stopped || verdicts.some((v) => !v.lands && "interrupted" in v)) {
+    for (const w of [...suspects, ...after]) w.settle(false);
+    return [];
+  }
+  const found = verdicts.findIndex((v) => v.lands);
+  if (found < 0) return undefined;
+  const { out, batch, candidate } = tries[found]!;
+  log.info("red run: every pull but one lands, the one left out is gated alone", {
+    repo: line.repoId,
+    pull: out.entry.pull.number,
+    landing: candidate.steps.length,
+  });
+  const was = suspectOf(line, out);
+  line.suspects.set(out.entry.pull.id, {
+    head: out.entry.pull.headOid,
+    reds: was?.reds ?? 1,
+    alone: true,
+    cleared: false,
+  });
+  const steps = inCandidate(batch, candidate);
+  // A step that did not land was settled by `land`; the one left out waits.
+  await land(candidate, steps);
+  return [out];
 }
 
 /** The candidate's chain cut after its first `end` steps: the tree a prefix gates. */

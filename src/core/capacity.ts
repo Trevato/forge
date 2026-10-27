@@ -20,6 +20,7 @@ export type CapacityKey =
   | "checks.concurrency"
   | "checks.shards"
   | "queue.depth"
+  | "queue.batch"
   | "children.max"
   | "cells.egress"
   | "guard_new_accounts"
@@ -71,6 +72,13 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
     kind: { type: "count", min: 1, max: 4 },
     fallback: "2",
     help: "How many merge-queue candidates of one repository gate at once, each on top of the one before: while one gates on main the next gates on it, and lands right after it if both are green. 1 gates one candidate at a time. A gate beyond the first takes a free check slot only, never one of the two kept for pull checks.",
+  },
+  "queue.batch": {
+    label: "Merge queue batch size",
+    env: "FORGE_QUEUE_BATCH",
+    kind: { type: "count", min: 1, max: 32 },
+    fallback: "8",
+    help: "The most pulls one merge-queue candidate carries. A bigger batch lands more pulls per green gate; a red one costs more search gates to find its culprit (one bad pull in 16 is found in two rounds, at most √16 = 4 gates each). The queue starts each line here, halves the batch after a red gate and doubles it back after two green gates in a row, never past this. Read on every sweep.",
   },
   "children.max": {
     label: "Forges this one may send",
@@ -316,6 +324,11 @@ export function egressSetting(db: Database): "enforce" | "report" {
 /** How many merge-queue candidates of one repository gate at once (#4053). */
 export function queueDepth(db: Database): number {
   return Number(capacityValue(db, "queue.depth"));
+}
+
+/** The most pulls one merge-queue candidate carries (#6674); the line adapts below it. */
+export function queueBatch(db: Database): number {
+  return Number(capacityValue(db, "queue.batch"));
 }
 
 /** Whether the platform edge's identity is read at all; on every request. */

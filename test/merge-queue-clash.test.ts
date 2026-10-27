@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Candidate, enqueue, type Expect, queueClashes, type Queued, redBatchRate, redMark } from "../src/checks/queue.ts";
+import { batchWords, type Candidate, enqueue, type Expect, queueClashes, type Queued, redBatchRate, redMark } from "../src/checks/queue.ts";
 import type { Pull } from "../src/core/pulls.ts";
 
 describe("the merge queue remembers clashes", () => {
@@ -177,12 +177,18 @@ describe("the merge queue remembers clashes", () => {
     expect(redMark("no-such-line", "clash-2", head)).toBeUndefined();
   });
 
-  test("a push is a new head: B is forgotten, batched with the rest, and lands", async () => {
+  test("a push is a new head: B is forgotten, gated as a fresh pull, and lands", async () => {
     const pushed = entry(2, await headAdding("b2", "b2.txt"));
     const g = entry(7, await headAdding("g", "g.txt"));
     const before = gates.length;
     expect(await enqueue(repoId, [pushed, g], gate)).toEqual([true, true]);
-    expect(gates.slice(before)).toEqual([{ pulls: [2, 7], ok: true }]);
+    // Not a re-check: B goes first, as fresh. Its red batches halved this
+    // line's batch to one (#6674); two greens in a row double it.
+    expect(gates.slice(before)).toEqual([
+      { pulls: [2], ok: true },
+      { pulls: [7], ok: true },
+    ]);
+    expect(batchWords(repoId, 8)).toBe("2 of 8");
     expect(queueClashes(repoId)).toBe(0);
   });
 });

@@ -26,9 +26,9 @@ import type { AccessError } from "../actions/access.ts";
 import { adoptGate, gateCandidate, releaseOnLand } from "../checks/landing.ts";
 import { queueStore } from "../checks/queue_store.ts";
 import { addLearned } from "../checks/learned.ts";
-import { dropFromLine, enqueue, type GateCandidate, type Queued, type QueueOptions, queueClashes, queueWords, waitingPulls } from "../checks/queue.ts";
+import { batchWords, dropFromLine, enqueue, type GateCandidate, type Queued, type QueueOptions, queueClashes, queueWords, waitingPulls } from "../checks/queue.ts";
 import { checksFor } from "../checks/service.ts";
-import { queueDepth } from "../core/capacity.ts";
+import { queueBatch, queueDepth } from "../core/capacity.ts";
 import { readConflictLane, readConflictRoom } from "./conflict_room.ts";
 import { mergeable, resolveOid, treeOf } from "../git/merge.ts";
 import { CLOSED_NOTE } from "../core/done_on_main.ts";
@@ -1332,6 +1332,8 @@ export async function autonomyTick(
         ...(approved === undefined ? {} : { approved }),
         // What the merge queue is doing now, not what the sweep admitted (#3430).
         queue: queueWords(current.id),
+        // The size of the next batch: `8`, or `4 of 16` after a red (#6674).
+        batch: batchWords(current.id, queueBatch(app.db)),
         // Pulls the queue found red on top of others of their candidate (#4235).
         clashes: queueClashes(current.id),
         spent: `${status.spentTodayUsd.toFixed(2)}/${status.ceilingUsd}`,
@@ -2087,14 +2089,15 @@ export function regateDue(red: Decision, now: number): boolean {
 }
 
 /**
- * How the merge queue may use the forge's check slots (#4053): its depth as
- * an admin set it, and the slots the checks service has spare. Each judged
+ * How the merge queue may use the forge's check slots (#4053): its depth and
+ * batch size as an admin set them, and the slots the checks service has spare. Each judged
  * batch is kept for the red-batch rate (#6427); its gates and red marks are
  * kept in the database, and a gate a roll left running adopted (#6611).
  */
 function queueOptions(app: App, repo: Repo): QueueOptions {
   return {
     depth: queueDepth(app.db),
+    batch: queueBatch(app.db),
     room: () => checksFor(app)?.spareSlots?.() ?? 0,
     onBatch: (repoId, red) => keepBatch(app.db, repoId, red),
     store: queueStore(app.db),

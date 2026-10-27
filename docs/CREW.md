@@ -170,8 +170,14 @@ word) and `issue.parked = 1` carries it, so raw SQL never reads it as done.
 its repository's queue (`src/checks/queue.ts`). The queue builds one
 candidate: main, then each queued pull's squash on top of the one before, in
 queue order, leaving out any pull that conflicts or has nothing left to land.
-A candidate carries at most eight pulls (`MAX_CANDIDATE`), so a gate stays
-near one full tier and a red bisects in three; the rest wait their turn.
+A candidate carries at most `queue.batch` pulls (Settings → Capacity,
+`FORGE_QUEUE_BATCH`, 1–32, default 8); the rest wait their turn. Each line
+adapts below it (#6674): a red batch halves its size (`[queue] batch halves
+to N`), two green batches in a row double it back (`[queue] batch grows to
+N`), never past the setting, so a clean line drains in big batches and a
+flaky one stays small. Pulls that come back to the line from a batch that
+gated go again together, whatever the size. The tick line's `batch=` says
+the size: `8`, or `4 of 16` after a red.
 The log says `[queue] gating N pulls since HH:MM` as a gate starts and
 `[queue] gated N pulls: green|red|cut off` as it ends.
 The full gate runs once on that candidate. Green lands every pull in order,
@@ -181,6 +187,11 @@ gated tree. Red is searched: prefixes of the candidate are gated on main
 — the front half, plus one more cut per free check slot, all at once — the
 longest green prefix lands, the search goes on in the steps up to the first
 red prefix, and the red pull is handed back with the failing tests named.
+However few slots are free, the search cuts at least √n − 1 prefixes, and
+a red run of three or more is then searched by leaving one out: one gate
+per pull of the run, each carrying everything not yet landed but that pull.
+The green one lands, and the pull it left out is gated alone. One bad pull
+in 16 costs two rounds: 3 prefixes, then 4 gates.
 A red batch is never formed again around the same head: with a check slot
 free, the head of a red batch of three or more is gated alone beside the
 line (`[queue] red batch: its head is gated alone`) while the rest gates

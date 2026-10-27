@@ -13,8 +13,9 @@ import { createApp, type App } from "../src/app.ts";
 import { mergePull, openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { readLearned } from "../src/checks/learned.ts";
-import { enqueue, gateDeadlineForTest, MAX_CANDIDATE, gateRuns, queueStatus, queueWords, type Queued } from "../src/checks/queue.ts";
+import { batchWords, enqueue, gateDeadlineForTest, MAX_CANDIDATE, gateRuns, queueStatus, queueWords, type Queued } from "../src/checks/queue.ts";
 import { provideChecksForTest, type ChecksHandle } from "../src/checks/service.ts";
+import { queueBatch, setCapacity, validCapacity } from "../src/core/capacity.ts";
 import { latestDecision } from "../src/core/decisions.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
@@ -223,6 +224,31 @@ describe("the merge queue", () => {
     expect(queue.some((l) => /\[queue\] gating 8 pulls since \d\d:\d\d .*waiting=\d/.test(l))).toBe(true);
     expect(queue.some((l) => l.includes("[queue] gated 8 pulls: green"))).toBe(true);
     expect(queue.some((l) => l.includes("[queue] gated 2 pulls: green"))).toBe(true);
+  }, SLOW);
+
+  test("queue.batch is read on each sweep: three per candidate when it says 3, and /settings/capacity explains the trade-off (#6674)", async () => {
+    const repo = await autonomousRepo("batch-of-three");
+    const base = git(repo, "rev-parse", "refs/heads/main");
+    const pulls = [];
+    for (let i = 0; i < 7; i++) pulls.push(await greenPull(repo, `b${i}.ts`));
+    expect(validCapacity("queue.batch", "33")).toBe(false);
+    expect(validCapacity("queue.batch", "0")).toBe(false);
+    setCapacity(app.db, "queue.batch", "3", alice.id);
+    try {
+      expect(await sweepGreen(app, repo)).toBe(7);
+    } finally {
+      setCapacity(app.db, "queue.batch", null, alice.id);
+    }
+    const carried = gatesOf(repo)
+      .map((g) => Number(git(repo, "rev-list", "--count", `${base}..${g.commit}`)))
+      .sort((a, b) => a - b);
+    expect(carried).toEqual([3, 6, 7]);
+    for (const pull of pulls) expect(merged(repo, pull)).toBe(true);
+    expect(batchWords(repo.id, queueBatch(app.db))).toBe("8");
+    const page = await fetch(`${servers.url}/settings/capacity`, { headers: { cookie: await login() } });
+    const html = await page.text();
+    expect(html).toContain("Merge queue batch size");
+    expect(html).toContain("a red one costs more search gates");
   }, SLOW);
 
   test("after a red batch, the good pulls go back into ONE candidate up to the cap, not one gate each (#4053)", async () => {
