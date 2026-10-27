@@ -44,7 +44,7 @@ for a tunnel and a forge that sleeps.
 | `app_notes` | `{ app, action?, note? }`: the notes sent from an app's forge button and its banned senders; `hide` a note, `ban` or `unban` its sender; an admin of the repository | yes |
 | `apps` | the apps you can see: live or not, where served, how each runs itself, what is working |  |
 | `archive` | `{ repo | repos, archived?, dryRun? }`: archive (true) or wake (false) a repository, by name; planned first (`dryRun` is true unless `false`); only the repository's admin with an admin token, never an agent. `repos` (at most 50) runs the fleet `archive` operation over them, answers each one's outcome and the `operation` id; `limb` with `action: "undo"`, that `operation` and any one of the repositories as `app` reverts it for a day | yes |
-| `asked` | `{ repo?, show?, order? }`: what people asked the crew for, by default nothing merged yet and oldest first: who and when, the pulls that close it, the crew's last activity, waiting/building/shipped/closed, the outcome (landed in a pull, who is building, parked and why, failed) and its sentence, stale when not shipped in three days and flagged when stale with nothing built; repositories you can write |  |
+| `asked` | `{ repo?, show?, order? }`: what people asked the crew for, by default nothing merged yet and oldest first: who and when, the pulls that close it, the crew's last activity, waiting/building/shipped/closed, the outcome (landed in a pull, who is building, parked and why, failed) and its sentence, stale when not shipped in three days and flagged when stale with nothing built; repositories you can write; draws the `ui://forge/asked` card: flagged asks first, then each ask's words, its state and a link to the merged or open pull that closes it, else the issue; at most 20 rows |  |
 | `asks` | `{ …chips }`: what waits on you, most important first; your saved filter applies unless a chip argument overrides it |  |
 | `asks_act` | `{ action, items, reason?, dryRun? }`: decide asks in bulk (up to 100): `dismiss`, `decline`, `mute`, `ship`, `close` (with `reason`) or `replan`; planned first (`dryRun` is true unless `false`), as `POST /api/v1/asks/bulk` | yes |
 | `asks_decide` | `{ item, give_back? }`: let the decider answer a parked hand-over (`parked:<id>`); with `give_back`, give a hand-over back to the crew instead (`handover:<id>`, or `assigned:<id>` for a pull a pass gave up on and assigned to you, whose ask carries the pass's reason): it is assigned to the builder that last worked on it and a comment says so; the same as the card's **Give back to the crew** and `POST /api/v1/asks/give-back` | yes |
@@ -358,9 +358,9 @@ answers
 
 ## Cards, the contract and the plugins (#1116)
 
-- **Cards.** `apps`, `new_app`, `now`, `asks`, `milestones`, `waves` (one wave), `map`, `feed` and `pull` name a `ui://` resource in
+- **Cards.** `apps`, `new_app`, `now`, `asks`, `milestones`, `waves` (one wave), `map`, `feed`, `pull`, `pulls` and `asked` name a `ui://` resource in
   `_meta.ui.resourceUri` (MCP Apps, SEP-1865): `ui://forge/app`, `run`,
-  `decision`, `wave`, `map`, `feed`, `pull`. The Plan card (`map`) shows one row per pillar with
+  `decision`, `wave`, `map`, `feed`, `pull`, `pulls`, `asked`. The Plan card (`map`) shows one row per pillar with
   its ready, working and waiting counts, and the first five ready issues linked
   to their pages; it has no actions. The decision card's rows link to the pull or issue
   they are about (a paused repository's row has none).

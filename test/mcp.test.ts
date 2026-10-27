@@ -1214,6 +1214,7 @@ describe("the forge over MCP", () => {
     const uris = list.body.result.resources.map((r: any) => r.uri).sort();
     expect(uris).toEqual([
       "ui://forge/app",
+      "ui://forge/asked",
       "ui://forge/decision",
       "ui://forge/explore",
       "ui://forge/feed",
@@ -1244,6 +1245,7 @@ describe("the forge over MCP", () => {
     expect(meta("explore")).toBe("ui://forge/explore");
     expect(meta("pull")).toBe("ui://forge/pull");
     expect(meta("pulls")).toBe("ui://forge/pulls");
+    expect(meta("asked")).toBe("ui://forge/asked");
   });
 
   test("tools/call pull carries the card beside an unchanged text answer", async () => {
