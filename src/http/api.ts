@@ -293,7 +293,13 @@ import { dependenciesOf, repoGraph } from "../core/dependencies.ts";
 import { mapHeldFor } from "../crew/held.ts";
 import { pillarView } from "../core/pillars.ts";
 import { askToLiveFor } from "../web/ask_to_live.ts";
-import { decisionStats, listDecisions } from "../core/decisions.ts";
+import {
+  DECISIONS_LIMIT_MAX,
+  decisionCursorValid,
+  decisionStats,
+  decisionsLimit,
+  decisionsPage,
+} from "../core/decisions.ts";
 import { forReader } from "../crew/handover.ts";
 import { globalMapJson } from "../web/pages/global-map.ts";
 import { mapJson, marksFor } from "../web/pages/map.ts";
@@ -3160,10 +3166,17 @@ export function apiRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const kind = ctx.url.searchParams.get("kind");
+    const q = ctx.url.searchParams;
+    const kind = q.get("kind");
+    const limit = decisionsLimit(q.get("limit"));
+    if (limit === undefined)
+      return apiError("invalid_limit", 422, `limit is a whole number from 1 to ${DECISIONS_LIMIT_MAX}`);
+    const cursor = q.get("cursor");
+    if (cursor !== null && !decisionCursorValid(ctx.app.db, repo.id, cursor))
+      return apiError("invalid_cursor", 422, "cursor is the next_cursor of a page before");
     const week = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString();
-    const read = timePhase(ctx.request, "decisions", () => ({
-      decisions: listDecisions(ctx.app.db, repo.id, {
+    const read = timePhase(ctx.request, "decisions", () => {
+      const page = decisionsPage(ctx.app.db, repo.id, {
         kind:
           kind === "next" ||
           kind === "land" ||
@@ -3171,16 +3184,18 @@ export function apiRoutes(router: Router<Handler>): void {
           kind === "guard"
             ? kind
             : undefined,
-        limit: 100,
-      })
+        limit,
+        cursor: cursor ?? undefined,
         // What the decider saw about a sealed report is the report's (`sealed.ts`).
-        .filter(
-          (d) => mayViewId(ctx.app.db, repo, d.issueId, ctx.auth.user),
-        )
+        visible: (d) => mayViewId(ctx.app.db, repo, d.issueId, ctx.auth.user),
+      });
+      return {
         // A hand-over's state carries its tapper's private preferences.
-        .map((d) => forReader(d, ctx.auth.user)),
-      week: decisionStats(ctx.app.db, repo.id, week),
-    }));
+        decisions: page.decisions.map((d) => forReader(d, ctx.auth.user)),
+        week: decisionStats(ctx.app.db, repo.id, week),
+        next_cursor: page.next_cursor,
+      };
+    });
     return timePhase(ctx.request, "render", () => json(read));
   });
 
