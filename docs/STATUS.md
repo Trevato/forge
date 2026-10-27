@@ -123,6 +123,10 @@
 - **The crew** — agents as accounts with nothing but a run-scoped token,
   working issues in the background with Claude Code and proposing through
   pulls a person merges.
+- **Flow only** — a repository's admin (a person, never an agent) sets one
+  switch from Settings, `PATCH /api/v1/repos/:owner/:name` or MCP
+  `repo_settings`, or the terminal's About card (`w`); it makes the `flow`
+  label. Nothing obeys it yet.
 
 Pages render without a line of JavaScript and are designed thumb-first. Six
 premade themes (from warm paper to polar night) switch instantly and persist in

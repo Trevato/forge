@@ -375,6 +375,7 @@ import {
   autonomySettingsUpdate,
   settingsPage,
   settingsUpdate,
+  flowOnlyUpdate,
   waveCut,
   archiveSubmit,
   provenanceSubmit,
@@ -1444,6 +1445,7 @@ export function buildRouter(): Router<Handler> {
   );
   router.add("GET", "/:owner/:name/settings/autonomy", autonomySettingsPage);
   router.add("POST", "/:owner/:name/settings/autonomy", autonomySettingsUpdate);
+  router.add("POST", "/:owner/:name/settings/flow-only", flowOnlyUpdate);
   router.add("POST", "/:owner/:name/settings/holds", fileHoldUpdate);
   router.add("POST", "/:owner/:name/settings/upstream", followUpstreamUpdate);
   router.add("POST", "/:owner/:name/settings/upstream/check", followUpstreamCheck);

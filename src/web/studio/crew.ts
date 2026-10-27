@@ -373,7 +373,17 @@ ${repo.autonomyDirection}</textarea
           crew under Crew to have them reviewed and land on their own.
         </p>`
       : null;
-  return card(html`${state}${noReviewer}${form}`, {
+  const flowOnly = !admin
+    ? null
+    : html`<form method="post" action="${base}/settings/flow-only" id="flow-only">
+        <input type="hidden" name="flowOnly" value="${repo.flowOnly ? "0" : "1"}" />
+        <p class="small">
+          <b>Flow only:</b> ${repo.flowOnly ? "on" : "off"} — the direction is
+          to finish what is open, not start features.
+          ${btn(repo.flowOnly ? "Turn off" : "Turn on", { size: "sm" })}
+        </p>
+      </form>`;
+  return card(html`${state}${noReviewer}${form}${flowOnly}`, {
     id: "autonomy",
     head: html`${icon("play")}
       <h2>On its own</h2>`,

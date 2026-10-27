@@ -2194,6 +2194,8 @@ export function apiRoutes(router: Router<Handler>): void {
       );
     if (input.plansNeedNod !== undefined && typeof input.plansNeedNod !== "boolean")
       return apiError("bad_plans_need_nod", 422, "plansNeedNod is true or false");
+    if (input.flowOnly !== undefined && typeof input.flowOnly !== "boolean")
+      return apiError("bad_flow_only", 422, "flowOnly is true or false");
     if (input.showProvenance !== undefined) {
       if (typeof input.showProvenance !== "boolean")
         return apiError("bad_show_provenance", 422, "showProvenance is true or false");
@@ -2241,6 +2243,8 @@ export function apiRoutes(router: Router<Handler>): void {
       ...(typeof input.plansNeedNod === "boolean"
         ? { plansNeedNod: input.plansNeedNod }
         : {}),
+      // FLOW ONLY: an admin's switch, never an agent's.
+      ...(typeof input.flowOnly === "boolean" ? { flowOnly: input.flowOnly } : {}),
     });
     if (!updated.ok) return respondAccess(updated.error, 422);
     // "Show where this came from" (#3293): an admin's, never an agent's.

@@ -89,6 +89,8 @@ export function aboutScreen(
     f.user?.kind !== "agent" &&
     repo !== undefined &&
     getProvenance(f.db, repo.id) !== undefined;
+  // FLOW ONLY is a person's, an admin's: the settings page's gate.
+  const mayFlow = (): boolean => may() && f.user?.kind !== "agent";
   // The following card's rule: an admin's, and only while it is on or to be turned on.
   const mayFollow = (): boolean =>
     may() && repo !== undefined && repo.origin === null;
@@ -96,6 +98,7 @@ export function aboutScreen(
     repo !== undefined && followShown(f.app, repo, f.user)?.enabled === true;
   const factRows = (): [string, string][] => [
     ...archivedRow(repo),
+    ...flowRow(repo),
     ...aboutFacts(f, src, facts, ref),
     ...trailRows(f, repo),
     ...upstreamRows(f, repo),
@@ -153,6 +156,9 @@ export function aboutScreen(
                 repo?.archivedAt === null ? "archive" : "wake",
               ),
             ]
+          : []),
+        ...(mayFlow()
+          ? [binding(["w"], repo?.flowOnly === true ? "flow only off" : "flow only on")]
           : []),
         ...(mayTrail()
           ? [
@@ -298,6 +304,18 @@ export function aboutScreen(
         });
         return true;
       }
+      if (e.key === "w" && repo !== undefined && mayFlow()) {
+        const on = !repo.flowOnly;
+        void updateRepoSettings(f.app, f.user, repo, { flowOnly: on }).then((done) => {
+          if (done.ok) {
+            repo = getRepoById(f.db, done.value.id) ?? done.value;
+            rows = factRows();
+            ctx.toast(on ? "flow only is on" : "flow only is off", "success");
+          } else ctx.toast("that could not be changed", "danger");
+          ctx.invalidate();
+        });
+        return true;
+      }
       if (e.key === "t" && repo !== undefined && mayTrail()) {
         const shown = getProvenance(f.db, repo.id)?.shown === true;
         const done = showProvenance(f.app, f.user, repo, !shown);
@@ -415,6 +433,12 @@ export function upstreamRows(
     ...(behind === null ? [] : [["behind", `${behind.text} · u updates`] as [string, string]]),
     ...listChecks(f.db, repo.id).map((c): [string, string] => ["", checkLine(c, ago(c.at))]),
   ];
+}
+
+/** The FLOW ONLY switch, in the settings page's words; every reader sees it. */
+export function flowRow(repo: Repo | undefined): [string, string][] {
+  if (repo === undefined) return [];
+  return [["Flow only", repo.flowOnly ? "on" : "off"]];
 }
 
 /** One line when an admin has put the repository away. */

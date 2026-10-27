@@ -18,6 +18,7 @@ import { storageChanged, storageRefusal, storageSentence } from "../core/storage
 import {
   createLabel as insertLabel,
   deleteLabel as removeLabel,
+  getLabel,
   updateLabel as writeLabel,
   type Label,
 } from "../core/issues.ts";
@@ -333,6 +334,9 @@ function moveArchive(app: App, repoId: string, archived: boolean): Promise<boole
   });
 }
 
+/** The label FLOW ONLY puts in a repository. */
+const FLOW_LABEL = "flow";
+
 /**
  * Change settings. A new default branch must exist; git HEAD is moved first
  * and the row follows (git is truth, the index is derived from it).
@@ -352,6 +356,7 @@ export async function updateRepoSettings(
     (settings.crewOutsiders !== undefined ||
       settings.decisionsBy !== undefined ||
       settings.plansNeedNod !== undefined ||
+      settings.flowOnly !== undefined ||
       settings.archived !== undefined) &&
     admin.value.kind === "agent"
   )
@@ -370,10 +375,15 @@ export async function updateRepoSettings(
   }
   const { archived, ...rest } = settings;
   writeSettings(app.db, repo, rest);
+  // FLOW ONLY names its label (the label it makes is not in `changed`, below): on, the repository has a `flow` to put on work.
+  if (settings.flowOnly === true && getLabel(app.db, repo.id, FLOW_LABEL) === undefined)
+    insertLabel(app.db, repo.id, FLOW_LABEL, "d29922");
   const moved =
     archived === undefined ? false : await moveArchive(app, repo.id, archived);
   const updated = getRepoById(app.db, repo.id);
   if (updated === undefined) return err("not_found");
+  // `changed` is the audit line: it names settings, not the `flow` label
+  // that turning flowOnly on may have made.
   const changed: string[] = (
     [
       "visibility",
@@ -385,6 +395,7 @@ export async function updateRepoSettings(
       "crewOutsiders",
       "decisionsBy",
       "plansNeedNod",
+      "flowOnly",
     ] as const
   ).filter((k) => settings[k] !== undefined && settings[k] !== repo[k]);
   if (moved) changed.push("archived");
