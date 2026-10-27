@@ -26,7 +26,7 @@ import { html, type Html } from "../html.ts";
 import { fragment } from "../layout.ts";
 import { draftJs } from "../draft.ts";
 import { outboxJs } from "../outbox.ts";
-import { avatar, btn, card, disclosure, empty, nameMark, stateBadge, time, timeAgo } from "../ui.ts";
+import { avatar, btn, card, disclosure, empty, nameMark, stateBadge, time } from "../ui.ts";
 import { writableAppsOf } from "./asks.ts";
 
 /** Events that can change what the feed says. */
@@ -114,7 +114,7 @@ export function feedCard(
   const head = html`${avatar(item.actor ?? item.app)}
       <strong class="break">${item.actor ?? item.app}</strong
       >${nameMark(item.actor === null ? undefined : marks.get(item.actor))}
-      <span class="muted small break">${item.app} · ${timeAgo(item.at)}</span>
+      <span class="muted small break">${item.app} · ${time(item.at)}</span>
       ${settledBadge(item.settled)}
       <span class="spacer"></span>
       <span class="badge">${KIND_LABEL[item.kind]}</span>`;
@@ -164,7 +164,7 @@ const lines = (text: string): Html[] =>
 export function thoughtCard(thought: Thought, who: string, placement?: Placement): Html {
   const head = html`${avatar(who)}
       <strong>${who}</strong>
-      <span class="muted small">${timeAgo(thought.receivedAt)}</span>
+      <span class="muted small">${time(thought.receivedAt)}</span>
       <span class="spacer"></span>
       <span class="badge">Received</span>`;
   return card(
