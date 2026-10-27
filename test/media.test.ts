@@ -325,7 +325,7 @@ describe("the blob page's switch", () => {
     expect(code).toContain('href="/alice/gallery/media/main/src/a.ts?download=1"');
 
     const png = flat(await (await get("/alice/gallery/blob/main/art/logo.png")).text());
-    expect(png).toContain("Binary file");
+    expect(png).toContain('src="/alice/gallery/media/main/art/logo.png"');
     expect(png).toContain('href="/alice/gallery/media/main/art/logo.png?download=1"');
   });
 });

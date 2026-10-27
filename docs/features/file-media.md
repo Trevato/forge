@@ -95,3 +95,14 @@ path, size, body, and `media`, the media route's address; HTML out), and
 name it once in `RENDERERS` (`render/renderers.ts`); `rendererFor` picks it. Point any element
 that needs the bytes at `input.media`, never at an inline copy, so
 repository content only ever runs under the media route's sandbox. `render/markdown.ts` is the example.
+
+## Images and SVG (#7331)
+
+`render/image.ts` draws the `image` and `svg` kinds as an `<img>` at the media
+route; an SVG is never inlined. The picture fits the pane; a click shows it at
+100% and the pane scrolls or drags to pan. A checkerboard sits behind it for
+transparency. The header line carries the pixel size (read in the browser from
+`naturalWidth`/`naturalHeight` by a few lines in the shell script, so no new
+request), the file size and the format. Animated GIF and WebP play, since the
+browser draws the original bytes. Over `RENDER_CAP` the page shows the
+"too large" notice and Download.

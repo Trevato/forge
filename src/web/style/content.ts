@@ -287,6 +287,16 @@ form.inline { display: inline; margin-left: auto; }
 .media-pane .media-player { display: block; width: 100%; max-width: 100%; }
 .media-pane video.media-player { height: auto; max-height: 80vh; background: var(--muted); border-radius: var(--radius-sm); }
 
+/* ---- image view ---- */
+.imgview-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 4px 16px; font-size: 12.5px; border-bottom: 1px solid var(--border); }
+.imgview-dim { min-width: 9ch; }
+.imgview-pane { overflow: auto; min-height: 160px; max-height: 80vh; text-align: center; padding: 12px;
+  background: repeating-conic-gradient(color-mix(in srgb, var(--fg) 8%, var(--bg)) 0 25%, transparent 0 50%) 0 0 / 16px 16px; }
+.imgview-zoom { margin-left: auto; }
+.imgview-img { max-width: 100%; height: auto; cursor: zoom-in; vertical-align: middle; }
+.imgview-pane.is-actual { text-align: left; cursor: grab; }
+.imgview-pane.is-actual .imgview-img { max-width: none; cursor: zoom-out; }
+
 /* ---- prose (markdown) ---- */
 .prose { padding: 16px 20px; font-size: 15px; line-height: 1.65; overflow-wrap: break-word; }
 .prose > * { max-width: var(--measure); }

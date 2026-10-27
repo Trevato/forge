@@ -171,6 +171,8 @@ export interface BtnOptions {
   external?: boolean;
   disabled?: boolean;
   current?: boolean;
+  /** A toggle: emits `aria-pressed` with its state. */
+  pressed?: boolean;
   extra?: string;
   /** The element's id, for a script or a fragment link that finds it. */
   id?: string;
@@ -184,7 +186,7 @@ function btnAttrs(o: BtnOptions): Html {
   ${o.label ? html`aria-label="${o.label}"` : null}
   ${o.shortcut ? html`data-shortcut="${o.shortcut}"` : null}
   ${o.copy ? html`data-copy="${o.copy}"` : null}
-  ${o.current ? raw('aria-current="page"') : null}`;
+  ${o.pressed !== undefined ? html`aria-pressed="${o.pressed ? "true" : "false"}"` : null}${o.current ? raw('aria-current="page"') : null}`;
 }
 
 /** A button or a link that looks like one. Content is the visible label. */

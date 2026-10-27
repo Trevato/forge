@@ -10,6 +10,7 @@
  * behaviour that a page depends on to be usable.
  */
 
+import { imageViewJs } from "./render/image.ts";
 import { STAGE_BADGE_JS } from "./stage-row.ts";
 import { paletteHelpersJs } from "./palette.ts";
 import { MEDIA_PLAY_JS } from "./render/player.ts";
@@ -1275,6 +1276,7 @@ export const shellJs = /* js */ `
 (function () {
   var doc = document;
   ${modalJs}
+  ${imageViewJs}
 
   // Controls that only mean something with a script running stay hidden
   // until one is: no dead buttons on a page with JavaScript switched off.

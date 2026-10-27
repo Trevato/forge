@@ -7,6 +7,7 @@
 import type { Html } from "../html.ts";
 import type { Blob } from "../../view/source.ts";
 import { audio } from "./audio.ts";
+import { image } from "./image.ts";
 import { claimedMedia, fileKind, HEAD_BYTES, NO_BYTES, RENDER_CAP, type FileKind } from "./kinds.ts";
 import { markdown } from "./markdown.ts";
 import { video } from "./video.ts";
@@ -35,6 +36,8 @@ export interface Rendered {
 export type Renderer = (input: RenderInput) => Rendered;
 
 export const RENDERERS: Partial<Readonly<Record<FileKind, Renderer>>> = {
+  image,
+  svg: image,
   markdown,
   audio,
   video,

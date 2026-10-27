@@ -380,6 +380,13 @@ work here.
 
 ## What works today
 
+Open an image or SVG in a repository and it is drawn, fit to the pane. Press
+**Actual size** (or click the picture) for 100%; the pane scrolls or drags to
+pan. The header shows its pixel size, file size and format; **Source**,
+**Raw** and **Download** stay beside it. The terminal's file view draws a
+binary picture where the terminal can, and otherwise names the file and its
+size; SVG there shows as its source text.
+
 The running list of what the forge does, one bullet each, lives in
 [`docs/STATUS.md`](docs/STATUS.md).
 
