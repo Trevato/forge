@@ -35,7 +35,7 @@ export const tool: Tool = {
       pulls.map((p) => pullDir(db, ctx.app.reposRoot, repo, p)),
     );
     const merge = await pullMergeStates(pulls.map((pull, i) => ({ dir: dirs[i]!, pull })));
-    return good({
+    const answer = good({
       pulls: pulls.map((p, i) => ({
         number: p.number,
         title: p.title,
@@ -47,5 +47,8 @@ export const tool: Tool = {
         mergeable: merge[i]?.mergeable ?? null,
       })),
     });
+    // What the card needs and the text does not say: where the pulls live, and
+    // the limit that may have cut the list short.
+    return { ...answer, card: { repo: `${repo.ownerName}/${repo.name}`, state, limit } };
   },
 };

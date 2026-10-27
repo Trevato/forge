@@ -1218,6 +1218,7 @@ describe("the forge over MCP", () => {
       "ui://forge/issue",
       "ui://forge/map",
       "ui://forge/pull",
+      "ui://forge/pulls",
       "ui://forge/run",
       "ui://forge/wave",
     ]);
@@ -1240,6 +1241,7 @@ describe("the forge over MCP", () => {
     expect(meta("issue")).toBe("ui://forge/issue");
     expect(meta("explore")).toBe("ui://forge/explore");
     expect(meta("pull")).toBe("ui://forge/pull");
+    expect(meta("pulls")).toBe("ui://forge/pulls");
   });
 
   test("tools/call pull carries the card beside an unchanged text answer", async () => {

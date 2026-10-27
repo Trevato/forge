@@ -10,7 +10,7 @@
 import { html, raw } from "../html.ts";
 import { timeAgo } from "../ui.ts";
 
-export type CardKind = "app" | "run" | "decision" | "wave" | "map" | "feed" | "pull" | "explore" | "issue";
+export type CardKind = "app" | "run" | "decision" | "wave" | "map" | "feed" | "pull" | "pulls" | "explore" | "issue";
 
 export interface CardRow {
   readonly label: string;
@@ -39,7 +39,7 @@ const here = (origin: string, path: string): boolean => origin !== "" && /^\/(?!
 
 export const CARD_MIME = "text/html;profile=mcp-app";
 export const CARD_URI = (kind: CardKind): string => `ui://forge/${kind}`;
-export const CARD_KINDS: readonly CardKind[] = ["app", "run", "decision", "wave", "map", "feed", "pull", "explore", "issue"];
+export const CARD_KINDS: readonly CardKind[] = ["app", "run", "decision", "wave", "map", "feed", "pull", "pulls", "explore", "issue"];
 
 /** The tool whose answer each card draws. */
 export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
@@ -53,6 +53,7 @@ export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   explore: "explore",
   new_app: "app",
   pull: "pull",
+  pulls: "pulls",
   issue: "issue",
 };
 
@@ -65,6 +66,7 @@ const CARD_TITLE: Readonly<Record<CardKind, string>> = {
   feed: "Feed",
   explore: "Explore",
   pull: "Pull",
+  pulls: "Pulls",
   issue: "Issue",
 };
 
@@ -76,8 +78,17 @@ const text = (v: unknown): string =>
   typeof v === "string" ? v : typeof v === "number" ? String(v) : "";
 const LIMIT = 12;
 const FEED_LIMIT = 10;
+const PULLS_LIMIT = 20;
 /** The forge's id shape (src/kernel/id.ts): 26 lowercase Crockford base32 characters. */
 const RUN_ID = /^[0-9a-hjkmnp-tv-z]{26}$/;
+
+/** A run state as one check word: what a pull's check says at a glance. */
+const checkWord = (state: string): string =>
+  state === "ok" ? "green"
+  : state === "failed" ? "red"
+  : state === "queued" || state === "running" ? "running"
+  : state === "cancelled" ? "cancelled"
+  : "none";
 
 /** An absolute http(s) address: the only origin a card builds links on. */
 const web = (u: string): boolean => /^https?:\/\//.test(u);
@@ -121,16 +132,11 @@ export function cardFor(
     const p = obj(value);
     const state = text(p["state"]);
     const check = text(obj(p["check"])["state"]);
-    const checkWord =
-      check === "ok" ? "check green"
-      : check === "failed" ? "check red"
-      : check === "queued" || check === "running" ? "check running"
-      : check === "cancelled" ? "check cancelled"
-      : "";
+    const word = checkWord(check);
     const conflicts = list(p["conflicts"]).map(text).filter((c) => c !== "");
     status = [
       state,
-      state === "open" ? checkWord : "",
+      state === "open" && word !== "none" ? `check ${word}` : "",
       state === "open" && conflicts.length > 0 ? "conflicts" : "",
     ]
       .filter((w) => w !== "")
@@ -149,6 +155,28 @@ export function cardFor(
     const preview = text(extra["preview"]);
     if (web(preview)) rows.push({ label: "Preview", value: preview, link: preview });
     return { kind, title: `#${number} ${text(p["title"])}`.trim(), status, rows, actions };
+  }
+  if (kind === "pulls") {
+    // `pulls` answers `{ pulls: [{ number, title, check, … }] }`; the repo and
+    // the state asked for come in `extra`.
+    const pulls = list(obj(value)["pulls"]).map(obj);
+    // The tool stops at `limit`: a full answer may be the first of more.
+    const cut = typeof extra["limit"] === "number" && pulls.length >= extra["limit"];
+    status = `${pulls.length}${cut ? "+" : ""} ${extra["state"] === "closed" ? "closed" : "open"}`;
+    const slug = text(extra["repo"]);
+    for (const p of pulls.slice(0, PULLS_LIMIT)) {
+      const number = text(p["number"]);
+      const check = text(p["check"]);
+      const path = `/${slug}/pulls/${number}`;
+      rows.push({
+        label: `#${number} ${text(p["title"])}`.trim(),
+        value: checkWord(check),
+        ...(web(origin) && slugOf(slug) && /^[1-9]\d*$/.test(number) && here(origin, path)
+          ? { link: origin + path }
+          : {}),
+      });
+    }
+    return { kind, title: CARD_TITLE[kind], status, rows, actions };
   }
   if (kind === "issue") {
     const v = obj(value);
