@@ -15,6 +15,7 @@ const DEEP = "../../../core/arg_words.ts";
 /** Each file that refuses with these words, and how it imports them. */
 const DOORS: Record<string, string> = {
   "src/http/api.ts": "../core/arg_words.ts",
+  "src/http/api/upstream.ts": "../../core/arg_words.ts",
   "src/http/feed.ts": "../core/arg_words.ts",
   "src/http/mcp/tools/asked.ts": DEEP,
   "src/http/mcp/tools/board_pins.ts": DEEP,

@@ -9,14 +9,7 @@
  */
 
 import { homeTruth } from "../system/home_truth.ts";
-import {
-  checkUpstreamNow,
-  FOLLOW_REFUSALS,
-  followJson,
-  upstreamFacts,
-  setFollowUpstream,
-} from "../actions/upstream_follow.ts";
-import { getFollow } from "../core/upstream_follow.ts";
+import { upstreamFacts } from "../actions/upstream_follow.ts";
 import { FAMILY_WORDS } from "../actions/family_words.ts";
 import { showProvenance } from "../actions/provenance.ts";
 import {
@@ -160,8 +153,6 @@ import {
   createWebhook,
   deleteRepo,
   deleteWebhook,
-  FORKS_PER_DAY,
-  forkRepo,
   repositoryLimitMessage,
   resolveOwner,
   privateRepoForSealed,
@@ -223,7 +214,6 @@ import {
   getRepo,
   listReposByOwner,
   listReposVisibleTo,
-  visibleForks,
   type Repo,
   type RepoCounts,
   canWrite,
@@ -437,6 +427,7 @@ import { boardRoutes } from "./api/boards.ts";
 import { labelsRoutes } from "./api/labels.ts";
 import { orgRoutes } from "./api/orgs.ts";
 import { secretRoutes } from "./api/secrets.ts";
+import { upstreamRoutes } from "./api/upstream.ts";
 import type { Router } from "./router.ts";
 import { clientAddress, clientBucket } from "./peer.ts";
 import { manifestFor } from "../actions/here.ts";
@@ -455,7 +446,7 @@ import { REPORT_RECEIVED } from "../actions/report_words.ts";
 import { ADMIN_WORDS } from "../actions/admin_words.ts";
 import { SETTING_WORDS } from "../actions/setting_words.ts";
 import { SPEND_WORDS } from "../actions/spend_words.ts";
-import { ANSWER_WORDS, ENABLED_WORDS, ORDER_WORDS, SIGNUP_WORDS, VISIBILITY_WORDS } from "../core/arg_words.ts";
+import { ANSWER_WORDS, ORDER_WORDS, SIGNUP_WORDS, VISIBILITY_WORDS } from "../core/arg_words.ts";
 
 /** Take the parent's updates for `repo` and answer as the API does, for every route that asks. */
 async function respondTake(ctx: Ctx, repo: Repo): Promise<Response> {
@@ -2128,52 +2119,7 @@ export function apiRoutes(router: Router<Handler>): void {
     return res;
   });
 
-  // Following an outside upstream (#3442): an admin reads, sets and checks.
-  router.add("GET", "/api/v1/repos/:owner/:name/upstream", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const denied = requireScope(ctx, "ro");
-    if (denied) return denied;
-    const read = timePhase(ctx.request, "upstream", () => {
-      const repo = loadRepo(ctx);
-      if (!repo || !canAdmin(ctx.app.db, repo, ctx.auth.user)) return undefined;
-      return getFollow(ctx.app.db, repo.id) ?? null;
-    });
-    if (read === undefined) return notFound();
-    return timePhase(ctx.request, "render", () => json({ following: read === null ? null : followJson(read) }));
-  });
-
-  router.add("PUT", "/api/v1/repos/:owner/:name/upstream", async (ctx) => {
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const repo = loadRepo(ctx);
-    if (!repo) return notFound();
-    const input = await body(ctx.request);
-    if (typeof input.enabled !== "boolean")
-      return apiError("bad_enabled", 422, ENABLED_WORDS);
-    const saved = setFollowUpstream(ctx.app, ctx.auth.user, repo, {
-      url: str(input.url),
-      branch: str(input.branch),
-      enabled: input.enabled,
-    });
-    if (!saved.ok)
-      return saved.error === "not_found" || saved.error === "unauthorized" || saved.error === "forbidden"
-        ? respondAccess(saved.error, 422)
-        : apiError(saved.error, 422, FOLLOW_REFUSALS[saved.error]);
-    return json({ following: followJson(saved.value) });
-  });
-
-  router.add("POST", "/api/v1/repos/:owner/:name/upstream/check", async (ctx) => {
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const repo = loadRepo(ctx);
-    if (!repo) return notFound();
-    const checked = await checkUpstreamNow(ctx.app, ctx.auth.user, repo);
-    if (!checked.ok)
-      return checked.error === "not_found" || checked.error === "unauthorized" || checked.error === "forbidden"
-        ? respondAccess(checked.error, 422)
-        : apiError(checked.error, checked.error === "busy" ? 409 : 422, FOLLOW_REFUSALS[checked.error]);
-    return json(checked.value);
-  });
+  upstreamRoutes(router);
 
   router.add("PATCH", "/api/v1/repos/:owner/:name", async (ctx) => {
     const denied = requireScope(ctx, "admin");
@@ -2282,37 +2228,6 @@ export function apiRoutes(router: Router<Handler>): void {
       eventsPage(ctx.app.db, repo.id, ctx.auth.user, limit, cursor ?? undefined),
     );
     return timePhase(ctx.request, "render", () => json(page));
-  });
-
-  router.add("GET", "/api/v1/repos/:owner/:name/forks", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const repo = loadRepo(ctx);
-    if (!repo) return notFound();
-    const forks = timePhase(ctx.request, "forks", () => visibleForks(ctx.app.db, repo.id, ctx.auth.user));
-    return timePhase(ctx.request, "render", () => json(forks));
-  });
-
-  router.add("POST", "/api/v1/repos/:owner/:name/forks", async (ctx) => {
-    const denied = requireScope(ctx, "rw");
-    if (denied) return denied;
-    const parent = loadRepo(ctx);
-    if (!parent) return notFound();
-    const input = await body(ctx.request);
-    const forked = await forkRepo(
-      ctx.app,
-      ctx.auth.user,
-      parent,
-      str(input.name) || undefined,
-    );
-    if (!forked.ok)
-      return forked.error === "repository_limit"
-        ? apiError("repository_limit", 403, repositoryLimitMessage(ctx.app, ctx.auth.user!))
-        : forked.error === "storage_limit"
-        ? apiError("storage_limit", 403, storageLimitMessage(ctx.app, ctx.auth.user!.id))
-        : forked.error === "limit"
-        ? apiError("limit", 429, `at most ${FORKS_PER_DAY} forks a day: try again tomorrow`)
-        : respondAccess(forked.error, 422);
-    return json(forked.value, 201);
   });
 
   // ── following. A fork's standing against its parent, read from git each
