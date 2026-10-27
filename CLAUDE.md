@@ -286,7 +286,9 @@ flag exists only in the stdio dev runner and is never reachable over SSH.
   pinned the schema test fails on an edit: the pull that adds a migration
   runs `bun scripts/pin-migrations.ts` and commits the one file it writes,
   `core/migration-pins/<name>.pin` (`core/migration-pins.json` is the frozen
-  older pins); the release never touches pins. A migration must only add
+  older pins); the release never touches pins. A crew clone's `pre-push`
+  hook (`crew/pin_hook.ts`) runs it and commits the pin when a push touches
+  a migration, and the gate names a migration added without its pin. A migration must only add
   (`test/schema-additive.test.ts`). A release is an annotated tag whose
   message is its record (`bun scripts/cut-release.ts <version> --tag`,
   read by `release/shipped.ts`); no pull and no release touches

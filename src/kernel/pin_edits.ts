@@ -39,3 +39,23 @@ export function parseNameStatus(out: string): Change[] {
   }
   return changes;
 }
+
+const MIGRATIONS = "src/core/migrations/";
+
+/**
+ * The migrations a pull adds whose pin is missing (#6938): each added
+ * `src/core/migrations/<name>.ts` for which `pinned(name)` is false.
+ */
+export function unpinnedAdds(
+  changes: readonly Change[],
+  pinned: (name: string) => boolean,
+): string[] {
+  const names: string[] = [];
+  for (const { status, path } of changes) {
+    if (!path.startsWith(MIGRATIONS) || !path.endsWith(".ts")) continue;
+    if (!status.startsWith("A") && !status.startsWith("C")) continue;
+    const name = path.slice(MIGRATIONS.length, -".ts".length);
+    if (!name.includes("/") && !pinned(name)) names.push(name);
+  }
+  return names;
+}

@@ -20,7 +20,7 @@
  * runs `outsideFiles` nightly and files a `Red:` issue for each that fails (#812).
  */
 
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 export type Exclusion = {
@@ -193,7 +193,7 @@ function git(args: string[], cwd: string = process.cwd()): { ok: boolean; out: s
  */
 // Imported on use: `treeGate` loads this file alone, outside the repository.
 export async function pinRefusal(cwd: string = process.cwd()): Promise<string[]> {
-  const { parseNameStatus, pinEdits } = await import("../src/kernel/pin_edits.ts");
+  const { parseNameStatus, pinEdits, unpinnedAdds } = await import("../src/kernel/pin_edits.ts");
   const env = process.env.FORGE_CHECK_BASE;
   const base =
     env || git(["merge-base", "origin/main", "HEAD"], cwd).out || git(["merge-base", "main", "HEAD"], cwd).out;
@@ -207,7 +207,7 @@ export async function pinRefusal(cwd: string = process.cwd()): Promise<string[]>
     return [];
   }
   const changes = parseNameStatus(diff.out);
-  return pinEdits(changes).map((path) => {
+  const edits = pinEdits(changes).map((path) => {
     const name = path.split("/").pop()?.replace(/\.pin$/, "") ?? "";
     const deleted = changes.some((c) => c.path === path && c.status.startsWith("D"));
     const onBase = git(["cat-file", "-e", `${base}:src/core/migrations/${name}.ts`], cwd).ok;
@@ -217,6 +217,13 @@ export async function pinRefusal(cwd: string = process.cwd()): Promise<string[]>
       ? `${path} was deleted: a migration on main is history, so restore it`
       : `${path} was changed: a migration on main is history, so add a new migration instead`;
   });
+  // Last, so the check's summary — its last line — names the one-step fix.
+  const pinned = (name: string) => existsSync(join(cwd, "src/core/migration-pins", `${name}.pin`));
+  const missing = unpinnedAdds(changes, pinned).map(
+    (name) =>
+      `this pull adds migration ${name} without its pin: run bun scripts/pin-migrations.ts and commit src/core/migration-pins/${name}.pin`,
+  );
+  return [...edits, ...missing];
 }
 
 // `bun scripts/gate.ts`: the audit alone, first in `forge.json`'s check, so

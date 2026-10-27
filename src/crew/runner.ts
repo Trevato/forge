@@ -73,6 +73,7 @@ import {
 import { mintRunToken } from "../core/run_token.ts";
 import { deleteToken } from "../core/tokens.ts";
 import { runGit } from "../git/env.ts";
+import { installPinHook } from "./pin_hook.ts";
 import { cloneWithMirror } from "./mirror.ts";
 import { isSafeRef } from "../git/guard.ts";
 import { runGitCapture } from "../git/env.ts";
@@ -1929,6 +1930,8 @@ async function prepareClone(
   // own exclude file — the repository's `.gitignore` is the repository's.
   mkdirSync(join(dir, ".git", "info"), { recursive: true });
   writeFileSync(join(dir, ".git", "info", "exclude"), CLONE_EXCLUDES);
+  // A push that adds a migration commits its pin first (#6938).
+  installPinHook(dir);
   write(
     remote === undefined
       ? `branch ${branch} from ${repo.defaultBranch}`
@@ -2047,6 +2050,8 @@ async function landWork(
         [
           "push",
           "--quiet",
+          // The clone's hooks are the agent's sandbox's, never the forge's.
+          "--no-verify",
           `${options.localUrl}/${fork.ownerName}/${fork.name}.git`,
           `${branch}:${branch}`,
         ],

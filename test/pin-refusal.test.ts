@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { pinRefusal } from "../scripts/gate.ts";
+import { summariseCheckFailure } from "../src/checks/summary.ts";
 
 const root = mkdtempSync(join(tmpdir(), "pin-refusal-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -103,4 +104,21 @@ test("with no base it warns on stderr instead of passing silently", async () => 
     if (old !== undefined) process.env.FORGE_CHECK_BASE = old;
   }
   expect(seen.join("\n")).toContain("pins not checked");
+});
+
+test("a migration added without its pin is named with the one-step fix, last, as the check's summary", async () => {
+  const { dir, base } = repo("unpinned");
+  put(dir, "src/core/migrations/0003-c.ts", "c");
+  put(dir, "src/core/migrations/0004-d.ts", "d");
+  put(dir, "src/core/migration-pins/0004-d.pin", "x");
+  run(dir, "add", "-A");
+  run(dir, "commit", "-qm", "add");
+  const out = await withBase(base, () => pinRefusal(dir));
+  const named =
+    "this pull adds migration 0003-c without its pin: run bun scripts/pin-migrations.ts and commit src/core/migration-pins/0003-c.pin";
+  expect(out).toEqual([named]);
+  const r = Bun.spawnSync(["bun", gateScript], { cwd: dir, env: { ...process.env, FORGE_CHECK_BASE: base } });
+  expect(r.exitCode).toBe(2);
+  const lines = r.stderr.toString().split("\n");
+  expect(summariseCheckFailure(lines, "check exited with code 2").summary).toBe(`gate: ${named}`);
 });
