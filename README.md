@@ -40,6 +40,8 @@ when). The terminal's palette has the same as "Crew hand-overs", a read-only
 list of the same rows (repo#number, title, reasons; it does not open the
 issue — use the link on the page). Both are a forge admin's only.
 
+Home opens with "Since you were here · 2 days": the pulls that landed in public repositories since you last loaded `/` (1 hour to 7 days back, a day on a first visit); the terminal's home shows the same lines. See `docs/features/since-you-were-here.md`.
+
 A hand-over card on `/asks` (an agent's pull the reviewer stopped on after three rounds) has "Give back to the crew": one press assigns the pull, and the open issue it closes if a person holds it, to the agent that opened it, writes "Given back to the crew by @who", and the card leaves; the next tick starts its run. It is for a writer of the repository, and a pull a person opened, or by an agent gone from the crew, gets no button. In the terminal, `b` on a handed-over row of the On you pane does the same (`src/actions/give_back.ts`).
 
 A pull the merge queue holds as red alone (red on its own merge at its current head; cleared by a new head or a moved main) says so under its checks line: "red alone at <time>, waiting for a new head or a new main", on the pull page, its live checks line and the studio change step, and in the checks row of the pull's terminal screen (`redMark` in `src/checks/queue.ts`). Nothing is drawn when it is not held.

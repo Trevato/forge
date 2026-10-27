@@ -5,6 +5,22 @@
 
 export const DIGEST_WINDOW_MS = 24 * 3600 * 1000;
 export const DIGEST_LINES = 3;
+export const DIGEST_MIN_MS = 3600 * 1000;
+export const DIGEST_MAX_MS = 7 * 24 * 3600 * 1000;
+
+/** The window since the last visit: a day for a first visit, else at least an hour and at most a week. */
+export function windowOf(lastVisit: number | undefined, now: number): number {
+  if (lastVisit === undefined || !Number.isFinite(lastVisit)) return DIGEST_WINDOW_MS;
+  return Math.min(DIGEST_MAX_MS, Math.max(DIGEST_MIN_MS, now - lastVisit));
+}
+
+/** The heading that names the window, e.g. `Since you were here · 2 days`. */
+export function headingOf(windowMs: number): string {
+  const hours = Math.round(windowMs / 3600000);
+  if (hours < 24) return `Since you were here · ${hours} ${hours === 1 ? "hour" : "hours"}`;
+  const days = Math.round(hours / 24);
+  return `Since you were here · ${days} ${days === 1 ? "day" : "days"}`;
+}
 
 export type DigestKind = "landed" | "released" | "failed" | "decided";
 const KINDS: readonly DigestKind[] = ["landed", "released", "failed", "decided"];
@@ -32,8 +48,8 @@ interface Group {
   counts: Record<DigestKind, number>;
 }
 
-export function digest(events: readonly DigestEvent[], now: number): DigestLine[] {
-  const since = now - DIGEST_WINDOW_MS;
+export function digest(events: readonly DigestEvent[], now: number, windowMs: number = DIGEST_WINDOW_MS): DigestLine[] {
+  const since = now - windowMs;
   const groups = new Map<string, Group>();
   for (const e of events) {
     if (!(e.at >= since && e.at <= now)) continue;

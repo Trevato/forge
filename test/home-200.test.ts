@@ -39,7 +39,7 @@ test("the second look at home as the owner is within its budget, and every phase
   console.log(`home warm ${warm.ms.toFixed(0)} ms:`, warm.phases.map((p) => `${p.name} ${p.ms}`).join(", "));
   expectBudget(warm.ms, { ms: 300, against: await baselineMs(f.base) });
   // The page's own total is the sum of named phases: nothing over 20 ms hides in "app" alone.
-  const known = new Set(["app", "spawned", "steps", "session", "repos", "kpis", "waiting", "panels", "feed", "render"]);
+  const known = new Set(["app", "spawned", "steps", "session", "repos", "kpis", "waiting", "panels", "feed", "visit", "since", "render"]);
   for (const p of slow) expect(known.has(p.name)).toBe(true);
   const total = warm.phases.find((p) => p.name === "app")!.ms;
   const named = warm.phases.filter((p) => p.name !== "app").reduce((s, p) => s + p.ms, 0);

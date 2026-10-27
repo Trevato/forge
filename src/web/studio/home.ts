@@ -59,6 +59,8 @@ import { notePhase, notePhaseRest, takeSessionTime, timePhase, timePhaseAsync } 
 import { kpiCache, panelCache, waitingCache } from "./home_cache.ts";
 import { archivedAppCount } from "../pages/apps.ts";
 import { pinnedPanels } from "./pinned.ts";
+import { isNavigation, lastVisit, noteVisit } from "../../core/home_visit.ts";
+import { sinceYouWere } from "./since.ts";
 import { homeTabs } from "./home_tabs.ts";
 import { crewKeyNote } from "./crew.ts";
 import { everydayCard } from "../pages/everyday.ts";
@@ -273,6 +275,11 @@ export async function studioHome(
   const { repos: appRepos } = timePhase(ctx.request, "repos", () => writableAppsOf(ctx, user));
   // Render is what is left of the page once the named reads are taken out.
   const rendering = performance.now();
+  const visitedAt = Date.now();
+  const before = timePhase(ctx.request, "visit", () =>
+    isNavigation(ctx.request) ? noteVisit(ctx.app.db, user.id, visitedAt) : lastVisit(ctx.app.db, user.id),
+  );
+  const since = timePhase(ctx.request, "since", () => sinceYouWere(ctx.app.db, before, visitedAt));
   const ask = firstSteps ?? everydayCard(ctx, user);
   const figures = user.isAdmin && steps === undefined;
   const ceilingUsd = forgeCeiling(ctx.app.config);
@@ -293,6 +300,7 @@ export async function studioHome(
         <a href="/">Just my apps</a>
       </p>`,
     )}
+    ${since}
     ${homeTabs("feed")}
     <div class="split" data-rail="wide">
       <div class="stack">
@@ -323,7 +331,7 @@ export async function studioHome(
     body,
     scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${feedJs}${ask ? `\n${passkeyJs}` : ""}`,
   });
-  notePhaseRest(ctx.request, "render", rendering, ["kpis", "vitals", "waiting", "panels", "feed"]);
+  notePhaseRest(ctx.request, "render", rendering, ["kpis", "vitals", "waiting", "panels", "feed", "visit", "since"]);
   return res;
 }
 

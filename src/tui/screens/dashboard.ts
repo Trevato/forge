@@ -23,6 +23,8 @@ import { coveredByVerdict, forgeVerdict, verdictLine } from "../../kernel/guard_
 import { clientAppRows, clientDoings, clientFinished, doingLine, finishedLine } from "../../core/client-apps.ts";
 import { nextStepsFor } from "../../core/next-steps.ts";
 import { agentsLine } from "../../web/studio/client_home.ts";
+import { lastVisit } from "../../core/home_visit.ts";
+import { sinceDigest } from "../../web/studio/since.ts";
 import { askForSomething } from "./tell.ts";
 import { mayView } from "../../core/sealed.ts";
 import { applyFleetIds, previewFleetIds, undoFleetOp } from "../../actions/fleet.ts";
@@ -186,6 +188,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   let waits: string[] = [];
   /** A client's apps, one sentence each on whether its agents work or wait (#1812). */
   let clientLines: string[] = [];
+  /** "Since you were here" and its lines: read from the web home's last-visit row, never written here. */
+  let sinceLines: string[] = [];
   /** The ids of those apps, so the key that asks for something stays on them. */
   let clientRepoIds = new Set<string>();
   /** The live address of each of those apps that is running, by repo id; `o` shows it. */
@@ -235,6 +239,12 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
             const line = `${a.repo.name}${mark}: ${agentsLine(a.working, a.queued)}`;
             return doing === "" ? line : `${line} ${doing}`;
           });
+    ctx.invalidate();
+  };
+
+  const loadSinceLines = (): void => {
+    const d = f.user ? sinceDigest(f.app.db, lastVisit(f.app.db, f.user.id), Date.now()) : undefined;
+    sinceLines = d === undefined ? [] : [d.heading, ...d.lines.map((l) => `  ${l.says}`)];
     ctx.invalidate();
   };
 
@@ -888,6 +898,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       // functions of the outbox, so one subscription refreshes all of them.
       live(f, signal, {}, reload);
       reload();
+      loadSinceLines();
       return Promise.all([loadClientLines(), loadPanelLines()]).then(() => undefined);
     },
     render(area, s) {
@@ -914,6 +925,14 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
             style(c.fg, c.bg),
             strip!.x + strip!.w,
           ),
+        );
+        body = rest!;
+      }
+      if (sinceLines.length > 0) {
+        const lines = sinceLines.slice(0, 4);
+        const [strip, rest] = split(body, "v", [len(lines.length), fill(1)]);
+        lines.forEach((line, i) =>
+          s.text(strip!.x, strip!.y + i, truncate(line, strip!.w), style(i === 0 ? c.mutedFg : c.fg, c.bg), strip!.x + strip!.w),
         );
         body = rest!;
       }
