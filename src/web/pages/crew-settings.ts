@@ -6,6 +6,12 @@
  */
 
 import { addToCrew, listCrew, removeFromCrew } from "../../actions/crew.ts";
+import {
+  CREW_NO_SUCH_AGENT,
+  CREW_NOT_AN_AGENT,
+  crewAddedWords,
+  crewRemovedWords,
+} from "../../actions/crew_words.ts";
 import { getAgentByName, isCrewRole, setCrewRole } from "../../core/agents.ts";
 import type { Ctx } from "../../http/context.ts";
 import { loadRepo, repoBase, repoNotFound } from "../chrome.ts";
@@ -44,15 +50,11 @@ export async function crewAdd(ctx: Ctx): Promise<Response> {
     ctx,
     `${repoBase(repo)}/settings#crew`,
     added.ok
-      ? {
-          message: `${added.value.user.username} is on the crew. Assign it an issue and it starts.`,
-        }
+      ? { message: crewAddedWords(added.value.user.username) }
       : {
           tone: "danger",
           message:
-            added.error === "not_an_agent"
-              ? "Only an agent can be on a crew; a person is given access through an organization's team."
-              : "No such agent on this forge.",
+            added.error === "not_an_agent" ? CREW_NOT_AN_AGENT : CREW_NO_SUCH_AGENT,
         },
   );
 }
@@ -68,8 +70,8 @@ export async function crewRemove(ctx: Ctx): Promise<Response> {
     ctx,
     `${repoBase(repo)}/settings#crew`,
     removed.ok
-      ? { message: `${username} is off the crew.` }
-      : { tone: "danger", message: "No such agent on this forge." },
+      ? { message: crewRemovedWords(username) }
+      : { tone: "danger", message: CREW_NO_SUCH_AGENT },
   );
 }
 
