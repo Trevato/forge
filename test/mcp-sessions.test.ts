@@ -86,4 +86,41 @@ describe("MCP sessions", () => {
     expect(names).not.toContain("sessions");
     expect((await mcp(rw, {})).error).toBe(true);
   });
+
+  const me = async (cookie: string) => (await fetch(`${servers.url}/api/v1/user`, { headers: { cookie: `forge_session=${cookie}` } })).status;
+
+  test("end signs one browser out, and its cookie answers as signed out", async () => {
+    const lost = createSession(app.db, id("carol")).token;
+    const tok = createToken(app.db, id("carol"), "t", "admin").token;
+    expect(await me(lost)).toBe(200);
+    const list = JSON.parse((await mcp(tok, {})).text).sessions as { id: string }[];
+    const got = await mcp(tok, { action: "end", id: list[list.length - 1]!.id });
+    expect(got.error).toBe(false);
+    expect(JSON.parse(got.text).says).toContain("signed out");
+    expect(await me(lost)).toBe(401);
+  });
+
+  test("ending your own says it may be the browser you are in; an owner ending another's names them", async () => {
+    const tok = createToken(app.db, id("carol"), "t", "admin").token;
+    const own = createSession(app.db, id("carol"));
+    const sid = (JSON.parse((await mcp(tok, {})).text).sessions as { id: string }[]).at(-1)!.id;
+    expect(JSON.parse((await mcp(tok, { action: "end", id: sid })).text).says).toContain("if it is the one you are in now");
+    const bobsId = (JSON.parse((await mcp(createToken(app.db, id("alice"), "t", "admin").token, { username: "bob" })).text).sessions as { id: string }[])[0]!.id;
+    const owner = createToken(app.db, id("alice"), "t", "admin").token;
+    expect(JSON.parse((await mcp(owner, { username: "bob", action: "end", id: bobsId })).text).says).toContain("out of bob");
+    expect(own.token).toBeTruthy();
+  });
+
+  test("an unknown id, or another person's session, is refused as the route refuses", async () => {
+    const tok = createToken(app.db, id("carol"), "t", "admin").token;
+    const bobs = (JSON.parse((await mcp(createToken(app.db, id("bob"), "t", "admin").token, {})).text).sessions as { id: string }[])[0]!.id;
+    for (const [args, route] of [[{ action: "end", id: "nope" }, "nope"], [{ action: "end", id: bobs }, bobs]] as const) {
+      const got = await mcp(tok, args);
+      expect(got.error).toBe(true);
+      expect(got.text).toContain("not_found");
+      const res = await fetch(`${servers.url}/api/v1/users/carol/sessions/${route}`, { method: "DELETE", headers: { authorization: `Bearer ${tok}` } });
+      expect(res.status).toBe(404);
+    }
+    expect((await mcp(tok, { username: "bob", action: "end", id: bobs })).error).toBe(true);
+  });
 });
