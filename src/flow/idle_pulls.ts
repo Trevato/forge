@@ -9,7 +9,8 @@ import { closesFromBody } from "../core/pulls.ts";
 
 const HOUR_MS = 3_600_000;
 const IDLE_HOURS = 72;
-const LIMIT = 20;
+/** The reader returns at most this many; a screen shows `N+` when it gets them all. */
+export const IDLE_LIMIT = 20;
 
 export interface IdlePull {
   readonly pull: number;
@@ -38,7 +39,7 @@ export function readIdlePulls(db: Database, now = new Date(), publicOnly = false
         ORDER BY m.at ASC, i.number ASC
         LIMIT ?3`,
     )
-    .all(publicOnly ? 1 : 0, cutoff, LIMIT);
+    .all(publicOnly ? 1 : 0, cutoff, IDLE_LIMIT);
   return rows.map((r) => ({
     pull: r.number,
     repo: r.name,

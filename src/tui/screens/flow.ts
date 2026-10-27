@@ -6,8 +6,8 @@
  * MCP `flow` tool read. Under them, each repository's merge queue (#2036):
  * queued, gating, gates in flight, landed in the last hour and the median
  * minutes from approval to landing (`flow/queue.ts`); then the
- * conflicted pulls, and the pulls with changes requested waiting on a
- * builder and on a reviewer (`flow/requested.ts`, #2172); then each
+ * conflicted pulls, the idle crew pulls (#6479) and the pulls with
+ * changes requested waiting on a builder and on a reviewer (`flow/requested.ts`, #2172); then each
  * autonomous repository's ready list, startable beside the count per
  * filter that holds the rest (`flow/held.ts`, #2244), as the flow panel draws it.
  * Read-only; Enter, Esc or q closes it.
@@ -19,6 +19,7 @@ import { pullCounts } from "../../crew/hot_files.ts";
 import { warmingLine } from "../../crew/hot_history.ts";
 import type { HeldRow } from "../../flow/held.ts";
 import { conflictedPulls, conflictedSays, rebaseLane, rebaseLaneSays } from "../../flow/conflicted.ts";
+import { IDLE_LIMIT, readIdlePulls } from "../../flow/idle_pulls.ts";
 import { pileSays, readPile } from "../../flow/pile.ts";
 import { readPipeline, STAGE_LABEL, verdict } from "../../flow/pipeline.ts";
 import { parkedSays, readParked } from "../../flow/parked.ts";
@@ -99,12 +100,28 @@ export function flowLines(
       : wrap(`Red batches, last hour: ${red.map((q) => `${q.repo} ${redBatchWords(q)}`).join(", ")}.`, inner)),
     ...(lane === null ? [] : ["", ...wrap(`Rebases: ${lane}.`, inner)]),
     ...(conflicted === null ? [] : ["", ...wrap(conflicted, inner)]),
+    ...idleLines(db, now, agent !== undefined, inner),
     ...waits,
     ...(reviewing === null ? [] : ["", ...wrap(reviewing, inner)]),
     ...(warming === "" ? [] : ["", ...warming.split("\n").flatMap((l) => wrap(l, inner))]),
     ...(held === undefined ? [] : ["", ...heldLines(held, inner)]),
     "",
     ...duplicateLines(dups, inner),
+  ];
+}
+
+/** Idle pulls shown before `+N more`. */
+const IDLE_SHOWN = 5;
+
+/** A blank line, `idle: N`, then a line per idle crew pull (`flow/idle_pulls.ts`, #6479), oldest first; nothing when none. */
+export function idleLines(db: Database, now: Date, publicOnly: boolean, inner: number): string[] {
+  const idle = readIdlePulls(db, now, publicOnly);
+  if (idle.length === 0) return [];
+  return [
+    "",
+    `idle: ${idle.length >= IDLE_LIMIT ? `${IDLE_LIMIT}+` : idle.length}`,
+    ...idle.slice(0, IDLE_SHOWN).map((p) => truncate(`#${p.pull} ${p.repo} · ${Math.floor(p.hours)} h since a push`, inner)),
+    ...(idle.length > IDLE_SHOWN ? [`+${idle.length - IDLE_SHOWN}${idle.length >= IDLE_LIMIT ? "+" : ""} more`] : []),
   ];
 }
 
