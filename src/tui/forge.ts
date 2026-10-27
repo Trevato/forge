@@ -725,6 +725,15 @@ export function forgeSearch(session: Session): (ctx: Ctx) => PaletteSearch {
         hint: `${held.why}; retry in ${held.retryAfter}s`,
         run: () => ctx.toast("Sign in to search code without waiting.", "secondary"),
       });
+    if (found.codeSkipped)
+      items.push({
+        id: "code:skipped",
+        section: "Code",
+        mark: G.ring,
+        title: "Some code was not searched",
+        hint: "the forge is busy grepping; try again shortly",
+        run: () => ctx.toast("Code search is busy; try again shortly.", "secondary"),
+      });
     return items;
   };
 }

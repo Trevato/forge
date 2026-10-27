@@ -489,6 +489,14 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
         ${String(busy)} s.
       </p>`,
   )}
+  ${when(
+    found.codeSkipped,
+    () =>
+      html`<p class="muted small" role="status" data-code-skipped>
+        Some code was not searched: the forge is busy grepping. Try again
+        shortly.
+      </p>`,
+  )}
   ${WORDS
     .filter(
       ([kind]) => kind !== "all" && (a.kind === "all" || a.kind === kind),

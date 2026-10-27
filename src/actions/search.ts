@@ -94,6 +94,7 @@ export async function search(
     code: [],
     truncated: { repos: false, issues: false, code: false },
     moreCode: false,
+    codeSkipped: false,
   };
   if (q === "") return empty;
 
@@ -144,8 +145,10 @@ export async function search(
         q,
         Math.min(limit * 5, MAX_CODE_HITS),
         input.codeBudgetMs ?? Infinity,
+        // The slot is keyed on the actor the session resolved, never on input.
+        { memberId: actor?.id },
       )
-    : { hits: [], truncated: false, more: false };
+    : { hits: [], truncated: false, more: false, skipped: false };
 
   return {
     repos,
@@ -157,6 +160,7 @@ export async function search(
       code: code.truncated,
     },
     moreCode: code.more,
+    codeSkipped: code.skipped,
   };
 }
 
@@ -232,6 +236,7 @@ export async function searchWithin(
   const hits = { repos: [] as RepoHit[], issues: [] as IssueHit[], code: [] as CodeHit[] };
   const truncated = { repos: false, issues: false, code: false };
   let moreCode = false;
+  let codeSkipped = false;
   for (const repo of repos) {
     if (!canRead(app.db, repo, actor)) continue;
     const one = await search(app, actor, { ...input, live: false, repo });
@@ -242,6 +247,7 @@ export async function searchWithin(
     truncated.issues ||= one.truncated.issues;
     truncated.code ||= one.truncated.code;
     moreCode ||= one.moreCode;
+    codeSkipped ||= one.codeSkipped;
   }
-  return { ...hits, truncated, moreCode };
+  return { ...hits, truncated, moreCode, codeSkipped };
 }

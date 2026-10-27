@@ -6,6 +6,7 @@
  * lands. Addresses are told apart by `X-Forwarded-For`, which the forge
  * reads from this machine (`http/peer.ts`).
  */
+import { GREP_LIMITS, grepSlots } from "../src/search/grep_slots.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { connect, type Socket } from "node:net";
@@ -346,6 +347,47 @@ describe("strangers at every door", () => {
     } finally {
       if (busy.allowed) busy.release();
     }
+
+    // Every stranger grep slot taken elsewhere: the search answers, says code was partial.
+    const hung = Array.from({ length: GREP_LIMITS.strangers }, () => {
+      let settle!: () => void;
+      const done = grepSlots.run(undefined, () => new Promise<void>((r) => (settle = r)));
+      return { settle: () => settle(), done };
+    });
+    try {
+      // An uncached query, so the answer must come from a grep.
+      const items = await ask("trowel");
+      expect(code(items).filter((i) => i.id !== "code:skipped")).toEqual([]);
+      expect(items.find((i) => i.id === "code:skipped")?.title).toBe("Some code was not searched");
+    } finally {
+      for (const h of hung) h.settle();
+      await Promise.all(hung.map((h) => h.done));
+    }
+    expect((await ask("trowel")).some((i) => i.id === "code:skipped")).toBe(false);
+
+    // A signed-in member is held to its own two slots, and told the same way.
+    const member = new Session(app, {
+      sshUsername: "ada",
+      remoteAddress: address(),
+      fingerprint: "SHA256:ada",
+      user: ada,
+    });
+    const askAsMember = (q: string) =>
+      forgeSearch(member)(ctx)(q, false, new AbortController().signal);
+    const mine = Array.from({ length: GREP_LIMITS.perMember }, () => {
+      let settle!: () => void;
+      const done = grepSlots.run(ada.id, () => new Promise<void>((r) => (settle = r)));
+      return { settle: () => settle(), done };
+    });
+    try {
+      const items = await askAsMember("barrow");
+      expect(items.some((i) => i.id.startsWith("code:ada/"))).toBe(false);
+      expect(items.find((i) => i.id === "code:skipped")?.title).toBe("Some code was not searched");
+    } finally {
+      for (const h of mine) h.settle();
+      await Promise.all(mine.map((h) => h.done));
+    }
+    expect((await askAsMember("barrow")).some((i) => i.id.startsWith("code:ada/"))).toBe(true);
 
     // Its own minute, counted under its address.
     setStrangerLimits(app, { perAddress: { ...STRANGER_LIMITS.perAddress, code: 1 } });

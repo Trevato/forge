@@ -30,6 +30,7 @@ const read = async <T>(response: Response): Promise<T> =>
 
 interface Results {
   moreCode?: boolean;
+  codeSkipped?: boolean;
   repos: (
     | {
         source: "local";
@@ -395,6 +396,7 @@ describe("search: one query, four sources", () => {
         issues: [],
         code: [],
         moreCode: false,
+        codeSkipped: false,
         truncated: { repos: false, issues: false, code: false },
       });
     }

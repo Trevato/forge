@@ -29,6 +29,7 @@ import { join } from "node:path";
 import { runGitCapture } from "../git/env.ts";
 import { isSafeRef } from "../git/guard.ts";
 import { repoDir } from "../git/repos.ts";
+import { GREP_LIMITS, grepSlots, type GrepSlots } from "../search/grep_slots.ts";
 import { likeEscape } from "./issues.ts";
 import { listReposVisibleTo, type Repo } from "./repos.ts";
 import type { User } from "./users.ts";
@@ -129,6 +130,8 @@ export interface SearchResults {
   };
   /** True when the code budget ran out with repositories still ungrepped. */
   readonly moreCode: boolean;
+  /** True when a grep was refused a slot (`search/grep_slots.ts`): code results are partial. */
+  readonly codeSkipped: boolean;
 }
 
 /**
@@ -462,12 +465,20 @@ async function grepCached(
   repo: Repo,
   dir: string,
   query: string,
-): Promise<RawHit[]> {
+  who: GrepWho,
+): Promise<RawHit[] | "skipped"> {
   const ref = repo.defaultBranch;
   const oid = await branchOid(dir, ref);
+  const slotted = async (at: string): Promise<RawHit[] | null | "skipped"> => {
+    const got = await (who.slots ?? grepSlots).run(who.memberId, () => {
+      grepsRun++;
+      return (who.grep ?? grepRun)(dir, at, query, MAX_HITS_PER_REPO);
+    });
+    return got.ran ? got.value : "skipped";
+  };
   if (oid === null) {
-    grepsRun++;
-    return (await grepRun(dir, ref, query, MAX_HITS_PER_REPO)) ?? [];
+    const hits = await slotted(ref);
+    return hits === "skipped" ? hits : (hits ?? []);
   }
   const key = `${repo.id}\0${oid}\0${cleanQuery(query)}`;
   const kept = grepCache.get(key);
@@ -476,14 +487,22 @@ async function grepCached(
     grepCache.set(key, kept);
     return kept.map((h) => ({ ...h }));
   }
-  grepsRun++;
-  const hits = await grepRun(dir, oid, query, MAX_HITS_PER_REPO);
+  const hits = await slotted(oid);
+  if (hits === "skipped") return hits;
   if (hits === null) return [];
   grepCache.set(key, hits.map((h) => ({ ...h })));
   if (grepCache.size > CACHE_MAX) {
     grepCache.delete(grepCache.keys().next().value as string);
   }
   return hits;
+}
+
+/** Whose slot a grep takes; `grep` and `slots` are for tests to inject. */
+export interface GrepWho {
+  /** The signed-in actor's id; undefined is a stranger. */
+  readonly memberId?: string | undefined;
+  readonly slots?: GrepSlots;
+  readonly grep?: typeof grepRun;
 }
 
 /**
@@ -499,28 +518,46 @@ export async function grepRepos(
   limit = MAX_CODE_HITS,
   /** No new batch starts after this many ms; the rest is reported as `more`. */
   budgetMs = Infinity,
-): Promise<{ hits: CodeHit[]; truncated: boolean; more: boolean }> {
+  who: GrepWho = {},
+): Promise<{ hits: CodeHit[]; truncated: boolean; more: boolean; skipped: boolean }> {
+  let skipped = false;
   const hits: CodeHit[] = [];
   const considered = repos.slice(0, MAX_SEARCH_REPOS);
   const batch = 4;
+  // Within a batch a member's greps run in pairs, so a search never
+  // starves itself of the member's own slots.
+  const width = who.memberId === undefined ? batch : GREP_LIMITS.perMember;
   const started = performance.now();
   for (let i = 0; i < considered.length; i += batch) {
     if (i > 0 && performance.now() - started >= budgetMs) {
-      return { hits, truncated: repos.length > MAX_SEARCH_REPOS, more: true };
+      return { hits, truncated: repos.length > MAX_SEARCH_REPOS, more: true, skipped };
     }
     const slice = considered.slice(i, i + batch);
-    const found = await Promise.all(
-      slice.map((repo) =>
-        grepCached(
-          repo,
-          repoDir(reposRoot, repo.ownerName, repo.name),
-          query,
-        ),
-      ),
-    );
+    const found: (RawHit[] | "skipped")[] = [];
+    for (let k = 0; k < slice.length; k += width) {
+      found.push(
+        ...(await Promise.all(
+          slice
+            .slice(k, k + width)
+            .map((repo) =>
+              grepCached(
+                repo,
+                repoDir(reposRoot, repo.ownerName, repo.name),
+                query,
+                who,
+              ),
+            ),
+        )),
+      );
+    }
     for (const [j, repo] of slice.entries()) {
-      for (const hit of found[j] ?? []) {
-        if (hits.length >= limit) return { hits, truncated: true, more: false };
+      const mine = found[j] ?? [];
+      if (mine === "skipped") {
+        skipped = true;
+        continue;
+      }
+      for (const hit of mine) {
+        if (hits.length >= limit) return { hits, truncated: true, more: false, skipped };
         hits.push({
           repo: { owner: repo.ownerName, name: repo.name },
           archived: repo.archivedAt !== null,
@@ -529,5 +566,5 @@ export async function grepRepos(
       }
     }
   }
-  return { hits, truncated: repos.length > MAX_SEARCH_REPOS, more: false };
+  return { hits, truncated: repos.length > MAX_SEARCH_REPOS, more: false, skipped };
 }
