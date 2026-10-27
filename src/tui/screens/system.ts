@@ -22,6 +22,8 @@ import type { SystemView } from "../../system/view.ts";
 import type { readHealth } from "../../actions/health.ts";
 import { rolloutLine, type ForgeHealth } from "../../kernel/guard.ts";
 import { canSeeMemory, memoryHours } from "../../boards/memory.ts";
+import { telemetryReader } from "../../actions/telemetry.ts";
+import { historyOver } from "../../system/telemetry.ts";
 import { binding } from "../app/keys.ts";
 import type { Session } from "../session.ts";
 import { setTelemetryGrant } from "../../actions/telemetry.ts";
@@ -103,6 +105,44 @@ export function systemLines(v: SystemView): string[] {
   ];
 }
 
+/** The windows `h` cycles, in hours: the MCP `telemetry_history` tool's `hours`. */
+export const WINDOWS = [1, 6, 24, 72] as const;
+/** Seven for the label, this, and " now … · peak …" must fit the dialog's 66 inner columns. */
+const SPARK_COLUMNS = 20;
+
+/** At most `n` readings, each the mean of its stretch, so a long window still fits the line. */
+function shrink(xs: readonly number[], n: number): number[] {
+  if (xs.length <= n) return [...xs];
+  return Array.from({ length: n }, (_, i) => {
+    const part = xs.slice(Math.floor((i * xs.length) / n), Math.floor(((i + 1) * xs.length) / n));
+    return part.reduce((a, b) => a + b, 0) / part.length;
+  });
+}
+
+/**
+ * CPU, memory and load of the node over the last `hours`, one sparkline each (scaled to its own peak),
+ * with the latest value and the peak in words. Empty for anyone `telemetry_history` refuses;
+ * `no readings yet` when nothing is recorded.
+ */
+export function historyLines(session: Session, hours: number): string[] {
+  if (!telemetryReader(session.app, session.user)) return [];
+  const head = `Last ${hours} h (h: 1 / 6 / 24 / 72)`;
+  const points = historyOver(session.app, hours).filter((p) => p.target === "node");
+  const series: [string, (p: (typeof points)[number]) => number | null, (n: number) => string][] = [
+    ["CPU", (p) => p.cpuCoresMax, (n) => `${n.toFixed(2)} cores`],
+    ["memory", (p) => p.memoryBytes, bytes],
+    ["load", (p) => p.load, (n) => n.toFixed(2)],
+  ];
+  const rows = series.map(([label, pick, say]) => {
+    const xs = points.map(pick).filter((x): x is number => x !== null);
+    if (xs.length === 0) return `${pad(label, 7)} no readings yet`;
+    const peak = Math.max(...xs);
+    const scaled = shrink(xs, SPARK_COLUMNS).map((x) => (peak > 0 ? (x / peak) * 100 : 0));
+    return `${pad(label, 7)} ${pad(spark(scaled), SPARK_COLUMNS)} now ${say(xs[xs.length - 1]!)} · peak ${say(peak)}`;
+  });
+  return [head, ...rows];
+}
+
 /** Who may grant telemetry:read: the MCP tool's gate (`mayBoards`), a forge admin who is a person. */
 const mayGrant = (session: Session | undefined): boolean => session?.user?.isAdmin === true && session.user.kind !== "agent";
 
@@ -116,10 +156,12 @@ export function grantLine(session: Session): string {
 const grantRefused = (error: "not_found" | "not_an_agent"): string =>
   error === "not_an_agent" ? "Only an agent account can be granted telemetry:read." : "no such account";
 
-export function systemScreen(ctx: Ctx, lines: readonly string[], session?: Session): Screen {
-  const offered = session !== undefined && mayGrant(session);
+export function systemScreen(ctx: Ctx, lines: readonly string[], session: Session): Screen {
+  let span = 1; // index into WINDOWS; 1 is the default 6 h window
+  // read on open and when `h` moves the window, not on every paint
+  let history = historyLines(session, WINDOWS[span]!);
+  const offered = mayGrant(session);
   const askGrant = (): void => {
-    if (!session) return;
     if (!mayGrant(session)) return ctx.toast("telemetry:read is a forge admin's to grant", "danger");
     const agents = grantable(session.db);
     if (agents.length === 0) return ctx.toast("No agent accounts yet");
@@ -151,11 +193,16 @@ export function systemScreen(ctx: Ctx, lines: readonly string[], session?: Sessi
   };
   const screen: Screen = {
     title: "System",
-    keys: [...(offered ? [binding(["g"], "grant or take back telemetry")] : []), binding(["enter", "esc", "q"], "close")],
+    keys: [binding(["h"], "window"), ...(offered ? [binding(["g"], "grant or take back telemetry")] : []), binding(["enter", "esc", "q"], "close")],
     render(area, s) {
       const buttons = dialog(s, area, ctx.theme.c, {
         title: "System",
-        body: offered ? [...lines, "", grantLine(session), "g: grant or take back telemetry:read"] : lines,
+        body: [
+          ...lines,
+          "",
+          ...history,
+          ...(offered ? ["", grantLine(session), "g: grant or take back telemetry:read"] : []),
+        ],
         actions: [{ label: "Close" }],
         selected: 0,
         width: WIDTH,
@@ -163,7 +210,10 @@ export function systemScreen(ctx: Ctx, lines: readonly string[], session?: Sessi
       buttons.forEach((rect) => ctx.hit(rect, () => ctx.pop()));
     },
     key(e) {
-      if (e.key === "g" && session) askGrant();
+      if (e.key === "h") {
+        span = (span + 1) % WINDOWS.length;
+        history = historyLines(session, WINDOWS[span]!);
+      } else if (e.key === "g") askGrant();
       else if (e.key === "enter" || e.key === "esc" || e.key === "q") ctx.pop();
       return true;
     },

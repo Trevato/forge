@@ -15,7 +15,7 @@ import { createUser, type User } from "../src/core/users.ts";
 import { createForgeApp, forgeCommands, Session } from "../src/tui/forge.ts";
 import { setTelemetryGrant } from "../src/actions/telemetry.ts";
 import { hasGrant } from "../src/core/telemetry.ts";
-import { forgeLines, memoryLines, memoryScreen, systemScreen } from "../src/tui/screens/system.ts";
+import { forgeLines, historyLines, memoryLines, memoryScreen, systemScreen } from "../src/tui/screens/system.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
@@ -103,9 +103,61 @@ describe("tui system memory", () => {
   });
 });
 
+describe("tui system history", () => {
+  const put = (at: string, cpu: number, mem: number, load: number) =>
+    app.db
+      .query("INSERT INTO machine_sample (at, step, target, cpu_cores, cpu_cores_max, memory_bytes, load) VALUES (?1, 15, 'node', ?2, ?2, ?3, ?4)")
+      .run(at, cpu, mem, load);
+
+  test("no readings says so, never an empty chart", () => {
+    const lines = historyLines(new Session(app, identity(carol)), 6);
+    expect(lines.filter((l) => l.includes("no readings yet")).length).toBe(3);
+  });
+
+  test("recorded points draw three lines with the latest and the peak; h cycles the window", async () => {
+    const t = Date.now();
+    put(new Date(t - 120_000).toISOString(), 1, 2 * MiB, 0.5);
+    put(new Date(t - 60_000).toISOString(), 4, 8 * MiB, 2);
+    put(new Date(t - 30_000).toISOString(), 2, 4 * MiB, 1);
+    const lines = historyLines(new Session(app, identity(carol)), 6);
+    expect(lines.length).toBe(4);
+    expect(lines[1]).toContain("CPU");
+    expect(lines[1]).toContain("now 2.00 cores · peak 4.00 cores");
+    expect(lines[2]).toContain("now 4.0 MiB");
+    expect(lines[3]).toContain("peak 2.00");
+    expect(lines.join("\n")).not.toContain("no readings yet");
+
+    const terminal = headlessTerminal(120, 50);
+    const { app: tui, session } = createForgeApp(app, identity(carol), { terminal, exitHooks: false });
+    tui.start();
+    tui.ctx.push(systemScreen(tui.ctx, ["CPU"], session));
+    await settleApp(tui);
+    const seen = () => tui.screen.toText();
+    // the dialog is 72 wide: every row's now and peak words must be on screen, not clipped
+    const peaks = () => seen().split("\n").filter((r) => r.includes("peak"));
+    expect(seen()).toContain("Last 6 h");
+    expect(peaks().length).toBe(3);
+    expect(seen()).toContain("peak 4.00 cores");
+    expect(seen()).toContain("peak 8.0 MiB");
+    for (const hrs of [24, 72, 1, 6]) {
+      tui.dispatch({ type: "key", key: "h", ctrl: false, alt: false, shift: false });
+      await settleApp(tui);
+      expect(seen()).toContain(`Last ${hrs} h`);
+      // the 72 h window reads 5-minute points, of which the test recorded none
+      expect(peaks().length).toBe(hrs === 72 ? 0 : 3);
+      if (hrs === 72) expect(seen()).toContain("no readings yet");
+    }
+    tui.stop?.();
+  });
+
+  test("anyone telemetry_history refuses sees no line", () => {
+    for (const who of [bob, undefined]) expect(historyLines(new Session(app, identity(who)), 6)).toEqual([]);
+  });
+});
+
 describe("tui system telemetry grant", () => {
   const boot = (user: User) => {
-    const { app: tui, session } = createForgeApp(app, identity(user), { terminal: headlessTerminal(120, 40), exitHooks: false });
+    const { app: tui, session } = createForgeApp(app, identity(user), { terminal: headlessTerminal(120, 50), exitHooks: false });
     tui.start();
     tui.ctx.push(systemScreen(tui.ctx, ["CPU"], session));
     const press = async (...keys: string[]) => {
@@ -151,7 +203,7 @@ describe("tui system telemetry grant", () => {
   });
 
   test("the System command passes the session, so the admin has the line and g", async () => {
-    const { app: tui, session } = createForgeApp(app, identity(carol), { terminal: headlessTerminal(120, 40), exitHooks: false });
+    const { app: tui, session } = createForgeApp(app, identity(carol), { terminal: headlessTerminal(120, 50), exitHooks: false });
     tui.start();
     const system = forgeCommands(session)(tui.ctx).find((c) => c.id === "system");
     system!.run();
