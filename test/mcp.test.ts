@@ -255,6 +255,7 @@ describe("the forge over MCP", () => {
       "converge",
       "family",
       "next_steps",
+      "notify",
       "thought",
       "asked",
       "assigned",
