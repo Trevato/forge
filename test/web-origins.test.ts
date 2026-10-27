@@ -24,6 +24,7 @@ import { listPins } from "../src/core/pins.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { getUserByName } from "../src/core/users.ts";
 import { forgetProviders } from "../src/origins/providers/index.ts";
+import { firstFetchRetry } from "../src/origins/mirror.ts";
 import { advance, createJob, settled } from "../src/origins/jobs.ts";
 import { icon } from "../src/web/ui.ts";
 import { quietLogs, withoutEnv } from "./helpers/globals.ts";
@@ -420,6 +421,19 @@ describe("origins on the web", () => {
   });
 
   test("Mirror starts a job, shows its stages, and lands on the mirror", async () => {
+    // The first fetch is retried on the forge's clock (2 s, 5 s, 10 s); a
+    // loaded check machine can spend all three and fail the job. Retry on a
+    // short clock instead, so the verdict is the mirror's, not the load's.
+    const found = firstFetchRetry.ms;
+    firstFetchRetry.ms = Array.from({ length: 40 }, () => 250);
+    try {
+      await mirrorStartsAJob();
+    } finally {
+      firstFetchRetry.ms = found;
+    }
+  });
+
+  async function mirrorStartsAJob(): Promise<void> {
     const id = listOrigins(app.db, getUserByName(app.db, "alice")!.id)[0]!.id;
     const mirrored = await asUser(alice, `/settings/origins/${id}/mirror`, {
       form: { fullName: "octo/widgets" },
@@ -449,7 +463,7 @@ describe("origins on the web", () => {
     const after = await (await asUser(alice, jobPath)).text();
     expect(after).not.toContain("http-equiv");
     expect(after).toContain("Open the mirror");
-  });
+  }
 
   test("a running job's stream sends the next stage, then done with the mirror's address; only its starter may read it", async () => {
     const id = listOrigins(app.db, getUserByName(app.db, "alice")!.id)[0]!.id;
