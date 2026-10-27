@@ -8,7 +8,7 @@
  * the system's own voice and takes no actor.
  */
 
-import { isCommitId, releaseCheck, type CommitCheck } from "../checks/commit_check.ts";
+import { commitVerdicts, isCommitId, releaseCheck, type CommitCheck } from "../checks/commit_check.ts";
 import { hasCommit, isAncestor } from "../git/local.ts";
 import { repoDir } from "../git/repos.ts";
 import { mayViewId } from "../core/sealed.ts";
@@ -189,6 +189,17 @@ export async function checkOfCommit(
       contains: (descendant) => isAncestor(dir, oid, descendant),
     }),
   );
+}
+
+/** The own green or red verdicts of a page of commits, for whoever may read the runs; empty otherwise. */
+export function verdictsOfCommits(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  oids: readonly string[],
+): Map<string, CommitCheck> {
+  if (!mayReadRuns(app, actor, repo)) return new Map();
+  return commitVerdicts(app.db, repo.id, repo.defaultBranch, oids);
 }
 
 /** A run by id, only if it belongs to a repository the actor can see. */
