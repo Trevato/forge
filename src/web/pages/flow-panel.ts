@@ -36,7 +36,7 @@ import { type QueueRow, redBatchWords } from "../../flow/queue.ts";
 import { HOT_PULLS, pullCounts, warmFiles } from "../../crew/hot_files.ts";
 import { warmingLine } from "../../crew/hot_history.ts";
 import { getRepoById } from "../../core/repos.ts";
-import { IDLE_LIMIT, readIdlePulls, type IdlePull } from "../../flow/idle_pulls.ts";
+import { IDLE_LIMIT, idlePullsCached, type IdlePull } from "../../flow/idle_pulls.ts";
 import { readParked } from "../../flow/parked.ts";
 import { hoursWords, readLeadTime } from "../../flow/lead_time.ts";
 import { buildYieldSays, readBuildYield } from "../../flow/build_yield.ts";
@@ -113,7 +113,7 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
   const latency = readReviewLatency(app.db, new Date(now), agent);
   const openers = readOpeners(app.db, new Date(now), agent);
   const pile = pileSays(readPile(app.db, reader.kind === "agent"));
-  const idle = readIdlePulls(app.db, new Date(now), reader.kind === "agent");
+  const idle = idlePullsCached(app.db, new Date(now), reader.kind === "agent");
   const parked = readParked(app.db, new Date(now), reader.kind === "agent");
   const newest = parked.newest[0];
   const listed = asked(url);
