@@ -54,6 +54,7 @@ import { typeSafeDecider } from "./crew/decide.ts";
 import { graphInstagram } from "./crew/instagram.ts";
 import { peopleOnCrews } from "./core/agents.ts";
 import { startNotifier } from "./crew/notify.ts";
+import { expireCrewHolds } from "./actions/holds.ts";
 import { startClogTick } from "./flow/clog_tick.ts";
 import { sweepStaleAsks } from "./crew/stale_asks.ts";
 import { recordAskLedger } from "./web/studio/asks.ts";
@@ -553,6 +554,14 @@ const processTick = (): void => {
 };
 // The clog watch (#6524, #6757) reads the flow every minute; its state is the database's.
 const stopClogTick = startClogTick(app.db, app.bus, (error) => app.log.warn("clog tick failed", { error: String(error) }));
+// An agent's hold that has stood 24 h is released each minute (#6918).
+const holdTimer = setInterval(() => {
+  try {
+    expireCrewHolds(app);
+  } catch (error) {
+    app.log.warn("hold expiry failed", { error: String(error) });
+  }
+}, 60_000);
 const processTimer = setInterval(processTick, 60_000);
 processTick();
 // A new version proves itself against the public URL once (release/prove.ts).
@@ -672,6 +681,7 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
   clearInterval(followTimer);
   stopClogTick();
   clearInterval(processTimer);
+  clearInterval(holdTimer);
   clearInterval(leaseTimer);
   // The platform's SIGTERM: the listener stays open while routers learn
   // this process is going. A person's Ctrl-C does not wait for routers.

@@ -14,13 +14,20 @@
 import type { App } from "../app.ts";
 import {
   cleanWhy,
+  CREW_HOLD_MS,
+  crewHoldsPlacedBefore,
   getHold,
   releaseGreenHold,
   releaseHold,
   setHold,
   type Hold,
 } from "../core/holds.ts";
-import { getIssueById } from "../core/issues.ts";
+import { getIssueById, setAssignee } from "../core/issues.ts";
+import { getRepoById } from "../core/repos.ts";
+import { getUserById } from "../core/users.ts";
+import { transact } from "../kernel/db.ts";
+import { builderOf } from "./give_back.ts";
+import { addComment } from "./issues.ts";
 import { getPull, type Pull } from "../core/pulls.ts";
 import { checksForHead, type Run } from "../core/runs.ts";
 import { canRead, canWrite, type Repo } from "../core/repos.ts";
@@ -140,4 +147,48 @@ export function releaseOnGreen(app: App, run: Run): boolean {
     },
   });
   return true;
+}
+
+/**
+ * The tick's sweep: a hold the crew placed (an agent's) that has stood 24 h
+ * is released with a comment that names its reason, and the pull goes back
+ * to its builder. A person's hold is never touched. Returns the pulls let go.
+ */
+export function expireCrewHolds(app: App, now = new Date()): number {
+  const before = new Date(now.getTime() - CREW_HOLD_MS).toISOString();
+  let released = 0;
+  for (const hold of crewHoldsPlacedBefore(app.db, before)) {
+    // Foreign keys guarantee the pull's issue, its repository and the holder.
+    const issue = getIssueById(app.db, hold.pullId)!;
+    const repo = getRepoById(app.db, issue.repoId)!;
+    const holder = getUserById(app.db, hold.heldBy)!;
+    const pull = issue.kind === "pull" ? getPull(app.db, repo.id, issue.number) : undefined;
+    const open = pull !== undefined && pull.state === "open";
+    transact(app.db, () => {
+      if (!releaseHold(app.db, hold.pullId, hold.heldBy)) return;
+      released++;
+      app.bus.append({
+        kind: "pull.released",
+        repoId: repo.id,
+        payload: { number: issue.number, note: "hold expired after 24 h" },
+      });
+      if (!open) return;
+      const builder = builderOf(app.db, repo, issue);
+      const note = `Hold expired after 24 h: ${hold.why}.${builder ? ` Back to @${builder.username}.` : ""}`;
+      // The holder may have left the crew; the builder can still speak.
+      let said = addComment(app, holder, repo, issue, note);
+      if (!said.ok && builder) said = addComment(app, builder, repo, issue, note);
+      if (!said.ok)
+        app.log.warn("hold expiry note not posted", { pull: issue.number, repo: repo.id, error: said.error });
+      // The assignment event is what starts the builder's run.
+      if (builder && setAssignee(app.db, issue.id, builder.id))
+        app.bus.append({
+          kind: "pull.assigned",
+          repoId: repo.id,
+          actorId: holder.id,
+          payload: { number: issue.number, assignee: builder.username, agent: true },
+        });
+    });
+  }
+  return released;
 }

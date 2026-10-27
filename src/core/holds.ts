@@ -142,6 +142,20 @@ export function releaseGreenHold(db: Database, pullId: string): boolean {
   );
 }
 
+/** How long a hold the crew placed may stand before the forge lets it go. */
+export const CREW_HOLD_MS = 24 * 3_600_000;
+
+/** Standing holds the crew placed (an agent's) at or before `before`, oldest first. */
+export function crewHoldsPlacedBefore(db: Database, before: string): Hold[] {
+  return db
+    .query<Row, [string]>(
+      `${STANDING} AND user.is_agent = 1 AND pull_hold.held_at <= ?1
+        ORDER BY pull_hold.held_at, pull_hold.id`,
+    )
+    .all(before)
+    .map(fromRow);
+}
+
 /** When a hold on this pull was last released, if one ever was. */
 export function lastRelease(db: Database, pullId: string): string | undefined {
   return (
