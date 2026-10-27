@@ -179,7 +179,9 @@ stamped ids). That list is frozen: a release cut since #6642 is an annotated
 tag `v<version>` whose message is the same record (`bun scripts/cut-release.ts
 <version> --tag`), so a cut never moves main and never voids a gate in flight;
 `release/shipped.ts` reads the tags from the forge's own repository for
-`/releases.json`, the children's standings and the behind watch. A check runs
+`/releases.json`, the children's standings and the behind watch; `release/own_tags.ts`
+finds that repository (`FORGE_REPO`, any case) on every ten-minute tick and logs,
+once, why when it cannot read its tags. A check runs
 on the tree alone, so a migration landed after the freeze stays held to
 additive.
 An old process that restarts mid-roll boots on a database ahead of it and

@@ -7,7 +7,8 @@
  * so it never voids a gate in flight or stales a pull's check (#6640).
  *
  * The tags are read from the git store, never the network, by the same
- * ten-minute tick that watches for production behind (`release/behind.ts`);
+ * ten-minute tick that watches for production behind (`release/behind.ts`,
+ * through `release/own_tags.ts`, which finds the repository and logs why not);
  * what was read is kept in memory, so `/releases.json` and the children's
  * standings read a list, not git. A forge with no repository of its own
  * (`FORGE_REPO` unset, a test) ships the frozen list alone.
@@ -15,6 +16,7 @@
 
 import before from "../core/releases-before-tags.json" with { type: "json" };
 import { runGit } from "../git/env.ts";
+import { err, ok, type Result } from "../kernel/result.ts";
 
 export interface Shipped {
   readonly version: string;
@@ -74,8 +76,8 @@ export function mergeShipped(frozen: readonly Shipped[], tagged: readonly Shippe
   return [...byVersion.values()].sort((a, b) => compareVersions(a.version, b.version));
 }
 
-/** The release records on the annotated `v*` tags of the repository at `dir`, newest first; [] when git cannot say. */
-export async function readTagged(dir: string): Promise<Shipped[]> {
+/** The release records on the annotated `v*` tags of the repository at `dir`, newest first; why not when git cannot say. */
+export async function readTags(dir: string): Promise<Result<Shipped[], string>> {
   const args = [
     "for-each-ref",
     `--count=${MAX_TAGS}`,
@@ -84,8 +86,8 @@ export async function readTagged(dir: string): Promise<Shipped[]> {
     "refs/tags/v*",
   ];
   // A repository not yet on disk cannot even be a working directory.
-  const out = await runGit(args, { cwd: dir }).catch(() => undefined);
-  if (!out?.ok) return [];
+  const out = await runGit(args, { cwd: dir }).catch((e: unknown) => err(String(e)));
+  if (!out.ok) return err(typeof out.error === "string" ? out.error : out.error.stderr || `git exited ${out.error.code}`);
   const records: Shipped[] = [];
   for (const entry of out.value.split("\x01")) {
     const [type, secs, message] = entry.replace(/^\n/, "").split("\x00");
@@ -94,7 +96,13 @@ export async function readTagged(dir: string): Promise<Shipped[]> {
     const at = Number(secs) * 1000;
     if (record !== undefined && Number.isFinite(at) && at > 0) records.push({ ...record, at });
   }
-  return mergeShipped([], records);
+  return ok(mergeShipped([], records));
+}
+
+/** The release records of the repository at `dir`, newest first; [] when git cannot say. */
+export async function readTagged(dir: string): Promise<Shipped[]> {
+  const read = await readTags(dir);
+  return read.ok ? read.value : [];
 }
 
 const frozen: readonly Shipped[] = before.releases;

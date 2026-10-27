@@ -18,6 +18,13 @@ import {
   setTagged,
   shippedReleases,
 } from "../src/release/shipped.ts";
+import { ownTagsReader, readOwnTags } from "../src/release/own_tags.ts";
+import { createApp, type App } from "../src/app.ts";
+import { createRepo } from "../src/actions/repos.ts";
+import { createUser } from "../src/core/users.ts";
+import { repoDir } from "../src/git/repos.ts";
+import { serve, type Servers } from "../src/http/server.ts";
+import type { Log, LogFields } from "../src/kernel/log.ts";
 
 let dir: string;
 beforeAll(async () => {
@@ -107,5 +114,95 @@ describe("the shipped releases", () => {
       { version: "0.7.272", migrations: 151, ids: ["a-b"], at: Date.parse("2026-10-26T11:00:00Z") },
     ]);
     expect(await readTagged(join(dir, "missing"))).toEqual([]);
+  });
+});
+
+describe("the forge's own tags", () => {
+  let data: string;
+  let app: App;
+  let servers: Servers;
+  const lines: { level: string; message: string; fields?: LogFields | undefined }[] = [];
+  const log: Log = {
+    debug: () => {},
+    info: (message, fields) => lines.push({ level: "info", message, fields }),
+    warn: (message, fields) => lines.push({ level: "warn", message, fields }),
+    error: () => {},
+  };
+  let work: string;
+  const tag = (name: string, date: string, message?: string) =>
+    Bun.spawn(["git", "tag", ...(message === undefined ? [] : ["-a", "-F", "-"]), name], {
+      cwd: work,
+      env: { ...env, GIT_COMMITTER_DATE: date },
+      stdout: "ignore",
+      stderr: "ignore",
+      ...(message === undefined ? {} : { stdin: new Blob([message]) }),
+    }).exited;
+  // As a push lands them, without the forge's receive hooks (they need a running push session).
+  const push = () =>
+    Bun.spawn(["git", "fetch", "-q", work, "main:main", "+refs/tags/*:refs/tags/*"], {
+      cwd: repoDir(app.reposRoot, "trevato", "forge"),
+      env,
+      stdout: "ignore",
+      stderr: "ignore",
+    }).exited;
+  const listed = async () =>
+    ((await (await fetch(`${servers.url}/releases.json`)).json()) as { releases: { name: string }[] }).releases.map((r) => r.name);
+
+  beforeAll(async () => {
+    data = await mkdtemp(join(tmpdir(), "forge-own-tags-"));
+    app = createApp({ dataDir: data, port: 0 });
+    servers = await serve(app);
+    const owner = await createUser(app.db, { origin: "seed", trusted: true, username: "trevato", email: "t@forge.local", password: "a-good-passphrase", adminIfFirst: true });
+    if (!owner.ok) throw new Error(owner.error);
+    const repo = await createRepo(app, owner.value, { name: "forge", visibility: "public" });
+    if (!repo.ok) throw new Error(String(repo.error));
+    work = join(data, "work");
+    await Bun.$`mkdir -p ${work}`.quiet();
+    await Bun.spawn(["git", "init", "-q", "-b", "main"], { cwd: work, env }).exited;
+    await Bun.spawn(["git", "commit", "-q", "--allow-empty", "-m", "one"], { cwd: work, env }).exited;
+  }, 60_000);
+  afterAll(async () => {
+    setTagged([]);
+    servers.stop();
+    app.close();
+    await rm(data, { recursive: true, force: true });
+  });
+
+  test("are merged over the frozen list newest first, and /releases.json shows a tag pushed after boot at the next tick", async () => {
+    const frozen = shippedReleases();
+    await tag("v0.7.300", "2026-10-26T10:00:00Z");
+    await tag("not-a-release", "2026-10-26T10:00:00Z", '{"version":"5.0.0","migrations":1}');
+    await tag("v0.7.301", "2026-10-26T11:00:00Z", '{"version":"0.7.301","migrations":151}');
+    await tag("v0.7.302", "2026-10-26T12:00:00Z", '{"version":"0.7.302","migrations":152}');
+    expect(await push()).toBe(0);
+    // The name is found whatever its case, as a URL finds it.
+    const read = ownTagsReader({ db: app.db, reposRoot: app.reposRoot, log }, "Trevato/Forge");
+    expect(await read()).toEqual({ version: "0.7.302", at: Date.parse("2026-10-26T12:00:00Z") });
+    expect(shippedReleases().map((r) => r.version)).toEqual(["0.7.302", "0.7.301", ...frozen.map((r) => r.version)]);
+    expect((await listed()).slice(0, 3)).toEqual(["0.7.302", "0.7.301", frozen[0]!.version]);
+
+    await tag("v0.7.303", "2026-10-26T13:00:00Z", '{"version":"0.7.303","migrations":152}');
+    expect(await push()).toBe(0);
+    expect((await listed())[0]).toBe("0.7.302"); // until the tick
+    await read();
+    expect((await listed()).slice(0, 2)).toEqual(["0.7.303", "0.7.302"]);
+    expect(lines.filter((l) => l.level === "info").map((l) => l.fields?.newest)).toEqual(["0.7.302", "0.7.303"]);
+  });
+
+  test("a FORGE_REPO that is no repository here is said once, and keeps what was read", async () => {
+    const kept = shippedReleases();
+    lines.length = 0;
+    expect((await readOwnTags(app, "trevato-apps/forge")).ok).toBe(false);
+    const read = ownTagsReader({ db: app.db, reposRoot: app.reposRoot, log }, "trevato-apps/forge");
+    await expect(read()).rejects.toThrow("no repository on this forge");
+    await expect(read()).rejects.toThrow();
+    expect(lines).toEqual([
+      {
+        level: "warn",
+        message: "release tags unread; /releases.json lists what was read before",
+        fields: { why: "FORGE_REPO names trevato-apps/forge, which is no repository on this forge" },
+      },
+    ]);
+    expect(shippedReleases()).toBe(kept);
   });
 });

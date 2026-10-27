@@ -63,8 +63,8 @@ import { running } from "./kernel/version.ts";
 import { record as recordDegraded } from "./kernel/degraded_history.ts";
 import { vitals } from "./kernel/vitals.ts";
 import { proveRelease } from "./release/prove.ts";
-import { CHECK_EVERY_MS, readNewest, setBehind, watchBehind } from "./release/behind.ts";
-import { repoDir } from "./git/repos.ts";
+import { CHECK_EVERY_MS, setBehind, watchBehind } from "./release/behind.ts";
+import { ownTagsReader } from "./release/own_tags.ts";
 import { snapshotPlace } from "./actions/health.ts";
 import { capacityDefault } from "./core/capacity.ts";
 import { bootCounts, recordBoot, recordCleanExit } from "./kernel/boots.ts";
@@ -566,18 +566,13 @@ void proveRelease({
 }).then((p) => p && app.log.info("release proof", { version: p.version, ok: String(p.ok), ...(p.failure ? { failure: p.failure } : {}) }));
 // The release tags of the forge's own repository are its shipped releases (release/shipped.ts);
 // production behind the newest for over an hour is a card (release/behind.ts).
+// A FORGE_REPO that is not owner/name is dropped by releaseEnv; say so, or the list stops at the frozen one unexplained.
+if ((process.env.FORGE_REPO ?? "") !== "" && !app.config.forgeRepo)
+  app.log.warn("FORGE_REPO is not owner/name; release tags are not read", { value: process.env.FORGE_REPO });
 if (app.config.forgeRepo) {
-  const [owner, name] = app.config.forgeRepo.split("/");
   const watch = watchBehind({
     live: () => running().version,
-    read: async () => {
-      const row = app.db
-        .query<{ id: string }, [string, string]>(
-          "SELECT repo.id FROM repo JOIN user u ON u.id = repo.owner_id WHERE u.username = ?1 AND repo.name = ?2",
-        )
-        .get(owner ?? "", name ?? "");
-      return row ? readNewest(repoDir(app.reposRoot, owner!, name!)) : undefined;
-    },
+    read: ownTagsReader(app, app.config.forgeRepo),
   });
   setBehind(watch);
   void watch.tick();
