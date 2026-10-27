@@ -12,6 +12,7 @@
 
 import { STAGE_BADGE_JS } from "./stage-row.ts";
 import { paletteHelpersJs } from "./palette.ts";
+import { MEDIA_PLAY_JS } from "./render/player.ts";
 import { NOT_TOLD_WORDS } from "../actions/tell_words.ts";
 
 /**
@@ -1278,6 +1279,9 @@ export const shellJs = /* js */ `
   // Controls that only mean something with a script running stay hidden
   // until one is: no dead buttons on a page with JavaScript switched off.
   doc.documentElement.classList.add('js');
+
+  // ---- a file the browser cannot play: its note, with Download ----
+  ${MEDIA_PLAY_JS}
 
   // ---- menus (details) ----
   function closeMenus(except) {

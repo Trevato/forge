@@ -71,8 +71,7 @@ import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, fragment, page, redirect } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
-import { fileKind, HEAD_BYTES, RENDER_CAP } from "../render/kinds.ts";
-import { RENDERERS } from "../render/renderers.ts";
+import { rendererFor } from "../render/renderers.ts";
 import { mediaHref } from "./media.ts";
 import { browseBase, localScope, type RepoScope } from "../scope.ts";
 import { repoForkOf } from "../../core/origins.ts";
@@ -1025,23 +1024,17 @@ export function renderBlob(
   const blob = o.blob;
   // The registry decides what this file is and whether anything draws it;
   // a kind with no renderer yet, or one over its cap, keeps the source view.
-  const renderer =
-    blob.kind === "too_large"
-      ? undefined
-      : (() => {
-          const kind = fileKind(o.path, blob.body.subarray(0, HEAD_BYTES));
-          return blob.size <= RENDER_CAP[kind] ? RENDERERS[kind] : undefined;
-        })();
+  const renderer = rendererFor(o.path, blob);
   const view: BlobView = renderer ? (o.view ?? "rendered") : "source";
-  const { content, lines } =
-    view === "rendered" && renderer && blob.kind !== "too_large"
-      ? renderer({
+  const { content, lines, summary } =
+    view === "rendered" && renderer
+      ? renderer.render({
           path: o.path,
           size: blob.size,
-          body: blob.body,
+          body: renderer.body,
           media: mediaHref(base, o.ref, o.path),
         })
-      : blobBody(base, o.ref, o.path, blob, o.highlighted, o.all);
+      : { ...blobBody(base, o.ref, o.path, blob, o.highlighted, o.all), summary: undefined };
   const sizeText =
     blob.kind === "too_large" ? "" : sizeWithTokens(blob.size, o.path);
   const fileHref = `${base}/blob/${encoded}/${o.path}`;
@@ -1055,13 +1048,15 @@ export function renderBlob(
       )}
       ${pathCrumbs(base, scope.facts.name, o.ref, o.path, true)}
       <span class="spacer"></span>
-      ${when(
-        lines > 0,
-        () =>
-          html`<span class="muted small num"
-            >${lines.toLocaleString()} lines · ${sizeText}</span
-          >`,
-      )}
+      ${summary !== undefined
+        ? html`<span class="muted small num">${summary}</span>`
+        : when(
+            lines > 0,
+            () =>
+              html`<span class="muted small num"
+                >${lines.toLocaleString()} lines · ${sizeText}</span
+              >`,
+          )}
       ${when(
         renderer !== undefined,
         () =>

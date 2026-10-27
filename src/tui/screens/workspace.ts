@@ -75,6 +75,7 @@ import {
 } from "../ui/image.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { renderMarkdown, type Line } from "../ui/markdown.ts";
+import { mediaNote } from "../ui/media-note.ts";
 import { tokColor, type Tokens } from "../ui/theme.ts";
 import { card, emptyState, input, scrollbar } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
@@ -470,6 +471,11 @@ export function workspaceScreen(
 ): Screen {
   const key = memoryKey(src);
   const memory = recall(f, key);
+  /** This repository on the web, where its media route plays a file; none for a mirror. */
+  const mediaWeb = (): string | undefined =>
+    src.where.kind === "local" && f.app.config.url !== undefined
+      ? `${f.app.config.url.replace(/\/+$/, "")}/${src.where.repo.ownerName}/${src.where.repo.name}`
+      : undefined;
   // An explicit `open`/`ref` from the caller wins over what we remembered:
   // arriving from a search hit means "show me *that*", not "show me where I
   // was". Everything else is restored.
@@ -668,15 +674,23 @@ export function workspaceScreen(
           read.error === "not_found"
             ? "No such file at this revision."
             : errorText(read.error);
-      else if (read.value.kind === "too_large")
-        note = `${formatSize(read.value.size)} — too large to display.`;
-      else if (read.value.kind === "binary") {
-        // A binary blob whose *name* says picture is the one binary we do
-        // something with. Everything else keeps the honest note: showing
-        // bytes as text is how a terminal ends up beeping at you.
-        if (looksLikeImage(t.path)) picture = read.value.body;
-        else note = `Binary file, ${formatSize(read.value.size)}.`;
-      } else raw = read.value.body;
+      else {
+        // Audio and video are not played here; the note says where they are.
+        const media =
+          read.value.kind === "text"
+            ? undefined
+            : mediaNote(t.path, formatSize(read.value.size), mediaWeb(), ref);
+        if (media !== undefined) note = media;
+        else if (read.value.kind === "too_large")
+          note = `${formatSize(read.value.size)} — too large to display.`;
+        else if (read.value.kind === "binary") {
+          // A binary blob whose *name* says picture is the one binary we do
+          // something with. Everything else keeps the honest note: showing
+          // bytes as text is how a terminal ends up beeping at you.
+          if (looksLikeImage(t.path)) picture = read.value.body;
+          else note = `Binary file, ${formatSize(read.value.size)}.`;
+        } else raw = read.value.body;
+      }
       entry = { note, raw, picture };
       remember(key, entry);
     }

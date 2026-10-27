@@ -282,6 +282,10 @@ form.inline { display: inline; margin-left: auto; }
    one path header, and the switch between the two views in it. */
 .blob-view { margin-left: 8px; }
 .blob-view .seg { font-size: 12.5px; }
+/* An audio or video file, played inline (render/player.ts). The video is as
+   wide as the pane and no wider; height follows its own aspect ratio. */
+.media-pane .media-player { display: block; width: 100%; max-width: 100%; }
+.media-pane video.media-player { height: auto; max-height: 80vh; background: var(--muted); border-radius: var(--radius-sm); }
 
 /* ---- prose (markdown) ---- */
 .prose { padding: 16px 20px; font-size: 15px; line-height: 1.65; overflow-wrap: break-word; }

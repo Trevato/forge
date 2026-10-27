@@ -51,10 +51,39 @@ its module; a kind with none yet keeps the source or binary view it always
 had. Where a renderer exists the header offers `Rendered | Source`; every
 file's header has the **Raw** and **Download** buttons.
 
+## Audio and video (#7333)
+
+An audio file is `<audio controls preload="metadata">` and a video
+`<video controls playsinline preload="metadata">`, each with a `<source>` on
+the media route and the registry's type (`render/audio.ts`,
+`render/video.ts`, `render/player.ts`). Range on the media route is what
+seeks. A `.mov` also offers itself as `video/mp4`, which is what most
+QuickTime files are inside, for browsers that refuse `video/quicktime`.
+
+- **Header:** size and container (`3.2 MB · WebM`) in place of a line count.
+- **Video** is the pane's width at its own aspect ratio, at most 80vh tall.
+- **A format the browser cannot decode** fires `error`; the shell script
+  (`MEDIA_PLAY_JS`) hides the player and shows "Your browser can't play this
+  format" with Download, already in the markup.
+- **With scripts off,** a `<noscript>` line under the player offers the same
+  Download, so an undecodable file is never a dead end.
+- **Container names** come from the registry (`name` in `kinds.ts`,
+  returned by `claimedMedia`): one table names each format.
+- **In the terminal** an audio or video file is not played; the file pane
+  says so, names the format and size, and prints the media route on the
+  forge's address (`src/tui/ui/media-note.ts`).
+- **A long file:** the page reads at most 1 MB of a file. Audio and video are
+  drawn from the media route alone (`STREAMED` in `render/renderers.ts`), so
+  past that a file is drawn by its extension (`claimedMedia`) and its bytes
+  are confirmed by the media route, which serves a contradicted one as
+  `application/octet-stream` and the player shows the note. Under 1 MB, the
+  bytes decide first, and a `.mp4` that is text keeps the source view.
+- Over `RENDER_CAP` (500 MB audio, 4 GB video) the page offers Download.
+
 ## Adding a renderer
 
 Write `src/web/render/<kind>.ts` exporting a `Renderer` (plain data in:
 path, size, body, and `media`, the media route's address; HTML out), and
-name it once in `RENDERERS` (`render/renderers.ts`). Point any element
+name it once in `RENDERERS` (`render/renderers.ts`); `rendererFor` picks it. Point any element
 that needs the bytes at `input.media`, never at an inline copy, so
 repository content only ever runs under the media route's sandbox. `render/markdown.ts` is the example.

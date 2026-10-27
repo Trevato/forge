@@ -83,6 +83,8 @@ const svgRoot: Magic = (head) =>
 
 interface Media {
   readonly kind: FileKind;
+  /** The format as a person says it, for a header: `WebM`, `QuickTime`. */
+  readonly name: string;
   readonly type: string;
   /** Absent for a format with no signature (STL); the extension decides. */
   readonly magic?: Magic;
@@ -90,29 +92,29 @@ interface Media {
 
 /** The allowlist. A media type that is not here is never served. */
 const MEDIA: Readonly<Record<string, Media>> = {
-  png: { kind: "image", type: "image/png", magic: bytes(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a) },
-  jpg: { kind: "image", type: "image/jpeg", magic: bytes(0xff, 0xd8, 0xff) },
-  jpeg: { kind: "image", type: "image/jpeg", magic: bytes(0xff, 0xd8, 0xff) },
-  gif: { kind: "image", type: "image/gif", magic: any(ascii("GIF87a"), ascii("GIF89a")) },
-  webp: { kind: "image", type: "image/webp", magic: riff("WEBP") },
-  avif: { kind: "image", type: "image/avif", magic: (h) => ftyp(h) && (at(h, 8, "avif") || at(h, 8, "avis")) },
-  bmp: { kind: "image", type: "image/bmp", magic: ascii("BM") },
-  ico: { kind: "image", type: "image/x-icon", magic: bytes(0x00, 0x00, 0x01, 0x00) },
-  svg: { kind: "svg", type: "image/svg+xml", magic: svgRoot },
-  pdf: { kind: "pdf", type: "application/pdf", magic: ascii("%PDF-") },
-  mp3: { kind: "audio", type: "audio/mpeg", magic: mpegAudio },
-  ogg: { kind: "audio", type: "audio/ogg", magic: ascii("OggS") },
-  oga: { kind: "audio", type: "audio/ogg", magic: ascii("OggS") },
-  wav: { kind: "audio", type: "audio/wav", magic: riff("WAVE") },
-  flac: { kind: "audio", type: "audio/flac", magic: ascii("fLaC") },
-  m4a: { kind: "audio", type: "audio/mp4", magic: ftyp },
-  aac: { kind: "audio", type: "audio/aac", magic: any(adts, ftyp) },
-  mp4: { kind: "video", type: "video/mp4", magic: ftyp },
-  m4v: { kind: "video", type: "video/mp4", magic: ftyp },
-  webm: { kind: "video", type: "video/webm", magic: bytes(0x1a, 0x45, 0xdf, 0xa3) },
-  mov: { kind: "video", type: "video/quicktime", magic: quicktime },
-  stl: { kind: "model3d", type: "model/stl" },
-  glb: { kind: "model3d", type: "model/gltf-binary", magic: ascii("glTF") },
+  png: { kind: "image", name: "PNG", type: "image/png", magic: bytes(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a) },
+  jpg: { kind: "image", name: "JPEG", type: "image/jpeg", magic: bytes(0xff, 0xd8, 0xff) },
+  jpeg: { kind: "image", name: "JPEG", type: "image/jpeg", magic: bytes(0xff, 0xd8, 0xff) },
+  gif: { kind: "image", name: "GIF", type: "image/gif", magic: any(ascii("GIF87a"), ascii("GIF89a")) },
+  webp: { kind: "image", name: "WebP", type: "image/webp", magic: riff("WEBP") },
+  avif: { kind: "image", name: "AVIF", type: "image/avif", magic: (h) => ftyp(h) && (at(h, 8, "avif") || at(h, 8, "avis")) },
+  bmp: { kind: "image", name: "BMP", type: "image/bmp", magic: ascii("BM") },
+  ico: { kind: "image", name: "ICO", type: "image/x-icon", magic: bytes(0x00, 0x00, 0x01, 0x00) },
+  svg: { kind: "svg", name: "SVG", type: "image/svg+xml", magic: svgRoot },
+  pdf: { kind: "pdf", name: "PDF", type: "application/pdf", magic: ascii("%PDF-") },
+  mp3: { kind: "audio", name: "MP3", type: "audio/mpeg", magic: mpegAudio },
+  ogg: { kind: "audio", name: "Ogg", type: "audio/ogg", magic: ascii("OggS") },
+  oga: { kind: "audio", name: "Ogg", type: "audio/ogg", magic: ascii("OggS") },
+  wav: { kind: "audio", name: "WAV", type: "audio/wav", magic: riff("WAVE") },
+  flac: { kind: "audio", name: "FLAC", type: "audio/flac", magic: ascii("fLaC") },
+  m4a: { kind: "audio", name: "MPEG-4 audio", type: "audio/mp4", magic: ftyp },
+  aac: { kind: "audio", name: "AAC", type: "audio/aac", magic: any(adts, ftyp) },
+  mp4: { kind: "video", name: "MPEG-4", type: "video/mp4", magic: ftyp },
+  m4v: { kind: "video", name: "MPEG-4", type: "video/mp4", magic: ftyp },
+  webm: { kind: "video", name: "WebM", type: "video/webm", magic: bytes(0x1a, 0x45, 0xdf, 0xa3) },
+  mov: { kind: "video", name: "QuickTime", type: "video/quicktime", magic: quicktime },
+  stl: { kind: "model3d", name: "STL", type: "model/stl" },
+  glb: { kind: "model3d", name: "glTF binary", type: "model/gltf-binary", magic: ascii("glTF") },
 };
 
 /** Kinds read as text: the extension names the kind, the bytes must be text. */
@@ -165,6 +167,18 @@ export function fileKind(path: string, head: Uint8Array): FileKind {
   if (media !== undefined) return media.kind;
   if (looksBinary(head)) return "binary";
   return TEXTUAL[extension(path)] ?? "text";
+}
+
+/**
+ * What a file's name alone claims to be, unconfirmed: for a page that never
+ * read the bytes (a long video) and only points an element at the media
+ * route, which confirms them before it sends one with this type.
+ */
+export function claimedMedia(
+  path: string,
+): { kind: FileKind; type: string; name: string } | undefined {
+  const media = MEDIA[extension(path)];
+  return media === undefined ? undefined : { kind: media.kind, type: media.type, name: media.name };
 }
 
 /**
