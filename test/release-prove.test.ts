@@ -29,6 +29,7 @@ function site(version: string, over: Record<string, () => Response> = {}) {
       return new Response('if (r.mode === "navigate") { e.respondWith(fetch(r)); return; }', {
         headers: { "content-type": "text/javascript" },
       });
+    if (path === "/explore" || path === "/search" || path === "/boards") return new Response("page");
     return new Response("no", { status: 404 });
   }) as unknown as typeof fetch;
   return { fake, hits };
@@ -41,7 +42,7 @@ describe("proving a release", () => {
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
   const run = (version: string, fake: typeof fetch, extra = {}) =>
-    proveRelease({ dataDir: dir, version, url: "https://forge.test", fetch: fake, sleep: async () => {}, ...extra });
+    proveRelease({ dataDir: dir, version, url: "https://forge.test", fetch: fake, sleep: async () => {}, heavy: { watchMs: 30, pollMs: 5 }, ...extra });
 
   test("a pass is recorded with the version and raises nothing", async () => {
     const { fake } = site("1.2.3");
@@ -49,6 +50,15 @@ describe("proving a release", () => {
     expect(p?.ok).toBe(true);
     expect(lastProof(dir)?.version).toBe("1.2.3");
     expect(proofNeed(dir)).toBeUndefined();
+  });
+
+  test("the go-live proof loads the heavy pages and watches /healthz without being asked", async () => {
+    const { fake: base, hits } = site("1.2.5");
+    const fake = (async (input: string | URL, init?: RequestInit) =>
+      new URL(String(input)).pathname === "/healthz" && hits.includes("/explore") ? new Response("down", { status: 503 }) : base(input, init)) as unknown as typeof fetch;
+    const p = await proveRelease({ dataDir: dir, version: "1.2.5", url: "https://forge.test", fetch: fake, sleep: async () => {} });
+    expect(p?.ok).toBe(false);
+    expect(p?.failure).toContain("/healthz");
   });
 
   test("an app host that answers as the forge fails the proof (#6726)", async () => {

@@ -16,6 +16,9 @@
  * line per finding with its section (`--error-path` names a path that must answer
  * 500), and exits 0: it reports, it does not gate.
  *
+ * `--version` also loads `/boards`, `/`, `/explore`, `/search?q=a` and a repository home (`--repo`, default
+ * /trevato/forge, skipped on 404) and watches `/healthz` for `--watch` seconds (default 60); see `release/smoke.ts`.
+ *
  * `--app-host <url>` also fetches `/` there and fails if it is the forge's page (`<title>forge</title>`).
  *
  * `--outsider` also signs up a fresh account and proves each thing a
@@ -47,10 +50,13 @@ if (import.meta.main) {
   const appHost = flag("--app-host");
   const version = flag("--version");
   const wait = flag("--wait");
+  const watchFor = flag("--watch");
+  const repo = flag("--repo");
   const base = args[0];
   const seconds = wait === undefined ? 120 : Number(wait);
-  if (!base || !Number.isFinite(seconds) || seconds < 0 || args.length > 1) {
-    console.error("usage: bun scripts/smoke.ts <url> [--version <v>] [--wait <seconds>] [--outsider] [--app-host <url of an app>] [--standards [--error-path <path that answers 500>]]  (--version needs FORGE_PROBE, the forge's probe)");
+  const watchSeconds = watchFor === undefined ? undefined : Number(watchFor);
+  if (!base || (watchSeconds !== undefined && !(watchSeconds >= 0)) || !Number.isFinite(seconds) || seconds < 0 || args.length > 1) {
+    console.error("usage: bun scripts/smoke.ts <url> [--version <v>] [--wait <seconds>] [--watch <seconds of /healthz watching, default 60>] [--repo </owner/name>] [--outsider] [--app-host <url of an app>] [--standards [--error-path <path that answers 500>]]  (--version needs FORGE_PROBE, the forge's probe)");
     process.exit(2);
   }
   if (withOutsider && !process.env["FORGE_TOKEN"]) {
@@ -71,6 +77,8 @@ if (import.meta.main) {
   }
   const failures = await smoke(base, process.env["FORGE_TOKEN"] ?? "", {
     version,
+    // A release (`--version`) loads the heavy pages and watches /healthz after go-live (#6898).
+    ...(version ? { heavy: { ...(watchSeconds === undefined ? {} : { watchMs: watchSeconds * 1000 }), ...(repo ? { repo } : {}) } } : {}),
     waitMs: seconds * 1000,
     ...(appHost ? { appHost } : {}),
     // The forge tells only its probe its version (`src/kernel/probe.ts`).

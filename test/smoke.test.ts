@@ -34,6 +34,7 @@ function stub(cssType: string, seen: string[] = []) {
           ? new Response("board")
           : new Response(null, { status: anonymousBoard.status, headers: { location: anonymousBoard.location } });
       if (path === "/healthz") return new Response("ok", { headers: { "x-forge-version": version() } });
+      if (["/explore", "/search", "/boards"].includes(path) || path.startsWith("/trevato/")) return new Response("page");
       if (path === "/sw.js") return new Response(sw.body, { status: sw.status, headers: { "content-type": sw.type } });
       return new Response("no", { status: 404 });
     },
@@ -104,7 +105,7 @@ test("the CLI takes --version and --wait", async () => {
   const base = stub("text/css");
   const run = (...a: string[]) =>
     Bun.spawn(["bun", "scripts/smoke.ts", base, ...a], { env: { ...process.env, FORGE_TOKEN: "t" }, stdout: "pipe", stderr: "pipe" }).exited;
-  expect(await run("--version", "v1")).toBe(0);
+  expect(await run("--version", "v1", "--watch", "0.2")).toBe(0);
   expect(await run("--version", "zz", "--wait", "0")).toBe(1);
 });
 

@@ -10,7 +10,7 @@
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { smoke, type Failure } from "./smoke.ts";
+import { smoke, type Failure, type Heavy } from "./smoke.ts";
 import { UNSTAMPED } from "../kernel/version.ts";
 import { ownProbeHeaders } from "../kernel/probe.ts";
 
@@ -72,6 +72,8 @@ export interface ProveOptions {
   readonly now?: () => number;
   readonly sleep?: (ms: number) => Promise<void>;
   readonly giveUpMs?: number;
+  /** The heavy-page load and `/healthz` watch after go-live; a shorter window for a test. */
+  readonly heavy?: Heavy;
 }
 
 /**
@@ -104,7 +106,11 @@ export async function proveRelease(o: ProveOptions): Promise<Proof | undefined> 
       if (now() + POLL_MS > deadline) return finish(`the public URL never answered as ${o.version}`);
       await sleep(POLL_MS);
     }
-    const failures = await smoke(o.url, o.token ?? "", { fetch: doFetch, anonymousBoard: true, ...(o.appHost ? { appHost: o.appHost } : {}) });
+    const failures = await smoke(o.url, o.token ?? "", {
+      fetch: doFetch,
+      anonymousBoard: true,
+      heavy: { version: o.version, probe: ownProbeHeaders(o.dataDir), ...o.heavy }, ...(o.appHost ? { appHost: o.appHost } : {}),
+    });
     return finish(failures[0] === undefined ? undefined : checkLine(failures[0]));
   } catch (error) {
     return finish(`the smoke checks could not run: ${String(error)}`);
