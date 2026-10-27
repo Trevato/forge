@@ -266,12 +266,6 @@ import {
   listAppDomains,
   removeAppDomain,
 } from "../actions/domains.ts";
-import {
-  addPromptSource,
-  listPromptSources,
-  removePromptSource,
-  runPromptSource,
-} from "../actions/prompts.ts";
 import { listDomains } from "../core/domains.ts";
 import {
   migrateMessage,
@@ -417,6 +411,7 @@ import { agentRoutes } from "./api/agents.ts";
 import { boardRoutes } from "./api/boards.ts";
 import { labelsRoutes } from "./api/labels.ts";
 import { orgRoutes } from "./api/orgs.ts";
+import { promptRoutes } from "./api/prompts.ts";
 import { secretRoutes } from "./api/secrets.ts";
 import { upstreamRoutes } from "./api/upstream.ts";
 import type { Router } from "./router.ts";
@@ -5392,68 +5387,7 @@ export function apiRoutes(router: Router<Handler>): void {
 
   egressGrantRoutes(router);
 
-  // Where the crew's next tell comes from when nobody is typing
-  // (docs/APPS.md, "Prompts from Instagram"). Admin scope and admin over
-  // the repository; the token goes in once and never comes back out.
-  router.add("GET", "/api/v1/repos/:owner/:name/prompts", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const repo = loadRepo(ctx);
-    if (!repo) return notFound();
-    const listed = timePhase(ctx.request, "prompts", () => listPromptSources(ctx.app, ctx.auth.user, repo));
-    if (!listed.ok) return respondAccess(listed.error, 422);
-    return timePhase(ctx.request, "render", () => json({ items: listed.value, next_cursor: null }));
-  });
-
-  router.add("POST", "/api/v1/repos/:owner/:name/prompts", async (ctx) => {
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const repo = loadRepo(ctx);
-    if (!repo) return notFound();
-    const input = await body(ctx.request);
-    const added = addPromptSource(ctx.app, ctx.auth.user, repo, {
-      kind: str(input.kind),
-      token: str(input.token),
-      at: str(input.at),
-    });
-    if (!added.ok) return respondAccess(added.error, 422);
-    return json(added.value, 201);
-  });
-
-  router.add(
-    "POST",
-    "/api/v1/repos/:owner/:name/prompts/:id/run",
-    async (ctx) => {
-      const denied = requireScope(ctx, "admin");
-      if (denied) return denied;
-      const repo = loadRepo(ctx);
-      if (!repo) return notFound();
-      const ran = await runPromptSource(
-        ctx.app,
-        ctx.auth.user,
-        repo,
-        ctx.params.id ?? "",
-      );
-      if (!ran.ok) return respondAccess(ran.error, 422);
-      return json(ran.value);
-    },
-  );
-
-  router.add("DELETE", "/api/v1/repos/:owner/:name/prompts/:id", (ctx) => {
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const repo = loadRepo(ctx);
-    if (!repo) return notFound();
-    const removed = removePromptSource(
-      ctx.app,
-      ctx.auth.user,
-      repo,
-      ctx.params.id ?? "",
-    );
-    if (!removed.ok) return respondAccess(removed.error, 422);
-    return json({}, 200);
-  });
+  promptRoutes(router);
 
   secretRoutes(router);
 
