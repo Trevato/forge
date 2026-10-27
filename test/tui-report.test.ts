@@ -74,7 +74,8 @@ afterAll(async () => {
 
 describe("report a problem in the terminal", () => {
   test("the palette has the row", async () => {
-    expect(await palette(bob, [":"])).toContain("alice/lobby — Report a problem");
+    // Filtered, so the row's presence does not depend on how many others the palette lists.
+    expect(await palette(bob, [":", "Report a"])).toContain("alice/lobby — Report a problem");
   });
 
   test("a text opens an issue titled by its first line", async () => {

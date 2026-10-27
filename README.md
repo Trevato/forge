@@ -441,6 +441,8 @@ This page is the front door. Everything else is a file of its own under
 - [`docs/DESIGN.md`](docs/DESIGN.md) — the design system's spine; its sections are under `docs/design/sections/`.
 - [`docs/SPIKE-CLOUDFLARE.md`](docs/SPIKE-CLOUDFLARE.md), [`docs/AUDIT-MANY-HANDS.md`](docs/AUDIT-MANY-HANDS.md), [`docs/BACKLOG.md`](docs/BACKLOG.md) and [`docs/research/`](docs/research/) — a spike, an audit, a backlog and research notes, kept as written.
 
+What the crew's tokens bought is on the board (`/board/returns`), in MCP `returns`, and in the terminal: the palette's Usage carries a Returns line (dollars, runs, changes landed, cost per landed change; `[`/`]` move between 1, 7, 30 and 90 days), and Usage of a repository (`owner/name`) narrows it to one app. Owner facts only (`src/actions/returns.ts`); see [`docs/OPERATING.md`](docs/OPERATING.md).
+
 The terminal's palette has `Signed in` for anyone signed in: your browsers, tokens and this terminal's key, with when each was last seen; `d` signs the selected browser out after a confirm, as `/settings` and MCP `sessions` do (`docs/CREW.md`, "Where you are signed in").
 
 `/changelog` lists the last 30 releases of `FORGE_REPO` (public only) with their pulls, for anyone; the terminal's palette has `Changelog` for the same list (`docs/features/changelog.md`).

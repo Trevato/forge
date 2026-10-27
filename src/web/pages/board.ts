@@ -14,6 +14,7 @@
  * pointer. The old big view (`/big`, every address it had) lands here.
  */
 
+import { usd } from "../../core/money.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { sentinelNotice } from "../../crew/sentinel.ts";
 import { appsForRepos, type AppRecord } from "../../core/apps.ts";
@@ -466,8 +467,6 @@ function asksStrip(ctx: Ctx): Html | null {
 
 // ---- what the tokens bought ----
 
-/** Dollars as the board writes them: cents under ten, whole above. */
-export const usd = (n: number): string => `$${n < 10 ? n.toFixed(2) : n.toFixed(0)}`;
 
 /**
  * The week's spend against what it landed, in one line, owner facts only:

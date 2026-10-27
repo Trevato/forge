@@ -125,6 +125,12 @@ const REPO_VERBS: readonly {
     title: "Milestones in a repository",
     open: (f, ctx, repo) => limbsScreen(f, ctx, repo),
   },
+  {
+    // What the crew's tokens bought on one app, as MCP `returns` with `repo` (#7271).
+    id: "repo-usage",
+    title: "Usage of a repository",
+    open: (f, ctx, repo) => usageScreen(f, ctx, repo),
+  },
   { id: "new-issue", title: "New issue", open: newIssueScreen },
   { id: "new-pull", title: "New pull request", open: newPullScreen },
   {
