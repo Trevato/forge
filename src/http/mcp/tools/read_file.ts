@@ -4,11 +4,12 @@ import { isSafeRef, isSafeTreePath } from "../../../git/guard.ts";
 import { blobForRender, listTree } from "../../../git/read.ts";
 import { readStl, sayStl, stlSize, TOO_LARGE } from "../../../text/stl.ts";
 import { checkConfig, configKind, type ConfigKind } from "../../../text/config_check.ts";
+import { describeMedia } from "../../../text/mp4.ts";
 import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
 
 export const tool: Tool = {
   name: "read_file",
-  doc: "a file (utf-8, or base64 for binary) or a directory listing at a ref, as GET …/contents",
+  doc: "a file (utf-8, or base64 for binary) or a directory listing at a ref, as GET …/contents; MP4/MOV/M4A files also carry about: {kind, seconds, width?, height?, says}",
   description:
     "Read a file or list a directory at a ref (default branch); over 5 MB answers tooLarge.",
   inputSchema: {
@@ -70,6 +71,8 @@ function aboutFile(path: string, body: Uint8Array, text: string | undefined): Re
     const { format, triangles } = stl.value;
     return { kind: "stl", format, triangles, size: stlSize(stl.value), says: sayStl(stl.value) };
   }
+  const media = describeMedia(path, body);
+  if (media) return media;
   if (text === undefined) return undefined;
   const kind = configKind(path);
   return kind === null ? undefined : aboutConfig(kind, text);

@@ -10,6 +10,7 @@ import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { box, concat, ftyp, mvhd0, tkhd } from "./helpers/mp4-boxes.ts";
 import { asciiBox, binaryBox } from "./helpers/stl.ts";
 
 quietLogs();
@@ -66,6 +67,8 @@ beforeAll(async () => {
           { path: "bad.json", content: '{\n "a": }' },
           { path: "good.json", content: "{}" },
         ] }));
+  const movie = concat(ftyp(), box("moov", mvhd0(600, 600 * 92), box("trak", tkhd(0, 1920, 1080))));
+  ok(await commitToBranch(app, owner, pub, { message: "movie", files: [{ path: "clip.mp4", content: movie }] }));
   ok(
     await commitToBranch(app, owner, pub, {
       message: "models",
@@ -107,6 +110,13 @@ test("bad arguments are refused", async () => {
   expect((await read(t, { repo: "ada/pub", path: "src/a.txt", ref: "--upload-pack=x" })).error).toContain("not_found");
   expect((await read(t, { repo: "ada/pub", path: 7 })).error).toContain("invalid");
   expect((await read(t, { repo: "ada/pub", path: "nope.txt" })).error).toContain("not_found");
+});
+
+test("an MP4 file is described in words beside its base64; a text file has no about", async () => {
+  const file = (await read(tok["stranger"]!, { repo: "ada/pub", path: "clip.mp4" })).value;
+  expect(file.encoding).toBe("base64");
+  expect(file.about).toEqual({ kind: "video", seconds: 92, width: 1920, height: 1080, says: "video · 1:32 · 1920×1080" });
+  expect((await read(tok["stranger"]!, { repo: "ada/pub", path: "src/a.txt" })).value.about).toBeUndefined();
 });
 
 test("an STL file is described in words", async () => {
