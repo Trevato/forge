@@ -159,6 +159,7 @@ import {
   backupsTest,
   domainsMoved,
 } from "../web/pages/backups.ts";
+import { changelogPage } from "../web/pages/changelog.ts";
 import { releasesPage, rollbackSubmit } from "../web/pages/releases.ts";
 import {
   cloudAdd,
@@ -775,6 +776,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/new", newRepoPage);
   router.add("GET", "/audit", auditPage);
   router.add("GET", "/releases", releasesPage);
+  router.add("GET", "/changelog", changelogPage);
   router.add("POST", "/releases/:sha/rollback", rollbackSubmit);
   router.add("GET", "/audit.csv", auditCsv);
   router.add("POST", "/audit/:owner/:name/probe", auditProbeSubmit);

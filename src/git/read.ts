@@ -492,6 +492,8 @@ export interface LogOptions {
   skip?: number;
   /** Restrict to commits touching this tree path. */
   path?: string;
+  /** Only commits whose message matches this extended regular expression. */
+  grep?: string;
 }
 
 /** When `oid` was committed, as an ISO time; undefined when git cannot say. */
@@ -536,6 +538,7 @@ export async function commitLog(
     `--format=${LOG_FORMAT}`,
     `--max-count=${options.limit ?? 50}`,
     `--skip=${options.skip ?? 0}`,
+    ...(options.grep === undefined ? [] : ["--extended-regexp", `--grep=${options.grep}`]),
     rev,
     "--",
   ];

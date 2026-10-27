@@ -121,6 +121,7 @@ export const SYSTEM_NAMES: readonly string[] = [
   "git",
   "ssh",
   "status",
+  "changelog",
   "docs",
   "open-platform",
 ];

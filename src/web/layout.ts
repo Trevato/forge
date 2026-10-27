@@ -518,6 +518,7 @@ function footer(ctx: Ctx): Html {
           >${reduced}</span
         >`}
     <span class="spacer"></span>
+    <a href="/changelog">Changelog</a>
     ${ctx.auth.user !== undefined && ctx.auth.user.kind !== "org"
       ? html`<a class="btn" data-variant="link" data-size="sm" href="/#composer">Tell the crew</a>`
       : ""}

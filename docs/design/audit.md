@@ -33,7 +33,7 @@ their own vocabulary instead of composing the named one.
 
 ## Finding 2 — the pages, and what each is for
 
-There are 62 top-level pages, one entry each: every static `GET` route in `src/http/server.ts`
+There are 63 top-level pages, one entry each: every static `GET` route in `src/http/server.ts`
 that returns a page (`test/design-audit.test.ts` holds this list to the router,
 both ways). Each entry reads `route` — module · what it is for · what
 duplicates it · what breaks `docs/DESIGN.md`. "Breaks" counts colour literals
@@ -62,6 +62,7 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/map` — `pages/map.ts` (1,806 lines) · the dependency map of work across the forge · `/board`, issue dependency lists, `/:owner/:name/map` · colours 3, sizes 12: the largest private vocabulary.
 - `/audit` — `pages/audit.ts` · every app's contract, who can do what · the app page's one-line policy · none seen. Names the audit of apps, not this document.
 - `/releases` — `pages/releases.ts` · the forge's kept releases and rollback · `/settings/backups` (both are "go back") · none seen.
+- `/changelog` — `pages/changelog.ts` · the last 30 releases with their dates and pulls, public · `/releases` (the signed-in kept releases) · none seen.
 - `/contribute` — `pages/contribute.ts` · what this forge is and where outside work is welcome, open to anyone · `/llms.txt`, MCP `contribute` tool · none seen.
 - `/search` — `pages/search.ts` · find across what I can read · the palette (`palette.ts`) · none seen.
 - `/-/confirm` — `pages/search.ts` (`confirmPage`) · the "are you sure" step for a destructive action · none · none seen.

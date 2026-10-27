@@ -72,6 +72,7 @@ import { grantable, READS_KEPT, recentReads } from "../core/telemetry.ts";
 import { noteRead, setTelemetryGrant, telemetryReader } from "../actions/telemetry.ts";
 import { queuesFor, systemFor } from "../system/telemetry.ts";
 import { live as liveMachine } from "../system/live.ts";
+import { changelogScreen } from "./screens/changelog.ts";
 import { releasesScreen } from "./screens/releases.ts";
 import { mayRead } from "../release/gate.ts";
 import { fileHoldsPrompt } from "./screens/fileholds.ts";
@@ -345,6 +346,13 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         hint: "each protection green, red or untested",
         run: () => ctx.push(resilienceScreen(ctx, resilienceLines(session.app.config.dataDir))),
       });
+    // The last releases with their pulls, as /changelog shows them: for anyone.
+    commands.push({
+      id: "changelog",
+      title: "Changelog",
+      hint: "the last 30 releases and their pulls",
+      run: () => ctx.push(changelogScreen(session, ctx)),
+    });
     // The live release and the kept ones, as /releases gates them: a site admin or a reader of FORGE_REPO.
     if (mayRead(session.app, session.user))
       commands.push({
