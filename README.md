@@ -40,9 +40,9 @@ in all three).
 Settings → Crew also shows, each only when it has something, a "Handed to the
 planner" card (issues the crew parked twice: repo, issue link, when last
 parked, why) and a "Restore drill" card (the last drill's pass or fail and
-when). The terminal's palette has the same as "Crew hand-overs", a read-only
-list of the same rows (repo#number, title, reasons; it does not open the
-issue — use the link on the page). Both are a forge admin's only.
+when). The terminal's palette has the same as "Crew hand-overs", a list of the
+same rows (repo#number, title, reasons): Enter opens a parked row's issue and
+`r` reads the list again. Both are a forge admin's only.
 
 `/boards` carries a Held files card for anyone who administers a repository (a forge admin sees every repository's): the holds of the repositories you administer, a form to hold another path, Release on each row, and "Showing 200 of N" when the list is cut. The user menu links Boards to such a person. In the terminal, a bare line on the Held files prompt lists the same holds.
 
