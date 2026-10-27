@@ -100,6 +100,7 @@ import { canSeeAnswers } from "../../web/studio/answers.ts";
 import { answersScreen } from "./answers.ts";
 import { commitsScreen } from "./commits.ts";
 import { deploysScreen } from "./deploys.ts";
+import { hooksCommands } from "./hooks.ts";
 import { runsScreen } from "./runs.ts";
 import {
   Filter,
@@ -1302,6 +1303,7 @@ export function workspaceScreen(
       ...reportsCommands(f, ctx, repo),
       ...noteCommands(f, ctx, () => screen, repo),
       ...yoursCommands(f, ctx, repo),
+      ...hooksCommands(f, ctx, repo),
       ...visionCommands(f, ctx, repo),
       ...appEnvCommands(f, ctx, repo),
     ],
