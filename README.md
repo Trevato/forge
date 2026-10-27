@@ -315,9 +315,21 @@ forge sync --ff                    # fast-forward clean repos, and only those
 forge pin owner/name               # ask the workbench to keep this one here
 forge ls                           # what is here, and how stale
 forge open owner/name --web        # the page, in a browser
+forge pulls                        # open pulls of this clone, newest first
 forge asks                         # what waits on you, most important first
 forge asks --repo owner/name       # only that repository's; --json for the API's answer
 ```
+
+`forge pulls` prints one line per pull: `#N`, the title cut to the terminal
+width, the author, the check (`green`, `red`, `running` or `none`) and the
+preview address when the repository is an app. It asks about the repository
+your `origin` remote names, when that remote is on the configured workbench;
+anywhere else it exits 2 and says so, and `--repo owner/name` names one
+yourself. `--closed` lists closed pulls, `--json` prints the API's answer, and
+a list longer than the 100-pull pages it follows is marked as cut. This is a
+shell command on purpose: the terminal UI of the forge (`ssh`, `src/tty.ts`)
+already has its own pulls screen, and the local UI is about working trees, not
+the workbench's conversation; the pulls API and MCP are the other doors.
 
 `sync` never merges, rebases, resets or checks anything out. `--ff` is the one
 exception and it fast-forwards a repo only when the tree is clean, nothing is

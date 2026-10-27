@@ -257,7 +257,8 @@ import {
   takeBackLimb,
 } from "../actions/limb_replan.ts";
 import { appsRuntime, envsFor, type AppsRuntime } from "../apps/runtime.ts";
-import { isEnvName } from "../apps/data.ts";
+import { isEnvName, previewEnv } from "../apps/data.ts";
+import { checkWord } from "../apps/check_word.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import { crewRole, isCrew, type Agent } from "../core/agents.ts";
 import { listApps, type AppRecord } from "../core/apps.ts";
@@ -266,6 +267,7 @@ import {
   checksForHead,
   getRun,
   isTerminal,
+  latestRunsForIssues,
   listActiveRuns,
   type Run,
 } from "../core/runs.ts";
@@ -2649,8 +2651,24 @@ export function apiRoutes(router: Router<Handler>): void {
     );
     const items = timePhase(ctx.request, "labels", () => {
       const siblings = variantSiblings(ctx.app.db, pulls);
+      // The check word and preview address the pull page shows, so a client
+      // lists "where to try it" without a request per pull.
+      const checks = latestRunsForIssues(ctx.app.db, pulls.map((p) => p.id));
+      // An address only where the pull page's preview card shows one: the
+      // environments `envsFor` hands this viewer (a private app shows none).
+      const record = getAppByRepo(ctx.app.db, repo.id);
+      const runtime = record === undefined ? undefined : appsRuntime(ctx.app);
+      const live = new Set(
+        record === undefined ? [] : envsFor(ctx.app, ctx.auth.user, record).map((e) => e.env),
+      );
       return withLabelsMany(ctx, pulls).map((item, i) => ({
         ...item,
+        author: item.originAuthor ?? item.authorName,
+        check: checkWord(checks.get(item.id), item.headOid),
+        preview:
+          record !== undefined && runtime !== undefined && item.state === "open" && item.mergedAt === null && live.has(previewEnv(item.number))
+            ? runtime.urlFor(record, previewEnv(item.number))
+            : null,
         variantSiblings: siblings[i] ?? [],
         ...(states[i] ?? {}),
       }));

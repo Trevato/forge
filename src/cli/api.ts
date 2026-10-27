@@ -36,6 +36,9 @@ export interface Whoami {
   readonly displayName: string;
 }
 
+/** Pages of 100 a listing follows before it says it is cut. */
+const PULL_PAGES = 20;
+
 /** One thing waiting on the user, as `forge asks` prints it. */
 export interface Ask {
   /** The API's kind (`look`, `parked`, `proposal`, …), or `forge` for its own needs. */
@@ -189,6 +192,36 @@ export class ForgeApi {
       `/api/v1/user/pins/${encode(owner)}/${encode(name)}`,
       { method: "DELETE" },
     );
+  }
+
+  /**
+   * The pulls of one repository, newest first, in the API's own shape. The
+   * cursor is followed to the end (at most `PULL_PAGES` pages), so the answer
+   * is whole; a single page comes back exactly as the API sent it, and when
+   * the cap is hit `next_cursor` is still set — the caller says it is cut.
+   */
+  async pulls(
+    owner: string,
+    name: string,
+    state: "open" | "closed" = "open",
+  ): Promise<ApiResult<{ items: unknown[]; next_cursor: unknown }>> {
+    const base = `/api/v1/repos/${encode(owner)}/${encode(name)}/pulls?state=${state}&limit=100`;
+    let first: Record<string, unknown> | undefined;
+    const items: unknown[] = [];
+    let cursor: unknown = null;
+    for (let page = 0; page < PULL_PAGES; page++) {
+      const query = cursor === null ? "" : `&cursor=${encodeURIComponent(String(cursor))}`;
+      const out = await this.call<Record<string, unknown>>(`${base}${query}`);
+      if (!out.ok) return out;
+      first ??= out.value;
+      if (Array.isArray(out.value["items"])) items.push(...out.value["items"]);
+      cursor = out.value["next_cursor"] ?? null;
+      if (cursor === null || cursor === "") {
+        cursor = null;
+        break;
+      }
+    }
+    return ok({ ...first, items, next_cursor: cursor });
   }
 
   /**

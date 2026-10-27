@@ -34,6 +34,7 @@ const PIPING: Record<string, { sites: string[]; reason: string }> = {
   "src/release/boot.ts": { sites: ["stderr"], reason: "stderr read to its end in a background loop, awaited before the reason is read; stdout ignored" },
   "src/release/checkout.ts": { sites: ["stdout+stderr"], reason: "stdout and stderr both read via Response.text()" },
   "src/cli/config.ts": { sites: ["stdout"], reason: "stdout awaited with the exit; stderr ignored" },
+  "src/cli/folder-repo.ts": { sites: ["stdout"], reason: "stdout awaited with the exit; stderr ignored" },
 };
 
 function files(dir: string): string[] {
