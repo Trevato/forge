@@ -17,6 +17,7 @@ import { rmSync } from "node:fs";
 import type { App } from "../app.ts";
 import { transact } from "../kernel/db.ts";
 import { addComment } from "../actions/issues.ts";
+import { planAnotherRound } from "../actions/give_back.ts";
 import { announceRun } from "../actions/runs.ts";
 import { crewRole, getAgent, type Agent } from "../core/agents.ts";
 import type { ForgeEvent } from "../core/events.ts";
@@ -556,6 +557,10 @@ function route(app: App, event: ForgeEvent): void {
         event.kind === "pull.reviewed" &&
         typeof event.payload["state"] === "string" &&
         crewRole(app.db, repo.id, actor.id) === "reviewer";
+      if (actor.kind === "agent" && event.kind === "pull.commented") {
+        const pull = typeof number === "number" ? getIssue(app.db, repo.id, number) : undefined;
+        if (pull && planAnotherRound(app, actor, repo, pull, event.payload["body"])) return;
+      }
       if (actor.kind === "agent" && !reviewerVerdict) return;
       // A reader's words stay on the thread and do nothing more: on a
       // public repository anyone may comment, and a run spends the owner's

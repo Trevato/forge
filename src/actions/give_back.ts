@@ -9,8 +9,8 @@
 import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import { assignIssue, addComment } from "./issues.ts";
-import { isCrew } from "../core/agents.ts";
-import { getIssue, getIssueById, type Issue } from "../core/issues.ts";
+import { crewRole, isCrew } from "../core/agents.ts";
+import { getIssue, getIssueById, setAssignee, type Issue } from "../core/issues.ts";
 import { closesFromBody } from "../core/pulls.ts";
 import { canWrite, getRepoById, type Repo } from "../core/repos.ts";
 import { getUserById, type User } from "../core/users.ts";
@@ -109,3 +109,41 @@ export function giveBack(
 }
 
 class Refused extends Error {}
+
+/** What a planner's comment starts with to send a handed-over pull one more round. */
+export const ANOTHER_ROUND = "Planner, one more round";
+
+/**
+ * The planner's "one more round" comment on a handed-over crew pull gives
+ * it back to its builder, as the button does. The planner cannot assign an
+ * agent (that is a person's to spend), so the rule is this one narrow
+ * door: the repository's planner, an open handed-over pull, a comment that
+ * starts with the phrase. The assignment event is what starts the run.
+ * An agent's word is not a director's: it does not end the hand-over, so the
+ * card stays on /asks and the pull counts as handed over during the round.
+ * Returns whether the pull was given back.
+ */
+export function planAnotherRound(
+  app: App,
+  actor: User,
+  repo: Repo,
+  pull: Issue,
+  body: unknown,
+): boolean {
+  if (typeof body !== "string" || !body.startsWith(ANOTHER_ROUND)) return false;
+  if (actor.kind !== "agent" || crewRole(app.db, repo.id, actor.id) !== "planner") return false;
+  if (pull.kind !== "pull" || pull.state !== "open" || repo.archivedAt !== null) return false;
+  if (handoverOf(app.db, repo, pull.id) === undefined) return false;
+  const builder = builderOf(app.db, repo, pull);
+  if (builder === undefined) return false;
+  // A crew pull starts assigned to its builder and hand-over never unassigns,
+  // so the builder usually holds it already: the event is what starts the run.
+  if (pull.assigneeId !== builder.id) setAssignee(app.db, pull.id, builder.id);
+  app.bus.append({
+    kind: "pull.assigned",
+    repoId: repo.id,
+    actorId: actor.id,
+    payload: { number: pull.number, assignee: builder.username, agent: true },
+  });
+  return true;
+}

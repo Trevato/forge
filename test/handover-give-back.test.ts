@@ -5,12 +5,16 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { chmodSync, writeFileSync } from "node:fs";
+import { addComment } from "../src/actions/issues.ts";
+import { startCrew } from "../src/crew/dispatch.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { addCrew, createAgentRow, setCrewRole } from "../src/core/agents.ts";
-import { getIssueById, listComments } from "../src/core/issues.ts";
+import { getIssueById, listComments, setAssignee } from "../src/core/issues.ts";
+import { handoverOf } from "../src/crew/guard.ts";
 import { createRepo, type Repo } from "../src/core/repos.ts";
 import { submitReview } from "../src/core/reviews.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
@@ -35,6 +39,7 @@ describe("give a handed-over pull back to the crew", () => {
   let builder: User;
   let reviewer: User;
   let repo: Repo;
+  let reader: User;
   let cookie = "";
   let readerCookie = "";
   let seq = 0;
@@ -69,7 +74,7 @@ describe("give a handed-over pull back to the crew", () => {
     return { id: issueId, number };
   };
 
-  const handedOver = (author: User, title: string, body = ""): string => {
+  const handedOver = (author: User, title: string, body = "", assigned = false): string => {
     const issueId = id();
     const number = nextNumber();
     app.db
@@ -84,6 +89,8 @@ describe("give a handed-over pull back to the crew", () => {
          VALUES (?1, 'main', ?2, ?3, ?3, ?4)`,
       )
       .run(issueId, `b/${++seq}`, ZERO, repo.id);
+    // As production opens a crew pull: assigned to the agent that made it.
+    if (assigned && author.kind === "agent") setAssignee(app.db, issueId, author.id);
     for (let r = 0; r < 3; r++)
       submitReview(app.db, {
         issueId,
@@ -126,7 +133,7 @@ describe("give a handed-over pull back to the crew", () => {
       return made.value;
     };
     owner = await make("alice", false);
-    await make("reader", false);
+    reader = await make("reader", false);
     builder = await make("builder", true);
     reviewer = await make("reviewer", true);
     promote(app.db, getUserByName(app.db, "alice")!);
@@ -207,6 +214,66 @@ describe("give a handed-over pull back to the crew", () => {
     expect(getIssueById(app.db, mine.id)!.assigneeId).toBe(owner.id);
     expect(listComments(app.db, crew).map((c) => c.body)).not.toContain("Given back to the crew by @alice");
     expect(asking(crew)).toBe(true);
+  });
+
+  test("the planner's one-more-round comment gives the pull back and starts a run; no one else's does", async () => {
+    const planner = await createUser(app.db, {
+      username: "planner",
+      email: "planner@forge.test",
+      agent: true,
+      origin: "agent",
+    });
+    if (!planner.ok) throw new Error(planner.error);
+    createAgentRow(app.db, { userId: planner.value.id, brief: "plans." });
+    addCrew(app.db, repo.id, planner.value.id, owner.id);
+    setCrewRole(app.db, repo.id, planner.value.id, "planner");
+    const fake = join(dataDir, "fake-claude.sh");
+    writeFileSync(
+      fake,
+      `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
+IFS= read -r first
+echo '{"type":"result","subtype":"success","is_error":false,"result":"ok","total_cost_usd":0.01,"num_turns":1}'
+`,
+    );
+    chmodSync(fake, 0o755);
+    const crew = await startCrew(app, {
+      forgeUrl: servers.url,
+      localUrl: servers.url,
+      binary: fake,
+      concurrency: 1,
+      budgetUsd: 1,
+      runTimeoutMs: 60_000,
+    });
+    const runsOn = (issueId: string): number =>
+      app.db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM run WHERE issue_id = ?1").get(issueId)!.n;
+    const say = (user: User, pullId: string, body: string): void => {
+      const pull = getIssueById(app.db, pullId)!;
+      const said = addComment(app, user, repo, pull, body);
+      if (!said.ok) throw new Error(String(said.error));
+    };
+    try {
+      const one = handedOver(builder, "Planner sends it back", "", true);
+      const two = handedOver(builder, "Someone else asks", "", true);
+      const plain = handedOver(builder, "Planner says something else", "", true);
+      const person = handedOver(owner, "A person's pull");
+      say(planner.value, one, "Planner, one more round: change only the heading.");
+      say(reader, two, "Planner, one more round: please");
+      say(reviewer, two, "Planner, one more round: please");
+      say(planner.value, plain, "Re-scoped; nothing to add.");
+      say(planner.value, person, "Planner, one more round: go");
+      for (let i = 0; i < 100 && runsOn(one) === 0; i++) await Bun.sleep(50);
+      expect(getIssueById(app.db, one)!.assigneeId).toBe(builder.id);
+      expect(runsOn(one)).toBeGreaterThan(0);
+      // The planner is an agent, not a director: the hand-over stands.
+      expect(handoverOf(app.db, repo, one)).toBeDefined();
+      for (const other of [two, plain, person]) {
+        expect(runsOn(other)).toBe(0);
+      }
+      expect(getIssueById(app.db, person)!.assigneeId).toBeNull();
+    } finally {
+      await crew.stop();
+    }
   });
 
   test("the terminal: b gives the row back, and a reader's b does nothing", async () => {
