@@ -11,7 +11,9 @@ import { listEvents, type EventBus } from "../core/events.ts";
 import { getRepo } from "../core/repos.ts";
 import { createLog } from "../kernel/log.ts";
 import { ownRepoPath } from "../kernel/own_repo.ts";
+import { firedAlarms } from "./alarms.ts";
 import { CLOG_APPROVED_HOURS, clogOf } from "./clog.ts";
+import { stepFlowOnly } from "./flow_only_auto.ts";
 import { CLOG_NOTE_WINDOW_MS, clogNote, flattenNote } from "./clog_note.ts";
 import { clogStep, type ClogEvent, type ClogState } from "./clog_watch.ts";
 import { readOldestApproved } from "./oldest_approved.ts";
@@ -87,10 +89,13 @@ export function startClogTick(
   bus: Pick<EventBus, "append">,
   onError: (error: unknown) => void,
   everyMs = 60_000,
+  onFlowOnlyOff: () => void = () => {},
+  ceilingUsd: () => number | null = () => null,
 ): () => void {
   const timer = setInterval(() => {
     try {
       tickClog(db, bus);
+      if (tickFlowOnly(db, bus, undefined, ceilingUsd())) onFlowOnlyOff();
     } catch (error) {
       onError(error);
     }
@@ -138,4 +143,21 @@ export function tickClog(db: Database, bus: Pick<EventBus, "append">, now = new 
     }
     return { event: step.event };
   }).immediate();
+}
+
+/**
+ * The own repository's FLOW ONLY watch, one step. It counts the alarms the home
+ * shows, so it reads them with the same crew ceiling (`cachedAlarms`); without it
+ * an idle-crew alarm the ceiling silences would hold the switch on.
+ *  true when the forge turned the switch off. */
+export function tickFlowOnly(
+  db: Database,
+  bus: Pick<EventBus, "append">,
+  now = new Date(),
+  ceilingUsd: number | null = null,
+): boolean {
+  const [owner, name] = ownRepoPath().split("/");
+  const repo = owner && name ? getRepo(db, owner, name) : undefined;
+  if (!repo) return false;
+  return db.transaction(() => stepFlowOnly(db, bus, repo, repo.flowOnly && firedAlarms(db, now, { ceilingUsd }).length > 0, now.getTime())).immediate();
 }

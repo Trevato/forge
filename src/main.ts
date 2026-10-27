@@ -48,7 +48,8 @@ import { failAbandonedRuns } from "./core/runs.ts";
 import { DRAIN_LINGER_MAX_S, drainLingerMs, startDraining } from "./http/health.ts";
 import { takePresence, warmBehind } from "./apps/presence.ts";
 import { STALE_AFTER_MS } from "./runs/lease.ts";
-import { startCrew } from "./crew/dispatch.ts";
+import { forgeCeiling } from "./flow/ceiling.ts";
+import { startCrew, sweepAssigned } from "./crew/dispatch.ts";
 import { CREW_OFF_IN_PREVIEW, crewOffInPreview } from "./crew/preview.ts";
 import { typeSafeDecider } from "./crew/decide.ts";
 import { graphInstagram } from "./crew/instagram.ts";
@@ -582,7 +583,7 @@ const processTick = (): void => {
   }
 };
 // The clog watch (#6524, #6757) reads the flow every minute; its state is the database's.
-const stopClogTick = startClogTick(app.db, app.bus, (error) => app.log.warn("clog tick failed", { error: String(error) }));
+const stopClogTick = startClogTick(app.db, app.bus, (error) => app.log.warn("clog tick failed", { error: String(error) }), 60_000, () => sweepAssigned(app), () => forgeCeiling(app.config));
 // An agent's hold that has stood 24 h is released each minute (#6918).
 const holdTimer = setInterval(() => {
   try {

@@ -53,7 +53,7 @@ import { writableAppsOf } from "./asks.ts";
 import { needsYouSection } from "./asks_page.ts";
 import { flowCards } from "./flow_card.ts";
 import { composer, feedJs, feedNote, feedRegion } from "./feed.ts";
-import { alarmLines, cachedAlarms } from "./alarm_lines.ts";
+import { alarmLines, cachedAlarms, flowOnlyOffer } from "./alarm_lines.ts";
 import { clogRow, kpiRow, vitalsRow, waitingLine } from "./kpi_row.ts";
 import { feedCandidateCache } from "../../feed/feed.ts";
 import { notePhase, notePhaseRest, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
@@ -292,7 +292,7 @@ export async function studioHome(
       : liveLine(ctx)}
     ${figures ? timePhase(ctx.request, "vitals", () => vitalsRow(ctx.app.db)) : null}
     ${figures ? clogRow(ctx.app.db) : null}
-    ${figures ? alarmLines(cachedAlarms(ctx.app.db, new Date(), ceilingUsd)) : null}
+    ${figures ? alarmLines(cachedAlarms(ctx.app.db, new Date(), ceilingUsd), flowOnlyOffer(ctx.app.db, user)) : null}
     ${timePhase(ctx.request, "waiting", () => waitingLine(ctx.app.db, user), () => waitingCache(ctx.app.db))}
     ${figures
       ? await timePhaseAsync(ctx.request, "panels", () => pinnedPanels(ctx.app, user), () => panelCache(ctx.app.db))

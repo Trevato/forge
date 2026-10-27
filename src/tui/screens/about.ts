@@ -15,6 +15,7 @@
  * card is an OSC 8 hyperlink besides.
  */
 
+import { ownRepoPath } from "../../kernel/own_repo.ts";
 import { audienceFor } from "../../core/audience.ts";
 import { isPinned } from "../../core/pins.ts";
 import { parentReleases, releasesSentence } from "../../core/parent_releases.ts";
@@ -485,10 +486,14 @@ export function upstreamRows(
   ];
 }
 
-/** The FLOW ONLY switch, in the settings page's words; every reader sees it. */
+/**
+ * The FLOW ONLY switch, in the settings page's words; every reader sees it. On
+ * the forge's own repository it also says the forge lets go by itself (#6395).
+ */
 export function flowRow(repo: Repo | undefined): [string, string][] {
   if (repo === undefined) return [];
-  return [["Flow only", repo.flowOnly ? "on" : "off"]];
+  const own = ownRepoPath() === `${repo.ownerName}/${repo.name}`;
+  return [["Flow only", repo.flowOnly ? (own ? "on, off after 24 h clear" : "on") : "off"]];
 }
 
 /** Who may direct the crew, in `OUTSIDERS_NOTE`'s words; every reader sees it. */
