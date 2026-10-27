@@ -245,6 +245,15 @@ claude mcp add --transport http forge https://<your-forge>/mcp \
 
 Any MCP client that can send a header works the same way.
 
+## The server card
+
+`/.well-known/mcp.json` names the server (`name`, `version`, `endpoint`,
+`transport`, `protectedResourceMetadata`, `documentation`, `tokenFreeTools`)
+and the build that answers: `commit`, the full commit the forge runs
+(`FORGE_COMMIT`, or `FORGE_APP_COMMIT` on a preview), or `null` when nothing
+says. `version` is `dev` on a preview, so `commit` is how an agent tells two
+previews apart.
+
 ## Attaching with OAuth
 
 Clients that cannot paste a header — the Claude apps, Grok's connectors —
