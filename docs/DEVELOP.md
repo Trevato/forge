@@ -94,6 +94,14 @@ map has never seen fall back to the import-hop guess, and a change to
 `forge.json`, `package.json`, `scripts/**` or `src/kernel/**` runs
 everything. With no map yet the line says `by imports (no impact map)`.
 
+A test that reads the whole tree — every test file, every migration, the
+README — is reached by no diff, yet any file can break it. Those are
+`RULE_TESTS` in `src/checks/tiers.ts`, and every fast tier runs them
+whatever else the diff holds (#7138) — a diff of only the timing or impact table breaks no rule and runs none; a new rule of that kind goes on the list. Write
+the rule with `breaches()` from `test/helpers/rule.ts`: one red test per
+breach, named `path:line: …`, so the check's summary names the rule and
+the line.
+
 Before you push, ask what the fast tier would run for your change:
 `files=$(bun scripts/fast.ts) && bun test $files`. `bun scripts/fast.ts
 [--base origin/main] [--why | --null | --json]` lists the picked test files

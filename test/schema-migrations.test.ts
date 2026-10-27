@@ -35,6 +35,7 @@ import {
 } from "../src/kernel/migrate.ts";
 import { migrationFiles, migrations, NUMBERED } from "../src/core/schema.ts";
 import { failureReason } from "../src/apps/process.ts";
+import { breaches } from "./helpers/rule.ts";
 import legacyPins from "../src/core/migration-pins.json" with { type: "json" };
 
 const pins = readPins(join(import.meta.dir, "../src/core/migration-pins"), legacyPins);
@@ -427,10 +428,12 @@ describe("a migration on main is never edited (#783)", () => {
     expect(pinBreaks(migrationFiles, pins)).toEqual([]);
   });
 
-  test("every migration is pinned by its own pull: run bun scripts/pin-migrations.ts", () => {
-    const missing = migrationFiles.filter((m) => !Object.hasOwn(pins, m.name)).map((m) => m.name);
-    expect(missing).toEqual([]);
-  });
+  breaches(
+    "every migration is pinned by its own pull: run bun scripts/pin-migrations.ts",
+    migrationFiles
+      .filter((m) => !Object.hasOwn(pins, m.name))
+      .map((m) => `src/core/migrations/${m.name}.ts is not pinned: run bun scripts/pin-migrations.ts`),
+  );
 
   test("pin files are read beside the frozen list, and a bad one is a defect", () => {
     const dir = join(root, "pins");

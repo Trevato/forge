@@ -308,7 +308,7 @@ export function rawBudgets(name: string, source: string): string[] {
       )
         raw = true;
     if (raw && !/expectBudget/.test(line))
-      found.push(`${name}:${i + 1}: ${line.trim()} — bound speed with expectBudget() from test/helpers/budget.ts`);
+      found.push(`${name}:${i + 1}: ${line.trim()} — bound speed with expectBudget() from test/helpers/budget.ts (#4429)`);
   });
   return found;
 }
