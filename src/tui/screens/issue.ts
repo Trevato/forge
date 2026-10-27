@@ -16,8 +16,11 @@
 
 import {
   addCommentThrough,
+  editIssue,
+  mayEditIssue,
   setIssueLabelsThrough,
   setIssueStateThrough,
+  TAKEN_UP,
 } from "../../actions/issues.ts";
 import {
   dependencyWords,
@@ -33,6 +36,7 @@ import { privateRepoForSealed } from "../../actions/repos.ts";
 import { dependenciesOf } from "../../core/dependencies.ts";
 import { alreadyDone } from "../../core/done_on_main.ts";
 import { hasPicture } from "../../core/note_pictures.ts";
+import { isMirror } from "../../origins/write-through.ts";
 import { getIssue, type Issue, type Label } from "../../core/issues.ts";
 import type { Repo } from "../../core/repos.ts";
 import type { IssueDetail, RepoSource } from "../../view/source.ts";
@@ -80,6 +84,27 @@ const PRIVATE_SAY: Record<string, string> = {
   not_sealed: "This report is not sealed: its fix can be worked in the open.",
   unverified: "Verify your email first: the private repository is for verified writers.",
 };
+
+/** The refusals of an edit, in the action's and the page's words. */
+const EDIT_SAY: Record<string, string> = {
+  forbidden: "only the author, or a person who writes here, edits this",
+  taken_up: TAKEN_UP,
+  body_too_long: "that description is too long",
+};
+
+/**
+ * An issue's words as the editor holds them: the title on the first line,
+ * a blank line, then the body — the shape of a commit message.
+ */
+export function editText(title: string, body: string): string {
+  return body === "" ? title : `${title}\n\n${body}`;
+}
+
+/** The editor's text back into a title and a body. */
+export function readEditText(text: string): { title: string; body: string } {
+  const [first = "", ...rest] = text.replace(/\r\n?/g, "\n").split("\n");
+  return { title: first.trim(), body: rest.join("\n").replace(/^\n+/, "").trimEnd() };
+}
 
 /** What an issue waits for and holds up, by number, ascending. */
 export interface Waits {
@@ -137,6 +162,8 @@ export function issueScreen(
   let focus: "thread" | "crew" = "thread";
   /** The private repository made for this sealed report, shown until we leave. */
   let privateNote: string | undefined;
+  /** The text `e` opened the editor with; set while the composer edits, not comments. */
+  let editing: string | undefined;
   const mayWrite = (): boolean => src.capabilities.write && repo !== undefined;
   scroll.top = keep.top ?? 0;
 
@@ -244,6 +271,43 @@ export function issueScreen(
       await reload();
       ctx.toast("comment posted", "success");
     });
+  };
+
+  /** Whether `editIssue` would take this person's words here: its own two tests. */
+  const mayEdit = (): boolean =>
+    repo !== undefined &&
+    !isMirror(f.app, repo) &&
+    issueRow !== undefined &&
+    mayEditIssue(f.app, repo, issueRow, f.user).ok;
+
+  /** `e` — the title and the body in the long-form editor. */
+  const startEdit = (): void => {
+    if (issueRow === undefined) return;
+    editing = editText(issueRow.title, issueRow.body);
+    composer.start(`Edit #${number} — first line is the title`, editing);
+  };
+
+  const stopEdit = (): void => {
+    editing = undefined;
+    composer.close();
+  };
+
+  /** `ctrl+d` in the editor. A refusal keeps the draft open, as typed. */
+  const saveEdit = (): void => {
+    const at = row();
+    if (at?.issue === undefined) return;
+    if (composer.value === editing) {
+      stopEdit();
+      return;
+    }
+    const edited = editIssue(f.app, f.user, at.repo, at.issue, readEditText(composer.value));
+    if (!edited.ok) {
+      ctx.toast(EDIT_SAY[edited.error] ?? errorText(edited.error), "danger");
+      return;
+    }
+    stopEdit();
+    runAsync(ctx, reload);
+    ctx.toast("saved", "success");
   };
 
   const setState = (state: "open" | "closed"): void => {
@@ -361,6 +425,7 @@ export function issueScreen(
         ...(mayWrite()
           ? [
               binding(["c"], "comment"),
+              ...(mayEdit() ? [binding(["e"], "edit")] : []),
               binding(["a"], "assign"),
               binding(["x"], "close", {
                 disabled: detail?.issue.state === "closed",
@@ -375,7 +440,10 @@ export function issueScreen(
                 ? [binding(["p"], "private repo")]
                 : []),
             ]
-          : liveBindings(src)),
+          : [
+              ...(mayEdit() ? [binding(["e"], "edit")] : []),
+              ...liveBindings(src),
+            ]),
         binding(["r"], "refresh"),
       ];
     },
@@ -521,7 +589,10 @@ export function issueScreen(
     key(e) {
       if (composer.open) {
         const out = composer.key(e);
-        if (out === "submit") submit();
+        if (editing !== undefined) {
+          if (out === "submit") saveEdit();
+          else if (out === "cancel") stopEdit();
+        } else if (out === "submit") submit();
         else if (out === "cancel") composer.close();
         return true;
       }
@@ -542,6 +613,10 @@ export function issueScreen(
       }
       if (e.key === "c" && mayWrite()) {
         composer.start("Comment");
+        return true;
+      }
+      if (e.key === "e" && mayEdit()) {
+        startEdit();
         return true;
       }
       if (e.key === "x" && mayWrite()) {
