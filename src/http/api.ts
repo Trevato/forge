@@ -168,10 +168,8 @@ import { search, searchWithin } from "../actions/search.ts";
 import { runRepos } from "./run_gate.ts";
 import {
   commitToBranch,
-  createLabel,
   createRepo,
   createWebhook,
-  deleteLabel,
   deleteRepo,
   deleteWebhook,
   FORKS_PER_DAY,
@@ -208,7 +206,6 @@ import {
   labelsForIssues,
   listComments,
   listIssues,
-  listLabels,
   LIST_LIMIT,
   LIST_LIMIT_MAX,
   pageLimit,
@@ -454,6 +451,7 @@ import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
 import { passportRoutes } from "./passport_edge.ts";
 import { egressGrantRoutes } from "./api/egress_grants.ts";
+import { labelsRoutes } from "./api/labels.ts";
 import { secretRoutes } from "./api/secrets.ts";
 import type { Router } from "./router.ts";
 import { clientAddress, clientBucket } from "./peer.ts";
@@ -3175,40 +3173,7 @@ export function apiRoutes(router: Router<Handler>): void {
 
   // ── labels ───────────────────────────────────────────────────────────
 
-  router.add("GET", "/api/v1/repos/:owner/:name/labels", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const repo = loadRepo(ctx);
-    if (!repo) return notFound();
-    const labels = timePhase(ctx.request, "labels", () => listLabels(ctx.app.db, repo.id));
-    return timePhase(ctx.request, "render", () => json(labels));
-  });
-
-  router.add("POST", "/api/v1/repos/:owner/:name/labels", async (ctx) => {
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const repo = loadRepo(ctx);
-    if (!repo) return notFound();
-    const input = await body(ctx.request);
-    const created = createLabel(
-      ctx.app,
-      ctx.auth.user,
-      repo,
-      str(input.name),
-      str(input.color) || "6b7280",
-    );
-    if (!created.ok) return respondAccess(created.error, 422);
-    return json(created.value, 201);
-  });
-
-  router.add("DELETE", "/api/v1/repos/:owner/:name/labels/:id", (ctx) => {
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const repo = loadRepo(ctx);
-    if (!repo) return notFound();
-    const removed = deleteLabel(ctx.app, ctx.auth.user, repo, ctx.params.id!);
-    if (!removed.ok) return respondAccess(removed.error, 422);
-    return new Response(null, { status: 204 });
-  });
+  labelsRoutes(router);
 
   // Replace the label set of an issue or a pull — both live in one table, so
   // either number works here. Names or ids; an unknown label rejects the set.
