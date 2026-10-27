@@ -16,7 +16,14 @@ where it is not for assigning (which spends money) or merging (a person's
 call).
 
 On the issue page, **Depends on** says _Waits for 2, 1 still open_ and
-_Holds up 3_, with each issue linked and a field to add one. Over the API:
+_Holds up 3_, with each issue linked and a field to add one. The terminal's
+issue screen shows the same line, `Waits for #12, #15 · Holds up #20`, when
+there is any, and a click on a number opens that issue. There a writer
+presses `w` and types a number: a new one is linked, and one it already
+waits for asks a confirm, then is unlinked. A refusal reads in
+`dependencyWords`' sentences, as MCP `wait_for` says it. The page, the
+terminal and `wait_for` all go through `linkIssue` and `unlinkIssue`
+(`src/actions/dependencies.ts`). Over the API:
 
 ```
 GET    /api/v1/repos/:owner/:name/issues/:n/dependencies   → { blockedBy, blocks }

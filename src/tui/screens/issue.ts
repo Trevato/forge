@@ -19,11 +19,18 @@ import {
   setIssueLabelsThrough,
   setIssueStateThrough,
 } from "../../actions/issues.ts";
+import {
+  dependencyWords,
+  linkIssue,
+  unlinkIssue,
+} from "../../actions/dependencies.ts";
+import { THREAD_SAYS } from "../../actions/thread_words.ts";
 import { ISSUE_TEAMS_SAY, nameTeams } from "../../actions/issue_teams.ts";
 import { teamsOfIssue, TEAMS_MAX } from "../../core/issue_teams.ts";
 import { listTeams } from "../../core/teams.ts";
 import { listRepoRuns } from "../../actions/runs.ts";
 import { privateRepoForSealed } from "../../actions/repos.ts";
+import { dependenciesOf } from "../../core/dependencies.ts";
 import { alreadyDone } from "../../core/done_on_main.ts";
 import { hasPicture } from "../../core/note_pictures.ts";
 import { getIssue, type Issue, type Label } from "../../core/issues.ts";
@@ -41,12 +48,15 @@ import {
   ORIGIN_MARK,
   Scroll,
   ago,
+  confirmScreen,
   drawLines,
   hitScroll,
   errorText,
+  later,
   live,
   pickerScreen,
   plural,
+  promptScreen,
   runAsync,
 } from "./common.ts";
 import { assignPicker, assignedText } from "./assign.ts";
@@ -70,6 +80,29 @@ const PRIVATE_SAY: Record<string, string> = {
   not_sealed: "This report is not sealed: its fix can be worked in the open.",
   unverified: "Verify your email first: the private repository is for verified writers.",
 };
+
+/** What an issue waits for and holds up, by number, ascending. */
+export interface Waits {
+  readonly blockedBy: readonly number[];
+  readonly blocks: readonly number[];
+}
+
+/** The waits line's parts: plain words, and the numbers a click opens. */
+export function waitsParts(waits: Waits): { text: string; opens?: number }[] {
+  const parts: { text: string; opens?: number }[] = [];
+  const run = (words: string, numbers: readonly number[]): void => {
+    if (numbers.length === 0) return;
+    if (parts.length > 0) parts.push({ text: " · " });
+    parts.push({ text: `${words} ` });
+    numbers.forEach((n, i) => {
+      if (i > 0) parts.push({ text: ", " });
+      parts.push({ text: `#${n}`, opens: n });
+    });
+  };
+  run("Waits for", waits.blockedBy);
+  run("Holds up", waits.blocks);
+  return parts;
+}
 
 /** The status-line tail for an issue the crew found done on main. */
 export function doneText(commits: readonly string[], canClose: boolean): string {
@@ -96,6 +129,8 @@ export function issueScreen(
   let issueRow: Issue | undefined;
   /** The commits the crew found this issue done by on main; `x` closes it. */
   let doneBy: readonly string[] = [];
+  /** Which issues this one waits for and holds up; a line when any. */
+  let waits: Waits = { blockedBy: [], blocks: [] };
   /** What the crew has done here, newest first; a card when there is any. */
   const crew = new RunList(f);
   /** Which pane `j`/`k`/`enter` belong to; `tab` moves between them. */
@@ -126,6 +161,11 @@ export function issueScreen(
       issueRow?.state === "open"
         ? (alreadyDone(f.db, [issueRow.id]).get(issueRow.id) ?? [])
         : [];
+    const deps = issueRow === undefined ? undefined : dependenciesOf(f.db, issueRow.id);
+    waits = {
+      blockedBy: deps?.blockedBy.map((i) => i.number) ?? [],
+      blocks: deps?.blocks.map((i) => i.number) ?? [],
+    };
     crew.set(runs !== undefined && runs.ok ? runs.value : []);
     if (crew.runs.length === 0) focus = "thread";
     width = 0;
@@ -245,6 +285,69 @@ export function issueScreen(
     });
   };
 
+  /**
+   * `w` — a number to wait for. A new one links it; one it already waits
+   * for asks first, then stops the wait. Refusals in `dependencyWords`.
+   */
+  const waitFor = (): void => {
+    const at = row();
+    if (at?.issue === undefined) return;
+    const { repo: target, issue } = at;
+    const refused = (code: string): string =>
+      dependencyWords[code] ?? (code === "forbidden" ? THREAD_SAYS.planForbidden : errorText(code));
+    const settled = (said: string): void => {
+      ctx.toast(said, "success");
+      runAsync(ctx, reload);
+    };
+    ctx.push(
+      promptScreen(ctx, screen, {
+        title: "Waits for",
+        label: `#${number} waits for issue`,
+        placeholder: "12",
+        hint:
+          waits.blockedBy.length === 0
+            ? "the number of the issue that must land first"
+            : "a number it already waits for stops the wait",
+        onSubmit: (value) => {
+          const n = Number(value.replace(/^#/, ""));
+          if (!Number.isInteger(n) || n <= 0) return "an issue number, like 12";
+          const blocker = getIssue(f.db, target.id, n);
+          if (blocker === undefined) return `no #${n} here`;
+          // Asked now, not from the last reload: another door may have
+          // linked or unlinked since.
+          const waiting = dependenciesOf(f.db, issue.id).blockedBy.some((i) => i.id === blocker.id);
+          if (waiting)
+            return later(ctx, () =>
+              confirmScreen(ctx, screen, {
+                title: `Stop waiting for #${n}?`,
+                body: [`#${number} no longer waits for #${n}.`],
+                actions: [
+                  { label: "Stop waiting", variant: "danger" },
+                  { label: "Cancel", variant: "ghost" },
+                ],
+                onChoose: (choice) => {
+                  if (choice !== 0) return;
+                  const done = unlinkIssue(f.app, f.user, target, issue, blocker);
+                  if (!done.ok) ctx.toast(refused(done.error), "danger");
+                  else settled(`#${number} no longer waits for #${n}`);
+                },
+              }),
+            );
+          const done = linkIssue(f.app, f.user, target, issue, blocker);
+          // A refusal another number could fix stays in the prompt; one
+          // about who may plan here closes it and says so in full.
+          if (!done.ok && done.error in dependencyWords) return refused(done.error);
+          if (!done.ok) {
+            ctx.toast(refused(done.error), "danger");
+            return undefined;
+          }
+          settled(`#${number} waits for #${n}`);
+          return undefined;
+        },
+      }),
+    );
+  };
+
   const screen: Screen = {
     title: `#${number}`,
     get keys() {
@@ -267,6 +370,7 @@ export function issueScreen(
               }),
               binding(["l"], "labels"),
               binding(["t"], "teams"),
+              binding(["w"], "waits for"),
               ...(issueRow?.sealed === true
                 ? [binding(["p"], "private repo")]
                 : []),
@@ -291,12 +395,14 @@ export function issueScreen(
       // Then the crew card, only when an agent has worked here.
       const crewH =
         crew.runs.length === 0 ? 0 : Math.min(crew.runs.length, CREW_ROWS) + 2;
+      const waitsLine = waitsParts(waits);
+      const headH = waitsLine.length === 0 ? 3 : 4;
       const [strip, head, crewRow, body, box] = split(area, "v", [
         len(whereRows(src)),
-        len(3),
+        len(headH),
         len(crewH),
         fill(1),
-        len(Math.min(foot, Math.max(0, area.h - 7 - crewH - whereRows(src)))),
+        len(Math.min(foot, Math.max(0, area.h - 4 - headH - crewH - whereRows(src)))),
       ]);
       whereStrip(s, strip!, c, f, src);
       const right = head!.x + head!.w;
@@ -348,6 +454,23 @@ export function issueScreen(
           style(c.mutedFg, c.bg),
           right,
         );
+      }
+      // What this waits for and holds up; each number opens that issue.
+      let wx = head!.x;
+      for (const part of waitsLine) {
+        const start = wx;
+        wx = s.text(
+          wx,
+          head!.y + 2,
+          part.text,
+          style(part.opens === undefined ? c.mutedFg : c.fg, c.bg),
+          right,
+        );
+        const opens = part.opens;
+        if (opens !== undefined && wx > start)
+          ctx.hit({ x: start, y: head!.y + 2, w: wx - start, h: 1 }, () =>
+            ctx.push(issueScreen(f, ctx, src, opens)),
+          );
       }
       if (crewH > 0) {
         const inner = card(s, crewRow!, c, {
@@ -473,6 +596,10 @@ export function issueScreen(
             },
           }),
         );
+        return true;
+      }
+      if (e.key === "w" && mayWrite()) {
+        waitFor();
         return true;
       }
       if (e.key === "p" && mayWrite()) {
