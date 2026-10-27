@@ -148,4 +148,19 @@ describe("flow only at the dispatcher", () => {
     const after = await (await fetch(`${servers.url}/alice/svc/issues/${held.number}`, { headers: { cookie: `forge_session=${createSession(app.db, alice.id).token}` } })).text();
     expect(after).not.toContain('id="flow-only-queued"');
   });
+
+  test("a label set before the dispatcher has loaded still dispatches, once it has", async () => {
+    await flow(true);
+    const held = assign(open("Early"));
+    sweepAssigned(app);
+    expect(runsOn(held)).toBe(0);
+    // A fresh instance of the module, called in the tick it is evaluated: its import() has not settled.
+    const early = (await import(`../src/actions/issues.ts?${"early"}`)) as typeof import("../src/actions/issues.ts");
+    const labelled = early.setIssueLabels(app, alice, fresh(), held, ["flow"]);
+    expect(labelled.ok).toBe(true);
+    expect(runsOn(held)).toBe(0);
+    await early.flowLabelLoaded;
+    await new Promise((r) => setTimeout(r, 0));
+    expect(runsOn(held)).toBe(1);
+  });
 });
