@@ -52,11 +52,11 @@ describe("flow vitals", () => {
         .run(id(), repo.value.id, clash, ago(1));
 
       const v = readVitals(app.db, NOW);
-      expect(v).toEqual({ open: 3, opened1h: 1, landed1h: 1, opened6h: 3, landed6h: 2, conflicted: 1, red: 0, queued: 0, oldestApprovedHours: null, strandedUsd: 0 });
+      expect(v).toEqual({ open: 3, opened1h: 1, landed1h: 1, opened6h: 3, landed6h: 2, conflicted: 1, red: 0, queued: 0, oldestApprovedHours: null, strandedUsd: 0, gateMinutes1h: 0, pullCheckMinutes1h: 0, batches6h: 0, redBatchRate: null });
       expect(vitalsMisses(v)).toEqual(["landed 2 < opened 3 over 6 h"]);
 
       const tick = flowVitals(app.db, NOW);
-      expect(tick.pulls).toBe("open 3, opened/landed 1/1 in 1 h, 3/2 in 6 h, conflicted 1, 0 red, 0 queued, $0.00 stranded");
+      expect(tick.pulls).toBe("open 3, opened/landed 1/1 in 1 h, 3/2 in 6 h, conflicted 1, 0 red, 0 queued, $0.00 stranded, gate 0 min, other checks 0 min in 1 h");
       expect(tick.pulls).toBe(vitalsWords(v));
       expect(tick.offTarget).toBe("landed 2 < opened 3 over 6 h");
 
@@ -121,7 +121,7 @@ describe("flow vitals", () => {
     const app = createApp({ dataDir: root, port: 0 });
     try {
       const v = readVitals(app.db, NOW);
-      expect(Object.values(v)).toEqual([0, 0, 0, 0, 0, 0, 0, 0, null, 0]);
+      expect(Object.values(v)).toEqual([0, 0, 0, 0, 0, 0, 0, 0, null, 0, 0, 0, 0, null]);
       expect(vitalsMisses(v)).toEqual([]);
     } finally {
       app.close();
@@ -130,7 +130,7 @@ describe("flow vitals", () => {
   });
 
   test("an approved pull waiting over 24 h is a miss; an agent without telemetry:read gets no dollars", () => {
-    const base: Vitals = { open: 1, opened1h: 0, landed1h: 0, opened6h: 0, landed6h: 0, conflicted: 0, red: 2, queued: 3, oldestApprovedHours: 30.4, strandedUsd: 12.5 };
+    const base: Vitals = { open: 1, opened1h: 0, landed1h: 0, opened6h: 0, landed6h: 0, conflicted: 0, red: 2, queued: 3, oldestApprovedHours: 30.4, strandedUsd: 12.5, gateMinutes1h: 0, pullCheckMinutes1h: 0, batches6h: 0, redBatchRate: null };
     expect(vitalsMisses(base)).toEqual(["oldest approved pull has waited 30 h"]);
     expect(vitalsMisses({ ...base, oldestApprovedHours: 24 })).toEqual([]);
     expect(vitalsMisses({ ...base, oldestApprovedHours: null })).toEqual([]);
@@ -140,6 +140,18 @@ describe("flow vitals", () => {
     expect(vitalsLine(cut)).not.toContain("stranded");
     expect(vitalsLine(cut)).toContain("2 red, 3 queued · oldest approved 30 h");
     expect(vitalsFor(base, true).strandedUsd).toBe(12.5);
+  });
+
+  test("a red-batch rate over 30% of at least 3 batches is a miss; the gate minutes are said", () => {
+    const base: Vitals = { open: 1, opened1h: 0, landed1h: 0, opened6h: 0, landed6h: 0, conflicted: 0, red: 0, queued: 0, oldestApprovedHours: null, strandedUsd: 0, gateMinutes1h: 12.4, pullCheckMinutes1h: 30, batches6h: 4, redBatchRate: 0.5 };
+    expect(vitalsMisses(base)).toEqual(["50% of merge batches went red in 6 h"]);
+    expect(vitalsMisses({ ...base, batches6h: 10, redBatchRate: 0.3 })).toEqual([]);
+    expect(vitalsMisses({ ...base, batches6h: 10, redBatchRate: 0.4 })).toEqual(["40% of merge batches went red in 6 h"]);
+    expect(vitalsMisses({ ...base, batches6h: 2, redBatchRate: 1 })).toEqual([]);
+    expect(vitalsMisses({ ...base, batches6h: 3, redBatchRate: 1 })).toHaveLength(1);
+    expect(vitalsMisses({ ...base, batches6h: 0, redBatchRate: null })).toEqual([]);
+    expect(vitalsWords(base)).toContain("gate 12 min, other checks 30 min in 1 h, 50% of 4 batches red in 6 h");
+    expect(vitalsLine(base)).toContain("gate 12 min, other checks 30 min in 1 h · 50% of 4 batches red in 6 h");
   });
 
   test("the dollars and the old approval pass through every door only to a reader who may read them", async () => {
