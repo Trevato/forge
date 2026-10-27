@@ -91,7 +91,9 @@ export function parseRepoRef(
   text: string | undefined,
 ): { owner: string; name: string } | undefined {
   if (text === undefined) return undefined;
-  const parts = text.split("/").filter((p) => p !== "");
-  if (parts.length !== 2) return undefined;
+  const parts = text.trim().split("/");
+  if (parts.length !== 2 || parts[0] === "" || parts[1] === "") {
+    return undefined;
+  }
   return { owner: parts[0]!, name: parts[1]! };
 }
