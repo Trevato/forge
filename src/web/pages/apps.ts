@@ -30,7 +30,8 @@ import { listAllAgents } from "../../actions/crew.ts";
 import { planningAvailable } from "../../crew/plan.ts";
 import { appNameJs, deriveAppName } from "./apps-name.ts";
 import { STARTERS, starterFromQuery, starterHref } from "./apps-starters.ts";
-import { envPull, previewEnv, type EnvName } from "../../apps/data.ts";
+import { previewEnv, type EnvName } from "../../apps/data.ts";
+import { envRefusalText, redeployedText, stoppedText } from "../../actions/env_words.ts";
 import { appsRuntime, type EnvStatus, envsFor } from "../../apps/runtime.ts";
 import { firstPreviews, goldenPath, goldenPathLine } from "../../apps/golden_path.ts";
 import { appHostSuffix } from "../../apps/host.ts";
@@ -140,12 +141,6 @@ export function archivedAppCount(ctx: Ctx): number {
     ctx.app.db,
     repos.map((repo) => repo.id),
   ).size;
-}
-
-/** `production` or `preview of #12`, as a phrase that fits in a sentence. */
-export function envLabel(env: EnvName): string {
-  const number = envPull(env);
-  return number === undefined ? "production" : `preview of #${number}`;
 }
 
 /** The archived list's Wake: a small form under each row the viewer administers. */
@@ -792,15 +787,9 @@ function envBack(ctx: Ctx, repo: Repo): string {
 function envFailure(ctx: Ctx, repo: Repo, error: string): Response {
   if (error === "not_found" || error === "no_such_env")
     return notFoundPage(ctx);
-  const words: Record<string, string> = {
-    forbidden: "You need write access to do that.",
-    no_runtime: "Nothing is serving apps on this forge.",
-    nothing_to_deploy:
-      "There is nothing to deploy: the branch has no commits, or the pull request is closed.",
-  };
   return flashTo(ctx, envBack(ctx, repo), {
     tone: "danger",
-    message: words[error] ?? "That could not be done.",
+    message: envRefusalText(error),
   });
 }
 
@@ -817,12 +806,7 @@ export async function appRedeploy(ctx: Ctx): Promise<Response> {
   return redirect(envBack(ctx, repo), {
     url: ctx.url,
     forgeUrl: ctx.app.config.url,
-    flash: {
-      message:
-        run === undefined
-          ? `${envLabel(env as EnvName)} already serves that commit.`
-          : `Redeploying ${envLabel(env as EnvName)}.`,
-    },
+    flash: { message: redeployedText(env as EnvName, run) },
   });
 }
 
@@ -834,6 +818,6 @@ export async function appStop(ctx: Ctx): Promise<Response> {
   const stopped = await stopEnv(ctx.app, user, repo, env);
   if (!stopped.ok) return envFailure(ctx, repo, stopped.error);
   return flashTo(ctx, envBack(ctx, repo), {
-    message: `Stopped ${envLabel(env as EnvName)}. Its data is kept; Redeploy brings it back.`,
+    message: stoppedText(env as EnvName),
   });
 }
