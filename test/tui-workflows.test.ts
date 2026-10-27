@@ -203,11 +203,15 @@ describe("reviews, threads and the merge gate", () => {
       email: "alice@forge.test",
       password: "a-long-passphrase",
     });
-    const two = await signUp(forge, {
-      username: "bob",
-      email: "bob@forge.test",
-      password: "another-long-passphrase",
-    }, { slot: fixtureSlot(forge) });
+    const two = await signUp(
+      forge,
+      {
+        username: "bob",
+        email: "bob@forge.test",
+        password: "another-long-passphrase",
+      },
+      { slot: fixtureSlot(forge) },
+    );
     if (!one.ok || !two.ok) throw new Error("signup failed");
     alice = one.value;
     bob = two.value;
@@ -330,7 +334,7 @@ describe("reviews, threads and the merge gate", () => {
       // wears it from the first paint, before the setting has loaded).
       await admin.until("Needs an approval of this head", 30_000);
       await admin.press("m");
-      await admin.until("approval");
+      await admin.until("needs an approval of its current head first", 30_000);
       expect(getPull(forge.db, repo.id, 1)?.mergedAt).toBeNull();
     } finally {
       admin.stop();
@@ -348,8 +352,9 @@ describe("reviews, threads and the merge gate", () => {
 
       // The list wears the same verdict, in one tabular column.
       await reviewer.press("q");
+      // The title paints before the verdict column loads: wait for it.
       await reviewer.until("Tweak the lamp", 30_000);
-      expect(reviewer.text()).toContain("✓");
+      await reviewer.until("✓", 30_000);
     } finally {
       reviewer.stop();
     }
@@ -475,7 +480,6 @@ describe("reviews, threads and the merge gate", () => {
       await h.click(4, row);
       await h.click(4, row);
       await h.until("fix", 30_000);
-
     } finally {
       h.stop();
     }
@@ -523,16 +527,20 @@ describe("reviews, threads and the merge gate", () => {
     }
   });
   test("p on a sealed issue shows the private repository and its clone URL, with the same refusals", async () => {
-    const sealed = openIssue(forge, alice, repo, { title: "Token leak", sealed: true });
+    const sealed = openIssue(forge, alice, repo, {
+      title: "Token leak",
+      sealed: true,
+    });
     const plain = openIssue(forge, alice, repo, { title: "A typo" });
     if (!sealed.ok || !plain.ok) throw new Error("issues");
-    const open = (user: User) =>
-      boot(forge, identityFor(user));
+    const open = (user: User) => boot(forge, identityFor(user));
 
     const h = open(alice);
     try {
       await h.settle();
-      await h.push((s, ctx) => issueScreen(s, ctx, local(s, repo), sealed.value.number));
+      await h.push((s, ctx) =>
+        issueScreen(s, ctx, local(s, repo), sealed.value.number),
+      );
       await h.until("private repo");
       await h.press("p");
       await h.until("private repository alice/");
@@ -546,7 +554,9 @@ describe("reviews, threads and the merge gate", () => {
     const g = open(alice);
     try {
       await g.settle();
-      await g.push((s, ctx) => issueScreen(s, ctx, local(s, repo), plain.value.number));
+      await g.push((s, ctx) =>
+        issueScreen(s, ctx, local(s, repo), plain.value.number),
+      );
       await g.until("A typo");
       expect(g.text()).not.toContain("private repo");
       await g.press("p");
@@ -559,7 +569,9 @@ describe("reviews, threads and the merge gate", () => {
     const b = open(bob);
     try {
       await b.settle();
-      await b.push((s, ctx) => issueScreen(s, ctx, local(s, repo), sealed.value.number));
+      await b.push((s, ctx) =>
+        issueScreen(s, ctx, local(s, repo), sealed.value.number),
+      );
       await b.until("Token leak");
       await b.press("p");
       await b.until("Verify your email first");
