@@ -422,6 +422,8 @@ function taskBody(input: TaskInput): string {
             "- The contract: every action asks `permit` and none compares roles by hand; a new door has its row in `src/contract.test.ts`; and no cell in `contract.json` is loosened unless the issue asked for exactly that — a loosened cell is a wall a person crosses, so a pull that loosens one without being asked is a change request, whatever else it does well.",
           ]),
       "",
+      ...roundLines(input.reviews.filter((r) => r.authorName === me)),
+      "",
       "Then submit exactly one review through the forge's API — the verdict and its line comments in one call — and stop:",
       `  curl -sS -X POST -H "authorization: Bearer $FORGE_TOKEN" -H "content-type: application/json" "$FORGE_URL/api/v1/repos/${input.repo.ownerName}/${input.repo.name}/pulls/${issue.number}/review-states" -d '{"state":"approved","body":"...","comments":[{"path":"src/x.ts","line":12,"side":"new","body":"..."}]}'`,
       `"comments" is optional. Each anchors to a line of the diff below: "path" is the file, "side" is "new" for an added or kept line (numbered as in the head) or "old" for a removed one (numbered as in the base), and "line" counts from the hunk header — in \`@@ -a,b +c,d @@\` the hunk's first line is c on the new side. If the API answers \`bad_anchor\`, nothing was posted: read its message, fix the anchors, and send the review once more; if it is refused again, send it without "comments" and put those points in the body.`,
@@ -748,6 +750,25 @@ const indent = (text: string): string =>
     .map((l) => `    ${l}`)
     .join("\n");
 const oneLine = (text: string): string => text.replace(/\s+/g, " ").trim();
+
+/**
+ * What the reviewer does with the rounds: everything in the first, and only
+ * what changed in the later ones, so a pull is not re-opened every round.
+ */
+function roundLines(mine: readonly Review[]): string[] {
+  const last = mine[mine.length - 1];
+  if (last === undefined)
+    return [
+      "This is your first review of this pull: list every change you need in it, so the builder fixes them in one round.",
+    ];
+  return [
+    `You have reviewed this pull before; your last review was on head ${last.commitOid.slice(0, 12)}. This is a later round, so do not start over:`,
+    `- Read the diff since that head (\`git diff ${last.commitOid.slice(0, 12)}..HEAD\` in the clone, if it has the commit; otherwise the change below).`,
+    "- Say for each earlier ask whether it is met.",
+    "- Raise a new ask only on lines that changed since your last review; code you already read and passed is not reopened.",
+    "- Mark anything optional as `Non-blocking:`, and approve when only those remain.",
+  ];
+}
 
 /** `<agent>/<issue number>-<slug>`: a branch name that says whose and what for. */
 export function branchFor(agent: Agent, issue: Issue): string {
