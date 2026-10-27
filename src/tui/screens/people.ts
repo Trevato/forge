@@ -4,9 +4,11 @@
  * starter $5 a month) or a guest. A forge admin who is a person; every rule
  * is the action's (`actions/roles.ts`). `s` suspends or lifts a suspension
  * after a confirm, with the actions and words MCP `account_suspend` uses.
+ * `v` vouches for the email of the person under the cursor, after a y/n,
+ * with the action MCP `account_verify` uses.
  */
 
-import { suspendAccount, unsuspendAccount } from "../../actions/accounts.ts";
+import { suspendAccount, unsuspendAccount, verifyAccount } from "../../actions/accounts.ts";
 import { ADMIN_WORDS } from "../../actions/admin_words.ts";
 import { lastOwnerSays } from "../../core/orgs.ts";
 import { setRole } from "../../actions/roles.ts";
@@ -15,9 +17,7 @@ import { listPeople, type Person } from "../../core/roles.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import type { Session } from "../session.ts";
-import { style } from "../term/style.ts";
-import { truncate } from "../term/width.ts";
-import { confirmScreen, later, promptScreen, runAsync } from "./common.ts";
+import { confirmScreen, drawList, later, ListState, promptScreen, runAsync, type ListRow } from "./common.ts";
 
 /** One person's row: name, role, allowance, and since when they are suspended. */
 function rowOf(p: Person): string {
@@ -27,6 +27,16 @@ function rowOf(p: Person): string {
 }
 
 export function peopleScreen(f: Session, ctx: Ctx): Screen {
+  const list = new ListState();
+  const verify = (name: string): void => {
+    const done = verifyAccount(f.app, f.user, name);
+    if (done.ok) ctx.toast(`${done.value.username}'s email is verified.`);
+    else
+      ctx.toast(
+        done.error === "not_found" ? "No such account." : "An agent or a removed account has no email to verify.",
+        "danger",
+      );
+  };
   const askSuspend = (username: string, suspend: boolean): void => {
     later(ctx, () =>
       confirmScreen(ctx, screen, {
@@ -59,17 +69,38 @@ export function peopleScreen(f: Session, ctx: Ctx): Screen {
   };
   const screen: Screen = {
     title: "People",
-    keys: [binding(["r"], "change a role"), binding(["s"], "suspend or lift"), binding(["esc"], "back")],
+    keys: [binding(["r"], "change a role"), binding(["s"], "suspend or lift"), binding(["v"], "verify"), binding(["esc"], "back")],
     render(area, s) {
-      const c = ctx.theme.c;
-      listPeople(f.app.db)
-        .slice(0, Math.max(0, area.h))
-        .forEach((p, i) => {
-          s.text(area.x, area.y + i, truncate(rowOf(p), area.w), style(c.mutedFg, c.bg), area.x + area.w);
-        });
+      const rows: ListRow[] = listPeople(f.app.db).map((p) => ({
+        title: rowOf(p),
+        ...(p.verified ? {} : { meta: "unverified" }),
+      }));
+      drawList(s, area, ctx.theme.c, list, rows);
     },
     key(e) {
+      const people = listPeople(f.app.db);
+      if (list.key(e, people.length)) return true;
       if (e.ctrl || e.alt) return false;
+      if (e.key === "v") {
+        const p = people[list.index];
+        if (f.user?.isAdmin !== true || f.user.kind !== "user") ctx.toast("Only a forge admin can verify an email.", "danger");
+        else if (p === undefined) return true;
+        else if (p.verified) ctx.toast(`${p.username}'s email is already verified.`, "danger");
+        else
+          ctx.push(
+            confirmScreen(ctx, screen, {
+              title: "Verify email",
+              body: [`verify ${p.username}'s email? y/n`],
+              actions: [{ label: "Verify" }, { label: "Cancel" }],
+              selected: 1,
+              yesNo: true,
+              onChoose: (choice) => {
+                if (choice === 0) verify(p.username);
+              },
+            }),
+          );
+        return true;
+      }
       if (e.key === "s") {
         ctx.push(
           promptScreen(ctx, screen, {

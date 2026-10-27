@@ -396,6 +396,8 @@ export function confirmScreen(
     /** Index of the action chosen; -1 when dismissed. */
     onChoose: (index: number) => void;
     selected?: number;
+    /** `y` chooses the first action and `n` dismisses, for a plain yes/no question. */
+    yesNo?: boolean;
   },
 ): Screen {
   let selected = o.selected ?? 0;
@@ -424,7 +426,10 @@ export function confirmScreen(
       );
     },
     key(e) {
-      if (e.key === "left" || e.key === "h")
+      if (o.yesNo === true && (e.key === "y" || e.key === "n")) {
+        ctx.pop();
+        o.onChoose(e.key === "y" ? 0 : -1);
+      } else if (e.key === "left" || e.key === "h")
         selected = Math.max(0, selected - 1);
       else if (e.key === "right" || e.key === "l" || e.key === "tab")
         selected = Math.min(o.actions.length - 1, selected + 1);

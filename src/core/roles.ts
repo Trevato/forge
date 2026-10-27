@@ -122,16 +122,19 @@ export interface Person {
   readonly usdPerMonth: number | null;
   /** When the owner suspended the account; null while it is in good standing. */
   readonly suspendedAt: string | null;
+  /** Whether the email is proven: a link followed or an owner's word (`core/verify.ts`). */
+  readonly verified: boolean;
 }
 
 /** Every person (not an agent, not an organization) with role and model grant, newest first, in one query. */
 export function listPeople(db: Database): Person[] {
   return db
-    .query<{ username: string; is_admin: number; member: number | null; usd: number | null; suspended_at: string | null }, []>(
-      `SELECT u.username, u.is_admin, m.user_id AS member, g.usd_per_month AS usd, u.suspended_at
+    .query<{ username: string; is_admin: number; member: number | null; usd: number | null; suspended_at: string | null; verified_at: string | null }, []>(
+      `SELECT u.username, u.is_admin, m.user_id AS member, g.usd_per_month AS usd, u.suspended_at, c.verified_at
        FROM user u
        LEFT JOIN member m ON m.user_id = u.id
        LEFT JOIN model_grant g ON g.user_id = u.id
+       LEFT JOIN email_check c ON c.user_id = u.id
        WHERE u.kind = 'user' AND u.is_agent = 0 AND u.removed_at IS NULL
        ORDER BY u.created_at DESC, u.username`,
     )
@@ -141,5 +144,6 @@ export function listPeople(db: Database): Person[] {
       role: r.is_admin === 1 ? "admin" : r.member !== null ? "member" : "guest",
       usdPerMonth: r.usd,
       suspendedAt: r.suspended_at,
+      verified: r.verified_at !== null,
     }));
 }
