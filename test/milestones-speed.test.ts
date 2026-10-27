@@ -85,10 +85,12 @@ const list = async () => {
   return res.status;
 };
 
-test("readPlan of 2,000 closed and 300 open issues under 10 pillars fits a 30 ms budget", async () => {
+test("readPlan of 2,000 closed and 300 open issues under 10 pillars fits a 40 ms budget", async () => {
   const repo = getRepo(app.db, "alice", "forge")!;
   // The yardstick is the same machine reading the same rows raw, so load
-  // stretches both and the verdict follows the code (#6690).
+  // stretches both and the verdict follows the code (#6690). The plan builds
+  // 2,300 issue objects and walks their graph: ~25 ms quiet, so 30 sat on the
+  // edge and flipped with the machine (#6811); 40 leaves room under the page's 50.
   const raw = Math.min(
     ...Array.from({ length: 7 }, () => {
       const start = performance.now();
@@ -104,7 +106,7 @@ test("readPlan of 2,000 closed and 300 open issues under 10 pillars fits a 30 ms
     times.push(performance.now() - start);
     expect(plan.limbs).toHaveLength(PILLARS);
   }
-  expectBudget(Math.min(...times), { ms: 30, against: raw });
+  expectBudget(Math.min(...times), { ms: 40, against: raw });
 });
 
 test("a write to another repository keeps the plan warm; a new issue here refreshes it", async () => {
