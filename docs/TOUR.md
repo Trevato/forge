@@ -121,7 +121,12 @@ about why.
 ## Asked, review, a client's forge and the family
 
 What you asked for: `Ctrl+K`, then **Asked**, is `/asked` in the terminal — your
-thoughts, then the issues you can write to that are not shipped, oldest first
+thoughts, then the issues you can write to that are not shipped, oldest first,
+as MCP `asked` defaults to. `s` cycles not shipped → flagged → all and `o` flips
+oldest/newest first, the title saying which; each row says the ask's state
+(waiting, building, shipped, closed) and stale or flagged in MCP's words. The
+rows keep MCP's order in every view, so the terminal and an agent read the same
+list; the web page `/asked` groups what needs you first instead
 (`j`/`k` move, `enter` gives the issue's web address, `r` refreshes). It is read
 only, shows a guest nothing, and names nothing of a placement in a repository
 you cannot read.

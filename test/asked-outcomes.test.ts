@@ -184,8 +184,8 @@ test("the API, the MCP and the terminal carry the same outcome and sentence", as
   expect(by("Plant tomatoes in the north bed").outcomeText).toBe("parked: the check failed twice on the same test.");
   expect(by("Fix the gate").outcome).toMatchObject({ kind: "failed", by: "bot" });
   const lines = askedLines(app.db, getUserByName(app.db, "alice")!).asks;
-  expect(lines.map((l) => l.title)[0]).toBe("Plant tomatoes in the north bed");
-  expect(lines[0]!.secondary).toStartWith("parked: the check failed twice");
+  // Found by title: the terminal keeps MCP's order, not the page's grouping (#7303).
+  expect(lines.find((l) => l.title === "Plant tomatoes in the north bed")?.secondary).toStartWith("parked: the check failed twice");
 });
 
 test("All lists every ask it counts, closed ones last", async () => {
