@@ -35,6 +35,7 @@ const ADMIN_ARGS: Record<string, Record<string, unknown>> = {
   app_domains: { repo: "alice/game", action: "add", host: "game.example.com" },
   backups_destination: { action: "set", bucket: "forge-snaps", accessKey: "AKIA", secretKey: "s3cr3t-key-0123456789" },
   backups_test: { endpoint: "http://127.0.0.1:1", bucket: "b", accessKey: "AKIA", secretKey: "s3cr3t-key-0123456789" },
+  rollback: { sha: "a".repeat(40), dryRun: false },
 };
 
 /** What `visible()` answers for a tool the token's scope does not open. */

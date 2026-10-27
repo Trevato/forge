@@ -111,6 +111,7 @@ export { tool as reports } from "./reports.ts";
 export { tool as restore_drill } from "./restore_drill.ts";
 export { tool as returns } from "./returns.ts";
 export { tool as review } from "./review.ts";
+export { tool as rollback } from "./rollback.ts";
 export { tool as run_log } from "./run_log.ts";
 export { tool as runs } from "./runs.ts";
 export { tool as say } from "./say.ts";

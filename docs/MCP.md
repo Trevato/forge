@@ -138,6 +138,7 @@ for a tunnel and a forge that sleeps.
 | `restore_drill` | no input: restore the newest snapshot as a drill and answer `{ verdict, failedStep?, says }`, worded as the Backups page's button; no store, a failure or a red drill is an answer, not an error; a forge admin's, with an admin token | yes |
 | `returns` | `{ repo?, days? }`: what the crew's tokens bought over the last `days` (1–90, default 7): dollars, runs, changes landed, cost per change; `repo` narrows it to one app of yours |  |
 | `review` | `{ repo, number, verdict, reason? }`: approve a pull (`approve`) or request changes (`changes`, with a `reason`), as the page does; a writer's or the crew's, and never your own pull | yes |
+| `rollback` | `{ sha, dryRun? }`: roll the forge back to a kept release, as /releases does; plans unless `dryRun` is false (from which release to which, and whether the live schema allows it); a person who may roll back, with an admin-scope token, never an agent | yes |
 | `run_log` | `{ repo, run, tail? }`: a run's log, or its last `tail` lines (1–2000), with the REST route's access: a hidden log or unreadable repository is not found |  |
 | `runs` | `{ repo, limit? }`: the repository's recent runs, newest first (id, kind, state, issue or pull number, started, ended), 1–50, default 20; read as the runs page reads them |  |
 | `say` | speak on an issue or a pull; a working builder hears it as its next step | yes |
