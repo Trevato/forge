@@ -7,12 +7,58 @@ import { enableApp } from "../src/actions/apps.ts";
 import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import { forkRelation } from "../src/core/following.ts";
+import { deferredOf, repoGraph } from "../src/core/dependencies.ts";
+import { getRepo } from "../src/core/repos.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { proveAll } from "./helpers/verified.ts";
+import { baselineMs, expectBudget } from "./helpers/budget.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
+
+/**
+ * The live shape of trevato/forge: 20 pillar umbrellas among the 300 open
+ * issues, 2,000 closed (a quarter of them landed pulls), and 3,500 edges.
+ */
+function seedLive(db: App["db"], repoId: string, author: string, from: number): void {
+  const open = (i: number) => `${repoId}i${i}`;
+  let n = 10_000 + from;
+  for (let k = 0; k < 20; k++)
+    db.query(
+      `INSERT INTO issue (id, repo_id, number, kind, title, body, author_id, state)
+       VALUES (?1, ?2, ?3, 'issue', ?4, '', ?5, 'open')`,
+    ).run(`${repoId}u${k}`, repoId, ++n, `P${k} Pillar ${k}: umbrella`, author);
+  db.query(
+    `INSERT INTO issue (id, repo_id, number, kind, title, body, author_id, state)
+     VALUES (?1, ?2, ?3, 'issue', 'Later gate: parked', '', ?4, 'open')`,
+  ).run(`${repoId}gate`, repoId, ++n, author);
+  const closed: string[] = [];
+  for (let i = 0; i < 2000; i++) {
+    const id = `${repoId}c${i}`;
+    closed.push(id);
+    const pull = i % 4 === 0;
+    db.query(
+      `INSERT INTO issue (id, repo_id, number, kind, title, body, author_id, state)
+       VALUES (?1, ?2, ?3, ?4, ?5, '', ?6, 'closed')`,
+    ).run(id, repoId, ++n, pull ? "pull" : "issue", `Done ${i}`, author);
+    if (pull)
+      db.query(
+        `INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, merged_at)
+         VALUES (?1, 'main', ?2, 'x', 'y', ?3)`,
+      ).run(id, `c${i}`, new Date(Date.now() - i * 3_600_000).toISOString());
+  }
+  const edges = new Set<string>();
+  const add = (a: string, b: string) => {
+    if (a === b || edges.has(`${a}>${b}`)) return;
+    edges.add(`${a}>${b}`);
+    db.query(`INSERT INTO issue_dependency (issue_id, blocked_by_id, actor_id) VALUES (?1, ?2, ?3)`).run(a, b, author);
+  };
+  for (let i = 0; i < 280; i++) add(`${repoId}u${i % 20}`, open(i));
+  for (let i = 0; i < 30; i++) add(open(i), `${repoId}gate`);
+  for (let i = 1; edges.size < 3500; i++)
+    add(closed[i % 2000]!, closed[(i * 7 + 1 + Math.floor(i / 2000)) % 2000]!);
+}
 
 let root = "";
 let app: App;
@@ -159,4 +205,43 @@ test("following stays cheap on a diverged fork (regression guard; this pull does
   expect(res.headers.get("server-timing") ?? "").toContain("following");
   await queriesFor(path);
   expect(Math.abs((await queriesFor(path)) - small[path]!)).toBeLessThanOrEqual(SLACK);
+});
+
+async function phases(path: string): Promise<Record<string, number>> {
+  const best: Record<string, number> = {};
+  for (let i = 0; i < 6; i++) {
+    const res = await fetch(`${servers.url}${path}`, { headers: { cookie } });
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    if (path.endsWith("-fork")) expect(body.replace(/\s+/g, " ")).toContain("needs a decision");
+    for (const part of (res.headers.get("server-timing") ?? "").split(", ")) {
+      const m = /^([a-z]+);dur=([\d.]+)/.exec(part);
+      if (m) best[m[1]!] = Math.min(best[m[1]!] ?? Infinity, Number(m[2]));
+    }
+  }
+  return best;
+}
+
+test("now stays within budget on the live shape: 300 open issues, 2,000 closed, 3,500 edges, 20 pillars", async () => {
+  const repo = getRepo(app.db, "alice", "vault")!;
+  const author = app.db.query<{ id: string }, []>("SELECT id FROM user WHERE username = 'alice'").get()!.id;
+  app.db.transaction(() => {
+    for (let i = 200; i < 280; i++)
+      app.db.query(
+        `INSERT INTO issue (id, repo_id, number, kind, title, body, author_id, state)
+         VALUES (?1, ?2, ?3, 'issue', ?4, '', ?5, 'open')`,
+      ).run(`${repo.id}i${i}`, repo.id, 5000 + i, `Tell ${i}`, author);
+    seedLive(app.db, repo.id, author, 0);
+  })();
+  const against = await baselineMs(servers.url);
+  const best = await phases("/alice/vault");
+  expectBudget(best.now!, { ms: 5, against });
+  expectBudget(best.shipped!, { ms: 5, against });
+});
+
+test("the lean deferred read says what the whole graph says, and something is deferred", () => {
+  const repo = getRepo(app.db, "alice", "vault")!;
+  const whole = repoGraph(app.db, repo.id).deferred;
+  expect(whole.size).toBeGreaterThan(0);
+  expect([...deferredOf(app.db, repo)].sort()).toEqual([...whole].sort());
 });

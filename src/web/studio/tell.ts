@@ -17,8 +17,8 @@ import { alreadyDone } from "../../core/done_on_main.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { LATER_TITLED } from "../../core/pillars.ts";
+import { deferredOf, linkedIssueIds } from "../../core/dependencies.ts";
 import { hasPicture } from "../../core/note_pictures.ts";
-import { linkedIssueIds, repoGraph } from "../../core/dependencies.ts";
 import {
   getIssuesByNumbers,
   labelsFor,
@@ -306,7 +306,7 @@ function deferredWhy(
   if (byRepo === undefined) deferrals.set(wordCtx, (byRepo = new Map()));
   let known = byRepo.get(repo.id);
   if (known === undefined)
-    byRepo.set(repo.id, (known = repoGraph(wordCtx.db, repo.id).deferred));
+    byRepo.set(repo.id, (known = deferredOf(wordCtx.db, repo)));
   return known.get(issue.id);
 }
 

@@ -12,7 +12,7 @@ import type { Database } from "bun:sqlite";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { getIssuesByIds, getIssuesOfRepo, type CloseReason, type Issue } from "./issues.ts";
 import { pillarsOf, structuralIds, type Pillars } from "./pillars.ts";
-import { getRepoById } from "./repos.ts";
+import { getRepoById, type Repo } from "./repos.ts";
 import { unadoptedAmong } from "../crew/direct.ts";
 import { raisedAt, raisedInRepo } from "./thought_links.ts";
 import { limbRanks, limbTree, readPlaces } from "./limb_order.ts";
@@ -241,7 +241,7 @@ export interface Graph {
  * would take along before anything is written.
  */
 export function deferredIn(
-  graph: Pick<Graph, "issues" | "edges">,
+  graph: { issues: readonly Pick<Issue, "id" | "state">[]; edges: readonly Edge[] },
   gate: string | undefined,
   later: string | undefined,
   also: Iterable<string> = [],
@@ -301,6 +301,39 @@ export function linkedIssueIds(db: Database, ids: readonly string[]): Set<string
     out.add(r.b);
   }
   return out;
+}
+
+/**
+ * `repoGraph(...).deferred` for a repository, reading only what it needs: the
+ * open issues and the edges that start at one. Closed issues and the edges
+ * between them never change what is deferred, so a repository with thousands
+ * of finished issues costs what its open ones do. Nothing is deferred
+ * without an open Later gate, which is checked before any edge is read.
+ */
+export function deferredOf(db: Database, repo: Repo): ReadonlyMap<string, string> {
+  const set = pillarsOf(db, repo);
+  const gate = set.gate?.id;
+  if (gate === undefined || set.gate?.state !== "open") return new Map();
+  const issues = db
+    .query<{ id: string; number: number; title: string }, [string, number]>(
+      `SELECT id, number, title FROM issue
+        WHERE repo_id = ?1 AND kind = 'issue' AND state = 'open' AND sealed = 0
+        ORDER BY number LIMIT ?2`,
+    )
+    .all(repo.id, GRAPH_MAX)
+    .map((i) => ({ ...i, state: "open" as const }));
+  const open = new Set(issues.map((i) => i.id));
+  const edges = db
+    .query<{ issue_id: string; blocked_by_id: string }, [string]>(
+      `SELECT d.issue_id, d.blocked_by_id FROM issue_dependency d
+         JOIN issue i ON i.id = d.issue_id
+        WHERE i.repo_id = ?1 AND i.state = 'open' AND i.kind = 'issue'`,
+    )
+    .all(repo.id)
+    .filter((r) => open.has(r.issue_id) && open.has(r.blocked_by_id))
+    .map((r) => ({ issueId: r.issue_id, blockedById: r.blocked_by_id }));
+  const graph = { issues, edges };
+  return deferredWhy(graph, deferredIn(graph, gate, set.later?.id), gate, set.later?.id);
 }
 
 export function repoGraph(
@@ -426,7 +459,7 @@ const NAMED_LIMBS = 2;
  * it — and then which: the deferred limbs above it, by number and title.
  */
 function deferredWhy(
-  graph: Pick<Graph, "issues" | "edges">,
+  graph: { issues: readonly Pick<Issue, "id" | "number" | "title">[]; edges: readonly Edge[] },
   deferred: ReadonlySet<string>,
   gate: string | undefined,
   later: string | undefined,
@@ -447,8 +480,8 @@ function deferredWhy(
       ]);
   }
   // The deferred limbs an issue hangs from: what above it was itself filed.
-  const limbs = (id: string, seen: Set<string>): Issue[] => {
-    const found: Issue[] = [];
+  const limbs = (id: string, seen: Set<string>): Pick<Issue, "id" | "number" | "title">[] => {
+    const found: Pick<Issue, "id" | "number" | "title">[] = [];
     for (const waiter of waiters.get(id) ?? []) {
       if (seen.has(waiter)) continue;
       seen.add(waiter);
