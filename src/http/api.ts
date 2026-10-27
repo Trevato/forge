@@ -15,7 +15,6 @@ import { showProvenance } from "../actions/provenance.ts";
 import {
   APP_ALREADY_YOURS,
   ORIGIN_UNREACHABLE,
-  REPORT_ALREADY_DECIDED,
 } from "../actions/origin_app_words.ts";
 import { getProvenance, provenanceFacts } from "../core/provenance.ts";
 import { goldenPath } from "../apps/golden_path.ts";
@@ -405,25 +404,18 @@ import { agentRoutes } from "./api/agents.ts";
 import { boardRoutes } from "./api/boards.ts";
 import { followingRoutes } from "./api/following.ts";
 import { labelsRoutes } from "./api/labels.ts";
+import { reportRoutes } from "./api/reports.ts";
 import { orgRoutes } from "./api/orgs.ts";
 import { promptRoutes } from "./api/prompts.ts";
 import { secretRoutes } from "./api/secrets.ts";
 import { upstreamRoutes } from "./api/upstream.ts";
 import type { Router } from "./router.ts";
-import { clientAddress, clientBucket } from "./peer.ts";
+import { clientAddress } from "./peer.ts";
 import { manifestFor } from "../actions/here.ts";
 import { egressSnapshot } from "../apps/egress.ts";
 import { egressMetrics } from "../apps/egress_metrics.ts";
 import { forgeMetrics } from "../metrics/forge.ts";
 import { appSources } from "../metrics/app_sources.ts";
-import {
-  acceptReport,
-  dismissReport,
-  fileReport,
-  waitingReports,
-} from "../actions/reports.ts";
-import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
-import { REPORT_RECEIVED } from "../actions/report_words.ts";
 import { ADMIN_WORDS } from "../actions/admin_words.ts";
 import { SETTING_WORDS } from "../actions/setting_words.ts";
 import { SPEND_WORDS } from "../actions/spend_words.ts";
@@ -475,9 +467,6 @@ function reportInstead(ctx: Ctx, repo: Repo): Response {
   );
 }
 
-/** What a refused report is told: the shape that would have been taken. */
-const REPORT_HINT = `send JSON {title, body?, page?}: plain text, a title of 1-${TITLE_MAX} characters, a body of at most ${BODY_MAX}, page an http(s) address`;
-
 // ---- shapes ----
 
 /** A fleet refusal: the access codes keep their fixed shapes. */
@@ -491,7 +480,7 @@ function respondFleet(error: FleetError): Response {
   );
 }
 
-function withLabels<T extends Issue>(ctx: Ctx, issue: T) {
+export function withLabels<T extends Issue>(ctx: Ctx, issue: T) {
   return {
     ...readerMarked(ctx, issue.repoId, [issue])[0]!,
     labels: labelsFor(ctx.app.db, issue.id),
@@ -750,7 +739,7 @@ function sourceFailure(error: SourceError): Response {
  * said no" from "the origin said no" — and the status says which side is
  * worth retrying against.
  */
-function originAware(error: string, status = 422): Response {
+export function originAware(error: string, status = 422): Response {
   if (error === "invalid_reason")
     return apiError(
       "invalid_reason",
@@ -2674,118 +2663,7 @@ export function apiRoutes(router: Router<Handler>): void {
     return json(withLabels(ctx, created.value), 201);
   });
 
-  // ── reports from outside — no account, a person decides ──────────────
-
-  router.add("POST", "/api/v1/repos/:owner/:name/reports", async (ctx) => {
-    const repo = loadRepo(ctx);
-    if (!repo) return notFound();
-    const input = await boundedBody(ctx.request, REQUEST_MAX);
-    if (input === "too_large")
-      return json({ error: "too_large", message: REPORT_HINT }, 413);
-    const filed = fileReport(
-      ctx.app,
-      repo,
-      { title: str(input.title), body: str(input.body), page: str(input.page) },
-      clientBucket(ctx.request),
-    );
-    if (!filed.ok) {
-      const refusal = filed.error;
-      if (refusal.error === "not_found") return notFound();
-      if (refusal.error === "rate_limited")
-        return json(
-          { error: "rate_limited", message: "too many reports; wait and send again" },
-          429,
-          { "retry-after": String(refusal.retryAfter) },
-        );
-      if (refusal.error === "queue_full")
-        return apiError(
-          "queue_full",
-          429,
-          "this repository has many reports waiting; try again later",
-        );
-      return apiError(refusal.error, 422, REPORT_HINT);
-    }
-    return json(
-      {
-        id: filed.value.id,
-        state: filed.value.state,
-        message: REPORT_RECEIVED,
-      },
-      202,
-    );
-  });
-
-  // Reading the words is a writer's act, so a read-only token — the one an
-  // app process holds for its owner — cannot fetch them.
-  router.add("GET", "/api/v1/repos/:owner/:name/reports", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const denied = requireScope(ctx, "rw");
-    if (denied) return denied;
-    const repo = loadRepo(ctx);
-    if (!repo) return notFound();
-    const window = keyedWindow(ctx);
-    if (window instanceof Response) return window;
-    const waiting = timePhase(ctx.request, "reports", () =>
-      waitingReports(ctx.app, ctx.auth.user, repo),
-    );
-    if (!waiting.ok) return respondAccess(waiting.error, 403);
-    return timePhase(ctx.request, "render", () =>
-      json(
-        keyedPage(
-          waiting.value.map((r) => ({ ...r, from: "outside" })),
-          (r) => r.id,
-          window,
-        ),
-      ),
-    );
-  });
-
-  router.add(
-    "POST",
-    "/api/v1/repos/:owner/:name/reports/:id/accept",
-    async (ctx) => {
-      const denied = requireScope(ctx, "rw");
-      if (denied) return denied;
-      const repo = loadRepo(ctx);
-      if (!repo) return notFound();
-      // `{ title }` is the accepting person's wording; the marker stays.
-      const { title } = await body(ctx.request);
-      const accepted = await acceptReport(
-        ctx.app,
-        ctx.auth.user,
-        repo,
-        ctx.params.id ?? "",
-        typeof title === "string" ? title : undefined,
-      );
-      if (!accepted.ok)
-        return accepted.error === "decided"
-          ? apiError("decided", 409, REPORT_ALREADY_DECIDED)
-          : originAware(accepted.error);
-      return json(withLabels(ctx, accepted.value), 201);
-    },
-  );
-
-  router.add(
-    "POST",
-    "/api/v1/repos/:owner/:name/reports/:id/dismiss",
-    (ctx) => {
-      const denied = requireScope(ctx, "rw");
-      if (denied) return denied;
-      const repo = loadRepo(ctx);
-      if (!repo) return notFound();
-      const dismissed = dismissReport(
-        ctx.app,
-        ctx.auth.user,
-        repo,
-        ctx.params.id ?? "",
-      );
-      if (!dismissed.ok)
-        return dismissed.error === "decided"
-          ? apiError("decided", 409, REPORT_ALREADY_DECIDED)
-          : respondAccess(dismissed.error, 403);
-      return json({ id: ctx.params.id, state: "dismissed" });
-    },
-  );
+  reportRoutes(router);
 
   router.add("GET", "/api/v1/repos/:owner/:name/issues/:number", (ctx) => {
     // Numbers are shared with pulls: a pull's number answers as the same
