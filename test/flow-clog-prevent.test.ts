@@ -52,7 +52,7 @@ const open = (title: string): Issue => {
 };
 
 test("a seeded clog lowers the slots and holds a fresh build on the hot file", () => {
-  const clog: Vitals = { open: 8, opened1h: 51, landed1h: 15, opened6h: 120, landed6h: 40, conflicted: 0 };
+  const clog: Vitals = { open: 8, opened1h: 51, landed1h: 15, opened6h: 120, landed6h: 40, conflicted: 0, red: 0, queued: 0, oldestApprovedHours: null, strandedUsd: 0 };
   const ceiling = 7;
   const governed = governedSlots(clog, ceiling);
   expect(governed.slots).toBeLessThan(ceiling);

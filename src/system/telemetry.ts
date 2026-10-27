@@ -9,7 +9,7 @@ import type { App } from "../app.ts";
 import { SOURCES } from "../boards/sources.ts";
 import { conflictedPulls, conflictedSays, rebaseLane, rebaseLaneSays } from "../flow/conflicted.ts";
 import { firedAlarms } from "../flow/alarms.ts";
-import { readVitals, vitalsLine, vitalsMisses } from "../flow/vitals.ts";
+import { readVitals, vitalsFor, vitalsLine, vitalsMisses } from "../flow/vitals.ts";
 import { parkedSays, readParked } from "../flow/parked.ts";
 import { readPipeline, verdict } from "../flow/pipeline.ts";
 import { type QueueReading, readQueues } from "../flow/queue.ts";
@@ -33,7 +33,8 @@ export function flowFor(app: App, reader: Reader, now = new Date()) {
   const lane = rebaseLane(app.db, conflicted);
   const requested = requestedWaits(app.db, reader.kind === "agent");
   const busy = reviewersBusy(app.db, reader.kind === "agent");
-  const vitals = readVitals(app.db, now, reader.kind === "agent");
+  // Dollars only for the owner and an agent holding telemetry:read (#6424).
+  const vitals = vitalsFor(readVitals(app.db, now, reader.kind === "agent"), reader.kind === "owner" || reader.spend === true);
   const parked = readParked(app.db, now, reader.kind === "agent");
   return {
     says: verdict(stages, now.getTime()),

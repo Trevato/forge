@@ -23,9 +23,9 @@ import { pileSays, readPile } from "../../flow/pile.ts";
 import { readPipeline, STAGE_LABEL, verdict } from "../../flow/pipeline.ts";
 import { parkedSays, readParked } from "../../flow/parked.ts";
 import { firedAlarms } from "../../flow/alarms.ts";
+import { readVitals, vitalsFor, vitalsLine } from "../../flow/vitals.ts";
 import { readLeadTime, type LeadTime } from "../../flow/lead_time.ts";
 import { readOpeners, type Opener } from "../../flow/openers.ts";
-import { readVitals, vitalsLine } from "../../flow/vitals.ts";
 import { readQueues, redBatchWords } from "../../flow/queue.ts";
 import { reviewersBusy, reviewingSays } from "../../flow/reviewing.ts";
 import { requestedSays, requestedWaits } from "../../flow/requested.ts";
@@ -70,7 +70,7 @@ export function flowLines(
   return [
     ...wrap(verdict(stages, now.getTime()), inner),
     "",
-    ...wrap(vitalsLine(readVitals(db, now, agent !== undefined)), inner),
+    ...wrap(vitalsLine(vitalsFor(readVitals(db, now, agent !== undefined), agent === undefined)), inner),
     ...firedAlarms(db, now, { publicOnly: agent !== undefined, ceilingUsd }).flatMap((a) => wrap(a.says, inner)),
     "",
     ...wrap(parkedSays(readParked(db, now, agent !== undefined)), inner),

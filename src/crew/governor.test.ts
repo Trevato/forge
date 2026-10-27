@@ -3,7 +3,7 @@ import type { Vitals } from "../flow/vitals.ts";
 import { governedSlots } from "./governor.ts";
 
 const v = (p: Partial<Vitals>): Vitals => ({
-  open: 0, opened1h: 0, landed1h: 0, opened6h: 0, landed6h: 0, conflicted: 0, ...p,
+  open: 0, opened1h: 0, landed1h: 0, opened6h: 0, landed6h: 0, conflicted: 0, red: 0, queued: 0, oldestApprovedHours: null, strandedUsd: 0, ...p,
 });
 
 describe("governedSlots", () => {
