@@ -248,7 +248,13 @@ const snap = (counts?: Counts): [number, number] | undefined => {
 export function timePhase<T>(request: Request, name: string, work: () => T, counts?: Counts): T {
   const before = snap(counts);
   const started = performance.now();
-  const value = work();
+  let value: T;
+  try {
+    value = work();
+  } catch (err) {
+    noteSince(request, name, started, before, counts);
+    throw err;
+  }
   noteSince(request, name, started, before, counts);
   return value;
 }
@@ -256,7 +262,13 @@ export function timePhase<T>(request: Request, name: string, work: () => T, coun
 export async function timePhaseAsync<T>(request: Request, name: string, work: () => Promise<T>, counts?: Counts): Promise<T> {
   const before = snap(counts);
   const started = performance.now();
-  const value = await work();
+  let value: T;
+  try {
+    value = await work();
+  } catch (err) {
+    noteSince(request, name, started, before, counts);
+    throw err;
+  }
   noteSince(request, name, started, before, counts);
   return value;
 }
@@ -306,7 +318,9 @@ export function noteSessionTime(request: Request, ms: number): void {
 }
 
 export function takeSessionTime(request: Request): number {
-  return sessionTimes.get(request) ?? 0;
+  const ms = sessionTimes.get(request) ?? 0;
+  sessionTimes.delete(request);
+  return ms;
 }
 
 const dbTimes = new WeakMap<Request, number>();
