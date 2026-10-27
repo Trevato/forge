@@ -9,7 +9,6 @@ import { ROUTES } from "../src/contract/openapi.ts";
  * until you do.
  */
 const NOT_YET_DESCRIBED: readonly string[] = [
-  "GET /api/v1/user/origins/{}/browse/{}/{}",
 ];
 
 const norm = (path: string) => path.replace(/[:*]\w+/g, "{}").replace(/\{\w+\}/g, "{}");

@@ -133,6 +133,7 @@ export { route as getApiV1UserKeys } from "./getApiV1UserKeys.ts";
 export { route as getApiV1UserOrgs } from "./getApiV1UserOrgs.ts";
 export { route as getApiV1UserOriginApps } from "./getApiV1UserOriginApps.ts";
 export { route as getApiV1UserOrigins } from "./getApiV1UserOrigins.ts";
+export { route as getApiV1UserOriginsIdBrowseOwnerName } from "./getApiV1UserOriginsIdBrowseOwnerName.ts";
 export { route as getApiV1UserOriginsIdBrowseOwnerNameBlobRefPath } from "./getApiV1UserOriginsIdBrowseOwnerNameBlobRefPath.ts";
 export { route as getApiV1UserOriginsIdBrowseOwnerNameBranches } from "./getApiV1UserOriginsIdBrowseOwnerNameBranches.ts";
 export { route as getApiV1UserOriginsIdBrowseOwnerNameCommits } from "./getApiV1UserOriginsIdBrowseOwnerNameCommits.ts";

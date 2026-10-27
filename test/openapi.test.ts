@@ -39,8 +39,8 @@ test("every described route is registered in the router", () => {
     .replace(/"(PUT)",\s*`([^`]*)\$\{kind\}([^`]*)`/g, (_, m, a, b) => `"${m}", "${a}issues${b}"\n"${m}", "${a}pulls${b}"`);
   const browse = /const BROWSE = "([^"]+)"/.exec(src)![1]!;
   const registered = new Set(
-    [...src.matchAll(/"(GET|POST|PATCH|DELETE|PUT)",\s*(?:"([^"]+)"|`\$\{BROWSE\}([^`]*)`)/g)].map(
-      (m) => `${m[1]} ${m[2] ?? browse + m[3]}`,
+    [...src.matchAll(/"(GET|POST|PATCH|DELETE|PUT)",\s*(?:"([^"]+)"|`\$\{BROWSE\}([^`]*)`|(BROWSE)\s*,)/g)].map(
+      (m) => `${m[1]} ${m[2] ?? browse + (m[3] ?? "")}`,
     ),
   );
   const shape = (p: string) => p.replace(/\{\w+\}|[:*]\w+/g, ":");
