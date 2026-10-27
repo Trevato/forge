@@ -414,6 +414,7 @@ import { boardRoutes } from "./api/boards.ts";
 import { followingRoutes } from "./api/following.ts";
 import { labelsRoutes } from "./api/labels.ts";
 import { reportRoutes } from "./api/reports.ts";
+import { takeBackRoutes } from "./api/take_back.ts";
 import { orgRoutes } from "./api/orgs.ts";
 import { promptRoutes } from "./api/prompts.ts";
 import { secretRoutes } from "./api/secrets.ts";
@@ -1201,7 +1202,7 @@ const holdJson = (hold: Hold) => ({
   ...(hold.until ? { until: hold.until } : {}),
 });
 
-function loadPull(ctx: Ctx): Found<{ pull: Pull }> {
+export function loadPull(ctx: Ctx): Found<{ pull: Pull }> {
   const repo = loadRepo(ctx);
   if (!repo) return { error: notFound() };
   const number = positiveInt(ctx.params.number);
@@ -2682,6 +2683,7 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   reportRoutes(router);
+  takeBackRoutes(router);
 
   router.add("GET", "/api/v1/repos/:owner/:name/issues/:number", (ctx) => {
     // Numbers are shared with pulls: a pull's number answers as the same

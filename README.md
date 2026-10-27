@@ -54,6 +54,8 @@ A pull the merge queue holds as red alone (red on its own merge at its current h
 
 On a sealed issue, a writer gets the private repository to fix it in: `POST /api/v1/repos/:owner/:name/issues/:number/private`, the issue page's button, and `p` on the issue's terminal screen, which shows the repository and its clone URL (built from the forge's origin). All three refuse alike: not found for anyone who may not see sealed reports, `not_sealed`, and `unverified`.
 
+**Taking a shipped pull back**: `POST /api/v1/repos/:owner/:name/pulls/:number/take-back` (a person who can write here, `rw` token scope; a session needs a same-origin request) opens a new pull, `Revert "<title>"` from the branch `revert-<n>` into the default branch, that undoes exactly what the shipped pull merged. Nothing lands until a person merges it. It takes no body and answers 201 with the new pull, as `POST …/pulls` answers one. Refusals: an agent or a reader gets 403 `forbidden`; a read-only token gets 403; a pull that is unknown or that you may not see gets 404 `not_found`; 409 `not_shipped` (it never merged), 409 `already_reverted`, 409 `mirrored` (the origin owns the history); 409 `conflict` when the undo no longer applies cleanly, with the conflicting files in `message`, and nothing is left behind. A failure of the forge's own git is 500 `git_failed` with a fixed message; git's words go to the server log. The pull page's **Take back** is the same verb (`revertPull` in `src/actions/revert.ts`). The terminal's pull screen does not offer it yet.
+
 Under the agents, each team that has a pull has one pooled row (its members'
 counts added, the ratios taken from the sums; an agent on two teams counts in
 both): `data-team` rows on the page, "team <name>" rows in that terminal screen.
