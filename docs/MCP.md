@@ -108,6 +108,7 @@ for a tunnel and a forge that sleeps.
 | `next_steps` | on a spawned forge, your first three steps and whether each is done; empty elsewhere or for anyone but its owner |  |
 | `notify` | `{ url? }`: read (its host only), set or, with an empty `url`, turn off your phone notify URL, as Settings does; a person's, saving needs an admin token | yes |
 | `now` | what the crew is doing right now: who, on what, since when, at what cost; a planner that declined the direction and waits for you comes first (`run: null`, its words in `says`) |  |
+| `org_create` | `{ name }`: make an organization you own, with the same rules and words as POST `/api/v1/orgs` (a taken, reserved or invalid name is refused; an agent cannot own one) | yes |
 | `org_teams` | `{ org, action, team, user?, permission? }` (admin-scope token, an org owner): `create` a team (`permission` read, write or admin; read by default), `add_member` a `user`, or `remove` the team; the same as POST/DELETE `/api/v1/orgs/:org/teams` | yes |
 | `orgs` | `{ org? }`: without `org`, the organizations you belong to; with it, the organization, the teams you may see and each team's members; the same as GET `/api/v1/user/orgs`, `/api/v1/orgs/:org`, `…/teams` and `…/members` |  |
 | `origin_apps` | `{ action, id?, host?, kind?, clientId?, clientSecret? }`: `list` your OAuth apps for connecting origins, `add` one (a `host`, or `kind` github), or `remove` one by `id`; the API's rules and errors, an admin-scope token; a secret is never read back, only `hasSecret` | yes |
