@@ -24,7 +24,6 @@ import {
   prune,
   readAccess,
   recordAccess,
-  TOTAL_BYTES,
 } from "../src/http/access_log.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import { newApp } from "../src/actions/apps.ts";
@@ -199,11 +198,12 @@ describe("the access log's keeping", () => {
       prune(dir, now);
       expect(readdirSync(keep)).toEqual(["access-2026-09-30.log"]);
       // Over the cap: the oldest goes first, today's file always stays.
-      const big = "x".repeat(TOTAL_BYTES / 2 + 1);
+      const cap = 1024;
+      const big = "x".repeat(cap / 2 + 1);
       writeFileSync(join(keep, "access-2026-10-10.log"), big);
       writeFileSync(join(keep, "access-2026-10-11.log"), big);
       writeFileSync(join(keep, "access-2026-10-13.log"), "today\n");
-      prune(dir, now);
+      prune(dir, now, cap);
       expect(readdirSync(keep).sort()).toEqual([
         "access-2026-10-11.log",
         "access-2026-10-13.log",

@@ -156,7 +156,7 @@ export function lineFor(
 let pruned = "";
 
 /** Drop files past their days, then the oldest until the directory fits. */
-export function prune(dataDir: string, at: Date): void {
+export function prune(dataDir: string, at: Date, cap: number = TOTAL_BYTES): void {
   const dir = accessDir(dataDir);
   const oldest = dayOf(new Date(at.getTime() - (KEEP_DAYS - 1) * DAY_MS));
   const files = readdirSync(dir)
@@ -169,7 +169,7 @@ export function prune(dataDir: string, at: Date): void {
   }
   let total = kept.reduce((n, f) => n + statSync(join(dir, f)).size, 0);
   for (const f of kept) {
-    if (total <= TOTAL_BYTES || f === kept[kept.length - 1]) break;
+    if (total <= cap || f === kept[kept.length - 1]) break;
     total -= statSync(join(dir, f)).size;
     unlinkSync(join(dir, f));
   }
