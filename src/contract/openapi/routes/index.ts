@@ -171,6 +171,7 @@ export { route as postApiV1AdminAccountsUsernameSuspend } from "./postApiV1Admin
 export { route as postApiV1AdminAccountsUsernameUnsuspend } from "./postApiV1AdminAccountsUsernameUnsuspend.ts";
 export { route as postApiV1AdminAccountsUsernameVerify } from "./postApiV1AdminAccountsUsernameVerify.ts";
 export { route as postApiV1AdminInvites } from "./postApiV1AdminInvites.ts";
+export { route as postApiV1AdminReleasesShaRollback } from "./postApiV1AdminReleasesShaRollback.ts";
 export { route as postApiV1Agents } from "./postApiV1Agents.ts";
 export { route as postApiV1Apps } from "./postApiV1Apps.ts";
 export { route as postApiV1AsksBulk } from "./postApiV1AsksBulk.ts";

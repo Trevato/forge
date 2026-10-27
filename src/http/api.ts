@@ -414,6 +414,7 @@ import { boardRoutes } from "./api/boards.ts";
 import { followingRoutes } from "./api/following.ts";
 import { labelsRoutes } from "./api/labels.ts";
 import { reportRoutes } from "./api/reports.ts";
+import { rollbackRoutes } from "./api/rollback.ts";
 import { takeBackRoutes } from "./api/take_back.ts";
 import { orgRoutes } from "./api/orgs.ts";
 import { promptRoutes } from "./api/prompts.ts";
@@ -2683,6 +2684,7 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   reportRoutes(router);
+  rollbackRoutes(router);
   takeBackRoutes(router);
 
   router.add("GET", "/api/v1/repos/:owner/:name/issues/:number", (ctx) => {
