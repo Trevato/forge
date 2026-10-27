@@ -64,7 +64,7 @@ import { html, when, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import { writableAppsOf } from "../studio/asks.ts";
 import { costLine } from "../studio/cost_line.ts";
-import { homeTabs } from "../studio/home_tabs.ts";
+import { homeTabs, unshippedAsks } from "../studio/home_tabs.ts";
 import { shelfRows } from "../studio/shelf.ts";
 import {
   badge,
@@ -214,7 +214,7 @@ export async function appsList(ctx: Ctx): Promise<Response> {
     costLine(ctx.app.db, writableAppsOf(ctx, ctx.auth.user).repos),
   );
   const rendering = performance.now();
-  const body = html`${when(ctx.auth.user, () => homeTabs("apps"))}
+  const body = html`${when(ctx.auth.user, (user) => homeTabs("apps", unshippedAsks(ctx.app.db, user)))}
     ${pageHead("Apps", { actions: create })}
     ${cost}
     ${filters}

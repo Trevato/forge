@@ -61,7 +61,7 @@ import { archivedAppCount } from "../pages/apps.ts";
 import { pinnedPanels } from "./pinned.ts";
 import { isNavigation, lastVisit, noteVisit } from "../../core/home_visit.ts";
 import { sinceYouWere } from "./since.ts";
-import { homeTabs } from "./home_tabs.ts";
+import { homeTabs, unshippedAsks } from "./home_tabs.ts";
 import { crewKeyNote } from "./crew.ts";
 import { everydayCard } from "../pages/everyday.ts";
 import { nextStepsCard, nextStepsOf } from "../pages/next-steps.ts";
@@ -280,6 +280,7 @@ export async function studioHome(
     isNavigation(ctx.request) ? noteVisit(ctx.app.db, user.id, visitedAt) : lastVisit(ctx.app.db, user.id),
   );
   const since = timePhase(ctx.request, "since", () => sinceYouWere(ctx.app.db, user, before, visitedAt));
+  const asking = timePhase(ctx.request, "asked", () => unshippedAsks(ctx.app.db, user));
   const ask = firstSteps ?? everydayCard(ctx, user);
   const figures = user.isAdmin && steps === undefined;
   const ceilingUsd = forgeCeiling(ctx.app.config);
@@ -301,7 +302,7 @@ export async function studioHome(
       </p>`,
     )}
     ${since}
-    ${homeTabs("feed")}
+    ${homeTabs("feed", asking)}
     <div class="split" data-rail="wide">
       <div class="stack">
         ${composer(ctx, user)}

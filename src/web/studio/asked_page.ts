@@ -204,7 +204,7 @@ export function askedPage(ctx: Ctx): Response {
       ? "Nothing asked yet"
       : `${asked} asked · ${shipped} shipped${flagged > 0 ? ` · ${flagged} with nothing built` : ""}`;
 
-  const body = html`${homeTabs("asked")}
+  const body = html`${homeTabs("asked", unshipped)}
     <h1 id="asked-sentence">What you asked for</h1>
     <p class="muted">${sentence}</p>
     ${thoughts}
