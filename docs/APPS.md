@@ -145,8 +145,9 @@ Under the box, four starter sentences are plain links (no script):
   write the app. A production comment opens an issue carrying the page address;
   a preview comment goes on its pull. From a terminal or an agent the same
   actions are, in the SSH terminal, rows of the palette on a repository
-  screen: *Working now* (while an agent run is live, left out when it is on work
-  you may not see), *Tell the crew*, *Report a problem* (one text, an issue
+  screen: *Working now* (one row per running agent run with its minutes, choosing
+  one opens the run's log; a run on work you may not see is left out),
+  *Tell the crew*, *Report a problem* (one text, an issue
   titled by its first line, through `openIssueThrough`) and *Make it yours*
   (the fork screen, for those who cannot write the repository), and *Vision*
   (docs/VISION.md on the default branch: the purpose, each pillar numbered,

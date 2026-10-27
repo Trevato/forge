@@ -99,7 +99,7 @@ describe("working now in the terminal", () => {
     expect(await palette(bob, [":", "Working"])).not.toContain("Working now");
     const run = liveRun("LIVEJOB sanding the door");
     try {
-      expect(await palette(bob, [":", "Working"], "LIVEJOB")).toContain("Working now: LIVEJOB sanding the door");
+      expect(await palette(bob, [":", "Working"], "LIVEJOB")).toContain("LIVEJOB sanding the door");
     } finally {
       run.done();
     }
