@@ -67,8 +67,9 @@ if (import.meta.main) {
   }
   // After the index is current, so a new file's row is in the table.
   const { TOOLS } = await import("../src/http/mcp/tools.ts");
+  const { REPORT_TOOL } = await import("../src/http/mcp.ts");
   const md = readFileSync(DOC, "utf8");
-  const doc = withTable(md, tableText(TOOLS));
+  const doc = withTable(md, tableText([...TOOLS, REPORT_TOOL]));
   if (md !== doc) {
     stale.push("docs/MCP.md");
     if (!check) writeFileSync(DOC, doc);

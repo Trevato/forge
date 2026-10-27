@@ -19,6 +19,8 @@ export const tool: Tool = {
     },
     required: ["repo", "who"],
   },
+  doc:
+    "`{ repo, who, model?, tokensIn?, tokensOut?, usd?, issue?, note? }`: report what your session spent outside forge runs; `who` and some spend (tokens or `usd`) are required; answers the entry's `id` and `usd`",
   writes: true,
   run(ctx, user, args) {
     const repo = repoArg(ctx, user, args);

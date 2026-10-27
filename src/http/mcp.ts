@@ -123,7 +123,7 @@ function rpcOne(
                 },
               }),
         })),
-        REPORT_TOOL,
+        { name: REPORT_TOOL.name, description: REPORT_TOOL.description, inputSchema: REPORT_TOOL.inputSchema },
       ];
       // The cursor is the name of the last tool of the page before, so a tool
       // added between two requests moves nothing.
@@ -204,8 +204,11 @@ function rpcOne(
  * public repository (`actions/reports.ts`), with the same limits as the
  * page and the API. Everything else here needs a token.
  */
-const REPORT_TOOL = {
+export const REPORT_TOOL = {
   name: "report",
+  /** Its row in docs/MCP.md (`bun scripts/mcp-tools.ts`); never sent to a client. */
+  doc: "`{ repo, title, body?, page? }`: report a problem in a public repository, the one tool open without a token; it still stores the report, which a person reads first; plain text",
+  writes: true,
   description:
     "Report a problem in a public repository, no account needed. Plain text; a person reads it first.",
   inputSchema: {
