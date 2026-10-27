@@ -23,7 +23,8 @@
  * finishes, so the log reads one shard at a time. Either way the tail
  * names every failing test from every shard. The first red shard stops
  * the rest (fail-fast) so a known fail does not burn the remaining wall
- * clock. Exits non-zero if any shard does.
+ * clock — unless every red in it is a budget test, which the forge re-runs
+ * once after the gate (#7354). Exits non-zero if any shard does.
  *
  * The whole gate, unsliced (`--gate` on the full tier, as `check.run`),
  * runs one file per `bun test`, heaviest first into whichever worker is
@@ -63,6 +64,7 @@ import {
   besideOthers,
   failingFiles,
   onlyTestFailures,
+  stopsTheRest,
   type ShardResult,
 } from "./shards.ts";
 import { gateFiles, gateRefusal, presentTests } from "./gate.ts";
@@ -561,7 +563,8 @@ async function pool(width: number): Promise<Timed[]> {
       const index = next++;
       if (stop) break;
       results[index] = await runShard(slices[index]!, index, width === 1);
-      if (results[index]!.code !== 0) {
+      // A shard red only on budget tests lets the rest run (#7354).
+      if (stopsTheRest(results[index]!)) {
         stop = true;
         halted = true;
         for (const child of children) child.kill("SIGTERM");

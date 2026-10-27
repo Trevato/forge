@@ -58,6 +58,7 @@ import { keepCache, restoreCache } from "./cache.ts";
 import { MAX_FILED, clearedFiles, fileOrderDependent } from "./order_dependent.ts";
 import { parseBunTestFailure } from "./bun-test.ts";
 import { passedAlone, recordFlakes, rerunCommand, rerunnable } from "./flake.ts";
+import { budgetFiles, budgetReds, budgetRetryCommand, noteBudgetRetry, retryPassed } from "./budget_retry.ts";
 import { diskRecovered, withDisk } from "./disk_red.ts";
 import { ASKED, redMain, unheld } from "./red_main.ts";
 import { proposeRevert } from "./revert_red.ts";
@@ -743,6 +744,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     readonly fileOrderDependent?: boolean;
     /** The default branch's own run: a failure of one or two tests is re-run alone before it counts as red. */
     readonly isMain?: boolean;
+    /** A merge-queue gate: a red only on budget tests re-runs those files once, serially (#7354). */
+    readonly gate?: boolean;
     readonly write: (line: string) => void;
     readonly signal: AbortSignal;
   }
@@ -1098,6 +1101,40 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           write(`flake re-run failed: ${String(error)}`);
         }
       }
+      // A gate's red only on budget tests is the gate's own load, not the
+      // batch's code (#7354): those files run once more, one test at a
+      // time, held to their absolute budgets. Passing, the batch is green
+      // and the tests are recorded as flakes; failing, it is red as before.
+      if (!ran.ok && job === undefined && x.gate === true) {
+        try {
+          const tests = budgetReds(checkLines);
+          if (tests !== undefined) {
+            const files = budgetFiles(tests);
+            write(`re-running ${files.length} file(s) red only on budget tests, serially: ${files.join(" ")}`);
+            const out: string[] = [];
+            const again = await runStep("budget", budgetRetryCommand(files), {
+              cwd: dir,
+              env: { ...env, FORGE_TEST_QUIET: "1" },
+              log: (line) => {
+                out.push(line);
+                write(line);
+              },
+              signal,
+              timeoutMs: Math.min(manifest.timeout, RERUN_TIMEOUT_S) * 1000,
+              cell,
+            });
+            const passed = again.ok && retryPassed(out);
+            if (!signal.aborted) noteBudgetRetry(repo.id, passed);
+            if (passed) {
+              recordFlakes(app.db, app.bus, repo, tests, { runId: run.id, commit: run.commitOid });
+              write(`budget retry passed: ${tests.map((t) => `"${t.name}"`).join(", ")} held their budgets alone; recorded, the gate is green`);
+              ran = { ok: true, value: undefined };
+            } else write("budget retry failed: the gate is red");
+          }
+        } catch (error) {
+          write(`budget retry failed to run: ${String(error)}`);
+        }
+      }
       if (!ran.ok) {
         const { summary, detail } = summariseCheckFailure(
           checkLines,
@@ -1336,6 +1373,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         commitOid,
         pull,
         tier: "full",
+        gate: true,
         write: (line) => lines.push(line),
         signal: controller.signal,
       });

@@ -9,8 +9,15 @@
  * a quiet machine; no lane sets it yet). Otherwise the limit is relative to the
  * baseline but never above `MAX_RELAXATION` times `ms`, so a 50 ms budget
  * cannot drift past 200 ms however slow the baseline.
+ *
+ * A time over its limit throws an error that starts with `BUDGET_MARK`, so
+ * the merge queue's gate can tell a budget red from a functional one and
+ * re-run it once, serially, before it sinks a batch (#7354,
+ * `src/checks/budget_retry.ts`). A time that is not a number is a missing
+ * phase, not a slow one: that fails as any `expect` does.
  */
 import { expect } from "bun:test";
+import { BUDGET_MARK } from "../../src/checks/budget_retry.ts";
 
 /** How many times slower than the same-run baseline a page may be under load. */
 export const BASELINE_FACTOR = 10;
@@ -29,7 +36,16 @@ export function budgetLimit(ms: number, against: number): number {
 
 /** Asserts `measured` (ms) fits the budget `ms`, judged against `against` (ms, same run) unless quiet. */
 export function expectBudget(measured: number, opts: { ms: number; against: number }): void {
-  expect(measured).toBeLessThan(budgetLimit(opts.ms, opts.against));
+  if (!Number.isFinite(measured)) {
+    expect(measured).toBeLessThan(budgetLimit(opts.ms, opts.against));
+    return;
+  }
+  const limit = budgetLimit(opts.ms, opts.against);
+  if (measured < limit) return;
+  throw new Error(
+    `${BUDGET_MARK}: ${measured.toFixed(1)} ms is not under ${limit.toFixed(1)} ms ` +
+      `(budget ${opts.ms} ms, baseline ${opts.against.toFixed(1)} ms${quiet() ? ", quiet" : ""})`,
+  );
 }
 
 /** The best wall-clock ms of a few loopback requests to `/healthz`: what a request costs right now. */

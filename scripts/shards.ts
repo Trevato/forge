@@ -8,6 +8,7 @@
  */
 
 import { nameUnnamed } from "../src/checks/bun-test.ts";
+import { budgetReds } from "../src/checks/budget_retry.ts";
 
 /**
  * No more than this many `bun test` processes at once, whatever the host:
@@ -365,6 +366,16 @@ export interface ShardResult {
   readonly output: string;
   /** How long the shard ran, when the runner timed it. */
   readonly seconds?: number;
+}
+
+/**
+ * Whether a finished shard stops the shards not yet done (fail-fast): any
+ * red does, except one whose every failure is a budget test (#7354). The
+ * forge re-runs those once, serially, after the gate — which it can only
+ * call green when every other file ran too.
+ */
+export function stopsTheRest(result: Pick<ShardResult, "code" | "output">): boolean {
+  return result.code !== 0 && budgetReds(result.output.split("\n")) === undefined;
 }
 
 /** What the log ends with, and the exit code of the whole run. */

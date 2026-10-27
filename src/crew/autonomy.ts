@@ -130,6 +130,7 @@ import { approvedOnHead, finishApproved, finishFields } from "./finishing.ts";
 import { recheckRedApproved } from "./red_approved.ts";
 import { keepBatch } from "../flow/red_batches.ts";
 import { recordQueueFlakes } from "../checks/flake.ts";
+import { budgetRetryWords } from "../checks/budget_retry.ts";
 import { readVitals, vitalsMisses, vitalsWords } from "../flow/vitals.ts";
 import { moveRequested, tallyRequested, tallyWords } from "./requested.ts";
 import { reviewersOf, sendToReview, sweepReviews } from "./review.ts";
@@ -1348,6 +1349,8 @@ export async function autonomyTick(
         batch: batchWords(current.id, queueBatch(app.db)),
         // Pulls the queue found red on top of others of their candidate (#4235).
         clashes: queueClashes(current.id),
+        // The last hour's gates re-run red only on budget tests, passed/failed (#7354).
+        ...budgetRetriesField(current.id, now.getTime()),
         spent: `${status.spentTodayUsd.toFixed(2)}/${status.ceilingUsd}`,
         ...(status.paused === null ? {} : { paused: status.paused }),
         // Starts after the first, and how many followed a crash (#3708).
@@ -2119,6 +2122,12 @@ function queueOptions(app: App, repo: Repo): QueueOptions {
     store: queueStore(app.db),
     adopt: (record, signal) => adoptGate(app, repo, record, signal),
   };
+}
+
+/** `budgetRetries: "2 passed/1 failed"` on the tick line when a gate re-ran its budget reds this hour; nothing otherwise. */
+function budgetRetriesField(repoId: string, now: number): { budgetRetries?: string } {
+  const words = budgetRetryWords(repoId, now);
+  return words === undefined ? {} : { budgetRetries: words };
 }
 
 /** The queue's gate: the full tier on the candidate's tip, asked as its first pull. */
