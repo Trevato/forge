@@ -452,7 +452,8 @@ export function promptScreen(
     /**
      * Show the value as dots. A terminal is the one surface where somebody
      * is routinely reading over your shoulder, so a secret typed into one
-     * must never be a plain string of cells.
+     * must never be a plain string of cells. A masked value is also kept
+     * verbatim: not trimmed, and a paste keeps its newlines.
      */
     mask?: boolean;
     /** Return an error string to keep the prompt open with a message. */
@@ -491,7 +492,8 @@ export function promptScreen(
       ctx.setCursor(cursor);
     },
     paste(text) {
-      value += text.replace(/\s+/g, " ");
+      // A masked value is a credential: kept as pasted (a PEM key's lines), only CR/CRLF made LF.
+      value += o.mask === true ? text.replace(/\r\n?/g, "\n") : text.replace(/\s+/g, " ");
       return true;
     },
     key(e) {
@@ -500,7 +502,7 @@ export function promptScreen(
         return true;
       }
       if (e.key === "enter") {
-        const outcome = o.onSubmit(value.trim());
+        const outcome = o.onSubmit(o.mask === true ? value : value.trim());
         if (typeof outcome === "string") {
           error = outcome;
           return true;

@@ -155,6 +155,10 @@ it falls back to a regex read of the served HTML). axe-core is a devDependency
 of this check only, never loaded by the server: its rules need a rendered page
 and an accessibility tree, which nothing dependency-free gives.
 
+## Secrets in the terminal
+
+A forge admin opens the palette (`ctrl+k`), picks **Secrets**, and sees the sealed names at a place with when each was set and last read — names only, never a value. `a` sets one (place, name, then the value typed or pasted masked and kept verbatim, newlines included), `d` removes the one under the cursor after a confirm, `s` looks at another place (`forge`, `org NAME`, `repo OWNER/NAME`). Everything is `actions/secrets.ts`, as the page and MCP `secrets` use it; a member has no entry.
+
 ## Flags
 
 A forge admin sees every declared flag at `/settings/flags` (Settings → Flags): why it exists, its default, the owner issue and its live value. Set it for the whole forge, for listed user ids or roles, or for a percentage of people; Clear returns it to the default. A change is validated, kept in the change record and live on the next request, with no restart. In the terminal the same admin opens the command palette (`ctrl+k`), picks Flags, and presses enter to set a flag from a line such as `forge=on users=u1,u2 roles=admin percent=30` or `x` to clear it; an agent is never an admin there either. The MCP `flag_set` tool does the same with the same checks, for an admin token. The page and the terminal screen both list flags through one read, `readFlags` in `src/actions/flags_view.ts`.

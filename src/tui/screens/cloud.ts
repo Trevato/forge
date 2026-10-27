@@ -102,7 +102,7 @@ export function cloudScreen(f: Session, ctx: Ctx): Screen {
             title: `${LABEL[provider as (typeof PROVIDERS)[number]]} / ${name}`,
             label: "the token (checked, then sealed, never shown)",
             mask: true,
-            onSubmit: (value) => settle(addAccount(f.app, f.user, provider, name, value), () => `Sealed ${provider}/${name}.`),
+            onSubmit: (value) => settle(addAccount(f.app, f.user, provider, name, value.trim()), () => `Sealed ${provider}/${name}.`),
           }),
         );
       },
@@ -160,7 +160,7 @@ export function cloudScreen(f: Session, ctx: Ctx): Screen {
             title: `Rotate ${provider}/${name}`,
             label: "the new token (checked, then sealed)",
             mask: true,
-            onSubmit: (value) => settle(rotateAccount(f.app, f.user, provider, name, value), () => `Rotated ${provider}/${name}.`),
+            onSubmit: (value) => settle(rotateAccount(f.app, f.user, provider, name, value.trim()), () => `Rotated ${provider}/${name}.`),
           }),
         );
       else if (e.key === "n")

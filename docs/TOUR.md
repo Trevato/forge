@@ -32,6 +32,8 @@ username and password — which links that key to your account, so the next
 connection is instant. `j`/`k` to move, `enter` to open, `esc` to go back, `/`
 to filter, `?` for the keys, `:` for the command palette, `t` for the theme.
 
+**Secrets.** For a forge admin, `:` → *Secrets* lists sealed secret names (never values); `a` sets one, `d` removes one after a confirm, `s` changes the place. See [OPERATING](OPERATING.md#secrets-in-the-terminal).
+
 **Milestones.** `:` → *Milestones in a repository* → `owner/name` lists a
 repository's limbs in the order the crew takes ready work (`enter` opens a
 limb's own limbs). A person who administers the repository presses `r` to

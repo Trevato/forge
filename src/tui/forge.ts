@@ -49,6 +49,7 @@ import { accessScreen } from "./screens/access.ts";
 import { mayEditTrustedHosts } from "../origins/trusted-hosts.ts";
 import { trustedHostsPrompt } from "./screens/trustedhosts.ts";
 import { flagsScreen } from "./screens/flags.ts";
+import { secretsScreen } from "./screens/secrets.ts";
 import { scorecardScreen } from "./screens/scorecard.ts";
 import { cloudScreen } from "./screens/cloud.ts";
 import { crewSplitsScreen } from "./screens/crewsplits.ts";
@@ -392,6 +393,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Flags",
         hint: "declared flags and their live values",
         run: () => ctx.push(flagsScreen(session, ctx)),
+      });
+    // Settings → Secrets, as the page has it: a forge admin; names only, never a value.
+    if (session.user?.isAdmin === true)
+      commands.push({
+        id: "secrets",
+        title: "Secrets",
+        hint: "sealed secrets by name; set or remove one",
+        run: () => ctx.push(secretsScreen(session, ctx)),
       });
     // Settings → Origins' trusted internal hosts: the same admin gate as the page.
     if (mayEditTrustedHosts(session.user))
