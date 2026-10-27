@@ -61,6 +61,7 @@ import { badge, card } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
 import { PIN_MARK, ago, confirmScreen, drawFacts, plural } from "./common.ts";
 import { connectionsScreen, egressScreen } from "./egress.ts";
+import { eventsScreen } from "./events.ts";
 import { newPullScreen } from "./newpull.ts";
 import { pullScreen } from "./pull.ts";
 import { forkOf, hostOf, liveOrigin, local, localRepo, sourceName } from "./where.ts";
@@ -155,6 +156,7 @@ export function aboutScreen(
     get keys() {
       return [
         binding(["y"], "copy the clone URL", { disabled: cloneUrl === "" }),
+        ...(repo === undefined ? [] : [binding(["v"], "events")]),
         // Only an admin is offered the key, and only an admin's press counts.
         ...(may()
           ? [
@@ -407,6 +409,10 @@ export function aboutScreen(
           );
         rows = factRows();
         ctx.invalidate();
+        return true;
+      }
+      if (e.key === "v" && repo !== undefined) {
+        ctx.push(eventsScreen(f, ctx, repo));
         return true;
       }
       if (e.key === "e" && repo !== undefined && f.user?.isAdmin === true) {
