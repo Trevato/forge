@@ -100,6 +100,8 @@ export function upstreamRoutes(router: Router<Handler>): void {
         ? apiError("storage_limit", 403, storageLimitMessage(ctx.app, ctx.auth.user!.id))
         : forked.error === "limit"
         ? apiError("limit", 429, `at most ${FORKS_PER_DAY} forks a day: try again tomorrow`)
+        : forked.error === "fork_failed"
+        ? apiError("fork_failed", 422, "the fork could not be created")
         : respondAccess(forked.error, 422);
     return json(forked.value, 201);
   });
