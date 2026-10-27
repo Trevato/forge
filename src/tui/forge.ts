@@ -61,6 +61,7 @@ import { modelCeilingPrompt, modelGrantPrompt, modelScreen } from "./screens/mod
 import { sshKeysScreen } from "./screens/sshkeys.ts";
 import { proposalTokensPrompt } from "./screens/proposal_tokens.ts";
 import { invitesScreen } from "./screens/invites.ts";
+import { subscriptionsScreen } from "./screens/subscriptions.ts";
 import { signInsScreen } from "./screens/signins.ts";
 import { quotasScreen } from "./screens/quotas.ts";
 import { teamsScreen } from "./screens/teams.ts";
@@ -528,6 +529,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Invite links",
         hint: "make a single-use link, see which are open, revoke one",
         run: () => ctx.push(invitesScreen(session, ctx)),
+      });
+    // The crew's Claude subscriptions, as MCP `subscriptions` has them: a forge admin (#7244).
+    if (session.user?.isAdmin === true)
+      commands.push({
+        id: "subscriptions",
+        title: "Crew subscriptions",
+        hint: "each account's budget and rest; wake one, set its budget",
+        run: () => ctx.push(subscriptionsScreen(session, ctx)),
       });
     // Cloud accounts, as Settings → Cloud accounts has them: a forge admin (#2199).
     if (session.user?.isAdmin === true)

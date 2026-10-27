@@ -118,6 +118,27 @@ export function budgetsOf(db: Database): Map<string, Budget> {
   );
 }
 
+/** Why a budget change would be refused, in the words MCP and the terminal share. */
+export type BudgetRefusal = { readonly code: "not_found" | "locked" | "invalid"; readonly says: string };
+
+/**
+ * The refusal for setting (or clearing, null) an account's budget, or
+ * undefined when `setBudget` would take it. One rule for MCP, the terminal.
+ */
+export function budgetRefusal(db: Database, subscriptionId: string, usd: number | null): BudgetRefusal | undefined {
+  const held = budgetsOf(db).get(subscriptionId);
+  if (!held) return { code: "not_found", says: "no such account" };
+  if (held.locked && (usd === null || !(usd < (held.budgetUsd ?? 0))))
+    return {
+      code: "locked",
+      says: "This budget was set by whoever made this forge: it can be lowered, never raised or cleared.",
+    };
+  const max = limitValue(db, "subscription.budget_max_usd");
+  if (usd !== null && !(Number.isFinite(usd) && usd > 0 && usd <= max))
+    return { code: "invalid", says: `A budget is dollars from 1 to ${max}, or null for none.` };
+  return undefined;
+}
+
 /**
  * Set or clear (null) an account's whole-life budget. False for no such
  * sealed account, a budget out of range, or a locked budget: one set by
