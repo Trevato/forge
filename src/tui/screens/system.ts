@@ -6,6 +6,11 @@
  * It reads `live().read()`, the same view the page and the API serve.
  * Read-only; Enter, Esc or q closes it.
  *
+ * Above the machine, the forge itself (#7296): `forgeLines` reads
+ * `readHealth`, the answer MCP `health` gives the same user — version, short
+ * commit, serving or draining, and one more line only when a rollout is not
+ * simply fine or the platform reports incidents.
+ *
  * `memoryScreen` is `/system`'s other half (#2151): the forge's RSS beside
  * its JS heap, an hour a row for the last 24 h, read through `memoryHours`
  * like the page. The gate is the page's (`canSeeMemory`): anyone but a forge
@@ -14,12 +19,14 @@
 
 import type { Ctx, Screen } from "../app/app.ts";
 import type { SystemView } from "../../system/view.ts";
+import type { readHealth } from "../../actions/health.ts";
+import { rolloutLine, type ForgeHealth } from "../../kernel/guard.ts";
 import { canSeeMemory, memoryHours } from "../../boards/memory.ts";
 import { binding } from "../app/keys.ts";
 import type { Session } from "../session.ts";
 import { bytes, spark } from "../../system/format.ts";
 import { style } from "../term/style.ts";
-import { pad, wrap } from "../term/width.ts";
+import { pad, truncate, wrap } from "../term/width.ts";
 import { dialog } from "../ui/widgets.ts";
 import { Scroll, drawLines, hitScroll } from "./common.ts";
 
@@ -48,6 +55,27 @@ export function duplicateLines(dups: SystemView["duplicates"], inner: number): s
 /** A cell's memory beside its cap and who holds it, as /system says it (#2410); the forge and the host have none. */
 const capOf = (g: SystemView["groups"][number]): string =>
   g.capBytes === null ? "" : `${bytes(g.rssBytes)} of ${bytes(g.capBytes)} ${g.capBy === "kernel" ? "kernel" : "watched"}`;
+
+/**
+ * The forge as MCP `health` says it: the first line always, the second only
+ * when there is something to say. A stranger's answer carries no rollout or
+ * incidents, so it never has a second line.
+ */
+export function forgeLines(h: ReturnType<typeof readHealth>, inner = WIDTH - 6): string[] {
+  const head = `forge ${h.version} · ${h.commit === null ? "no commit" : h.commit.slice(0, 7)} · ${h.draining ? "draining" : "serving"}`;
+  if (!("incidents" in h)) return [head];
+  const full = h as ForgeHealth;
+  const rollout = rolloutLine(full);
+  // `stuck` and `held` are the rollout's own words; the rest are incidents.
+  const others = full.incidents.filter((i) => i.key !== "stuck" && i.key !== "held");
+  const said = [
+    ...(rollout === null ? [] : [rollout]),
+    ...(others.length === 0
+      ? []
+      : [`${others.length} incident${others.length === 1 ? "" : "s"}: ${others.map((i) => `${i.key}: ${i.message}`).join("; ")}`]),
+  ];
+  return said.length === 0 ? [head] : [head, truncate(said.join(" · "), inner)];
+}
 
 export function systemLines(v: SystemView): string[] {
   const inner = WIDTH - 6;

@@ -71,7 +71,8 @@ import { resilienceScreen } from "./screens/resilience.ts";
 import { forgeCeiling } from "../flow/ceiling.ts";
 import { flowLines, flowScreen } from "./screens/flow.ts";
 import { readHeld } from "../flow/held.ts";
-import { memoryScreen, systemLines, systemScreen } from "./screens/system.ts";
+import { forgeLines, memoryScreen, systemLines, systemScreen } from "./screens/system.ts";
+import { readHealth } from "../actions/health.ts";
 import { grantable, READS_KEPT, recentReads } from "../core/telemetry.ts";
 import { noteRead, setTelemetryGrant, telemetryReader } from "../actions/telemetry.ts";
 import { queuesFor, systemFor } from "../system/telemetry.ts";
@@ -320,7 +321,11 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         id: "system",
         title: "System",
         hint: "the machine now: CPU, memory, disks, processes",
-        run: () => ctx.push(systemScreen(ctx, systemLines(liveMachine().read()))),
+        run: () => ctx.push(systemScreen(ctx, [
+          ...forgeLines(readHealth(session.app, session.user)),
+          "",
+          ...systemLines(liveMachine().read()),
+        ])),
       });
       commands.push({
         id: "telemetry",

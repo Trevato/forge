@@ -4,15 +4,16 @@
  * guest get neither.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAgent } from "../src/actions/crew.ts";
+import { readHealth } from "../src/actions/health.ts";
 import { createApp, type App } from "../src/app.ts";
 import { recordMemory } from "../src/boards/memory.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { createForgeApp, forgeCommands, Session } from "../src/tui/forge.ts";
-import { memoryLines, memoryScreen } from "../src/tui/screens/system.ts";
+import { forgeLines, memoryLines, memoryScreen } from "../src/tui/screens/system.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
@@ -97,5 +98,68 @@ describe("tui system memory", () => {
       expect(doors(who)).not.toContain("system-memory");
       expect(await screenText(who)).not.toContain("123.0");
     }
+  });
+});
+
+describe("tui system: the forge's own state (#7296)", () => {
+  const SHA = "0123456789abcdef0123456789abcdef01234567";
+  const saved = ["FORGE_GUARD_DIR", "FORGE_VERSION", "FORGE_COMMIT"].map((k) => [k, process.env[k]] as const);
+  let guard: string;
+
+  beforeAll(async () => {
+    guard = await mkdtemp(join(tmpdir(), "forge-tui-system-guard-"));
+    process.env["FORGE_GUARD_DIR"] = guard;
+    process.env["FORGE_VERSION"] = "v9.8.7";
+    process.env["FORGE_COMMIT"] = SHA;
+  });
+
+  afterAll(async () => {
+    for (const [k, v] of saved) v === undefined ? delete process.env[k] : (process.env[k] = v);
+    await rm(guard, { recursive: true, force: true });
+  });
+
+  const seed = async (incidents: Record<string, string>) => {
+    await writeFile(join(guard, "status.json"), JSON.stringify({ incidents }));
+    await writeFile(join(guard, "checkedAt"), new Date().toISOString());
+  };
+
+  async function systemText(user: User): Promise<string> {
+    const terminal = headlessTerminal(120, 50);
+    const { app: tui, session } = createForgeApp(app, identity(user), { terminal, exitHooks: false });
+    tui.start();
+    forgeCommands(session)(tui.ctx).find((c) => c.id === "system")!.run();
+    await settleApp(tui);
+    const text = tui.screen.toText();
+    tui.stop?.();
+    return text;
+  }
+
+  test("all well: one line with the version, the short commit and serving; nothing more", async () => {
+    await seed({});
+    const lines = forgeLines(readHealth(app, carol));
+    expect(lines).toEqual(["forge 9.8.7 · 0123456 · serving"]);
+    const text = await systemText(carol);
+    expect(text).toContain("forge 9.8.7 · 0123456 · serving");
+    expect(text).not.toContain("incident");
+  });
+
+  test("a seeded incident adds exactly one line, in words", async () => {
+    await seed({ down: "the edge answered 502" });
+    const lines = forgeLines(readHealth(app, carol));
+    expect(lines).toEqual(["forge 9.8.7 · 0123456 · serving", "1 incident: down: the edge answered 502"]);
+    expect(await systemText(carol)).toContain("1 incident: down: the edge answered 502");
+  });
+
+  test("a blocked rollout and an incident share the one line", async () => {
+    await seed({ stuck: "quota refused", "oom:web": "killed" });
+    expect(forgeLines(readHealth(app, carol), 20)[1]).toBe("rollout blocked: qu…");
+    const lines = forgeLines(readHealth(app, carol));
+    expect(lines.length).toBe(2);
+    expect(lines[1]).toBe("rollout blocked: quota refused · 1 incident: oom:web: killed");
+  });
+
+  test("a stranger's answer, as MCP gives it, never has a second line", async () => {
+    await seed({ down: "the edge answered 502" });
+    expect(forgeLines(readHealth(app, undefined))).toEqual(["forge 9.8.7 · 0123456 · serving"]);
   });
 });
