@@ -852,7 +852,8 @@ const ANCHOR_FORMAT =
 /** A review's line comments as the API was sent them; undefined when they are not a list of objects. */
 function reviewLines(raw: unknown): ReviewInput[] | undefined {
   if (raw === undefined || raw === null) return [];
-  if (!Array.isArray(raw) || raw.length > MAX_REVIEW_LINES) return undefined;
+  // The cap is `submitReview`'s to refuse, by name (`too_many_lines`).
+  if (!Array.isArray(raw)) return undefined;
   const out: ReviewInput[] = [];
   for (const row of raw) {
     if (typeof row !== "object" || row === null) return undefined;
