@@ -1491,12 +1491,13 @@ export const shellJs = /* js */ `
       var box = doc.querySelector('[data-search-input]');
       if (box) { seq.length = 0; e.preventDefault(); box.focus(); box.select(); }
     } else if (e.key === '?') { seq.length = 0; e.preventDefault(); openHelp(); }
+    else if (e.key === ':') { seq.length = 0; e.preventDefault(); openPalette(); }
   });
 
   // ---- help overlay, generated from the shortcuts actually on the page ----
   var STATIC_KEYS = [
     ['j / k', 'Move between rows'], ['o or Enter', 'Open the focused row'],
-    ['/', 'Focus search'], ['Cmd/Ctrl K', 'Command palette'], ['?', 'This help'],
+    ['/', 'Focus search'], ['Cmd/Ctrl K', 'Command palette'], [':', 'Command palette'], ['?', 'This help'],
     ['Esc', 'Leave a box, close a menu or dialog'],
   ];
   // The rows a page earns by what it carries: a box to type in, a form
