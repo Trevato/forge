@@ -16,6 +16,7 @@ import { saysFromApp } from "../actions/app_notes.ts";
 import { OUTSIDE_LABEL, OUTSIDE_TITLE, saysOutside } from "../core/reports.ts";
 import type { Repo } from "../core/repos.ts";
 import { READER } from "./direct.ts";
+import { hotFiles, hotWords } from "./hot_files.ts";
 import { newsSince } from "./news.ts";
 import type { Reserve } from "./reserve.ts";
 import {
@@ -331,7 +332,7 @@ function taskBody(input: TaskInput): string {
   const { issue } = input;
   const out: string[] = [];
   const isAgent = (name: string): boolean => name === input.agent.user.username;
-  const handed = [reserveLines(input), parkedTwiceLines(input), limbLines(input), stuckLines(input), teamLines(input)]
+  const handed = [reserveLines(input), parkedTwiceLines(input), limbLines(input), stuckLines(input), teamLines(input), hotLines(input)]
     .filter((lines) => lines.length > 0)
     .flatMap((lines, n) => (n === 0 ? lines : ["", ...lines]));
   const readers = input.readers ?? new Set<string>();
@@ -737,6 +738,22 @@ function reserveLines(input: TaskInput): string[] {
     `The crew keeps a standing reserve of ${reserve.target} startable issues, two per builder slot, so builders never wait for a plan. ${reserve.startable} can start now${gap > 0 ? `: plan at least ${gap} more a builder can start at once — ready, with nothing open in front of it` : ""}.`,
     `If you finish with fewer than ${reserve.target} startable, say why in a comment on #${input.issue.number} before you finish: what the direction has left, or what holds the rest.`,
   ];
+}
+
+/** The most hot files a planner is told of. */
+const HOT_LISTED = 10;
+
+/**
+ * What a planner is told of the files open pulls crowd now: an issue whose
+ * `Files:` line names one waits, so it plans around them. Nothing when none.
+ */
+function hotLines(input: TaskInput): string[] {
+  if (input.role !== "planner") return [];
+  const hot = [...hotFiles(input.repo.id)]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, HOT_LISTED);
+  if (hot.length === 0) return [];
+  return [`Hot now (an issue whose Files: line names one waits): ${hotWords(new Map(hot))}`];
 }
 
 /**
