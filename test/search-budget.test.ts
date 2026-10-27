@@ -3,8 +3,9 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CODE_BUDGET_MS, grepCount, grepRepos } from "../src/core/search.ts";
+import { CODE_BUDGET_MS, grepCount, grepRepos, type GrepWho } from "../src/core/search.ts";
 import type { Repo } from "../src/core/repos.ts";
+import { createGrepSlots } from "../src/search/grep_slots.ts";
 
 let root = "";
 const repos: Repo[] = [];
@@ -66,4 +67,37 @@ test("a repo that cannot be grepped, such as one with no commits, leaves more fa
   const r = await grepRepos(root, gone, "budgetword", 200, 30);
   expect(r.more).toBe(false);
   expect(r.hits).toEqual([]);
+});
+
+test("a grep that never settles is cut at the budget: the first batch's repositories are kept and the abandoned slots free only when it settles", async () => {
+  const slots = createGrepSlots();
+  const eight = Array.from({ length: 8 }, (_, i) => ({ id: `n${i}`, ownerName: "u", name: `n${i}`, defaultBranch: "main" }) as Repo);
+  const open: (() => void)[] = [];
+  const started: Promise<unknown>[] = [];
+  let allFour!: () => void;
+  const fourStarted = new Promise<void>((resolve) => (allFour = resolve));
+  const grep: NonNullable<GrepWho["grep"]> = async (dir) => {
+    if (/n[0-3](\.git)?$/.test(dir)) return [{ path: "a.txt", line: 1, text: "sqlite" }];
+    const never = new Promise<never[]>((resolve) => open.push(() => resolve([])));
+    started.push(never);
+    if (started.length === 4) allFour();
+    return never;
+  };
+  const cut = await grepRepos(root, eight, "sqlite", 200, 30, {
+    grep,
+    slots,
+    now: () => 0,
+    timer: () => ({ done: Promise.resolve(), clear() {} }),
+  });
+  expect(cut.more).toBe(true);
+  expect(cut.hits.length).toBeGreaterThanOrEqual(1);
+  expect(cut.hits.map((h) => h.repo.name)).toEqual(["n0", "n1", "n2", "n3"]);
+  // The abandoned batch starts its greps after the answer; wait for them, not a clock.
+  await fourStarted;
+  // The four abandoned greps still hold the strangers' four slots.
+  expect(slots.held()).toEqual({ total: 4, strangers: 4 });
+  for (const settle of open) settle();
+  await Promise.allSettled(started);
+  await Promise.resolve();
+  expect(slots.held()).toEqual({ total: 0, strangers: 0 });
 });

@@ -36,9 +36,10 @@ async function phases(path: string): Promise<{ status: number; names: string[]; 
   return { status: res.status, names: names.slice(names.indexOf("app") + 1), body };
 }
 
-test("the API search names session, search and render in order", async () => {
+test("the API search names session, then the parts asked for, then render", async () => {
   const got = await phases("/api/v1/search?q=forge&kind=repos");
   expect(got.status).toBe(200);
-  expect(got.names).toEqual(["session", "search", "render"]);
+  expect(got.names).toEqual(["session", "repos", "render"]);
+  expect((await phases("/api/v1/search?q=forge")).names).toEqual(["session", "repos", "issues", "code", "render"]);
   expect(typeof JSON.parse(got.body)).toBe("object");
 });

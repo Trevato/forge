@@ -138,7 +138,7 @@ import { holdPull, releasePull } from "../actions/holds.ts";
 import { getHold, type Hold } from "../core/holds.ts";
 import { watchMilestone } from "../actions/watches.ts";
 import { THOUGHT_MAX, keepThought } from "../actions/thought.ts";
-import { search, searchWithin } from "../actions/search.ts";
+import { search, searchWithin, type SearchPhase } from "../actions/search.ts";
 import { runRepos } from "./run_gate.ts";
 import {
   commitToBranch,
@@ -2075,11 +2075,10 @@ export function apiRoutes(router: Router<Handler>): void {
           : { codeBudgetMs: ctx.app.config.codeBudgetMs ?? CODE_BUDGET_MS }),
       };
       const mine = runRepos(ctx.app, ctx.auth);
-      const found = await timePhaseAsync(ctx.request, "search", () =>
-        mine === undefined
-          ? search(ctx.app, ctx.auth.user, input)
-          : searchWithin(ctx.app, ctx.auth.user, mine, input),
-      );
+      const timed = { ...input, phase: (name: SearchPhase, ms: number) => notePhase(ctx.request, name, ms) };
+      const found = await (mine === undefined
+        ? search(ctx.app, ctx.auth.user, timed)
+        : searchWithin(ctx.app, ctx.auth.user, mine, timed));
       return timePhase(ctx.request, "render", () => json(found));
     } finally {
       held?.release();

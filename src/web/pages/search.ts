@@ -27,7 +27,7 @@ import {
   type SearchResults,
 } from "../../core/search.ts";
 import type { Ctx } from "../../http/context.ts";
-import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { notFoundPage, pageHead } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import { DELETE_REPO, STOP_APP } from "../danger_words.ts";
@@ -321,7 +321,9 @@ async function find(
     ctx.auth.user === undefined &&
     (a.kind === "code" || a.kind === "all") &&
     cleanQuery(a.query) !== "";
-  const held = greps ? strangerCodeSearch(ctx.app, ctx.request) : undefined;
+  const held = greps
+    ? timePhase(ctx.request, "gate", () => strangerCodeSearch(ctx.app, ctx.request))
+    : undefined;
   const withCode = held === undefined || held.allowed;
   try {
     const found = await search(ctx.app, ctx.auth.user, {
@@ -329,6 +331,7 @@ async function find(
       kind: a.kind,
       live: a.live,
       withCode,
+      phase: (name, ms) => notePhase(ctx.request, name, ms),
       ...(a.codeAll
         ? {}
         : { codeBudgetMs: ctx.app.config.codeBudgetMs ?? CODE_BUDGET_MS }),
@@ -403,7 +406,7 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
     return blank;
   }
 
-  const { found, busy } = await timePhaseAsync(ctx.request, "search", () => find(ctx, a));
+  const { found, busy } = await find(ctx, a);
   const apps: Apps = timePhase(ctx.request, "apps", () => {
     const seen = appsOf(ctx, ctx.auth.user);
     return {
