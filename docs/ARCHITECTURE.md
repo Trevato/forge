@@ -416,8 +416,10 @@ ends every open event stream with a resume hint (`retry: 1000`, then
 process — from the last id it saw; the crew stops taking runs and lets the
 ones it holds finish and land (`crew.stop({ drain: true })`, bounded); a
 check in flight is cut and handed back to the queue for the new process.
-A gate on land in flight is cut too, and is no verdict: no red is told, and
-the new process's merge queue gates it again (#3155). Its app processes stop
+A merge-queue gate in flight runs on through the same drain; its verdict is
+kept in its `queue_gate` row for the new process to act on (#6611). One the
+drain cuts off is no verdict: no red is told, and the new process's merge
+queue gates the same candidate again (#3155). Its app processes stop
 (the new process already runs its own), and SSH sessions are kept until
 they leave. However little it holds, its listener stays open
 for `FORGE_DRAIN_LINGER_S` (10 s) after the SIGTERM: routers hear that it

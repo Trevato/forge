@@ -34,6 +34,7 @@ import { AppsRuntime } from "./apps/runtime.ts";
 import { resolveAppDomain } from "./apps/host.ts";
 import { LAND_SETTLE_MS, requeueAbandonedChecks, startChecks } from "./checks/service.ts";
 import { RED_HOLD_MS } from "./checks/red_main.ts";
+import { stopQueue } from "./checks/queue.ts";
 import { startLooks } from "./looks/service.ts";
 import { startMirrorOut } from "./origins/mirror-out.ts";
 import { startProbes } from "./contract/probes.ts";
@@ -657,6 +658,9 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
   // The platform's SIGTERM: the listener stays open while routers learn
   // this process is going. A person's Ctrl-C does not wait for routers.
   const linger = signal === "SIGTERM" ? Bun.sleep(lingerMs ?? 0) : undefined;
+  // The merge queue acts on nothing more: its gates run on through the
+  // checks' drain, and a verdict is kept for the forge that carries on (#6611).
+  stopQueue();
   return Promise.all([
     linger,
     prompts.stop(),

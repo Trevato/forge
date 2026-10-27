@@ -93,7 +93,7 @@ import { placementFromEnv, type Placement } from "./placement.ts";
 import { JOB_VANISHED, runJobStep } from "./job_step.ts";
 import { checkInstallCache, installWithRetry, withLock } from "./install.ts";
 import { checkStage, type GateStage } from "./gate_reason.ts";
-import { extraGates, gateQueued, gatesInFlight, watchGates } from "./queue.ts";
+import { extraGates, gateQueued, gateRunId, gatesInFlight, watchGates } from "./queue.ts";
 import type { JobOptions } from "../cluster/jobs.ts";
 import type { CheckDetail } from "../core/runs.ts";
 
@@ -141,6 +141,15 @@ export interface ChecksOptions {
   readonly installRetryMs?: number | undefined;
 }
 
+/** A gate's answer from the lane: `interrupted` is no verdict (#3155). */
+export interface GateDone {
+  ok: boolean;
+  error: string;
+  lines: string[];
+  interrupted?: boolean;
+  stage?: GateStage;
+}
+
 export interface ChecksHandle {
   /** Ask for a check of one commit; the answer is the run, or nothing when the commit declares no check. */
   request(
@@ -159,12 +168,12 @@ export interface ChecksHandle {
    * forge stopping, or the cluster losing its Job — and is no verdict (#3155).
    * `signal` aborting (the queue's deadline, #3430) cuts it off the same way.
    */
-  gate(
-    repo: Repo,
-    pull: Pull,
-    commitOid: string,
-    signal?: AbortSignal,
-  ): Promise<{ ok: boolean; error: string; lines: string[]; interrupted?: boolean; stage?: GateStage }>;
+  gate(repo: Repo, pull: Pull, commitOid: string, signal?: AbortSignal): Promise<GateDone>;
+  /**
+   * The gate of `commitOid` this forge is running now, to wait on rather
+   * than start again (#6611); undefined when none is.
+   */
+  adopt?(commitOid: string): Promise<GateDone> | undefined;
   /**
    * Stop checking. Checks under way get `drainMs` to finish unless `drain`
    * is false (a person's Ctrl-C): then they are cut off and queued again now.
@@ -314,8 +323,12 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     capacityCount(app.db, "checks.concurrency", booted);
   const gate = options.gate ?? new Gate(capacity());
   const placement = options.placement ?? placementFromEnv();
-  /** Full gates on land in flight: not slots in the queue, but stopped with it. */
-  const gates = new Set<AbortController>();
+  /**
+   * Full gates on land in flight: not slots in the queue, but stopped with
+   * it — after the drain, as a check is. By commit, so a merge queue that
+   * carries on adopts one rather than gate the same tip again (#6611).
+   */
+  const gates = new Map<AbortController, { commitOid: string; done: Promise<GateDone> }>();
   const inFlight = new Map<
     string,
     { promise: Promise<void>; abort: AbortController }
@@ -1238,49 +1251,64 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   schedule();
   void catchUp();
 
+  /** One gate's run on the lane: the full tier on `commitOid`, traced, cut off by `controller`. */
+  async function gateOnce(
+    repo: Repo,
+    pull: Pull,
+    commitOid: string,
+    controller: AbortController,
+    signal: AbortSignal | undefined,
+  ): Promise<GateDone> {
+    const lines: string[] = [];
+    const abandon = (): void => controller.abort();
+    signal?.addEventListener("abort", abandon, { once: true });
+    // The slot minutes it spends are the flow's gate minutes (#6426).
+    const traced = beginGate(app.db, repo.id, pull.id, commitOid);
+    try {
+      const bare = await pullDir(app.db, app.reposRoot, repo, pull);
+      const done = await runTier({
+        bare,
+        repo,
+        id: gateRunId(commitOid),
+        commitOid,
+        pull,
+        tier: "full",
+        write: (line) => lines.push(line),
+        signal: controller.signal,
+      });
+      if (done.ok) return { ok: true, error: "", lines };
+      const stage = done.stage ?? "setup";
+      // Cut off by this forge stopping, the Job lost under it, or an
+      // install the machine failed twice: the code was not judged, so
+      // this is no red. A gate the drain lets finish is judged (#6611).
+      if (
+        controller.signal.aborted ||
+        done.error === JOB_VANISHED ||
+        done.infrastructure === true
+      )
+        return { ok: false, error: done.error, lines, interrupted: true, stage };
+      return { ok: false, error: done.error, lines, stage };
+    } finally {
+      endGate(app.db, traced);
+      signal?.removeEventListener("abort", abandon);
+      gates.delete(controller);
+    }
+  }
+
   const handle: ChecksHandle = {
     request,
-    gate: async (repo, pull, commitOid, signal) => {
-      const lines: string[] = [];
+    gate: (repo, pull, commitOid, signal) => {
       // A gate asked of a forge already stopping is not started: the forge
       // that carries on asks it again.
-      if (stopped) return { ok: false, error: INTERRUPTED, lines, interrupted: true };
+      if (stopped) return Promise.resolve({ ok: false, error: INTERRUPTED, lines: [], interrupted: true });
       const controller = new AbortController();
-      gates.add(controller);
-      const abandon = (): void => controller.abort();
-      signal?.addEventListener("abort", abandon, { once: true });
-      // The slot minutes it spends are the flow's gate minutes (#6426).
-      const traced = beginGate(app.db, repo.id, pull.id, commitOid);
-      try {
-        const bare = await pullDir(app.db, app.reposRoot, repo, pull);
-        const done = await runTier({
-          bare,
-          repo,
-          id: `gate-${commitOid.slice(0, 12)}`,
-          commitOid,
-          pull,
-          tier: "full",
-          write: (line) => lines.push(line),
-          signal: controller.signal,
-        });
-        if (done.ok) return { ok: true, error: "", lines };
-        const stage = done.stage ?? "setup";
-        // Cut off by this forge stopping, the Job lost under it, or an
-        // install the machine failed twice: the code was not judged, so
-        // this is no red.
-        if (
-          stopped ||
-          controller.signal.aborted ||
-          done.error === JOB_VANISHED ||
-          done.infrastructure === true
-        )
-          return { ok: false, error: done.error, lines, interrupted: true, stage };
-        return { ok: false, error: done.error, lines, stage };
-      } finally {
-        endGate(app.db, traced);
-        signal?.removeEventListener("abort", abandon);
-        gates.delete(controller);
-      }
+      const done = gateOnce(repo, pull, commitOid, controller, signal);
+      gates.set(controller, { commitOid, done });
+      return done;
+    },
+    adopt: (commitOid) => {
+      for (const g of gates.values()) if (g.commitOid === commitOid) return g.done;
+      return undefined;
     },
     spareSlots: () => Math.max(0, capacity() - PULL_RESERVE - inFlight.size - extraGates()),
     lane: gate,
@@ -1291,9 +1319,14 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       unwatch();
       // A roll waits for the checks under way, up to the budget, and only
       // then cuts off what is left (it is queued again, not lost).
-      const running = Promise.all([...inFlight.values()].map((f) => f.promise));
+      // A merge-queue gate is under way too: its verdict, if it comes in the
+      // drain, is kept for the forge that carries on (#6611).
+      const running = Promise.all([
+        ...[...inFlight.values()].map((f) => f.promise),
+        ...[...gates.values()].map((g) => g.done),
+      ]);
       const drainMs = stopOptions?.drain === false ? 0 : (options.drainMs ?? 0);
-      if (drainMs > 0 && inFlight.size > 0) {
+      if (drainMs > 0 && inFlight.size + gates.size > 0) {
         let timer: ReturnType<typeof setTimeout> | undefined;
         await Promise.race([
           running,
@@ -1304,7 +1337,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         clearTimeout(timer);
       }
       for (const { abort } of inFlight.values()) abort.abort();
-      for (const abort of gates) abort.abort();
+      for (const abort of gates.keys()) abort.abort();
       await running;
     },
   };

@@ -22,9 +22,10 @@ import {
   setIssueState,
 } from "../actions/issues.ts";
 import type { AccessError } from "../actions/access.ts";
-import { gateCandidate, releaseOnLand } from "../checks/landing.ts";
+import { adoptGate, gateCandidate, releaseOnLand } from "../checks/landing.ts";
+import { queueStore } from "../checks/queue_store.ts";
 import { addLearned } from "../checks/learned.ts";
-import { enqueue, type GateCandidate, type Queued, type QueueOptions, queueClashes, queueWords } from "../checks/queue.ts";
+import { dropFromLine, enqueue, type GateCandidate, type Queued, type QueueOptions, queueClashes, queueWords, waitingPulls } from "../checks/queue.ts";
 import { checksFor } from "../checks/service.ts";
 import { queueDepth } from "../core/capacity.ts";
 import { readConflictLane, readConflictRoom } from "./conflict_room.ts";
@@ -1123,8 +1124,33 @@ export async function sweepGreen(app: App, repo: Repo): Promise<number> {
   }
   noteWaits(repo.id, tallyWaits(waits));
   if (entries.length === 0) return 0;
-  const landed = await enqueue(repo.id, entries, gateFor(app, repo), queueOptions(app));
+  const landed = await enqueue(repo.id, entries, gateFor(app, repo), queueOptions(app, repo));
   return landed.filter(Boolean).length;
+}
+
+/**
+ * Take out of the merge queue's line every waiting pull that would no
+ * longer be admitted (#6611): held, closed or merged, pushed to since it
+ * joined, no longer green on its head, or with changes requested on it.
+ * Run on every tick, beside the sweep: a sweep in flight waits on its whole
+ * line, so the line is cleared here, not there. Reads only rows: cheap.
+ * How many were taken out.
+ */
+export function pruneLine(app: App, repo: Repo): number {
+  const out = new Set<string>();
+  for (const joined of waitingPulls(repo.id)) {
+    const row = getPull(app.db, repo.id, joined.number);
+    const stays =
+      row !== undefined &&
+      row.state === "open" &&
+      row.mergedAt === null &&
+      row.headOid === joined.headOid &&
+      getHold(app.db, row.id) === undefined &&
+      verdictForHead(app.db, row.id, row.headOid).every((c) => c.state === "ok") &&
+      reviewSummary(app.db, row.id, row.headOid).changesRequested === 0;
+    if (!stays) out.add(joined.id);
+  }
+  return out.size === 0 ? 0 : dropFromLine(repo.id, out);
 }
 
 /** The sweep each repository has in flight, by repository id. */
@@ -1211,6 +1237,9 @@ export async function autonomyTick(
     // An archived repository is put away: the crew starts nothing in it.
     if (repo.archivedAt !== null) continue;
     try {
+      // A hold, a close, a push or a lost approval leaves the line before
+      // the next batch is formed, not at its gate (#6611).
+      pruneLine(app, repo);
       void startSweep(app, repo, sweep);
       // First of all: a slot freed goes to an approved pull that no longer
       // merges, before a changes-requested one or a new issue (#3682).
@@ -1798,7 +1827,7 @@ export async function landIfGreen(
 ): Promise<boolean> {
   const admitted = await admit(app, repo, pull);
   if (!admitted.ok) return false;
-  const [landed] = await enqueue(repo.id, [admitted.value], gateFor(app, repo), queueOptions(app));
+  const [landed] = await enqueue(repo.id, [admitted.value], gateFor(app, repo), queueOptions(app, repo));
   return landed === true;
 }
 
@@ -2026,13 +2055,16 @@ export function regateDue(red: Decision, now: number): boolean {
 /**
  * How the merge queue may use the forge's check slots (#4053): its depth as
  * an admin set it, and the slots the checks service has spare. Each judged
- * batch is kept for the red-batch rate (#6427).
+ * batch is kept for the red-batch rate (#6427); its gates and red marks are
+ * kept in the database, and a gate a roll left running adopted (#6611).
  */
-function queueOptions(app: App): QueueOptions {
+function queueOptions(app: App, repo: Repo): QueueOptions {
   return {
     depth: queueDepth(app.db),
     room: () => checksFor(app)?.spareSlots?.() ?? 0,
     onBatch: (repoId, red) => keepBatch(app.db, repoId, red),
+    store: queueStore(app.db),
+    adopt: (record, signal) => adoptGate(app, repo, record, signal),
   };
 }
 

@@ -203,7 +203,22 @@ candidate`, or `red on its own merge`), and the tick line counts them as
 alone, only once no fresh pull waits, and nothing is stacked on it, so a red
 re-check never cuts off a batch of fresh pulls; a push forgets it. A gate cut off by the forge stopping (a
 roll, a drain) or by the cluster losing its Job is no red at all: the next
-sweep gates it again. So is a gate that has not answered in 15 minutes
+sweep gates it again. A roll does not cost a gate round (#6611): each gate's
+candidate — its pulls and heads, the base, each step's commit and tree, the
+lane's run id (`gate-<tip>`) and when it started — is a `queue_gate` row, and
+the red marks are `queue_red` rows by pull, head and base
+(`src/checks/queue_store.ts`). A stopping forge's queue acts on nothing more
+(`stopQueue`) but its gates run on through the checks' drain, and a verdict
+that comes in is written to the row. The new process resumes the recorded
+candidate when its pulls are back at the same heads and main has not moved:
+the same commits, not a candidate planned again. It acts on a kept verdict,
+adopts the run when the lane still has it (`[queue] resuming N pulls`, and
+`adopted=gate-…` on the verdict line), or gates the same tip again when the
+run is gone. A record whose base moved is forgotten. A pull waiting in the line that is
+held, closed, pushed to, no longer green on its head or sent back for
+changes is taken out on the next tick (`pruneLine`, `[queue] taken out of
+the line`), before the next batch is formed, and the tick line's waiting
+count drops with it; a pull already in a candidate is left to its gate. So is a gate that has not answered in 15 minutes
 (`GATE_DEADLINE_MS`): it is abandoned and its check aborted, the log says
 `[queue] candidate abandoned`, and the next sweep forms the line again. Pulls
 that turn green while a candidate is gating wait for the next one. Each

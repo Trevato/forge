@@ -58,6 +58,7 @@
 import type { Pull } from "../core/pulls.ts";
 import { runGit } from "../git/env.ts";
 import { mergeable, resolveOid, treeOf } from "../git/merge.ts";
+import { id } from "../kernel/id.ts";
 import { createLog } from "../kernel/log.ts";
 import { conflictWords, reasonWords, searched } from "./gate_reason.ts";
 import type { LandVerdict } from "./tiers.ts";
@@ -157,6 +158,65 @@ export interface QueueOptions {
    * kept beyond this process (#6427).
    */
   readonly onBatch?: (repoId: string, red: boolean) => void;
+  /** Where the line's gates and red marks outlive this process (#6611). */
+  readonly store?: QueueStore;
+  /**
+   * The verdict of a recorded gate still running on the check lane — in
+   * this process or the one before it — or undefined when its run is gone
+   * and the candidate must be gated again (#6611).
+   */
+  readonly adopt?: (record: GateRecord, signal: AbortSignal) => Promise<LandVerdict | undefined>;
+}
+
+/** A step as recorded: which pull at which head, and the commit it made. */
+export interface RecordedStep {
+  readonly pullId: string;
+  readonly headOid: string;
+  readonly baseOid: string;
+  readonly treeOid: string;
+  readonly commitOid: string;
+}
+
+/**
+ * A gate as kept beyond this process (#6611): its candidate exactly as
+ * built, the run the check lane gates it as, and its verdict once it has
+ * one. A forge that carries on rebuilds the candidate from it, not the line.
+ */
+export interface GateRecord {
+  readonly id: string;
+  readonly repoId: string;
+  /** The check lane's name for the gate: `gate-` and the tip's first 12. */
+  readonly runId: string;
+  readonly baseOid: string;
+  readonly baseTreeOid: string;
+  readonly tipOid: string;
+  /** The tree the gate judges: on a speculative candidate, a tree main never had. */
+  readonly treeOid: string;
+  readonly steps: readonly RecordedStep[];
+  readonly startedAt: string;
+  /** Green or red, once the gate answered; never a cut-off. */
+  readonly verdict?: Exclude<LandVerdict, { interrupted: true }>;
+}
+
+/** What the line keeps outside memory (`checks/queue_store.ts`). */
+export interface QueueStore {
+  /** A gate started. */
+  began(record: GateRecord): void;
+  /** A gate answered after its line stopped: kept for the line that carries on. */
+  settled(id: string, verdict: Exclude<LandVerdict, { interrupted: true }>): void;
+  /** A gate acted on, abandoned, or no longer anyone's to resume. */
+  forget(id: string): void;
+  /** The repository's recorded gates, oldest first. */
+  gates(repoId: string): GateRecord[];
+  /** Mark a pull red at a head and base, replacing its mark; undefined clears it. */
+  red(repoId: string, pullId: string, mark: Remembered | undefined): void;
+  /** The repository's red marks, by pull id. */
+  reds(repoId: string): Map<string, Remembered>;
+}
+
+/** The check lane's run id for a gate of `tipOid` (`checks/service.ts` names it so). */
+export function gateRunId(tipOid: string): string {
+  return `gate-${tipOid.slice(0, 12)}`;
 }
 
 /**
@@ -173,8 +233,12 @@ export function gateDeadlineForTest(ms: number, arm?: Schedule): () => void {
   };
 }
 
-/** The gate as the line asks it: the deadline is the line's own. */
-type Gated = (candidate: Candidate, signal?: AbortSignal) => Promise<LandVerdict>;
+/**
+ * The gate as the line asks it: the deadline is the line's own. `resumed`
+ * is the record of a gate an earlier line started on this candidate: its
+ * verdict, or its run adopted, before a gate of its own.
+ */
+type Gated = (candidate: Candidate, signal?: AbortSignal, resumed?: GateRecord) => Promise<LandVerdict>;
 
 /** Check slots free now for one more gate beyond a line's first. */
 type Room = () => number;
@@ -187,7 +251,7 @@ interface Waiting {
 }
 
 /** A pull the line handed back red, while its head is the same (#4235). */
-interface Remembered {
+export interface Remembered {
   readonly head: string;
   /** The base tip it went red on: a moved base is a new try (#6493). */
   readonly base: string;
@@ -238,6 +302,12 @@ interface Line {
   draining: boolean;
   /** Wakes a drain waiting on a gate when pulls join the line. */
   wake: (() => void) | undefined;
+  /** Where its gates and red marks are kept, when anywhere (#6611). */
+  store: QueueStore | undefined;
+  /** Gates an earlier line recorded and this one may resume, oldest first. */
+  kept: GateRecord[];
+  /** Stopped (`stopQueue`): its gates run on, but it acts on no verdict. */
+  stopped: boolean;
 }
 
 /** A candidate at the gate in the pipeline, and the pulls it took from the line. */
@@ -315,9 +385,14 @@ const IDENTITY = {
 
 const UNDECIDED: LandVerdict = { lands: false, interrupted: true };
 
-function lineOf(repoId: string): Line {
+/**
+ * The repository's line. A new one starts from what the store kept (#6611):
+ * the red marks, and the gates an earlier line left to resume.
+ */
+function lineOf(repoId: string, store: QueueStore | undefined): Line {
   let line = lines.get(repoId);
   if (line === undefined) {
+    const reds = kept(() => store?.reds(repoId)) ?? new Map<string, Remembered>();
     line = {
       repoId,
       waiting: [],
@@ -325,15 +400,59 @@ function lineOf(repoId: string): Line {
       flights: new Set(),
       forming: 0,
       gates: 0,
-      reds: new Map(),
+      reds,
       suspects: new Map(),
       batches: [],
       draining: false,
       wake: undefined,
+      store,
+      kept: kept(() => store?.gates(repoId)) ?? [],
+      stopped: false,
     };
     lines.set(repoId, line);
   }
+  line.store ??= store;
   return line;
+}
+
+/** A store call: what it answers, or undefined, logged, when it fails. The line goes on in memory. */
+function kept<T>(fn: () => T): T | undefined {
+  try {
+    return fn();
+  } catch (error) {
+    log.warn("merge queue state not kept", { error: String(error) });
+    return undefined;
+  }
+}
+
+/** Mark a pull red at its head and base, here and in the store. */
+function markRed(line: Line, pullId: string, mark: Remembered): void {
+  line.reds.set(pullId, mark);
+  kept(() => line.store?.red(line.repoId, pullId, mark));
+}
+
+/** Forget a pull's red mark, here and in the store. */
+function clearRed(line: Line, pullId: string): void {
+  if (!line.reds.delete(pullId)) return;
+  kept(() => line.store?.red(line.repoId, pullId, undefined));
+}
+
+/**
+ * Stop every line (#6611), as the forge stopping does first: what waits is
+ * answered `false`, and no verdict from here on is acted on — the gates in
+ * flight run on, and one that answers is kept in the store for the forge
+ * that carries on. Lines asked for after this start afresh from the store.
+ */
+export function stopQueue(): void {
+  for (const line of lines.values()) {
+    line.stopped = true;
+    const waiting = line.waiting;
+    line.waiting = [];
+    for (const w of waiting) w.settle(false);
+    line.wake?.();
+    line.wake = undefined;
+  }
+  lines.clear();
 }
 
 /**
@@ -347,7 +466,7 @@ export async function enqueue(
   gate: GateCandidate,
   options: QueueOptions = {},
 ): Promise<boolean[]> {
-  const line = lineOf(repoId);
+  const line = lineOf(repoId, options.store);
   // A red mark names the base it went red on; the tip is read only when a
   // mark is there to compare it with.
   const tips = new Map<string, string | undefined>();
@@ -361,7 +480,7 @@ export async function enqueue(
     const red = line.reds.get(entry.pull.id);
     const tip = tips.get(entry.pull.baseBranch + "\0" + entry.dir);
     const held = red !== undefined && red.head === entry.pull.headOid && (tip === undefined || red.base === tip);
-    if (red !== undefined && !held) line.reds.delete(entry.pull.id);
+    if (red !== undefined && !held) clearRed(line, entry.pull.id);
     const recheck = held;
     if (line.suspects.get(entry.pull.id)?.head !== entry.pull.headOid) line.suspects.delete(entry.pull.id);
     return new Promise<boolean>((resolve) =>
@@ -371,7 +490,7 @@ export async function enqueue(
         settle: (landed) => {
           line.holds.delete(entry.pull.id);
           if (landed) {
-            line.reds.delete(entry.pull.id);
+            clearRed(line, entry.pull.id);
             line.suspects.delete(entry.pull.id);
           }
           resolve(landed);
@@ -385,6 +504,32 @@ export async function enqueue(
     line.wake = undefined;
   }
   return Promise.all(answers);
+}
+
+/** The pulls waiting in a repository's line, not yet in a candidate: as they joined. */
+export function waitingPulls(repoId: string): Pull[] {
+  return (lines.get(repoId)?.waiting ?? []).map((w) => w.entry.pull);
+}
+
+/**
+ * Take pulls out of the line before they reach a gate (#6611): held,
+ * closed, pushed to or no longer approved, a pull that waits on would be
+ * gated in the next batch all the same. Each is answered `false`; a pull
+ * already in a candidate is left to its gate. How many were taken out.
+ */
+export function dropFromLine(repoId: string, pullIds: ReadonlySet<string>): number {
+  const line = lines.get(repoId);
+  if (line === undefined) return 0;
+  const gone = line.waiting.filter((w) => pullIds.has(w.entry.pull.id));
+  if (gone.length === 0) return 0;
+  line.waiting = line.waiting.filter((w) => !pullIds.has(w.entry.pull.id));
+  for (const w of gone) w.settle(false);
+  log.info("taken out of the line", {
+    repo: repoId,
+    pulls: gone.map((w) => `#${w.entry.pull.number}`).join(","),
+    waiting: line.waiting.length,
+  });
+  return gone.length;
 }
 
 /** What the flow panel shows of each repository's line. */
@@ -487,10 +632,10 @@ export function gateRuns(repoId: string): number {
  * setup, a timeout. Red that way twice is infrastructure — no verdict, as a
  * gate cut off is not: no pull is handed back and nothing is searched.
  */
-function counted(line: Line, gate: GateCandidate): Gated {
-  const once = attempt(line, gate);
-  return async (candidate, signal) => {
-    const first = await once(candidate, signal);
+function counted(line: Line, gate: GateCandidate, adopt: QueueOptions["adopt"]): Gated {
+  const once = attempt(line, gate, adopt);
+  return async (candidate, signal, resumed) => {
+    const first = await once(candidate, signal, resumed);
     if (!machines(first) || signal?.aborted === true) return first;
     const again = await once(candidate, signal);
     if (!machines(again)) return again;
@@ -507,20 +652,31 @@ function counted(line: Line, gate: GateCandidate): Gated {
  * minutes, #3430), and abandoned at the deadline or when `signal` aborts —
  * a speculative candidate discarded. Abandoned is no verdict.
  */
-function attempt(line: Line, gate: GateCandidate): Gated {
-  return async (candidate, signal) => {
+function attempt(line: Line, gate: GateCandidate, adopt: QueueOptions["adopt"]): Gated {
+  return async (candidate, signal, resumed) => {
+    // Answered before this line was: acted on now, nothing gated (#6611).
+    if (resumed?.verdict !== undefined) {
+      log.info(`resumed a gate's ${outcome(resumed.verdict)} verdict`, {
+        repo: line.repoId,
+        pulls: candidate.steps.map((s) => `#${s.entry.pull.number}`).join(","),
+      });
+      kept(() => line.store?.forget(resumed.id));
+      return resumed.verdict;
+    }
     const beyond = line.flights.size > 0;
-    const flight: InFlight = { pulls: candidate.steps.map((s) => s.entry.pull.id), since: Date.now() };
+    const since = resumed === undefined ? Date.now() : Date.parse(resumed.startedAt) || Date.now();
+    const flight: InFlight = { pulls: candidate.steps.map((s) => s.entry.pull.id), since };
     line.flights.add(flight);
-    line.gates++;
     if (beyond) extra++;
     const n = candidate.steps.length;
     const pulls = candidate.steps.map((s) => `#${s.entry.pull.number}`).join(",");
-    log.info(`gating ${pullsWord(n)} since ${hhmm(flight.since)}`, {
+    log.info(`${resumed === undefined ? "gating" : "resuming"} ${pullsWord(n)} since ${hhmm(flight.since)}`, {
       repo: line.repoId,
       pulls,
       waiting: line.waiting.length,
     });
+    const record = resumed ?? recordOf(line.repoId, candidate, flight.since);
+    if (resumed === undefined) kept(() => line.store?.began(record));
     const abandon = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let dropped: (() => void) | undefined;
@@ -545,12 +701,25 @@ function attempt(line: Line, gate: GateCandidate): Gated {
       else signal?.addEventListener("abort", dropped, { once: true });
     });
     try {
-      const verdict = await Promise.race([gate(candidate, abandon.signal), cut]);
+      // A recorded gate still running on the check lane is adopted, not
+      // started again; one whose run is gone is gated again as it was (#6611).
+      const adopted =
+        resumed === undefined || adopt === undefined
+          ? undefined
+          : await Promise.race([adopt(resumed, abandon.signal), cut]);
+      if (adopted === undefined) line.gates++;
+      const verdict = adopted ?? (await Promise.race([gate(candidate, abandon.signal), cut]));
       log.info(`gated ${pullsWord(n)}: ${outcome(verdict)}`, {
         repo: line.repoId,
         pulls,
         took: `${Math.round((Date.now() - flight.since) / 1000)}s`,
+        ...(adopted === undefined ? {} : { adopted: record.runId }),
       });
+      // A stopped line acts on nothing: a verdict is kept for the line that
+      // carries on, and so is a gate its forge stopping cut off. Anything
+      // else is acted on now, or was abandoned: not to resume.
+      if (line.stopped && !("interrupted" in verdict)) kept(() => line.store?.settled(record.id, verdict));
+      else if (!line.stopped || abandon.signal.aborted) kept(() => line.store?.forget(record.id));
       return verdict;
     } finally {
       clearTimeout(timer);
@@ -559,6 +728,27 @@ function attempt(line: Line, gate: GateCandidate): Gated {
       if (beyond) extra--;
       gateFreed();
     }
+  };
+}
+
+/** The record of a gate starting now on `candidate`. */
+function recordOf(repoId: string, candidate: Candidate, since: number): GateRecord {
+  return {
+    id: id(),
+    repoId,
+    runId: gateRunId(candidate.tipOid),
+    baseOid: candidate.baseOid,
+    baseTreeOid: candidate.baseTreeOid,
+    tipOid: candidate.tipOid,
+    treeOid: candidate.treeOid,
+    steps: candidate.steps.map((s) => ({
+      pullId: s.entry.pull.id,
+      headOid: s.entry.pull.headOid,
+      baseOid: s.baseOid,
+      treeOid: s.treeOid,
+      commitOid: s.commitOid,
+    })),
+    startedAt: new Date(since).toISOString(),
   };
 }
 
@@ -578,13 +768,19 @@ const ARRIVED = Symbol("arrived");
  */
 async function drain(line: Line, gate: GateCandidate, options: QueueOptions): Promise<void> {
   line.draining = true;
-  const gated = counted(line, gate);
+  const gated = counted(line, gate, options.adopt);
   const depth = Math.max(1, Math.floor(options.depth ?? DEFAULT_DEPTH));
   const room: Room = options.room ?? (() => 0);
   const ahead: Flight[] = [];
   const solos = new Set<Promise<void>>();
   try {
     while (line.waiting.length > 0 || ahead.length > 0 || solos.size > 0) {
+      // Stopped: what is at the gate is answered `false` and left running,
+      // for the forge that carries on to adopt (#6611).
+      if (line.stopped) {
+        for (const f of ahead.splice(0)) for (const w of f.steps) w.settle(false);
+        return;
+      }
       for (const w of line.waiting.filter((w) => suspectOf(line, w)?.alone === true)) {
         if (line.flights.size > 0 && room() <= 0) break;
         line.waiting = line.waiting.filter((x) => x !== w);
@@ -607,19 +803,17 @@ async function drain(line: Line, gate: GateCandidate, options: QueueOptions): Pr
         if (flight !== undefined) ahead.push(flight);
       }
       const head = ahead[0];
-      const arrived =
-        head === undefined || ahead.length < depth || solos.size > 0
-          ? new Promise<typeof ARRIVED>((resolve) => (line.wake = () => resolve(ARRIVED)))
-          : undefined;
+      // Pulls joining, a suspect coming back or the line stopping wake it.
+      const arrived = new Promise<typeof ARRIVED>((resolve) => (line.wake = () => resolve(ARRIVED)));
       if (head === undefined) {
         // Only suspects at the gate, or waiting on a slot: wait for one to come back.
         if (solos.size > 0) await arrived;
         line.wake = undefined;
         continue;
       }
-      const verdict = arrived === undefined ? await head.verdict : await Promise.race([head.verdict, arrived]);
+      const verdict = await Promise.race([head.verdict, arrived]);
       line.wake = undefined;
-      if (verdict === ARRIVED) continue;
+      if (verdict === ARRIVED || line.stopped) continue;
       ahead.shift();
       let left: Waiting[];
       try {
@@ -671,6 +865,7 @@ async function solo(line: Line, gated: Gated, w: Waiting): Promise<{ readonly do
   const done = gated(on)
     .then((verdict) => {
       const pull = w.entry.pull;
+      if (line.stopped) return w.settle(false);
       if (verdict.lands) {
         line.suspects.set(pull.id, { head: pull.headOid, reds: 0, alone: false, cleared: true });
         line.waiting.unshift(w);
@@ -681,7 +876,7 @@ async function solo(line: Line, gated: Gated, w: Waiting): Promise<{ readonly do
         return;
       }
       line.suspects.delete(pull.id);
-      line.reds.set(pull.id, { head: pull.headOid, base: on.baseOid, together: [] });
+      markRed(line, pull.id, { head: pull.headOid, base: on.baseOid, together: [] });
       log.info("red alone", { repo: line.repoId, pull: pull.number });
       w.entry.handBack(verdict, on.baseOid, []);
       w.settle(false);
@@ -725,6 +920,26 @@ function explained(line: Line, steps: readonly Waiting[]): void {
  * undefined when nothing of the batch could be built.
  */
 async function launch(line: Line, gated: Gated, on: Flight | undefined): Promise<Flight | undefined | "apart"> {
+  if (on === undefined && line.kept.length > 0) {
+    line.forming++;
+    try {
+      const resumed = await resumable(line);
+      if (resumed !== undefined) {
+        const { record, batch, candidate } = resumed;
+        line.waiting = line.waiting.filter((w) => !batch.includes(w));
+        const abort = new AbortController();
+        const verdict = gated(candidate, abort.signal, record).catch((error: unknown) => {
+          log.warn("merge queue round failed", { error: String(error) });
+          return UNDECIDED;
+        });
+        const recheck = batch.length === 1 && batch[0]!.recheck;
+        return { steps: batch, candidate, speculative: false, recheck, branch: batch[0]!.entry.pull.baseBranch, verdict, abort };
+      }
+    } finally {
+      line.forming--;
+      gateFreed();
+    }
+  }
   const cleared = (w: Waiting): boolean => suspectOf(line, w)?.cleared === true;
   const open = line.waiting.filter((w) => suspectOf(line, w)?.alone !== true);
   const front = open.find((w) => !w.recheck && !cleared(w)) ?? open.find((w) => !w.recheck) ?? open[0]!;
@@ -761,6 +976,54 @@ async function launch(line: Line, gated: Gated, on: Flight | undefined): Promise
     gateFreed();
   }
   return { steps, candidate, speculative: on !== undefined, recheck: front.recheck, branch, verdict, abort };
+}
+
+/**
+ * The first gate an earlier line recorded that this one can resume (#6611):
+ * every pull of it waiting at the head it was gated at, none a suspect to
+ * gate alone, and the base still at the tip it was built on. Its candidate
+ * is rebuilt from the record — the very commits that were gated — so it is
+ * not planned again. A record that cannot be resumed is forgotten.
+ */
+async function resumable(
+  line: Line,
+): Promise<{ record: GateRecord; batch: Waiting[]; candidate: Candidate } | undefined> {
+  while (line.kept.length > 0) {
+    const record = line.kept.shift()!;
+    const batch: Waiting[] = [];
+    for (const s of record.steps) {
+      const w = line.waiting.find((w) => w.entry.pull.id === s.pullId && w.entry.pull.headOid === s.headOid);
+      if (w === undefined || suspectOf(line, w)?.alone === true) break;
+      batch.push(w);
+    }
+    const first = batch[0]?.entry;
+    const whole =
+      first !== undefined &&
+      batch.length === record.steps.length &&
+      batch.every((w) => w.entry.dir === first.dir && w.entry.pull.baseBranch === first.pull.baseBranch) &&
+      (await resolveOid(first.dir, `refs/heads/${first.pull.baseBranch}`)) === record.baseOid &&
+      (await resolveOid(first.dir, record.tipOid)) === record.tipOid;
+    if (!whole) {
+      kept(() => line.store?.forget(record.id));
+      continue;
+    }
+    const steps = record.steps.map((s, i) => ({
+      entry: batch[i]!.entry,
+      baseOid: s.baseOid,
+      treeOid: s.treeOid,
+      commitOid: s.commitOid,
+    }));
+    const candidate: Candidate = {
+      dir: first.dir,
+      baseOid: record.baseOid,
+      baseTreeOid: record.baseTreeOid,
+      steps,
+      tipOid: record.tipOid,
+      treeOid: record.treeOid,
+    };
+    return { record, batch, candidate };
+  }
+  return undefined;
 }
 
 /**
@@ -887,6 +1150,10 @@ async function round(
   const steps = inCandidate(batch, candidate);
   const verdict: LandVerdict =
     known.treeOid === candidate.treeOid ? known.red : await gated(candidate);
+  if (search.line.stopped) {
+    for (const w of steps) w.settle(false);
+    return [];
+  }
   if (verdict.lands) {
     await land(candidate, steps);
     return [];
@@ -926,7 +1193,7 @@ async function judged(
     // with them, or red on its own — not gated alone on the base before
     // them to tell which. Remembered with them either way (#4235).
     const together = landed.map((q) => q.pull.number);
-    search.line.reds.set(culprit.pull.id, { head: culprit.pull.headOid, base: candidate.baseOid, together });
+    markRed(search.line, culprit.pull.id, { head: culprit.pull.headOid, base: candidate.baseOid, together });
     search.line.suspects.delete(culprit.pull.id);
     log.info(together.length === 0 ? "red on its own merge" : "red on top of its candidate", {
       repo: search.line.repoId,
@@ -946,7 +1213,7 @@ async function judged(
   for (const run of runs) ends.push((ends.at(-1) ?? 0) + run.length);
   const prefixes = ends.slice(0, -1).map((end) => prefixOf(candidate, end));
   const verdicts = await Promise.all(prefixes.map((c) => gated(c)));
-  if (verdicts.some((v) => !v.lands && "interrupted" in v)) {
+  if (search.line.stopped || verdicts.some((v) => !v.lands && "interrupted" in v)) {
     for (const w of steps) w.settle(false);
     return [];
   }
