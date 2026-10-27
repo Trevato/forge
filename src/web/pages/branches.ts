@@ -19,6 +19,7 @@ import { createBranch, deleteBranch } from "../../actions/branches.ts";
 import type { Repo } from "../../core/repos.ts";
 import { notePhase, takeSessionTime, timePhaseAsync } from "../../core/route_timing.ts";
 import { listBranches, tipCommits, type BranchInfo } from "../../git/branches.ts";
+import { headsState } from "../../git/heads.ts";
 import type { Commit } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -104,22 +105,61 @@ async function branchRows(
     return { rows, compared: false };
   }
   const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
-  const listed = await timePhaseAsync(ctx.request, "compare", () =>
-    listBranches(dir, repo.defaultBranch),
+  const listing = await timePhaseAsync(ctx.request, "compare", () =>
+    compareBranches(dir, repo.defaultBranch),
   );
-  if (!listed.ok) return { rows: [], compared: false };
+  if (listing === undefined) return { rows: [], compared: false };
+  return {
+    rows: listing.rows.map((r) => ({
+      ...r,
+      protected: r.isDefault && repo.protectDefault,
+    })),
+    compared: listing.compared,
+  };
+}
+
+interface Compared {
+  readonly rows: readonly BranchRow[];
+  readonly compared: boolean;
+}
+
+/** How many repositories keep their last listing in memory. */
+const KEPT_LISTINGS = 64;
+
+/** The last listing per repository directory, with the branch state it was read at. */
+const kept = new Map<string, { readonly state: string; readonly listing: Compared }>();
+
+/**
+ * Every branch with its divergence and tip. The answer depends only on where
+ * each branch points (commits never change), so while `headsState` reads the
+ * same, the last listing is the answer and no git process runs.
+ */
+async function compareBranches(
+  dir: string,
+  defaultBranch: string,
+): Promise<Compared | undefined> {
+  const heads = headsState(dir);
+  const state = heads === undefined ? undefined : `${defaultBranch}\n${heads}`;
+  const hit = kept.get(dir);
+  if (state !== undefined && hit?.state === state) return hit.listing;
+  const listed = await listBranches(dir, defaultBranch);
+  if (!listed.ok) return undefined;
   const bare = listed.value.branches.map((b: BranchInfo) => ({
     name: b.name,
     oid: b.oid,
     isDefault: b.isDefault,
-    protected: b.isDefault && repo.protectDefault,
+    protected: false,
     ahead: b.ahead,
     behind: b.behind,
   }));
-  return {
-    rows: await withTips(dir, bare),
-    compared: listed.value.compared,
-  };
+  const listing = { rows: await withTips(dir, bare), compared: listed.value.compared };
+  kept.delete(dir);
+  // Read again after git answered: a push meanwhile means this listing may be stale.
+  if (state !== undefined && headsState(dir) === heads) {
+    kept.set(dir, { state, listing });
+    if (kept.size > KEPT_LISTINGS) kept.delete(kept.keys().next().value!);
+  }
+  return listing;
 }
 
 function divergence(row: BranchRow): Html {

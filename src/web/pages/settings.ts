@@ -41,10 +41,7 @@ import {
 import { addToCrew, listCrew, removeFromCrew } from "../../actions/crew.ts";
 import { getAgentByName, isCrewRole, setCrewRole } from "../../core/agents.ts";
 import { isAutonomy, isDecisionsBy } from "../../core/repos.ts";
-import {
-  deleteRepo,
-  updateRepoSettings,
-} from "../../actions/repos.ts";
+import { updateRepoSettings } from "../../actions/repos.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { nameFrame, notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { appVitals, shiftText, speedText as ms, type AppVitals } from "../../apps/vitals.ts";
@@ -82,7 +79,7 @@ import { appHref } from "./apps.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { NOT_CHANGED } from "../edit_words.ts";
-import { DELETE_REPO, STOP_APP } from "../danger_words.ts";
+import { STOP_APP } from "../danger_words.ts";
 import { icon } from "../icons.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import type { Flash } from "../flash.ts";
@@ -1488,67 +1485,6 @@ export async function crewRemove(ctx: Ctx): Promise<Response> {
       ? { message: `${username} is off the crew.` }
       : { tone: "danger", message: "No such agent on this forge." },
   );
-}
-
-// ---- danger zone ----
-
-export function dangerPage(ctx: Ctx): Response {
-  const repo = timedAdminRepo(ctx);
-  if (!repo) return repoNotFound(ctx);
-  const rendering = performance.now();
-  const base = repoBase(repo);
-  const full = `${repo.ownerName}/${repo.name}`;
-
-  const body = card(
-    html`<p>
-        Deleting <strong>${full}</strong> removes its issues, pull requests,
-        reviews, labels and webhooks, and erases the git objects from disk.
-      </p>
-      <p class="muted small mt">
-        Any fork of this repository is detached first — it repacks so it owns
-        its objects, then loses the link. Forks survive; this repository does
-        not. There is no undo and no backup.
-      </p>
-      <div class="form-actions">
-        ${confirmAction({
-          action: `${base}/settings/delete`,
-          verb: DELETE_REPO,
-        })}
-      </div>`,
-    {
-      tone: "danger",
-      head: html`${icon("alert")}
-        <h2>${DELETE_REPO}</h2>`,
-    },
-  );
-  const response = settingsPageResponse(ctx, repo, "danger", "Danger zone", body);
-  notePhase(ctx.request, "render", performance.now() - rendering);
-  return response;
-}
-
-/**
- * The typed-name check lives here and nowhere else: the confirm page collects
- * the phrase, this handler is the one that refuses without it.
- */
-export async function repoDelete(ctx: Ctx): Promise<Response> {
-  const gate = await adminForm(ctx);
-  if (gate instanceof Response) return gate;
-  const { repo, form } = gate;
-  const full = `${repo.ownerName}/${repo.name}`;
-  if (field(form, "confirm") !== full) {
-    return flashTo(ctx, `${repoBase(repo)}/settings/danger`, {
-      tone: "danger",
-      message: `Type ${full} exactly to confirm. Nothing was deleted.`,
-    });
-  }
-  const deleted = await deleteRepo(ctx.app, ctx.auth.user, repo);
-  if (!deleted.ok) {
-    return flashTo(ctx, `${repoBase(repo)}/settings/danger`, {
-      tone: "danger",
-      message: "The repository could not be deleted.",
-    });
-  }
-  return flashTo(ctx, "/", { message: `${full} was deleted.` });
 }
 
 // POST /:owner/:name/settings/crew/:username/role

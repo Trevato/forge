@@ -194,3 +194,19 @@ test("tipCommits reads every field commitLog does: body, parents, author, date",
   // An unsafe oid is dropped, never handed to git.
   expect((await tipCommits(dir, ["--output=x", mergeTip])).size).toBe(1);
 }, 60_000);
+
+test("a warm look shows a branch that moved or appeared since the last look", async () => {
+  await get("/alice/app/branches");
+  const dir = join(work, "app");
+  await git(["switch", "-q", "feat/b000"], dir);
+  await git(["commit", "--allow-empty", "-m", "moved on"], dir);
+  await git(["push", "-q", "origin", "feat/b000"], dir);
+  await git(["switch", "-q", "-c", "feat/zz-new"], dir);
+  await git(["push", "-q", "origin", "feat/zz-new"], dir);
+  const { text } = await get("/alice/app/branches");
+  expect(text).toContain("201 branches");
+  expect(text).toContain("feat/zz-new");
+  expect(text).toContain("moved on");
+  await git(["push", "-q", "origin", "--delete", "feat/zz-new"], dir);
+  expect((await get("/alice/app/branches")).text).toContain("200 branches");
+}, 60_000);

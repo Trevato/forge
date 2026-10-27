@@ -377,8 +377,6 @@ import {
   crewRemove,
   crewRoleUpdate,
   crewSettingsPage,
-  dangerPage,
-  repoDelete,
   settingsPage,
   settingsUpdate,
   waveCut,
@@ -386,6 +384,7 @@ import {
   provenanceSubmit,
   mirrorStop,
 } from "../web/pages/settings.ts";
+import { dangerPage, repoDelete } from "../web/pages/danger.ts";
 import { hooksPage, webhookCreate, webhookDelete } from "../web/pages/hooks.ts";
 import {
   promptSourceAdd,
