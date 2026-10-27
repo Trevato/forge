@@ -9,10 +9,10 @@
 
 import type { Reader } from "../../actions/telemetry.ts";
 import { queuesFor, systemFor } from "../../system/telemetry.ts";
-import { conflictedPulls, conflictedSays, rebaseLane, rebaseLaneSays } from "../../flow/conflicted.ts";
-import { pileSays, readPile } from "../../flow/pile.ts";
-import { reviewersBusy, reviewingSays } from "../../flow/reviewing.ts";
-import { requestedSays, requestedWaits } from "../../flow/requested.ts";
+import { conflictedSays, rebaseLaneSays } from "../../flow/conflicted.ts";
+import { pileSays } from "../../flow/pile.ts";
+import { reviewingSays } from "../../flow/reviewing.ts";
+import { requestedSays } from "../../flow/requested.ts";
 import {
   bottleneck,
   readPipeline,
@@ -36,12 +36,12 @@ import { type QueueRow, redBatchWords } from "../../flow/queue.ts";
 import { HOT_PULLS, pullCounts, warmFiles } from "../../crew/hot_files.ts";
 import { warmingLine } from "../../crew/hot_history.ts";
 import { getRepoById } from "../../core/repos.ts";
-import { IDLE_LIMIT, idlePullsCached, type IdlePull } from "../../flow/idle_pulls.ts";
-import { readParked } from "../../flow/parked.ts";
-import { hoursWords, readLeadTime } from "../../flow/lead_time.ts";
-import { buildYieldSays, readBuildYield } from "../../flow/build_yield.ts";
-import { readReviewLatency, reviewLatencySays } from "../../flow/review_latency.ts";
-import { openerCounts, readOpeners } from "../../flow/openers.ts";
+import { IDLE_LIMIT, type IdlePull } from "../../flow/idle_pulls.ts";
+import { panelFigures } from "../../flow/panel_cache.ts";
+import { hoursWords } from "../../flow/lead_time.ts";
+import { buildYieldSays } from "../../flow/build_yield.ts";
+import { reviewLatencySays } from "../../flow/review_latency.ts";
+import { openerCounts } from "../../flow/openers.ts";
 import { readHeld } from "../../flow/held.ts";
 import type { App } from "../../app.ts";
 import { html, type Html } from "../html.ts";
@@ -100,21 +100,14 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
   const out = new Map(flow.stages.map((t) => [t.key, t]));
   const landed = out.get("approved");
   const dups = systemFor(app, reader).duplicates;
-  const conflictedList = conflictedPulls(app.db, reader.kind === "agent");
-  const conflicted = conflictedSays(conflictedList, now);
-  const lane = rebaseLaneSays(rebaseLane(app.db, conflictedList));
-  const requested = requestedWaits(app.db, reader.kind === "agent");
-  const onBuilder = requestedSays(requested.builder, "builder", now);
-  const onReviewer = requestedSays(requested.reviewer, "reviewer", now);
-  const reviewing = reviewingSays(reviewersBusy(app.db, reader.kind === "agent"));
-  const agent = reader.kind === "agent";
-  const lead = readLeadTime(app.db, new Date(now), agent);
-  const yielded = readBuildYield(app.db, new Date(now), agent);
-  const latency = readReviewLatency(app.db, new Date(now), agent);
-  const openers = readOpeners(app.db, new Date(now), agent);
-  const pile = pileSays(readPile(app.db, reader.kind === "agent"));
-  const idle = idlePullsCached(app.db, new Date(now), reader.kind === "agent");
-  const parked = readParked(app.db, new Date(now), reader.kind === "agent");
+  const fig = panelFigures(app.db, reader.kind, new Date(now));
+  const conflicted = conflictedSays(fig.conflicted, now);
+  const lane = rebaseLaneSays(fig.lane);
+  const onBuilder = requestedSays(fig.requested.builder, "builder", now);
+  const onReviewer = requestedSays(fig.requested.reviewer, "reviewer", now);
+  const reviewing = reviewingSays(fig.reviewing);
+  const { lead, yielded, latency, openers, idle, parked } = fig;
+  const pile = pileSays(fig.pile);
   const newest = parked.newest[0];
   const listed = asked(url);
   const shown = listed === null ? undefined : out.get(listed.key);
