@@ -11,9 +11,9 @@ export const bytes = (n: number): string => {
 };
 
 const BLOCKS = "▁▂▃▄▅▆▇█";
-/** A history as block characters, one per reading, each 0–100. */
+/** A history as block characters, one per reading, each 0–100; one that is not a finite number draws the lowest. */
 export const spark = (history: readonly number[]): string =>
-  history.map((n) => BLOCKS[Math.min(7, Math.max(0, Math.floor((n / 100) * 8)))]).join("");
+  history.map((n) => BLOCKS[Number.isFinite(n) ? Math.min(7, Math.max(0, Math.floor((n / 100) * 8))) : 0]).join("");
 
 export const span = (s: number): string =>
   s < 90 ? `${s}s` : s < 5400 ? `${Math.round(s / 60)}m` : s < 172_800 ? `${Math.round(s / 3600)}h` : `${Math.round(s / 86_400)}d`;
