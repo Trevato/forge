@@ -19,6 +19,7 @@ import { SIGNUP_CLOSED_MESSAGE } from "../../actions/users.ts";
 import { ORIGIN_ALREADY_CONNECTED } from "../../actions/origins.ts";
 import { NEW_ACCOUNT_GUARD_MESSAGE } from "../../core/capacity.ts";
 import { PRIVATE_ADDRESS_REFUSED } from "../../kernel/address_words.ts";
+import type { ForgeEvent } from "../../core/events.ts";
 import type { Session } from "../session.ts";
 import { G, Screen as Surface, type Rect } from "../term/screen.ts";
 import { style } from "../term/style.ts";
@@ -662,6 +663,8 @@ export interface LiveOptions {
   readonly repoId?: string;
   /** Only these event kinds. Omit for all of them. */
   readonly kinds?: readonly string[];
+  /** Only events this accepts. Omit for all of them. */
+  readonly where?: (event: ForgeEvent) => boolean;
 }
 
 /**
@@ -688,6 +691,7 @@ export function live(
   const off = f.app.bus.subscribe((event) => {
     if (o.repoId !== undefined && event.repoId !== o.repoId) return;
     if (o.kinds !== undefined && !o.kinds.includes(event.kind)) return;
+    if (o.where !== undefined && !o.where(event)) return;
     if (timer !== null) return;
     timer = setTimeout(() => {
       timer = null;

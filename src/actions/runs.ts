@@ -32,7 +32,7 @@ import type { User } from "../core/users.ts";
 import { abortAgentRun } from "../crew/running.ts";
 import { queueAgentRun, taskOf } from "../crew/dispatch.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { readRunLog, runLogPath } from "../runs/log.ts";
+import { readRunLog, readRunLogTail, runLogPath } from "../runs/log.ts";
 import { firstErrorLine } from "../runs/error_line.ts";
 import { requireReader, requireWriter, type AccessError } from "./access.ts";
 
@@ -219,13 +219,16 @@ export function runLog(
   actor: User | undefined,
   repo: Repo,
   runId: string,
+  tail?: number,
 ): Result<RunLogView, "not_found"> {
   const found = getRepoRun(app, actor, repo, runId);
   if (!found.ok) return found;
   const logHidden = !mayReadRunLog(app, actor, repo);
   const { lines, truncated } = logHidden
     ? { lines: [], truncated: false }
-    : readRunLog(app.config.dataDir, runId);
+    : tail === undefined
+      ? readRunLog(app.config.dataDir, runId)
+      : readRunLogTail(app.config.dataDir, runId, tail);
   return ok({
     run: found.value,
     lines,

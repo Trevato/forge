@@ -34,6 +34,8 @@ to filter, `?` for the keys, `:` for the command palette, `t` for the theme.
 
 **Secrets.** For a forge admin, `:` → *Secrets* lists sealed secret names (never values); `a` sets one, `d` removes one after a confirm, `s` changes the place. See [OPERATING](OPERATING.md#secrets-in-the-terminal).
 
+**Run logs.** In the terminal, `enter` on a run (in the runs list, a pull, an issue or the deploys) opens its log: the state line, then the last 200 lines, scrolled to the end and following new lines while the run is queued or running (`j`/`k` and the page keys scroll; scrolling up keeps your place). A log you may not read is "Not found", as `run_log` and the REST route say. `o` there prints the web address (`src/tui/screens/runlog.ts`).
+
 **Milestones.** `:` → *Milestones in a repository* → `owner/name` lists a
 repository's limbs in the order the crew takes ready work (`enter` opens a
 limb's own limbs). A person who administers the repository presses `r` to

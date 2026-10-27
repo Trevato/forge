@@ -1,8 +1,7 @@
 /**
  * Runs, as rows: the vocabulary a screen borrows to show one — a pull's
  * checks, an issue's crew activity. One place decides what "failed" looks
- * like so it looks the same everywhere. A run's live log is a web page
- * (`/:owner/:name/runs/:id`); `openRunLog` hands its address over.
+ * like so it looks the same everywhere. `openRunLog` opens a run's log screen.
  *
  * A run row says four things in order: its state (a dot in the tone and the
  * word), what it was (`deploy production`, `agent robo`), why (the reason),
@@ -20,7 +19,6 @@ import type { Ctx } from "../app/app.ts";
 import type { Rect, Screen as Surface } from "../term/screen.ts";
 import type { Tokens } from "../ui/theme.ts";
 import { icon, type IconSet } from "../ui/icons.ts";
-import type { Tone } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
 import {
   ListState,
@@ -29,24 +27,9 @@ import {
   metaOf,
   relTime,
   type ListRow,
-  openOnWeb,
 } from "./common.ts";
-
-/** The tone a run's state wears — the same reading on every surface. */
-export function runTone(state: RunState): Tone | undefined {
-  switch (state) {
-    case "ok":
-      return "success";
-    case "failed":
-      return "danger";
-    case "running":
-      return "attn";
-    case "cancelled":
-      return "secondary";
-    case "queued":
-      return undefined;
-  }
-}
+import { runLogScreen } from "./runlog.ts";
+import { costText, envLabel, runTone } from "./runwords.ts";
 
 /** Whether the dot is hollow: nothing has happened yet, or nothing will. */
 export const runHollow = (state: RunState): boolean =>
@@ -68,16 +51,6 @@ export function runTitle(
       ? "an agent"
       : (names.get(run.actorId)?.username ?? "an agent");
   return set === "nerd" ? `${icon("bot", set)} ${who}` : `agent ${who}`;
-}
-
-/** `production`, or `pull #4` — the environment as a person says it. */
-export function envLabel(env: string): string {
-  return env.startsWith("pull-") ? `pull #${env.slice(5)}` : env || "—";
-}
-
-/** The dollars a run spent, or nothing when it spent none. */
-export function costText(costUsd: number): string {
-  return costUsd > 0 ? `$${costUsd.toFixed(2)}` : "";
 }
 
 /** The moment a run is best dated by: when it finished, started, or was made. */
@@ -193,21 +166,12 @@ export class RunList {
   }
 }
 
-/**
- * `enter` on a run: its log, cancel and steer live on the web page, so the
- * terminal hands over the address. With no public URL configured the path
- * is still the answer, said as one.
- */
+/** `enter` on a run: its log, in the terminal; `o` there prints the web address. */
 export function openRunLog(
   f: Session,
   ctx: Ctx,
   repo: Repo,
   run: Run,
 ): void {
-  openOnWeb(
-    f,
-    ctx,
-    `/${repo.ownerName}/${repo.name}/runs/${run.id}`,
-    "the run's log",
-  );
+  ctx.push(runLogScreen(f, ctx, repo, run.id));
 }

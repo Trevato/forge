@@ -303,6 +303,8 @@ one: the library of clones, then a lazygit-shaped working-tree screen —
 `space` stages, `enter` opens the hunks, `s` stages one, `c` commits, `P`
 pushes, `b` branches, `l` log, `z` stashes, `?` shows every binding.
 
+In the SSH terminal, `enter` on a run opens its log (the last 200 lines, following new ones while it runs; "Not found" where the web would say so), and `o` there prints the web address (`src/tui/screens/runlog.ts`).
+
 Build it once and put it on your PATH:
 
 ```sh

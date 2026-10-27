@@ -120,7 +120,8 @@ import { FINISH_REFUSALS, finishConflicts } from "../../actions/finish-conflicts
 import { PROPOSE_WHY, proposalOf, proposeResolution } from "../../crew/proposal.ts";
 import { conflictScreen } from "./conflicts.ts";
 import { reviewScreen } from "./review.ts";
-import { RunList, openRunLog, runTone } from "./runlist.ts";
+import { RunList, openRunLog } from "./runlist.ts";
+import { runTone } from "./runwords.ts";
 import { Composer, threadLines, type ThreadEntry } from "./thread.ts";
 import { local, localRepo, whereRows, whereStrip } from "./where.ts";
 import { openAppTerminal } from "./apptty.ts";
