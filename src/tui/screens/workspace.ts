@@ -118,6 +118,7 @@ import {
 } from "./common.ts";
 import { noteCommands } from "./notes.ts";
 import { reportCommands } from "./report.ts";
+import { reportsCommands } from "./reports.ts";
 import { tellCommands } from "./tell.ts";
 import { workingCommands } from "./working.ts";
 import { yoursCommands } from "./yours.ts";
@@ -1281,6 +1282,7 @@ export function workspaceScreen(
       ...workingCommands(f, ctx, repo),
       ...tellCommands(f, ctx, () => screen, repo),
       ...reportCommands(f, ctx, () => screen, repo),
+      ...reportsCommands(f, ctx, repo),
       ...noteCommands(f, ctx, () => screen, repo),
       ...yoursCommands(f, ctx, repo),
     ],

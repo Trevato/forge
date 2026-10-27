@@ -39,7 +39,10 @@ wrong: the form at `/:owner/:name/report`, or
 (202, `{id, state: "pending"}`). A private repository answers `not_found`, as
 a missing one does. A report is plain text, capped (a 200-character title, an
 8,000-character body), limited per source, per repository and for the whole
-forge, and a repository holds at most 100 waiting.
+forge, and a repository holds at most 100 waiting. A person who writes the
+repository decides them on the web, through the API, MCP `reports`, or the
+terminal: a repository's `:` palette shows "Reports (N)" while any wait, `a`
+accepts one as an issue and `d` dismisses one (`src/tui/screens/reports.ts`).
 
 Every page also says what its reader can do there: `rel="alternate"
 type="application/json"` (tag and `Link` header) points at
