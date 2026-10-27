@@ -58,7 +58,7 @@ import { keepCache, restoreCache } from "./cache.ts";
 import { MAX_FILED, clearedFiles, fileOrderDependent } from "./order_dependent.ts";
 import { parseBunTestFailure } from "./bun-test.ts";
 import { passedAlone, recordFlakes, rerunCommand, rerunnable } from "./flake.ts";
-import { withDisk } from "./disk_red.ts";
+import { diskRecovered, withDisk } from "./disk_red.ts";
 import { ASKED, redMain, unheld } from "./red_main.ts";
 import { proposeRevert } from "./revert_red.ts";
 import { rebasesFirst } from "./finishing_first.ts";
@@ -307,6 +307,17 @@ export function sweepCheckouts(app: App, now: number = Date.now()): void {
       !leaseLapsed(run, STALE_AFTER_MS, now);
     if (!live) rmSync(join(root, name), { recursive: true, force: true });
   }
+}
+
+/**
+ * Under the free floor, give back what no check is using before taking more
+ * (#6945): checkouts leaked by a crash sat on the disk until the next boot
+ * while every check failed red on it. Answers whether it swept.
+ */
+export function reclaimIfFull(app: App, now: number = Date.now()): boolean {
+  if (diskRecovered(app.config.dataDir)) return false;
+  sweepCheckouts(app, now);
+  return true;
 }
 
 const handles = new WeakMap<App, ChecksHandle>();
@@ -853,6 +864,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       write(`already proven green by ${earlier}`);
       return { ok: true, proven: earlier };
     }
+    if (reclaimIfFull(app)) write("disk under its free floor: swept unused checkouts");
     const dir = join(checksRoot(app.config.dataDir), run.id);
     mkdirSync(dir, { recursive: true });
     write(mergeLine === "" ? `checking out ${run.commitOid.slice(0, 7)}` : mergeLine);

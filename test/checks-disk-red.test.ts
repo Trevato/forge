@@ -153,3 +153,28 @@ describe("a red on a full check machine", () => {
     expect(cards()[0]!.sentence).toBe(before);
   });
 });
+
+describe("a full check machine gives back unused checkouts", () => {
+  test("under the floor the sweep removes a checkout no run owns; above it, nothing", async () => {
+    const { mkdirSync, existsSync, rmSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { reclaimIfFull } = await import("../src/checks/service.ts");
+    const standIn = await startStandInCrew();
+    const dataDir = join(process.env.TMPDIR ?? "/tmp", `reclaim-${Date.now()}`);
+    try {
+      const app = { ...standIn.app, config: { ...standIn.app.config, dataDir } } as App;
+      const orphan = join(dataDir, "checks", "orphan");
+      mkdirSync(orphan, { recursive: true });
+      diskReading.read = () => ({ freeBytes: 500, totalBytes: 1000 });
+      expect(reclaimIfFull(app)).toBe(false);
+      expect(existsSync(orphan)).toBe(true);
+      diskReading.read = () => ({ freeBytes: 50, totalBytes: 1000 });
+      expect(reclaimIfFull(app)).toBe(true);
+      expect(existsSync(orphan)).toBe(false);
+    } finally {
+      diskReading.read = statDisk;
+      rmSync(dataDir, { recursive: true, force: true });
+      await stopStandInCrew(standIn);
+    }
+  }, 30_000);
+});
