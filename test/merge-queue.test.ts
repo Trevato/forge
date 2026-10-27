@@ -358,6 +358,98 @@ describe("the merge queue", () => {
     expect(tree(repo, "refs/heads/main")).toBe(tree(repo, gatesOf(repo)[0]!.commit));
   });
 
+  test("a release cut while a gate is green and in flight does not void it: the pulls land on the new tip, one gate (#6640)", async () => {
+    const repo = await autonomousRepo("release-mid-gate");
+    const pulls = [];
+    for (const name of ["a.ts", "b.ts"]) pulls.push(await greenPull(repo, name));
+    // The release record is pushed to main while the gate runs.
+    held = (async () => {
+      const cut = await commitToBranch(app, alice, repo, {
+        message: "Release 0.0.1",
+        files: [{ path: "src/core/releases.json", content: "[]\n" }],
+      });
+      if (!cut.ok) throw new Error(JSON.stringify(cut.error));
+    })();
+    const base = git(repo, "rev-parse", "refs/heads/main");
+    try {
+      expect(await sweepGreen(app, repo)).toBe(2);
+    } finally {
+      held = undefined;
+    }
+    expect(git(repo, "rev-parse", "refs/heads/main")).not.toBe(base);
+    expect(gatesOf(repo)).toHaveLength(1);
+    for (const pull of pulls) expect(merged(repo, pull)).toBe(true);
+    const files = git(repo, "ls-tree", "--name-only", "refs/heads/main");
+    expect(git(repo, "ls-tree", "-r", "--name-only", "refs/heads/main")).toContain("src/core/releases.json");
+    expect(files).toContain("a.ts");
+    expect(files).toContain("b.ts");
+  });
+
+  test("a base move that touches a file the candidate changes still voids the gate (#6640)", async () => {
+    const repo = await autonomousRepo("overlap-mid-gate");
+    const pull = await greenPull(repo, "a.ts");
+    held = (async () => {
+      const moved = await commitToBranch(app, alice, repo, {
+        message: "Same file",
+        files: [{ path: "a.ts", content: "export const n = 'other';\n" }],
+      });
+      if (!moved.ok) throw new Error(JSON.stringify(moved.error));
+    })();
+    const base = git(repo, "rev-parse", "refs/heads/main");
+    try {
+      await sweepGreen(app, repo);
+    } finally {
+      held = undefined;
+    }
+    expect(merged(repo, pull)).toBe(false);
+    // Main moved by the competing commit alone, and nothing is left half-landed.
+    expect(git(repo, "rev-list", "--count", `${base}..refs/heads/main`)).toBe("1");
+    expect(git(repo, "log", "-1", "--format=%s", "refs/heads/main")).toBe("Same file");
+    expect(gatesOf(repo).length).toBeLessThanOrEqual(1);
+  });
+
+  test("a disjoint move of live files that breaks the gate is no exemption: the pull does not land (#6640)", async () => {
+    const repo = await autonomousRepo("breaking-mid-gate");
+    const pull = await greenPull(repo, "a.ts");
+    held = (async () => {
+      const moved = await commitToBranch(app, alice, repo, {
+        message: "Breaks the gate",
+        files: [{ path: "red-other.ts", content: "export const x = 1;\n" }],
+      });
+      if (!moved.ok) throw new Error(JSON.stringify(moved.error));
+    })();
+    try {
+      await sweepGreen(app, repo);
+    } finally {
+      held = undefined;
+    }
+    expect(merged(repo, pull)).toBe(false);
+    expect(git(repo, "ls-tree", "-r", "--name-only", "refs/heads/main")).not.toContain("a.ts");
+  });
+
+  test("a docs-only move voids the gate: tests read docs, so the pull is gated again on the new base (#6640)", async () => {
+    const repo = await autonomousRepo("docs-mid-gate");
+    const pull = await greenPull(repo, "a.ts");
+    held = (async () => {
+      const moved = await commitToBranch(app, alice, repo, {
+        message: "A doc",
+        files: [{ path: "docs/NOTE.md", content: "# note\n" }],
+      });
+      if (!moved.ok) throw new Error(JSON.stringify(moved.error));
+    })();
+    try {
+      await sweepGreen(app, repo);
+    } finally {
+      held = undefined;
+    }
+    // Voided: not landed on the gate that ran before the move.
+    expect(merged(repo, pull)).toBe(false);
+    expect(gatesOf(repo)).toHaveLength(1);
+    await sweepGreen(app, repo);
+    expect(gatesOf(repo)).toHaveLength(2);
+    expect(merged(repo, pull)).toBe(true);
+  });
+
   test("a gated step lands only on the base and as the tree it was gated with", async () => {
     const repo = await autonomousRepo("guarded");
     const pull = await greenPull(repo, "guard.ts");

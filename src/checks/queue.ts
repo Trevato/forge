@@ -985,12 +985,19 @@ function split<T>(steps: readonly T[], k: number): T[][] {
  * Whether every step landed.
  */
 async function land(candidate: Candidate, steps: readonly Waiting[]): Promise<boolean> {
-  let at = candidate.baseOid;
+  const moved = await movedDisjoint(candidate);
+  let at = moved ?? candidate.baseOid;
   let landed: Queued | undefined;
   try {
     for (const [i, step] of candidate.steps.entries()) {
       const w = steps[i]!;
-      const tip = await step.entry.land({ baseOid: at, treeOid: step.treeOid });
+      // On a moved base the tree is the step's merge on the tip it lands on:
+      // a clean merge there is the re-verification the move needs.
+      const rebased = moved === undefined ? undefined : await mergeable(candidate.dir, at, step.entry.pull.headOid);
+      const tip =
+        rebased !== undefined && !rebased.ok
+          ? undefined
+          : await step.entry.land({ baseOid: at, treeOid: rebased?.value.treeOid ?? step.treeOid });
       if (tip === undefined) {
         log.warn("merge queue: a gated step did not land", {
           pull: step.entry.pull.number,
@@ -1008,6 +1015,49 @@ async function land(candidate: Candidate, steps: readonly Waiting[]): Promise<bo
   } finally {
     landed?.release(at);
   }
+}
+
+/**
+ * The base's tip, when it moved since the candidate was gated and the move
+ * touched only the release record, which the candidate does not change: the
+ * green gate still speaks for the candidate, so it lands on that tip
+ * instead of being voided. Undefined when the base is where it was, or the
+ * move overlaps the candidate, or anything cannot be read.
+ */
+async function movedDisjoint(candidate: Candidate): Promise<string | undefined> {
+  const first = candidate.steps[0];
+  if (first === undefined) return undefined;
+  const { dir } = candidate;
+  const tip = await resolveOid(dir, `refs/heads/${first.entry.pull.baseBranch}`);
+  if (tip === undefined || tip === candidate.baseOid) return undefined;
+  // Only a move forward of the gated base: a rewind is not a move to land on.
+  const ahead = await runGit(["merge-base", "--is-ancestor", candidate.baseOid, tip], { cwd: dir });
+  if (!ahead.ok) return undefined;
+  const theirs = await changedFiles(dir, candidate.baseOid, tip);
+  const ours = await changedFiles(dir, candidate.baseOid, candidate.tipOid);
+  if (theirs === undefined || ours === undefined) return undefined;
+  // Clear of the candidate is not enough: files that share no path can
+  // still break each other. Only a move of inert paths keeps the gate.
+  if (!theirs.every(inert)) return undefined;
+  if (theirs.some((f) => ours.includes(f))) return undefined;
+  log.info("merge queue: the base moved clear of the candidate; it lands on the new tip", {
+    from: candidate.baseOid.slice(0, 8),
+    to: tip.slice(0, 8),
+    files: theirs.length,
+  });
+  return tip;
+}
+
+/** The release record: the one file a release cut moves that no gated test depends on. */
+function inert(path: string): boolean {
+  return path === "src/core/releases.json";
+}
+
+/** The paths that differ between two commits, or undefined when git cannot say. */
+async function changedFiles(dir: string, from: string, to: string): Promise<string[] | undefined> {
+  const out = await runGit(["diff", "--name-only", "-z", "--no-renames", from, to], { cwd: dir });
+  if (!out.ok) return undefined;
+  return out.value.split("\0").filter((f) => f !== "");
 }
 
 /**
