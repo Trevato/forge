@@ -208,7 +208,7 @@ import {
   canWrite,
   getRepoById,
 } from "../core/repos.ts";
-import { cleanQuery, searchKind } from "../core/search.ts";
+import { cleanQuery, CODE_BUDGET_MS, searchKind } from "../core/search.ts";
 import { strangerCodeSearch } from "./strangers.ts";
 import {
   isReviewState,
@@ -2051,6 +2051,10 @@ export function apiRoutes(router: Router<Handler>): void {
         kind,
         ...(q.has("limit") ? { limit: Number(q.get("limit")) } : {}),
         live: q.get("live") === "1" || q.get("live") === "true",
+        // The page's budget; `code=all` lifts it, as on the page.
+        ...(q.get("code") === "all"
+          ? {}
+          : { codeBudgetMs: ctx.app.config.codeBudgetMs ?? CODE_BUDGET_MS }),
       };
       const mine = runRepos(ctx.app, ctx.auth);
       const found = await timePhaseAsync(ctx.request, "search", () =>
