@@ -25,7 +25,8 @@ import { repoDir } from "../../git/repos.ts";
 import { forkDrift } from "../../actions/forks.ts";
 import { upstreamOffer, type UpstreamOffer } from "../../actions/offer_upstream.ts";
 import { listRefs } from "../../git/read.ts";
-import { updateRepoSettings } from "../../actions/repos.ts";
+import { directionNote } from "../../crew/direct.ts";
+import { setCrewOutsiders, updateRepoSettings } from "../../actions/repos.ts";
 import { showProvenance } from "../../actions/provenance.ts";
 import {
   checkLine,
@@ -57,7 +58,7 @@ import { style } from "../term/style.ts";
 import { truncate, wrap } from "../term/width.ts";
 import { badge, card } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
-import { PIN_MARK, ago, drawFacts, plural } from "./common.ts";
+import { PIN_MARK, ago, confirmScreen, drawFacts, plural } from "./common.ts";
 import { connectionsScreen, egressScreen } from "./egress.ts";
 import { newPullScreen } from "./newpull.ts";
 import { pullScreen } from "./pull.ts";
@@ -95,11 +96,15 @@ export function aboutScreen(
   // The following card's rule: an admin's, and only while it is on or to be turned on.
   const mayFollow = (): boolean =>
     may() && repo !== undefined && repo.origin === null;
+  // Outsiders is the same person-and-admin gate; `d` (direct) never clashes
+  // with `o`, the fork's upstream offer.
+  const mayOutsiders = (): boolean => mayFlow();
   const checking = (): boolean =>
     repo !== undefined && followShown(f.app, repo, f.user)?.enabled === true;
   const factRows = (): [string, string][] => [
     ...archivedRow(repo),
     ...flowRow(repo),
+    ...outsidersRow(repo),
     ...aboutFacts(f, src, facts, ref),
     ...trailRows(f, repo),
     ...upstreamRows(f, repo),
@@ -144,7 +149,7 @@ export function aboutScreen(
     });
   }
   const cloneUrl = rows.find(([label]) => label.startsWith("clone"))?.[1] ?? "";
-  return {
+  const screen: Screen = {
     title: "About",
     get keys() {
       return [
@@ -160,6 +165,14 @@ export function aboutScreen(
           : []),
         ...(mayFlow()
           ? [binding(["w"], repo?.flowOnly === true ? "flow only off" : "flow only on")]
+          : []),
+        ...(mayOutsiders()
+          ? [
+              binding(
+                ["d"],
+                repo?.crewOutsiders === true ? "outsiders off" : "outsiders on",
+              ),
+            ]
           : []),
         ...(mayTrail()
           ? [
@@ -286,6 +299,41 @@ export function aboutScreen(
         );
         return true;
       }
+      if (e.key === "d" && repo !== undefined && mayOutsiders()) {
+        const at = repo;
+        const on = !at.crewOutsiders;
+        void setCrewOutsiders(f.app, f.user, at, on, true).then((plan) => {
+          if (!plan.ok) return ctx.toast("that could not be changed", "danger");
+          ctx.push(
+            confirmScreen(ctx, screen, {
+              title: "Outsiders",
+              body: [
+                on
+                  ? "Turn on: people who cannot write here may direct the crew."
+                  : "Turn off: only people who can write here direct the crew.",
+              ],
+              actions: [{ label: "Confirm" }, { label: "Cancel" }],
+              onChoose: (i) => {
+                if (i !== 0) return;
+                void setCrewOutsiders(f.app, f.user, at, on, false).then((done) => {
+                  if (done.ok) {
+                    repo = getRepoById(f.db, at.id) ?? at;
+                    rows = factRows();
+                    ctx.toast(
+                      on
+                        ? "outsiders may direct the crew"
+                        : "outsiders may not direct the crew",
+                      "success",
+                    );
+                  } else ctx.toast("that could not be changed", "danger");
+                  ctx.invalidate();
+                });
+              },
+            }),
+          );
+        });
+        return true;
+      }
       if (e.key === "y" && cloneUrl !== "") {
         ctx.copy(cloneUrl);
         ctx.toast("copied the clone URL", "success");
@@ -375,6 +423,7 @@ export function aboutScreen(
       return true;
     },
   };
+  return screen;
 }
 
 /**
@@ -440,6 +489,15 @@ export function upstreamRows(
 export function flowRow(repo: Repo | undefined): [string, string][] {
   if (repo === undefined) return [];
   return [["Flow only", repo.flowOnly ? "on" : "off"]];
+}
+
+/** Who may direct the crew, in `OUTSIDERS_NOTE`'s words; every reader sees it. */
+export function outsidersRow(repo: Repo | undefined): [string, string][] {
+  if (repo === undefined) return [];
+  return wrap(directionNote(repo), 50).map((line, i): [string, string] => [
+    i === 0 ? "Crew" : "",
+    line,
+  ]);
 }
 
 /** One line when an admin has put the repository away. */
