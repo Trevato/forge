@@ -214,11 +214,11 @@ describe("the merge queue across a restart", () => {
     const head = pull.headOid;
     const base = git(repo, "rev-parse", "main");
     const store = queueStore(app.db);
-    store.red(repo.id, pull.id, { head, base, together: [4, 5] });
-    expect(redMarks(app.db, repo.id).get(pull.id)).toEqual({ head, base, together: [4, 5] });
+    store.red(repo.id, pull.id, { head, base, together: [4, 5], at: 1000 });
+    expect(redMarks(app.db, repo.id).get(pull.id)).toEqual({ head, base, together: [4, 5], at: 1000 });
     // A new mark replaces the old: the line remembers one per pull.
-    keepRed(app.db, repo.id, pull.id, { head, base: head, together: [] });
-    expect([...redMarks(app.db, repo.id).values()]).toEqual([{ head, base: head, together: [] }]);
+    keepRed(app.db, repo.id, pull.id, { head, base: head, together: [], at: 2000 });
+    expect([...redMarks(app.db, repo.id).values()]).toEqual([{ head, base: head, together: [], at: 2000 }]);
     store.red(repo.id, pull.id, undefined);
     expect(redMarks(app.db, repo.id).size).toBe(0);
   });

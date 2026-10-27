@@ -167,14 +167,14 @@ export function keepRed(
   if (mark === undefined) return;
   db.query(
     "INSERT INTO queue_red (repo_id, pull_id, head_oid, base_oid, together, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-  ).run(repoId, pullId, mark.head, mark.base, JSON.stringify(mark.together), now.toISOString());
+  ).run(repoId, pullId, mark.head, mark.base, JSON.stringify(mark.together), new Date(mark.at ?? now.getTime()).toISOString());
 }
 
 /** The repository's red marks, by pull id. */
 export function redMarks(db: Database, repoId: string): Map<string, Remembered> {
   const rows = db
-    .query<{ pull_id: string; head_oid: string; base_oid: string; together: string }, [string]>(
-      "SELECT pull_id, head_oid, base_oid, together FROM queue_red WHERE repo_id = ?1 ORDER BY at",
+    .query<{ pull_id: string; head_oid: string; base_oid: string; together: string; at: string }, [string]>(
+      "SELECT pull_id, head_oid, base_oid, together, at FROM queue_red WHERE repo_id = ?1 ORDER BY at",
     )
     .all(repoId);
   const marks = new Map<string, Remembered>();
@@ -182,7 +182,7 @@ export function redMarks(db: Database, repoId: string): Map<string, Remembered> 
     const together = parsed(row.together);
     const numbers =
       Array.isArray(together) && together.every((n) => Number.isSafeInteger(n)) ? (together as number[]) : [];
-    marks.set(row.pull_id, { head: row.head_oid, base: row.base_oid, together: numbers });
+    marks.set(row.pull_id, { head: row.head_oid, base: row.base_oid, together: numbers, at: Date.parse(row.at) || 0 });
   }
   return marks;
 }

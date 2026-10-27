@@ -26,6 +26,7 @@
  *   `n`/`p` walk the unsettled ones while the cursor is inside a thread.
  */
 
+import { RED_ALONE_WAIT, redAloneAt, redMark } from "../../checks/queue.ts";
 import {
   addCommentThrough,
   setIssueStateThrough,
@@ -253,6 +254,7 @@ export function pullScreen(
   let checkSteps = "";
   /** `findingsWords` of the preview's website-spec findings; empty when none were recorded. */
   let specWords = "";
+  let redWords = "";
   /** The check's green was against a base that has since moved. */
   let checkOld = false;
   /** Agent runs about this pull, newest first. */
@@ -316,6 +318,11 @@ export function pullScreen(
         ? null
         : pullPreviewFindings(f.db, repo.id, previewEnv(number));
     specWords = spec === null ? "" : findingsWords(spec);
+    const mark =
+      repo === undefined || row === undefined
+        ? undefined
+        : redMark(repo.id, row.id, row.headOid || (facts?.headOid ?? ""));
+    redWords = mark === undefined ? "" : `red alone at ${redAloneAt(mark)}, ${RED_ALONE_WAIT}`;
     checkSteps =
       settings === undefined
         ? ""
@@ -833,7 +840,7 @@ export function pullScreen(
       // The box is exactly as tall as what is in it: the state, then a row
       // for the verdicts when there are any, then a row for the checks when
       // a deploy has run or the gate demands one.
-      const checksLine = checksText(check, requireChecks, isApp, checkBase, checkOld, checkProgress, checkSteps, specWords);
+      const checksLine = checksText(check, requireChecks, isApp, checkBase, checkOld, checkProgress, checkSteps, specWords, redWords);
       const boxH =
         3 +
         (standingText(standing(), requireReview) === "" ? 0 : 1) +
@@ -1300,10 +1307,13 @@ export function checksText(
   steps = "",
   /** `findingsWords` of the preview; empty when none were recorded. */
   spec = "",
+  /** The queue holds the pull as red alone: its words; empty when it does not. */
+  red = "",
 ): string {
   const line = checksLine(check, required, isApp, baseBranch, stale, progress);
   const withSteps = line === "" || steps === "" ? line : `${line} · ${steps}`;
-  return withSteps === "" || spec === "" ? withSteps : `${withSteps} · ${spec}`;
+  const withSpec = withSteps === "" || spec === "" ? withSteps : `${withSteps} · ${spec}`;
+  return withSpec === "" || red === "" ? `${withSpec}${red}` : `${withSpec} · ${red}`;
 }
 
 function checksLine(

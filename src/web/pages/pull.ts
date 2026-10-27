@@ -25,6 +25,7 @@ import { CHECK_ASKED } from "../../actions/pull_ask_words.ts";
 import { reviewWords } from "../../actions/review_words.ts";
 import { readFileAt } from "../../apps/checkout.ts";
 import { parseCheck } from "../../apps/manifest.ts";
+import { RED_ALONE_WAIT, redAloneAt, redMark, type RedMark } from "../../checks/queue.ts";
 import { tierLine, type TierState } from "../../checks/tiers.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { labelsFor, listLabels } from "../../core/issues.ts";
@@ -304,6 +305,17 @@ export function checksLine(
   </p>`;
 }
 
+/** One muted line when the merge queue holds the pull as red alone; nothing otherwise. */
+export function redAloneLine(mark: RedMark | undefined): Html {
+  if (mark === undefined) return html``;
+  const exact = redAloneAt(mark);
+  if (exact === "") return html``;
+  return html`<p class="muted small">
+    ${icon("clock")}red alone at
+    <time datetime="${new Date(mark.at).toISOString()}">${exact}</time>, ${RED_ALONE_WAIT}
+  </p>`;
+}
+
 /** Whether a head declares a fast tier: a commit's files never change. */
 const fastByHead = new Map<string, boolean>();
 export async function declaresFast(dir: string, head: string): Promise<boolean> {
@@ -392,7 +404,8 @@ function pullChecksLine(
     `${thread}/checks-line`,
   );
   const found = !isApp ? null : pullPreviewFindings(ctx.app.db, repo.id, previewEnv(pull.number));
-  return html`${line}${found === null ? "" : specFindings(found)}`;
+  const red = redAloneLine(redMark(repo.id, pull.id, status.headOid));
+  return html`${line}${red}${found === null ? "" : specFindings(found)}`;
 }
 
 /** One §5 row in a toned card; `.setting-list` wraps the sentence and drops the action under it on a phone. */

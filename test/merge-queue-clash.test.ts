@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Candidate, enqueue, type Expect, queueClashes, type Queued, redBatchRate } from "../src/checks/queue.ts";
+import { type Candidate, enqueue, type Expect, queueClashes, type Queued, redBatchRate, redMark } from "../src/checks/queue.ts";
 import type { Pull } from "../src/core/pulls.ts";
 
 describe("the merge queue remembers clashes", () => {
@@ -163,6 +163,18 @@ describe("the merge queue remembers clashes", () => {
       { pulls: [10], ok: true },
       { pulls: [2], ok: false },
     ]);
+  });
+
+  test("red alone is readable as a mark at its head and base, and nowhere else", async () => {
+    await markedNow();
+    const head = git("rev-parse", "b");
+    const mark = redMark(repoId, "clash-2", head);
+    expect(mark?.head).toBe(head);
+    expect(mark?.base).toBe(git("rev-parse", "refs/heads/main"));
+    expect(new Date(mark!.at).toISOString()).toBe(mark!.at);
+    expect(redMark(repoId, "clash-2", "0".repeat(40))).toBeUndefined();
+    expect(redMark(repoId, "clash-99", head)).toBeUndefined();
+    expect(redMark("no-such-line", "clash-2", head)).toBeUndefined();
   });
 
   test("a push is a new head: B is forgotten, batched with the rest, and lands", async () => {

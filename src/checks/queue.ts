@@ -257,6 +257,8 @@ export interface Remembered {
   readonly base: string;
   /** The pulls its red tree held besides it: a clash when there are any. */
   readonly together: readonly number[];
+  /** When the line handed it back (epoch ms). */
+  readonly at: number;
 }
 
 /** A pull in red batches at this head (#4999): gated alone once it is a suspect. */
@@ -585,6 +587,32 @@ export function queueClashes(repoId: string): number {
   return n;
 }
 
+/** A pull's red mark, as the page says it: when, at which head, on which base. */
+export interface RedMark {
+  readonly at: string;
+  readonly head: string;
+  readonly base: string;
+}
+
+/**
+ * The mark the line holds on a pull that was red alone — on its own merge,
+ * not on top of others — at this `head`; undefined when it holds none.
+ */
+export function redMark(repoId: string, pullId: string, head: string): RedMark | undefined {
+  const red = lines.get(repoId)?.reds.get(pullId);
+  if (red === undefined || red.head !== head || red.together.length > 0) return undefined;
+  return { at: new Date(red.at).toISOString(), head: red.head, base: red.base };
+}
+
+/** What the line waits for on a pull it holds as red alone. */
+export const RED_ALONE_WAIT = "waiting for a new head or a new main";
+
+/** A mark's time as both doors say it: `2026-10-26 20:41 UTC`; empty when it does not parse. */
+export function redAloneAt(mark: RedMark): string {
+  const at = new Date(mark.at);
+  return Number.isNaN(at.getTime()) ? "" : `${at.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
+
 const HOUR_MS = 60 * 60_000;
 
 /** The last hour's first candidates of a line, and how many of them were red (#4235). */
@@ -876,7 +904,7 @@ async function solo(line: Line, gated: Gated, w: Waiting): Promise<{ readonly do
         return;
       }
       line.suspects.delete(pull.id);
-      markRed(line, pull.id, { head: pull.headOid, base: on.baseOid, together: [] });
+      markRed(line, pull.id, { head: pull.headOid, base: on.baseOid, together: [], at: Date.now() });
       log.info("red alone", { repo: line.repoId, pull: pull.number });
       w.entry.handBack(verdict, on.baseOid, []);
       w.settle(false);
@@ -1193,7 +1221,7 @@ async function judged(
     // with them, or red on its own — not gated alone on the base before
     // them to tell which. Remembered with them either way (#4235).
     const together = landed.map((q) => q.pull.number);
-    markRed(search.line, culprit.pull.id, { head: culprit.pull.headOid, base: candidate.baseOid, together });
+    markRed(search.line, culprit.pull.id, { head: culprit.pull.headOid, base: candidate.baseOid, together, at: Date.now() });
     search.line.suspects.delete(culprit.pull.id);
     log.info(together.length === 0 ? "red on its own merge" : "red on top of its candidate", {
       repo: search.line.repoId,
