@@ -1,6 +1,6 @@
 /** The OpenAPI document names every route the manifest names. */
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,7 +30,8 @@ test("every http route the manifest names is described", () => {
 });
 
 test("every described route is registered in the router", () => {
-  const src = ["src/http/server.ts", "src/http/api.ts", "src/http/mcp.ts", "src/http/passport_edge.ts", "src/http/feed.ts", "src/http/checks_recheck.ts"]
+  const src = ["src/http/server.ts", "src/http/api.ts", "src/http/mcp.ts", "src/http/passport_edge.ts", "src/http/feed.ts", "src/http/checks_recheck.ts",
+    ...readdirSync("src/http/api").map((f) => `src/http/api/${f}`)]
     .map((f) => readFileSync(f, "utf8"))
     .join("\n")
     // A route registered in a loop over issues and pulls is two routes.

@@ -13,9 +13,9 @@ const NOT_YET_DESCRIBED: readonly string[] = [
 
 const norm = (path: string) => path.replace(/[:*]\w+/g, "{}").replace(/\{\w+\}/g, "{}");
 
-/** Every file under src/http that registers routes. */
+/** Every file under src/http (and its route modules in src/http/api/) that registers routes. */
 const files = () =>
-  readdirSync(new URL("../src/http/", import.meta.url))
+  [...readdirSync(new URL("../src/http/", import.meta.url)), ...readdirSync(new URL("../src/http/api/", import.meta.url)).map((f) => `api/${f}`)]
     .filter((f) => f.endsWith(".ts"))
     .map((f) => ({ f, src: readFileSync(new URL(`../src/http/${f}`, import.meta.url), "utf8") }))
     .filter(({ src }) => src.includes("router.add("));

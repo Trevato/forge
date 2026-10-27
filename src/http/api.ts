@@ -304,11 +304,6 @@ import {
   removeAppDomain,
 } from "../actions/domains.ts";
 import {
-  egressView,
-  grantAppEgress,
-  revokeAppEgress,
-} from "../actions/egress_grants.ts";
-import {
   addPromptSource,
   listPromptSources,
   removePromptSource,
@@ -458,6 +453,7 @@ import {
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
 import { passportRoutes } from "./passport_edge.ts";
+import { egressGrantRoutes } from "./api/egress_grants.ts";
 import type { Router } from "./router.ts";
 import { clientAddress, clientBucket } from "./peer.ts";
 import { manifestFor } from "../actions/here.ts";
@@ -1189,7 +1185,7 @@ function appLimitResponse(ctx: Ctx, ownerName: string): Response {
 // ---- resolution ----
 
 /** The repo a route names, if the viewer may see it. */
-function loadRepo(ctx: Ctx): Repo | undefined {
+export function loadRepo(ctx: Ctx): Repo | undefined {
   const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
   return repo && canRead(ctx.app.db, repo, ctx.auth.user) ? repo : undefined;
 }
@@ -5878,55 +5874,7 @@ export function apiRoutes(router: Router<Handler>): void {
     },
   );
 
-  // A site admin's grant of one private destination forge.json asks for
-  // (#3433). Reading takes admin over the repository; changing takes a site
-  // admin. The destination is the exact `host:port` forge.json names.
-  router.add("GET", "/api/v1/repos/:owner/:name/egress-grants", async (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const repo = loadRepo(ctx);
-    if (!repo) return notFound();
-    const view = await timePhaseAsync(ctx.request, "grants", () =>
-      egressView(ctx.app, ctx.auth.user, repo),
-    );
-    if (!view.ok) return respondAccess(view.error, 422);
-    return timePhase(ctx.request, "render", () =>
-      json({ items: view.value.rows, changes: view.value.changes, next_cursor: null }),
-    );
-  });
-
-  router.add("POST", "/api/v1/repos/:owner/:name/egress-grants", async (ctx) => {
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const repo = loadRepo(ctx);
-    if (!repo) return notFound();
-    const input = await body(ctx.request);
-    const granted = await grantAppEgress(
-      ctx.app,
-      ctx.auth.user,
-      repo,
-      str(input.destination),
-    );
-    if (!granted.ok) return respondAccess(granted.error, 422);
-    return json(granted.value, 201);
-  });
-
-  router.add("DELETE", "/api/v1/repos/:owner/:name/egress-grants", async (ctx) => {
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const repo = loadRepo(ctx);
-    if (!repo) return notFound();
-    const input = await body(ctx.request);
-    const revoked = revokeAppEgress(
-      ctx.app,
-      ctx.auth.user,
-      repo,
-      str(input.destination),
-    );
-    if (!revoked.ok) return respondAccess(revoked.error, 422);
-    return json({}, 200);
-  });
+  egressGrantRoutes(router);
 
   // Where the crew's next tell comes from when nobody is typing
   // (docs/APPS.md, "Prompts from Instagram"). Admin scope and admin over
