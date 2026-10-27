@@ -320,7 +320,12 @@ describe("commits, branches and the log", () => {
     // the root closes again — a lane left open past the commit it was waiting
     // for would draw a line of history that does not exist.
     expect(log.every((c) => c.graph.includes("\u25cf"))).toBe(true);
-    expect(log.map((c) => c.graph)).toEqual(["\u25cf\u256e", "\u2502\u25cf", "\u25cf\u2502", "\u25cf\u256f"]);
+    expect(log.map((c) => c.graph)).toEqual([
+      "\u25cf\u256e",
+      "\u2502\u25cf",
+      "\u25cf\u2502",
+      "\u25cf\u256f",
+    ]);
   });
 
   test("the log filtered to one path only mentions that path", async () => {
@@ -542,6 +547,24 @@ describe("discarding", () => {
       (await git.discardPath(dir, "junk.txt", { untracked: true })).ok,
     ).toBe(true);
     expect(await Bun.file(join(dir, "junk.txt")).exists()).toBe(false);
+  });
+
+  test("unstagedOnly puts the file back to the index and leaves the staged half", async () => {
+    const dir = await newRepo(root, "discard-half");
+    await writeFile(join(dir, "a.txt"), "one\n");
+    await git.stageAll(dir);
+    await git.commit(dir, "base");
+    await writeFile(join(dir, "a.txt"), "two\n");
+    await git.stagePath(dir, "a.txt");
+    await writeFile(join(dir, "a.txt"), "three\n");
+    expect(
+      (await git.discardPath(dir, "a.txt", { unstagedOnly: true })).ok,
+    ).toBe(true);
+    expect(await Bun.file(join(dir, "a.txt")).text()).toBe("two\n");
+    const status = await git.status(dir);
+    expect(status.ok && status.value.staged.map((f) => f.path)).toEqual([
+      "a.txt",
+    ]);
   });
 
   test("unstaging works before there is a HEAD to restore from", async () => {
