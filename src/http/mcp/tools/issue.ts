@@ -8,7 +8,7 @@ import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts"
 
 export const tool: Tool = {
   name: "issue",
-  doc: "`{ repo, number }`: one issue's title, state, closeReason, body, labels, assignee, comments (author, authorIsAgent, body, at) and blockedBy/blocks, as `GET …/issues/:number`; a sealed one you cannot see is not found",
+  doc: "`{ repo, number }`: one issue's title, state, closeReason, body, labels, assignee, comments (author, authorIsAgent, body, at) and blockedBy/blocks, as `GET …/issues/:number`; a sealed one you cannot see is not found; draws the `ui://forge/issue` card: title, state, assignee, labels and what it waits for, never the body or comments",
   description:
     "One issue with comments, `blockedBy`, `blocks`; non-writers' text is `untrusted`.",
   inputSchema: {
@@ -53,7 +53,7 @@ export const tool: Tool = {
     const flag = (x: { untrusted?: string }) =>
       x.untrusted === undefined ? {} : { untrusted: true };
     const [self] = mark([issue]);
-    return good({
+    const answer = good({
       number: issue.number,
       title: issue.title,
       state: issue.state,
@@ -74,5 +74,7 @@ export const tool: Tool = {
       blockedBy: deps.blockedBy.filter(seen).map(brief),
       blocks: deps.blocks.filter(seen).map(brief),
     });
+    // Where the issue lives, for the card's links.
+    return { ...answer, card: { repo: `${repo.ownerName}/${repo.name}` } };
   },
 };

@@ -614,6 +614,15 @@ describe("the forge over MCP", () => {
     });
     if (!opened.ok) throw new Error(String(opened.error));
     expect((await tool(rw, "issue", { repo: "alice/game", number: opened.value.number })).value).toEqual({ kind: "pull", tool: "pull" });
+    // Through MCP the card is built from the answer's repo; a pull's number has none.
+    const viaPull = await call(rw, "tools/call", { name: "issue", arguments: { repo: "alice/game", number: opened.value.number } });
+    expect(viaPull.body.result.structuredContent).toBeUndefined();
+    const viaIssue = await call(rw, "tools/call", { name: "issue", arguments: { repo: "alice/game", number: waiting.number } });
+    const card = viaIssue.body.result.structuredContent.card;
+    expect(card.kind).toBe("issue");
+    expect(card.rows[0].link).toMatch(/^https?:\/\/.+\/alice\/game\/issues\/\d+$/);
+    expect(card.rows[0].link.endsWith(`/alice/game/issues/${waiting.number}`)).toBe(true);
+    expect(card.rows.find((r: any) => r.label === "Waits for").link.endsWith(`/alice/game/issues/${first.number}`)).toBe(true);
 
     // Sealed: the writer reads it; a reader of a public repo is told not found.
     const pub = await createRepo(app, alice, { name: "sealedpub", visibility: "public" });
@@ -1188,6 +1197,7 @@ describe("the forge over MCP", () => {
       "ui://forge/decision",
       "ui://forge/explore",
       "ui://forge/feed",
+      "ui://forge/issue",
       "ui://forge/map",
       "ui://forge/pull",
       "ui://forge/run",
@@ -1209,6 +1219,7 @@ describe("the forge over MCP", () => {
     expect(meta("milestones")).toBe("ui://forge/wave");
     expect(meta("map")).toBe("ui://forge/map");
     expect(meta("feed")).toBe("ui://forge/feed");
+    expect(meta("issue")).toBe("ui://forge/issue");
     expect(meta("explore")).toBe("ui://forge/explore");
     expect(meta("pull")).toBe("ui://forge/pull");
   });
@@ -1282,6 +1293,37 @@ describe("the forge over MCP", () => {
     })!;
     expect(hostile.status).toBe("open · check running");
     expect(hostile.rows.some((r) => r.label === "Preview")).toBe(false);
+  });
+
+  test("the issue card carries state, assignee, labels and what it waits for, with absolute links and no comments", async () => {
+    const { cardFor } = await import("../src/web/studio/cards.ts");
+    const answer = {
+      number: 7,
+      title: "<b>Fix</b>",
+      state: "open",
+      closeReason: null,
+      body: "secret body",
+      assignee: "scout",
+      labels: ["bug"],
+      untrusted: true,
+      comments: [{ author: "x", body: "COMMENTTEXT" }],
+      blockedBy: [{ number: 3, title: "T3", state: "open" }],
+      blocks: [],
+    };
+    const card = cardFor("issue", answer, "https://forge.test", { repo: "alice/game" })!;
+    expect(card.kind).toBe("issue");
+    expect(card.status).toBe("open");
+    expect(card.rows[0]).toEqual({ label: "#7", value: "<b>Fix</b>", link: "https://forge.test/alice/game/issues/7" });
+    expect(card.rows.find((r) => r.label === "Assignee")!.value).toBe("scout");
+    expect(card.rows.find((r) => r.label === "Labels")!.value).toBe("bug");
+    expect(card.rows.find((r) => r.label === "Waits for")!.link).toBe("https://forge.test/alice/game/issues/3");
+    expect(card.rows.some((r) => r.label === "Author" && r.value.startsWith("untrusted"))).toBe(true);
+    expect(JSON.stringify(card)).not.toContain("COMMENTTEXT");
+    expect(JSON.stringify(card)).not.toContain("secret body");
+    expect(cardFor("issue", answer, "https://forge.test")!.rows[0]!.link).toBeUndefined();
+    // A number that names a pull is not an issue: no card.
+    expect(cardFor("issue", { kind: "pull", tool: "pull" }, "https://forge.test", { repo: "alice/game" })).toBeUndefined();
+    expect(cardFor("issue", {}, "https://forge.test", { repo: "alice/game" })).toBeUndefined();
   });
 
   test("the decision card links each ask to its pull or issue, and to nothing unsafe", async () => {

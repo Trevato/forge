@@ -10,7 +10,7 @@
 import { html, raw } from "../html.ts";
 import { timeAgo } from "../ui.ts";
 
-export type CardKind = "app" | "run" | "decision" | "wave" | "map" | "feed" | "pull" | "explore";
+export type CardKind = "app" | "run" | "decision" | "wave" | "map" | "feed" | "pull" | "explore" | "issue";
 
 export interface CardRow {
   readonly label: string;
@@ -39,7 +39,7 @@ const here = (origin: string, path: string): boolean => origin !== "" && /^\/(?!
 
 export const CARD_MIME = "text/html;profile=mcp-app";
 export const CARD_URI = (kind: CardKind): string => `ui://forge/${kind}`;
-export const CARD_KINDS: readonly CardKind[] = ["app", "run", "decision", "wave", "map", "feed", "pull", "explore"];
+export const CARD_KINDS: readonly CardKind[] = ["app", "run", "decision", "wave", "map", "feed", "pull", "explore", "issue"];
 
 /** The tool whose answer each card draws. */
 export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
@@ -53,6 +53,7 @@ export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   explore: "explore",
   new_app: "app",
   pull: "pull",
+  issue: "issue",
 };
 
 const CARD_TITLE: Readonly<Record<CardKind, string>> = {
@@ -64,6 +65,7 @@ const CARD_TITLE: Readonly<Record<CardKind, string>> = {
   feed: "Feed",
   explore: "Explore",
   pull: "Pull",
+  issue: "Issue",
 };
 
 type Obj = Record<string, unknown>;
@@ -147,6 +149,25 @@ export function cardFor(
     const preview = text(extra["preview"]);
     if (web(preview)) rows.push({ label: "Preview", value: preview, link: preview });
     return { kind, title: `#${number} ${text(p["title"])}`.trim(), status, rows, actions };
+  }
+  if (kind === "issue") {
+    const v = obj(value);
+    const number = text(v["number"]);
+    // A number that names a pull answers `{kind:"pull"}`: no issue, no card.
+    if (v["kind"] === "pull" || !/^[1-9]\d*$/.test(number)) return undefined;
+    const slug = text(extra["repo"]);
+    const base = web(origin) && /^[^/\s]+\/[^/\s]+$/.test(slug) ? `${origin}/${slug}/issues/` : "";
+    const at = (n: string): { link?: string } => (base !== "" && /^\d+$/.test(n) ? { link: base + n } : {});
+    status = text(v["state"]) + (v["closeReason"] ? ` · ${text(v["closeReason"])}` : "");
+    rows.push({ label: `#${number}`, value: text(v["title"]), ...at(number) });
+    // The title is an outsider's when the answer says so; the card says so too.
+    if (v["untrusted"] === true) rows.push({ label: "Author", value: "untrusted: not a writer on this repository" });
+    rows.push({ label: "Assignee", value: text(v["assignee"]) || "nobody" });
+    const labels = list(v["labels"]).map(text).filter((l) => l !== "");
+    if (labels.length > 0) rows.push({ label: "Labels", value: labels.join(", ") });
+    for (const b of list(v["blockedBy"]).map(obj).slice(0, LIMIT))
+      rows.push({ label: "Waits for", value: `#${text(b["number"])} · ${text(b["state"])}`, ...at(text(b["number"])) });
+    return { kind, title: `Issue #${number}`, status, rows, actions };
   }
   if (kind === "app") {
     const apps = list(value).map(obj);
