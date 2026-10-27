@@ -12,7 +12,7 @@ export const tool: Tool = {
       query: {
         type: "string",
         maxLength: 200,
-        description: "Words; kind:, sort: filters.",
+        description: "Words; kind: sort: updated:7d",
       },
     },
   },

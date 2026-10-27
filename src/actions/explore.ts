@@ -49,9 +49,18 @@ export interface ExploreQuery {
   readonly text: string;
   /** `archived:yes` — put-away repositories are in the list; off, they are not. */
   readonly archived: boolean;
+  /** `updated:1d|7d|30d` — only rows that moved within the window; `all` is no window. */
+  readonly updated: ExploreWindow;
   /** `owner:<name>` — only this account's apps, and the person themself. */
   readonly owner?: string;
 }
+
+export type ExploreWindow = "all" | "1d" | "7d" | "30d";
+const WINDOWS: Record<string, number> = {
+  "1d": 86_400_000,
+  "7d": 7 * 86_400_000,
+  "30d": 30 * 86_400_000,
+};
 
 const KINDS: Record<string, ExploreKind> = {
   app: "app",
@@ -83,6 +92,7 @@ export function parseExploreQuery(line: string): ExploreQuery {
   let kind: ExploreKind | "all" = "all";
   let sort: ExploreSort = "score";
   let archived = false;
+  let updated: ExploreWindow = "all";
   let owner: string | undefined;
   const words: string[] = [];
   for (const word of line
@@ -99,6 +109,8 @@ export function parseExploreQuery(line: string): ExploreQuery {
       sort = value.toLowerCase() as ExploreSort;
     else if (k === "archived" && ["yes", "no"].includes(value.toLowerCase()))
       archived = value.toLowerCase() === "yes";
+    else if (k === "updated" && value.toLowerCase() in WINDOWS)
+      updated = value.toLowerCase() as ExploreWindow;
     else if (k === "owner" && isSafeName(value)) owner = value;
     else if (k === "q" && value !== "") words.push(value);
     else words.push(word);
@@ -108,6 +120,7 @@ export function parseExploreQuery(line: string): ExploreQuery {
     sort,
     text: words.join(" ").slice(0, 100),
     archived,
+    updated,
     ...(owner === undefined ? {} : { owner }),
   };
 }
@@ -118,6 +131,7 @@ export function exploreLine(query: ExploreQuery): string {
     query.kind === "all" ? "" : `kind:${query.kind}`,
     query.sort === "score" ? "" : `sort:${query.sort}`,
     query.archived ? "archived:yes" : "",
+    query.updated === "all" ? "" : `updated:${query.updated}`,
     query.owner === undefined ? "" : `owner:${query.owner}`,
     query.text,
   ]
@@ -196,7 +210,8 @@ export async function explore(
 
 /** The forges this forge spawned, for a site admin asking for them. */
 async function forges(app: App, viewer: User | undefined, query: ExploreQuery): Promise<ExploreRow[]> {
-  if (query.owner !== undefined || viewer?.isAdmin !== true || (query.kind !== "all" && query.kind !== "forge")) return [];
+  // A spawned forge carries no time, so a window leaves it out.
+  if (query.updated !== "all" || query.owner !== undefined || viewer?.isAdmin !== true || (query.kind !== "all" && query.kind !== "forge")) return [];
   return (await listChildren(app)).map((child) => ({
     kind: "forge",
     name: child.name,
@@ -326,11 +341,20 @@ function rank(
     [...appRows, ...people.values()].map(freeze).filter(
       (row) =>
         (query.kind === "all" || row.kind === query.kind) &&
+        movedWithin(row, query, now) &&
         (only === undefined || (row.repo?.owner ?? row.name).toLowerCase() === only) &&
         (text === "" || `${row.name} ${row.description}`.toLowerCase().includes(text)),
     ),
     query,
   );
+}
+
+/** Whether the row's `shippedAt` (its last merged pull) is inside the window. */
+function movedWithin(row: ExploreRow, query: ExploreQuery, now: number): boolean {
+  if (query.updated === "all") return true;
+  if (row.shippedAt === null) return false;
+  const at = Date.parse(row.shippedAt);
+  return now - at <= WINDOWS[query.updated]!;
 }
 
 /** Rows sorted as the query says, in place. */

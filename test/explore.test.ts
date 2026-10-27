@@ -31,22 +31,31 @@ describe("the one line", () => {
       sort: "forks",
       text: "garden",
       archived: false,
+      updated: "all",
     });
     expect(parseExploreQuery("kind:people q:dungeon")).toEqual({
       kind: "person",
       sort: "score",
       text: "dungeon",
       archived: false,
+      updated: "all",
     });
     expect(parseExploreQuery("kind:nonsense sort:nonsense")).toEqual({
       kind: "all",
       sort: "score",
       text: "sort:nonsense",
       archived: false,
+      updated: "all",
     });
     expect(parseExploreQuery("archived:yes").archived).toBe(true);
     expect(exploreLine(parseExploreQuery("archived:yes kind:app"))).toBe(
       "kind:app archived:yes",
+    );
+    expect(parseExploreQuery("updated:7d").updated).toBe("7d");
+    expect(parseExploreQuery("updated:2y").updated).toBe("all");
+    expect(parseExploreQuery("updated:2y").text).toBe("updated:2y");
+    expect(exploreLine(parseExploreQuery("updated:30d kind:app garden"))).toBe(
+      "kind:app updated:30d garden",
     );
     expect(exploreLine(parseExploreQuery("  sort:ships   kind:app  "))).toBe(
       "kind:app sort:ships",
@@ -302,6 +311,39 @@ describe("explore", () => {
     ).text();
     expect(asAlice).not.toContain('href="/alice/loved/make-it-yours"');
   });
+
+  test("updated: narrows to what moved in the window, on the API and the page chips", async () => {
+    const ago = async (name: string, days: number) => {
+      const repo = await appOf(alice, name);
+      const issue = createIssue(app.db, { repoId: repo.id, authorId: alice.id, title: "c", kind: "pull" });
+      if (!issue.ok) throw new Error(issue.error);
+      app.db
+        .query(
+          `INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, merged_at)
+           VALUES (?1, 'main', 'b', '', '', ?2)`,
+        )
+        .run(issue.value.id, new Date(Date.now() - days * 86_400_000).toISOString());
+    };
+    await ago("two-days", 2);
+    await ago("twenty-days", 20);
+    const inWindow = async (w: string) =>
+      names((await api(`kind:app updated:${w}`)).items);
+    expect(await inWindow("1d")).not.toContain("alice/two-days");
+    expect(await inWindow("1d")).toContain("alice/loved");
+    expect(await inWindow("7d")).toContain("alice/two-days");
+    expect(await inWindow("7d")).not.toContain("alice/twenty-days");
+    expect(await inWindow("30d")).toContain("alice/twenty-days");
+    expect(await inWindow("30d")).not.toContain("alice/quiet");
+    expect((await api("updated:7d kind:app")).query).toBe("kind:app updated:7d");
+
+    const page = await (await fetch(`${base}/explore?q=${encodeURIComponent("updated:7d")}`)).text();
+    for (const [label, w] of [["Today", "1d"], ["This week", "7d"], ["This month", "30d"]] as const) {
+      expect(page).toContain(`href="/explore?q=updated%3A${w}"`);
+      expect(page).toContain(label);
+    }
+    expect(page).toMatch(/aria-current="page"\s*>This week/);
+  });
+
 });
 
 describe("explore on a forge with nothing public", () => {
@@ -377,6 +419,18 @@ describe("explore on a forge with nothing public", () => {
     expect(out).toContain(`href="/explore?q=${encodeURIComponent("zzz-no-such")}"`);
     expect(out).toContain(`href="/explore?q=${encodeURIComponent("kind:app")}"`);
     expect(out).toContain('href="/explore"');
+  });
+
+  test("a window with no hits offers to drop it, and the seg has an Any time chip", async () => {
+    const out = await get(`/explore?q=${encodeURIComponent("updated:1d zzz-no-such")}`, false);
+    expect(out).toContain(`href="/explore?q=${encodeURIComponent("zzz-no-such")}"`);
+    expect(out).toContain(`href="/explore?q=${encodeURIComponent("updated:1d")}"`);
+    const only = await get(`/explore?q=${encodeURIComponent("updated:1d kind:person zzz")}`, false);
+    expect(only).toContain(`href="/explore?q=${encodeURIComponent("kind:person zzz")}"`);
+    expect(only).toContain("Any time");
+    expect(only).toMatch(/aria-current="page"\s*>Today/);
+    const none = await get(`/explore?q=${encodeURIComponent("zzz")}`, false);
+    expect(none).toMatch(/aria-current="page"\s*>Any time/);
   });
 
   test("many words and a long one sit in a wrapping group, not a list row", async () => {
