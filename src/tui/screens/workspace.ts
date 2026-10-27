@@ -48,6 +48,8 @@ import type { TreeEntry } from "../../git/read.ts";
 import { fileKind, NO_BYTES } from "../../web/render/kinds.ts";
 import type { RepoFacts, RepoSource } from "../../view/source.ts";
 import { detectLanguage, highlightLines } from "../../web/highlight.ts";
+import { MAX_COLUMNS, parseCsv, type Table } from "../../text/csv.ts";
+import { layoutTable, type Grid } from "../ui/grid.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding, type Binding } from "../app/keys.ts";
 import type { KeyEvent } from "../term/input.ts";
@@ -260,6 +262,11 @@ type FindMode = "off" | "find" | "replace";
 /** What a path is, as far as the file pane is concerned. */
 type TabKind = "image" | "markdown" | "code";
 
+/** `.csv` and `.tsv`: files that read as a table. */
+function isTablePath(path: string): boolean {
+  return /\.[ct]sv$/i.test(path);
+}
+
 /** `README.md`, `NOTES.markdown`, `readme` — the prose a repo opens on. */
 function isMarkdownPath(path: string): boolean {
   const name = path.slice(path.lastIndexOf("/") + 1);
@@ -306,6 +313,11 @@ class Tab {
   doc: Line[] = [];
   docPlain: string[] = [];
   docWidth = 0;
+  /** `s` on a CSV/TSV: the aligned table, or the source behind it. */
+  asTable = true;
+  /** The parsed file, when its name says table. Parse errors ride along. */
+  table: Table | null = null;
+  grid: Grid = { header: "", rows: [] };
 
   constructor(readonly path: string) {}
 
@@ -323,9 +335,21 @@ class Tab {
     return this.kind === "markdown" && this.rendered && this.mode === "view";
   }
 
+  /** True when the pane is showing a CSV/TSV as columns. */
+  get tabular(): boolean {
+    return (
+      this.table !== null &&
+      this.table.error === undefined &&
+      this.table.header.length > 0 &&
+      this.asTable &&
+      this.mode === "view"
+    );
+  }
+
   /** The lines `/` searches and `j` scrolls: whichever view is up. */
   get body(): string[] {
-    return this.reading ? this.docPlain : this.plain;
+    if (this.reading) return this.docPlain;
+    return this.tabular ? this.grid.rows : this.plain;
   }
 
   /** Wrap the markdown for this width, and only when the width moved. */
@@ -372,6 +396,12 @@ class Tab {
     const built = buildLines(new TextDecoder().decode(source), this.path, c);
     this.plain = built.plain;
     this.lines = built.lines;
+    if (isTablePath(this.path)) {
+      // The decoded source, not `plain`: `expandTabs` has eaten every tab there.
+      const delimiter = /\.tsv$/i.test(this.path) ? "\t" : undefined;
+      this.table = parseCsv(new TextDecoder().decode(source), { delimiter });
+      this.grid = layoutTable(this.table);
+    } else this.table = null;
     // The rendered document is derived from the same text, so an edit, a
     // theme switch or a re-read has to throw it away with everything else.
     this.doc = [];
@@ -705,6 +735,7 @@ export function workspaceScreen(
         : prepareImage(entry.picture, imageId(t.path), ctx.caps);
     t.showImage = true;
     t.rendered = true;
+    t.asTable = true;
     t.editor = null;
     t.mode = "view";
     t.find = "off";
@@ -1210,6 +1241,7 @@ export function workspaceScreen(
     // You edit the bytes, never the rendering of them. Leaving `rendered`
     // set would put the document back on `esc` with the edits invisible.
     t.rendered = false;
+    t.asTable = false;
     t.mode = "edit";
     focus = "file";
     ctx.invalidate();
@@ -1277,6 +1309,13 @@ export function workspaceScreen(
     const two =
       t !== undefined && (t.image !== null || isMarkdownPath(t.path));
     return [
+      ...(t?.table == null
+        ? []
+        : [
+            binding(["s"], t.asTable ? "show the source" : "show the table", {
+              disabled: t.table.error !== undefined || t.table.header.length === 0,
+            }),
+          ]),
       binding(["tab"], "focus explorer"),
       binding(["e"], "edit", { disabled: !editable() }),
       binding(
@@ -1611,6 +1650,10 @@ export function workspaceScreen(
       }
       if (plain && e.key === "v") {
         toggleView();
+        return true;
+      }
+      if (plain && e.key === "s" && focus === "file" && t !== undefined) {
+        toggleTable(t);
         return true;
       }
 
@@ -2039,6 +2082,20 @@ export function workspaceScreen(
     t.findHits();
   }
 
+  /** `s` — a table file's two views: aligned columns, or the text itself. */
+  function toggleTable(t: Tab): void {
+    // A stray `s` on anything else is not worth a toast.
+    if (t.table === null || t.mode === "edit") return;
+    if (t.table.error !== undefined) {
+      ctx.toast(tableProblem(t.table), "attn");
+      return;
+    }
+    t.asTable = !t.asTable;
+    t.scroll.top = 0;
+    t.left = 0;
+    t.findHits();
+  }
+
   function drawPane(s: Surface, r: Rect, c: Tokens): void {
     const t = tab();
     if (t === undefined) {
@@ -2073,6 +2130,10 @@ export function workspaceScreen(
       // renders it. `v` shows the bytes; `e` edits them, always.
       t.document(Math.max(8, r.w - 2), c);
       drawDoc(s, r, c, t);
+      return;
+    }
+    if (t.tabular) {
+      drawTable(s, r, c, t);
       return;
     }
     drawCode(s, r, c, t);
@@ -2253,12 +2314,18 @@ export function workspaceScreen(
               }· ${humanBytes(t.image.byteLength)}`
             : t.note !== ""
               ? ""
-              : `${t.path} · ${plural(
-                  t.reading ? t.doc.length : t.plain.length,
-                  "line",
-                )}${t.reading ? " rendered" : ""}${
-                  writable() || target !== undefined ? "" : " · read only"
-                }`;
+              : `${t.path} · ${
+                  t.tabular && t.table !== null
+                    ? tableStatus(t.table)
+                    : `${plural(
+                        t.reading ? t.doc.length : t.plain.length,
+                        "line",
+                      )}${t.reading ? " rendered" : ""}${
+                        t.table?.error === undefined || t.mode === "edit"
+                          ? ""
+                          : ` · ${tableProblem(t.table)}`
+                      }`
+                }${writable() || target !== undefined ? "" : " · read only"}`;
     if (tail === "") return;
     const shown = truncate(tail, Math.max(0, r.w - 4));
     s.text(
@@ -2576,6 +2643,68 @@ function drawCode(s: Surface, r: Rect, c: Tokens, t: Tab): void {
   }
   scrollbar(s, { x: r.x + r.w - 1, y: r.y, w: 1, h: r.h }, c, {
     total,
+    offset: from,
+  });
+}
+
+/** `80 rows, first 50 shown · 3 more columns`: what the table leaves out. */
+function tableStatus(table: Table): string {
+  const rows = table.rows.length + table.more;
+  return `${plural(rows, "row")}${
+    table.more > 0 ? `, first ${table.rows.length} shown` : ""
+  }${
+    table.columns > MAX_COLUMNS
+      ? ` · ${table.columns - MAX_COLUMNS} more columns`
+      : ""
+  }`;
+}
+
+/** The one line a broken table file gets: where, and what. */
+function tableProblem(table: Table): string {
+  return table.error === undefined
+    ? ""
+    : `not a table: line ${table.error.line}, ${table.error.message}`;
+}
+
+/**
+ * A table: the header pinned on the top row in bold, the data scrolling under
+ * it, `t.left` shifting both so a wide table can be read across.
+ */
+function drawTable(s: Surface, r: Rect, c: Tokens, t: Tab): void {
+  if (r.w <= 1 || r.h <= 1) return;
+  const textW = r.w - 1;
+  const rows = t.grid.rows;
+  const body = r.h - 1;
+  const from = t.scroll.window(body, rows.length);
+  const hits = new Set(t.hits);
+  s.fill({ x: r.x, y: r.y, w: textW, h: 1 }, " ", style(c.fg, c.bg));
+  drawShifted(
+    s,
+    r.x,
+    r.y,
+    [{ text: t.grid.header, style: style(c.accent, c.bg, BOLD) }],
+    t.left,
+    textW,
+    c.bg,
+  );
+  for (let i = 0; i < body; i++) {
+    const row = from + i;
+    if (row >= rows.length) break;
+    const y = r.y + 1 + i;
+    const bg = hits.has(row) ? c.muted : c.bg;
+    s.fill({ x: r.x, y, w: textW, h: 1 }, " ", style(c.fg, bg));
+    drawShifted(
+      s,
+      r.x,
+      y,
+      [{ text: rows[row]!, style: style(c.fg, bg) }],
+      t.left,
+      textW,
+      bg,
+    );
+  }
+  scrollbar(s, { x: r.x + r.w - 1, y: r.y + 1, w: 1, h: body }, c, {
+    total: rows.length,
     offset: from,
   });
 }

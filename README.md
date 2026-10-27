@@ -77,6 +77,8 @@ Reports from outside (sent with no account) are decided in the terminal too: ope
 
 The terminal's history says each commit's check, as MCP `commits` with `oid` does: a ✓ or ✗ mark on a log row where the commit's own check on the default branch passed or failed (blank where it has no verdict yet), and a `check:` line under one commit's title: `green`, `red · <first line of the failing step>`, `running`, `superseded` or `not run`, with `· via <sha>` when a later main commit's check answers for it. Nothing shows to a viewer who may not read the repository's runs (`src/checks/commit_check.ts`, `src/tui/screens/commits.ts`).
 
+In the terminal workspace a `.csv` or `.tsv` file opens as a table (columns padded to their widest cell, the header kept on top, `N rows` in the status line; at most 1,000 rows and 64 columns are drawn and the rest is counted; a cell wider than 32 columns is cut with `…`, and the source view shows it whole). `s` flips between the table and the source, and a file that does not parse opens as source with `not a table: line N` in the status line (`src/text/csv.ts`, `src/tui/ui/grid.ts`).
+
 Under the agents, each team that has a pull has one pooled row (its members'
 counts added, the ratios taken from the sums; an agent on two teams counts in
 both): `data-team` rows on the page, "team <name>" rows in that terminal screen.
