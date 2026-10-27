@@ -114,9 +114,9 @@ export interface ProposeTarget {
 const forkNameFor = (login: string, fullName: string): string =>
   `${login}/${fullName.split("/")[1] ?? fullName}`;
 
-/** `codeberg.org` out of `https://codeberg.org/octo/widgets`. */
+/** `codeberg.org` out of `https://codeberg.org/octo/widgets`; "" for anything that is not a URL with a host. */
 export function hostOf(url: string): string {
-  return URL.parse(url)?.host ?? url;
+  return URL.parse(url)?.host ?? "";
 }
 
 // ---- building one ----
