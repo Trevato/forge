@@ -111,9 +111,9 @@ export function feedCard(
   const steer = item.kind === "run" || item.kind === "cost";
   const target = steer && RUN_LINK.test(item.link) ? `${item.link}/steer` : null;
   const head = html`${avatar(item.actor ?? item.app)}
-      <strong>${item.actor ?? item.app}</strong
+      <strong class="break">${item.actor ?? item.app}</strong
       >${nameMark(item.actor === null ? undefined : marks.get(item.actor))}
-      <span class="muted small">${item.app} · ${timeAgo(item.at)}</span>
+      <span class="muted small break">${item.app} · ${timeAgo(item.at)}</span>
       ${settledBadge(item.settled)}
       <span class="spacer"></span>
       <span class="badge">${KIND_LABEL[item.kind]}</span>`;
