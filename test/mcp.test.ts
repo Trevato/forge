@@ -179,6 +179,7 @@ describe("the forge over MCP", () => {
     expect(names).toEqual(sortedThenReport([
       "drills",
       "sizes",
+      "releases",
       "apps",
       "app_deploy",
       "new_app",

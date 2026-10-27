@@ -91,6 +91,7 @@ export { tool as pull } from "./pull.ts";
 export { tool as pulls } from "./pulls.ts";
 export { tool as quotas } from "./quotas.ts";
 export { tool as read_file } from "./read_file.ts";
+export { tool as releases } from "./releases.ts";
 export { tool as repo } from "./repo.ts";
 export { tool as repo_labels } from "./repo_labels.ts";
 export { tool as repo_settings } from "./repo_settings.ts";

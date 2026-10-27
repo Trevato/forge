@@ -5,7 +5,7 @@ export const tool: Tool = {
   name: "spawn",
   doc: "`{ name, apps?, crew?, dryRun? }`: a child forge, planned first (`dryRun` is true unless `false`); an admin's, and an `ro` token may plan but not make",
   description:
-    "Spawn a child forge with named apps and the crew's briefs. Plans first.",
+    "Spawn a child forge. Plans first.",
   inputSchema: {
     type: "object",
     properties: {

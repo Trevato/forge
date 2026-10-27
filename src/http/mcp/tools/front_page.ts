@@ -6,7 +6,7 @@ export const tool: Tool = {
   name: "front_page",
   doc: "`{ pinned?, hidden?, weights?, dryRun? }`: the front page as a stranger sees it, ranked, with numbers; a site admin sets what is pinned (first public one featured), hidden, and what counts (weights of forks, ships, use, fresh, 0 to 10)",
   description:
-    "The front page as a stranger sees it; admin sets `pinned`, `hidden`, `weights`.",
+    "The stranger's front page; admin sets `pinned`/`hidden`/`weights`.",
   inputSchema: {
     type: "object",
     properties: {
