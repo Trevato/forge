@@ -30,6 +30,7 @@ import {
   getCursor,
   listAllOrigins,
   listMirrors,
+  markNeedsReauth,
   originForRepo,
   recordFetch,
   rememberOriginRepo,
@@ -161,7 +162,8 @@ async function runOrigin(
 
   const provider = providerForOrigin(app, origin);
   if (!provider.ok) {
-    report.error = "this origin has no usable credential";
+    report.error = `this origin has no stored token: reconnect ${origin.login} at ${origin.webUrl}`;
+    markNeedsReauth(app.db, origin.id, report.error);
     recordSync(app.db, origin.id, { at: startedAt, error: report.error });
     schedule(app, origin.id, SYNC_INTERVAL_MS);
     return report;
