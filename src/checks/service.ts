@@ -12,7 +12,7 @@
  */
 
 import { pullDir, runDir } from "../core/pulls.ts";
-import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { App } from "../app.ts";
@@ -57,7 +57,7 @@ import { readLearned } from "./learned.ts";
 import { keepCache, restoreCache } from "./cache.ts";
 import { MAX_FILED, clearedFiles, fileOrderDependent } from "./order_dependent.ts";
 import { parseBunTestFailure } from "./bun-test.ts";
-import { passedAlone, recordFlakes, rerunCommand, rerunnable } from "./flake.ts";
+import { passedAlone, recordFlakes, rerunCommand, rerunnable, pullOwnsRed } from "./flake.ts";
 import { budgetFiles, budgetReds, budgetRetryCommand, noteBudgetRetry, retryPassed } from "./budget_retry.ts";
 import { diskRecovered, withDisk } from "./disk_red.ts";
 import { ASKED, redMain, unheld } from "./red_main.ts";
@@ -1066,9 +1066,28 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       // Main's red costs the forge every pull's check (#6643): one or two
       // failed tests are re-run alone, on this commit in this cell, before
       // main counts as red. Passing alone is a flake: green, and recorded.
-      if (!ran.ok && job === undefined && x.isMain === true) {
+      // A pull's red is the same unless the pull touched the test (#7426).
+      if (!ran.ok && job === undefined && (x.isMain === true || tip !== undefined)) {
         try {
-          const tests = rerunnable(checkLines, parseBunTestFailure(checkLines));
+          let tests = rerunnable(checkLines, parseBunTestFailure(checkLines));
+          if (tests !== undefined && x.isMain !== true) {
+            const diff = await runGit(
+              ["diff", "--name-only", "-z", `${tip}...${x.commitOid}`],
+              { cwd: bare },
+            );
+            const changed = diff.ok ? diff.value.split("\0").filter((p) => p !== "") : undefined;
+            const read = (path: string): string | undefined => {
+              try {
+                return readFileSync(join(dir, path), "utf8");
+              } catch {
+                return undefined;
+              }
+            };
+            if (pullOwnsRed(tests, changed, read)) {
+              write("not re-run alone: the pull changed a failed test or what it imports");
+              tests = undefined;
+            }
+          }
           if (tests !== undefined) {
             write(`re-running ${tests.length} failed test(s) alone`);
             let alone = true;
@@ -1087,13 +1106,14 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
               });
               if (!again.ok || !passedAlone(out)) {
                 alone = false;
-                write(`"${test.name}" fails alone too: main is red`);
+                write(`"${test.name}" fails alone too: ${x.isMain === true ? "main" : "the check"} is red`);
                 break;
               }
             }
             if (alone) {
-              recordFlakes(app.db, app.bus, repo, tests, { runId: run.id, commit: run.commitOid });
-              write(`flaky: ${tests.map((t) => `"${t.name}"`).join(", ")} failed in the full run and passed alone; recorded, main stays green`);
+              recordFlakes(app.db, app.bus, repo, tests, { runId: run.id, commit: run.commitOid, pull: x.isMain !== true });
+              for (const t of tests) write(`flake: ${t.file} > ${t.name} passed alone`);
+              write(`flaky: ${tests.map((t) => `"${t.name}"`).join(", ")} failed in the full run and passed alone; recorded, ${x.isMain === true ? "main" : "the check"} stays green`);
               ran = { ok: true, value: undefined };
             }
           }

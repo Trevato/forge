@@ -15,6 +15,7 @@ import type { Repo } from "../core/repos.ts";
 import type { EventBus } from "../core/events.ts";
 import { id } from "../kernel/id.ts";
 import type { CheckDetail } from "../core/runs.ts";
+import { importsOf } from "./tiers.ts";
 
 /** The most failures that are re-run; more is a broken main, not a flake. */
 export const MAX_RERUN = 2;
@@ -75,6 +76,58 @@ export function rerunnable(
   return out;
 }
 
+/** Files that shape every test run: a pull changing one owns any red. */
+const SHAPING = /(^|\/)(package\.json|bun\.lock|bun\.lockb|bunfig\.toml|tsconfig[^/]*\.json|forge\.json|\.env[^/]*)$/;
+const EXTENSIONS = ["", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", "/index.ts", "/index.tsx", "/index.js"];
+const IMPORT_FILES_MAX = 2000;
+
+/**
+ * Whether a failed test's file is the pull's to answer for: it, or any
+ * repository file it imports (followed to the end), is among the changed
+ * paths, or a file that shapes every run changed. Conservative: an import that
+ * resolves to no readable file, or a closure too large to walk, counts as
+ * touched, so only a provably unrelated red is re-run.
+ */
+export function touchedByPull(
+  file: string,
+  changed: readonly string[],
+  read: (path: string) => string | undefined,
+): boolean {
+  const diff = new Set(changed);
+  if (changed.some((c) => SHAPING.test(c))) return true;
+  const seen = new Set<string>();
+  const queue = [file];
+  while (queue.length > 0) {
+    const at = queue.pop()!;
+    if (seen.has(at)) continue;
+    if (seen.size >= IMPORT_FILES_MAX) return true;
+    seen.add(at);
+    if (diff.has(at)) return true;
+    const source = read(at);
+    if (source === undefined) return true;
+    for (const spec of importsOf(source, at)) {
+      const candidates = EXTENSIONS.map((e) => spec + e);
+      if (candidates.some((c) => diff.has(c))) return true;
+      const real = candidates.find((c) => read(c) !== undefined);
+      if (real === undefined) return true;
+      queue.push(real);
+    }
+  }
+  return false;
+}
+
+/**
+ * Whether the pull answers for a red: any failed test touched, or no list of
+ * changed paths at all (the diff failed), and nothing is re-run.
+ */
+export function pullOwnsRed(
+  tests: readonly Flaky[],
+  changed: readonly string[] | undefined,
+  read: (path: string) => string | undefined,
+): boolean {
+  return changed === undefined || tests.some((t) => touchedByPull(t.file, changed, read));
+}
+
 const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const quote = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
 
@@ -115,9 +168,10 @@ export function recordFlakes(
   bus: EventBus,
   repo: Pick<Repo, "id" | "ownerId">,
   tests: readonly Flaky[],
-  ref: { runId: string; commit: string },
+  ref: { runId: string; commit: string; pull?: boolean },
   now = Date.now(),
 ): number[] {
+  const where = ref.pull === true ? "a pull's check" : "main's check";
   const opened: number[] = [];
   for (const t of tests) {
     db.query(
@@ -144,8 +198,8 @@ export function recordFlakes(
       title,
       body:
         `_Filed by the check runner from a check log, not written by a person._\n\n` +
-        `\`${t.name}\` in \`${t.file}\` failed in main's check and passed when run alone, ${count} times in 7 days ` +
-        `(latest: check run ${ref.runId}, ${ref.commit.slice(0, 7)}). Main stayed green each time. ` +
+        `\`${t.name}\` in \`${t.file}\` failed in ${where} and passed when run alone, ${count} times in 7 days ` +
+        `(latest: check run ${ref.runId}, ${ref.commit.slice(0, 7)}). The check stayed green each time. ` +
         `Find what it depends on: time, load, order, or shared state.\n\nFiles: ${t.file}`,
     });
     if (!made.ok) continue;
