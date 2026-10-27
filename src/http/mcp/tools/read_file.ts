@@ -2,6 +2,7 @@ import { repoDir } from "../../../git/repos.ts";
 import { runGit } from "../../../git/env.ts";
 import { isSafeRef, isSafeTreePath } from "../../../git/guard.ts";
 import { blobForRender, listTree } from "../../../git/read.ts";
+import { checkConfig, configKind, type ConfigKind } from "../../../text/config_check.ts";
 import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
 
 export const tool: Tool = {
@@ -45,15 +46,28 @@ export const tool: Tool = {
     if (blob.kind === "too_large")
       return good({ type: "file", tooLarge: true, size: blob.size });
     const binary = blob.kind === "binary";
+    const content = binary ? "" : new TextDecoder().decode(blob.body);
+    const kind = binary ? null : configKind(rawPath);
+    const about = kind === null ? undefined : aboutConfig(kind, content);
     return good({
       type: "file",
       ref,
       path: rawPath,
       size: blob.size,
       encoding: binary ? "base64" : "utf-8",
-      content: binary
-        ? Buffer.from(blob.body).toString("base64")
-        : new TextDecoder().decode(blob.body),
+      content: binary ? Buffer.from(blob.body).toString("base64") : content,
+      ...(about ? { about } : {}),
     });
   },
 };
+
+function aboutConfig(kind: ConfigKind, content: string) {
+  const check = checkConfig(kind, content);
+  if (check.ok) return { kind, parses: true };
+  return {
+    kind,
+    parses: false,
+    ...(check.line === undefined ? {} : { line: check.line, column: check.column }),
+    message: check.message,
+  };
+}

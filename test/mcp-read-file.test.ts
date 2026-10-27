@@ -60,7 +60,11 @@ beforeAll(async () => {
   const pub = ok(await createRepo(app.db, app.reposRoot, { ownerId: owner.id, name: "pub", visibility: "public" }));
   const priv = ok(await createRepo(app.db, app.reposRoot, { ownerId: owner.id, name: "priv", visibility: "private" }));
   for (const r of [pub, priv])
-    ok(await commitToBranch(app, owner, r, { message: "seed", files: [{ path: "src/a.txt", content: "hello\n" }] }));
+    ok(await commitToBranch(app, owner, r, { message: "seed", files: [
+          { path: "src/a.txt", content: "hello\n" },
+          { path: "bad.json", content: '{\n "a": }' },
+          { path: "good.json", content: "{}" },
+        ] }));
   tok["owner"] = createToken(app.db, owner.id, "o", "ro").token;
   tok["stranger"] = createToken(app.db, stranger.id, "s", "ro").token;
 }, 30_000);
@@ -91,4 +95,12 @@ test("bad arguments are refused", async () => {
   expect((await read(t, { repo: "ada/pub", path: "src/a.txt", ref: "--upload-pack=x" })).error).toContain("not_found");
   expect((await read(t, { repo: "ada/pub", path: 7 })).error).toContain("invalid");
   expect((await read(t, { repo: "ada/pub", path: "nope.txt" })).error).toContain("not_found");
+});
+
+test("a config file says whether it parses; other files carry no about", async () => {
+  const t = tok["owner"]!;
+  const bad = await read(t, { repo: "ada/pub", path: "bad.json" });
+  expect(bad.value.about).toMatchObject({ kind: "json", parses: false, line: 2 });
+  expect((await read(t, { repo: "ada/pub", path: "good.json" })).value.about).toEqual({ kind: "json", parses: true });
+  expect((await read(t, { repo: "ada/pub", path: "src/a.txt" })).value.about).toBeUndefined();
 });
