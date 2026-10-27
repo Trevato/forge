@@ -246,6 +246,7 @@ function unverifiedNotice(ctx: Ctx): Html {
 
 // POST /settings/email/verify
 export async function resendVerifyLink(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
   const form = await readForm(ctx);
   if (form instanceof Response) return form;
   const sent = await resendVerification(ctx.app, ctx.auth.user);
