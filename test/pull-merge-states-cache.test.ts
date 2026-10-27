@@ -4,10 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readTips } from "../src/git/tips.ts";
 import { pullMergeStates, type Pull } from "../src/core/pulls.ts";
+import { expectBudget } from "./helpers/budget.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 
 const env = gitClientEnv();
-const N = 50;
+const N = 130;
+/** The uncached read spawns git per pull; a cached one should cost a small fraction of it. */
+const BASELINE_DIVISOR = 100;
 let root: string;
 let dir: string;
 
@@ -54,16 +57,26 @@ beforeEach(async () => {
 
 afterEach(() => rm(root, { recursive: true, force: true }));
 
-test("a second read of 50 pulls does no git work; a moved head recomputes only its pull", async () => {
+test("a second read of 130 pulls does no git work and is cheap beside the first; a moved head recomputes only its pull", async () => {
   const items = Array.from({ length: N }, (_, i) => ({ dir, pull: pullOf(i) }));
   const spawn = spyOn(Bun, "spawn");
   try {
+    const t1 = performance.now();
     const first = await pullMergeStates(items);
+    const uncached = performance.now() - t1;
     expect(first.every((m) => m?.mergeable === true)).toBe(true);
     expect(spawn.mock.calls.length).toBeGreaterThan(0);
 
     spawn.mockClear();
-    const second = await pullMergeStates(items);
+    // Best of a few cached reads: a busy machine slows one, not all.
+    let best = Infinity;
+    let second = first;
+    for (let k = 0; k < 5; k++) {
+      const t0 = performance.now();
+      second = await pullMergeStates(items);
+      best = Math.min(best, performance.now() - t0);
+    }
+    expectBudget(best, { ms: 20, against: uncached / BASELINE_DIVISOR });
     expect(spawn.mock.calls.length).toBe(0);
     expect(second).toEqual(first);
 
