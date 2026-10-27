@@ -39,6 +39,8 @@ import { getRepoById } from "../../core/repos.ts";
 import { IDLE_LIMIT, readIdlePulls, type IdlePull } from "../../flow/idle_pulls.ts";
 import { readParked } from "../../flow/parked.ts";
 import { hoursWords, readLeadTime } from "../../flow/lead_time.ts";
+import { buildYieldSays, readBuildYield } from "../../flow/build_yield.ts";
+import { readReviewLatency, reviewLatencySays } from "../../flow/review_latency.ts";
 import { openerCounts, readOpeners } from "../../flow/openers.ts";
 import { readHeld } from "../../flow/held.ts";
 import type { App } from "../../app.ts";
@@ -107,6 +109,8 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
   const reviewing = reviewingSays(reviewersBusy(app.db, reader.kind === "agent"));
   const agent = reader.kind === "agent";
   const lead = readLeadTime(app.db, new Date(now), agent);
+  const yielded = readBuildYield(app.db, new Date(now), agent);
+  const latency = readReviewLatency(app.db, new Date(now), agent);
   const openers = readOpeners(app.db, new Date(now), agent);
   const pile = pileSays(readPile(app.db, reader.kind === "agent"));
   const idle = readIdlePulls(app.db, new Date(now), reader.kind === "agent");
@@ -155,6 +159,8 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
         ? "nothing landed in 24 h"
         : html`median <span data-median-hours>${hoursWords(lead.medianHours)}</span>, slowest <span data-max-hours>${hoursWords(lead.maxHours ?? 0)}</span>`}
     </p>
+    <p id="build-yield" class="muted">${buildYieldSays(yielded)}</p>
+    <p id="review-latency" class="muted">${reviewLatencySays(latency)}</p>
     <p id="openers" class="muted small">
       opened in the last hour:
       ${openers.length === 0

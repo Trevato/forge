@@ -46,3 +46,9 @@ export function readReviewLatency(db: Database, now = new Date(), publicOnly = f
   const median = n % 2 ? hours[mid]! : (hours[mid - 1]! + hours[mid]!) / 2;
   return { median: Math.round(median * 10) / 10, count: n };
 }
+
+/** The latency in words, for the page and the terminal alike. */
+export function reviewLatencySays(l: ReviewLatency | null): string {
+  if (l === null) return "First review: no pull reviewed in the last 24 h.";
+  return `First review: median ${l.median} h over ${l.count} ${l.count === 1 ? "pull" : "pulls"} (24 h)`;
+}

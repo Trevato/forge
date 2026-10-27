@@ -57,3 +57,9 @@ export function readBuildYield(db: Database, now = new Date(), publicOnly = fals
   }
   return { finished: runs.size, pushed: pushed.size, landed: landed.size, closed: closed.size };
 }
+
+/** The yield in words, for the page and the terminal alike. */
+export function buildYieldSays(y: BuildYield): string {
+  if (y.finished === 0) return "Build yield: no runs finished in the last 24 h.";
+  return `Build yield: ${y.finished} ${y.finished === 1 ? "run" : "runs"} finished, ${y.pushed} pushed, ${y.landed} landed (24 h)`;
+}

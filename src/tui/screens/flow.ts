@@ -26,6 +26,8 @@ import { parkedSays, readParked } from "../../flow/parked.ts";
 import { firedAlarms } from "../../flow/alarms.ts";
 import { readVitals, vitalsFor, vitalsLine } from "../../flow/vitals.ts";
 import { readLeadTime, type LeadTime } from "../../flow/lead_time.ts";
+import { buildYieldSays, readBuildYield } from "../../flow/build_yield.ts";
+import { readReviewLatency, reviewLatencySays } from "../../flow/review_latency.ts";
 import { readOpeners, type Opener } from "../../flow/openers.ts";
 import { readQueues, redBatchWords } from "../../flow/queue.ts";
 import { reviewersBusy, reviewingSays } from "../../flow/reviewing.ts";
@@ -80,6 +82,8 @@ export function flowLines(
     "",
     ...wrap(pileSays(readPile(db, agent !== undefined)), inner),
     ...wrap(leadTimeSays(readLeadTime(db, now, agent !== undefined)), inner),
+    ...wrap(buildYieldSays(readBuildYield(db, now, agent !== undefined)), inner),
+    ...wrap(reviewLatencySays(readReviewLatency(db, now, agent !== undefined)), inner),
     ...openerLines(readOpeners(db, now, agent !== undefined), inner),
     "",
     `${pad("Out", 12)} ${pad("last hour", 9, "right")} ${pad("24 h", 5, "right")}`,
