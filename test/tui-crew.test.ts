@@ -10,7 +10,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
-import { CREW_NOT_AN_AGENT } from "../src/actions/crew_words.ts";
+import { CREW_NO_SUCH_AGENT, CREW_NOT_AN_AGENT, crewRefusal } from "../src/actions/crew_words.ts";
+import { createUser } from "../src/core/users.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { signUp } from "../src/actions/users.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
@@ -117,10 +118,37 @@ test("a person's name is refused in Settings › Crew's words, and nobody joins"
   expect(listCrewRoles(forge.db, repo.id).map((c) => c.agent.user.username).sort()).toEqual(["bolt", "quill"]);
 });
 
+test("an unknown name is refused as no such agent, and nobody joins", async () => {
+  const frames = await open(alice, ["C", "a", "nobody-here", "enter", "enter"]);
+  expect(frames.at(-1)).toContain(CREW_NO_SUCH_AGENT);
+  expect(onCrew("nobody-here")).toBe(false);
+});
+
+test("an admin whose email is unproven is told to verify first, and nobody joins", async () => {
+  const made = await createUser(forge.db, {
+    username: "ursa",
+    email: "ursa@forge.test",
+    password: "a-long-passphrase",
+    origin: "seed",
+    isAdmin: true,
+  });
+  if (!made.ok) throw new Error("user failed");
+  const frames = await open(made.value, ["C", "a", "bolt", "enter", "enter"]);
+  expect(frames.at(-1)).toContain(crewRefusal("unverified"));
+  expect(frames.at(-1)).toContain("Verify");
+  expect(crewRefusal("unverified")).not.toBe(CREW_NO_SUCH_AGENT);
+  expect(crewRefusal("not_found")).toContain("admin");
+});
+
 test("`d` takes the selected agent off after a confirm", async () => {
   expect(onCrew("bolt")).toBe(true);
-  const rows = listCrewRoles(forge.db, repo.id).map((c) => c.agent.user.username);
-  const down = rows.indexOf("bolt") > 0 ? ["j"] : [];
+  // The cursor starts on the first row drawn; press `j` once per row above bolt's.
+  const lines = (await open(alice, ["C"]))[1]!.split("\n");
+  const drawn = ["bolt", "quill"]
+    .map((name) => ({ name, line: lines.findIndex((l) => l.includes(name)) }))
+    .sort((x, y) => x.line - y.line);
+  expect(drawn.every((d) => d.line > -1)).toBe(true);
+  const down = Array<string>(drawn.findIndex((d) => d.name === "bolt")).fill("j");
   const asked = await open(alice, ["C", ...down, "d"]);
   expect(asked.at(-1)).toContain("bolt leaves the crew of alice/lamp");
   expect(onCrew("bolt")).toBe(true);

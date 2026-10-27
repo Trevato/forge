@@ -157,7 +157,9 @@ export function aboutScreen(
     get keys() {
       return [
         binding(["y"], "copy the clone URL", { disabled: cloneUrl === "" }),
-        ...(repo === undefined ? [] : [binding(["v"], "events"), binding(["C"], "crew")]),
+        ...(repo === undefined
+          ? []
+          : [binding(["v"], "events"), binding(["C"], "crew")]),
         // Only an admin is offered the key, and only an admin's press counts.
         ...(may()
           ? [
