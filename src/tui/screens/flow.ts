@@ -18,21 +18,22 @@ import { HOLDS } from "../../crew/held.ts";
 import { pullCounts } from "../../crew/hot_files.ts";
 import { warmingLine } from "../../crew/hot_history.ts";
 import type { HeldRow } from "../../flow/held.ts";
-import { conflictedPulls, conflictedSays, rebaseLane, rebaseLaneSays } from "../../flow/conflicted.ts";
-import { IDLE_LIMIT, readIdlePulls } from "../../flow/idle_pulls.ts";
-import { pileSays, readPile } from "../../flow/pile.ts";
+import { conflictedSays, rebaseLaneSays } from "../../flow/conflicted.ts";
+import { IDLE_LIMIT, type IdlePull } from "../../flow/idle_pulls.ts";
+import { pileSays } from "../../flow/pile.ts";
+import { panelFigures } from "../../flow/panel_cache.ts";
 import { readPipeline, STAGE_LABEL, verdict } from "../../flow/pipeline.ts";
-import { parkedSays, readParked } from "../../flow/parked.ts";
+import { parkedSays } from "../../flow/parked.ts";
 import { firedAlarms } from "../../flow/alarms.ts";
 import { readVitals, vitalsFor, vitalsLine } from "../../flow/vitals.ts";
-import { readLeadTime, type LeadTime } from "../../flow/lead_time.ts";
-import { buildYieldSays, readBuildYield } from "../../flow/build_yield.ts";
-import { readReviewLatency, reviewLatencySays } from "../../flow/review_latency.ts";
-import { readOpeners, type Opener } from "../../flow/openers.ts";
+import type { LeadTime } from "../../flow/lead_time.ts";
+import { buildYieldSays } from "../../flow/build_yield.ts";
+import { reviewLatencySays } from "../../flow/review_latency.ts";
+import type { Opener } from "../../flow/openers.ts";
 import { clogLines, readClog } from "../../flow/clog_read.ts";
 import { readQueues, redBatchWords } from "../../flow/queue.ts";
-import { reviewersBusy, reviewingSays } from "../../flow/reviewing.ts";
-import { requestedSays, requestedWaits } from "../../flow/requested.ts";
+import { reviewingSays } from "../../flow/reviewing.ts";
+import { requestedSays } from "../../flow/requested.ts";
 import { readThroughput, stageOut, throughputSays } from "../../flow/throughput.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -61,16 +62,17 @@ export function flowLines(
   const queues = agent?.queues ?? readQueues(db, now, { batches: true });
   // The row is full at 58 columns: the red-batch rate (#4235) is a line under it.
   const red = queues.filter((q) => (q.batches?.batches ?? 0) > 0);
-  const conflictedList = conflictedPulls(db, agent !== undefined);
-  const conflicted = conflictedSays(conflictedList, now.getTime());
-  const lane = rebaseLaneSays(rebaseLane(db, conflictedList));
-  const requested = requestedWaits(db, agent !== undefined);
+  // The figures the /boards panel keeps (`flow/panel_cache.ts`): an agent's public-only set is apart from an admin's.
+  const fig = panelFigures(db, agent === undefined ? "owner" : "agent", now);
+  const conflicted = conflictedSays(fig.conflicted, now.getTime());
+  const lane = rebaseLaneSays(fig.lane);
+  const requested = fig.requested;
   const waits = [
     requestedSays(requested.builder, "builder", now.getTime()),
     requestedSays(requested.reviewer, "reviewer", now.getTime()),
   ].flatMap((says) => (says === null ? [] : ["", ...wrap(says, inner)]));
   const warming = warmingLine(db, now.getTime(), pullCounts, agent !== undefined);
-  const reviewing = reviewingSays(reviewersBusy(db, agent !== undefined));
+  const reviewing = reviewingSays(fig.reviewing);
   return [
     ...wrap(verdict(stages, now.getTime()), inner),
     "",
@@ -78,15 +80,15 @@ export function flowLines(
     ...(agent === undefined ? clogLines(readClog(db, now), now.getTime()).flatMap((l) => wrap(l, inner)) : []),
     ...firedAlarms(db, now, { publicOnly: agent !== undefined, ceilingUsd }).flatMap((a) => wrap(a.says, inner)),
     "",
-    ...wrap(parkedSays(readParked(db, now, agent !== undefined)), inner),
+    ...wrap(parkedSays(fig.parked), inner),
     "",
     ...wrap(throughputSays(flow), inner),
     "",
-    ...wrap(pileSays(readPile(db, agent !== undefined)), inner),
-    ...wrap(leadTimeSays(readLeadTime(db, now, agent !== undefined)), inner),
-    ...wrap(buildYieldSays(readBuildYield(db, now, agent !== undefined)), inner),
-    ...wrap(reviewLatencySays(readReviewLatency(db, now, agent !== undefined)), inner),
-    ...openerLines(readOpeners(db, now, agent !== undefined), inner),
+    ...wrap(pileSays(fig.pile), inner),
+    ...wrap(leadTimeSays(fig.lead), inner),
+    ...wrap(buildYieldSays(fig.yielded), inner),
+    ...wrap(reviewLatencySays(fig.latency), inner),
+    ...openerLines(fig.openers, inner),
     "",
     `${pad("Out", 12)} ${pad("last hour", 9, "right")} ${pad("24 h", 5, "right")}`,
     ...flow.stages.map(stageOut).map(
@@ -106,7 +108,7 @@ export function flowLines(
       : wrap(`Red batches, last hour: ${red.map((q) => `${q.repo} ${redBatchWords(q)}`).join(", ")}.`, inner)),
     ...(lane === null ? [] : ["", ...wrap(`Rebases: ${lane}.`, inner)]),
     ...(conflicted === null ? [] : ["", ...wrap(conflicted, inner)]),
-    ...idleLines(db, now, agent !== undefined, inner),
+    ...idleLines(fig.idle, inner),
     ...waits,
     ...(reviewing === null ? [] : ["", ...wrap(reviewing, inner)]),
     ...(warming === "" ? [] : ["", ...warming.split("\n").flatMap((l) => wrap(l, inner))]),
@@ -120,8 +122,7 @@ export function flowLines(
 const IDLE_SHOWN = 5;
 
 /** A blank line, `idle: N`, then a line per idle crew pull (`flow/idle_pulls.ts`, #6479), oldest first; nothing when none. */
-export function idleLines(db: Database, now: Date, publicOnly: boolean, inner: number): string[] {
-  const idle = readIdlePulls(db, now, publicOnly);
+export function idleLines(idle: readonly IdlePull[], inner: number): string[] {
   if (idle.length === 0) return [];
   return [
     "",
