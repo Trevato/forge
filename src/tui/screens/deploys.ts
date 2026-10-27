@@ -20,6 +20,11 @@
  * `probeApp` against the running production app, every door tried as
  * nobody, a user and an admin, read-only, one line per door.
  *
+ * A private app's writer who is a person — never an agent — gets `m`: the
+ * people the app names, with `a` and `d` to let one in or out after a plan
+ * and a confirm, as MCP `app_members` does (`appmembers.ts`). A public app
+ * names nobody and is not offered `m`.
+ *
  * The app's admin sees its own domains under the head, each with its state
  * in the settings page's words (`domain_words.ts`), and gets `n`: a domains
  * screen where `+` adds one, `c` checks the selected one's DNS proof now and
@@ -83,6 +88,7 @@ import {
   type ListRow,
 } from "./common.ts";
 import { RunList, openRunLog, runRows } from "./runlist.ts";
+import { appMembersScreen } from "./appmembers.ts";
 
 const LIMIT = 50;
 
@@ -132,6 +138,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   let side: string[] = [];
   let pulls: AppPullLine[] = [];
   let production: Production = { state: "", redeploy: false, stop: false };
+  let members = false;
   /** The app's domains, or undefined for anyone `listAppDomains` refuses. */
   let domains: AppDomainView[] | undefined;
 
@@ -149,6 +156,12 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     side = appSideLines(f.app, f.user, repo);
     pulls = appPullLines(f.app, f.user, repo);
     production = readProduction(f, repo);
+    // The action's gate: a person who can write, never an agent.
+    members =
+      getAppByRepo(f.db, repo.id)?.access === "private" &&
+      f.user !== undefined &&
+      f.user.kind !== "agent" &&
+      canWrite(f.db, repo, f.user);
     const listed = listAppDomains(f.app, f.user, repo);
     domains = listed.ok ? listed.value : undefined;
     loaded = true;
@@ -204,6 +217,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         ...(production.redeploy ? [binding(["D"], "redeploy production")] : []),
         ...(production.stop ? [binding(["S"], "stop production")] : []),
         ...(mayProbe ? [binding(["p"], "probe the running app's doors")] : []),
+        ...(members ? [binding(["m"], "members")] : []),
         ...(domains !== undefined ? [binding(["n"], "the app's own domains")] : []),
       ];
     },
@@ -294,6 +308,10 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       }
       if (e.key === "p" && mayProbe) {
         ctx.push(probeScreen(f, ctx, repo));
+        return true;
+      }
+      if (e.key === "m" && members) {
+        ctx.push(appMembersScreen(f, ctx, repo));
         return true;
       }
       if (e.key === "n" && domains !== undefined) {
