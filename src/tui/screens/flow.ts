@@ -5,7 +5,10 @@
  * `flow/pipeline.ts` and `flow/throughput.ts`, the same the page and the
  * MCP `flow` tool read. Under them, each repository's merge queue (#2036):
  * queued, gating, gates in flight, landed in the last hour and the median
- * minutes from approval to landing (`flow/queue.ts`); then the
+ * minutes from approval to landing (`flow/queue.ts`), and under each its
+ * last five gates (#7320, `checks/gate_result.ts`, as MCP `queue_gates`
+ * reads them): the pulls carried, the verdict, how long ago, and for a red
+ * one the first failing test by name and file, `flaky` when it is; then the
  * conflicted pulls, the idle crew pulls (#6479) and the pulls with
  * changes requested waiting on a builder and on a reviewer (`flow/requested.ts`, #2172); then each
  * autonomous repository's ready list, startable beside the count per
@@ -14,9 +17,11 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { recentGates, type KeptResult } from "../../checks/gate_result.ts";
 import { HOLDS } from "../../crew/held.ts";
 import { pullCounts } from "../../crew/hot_files.ts";
 import { warmingLine } from "../../crew/hot_history.ts";
+import { ago } from "../../feed/rank.ts";
 import type { HeldRow } from "../../flow/held.ts";
 import { conflictedSays, rebaseLaneSays } from "../../flow/conflicted.ts";
 import { IDLE_LIMIT, type IdlePull } from "../../flow/idle_pulls.ts";
@@ -73,6 +78,7 @@ export function flowLines(
   ].flatMap((says) => (says === null ? [] : ["", ...wrap(says, inner)]));
   const warming = warmingLine(db, now.getTime(), pullCounts, agent !== undefined);
   const reviewing = reviewingSays(fig.reviewing);
+  const ids = repoIds(db, queues.map((q) => q.repo));
   return [
     ...wrap(verdict(stages, now.getTime()), inner),
     "",
@@ -99,10 +105,13 @@ export function flowLines(
     `${pad("Merge queue", 15)} ${pad("queued", 6, "right")} ${pad("gating", 6, "right")} ${pad("gates", 5, "right")} ${pad("landed 1h", 9, "right")} ${pad("to land, min", 12, "right")}`,
     ...(queues.length === 0
       ? ["Nothing queued, gating or landed in the last hour."]
-      : queues.map(
-          (q) =>
+      : queues.flatMap((q) => {
+          const id = ids.get(q.repo);
+          return [
             `${pad(truncate(q.repo, 15), 15)} ${pad(String(q.queued), 6, "right")} ${pad(String(q.gating), 6, "right")} ${pad(String(q.gates), 5, "right")} ${pad(String(q.landedHour), 9, "right")} ${pad(q.approvedToLanded === null ? "—" : String(q.approvedToLanded), 12, "right")}`,
-        )),
+            ...gateLines(id === undefined ? [] : recentGates(db, id, GATES_SHOWN), now.getTime(), inner),
+          ];
+        })),
     ...(red.length === 0
       ? []
       : wrap(`Red batches, last hour: ${red.map((q) => `${q.repo} ${redBatchWords(q)}`).join(", ")}.`, inner)),
@@ -116,6 +125,43 @@ export function flowLines(
     "",
     ...duplicateLines(dups, inner),
   ];
+}
+
+/** Gates shown under each repository's queue line. */
+const GATES_SHOWN = 5;
+
+/** Each `owner/name` the queue lists, to its repository id: one query. */
+function repoIds(db: Database, names: readonly string[]): Map<string, string> {
+  if (names.length === 0) return new Map();
+  const rows = db
+    .query<{ id: string; full: string }, string[]>(
+      `SELECT r.id, u.username || '/' || r.name AS full
+         FROM repo r JOIN user u ON u.id = r.owner_id
+        WHERE u.username || '/' || r.name IN (${names.map(() => "?").join(",")})`,
+    )
+    .all(...names);
+  return new Map(rows.map((r) => [r.full, r.id]));
+}
+
+const STATE_WORD: Record<KeptResult["state"], string> = { green: "green", red: "red", cut_off: "cut off" };
+
+/**
+ * One indented line per kept gate, newest first: its pulls, its verdict,
+ * how long ago it finished, and for a red one the first failing test with
+ * its file, `flaky` when two gates sharing no pull failed it; `no gates
+ * yet` when none is kept.
+ */
+export function gateLines(gates: readonly KeptResult[], now: number, inner: number): string[] {
+  if (gates.length === 0) return ["  no gates yet"];
+  return gates.map((g) => {
+    const pulls = g.pulls.length === 0 ? "no pulls" : g.pulls.map((n) => `#${n}`).join(" ");
+    const first = g.state === "red" ? g.failing[0] : undefined;
+    const test =
+      first === undefined
+        ? ""
+        : ` · ${first.name}${first.file === undefined ? "" : ` (${first.file})`}${first.flaky ? " flaky" : ""}`;
+    return truncate(`  ${pulls} ${STATE_WORD[g.state]} · ${ago(Date.parse(g.finishedAt), now)}${test}`, inner);
+  });
 }
 
 /** Idle pulls shown before `+N more`. */
