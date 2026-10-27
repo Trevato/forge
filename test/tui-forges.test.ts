@@ -28,6 +28,9 @@ const row = (over: Partial<ClientRow>): ClientRow => ({
   attention: null,
   spendTodayUsd: null,
   ceilingUsd: null,
+  size: "small",
+  use: { kind: "shared" },
+  lastHeartbeatAt: null,
   nextStep: { key: "unreported", words: "has not reported yet", lastTellAt: null },
   ...over,
 });
@@ -103,19 +106,36 @@ describe("forges you sent in the terminal", () => {
     expect(forgeLines([row({})])[0]![1]).not.toContain("today");
   });
 
+  test("a row says its size and use: shared when hosted, X of Y in a cell", () => {
+    const hosted = forgeLines([row({ size: "medium" })])[0]![1];
+    expect(hosted).toContain("medium · shared");
+    const cell = row({
+      size: "small",
+      use: { kind: "cell", limits: { cpu: 1, memoryMiB: 512, diskMiB: 2048 }, memoryMiB: 310, cores: 0.4, diskMiB: 100 },
+      lastHeartbeatAt: new Date().toISOString(),
+    });
+    const line = forgeLines([cell])[0]![1];
+    expect(line).toContain("memory 310 MiB of 512 MiB");
+    expect(line).toContain("cpu 0.4 of 1 core");
+    expect(line).toContain("disk 100 MiB of 2 GiB");
+    expect(line).toContain("heartbeat just now");
+    const idle = row({ size: "small", use: { kind: "idle", limits: { cpu: 1, memoryMiB: 512, diskMiB: 2048 } } });
+    expect(forgeLines([idle])[0]![1]).toContain("memory not running");
+  });
+
   test("a row says who, the claim state and the apps note; never a link", () => {
     const up = { total: 3, running: 3, notRunning: [] };
     const down = { total: 2, running: 1, notRunning: [{ slug: "notes", why: "build failed" }] };
     expect(forgeLines([row({ running: up })])).toEqual([
-      ["maria", "for Maria's bakery · Not claimed yet · 3 apps running · has not reported yet"],
+      ["maria", "for Maria's bakery · Not claimed yet · 3 apps running · has not reported yet · small · shared · no heartbeat yet"],
     ]);
     expect(forgeLines([row({ claimed: true, running: down, for: null })])).toEqual([
-      ["maria", "Claimed · 1 app running · notes: build failed · has not reported yet"],
+      ["maria", "Claimed · 1 app running · notes: build failed · has not reported yet · small · shared · no heartbeat yet"],
     ]);
     expect(forgeLines([row({ claimed: null })])[0]![1]).toContain("Unknown");
     expect(forgeLines([row({ made: false })])[0]![1]).toContain("Still being made");
     expect(forgeLines([row({ attention: "down", claimed: true, for: null })])).toEqual([
-      ["maria", "App down · Claimed · has not reported yet"],
+      ["maria", "App down · Claimed · has not reported yet · small · shared · no heartbeat yet"],
     ]);
     expect(forgeLines([row({})])[0]![1]).not.toMatch(/Not reporting|App down|Unclaimed/);
     expect(forgeLines([row({ nextStep: { key: "tell", words: "no tell yet", lastTellAt: null } })])[0]![1]).toContain("no tell yet");

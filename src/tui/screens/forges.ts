@@ -7,6 +7,8 @@
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { ATTENTION_WORDS, CLAIM_WORDS, claimState, runningWords, spendWords, type ClientRow } from "../../spawn/clients.ts";
+import { useLine } from "../../spawn/usage.ts";
+import { timeAgo } from "../../web/ui.ts";
 import { card } from "../ui/widgets.ts";
 import { drawFacts } from "./common.ts";
 
@@ -15,7 +17,7 @@ export function forgeLines(rows: readonly ClientRow[]): [string, string][] {
   if (rows.length === 0) return [["", "You have not sent a forge yet"]];
   return rows.map((r) => [
     r.name,
-    [r.attention === null ? null : ATTENTION_WORDS[r.attention], r.for === null ? null : `for ${r.for}`, CLAIM_WORDS[claimState(r)], runningWords(r), r.nextStep.words, spendWords(r)?.words ?? null]
+    [r.attention === null ? null : ATTENTION_WORDS[r.attention], r.for === null ? null : `for ${r.for}`, CLAIM_WORDS[claimState(r)], runningWords(r), r.nextStep.words, spendWords(r)?.words ?? null, useLine(r.size, r.use), r.lastHeartbeatAt === null ? "no heartbeat yet" : `heartbeat ${timeAgo(r.lastHeartbeatAt)}`]
       .filter((m): m is string => m !== null)
       .join(" · "),
   ]);

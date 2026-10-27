@@ -21,7 +21,7 @@ any URL — and it is the rest of this page.
 A forge this one spawned (hosted) runs the apps it was given too: its `bakery`
 answers at `bakery--<child>--<this forge's host>`, in this forge's lanes, on the
 child's own data, and `/forges` says how many are running and why any is not. Each row also ends with the first step its person has not taken (`not claimed yet`, `no everyday account yet`, `no tell yet`, or `going: last tell <time>`; `has not reported yet` before the child's first beat), read from the child's heartbeat; the terminal's forges screen and the MCP `forges` tool (`nextStep`) say the same.
-The list leads with the forges that need you, each badged
+`/forges` opens with the forges side by side (size, memory/CPU/disk against it or "shared", apps, last heartbeat; `docs/features/forges-side-by-side.md`). The list leads with the forges that need you, each badged
 with why (also in the terminal and the MCP `forges`): "Not reporting" (no word
 in 24 hours), "App down", or "Unclaimed" three days after it was sent; the rest
 follow by last activity.

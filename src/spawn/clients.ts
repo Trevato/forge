@@ -10,13 +10,15 @@
  */
 
 import type { App } from "../app.ts";
-import { listChildren, statusTokenOf, type Child } from "../actions/spawn.ts";
+import { childDirOf, listChildren, statusTokenOf, type Child } from "../actions/spawn.ts";
 import { timingSafeEqual } from "node:crypto";
 import { sha256 } from "../kernel/hash.ts";
 import type { ChildAppsSummary } from "./child-apps.ts";
 import { hostedChildApps } from "./host.ts";
 import { hasAdmin, spawnedOrg } from "./claim.ts";
 import { lastHeard, type Beat } from "./heartbeat.ts";
+import type { Size } from "./sizes.ts";
+import { forgeUse, type ForgeUse } from "./usage.ts";
 
 /** What a spawned forge says about itself to anyone: nothing more. */
 export interface ForgeState {
@@ -43,6 +45,12 @@ export interface ClientRow {
   readonly spendTodayUsd: number | null;
   /** The child's forge cap in dollars; null when none or unsaid. */
   readonly ceilingUsd: number | null;
+  /** Its size (`spawn/sizes.ts`). */
+  readonly size: Size;
+  /** What it uses against that size: its cell's reading, or "shared" when it is hosted here. */
+  readonly use: ForgeUse;
+  /** When its last heartbeat reached this forge, ISO; null when none has. */
+  readonly lastHeartbeatAt: string | null;
   /** The first step its person has not taken, read from the child's heartbeat. */
   readonly nextStep: NextStep;
 }
@@ -196,6 +204,9 @@ export async function clientRows(app: App): Promise<ClientRow[]> {
       running: hostedChildApps(app, c.name) ?? null,
       spendTodayUsd: beats[i]?.beat.spendTodayUsd ?? null,
       ceilingUsd: beats[i]?.beat.ceilingUsd ?? null,
+      size: c.size,
+      use: forgeUse(c, childDirOf(app, c.bodyId)),
+      lastHeartbeatAt: beats[i] === undefined ? null : new Date(beats[i]!.receivedAt).toISOString(),
       nextStep: nextStepOf(states[i]?.claimed ?? null, beats[i]?.beat),
     })),
     now,

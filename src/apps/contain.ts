@@ -723,6 +723,20 @@ export interface CellCounter {
   readonly cpuUsec: number;
   /** Resident memory of every process in the tree, bytes (`VmRSS`). */
   readonly memoryBytes: number;
+  /** Cores used over the watch's CPU window; null until the window has filled. */
+  readonly cores?: number | null;
+}
+
+/** Cores used since the oldest sample; null until the samples span half the CPU window. */
+export function coresOf(
+  samples: readonly { at: number; ticks: number }[],
+  last: { ticks: number } | undefined,
+  now: number,
+): number | null {
+  const first = samples[0];
+  if (first === undefined || last === undefined) return null;
+  const span = (now - first.at) / 1000;
+  return span >= WATCH.cpuWindowMs / 1000 / 2 ? Math.max(0, (last.ticks - first.ticks) / CLK_TCK / span) : null;
 }
 
 /** Every labelled cell the watch has read at least once. */
@@ -735,6 +749,7 @@ export function cellCounters(): CellCounter[] {
       label: e.label,
       cpuUsec: (e.last.ticks * 1_000_000) / CLK_TCK,
       memoryBytes: e.last.kib * 1024,
+      cores: coresOf(e.samples, e.last, Date.now()),
     });
   }
   return out;
