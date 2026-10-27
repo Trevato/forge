@@ -5,9 +5,9 @@
  * once pinned, a migration's text is history, and
  * `test/schema-migrations.test.ts` fails if it changes (#783).
  *
- * The release agent runs it when it cuts a release, beside bumping
- * `src/core/releases.json`, so pulls never touch the file and two of them
- * adding a migration each never meet in it.
+ * The release agent runs it, never a pull, so two pulls adding a
+ * migration each never meet in the file. The release record itself is a
+ * tag and moves no branch (`scripts/cut-release.ts`).
  */
 
 import { readFileSync, writeFileSync } from "node:fs";

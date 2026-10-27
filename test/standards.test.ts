@@ -5,7 +5,7 @@
  * to unfurl.
  */
 import { MAX_RELEASES, parseReleases } from "../src/core/parent_releases.ts";
-import releasesFile from "../src/core/releases.json" with { type: "json" };
+import { setTagged, shippedReleases } from "../src/release/shipped.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -97,7 +97,7 @@ describe("what the open web expects", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("application/json");
     const doc = (await res.json()) as { releases: unknown[] };
-    expect(doc.releases.length).toBe(releasesFile.releases.length);
+    expect(doc.releases.length).toBe(shippedReleases().length);
     const read = parseReleases(doc, true);
     // A child reads the newest MAX_RELEASES; the record itself keeps every release,
     // and every entry, past those too, is in the child's shape.
@@ -108,7 +108,7 @@ describe("what the open web expects", () => {
       const page = doc.releases.slice(at, at + MAX_RELEASES);
       expect(parseReleases({ releases: page }, true)!.length).toBe(page.length);
     }
-    expect(read![0]!.name).toBe(releasesFile.releases[0]!.version);
+    expect(read![0]!.name).toBe(shippedReleases()[0]!.version);
     expect(read![0]!.url).toStartWith(`${base}/releases.json#`);
     // The verdict is the document's shape, not the machine's speed: a loaded
     // check machine gets a generous bound rather than a red lane (#5966).
@@ -132,6 +132,22 @@ describe("what the open web expects", () => {
       headers: { "if-none-match": '"nope"' },
     });
     expect(other.status).toBe(200);
+  });
+
+  test("a release tag read since is in releases.json at once, with a new ETag", async () => {
+    const before = await fetch(`${base}/releases.json`);
+    const etag = before.headers.get("etag")!;
+    await before.text();
+    setTagged([{ version: "9.9.9", migrations: 1, at: Date.now() }]);
+    try {
+      const after = await fetch(`${base}/releases.json`, { headers: { "if-none-match": etag } });
+      expect(after.status).toBe(200);
+      expect(after.headers.get("etag")).not.toBe(etag);
+      const doc = (await after.json()) as { releases: { name: string }[] };
+      expect(doc.releases[0]!.name).toBe("9.9.9");
+    } finally {
+      setTagged([]);
+    }
   });
 
   test("robots keeps crawlers out of accounts and points at the sitemap", async () => {

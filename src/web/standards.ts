@@ -23,7 +23,6 @@
  * FORGE_SECURITY_CONTACT.
  */
 
-import releases from "../core/releases.json" with { type: "json" };
 import { markPng, type MarkShape } from "../design/mark.ts";
 import { metaThemeColor } from "../design/themes.ts";
 import { BODY_MAX, TITLE_MAX } from "../core/reports.ts";
@@ -38,6 +37,7 @@ import { mcpToolsSection } from "./llms_tools.ts";
 import { mcpCard, mcpPointers } from "../core/mcp_card.ts";
 import { running } from "../kernel/version.ts";
 import { timePhase } from "../core/route_timing.ts";
+import { shippedReleases, type Shipped } from "../release/shipped.ts";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -118,16 +118,17 @@ export function changePassword(): Response {
  */
 export function releasesJson(ctx: Ctx): Response {
   const origin = ctx.url.origin;
+  const list = shippedReleases();
   let kept = releasesBodies.get(origin);
-  if (kept === undefined) {
+  if (kept === undefined || kept.list !== list) {
     const body = JSON.stringify({
-      releases: releases.releases.map((r) => ({
+      releases: list.map((r) => ({
         name: r.version,
         url: `${origin}/releases.json#${encodeURIComponent(r.version)}`,
       })),
     });
     const etag = `"${new Bun.CryptoHasher("sha256").update(body).digest("hex").slice(0, 32)}"`;
-    kept = { body, etag };
+    kept = { list, body, etag };
     // Origins come from the Host header: keep a handful, not one per guess.
     if (releasesBodies.size >= 16) releasesBodies.clear();
     releasesBodies.set(origin, kept);
@@ -144,8 +145,8 @@ export function releasesJson(ctx: Ctx): Response {
   return res;
 }
 
-/** The releases document and its ETag, per origin; the file is read once at boot. */
-const releasesBodies = new Map<string, { body: string; etag: string }>();
+/** The releases document and its ETag, per origin, made again when the tags read differently. */
+const releasesBodies = new Map<string, { list: readonly Shipped[]; body: string; etag: string }>();
 
 /** GET /robots.txt */
 export function robotsTxt(ctx: Ctx): Response {

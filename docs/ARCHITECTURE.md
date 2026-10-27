@@ -174,8 +174,14 @@ that read it (add now, remove next release; a rename is two releases).
 `notAdditive` (`kernel/migrate.ts`) names a drop, a rename, a rebuild or a
 NOT NULL column without a default, and `test/schema-additive.test.ts`
 refuses one in any migration not shipped by both of the two newest releases
-recorded in `src/core/releases.json` (by id: a count, and the stamped ids),
-which the release agent bumps when it cuts one.
+recorded in `src/core/releases-before-tags.json` (by id: a count, and the
+stamped ids). That list is frozen: a release cut since #6642 is an annotated
+tag `v<version>` whose message is the same record (`bun scripts/cut-release.ts
+<version> --tag`), so a cut never moves main and never voids a gate in flight;
+`release/shipped.ts` reads the tags from the forge's own repository for
+`/releases.json`, the children's standings and the behind watch. A check runs
+on the tree alone, so a migration landed after the freeze stays held to
+additive.
 An old process that restarts mid-roll boots on a database ahead of it and
 logs, by name, the migrations it does not know (`schema_migration` records
 each name, #783) — they only add, so it serves as it did.

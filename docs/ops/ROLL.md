@@ -142,6 +142,16 @@ request routed to it in that beat is refused.
 Release as the release workflow does. Nothing in this recipe changes the
 workflow or the chart.
 
+**Cutting a release moves no branch (#6642).** On the commit of main being
+released, `bun scripts/cut-release.ts <version> --tag` makes the annotated
+tag `v<version>` whose message is the release record (`{"version",
+"migrations", "ids"}`); push that tag to the forge's own repository, where
+`release/shipped.ts` reads it for `/releases.json`, the children's standings
+and the behind watch, and to the mirror, where it starts `release.yml`.
+Nothing is committed: a commit to main would void every gate in flight
+(#6640). `src/core/releases-before-tags.json` keeps the releases cut before
+this, frozen.
+
 ## The gate of record (#2794)
 
 A release ships on two proofs, and nothing else holds it:

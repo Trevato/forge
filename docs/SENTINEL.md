@@ -43,7 +43,7 @@ JSON API and MCP carry the same fact: a setting away from its default has a
 The `setting:<key>` findings filed before that are all closed; none raises an
 ask, and the capacity page's Put back is the one answer. The `sentinel_kept`
 table they once used is unread; a migration drops it once the additive rule
-(`src/core/releases.json`) allows a drop.
+(`test/schema-additive.test.ts`) allows a drop.
 
 **What it never quotes.** Evidence passes through `scrub` (`redactSecrets` and
 any 32-character unbroken token) before it is filed, since the repository may

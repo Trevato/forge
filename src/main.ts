@@ -544,18 +544,19 @@ void proveRelease({
   url: forgeUrl,
   token: process.env["FORGE_TOKEN"],
 }).then((p) => p && app.log.info("release proof", { version: p.version, ok: String(p.ok), ...(p.failure ? { failure: p.failure } : {}) }));
-// Production behind main's newest release for over an hour is a card (release/behind.ts).
+// The release tags of the forge's own repository are its shipped releases (release/shipped.ts);
+// production behind the newest for over an hour is a card (release/behind.ts).
 if (app.config.forgeRepo) {
   const [owner, name] = app.config.forgeRepo.split("/");
   const watch = watchBehind({
     live: () => running().version,
     read: async () => {
       const row = app.db
-        .query<{ default_branch: string }, [string, string]>(
-          "SELECT repo.default_branch FROM repo JOIN user u ON u.id = repo.owner_id WHERE u.username = ?1 AND repo.name = ?2",
+        .query<{ id: string }, [string, string]>(
+          "SELECT repo.id FROM repo JOIN user u ON u.id = repo.owner_id WHERE u.username = ?1 AND repo.name = ?2",
         )
         .get(owner ?? "", name ?? "");
-      return row ? readNewest(repoDir(app.reposRoot, owner!, name!), row.default_branch) : undefined;
+      return row ? readNewest(repoDir(app.reposRoot, owner!, name!)) : undefined;
     },
   });
   setBehind(watch);

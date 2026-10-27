@@ -285,8 +285,10 @@ flag exists only in the stdio dev runner and is never reachable over SSH.
   an existing migration — an edited one is a new one and runs again; once
   pinned in `core/migration-pins.json` (`bun scripts/pin-migrations.ts`, run
   by the release agent, never by a pull) the schema test fails on an edit. It must only add
-  (`test/schema-additive.test.ts`); the release agent lists its id in
-  `core/releases.json`.
+  (`test/schema-additive.test.ts`). A release is an annotated tag whose
+  message is its record (`bun scripts/cut-release.ts <version> --tag`,
+  read by `release/shipped.ts`); no pull and no release touches
+  `core/releases-before-tags.json`, which is frozen.
 - **New git read:** put it in `git/read.ts`; reuse the long-lived `cat-file`
   batch reader rather than spawning per object. Run every rev/path through
   `assertBatchSafe`.
