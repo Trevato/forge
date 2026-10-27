@@ -9,6 +9,7 @@ import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { promote } from "./helpers/members.ts";
+import { listVia } from "./mcp-list.ts";
 
 describe("MCP hooks", () => {
   let dataDir: string;
@@ -101,7 +102,7 @@ describe("MCP hooks", () => {
   });
 
   test("it is listed, and callable, only with an admin-scope token", async () => {
-    const names = async (t: string) => (await rpc(t, "tools/list", {})).result.tools.map((x: any) => x.name);
+    const names = async (t: string) => (await listVia((p) => rpc(t, "tools/list", p))).result.tools.map((x: any) => x.name);
     expect(await names(aliceAdmin)).toContain("hooks");
     expect(await names(aliceRw)).not.toContain("hooks");
     const called = await rpc(aliceRw, "tools/call", { name: "hooks", arguments: { repo: "alice/game", action: "list" } });

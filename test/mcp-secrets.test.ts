@@ -13,6 +13,7 @@ import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { promote } from "./helpers/members.ts";
+import { listVia } from "./mcp-list.ts";
 
 describe("MCP secrets", () => {
   let dataDir: string;
@@ -125,9 +126,9 @@ describe("MCP secrets", () => {
   });
 
   test("a non-admin is refused and not listed the tool", async () => {
-    const listed = await rpc(other, "tools/list");
+    const listed = await listVia((p) => rpc(other, "tools/list", p));
     expect(listed.result.tools.map((t: any) => t.name)).not.toContain("secrets");
-    const seen = await rpc(admin, "tools/list");
+    const seen = await listVia((p) => rpc(admin, "tools/list", p));
     expect(seen.result.tools.map((t: any) => t.name)).toContain("secrets");
     const call = await rpc(other, "tools/call", {
       name: "secrets",

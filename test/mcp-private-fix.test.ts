@@ -12,6 +12,7 @@ import { createIssue } from "../src/core/issues.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { listVia } from "./mcp-list.ts";
 
 describe("MCP seal action private", () => {
   let dataDir: string;
@@ -80,7 +81,7 @@ describe("MCP seal action private", () => {
   });
 
   test("seal takes the private action in its schema", async () => {
-    const listed = await rpc(alice, "tools/list");
+    const listed = await listVia((p) => rpc(alice, "tools/list", p));
     const t = listed.result.tools.find((x: any) => x.name === "seal");
     expect(t.inputSchema.properties.action.enum).toEqual(["private"]);
     expect(listed.result.tools.some((x: any) => x.name === "private_fix")).toBe(false);

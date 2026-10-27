@@ -24,6 +24,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { checkUpstream } from "../src/spawn/upstream.ts";
 import { keepParentCredential } from "../src/spawn/parent_credential.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { listAt } from "./mcp-list.ts";
 
 quietLogs();
 
@@ -176,16 +177,7 @@ describe("MCP proposes to the parent forge and lists proposals", () => {
 
   test("tools/list names both", async () => {
     const token = createToken(child.db, kid.id, "rw", "rw").token;
-    const res = await fetch(`${childServer.url}/mcp`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-        authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
-    });
-    const tools = ((await res.json()) as any).result.tools as { name: string; annotations: any }[];
+    const tools = (await listAt(childServer.url, token)).result.tools as { name: string; annotations: any }[];
     const by = (n: string) => tools.find((t) => t.name === n);
     expect(by("propose_to_parent_forge")?.annotations).toBeUndefined();
     expect(by("forge_proposals")?.annotations.readOnlyHint).toBe(true);

@@ -16,6 +16,7 @@ import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { listVia } from "./mcp-list.ts";
 
 quietLogs();
 
@@ -132,7 +133,7 @@ describe("the crew scorecard over the API and MCP", () => {
     const called = await rpc(admin, "tools/call", { name: "scorecard", arguments: {} });
     expect(JSON.parse(called.result.content[0].text)).toEqual(api);
     const names = (token: string) =>
-      rpc(token, "tools/list").then((r) => r.result.tools.map((t: { name: string }) => t.name));
+      listVia((p) => rpc(token, "tools/list", p)).then((r) => r.result.tools.map((t: { name: string }) => t.name));
     expect(await names(admin)).toContain("scorecard");
     expect(await names(member)).not.toContain("scorecard");
     const refused = await rpc(member, "tools/call", { name: "scorecard", arguments: {} });

@@ -32,6 +32,7 @@ import { limitChanges, limitValue } from "../src/settings/limits.ts";
 import { promote } from "./helpers/members.ts";
 import { showBoard } from "../src/actions/boards.ts";
 import { panelData } from "../src/boards/panel_data.ts";
+import { listVia } from "./mcp-list.ts";
 
 /** tools/list's order: the tools by name, then `report`. */
 const sortedThenReport = (names: string[]): string[] => [
@@ -51,6 +52,10 @@ describe("the forge over MCP", () => {
   let bobRw: string;
   let game: Repo;
   let nextId = 1;
+
+  const listCall = async (token: string) => ({
+    body: await listVia(async (p) => (await call(token, "tools/list", p)).body),
+  });
 
   const call = async (
     token: string | null,
@@ -173,7 +178,7 @@ describe("the forge over MCP", () => {
     expect(note.status).toBe(202);
     expect((await call(rw, "ping")).body.result).toEqual({});
 
-    const listed = await call(rw, "tools/list");
+    const listed = await listCall(rw);
     const names = listed.body.result.tools.map((t: { name: string }) => t.name);
     // Listed by name, one file each (#5924), and `report` last.
     expect(names).toEqual(sortedThenReport([
@@ -713,7 +718,7 @@ describe("the forge over MCP", () => {
   });
 
   test("probe only reads, yet needs the access the page needs", async () => {
-    const listed = await call(ro, "tools/list");
+    const listed = await listCall(ro);
     const hints = Object.fromEntries(
       listed.body.result.tools.map((t: any) => [
         t.name,
@@ -860,7 +865,7 @@ describe("the forge over MCP", () => {
       .value.issue;
     const b = (await tool(rw, "tell", { repo: "alice/game", text: "second" }))
       .value.issue;
-    const listed = await call(rw, "tools/list");
+    const listed = await listCall(rw);
     const hints = Object.fromEntries(
       listed.body.result.tools.map((t: any) => [
         t.name,
@@ -1210,7 +1215,7 @@ describe("the forge over MCP", () => {
     expect(c.text).not.toContain("innerHTML");
     const nope = await call(rw, "resources/read", { uri: "ui://forge/nope" });
     expect(nope.body.error.code).toBe(-32002);
-    const tools = (await call(rw, "tools/list")).body.result.tools;
+    const tools = (await listCall(rw)).body.result.tools;
     const meta = (n: string) => tools.find((t: any) => t.name === n)._meta?.ui?.resourceUri;
     expect(meta("apps")).toBe("ui://forge/app");
     expect(meta("new_app")).toBe("ui://forge/app");
@@ -1412,7 +1417,7 @@ describe("the forge over MCP", () => {
     expect(card.rows[1]).toMatchObject({ label: `agent ${id}`, value: "#1 — done" });
     const { body } = await call(rw, "tools/call", { name: "runs", arguments: { repo: "alice/game" } });
     expect(body.result.structuredContent.card.kind).toBe("run");
-    const tools = (await call(rw, "tools/list")).body.result.tools;
+    const tools = (await listCall(rw)).body.result.tools;
     expect(tools.find((t: any) => t.name === "runs")._meta?.ui?.resourceUri).toBe("ui://forge/run");
   });
 
@@ -1427,7 +1432,7 @@ describe("the forge over MCP", () => {
 
   test("ship and close card actions never apply at once and always meet the target tool's required fields", async () => {
     const { cardFor } = await import("../src/web/studio/cards.ts");
-    const tools = (await call(rw, "tools/list")).body.result.tools;
+    const tools = (await listCall(rw)).body.result.tools;
     const cards = [
       cardFor("apps", [{ app: "alice/game", live: "up" }]),
       cardFor("now", [{ who: "scout", app: "alice/game", run: "r1", on: "#1", state: "going" }]),

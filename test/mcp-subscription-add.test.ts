@@ -13,6 +13,7 @@ import { createSession } from "../src/core/sessions.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { listVia } from "./mcp-list.ts";
 
 describe("MCP subscription_add", () => {
   let dataDir: string;
@@ -76,7 +77,7 @@ describe("MCP subscription_add", () => {
     }).then((r) => r.text());
     expect(page).toContain("Team Max");
     expect(page).not.toContain(TOKEN);
-    const tools = (await rpc(alice, "tools/list", {})).result.tools;
+    const tools = (await listVia((p) => rpc(alice, "tools/list", p))).result.tools;
     const t = tools.find((x: any) => x.name === "subscription_add");
     expect(t.annotations?.readOnlyHint).toBeUndefined();
   });

@@ -19,6 +19,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 import { promote } from "./helpers/members.ts";
 import { tokenFor } from "./helpers/tokens.ts";
+import { listAt } from "./mcp-list.ts";
 
 describe("MCP preview", () => {
   let dataDir: string;
@@ -163,12 +164,7 @@ describe("MCP preview", () => {
   });
 
   test("it is listed in tools/list", async () => {
-    const res = await fetch(`${servers.url}/mcp`, {
-      method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json", authorization: `Bearer ${bobRw}` },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 999, method: "tools/list" }),
-    });
-    const body: any = await res.json();
+    const body = await listAt(servers.url, bobRw);
     expect(body.result.tools.some((t: any) => t.name === "preview")).toBe(true);
   });
 });

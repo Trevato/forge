@@ -8,6 +8,7 @@ import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { listAt } from "./mcp-list.ts";
 
 quietLogs();
 
@@ -44,16 +45,7 @@ beforeAll(async () => {
   });
   if (!made.ok) throw new Error(JSON.stringify(made.error));
   const token = createToken(app.db, made.value.id, "admin", "admin").token;
-  const res = await fetch(`${servers.url}/mcp`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      accept: "application/json, text/event-stream",
-      authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
-  });
-  served = JSON.parse(await res.text()).result.tools.map((t: { name: string }) => t.name);
+  served = (await listAt(servers.url, token)).result.tools.map((t: { name: string }) => t.name);
 });
 
 afterAll(async () => {

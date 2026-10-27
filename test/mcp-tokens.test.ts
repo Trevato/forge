@@ -13,6 +13,7 @@ import { seedAdmin } from "./helpers/admin.ts";
 import { promote } from "./helpers/members.ts";
 import { createUser } from "../src/core/users.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { listVia } from "./mcp-list.ts";
 
 quietLogs();
 
@@ -79,7 +80,7 @@ test("another person's tokens are never listed", async () => {
 });
 
 test("tools/list marks it read-only", async () => {
-  const body = await rpc(mine[0]!.token, "tools/list");
+  const body = await listVia((p) => rpc(mine[0]!.token, "tools/list", p));
   const t = body.result.tools.find((x: { name: string }) => x.name === "tokens");
   expect(t.annotations.readOnlyHint).toBe(true);
 });

@@ -8,6 +8,7 @@ import { createRepo } from "../src/actions/repos.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { listAt } from "./mcp-list.ts";
 
 describe("MCP repo_labels", () => {
   let dataDir: string;
@@ -69,16 +70,7 @@ describe("MCP repo_labels", () => {
   });
 
   test("it is listed with a schema", async () => {
-    const res = await fetch(`${servers.url}/mcp`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-        authorization: `Bearer ${admin}`,
-      },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 999, method: "tools/list" }),
-    });
-    const body: any = await res.json();
+    const body = await listAt(servers.url, admin);
     const t = body.result.tools.find((x: any) => x.name === "repo_labels");
     expect(t.inputSchema.required).toEqual(["repo"]);
   });

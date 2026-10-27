@@ -69,7 +69,7 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-test(`tools/list stays under 40 KB, with 1.5 KB of headroom (${HEADROOM_CEILING.toLocaleString("en-US")} bytes)`, async () => {
+async function page(cursor?: unknown): Promise<{ text: string; json: any }> {
   const res = await fetch(`${servers.url}/mcp`, {
     method: "POST",
     headers: {
@@ -77,28 +77,47 @@ test(`tools/list stays under 40 KB, with 1.5 KB of headroom (${HEADROOM_CEILING.
       accept: "application/json, text/event-stream",
       authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+      ...(cursor === undefined ? {} : { params: { cursor } }),
+    }),
   });
   const text = await res.text();
-  const bytes = Buffer.byteLength(text);
-  const tools = (JSON.parse(text) as any).result.tools as {
-    name: string;
-    description: string;
-    inputSchema: unknown;
-    annotations?: { readOnlyHint?: boolean };
-  }[];
+  return { text, json: JSON.parse(text) };
+}
+
+/** Every page, in order: each page's bytes and all the tools. */
+async function walk(): Promise<{ sizes: number[]; tools: any[] }> {
+  const sizes: number[] = [];
+  const tools: any[] = [];
+  let cursor: string | undefined;
+  do {
+    const { text, json } = await page(cursor);
+    sizes.push(Buffer.byteLength(text));
+    tools.push(...json.result.tools);
+    cursor = json.result.nextCursor;
+  } while (cursor !== undefined);
+  return { sizes, tools };
+}
+
+test(`each page of tools/list stays under 40 KB, with 1.5 KB of headroom (${HEADROOM_CEILING.toLocaleString("en-US")} bytes)`, async () => {
+  const { sizes, tools } = await walk();
+  const bytes = Math.max(...sizes);
+  expect(sizes.length).toBeGreaterThan(1);
   // The argument words are short; the detail lives in docs/MCP.md.
   const long: string[] = [];
-  const walk = (tool: string, node: any, path: string): void => {
+  const walkProps = (tool: string, node: any, path: string): void => {
     if (!node || typeof node !== "object") return;
     for (const [k, v] of Object.entries<any>(node.properties ?? {})) {
       if (typeof v?.description === "string" && Buffer.byteLength(v.description) > PROPERTY_MAX)
         long.push(`${tool}.${path}${k} (${Buffer.byteLength(v.description)} bytes)`);
-      walk(tool, v, `${path}${k}.`);
+      walkProps(tool, v, `${path}${k}.`);
     }
-    walk(tool, node.items, path);
+    walkProps(tool, node.items, path);
   };
-  for (const t of tools) walk(t.name, t.inputSchema, "");
+  for (const t of tools) walkProps(t.name, t.inputSchema, "");
   expect(long, `property descriptions over ${PROPERTY_MAX} bytes`).toEqual([]);
   // readOnlyHint defaults to false; spelling the default out on every write
   // tool cost 2 KB, so only a read tool carries annotations.
@@ -106,11 +125,11 @@ test(`tools/list stays under 40 KB, with 1.5 KB of headroom (${HEADROOM_CEILING.
   const longest = costliestTools(tools);
   expect(
     bytes,
-    `tools/list is ${bytes} bytes, ${bytes - CEILING} over the ${CEILING} ceiling; the five costliest tools: ${longest}`,
+    `a tools/list page is ${bytes} bytes, ${bytes - CEILING} over the ${CEILING} ceiling; the five costliest tools: ${longest}`,
   ).toBeLessThanOrEqual(CEILING);
   expect(
     bytes,
-    `tools/list is ${bytes} bytes, ${bytes - HEADROOM_CEILING} over the ${HEADROOM_CEILING} headroom (${CEILING - bytes} left under the ceiling); the five costliest tools: ${longest}`,
+    `a tools/list page is ${bytes} bytes, ${bytes - HEADROOM_CEILING} over the ${HEADROOM_CEILING} headroom (${CEILING - bytes} left under the ceiling); the five costliest tools: ${longest}`,
   ).toBeLessThanOrEqual(HEADROOM_CEILING);
   expect(
     tools
@@ -138,7 +157,7 @@ test("`dryRun` is explained once, in the instructions, not on every tool", async
         }),
       })
     ).json()) as any;
-  const tools = (await call("tools/list")).result.tools as {
+  const tools = (await walk()).tools as {
     name: string;
     inputSchema: { properties?: Record<string, { description?: string }> };
   }[];
@@ -151,4 +170,21 @@ test("`dryRun` is explained once, in the instructions, not on every tool", async
   expect((await call("initialize")).result.instructions).toContain(
     "A tool with `dryRun` plans unless it is `false`.",
   );
+});
+
+test("walking every page lists every tool exactly once", async () => {
+  const { tools } = await walk();
+  const names = tools.map((t) => t.name);
+  expect(new Set(names).size).toBe(names.length);
+  expect(names).toContain("report");
+  const first = await page();
+  expect(first.json.result.nextCursor).toBe(first.json.result.tools.at(-1).name);
+});
+
+test("a cursor that names no tool is an invalid-params error", async () => {
+  for (const bad of ["nope", "", 7]) {
+    const { json } = await page(bad);
+    expect(json.error.code).toBe(-32602);
+    expect(json.result).toBeUndefined();
+  }
 });

@@ -179,9 +179,14 @@ tool's own behaviour is tested in `test/mcp-<name>.test.ts`.
 
 ### Room for a new tool
 
-Every session pays for `tools/list` first, so `test/mcp-size.test.ts` holds it
-to a 40,000-byte ceiling and a 38,500-byte headroom (the answer an admin gets,
-the largest). Measure before you push with `bun test test/mcp-size.test.ts`;
+Every session pays for `tools/list` first. It is paged, as the MCP spec
+allows: a page holds about 20,000 bytes of tools (`TOOLS_PAGE_BYTES` in
+`src/http/mcp.ts`) and carries `nextCursor` while more remain; send it back as
+`params.cursor` for the next page. A cursor that names no tool is a `-32602`
+error. A client must follow `nextCursor`; the Claude Code and OpenCode
+plugins only register `/mcp`, so paging is their MCP client's job. Adding a
+tool no longer busts one response, but `test/mcp-size.test.ts` still holds
+each page to a 40,000-byte ceiling and a 38,500-byte headroom. Measure before you push with `bun test test/mcp-size.test.ts`;
 a failure names the bytes over and the longest descriptions.
 
 - A new door is an `action` or `kind` on the tool that already owns the

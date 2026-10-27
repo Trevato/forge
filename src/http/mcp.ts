@@ -36,6 +36,10 @@ import { TOOLS } from "./mcp/tools.ts";
 
 const PROTOCOLS = ["2025-06-18", "2025-03-26", "2024-11-05"] as const;
 /** Who answers: the forge, at the version its build stamped. */
+// One page of tools/list stays within this many bytes of tools; `nextCursor`
+// names the rest, so adding a tool never busts one response.
+export const TOOLS_PAGE_BYTES = 20_000;
+
 const server = () => ({ name: "forge", version: running().version });
 
 
@@ -102,27 +106,47 @@ function rpcOne(
     }
     case "ping":
       return reply({});
-    case "tools/list":
+    case "tools/list": {
+      const all = [
+        ...TOOLS.filter((t) => visible(t, ctx, user)).map((t) => ({
+          name: t.name,
+          description: t.description,
+          inputSchema: lean(t.inputSchema),
+          // readOnlyHint defaults to false (MCP tool annotations), so only a
+          // read says so: 57 copies of the default were 2 KB of the 40 KB.
+          ...(t.writes ? {} : { annotations: { readOnlyHint: true } }),
+          ...(CARD_OF_TOOL[t.name] === undefined
+            ? {}
+            : {
+                _meta: {
+                  ui: { resourceUri: CARD_URI(CARD_OF_TOOL[t.name]!) },
+                },
+              }),
+        })),
+        REPORT_TOOL,
+      ];
+      // The cursor is the name of the last tool of the page before, so a tool
+      // added between two requests moves nothing.
+      const cursor = params["cursor"];
+      let from = 0;
+      if (cursor !== undefined) {
+        const at =
+          typeof cursor === "string" ? all.findIndex((t) => t.name === cursor) : -1;
+        if (at < 0) return refuse(-32602, "unknown cursor");
+        from = at + 1;
+      }
+      let end = from;
+      let bytes = 0;
+      while (end < all.length) {
+        bytes += Buffer.byteLength(JSON.stringify(all[end]));
+        if (end > from && bytes > TOOLS_PAGE_BYTES) break;
+        end++;
+      }
       return reply({
-        tools: [
-          ...TOOLS.filter((t) => visible(t, ctx, user)).map((t) => ({
-            name: t.name,
-            description: t.description,
-            inputSchema: lean(t.inputSchema),
-            // readOnlyHint defaults to false (MCP tool annotations), so only a
-            // read says so: 57 copies of the default were 2 KB of the 40 KB.
-            ...(t.writes ? {} : { annotations: { readOnlyHint: true } }),
-            ...(CARD_OF_TOOL[t.name] === undefined
-              ? {}
-              : {
-                  _meta: {
-                    ui: { resourceUri: CARD_URI(CARD_OF_TOOL[t.name]!) },
-                  },
-                }),
-          })),
-          REPORT_TOOL,
-        ],
+        tools: all.slice(from, end),
+        ...(end < all.length ? { nextCursor: all[end - 1]!.name } : {}),
       });
+    }
     case "resources/list":
       return reply({
         resources: CARD_KINDS.map((k) => ({

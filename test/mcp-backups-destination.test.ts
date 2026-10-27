@@ -14,6 +14,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { sealedSet } from "../src/snapshot/destination.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { listAt } from "./mcp-list.ts";
 
 quietLogs();
 
@@ -129,16 +130,7 @@ describe("MCP backups_destination", () => {
   });
 
   test("tools/list names the action and the fields an agent sends", async () => {
-    const res = await fetch(`${servers.url}/mcp`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-        authorization: `Bearer ${admin}`,
-      },
-      body: JSON.stringify({ jsonrpc: "2.0", id: id++, method: "tools/list" }),
-    });
-    const tools = ((await res.json()) as any).result.tools as { name: string; inputSchema: any }[];
+    const tools = (await listAt(servers.url, admin)).result.tools as { name: string; inputSchema: any }[];
     const schema = tools.find((t) => t.name === "backups_destination")!.inputSchema;
     expect(schema.required).toEqual(["action"]);
     expect(schema.properties.action.enum).toEqual(["set", "forget"]);
