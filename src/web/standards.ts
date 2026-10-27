@@ -363,8 +363,19 @@ export function llmsTxt(ctx: Ctx): Response {
       // Names and addresses only: a description is whatever its owner
       // wrote, and an agent reading this file must not meet anyone's words
       // as the forge's own.
-      ...(repos.length > 0
-        ? repos.map((r) => `- [${r}](${o}/${r})`)
+      ...(repos.lines.length > 0
+        ? [
+            ...repos.lines.map(
+              (r) =>
+                `- [${r.path}](${o}/${r.path})` +
+                (r.forks > 0
+                  ? ` · ${r.forks} ${r.forks === 1 ? "fork" : "forks"}`
+                  : ""),
+            ),
+            ...(repos.more
+              ? [`- More: ${o}/api/v1/explore`]
+              : []),
+          ]
         : ["None yet."]),
       "",
     ].join("\n"),
