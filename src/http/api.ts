@@ -148,9 +148,7 @@ import { runRepos } from "./run_gate.ts";
 import {
   commitToBranch,
   createRepo,
-  createWebhook,
   deleteRepo,
-  deleteWebhook,
   repositoryLimitMessage,
   resolveOwner,
   privateRepoForSealed,
@@ -241,7 +239,6 @@ import {
   type User,
 } from "../core/users.ts";
 import { isPinned } from "../core/pins.ts";
-import { listWebhooks } from "../core/webhooks.ts";
 import { diffCommit } from "../git/diff.ts";
 import { runGit } from "../git/env.ts";
 import { appLimitWords, appsOwnedBy } from "../actions/app_limit.ts";
@@ -415,6 +412,7 @@ import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
 import { passportRoutes } from "./passport_edge.ts";
 import { egressGrantRoutes } from "./api/egress_grants.ts";
 import { forgeRoutes } from "./api/forges.ts";
+import { hookRoutes } from "./api/hooks.ts";
 import { agentRoutes } from "./api/agents.ts";
 import { boardRoutes } from "./api/boards.ts";
 import { labelsRoutes } from "./api/labels.ts";
@@ -4317,47 +4315,7 @@ export function apiRoutes(router: Router<Handler>): void {
     return json(contributionJson(ctx, result.value), 201);
   });
 
-  // ── webhooks — admin-scoped, since a webhook exfiltrates repo events ──
-
-  router.add("GET", "/api/v1/repos/:owner/:name/hooks", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const repo = loadRepo(ctx);
-    if (!repo || !canAdmin(ctx.app.db, repo, ctx.auth.user)) return notFound();
-    const page = pageParams(ctx);
-    if (page instanceof Response) return page;
-    const rows = timePhase(ctx.request, "hooks", () => listWebhooks(ctx.app.db, repo.id));
-    return timePhase(ctx.request, "render", () => pageOf(rows, page));
-  });
-
-  router.add("POST", "/api/v1/repos/:owner/:name/hooks", async (ctx) => {
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const repo = loadRepo(ctx);
-    if (!repo) return notFound();
-    const input = await body(ctx.request);
-    const created = createWebhook(ctx.app, ctx.auth.user, repo, {
-      url: str(input.url),
-      kinds: str(input.kinds) || "*",
-      ...(typeof input.secret === "string" ? { secret: input.secret } : {}),
-    });
-    if (!created.ok) return respondAccess(created.error, 422);
-    // The secret is returned exactly once, at creation.
-    return json(
-      { ...created.value.webhook, secret: created.value.secret },
-      201,
-    );
-  });
-
-  router.add("DELETE", "/api/v1/repos/:owner/:name/hooks/:id", (ctx) => {
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const repo = loadRepo(ctx);
-    if (!repo) return notFound();
-    const removed = deleteWebhook(ctx.app, ctx.auth.user, repo, ctx.params.id!);
-    return json({}, removed.ok ? 200 : 404);
-  });
+  hookRoutes(router);
 
   // ── origins ──────────────────────────────────────────────────────────
   //
