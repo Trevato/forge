@@ -21,6 +21,8 @@ import { pileSays, readPile } from "../../flow/pile.ts";
 import { readPipeline, STAGE_LABEL, verdict } from "../../flow/pipeline.ts";
 import { parkedSays, readParked } from "../../flow/parked.ts";
 import { firedAlarms } from "../../flow/alarms.ts";
+import { readLeadTime, type LeadTime } from "../../flow/lead_time.ts";
+import { readOpeners, type Opener } from "../../flow/openers.ts";
 import { readVitals, vitalsLine } from "../../flow/vitals.ts";
 import { readQueues, redBatchWords } from "../../flow/queue.ts";
 import { reviewersBusy, reviewingSays } from "../../flow/reviewing.ts";
@@ -73,6 +75,8 @@ export function flowLines(
     ...wrap(throughputSays(flow), inner),
     "",
     ...wrap(pileSays(readPile(db, agent !== undefined)), inner),
+    ...wrap(leadTimeSays(readLeadTime(db, now, agent !== undefined)), inner),
+    ...openerLines(readOpeners(db, now, agent !== undefined), inner),
     "",
     `${pad("Out", 12)} ${pad("last hour", 9, "right")} ${pad("24 h", 5, "right")}`,
     ...flow.stages.map(stageOut).map(
@@ -98,6 +102,25 @@ export function flowLines(
     "",
     ...duplicateLines(dups, inner),
   ];
+}
+
+/** Hours, or minutes under one hour, so a landing never reads as 0 h. */
+const hours = (h: number) =>
+  h < 1 ? `${Math.max(1, Math.round(h * 60))} min` : `${Math.round(h * 10) / 10} h`;
+
+/** The time to land, in words; with no landing in the day, it says so. */
+export function leadTimeSays(t: LeadTime): string {
+  if (t.landed === 0 || t.medianHours === null || t.maxHours === null) return "Time to land: nothing landed in the last 24 h.";
+  return `Time to land: median ${hours(t.medianHours)}, slowest ${hours(t.maxHours)} (24 h)`;
+}
+
+/** One line per opener of the last hour, at most five; with none, a line that says so. */
+export function openerLines(rows: readonly Opener[], inner: number): string[] {
+  if (rows.length === 0) return ["Opened in the last hour: no pulls."];
+  const lines = rows
+    .slice(0, 5)
+    .map((o) => truncate(`${o.author}: ${o.opened} ${o.opened === 1 ? "pull" : "pulls"}, ${o.flow} for flow`, inner));
+  return rows.length > 5 ? [...lines, `and ${rows.length - 5} more`] : lines;
 }
 
 /** One line per autonomous repository: its name, then `startable=N` and each filter holding any. */
