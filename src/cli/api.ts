@@ -36,6 +36,24 @@ export interface Whoami {
   readonly displayName: string;
 }
 
+/** One thing waiting on the user, as `forge asks` prints it. */
+export interface Ask {
+  /** The API's kind (`look`, `parked`, `proposal`, …), or `forge` for its own needs. */
+  readonly kind: string;
+  /** `owner/name`, or "" for a need of the forge itself. */
+  readonly repo: string;
+  readonly title: string;
+  /** Absolute: where a person decides it on the workbench. */
+  readonly url: string;
+}
+
+export interface Asks {
+  /** The answer exactly as the forge gave it, for `--json`. */
+  readonly raw: unknown;
+  /** The rows in the order the forge ranks them, then the forge's own needs. */
+  readonly asks: Ask[];
+}
+
 export class ForgeApi {
   /** True once `pins()` has had to fall back, so the CLI can say it once. */
   pinsUnavailable = false;
@@ -173,6 +191,47 @@ export class ForgeApi {
     );
   }
 
+  /**
+   * What waits on the user, most consequential first (`GET /api/v1/asks`).
+   * A row of a kind this client has never heard of is kept, not dropped: it
+   * prints with its kind and whatever title it carries.
+   */
+  async asks(): Promise<ApiResult<Asks>> {
+    const out = await this.call<unknown>("/api/v1/asks");
+    if (!out.ok) return out;
+    const body = (out.value ?? {}) as { rows?: unknown; forge?: unknown };
+    const asks: Ask[] = [];
+    for (const item of Array.isArray(body.rows) ? body.rows : []) {
+      if (typeof item !== "object" || item === null) continue;
+      const r = item as Record<string, unknown>;
+      const kind = str(r["kind"]) ?? "ask";
+      const repo = str(r["repo"]) ?? "";
+      const proposal = r["proposal"] as Record<string, unknown> | undefined;
+      asks.push({
+        kind,
+        repo,
+        title: titleOf(
+          str(r["line"]) ?? str(proposal?.["title"]) ?? kind,
+          repo,
+        ),
+        url: this.absolute(str(r["link"]) ?? "/"),
+      });
+    }
+    for (const need of Array.isArray(body.forge) ? body.forge : []) {
+      const title = str(need);
+      if (title !== undefined)
+        asks.push({ kind: "forge", repo: "", title, url: this.absolute("/") });
+    }
+    return ok({ raw: out.value, asks });
+  }
+
+  /** A workbench path as a full address; anything not a path is the home. */
+  private absolute(link: string): string {
+    return link.startsWith("/") && !link.startsWith("//")
+      ? `${this.url}${link}`
+      : `${this.url}/`;
+  }
+
   /** The page a person would open in a browser. */
   webUrl(owner: string, name: string): string {
     return `${this.url}/${encode(owner)}/${encode(name)}`;
@@ -214,6 +273,18 @@ function toOrigin(value: unknown): Pin["origin"] {
   const fullName = str(r["fullName"]);
   if (htmlUrl === undefined || fullName === undefined) return null;
   return { htmlUrl, fullName };
+}
+
+/**
+ * An ask's line without the repo name it leads with (`app: Pull #3 …`, or
+ * `app paused …`): the CLI prints `owner/name` in its own column.
+ */
+function titleOf(line: string, repo: string): string {
+  const name = repo.slice(repo.indexOf("/") + 1);
+  if (name === "") return line;
+  if (line.startsWith(`${name}: `)) return line.slice(name.length + 2);
+  if (line.startsWith(`${name} `)) return line.slice(name.length + 1);
+  return line;
 }
 
 function str(value: unknown): string | undefined {

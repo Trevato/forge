@@ -6,6 +6,7 @@
  *   forge login <url>         remember a workbench and a token
  *   forge sync                clone what is missing, fetch the rest, report
  *   forge status              the same report without touching the network
+ *   forge asks                what waits on you, most important first
  *
  * Everything here is a thin shell around three modules: `api.ts` talks to the
  * workbench, `sync.ts` decides what should be on disk, `report.ts` prints it.
@@ -14,7 +15,7 @@
  */
 
 import { parseArgs, parseDuration, parseRepoRef, type Args } from "./args.ts";
-import { ForgeApi } from "./api.ts";
+import { ForgeApi, type Ask } from "./api.ts";
 import {
   clearConfig,
   configPath,
@@ -25,7 +26,7 @@ import {
   type Config,
 } from "./config.ts";
 import { systemNotifier } from "./notify.ts";
-import { cell, createOut, type Out } from "./out.ts";
+import { cell, createOut, inert, type Out } from "./out.ts";
 import { dirtyCount, printReport, settled, since } from "./report.ts";
 import {
   changesBetween,
@@ -35,6 +36,7 @@ import {
 } from "./sync.ts";
 import { G } from "../tui/term/screen.ts";
 import { trackText } from "../tui/local/common.ts";
+import { displayWidth, pad, truncate } from "../tui/term/width.ts";
 
 /**
  * The CLI's own number, kept by hand: it ships compiled, to machines no
@@ -51,7 +53,7 @@ export const EXIT = {
   partial: 4,
 } as const;
 
-const VALUE_FLAGS = ["token", "interval", "root", "url", "limit"];
+const VALUE_FLAGS = ["token", "interval", "root", "url", "limit", "repo"];
 
 export async function main(argv: readonly string[]): Promise<number> {
   const args = parseArgs(argv, { values: VALUE_FLAGS });
@@ -95,6 +97,8 @@ export async function main(argv: readonly string[]): Promise<number> {
       return setPin(out, args, false);
     case "open":
       return openRepo(out, args);
+    case "asks":
+      return asks(out, args);
     case "ui":
       return openTui(out, args);
     default:
@@ -121,6 +125,9 @@ function usage(out: Out): void {
   out.line(b("  forge pin <owner/name>"));
   out.line(b("  forge unpin <owner/name>"));
   out.line(b("  forge open <owner/name>") + "      [--web]");
+  out.line(
+    b("  forge asks") + "                   [--repo owner/name] [--json]",
+  );
   out.line();
   out.line(
     out.paint(`  config ${configPath()}   root ${rootDir()}`, out.c.faint),
@@ -392,6 +399,90 @@ async function openRepo(out: Out, args: Args): Promise<number> {
     return EXIT.failed;
   }
   return EXIT.ok;
+}
+
+// ── asks ─────────────────────────────────────────────────────────────────
+
+/**
+ * What waits on you, one line each, in the order the forge ranks it: kind,
+ * repository, title cut to the terminal, and the address to decide it at.
+ */
+async function asks(out: Out, args: Args): Promise<number> {
+  const only = args.value("repo");
+  const ref = only === undefined ? undefined : parseRepoRef(only);
+  if (only !== undefined && ref === undefined) {
+    out.err("forge asks: --repo expects owner/name");
+    return EXIT.usage;
+  }
+  const loaded = await requireConfig(out);
+  if (typeof loaded === "number") return loaded;
+  const answer = await new ForgeApi(loaded.url, loaded.token).asks();
+  if (!answer.ok) {
+    out.err(`forge asks: ${answer.error.message}`);
+    return answer.error.status === 401 ? EXIT.notConfigured : EXIT.failed;
+  }
+  const repo = ref === undefined ? undefined : `${ref.owner}/${ref.name}`;
+  if (args.flag("json")) {
+    const raw = answer.value.raw;
+    out.line(JSON.stringify(repo === undefined ? raw : onlyRepo(raw, repo)));
+    return EXIT.ok;
+  }
+  const rows = answer.value.asks.filter(
+    (a) => repo === undefined || a.repo === repo,
+  );
+  if (rows.length === 0) {
+    out.line("Nothing waits on you.");
+    return EXIT.ok;
+  }
+  for (const line of askLines(rows, out.width, out)) out.line(line);
+  return EXIT.ok;
+}
+
+/**
+ * The asks as lines no wider than `width - 1`, so none wraps on its own:
+ * kind and repository padded to their widest, the address whole, and the
+ * title cut to what those leave. Coloured only when `out` is given.
+ */
+export function askLines(
+  rows: readonly Ask[],
+  width: number,
+  out?: Pick<Out, "paint" | "c">,
+): string[] {
+  const kindW = Math.max(...rows.map((a) => displayWidth(inert(a.kind))));
+  const repoW = Math.max(...rows.map((a) => displayWidth(inert(a.repo))));
+  return rows.map((a) => {
+    const url = inert(a.url);
+    // Three two-space gaps; the title gets what the other columns leave.
+    const room = Math.max(
+      8,
+      width - 1 - kindW - repoW - displayWidth(url) - 6,
+    );
+    const kind = pad(inert(a.kind), kindW);
+    return [
+      out === undefined ? kind : out.paint(kind, out.c.accent),
+      pad(inert(a.repo), repoW),
+      truncate(inert(a.title), room),
+      out === undefined ? url : out.paint(url, out.c.faint),
+    ].join("  ");
+  });
+}
+
+/**
+ * The API's answer with only one repository's rows; the forge's own needs
+ * belong to none.
+ */
+function onlyRepo(raw: unknown, repo: string): unknown {
+  if (typeof raw !== "object" || raw === null) return raw;
+  const body = raw as { rows?: unknown };
+  return {
+    ...body,
+    rows: Array.isArray(body.rows)
+      ? body.rows.filter(
+          (r) => (r as { repo?: unknown } | null)?.repo === repo,
+        )
+      : body.rows,
+    forge: [],
+  };
 }
 
 // ── the terminal UI ──────────────────────────────────────────────────────

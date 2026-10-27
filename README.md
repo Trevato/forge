@@ -299,6 +299,8 @@ forge sync --ff                    # fast-forward clean repos, and only those
 forge pin owner/name               # ask the workbench to keep this one here
 forge ls                           # what is here, and how stale
 forge open owner/name --web        # the page, in a browser
+forge asks                         # what waits on you, most important first
+forge asks --repo owner/name       # only that repository's; --json for the API's answer
 ```
 
 `sync` never merges, rebases, resets or checks anything out. `--ff` is the one

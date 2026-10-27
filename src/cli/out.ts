@@ -46,7 +46,7 @@ export function cell(text: string, fg?: Color, attr?: number): Cell {
 }
 
 /** A cell is data, not instructions: control characters become U+FFFD. */
-function inert(text: string): string {
+export function inert(text: string): string {
   return text.replace(/[\x00-\x1f\x7f-\x9f]/g, "\ufffd");
 }
 
