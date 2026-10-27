@@ -166,7 +166,9 @@ describe("home is the feed", () => {
     expect(text).not.toContain("home-tabs");
     // Nothing stands between the composer and the first post: the crew's
     // missing key sits beside the timeline (after it on a phone), and
-    // "What you asked for" is a tab there.
+    // "What you asked for" is the Asked tab, the one door to /asked.
+    expect(text).not.toContain("feed-head");
+    expect(text).not.toContain('href="/asked">What you asked for');
     const note = text.indexOf('id="crew-key-note"');
     if (note !== -1) expect(note).toBeGreaterThan(feed);
     expect(text).toMatch(/class="tabs"[\s\S]*?href="\/asked"/);

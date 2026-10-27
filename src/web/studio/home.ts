@@ -305,10 +305,6 @@ export async function studioHome(
     <div class="split" data-rail="wide">
       <div class="stack">
         ${composer(ctx, user)}
-        <div class="bar feed-head">
-          <span class="spacer"></span>
-          <a class="small muted" href="/asked">What you asked for</a>
-        </div>
         ${flowCards(ctx, user)}
         ${feedNote()}
         ${timePhase(ctx.request, "feed", () => feedRegion(user, ctx), () => feedCandidateCache(ctx.app.db))}
