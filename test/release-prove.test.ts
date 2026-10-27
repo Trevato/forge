@@ -51,6 +51,19 @@ describe("proving a release", () => {
     expect(proofNeed(dir)).toBeUndefined();
   });
 
+  test("an app host that answers as the forge fails the proof (#6726)", async () => {
+    const { fake: base } = site("1.2.6");
+    const fake = (async (input: string | URL, init?: RequestInit) =>
+      new URL(String(input)).host === "notes.apps.test"
+        ? new Response("<title>forge</title>", { headers: { "content-type": "text/html" } })
+        : base(input, init)) as unknown as typeof fetch;
+    const p = await run("1.2.6", fake, { appHost: "https://notes.apps.test" });
+    expect(p?.ok).toBe(false);
+    expect(p?.failure).toContain("an app host answered with the forge's page");
+    const good = await run("1.2.7", site("1.2.7").fake, { appHost: "https://notes.apps.test" });
+    expect(good?.ok).toBe(true);
+  });
+
   test("a failure raises the cause once, naming the first failing check", async () => {
     const { fake } = site("1.2.4", { "/a.css": () => new Response("x", { status: 500 }) });
     await run("1.2.4", fake);

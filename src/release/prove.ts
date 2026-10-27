@@ -66,6 +66,8 @@ export interface ProveOptions {
   readonly url: string;
   /** Signs `/board` in; without it a redirect to sign-in passes. */
   readonly token?: string | undefined;
+  /** An app's URL on this forge: its `/` must never be the forge's page (#6726). */
+  readonly appHost?: string | undefined;
   readonly fetch?: typeof fetch;
   readonly now?: () => number;
   readonly sleep?: (ms: number) => Promise<void>;
@@ -102,7 +104,7 @@ export async function proveRelease(o: ProveOptions): Promise<Proof | undefined> 
       if (now() + POLL_MS > deadline) return finish(`the public URL never answered as ${o.version}`);
       await sleep(POLL_MS);
     }
-    const failures = await smoke(o.url, o.token ?? "", { fetch: doFetch, anonymousBoard: true });
+    const failures = await smoke(o.url, o.token ?? "", { fetch: doFetch, anonymousBoard: true, ...(o.appHost ? { appHost: o.appHost } : {}) });
     return finish(failures[0] === undefined ? undefined : checkLine(failures[0]));
   } catch (error) {
     return finish(`the smoke checks could not run: ${String(error)}`);

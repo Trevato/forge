@@ -31,6 +31,8 @@ import { checkDue } from "./actions/upstream_follow.ts";
 import { runSync } from "./origins/sync.ts";
 import { startForgeSsh } from "./tui/ssh.ts";
 import { AppsRuntime } from "./apps/runtime.ts";
+import { listApps } from "./core/apps.ts";
+import { holdAppHosts, releaseAppHosts } from "./apps/holding.ts";
 import { resolveAppDomain } from "./apps/host.ts";
 import { LAND_SETTLE_MS, requeueAbandonedChecks, startChecks } from "./checks/service.ts";
 import { RED_HOLD_MS } from "./checks/red_main.ts";
@@ -280,6 +282,21 @@ await reconcile(app);
 // Issues linked under a pillar's umbrella before pillars had labels.
 const labelled = syncAllPillars(app);
 if (labelled > 0) app.log.info("pillars labelled", { issues: labelled });
+// The host apps answer at, resolved once and before the listener opens: an
+// app host never reaches the forge's own router, so `serve` needs it from the
+// first connection (#6726). Only the hostname matters here, not the port.
+const appsOn = process.env.FORGE_APPS !== "0";
+const appDomain = appsOn
+  ? resolveAppDomain({
+      explicit: (process.env.FORGE_APP_DOMAIN ?? "").trim() || undefined,
+      hosted,
+      hostname: new URL(
+        (hosted ? hostedAt : process.env.FORGE_URL)?.trim().replace(/\/+$/, "") ||
+          `http://${app.config.host ?? "localhost"}`,
+      ).hostname,
+    })
+  : undefined;
+if (appDomain?.ok === true) holdAppHosts(app, appDomain.domain);
 const servers = await serve(app);
 const sshStarted =
   sshPort > 0 ? await startForgeSsh(app, { port: sshPort }) : undefined;
@@ -300,18 +317,10 @@ const forgeUrl =
   (hosted ? hostedAt : process.env.FORGE_URL)?.replace(/\/+$/, "") ??
   `http://${host}:${servers.port}`;
 const publicUrl = new URL(forgeUrl);
-const appsOn = process.env.FORGE_APPS !== "0";
-// The host apps answer at is checked once, here: an IP-addressed forge
-// hands out a hostname no URL can hold once a slug attaches to it, and an
-// app that parses its own FORGE_APP_URL (the scaffold does) dies before it
-// answers — every deploy, forever. docs/APPS.md, "Hostnames and the proxy".
-const appDomain = appsOn
-  ? resolveAppDomain({
-      explicit: (process.env.FORGE_APP_DOMAIN ?? "").trim() || undefined,
-      hosted,
-      hostname: publicUrl.hostname,
-    })
-  : undefined;
+// An IP-addressed forge hands out a hostname no URL can hold once a slug
+// attaches to it, and an app that parses its own FORGE_APP_URL (the scaffold
+// does) dies before it answers — every deploy, forever. docs/APPS.md,
+// "Hostnames and the proxy".
 if (appDomain?.ok === false) app.log.error(appDomain.reason);
 if (appDomain?.ok === true && appDomain.note !== undefined)
   app.log.warn(appDomain.note);
@@ -338,6 +347,9 @@ const apps = appDomain?.ok
   : undefined;
 // Which other forge serves this data's apps, read before this one starts its own.
 const presence = apps ? takePresence(app.config.dataDir) : undefined;
+// The runtime is registered by its constructor: app hosts stop waiting now,
+// not at the end of `start()`.
+releaseAppHosts(app);
 await apps?.start();
 // In a rollout this forge takes no traffic until the apps it just started
 // serve: the one it replaces keeps proxying to its own copies until then,
@@ -546,6 +558,11 @@ void proveRelease({
   version: running().version,
   url: forgeUrl,
   token: process.env["FORGE_TOKEN"],
+  // The first app's production host: it must never answer as the forge (#6726).
+  appHost: (() => {
+    const first = listApps(app.db)[0];
+    return apps && first ? apps.urlFor(first, "production") : undefined;
+  })(),
 }).then((p) => p && app.log.info("release proof", { version: p.version, ok: String(p.ok), ...(p.failure ? { failure: p.failure } : {}) }));
 // The release tags of the forge's own repository are its shipped releases (release/shipped.ts);
 // production behind the newest for over an hour is a card (release/behind.ts).

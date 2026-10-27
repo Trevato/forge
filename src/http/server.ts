@@ -540,6 +540,7 @@ import { sseStream, viewerStream } from "./sse.ts";
 import { Router } from "./router.ts";
 import { getUserById } from "../core/users.ts";
 import { appsRuntime } from "../apps/runtime.ts";
+import { holdAppHost } from "../apps/holding.ts";
 import {
   appWebSocket,
   type AppSocket,
@@ -2272,6 +2273,8 @@ export async function serve(app: App): Promise<Servers> {
       noteStart(request, started);
       // An app's hostname is answered before any route: `hello.<domain>` is
       // the app, whatever its path, and the forge's own routes never apply.
+      const holding = await holdAppHost(app, request);
+      if (holding !== undefined) return securityFloor(holding);
       const runtime = appsRuntime(app);
       // The parent's own app host wins: a child named like a pull number
       // must not take `<app>--<n>--<parentHost>`. Only its `"unknown"` falls

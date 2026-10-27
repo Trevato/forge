@@ -59,6 +59,8 @@ export interface Options {
   fetch?: typeof fetch;
   /** Accept a redirect from `/board` to sign-in as the sign-in it is, for a caller holding no token. */
   anonymousBoard?: boolean;
+  /** An app's URL on this forge: `GET /` there must never be a forge page (#6726). */
+  appHost?: string;
 }
 
 /** The redirect statuses a sign-in answers with. */
@@ -167,6 +169,16 @@ export async function smoke(base: string, token = "", options: Options = {}): Pr
       const nav = navigationBranch(sw.body);
       if (nav === null) fail(sw.url, "desktop", sw.res, "no navigation branch");
       else if (/Response\s*\.\s*error\s*\(/.test(nav)) fail(sw.url, "desktop", sw.res, "a navigation can be answered with Response.error()");
+    }
+  }
+  if (options.appHost) {
+    const url = new URL("/", options.appHost).href;
+    try {
+      const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(10_000), headers: { "user-agent": AGENTS["desktop"]! } });
+      const body = await res.text();
+      if (/<title>\s*forge\s*<\/title>/i.test(body)) fail(url, "desktop", res, "an app host answered with the forge's page");
+    } catch (error) {
+      failures.push({ url, agent: "desktop", status: "error", contentType: "", why: String(error) });
     }
   }
   return failures;

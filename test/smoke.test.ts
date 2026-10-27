@@ -160,3 +160,17 @@ test("--outsider without FORGE_TOKEN exits 2 and prints no ok", async () => {
   expect(await new Response(proc.stdout).text()).not.toContain("ok");
   expect(await new Response(proc.stderr).text()).toContain("FORGE_TOKEN");
 });
+
+test("--app-host fails when an app host answers with the forge's page", async () => {
+  const forgePage = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("<title>forge</title>", { headers: { "content-type": "text/html" } }) });
+  const appPage = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("<title>notes</title>") });
+  try {
+    const base = stub("text/css");
+    expect(await smoke(base, "t", { appHost: `http://127.0.0.1:${appPage.port}` })).toEqual([]);
+    const failures = await smoke(base, "t", { appHost: `http://127.0.0.1:${forgePage.port}` });
+    expect(failures.map((f) => f.why)).toEqual(["an app host answered with the forge's page"]);
+  } finally {
+    forgePage.stop(true);
+    appPage.stop(true);
+  }
+});
