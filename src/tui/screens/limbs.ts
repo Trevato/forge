@@ -17,6 +17,11 @@
  * `replanLimb` on confirm. The row reads "with the planner" until it
  * answers, and `p` then takes it back while that is still allowed.
  *
+ * `w` watches the milestone under the cursor, or stops (#7236): the same
+ * `watchMilestone` the page and MCP `watch` reach, so its feed item and its
+ * one push follow. A person only; an agent is told so. A watched row reads
+ * "watching".
+ *
  * `enter` on a limb that has limbs of its own opens them, so a milestone's
  * sub-limbs can be moved among themselves (the `under` of the action).
  * Subscribed to the bus while on the stack, so a move made on the web, or in
@@ -26,9 +31,12 @@
 import { undoFleetOp } from "../../actions/fleet.ts";
 import { previewReplan, replanLimb, takeBackLimb } from "../../actions/limb_replan.ts";
 import { IN_HAND } from "../../actions/plan_words.ts";
+import { MILESTONE_WATCH_PERSON_ONLY } from "../../actions/board_words.ts";
+import { watchMilestone } from "../../actions/watches.ts";
+import { isWatching } from "../../core/watches.ts";
 import { pendingReplans } from "../../core/limb_replan.ts";
 import { applyLimb, previewLimb, type LimbPreview } from "../../actions/limbs.ts";
-import { canAdmin, canRead, canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
+import { canAdmin, canRead, canSeeOwnerFacts, getRepoById, type Repo } from "../../core/repos.ts";
 import { readPlan, type Limb, type Milestone, type Plan } from "../../core/milestones.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -115,6 +123,8 @@ export function limbsScreen(
   let last: string | undefined;
   /** The limbs with the planner, by issue id (#761). */
   let withPlanner = new Set<string>();
+  /** The milestones here the viewer watches, by issue id (#7236). */
+  let watching = new Set<string>();
   // Read at use, not at open: a repository's admin can change under a session.
   const may = (): boolean =>
     f.user !== undefined && f.user.kind === "user" && canAdmin(f.db, repo, f.user);
@@ -133,9 +143,12 @@ export function limbsScreen(
     withPlanner = new Set(pendingReplans(f.db, repo).map((r) => r.limbId));
     spends = new Map();
     paces = new Map();
+    watching = new Set();
     for (const l of limbs) {
       const m = plan.milestone(l.issue.number);
       if (m === undefined) continue;
+      if (f.user?.kind === "user" && isWatching(f.db, f.user.id, m.issue.id))
+        watching.add(m.issue.id);
       if (m.spend !== undefined) spends.set(l.issue.number, m.spend);
       if (m.pace.line !== "") paces.set(l.issue.number, m.pace.line);
     }
@@ -240,6 +253,28 @@ export function limbsScreen(
     );
   };
 
+  /** Watch the milestone under the cursor, or stop: the action decides who may. */
+  const watch = (): void => {
+    const limb = current();
+    if (limb === undefined) return;
+    const on = !watching.has(limb.issue.id);
+    // Read now, not at open: a repository made private under the screen is not watched.
+    const now = getRepoById(f.db, repo.id);
+    const done =
+      now === undefined
+        ? ({ ok: false, error: "not_found" } as const)
+        : watchMilestone(f.app, f.user, now, limb.issue.number, on);
+    if (!done.ok) {
+      ctx.toast(
+        done.error === "forbidden" ? MILESTONE_WATCH_PERSON_ONLY : "no milestone to watch here",
+        "danger",
+      );
+      return;
+    }
+    reload(limb.issue.number);
+    ctx.toast(done.value.watching ? "watching — one item in your feed" : "not watching", "success");
+  };
+
   const undo = (): void => {
     const id = last;
     if (id === undefined || !may()) return;
@@ -268,7 +303,7 @@ export function limbsScreen(
     limbs.map((l, n) => ({
       title: `${n + 1}. ${line(l.issue.number, l.name)}`,
       secondary: withPlanner.has(l.issue.id) ? "with the planner" : l.deferred ? "deferred" : "",
-      meta: `${l.weight.done}/${l.weight.total} done`,
+      meta: `${watching.has(l.issue.id) ? "watching · " : ""}${l.weight.done}/${l.weight.total} done`,
     }));
 
   const screen: Screen = {
@@ -281,6 +316,7 @@ export function limbsScreen(
         binding(["r"], "raise", { disabled: !moves }),
         binding(["l"], "lower", { disabled: !moves }),
         binding(["p"], withPlanner.has(current()?.issue.id ?? "") ? "take back" : "re-plan", { disabled: !may() || current() === undefined }),
+        binding(["w"], watching.has(current()?.issue.id ?? "") ? "unwatch" : "watch", { disabled: current() === undefined }),
         binding(["u"], "undo", { disabled: !may() || last === undefined }),
       ];
     },
@@ -319,6 +355,7 @@ export function limbsScreen(
       else if (e.key === "r") move("raise");
       else if (e.key === "l") move("lower");
       else if (e.key === "p") replan();
+      else if (e.key === "w") watch();
       else if (e.key === "u") undo();
       else return false;
       return true;

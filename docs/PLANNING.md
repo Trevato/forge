@@ -395,7 +395,9 @@ from the plan each time, as that person:
 A watch on a repository the person can no longer read says nothing, in the
 feed or on the phone. An agent does not watch. The same is `PUT` and
 `DELETE /api/v1/repos/:owner/:name/milestones/:number/watch` with a write
-token, `watching` on the milestone's read, and the MCP's `watch`.
+token, `watching` on the milestone's read, and the MCP's `watch`. On the
+terminal's Milestones screen, `w` on a row watches or stops; a watched row
+reads _watching_, and an agent is told only a person watches.
 
 ## A repository on its own
 
