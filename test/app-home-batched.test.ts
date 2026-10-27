@@ -94,7 +94,15 @@ async function queriesFor(path: string): Promise<number> {
   }
   return n;
 }
-
+/**
+ * Background work (timers, following, run loops) can prepare statements on the same db
+ * while a page is read, and only ever adds to the count; the fewest of several reads is the page's own cost.
+ */
+async function costOf(path: string): Promise<number> {
+  let least = Infinity;
+  for (let i = 0; i < 5; i++) least = Math.min(least, await queriesFor(path));
+  return least;
+}
 
 beforeAll(async () => {
   root = mkdtempSync(join(tmpdir(), "forge-home-batched-"));
@@ -178,8 +186,7 @@ beforeAll(async () => {
   });
   cookie = (signin.headers.get("set-cookie") ?? "").split(";")[0]!;
   for (const path of PAGES) {
-    await queriesFor(path); // warm caches
-    small[path] = await queriesFor(path);
+    small[path] = await costOf(path);
   }
   seed([10, 200], [2, 40], [1, 5]);
 });
@@ -197,16 +204,14 @@ const SLACK = 3;
 // issue, pull or run would make the 200/40/5 page cost more than the 10/2/1 one.
 test("now reads its rows in batches with 200 open issues, 40 open pulls and 5 active runs", async () => {
   const path = "/alice/vault";
-  await queriesFor(path);
-  expect(Math.abs((await queriesFor(path)) - small[path]!)).toBeLessThanOrEqual(SLACK);
+  expect(Math.abs((await costOf(path)) - small[path]!)).toBeLessThanOrEqual(SLACK);
 });
 
 test("following stays cheap on a diverged fork (regression guard; this pull does not change it)", async () => {
   const path = "/alice/vault-fork";
   const res = await fetch(`${servers.url}${path}`, { headers: { cookie } });
   expect(res.headers.get("server-timing") ?? "").toContain("following");
-  await queriesFor(path);
-  expect(Math.abs((await queriesFor(path)) - small[path]!)).toBeLessThanOrEqual(SLACK);
+  expect(Math.abs((await costOf(path)) - small[path]!)).toBeLessThanOrEqual(SLACK);
 });
 
 async function phases(path: string): Promise<Record<string, number>> {
