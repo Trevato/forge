@@ -317,6 +317,11 @@ ahead, no rebase or merge is half-finished, and `merge-base --is-ancestor` has
 proved that moving the branch cannot lose a commit. A dirty repo is reported
 and left exactly as you left it.
 
+`sync` hands git your token only for a remote on the workbench's own origin
+(scheme, host and port) over https, or plain http to loopback. A clone whose
+`origin` was edited to anywhere else is fetched without the token, and its row
+says `no token sent`.
+
 `forge` with no arguments opens the local UI on the same runtime as the SSH
 one: the library of clones, then a lazygit-shaped working-tree screen —
 `space` stages, `enter` opens the hunks, `s` stages one, `c` commits, `P`

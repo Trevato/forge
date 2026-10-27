@@ -40,6 +40,8 @@ export interface RepoReport {
   readonly lastFetch: Date | null;
   readonly fastForwarded: boolean;
   readonly error: string | null;
+  /** Why git ran without the token, in one line; absent when it had it. */
+  readonly note?: string;
 }
 
 export interface SyncReport {
@@ -140,10 +142,14 @@ async function visit(
 ): Promise<RepoReport> {
   const dir = join(root, owner, name);
   const label = `${owner}/${name}`;
-  const env = tokenGitEnv(opts.token);
   const progress = (text: string): void => opts.onProgress?.(label, text);
   let cloned = false;
   let error: string | null = null;
+  let note: string | undefined;
+  const withheld = (why: string): void => {
+    note = why;
+    progress(why);
+  };
 
   const exists = await Bun.file(join(dir, ".git/HEAD")).exists();
   if (!exists) {
@@ -151,22 +157,30 @@ async function visit(
       return absent(owner, name, dir, pin !== null);
     await mkdir(join(root, owner), { recursive: true });
     const url = await remoteFor(pin);
+    const why = url.ssh ? null : tokenRefusal(url.url, opts.api.url);
+    if (why !== null) withheld(why);
     const result = await git.clone(url.url, dir, {
       parent: join(root, owner),
       onProgress: progress,
-      ...(url.ssh ? {} : { env }),
+      ...(url.ssh || why !== null ? {} : { env: tokenGitEnv(opts.token) }),
     });
     if (!result.ok)
-      return { ...absent(owner, name, dir, true), error: result.error.stderr };
+      return {
+        ...absent(owner, name, dir, true),
+        error: result.error.stderr,
+        ...(note === undefined ? {} : { note }),
+      };
     cloned = true;
     if (pin.origin !== null)
       await git.setRemote(dir, "upstream", pin.origin.htmlUrl);
   } else if (opts.fetch) {
     const url = await git.remoteUrl(dir);
     const ssh = url !== null && !url.startsWith("http");
+    const why = ssh ? null : tokenRefusal(url, opts.api.url);
+    if (why !== null) withheld(why);
     const result = await git.fetch(dir, {
       onProgress: progress,
-      ...(ssh ? {} : { env }),
+      ...(ssh || why !== null ? {} : { env: tokenGitEnv(opts.token) }),
     });
     if (!result.ok) error = result.error.stderr;
   }
@@ -203,6 +217,7 @@ async function visit(
     pinned: pin !== null,
     fastForwarded,
     error,
+    ...(note === undefined ? {} : { note }),
     ...after,
   };
 }
@@ -285,6 +300,35 @@ function absent(
     fastForwarded: false,
     error: null,
   };
+}
+
+/**
+ * Why the token must not go to this git URL, or null when it may: the URL has
+ * the workbench's own origin (scheme, host, port), and is https or plain http
+ * to loopback. An edited `origin` must not be able to collect the token.
+ */
+export function tokenRefusal(
+  remote: string | null,
+  workbench: string,
+): string | null {
+  const refuse = (what: string): string =>
+    `token withheld: origin ${what} is not this workbench over https`;
+  if (remote === null) return refuse("(unreadable)");
+  let r: URL;
+  let w: URL;
+  try {
+    r = new URL(remote);
+    w = new URL(workbench);
+  } catch {
+    return refuse("(unparseable)");
+  }
+  if (r.origin !== w.origin) return refuse(r.origin);
+  if (r.protocol === "https:") return null;
+  const loopback =
+    r.hostname === "localhost" ||
+    r.hostname === "[::1]" ||
+    /^127\./.test(r.hostname);
+  return r.protocol === "http:" && loopback ? null : refuse(r.origin);
 }
 
 /**
