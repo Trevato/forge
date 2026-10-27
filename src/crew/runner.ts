@@ -144,7 +144,14 @@ import { trackAgentRun, untrackAgentRun } from "./running.ts";
 import { installCacheEnv, sandboxPolicy } from "./sandbox.ts";
 import { grantSecrets, parseDeclaration, type Grant } from "./grant.ts";
 import { historyHolds, scrubTree } from "./leak.ts";
-import { removeClone, workdirFor } from "./workdir.ts";
+import {
+  installCacheDir,
+  installDependencies,
+  installNote,
+  type InstallRunner,
+  removeClone,
+  workdirFor,
+} from "./workdir.ts";
 import { readersAmong, voiceOf } from "./direct.ts";
 import { feedbackSince } from "./news.ts";
 import { handedOverPulls, RETRY_SUMMARY, SKIP_SUMMARY, skipsFeedback } from "./guard.ts";
@@ -178,6 +185,8 @@ export interface CrewOptions {
   readonly tickMs?: number | undefined;
   /** The clock a run's timing line reads; tests pass a fake. @default Date.now */
   readonly now?: (() => number) | undefined;
+  /** What runs `bun install` in a clone; tests pass a stand-in. @default bun */
+  readonly installRunner?: InstallRunner | undefined;
 }
 
 export { crewRoot, workdirFor } from "./workdir.ts";
@@ -980,6 +989,15 @@ async function work(
     );
     watch.lap("clone");
     if (!prepared.ok) return { state: "failed", summary: prepared.error };
+    // Dependencies before the agent starts, so the type check has its types;
+    // a failure is logged and the run goes on.
+    const deps = await installDependencies(
+      dir,
+      installCacheDir(app.config.dataDir, repo.id),
+      options.installRunner,
+    );
+    const note = installNote(deps);
+    if (note !== undefined) write(note);
 
     // What the agent is told.
     // The session belongs to the task, which spans the issue and the pull

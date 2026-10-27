@@ -22,6 +22,7 @@ const PIPING: Record<string, { sites: string[]; reason: string }> = {
   "src/crew/plan.ts": { sites: ["stdout"], reason: "stdout awaited with the exit; stderr ignored" },
   "src/crew/runner.ts": { sites: ["stdout"], reason: "lsof stdout awaited; stderr ignored" },
   "src/crew/sandbox.ts": { sites: ["stderr"], reason: "stderr awaited with the exit; stdout ignored" },
+  "src/crew/workdir.ts": { sites: ["stderr"], reason: "stderr read to its end alongside the exit; stdout ignored" },
   "src/git/env.ts": { sites: ["stdout+stderr", "stdout+stderr"], reason: "stdout and stderr both read to the end, finally clears the timer" },
   "src/git/local.ts": { sites: ["stdout+stderr", "stdout+stderr"], reason: "stdout and stderr both read to the end" },
   "src/git/read.ts": { sites: ["stdout"], reason: "cat-file stdout is read by the long-lived reader; stderr ignored" },

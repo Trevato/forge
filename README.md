@@ -66,6 +66,18 @@ days. A ratio over nothing is `null`, and an agent with no pull has `all` and
 `recent` null. Any token of a forge admin may read it (401 with none, 403 for
 anyone else); the tool is listed for admins only.
 
+A crew clone's dependencies are installed before the agent starts
+(`installDependencies` in `src/crew/workdir.ts`), once per lockfile hash, so
+the type check has its types. That install runs on the forge side, outside the
+agent's shell sandbox, because the sandbox is built around the agent and the
+install has to finish before it starts. It is bounded instead: a child env of
+`PATH`, `HOME`, `TMPDIR` and the repository's install cache only (no `FORGE_*`
+variable or key), `--ignore-scripts` so no package runs code, `--frozen-lockfile`,
+and a 120 s kill. What remains is the registry and tarball fetch, which a
+repository's `bunfig.toml` can point at a host of its choosing; that is the same
+reach the agent's own `bun install` has through the sandbox's allowed hosts, and
+a failed or killed install only logs and lets the run start.
+
 Git hosting, code browsing, and a JSON API in one fast Bun process, with
 **zero runtime dependencies** — the `package.json` dependency list is empty and
 stays that way. The one exception is dev-only: `@anthropic-ai/sandbox-runtime`
