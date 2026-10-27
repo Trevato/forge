@@ -22,16 +22,17 @@ describe("MCP flags", () => {
   let app: App;
   let servers: Servers;
 
-  const call = async (token: string) => {
+  const call = async (token: string, name = "flags", args: Record<string, unknown> = {}) => {
     const res = await fetch(`${servers.url}/mcp`, {
       method: "POST",
       headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${token}` },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "flags", arguments: {} } }),
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
     });
     const body = (await res.json()) as any;
     return { error: body.result.isError === true, text: body.result.content[0].text as string };
   };
-  const tokenOf = (name: string) => createToken(app.db, getUserByName(app.db, name)!.id, "t", "ro").token;
+  const tokenOf = (name: string, scope: "ro" | "admin" = "ro") =>
+    createToken(app.db, getUserByName(app.db, name)!.id, "t", scope).token;
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-mcp-flags-"));
@@ -56,28 +57,15 @@ describe("MCP flags", () => {
     const out = await call(tokenOf("alice"));
     expect(out.error).toBe(false);
     expect(JSON.parse(out.text).flags).toEqual([
-      { name: "alpha", why: "shows the new board", default: false, issue: 5417, live: null },
+      { name: "alpha", why: "shows the new board", default: false, issue: 5417 },
     ]);
   });
 
-  test("after it is set on the page, the live value changes", async () => {
-    const cookie = (
-      await fetch(`${servers.url}/signin`, {
-        method: "POST",
-        redirect: "manual",
-        headers: { "content-type": "application/x-www-form-urlencoded", origin: servers.url },
-        body: new URLSearchParams({ username: "alice", password: PASS }),
-      })
-    ).headers.get("set-cookie")!.split(";")[0]!;
-    const set = await fetch(`${servers.url}/settings/flags`, {
-      method: "POST",
-      redirect: "manual",
-      headers: { cookie, "content-type": "application/x-www-form-urlencoded", origin: servers.url },
-      body: new URLSearchParams({ name: "alpha", forge: "on", percent: "30" }),
-    });
-    expect(set.status).toBe(303);
+  test("flag_set changes the live value", async () => {
+    const set = await call(tokenOf("alice", "admin"), "flag_set", { name: "alpha", value: { forge: true, percent: 30 } });
+    expect(set.error).toBe(false);
     const [flag] = JSON.parse((await call(tokenOf("alice"))).text).flags;
-    expect(flag.live).toEqual({ forge: true, percent: 30 });
+    expect(flag.value).toEqual({ forge: true, percent: 30 });
     expect(flag.default).toBe(false);
   });
 
