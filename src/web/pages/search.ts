@@ -75,6 +75,9 @@ interface Apps {
 const privateBadge = (yes: boolean): Html =>
   when(yes, () => badge("Private", { icon: "lock", variant: "secondary" }));
 
+const archivedBadge = (yes: boolean): Html =>
+  when(yes, () => badge("Archived", { variant: "secondary" }));
+
 /** Whether an app is live. No query — `runtime.status` reads what is
  * already in memory. Undefined for a private app the viewer may not enter:
  * its state is its writers' and crew's (`envsFor`), and "not running" would
@@ -129,7 +132,7 @@ function repoHitRow(ctx: Ctx, apps: Apps, hit: RepoHit): Html {
         ? counts
         : badge(live.word, { tone: live.tone })}${privateBadge(
         hit.visibility === "private",
-      )}`,
+      )}${archivedBadge(hit.archived)}`,
     });
   }
   const mirror = hit.mirroredAs;
@@ -237,6 +240,7 @@ function codeHitRow(hit: CodeHit, query: string): Html {
           >${markMatch(hit.text.trim(), query)}</span
         >
       </span>
+      ${when(hit.archived, () => html`<span class="row-trail">${archivedBadge(true)}</span>`)}
     </a>
   </li>`;
 }

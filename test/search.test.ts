@@ -60,6 +60,7 @@ interface Results {
   )[];
   code: {
     repo: { owner: string; name: string };
+    archived?: boolean;
     path: string;
     line: number;
     text: string;
@@ -453,6 +454,7 @@ describe("search: one query, four sources", () => {
     expect(results.code).toEqual([
       {
         repo: { owner: "alice", name: "widget-engine" },
+        archived: false,
         path: "notes/a:1:b.txt",
         line: 2,
         text: "colon needle here",

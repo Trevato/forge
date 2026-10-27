@@ -64,6 +64,8 @@ export type RepoHit =
       readonly name: string;
       readonly description: string;
       readonly visibility: "public" | "private";
+      /** Put away by an admin: still found, but not live. */
+      readonly archived: boolean;
       readonly openIssues: number;
       readonly openPulls: number;
     }
@@ -108,6 +110,8 @@ export type IssueHit =
 
 export interface CodeHit {
   readonly repo: { owner: string; name: string };
+  /** The repository is archived. */
+  readonly archived: boolean;
   readonly path: string;
   readonly line: number;
   readonly text: string;
@@ -177,6 +181,7 @@ function toRepoHit(repo: Repo): RepoHit {
     name: repo.name,
     description: repo.description,
     visibility: repo.visibility,
+    archived: repo.archivedAt !== null,
     openIssues: repo.counts?.openIssues ?? 0,
     openPulls: repo.counts?.openPulls ?? 0,
   };
@@ -518,6 +523,7 @@ export async function grepRepos(
         if (hits.length >= limit) return { hits, truncated: true, more: false };
         hits.push({
           repo: { owner: repo.ownerName, name: repo.name },
+          archived: repo.archivedAt !== null,
           ...hit,
         });
       }
