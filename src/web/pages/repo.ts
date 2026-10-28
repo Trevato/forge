@@ -71,6 +71,7 @@ import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, fragment, page, redirect } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
+import { csvJs, isCsvPath } from "../render/csv.ts";
 import { HEAD_BYTES } from "../render/kinds.ts";
 import { rendererFor } from "../render/renderers.ts";
 import { mediaHref } from "./media.ts";
@@ -1027,14 +1028,21 @@ export function renderBlob(
   // a kind with no renderer yet, or one over its cap, keeps the source view.
   const renderer = rendererFor(o.path, blob);
   const view: BlobView = renderer ? (o.view ?? "rendered") : "source";
-  const { content, lines, summary } =
+  const drawn =
     view === "rendered" && renderer
       ? renderer.render({
           path: o.path,
           size: blob.size,
           body: renderer.body,
           media: mediaHref(base, o.ref, o.path),
+          pathHref: `${base}/blob/${encoded}/${o.path}`,
+          all: o.all === true,
         })
+      : undefined;
+  const fellBack = drawn?.fallback;
+  const { content, lines, summary } =
+    drawn !== undefined && fellBack === undefined
+      ? drawn
       : { ...blobBody(base, o.ref, o.path, blob, o.highlighted, o.all), summary: undefined };
   const sizeText =
     blob.kind === "too_large" ? "" : sizeWithTokens(blob.size, o.path);
@@ -1066,12 +1074,12 @@ export function renderBlob(
               {
                 label: "Rendered",
                 href: fileHref,
-                current: view === "rendered",
+                current: view === "rendered" && fellBack === undefined,
               },
               {
                 label: "Source",
                 href: `${fileHref}?view=source`,
-                current: view === "source",
+                current: view === "source" || fellBack !== undefined,
               },
             ])}</span
           >`,
@@ -1095,6 +1103,10 @@ export function renderBlob(
       })}
       ${editAction(scope, o.ref, o.path)}
     </div>
+    ${when(
+      fellBack !== undefined,
+      () => html`<p class="muted small mb">Showing the source: ${fellBack}</p>`,
+    )}
     ${content}
   </div>`;
 }
@@ -1350,6 +1362,8 @@ export function codePage(
     content: Html;
     header?: Html;
     before?: Html;
+    /** Script only some files need (the CSV table's sort and filter). */
+    extraJs?: string;
   },
 ): Response {
   return page({
@@ -1360,7 +1374,7 @@ export function codePage(
     body: html`${o.header ?? scopeHeader(ctx, scope, "code", { compact: true })}
     ${o.before ?? null} ${codeLayout(o.explorer, o.content)}
     ${codeMount(scope, o.ref)} ${finderDialog()}`,
-    scriptJs: codeJs,
+    scriptJs: o.extraJs === undefined ? codeJs : `${codeJs}\n${o.extraJs}`,
     wide: true,
   });
 }
@@ -1487,6 +1501,7 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
       ),
     }),
     content: pane,
+    ...(isCsvPath(path) ? { extraJs: csvJs } : {}),
   });
   notePhase(ctx.request, "render", paneMs + performance.now() - pageStart);
   return response;

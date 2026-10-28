@@ -7,6 +7,7 @@
 import type { Html } from "../html.ts";
 import type { Blob } from "../../view/source.ts";
 import { audio } from "./audio.ts";
+import { csv } from "./csv.ts";
 import { image } from "./image.ts";
 import { claimedMedia, fileKind, HEAD_BYTES, NO_BYTES, RENDER_CAP, type FileKind } from "./kinds.ts";
 import { markdown } from "./markdown.ts";
@@ -23,6 +24,10 @@ export interface RenderInput {
   readonly body: Uint8Array;
   /** `/:owner/:name/media/:ref/*path`, for `<img>`, `<video>` and `fetch()`. */
   readonly media: string;
+  /** The file page's own address, for a link back to it (`?all=1`). */
+  readonly pathHref?: string;
+  /** `?all=1`: draw past the default window, up to the renderer's cap. */
+  readonly all?: boolean;
 }
 
 export interface Rendered {
@@ -31,6 +36,8 @@ export interface Rendered {
   readonly lines: number;
   /** The header's facts in place of the line count, as `1.2 MB · WebM`. */
   readonly summary?: string;
+  /** Set when the file cannot be drawn: the source view shows, with this reason. */
+  readonly fallback?: string;
 }
 
 export type Renderer = (input: RenderInput) => Rendered;
@@ -39,6 +46,7 @@ export const RENDERERS: Partial<Readonly<Record<FileKind, Renderer>>> = {
   image,
   svg: image,
   markdown,
+  csv,
   audio,
   video,
 };

@@ -247,6 +247,24 @@ form.inline { display: inline; margin-left: auto; }
 }
 .code tr:target .ln, .code tr[data-hl] .ln { color: var(--attn); }
 
+/* ---- csv view: the header stays under the bar, the first column on phones ---- */
+.csv-tools { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.csv-tools[hidden], .csv-view tr[hidden] { display: none; }
+.csv-tools .input { max-width: 260px; }
+.csv-scroll { overflow: auto; max-height: 75vh; scrollbar-width: thin; }
+.csv-view th { position: sticky; top: 0; z-index: 2; background: var(--card); user-select: none; }
+.csv-sort {
+  font: inherit; color: inherit; background: none; border: 0; padding: 0;
+  text-align: inherit; cursor: pointer;
+}
+.csv-sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+.csv-view th:first-child { z-index: 3; }
+.csv-view td { max-width: 40ch; overflow-wrap: anywhere; }
+.csv-view th[aria-sort="ascending"]::after { content: " \\25B2"; font-size: 12.5px; }
+.csv-view th[aria-sort="descending"]::after { content: " \\25BC"; font-size: 12.5px; }
+.csv-view .num { text-align: right; }
+.csv-more { padding: 10px 12px; margin: 0; }
+
 /* ---- syntax tokens (colors come from the active theme) ----
    Two layers, exactly as the tokenizer emits them: a colour class every
    consumer understands, and — where the web can say something finer — a kind
