@@ -97,13 +97,13 @@ test("prints one line per ask, in the API's order, every kind kept", async () =>
   expect(seen.at(-1)).toBe("/api/v1/asks Bearer tok");
   const lines = run.out.trimEnd().split("\n");
   expect(lines).toHaveLength(4);
-  expect(lines[0]!.startsWith("look       alice/shop   Pull #3")).toBe(true);
+  expect(lines[0]!.startsWith("1  look       alice/shop   Pull #3")).toBe(true);
   expect(lines[0]!.endsWith(`  ${base}/alice/shop/pulls/3`)).toBe(true);
-  expect(lines[1]!.startsWith("parked     alice/notes  Issue #9")).toBe(true);
+  expect(lines[1]!.startsWith("2  parked     alice/notes  ")).toBe(true);
   expect(lines[1]!.endsWith(`…  ${base}/alice/notes/issues/9`)).toBe(true);
   // An unknown kind with no line prints its kind as its title.
-  expect(lines[2]).toBe(`brand-new  bob/lab      brand-new  ${base}/#ask-x-3`);
-  expect(lines[3]!.startsWith("forge                   The check")).toBe(true);
+  expect(lines[2]).toBe(`3  brand-new  bob/lab      brand-new  ${base}/#ask-x-3`);
+  expect(lines[3]!.startsWith("4  forge                   The check")).toBe(true);
   expect(lines[3]!.endsWith(`  ${base}/`)).toBe(true);
   // A pipe has no width; the CLI takes 80 and leaves the last column free.
   for (const line of lines) expect(line.length).toBeLessThanOrEqual(79);
@@ -148,7 +148,7 @@ test("--repo keeps only that repository's asks", async () => {
   expect(run.code).toBe(EXIT.ok);
   const lines = run.out.trimEnd().split("\n");
   expect(lines).toHaveLength(1);
-  expect(lines[0]!.startsWith("parked  alice/notes  Issue #9")).toBe(true);
+  expect(lines[0]!.startsWith("1  parked  alice/notes  Issue #9")).toBe(true);
 
   const none = await forge(["asks", "--repo", "carol/elsewhere"]);
   expect(none.out).toBe("Nothing waits on you.\n");

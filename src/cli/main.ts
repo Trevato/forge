@@ -7,6 +7,8 @@
  *   forge sync                clone what is missing, fetch the rest, report
  *   forge status              the same report without touching the network
  *   forge asks                what waits on you, most important first
+ *   forge asks --ship 1 3     decide asks by their numbers: planned, then a y/N
+ *   forge asks --undo <id>    take back what that decided
  *   forge ship <number>       land a pull after a y/N, as its Merge button does
  *
  * Everything here is a thin shell around three modules: `api.ts` talks to the
@@ -16,7 +18,8 @@
  */
 
 import { parseArgs, parseDuration, parseRepoRef, type Args } from "./args.ts";
-import { ForgeApi, type ApiError, type Ask } from "./api.ts";
+import { ForgeApi, type ApiError, type Ask, type Bulk } from "./api.ts";
+import { parseWish, pickAsks, type Wish } from "./decide.ts";
 import {
   clearConfig,
   configPath,
@@ -60,7 +63,7 @@ export const EXIT = {
   refused: 5,
 } as const;
 
-const VALUE_FLAGS = ["token", "interval", "root", "url", "limit", "repo"];
+const VALUE_FLAGS = ["token", "interval", "root", "url", "limit", "repo", "reason"];
 
 /** What the CLI needs from the person at the keyboard; a test fakes it. */
 export interface Io {
@@ -116,7 +119,7 @@ export async function main(
     case "open":
       return openRepo(out, args);
     case "asks":
-      return asks(out, args);
+      return asks(out, args, argv.slice(1));
     case "ship":
       return ship(out, args, io);
     case "ui":
@@ -150,6 +153,10 @@ function usage(out: Out): void {
   );
   out.line(
     b("  forge asks") + "                   [--repo owner/name] [--json]",
+  );
+  out.line(
+    b("  forge asks --ship|--close|--dismiss <n…>") +
+      "  [--reason words] [--yes]",
   );
   out.line(b("  forge ship <number>") + "          [--repo owner/name] [--yes]");
   out.line();
@@ -516,7 +523,17 @@ async function pulls(out: Out, args: Args): Promise<number> {
  * What waits on you, one line each, in the order the forge ranks it: kind,
  * repository, title cut to the terminal, and the address to decide it at.
  */
-async function asks(out: Out, args: Args): Promise<number> {
+export async function asks(
+  out: Out,
+  args: Args,
+  argv: readonly string[] = [],
+  confirm: Confirm = confirmOnTty,
+): Promise<number> {
+  const wish = parseWish(argv);
+  if (typeof wish === "string") {
+    out.err(`forge asks: ${wish}`);
+    return EXIT.usage;
+  }
   const only = args.value("repo");
   const ref = only === undefined ? undefined : parseRepoRef(only);
   if (only !== undefined && ref === undefined) {
@@ -525,12 +542,21 @@ async function asks(out: Out, args: Args): Promise<number> {
   }
   const loaded = await requireConfig(out);
   if (typeof loaded === "number") return loaded;
-  const answer = await new ForgeApi(loaded.url, loaded.token).asks();
+  const api = new ForgeApi(loaded.url, loaded.token);
+  const answer = await api.asks();
   if (!answer.ok) {
     out.err(`forge asks: ${answer.error.message}`);
     return answer.error.status === 401 ? EXIT.notConfigured : EXIT.failed;
   }
   const repo = ref === undefined ? undefined : `${ref.owner}/${ref.name}`;
+  if (wish !== undefined && wish.action === "undo")
+    return decide(out, api, wish, [], true, confirm);
+  if (wish !== undefined) {
+    const rows = answer.value.asks.filter(
+      (a) => repo === undefined || a.repo === repo,
+    );
+    return decide(out, api, wish, rows, args.flag("yes"), confirm);
+  }
   if (args.flag("json")) {
     const raw = answer.value.raw;
     out.line(JSON.stringify(repo === undefined ? raw : onlyRepo(raw, repo)));
@@ -543,8 +569,98 @@ async function asks(out: Out, args: Args): Promise<number> {
     out.line("Nothing waits on you.");
     return EXIT.ok;
   }
-  for (const line of askLines(rows, out.width, out)) out.line(line);
+  const numberW = String(rows.length).length;
+  const lines = askLines(rows, out.width - numberW - 2, out);
+  lines.forEach((line, i) =>
+    out.line(`${String(i + 1).padStart(numberW)}  ${line}`),
+  );
   return EXIT.ok;
+}
+
+/** Whether to go ahead: undefined when there is no one to ask. */
+export type Confirm = (question: string) => Promise<boolean | undefined>;
+
+const confirmOnTty: Confirm = async (question) => {
+  if (process.stdin.isTTY !== true || process.stdout.isTTY !== true)
+    return undefined;
+  process.stdout.write(question);
+  const line = await new Promise<string>((resolve) => {
+    const stdin = process.stdin;
+    stdin.setEncoding("utf8");
+    stdin.once("data", (chunk) => {
+      stdin.pause();
+      resolve(String(chunk));
+    });
+    stdin.resume();
+  });
+  return /^\s*y(es)?\s*$/i.test(line);
+};
+
+/**
+ * Decide asks by the numbers of the list just read: the plan first, then,
+ * after a yes (or `--yes`), the deed and the line that undoes it.
+ */
+async function decide(
+  out: Out,
+  api: ForgeApi,
+  wish: Wish,
+  rows: readonly Ask[],
+  yes: boolean,
+  confirm: Confirm,
+): Promise<number> {
+  const fail = (e: { message: string; status: number }): number => {
+    out.err(`forge asks: ${e.message}`);
+    return e.status === 401 ? EXIT.notConfigured : EXIT.failed;
+  };
+  if (wish.action === "undo") {
+    const back = await api.undo(wish.numbers[0]!);
+    if (!back.ok) return fail(back.error);
+    printBulk(out, back.value, "undo", true);
+    return EXIT.ok;
+  }
+  const ids = pickAsks(wish.numbers, rows);
+  if (!Array.isArray(ids)) {
+    out.err(`forge asks: ${ids.refused}`);
+    return EXIT.usage;
+  }
+  const plan = await api.bulk(wish.action, ids, wish.reason, true);
+  if (!plan.ok) return fail(plan.error);
+  printBulk(out, plan.value, wish.action, false);
+  const changes = plan.value.rows.filter((r) => r.outcome === "change").length;
+  if (changes === 0) {
+    out.line("Nothing would change.");
+    return EXIT.ok;
+  }
+  if (!yes) {
+    const said = await confirm("Apply? [y/N] ");
+    if (said === undefined) {
+      out.err("forge asks: not applied — no terminal to ask on; add --yes");
+      return EXIT.usage;
+    }
+    if (!said) {
+      out.line("Nothing applied.");
+      return EXIT.ok;
+    }
+  }
+  const done = await api.bulk(wish.action, ids, wish.reason, false);
+  if (!done.ok) return fail(done.error);
+  printBulk(out, done.value, wish.action, true);
+  if (done.value.id !== undefined) {
+    out.line(`Receipt ${inert(done.value.id)}`);
+    out.line(`Undo: forge asks --undo ${inert(done.value.id)}`);
+  }
+  return EXIT.ok;
+}
+
+function printBulk(out: Out, bulk: Bulk, action: string, done: boolean): void {
+  out.line(done ? `Applied: ${action}` : `Would ${action}:`);
+  for (const r of bulk.rows) {
+    const move = r.before === r.after ? "" : `  ${r.before} → ${r.after}`;
+    const why = r.reason === "" ? "" : `  (${r.reason})`;
+    out.line(`  ${pad(inert(r.outcome), 9)} ${inert(r.label)}${inert(move)}${inert(why)}`);
+  }
+  for (const s of bulk.skipped)
+    out.line(`  skipped   ${inert(s.item)}  (${inert(s.reason)})`);
 }
 
 /**
@@ -563,7 +679,7 @@ export function askLines(
     const url = inert(a.url);
     // Three two-space gaps; the title gets what the other columns leave.
     const room = Math.max(
-      8,
+      1,
       width - 1 - kindW - repoW - displayWidth(url) - 6,
     );
     const kind = pad(inert(a.kind), kindW);

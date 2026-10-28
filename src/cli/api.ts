@@ -52,6 +52,8 @@ const PULL_PAGES = 20;
 
 /** One thing waiting on the user, as `forge asks` prints it. */
 export interface Ask {
+  /** The API's id for a row, to decide it by; absent on the forge's own needs. */
+  readonly id?: string;
   /** The API's kind (`look`, `parked`, `proposal`, …), or `forge` for its own needs. */
   readonly kind: string;
   /** `owner/name`, or "" for a need of the forge itself. */
@@ -67,6 +69,25 @@ export interface Asks {
   /** The rows in the order the forge ranks them, then the forge's own needs. */
   readonly asks: Ask[];
 }
+
+export interface BulkRow {
+  readonly label: string;
+  /** `change`, `unchanged` or `refused` in a plan; what happened in a receipt. */
+  readonly outcome: string;
+  readonly reason: string;
+  readonly before: string;
+  readonly after: string;
+}
+
+export interface Bulk {
+  /** The operation's id, on a receipt only. */
+  readonly id: string | undefined;
+  readonly rows: BulkRow[];
+  readonly skipped: { item: string; reason: string }[];
+}
+
+const show = (value: unknown): string =>
+  value === null || value === undefined ? "" : String(value);
 
 export class ForgeApi {
   /** True once `pins()` has had to fall back, so the CLI can say it once. */
@@ -315,7 +336,9 @@ export class ForgeApi {
       const kind = str(r["kind"]) ?? "ask";
       const repo = str(r["repo"]) ?? "";
       const proposal = r["proposal"] as Record<string, unknown> | undefined;
+      const id = str(r["id"]);
       asks.push({
+        ...(id === undefined ? {} : { id }),
         kind,
         repo,
         title: titleOf(
@@ -331,6 +354,60 @@ export class ForgeApi {
         asks.push({ kind: "forge", repo: "", title, url: this.absolute("/") });
     }
     return ok({ raw: out.value, asks });
+  }
+
+  /**
+   * One action on many asks (`POST /api/v1/asks/bulk`): the plan while
+   * `preview` is true, the deed and its receipt when false.
+   */
+  async bulk(
+    action: string,
+    items: readonly string[],
+    reason: string | undefined,
+    preview: boolean,
+  ): Promise<ApiResult<Bulk>> {
+    const out = await this.call<Record<string, unknown>>("/api/v1/asks/bulk", {
+      method: "POST",
+      body: JSON.stringify({
+        action,
+        items,
+        ...(reason === undefined ? {} : { reason }),
+        preview,
+      }),
+    });
+    if (!out.ok) return out;
+    return ok(this.toBulk(out.value));
+  }
+
+  private toBulk(value: Record<string, unknown>): Bulk {
+    const out = { value };
+    const rows: BulkRow[] = [];
+    for (const item of Array.isArray(out.value["rows"]) ? out.value["rows"] : []) {
+      const r = (item ?? {}) as Record<string, unknown>;
+      rows.push({
+        label: str(r["label"]) ?? "",
+        outcome: str(r["outcome"]) ?? "",
+        reason: str(r["reason"]) ?? "",
+        before: show(r["before"]),
+        after: show(r["after"]),
+      });
+    }
+    const skipped: { item: string; reason: string }[] = [];
+    for (const item of Array.isArray(out.value["skipped"]) ? out.value["skipped"] : []) {
+      const r = (item ?? {}) as Record<string, unknown>;
+      skipped.push({ item: str(r["item"]) ?? "", reason: str(r["reason"]) ?? "" });
+    }
+    return { id: str(out.value["id"]), rows, skipped };
+  }
+
+  /** Reverse a bulk receipt (`POST /api/v1/asks/bulk/:id/undo`). */
+  async undo(id: string): Promise<ApiResult<Bulk>> {
+    const out = await this.call<Record<string, unknown>>(
+      `/api/v1/asks/bulk/${encode(id)}/undo`,
+      { method: "POST" },
+    );
+    if (!out.ok) return out;
+    return ok(this.toBulk(out.value));
   }
 
   /** A workbench path as a full address; anything not a path is the home. */
