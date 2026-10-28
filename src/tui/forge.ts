@@ -58,6 +58,7 @@ import { usageScreen } from "./screens/usage.ts";
 import { canScreen } from "./screens/can.ts";
 import { peopleScreen } from "./screens/people.ts";
 import { modelCeilingPrompt, modelGrantPrompt, modelScreen } from "./screens/model.ts";
+import { notifyScreen } from "./screens/notify.ts";
 import { sshKeysScreen } from "./screens/sshkeys.ts";
 import { proposalTokensPrompt } from "./screens/proposal_tokens.ts";
 import { invitesScreen } from "./screens/invites.ts";
@@ -260,6 +261,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Decider",
         hint: "what it closed, deferred and asked you about today",
         run: () => ctx.push(deciderScreen(session, ctx)),
+      });
+    // Where a decision finds the owner; an agent is never offered it.
+    if (session.signedIn && session.user?.kind !== "agent")
+      commands.push({
+        id: "notify",
+        title: "Phone notifications",
+        hint: "where the crew reaches your phone; s sets, x turns off",
+        run: () => ctx.push(notifyScreen(session, ctx)),
       });
     if (session.signedIn)
       commands.push({
