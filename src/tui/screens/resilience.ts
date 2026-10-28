@@ -15,6 +15,7 @@
  * `f` forgets it, through `actions/mirror.ts` — the Backups page's and MCP's
  * rules and words. Each asks five prompts (endpoint, bucket, region, access
  * key, secret key — both keys typed masked; a blank keeps what was sealed).
+ * `t` tries the destination in effect, as `testDestination` says it.
  * A key is never drawn, kept past the save, or put in a note.
  */
 
@@ -25,6 +26,7 @@ import {
   invalidField,
   mayChangeDestination,
   saveDestination,
+  testDestination,
   type DestinationInput,
 } from "../../actions/destination.ts";
 import { forgetMirror, saveMirror } from "../../actions/mirror.ts";
@@ -196,6 +198,22 @@ export function resilienceScreen(f: Session, ctx: Ctx): Screen {
       },
     });
 
+  // All fields blank: the destination in effect is tried, and the sentence never carries a key.
+  let testing = false;
+  const test = async (): Promise<void> => {
+    if (testing) return;
+    testing = true;
+    say("Testing where snapshots go…");
+    try {
+      const tried = await ctx.track(testDestination(f.app, f.user, BLANK));
+      say(tried.ok ? tried.value : refusedAll);
+    } catch {
+      say("The test failed before it could say why.");
+    } finally {
+      testing = false;
+    }
+  };
+
   const body = (): string[] => {
     // The question and the answer come first: a long list must not clip them.
     const out: string[] = [];
@@ -203,7 +221,7 @@ export function resilienceScreen(f: Session, ctx: Ctx): Screen {
     else if (said !== "") out.push(...wrap(said, INNER), "");
     out.push(...wrap(destinationLine(f), INNER), ...wrap(mirrorLine(f), INNER));
     if (note !== "") out.push(...wrap(note, INNER));
-    if (mayChange()) out.push("d sets where snapshots go, x forgets it.", "m sets the mirror, f forgets it.");
+    if (mayChange()) out.push("d sets where snapshots go, x forgets it.", "m sets the mirror, f forgets it.", "t tests where snapshots go.");
     out.push("", "Snapshots, newest first:");
     if (snapshots === undefined) out.push("  reading…");
     else if (snapshots === "unreadable") out.push("  the snapshots could not be read");
@@ -225,6 +243,7 @@ export function resilienceScreen(f: Session, ctx: Ctx): Screen {
               binding(["x"], "forget destination"),
               binding(["m"], "set the mirror"),
               binding(["f"], "forget the mirror"),
+              binding(["t"], "test where snapshots go"),
             ]
           : []),
         binding(["enter", "esc", "q"], "close"),
@@ -258,6 +277,7 @@ export function resilienceScreen(f: Session, ctx: Ctx): Screen {
       else if (e.key === "x") ctx.push(forgetDest());
       else if (e.key === "m") ctx.push(step(mirror, 0, BLANK));
       else if (e.key === "f") ctx.push(forgetMir());
+      else if (e.key === "t") void test();
       return true;
     },
   };
