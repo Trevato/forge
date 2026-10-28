@@ -39,6 +39,9 @@
  * — `addAppDomain`, `checkAppDomain` and `removeAppDomain`, the page's and
  * MCP `app_domains`' actions. `listAppDomains` is the admin gate: anyone it
  * refuses sees neither the domains nor the key.
+ *
+ * The admin who is a person also gets `i`: the app's prompt source, the
+ * Instagram account whose comments become the crew's tell (`prompts.ts`).
  */
 
 import {
@@ -106,6 +109,7 @@ import { envTone } from "./runwords.ts";
 import { pullScreen } from "./pull.ts";
 import { local } from "./where.ts";
 import { appMembersScreen } from "./appmembers.ts";
+import { mayManagePrompts, promptsScreen } from "./prompts.ts";
 
 const LIMIT = 50;
 
@@ -193,6 +197,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   let inPreviews = false;
   let production: Production = { state: "", redeploy: false, stop: false };
   let members = false;
+  let prompts = false;
   /** The app's domains, or undefined for anyone `listAppDomains` refuses. */
   let domains: AppDomainView[] | undefined;
 
@@ -222,6 +227,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       canWrite(f.db, repo, f.user);
     const listed = listAppDomains(f.app, f.user, repo);
     domains = listed.ok ? listed.value : undefined;
+    prompts = mayManagePrompts(f, repo);
     loaded = true;
     ctx.invalidate();
   };
@@ -278,6 +284,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         ...(mayProbe ? [binding(["p"], "probe the running app's doors")] : []),
         ...(members ? [binding(["m"], "members")] : []),
         ...(domains !== undefined ? [binding(["n"], "the app's own domains")] : []),
+        ...(prompts ? [binding(["i"], "prompt source (Instagram)")] : []),
       ];
     },
     load: async () => read(),
@@ -423,6 +430,10 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       }
       if (e.key === "n" && domains !== undefined) {
         ctx.push(domainsScreen(f, ctx, repo, read));
+        return true;
+      }
+      if (e.key === "i" && prompts) {
+        ctx.push(promptsScreen(f, ctx, repo));
         return true;
       }
       return false;
