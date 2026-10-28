@@ -97,6 +97,7 @@ import { placementFromEnv, type Placement } from "./placement.ts";
 import { JOB_VANISHED, runJobStep } from "./job_step.ts";
 import { cellInstall, checkInstallCache, installWithRetry, prefillInstallCache, withLock } from "./install.ts";
 import { checkStage, type GateStage } from "./gate_reason.ts";
+import { proofsInFlight } from "./proof.ts";
 import { extraGates, gateQueued, gateRunId, gatesInFlight, watchGates } from "./queue.ts";
 import type { JobOptions } from "../cluster/jobs.ts";
 import type { CheckDetail } from "../core/runs.ts";
@@ -173,6 +174,14 @@ export interface ChecksHandle {
    * `signal` aborting (the queue's deadline, #3430) cuts it off the same way.
    */
   gate(repo: Repo, pull: Pull, commitOid: string, signal?: AbortSignal): Promise<GateDone>;
+  /**
+   * The proof before the line (#7616, `checks/proof.ts`): the gate's own
+   * run — command, environment, sharding — on the pull's head squashed onto
+   * its base, cut off as a gate is when `signal` aborts (its deadline). A
+   * lane without it (a test's stand-in) admits on the pull's own check, as
+   * before.
+   */
+  prove?(repo: Repo, pull: Pull, commitOid: string, signal?: AbortSignal): Promise<GateDone>;
   /**
    * The gate of `commitOid` this forge is running now, to wait on rather
    * than start again (#6611); undefined when none is.
@@ -533,7 +542,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     const limit = capacity();
     if (options.gate === undefined) gate.resize(limit);
     // Every merge-queue gate in flight holds a slot, a line's first too (#6376).
-    while (inFlight.size < limit - gatesInFlight()) {
+    while (inFlight.size < limit - gatesInFlight() - proofsInFlight()) {
       // A pull's check waits while its main is red (`checks/red_main.ts`).
       const queued = unheld(
         listActive(app.db, "check").filter(
@@ -552,7 +561,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       const { rebases, rest: others } = rebasesFirst(app.db, queued);
       // While a gate is about to start, the last free slot is its: a pull's
       // check waits for it, a rebase's and a main check do not.
-      const held = holdsLastSlot(limit - gatesInFlight() - inFlight.size, gateQueued());
+      const held = holdsLastSlot(limit - gatesInFlight() - proofsInFlight() - inFlight.size, gateQueued());
       const next = startable(rebases) ?? startable(held ? others.filter((run) => run.issueId === null) : others);
       if (!next) return;
       const repo = getRepoById(app.db, next.repoId);
@@ -1479,22 +1488,24 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     }
   }
 
+  /** A gate asked of a forge already stopping is not started: the forge that carries on asks it again. */
+  function gateRun(repo: Repo, pull: Pull, commitOid: string, signal?: AbortSignal): Promise<GateDone> {
+    if (stopped) return Promise.resolve({ ok: false, error: INTERRUPTED, lines: [], interrupted: true });
+    const controller = new AbortController();
+    const done = gateOnce(repo, pull, commitOid, controller, signal);
+    gates.set(controller, { commitOid, done });
+    return done;
+  }
+
   const handle: ChecksHandle = {
     request,
-    gate: (repo, pull, commitOid, signal) => {
-      // A gate asked of a forge already stopping is not started: the forge
-      // that carries on asks it again.
-      if (stopped) return Promise.resolve({ ok: false, error: INTERRUPTED, lines: [], interrupted: true });
-      const controller = new AbortController();
-      const done = gateOnce(repo, pull, commitOid, controller, signal);
-      gates.set(controller, { commitOid, done });
-      return done;
-    },
+    gate: gateRun,
+    prove: gateRun,
     adopt: (commitOid) => {
       for (const g of gates.values()) if (g.commitOid === commitOid) return g.done;
       return undefined;
     },
-    spareSlots: () => Math.max(0, capacity() - PULL_RESERVE - inFlight.size - extraGates()),
+    spareSlots: () => Math.max(0, capacity() - PULL_RESERVE - inFlight.size - extraGates() - proofsInFlight()),
     lane: gate,
     stop: async (stopOptions) => {
       stopped = true;

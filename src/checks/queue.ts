@@ -57,6 +57,11 @@
  * with its pulls, counts and failing tests (#6739, `gate_result.ts`), read
  * by `GET …/queue/gates`.
  *
+ * A pull joins proved (#7616, `proof.ts`): the full suite was green on its
+ * head squashed onto its base. One whose proof the base has since moved too
+ * far past is left out of its batch, as a conflict is, and proved again
+ * before it joins once more.
+ *
  * What is queued is not stored: it is the pulls `landIfGreen` admitted, and
  * every sweep admits them again. The queue only orders them and remembers
  * what is at the gate and what its searches found, for the tick line and
@@ -102,6 +107,12 @@ export interface Queued {
    * that its red tree held: none when it was red on its own merge.
    */
   handBack(red: Red, baseOid: string, together: readonly number[]): void;
+  /**
+   * The pull's proof before the line still holds on this base (#7616,
+   * `proof.ts`). False leaves it out of the batch, answered `false`, to be
+   * proved again before it joins; absent, it always holds.
+   */
+  proven?(baseOid: string): Promise<boolean>;
 }
 
 /** One pull's squash on top of the steps before it. */
@@ -1596,6 +1607,10 @@ async function build(batch: readonly Waiting[], on?: Candidate): Promise<Candida
   let treeOid = baseTreeOid;
   const steps: Step[] = [];
   for (const { entry } of batch) {
+    if (entry.proven !== undefined && !(await entry.proven(tipOid))) {
+      log.info(`left out of the batch: #${entry.pull.number}'s proof is stale, proved again first`);
+      continue;
+    }
     const merged = await mergeable(dir, tipOid, entry.pull.headOid);
     if (!merged.ok) {
       // Left out, never red (#5276): the rest gate without it, and once the

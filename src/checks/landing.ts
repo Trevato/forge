@@ -62,6 +62,38 @@ export async function gateCandidate(
   return gateVerdict(app, repo, commitOid, await checks.gate(repo, pull, commitOid, signal));
 }
 
+/**
+ * The proof before the line (#7616, `proof.ts`): the full gate on the
+ * pull's head squashed onto its base, run as the gate runs. Undefined when
+ * there is nothing to prove with — no checks service, a lane that cannot
+ * prove, or a check with no fast tier, whose pull check was already the
+ * whole suite.
+ */
+export async function proveCandidate(
+  app: App,
+  repo: Repo,
+  pull: Pull,
+  dir: string,
+  commitOid: string,
+  signal?: AbortSignal,
+): Promise<LandVerdict | undefined> {
+  const prove = checksFor(app)?.prove;
+  if (prove === undefined || !(await provable(app, dir, commitOid))) return undefined;
+  // Not the forge's last gate: the Resilience page reads the queue's gates only.
+  return gateVerdict(app, repo, commitOid, await prove(repo, pull, commitOid, signal), false);
+}
+
+/** Whether a pull at `commitOid` is proved before the line: a lane that proves, and a check with a fast tier. */
+export async function provable(app: App, dir: string, commitOid: string): Promise<boolean> {
+  if (checksFor(app)?.prove === undefined) return false;
+  const [forgeJson, packageJson] = await Promise.all([
+    readFileAt(dir, commitOid, "forge.json"),
+    readFileAt(dir, commitOid, "package.json"),
+  ]);
+  const declared = parseCheck(forgeJson, packageJson);
+  return declared.ok && declared.value !== undefined && declared.value.fast !== null;
+}
+
 /** How long the queue waits between reads of a gate another forge runs (#6611). */
 export const ADOPT_POLL_MS = 5_000;
 
@@ -99,10 +131,10 @@ export async function adoptGate(
 }
 
 /** What the lane's answer on `commitOid` decides: its log kept, its red named. */
-function gateVerdict(app: App, repo: Repo, commitOid: string, done: GateDone): LandVerdict {
+function gateVerdict(app: App, repo: Repo, commitOid: string, done: GateDone, last = true): LandVerdict {
   // Cut off, not judged: no verdict, and not the gate log a red reads (#3155).
   if (done.interrupted === true) return { lands: false, interrupted: true };
-  keepForgeGate(app.config.dataDir, app.config.forgeRepo, `${repo.ownerName}/${repo.name}`, done.lines);
+  if (last) keepForgeGate(app.config.dataDir, app.config.forgeRepo, `${repo.ownerName}/${repo.name}`, done.lines);
   const slug = `${repo.ownerName}/${repo.name}`;
   const kept = keepGateLog(app.config.dataDir, slug, commitOid, done.ok, done.lines, Date.now());
   const failed = failuresOf(done.lines);

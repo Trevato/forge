@@ -167,9 +167,21 @@ the mark. Only the crew parks: the API and the page refuse `reason: "parked"`.
 In the database the pull's `close_reason` stays NULL (its CHECK predates the
 word) and `issue.parked = 1` carries it, so raw SQL never reads it as done.
 
-**The merge queue.** A green, approved pull in an autonomous repository joins
-its repository's queue (`src/checks/queue.ts`). The queue builds one
-candidate: main, then each queued pull's squash on top of the one before, in
+**The merge queue.** A green, approved pull in an autonomous repository
+joins its repository's queue (`src/checks/queue.ts`) once it is proved
+(#7616, `src/checks/proof.ts`): when its check has a fast tier, the full
+gate — the same command, environment and sharding — runs on its head
+squashed onto main's tip first, using one check slot. Green admits it, kept
+as a `proof` row in the decision ledger with the head and base. A red one is
+held (`proof-red` in the tick's waits; `proving` while it runs), and the
+pull gets a comment that names the failing tests, so a test the fast tier
+never reached costs no batch. A proof goes stale when main moves more than
+16 first-parent landings past it (`STALE_LANDINGS`). The pull is then proved
+again before it joins, and a pull already in the line is left out of its
+next batch until it is proved again. A proof that has not answered by the
+gate's deadline (15 minutes) is cut off and no verdict is kept, so a hung
+one never holds its pull or a check slot.
+The queue builds one candidate: main, then each queued pull's squash on top of the one before, in
 queue order, leaving out any pull that conflicts or has nothing left to land.
 A candidate carries at most `queue.batch` pulls (Settings → Capacity,
 `FORGE_QUEUE_BATCH`, 1–32, default 8); the rest wait their turn. Each line

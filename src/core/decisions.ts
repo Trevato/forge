@@ -19,14 +19,19 @@ import { id as newId } from "../kernel/id.ts";
  * the summaries that read them keep the word.
  *
  * `hand` is a person's tap on "Let the decider" on a hand-over card
- * (`crew/handover.ts`): its state is the curated context the decider saw. */
+ * (`crew/handover.ts`): its state is the curated context the decider saw.
+ *
+ * `proof` is the full suite on a pull's head squashed onto its base, before
+ * the pull joins the merge queue (`checks/proof.ts`): its state is the head
+ * and the base, its answer `green` or `red`. */
 export type DecisionKind =
   | "next"
   | "land"
   | "retry"
   | "lean"
   | "guard"
-  | "hand";
+  | "hand"
+  | "proof";
 
 export interface Decision {
   readonly id: string;
