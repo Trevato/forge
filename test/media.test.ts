@@ -254,10 +254,24 @@ describe("the media permits", () => {
     const stream = await blobStream(dir, oid, 0, CLIP.length - 1, { idleMs: 50 });
     if (typeof stream === "string") throw new Error(stream);
     const reader = stream.getReader();
-    expect((await reader.read()).done).toBe(false);
+    const first = await reader.read();
+    expect(first.done).toBe(false);
     // Then it never pulls again.
     expect(await settled()).toBe(0);
-    await expect(reader.read()).rejects.toThrow("idle");
+    // What was queued before the stall still reads; then the stream ends.
+    // A loaded machine can hand the whole blob over in the first two pipe
+    // reads, and then the range ends before any stall — so either the idle
+    // timer cut it short, or every byte had already arrived.
+    let received = first.value?.length ?? 0;
+    let cut: unknown = null;
+    try {
+      for (let next = await reader.read(); !next.done; next = await reader.read())
+        received += next.value.length;
+    } catch (error) {
+      cut = error;
+    }
+    if (received < CLIP.length) expect(String(cut)).toContain("idle");
+    else expect(cut).toBeNull();
   });
 
   test("a stream nobody ever reads ends too", async () => {

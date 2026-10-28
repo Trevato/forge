@@ -7,6 +7,7 @@
  *   forge sync                clone what is missing, fetch the rest, report
  *   forge status              the same report without touching the network
  *   forge asks                what waits on you, most important first
+ *   forge ship <number>       land a pull after a y/N, as its Merge button does
  *
  * Everything here is a thin shell around three modules: `api.ts` talks to the
  * workbench, `sync.ts` decides what should be on disk, `report.ts` prints it.
@@ -15,7 +16,7 @@
  */
 
 import { parseArgs, parseDuration, parseRepoRef, type Args } from "./args.ts";
-import { ForgeApi, type Ask } from "./api.ts";
+import { ForgeApi, type ApiError, type Ask } from "./api.ts";
 import {
   clearConfig,
   configPath,
@@ -29,6 +30,7 @@ import {
 } from "./config.ts";
 import { folderRepo } from "./folder-repo.ts";
 import { systemNotifier } from "./notify.ts";
+import { resolveRepo } from "./here.ts";
 import { cell, createOut, inert, type Out } from "./out.ts";
 import { dirtyCount, printReport, settled, since } from "./report.ts";
 import {
@@ -54,11 +56,22 @@ export const EXIT = {
   notConfigured: 3,
   /** The run completed, but at least one repo did not. */
   partial: 4,
+  /** The forge heard the request and said no: a rule, a conflict, a hold. */
+  refused: 5,
 } as const;
 
 const VALUE_FLAGS = ["token", "interval", "root", "url", "limit", "repo"];
 
-export async function main(argv: readonly string[]): Promise<number> {
+/** What the CLI needs from the person at the keyboard; a test fakes it. */
+export interface Io {
+  /** One answered line, or null when there is no terminal to ask. */
+  ask(prompt: string): Promise<string | null>;
+}
+
+export async function main(
+  argv: readonly string[],
+  io: Io = { ask: askLine },
+): Promise<number> {
   const args = parseArgs(argv, { values: VALUE_FLAGS });
   const out = createOut();
 
@@ -104,6 +117,8 @@ export async function main(argv: readonly string[]): Promise<number> {
       return openRepo(out, args);
     case "asks":
       return asks(out, args);
+    case "ship":
+      return ship(out, args, io);
     case "ui":
       return openTui(out, args);
     default:
@@ -136,6 +151,7 @@ function usage(out: Out): void {
   out.line(
     b("  forge asks") + "                   [--repo owner/name] [--json]",
   );
+  out.line(b("  forge ship <number>") + "          [--repo owner/name] [--yes]");
   out.line();
   out.line(
     out.paint(`  config ${configPath()}   root ${rootDir()}`, out.c.faint),
@@ -578,6 +594,77 @@ function onlyRepo(raw: unknown, repo: string): unknown {
   };
 }
 
+// ── landing a pull ───────────────────────────────────────────────────────
+
+/**
+ * `forge ship 12`: read the pull, show it, ask, merge. The merge route's
+ * rules stay the server's — this adds none and retries nothing; a refusal
+ * prints the forge's own words.
+ */
+async function ship(out: Out, args: Args, io: Io): Promise<number> {
+  const raw = args.positional[0];
+  const number = raw === undefined ? NaN : Number(raw.replace(/^#/, ""));
+  if (!Number.isSafeInteger(number) || number < 1) {
+    out.err("forge ship: which pull? e.g. forge ship 12");
+    return EXIT.usage;
+  }
+  const loaded = await requireConfig(out);
+  if (typeof loaded === "number") return loaded;
+  const ref = await resolveRepo(args.value("repo"), loaded.url);
+  if (typeof ref === "string") {
+    out.err(`forge ship: ${ref}`);
+    return EXIT.usage;
+  }
+  const api = new ForgeApi(loaded.url, loaded.token);
+  const pull = await api.pull(ref.owner, ref.name, number);
+  if (!pull.ok) return shipError(out, pull.error);
+  const check = await api.pullCheck(ref.owner, ref.name, number);
+  const p = pull.value;
+  out.line(`${ref.owner}/${ref.name}#${p.number}  ${inert(p.title)}`);
+  const facts = [
+    `check ${check.ok ? inert(check.value) : "unknown"}`,
+    p.merged
+      ? "already merged"
+      : p.state !== "open"
+        ? p.state
+        : p.mergeable === false
+          ? "not mergeable"
+          : p.mergeable === true
+            ? "mergeable"
+            : "mergeable unknown",
+    ...(p.held ? ["held"] : []),
+  ];
+  out.line(out.paint(`  ${facts.join(" · ")}`, out.c.faint));
+
+  if (!args.flag("yes")) {
+    const answer = await io.ask(`Ship #${p.number}? [y/N] `);
+    if (answer === null) {
+      out.err("forge ship: not a terminal — pass --yes to ship without asking");
+      return EXIT.usage;
+    }
+    if (answer.trim().toLowerCase() !== "y") {
+      out.line("not shipped");
+      return EXIT.ok;
+    }
+  }
+
+  const merged = await api.merge(ref.owner, ref.name, number);
+  if (!merged.ok) return shipError(out, merged.error);
+  out.line(
+    `${out.paint(G.check, out.c.success)} shipped #${p.number} as ${merged.value.mergeOid.slice(0, 7)}`,
+  );
+  out.line(api.pullUrl(ref.owner, ref.name, number));
+  return EXIT.ok;
+}
+
+function shipError(out: Out, error: ApiError): number {
+  out.err(`forge ship: ${inert(error.message)}`);
+  if (error.status === 401) return EXIT.notConfigured;
+  if (error.status === 403 || error.status === 409 || error.status === 422)
+    return EXIT.refused;
+  return EXIT.failed;
+}
+
 // ── the terminal UI ──────────────────────────────────────────────────────
 
 async function openTui(out: Out, args: Args): Promise<number> {
@@ -628,6 +715,33 @@ function status(out: Out, text: string): void {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** One line from the terminal, echoed; null when stdin is not a terminal. */
+async function askLine(prompt: string): Promise<string | null> {
+  const stdin = process.stdin;
+  if (stdin.isTTY !== true || process.stdout.isTTY !== true) return null;
+  process.stdout.write(prompt);
+  stdin.resume();
+  return new Promise<string>((resolve) => {
+    // ctrl+d or a closed terminal is an answer too, and the answer is N.
+    const finish = (answer: string): void => {
+      stdin.off("data", onData);
+      stdin.off("end", onEnd);
+      stdin.off("close", onEnd);
+      stdin.pause();
+      resolve(answer);
+    };
+    const onData = (chunk: Buffer): void =>
+      finish(chunk.toString("utf8").split("\n")[0] ?? "");
+    const onEnd = (): void => {
+      process.stdout.write("\n");
+      finish("");
+    };
+    stdin.on("data", onData);
+    stdin.once("end", onEnd);
+    stdin.once("close", onEnd);
+  });
 }
 
 /**

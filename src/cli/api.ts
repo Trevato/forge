@@ -36,6 +36,17 @@ export interface Whoami {
   readonly displayName: string;
 }
 
+/** What `forge ship` shows before it asks. */
+export interface PullSummary {
+  readonly number: number;
+  readonly title: string;
+  readonly state: string;
+  readonly merged: boolean;
+  /** Absent once the pull is no longer open. */
+  readonly mergeable: boolean | null;
+  readonly held: boolean;
+}
+
 /** Pages of 100 a listing follows before it says it is cut. */
 const PULL_PAGES = 20;
 
@@ -105,12 +116,16 @@ export class ForgeApi {
     }
     if (!response.ok) {
       const body = parsed as { error?: unknown; message?: unknown };
+      // Some refusals are a bare code (`{ error: "checks_required" }`): the
+      // code is then the forge's own word, and better than a status line.
       return err({
         code: typeof body.error === "string" ? body.error : "http_error",
         message:
           typeof body.message === "string"
             ? body.message
-            : `${response.status} from ${path}`,
+            : typeof body.error === "string"
+              ? body.error
+              : `${response.status} from ${path}`,
         status: response.status,
       });
     }
@@ -192,6 +207,66 @@ export class ForgeApi {
       `/api/v1/user/pins/${encode(owner)}/${encode(name)}`,
       { method: "DELETE" },
     );
+  }
+
+  /** One pull, without its diff: title, state, mergeable, hold. */
+  async pull(
+    owner: string,
+    name: string,
+    number: number,
+  ): Promise<ApiResult<PullSummary>> {
+    const out = await this.call<Record<string, unknown>>(
+      `${this.pullPath(owner, name, number)}?diff=0`,
+    );
+    if (!out.ok) return out;
+    const r = out.value;
+    return ok({
+      number: typeof r["number"] === "number" ? r["number"] : number,
+      title: str(r["title"]) ?? "",
+      state: str(r["state"]) ?? "open",
+      merged: r["mergedAt"] !== null && r["mergedAt"] !== undefined,
+      mergeable: typeof r["mergeable"] === "boolean" ? r["mergeable"] : null,
+      held: typeof r["hold"] === "object" && r["hold"] !== null,
+    });
+  }
+
+  /** The state of the pull's latest check at its head: "none" when unrun. */
+  async pullCheck(
+    owner: string,
+    name: string,
+    number: number,
+  ): Promise<ApiResult<string>> {
+    const out = await this.call<{ state?: unknown }>(
+      `${this.pullPath(owner, name, number)}/checks`,
+    );
+    if (!out.ok) return out;
+    return ok(str(out.value.state) ?? "none");
+  }
+
+  /**
+   * Land a pull. The server's rules decide; a refusal comes back as the
+   * server's own error, never retried.
+   */
+  async merge(
+    owner: string,
+    name: string,
+    number: number,
+  ): Promise<ApiResult<{ mergeOid: string }>> {
+    const out = await this.call<{ mergeOid?: unknown }>(
+      `${this.pullPath(owner, name, number)}/merge`,
+      { method: "POST", body: "{}" },
+    );
+    if (!out.ok) return out;
+    return ok({ mergeOid: str(out.value.mergeOid) ?? "" });
+  }
+
+  private pullPath(owner: string, name: string, number: number): string {
+    return `/api/v1/repos/${encode(owner)}/${encode(name)}/pulls/${number}`;
+  }
+
+  /** A pull's page. */
+  pullUrl(owner: string, name: string, number: number): string {
+    return `${this.webUrl(owner, name)}/pulls/${number}`;
   }
 
   /**

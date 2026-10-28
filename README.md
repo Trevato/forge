@@ -315,10 +315,18 @@ forge sync --ff                    # fast-forward clean repos, and only those
 forge pin owner/name               # ask the workbench to keep this one here
 forge ls                           # what is here, and how stale
 forge open owner/name --web        # the page, in a browser
+forge ship 12                      # land pull #12 after a y/N, as Merge does
 forge pulls                        # open pulls of this clone, newest first
 forge asks                         # what waits on you, most important first
 forge asks --repo owner/name       # only that repository's; --json for the API's answer
 ```
+
+`forge ship <number>` reads the repository from `--repo owner/name` or from
+the folder's `origin` when it points at your workbench, shows the pull's
+title, check and whether it merges, and asks `Ship #12? [y/N]`. `--yes` skips
+the question; with no terminal and no `--yes` it refuses (exit 2). The
+merge's rules stay the forge's: a refusal prints the forge's words and exits
+5 (3 for a refused token), and is never retried.
 
 `forge pulls` prints one line per pull: `#N`, the title cut to the terminal
 width, the author, the check (`green`, `red`, `running` or `none`) and the
