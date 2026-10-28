@@ -85,10 +85,21 @@ const ROWS = 60;
 
 /**
  * The one line: `kind:` and `sort:` take a word each; anything else is
- * text to match. An unknown kind or sort is ignored, not an error — the
- * line is typed by a person.
+ * text to match. An unknown kind or sort is ignored (`readExploreLine`
+ * names it), not an error — the line is typed by a person.
  */
 export function parseExploreQuery(line: string): ExploreQuery {
+  return readExploreLine(line).query;
+}
+
+/** The query and the `kind:`/`sort:` words it did not know, as typed. */
+export interface ExploreRead {
+  readonly query: ExploreQuery;
+  readonly unknown: readonly string[];
+}
+
+export function readExploreLine(line: string): ExploreRead {
+  const unknown: string[] = [];
   let kind: ExploreKind | "all" = "all";
   let sort: ExploreSort = "score";
   let archived = false;
@@ -101,13 +112,15 @@ export function parseExploreQuery(line: string): ExploreQuery {
     .filter((w) => w !== "")) {
     const [key, value = ""] = word.split(/:(.*)/s);
     const k = (key ?? "").toLowerCase();
-    if (k === "kind" && value !== "") kind = KINDS[value.toLowerCase()] ?? kind;
-    else if (
-      k === "sort" &&
-      (SORTS as readonly string[]).includes(value.toLowerCase())
-    )
-      sort = value.toLowerCase() as ExploreSort;
-    else if (k === "archived" && ["yes", "no"].includes(value.toLowerCase()))
+    if (k === "kind" && value !== "") {
+      const known = KINDS[value.toLowerCase()];
+      if (known === undefined) unknown.push(word);
+      else kind = known;
+    } else if (k === "sort" && value !== "") {
+      if ((SORTS as readonly string[]).includes(value.toLowerCase()))
+        sort = value.toLowerCase() as ExploreSort;
+      else unknown.push(word);
+    } else if (k === "archived" && ["yes", "no"].includes(value.toLowerCase()))
       archived = value.toLowerCase() === "yes";
     else if (k === "updated" && value.toLowerCase() in WINDOWS)
       updated = value.toLowerCase() as ExploreWindow;
@@ -116,13 +129,33 @@ export function parseExploreQuery(line: string): ExploreQuery {
     else words.push(word);
   }
   return {
-    kind,
-    sort,
-    text: words.join(" ").slice(0, 100),
-    archived,
-    updated,
-    ...(owner === undefined ? {} : { owner }),
+    query: {
+      kind,
+      sort,
+      text: words.join(" ").slice(0, 100),
+      archived,
+      updated,
+      ...(owner === undefined ? {} : { owner }),
+    },
+    unknown: unknown.slice(0, 5),
   };
+}
+
+/** The kinds a `kind:` word may be, once each. */
+const KIND_WORDS: readonly ExploreKind[] = [...new Set(Object.values(KINDS))];
+
+/**
+ * One quiet sentence for the unknown words, naming what is taken; "" when
+ * there are none. Plain text: the caller escapes it where it draws it.
+ */
+export function exploreNote(unknown: readonly string[]): string {
+  return unknown
+    .map((word) => {
+      const sort = word.toLowerCase().startsWith("sort:");
+      const shown = word.length > 40 ? `${word.slice(0, 39)}…` : word;
+      return `${shown} is not a ${sort ? "sort" : "kind"} — use ${(sort ? SORTS : KIND_WORDS).join(", ")}`;
+    })
+    .join("; ");
 }
 
 /** The line a query reads as, for links and the query box. */

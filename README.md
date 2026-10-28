@@ -287,6 +287,9 @@ does, by the same action, with each row's forks, merges, hours in use and
 freshness, and a "Read as:" line says how the line was understood. Enter on an
 app opens it; a person or forge row has no terminal page and says where the
 web has it. A plain line still matches your repositories by name.
+An unknown `kind:` or `sort:` word is dropped and named after "Read as:", with
+the words it takes, on the page, in the terminal and in a `note` field of
+`/api/v1/explore` and the MCP `explore` tool; results still show.
 
 ## On your machine
 

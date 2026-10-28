@@ -14,7 +14,7 @@
  * whole of this screen's design.
  */
 
-import { exploreLine, explorePage, parseExploreQuery, type ExploreRow } from "../../actions/explore.ts";
+import { exploreLine, exploreNote, explorePage, parseExploreQuery, readExploreLine, type ExploreRow } from "../../actions/explore.ts";
 import { protectionNotice } from "../../kernel/protection.ts";
 import { holdWords, plannerHold } from "../../crew/autonomy.ts";
 import { forgeFlakes, forgeLane, forgeNeeds } from "../../actions/health.ts";
@@ -1055,9 +1055,12 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
 
       // A site admin is told once, under the filter, when the forge runs
       // with less than its default protection — the web footer's line.
-      const readAs = exploring()
-        ? `Read as: ${exploreLine(parseExploreQuery(filter.query)) || "everything"}`
-        : undefined;
+      const read = exploring() ? readExploreLine(filter.query) : undefined;
+      const note = read === undefined ? "" : exploreNote(read.unknown);
+      const readAs =
+        read === undefined
+          ? undefined
+          : `Read as: ${exploreLine(read.query) || "everything"}${note === "" ? "" : ` · ${note}`}`;
       const reduced = readAs ?? (f.user?.isAdmin === true ? protectionNotice() : undefined);
       const [box, warn, list] = split(
         main,

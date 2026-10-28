@@ -25,7 +25,7 @@ import { promote } from "./helpers/members.ts";
 quietLogs();
 
 describe("the one line", () => {
-  test("kind and sort take a word each; the rest is text; unknown words are text, not errors", () => {
+  test("kind and sort take a word each; the rest is text; unknown kind and sort words are dropped, not errors", () => {
     expect(parseExploreQuery("kind:app sort:forks garden")).toEqual({
       kind: "app",
       sort: "forks",
@@ -43,7 +43,7 @@ describe("the one line", () => {
     expect(parseExploreQuery("kind:nonsense sort:nonsense")).toEqual({
       kind: "all",
       sort: "score",
-      text: "sort:nonsense",
+      text: "",
       archived: false,
       updated: "all",
     });

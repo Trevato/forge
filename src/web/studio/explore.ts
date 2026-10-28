@@ -9,7 +9,8 @@
 import {
   explore,
   exploreLine,
-  parseExploreQuery,
+  exploreNote,
+  readExploreLine,
   type ExploreQuery,
   type ExploreRow,
 } from "../../actions/explore.ts";
@@ -122,7 +123,8 @@ function emptyState(signedIn: boolean, query: ExploreQuery): Html {
 // GET /explore
 export async function explorePage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-  const query = parseExploreQuery(ctx.url.searchParams.get("q") ?? "");
+  const { query, unknown } = readExploreLine(ctx.url.searchParams.get("q") ?? "");
+  const note = exploreNote(unknown);
   const ranking = performance.now();
   const rows = await explore(ctx.app, ctx.auth.user, query);
   notePhase(ctx.request, "rank", performance.now() - ranking);
@@ -165,6 +167,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
       />
       ${btn("Go", { size: "sm" })}
     </form>
+    ${note === "" ? html`` : html`<p class="muted mb" role="status">${note}</p>`}
     <div class="bar mb">
       ${seg(
         kinds.map((k) => ({
