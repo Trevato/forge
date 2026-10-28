@@ -4,9 +4,7 @@
  * its first line.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rm } from "node:fs/promises";
 import { createRepo } from "../src/actions/repos.ts";
 import { reportTitle } from "../src/actions/page-report.ts";
 import { createApp, type App } from "../src/app.ts";
@@ -18,6 +16,7 @@ import { repoScreen } from "../src/tui/screens/repo.ts";
 import { local } from "../src/tui/screens/where.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { scratchDir } from "./helpers/scratch.ts";
 import { settleApp } from "./helpers/tui.ts";
 import { proveAll } from "./helpers/verified.ts";
 
@@ -49,7 +48,7 @@ async function palette(user: User, keys: string[]): Promise<string> {
 }
 
 beforeAll(async () => {
-  dir = await mkdtemp(join(tmpdir(), "forge-tui-report-"));
+  dir = scratchDir("forge-tui-report-");
   app = createApp({ dataDir: dir, port: 0 });
   const mk = async (username: string, first = false) => {
     const r = await createUser(app.db, {
