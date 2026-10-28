@@ -66,7 +66,7 @@ export const tool: Tool = {
     }
     const planned = openPlan(ctx.app, user, repo, items.value);
     if (!planned.ok) return bad(planned.error.error, planned.error.message);
-    const { opened, ready, later, gate } = planned.value;
+    const { opened, ready, held, later, gate } = planned.value;
     const waits =
       gate === undefined
         ? ""
@@ -75,6 +75,7 @@ export const tool: Tool = {
       says: `Opened ${opened.length} issue${opened.length === 1 ? "" : "s"}: ${opened.map((o) => `${o.key} is #${o.number}`).join(", ")}.${waits}`,
       opened,
       ready,
+      held,
       later,
     });
   },

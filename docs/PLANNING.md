@@ -198,8 +198,13 @@ action as the MCP `plan` tool (`openPlan`): the same items, the same
 refusals, all or nothing. An item names its `pillar`, or is `later: true`
 with `why`; one that says neither is refused with `no_pillar` and nothing is
 opened, so the planner reads the refusal, names the pillar or defers the
-item, and posts again. The answer is `{ opened, ready, later, gate }`. A
-repository with no umbrella issues has no pillars, and plans as it always
+item, and posts again. The answer is `{ opened, ready, held, later, gate }`. `held`
+lists each opened issue that is ready but would not start now, as `{ key, number, by,
+detail }`: `by` is one of the map's hold names (`HOLDS` in
+`src/crew/held.ts`) and `detail` its sentence. The usual ones are `hot_file`
+(a file on the issue's `Files:` line is hot, or an admin holds it); an open
+pull cannot hold an issue opened a moment ago. The planner can rewrite
+what is held in the same run. A repository with no umbrella issues has no pillars, and plans as it always
 did.
 
 **An issue opened outside a plan.** A builder that finds its task too big

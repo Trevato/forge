@@ -320,12 +320,15 @@ export function mapHeldFor(
   repo: Repo,
   graph: Graph,
   scope: { sealed?: true; sealedBy?: string },
+  /** Only these issue numbers are worked out: the cost grows with them, not with the ready list. */
+  only?: ReadonlySet<number>,
 ): ReturnType<typeof mapHolds> {
   const admit = admits(app, repo, scope);
   const active = listActive(app.db, "agent").filter((r) => r.repoId === repo.id);
+  const ready = readyNow(graph).filter((r) => only === undefined || only.has(r.issue.number));
   return mapHolds(
     repo,
-    heldBy(app, repo, readyNow(graph), listCrewRoles(app.db, repo.id), active, admit),
+    heldBy(app, repo, ready, listCrewRoles(app.db, repo.id), active, admit),
     admit,
   );
 }
