@@ -48,6 +48,7 @@ import {
 import type { User } from "../../core/users.ts";
 import { safeBack, type Ctx } from "../../http/context.ts";
 import {
+  nameFrame,
   notePhase,
   takeSessionTime,
   timePhase,
@@ -716,6 +717,7 @@ export function previewCard(ctx: Ctx, repo: Repo, pull: Pull): Html {
  * theirs, nothing else is.
  */
 export function appsOpen(ctx: Ctx): Response {
+  nameFrame(ctx.request);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   return timePhase(ctx.request, "render", () => appsOpenResponse(ctx));
 }

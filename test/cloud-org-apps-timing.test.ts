@@ -46,10 +46,12 @@ afterAll(() => {
 });
 
 // /apps/open with no host is the answer a stranger gets: session, then render.
+// `route` and `compress` are the server's own work around the handler: named,
+// the accounting no longer hangs on how long a loaded machine takes outside it.
 const PAGES: [string, string[]][] = [
-  ["/settings/cloud/audit", ["session", "audit", "render"]],
-  ["/organizations/new", ["session", "render"]],
-  ["/apps/open", ["session", "render"]],
+  ["/settings/cloud/audit", ["route", "session", "audit", "render", "compress"]],
+  ["/organizations/new", ["route", "session", "render", "compress"]],
+  ["/apps/open", ["route", "session", "render", "compress"]],
 ];
 
 for (const [path, names] of PAGES)
@@ -77,13 +79,14 @@ for (const [path, names] of PAGES)
 
 // Signed out, the redirect to sign-in is still a named phase.
 for (const path of ["/settings/cloud/audit", "/organizations/new"])
-  test(`signed-out GET ${path} names session and render`, async () => {
+  test(`signed-out GET ${path} names route, session, render and compress`, async () => {
     const res = await fetch(`${servers.url}${path}`, { redirect: "manual" });
     await res.text();
     expect(res.status).toBe(303);
     const parts = (res.headers.get("server-timing") ?? "").split(", ");
     const dur = (n: string) => Number(parts.find((p) => p.startsWith(`${n};`))!.split("dur=")[1]);
-    for (const name of ["session", "render"])
+    const names = ["route", "session", "render", "compress"];
+    for (const name of names)
       expect(parts.find((p) => p.startsWith(`${name};`))).toMatch(/^[a-z]+;dur=\d+\.\d$/);
-    expect(Math.abs(dur("app") - dur("session") - dur("render"))).toBeLessThan(1.5);
+    expect(Math.abs(dur("app") - names.reduce((sum, n) => sum + dur(n), 0))).toBeLessThan(1.5);
   });

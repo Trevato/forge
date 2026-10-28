@@ -24,7 +24,7 @@ import {
   type CloudAccount,
   type CloudRead,
 } from "../../core/cloud_account.ts";
-import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
+import { nameFrame, notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
@@ -218,6 +218,7 @@ export async function cloudAudit(ctx: Ctx): Promise<Response> {
 
 // GET /settings/cloud/audit
 export function cloudAuditPage(ctx: Ctx): Response {
+  nameFrame(ctx.request);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const denied = requireAdmin(ctx);
   if (denied) return timePhase(ctx.request, "render", () => denied);

@@ -34,7 +34,7 @@ import { LIST_LIMIT_MAX } from "../../core/issues.ts";
 import { listReposByOwner, type Repo } from "../../core/repos.ts";
 import { getUserByName, hiddenFrom, type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
-import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
+import { nameFrame, notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { notFoundPage, pageHead, signInFirst } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
@@ -457,6 +457,7 @@ function orgForm(ctx: Ctx, value: string, error?: string): Response {
 
 // GET /organizations/new
 export function newOrgPage(ctx: Ctx): Response {
+  nameFrame(ctx.request);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   return timePhase(ctx.request, "render", () =>
     ctx.auth.user ? orgForm(ctx, "") : signInFirst(ctx),
