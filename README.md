@@ -434,6 +434,7 @@ This page is the front door. Everything else is a file of its own under
 - [`docs/FEED.md`](docs/FEED.md) — the feed: what happened, ranked, each item with why it is there. The home composer keeps your draft across a reload.
 - [`docs/PULLS.md`](docs/PULLS.md) — resolving a conflicted pull without a clone.
 - [`docs/GIT.md`](docs/GIT.md) — cloning over HTTPS and SSH, and partial clones of big repositories.
+- [`docs/CLI.md`](docs/CLI.md) — the `forge` command on your machine: install, log in, and every command with its flags and one example.
 - [`docs/features/csv-view.md`](docs/features/csv-view.md) — open a `.csv` or `.tsv` in the code view to read it as a table; `?all=1` draws more rows, `?view=source` shows the text. The terminal has its own table view for them (see the `.csv` paragraph above).
 - [`docs/features/file-media.md`](docs/features/file-media.md) — a file in the browser: every file page has **Raw** and **Download** (any size), and `/:owner/:name/media/:ref/*path` serves images, audio, video and PDFs under their real type, sandboxed, with byte ranges.
 - [`docs/features/config-form.md`](docs/features/config-form.md) — a JSON file opens as a form: typed fields (from its schema when one is found), cards to add and reorder, and a save that commits for a writer or proposes a pull for anyone else. In the terminal, a reader edits in the workspace (`e`) and `c` proposes the change from their fork; any commit there that breaks a JSON file's schema is refused first.

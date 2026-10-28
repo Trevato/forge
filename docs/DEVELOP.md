@@ -2,6 +2,8 @@
 
 Moved from README.md (its "## Develop" section), unchanged.
 
+Driving the forge from a shell — every `forge` command, its flags and one example: [docs/CLI.md](CLI.md).
+
 ```sh
 bun test              # protocol-level + adversarial suite
 bun scripts/design-lint.ts   # no colour or off-scale font-size beyond docs/design/baseline.json, no class docs/DESIGN.md §5 does not name
