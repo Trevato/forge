@@ -40,6 +40,7 @@ export { tool as commits } from "./commits.ts";
 export { tool as confirm_wait } from "./confirm_wait.ts";
 export { tool as contribute } from "./contribute.ts";
 export { tool as converge } from "./converge.ts";
+export { tool as crew } from "./crew.ts";
 export { tool as decisions_by } from "./decisions_by.ts";
 export { tool as detach } from "./detach.ts";
 export { tool as drills } from "./drills.ts";

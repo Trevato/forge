@@ -259,6 +259,7 @@ describe("the forge over MCP", () => {
       "propose_to_parent_forge",
       "forge_proposals",
       "converge",
+      "crew",
       "family",
       "next_steps",
       "notify",
