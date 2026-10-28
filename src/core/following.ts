@@ -588,7 +588,9 @@ export async function lineageOf(
         size++;
         const child: Draft = { repo: fork, relation: undefined, children: [] };
         // The budget is spent in order; the reads themselves run together.
-        if (relations < LINEAGE_MAX_RELATIONS) {
+        // Against an archived parent a count reads as unshipped work, so
+        // none is taken (#7452).
+        if (node.repo.archivedAt === null && relations < LINEAGE_MAX_RELATIONS) {
           relations++;
           asked.push(
             forkRelation(forge, fork, node.repo, tips).then((r) => {

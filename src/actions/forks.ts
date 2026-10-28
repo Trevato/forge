@@ -209,6 +209,12 @@ export interface ForkRanking {
   readonly nothingNew: RankedFork[];
   /** True when forks past `MAX_RANKED_FORKS` were left out of the ranking. */
   readonly truncated: boolean;
+  /**
+   * The repository is archived: no fork is counted against it, because a
+   * frozen parent's "N ahead" reads as unshipped work (#7452). Every fork is
+   * in `nothingNew`, with no drift, and a surface lists names only.
+   */
+  readonly archived: boolean;
 }
 
 /** The ranked forks of `repo` among those `mayRead`: one answer for every surface. */
@@ -217,10 +223,15 @@ export async function rankedForksOf(
   repo: Repo,
   forks: readonly Repo[],
 ): Promise<ForkRanking> {
+  const truncated = forks.length > MAX_RANKED_FORKS;
+  if (repo.archivedAt !== null) {
+    const unmeasured = forks.slice(0, MAX_RANKED_FORKS).map((fork) => ({
+      fork,
+      drift: { ahead: null, behind: null },
+      pushedAt: null,
+    }));
+    return { total: forks.length, offering: [], nothingNew: unmeasured, truncated, archived: true };
+  }
   const ranked = rankForks(await driftOfForks(app, repo, forks));
-  return {
-    total: forks.length,
-    ...ranked,
-    truncated: forks.length > MAX_RANKED_FORKS,
-  };
+  return { total: forks.length, ...ranked, truncated, archived: false };
 }

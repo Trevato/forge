@@ -622,6 +622,16 @@ export function forkParentFor(
     : undefined;
 }
 
+/**
+ * Forget a fork's parent. Only once the fork owns its objects (`detachFork`):
+ * a row without a parent over a store that still borrows one is a fork that
+ * breaks when the parent goes.
+ */
+export function clearForkParent(db: Database, repoId: string): void {
+  db.query("UPDATE repo SET fork_parent_id = NULL WHERE id = ?1").run(repoId);
+  forgetListings(db);
+}
+
 /** The forks of this repository the viewer may see — the list, and its count. */
 export function visibleForks(
   db: Database,
@@ -892,9 +902,7 @@ export async function deleteRepo(
       });
       return err("delete_failed");
     }
-    db.query("UPDATE repo SET fork_parent_id = NULL WHERE id = ?1").run(
-      fork.id,
-    );
+    clearForkParent(db, fork.id);
   }
 
   const dir = repoDir(reposRoot, repo.ownerName, repo.name);

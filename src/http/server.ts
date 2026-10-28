@@ -385,6 +385,7 @@ import {
   mirrorStop,
 } from "../web/pages/settings.ts";
 import { dangerPage, repoDelete } from "../web/pages/danger.ts";
+import { detachSubmit } from "../web/pages/detach.ts";
 import { hooksPage, webhookCreate, webhookDelete } from "../web/pages/hooks.ts";
 import {
   crewAdd,
@@ -1464,6 +1465,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/settings/hooks/:id/delete", webhookDelete);
   router.add("GET", "/:owner/:name/settings/danger", dangerPage);
   router.add("POST", "/:owner/:name/settings/delete", repoDelete);
+  router.add("POST", "/:owner/:name/settings/detach", detachSubmit);
   router.add(
     "POST",
     "/:owner/:name/settings/origin/reconnect",

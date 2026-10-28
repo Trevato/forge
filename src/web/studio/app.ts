@@ -36,7 +36,11 @@ import { html, when, type Html } from "../html.ts";
 import { appLine } from "../describe.ts";
 import { page } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
-import { followingCard, followingOf } from "../pages/following.ts";
+import {
+  archivedParentLine,
+  followingCard,
+  followingOf,
+} from "../pages/following.ts";
 import {
   avatar,
   badge,
@@ -501,7 +505,9 @@ export async function studioApp(
       compact: true,
       ownTitle: true,
     })}
-    ${following === undefined ? "" : followingCard(ctx, repo, following)}
+    ${following === undefined
+      ? archivedParentLine(ctx, repo)
+      : followingCard(ctx, repo, following)}
     <div id="app-head">${head}</div>
     ${askingLine(ctx, repo)}
     ${policy}

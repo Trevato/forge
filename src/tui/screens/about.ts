@@ -24,6 +24,12 @@ import { sshCloneUrl } from "../../ssh/command.ts";
 import { checkMemoryAt } from "../../apps/check-memory.ts";
 import { repoDir } from "../../git/repos.ts";
 import { forkDrift } from "../../actions/forks.ts";
+import {
+  detachFromParent,
+  detachJob,
+  detachPhaseWords,
+  detachPlanWords,
+} from "../../actions/detach.ts";
 import { upstreamOffer, type UpstreamOffer } from "../../actions/offer_upstream.ts";
 import { listRefs } from "../../git/read.ts";
 import { directionNote } from "../../crew/direct.ts";
@@ -101,6 +107,10 @@ export function aboutScreen(
   // Outsiders is the same person-and-admin gate; `d` (direct) never clashes
   // with `o`, the fork's upstream offer.
   const mayOutsiders = (): boolean => mayFlow();
+  // Detach is a person's, an admin's, and only on a fork made here: the
+  // Danger zone card's gate (#7452).
+  const mayDetach = (): boolean =>
+    mayFlow() && repo !== undefined && repo.forkParentId !== null;
   const checking = (): boolean =>
     repo !== undefined && followShown(f.app, repo, f.user)?.enabled === true;
   const factRows = (): [string, string][] => [
@@ -111,6 +121,9 @@ export function aboutScreen(
     ...trailRows(f, repo),
     ...upstreamRows(f, repo),
     ...offerRows(offered),
+    // The phase and git's failure line are the Danger zone card's, an
+    // admin's: shown here behind the same gate as `x`.
+    ...(mayDetach() ? detachRows(repo) : []),
     ...cell,
   ];
   let rows = factRows();
@@ -118,7 +131,9 @@ export function aboutScreen(
   // button, read the same way (`upstreamOffer`), pressed here with `o`.
   const forkParent =
     repo === undefined ? undefined : forkParentFor(f.db, repo, f.user);
-  if (repo !== undefined && forkParent !== undefined) {
+  // An archived parent is offered nothing (`upstreamOffer`), so its drift
+  // is not read either, as the web home does.
+  if (repo !== undefined && forkParent !== undefined && forkParent.archivedAt === null) {
     const at = repo;
     void forkDrift(f.app, at, forkParent)
       .then((drift) => {
@@ -192,6 +207,9 @@ export function aboutScreen(
               ...(checking() ? [binding(["u"], "check upstream now")] : []),
               binding(["f"], checking() ? "stop following upstream" : "follow upstream"),
             ]
+          : []),
+        ...(mayDetach() && detachJob(repo!.id)?.phase !== "repacking"
+          ? [binding(["x"], "detach from parent")]
           : []),
         // A site admin also reaches the repository's private egress grants.
         ...(f.user?.isAdmin === true && repo !== undefined
@@ -330,6 +348,42 @@ export function aboutScreen(
                     );
                   } else ctx.toast("that could not be changed", "danger");
                   ctx.invalidate();
+                });
+              },
+            }),
+          );
+        });
+        return true;
+      }
+      if (e.key === "x" && repo !== undefined && mayDetach()) {
+        const at = repo;
+        void detachFromParent(f.app, f.user, at, true).then((plan) => {
+          if (!plan.ok) return ctx.toast("that could not be detached", "danger");
+          ctx.push(
+            confirmScreen(ctx, screen, {
+              title: "Detach from parent",
+              body: [detachPlanWords(plan.value)],
+              actions: [{ label: "Detach" }, { label: "Cancel" }],
+              onChoose: (i) => {
+                if (i !== 0) return;
+                void detachFromParent(f.app, f.user, at, false).then((started) => {
+                  if (!started.ok) {
+                    ctx.toast(
+                      started.error === "running" ? "a detach is already running" : "that could not be detached",
+                      "danger",
+                    );
+                    return ctx.invalidate();
+                  }
+                  rows = factRows();
+                  ctx.toast("detaching: the repack runs on its own", "default");
+                  ctx.invalidate();
+                  void detachJob(at.id)?.done.then(() => {
+                    repo = getRepoById(f.db, at.id) ?? at;
+                    rows = factRows();
+                    const failed = detachJob(at.id)?.phase === "failed";
+                    ctx.toast(failed ? "the detach stopped" : "detached from its parent", failed ? "danger" : "success");
+                    ctx.invalidate();
+                  });
                 });
               },
             }),
@@ -509,6 +563,13 @@ export function outsidersRow(repo: Repo | undefined): [string, string][] {
     i === 0 ? "Crew" : "",
     line,
   ]);
+}
+
+/** Where a detach from the parent stands (#7452): the Danger zone card's line. */
+export function detachRows(repo: Repo | undefined): [string, string][] {
+  if (repo === undefined) return [];
+  const words = detachPhaseWords(detachJob(repo.id), ago);
+  return words === null ? [] : [["detach", words]];
 }
 
 /** One line when an admin has put the repository away. */

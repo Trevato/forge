@@ -14,6 +14,7 @@ import { html } from "../html.ts";
 import { icon } from "../icons.ts";
 import { flashTo } from "../layout.ts";
 import { card, confirmAction } from "../ui.ts";
+import { detachCard } from "./detach.ts";
 import { adminForm, settingsPageResponse, timedAdminRepo } from "./settings.ts";
 
 export function dangerPage(ctx: Ctx): Response {
@@ -45,7 +46,14 @@ export function dangerPage(ctx: Ctx): Response {
         <h2>${DELETE_REPO}</h2>`,
     },
   );
-  const response = settingsPageResponse(ctx, repo, "danger", "Danger zone", body);
+  const detach = detachCard(ctx.app.db, repo, ctx.auth.user);
+  const response = settingsPageResponse(
+    ctx,
+    repo,
+    "danger",
+    "Danger zone",
+    detach === null ? body : html`${detach}<div class="mt">${body}</div>`,
+  );
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
 }

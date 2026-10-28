@@ -1,0 +1,8 @@
+# Detach a fork from its parent
+
+A fork borrows its parent's objects through git alternates, and the forge shows how far it stands from that parent. When the parent is put away for good, the fork can stand alone.
+
+- **Archived parent.** When a fork's parent is archived, the fork's page shows one quiet line, "forked from owner/name (archived)", in place of the Following card. There is no ahead/behind count, nothing to take, and no Propose upstream. The archived repository's forks page lists its forks by name, with no count against them.
+- **Detach.** A repository admin opens *Settings › Danger zone › Detach from parent*. From an archived parent's quiet line it is the "detach from it" link. The card names the parent only to an admin who may still read it. The `repo.detached` event carries the parent's id, never its name. The detach repacks the fork so it owns every object it borrowed (`detachFork`, the same step deleting a parent takes), drops the alternates link, then forgets the parent. The repack runs in the background, and the card says it is running and since when. If it fails, git's line stays on the card and nothing changes. There is no undo.
+- **Terminal.** On a fork's About card (`I`), an admin presses `x`. The terminal shows the plan, and the detach starts only after it is confirmed. A `detach` row shows the phase, as the card does.
+- **MCP.** `detach { repo }` returns the plan: the parent, and whether the fork still borrows objects. `detach { repo, dryRun: false }` starts the detach, and needs an admin token. Calling it again shows the `phase` until the fork has no `parent`. An agent is refused, as with `archive`.

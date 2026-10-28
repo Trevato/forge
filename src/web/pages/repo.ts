@@ -28,6 +28,7 @@ import {
 } from "../../actions/forks.ts";
 import { lineageOf } from "../../core/following.ts";
 import {
+  archivedParentLine,
   followingCard,
   followingOf,
   lineageCard,
@@ -204,7 +205,7 @@ function forkRanking(
       title: html`<a href="/${f.fork.ownerName}/${f.fork.name}"
         >${f.fork.ownerName}/${f.fork.name}</a
       >`,
-      meta: html`${driftWords(f.drift)}${f.pushedAt === null
+      meta: html`${ranked.archived ? "" : driftWords(f.drift)}${f.pushedAt === null
         ? html``
         : html` · pushed ${time(f.pushedAt)}`}`,
       ...(offer
@@ -228,7 +229,9 @@ function forkRanking(
       : listCard(offering.map((f) => line(f, true)))}
     ${nothingNew.length === 0
       ? html``
-      : html`<h3 class="mt">${nothingNewHeading(nothingNew.length)}</h3>
+      : html`${ranked.archived
+            ? ""
+            : html`<h3 class="mt">${nothingNewHeading(nothingNew.length)}</h3>`}
           ${listCard(nothingNew.map((f) => line(f, false)))}`}`;
 }
 
@@ -1256,7 +1259,7 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
   const parent = forkParent(ctx, repo);
   const [entries, drift] = await Promise.all([
     timePhaseAsync(ctx.request, "tree", () => scope.source.tree(ref, "")),
-    parent === undefined
+    parent === undefined || parent.archivedAt !== null
       ? undefined
       : timePhaseAsync(ctx.request, "drift", () => forkDrift(ctx.app, repo, parent)),
   ]);
@@ -1287,7 +1290,7 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
         · ${latest.headline} · ${latest.date}</p>`}
   ${frozenBlock(ctx, repo)} ${appStrip(ctx, repo)}
   ${following === undefined
-    ? forkBar(ctx, repo)
+    ? html`${archivedParentLine(ctx, repo)}${forkBar(ctx, repo)}`
     : followingCard(ctx, repo, following)}
   ${await renderCode(scope, {
     refs,

@@ -120,6 +120,7 @@ const WORDS: Record<string, string> = {
   "pull.thread_resolved": "resolved a review thread",
   "repo.created": "created a repository",
   "repo.forked": "forked a repository",
+  "repo.detached": "detached a fork from its parent",
   "repo.settings_updated": "changed repository settings",
   "repo.upstream_follow": "changed which upstream the repository follows",
   "repo.following": "turned following an upstream on or off",

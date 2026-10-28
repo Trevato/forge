@@ -16,6 +16,7 @@ import {
 } from "../../actions/forks.ts";
 import { listCrewRoles } from "../../core/agents.ts";
 import {
+  canAdmin,
   canRead,
   canWrite,
   forkParentFor,
@@ -99,6 +100,7 @@ export async function followingOf(
   repo: Repo,
 ): Promise<Following | undefined> {
   if (repo.forkParentId === null) return undefined;
+  if (archivedParent(ctx, repo) !== undefined) return undefined;
   const relation = await relationOf(ctx.app, ctx.auth.user, repo);
   if (relation === undefined) return undefined;
   // A parent the viewer may not read is not named here at all.
@@ -118,6 +120,29 @@ export async function followingOf(
           }),
         };
   return { relation, converge, releases };
+}
+
+/** The parent, when the viewer may read it and an admin has archived it. */
+function archivedParent(ctx: Ctx, repo: Repo): Repo | undefined {
+  const parent = forkParentFor(ctx.app.db, repo, ctx.auth.user);
+  return parent?.archivedAt === null ? undefined : parent;
+}
+
+/**
+ * In place of the Following card, when the parent is archived (#7452): one
+ * quiet line. A frozen parent's "N ahead" reads as unshipped work, and there
+ * is nothing to take from it or offer it, so no count and no button.
+ */
+export function archivedParentLine(ctx: Ctx, repo: Repo): Html | null {
+  const parent = archivedParent(ctx, repo);
+  if (parent === undefined) return null;
+  return html`<p class="mt small muted" data-archived-parent>
+    ${icon("fork")} forked from
+    <a href="/${parent.ownerName}/${parent.name}">${parent.ownerName}/${parent.name}</a>
+    (archived)${canAdmin(ctx.app.db, repo, ctx.auth.user)
+      ? html` · <a href="${repoBase(repo)}/settings/danger#detach">detach from it</a>`
+      : null}
+  </p>`;
 }
 
 /**

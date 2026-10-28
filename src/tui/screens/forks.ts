@@ -52,7 +52,7 @@ export function forkRows(
     {
       repo: f.fork,
       name: `${f.fork.ownerName}/${f.fork.name}`,
-      words: driftWords(f.drift),
+      words: ranked.archived ? "" : driftWords(f.drift),
       heading,
     },
     ...(below.get(f.fork.id) ?? []).map((n) => ({
@@ -64,7 +64,7 @@ export function forkRows(
   ];
   return [
     ...ranked.offering.flatMap((f) => row(f, "")),
-    ...ranked.nothingNew.flatMap((f, i) => row(f, i === 0 ? nothingNewHeading(ranked.nothingNew.length) : "")),
+    ...ranked.nothingNew.flatMap((f, i) => row(f, i === 0 && !ranked.archived ? nothingNewHeading(ranked.nothingNew.length) : "")),
   ];
 }
 
