@@ -43,7 +43,7 @@ describe("a failure during the builder's run", () => {
       files: [{ path: `${branch}.md`, content: "x\n" }],
     });
     if (!c.ok) throw new Error(JSON.stringify(c.error));
-    const o = await openPull(app, alice, repo, { title: branch, baseBranch: "main", headBranch: branch, ...(body === undefined ? {} : { body }) });
+    const o = await openPull(app, bot, repo, { title: branch, baseBranch: "main", headBranch: branch, ...(body === undefined ? {} : { body }) });
     if (!o.ok) throw new Error(String(o.error));
     app.db.run("UPDATE issue SET assignee_id = ?1 WHERE id = ?2", [bot.id, o.value.id]);
     for (let i = 0; i < CHECK_FAILED_LIMIT; i++) {

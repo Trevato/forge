@@ -404,7 +404,9 @@ describe("a held pull and the rules", () => {
     f.app.db
       .query("UPDATE issue SET author_id = ?2 WHERE id = ?1")
       .run(pull.id, author.id);
-    return f.passCheck(pull, minutesAgo);
+    f.passCheck(pull, minutesAgo);
+    // Read again: the author decides whose pull it is (#7572).
+    return getPull(f.app.db, f.repo.id, pull.number)!;
   };
   const approve = (pull: Pull, by: User) =>
     submitReview(f.app.db, {

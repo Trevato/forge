@@ -314,6 +314,12 @@ around it. None is advisory.
    create a repository (it owns nothing it was not given; it may fork to
    contribute). A reviewer on the crew may still pass a verdict — request
    changes, approve — since a verdict gates nothing an agent could do.
+   A person's pull from a branch of the repository itself — the owner's
+   or a steward's fix — is a normal pull: its pushes move its head and run
+   its check, review and gate again, and it lands through the queue. No
+   builder is sent to it, since none can push that branch; changes asked
+   for on it go back to its author, and the crew never parks it
+   (`crew/authors_pull.ts`, #7572).
 2. **A preview lives exactly as long as its pull is open.** Opened: deployed.
    Pushed: redeployed at the new head. Closed or merged: stopped, and its
    data deleted. There is no orphan state; the sweep on boot rebuilds the

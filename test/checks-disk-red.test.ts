@@ -54,7 +54,7 @@ describe("a red on a full check machine", () => {
       files: [{ path: `${branch}.md`, content: "x\n" }],
     });
     if (!c.ok) throw new Error(JSON.stringify(c.error));
-    const o = await openPull(app, alice, repo, { title: branch, baseBranch: "main", headBranch: branch });
+    const o = await openPull(app, bot, repo, { title: branch, baseBranch: "main", headBranch: branch });
     if (!o.ok) throw new Error(String(o.error));
     app.db.run("UPDATE issue SET assignee_id = ?1 WHERE id = ?2", [bot.id, o.value.id]);
     for (let i = 0; i < CHECK_FAILED_LIMIT; i++) {

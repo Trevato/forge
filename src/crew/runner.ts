@@ -33,6 +33,7 @@ import { Stopwatch } from "../apps/timing.ts";
 import { previewEnv } from "../apps/data.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import { ownApp, ownAppUrls } from "./app_hosts.ts";
+import { authorsInRepoPull } from "./authors_pull.ts";
 import { crewRole, getAgent, type Agent } from "../core/agents.ts";
 import { getAppByRepo, type AppRecord } from "../core/apps.ts";
 import {
@@ -898,10 +899,13 @@ async function work(
   // brief, its clone is its own fork at a scratch branch, and it pushes
   // nothing. The pull's branch is not its to move, and it never tries.
   const reviewing = reason === "review";
+  // A person's such pull is theirs to push, and stays open (#7572).
   if (pull !== undefined && !reviewing && pull.headRepoId === repo.id)
     return {
       state: "failed",
-      summary: `pull #${pull.number}'s branch lives in the repository itself; the crew works from forks now — close it and assign the issue again`,
+      summary: authorsInRepoPull(pull)
+        ? `pull #${pull.number}'s branch lives in the repository itself and only its author, a person, can push it; the crew leaves it with them`
+        : `pull #${pull.number}'s branch lives in the repository itself; the crew works from forks now — close it and assign the issue again`,
     };
   // A pull whose branch lives in someone else's fork is not the agent's to
   // push to, and the run no longer fails for it: like a merged pull's

@@ -13,6 +13,7 @@
  */
 
 import { closedToday, closeStale } from "./stale_pulls.ts";
+import { authorsInRepoPull } from "./authors_pull.ts";
 import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import { ceilingReached, forgeCeiling } from "../flow/ceiling.ts";
@@ -1082,7 +1083,10 @@ function answeredWithoutChange(
  * planner's to split or drop on its next pass, and one parked twice is
  * handed to the planner with every reason (`strikeNote`). A pull a person
  * holds is not parked: closing it would hand its issue back to the crew, to
- * build the same change again beside the one that was told to wait.
+ * build the same change again beside the one that was told to wait. A
+ * person's pull from a branch of the repository itself is not parked
+ * either: closing it is its author's, and closed it would stop following
+ * the pushes that answer its review (#7572).
  */
 export function parkPull(
   app: App,
@@ -1092,6 +1096,7 @@ export function parkPull(
 ): boolean {
   if (repo.autonomy !== "autonomous" || repo.autonomyBy === null) return false;
   if (getHold(app.db, pull.id) !== undefined) return false;
+  if (authorsInRepoPull(pull)) return false;
   const by = getUserById(app.db, repo.autonomyBy);
   if (!by) return false;
   const issue = getIssueById(app.db, pull.id);
