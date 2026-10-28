@@ -1,11 +1,12 @@
 /**
  * forge for OpenCode: registers the forge's MCP server and a `forge`
- * command (tell, status, decide, plan, preview, pulls, runs, log, asked). Set FORGE_URL and FORGE_TOKEN.
+ * command (new, tell, status, decide, plan, preview, pulls, runs, log, asked). Set FORGE_URL and FORGE_TOKEN.
  * No logic lives here: the tools are the forge's own (`docs/MCP.md`).
  */
 import type { Plugin } from "@opencode-ai/plugin";
 
 const COMMAND = `Use the forge MCP tools for: $ARGUMENTS
+- new <name> <words>: say the name and description back and ask the person to confirm. Only after the person says yes, call \`new_app\` with name and description (the words); relay in two lines the app's page (its url) and the next step (the first issue and who picked it up). If \`new_app\` refuses (name_taken, unverified, app_limit, repository_limit, storage_limit, no_such_agent), say its own message in one line; for name_taken, offer another name. Never retry without asking.
 - tell <app> <words>: call \`tell\` with repo and text; pass context { page, run, commit, said }.
 - status: call \`now\` and \`asks\`; say in three sentences what runs and what waits on the person.
 - decide approve|redirect|decline: call \`asks\`; approve -> \`asks_act\` ship, decline -> \`asks_act\` close, redirect -> \`say\`. Plan first, apply (dryRun false) only after the person says yes.
@@ -32,7 +33,7 @@ export const Forge: Plugin = async () => ({
     };
     config["command"] = {
       ...config["command"],
-      forge: { description: "Tell, status, decide, plan, preview, pulls, runs, log or asked on your forge", template: COMMAND },
+      forge: { description: "New, tell, status, decide, plan, preview, pulls, runs, log or asked on your forge", template: COMMAND },
     };
   },
 });

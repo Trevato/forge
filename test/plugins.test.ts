@@ -21,7 +21,7 @@ const opencodeText = (): string => {
 const backticked = (text: string): string[] => [...text.matchAll(/`([a-z][a-z0-9_]*)`/g)].map((m) => m[1]!);
 
 /** Backticked words that are the server or an argument, not a tool. */
-const NOT_TOOLS = new Set(["forge", "repo", "text", "context", "page", "run", "commit", "said", "action", "ship", "close", "status", "words", "id", "verb", "proposal", "approve", "later", "url", "tail", "show", "all", "outcomeText"]);
+const NOT_TOOLS = new Set(["forge", "repo", "text", "context", "page", "run", "commit", "said", "action", "ship", "close", "status", "words", "id", "verb", "proposal", "approve", "later", "url", "tail", "name", "description", "show", "all", "outcomeText"]);
 
 /** Tools the command text tells the agent to call: every backticked name that is not an argument. */
 const toolsNamed = (text: string): string[] => [...new Set(backticked(text))].filter((n) => !NOT_TOOLS.has(n));
@@ -127,6 +127,32 @@ test("the Claude Code command names plan's tools, and the forge lists them", () 
   expect(claudeText()).toContain("`proposal.id`");
 });
 
+describe("new <name> <words> makes an app through new_app, after a yes", () => {
+  for (const [label, text] of [
+    ["Claude Code", claudeText],
+    ["OpenCode", opencodeText],
+  ] as const) {
+    test(`${label} names new_app, which the forge lists`, () => {
+      expect(toolsNamed(text())).toContain("new_app");
+      expect(tools.has("new_app")).toBe(true);
+      expect(text()).toContain("new <name> <words>");
+      expect(text()).toMatch(/Only after (they say|the person says) yes, call `new_app`/);
+      expect(text()).toMatch(/If `new_app` refuses \([^)]*name_taken[^)]*\), say its own message in one line; for name_taken, offer another name\. Never retry without asking\./);
+    });
+  }
+
+  test("both argument hints offer it", () => {
+    expect(read("plugins/claude-code/commands/forge.md")).toMatch(/^argument-hint: new <name> <words> \|/m);
+    expect(read("plugins/opencode/forge.ts")).toMatch(/description: "New, tell/);
+    expect(opencodeText()).toMatch(/^- new <name> <words>: /m);
+    expect(claudeText()).toMatch(/^- `new <name> <words>`: /m);
+  });
+
+  test("a command that drops new_app is caught", () => {
+    expect(toolsNamed(claudeText().replaceAll("`new_app`", "`tell`"))).not.toContain("new_app");
+  });
+});
+
 describe("the OpenCode plan command", () => {
   test("steers the planner's wave through asks_proposal, after a yes", () => {
     const text = opencodeText();
@@ -174,7 +200,7 @@ const verbDiff = (a: string, b: string): { onlyA: string[]; onlyB: string[] } =>
 
 describe("the two plugin commands offer the same verbs", () => {
   test("Claude Code and OpenCode have the same set", () => {
-    expect(verbsOf(claudeText())).toEqual(["asked", "decide", "log", "plan", "preview", "pulls", "runs", "status", "tell"]);
+    expect(verbsOf(claudeText())).toEqual(["asked", "decide", "log", "new", "plan", "preview", "pulls", "runs", "status", "tell"]);
     expect(verbDiff(claudeText(), opencodeText())).toEqual({ onlyA: [], onlyB: [] });
   });
 

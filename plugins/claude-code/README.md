@@ -3,10 +3,12 @@
 Set `FORGE_URL` (the forge's address, no trailing slash) and `FORGE_TOKEN`
 (an `rw` token; `ro` reads only; make one at `/settings/tokens` on the forge, which also shows this line filled in), then add this directory as a plugin
 (`claude --plugin-dir plugins/claude-code`). It registers the forge's MCP
-server and a `/forge` command: `tell`, `status`, `decide`, `plan`, `preview`,
+server and a `/forge` command: `new`, `tell`, `status`, `decide`, `plan`, `preview`,
 `pulls`, `runs`, `log`, `asked`.
 
 `/forge plan` shows the planner's proposed wave in three lines. `/forge plan approve`, `/forge plan redirect <words>` or `/forge plan later` answers it, after you confirm.
+
+`/forge new <name> <words>` makes an app named `<name>` whose first issue is the words, through MCP `new_app`, after you confirm; it answers with the app's page and the next step. It needs an `rw` token (an `ro` token is refused). When the forge refuses (the name is taken, the account is unverified, a limit is reached), it says the forge's own words in one line, offers another name when the name is taken, and never retries without asking.
 
 `/forge preview <url>` says in two lines the app, environment, pull, check
 and who is working at that URL. `/forge pulls <app>` lists the app's open

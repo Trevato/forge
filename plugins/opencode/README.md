@@ -3,11 +3,13 @@
 Copy `forge.ts` into `.opencode/plugin/` (or list this package under `plugin`
 in `opencode.json`), and set `FORGE_URL` and `FORGE_TOKEN` (make the token at `/settings/tokens` on the forge, which shows the line with its own address filled in):
 `mkdir -p .opencode/plugin && cp plugins/opencode/forge.ts .opencode/plugin/ && FORGE_URL=<url> FORGE_TOKEN=<token> opencode`. It registers the
-forge's MCP server and the `forge` command: `tell`, `status`, `decide`, `plan`,
+forge's MCP server and the `forge` command: `new`, `tell`, `status`, `decide`, `plan`,
 `preview`, `pulls`, `runs`, `log`, `asked`.
 `/forge plan` shows the planner's next wave (the first wave-proposal row of `asks`);
 `/forge plan approve`, `redirect <words>` or `later` steers it through `asks_proposal`,
 applied only after you say yes. Only the owner may act on a proposal.
+
+`/forge new <name> <words>` makes an app named `<name>` whose first issue is the words, through MCP `new_app`, after you confirm; it answers with the app's page and the next step. It needs an `rw` token (an `ro` token is refused). When the forge refuses (the name is taken, the account is unverified, a limit is reached), it says the forge's own words in one line, offers another name when the name is taken, and never retries without asking.
 
 `/forge preview <url>` says in two lines the app, environment, pull, check
 and who is working at that URL. `/forge pulls <app>` lists the app's open

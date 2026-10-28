@@ -1,10 +1,11 @@
 ---
-description: Talk to your forge: tell, status, decide, plan, preview, pulls, runs, log, asked
-argument-hint: tell <app> <words> | status | decide <approve|redirect|decline> [words] | plan [approve|redirect <words>|later] | preview <url> | pulls <app> | runs <app> | log <app> <run> | asked [app]
+description: Talk to your forge: new, tell, status, decide, plan, preview, pulls, runs, log, asked
+argument-hint: new <name> <words> | tell <app> <words> | status | decide <approve|redirect|decline> [words] | plan [approve|redirect <words>|later] | preview <url> | pulls <app> | runs <app> | log <app> <run> | asked [app]
 ---
 
 Use the `forge` MCP server's tools for `$ARGUMENTS`.
 
+- `new <name> <words>`: say the name and the description (the words) back and ask the person to confirm. Only after they say yes, call `new_app` with `name` = the name and `description` = the words. Relay in two lines: the app's page (its `url`) and the next step (the first issue and who picked it up, or that it waits for the crew). If `new_app` refuses (name_taken, unverified, app_limit, repository_limit, storage_limit, no_such_agent), say its own message in one line; for name_taken, offer another name. Never retry without asking.
 - `tell <app> <words>`: call `tell` with `repo` = the app (owner/name) and `text` = the words. Pass `context` with `page` (if known), `run`, `commit` (the current `git rev-parse HEAD`) and `said` (the person's own words, verbatim).
 - `status`: call `now` and `asks`; say in three sentences what is running and what waits on the person.
 - `decide approve|redirect|decline`: call `asks`, take the first row; approve → `asks_act` with action `ship`, decline → `asks_act` with action `close`, redirect → `say` with the person's words. Plan first (`dryRun` defaults to true), show what would change, and apply (`dryRun: false`) only after the person says yes.
