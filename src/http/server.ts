@@ -222,6 +222,7 @@ import {
   newFilePage,
   previewSubmit,
 } from "../web/pages/edit.ts";
+import { configPage, configSubmit } from "../web/pages/config.ts";
 import { commitPage, commitsPage } from "../web/pages/commits.ts";
 import {
   issueCommentSubmit,
@@ -1359,6 +1360,9 @@ export function buildRouter(): Router<Handler> {
   // A mirror of a repository you cannot push to takes its edits as
   // proposals: fork at the origin, commit there, open the pull upstream.
   router.add("POST", "/:owner/:name/contribute", contributeSubmit);
+  // A JSON config file as a form: a writer commits, anyone else proposes.
+  router.add("GET", "/:owner/:name/config/:ref/*path", configPage);
+  router.add("POST", "/:owner/:name/config", configSubmit);
 
   router.add("GET", "/:owner/:name/commits", commitsPage);
   router.add("GET", "/:owner/:name/commit/:oid", commitPage);

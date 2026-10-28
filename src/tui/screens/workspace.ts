@@ -35,6 +35,8 @@
  */
 
 import { editFiles } from "../../actions/contents.ts";
+import { proposeEdit, proposeEditText } from "../../actions/propose_edit.ts";
+import { schemaRefusal } from "../../web/render/json-schema.ts";
 import { err, ok } from "../../kernel/result.ts";
 import { createBranch } from "../../actions/branches.ts";
 import { NAME_THE_BRANCH } from "../../actions/branch_words.ts";
@@ -560,8 +562,15 @@ export function workspaceScreen(
   /** Set when a change made here has to travel to another forge to land. */
   const proposal = (): OriginTarget | undefined =>
     proposeTarget(src, canPushUpstream());
+  /**
+   * A forge repository you can read and not write: a change to it goes on
+   * your fork, as a pull back here (`actions/propose_edit.ts`). A mirror
+   * proposes through its origin instead (`proposal`).
+   */
+  const forkable = (): boolean =>
+    !writable() && repo !== undefined && repo.origin == null && f.user !== undefined && src.where.kind === "local";
   /** Editing is allowed wherever the change has somewhere to go. */
-  const editable = (): boolean => writable() || proposal() !== undefined;
+  const editable = (): boolean => writable() || proposal() !== undefined || forkable();
   const admin = (): boolean =>
     repo !== undefined && canAdmin(f.db, repo, f.user);
   const readPin = (): void => {
@@ -842,9 +851,28 @@ export function workspaceScreen(
 
   // ---- mutations ----
 
+  /**
+   * Why the change breaks a schema one of its JSON files names, or
+   * undefined. The same check the web form makes before a save.
+   */
+  const schemaCheck = async (
+    files: readonly { path: string; content: Uint8Array | null }[],
+  ): Promise<string | undefined> => {
+    const read = async (p: string): Promise<string | undefined> => {
+      const blob = await src.blob(ref, p);
+      return blob.ok && blob.value.kind === "text" ? new TextDecoder().decode(blob.value.body) : undefined;
+    };
+    for (const file of files) {
+      if (file.content === null) continue;
+      const refused = await schemaRefusal(file.path, new TextDecoder().decode(file.content), read);
+      if (refused !== undefined) return refused;
+    }
+    return undefined;
+  };
+
   const commit = (): void => {
     const target = proposal();
-    if (!writable() && target === undefined) {
+    if (!writable() && target === undefined && !forkable()) {
       readOnlyToast();
       return;
     }
@@ -881,6 +909,10 @@ export function workspaceScreen(
       proposeChange(target, files, subject, payload);
       return;
     }
+    if (forkable() && repo !== undefined) {
+      proposeHere(repo, files, subject, payload);
+      return;
+    }
     if (repo === undefined) {
       readOnlyToast();
       return;
@@ -896,6 +928,8 @@ export function workspaceScreen(
         files,
         defaultBranchName: suggestBranch(f, "edit", slug(first.path)),
         commit: async (plan) => {
+          const broken = await schemaCheck(payload(plan.paths));
+          if (broken !== undefined) return err(broken);
           const made = await editFiles(f.app, f.user, here, {
             branch: ref,
             base: ref,
@@ -922,6 +956,68 @@ export function workspaceScreen(
               pending.clear();
               ref = result.branch;
               runAsync(ctx, reload);
+            },
+          });
+        },
+      }),
+    );
+  };
+
+  /**
+   * The same dialog, for a forge repository you can only read: the commit
+   * goes on a branch of your fork (made if you have none) and a pull asks
+   * for it here — what the web's Propose change does.
+   */
+  const proposeHere = (
+    here: Repo,
+    files: readonly CommitFile[],
+    subject: string,
+    payload: (paths: readonly string[]) => {
+      path: string;
+      content: Uint8Array | null;
+    }[],
+  ): void => {
+    const first = files[0]!;
+    const base = ref === "" ? here.defaultBranch : ref;
+    const fullName = `${here.ownerName}/${here.name}`;
+    ctx.push(
+      commitScreen(f, ctx, screen, {
+        repo: here,
+        where: fullName,
+        branch: ref,
+        title: "Propose a change",
+        subject,
+        files,
+        mode: "propose",
+        upstream: { fullName, base },
+        defaultBranchName: suggestBranch(f, "edit", slug(first.path)),
+        commit: async (plan) => {
+          const chosen = payload(plan.paths);
+          const broken = await schemaCheck(chosen);
+          if (broken !== undefined) return err(broken);
+          const sent = await proposeEdit(f.app, f.user, here, {
+            base,
+            files: chosen,
+            message: plan.message,
+            title: plan.pull?.title ?? subject,
+            ...(plan.pull?.body === undefined ? {} : { body: plan.pull.body }),
+            ...(plan.newBranch === undefined ? {} : { branch: plan.newBranch }),
+          });
+          if (!sent.ok) return err(proposeEditText(sent.error));
+          const pull = sent.value.pull;
+          return ok({
+            message: `opened pull #${pull.number} on ${fullName} from ${sent.value.head.ownerName}/${sent.value.head.name}`,
+            then: () => {
+              // The work lives on the fork and in the pull: the buffers go
+              // back to what this repository holds.
+              for (const t of tabs) {
+                t.creating = false;
+                t.editor = null;
+                t.mode = "view";
+                t.rebuild(ctx.theme.c);
+              }
+              pending.clear();
+              ctx.invalidate();
             },
           });
         },
@@ -2325,7 +2421,9 @@ export function workspaceScreen(
                           ? ""
                           : ` · ${tableProblem(t.table)}`
                       }`
-                }${writable() || target !== undefined ? "" : " · read only"}`;
+                }${
+                  writable() || target !== undefined ? "" : forkable() ? " · proposes from your fork" : " · read only"
+                }`;
     if (tail === "") return;
     const shown = truncate(tail, Math.max(0, r.w - 4));
     s.text(

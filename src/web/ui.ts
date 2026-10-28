@@ -170,6 +170,9 @@ export interface BtnOptions {
    * opener handle back into this page. */
   external?: boolean;
   disabled?: boolean;
+  /** A submit that skips the browser's checks: a structural step (add,
+   * remove, go back) must not wait for a field to be filled in. */
+  formnovalidate?: boolean;
   current?: boolean;
   /** A toggle: emits `aria-pressed` with its state. */
   pressed?: boolean;
@@ -206,6 +209,7 @@ export function btn(content: Html | string, o: BtnOptions = {}): Html {
     ${o.value !== undefined ? html`value="${o.value}"` : null}
     ${o.form ? html`form="${o.form}"` : null}
     ${o.disabled ? raw("disabled") : null}
+    ${o.formnovalidate ? raw("formnovalidate") : null}
     ${btnAttrs(o)}
   >
     ${inner}
@@ -1137,6 +1141,20 @@ export interface FieldOptions {
   /** `false` for names and paths, which a spelling checker only underlines. */
   spellcheck?: boolean;
   id?: string;
+  /** `type: "number"`'s bounds and step. */
+  min?: number;
+  max?: number;
+  step?: string;
+  /** `type: "checkbox"`: whether it is ticked; `value` is what it sends. */
+  checked?: boolean;
+  /** `type: "select"`: the choices, in order. */
+  options?: readonly { value: string; label: string; selected?: boolean }[];
+  /** Shown but not sent (a read-only view of a checkbox or a select). */
+  disabled?: boolean;
+  /** The label is for a screen reader only (a chip in a row of them). */
+  labelHidden?: boolean;
+  /** Drawn right after the control, before the hint: a chip's Remove. */
+  after?: Html;
 }
 
 /** Label, control, hint and error, wired together with `aria-describedby`. */
@@ -1145,10 +1163,12 @@ export function field(o: FieldOptions): Html {
   const described = [o.hint ? `${id}-hint` : "", o.error ? `${id}-err` : ""]
     .filter(Boolean)
     .join(" ");
+  const aria = html`${described !== "" ? html`aria-describedby="${described}"` : null}
+  ${o.error ? raw('aria-invalid="true"') : null}
+  ${o.disabled ? raw("disabled") : null}`;
   const shared = html`class="input${o.mono ? " mono" : ""}" id="${id}"
   name="${o.name}"
-  ${described !== "" ? html`aria-describedby="${described}"` : null}
-  ${o.error ? raw('aria-invalid="true"') : null}
+  ${aria}
   ${o.required ? raw("required") : null}
   ${o.autofocus ? raw("autofocus") : null}
   ${o.readonly ? raw("readonly") : null}
@@ -1159,18 +1179,35 @@ export function field(o: FieldOptions): Html {
       ? html`<textarea ${shared} rows="${o.rows ?? 6}" data-grow>
 ${o.value ?? ""}</textarea
         >`
-      : html`<input
-          ${shared}
+      : o.type === "select"
+        ? html`<select ${shared}>
+            ${(o.options ?? []).map(
+              (c) => html`<option value="${c.value}" ${c.selected ? raw("selected") : null}>${c.label}</option>`,
+            )}
+          </select>`
+        : html`<input
+          ${o.type === "checkbox" ? html`id="${id}" name="${o.name}" ${aria}` : shared}
           type="${o.type ?? "text"}"
           value="${o.value ?? ""}"
+          ${o.checked ? raw("checked") : null}
           ${o.autocomplete ? html`autocomplete="${o.autocomplete}"` : null}
           ${o.pattern ? html`pattern="${o.pattern}"` : null}
           ${o.minlength !== undefined ? html`minlength="${o.minlength}"` : null}
           ${o.maxlength !== undefined ? html`maxlength="${o.maxlength}"` : null}
+          ${o.min !== undefined ? html`min="${String(o.min)}"` : null}
+          ${o.max !== undefined ? html`max="${String(o.max)}"` : null}
+          ${o.step !== undefined ? html`step="${o.step}"` : null}
         />`;
+  const label =
+    o.type === "checkbox"
+      ? html`<label class="check">${control} ${o.label}</label>`
+      : o.labelHidden
+        ? html`<label for="${id}" class="sr-only">${o.label}</label>${control}`
+        : html`<label for="${id}">${o.label}</label>
+    ${control}`;
   return html`<div class="field" ${o.error ? raw("data-invalid") : null}>
-    <label for="${id}">${o.label}</label>
-    ${control}
+    ${label}
+    ${o.after ?? null}
     ${o.hint ? html`<span class="hint" id="${id}-hint">${o.hint}</span>` : null}
     ${o.error
       ? html`<span class="error" id="${id}-err">${o.error}</span>`

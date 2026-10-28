@@ -839,6 +839,18 @@ textarea.editor:focus-visible { outline: none; }
     #needs-you #asks-phone-more > .stack { margin-top: 0; }
   }
 }
+/* The config form (#7336): nested objects as quiet fieldsets, scalar
+   arrays as a wrapping row of chips, object arrays as cards. */
+.config-group { border-left: 2px solid var(--border); padding-left: 12px; }
+.config-group > legend { font-weight: 600; margin-bottom: 8px; }
+.config-card { padding: 12px; margin: 0 0 12px; }
+.config-chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.config-chips > li { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.config-chips .input { width: auto; min-width: 8rem; }
+.config-chips .field { margin: 0; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.config-diff { overflow-x: auto; white-space: pre; padding: 12px; }
+.config-diff > [data-op="add"] { background: var(--add-bg); color: var(--add-fg); }
+.config-diff > [data-op="del"] { background: var(--del-bg); color: var(--del-fg); }
 /* Reduced motion: the pulses hold still at a legible level, the scroll-tied
    fade stays at its resting width, and these transitions land at once. */
 @media (prefers-reduced-motion: reduce) {
