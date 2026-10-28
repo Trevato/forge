@@ -1077,3 +1077,42 @@ describe.skipIf(noCells)(
     }, 240_000);
   },
 );
+
+describe.skipIf(noCells)("cells: the shared install cache is read-only (#7543)", () => {
+  test("a revealed cache under a hidden data dir is readable and a write into it fails", async () => {
+    const data = await mkdtemp(join(tmpdir(), "forge-cell-cache-"));
+    const cache = join(data, "check-install", "r", "bun");
+    mkdirSync(cache, { recursive: true });
+    writeFileSync(join(cache, "pkg"), "x");
+    const dir = join(data, "..", `co-${Date.now()}`);
+    mkdirSync(dir);
+    const lines: string[] = [];
+    const result = await runStep(
+      "check",
+      `cat ${cache}/pkg && (echo y > ${cache}/new && echo WROTE || echo REFUSED)`,
+      {
+        cwd: dir,
+        env: childEnv({}),
+        log: (line) => lines.push(line),
+        signal: new AbortController().signal,
+        timeoutMs: 60_000,
+        cell: {
+          dir,
+          writable: [],
+          home: join(dir, ".home"),
+          hide: [data],
+          reveal: [cache],
+          egress: [],
+          reach: [],
+          limits: { memoryMiB: 1024, cpus: 2, diskMiB: 1024 },
+        },
+      },
+    );
+    expect(result.ok).toBe(true);
+    expect(lines).toContain("x");
+    expect(lines).toContain("REFUSED");
+    expect(lines).not.toContain("WROTE");
+    await rm(data, { recursive: true, force: true });
+    await rm(dir, { recursive: true, force: true });
+  }, 60_000);
+});

@@ -95,7 +95,7 @@ import { summariseCheckFailure } from "./summary.ts";
 import type { Result } from "../kernel/result.ts";
 import { placementFromEnv, type Placement } from "./placement.ts";
 import { JOB_VANISHED, runJobStep } from "./job_step.ts";
-import { checkInstallCache, installWithRetry, withLock } from "./install.ts";
+import { cellInstall, checkInstallCache, installWithRetry, prefillInstallCache, withLock } from "./install.ts";
 import { checkStage, type GateStage } from "./gate_reason.ts";
 import { extraGates, gateQueued, gateRunId, gatesInFlight, watchGates } from "./queue.ts";
 import type { JobOptions } from "../cluster/jobs.ts";
@@ -995,18 +995,44 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           // cache is shared, so installs into it take turns (`checks/install.ts`).
           const shared =
             cell === undefined ? checkInstallCache(app.config.dataDir, repo.id) : undefined;
-          const once = (log: (line: string) => void): Promise<Result<void, string>> =>
-            runStep("install", install, {
+          // A cell installs from that same cache, bound read-only (#7543):
+          // the forge fills it first, on the host, so no pull writes what
+          // the gate on main installs. Cluster jobs (`runJobStep`) are
+          // unchanged: a Job has its own cache and never takes this path.
+          const warm = cell === undefined ? undefined : checkInstallCache(app.config.dataDir, repo.id);
+          // Set once the fill has run: a cell installs from the shared cache
+          // only when the forge filled it; otherwise it keeps a cache of its own.
+          let filled = false;
+          const once = (log: (line: string) => void): Promise<Result<void, string>> => {
+            const base = shared === undefined ? env : { ...env, BUN_INSTALL_CACHE_DIR: shared };
+            const from = cellInstall(install, base, filled ? warm : undefined);
+            const revealed = cell !== undefined && filled && warm !== undefined ? { ...cell, reveal: [warm] } : cell;
+            return runStep("install", from.command, {
               cwd: dir,
-              env: shared === undefined ? env : { ...env, BUN_INSTALL_CACHE_DIR: shared },
+              env: from.env,
               log,
               signal,
               timeoutMs: manifest.timeout * 1000,
-              cell,
+              cell: revealed,
             });
+          };
           const installed = await installWithRetry(
             async (log) => {
-              if (shared === undefined) return once(log);
+              if (shared === undefined) {
+                if (warm !== undefined) {
+                  const fill = await prefillInstallCache({
+                    cache: warm,
+                    dir,
+                    env,
+                    log,
+                    signal,
+                    timeoutMs: manifest.timeout * 1000,
+                  });
+                  if (!fill.ok) return fill;
+                  filled = fill.value;
+                }
+                return once(log);
+              }
               mkdirSync(shared, { recursive: true });
               const held = await withLock(`${shared}.lock`, () => once(log), { signal });
               return held.ok ? held.value : held;
