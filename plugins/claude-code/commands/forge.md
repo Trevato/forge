@@ -1,6 +1,6 @@
 ---
-description: Talk to your forge: tell, status, decide, plan, preview, pulls, runs, log
-argument-hint: tell <app> <words> | status | decide <approve|redirect|decline> [words] | plan [approve|redirect <words>|later] | preview <url> | pulls <app> | runs <app> | log <app> <run>
+description: Talk to your forge: tell, status, decide, plan, preview, pulls, runs, log, asked
+argument-hint: tell <app> <words> | status | decide <approve|redirect|decline> [words] | plan [approve|redirect <words>|later] | preview <url> | pulls <app> | runs <app> | log <app> <run> | asked [app]
 ---
 
 Use the `forge` MCP server's tools for `$ARGUMENTS`.
@@ -13,5 +13,6 @@ Use the `forge` MCP server's tools for `$ARGUMENTS`.
 - `pulls <app>`: call `pulls` with `repo` = the app (owner/name); list the open pulls, one line each with its check.
 - `runs <app>`: call `runs` with `repo` = the app (owner/name); say, one line each, the running runs and the last three finished ones: kind, issue or pull number, state, and how long (from `startedAt` to `endedAt`, or to now while running).
 - `log <app> <run>`: call `run_log` with `repo` = the app, `run` = the run id and `tail` = 40; relay the lines verbatim, in a code block.
+- `asked [app]`: call `asked` with `show` = `all`, and `repo` = the app (owner/name) when one is given; say, one line each, flagged ones first, what was asked (its title and number), its state (waiting, building, shipped or closed), the pull that closes it (none yet: say so) and the `outcomeText` sentence, so a parked or failed ask says why.
 
 Keep what you relay short. Never merge: a person lands changes.

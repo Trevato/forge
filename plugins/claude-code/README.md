@@ -4,7 +4,7 @@ Set `FORGE_URL` (the forge's address, no trailing slash) and `FORGE_TOKEN`
 (an `rw` token; `ro` reads only; make one at `/settings/tokens` on the forge, which also shows this line filled in), then add this directory as a plugin
 (`claude --plugin-dir plugins/claude-code`). It registers the forge's MCP
 server and a `/forge` command: `tell`, `status`, `decide`, `plan`, `preview`,
-`pulls`, `runs`, `log`.
+`pulls`, `runs`, `log`, `asked`.
 
 `/forge plan` shows the planner's proposed wave in three lines. `/forge plan approve`, `/forge plan redirect <words>` or `/forge plan later` answers it, after you confirm.
 
@@ -16,5 +16,11 @@ pulls with their check.
 and the last three finished, one line each (kind, issue or pull, state, how
 long), through MCP `runs`. `/forge log <app> <run>` relays that run's last 40
 lines verbatim, through MCP `run_log`.
+
+`/forge asked [app]` says what you asked the crew for and what became of
+each, shipped ones included: one line per ask (what, waiting/building/shipped/closed,
+the pull that closes it, and the outcome sentence: landed, who is building,
+parked and why, failed), flagged ones first, through MCP `asked` with
+`show: "all"`; with an app, only that app's asks.
 
 `test/plugins.test.ts` fails when this plugin names an MCP tool the forge does not list, so a rename in `src/http/mcp.ts` cannot leave it behind.

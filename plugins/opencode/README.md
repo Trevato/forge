@@ -4,7 +4,7 @@ Copy `forge.ts` into `.opencode/plugin/` (or list this package under `plugin`
 in `opencode.json`), and set `FORGE_URL` and `FORGE_TOKEN` (make the token at `/settings/tokens` on the forge, which shows the line with its own address filled in):
 `mkdir -p .opencode/plugin && cp plugins/opencode/forge.ts .opencode/plugin/ && FORGE_URL=<url> FORGE_TOKEN=<token> opencode`. It registers the
 forge's MCP server and the `forge` command: `tell`, `status`, `decide`, `plan`,
-`preview`, `pulls`, `runs`, `log`.
+`preview`, `pulls`, `runs`, `log`, `asked`.
 `/forge plan` shows the planner's next wave (the first wave-proposal row of `asks`);
 `/forge plan approve`, `redirect <words>` or `later` steers it through `asks_proposal`,
 applied only after you say yes. Only the owner may act on a proposal.
@@ -17,6 +17,12 @@ pulls with their check.
 and the last three finished, one line each (kind, issue or pull, state, how
 long), through MCP `runs`. `/forge log <app> <run>` relays that run's last 40
 lines verbatim, through MCP `run_log`.
+
+`/forge asked [app]` says what you asked the crew for and what became of
+each, shipped ones included: one line per ask (what, waiting/building/shipped/closed,
+the pull that closes it, and the outcome sentence: landed, who is building,
+parked and why, failed), flagged ones first, through MCP `asked` with
+`show: "all"`; with an app, only that app's asks.
 
 Code Mode can also read `GET /contract/openapi.json`.
 

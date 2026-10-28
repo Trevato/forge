@@ -27,7 +27,9 @@ import { getRepo, listReposWritableTo, type Repo } from "./repos.ts";
 import { listActiveRuns } from "./runs.ts";
 import type { User } from "./users.ts";
 
-export type AskedState = "waiting" | "building" | "shipped" | "closed";
+/** Every state an ask can be in, in the order it moves through them. */
+export const ASKED_STATES = ["waiting", "building", "shipped", "closed"] as const;
+export type AskedState = (typeof ASKED_STATES)[number];
 
 export interface AskedPull {
   /** The pull's issue id, for reads; not part of the JSON. */
