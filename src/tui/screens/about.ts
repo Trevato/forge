@@ -35,6 +35,7 @@ import { listRefs } from "../../git/read.ts";
 import { directionNote } from "../../crew/direct.ts";
 import { setCrewOutsiders, updateRepoSettings } from "../../actions/repos.ts";
 import { showProvenance } from "../../actions/provenance.ts";
+import { appPace } from "../../actions/apps.ts";
 import {
   checkLine,
   checkedWords,
@@ -118,6 +119,7 @@ export function aboutScreen(
     ...flowRow(repo),
     ...outsidersRow(repo),
     ...aboutFacts(f, src, facts, ref),
+    ...paceRows(f, repo),
     ...trailRows(f, repo),
     ...upstreamRows(f, repo),
     ...offerRows(offered),
@@ -504,6 +506,23 @@ export function trailRows(
     ["migrated from", sourceLabel(trail.sourceUrl)],
     ...trail.parents.map((p): [string, string] => ["fork of", p]),
   ];
+}
+
+/**
+ * How long an app's golden path took, in the apps page's words (#7488):
+ * nothing on a repository that is not an app, or before either figure exists.
+ */
+export function paceRows(
+  f: Session,
+  repo: Repo | undefined,
+): [string, string][] {
+  if (repo === undefined) return [];
+  const pace = appPace(f.app, f.user, repo);
+  if (pace === "") return [];
+  return wrap(pace, 50).map((line, i): [string, string] => [
+    i === 0 ? "golden path" : "",
+    line,
+  ]);
 }
 
 /** The offer row: what the fork has for its parent, and where it stands. */
