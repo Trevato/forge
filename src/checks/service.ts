@@ -12,7 +12,7 @@
  */
 
 import { pullDir, runDir } from "../core/pulls.ts";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { App } from "../app.ts";
@@ -285,7 +285,41 @@ export function requeueAbandonedChecks(app: App, staleMs: number): number {
     appendRunLog(app.config.dataDir, run.id, run.summary);
     announceRun(app, run);
   }
+  // On the same timer: what a dead or lapsed run left on the disk.
+  sweepCheckouts(app);
   return swept.requeued.length + swept.failed.length + swept.cancelled.length;
+}
+
+/**
+ * Remove a run's directory even when the cell left read-only files in it (a
+ * bun cache is): `rmSync` cannot unlink inside a directory without write
+ * permission, so permissions are restored and the removal tried again. A
+ * removal that still fails is logged, never swallowed.
+ */
+export function removeRunDir(path: string): void {
+  try {
+    rmSync(path, { recursive: true, force: true });
+    return;
+  } catch {
+    /* fall through to restore permissions */
+  }
+  const open = (p: string): void => {
+    try {
+      if (lstatSync(p).isSymbolicLink()) return;
+      if (lstatSync(p).isDirectory()) {
+        chmodSync(p, 0o700);
+        for (const n of readdirSync(p)) open(join(p, n));
+      }
+    } catch {
+      /* gone, or not ours: the retry says */
+    }
+  };
+  open(path);
+  try {
+    rmSync(path, { recursive: true, force: true });
+  } catch (error) {
+    log.error("could not remove a run directory", { path, error: String(error) });
+  }
 }
 
 /** Where a check's checkout lives while it runs. */
@@ -301,12 +335,13 @@ export function sweepCheckouts(app: App, now: number = Date.now()): void {
   const root = checksRoot(app.config.dataDir);
   if (!existsSync(root)) return;
   for (const name of readdirSync(root)) {
-    const run = getRun(app.db, name);
+    // `<id>.home` is the home of run `<id>`: it lives and dies with it.
+    const run = getRun(app.db, name.endsWith(".home") ? name.slice(0, -5) : name);
     const live =
       run !== undefined &&
       run.state === "running" &&
       !leaseLapsed(run, STALE_AFTER_MS, now);
-    if (!live) rmSync(join(root, name), { recursive: true, force: true });
+    if (!live) removeRunDir(join(root, name));
   }
 }
 
@@ -1206,8 +1241,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       if (key !== undefined) recordProven(app.db, key, x.id);
       return { ok: true };
     } finally {
-      if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
-      rmSync(home, { recursive: true, force: true });
+      if (existsSync(dir)) removeRunDir(dir);
+      removeRunDir(home);
     }
   }
 
