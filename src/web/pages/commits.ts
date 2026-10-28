@@ -10,6 +10,8 @@
  * list can do neither, so the live browse pages by cursor and says so.
  */
 
+import { checkOfCommit, verdictsOfCommits } from "../../actions/runs.ts";
+import type { CommitCheck } from "../../checks/commit_check.ts";
 import { diffCommit, type Diff } from "../../git/diff.ts";
 import { isSafeOid, isSafeRef, isSafeTreePath } from "../../git/guard.ts";
 import { commitLog } from "../../git/read.ts";
@@ -34,6 +36,7 @@ import {
   messageText,
   originTag,
   pager,
+  runStateBadge,
   sha,
   time,
 } from "../ui.ts";
@@ -62,40 +65,91 @@ function pageNumber(raw: string | null): number {
  * it wears that forge's mark instead of a local avatar — the same rule every
  * imported author follows.
  */
-export function commitRows(scope: RepoScope, commits: readonly Commit[]): Html {
+export function commitRows(
+  scope: RepoScope,
+  commits: readonly Commit[],
+  verdicts: ReadonlyMap<string, CommitCheck> = new Map(),
+): Html {
   const glyph = scope.origin?.kind ?? scope.repo?.origin?.kind ?? "globe";
+  const lead = (commit: Commit): Html =>
+    html`<span class="row-lead"
+      >${scope.kind === "origin" && commit.login
+        ? icon(glyph)
+        : avatar(commit.author)}</span
+    >`;
+  const text = (commit: Commit): Html =>
+    html`<span class="row-title" title="${commit.subject}">${commit.subject}</span>
+      <span class="row-meta"
+        >${commit.author} committed
+        ${time(commit.date)}${when(
+          commit.parents.length > 1,
+          () => html` · ${badge("merge", { variant: "secondary" })}`,
+        )}</span
+      >`;
   return listCard(
-    commits.map(
-      (commit) =>
-        html`<li>
+    commits.map((commit) => {
+      const verdict = verdicts.get(commit.oid);
+      const step = verdict?.summary.split("\n")[0]?.trim() ?? "";
+      // A link cannot sit inside a link: a row with a verdict is a row whose
+      // title links to the commit and whose badge links to the check.
+      if (verdict === undefined || verdict.runId === null)
+        return html`<li>
           <a
             class="row"
             data-nav
             tabindex="-1"
             href="${scope.base}/commit/${commit.oid}"
           >
-            <span class="row-lead"
-              >${scope.kind === "origin" && commit.login
-                ? icon(glyph)
-                : avatar(commit.author)}</span
-            >
-            <span class="row-main">
-              <span class="row-title" title="${commit.subject}"
-                >${commit.subject}</span
-              >
-              <span class="row-meta"
-                >${commit.author} committed
-                ${time(commit.date)}${when(
-                  commit.parents.length > 1,
-                  () => html` · ${badge("merge", { variant: "secondary" })}`,
-                )}</span
-              >
-            </span>
+            ${lead(commit)}<span class="row-main">${text(commit)}</span>
             <span class="row-trail">${sha(commit.oid)}</span>
           </a>
-        </li>`,
-    ),
+        </li>`;
+      return html`<li>
+        <div class="row" data-nav tabindex="-1">
+          ${lead(commit)}
+          <a class="row-main" href="${scope.base}/commit/${commit.oid}"
+            >${text(commit)}</a
+          >
+          <span class="row-trail"
+            ><a
+              href="${scope.base}/runs/${verdict.runId}"
+              title="${step}"
+              aria-label="Check ${verdict.state === "ok" ? "passed" : "failed"} for ${commit.oid.slice(0, 7)}${step === "" ? "" : `: ${step}`}"
+              >${runStateBadge(verdict.state === "ok" ? "ok" : "failed", "check")}</a
+            >${sha(commit.oid)}</span
+          >
+        </div>
+      </li>`;
+    }),
   );
+}
+
+/** A commit's check in a sentence; on red, the first failing step as the check named it. */
+export function checkSentence(scope: RepoScope, check: CommitCheck): Html {
+  const run = check.runId === null ? null : `${scope.base}/runs/${check.runId}`;
+  const via =
+    check.checkedCommit === check.commit
+      ? ""
+      : ` (the check of ${check.checkedCommit.slice(0, 7)}, which contains it)`;
+  const link = (text: string): Html =>
+    run === null ? html`${text}` : html`<a href="${run}">${text}</a>`;
+  switch (check.state) {
+    case "ok":
+      return html`${runStateBadge("ok", "check")} ${link("The check passed")}${via}.`;
+    case "failed": {
+      const step = check.summary.split("\n")[0]?.trim() ?? "";
+      return html`${runStateBadge("failed", "check")} ${link("The check failed")}${via}${when(
+        step !== "",
+        () => html`: first failing ${step}`,
+      )}.`;
+    }
+    case "pending":
+      return html`${runStateBadge("running", "check")} ${link("The check is running")}${via}.`;
+    case "superseded":
+      return html`${runStateBadge("cancelled", "check")} The check was superseded and none will follow.`;
+    default:
+      return html`No check ran on this commit.`;
+  }
 }
 
 /** One commit's header card and its diff. */
@@ -104,9 +158,14 @@ export function renderCommit(
   commit: Commit,
   diff: Diff,
   syntax: SyntaxMap,
+  check: CommitCheck | null = null,
 ): Html {
+  const verdict: Html =
+    check !== null && check.state !== "none"
+      ? html`<div class="card-body small">${checkSentence(scope, check)}</div>`
+      : html``;
   const head: Html = card(
-    html`${when(
+    html`${verdict}${when(
         commit.body.trim() !== "",
         () => html`<div class="card-body">${messageText(commit.body)}</div>`,
       )}
@@ -230,7 +289,11 @@ export async function commitsPage(ctx: Ctx): Promise<Response> {
   const hasMore = log.value.length > PER_PAGE;
 
   const body = html`${scopeHeader(ctx, scope, "commits")}${switcher}
-  ${commitRows(scope, commits)}
+  ${commitRows(
+    scope,
+    commits,
+    verdictsOfCommits(ctx.app, ctx.auth.user, repo, commits.map((c) => c.oid)),
+  )}
   ${pager({
     ...(num > 1 ? { prev: query(num - 1) } : {}),
     ...(hasMore ? { next: query(num + 1) } : {}),
@@ -264,6 +327,8 @@ export async function commitPage(ctx: Ctx): Promise<Response> {
   if (!log.ok || log.value.length === 0) return notFoundPage(ctx);
   const commit = log.value[0]!;
 
+  // The ancestry walk behind a verdict runs beside the diff, not after it.
+  const checking = checkOfCommit(ctx.app, ctx.auth.user, repo, commit.oid);
   const diffResult = await diffCommit(dir, commit.oid);
   notePhase(ctx.request, "git", performance.now() - reading);
   const diff = diffResult.ok
@@ -273,9 +338,10 @@ export async function commitPage(ctx: Ctx): Promise<Response> {
   const syntax = hunkSyntax(diff);
   notePhase(ctx.request, "highlight", performance.now() - highlighting);
 
+  const checked = await checking;
   const rendering = performance.now();
   const body = html`${scopeHeader(ctx, scope, "commits", { compact: true })}
-  ${renderCommit(scope, commit, diff, syntax)}`;
+  ${renderCommit(scope, commit, diff, syntax, checked.ok ? checked.value : null)}`;
   const response = page({
     ctx,
     title: `${commit.subject} · ${repo.name}`,
