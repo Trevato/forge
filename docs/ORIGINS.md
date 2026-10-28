@@ -577,6 +577,21 @@ chosen gets the same rule in the job, over the clone's own tips
 That branch becomes the default branch here, the job says which and why,
 and the crew's brief names it: start from it, open the pull against it.
 
+**A token that sees public repositories only says so.** A classic GitHub
+token without `repo` (its `X-OAuth-Scopes` on `/user`), or a fine-grained one
+whose `/user/repos?visibility=private&per_page=1` answers no row, lists no
+private repository, and the account's card on /migrate says it in one line:
+"This token sees public repositories only, so private ones won't appear",
+with **Make a token with `repo` on GitHub** linking GitHub's new-token page (`scopes=repo`
+prefilled) and a field for the new one (`POST /settings/origins/:id/token`).
+The new token must answer for the same login; the origin keeps its id, its
+mirrors and pins, and its repositories are listed again at once. The answer
+is remembered ten minutes per origin and forgotten when the token changes
+(`origins/token-reach.ts`). The terminal's migrate screen draws the same
+line and the new-token page under its rows, and `t` takes the new token into
+the same action. The picker's filter narrows the rows as you
+type, Enter or the **Filter** button asks the server.
+
 **The conversations come too** — from a connected origin, not a pasted URL
 (`origins/carry.ts`). Labels; every issue, open and closed, with its comments
 and labels, under its original number; and the open pull requests as pulls

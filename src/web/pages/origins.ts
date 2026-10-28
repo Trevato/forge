@@ -24,6 +24,7 @@ import {
   listOriginApps,
   listUserOrigins,
   registerOriginApp,
+  replaceOriginToken,
   startOAuthConnect,
   syncOriginNow,
   type Reattachment,
@@ -37,6 +38,7 @@ import {
   updateTrustedHosts,
 } from "../../origins/trusted-hosts.ts";
 import { reattachMessage } from "./frozen.ts";
+import { replaceTokenMessage } from "../../origins/token-reach.ts";
 import {
   listDetachedMirrors,
   mirrorsByOrigin,
@@ -1100,5 +1102,32 @@ export async function originDisconnect(ctx: Ctx): Promise<Response> {
     message: gone.value.revokedUpstream
       ? "Disconnected, and the grant was revoked upstream."
       : "Disconnected. Revoke the token on the origin too if you want it dead there.",
+  });
+}
+
+// POST /settings/origins/:id/token
+/**
+ * A new token on an origin already connected: the origin, its mirrors and
+ * its pins stay; its repositories are listed again with what it sees.
+ */
+export async function originReplaceToken(ctx: Ctx): Promise<Response> {
+  const denied = accountOnly(ctx);
+  if (denied) return denied;
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const back = thenOf(field(form, "then")) ?? "/settings/origins";
+  const replaced = await replaceOriginToken(
+    ctx.app,
+    ctx.auth.user,
+    ctx.params.id ?? "",
+    field(form, "token"),
+  );
+  if (!replaced.ok)
+    return flashTo(ctx, back, {
+      tone: "danger",
+      message: replaceTokenMessage(replaced.error),
+    });
+  return flashTo(ctx, back, {
+    message: `Token replaced for ${replaced.value.login} at ${hostLabel(replaced.value.webUrl)}; its repositories are listed again.`,
   });
 }

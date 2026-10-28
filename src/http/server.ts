@@ -464,6 +464,7 @@ import {
   originOAuthStart,
   originSyncSubmit,
   originsPage,
+  originReplaceToken,
   originTrustedHosts,
 } from "../web/pages/origins.ts";
 import { originFlowPage, originFlowPoll } from "../web/pages/origin-flow.ts";
@@ -1022,6 +1023,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/settings/origins/:id/mirror/:job", mirrorJobPage);
   router.add("POST", "/settings/origins/:id/sync", originSyncSubmit);
   router.add("POST", "/settings/origins/:id/delete", originDisconnect);
+  router.add("POST", "/settings/origins/:id/token", originReplaceToken);
 
   // Browsing a repository on an origin, live and read-only. Registered here,
   // above every parameterized repo route, so `/origins` can never be captured

@@ -217,6 +217,11 @@ export interface FakeState {
   nextId: number;
   /** The OAuth endpoints, when a test wants the connect flows. */
   oauth?: FakeOAuth;
+  /**
+   * GitHub's `X-OAuth-Scopes` on every answer, as a classic token sends it;
+   * unset, the fake is a fine-grained token, which names none.
+   */
+  scopes?: string;
 }
 
 export interface FakeForge {
@@ -392,16 +397,28 @@ function route(
     return jsonResponse({ max_response_items: state.maxResponseItems });
 
   if (rest === "/user")
-    return jsonResponse({
-      id: 7,
-      login: state.login,
-      full_name: state.login,
-      name: state.login,
-      html_url: `${url.origin}/${state.login}`,
-    });
+    return jsonResponse(
+      {
+        id: 7,
+        login: state.login,
+        full_name: state.login,
+        name: state.login,
+        html_url: `${url.origin}/${state.login}`,
+      },
+      200,
+      state.scopes === undefined ? {} : { "x-oauth-scopes": state.scopes },
+    );
 
   if (rest === "/user/repos" || rest === "/repos/search") {
-    const rows = state.repos.map((r) => repoJson(state, r));
+    const visibility = q.get("visibility");
+    const rows = state.repos
+      .filter(
+        (r) =>
+          visibility === null ||
+          visibility === "all" ||
+          (visibility === "private") === (r.private ?? false),
+      )
+      .map((r) => repoJson(state, r));
     const payload = rest === "/repos/search" ? { ok: true, data: rows } : rows;
     return jsonResponse(payload, 200, { "x-total-count": String(rows.length) });
   }
