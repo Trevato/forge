@@ -539,6 +539,31 @@ export function appPullLines(app: App, actor: User | undefined, repo: Repo): App
   }));
 }
 
+export interface AppPreview {
+  readonly number: number;
+  readonly title: string;
+  /** The preview's environment, as the studio's previews list reads it. */
+  readonly env: EnvStatus;
+}
+
+/**
+ * The open pulls that have a preview environment, newest first, each with
+ * that environment — the studio's previews list (`studio/previews.ts`) for a
+ * door that cannot draw a page. One `status()` read for every row, never one
+ * per pull. `undefined` when the actor may not read the repository or it is
+ * no app, so "no previews" is only ever said to someone who may see them.
+ */
+export function appPreviews(app: App, actor: User | undefined, repo: Repo): AppPreview[] | undefined {
+  if (!requireReader(app, actor, repo).ok) return undefined;
+  const record = getAppByRepo(app.db, repo.id);
+  if (record === undefined) return undefined;
+  const envs = new Map(envsFor(app, actor, record).map((e) => [e.env, e] as const));
+  return openPulls(app.db, repo, actor, 50).flatMap((p) => {
+    const env = envs.get(previewEnv(p.number));
+    return env === undefined ? [] : [{ number: p.number, title: p.title, env }];
+  });
+}
+
 /**
  * The other side of the app for its production terminal, gated as the pill
  * is (an active reader of the repository; a guest gets none): production's

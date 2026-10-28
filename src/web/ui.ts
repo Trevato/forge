@@ -10,7 +10,7 @@
  * reaches for an inline `style` attribute, because the CSP forbids it.
  */
 
-import { VERIFYING_NOTE, type EnvState, type EnvStatus } from "../apps/runtime.ts";
+import { type EnvState, type EnvStatus } from "../apps/runtime.ts";
 import type { PreviewData } from "../apps/data.ts";
 import type { Mark } from "../core/marks.ts";
 import type { RunKind, RunState } from "../core/runs.ts";
@@ -415,36 +415,7 @@ export function envTone(state: EnvState | undefined): Tone {
         : "default";
 }
 
-/**
- * An environment's state in a person's words rather than a badge's —
- * `live`, `serving · tests failed`, `not up`, `not running` — for a head
- * that speaks one line. A card head wears `envStateBadge` instead. How fast
- * it came up belongs to `envFacts`, which sits under this and says it once.
- *
- * A serving app is never called down because its tests are red: the words
- * say the tests failed, and the tone is not green: it answers, but not
- * verified. While they still run it reads `serving · verifying`, neither
- * green nor failed.
- */
-export function envPhrase(env: EnvStatus | undefined): {
-  word: string;
-  tone: Tone;
-} {
-  if (env?.dormant !== undefined) return { word: "asleep", tone: "default" };
-  if (env === undefined || env.state === "stopped")
-    return { word: "not running", tone: "default" };
-  if (env.state === "failed") return { word: "not up", tone: "danger" };
-  if (env.state === "deploying") return { word: "starting", tone: "default" };
-  // It answers, so it is not "not up" — but a newer push never came up
-  // behind it, so it is not plain green either.
-  if (env.failedDeploy !== undefined)
-    return { word: "live · a newer push failed", tone: "attn" };
-  if (env.error !== undefined)
-    return { word: "serving · tests failed", tone: "attn" };
-  if (env.note === VERIFYING_NOTE)
-    return { word: "serving · verifying", tone: "default" };
-  return { word: "live", tone: "success" };
-}
+export { envPhrase } from "../apps/env_phrase.ts";
 
 export interface EnvFactsOptions {
   /** Name the environment's address in full — a card has room for it, a

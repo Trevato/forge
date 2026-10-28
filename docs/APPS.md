@@ -180,7 +180,13 @@ Under the box, four starter sentences are plain links (no script):
   (each with what it carries), `enter` for the log, `r` to refresh. A signed-in
   reader also sees `Production: <url>` and, when a pull's preview is up or
   asleep, `Newest preview: #N <title> <url>` — the pill's other side, same
-  gate; a guest sees neither. A writer presses `p` there to probe the running app's
+  gate; a guest sees neither. Under the deploys, anyone who may read the
+  repository sees a **Previews** group: one row per open pull with a preview,
+  `#N <title> · <state> · <url>`, the state in the studio's words (`live`,
+  `not up`, `starting`…) from the one runtime read the studio's list makes.
+  `j` past the last deploy moves into it and `k` from its first row back;
+  `enter` (or a second click) on a preview opens that pull. An app with none
+  says `No previews.`. A writer presses `p` there to probe the running app's
   doors as nobody, a user and an admin, read-only — one line per door with
   its status and `ok` or what was wrong, `r` to knock again; the result is
   kept and the mismatch issue opened or closed as for MCP `probe`. On a

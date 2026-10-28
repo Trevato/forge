@@ -4,6 +4,7 @@
  * neither imports the other.
  */
 
+import type { EnvPhraseTone } from "../../apps/env_phrase.ts";
 import type { RunState } from "../../core/runs.ts";
 import type { Tone } from "../ui/widgets.ts";
 
@@ -31,4 +32,9 @@ export function envLabel(env: string): string {
 /** The dollars a run spent, or nothing when it spent none. */
 export function costText(costUsd: number): string {
   return costUsd > 0 ? `$${costUsd.toFixed(2)}` : "";
+}
+
+/** The tone an environment's word wears (`envPhrase`): the studio's, with its plain default left neutral as a queued run is. */
+export function envTone(tone: EnvPhraseTone): Tone | undefined {
+  return tone === "default" ? undefined : tone;
 }

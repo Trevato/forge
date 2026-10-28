@@ -6,7 +6,14 @@
  * through `listRepoRuns` (so it is gated like every other run read) and
  * joined to `deploy_pull` in one grouped read for `carries #3 #5`.
  *
- * Below the deploys, a signed-in viewer sees the app's open pulls, one line
+ * Under production's deploys, anyone who may read the repository sees a
+ * "Previews" group: one row per open pull with a preview environment,
+ * `#N title · <state> · <address>`, the state in the studio's words
+ * (`envPhrase`) and tone, all from one runtime `status()` read
+ * (`appPreviews`). `j`/`k` walk from the last deploy into it, and Enter on a
+ * preview opens that pull's screen. An app with none says `No previews.`.
+ *
+ * Below those, a signed-in viewer sees the app's open pulls, one line
  * each: `#N title · check <word> · <preview address or none>`. A guest sees
  * none.
  *
@@ -36,14 +43,17 @@
 
 import {
   appPace,
+  appPreviews,
   appPullLines,
   appSideLines,
   appView,
   appVisitors,
   redeployEnv,
   stopEnv,
+  type AppPreview,
   type AppPullLine,
 } from "../../actions/apps.ts";
+import { envPhrase } from "../../apps/env_phrase.ts";
 import {
   addAppDomain,
   checkAppDomain,
@@ -75,6 +85,7 @@ import type { Run } from "../../core/runs.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import type { Session } from "../session.ts";
+import type { Rect } from "../term/screen.ts";
 import { style } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
@@ -91,6 +102,9 @@ import {
   type ListRow,
 } from "./common.ts";
 import { RunList, openRunLog, runRows } from "./runlist.ts";
+import { envTone } from "./runwords.ts";
+import { pullScreen } from "./pull.ts";
+import { local } from "./where.ts";
 import { appMembersScreen } from "./appmembers.ts";
 
 const LIMIT = 50;
@@ -131,6 +145,17 @@ function pullLine(p: AppPullLine): string {
   return `#${p.number} ${title} · check ${p.check} · ${p.preview ?? "none"}`;
 }
 
+/** Previews drawn before the group scrolls. */
+const PREVIEW_ROWS = 6;
+
+/** `#N title · live · https://app--4.apps.example`, the dot in the studio's tone. */
+export function previewRow(p: AppPreview): ListRow {
+  const title = p.title.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, "").trim();
+  const { word, tone } = envPhrase(p.env);
+  const t = envTone(tone);
+  return { title: `#${p.number} ${title} · ${word} · ${p.env.url}`, ...(t === undefined ? {} : { tone: t }) };
+}
+
 /**
  * "Reached, not declared": the hosts the app's code called that `forge.json`
  * does not declare, as the app's page says them, then the line to add them.
@@ -161,6 +186,11 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   let side: string[] = [];
   let egress: string[] = [];
   let pulls: AppPullLine[] = [];
+  /** The app's previews, or undefined for anyone who may not see them. */
+  let previews: AppPreview[] | undefined;
+  const previewState = new ListState();
+  /** Which list the cursor is in: production's deploys, or the previews under them. */
+  let inPreviews = false;
   let production: Production = { state: "", redeploy: false, stop: false };
   let members = false;
   /** The app's domains, or undefined for anyone `listAppDomains` refuses. */
@@ -180,6 +210,9 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     side = appSideLines(f.app, f.user, repo);
     egress = egressLines(f, repo);
     pulls = appPullLines(f.app, f.user, repo);
+    previews = appPreviews(f.app, f.user, repo);
+    previewState.clamp(previews?.length ?? 0);
+    if ((previews?.length ?? 0) === 0) inPreviews = false;
     production = readProduction(f, repo);
     // The action's gate: a person who can write, never an agent.
     members =
@@ -194,6 +227,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   };
 
   const open = (run: Run): void => openRunLog(f, ctx, repo, run);
+  const openPreview = (p: AppPreview): void => ctx.push(pullScreen(f, ctx, local(f, repo), p.number));
   // The MCP tool's gate, read once: only a writer is offered the knock.
   const mayProbe = canWrite(f.db, repo, f.user);
 
@@ -237,7 +271,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     get keys() {
       return [
         binding(["j", "k"], "move"),
-        binding(["enter"], "open the log"),
+        binding(["enter"], inPreviews ? "open the pull" : "open the log"),
         binding(["r"], "refresh (the open pulls below the deploys: check, preview)"),
         ...(production.redeploy ? [binding(["D"], "redeploy production")] : []),
         ...(production.stop ? [binding(["S"], "stop production")] : []),
@@ -250,7 +284,30 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     render(area, s) {
       const c = ctx.theme.c;
       const named = domainsLine(domains);
-      const [head, upper, tail] = split(area, "v", [
+      const drawPreviews = (r: Rect): void => {
+        s.text(r.x, r.y, truncate("Previews", r.w), style(c.mutedFg, c.bg), r.x + r.w);
+        const body = { x: r.x, y: r.y + 1, w: r.w, h: r.h - 1 };
+        if (previews === undefined || previews.length === 0) {
+          s.text(body.x, body.y, truncate("No previews.", body.w), style(c.mutedFg, c.bg), body.x + body.w);
+          return;
+        }
+        const rows = previews.map(previewRow);
+        drawList(s, body, c, previewState, rows, inPreviews);
+        hitList(ctx, body, previewState, rows.length, {
+          select: () => {
+            inPreviews = true;
+            ctx.invalidate();
+          },
+          open: (index) => {
+            const p = previews?.[index];
+            if (p === undefined) return;
+            inPreviews = true;
+            openPreview(p);
+          },
+        });
+      };
+      const shown = previews === undefined ? 0 : Math.max(1, Math.min(previews.length, PREVIEW_ROWS));
+      const [head, upper, middle, tail] = split(area, "v", [
         len(
           1 +
             (visitors === "" ? 0 : 1) +
@@ -261,9 +318,11 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
             (named === "" ? 0 : 1),
         ),
         fill(1),
+        len(previews === undefined ? 0 : shown + 1),
         len(pulls.length === 0 ? 0 : pulls.length + 1),
       ]);
       const body = upper;
+      if (previews !== undefined) drawPreviews(middle!);
       pulls.forEach((p, i) =>
         s.text(
           tail!.x,
@@ -305,16 +364,38 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
           ? row
           : { ...row, secondary: [row.secondary, text].filter((t) => t !== "").join(" · ") };
       });
-      drawList(s, body!, c, list.state, rows);
+      drawList(s, body!, c, list.state, rows, !inPreviews);
       hitList(ctx, body!, list.state, rows.length, {
+        select: () => {
+          inPreviews = false;
+          ctx.invalidate();
+        },
         open: (index) => {
+          inPreviews = false;
           const run = list.runs[index];
           if (run !== undefined) open(run);
         },
       });
     },
     key(e) {
-      if (list.state.key(e, list.runs.length)) return true;
+      const n = previews?.length ?? 0;
+      const down = !e.ctrl && !e.alt && (e.key === "j" || e.key === "down");
+      const up = !e.ctrl && !e.alt && (e.key === "k" || e.key === "up");
+      if (!inPreviews && down && n > 0 && list.state.index >= list.runs.length - 1) {
+        inPreviews = true;
+        previewState.index = 0;
+        return true;
+      }
+      if (inPreviews && up && previewState.index === 0) {
+        inPreviews = list.runs.length === 0;
+        return true;
+      }
+      if (inPreviews ? previewState.key(e, n) : list.state.key(e, list.runs.length)) return true;
+      if (e.key === "enter" && inPreviews) {
+        const p = previews?.[previewState.index];
+        if (p !== undefined) openPreview(p);
+        return true;
+      }
       if (e.key === "enter") {
         const run = list.selected;
         if (run !== undefined) open(run);
