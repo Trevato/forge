@@ -156,7 +156,7 @@ export function aboutScreen(
     title: "About",
     get keys() {
       return [
-        binding(["y"], "copy the clone URL", { disabled: cloneUrl === "" }),
+        binding(["y"], "copy URL", { disabled: cloneUrl === "" }),
         ...(repo === undefined
           ? []
           : [binding(["v"], "events"), binding(["C"], "crew")]),
