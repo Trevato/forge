@@ -1516,6 +1516,11 @@ Every limit an owner can hit (crew runs and checks at once, budget
 ceilings, per-account caps, sign-in rates) is listed with its value and its
 reason under **Settings → Limits** (`/admin/limits`, forge admin only),
 declared in `settings/limits.ts` and read on every use.
+The same list is MCP `limits` and the terminal's **Limits** command (Ctrl+K,
+then Limits; a forge admin who is a person, never an agent): each row shows
+the key, value, default and bounds. `e` asks for a value (empty restores the
+default), shows the plan as from → to, and changes it only after a confirm; a
+value out of bounds is refused in the same words as MCP.
 
 Four of these are the forge's capacity and change while it runs: crew runs
 at once, checks at once, shards per check, and the cells' egress mode. A

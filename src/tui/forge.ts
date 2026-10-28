@@ -64,6 +64,7 @@ import { proposalTokensPrompt } from "./screens/proposal_tokens.ts";
 import { invitesScreen } from "./screens/invites.ts";
 import { subscriptionsScreen } from "./screens/subscriptions.ts";
 import { signInsScreen } from "./screens/signins.ts";
+import { limitsScreen } from "./screens/limits.ts";
 import { quotasScreen } from "./screens/quotas.ts";
 import { teamsScreen } from "./screens/teams.ts";
 import { domainsScreen } from "./screens/domains.ts";
@@ -542,6 +543,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Account quotas",
         hint: "what one account may own, and who changed it",
         run: () => ctx.push(quotasScreen(session, ctx)),
+      });
+    // The forge's limits, as MCP `limits` has them: an admin who is not an agent (#7268).
+    if (session.user?.isAdmin === true && session.user.kind !== "agent")
+      commands.push({
+        id: "limits",
+        title: "Limits",
+        hint: "what the forge caps, with default and bounds; change one",
+        run: () => ctx.push(limitsScreen(session, ctx)),
       });
     // Crew teams, as /settings/teams has them: an admin who is not an agent (#2679).
     if (session.user?.isAdmin === true && session.user.kind !== "agent")
