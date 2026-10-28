@@ -160,6 +160,7 @@ import {
   backupsTest,
   domainsMoved,
 } from "../web/pages/backups.ts";
+import { apiPage, appApiPage } from "../web/pages/api.ts";
 import { changelogPage } from "../web/pages/changelog.ts";
 import { releasesPage, rollbackSubmit } from "../web/pages/releases.ts";
 import {
@@ -782,6 +783,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/audit", auditPage);
   router.add("GET", "/releases", releasesPage);
   router.add("GET", "/changelog", changelogPage);
+  router.add("GET", "/:owner/:name/api", appApiPage);
   router.add("POST", "/releases/:sha/rollback", rollbackSubmit);
   router.add("GET", "/audit.csv", auditCsv);
   router.add("POST", "/audit/:owner/:name/probe", auditProbeSubmit);
@@ -1492,6 +1494,8 @@ export function buildApiRouter(): Router<Handler> {
   apiRoutes(router);
   feedRoutes(router);
   checksRecheckRoutes(router);
+  // The reference page for these routes lives at their root, so it answers here.
+  router.add("GET", "/api", apiPage);
   return router;
 }
 

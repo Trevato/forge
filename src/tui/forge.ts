@@ -80,6 +80,7 @@ import { grantable, READS_KEPT, recentReads } from "../core/telemetry.ts";
 import { noteRead, setTelemetryGrant, telemetryReader } from "../actions/telemetry.ts";
 import { queuesFor, systemFor } from "../system/telemetry.ts";
 import { live as liveMachine } from "../system/live.ts";
+import { apiScreen } from "./screens/api.ts";
 import { changelogScreen } from "./screens/changelog.ts";
 import { releasesScreen } from "./screens/releases.ts";
 import { mayRead } from "../release/gate.ts";
@@ -403,6 +404,13 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         hint: "where snapshots go and the mirror; each protection green, red or untested",
         run: () => ctx.push(resilienceScreen(session, ctx)),
       });
+    // The forge's API operations, as /api lists them; Enter runs a GET: for anyone.
+    commands.push({
+      id: "api",
+      title: "API",
+      hint: "the forge's endpoints; run a GET",
+      run: () => ctx.push(apiScreen(session, ctx)),
+    });
     // The last releases with their pulls, as /changelog shows them: for anyone.
     commands.push({
       id: "changelog",
