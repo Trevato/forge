@@ -191,6 +191,7 @@ describe("the forge over MCP", () => {
       "repo",
       "here",
       "tell",
+      "templates",
       "share",
       "say",
       "issue",

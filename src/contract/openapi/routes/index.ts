@@ -57,6 +57,7 @@ export { route as getApiV1FleetOpsId } from "./getApiV1FleetOpsId.ts";
 export { route as getApiV1Forge } from "./getApiV1Forge.ts";
 export { route as getApiV1Forges } from "./getApiV1Forges.ts";
 export { route as getApiV1ForgesSizes } from "./getApiV1ForgesSizes.ts";
+export { route as getApiV1ForgesTemplates } from "./getApiV1ForgesTemplates.ts";
 export { route as getApiV1Front } from "./getApiV1Front.ts";
 export { route as getApiV1Health } from "./getApiV1Health.ts";
 export { route as getApiV1Here } from "./getApiV1Here.ts";

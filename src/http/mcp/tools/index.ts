@@ -149,6 +149,7 @@ export { tool as teams } from "./teams.ts";
 export { tool as telemetry_grant } from "./telemetry_grant.ts";
 export { tool as telemetry_history } from "./telemetry_history.ts";
 export { tool as tell } from "./tell.ts";
+export { tool as templates } from "./templates.ts";
 export { tool as thought } from "./thought.ts";
 export { tool as threads } from "./threads.ts";
 export { tool as tokens } from "./tokens.ts";

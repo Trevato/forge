@@ -161,7 +161,7 @@ for a tunnel and a forge that sleeps.
 | `signup` | `{ mode?, dryRun? }`: who may sign up: `open` (default), `invite` (only a person with an open invite link) or `closed` (no new accounts); without `mode` it reads the setting, with `mode` it plans first (`dryRun` is true unless `false`), and applying needs an admin token | yes |
 | `sizes` | what a child forge's sizes mean: small, medium and large, each with CPU, memory and disk |  |
 | `snapshot_now` | no arguments: take a snapshot now, as the Backups page's button does; a forge admin with an admin-scope token; answers `{ name, repos, apps, bytes, says }` | yes |
-| `spawn` | `{ name, apps?, crew?, dryRun? }`: a child forge, planned first (`dryRun` is true unless `false`); an admin's, and an `ro` token may plan but not make | yes |
+| `spawn` | `{ name, apps?, crew?, template?, dryRun? }`: a child forge, planned first (`dryRun` is true unless `false`); an admin's, and an `ro` token may plan but not make | yes |
 | `spend` | `{ repo, who, model?, tokensIn?, tokensOut?, usd?, issue?, note? }`: report what your session spent outside forge runs; `who` and some spend (tokens or `usd`) are required; answers the entry's `id` and `usd` | yes |
 | `ssh_keys` | `{ action?, title?, key?, id? }`: list your own SSH keys (default), add one (`key` is an authorized_keys line, `title` optional) or remove one by `id`; the API's rules and errors, add and remove need an `rw` token | yes |
 | `steer` | `{ repo, run, text }`: say a word to one running crew run by its id, as the run page's steer box and `POST …/runs/:id/steer` do; a writer's (never an agent), the run an agent's, `text` not empty; answers `{ says, outcome }` (`sent` or `commented`) | yes |
@@ -180,6 +180,7 @@ for a tunnel and a forge that sleeps.
 | `telemetry_grant` | `{ agent, on }`: grant an agent `telemetry:read`, or take it back with `false`, as the Telemetry page does; a person admin's, with an admin token; answers `says` | yes |
 | `telemetry_history` | `{ hours? }` (1–72, default 6): the node's and the forge's CPU cores, memory and load over the window, `{ hours, points: [{ target, at, cpuCores, cpuCoresMax (the bucket's peak), memoryBytes, load }] }`, at most 300 points a series (15-s samples to 24 h, 5-min beyond, averaged down); a forge admin or `telemetry:read`, as `system`; the machine records no disk history |  |
 | `tell` | a sentence becomes an issue, a builder is picked, a run starts on the crew's next tick | yes |
+| `templates` | the templates a child forge may start from (`blank` first, the default), each with id, title, one sentence and source; pass an id as `spawn`'s `template` |  |
 | `thought` | `{ id }`: where one of your thoughts went (its id comes from `tell` without a repo): the placement, and the earlier thoughts it repeats or takes back and the later ones that did the same; not yours and not there answer alike, `not_found` |  |
 | `threads` | `{ repo, number, anchor?, resolved? }`: a pull's review threads with their comments; with `anchor` (from the list) resolve it (`resolved` true, the default) or reopen it (false), by the API's rules: a writer or someone who commented in the thread | yes |
 | `tokens` | your own API tokens, as `GET /api/v1/tokens` lists them: id, name, scope, created and last used; never a token or its hash |  |

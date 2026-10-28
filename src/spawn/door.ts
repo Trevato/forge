@@ -268,6 +268,7 @@ export async function spawnDoor(
     fresh: raw["fresh"],
     followMode: raw["followMode"],
     size: raw["size"],
+    template: raw["template"],
     ...(anon ? {} : { for: raw["for"] }),
   };
 

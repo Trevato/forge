@@ -1,30 +1,36 @@
 /**
- * A forge's children over the API: `/api/v1/forges` — the sizes, the list,
- * a spawn (planned before made), and a fresh claim link. Moved out of
- * `api.ts` (#6331); the rules live in `actions/spawn.ts` and `spawn/`.
+ * A forge's children over the API: `/api/v1/forges` — the sizes, the
+ * templates, the list, a spawn (planned before made), and a fresh claim
+ * link. Moved out of `api.ts` (#6331); the rules live in `actions/spawn.ts` and `spawn/`.
  */
 
 import { listChildren } from "../../actions/spawn.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { reissueDoor, spawnDoor } from "../../spawn/door.ts";
 import { sizesView } from "../../spawn/sizes.ts";
-import { crossOrigin, type Handler } from "../context.ts";
+import { templatesView } from "../../spawn/templates.ts";
+import { crossOrigin, type Ctx, type Handler } from "../context.ts";
 import { holds, weakEtag } from "../etag.ts";
 import { apiError, body, forbidden, json, requireScope } from "../respond.ts";
 import type { Router } from "../router.ts";
 
-export function forgeRoutes(router: Router<Handler>): void {
-  // What small, medium and large mean: public, and cacheable by ETag.
-  router.add("GET", "/api/v1/forges/sizes", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const text = timePhase(ctx.request, "sizes", () => JSON.stringify(sizesView()));
-    return timePhase(ctx.request, "render", () => {
-      const etag = weakEtag(text);
-      const headers = { etag, "cache-control": "public, max-age=300" };
-      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
-      return new Response(text, { headers: { "content-type": "application/json", ...headers } });
-    });
+/** A table any page or agent may read: the same JSON for everyone, so an ETag and five minutes' cache. */
+function publicTable(ctx: Ctx, phase: string, view: () => unknown): Response {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const text = timePhase(ctx.request, phase, () => JSON.stringify(view()));
+  return timePhase(ctx.request, "render", () => {
+    const etag = weakEtag(text);
+    const headers = { etag, "cache-control": "public, max-age=300" };
+    if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+    return new Response(text, { headers: { "content-type": "application/json", ...headers } });
   });
+}
+
+export function forgeRoutes(router: Router<Handler>): void {
+  // What small, medium and large mean, and which templates a child may
+  // start from: public, and cacheable by ETag.
+  router.add("GET", "/api/v1/forges/sizes", (ctx) => publicTable(ctx, "sizes", sizesView));
+  router.add("GET", "/api/v1/forges/templates", (ctx) => publicTable(ctx, "templates", templatesView));
 
   // A forge's children (docs/SPAWN.md): an admin's, planned before made.
   router.add("GET", "/api/v1/forges", async (ctx) => {
