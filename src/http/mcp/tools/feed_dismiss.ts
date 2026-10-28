@@ -1,6 +1,6 @@
-import { ITEM_ID, recordInteraction } from "../../../core/interactions.ts";
-import { interactionTarget } from "../../../feed/interact.ts";
-import { good, bad, type Tool, str } from "../shared.ts";
+import { recordInteraction } from "../../../core/interactions.ts";
+import { readInteraction } from "../../../feed/interact.ts";
+import { good, bad, type Tool } from "../shared.ts";
 
 export const tool: Tool = {
   name: "feed_dismiss",
@@ -17,16 +17,12 @@ export const tool: Tool = {
   },
   writes: true,
   run(ctx, user, args) {
-    const item = str(args["item"]);
-    const kind = args["kind"];
-    if (!ITEM_ID.test(item)) return bad("invalid", "item is a feed item id");
-    if (kind !== "dismissed" && kind !== "muted")
-      return bad("invalid", "kind is dismissed or muted");
-    const target = interactionTarget(ctx.app.db, user, item, str(args["app"]));
-    if (!target) return bad("not_found", "no such item");
+    const act = readInteraction(ctx.app.db, user, args, ["dismissed", "muted"]);
+    if (!act.ok) return bad(act.error.code, act.error.message);
+    const { itemId, kind, target } = act.value;
     const made = recordInteraction(ctx.app.db, {
       viewerId: user.id,
-      itemId: item,
+      itemId,
       kind,
       repoId: target.repoId,
       actorId: target.actorId,

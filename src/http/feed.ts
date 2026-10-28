@@ -12,10 +12,10 @@ import {
   VARIANTS_MAX,
 } from "../actions/tell.ts";
 import { DIRECTION_NOTE } from "../crew/direct.ts";
-import { interactionTarget } from "../feed/interact.ts";
+import { readInteraction } from "../feed/interact.ts";
 import {
   ITEM_ID,
-  isInteractionKind,
+  INTERACTION_KINDS,
   recordInteraction,
 } from "../core/interactions.ts";
 import { chipsOf, isKindChip, setChip } from "../core/feed_chips.ts";
@@ -232,15 +232,10 @@ export function feedRoutes(router: Router<Handler>): void {
     const viewer = ctx.auth.user!;
     const db = ctx.app.db;
     const input = await body(ctx.request);
-    const itemId = str(input.item);
-    const kind = input.kind;
-    if (!ITEM_ID.test(itemId))
-      return apiError("invalid_item", 422, "item is a feed item id");
-    if (!isInteractionKind(kind))
-      return apiError("invalid_kind", 422, "kind is not one the feed knows");
-
-    const target = interactionTarget(db, viewer, itemId, str(input.app));
-    if (!target) return notFound();
+    const act = readInteraction(db, viewer, input, INTERACTION_KINDS);
+    if (!act.ok)
+      return apiError(act.error.code, act.error.code === "not_found" ? 404 : 422, act.error.message);
+    const { itemId, kind, target } = act.value;
     const made = recordInteraction(db, {
       viewerId: viewer.id,
       itemId,
