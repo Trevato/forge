@@ -11,7 +11,7 @@
  */
 
 import { STEER_SAYS, steerRepoRun } from "../../actions/runs.ts";
-import { SAY_SOMETHING_WORDS } from "../../actions/tell_words.ts";
+import { steerRefusedWords } from "../../actions/steer_words.ts";
 import { placementWords } from "../../checks/placement.ts";
 import { getIssuesByIds, type Issue } from "../../core/issues.ts";
 import { canWrite, type Repo } from "../../core/repos.ts";
@@ -25,7 +25,6 @@ import type { Session } from "../session.ts";
 import {
   ListState,
   drawList,
-  errorText,
   hitList,
   metaOf,
   promptScreen,
@@ -219,8 +218,8 @@ export function steerPrompt(
       onSubmit: (text) => {
         const steered = steerRepoRun(f.app, f.user, repo, run.id, text);
         if (!steered.ok) {
-          if (steered.error === "empty") return SAY_SOMETHING_WORDS;
-          ctx.toast(`Could not steer: ${errorText(steered.error)}.`, "danger");
+          if (steered.error === "empty") return steerRefusedWords("empty");
+          ctx.toast(steerRefusedWords(steered.error), "danger");
           return undefined;
         }
         ctx.toast(`${steered.value === "sent" ? "Sent" : "Commented"}. ${STEER_SAYS[steered.value]}`);

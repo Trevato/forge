@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { steerRefusedWords } from "../src/actions/steer_words.ts";
 import { createApp, type App } from "../src/app.ts";
 import { newApp } from "../src/actions/apps.ts";
 import { openIssue } from "../src/actions/issues.ts";
@@ -105,5 +106,36 @@ describe("MCP steer", () => {
     expect(other.error).toContain("not_agent");
     expect(said()).not.toContain("no");
     expect(said()).not.toContain("reader words");
+  });
+
+  test("each refusal is worded as the run page's steer box words it", async () => {
+    const said = (r: { error?: string }, code: string) => {
+      expect(r.error).toContain(code);
+      expect(r.error).toContain(steerRefusedWords(code));
+    };
+    said(await tool(bobRw, { repo: "alice/hello", run: agentRun.id, text: "x" }), "forbidden");
+    said(await tool(aliceRw, { repo: "alice/hello", run: agentRun.id, text: " " }), "empty");
+    said(await tool(aliceRw, { repo: "alice/hello", run: deployRun.id, text: "hi" }), "not_agent");
+    said(await tool(aliceRw, { repo: "alice/hello", run: "nope", text: "hi" }), "not_found");
+    // The run page: the flash it redirects with carries the same sentence.
+    for (const [token, code] of [[bobRw, "forbidden"], [aliceRw, "empty"]] as const) {
+      const page = await fetch(`${servers.url}/alice/hello/runs/${agentRun.id}/steer`, {
+        method: "POST",
+        redirect: "manual",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/x-www-form-urlencoded",
+          origin: servers.url,
+        },
+        body: new URLSearchParams({ text: code === "empty" ? " " : "x" }),
+      });
+      expect(page.status).toBe(303);
+      const flash = decodeURIComponent(
+        `${page.headers.get("location")} ${page.headers.get("set-cookie")}`.replace(/\+/g, " "),
+      );
+      expect(flash).toContain(steerRefusedWords(code));
+    }
+    for (const code of ["empty", "not_agent", "not_found", "unauthorized", "unverified", "forbidden"])
+      expect(steerRefusedWords(code)).not.toContain(code);
   });
 });

@@ -3,16 +3,17 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { steerRefusedWords } from "../src/actions/steer_words.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo as makeRepo } from "../src/actions/repos.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
 import { listComments, type Issue } from "../src/core/issues.ts";
-import { addTeamMember, createOrg, createTeam } from "../src/core/orgs.ts";
+import { addTeamMember, createOrg, createTeam, removeTeamMember } from "../src/core/orgs.ts";
 import { canWrite, createRepo, type Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
-import type { User } from "../src/core/users.ts";
+import { createUser, type User } from "../src/core/users.ts";
 import { listenForSteer } from "../src/crew/runner.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { issueScreen } from "../src/tui/screens/issue.ts";
@@ -220,5 +221,29 @@ test("an agent session that may write is not offered steering", async () => {
   expect(await h.press("S")).not.toContain("Steer the run");
   expect(heard).toEqual([]);
   stop();
+  h.app.stop();
+});
+
+test("a refusal reads as the run page and MCP read it", async () => {
+  const { repo, issue } = await seed();
+  const c = await createUser(forge.db, {
+    origin: "seed",
+    trusted: true,
+    username: "carol",
+    email: "carol@forge.test",
+    password: "a-long-passphrase",
+  });
+  if (!c.ok) throw new Error("carol failed");
+  const writers = createTeam(forge.db, orgId, "Carol's", "write");
+  if (!writers.ok) throw new Error("team failed");
+  addTeamMember(forge.db, writers.value, c.value.id);
+  const h = await open(c.value, (s, ctx) => runsScreen(s, ctx, repo));
+  await h.press("S");
+  await h.type("hello");
+  // Her write access goes after the prompt opened: the action refuses.
+  removeTeamMember(forge.db, writers.value, c.value.id);
+  const text = await h.press("enter");
+  expect(text).toContain(steerRefusedWords("forbidden"));
+  expect(listComments(forge.db, issue.id)).toHaveLength(0);
   h.app.stop();
 });
