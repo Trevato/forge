@@ -73,11 +73,17 @@ export function isVisionPull(db: Database, repo: string, number: number): boolea
   return rows.some((r) => toPlacement(r).placed.some((p) => p.action === "proposed" && p.repo === repo && p.pull === number));
 }
 
+/** The placements of these thoughts: one query per chunk, never one per thought (#7509). */
 export function placementsOf(db: Database, thoughtIds: readonly string[]): Map<string, Placement> {
   const out = new Map<string, Placement>();
-  for (const id of thoughtIds) {
-    const p = placementOf(db, id);
-    if (p) out.set(id, p);
+  const unique = [...new Set(thoughtIds)];
+  const CHUNK = 400;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const rows = db
+      .query<Row, string[]>(`SELECT * FROM placement WHERE thought_id IN (${batch.map(() => "?").join(",")})`)
+      .all(...batch);
+    for (const r of rows) out.set(r.thought_id, toPlacement(r));
   }
   return out;
 }

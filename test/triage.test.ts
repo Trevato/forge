@@ -299,7 +299,7 @@ describe("triage", () => {
     await placeThought(app, fresh(), alice, late);
     const rows = thoughtStream(app.db, alice);
     const repeatRow = String(thoughtRow(rows.find((t) => t.id === again.id)!, 7));
-    expect(repeatRow).toContain("said again, first on");
+    expect(repeatRow).toContain("repeats “build a &lt;b&gt;bold&lt;/b&gt; gauge for queue depth”");
     const reverseRow = String(thoughtRow(rows.find((t) => t.id === late.id)!, 7));
     expect(reverseRow).toContain("takes back");
     expect(reverseRow).toContain("&lt;b&gt;bold&lt;/b&gt;");

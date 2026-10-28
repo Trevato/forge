@@ -11,7 +11,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { NOT_PLACED_YET } from "../../actions/ask_state_words.ts";
+import { thoughtNotes, whereItWent } from "../../actions/ask_state_words.ts";
 import { askedIn, askedRepos, outcomeText, type Asked, type AskedOrder, type AskedShow } from "../../core/asked.ts";
 import { thoughtStream, type StreamThought } from "../../core/thought_stream.ts";
 import type { User } from "../../core/users.ts";
@@ -49,15 +49,15 @@ function toneOf(flagged: boolean, state: string): { tone?: Tone } {
   return state === "building" ? { tone: "attn" } : {};
 }
 
+/** Where it went and what it repeats or takes back, in /asked's words (`whereItWent`, `thoughtNotes`). */
 function thoughtLine(t: StreamThought): AskedLine {
-  const where = t.placed.map((x) =>
-    x.readable ? `${x.action} ${x.repo} #${x.number}` : `${x.action} in a repository you cannot read`,
-  );
+  const where = whereItWent(t).map((x) => `${x.lead}${x.text}`);
+  const notes = thoughtNotes(t).map((n) => `${n.text} ${relTime(n.at)}`);
   return {
     title: plain(t.text),
     ...toneOf(t.flagged, t.state),
     hollow: t.state === "unplaced" || t.state === "superseded",
-    secondary: plain(where.length > 0 ? where.join(" · ") : (t.reply ?? NOT_PLACED_YET)),
+    secondary: plain([...where, ...notes].join(" · ")),
     meta: metaOf(t.flagged ? "nothing built" : THOUGHT_WORD[t.state], relTime(t.receivedAt)),
   };
 }

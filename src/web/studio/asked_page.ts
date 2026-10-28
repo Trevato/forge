@@ -27,7 +27,7 @@ import {
   type StreamThought,
   type ThoughtState,
 } from "../../core/thought_stream.ts";
-import { NOT_PLACED_YET } from "../../actions/ask_state_words.ts";
+import { cut, thoughtNotes, whereItWent } from "../../actions/ask_state_words.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase, signInFirst } from "../chrome.ts";
@@ -53,18 +53,12 @@ const THOUGHT_WORD: Record<ThoughtState, { text: string; tone: Tone }> = {
   superseded: { text: "Superseded", tone: "default" },
 };
 
-/** Where a thought went: each issue it touched, linked when the viewer may read it. */
+/** Where a thought went (`whereItWent`), each issue linked when the viewer may read it. */
 function placedLinks(t: StreamThought): Html {
-  const links = t.placed.map((x) =>
-    !x.readable
-      ? html`${x.action} in a repository you cannot read`
-      : x.title === null
-      ? html`${x.action} ${x.repo} #${x.number}`
-      : html`${x.action} <a href="/${x.repo}/${x.pull === x.number ? "pulls" : "issues"}/${x.number}">${x.repo} #${x.number}</a>`,
+  const parts = whereItWent(t).map((x) =>
+    x.href === undefined ? html`${x.lead}${x.text}` : html`${x.lead}<a href="${x.href}">${x.text}</a>`,
   );
-  return links.length === 0
-    ? html`${t.reply ?? NOT_PLACED_YET}`
-    : html`${links.map((l, i) => html`${i > 0 ? " · " : ""}${l}`)}`;
+  return html`${parts.map((l, i) => html`${i > 0 ? " · " : ""}${l}`)}`;
 }
 
 export function thoughtRow(t: StreamThought, days: number): Html {
@@ -78,11 +72,9 @@ export function thoughtRow(t: StreamThought, days: number): Html {
         ? `Not placed ${days} days after it was sent`
         : `Nothing merged ${days} days after it was placed`
       : t.text,
-    meta: html`${time(t.receivedAt)} · ${t.source} · ${placedLinks(t)}${t.supersededBy
-      ? html` · superseded by “${t.supersededBy.text.slice(0, 80)}” ${time(t.supersededBy.receivedAt)}`
-      : null}${t.repeats ? html` · said again, first on ${time(t.repeats.receivedAt)}` : null}${t.supersedes.length > 0
-      ? html` · takes back “${t.supersedes[0]!.text.slice(0, 80)}” ${time(t.supersedes[0]!.receivedAt)}`
-      : null}`,
+    meta: html`${time(t.receivedAt)} · ${t.source} · ${placedLinks(t)}${thoughtNotes(t).map(
+      (n) => html` · ${n.text} ${time(n.at)}`,
+    )}`,
     trail: badge(word.text, { tone: word.tone }),
   });
 }
@@ -98,13 +90,8 @@ function oldestFlaggedHref(stream: readonly StreamThought[]): string | null {
   return null;
 }
 
-/** The ask, cut at the last space before 80 characters (a hard cut when it has none). */
-const asking = (a: Asked): string => {
-  const text = a.issue.title.replace(/\s+/g, " ").trim();
-  if (text.length <= 80) return text;
-  const space = text.lastIndexOf(" ", 79);
-  return `${text.slice(0, space > 0 ? space : 79)}…`;
-};
+/** The ask, its first 80 characters. */
+const asking = (a: Asked): string => cut(a.issue.title, 80);
 
 /**
  * What became of the ask, as the end of its sentence, linked to the pull or
