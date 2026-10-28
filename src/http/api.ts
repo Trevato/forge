@@ -19,9 +19,7 @@ import {
 } from "../actions/origin_app_words.ts";
 import { getProvenance, provenanceFacts } from "../core/provenance.ts";
 import { goldenPath } from "../apps/golden_path.ts";
-import { setRole } from "../actions/roles.ts";
-import { listPeople, NOT_A_MEMBER } from "../core/roles.ts";
-import { setAccountCeilings, setAccountGrant } from "../actions/model_grant.ts";
+import { NOT_A_MEMBER } from "../core/roles.ts";
 import { storageLimitMessage } from "../core/storage.ts";
 import { voteVariant } from "../actions/variants.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../core/route_timing.ts";
@@ -33,12 +31,7 @@ import { DOMAINS } from "../kernel/domains.ts";
 import { readBounded } from "./limits.ts";
 import { askCheck } from "../checks/again.ts";
 import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
-import { changeCapacity, listCapacity } from "../actions/capacity.ts";
-import { changeLimit, listLimits } from "../actions/limits.ts";
-import { changeTeam, readTeams, TEAM_SAYS } from "../actions/teams.ts";
 import { readScorecards } from "../actions/scorecard.ts";
-import { changeQuotas, readQuotas } from "../actions/quotas.ts";
-import { changeSignup, readSignup } from "../actions/signup.ts";
 import {
   accountSignIns,
   endAccountSession,
@@ -53,15 +46,6 @@ import {
   isAskedShow,
 } from "../core/asked.ts";
 import { streamJson, thoughtStream } from "../core/thought_stream.ts";
-import {
-  listAccounts,
-  removeAccount,
-  retireAndRemoveAccount,
-  retirementPlan,
-  suspendAccount,
-  unsuspendAccount,
-  verifyAccount,
-} from "../actions/accounts.ts";
 import { PROVE_FIRST } from "../actions/verify_words.ts";
 import { REPORT_LINK_TITLE } from "../actions/report_words.ts";
 import { editMessage } from "../actions/edit_words.ts";
@@ -149,10 +133,6 @@ import {
   type Issue,
   type IssueState,
 } from "../core/issues.ts";
-import {
-  soleOwnedOrgs,
-  lastOwnerSays,
-} from "../core/orgs.ts";
 import {
   getPull,
   listPulls,
@@ -284,7 +264,6 @@ import { blobForRender, commitLog, listRefs, listTree } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
 import { carriedPulls, pullPath } from "../story/wave_pulls.ts";
 import { pullRefs, readWave, readWaves } from "../story/waves.ts";
-import { inviteLink, list as listInviteLinks, mint as mintInviteLink, revoke as revokeInviteLink } from "../actions/invites.ts";
 import { originForRepo, type OriginRepoRow } from "../core/origins.ts";
 import { subscribe as subscribeJob, type MirrorJob } from "../origins/jobs.ts";
 import type { Origin } from "../origins/types.ts";
@@ -340,6 +319,7 @@ import { agentRoutes } from "./api/agents.ts";
 import { boardRoutes } from "./api/boards.ts";
 import { followingRoutes } from "./api/following.ts";
 import { labelsRoutes } from "./api/labels.ts";
+import { accountAdmin, adminRoutes } from "./api/admin.ts";
 import { issueRoutes, labelsHandler } from "./api/issues.ts";
 import { userRoutes } from "./api/user.ts";
 import { appRoutes } from "./api/app.ts";
@@ -359,9 +339,7 @@ import { egressMetrics } from "../apps/egress_metrics.ts";
 import { forgeMetrics } from "../metrics/forge.ts";
 import { appSources } from "../metrics/app_sources.ts";
 import { ADMIN_WORDS } from "../actions/admin_words.ts";
-import { SETTING_WORDS } from "../actions/setting_words.ts";
-import { SPEND_WORDS } from "../actions/spend_words.ts";
-import { ANSWER_WORDS, ORDER_WORDS, SIGNUP_WORDS, VISIBILITY_WORDS } from "../core/arg_words.ts";
+import { ANSWER_WORDS, ORDER_WORDS, VISIBILITY_WORDS } from "../core/arg_words.ts";
 
 /** Take the parent's updates for `repo` and answer as the API does, for every route that asks. */
 export async function respondTake(ctx: Ctx, repo: Repo): Promise<Response> {
@@ -853,7 +831,7 @@ export function listQuery(ctx: Ctx) {
 /** Room for the longest key: a pin's `owner/name` (up to ~40 + 1 + 100 characters). */
 const KEYED_CURSOR_MAX = 160;
 
-function offsetRefused(error: "invalid_limit" | "invalid_cursor"): Response {
+export function offsetRefused(error: "invalid_limit" | "invalid_cursor"): Response {
   return error === "invalid_limit"
     ? apiError(error, 422, `limit is a whole number from 1 to ${OFFSET_LIMIT_MAX}`)
     : apiError(error, 422, "cursor is the next_cursor of a page before");
@@ -1165,21 +1143,7 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   userRoutes(router);
-
-  // ---- accounts: the owner's view of who joined (#660) ----
-  // Hidden from everyone but a forge admin: the door is not there.
-  const accountError = (error: string): Response =>
-    error === "not_found"
-      ? notFound()
-      : error === "not_allowed"
-        ? apiError(
-            "not_allowed",
-            422,
-            ADMIN_WORDS.selfSuspend,
-          )
-        : apiError(error, 500, "the account could not be removed");
-  const accountAdmin = (ctx: Ctx, scope: "ro" | "admin"): Response | undefined =>
-    ctx.auth.user?.isAdmin === true ? requireScope(ctx, scope) : notFound();
+  adminRoutes(router);
 
   // Open read hooks (#1789): the owner, or an agent holding `telemetry:read`.
   // Anyone else is refused; every agent read is logged.
@@ -1238,64 +1202,6 @@ export function apiRoutes(router: Router<Handler>): void {
     return json(recordDrill(ctx.app.db, ctx.auth.user!.id, domain.key, observed, back, verdict), 201);
   });
 
-  // The forge's capacity (`core/capacity.ts`): read and changed live by an
-  // admin, never by an agent; anyone else is told the door is not there.
-  router.add("GET", "/api/v1/admin/capacity", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const denied = accountAdmin(ctx, "ro");
-    if (denied) return denied;
-    const listed = timePhase(ctx.request, "capacity", () => listCapacity(ctx.app, ctx.auth.user));
-    return timePhase(ctx.request, "render", () => (listed.ok ? json({ items: listed.value.settings, changes: listed.value.changes, next_cursor: null }) : notFound()));
-  });
-
-  router.add("PUT", "/api/v1/admin/capacity/:key", async (ctx) => {
-    const denied = accountAdmin(ctx, "admin");
-    if (denied) return denied;
-    const input = await body(ctx.request);
-    const value = input.value === null ? null : str(input.value);
-    const changed = changeCapacity(ctx.app, ctx.auth.user, ctx.params.key!, value);
-    if (changed.ok) return json(changed.value);
-    if (changed.error === "not_found") return notFound();
-    return apiError(
-      changed.error,
-      422,
-      changed.error === "no_such_setting"
-        ? "no such capacity setting"
-        : SETTING_WORDS.outOfRange,
-    );
-  });
-
-  // The forge's limits (`settings/limits.ts`): the same door as capacity.
-  router.add("GET", "/api/v1/admin/limits", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const denied = accountAdmin(ctx, "ro");
-    if (denied) return denied;
-    const listed = timePhase(ctx.request, "limits", () => listLimits(ctx.app, ctx.auth.user));
-    return timePhase(ctx.request, "render", () => (listed.ok ? json({ items: listed.value.limits, changes: listed.value.changes, next_cursor: null }) : notFound()));
-  });
-
-  router.add("PUT", "/api/v1/admin/limits/:key", async (ctx) => {
-    const denied = accountAdmin(ctx, "admin");
-    if (denied) return denied;
-    const input = await body(ctx.request);
-    const value =
-      input.value === null
-        ? null
-        : typeof input.value === "number" && Number.isFinite(input.value)
-          ? String(input.value)
-          : str(input.value);
-    const changed = changeLimit(ctx.app, ctx.auth.user, ctx.params.key!, value);
-    if (changed.ok) return json(changed.value);
-    if (changed.error.kind === "not_found") return notFound();
-    return apiError(
-      changed.error.kind,
-      422,
-      changed.error.kind === "no_such_limit"
-        ? "no such limit"
-        : changed.error.message,
-    );
-  });
-
   // The crew's scorecard (`core/scorecard.ts`): a read, so any scope of a
   // forge admin's token, as the MCP tool; 401 without one, 403 for anyone else.
   router.add("GET", "/api/v1/crew/scorecard", (ctx) => {
@@ -1305,254 +1211,6 @@ export function apiRoutes(router: Router<Handler>): void {
     const card = timePhase(ctx.request, "scorecard", () => readScorecards(ctx.app, ctx.auth.user));
     if (!card) return apiError("forbidden", 403, ADMIN_WORDS.scorecard);
     return timePhase(ctx.request, "render", () => json(card));
-  });
-
-  // Crew teams (`core/teams.ts`): a forge admin who is a person; the page's door.
-  router.add("GET", "/api/v1/admin/teams", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const denied = accountAdmin(ctx, "ro");
-    if (denied) return denied;
-    const read = timePhase(ctx.request, "teams", () => readTeams(ctx.app, ctx.auth.user));
-    return read.ok ? timePhase(ctx.request, "render", () => json({ teams: read.value.teams })) : notFound();
-  });
-
-  router.add("PUT", "/api/v1/admin/teams/:slug", async (ctx) => {
-    const denied = accountAdmin(ctx, "admin");
-    if (denied) return denied;
-    const input = await body(ctx.request);
-    const { charter, dial, members } = input;
-    if (
-      (charter !== undefined && typeof charter !== "string") ||
-      (dial !== undefined && typeof dial !== "number" && typeof dial !== "string") ||
-      (members !== undefined &&
-        (!Array.isArray(members) || !members.every((m) => typeof m === "string")))
-    )
-      return apiError("invalid_body", 422, "send charter (text), dial (a whole number) and members (agent ids)");
-    const changed = changeTeam(ctx.app, ctx.auth.user, ctx.params.slug ?? "", {
-      ...(charter === undefined ? {} : { charter: charter as string }),
-      ...(dial === undefined ? {} : { dial: String(dial) }),
-      ...(members === undefined ? {} : { members: members as string[] }),
-    });
-    if (changed.ok) return json(changed.value);
-    if (changed.error === "not_found") return notFound();
-    return apiError(changed.error, 422, TEAM_SAYS[changed.error]);
-  });
-
-  // Per-account quotas (`core/quotas.ts`): null is no limit. Each is
-  // asked when the thing is made or started (`settings/quotas.ts`), never of a
-  // forge admin.
-  router.add("GET", "/api/v1/admin/settings", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const denied = accountAdmin(ctx, "ro");
-    if (denied) return denied;
-    const { read, signup } = timePhase(ctx.request, "settings", () => ({
-      read: readQuotas(ctx.app, ctx.auth.user),
-      signup: readSignup(ctx.app, ctx.auth.user),
-    }));
-    return timePhase(ctx.request, "render", () =>
-      read.ok && signup.ok ? json({ ...read.value, ...signup.value, signupChanges: signup.value.changes, changes: read.value.changes }) : notFound());
-  });
-
-  router.add("PATCH", "/api/v1/admin/settings", async (ctx) => {
-    const denied = accountAdmin(ctx, "admin");
-    if (denied) return denied;
-    const input = await body(ctx.request);
-    if (input.signup !== undefined) {
-      if (input.quotas !== undefined)
-        return apiError("invalid_body", 422, "send signup or quotas, not both");
-      const set = changeSignup(ctx.app, ctx.auth.user, input.signup);
-      if (set.ok) return json({ signup: set.value });
-      if (set.error === "not_found") return notFound();
-      return apiError(set.error, 422, SIGNUP_WORDS);
-    }
-    const quotas = input.quotas;
-    if (typeof quotas !== "object" || quotas === null || Array.isArray(quotas))
-      return apiError("invalid_body", 422, "send {\"signup\": \"closed\"} or {\"quotas\": {\"repositories\": 5, \"apps\": null}}");
-    const changed = changeQuotas(ctx.app, ctx.auth.user, quotas as Record<string, unknown>);
-    if (changed.ok) return json({ quotas: changed.value });
-    if (changed.error === "not_found") return notFound();
-    return apiError(
-      changed.error,
-      422,
-      changed.error === "no_such_quota"
-        ? "no such quota"
-        : "a quota is a positive whole number, or null for no limit",
-    );
-  });
-
-  // Invite links (#2335): minted once, listed without tokens, revoked by id.
-  router.add("POST", "/api/v1/admin/invites", async (ctx) => {
-    const denied = accountAdmin(ctx, "admin");
-    if (denied) return denied;
-    const input = await body(ctx.request);
-    const made = mintInviteLink(ctx.app, ctx.auth.user, input.days);
-    if (!made.ok)
-      return made.error === "invalid_days"
-        ? apiError("invalid", 422, SPEND_WORDS.inviteDays)
-        : notFound();
-    const origin = ctx.app.config.url ?? ctx.url.origin;
-    return json(
-      { ...made.value.invite, token: made.value.token, link: inviteLink(origin, made.value.token) },
-      201,
-    );
-  });
-
-  router.add("GET", "/api/v1/admin/invites", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const denied = accountAdmin(ctx, "ro");
-    if (denied) return denied;
-    const query = offsetQuery(ctx.url.searchParams);
-    if ("error" in query) return offsetRefused(query.error);
-    const listed = timePhase(ctx.request, "invites", () => listInviteLinks(ctx.app, ctx.auth.user));
-    return listed.ok ? timePhase(ctx.request, "render", () => json(offsetPage(listed.value, query.limit, query.offset))) : notFound();
-  });
-
-  router.add("DELETE", "/api/v1/admin/invites/:id", (ctx) => {
-    const denied = accountAdmin(ctx, "admin");
-    if (denied) return denied;
-    const done = revokeInviteLink(ctx.app, ctx.auth.user, ctx.params.id!);
-    return done.ok ? json(done.value) : notFound();
-  });
-
-  router.add("GET", "/api/v1/admin/accounts", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const denied = accountAdmin(ctx, "ro");
-    if (denied) return denied;
-    const query = offsetQuery(ctx.url.searchParams);
-    if ("error" in query) return offsetRefused(query.error);
-    const listed = timePhase(ctx.request, "accounts", () => listAccounts(ctx.app, ctx.auth.user));
-    return listed.ok ? timePhase(ctx.request, "render", () => json(offsetPage(listed.value, query.limit, query.offset))) : notFound();
-  });
-
-  router.add("POST", "/api/v1/admin/accounts/:username/suspend", async (ctx) => {
-    const denied = accountAdmin(ctx, "admin");
-    if (denied) return denied;
-    const input = await body(ctx.request);
-    const done = await suspendAccount(ctx.app, ctx.auth.user, ctx.params.username!, {
-      confirmed: input.confirm === true,
-    });
-    if (!done.ok && done.error === "last_owner")
-      return apiError(
-        "last_owner",
-        409,
-        `${lastOwnerSays(ctx.app.db, ctx.params.username!)}, or send {"confirm": true} to suspend anyway`,
-      );
-    return done.ok ? json({ username: done.value.username, suspendedAt: done.value.suspendedAt }) : accountError(done.error);
-  });
-
-  // A capped model grant, dollars a month; null (or 0) takes it back.
-  router.add("POST", "/api/v1/admin/accounts/:username/model-grant", async (ctx) => {
-    const denied = accountAdmin(ctx, "admin");
-    if (denied) return denied;
-    const input = await body(ctx.request);
-    const raw = input.usdPerMonth;
-    if (raw !== null && (typeof raw !== "number" || !Number.isFinite(raw)))
-      return apiError("invalid", 422, "usdPerMonth is a number of dollars, or null to take the grant back");
-    const done = setAccountGrant(ctx.app, ctx.auth.user, ctx.params.username!, raw === 0 ? null : raw);
-    if (done.ok) return json(done.value);
-    return done.error === "invalid_amount"
-      ? apiError("invalid", 422, SPEND_WORDS.usdPerMonth)
-      : done.error === "not_allowed"
-        ? apiError("not_allowed", 422, "a grant is for a person who is not an admin")
-        : notFound();
-  });
-
-  // Every person and their role.
-  router.add("GET", "/api/v1/admin/people", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const denied = accountAdmin(ctx, "admin");
-    if (denied) return denied;
-    const query = offsetQuery(ctx.url.searchParams);
-    if ("error" in query) return offsetRefused(query.error);
-    const people = timePhase(ctx.request, "people", () => listPeople(ctx.app.db));
-    return timePhase(ctx.request, "render", () => json(offsetPage(people, query.limit, query.offset)));
-  });
-
-  // Make a person a member (with an optional starter allowance, dollars a month) or a guest again.
-  router.add("POST", "/api/v1/admin/accounts/:username/role", async (ctx) => {
-    const denied = accountAdmin(ctx, "admin");
-    if (denied) return denied;
-    const input = await body(ctx.request);
-    const { role, usdPerMonth } = input;
-    if ((role !== "member" && role !== "guest") || (usdPerMonth !== undefined && usdPerMonth !== null && (typeof usdPerMonth !== "number" || !Number.isFinite(usdPerMonth))))
-      return apiError("invalid", 422, 'role is "member" or "guest"; usdPerMonth is dollars a month, or null');
-    const done = setRole(ctx.app, ctx.auth.user, ctx.params.username!, role, typeof usdPerMonth === "number" ? usdPerMonth : null);
-    if (done.ok) return json(done.value);
-    return done.error === "invalid_amount"
-      ? apiError("invalid", 422, SPEND_WORDS.usdPerMonth)
-      : done.error === "not_allowed"
-        ? apiError("not_allowed", 422, "a role is for a person who is not an admin")
-        : notFound();
-  });
-
-  // An account's daily and per-run model spend ceilings, dollars (any account, orgs too).
-  router.add("POST", "/api/v1/admin/accounts/:username/ceiling", async (ctx) => {
-    const denied = accountAdmin(ctx, "admin");
-    if (denied) return denied;
-    const input = await body(ctx.request);
-    const { dailyUsd, perRunUsd } = input;
-    const amount = (v: unknown): v is number | null =>
-      v === null || (typeof v === "number" && Number.isFinite(v));
-    if (!amount(dailyUsd) || !amount(perRunUsd))
-      return apiError("invalid", 422, "dailyUsd and perRunUsd are numbers of dollars, both null to take them back");
-    const done = setAccountCeilings(ctx.app, ctx.auth.user, ctx.params.username!, dailyUsd, perRunUsd);
-    if (done.ok) return json(done.value);
-    return done.error === "invalid_amount"
-      ? apiError("invalid", 422, SPEND_WORDS.ceilings)
-      : notFound();
-  });
-
-  router.add("POST", "/api/v1/admin/accounts/:username/unsuspend", (ctx) => {
-    const denied = accountAdmin(ctx, "admin");
-    if (denied) return denied;
-    const done = unsuspendAccount(ctx.app, ctx.auth.user, ctx.params.username!);
-    return done.ok ? json({ username: done.value.username, suspendedAt: null }) : accountError(done.error);
-  });
-
-  router.add("POST", "/api/v1/admin/accounts/:username/verify", (ctx) => {
-    const denied = accountAdmin(ctx, "admin");
-    if (denied) return denied;
-    const done = verifyAccount(ctx.app, ctx.auth.user, ctx.params.username!);
-    return done.ok
-      ? json({ username: done.value.username, verified: true })
-      : accountError(done.error);
-  });
-
-  router.add("DELETE", "/api/v1/admin/accounts/:username", async (ctx) => {
-    const denied = accountAdmin(ctx, "admin");
-    if (denied) return denied;
-    const input = await body(ctx.request);
-    if (input.retireOrgs === true) {
-      const name = ctx.params.username!;
-      if (input.confirm !== true) {
-        const plan = retirementPlan(ctx.app, ctx.auth.user, name);
-        return plan.ok ? json({ confirm_required: true, retire: plan.value.orgs, own: plan.value.own }) : accountError(plan.error);
-      }
-      const retired = await retireAndRemoveAccount(ctx.app, ctx.auth.user, name, {
-        confirmed: true,
-      });
-      if (!retired.ok) return accountError(retired.error);
-      if (retired.value.failed !== null)
-        return json(
-          { error: "delete_failed", failed: retired.value.failed, removed: retired.value.removed },
-          500,
-        );
-      return json({ removed: name, retired: retired.value.removed });
-    }
-    const done = await removeAccount(ctx.app, ctx.auth.user, ctx.params.username!);
-    if (!done.ok && done.error === "last_owner") {
-      const user = getUserByName(ctx.app.db, ctx.params.username!);
-      const orgs =
-        user === undefined
-          ? []
-          : soleOwnedOrgs(ctx.app.db, user.id).map((o) => o.username);
-      return apiError(
-        "last_owner",
-        409,
-        `${ctx.params.username} is the only person owning ${orgs.join(", ")}: make someone else an owner first`,
-      );
-    }
-    return done.ok ? json({ removed: ctx.params.username }) : accountError(done.error);
   });
 
   // Tokens are minted, listed, and revoked with the account itself (a
