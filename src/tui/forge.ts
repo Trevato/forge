@@ -578,11 +578,11 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         run: () => ctx.push(invitesScreen(session, ctx)),
       });
     // The crew's Claude subscriptions, as MCP `subscriptions` has them: a forge admin (#7244).
-    if (session.user?.isAdmin === true)
+    if (session.user?.isAdmin === true && session.user.kind === "user")
       commands.push({
         id: "subscriptions",
         title: "Crew subscriptions",
-        hint: "each account's budget and rest; wake one, set its budget",
+        hint: "each account's budget and rest; wake one, set its budget, add or remove one",
         run: () => ctx.push(subscriptionsScreen(session, ctx)),
       });
     // Cloud accounts, as Settings → Cloud accounts has them: a forge admin (#2199).
