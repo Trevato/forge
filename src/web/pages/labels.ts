@@ -136,7 +136,7 @@ export async function labelCreate(ctx: Ctx): Promise<Response> {
           tone: "danger",
           message:
             created.error === "taken"
-              ? "This repository already has a label by that name."
+              ? LABEL_WORDS.taken
               : LABEL_WORDS.shape,
         },
   );
@@ -163,9 +163,9 @@ export async function labelUpdate(ctx: Ctx): Promise<Response> {
           tone: "danger",
           message:
             updated.error === "taken"
-              ? "This repository already has a label by that name."
+              ? LABEL_WORDS.taken
               : updated.error === "not_found"
-                ? "That label no longer exists."
+                ? LABEL_WORDS.gone
                 : LABEL_WORDS.shape,
         },
   );
@@ -186,6 +186,6 @@ export async function labelDelete(ctx: Ctx): Promise<Response> {
     `${repoBase(repo)}/settings/labels`,
     removed.ok
       ? { message: "Label deleted." }
-      : { tone: "danger", message: "That label no longer exists." },
+      : { tone: "danger", message: LABEL_WORDS.gone },
   );
 }
