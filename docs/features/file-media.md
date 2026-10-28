@@ -15,6 +15,31 @@ media type, for `<img>`, `<video>`, `<audio>`, `<object>` and `fetch()`.
 - **Headers:** `X-Content-Type-Options: nosniff` and
   `Content-Security-Policy: sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'`,
   so an SVG with a `<script>` is drawn and never runs.
+- **PDF policy:** Chrome's built-in PDF viewer refuses to run in a document
+  under `sandbox`, so `application/pdf`, and only that type, is sent
+  `default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; frame-ancestors 'self'`
+  (no `sandbox`), still `nosniff` and inline. It is chosen by the confirmed
+  type, so a file named `.pdf` without `%PDF-` bytes, and any `?download=1`,
+  keep the sandbox policy. A PDF is never served as HTML.
+- **Framing:** every media answer carries `frame-ancestors 'self'` and
+  `X-Frame-Options: SAMEORIGIN`: the blob page may embed it, no other site.
+- **The page's side:** the blob page of a PDF (`render/pdf.ts`) holds an
+  `<object type="application/pdf">` on the media URL, with an open link and a
+  download link inside it for a browser that cannot draw it. That page, and no
+  other, passes `objectSrc: true` to `page()`, which adds `object-src 'self'`
+  to its policy; it is sent only when the page really draws the PDF, never for
+  `?view=source`, and never site-wide. The PDF is drawn for a repository on
+  this forge, not for a browsed origin (the media route is not there). Like
+  audio and video it is streamed, drawn by name at any size up to its cap; the
+  media route confirms the bytes.
+- **What a PDF's own script can reach.** Dropping `sandbox` makes a PDF opened
+  at its media URL a same-origin document. The viewers run a PDF's script in
+  their own engine (PDFium's in Chrome, pdf.js's scripting sandbox in
+  Firefox), which has no access to this origin's DOM, cookies or `fetch`, and
+  the response's `default-src 'none'` forbids the document any load. That is
+  the viewers' documented isolation, not something this route enforces; it is
+  why the exception is one type, chosen by confirmed `%PDF-` bytes, and why a
+  `.pdf` of HTML, an SVG, and every download keep `sandbox`.
 - **Range:** one `bytes=` range answers 206 with `Content-Range`; a suffix
   (`bytes=-N`) is the last N bytes; past the end is 416. A list of ranges is
   answered whole, which the RFC allows. `If-Range` is honoured.

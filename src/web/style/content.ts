@@ -305,6 +305,14 @@ form.inline { display: inline; margin-left: auto; }
 .media-pane .media-player { display: block; width: 100%; max-width: 100%; }
 .media-pane video.media-player { height: auto; max-height: 80vh; background: var(--muted); border-radius: var(--radius-sm); }
 
+/* A PDF in the browser's own viewer: a fixed frame, so nothing shifts. */
+.pdf-view { overflow: hidden; }
+.pdf-frame { display: block; width: 100%; height: 80vh; min-height: 480px; border: 0; }
+.pdf-fallback { padding: 16px 20px; }
+.pdf-links { padding: 8px 20px; border-bottom: 1px solid var(--border); font-size: 13px; }
+/* A phone: a shorter frame, so a thumb can scroll the page past it. */
+@media (max-width: 600px) { .pdf-frame { height: 60vh; min-height: 360px; } }
+
 /* ---- image view ---- */
 .imgview-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 4px 16px; font-size: 12.5px; border-bottom: 1px solid var(--border); }
 .imgview-dim { min-width: 9ch; }

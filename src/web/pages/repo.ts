@@ -74,7 +74,7 @@ import { flashTo, fragment, page, redirect } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
 import { csvJs, isCsvPath } from "../render/csv.ts";
 import { HEAD_BYTES } from "../render/kinds.ts";
-import { rendererFor } from "../render/renderers.ts";
+import { RENDERERS, rendererFor } from "../render/renderers.ts";
 import { mediaHref } from "./media.ts";
 import { browseBase, localScope, type RepoScope } from "../scope.ts";
 import { repoForkOf } from "../../core/origins.ts";
@@ -1006,6 +1006,26 @@ export function editAction(scope: RepoScope, ref: string, path: string): Html {
 }
 
 /**
+ * What draws this file, if anything: the registry decides what it is and
+ * whether it is under its cap; a kind with no renderer yet, or one over its
+ * cap, keeps the source view. A PDF is drawn from the media route, which only
+ * a repository on this forge has.
+ */
+function blobRenderer(scope: RepoScope, path: string, blob: Blob): ReturnType<typeof rendererFor> {
+  const found = rendererFor(path, blob);
+  return found?.render === RENDERERS.pdf && scope.kind !== "local" ? undefined : found;
+}
+
+/** Whether the blob page of this file draws a PDF, and so needs `object-src`. */
+export function drawsPdf(scope: RepoScope, path: string, blob: Blob, view: BlobView): boolean {
+  return (
+    view !== "source" &&
+    RENDERERS.pdf !== undefined &&
+    blobRenderer(scope, path, blob)?.render === RENDERERS.pdf
+  );
+}
+
+/**
  * One file, framed by the same path header the tree uses. The header is
  * sticky and the whole pane is one element, because a script swapping a
  * preview in replaces exactly this.
@@ -1027,9 +1047,7 @@ export function renderBlob(
   const base = scope.base;
   const encoded = encodeURIComponent(o.ref);
   const blob = o.blob;
-  // The registry decides what this file is and whether anything draws it;
-  // a kind with no renderer yet, or one over its cap, keeps the source view.
-  const renderer = rendererFor(o.path, blob);
+  const renderer = blobRenderer(scope, o.path, blob);
   const view: BlobView = renderer ? (o.view ?? "rendered") : "source";
   const drawn =
     view === "rendered" && renderer
@@ -1365,6 +1383,8 @@ export function codePage(
     content: Html;
     header?: Html;
     before?: Html;
+    /** The page draws a PDF in an `<object>` (`PageOptions.objectSrc`). */
+    objectSrc?: boolean;
     /** Script only some files need (the CSV table's sort and filter). */
     extraJs?: string;
   },
@@ -1372,6 +1392,7 @@ export function codePage(
   return page({
     ctx,
     title: o.title,
+    ...(o.objectSrc ? { objectSrc: true } : {}),
     crumbs: scope.crumbs,
     palette: scope.palette,
     body: html`${o.header ?? scopeHeader(ctx, scope, "code", { compact: true })}
@@ -1466,12 +1487,14 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
   const refs = await git.read(() => refSetFrom(scope.source));
   let highlightMs: number | undefined;
   const renderStart = performance.now();
+  const view = blobView(ctx.url.searchParams.get("view"));
+  const shown = capped(blob.value);
   const pane = renderBlob(scope, {
     refs,
     ref,
     path,
-    blob: capped(blob.value),
-    view: blobView(ctx.url.searchParams.get("view")),
+    blob: shown,
+    view,
     highlighted: (ms) => (highlightMs = (highlightMs ?? 0) + ms),
     all: ctx.url.searchParams.get("all") === "1",
   });
@@ -1504,6 +1527,7 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
       ),
     }),
     content: pane,
+    objectSrc: drawsPdf(scope, path, shown, view),
     ...(isCsvPath(path) ? { extraJs: csvJs } : {}),
   });
   notePhase(ctx.request, "render", paneMs + performance.now() - pageStart);

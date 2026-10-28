@@ -17,13 +17,14 @@ import { mediaGate } from "../src/git/env.ts";
 import { blobStream, MEDIA_QUEUE_MAX, refTip, readerFor } from "../src/git/read.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { MEDIA_POLICY } from "../src/web/pages/media.ts";
+import { MEDIA_POLICY, PDF_POLICY } from "../src/web/pages/media.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 1, 2, 3]);
+const PDF = new TextEncoder().encode("%PDF-1.7\n1 0 obj<<>>endobj\n%%EOF\n");
 const EVIL_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(document.cookie)</script><rect width="1" height="1"/></svg>\n';
 /** Over the pooled read, so it is sniffed and streamed off git. */
@@ -61,6 +62,8 @@ beforeAll(async () => {
       { path: "art/logo.png", content: PNG },
       { path: "art/fake.png", content: "not a png at all\n" },
       { path: "art/evil.svg", content: EVIL_SVG },
+      { path: "doc.pdf", content: PDF },
+      { path: "fake.pdf", content: "<script>alert(1)</script>" },
       { path: "art/page.html", content: "<script>alert(1)</script>" },
       { path: "clip.mp4", content: CLIP },
       { path: "README.md", content: "# gallery\n" },
@@ -112,6 +115,32 @@ describe("the media route", () => {
     expect(MEDIA_POLICY).toContain("default-src 'none'");
     expect(MEDIA_POLICY).not.toContain("script-src");
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  test("a PDF drops sandbox for the viewer; an SVG keeps it; both embed same-origin only", async () => {
+    const pdf = await get("/alice/gallery/media/main/doc.pdf");
+    expect(pdf.status).toBe(200);
+    expect(pdf.headers.get("content-type")).toBe("application/pdf");
+    expect(pdf.headers.get("content-security-policy")).toBe(
+      "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; frame-ancestors 'self'",
+    );
+    expect(PDF_POLICY).not.toContain("sandbox");
+    expect(pdf.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(pdf.headers.get("content-disposition")).toBeNull();
+    expect(pdf.headers.get("x-frame-options")).toBe("SAMEORIGIN");
+
+    const svg = await get("/alice/gallery/media/main/art/evil.svg");
+    expect(svg.headers.get("content-security-policy")).toBe(
+      "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'self'",
+    );
+    expect(svg.headers.get("x-frame-options")).toBe("SAMEORIGIN");
+
+    // Only bytes that are a PDF get the PDF policy; a download never does.
+    const fake = await get("/alice/gallery/media/main/fake.pdf");
+    expect(fake.headers.get("content-type")).toBe("application/octet-stream");
+    expect(fake.headers.get("content-security-policy")).toBe(MEDIA_POLICY);
+    const dl = await get("/alice/gallery/media/main/doc.pdf?download=1");
+    expect(dl.headers.get("content-security-policy")).toBe(MEDIA_POLICY);
   });
 
   test("a single range is 206 with its window", async () => {
@@ -311,6 +340,32 @@ describe("the media permits", () => {
         if (typeof stream !== "string") await stream.cancel();
     }
     expect(await settled()).toBe(0);
+  });
+});
+
+describe("the blob page of a PDF", () => {
+  const policy = async (path: string): Promise<{ csp: string; html: string }> => {
+    const res = await get(path);
+    const bare = (res.headers.get("content-security-policy") ?? "").replace(/'nonce-[^']+'/g, "'nonce'");
+    return { csp: bare, html: await res.text() };
+  };
+
+  test("draws the media URL in an object and alone sends object-src 'self'", async () => {
+    const pdf = await policy("/alice/gallery/blob/main/doc.pdf");
+    expect(pdf.html).toContain('<object class="pdf-frame" data="/alice/gallery/media/main/doc.pdf" type="application/pdf">');
+    expect(pdf.html).toContain('href="/alice/gallery/media/main/doc.pdf?download=1"');
+    expect(pdf.html).toContain('<p class="pdf-links">');
+    expect(pdf.csp).toContain("object-src 'self'; ");
+
+    // Every other policy is exactly what it was, with object-src left out.
+    const readme = await policy("/alice/gallery/blob/main/README.md");
+    expect(readme.csp).not.toContain("object-src");
+    expect(pdf.csp.replace("object-src 'self'; ", "")).toBe(readme.csp);
+    const source = await policy("/alice/gallery/blob/main/doc.pdf?view=source");
+    expect(source.csp).not.toContain("object-src");
+    expect(source.html).not.toContain("<object");
+    for (const path of ["/alice/gallery", "/alice/gallery/blob/main/fake.pdf", "/alice/gallery/blob/main/art/logo.png"])
+      expect((await policy(path)).csp).not.toContain("object-src");
   });
 });
 

@@ -1,5 +1,6 @@
 # Code
 
 - `.blob-view` — the file view in the code browser (`renderBlob` in `src/web/pages/repo.ts`): on a Markdown file, wraps the Source/Rendered `.seg` toggle at the end of the file's bar, set 8px off the line count with its segments at 12.5px.
+- `.pdf-view`, `.pdf-links`, `.pdf-frame`, `.pdf-fallback` — a PDF on its blob page (`render/pdf.ts`): one card holding the browser's viewer in a full-width frame 80vh tall (480px at least), under an always-visible Open · Download line (the frame is 60vh on a phone so a thumb can scroll past it), with a padded link line inside for a browser that cannot draw it.
 
 `.ex-more` also closes a windowed directory page and the side Files column: the "Show all N entries" link to `?all=1`.

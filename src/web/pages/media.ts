@@ -25,7 +25,17 @@ import { HEAD_BYTES, mediaType } from "../render/kinds.ts";
 
 /** The policy every media answer leaves with. */
 export const MEDIA_POLICY =
-  "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'";
+  "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'self'";
+
+/**
+ * The one type with its own policy: Chrome's built-in PDF viewer will not run
+ * in a sandboxed document, so `application/pdf` (and nothing else) leaves
+ * without `sandbox`. It is still `default-src 'none'`, `nosniff`, and never
+ * HTML: the type is confirmed by the `%PDF-` bytes, so the viewer is all that
+ * ever opens it.
+ */
+export const PDF_POLICY =
+  "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; frame-ancestors 'self'";
 
 /** At or under this, the pooled reader hands the body back without a spawn. */
 const SMALL_BYTES = 1_000_000;
@@ -55,6 +65,8 @@ export async function mediaBlob(ctx: Ctx): Promise<Response> {
   const headers: Record<string, string> = {
     "x-content-type-options": "nosniff",
     "content-security-policy": MEDIA_POLICY,
+    // Same-origin embedding (the blob page's `<object>`) and nothing else.
+    "x-frame-options": "SAMEORIGIN",
     "referrer-policy": "same-origin",
     "accept-ranges": "bytes",
     etag,
@@ -81,7 +93,9 @@ export async function mediaBlob(ctx: Ctx): Promise<Response> {
     if (sniff === "busy" || sniff === "gone") return busy();
     head = await new Response(sniff).bytes();
   }
-  headers["content-type"] = download ? "application/octet-stream" : mediaType(path, head);
+  const type = download ? "application/octet-stream" : mediaType(path, head);
+  headers["content-type"] = type;
+  if (type === "application/pdf") headers["content-security-policy"] = PDF_POLICY;
 
   // A Range past an If-Range that no longer holds gets the whole new file.
   const ifRange = ctx.request.headers.get("if-range");

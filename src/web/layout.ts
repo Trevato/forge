@@ -109,6 +109,12 @@ export interface PageOptions {
    */
   scriptAsset?: string;
   /**
+   * The page draws a PDF from the media route in an `<object>`: the browser's
+   * own viewer may load it from this origin (`object-src 'self'`). Only the
+   * blob page of a PDF asks; no other page's policy changes.
+   */
+  objectSrc?: boolean;
+  /**
    * The page carries a Cloudflare Turnstile widget (`/signup`): its script,
    * frame and verification call may come from challenges.cloudflare.com, and
    * nothing else on this page is relaxed.
@@ -710,7 +716,7 @@ export function page(options: PageOptions, status = 200): Response {
     // The external stylesheet plus this page's own nonce'd <style>/<script>
     // are the only resources allowed; connect-src 'self' lets the live
     // event stream (EventSource) and fragment fetches reach same-origin.
-    "content-security-policy": `default-src 'none'; style-src 'self' 'nonce-${bound}'; script-src 'nonce-${bound}'${options.scriptAsset === undefined ? "" : " 'self'"}${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; connect-src 'self'${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; ${options.turnstile ? `frame-src ${TURNSTILE_ORIGIN}; ` : ""}worker-src 'self'; manifest-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
+    "content-security-policy": `default-src 'none'; style-src 'self' 'nonce-${bound}'; script-src 'nonce-${bound}'${options.scriptAsset === undefined ? "" : " 'self'"}${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; connect-src 'self'${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; ${options.turnstile ? `frame-src ${TURNSTILE_ORIGIN}; ` : ""}worker-src 'self'; manifest-src 'self'; img-src 'self' data:; ${options.objectSrc ? "object-src 'self'; " : ""}form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
     "referrer-policy": "same-origin",
     "x-content-type-options": "nosniff",
     // Markup is revalidated every time; only the hashed assets it names are
