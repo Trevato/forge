@@ -25,7 +25,9 @@ export const STOPPED_SUMMARY = "the forge stopped";
 /** The kinds that pass judgement on a commit: a preview's deploy, or a repository's own check. */
 export const CHECK_KINDS: readonly RunKind[] = ["deploy", "check"];
 export const RUN_KINDS: readonly RunKind[] = ["deploy", "agent", "check"];
-export type RunState = "queued" | "running" | "ok" | "failed" | "cancelled";
+/** Every state a run can be in — the type is read off this list, so a new state is named here once. */
+export const RUN_STATES = ["queued", "running", "ok", "failed", "cancelled"] as const;
+export type RunState = (typeof RUN_STATES)[number];
 
 export const RUN_TERMINAL: readonly RunState[] = ["ok", "failed", "cancelled"];
 export const isTerminal = (state: RunState): boolean =>
