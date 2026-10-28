@@ -62,6 +62,8 @@ Home opens with "Since you were here · 2 days": the pulls that landed in public
 
 In the terminal, the System screen (palette: System) shows a forge admin who is a person one more line, `telemetry:read held by: …` (the agents holding the grant), and `g` there picks an agent and asks `grant <agent> telemetry:read? y/n` (or `take back …`; the default is n). `y` calls `setTelemetryGrant`, as MCP `telemetry_grant` does; anyone that tool refuses sees neither the line nor the key hint, and `g` answers them in the tool's words.
 
+In the terminal, the Capacity screen (palette: Capacity, a forge admin who is a person) lists every guard with its live value and bounds, as /settings/capacity does; `e` on one asks for a value (empty restores the default), shows `key: from → to` and calls `changeCapacity` only on `y` (default n). No row is read-only here.
+
 An admin's home and the terminal's Flow dialog also say when the forge is clogged and how long the last clog took to notice and to clear: `docs/features/clog-watch.md`. A fork whose parent is archived shows one quiet line instead of its ahead/behind count, and its admin can detach it from the parent (Settings › Danger zone, the terminal's About `x`, MCP `detach`): `docs/features/detach.md`.
 
 A pull the merge queue holds as red alone (red on its own merge at its current head; cleared by a new head or a moved main) says so under its checks line: "red alone at <time>, waiting for a new head or a new main", on the pull page, its live checks line and the studio change step, and in the checks row of the pull's terminal screen (`redMark` in `src/checks/queue.ts`). Nothing is drawn when it is not held.

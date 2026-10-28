@@ -1,4 +1,4 @@
-import { changeCapacity, listCapacity } from "../../../actions/capacity.ts";
+import { SETTABLE_CAPACITY, changeCapacity, listCapacity } from "../../../actions/capacity.ts";
 import { SETTING_WORDS } from "../../../actions/setting_words.ts";
 import { scopeAllows } from "../../../core/tokens.ts";
 import { good, bad, type Tool } from "../shared.ts";
@@ -13,7 +13,7 @@ export const tool: Tool = {
     properties: {
       key: {
         type: "string",
-        enum: ["crew.concurrency", "checks.concurrency", "checks.shards", "cells.egress", "guard_new_accounts", "signin.edge"],
+        enum: [...SETTABLE_CAPACITY],
       },
       value: { type: "string", maxLength: 16 },
       dryRun: { type: "boolean" },

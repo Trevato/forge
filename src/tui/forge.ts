@@ -69,6 +69,7 @@ import { quotasScreen } from "./screens/quotas.ts";
 import { teamsScreen } from "./screens/teams.ts";
 import { domainsScreen } from "./screens/domains.ts";
 import { ownerScreen } from "./screens/owner.ts";
+import { capacityScreen, mayCapacity } from "./screens/capacity.ts";
 import { resilienceScreen } from "./screens/resilience.ts";
 import { forgeCeiling } from "../flow/ceiling.ts";
 import { flowLines, flowScreen } from "./screens/flow.ts";
@@ -386,6 +387,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         },
       });
     }
+    // The forge's capacity and guards, as MCP `capacity` gates them: a forge admin who is a person.
+    if (mayCapacity(session))
+      commands.push({
+        id: "capacity",
+        title: "Capacity",
+        hint: "concurrency and guards, live; e changes a settable one",
+        run: () => ctx.push(capacityScreen(session, ctx)),
+      });
     // Where snapshots go and each THREATS.md protection's standing, as /resilience says it: a site admin's; a person admin sets or forgets the destination and the mirror here.
     if (session.user?.isAdmin === true)
       commands.push({
