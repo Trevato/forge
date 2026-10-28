@@ -4,11 +4,14 @@
  * last seen, as Settings → Sessions and MCP `sessions` list them — never a
  * secret. `d` signs the selected browser out after a confirm, through
  * `endAccountSession`, so the gate is the action's: your own account only.
+ * `d` on a token revokes it after a confirm, through the action `deleteToken`
+ * as Settings and the API do (your own only, and `token.deleted` is emitted).
  * This terminal is held by its key, not a browser session, and cannot be
- * ended from here; a token is revoked from Settings → Personal access tokens.
+ * ended from here.
  */
 
 import { accountSignIns, endAccountSession } from "../../actions/signins.ts";
+import { deleteToken } from "../../actions/users.ts";
 import { listKeys } from "../../core/keys.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -25,6 +28,9 @@ interface SignIn {
   readonly seen: string | null;
   readonly since: string;
   readonly here: boolean;
+  /** Set on a token row: the parts of `where`, for the confirm. */
+  readonly name?: string;
+  readonly scope?: string;
 }
 
 /** The tail of an id: two browsers signed in the same day still read apart. */
@@ -58,6 +64,8 @@ export function signInsOf(f: Session): SignIn[] {
       seen: t.lastUsedAt,
       since: t.createdAt,
       here: false,
+      name: t.name,
+      scope: t.scope,
     })),
   ];
 }
@@ -80,8 +88,20 @@ export function signInsScreen(f: Session, ctx: Ctx): Screen {
       return;
     }
     if (picked.kind === "token") {
-      note = "A token is revoked from Settings → Personal access tokens.";
-      ctx.invalidate();
+      ctx.push(
+        confirmScreen(ctx, screen, {
+          title: "Revoke a token",
+          body: [`Revoke ${picked.name} (${picked.scope})? It stops working at once.`],
+          actions: [{ label: "Keep", variant: "ghost" }, { label: "Revoke", variant: "danger" }],
+          onChoose: (i) => {
+            if (i < 1) return;
+            const user = f.user;
+            const done = user !== undefined && deleteToken(f.app, user, picked.id).ok;
+            note = done ? "Revoked that token." : "That token is already gone.";
+            ctx.invalidate();
+          },
+        }),
+      );
       return;
     }
     ctx.push(
@@ -102,7 +122,7 @@ export function signInsScreen(f: Session, ctx: Ctx): Screen {
 
   const screen: Screen = {
     title: "Signed in",
-    keys: [binding(["j", "k"], "move cursor"), binding(["d"], "sign a browser out")],
+    keys: [binding(["j", "k"], "move cursor"), binding(["d"], "sign a browser out or revoke a token")],
     render(area, s) {
       const c = ctx.theme.c;
       const all = signInsOf(f);
@@ -112,7 +132,7 @@ export function signInsScreen(f: Session, ctx: Ctx): Screen {
           ? note
           : f.user === undefined
             ? "Sign in to see where you are signed in."
-            : "Where you are signed in. d signs the selected browser out.";
+            : "Where you are signed in. d signs a browser out or revokes a token.";
       s.text(head!.x, head!.y, truncate(text, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
       drawList(s, body!, c, state, rows(all));
     },

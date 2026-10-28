@@ -490,7 +490,7 @@ This page is the front door. Everything else is a file of its own under
 
 What the crew's tokens bought is on the board (`/board/returns`), in MCP `returns`, and in the terminal: the palette's Usage carries a Returns line (dollars, runs, changes landed, cost per landed change; `[`/`]` move between 1, 7, 30 and 90 days), and Usage of a repository (`owner/name`) narrows it to one app. Owner facts only (`src/actions/returns.ts`); see [`docs/OPERATING.md`](docs/OPERATING.md).
 
-The terminal's palette has `Signed in` for anyone signed in: your browsers, tokens and this terminal's key, with when each was last seen; `d` signs the selected browser out after a confirm, as `/settings` and MCP `sessions` do (`docs/CREW.md`, "Where you are signed in").
+The terminal's palette has `Signed in` for anyone signed in: your browsers, tokens and this terminal's key, with when each was last seen; `d` signs the selected browser out after a confirm, as `/settings` and MCP `sessions` do, and on a token revokes it after a confirm (Keep is the default) through the same `deleteToken` action as Settings and the API, so it stops working at once (`docs/CREW.md`, "Where you are signed in").
 
 `/changelog` lists the last 30 releases of `FORGE_REPO` (public only) with their pulls, for anyone; the terminal's palette has `Changelog` for the same list. In the terminal, `/` takes a word and keeps the releases whose version or pull titles contain it (`esc` clears it); Enter on a release lists its pulls, and Enter on a pull opens it (`docs/features/changelog.md`).
 
