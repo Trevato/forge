@@ -1,28 +1,35 @@
 /**
- * The Resilience command's dialog, a forge admin's: one line per THREATS.md
- * protection with its standing in the last gate, as /resilience says it.
- * Enter, Esc or q closes it.
+ * The Resilience command's dialog, a forge admin's: where snapshots go now and
+ * where the off-box mirror is, the newest snapshots, then one line per
+ * THREATS.md protection with its standing in the last gate, as /resilience
+ * says it. Enter, Esc or q closes it.
  *
- * Above the protections, the newest snapshots, newest first. A forge admin
- * takes one now with `n` and brings the mirror level with `l`, each after a
- * `y/n` asked on the dialog's first line, through `actions/backups_now.ts` —
- * MCP `snapshot_now`'s and `mirror_now`'s actions — and the answer is said
- * there in the page's words. While one runs, neither key is offered. The
- * command is a forge admin's only (`tui/forge.ts`), and the actions refuse
- * anyone else again.
+ * A forge admin takes a snapshot now with `n` and brings the mirror level with
+ * `l`, each after a `y/n` asked on the dialog's first line, through
+ * `actions/backups_now.ts` — MCP `snapshot_now`'s and `mirror_now`'s actions —
+ * and the answer is said there in the page's words. While one runs, neither
+ * key is offered.
  *
- * A forge admin who is a person also sees where the off-box snapshot mirror
- * is, `M` seals it (five prompts, the secret masked, a blank keeps what was
- * sealed) and `F` forgets it after a confirm; the rules are
- * `actions/mirror.ts`, the Backups page's and MCP `mirror_set`'s. No key is
- * ever drawn or read back.
+ * For an admin who is a person, `d` sets the destination and `x` forgets it
+ * after a confirm, through `actions/destination.ts`; `m` seals the mirror and
+ * `f` forgets it, through `actions/mirror.ts` — the Backups page's and MCP's
+ * rules and words. Each asks five prompts (endpoint, bucket, region, access
+ * key, secret key — both keys typed masked; a blank keeps what was sealed).
+ * A key is never drawn, kept past the save, or put in a note.
  */
 
 import { mirrorNow, recentSnapshots, snapshotNow } from "../../actions/backups_now.ts";
-import { forgetMirror, saveMirror } from "../../actions/mirror.ts";
-import type { DestinationInput } from "../../actions/destination.ts";
-import { snapshotsOf } from "../../snapshot/service.ts";
 import { readResilience } from "../../checks/resilience.ts";
+import {
+  forgetDestination,
+  invalidField,
+  mayChangeDestination,
+  saveDestination,
+  type DestinationInput,
+} from "../../actions/destination.ts";
+import { forgetMirror, saveMirror } from "../../actions/mirror.ts";
+import { resolveDestination } from "../../snapshot/destination.ts";
+import { snapshotsOf } from "../../snapshot/service.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import type { Session } from "../session.ts";
@@ -40,19 +47,42 @@ export function resilienceLines(dataDir: string): string[] {
   return rows.flatMap(({ p, s }) => wrap(`${pad(s, 11)} ${p.text}`, INNER));
 }
 
+/** The source of the destination in effect, in the Backups page's words. */
+const SOURCE: Record<string, string> = {
+  sealed: "sealed in this forge",
+  dir: "the directory named by FORGE_SNAPSHOT_DIR",
+  env: "the host's S3_* environment variables",
+};
+
+/** Where snapshots go now — kind and place — or that they stay on this box. Never a key. */
+export function destinationLine(f: Session): string {
+  const dest = resolveDestination({ db: f.app.db, dataDir: f.app.config.dataDir, bus: f.app.bus });
+  return dest === undefined
+    ? "Snapshots stay on this box: no destination is set."
+    : `Snapshots go to ${dest.store.where} (${SOURCE[dest.source] ?? dest.source}).`;
+}
+
 /** Where the mirror is, or that there is none; never a key. */
 export function mirrorLine(f: Session): string {
   const where = snapshotsOf(f.app)?.mirror?.where;
   return where === undefined ? "Mirror: none." : `Mirror: ${where}`;
 }
 
-const FIELDS = [
-  ["endpoint", "endpoint (https://…)", false],
-  ["bucket", "bucket", false],
-  ["region", "region", false],
-  ["accessKey", "access key", true],
-  ["secretKey", "secret key", true],
-] as const;
+const STEPS: readonly { key: keyof DestinationInput; label: string; placeholder?: string; mask?: true }[] = [
+  { key: "endpoint", label: "Endpoint, an http(s) URL", placeholder: "https://s3.example.com" },
+  { key: "bucket", label: "Bucket" },
+  { key: "region", label: "Region (optional)", placeholder: "us-east-1" },
+  { key: "accessKey", label: "Access key (sealed, never shown)", mask: true },
+  { key: "secretKey", label: "Secret key (sealed, never shown)", mask: true },
+];
+
+const BLANK: DestinationInput = { endpoint: "", bucket: "", region: "", accessKey: "", secretKey: "" };
+
+/** One of the two off-box places this screen sets: its prompt title and its save. */
+type Target = {
+  readonly title: string;
+  readonly save: (input: DestinationInput) => string;
+};
 
 type Asking = "snapshot" | "mirror";
 
@@ -62,7 +92,9 @@ const QUESTION: Record<Asking, string> = {
 };
 
 export function resilienceScreen(f: Session, ctx: Ctx): Screen {
-  const mayMirror = f.user?.isAdmin === true && f.user.kind === "user";
+  // One rule for the destination and the mirror: a site admin who is a person.
+  const mayChange = (): boolean => mayChangeDestination(f.user);
+  const refusedAll = "Where snapshots go is a forge admin's.";
   /** The newest snapshots, `unreadable` when the store could not be listed; undefined until read. */
   let snapshots: string[] | "unreadable" | undefined;
   let asking: Asking | undefined;
@@ -70,6 +102,11 @@ export function resilienceScreen(f: Session, ctx: Ctx): Screen {
   let busy = false;
   let said = "";
   let note = "";
+
+  const say = (text: string): void => {
+    note = text;
+    ctx.invalidate();
+  };
 
   const read = async (): Promise<void> => {
     const listed = await recentSnapshots(f.app, f.user, SNAPSHOTS);
@@ -98,14 +135,75 @@ export function resilienceScreen(f: Session, ctx: Ctx): Screen {
     });
   };
 
+  const destination: Target = {
+    title: "Snapshot destination",
+    save: (input) => {
+      const saved = saveDestination(f.app, f.user, input);
+      return saved.ok ? saved.value : saved.error === "not_found" ? refusedAll : saved.error;
+    },
+  };
+  const mirror: Target = {
+    title: "Mirror",
+    save: (input) => {
+      const saved = saveMirror(f.app, f.user, input);
+      return saved.ok ? saved.value : saved.error === "not_found" ? refusedAll : saved.error;
+    },
+  };
+
+  /** One prompt per field, each validated as typed; the last one seals them all. */
+  const step = (target: Target, i: number, given: DestinationInput): Screen => {
+    const s = STEPS[i]!;
+    return promptScreen(ctx, screen, {
+      title: `${target.title} ${i + 1}/${STEPS.length}`,
+      label: s.label,
+      hint: "Blank keeps it; a refusal is said whole behind.",
+      ...(s.placeholder === undefined ? {} : { placeholder: s.placeholder }),
+      ...(s.mask ? { mask: true } : {}),
+      onSubmit: (value) => {
+        const refused = invalidField({ ...BLANK, [s.key]: value });
+        // The prompt has room for the start of it; the screen behind says it whole.
+        if (refused) {
+          say(refused);
+          return refused;
+        }
+        const next = { ...given, [s.key]: value };
+        if (i + 1 < STEPS.length) return later(ctx, () => step(target, i + 1, next));
+        say(target.save(next));
+        return undefined;
+      },
+    });
+  };
+
+  const forgetDest = (): Screen =>
+    confirmScreen(ctx, screen, {
+      title: "Forget the destination?",
+      body: ["The sealed endpoint, bucket and keys are cleared;", "the environment's destination, if any, takes over."],
+      actions: [{ label: "Cancel", variant: "ghost" }, { label: "Forget", variant: "danger" }],
+      onChoose: (index) => {
+        if (index !== 1) return;
+        say(forgetDestination(f.app, f.user).ok ? "The sealed destination is cleared." : refusedAll);
+      },
+    });
+
+  const forgetMir = (): Screen =>
+    confirmScreen(ctx, screen, {
+      title: "Forget the mirror?",
+      body: ["The sealed mirror settings are cleared;", "snapshots stay only on this machine."],
+      actions: [{ label: "Cancel", variant: "ghost" }, { label: "Forget", variant: "danger" }],
+      onChoose: (index) => {
+        if (index !== 1) return;
+        say(forgetMirror(f.app, f.user).ok ? "The sealed mirror is cleared." : refusedAll);
+      },
+    });
+
   const body = (): string[] => {
     // The question and the answer come first: a long list must not clip them.
     const out: string[] = [];
     if (asking !== undefined) out.push(QUESTION[asking], "");
     else if (said !== "") out.push(...wrap(said, INNER), "");
-    out.push(...wrap(mirrorLine(f), INNER));
-    if (mayMirror) out.push("M sets the mirror, F forgets it.");
+    out.push(...wrap(destinationLine(f), INNER), ...wrap(mirrorLine(f), INNER));
     if (note !== "") out.push(...wrap(note, INNER));
+    if (mayChange()) out.push("d sets where snapshots go, x forgets it.", "m sets the mirror, f forgets it.");
     out.push("", "Snapshots, newest first:");
     if (snapshots === undefined) out.push("  reading…");
     else if (snapshots === "unreadable") out.push("  the snapshots could not be read");
@@ -121,7 +219,14 @@ export function resilienceScreen(f: Session, ctx: Ctx): Screen {
       if (asking !== undefined) return [binding(["y"], "yes"), binding(["n", "esc"], "no")];
       return [
         ...(busy ? [] : [binding(["n"], "take a snapshot now"), binding(["l"], "bring the mirror level now")]),
-        ...(mayMirror ? [binding(["m"], "set the mirror"), binding(["f"], "forget the mirror")] : []),
+        ...(mayChange()
+          ? [
+              binding(["d"], "set destination"),
+              binding(["x"], "forget destination"),
+              binding(["m"], "set the mirror"),
+              binding(["f"], "forget the mirror"),
+            ]
+          : []),
         binding(["enter", "esc", "q"], "close"),
       ];
     },
@@ -148,46 +253,13 @@ export function resilienceScreen(f: Session, ctx: Ctx): Screen {
         asking = e.key === "n" ? "snapshot" : "mirror";
         said = "";
       } else if (e.key === "enter" || e.key === "esc" || e.key === "q") ctx.pop();
-      else if (mayMirror && e.key === "m") ctx.push(ask(0, {}));
-      else if (mayMirror && e.key === "f")
-        ctx.push(
-          confirmScreen(ctx, screen, {
-            title: "Forget the mirror?",
-            body: ["The sealed mirror settings are cleared;", "snapshots stay only on this machine."],
-            actions: [{ label: "Cancel", variant: "ghost" }, { label: "Forget", variant: "danger" }],
-            onChoose: (i) => {
-              if (i !== 1) return;
-              note = forgetMirror(f.app, f.user).ok ? "The sealed mirror is cleared." : "Not found.";
-            },
-          }),
-        );
+      else if (!mayChange()) return true;
+      else if (e.key === "d") ctx.push(step(destination, 0, BLANK));
+      else if (e.key === "x") ctx.push(forgetDest());
+      else if (e.key === "m") ctx.push(step(mirror, 0, BLANK));
+      else if (e.key === "f") ctx.push(forgetMir());
       return true;
     },
-  };
-  // One field at a time; the last submit seals, and a refusal keeps that prompt open.
-  const ask = (n: number, got: Record<string, string>): Screen => {
-    const [name, label, mask] = FIELDS[n]!;
-    return promptScreen(ctx, screen, {
-      title: `Mirror ${n + 1}/${FIELDS.length}`,
-      label,
-      hint: "blank keeps what was sealed",
-      mask,
-      onSubmit: (value) => {
-        const next = { ...got, [name]: value };
-        if (n + 1 < FIELDS.length) return later(ctx, () => ask(n + 1, next));
-        const input: DestinationInput = {
-          endpoint: next["endpoint"] ?? "",
-          bucket: next["bucket"] ?? "",
-          region: next["region"] ?? "",
-          accessKey: next["accessKey"] ?? "",
-          secretKey: next["secretKey"] ?? "",
-        };
-        const saved = saveMirror(f.app, f.user, input);
-        if (!saved.ok) return saved.error === "not_found" ? "Not found." : saved.error;
-        note = saved.value;
-        return undefined;
-      },
-    });
   };
   return screen;
 }

@@ -456,16 +456,23 @@ describe("the merge queue", () => {
   test("a docs-only move voids the gate: tests read docs, so the pull is gated again on the new base (#6640)", async () => {
     const repo = await autonomousRepo("docs-mid-gate");
     const pull = await greenPull(repo, "a.ts");
-    held = (async () => {
-      const moved = await commitToBranch(app, alice, repo, {
-        message: "A doc",
-        files: [{ path: "docs/NOTE.md", content: "# note\n" }],
-      });
-      if (!moved.ok) throw new Error(JSON.stringify(moved.error));
-    })();
+    // The doc lands while the gate runs, not before it starts: on a loaded
+    // machine a move begun up front can beat the sweep, and the gate then
+    // rightly runs on the new base and lands.
+    atGate = () => {
+      atGate = undefined;
+      held = (async () => {
+        const moved = await commitToBranch(app, alice, repo, {
+          message: "A doc",
+          files: [{ path: "docs/NOTE.md", content: "# note\n" }],
+        });
+        if (!moved.ok) throw new Error(JSON.stringify(moved.error));
+      })();
+    };
     try {
       await sweepGreen(app, repo);
     } finally {
+      atGate = undefined;
       held = undefined;
     }
     // Voided: not landed on the gate that ran before the move.

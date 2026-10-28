@@ -376,12 +376,12 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         },
       });
     }
-    // Each THREATS.md protection's standing, as /resilience says it: a site admin's.
+    // Where snapshots go and each THREATS.md protection's standing, as /resilience says it: a site admin's; a person admin sets or forgets the destination and the mirror here.
     if (session.user?.isAdmin === true)
       commands.push({
         id: "resilience",
         title: "Resilience",
-        hint: "each protection green, red or untested",
+        hint: "where snapshots go and the mirror; each protection green, red or untested",
         run: () => ctx.push(resilienceScreen(session, ctx)),
       });
     // The last releases with their pulls, as /changelog shows them: for anyone.
