@@ -76,6 +76,8 @@ test("an admin's terminal shows the cuts, with the empty key as default / not re
   expect(text).toContain("model: default");
   expect(text).toContain("prompt: abc123");
   expect(text).toContain("prompt: not recorded");
+  expect(text).toContain(`day ${new Date().toISOString().slice(0, 10)}: claude-opus-5-5`);
+  expect(text).toContain("1 runs");
   h.stop();
 });
 

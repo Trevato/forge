@@ -400,6 +400,8 @@ export function noteRunProgress(
     node?: string | undefined;
     /** The model an agent run ran on (empty: the runner's default), and its prompt version. */
     model?: string | undefined;
+    /** Why that model: the agent's own, or what escalated the run to Opus. */
+    modelReason?: string | undefined;
     promptVersion?: string | undefined;
   },
 ): void {
@@ -411,7 +413,8 @@ export function noteRunProgress(
        placement = COALESCE(?8, placement),
        node = COALESCE(?9, node),
        model = COALESCE(?10, model),
-       prompt_version = COALESCE(?11, prompt_version)
+       prompt_version = COALESCE(?11, prompt_version),
+       model_reason = COALESCE(?12, model_reason)
      WHERE id = ?1`,
   ).run(
     runId,
@@ -425,6 +428,7 @@ export function noteRunProgress(
     progress.node?.slice(0, 253) ?? null,
     progress.model?.slice(0, 100) ?? null,
     progress.promptVersion?.slice(0, 40) ?? null,
+    progress.modelReason?.slice(0, 60) ?? null,
   );
 }
 

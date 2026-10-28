@@ -32,6 +32,7 @@ import { announceRun } from "../actions/runs.ts";
 import { Stopwatch } from "../apps/timing.ts";
 import { previewEnv } from "../apps/data.ts";
 import { appsRuntime } from "../apps/runtime.ts";
+import { chooseModel, modelFacts } from "./model_choice.ts";
 import { ownApp, ownAppUrls } from "./app_hosts.ts";
 import { authorsInRepoPull } from "./authors_pull.ts";
 import { crewRole, getAgent, type Agent } from "../core/agents.ts";
@@ -1342,6 +1343,16 @@ async function work(
     // One deadline for the run, whatever it takes to get there: the token
     // dies ten minutes after it, so a second invocation gets what is left.
     const deadline = Date.now() + options.runTimeoutMs;
+    // The agent's own model, unless the work asks for Opus (#7570).
+    const facts = modelFacts(
+      app.db,
+      repo,
+      taskIssue === undefined ? [issue] : [issue, taskIssue],
+      agent.model,
+      brief.role,
+      reviewing,
+    );
+    const chosen = chooseModel(facts);
     const invoke = async (
       prompt: string,
       budgetUsd: number,
@@ -1353,7 +1364,7 @@ async function work(
           cwd: dir,
           prompt,
           appendSystemPrompt: systemPrompt(brief),
-          model: agent.model || undefined,
+          model: chosen.model || undefined,
           budgetUsd,
           resume,
           env,
@@ -1389,7 +1400,8 @@ async function work(
       `claude: budget $${budget.toFixed(2)}, $${reserve.toFixed(2)} of it kept for the wrap-up${brief.resuming ? `, resuming ${previous?.sessionId}` : ""}`,
     );
     noteRunProgress(app.db, run.id, {
-      model: agent.model,
+      model: chosen.model,
+      modelReason: chosen.reason,
       promptVersion: promptVersion(agent, brief.role),
       sandbox: {
         enforced: sandbox.enforced,

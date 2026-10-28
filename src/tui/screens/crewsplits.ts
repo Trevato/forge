@@ -1,9 +1,10 @@
 /**
  * The crew scorecard in the terminal, a forge admin's (#2682): agent runs
- * cut by the model they ran on and by prompt version, as Settings → Crew
+ * cut by the model they ran on, by prompt version and by model per day, as Settings → Crew
  * has them (`agentSplits`). The gate is the page's: an admin.
  */
 
+import { modelDays, type ModelDay } from "../../core/model_days.ts";
 import { agentSplits, type SplitTotals } from "../../core/runs.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -25,6 +26,14 @@ export function splitRows(
   }));
 }
 
+export function modelDayRows(days: readonly ModelDay[]): ListRow[] {
+  return days.map((d) => ({
+    title: `day ${d.day}: ${d.model === "" ? "default" : d.model}`,
+    secondary: `${d.runs} runs`,
+    meta: `${d.landed} landed  $${d.spentUsd.toFixed(2)} spent`,
+  }));
+}
+
 export function crewSplitsScreen(f: Session, ctx: Ctx): Screen {
   const state = new ListState();
   const allowed = f.user?.isAdmin === true;
@@ -33,6 +42,7 @@ export function crewSplitsScreen(f: Session, ctx: Ctx): Screen {
     ? [
         ...splitRows("model", "default", agentSplits(f.db, "model")),
         ...splitRows("prompt", "not recorded", agentSplits(f.db, "prompt_version")),
+        ...modelDayRows(modelDays(f.db)),
       ]
     : [];
   return {
@@ -45,7 +55,7 @@ export function crewSplitsScreen(f: Session, ctx: Ctx): Screen {
         ? "The crew scorecard is read by a forge admin."
         : rows.length === 0
           ? "No agent runs yet."
-          : "Agent runs per model, then per prompt version.";
+          : "Agent runs per model, then per prompt version, then per model per day.";
       s.text(head!.x, head!.y, truncate(text, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
       drawList(s, list!, c, state, rows);
     },

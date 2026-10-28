@@ -11,6 +11,7 @@ import {
   type Scorecard,
   type SplitScorecard,
 } from "../core/scorecard.ts";
+import { modelDays, type ModelDay } from "../core/model_days.ts";
 import { listAgents } from "../core/agents.ts";
 import type { User } from "../core/users.ts";
 
@@ -40,7 +41,7 @@ const figures = (c: Scorecard): Scorecard => ({
 export function readScorecards(
   app: App,
   actor: User | undefined,
-): { agents: AgentScorecard[] } | undefined {
+): { agents: AgentScorecard[]; modelDays: ModelDay[] } | undefined {
   if (actor?.isAdmin !== true) return undefined;
   const window = recentWindow();
   const all = crewScorecards(app.db);
@@ -49,6 +50,7 @@ export function readScorecards(
   const recentSplits = crewScorecardSplits(app.db, window);
   const key = (p: SplitScorecard) => `${p.model}\u0000${p.promptVersion}`;
   return {
+    modelDays: modelDays(app.db),
     agents: listAgents(app.db).map((agent) => {
       const id = agent.user.id;
       const lately = new Map((recentSplits.get(id) ?? []).map((p) => [key(p), p]));

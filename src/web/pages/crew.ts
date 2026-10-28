@@ -35,6 +35,7 @@ import {
   type Scorecard,
   type SplitScorecard,
 } from "../../core/scorecard.ts";
+import { modelDays, type ModelDay } from "../../core/model_days.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { listTeams, type Team } from "../../core/teams.ts";
 import { crewFor } from "../../crew/dispatch.ts";
@@ -436,6 +437,7 @@ function loadScorecards(ctx: Ctx) {
     recentSplitScorecards: crewScorecardSplits(ctx.app.db, recentWindow()),
     byModel: agentSplits(ctx.app.db, "model"),
     byPrompt: agentSplits(ctx.app.db, "prompt_version"),
+    byModelDay: modelDays(ctx.app.db),
   };
 }
 
@@ -473,7 +475,7 @@ function crewView(
     splitScorecards,
     recentSplitScorecards,
   } = data.scorecards;
-  const { scorecards, byModel, byPrompt } = data.scorecards;
+  const { scorecards, byModel, byPrompt, byModelDay } = data.scorecards;
   const { spending } = data;
   const usernameError =
     error !== undefined && /username/i.test(error) ? error : undefined;
@@ -584,6 +586,7 @@ function crewView(
     byModel,
     () => html`<span class="muted">default</span>`,
   )}
+  ${modelDaysCard(byModelDay)}
   ${splitsCard(
     "Per prompt version",
     "Prompt version",
@@ -669,6 +672,38 @@ function drillCard(drill: CrewHandover["drill"]): Html {
       head: html`${icon("clock")}
         <h2>Restore drill</h2>`,
     },
+  );
+}
+
+/** Spend and landed pulls per model per day: the escalation, measured. */
+function modelDaysCard(rows: readonly ModelDay[]): Html {
+  if (rows.length === 0) return html``;
+  return card(
+    html`<div class="table-scroll">
+      <table class="table" id="crew-model-days">
+        <thead>
+          <tr>
+            <th>Day</th>
+            <th>Model</th>
+            <th>Runs</th>
+            <th>Spent</th>
+            <th>Landed</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(
+            (r) => html`<tr>
+              <td class="mono">${r.day}</td>
+              <td class="mono">${r.model === "" ? html`<span class="muted">default</span>` : r.model}</td>
+              <td class="num">${r.runs}</td>
+              <td class="num">$${r.spentUsd.toFixed(2)}</td>
+              <td class="num">${r.landed}</td>
+            </tr>`,
+          )}
+        </tbody>
+      </table>
+    </div>`,
+    { pad: false, head: html`<h2>Per model per day</h2>` },
   );
 }
 

@@ -9,6 +9,7 @@ import {
   claimRun,
   createRun,
   finishRun,
+  noteRunProgress,
 } from "../src/core/runs.ts";
 import {
   crewScorecards,
@@ -93,6 +94,20 @@ describe("a scorecard per crew member", () => {
     servers.stop();
     app.close();
     await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("the page has no model-per-day table before a run, and has one for an admin after", async () => {
+    const get = () =>
+      fetch(`${base}/settings/crew`, { headers: { cookie } }).then((r) => r.text());
+    expect(await get()).not.toContain(`id="crew-model-days"`);
+    const run = createRun(app.db, { repoId, kind: "agent", actorId: agentId });
+    claimRun(app.db, run.id);
+    noteRunProgress(app.db, run.id, { model: "opus", modelReason: "p0", costUsd: 0.5 });
+    finishRun(app.db, run.id, { state: "ok", summary: "" });
+    const page = await get();
+    expect(page).toContain(`id="crew-model-days"`);
+    expect(page).toContain("Per model per day");
+    app.db.query("DELETE FROM run WHERE id = ?1").run(run.id);
   });
 
   test("an agent with no pull is a row of dashes, not zeros", async () => {
