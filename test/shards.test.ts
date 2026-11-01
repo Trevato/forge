@@ -496,17 +496,14 @@ describe("splitArgs", () => {
     const check = parseCheck(text, undefined);
     expect(check.ok).toBe(true);
     if (!check.ok || check.value === undefined) throw new Error("no check");
-    const run = check.value.run;
+    const run = check.value.fast ?? "";
     const args = run
       .slice(run.indexOf("scripts/test-shards.ts ") + 23)
       .split(" ");
     const split = splitArgs(args);
     expect(split.ok).toBe(true);
     if (!split.ok) return;
-    const files = [
-      ...(split.flags.includes("--gate") ? gateFiles() : []),
-      ...split.files,
-    ];
+    const files = [...gateFiles(), ...split.files];
     expect(files.length).toBeGreaterThan(0);
     for (const file of files)
       expect(
