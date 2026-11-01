@@ -14,6 +14,7 @@ import { command as unpin } from "./unpin.ts";
 import { command as open } from "./open.ts";
 import { command as pulls } from "./pulls.ts";
 import { command as asks } from "./asks.ts";
+import { command as map } from "./map.ts";
 import { command as search } from "./search.ts";
 import { command as ship } from "./ship.ts";
 import type { Command } from "./types.ts";
@@ -31,6 +32,7 @@ export const commands: readonly Command[] = [
   open,
   pulls,
   asks,
+  map,
   search,
   ship,
 ];

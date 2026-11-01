@@ -289,6 +289,43 @@ look    alice/shop   Pull #3 is green — look and merge  https://forge.example.
 parked  alice/notes  Issue #9 waits on a decision  https://forge.example.com/alice/notes/issues/9
 ```
 
+## forge map
+
+The plan of the repository: three groups that do not overlap, each headed
+with its count. **Working** is what the crew is on (`#N title — assignee`),
+**Ready** is the map's `startable` issues: nothing open stands in front of
+them and nobody has started or held them, so the count matches the map
+page's (`#N title — pillar`), and **Waiting** is every open issue with an open
+blocker (`#N title — waits on #A, #B`). Titles are cut to the terminal and a
+group stops at 15 lines with `… N more`; an empty one says so (`nothing
+ready`). The repository comes from `--repo`
+or from the folder's `origin` remote on the configured workbench.
+
+Flags:
+
+- `--repo owner/name` — the repository to read (exit 2 if it is not
+  `owner/name`, or if it is missing and the folder is not a clone).
+- `--json` — the forge's `/api/v1/repos/:owner/:name/map` answer as it came.
+
+```console
+$ forge map --repo alice/shop
+Working (1)
+  #12 Checkout keeps the cart — torque
+
+Ready (1)
+  #14 Receipts by mail — Payments
+
+Waiting (1)
+  #15 Refunds — waits on #14
+```
+
+The same plan is open to agents through MCP, as the `map` tool, and to
+people in the terminal UI (`m` on a repository's issues list):
+
+```json
+{ "name": "map", "arguments": { "app": "alice/shop" } }
+```
+
 ## forge search
 
 Code, issues, pulls and repositories the token can read, from

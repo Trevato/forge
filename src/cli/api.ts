@@ -91,6 +91,28 @@ export interface Bulk {
 const show = (value: unknown): string =>
   value === null || value === undefined ? "" : String(value);
 
+/** One issue on the plan, as `forge map` prints it. */
+export interface PlanIssue {
+  readonly number: number;
+  readonly title: string;
+  readonly assignee: string | null;
+  readonly pillar: string | null;
+  /** Open issues this one waits on, lowest number first. */
+  readonly waitsOn: readonly number[];
+}
+
+/** Where the plan stands: the three groups `forge map` prints. */
+export interface Plan {
+  /** The answer exactly as the forge gave it, for `--json`. */
+  readonly raw: unknown;
+  /** What the crew is on right now. */
+  readonly working: PlanIssue[];
+  /** Ready now and nobody on it, in the forge's order. */
+  readonly ready: PlanIssue[];
+  /** Open, and waiting on at least one open issue. */
+  readonly waiting: PlanIssue[];
+}
+
 export class ForgeApi {
   /** True once `pins()` has had to fall back, so the CLI can say it once. */
   pinsUnavailable = false;
@@ -430,6 +452,20 @@ export class ForgeApi {
     return ok(this.toBulk(out.value));
   }
 
+  /**
+   * The repository's plan (`GET /api/v1/repos/:owner/:name/map`), split into
+   * what is being built, what is ready and what waits on what. The groups do
+   * not overlap: an issue the crew is on is Working even when it is ready or
+   * still has an open blocker.
+   */
+  async map(owner: string, name: string): Promise<ApiResult<Plan>> {
+    const out = await this.call<unknown>(
+      `/api/v1/repos/${encode(owner)}/${encode(name)}/map`,
+    );
+    if (!out.ok) return out;
+    return ok(toPlan(out.value));
+  }
+
   /** A workbench path as a full address; anything not a path is the home. */
   private absolute(link: string): string {
     return link.startsWith("/") && !link.startsWith("//")
@@ -490,6 +526,66 @@ function titleOf(line: string, repo: string): string {
   if (line.startsWith(`${name}: `)) return line.slice(name.length + 2);
   if (line.startsWith(`${name} `)) return line.slice(name.length + 1);
   return line;
+}
+
+/** The map's JSON → `Plan`; rows without a number are dropped, not guessed. */
+export function toPlan(raw: unknown): Plan {
+  const body = (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>;
+  const list = (v: unknown): Record<string, unknown>[] =>
+    Array.isArray(v)
+      ? v.filter((x): x is Record<string, unknown> => typeof x === "object" && x !== null)
+      : [];
+  const num = (v: unknown): number | undefined =>
+    typeof v === "number" && Number.isSafeInteger(v) ? v : undefined;
+  const issues = new Map<number, Record<string, unknown>>();
+  for (const i of list(body["issues"])) {
+    const n = num(i["number"]);
+    if (n !== undefined && i["state"] !== "closed") issues.set(n, i);
+  }
+  const waitsOn = new Map<number, number[]>();
+  for (const e of list(body["edges"])) {
+    const a = num(e["issue"]);
+    const b = num(e["blockedBy"]);
+    if (a === undefined || b === undefined || !issues.has(a) || !issues.has(b)) continue;
+    const on = waitsOn.get(a) ?? [];
+    if (!on.includes(b)) on.push(b);
+    waitsOn.set(a, on);
+  }
+  // Every group reads its fields from `issues`: the ready rows agree with it.
+  const issue = (n: number): PlanIssue => {
+    const r = issues.get(n) ?? {};
+    return {
+      number: n,
+      title: str(r["title"]) ?? "",
+      assignee: str(r["assignee"]) ?? null,
+      pillar: str(r["pillar"]) ?? null,
+      waitsOn: [...(waitsOn.get(n) ?? [])].sort((x, y) => x - y),
+    };
+  };
+  const workingSet = new Set<number>();
+  const working: PlanIssue[] = [];
+  for (const v of Array.isArray(body["working"]) ? body["working"] : []) {
+    const n = num(v);
+    // Only an open issue the map lists is being built; a closed one is done.
+    if (n === undefined || workingSet.has(n) || !issues.has(n)) continue;
+    workingSet.add(n);
+    working.push(issue(n));
+  }
+  const startable = Array.isArray(body["startable"])
+    ? new Set(body["startable"].map(num).filter((n) => n !== undefined))
+    : undefined;
+  const ready: PlanIssue[] = [];
+  for (const r of list(body["ready"])) {
+    const n = num(r["number"]);
+    if (n === undefined || workingSet.has(n)) continue;
+    if (startable !== undefined ? !startable.has(n) : r["assignee"] != null) continue;
+    ready.push(issue(n));
+  }
+  const waiting = [...waitsOn.keys()]
+    .filter((n) => !workingSet.has(n))
+    .sort((x, y) => x - y)
+    .map((n) => issue(n));
+  return { raw, working, ready, waiting };
 }
 
 function str(value: unknown): string | undefined {

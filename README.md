@@ -330,6 +330,7 @@ forge asks --repo owner/name       # only that repository's; --json for the API'
 forge asks --ship 1 3              # decide by the line numbers just printed: planned, then Apply? [y/N]
 forge asks --close 2 --reason "words"   # also --dismiss 4; --yes skips the question (needed without a TTY)
 forge asks --undo <id>             # take back a decision by the receipt id it printed
+forge map                          # the plan of this clone: working, ready, waiting
 forge search retry budget          # code, issues, pulls and repos you can read; exits 6 on "not now"
 forge search x --kind pulls --limit 5   # one kind, five hits; --json marks truncated.issues when more matched
 ```
@@ -351,6 +352,18 @@ a list longer than the 100-pull pages it follows is marked as cut. This is a
 shell command on purpose: the terminal UI of the forge (`ssh`, `src/tty.ts`)
 already has its own pulls screen, and the local UI is about working trees, not
 the workbench's conversation; the pulls API and MCP are the other doors.
+
+`forge map` reads the plan of the same repository (`--repo` or `origin`, as
+for `pulls`) from `GET /api/v1/repos/:owner/:name/map` and prints three
+groups, each headed with its count: Working (`#N title — assignee`), Ready —
+the map's `startable` subset of its ready issues, unassigned and not held, so
+its count matches the map page's ready count (`#N title — pillar`) — and
+Waiting (`#N title — waits on #A, #B`, open blockers only). Titles are cut to
+the terminal, and a group past 15 lines ends `… N more`. `--json` prints the
+API's answer unchanged; an unknown repository prints the forge's words and
+exits 1 (3 for a refused token, 5 for a forbidden one).
+The same plan is a screen in the forge's terminal UI: press `m` on a
+repository's issues list (`src/tui/screens/plan.ts`).
 
 `sync` never merges, rebases, resets or checks anything out. `--ff` is the one
 exception and it fast-forwards a repo only when the tree is clean, nothing is

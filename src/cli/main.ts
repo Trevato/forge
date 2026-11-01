@@ -10,6 +10,7 @@
  *   forge search <words>      code, issues, pulls and repos you can read
  *   forge asks --ship 1 3     decide asks by their numbers: planned, then a y/N
  *   forge asks --undo <id>    take back what that decided
+ *   forge map                 the plan: being built, ready now, what waits
  *   forge ship <number>       land a pull after a y/N, as its Merge button does
  *
  * Everything here is a thin shell around three modules: `api.ts` talks to the
