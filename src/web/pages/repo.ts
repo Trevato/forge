@@ -239,8 +239,10 @@ function forkRanking(
 function forkBar(ctx: Ctx, repo: Repo): Html {
   const canFork =
     ctx.auth.user !== undefined && ctx.auth.user.id !== repo.ownerId;
+  // Forge it is for any signed-in person, the owner too: it makes a forge, not a copy in this one.
+  const canForge = ctx.auth.user?.kind === "user";
   const forkCount = forksFor(ctx, repo).length;
-  if (!canFork && forkCount === 0) return html``;
+  if (!canFork && !canForge && forkCount === 0) return html``;
   return html`<div class="mt">
     ${listCard([
       row({
@@ -251,11 +253,15 @@ function forkBar(ctx: Ctx, repo: Repo): Html {
                 >${badge(`${forkCount} fork${forkCount === 1 ? "" : "s"}`)}</a
               >`
             : "Forks",
-        trail: canFork
+        trail: html`${canFork
           ? html`<form method="post" action="${repoBase(repo)}/fork">
               ${btn("Fork", { size: "sm", icon: "fork" })}
             </form>`
-          : html``,
+          : html``}${canForge
+          ? html`<form method="post" action="${repoBase(repo)}/forge">
+              ${btn("Forge it", { size: "sm", icon: "rocket", variant: "outline" })}
+            </form>`
+          : html``}`,
       }),
     ])}
   </div>`;

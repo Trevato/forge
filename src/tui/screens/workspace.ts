@@ -128,6 +128,7 @@ import { reportCommands } from "./report.ts";
 import { reportsCommands } from "./reports.ts";
 import { tellCommands } from "./tell.ts";
 import { workingCommands } from "./working.ts";
+import { forgeItCommands } from "./forge_it.ts";
 import { makeItYoursScreen, yoursCommands } from "./yours.ts";
 import { visionCommands } from "./vision.ts";
 import { appEnvCommands } from "./appenv.ts";
@@ -1438,6 +1439,7 @@ export function workspaceScreen(
       ...reportsCommands(f, ctx, repo),
       ...noteCommands(f, ctx, () => screen, repo),
       ...yoursCommands(f, ctx, repo),
+      ...forgeItCommands(f, ctx, repo, () => screen),
       ...hooksCommands(f, ctx, repo),
       ...visionCommands(f, ctx, repo),
       ...appEnvCommands(f, ctx, repo),

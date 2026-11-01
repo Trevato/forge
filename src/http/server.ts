@@ -265,6 +265,7 @@ import { claimFragmentPage, claimOptions, claimSubmit } from "../web/pages/claim
 import { firstAdminOptions, firstAdminPage, firstAdminSubmit } from "../web/pages/first-admin.ts";
 import { familyPage } from "../web/pages/family.ts";
 import { forgeLinkSubmit, forgesPage } from "../web/pages/forges.ts";
+import { forgeItSubmit } from "../web/pages/forge-it.ts";
 import { newForgePage, newForgeSubmit } from "../web/pages/new-forge.ts";
 import { askedPage } from "../web/studio/asked_page.ts";
 import { reviewPage } from "../web/studio/review_page.ts";
@@ -1379,6 +1380,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/commits", commitsPage);
   router.add("GET", "/:owner/:name/commit/:oid", commitPage);
   router.add("POST", "/:owner/:name/fork", forkSubmit);
+  // Forge it: a fresh forge with this repository as its app, then its claim link.
+  router.add("POST", "/:owner/:name/forge", forgeItSubmit);
   // Make it yours (#606): a fork with its app, planned, then made.
   router.add("GET", "/:owner/:name/make-it-yours", makeItYoursPage);
   router.add("POST", "/:owner/:name/make-it-yours", makeItYoursSubmit);
