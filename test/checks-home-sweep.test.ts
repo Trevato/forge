@@ -2,7 +2,9 @@
  * A run's home (`<id>.home`) belongs to run `<id>` (#7545): the sweep removes
  * it once the run is finished or its lease lapsed, leaves a live run's alone,
  * and removes it even with read-only files in it. A torn-down preview takes
- * its home with it.
+ * its home with it. A gate writes no run: its checkout and home stay while
+ * its `check_gate` row is open, and go once it closes or outlives any check
+ * (#7673).
  */
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
@@ -12,9 +14,10 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { requeueAbandonedChecks, sweepCheckouts } from "../src/checks/service.ts";
+import { beginGate, endGate } from "../src/checks/gate_record.ts";
 import { ensureEnvData, removeEnv } from "../src/apps/data.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
-import { GATE_DEADLINE_MS } from "../src/checks/queue.ts";
+import { GATE_DEADLINE_MS, gateRunId } from "../src/checks/queue.ts";
 import { STALE_AFTER_MS } from "../src/runs/lease.ts";
 import { createUser } from "../src/core/users.ts";
 
@@ -118,4 +121,25 @@ test("tearing a preview down removes its home", () => {
   writeFileSync(join(h, "cache"), "x");
   removeEnv(dataDir, "app1", "pull-1");
   expect(existsSync(h)).toBe(false);
+});
+
+test("a gate's open row keeps its checkout and home past the deadline window; a finished gate's go", () => {
+  const running = "b".repeat(40);
+  const finished = "c".repeat(40);
+  const open = beginGate(app.db, repoId, undefined, running);
+  endGate(app.db, beginGate(app.db, repoId, undefined, finished));
+  for (const oid of [running, finished]) {
+    mkdirSync(join(dataDir, "checks", gateRunId(oid), "node_modules"), { recursive: true });
+    populate(gateRunId(oid));
+  }
+  // Past the young-checkout window a full suite still runs: the open row holds it.
+  sweepCheckouts(app, Date.now() + GATE_DEADLINE_MS + 60_000);
+  expect(existsSync(join(dataDir, "checks", gateRunId(running), "node_modules"))).toBe(true);
+  expect(existsSync(home(gateRunId(running)))).toBe(true);
+  expect(existsSync(join(dataDir, "checks", gateRunId(finished)))).toBe(false);
+  expect(existsSync(home(gateRunId(finished)))).toBe(false);
+  // A row a crash left open holds no longer than a check may run.
+  sweepCheckouts(app, Date.now() + 3 * 3600_000);
+  expect(existsSync(join(dataDir, "checks", gateRunId(running)))).toBe(false);
+  endGate(app.db, open);
 });

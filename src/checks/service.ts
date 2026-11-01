@@ -51,7 +51,7 @@ import { mergeForCheck } from "./merged.ts";
 import { approvedOnce } from "./approved_first.ts";
 import { checkOnApproval } from "./approval.ts";
 import { checkKey, provenBy, recordProven } from "./proven.ts";
-import { beginGate, endGate } from "./gate_record.ts";
+import { beginGate, endGate, gateHolding } from "./gate_record.ts";
 import { giveHistory } from "./history.ts";
 import { readLearned } from "./learned.ts";
 import { keepCache, restoreCache } from "./cache.ts";
@@ -72,7 +72,7 @@ import { holdLease, STALE_AFTER_MS } from "../runs/lease.ts";
 import { appendRunLog } from "../runs/log.ts";
 import { runningLimitSentence, runningRuns } from "../settings/quotas.ts";
 import { exportTree, readFileAt } from "../apps/checkout.ts";
-import { parseCheck } from "../apps/manifest.ts";
+import { CHECK_TIMEOUT_MAX, parseCheck } from "../apps/manifest.ts";
 import { workerCpus } from "../core/capacity.ts";
 import { accountActive } from "../core/accounts.ts";
 import { childEnv, killedStep, runStep } from "../apps/process.ts";
@@ -334,6 +334,9 @@ export function removeRunDir(path: string): void {
 /** Where a check's checkout lives while it runs. */
 const checksRoot = (dataDir: string): string => join(dataDir, "checks");
 
+/** A gate's checkout (`gateRunId`): it has no run, only its `check_gate` row. */
+const GATE_DIR = /^gate-([0-9a-f]{12})$/;
+
 /** Whether a gate's checkout, this forge's or a peer's during a roll, is younger than a gate may run. */
 function gateMayBeRunning(path: string, now: number): boolean {
   try {
@@ -347,16 +350,26 @@ function gateMayBeRunning(path: string, now: number): boolean {
  * Remove the checkouts nobody is using: one whose run is not running with a
  * live lease, or has no run at all. A forge booting during a roll shares this
  * directory and database with the old one, whose checks are still running in
- * theirs; those are left alone.
+ * theirs; those are left alone. A gate writes no run: its checkout is left
+ * while it is younger than a gate's deadline, and past that while its
+ * `check_gate` row is open, for as long as a check may run — the proof
+ * step's full suite outlives the window, and lost its `node_modules` (#7673).
  */
 export function sweepCheckouts(app: App, now: number = Date.now()): void {
   const root = checksRoot(app.config.dataDir);
   if (!existsSync(root)) return;
+  const since = new Date(now - CHECK_TIMEOUT_MAX * 1000);
   for (const name of readdirSync(root)) {
     // A gate has no run row: its checkout is spared until no gate could still be using it.
     if (name.startsWith("gate-") && gateMayBeRunning(join(root, name), now)) continue;
     // `<id>.home` is the home of run `<id>`: it lives and dies with it.
-    const run = getRun(app.db, name.endsWith(".home") ? name.slice(0, -5) : name);
+    const id = name.endsWith(".home") ? name.slice(0, -5) : name;
+    const gate = GATE_DIR.exec(id);
+    if (gate !== null) {
+      if (!gateHolding(app.db, gate[1]!, since)) removeRunDir(join(root, name));
+      continue;
+    }
+    const run = getRun(app.db, id);
     const live =
       run !== undefined &&
       run.state === "running" &&

@@ -320,7 +320,7 @@ export interface CheckManifest {
 }
 
 const CHECK_TIMEOUT_DEFAULT = 20 * 60;
-const CHECK_TIMEOUT_MAX = 2 * 60 * 60;
+export const CHECK_TIMEOUT_MAX = 2 * 60 * 60;
 
 /**
  * The check a commit declares, `undefined` when it declares none. Fails
