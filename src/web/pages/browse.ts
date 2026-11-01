@@ -514,6 +514,7 @@ export async function browseBlob(ctx: Ctx): Promise<Response> {
     path,
     blob: blob.value,
     view: blobView(ctx.url.searchParams.get("view")),
+    all: ctx.url.searchParams.get("all") === "1",
   });
   if (ctx.url.searchParams.get("fragment") === "1")
     return fragment(pane, { request: ctx.request });

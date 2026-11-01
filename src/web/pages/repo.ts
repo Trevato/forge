@@ -98,7 +98,7 @@ const MAX_RENDER_BYTES = 1_000_000;
 // A blob under the byte cap can still be pathological (a megabyte of newlines
 // is ~490k lines). Bounding rendered lines bounds the response independently.
 /** Lines a file page draws before it links the rest (`?all=1` draws every one). */
-const FIRST_LINES = 1_000;
+const FIRST_LINES = 1_500;
 const MAX_RENDER_LINES = 10_000;
 
 import { sshCloneUrl } from "../../ssh/command.ts";
@@ -680,7 +680,7 @@ export function blobBody(
       ${when(truncated, () =>
         empty({
           icon: "file",
-          title: `Showing ${lines.length.toLocaleString()} of ${total.toLocaleString()} lines`,
+          title: `${(total - lines.length).toLocaleString("en-US")} more lines`,
           note: all
             ? "The rest is in the raw file."
             : "The page draws the first lines so it opens at once. A link to a later line (#L…) lands once you show all lines.",
@@ -1040,7 +1040,7 @@ export function renderBlob(
     view?: BlobView;
     /** Told how long highlighting took, for Server-Timing. */
     highlighted?: (ms: number) => void;
-    /** Draw every line instead of the first thousand. */
+    /** Draw every line instead of the first 1,500. */
     all?: boolean;
   },
 ): Html {

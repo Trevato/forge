@@ -1,7 +1,7 @@
 ## What works today
 
-- **A long file's page** draws its first 1,000 lines and says "Showing 1,000 of
-  N lines", with *Show all lines* (`?all=1`) and the raw file. `?all=1` stops at
+- **A long file's page** draws its first 1,500 lines and says "N more
+  lines", with *Show all lines* (`?all=1`) and the raw file. `?all=1` stops at
   10,000 lines (it was 5,000 for every view before); past that, the raw file is
   the way. Highlighted lines are cached by content hash (32 files, least
   recently used out). A `#L…` anchor past the cut is redirected to `?all=1` by
