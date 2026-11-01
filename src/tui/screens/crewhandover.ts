@@ -15,6 +15,7 @@ import { fill, len, split } from "../ui/layout.ts";
 import { issueScreen } from "./issue.ts";
 import { local } from "./where.ts";
 import { ListState, drawList, type ListRow } from "./common.ts";
+import type { PaletteEntry } from "./entries.ts";
 
 export function crewHandoverScreen(f: Session, ctx: Ctx): Screen {
   const state = new ListState();
@@ -80,3 +81,13 @@ export function crewHandoverScreen(f: Session, ctx: Ctx): Screen {
     },
   };
 }
+
+/** Settings → Crew's hand-overs: issues parked twice, the last restore drill. */
+export const entry: PaletteEntry = {
+  id: "crew-handover",
+  title: "Crew hand-overs",
+  hint: "issues parked twice, and the last restore drill",
+  after: ["crew-scorecard"],
+  offered: (session) => session.user?.isAdmin === true,
+  run: (session, ctx) => ctx.push(crewHandoverScreen(session, ctx)),
+};

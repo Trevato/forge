@@ -16,6 +16,7 @@ import { truncate } from "../term/width.ts";
 import type { Session } from "../session.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { ListState, confirmScreen, drawList, promptScreen, type ListRow } from "./common.ts";
+import type { PaletteEntry } from "./entries.ts";
 
 export function limitsScreen(f: Session, ctx: Ctx): Screen {
   const state = new ListState();
@@ -99,3 +100,13 @@ export function limitsScreen(f: Session, ctx: Ctx): Screen {
   };
   return screen;
 }
+
+/** The forge's limits, as MCP `limits` has them: an admin who is not an agent (#7268). */
+export const entry: PaletteEntry = {
+  id: "limits",
+  title: "Limits",
+  hint: "what the forge caps, with default and bounds; change one",
+  after: ["quotas", "people", "can"],
+  offered: (session) => session.user?.isAdmin === true && session.user.kind !== "agent",
+  run: (session, ctx) => ctx.push(limitsScreen(session, ctx)),
+};

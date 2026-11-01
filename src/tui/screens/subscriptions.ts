@@ -29,6 +29,7 @@ import { truncate } from "../term/width.ts";
 import type { Session } from "../session.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { ListState, confirmScreen, drawList, later, promptScreen, type ListRow } from "./common.ts";
+import type { PaletteEntry } from "./entries.ts";
 
 const money = (n: number): string => `$${n.toFixed(2)}`;
 
@@ -171,3 +172,13 @@ export function subscriptionsScreen(f: Session, ctx: Ctx): Screen {
   };
   return screen;
 }
+
+/** The crew's Claude subscriptions, as MCP `subscriptions` has them: a forge admin (#7244). */
+export const entry: PaletteEntry = {
+  id: "subscriptions",
+  title: "Crew subscriptions",
+  hint: "each account's budget and rest; wake one, set its budget, add or remove one",
+  after: ["invites", "teams", "limits", "quotas", "people", "can"],
+  offered: (session) => session.user?.isAdmin === true && session.user.kind === "user",
+  run: (session, ctx) => ctx.push(subscriptionsScreen(session, ctx)),
+};

@@ -13,6 +13,7 @@ import { truncate } from "../term/width.ts";
 import type { Session } from "../session.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { ListState, drawList, type ListRow } from "./common.ts";
+import type { PaletteEntry } from "./entries.ts";
 
 export function splitRows(
   label: string,
@@ -62,3 +63,13 @@ export function crewSplitsScreen(f: Session, ctx: Ctx): Screen {
     key: (e) => state.key(e, rows.length),
   };
 }
+
+/** Settings → Crew's scorecard by model and prompt version: an admin (#2682). */
+export const entry: PaletteEntry = {
+  id: "crew-scorecard",
+  title: "Crew scorecard",
+  hint: "agent runs per model and per prompt version",
+  after: ["usage", "trusted-hosts", "secrets"],
+  offered: (session) => session.user?.isAdmin === true,
+  run: (session, ctx) => ctx.push(crewSplitsScreen(session, ctx)),
+};

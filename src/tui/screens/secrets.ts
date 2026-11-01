@@ -17,6 +17,7 @@ import { truncate } from "../term/width.ts";
 import type { Session } from "../session.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { confirmScreen, drawList, later, ListState, promptScreen } from "./common.ts";
+import type { PaletteEntry } from "./entries.ts";
 
 /** The action's refusals in this screen's words. */
 const ERRORS: Record<string, string> = {
@@ -170,3 +171,13 @@ export function secretsScreen(f: Session, ctx: Ctx): Screen {
   };
   return screen;
 }
+
+/** Settings → Secrets, as the page has it: a forge admin; names only, never a value. */
+export const entry: PaletteEntry = {
+  id: "secrets",
+  title: "Secrets",
+  hint: "sealed secrets by name; set or remove one",
+  after: ["flags", "access", "file-holds"],
+  offered: (session) => session.user?.isAdmin === true,
+  run: (session, ctx) => ctx.push(secretsScreen(session, ctx)),
+};

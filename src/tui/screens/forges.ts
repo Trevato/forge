@@ -10,7 +10,9 @@ import { ATTENTION_WORDS, CLAIM_WORDS, claimState, runningWords, spendWords, typ
 import { useLine } from "../../spawn/usage.ts";
 import { timeAgo } from "../../web/ui.ts";
 import { card } from "../ui/widgets.ts";
-import { drawFacts } from "./common.ts";
+import { drawFacts, runAsync } from "./common.ts";
+import type { PaletteEntry } from "./entries.ts";
+import { clientRows } from "../../spawn/clients.ts";
 
 /** [name, "Not reporting · for Maria · Claimed · 3 apps running"] per row; an empty line when none. */
 export function forgeLines(rows: readonly ClientRow[]): [string, string][] {
@@ -51,3 +53,14 @@ export function forgesScreen(ctx: Ctx, rows: readonly ClientRow[]): Screen {
     },
   };
 }
+
+/** The forges this one sent, as /forges lists them: an admin's only. */
+export const entry: PaletteEntry = {
+  id: "forges",
+  title: "Forges you sent",
+  hint: "each forge sent, claimed or not, and its apps",
+  offered: (session) => session.user?.isAdmin === true,
+  run: (session, ctx) => runAsync(ctx, async () => {
+    ctx.push(forgesScreen(ctx, await clientRows(session.app)));
+  }),
+};

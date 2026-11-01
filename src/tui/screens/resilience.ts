@@ -38,6 +38,7 @@ import type { Session } from "../session.ts";
 import { pad, wrap } from "../term/width.ts";
 import { dialog } from "../ui/widgets.ts";
 import { confirmScreen, later, promptScreen, runAsync } from "./common.ts";
+import type { PaletteEntry } from "./entries.ts";
 
 const WIDTH = 72;
 const INNER = WIDTH - 6;
@@ -283,3 +284,13 @@ export function resilienceScreen(f: Session, ctx: Ctx): Screen {
   };
   return screen;
 }
+
+/** Where snapshots go and each THREATS.md protection's standing, as /resilience says it: a site admin's; a person admin sets or forgets the destination and the mirror here. */
+export const entry: PaletteEntry = {
+  id: "resilience",
+  title: "Resilience",
+  hint: "where snapshots go and the mirror; each protection green, red or untested",
+  after: ["capacity", "flow", "system-memory", "sentinel"],
+  offered: (session) => session.user?.isAdmin === true,
+  run: (session, ctx) => ctx.push(resilienceScreen(session, ctx)),
+};

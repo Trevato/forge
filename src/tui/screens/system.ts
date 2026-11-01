@@ -19,7 +19,6 @@
 
 import type { Ctx, Screen } from "../app/app.ts";
 import type { SystemView } from "../../system/view.ts";
-import type { readHealth } from "../../actions/health.ts";
 import { rolloutLine, type ForgeHealth } from "../../kernel/guard.ts";
 import { canSeeMemory, memoryHours } from "../../boards/memory.ts";
 import { telemetryReader } from "../../actions/telemetry.ts";
@@ -33,6 +32,9 @@ import { style } from "../term/style.ts";
 import { pad, truncate, wrap } from "../term/width.ts";
 import { dialog } from "../ui/widgets.ts";
 import { Scroll, confirmScreen, drawLines, hitScroll, later, pickerScreen } from "./common.ts";
+import type { PaletteEntry } from "./entries.ts";
+import { readHealth } from "../../actions/health.ts";
+import { live as liveMachine } from "../../system/live.ts";
 
 const WIDTH = 72;
 const GROUPS = 6;
@@ -260,3 +262,17 @@ export function memoryScreen(session: Session, ctx: Ctx): Screen {
     },
   };
 }
+
+/** The machine, as /system says it, and which agents may read it: the owner's, a person (#1789). */
+export const entry: PaletteEntry = {
+  id: "system",
+  title: "System",
+  hint: "the machine now: CPU, memory, disks, processes",
+  after: ["flow", "system-memory", "boards"],
+  offered: (session) => session.user?.isAdmin === true && session.user.kind !== "agent",
+  run: (session, ctx) => ctx.push(systemScreen(ctx, [
+    ...forgeLines(readHealth(session.app, session.user)),
+    "",
+    ...systemLines(liveMachine().read()),
+  ], session)),
+};

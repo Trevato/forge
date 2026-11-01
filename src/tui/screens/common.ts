@@ -1072,3 +1072,8 @@ export function ago(iso: string): string {
 }
 
 export { plural } from "../../kernel/plural.ts";
+
+/** A screen that draws nothing — the parent a palette-launched modal has. */
+export function blank(title: string): Screen {
+  return { title, keys: [], render: () => undefined, key: () => false };
+}

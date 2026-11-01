@@ -23,6 +23,7 @@ import { emptyState } from "../ui/widgets.ts";
 import { style } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
 import { ListState, Scroll, drawList, promptScreen, drawLines, hitList, hitScroll, metaOf, plural, runAsync, type ListRow } from "./common.ts";
+import type { PaletteEntry } from "./entries.ts";
 
 /** One line of plain text: a title or a query value may carry escapes the terminal must not obey. */
 export const plain = (text: string): string =>
@@ -247,3 +248,13 @@ export function boardsScreen(f: Session, ctx: Ctx): Screen {
   };
   return screen;
 }
+
+/** The boards, as the page gates them: a site admin who is a person, never an agent (#1817). */
+export const entry: PaletteEntry = {
+  id: "boards",
+  title: "Boards",
+  hint: "the forge's boards and their panels",
+  after: ["sentinel"],
+  offered: (session) => session.user?.isAdmin === true && session.user.kind !== "agent",
+  run: (session, ctx) => ctx.push(boardsScreen(session, ctx)),
+};

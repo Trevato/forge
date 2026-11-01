@@ -29,6 +29,7 @@ import { truncate } from "../term/width.ts";
 import type { Session } from "../session.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { ListState, drawList, type ListRow } from "./common.ts";
+import type { PaletteEntry } from "./entries.ts";
 
 const landed = (s: Scorecard | undefined) =>
   s === undefined ? "—" : `${s.landed} of ${s.opened}`;
@@ -171,3 +172,13 @@ export function scorecardScreen(f: Session, ctx: Ctx): Screen {
     key: (e) => state.key(e, rows.length),
   };
 }
+
+/** Settings → Crew's scorecard per agent, as the page has it: a forge admin (#2677). */
+export const entry: PaletteEntry = {
+  id: "scorecard",
+  title: "Crew scorecard per agent",
+  hint: "each agent's pulls landed, review rounds, red checks, reverts, time to land",
+  after: ["crew-handover"],
+  offered: (session) => session.user?.isAdmin === true,
+  run: (session, ctx) => ctx.push(scorecardScreen(session, ctx)),
+};

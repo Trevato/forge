@@ -21,6 +21,7 @@ import { truncate } from "../term/width.ts";
 import type { Session } from "../session.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { ListState, confirmScreen, drawList, pickerScreen, promptScreen, type ListRow } from "./common.ts";
+import type { PaletteEntry } from "./entries.ts";
 
 export function invitesScreen(f: Session, ctx: Ctx): Screen {
   const state = new ListState();
@@ -141,3 +142,13 @@ export function invitesScreen(f: Session, ctx: Ctx): Screen {
   };
   return screen;
 }
+
+/** Invite links, as /admin/limits has them: an admin who is a person (#2337). */
+export const entry: PaletteEntry = {
+  id: "invites",
+  title: "Invite links",
+  hint: "make a single-use link, see which are open, revoke one",
+  after: ["teams", "limits", "quotas", "people", "can"],
+  offered: (session) => session.user?.isAdmin === true && session.user.kind === "user",
+  run: (session, ctx) => ctx.push(invitesScreen(session, ctx)),
+};
