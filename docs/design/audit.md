@@ -33,7 +33,7 @@ their own vocabulary instead of composing the named one.
 
 ## Finding 2 — the pages, and what each is for
 
-There are 64 top-level pages, one entry each: every static `GET` route in `src/http/server.ts`
+There are 66 top-level pages, one entry each: every static `GET` route in `src/http/server.ts`
 that returns a page (`test/design-audit.test.ts` holds this list to the router,
 both ways). Each entry reads `route` — module · what it is for · what
 duplicates it · what breaks `docs/DESIGN.md`. "Breaks" counts colour literals
@@ -108,6 +108,8 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/signin` — `pages/site.ts` · sign in · `/signin/parent` · colours 3 (file).
 - `/signin/parent` — `http/rp.ts` · sign in with the forge that sent this one · `/signin` · no page (redirect).
 - `/signin/parent/callback` — `http/rp.ts` · the return leg of that sign-in · none · no page (redirect).
+- `/login` — `http/server.ts` (`signinAlias`) · the address people type to sign in · it is `/signin`, keeping a same-origin `next` · none (308, no page of its own).
+- `/sign-in` — `http/server.ts` (`signinAlias`) · the same, hyphenated · it is `/signin` · none (308, no page of its own).
 - `/signup` — `pages/site.ts` · make an account · `/signup` passkey flow (`signup-passkey.ts`) · colours 3 (file).
 - `/verify` — `pages/site.ts` · confirm an email address · none · colours 3 (file).
 - `/recover` — `pages/passkeys.ts` · get back in without a password · `/settings/passkeys` · none seen.

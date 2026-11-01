@@ -120,6 +120,7 @@ import {
   logoutSubmit,
   newRepoPage,
   newRepoSubmit,
+  safeNext,
   signinPage,
   signinSubmit,
   signupPage,
@@ -745,6 +746,15 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/home/archived/:op/undo", homeArchiveUndo);
   router.add("GET", "/signin", signinPage);
   router.add("POST", "/signin", signinSubmit);
+  // The addresses people type to sign in (#7721): a permanent move to
+  // `/signin`, carrying `next` only when `safeNext` calls it a path here.
+  const signinAlias = (ctx: Ctx): Response => {
+    const next = safeNext(ctx.url.searchParams.get("next"));
+    const location = next === undefined ? "/signin" : `/signin?${new URLSearchParams({ next })}`;
+    return new Response(null, { status: 308, headers: { location } });
+  };
+  router.add("GET", "/login", signinAlias);
+  router.add("GET", "/sign-in", signinAlias);
   router.add("GET", "/signin/parent", parentStart);
   router.add("GET", "/signin/parent/callback", parentCallback);
   router.add("GET", "/signup", signupPage);

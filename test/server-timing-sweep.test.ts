@@ -44,8 +44,10 @@ const REDIRECTS = new Set([
   "/alice/forge/tells/new",
   "/big",
   "/flow",
+  "/login",
   "/settings/origins/callback",
   "/settings/resilience",
+  "/sign-in",
 ]);
 
 /** Every GET pattern the router source registers, one-line or wrapped. */
