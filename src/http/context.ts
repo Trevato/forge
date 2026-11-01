@@ -25,6 +25,9 @@ export interface Auth {
   /** Set for a crew run's token: the repositories it may reach
    * (`http/run_gate.ts`). */
   readonly run?: RunScope;
+  /** Set for a via token: the forge's own agent, speaking for this person in
+   * this conversation (`conversation:<id>`, `core/via_token.ts`). */
+  readonly through?: string;
   /** Set when a Basic password was turned away by the sign-in windows or the
    * hash gate, not found wrong: the request answers 429, not 401. */
   readonly retryAfter?: number;

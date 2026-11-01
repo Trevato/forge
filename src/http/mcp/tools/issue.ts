@@ -1,6 +1,7 @@
 import { mayView } from "../../../core/sealed.ts";
 import { countThread, EMBEDDED_COMMENTS, getIssue, labelsFor, listComments } from "../../../core/issues.ts";
 import { isCrew } from "../../../core/agents.ts";
+import { canWrite } from "../../../core/repos.ts";
 import { dependenciesOf } from "../../../core/dependencies.ts";
 import { getUsersByIds } from "../../../core/users.ts";
 import { flowOnlyQueued } from "../../../crew/flow_only.ts";
@@ -34,9 +35,12 @@ export const tool: Tool = {
     // Seen only after the sealed check, so a sealed pull is not told apart.
     if (issue.kind !== "issue") return good({ kind: "pull", tool: "pull" });
     const db = ctx.app.db;
-    // Marked only for a crew agent, as the API does: to anyone else the
-    // mark would say which commenters cannot write.
-    const marking = user.kind === "agent" && isCrew(db, repo.id, user.id);
+    // Marked only for a crew agent, as the API does, and for the forge's own
+    // agent speaking for a writer here (#7649): to anyone else the mark would
+    // say which commenters cannot write.
+    const marking =
+      (user.kind === "agent" && isCrew(db, repo.id, user.id)) ||
+      (ctx.auth.through !== undefined && canWrite(db, repo, user));
     const mark = <T extends { authorName: string; originAuthor: string | null }>(
       items: readonly T[],
     ): (T & { untrusted?: string })[] =>

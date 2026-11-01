@@ -484,6 +484,7 @@ import { adminGate } from "./admin_gate.ts";
 import { originGate } from "./origin_gate.ts";
 import { proposalGate } from "./proposal_gate.ts";
 import { runGate } from "./run_gate.ts";
+import { viaGate } from "./via_gate.ts";
 import { checksRecheckRoutes } from "./checks_recheck.ts";
 import { feedRoutes } from "./feed.ts";
 import type { Database } from "bun:sqlite";
@@ -604,6 +605,7 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
         via: "token",
         ...(verified.value.proposal ? { proposal: verified.value.proposal } : {}),
         ...(verified.value.run ? { run: verified.value.run } : {}),
+        ...(verified.value.via ? { through: verified.value.via } : {}),
       };
     }
     return NO_AUTH;
@@ -630,6 +632,7 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
             ? { proposal: verified.value.proposal }
             : {}),
           ...(verified.value.run ? { run: verified.value.run } : {}),
+          ...(verified.value.via ? { through: verified.value.via } : {}),
         };
       }
       return NO_AUTH;
@@ -2598,6 +2601,9 @@ async function answerGet(
   // A crew run's token reaches its own repository and nothing else.
   const runRefusal = runGate(app, request, url, auth);
   if (runRefusal !== undefined) return runRefusal;
+  // A conversation's token reaches /mcp alone, where the fence is.
+  const viaRefusal = viaGate(request, url, auth);
+  if (viaRefusal !== undefined) return viaRefusal;
 
   // Admin settings and releases are an admin's; a member is told so.
   const adminRefusal = adminGate(app, request, url, auth);

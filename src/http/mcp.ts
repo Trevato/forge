@@ -32,7 +32,8 @@ import { fileReport } from "../actions/reports.ts";
 import { REPORT_RECEIVED } from "../actions/report_words.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
 import { everydayOf } from "../core/everyday.ts";
-import { type Args, visible, plansOnly, str, REPO_ARG, lean } from "./mcp/shared.ts";
+import { type Args, visible, plansOnly, str, REPO_ARG, lean, fenceAnswer, heldWrite } from "./mcp/shared.ts";
+import { CONVERSATION_BRIEF } from "../crew/conversation_brief.ts";
 import { TOOLS } from "./mcp/tools.ts";
 
 const PROTOCOLS = ["2025-06-18", "2025-03-26", "2024-11-05"] as const;
@@ -102,7 +103,9 @@ function rpcOne(
           : PROTOCOLS[0],
         capabilities: { tools: {}, resources: {} },
         serverInfo: server(),
-        instructions: `This is a person's forge: their apps, and the crew that builds them. \`tell\` and \`say\` are how they direct it. Keep what you relay short — three sentences and the real options. A tool with \`dryRun\` plans unless it is \`false\`.${adminNote(ctx, user)}`,
+        instructions: `This is a person's forge: their apps, and the crew that builds them. \`tell\` and \`say\` are how they direct it. Keep what you relay short — three sentences and the real options. A tool with \`dryRun\` plans unless it is \`false\`.${adminNote(ctx, user)}${
+          ctx.auth.through === undefined ? "" : ` ${CONVERSATION_BRIEF}`
+        }`,
       });
     }
     case "ping":
@@ -166,12 +169,16 @@ function rpcOne(
     }
     case "tools/call": {
       const tool = TOOLS.find((t) => t.name === params["name"]);
-      if (tool === undefined || !visible(tool, ctx, user))
-        return refuse(-32602, `no tool named ${String(params["name"])}`);
       const args =
         typeof params["arguments"] === "object" && params["arguments"] !== null
           ? (params["arguments"] as Args)
           : {};
+      // Before the scope floor, so an admin tool the forge's agent was
+      // steered to is held as a confirm too, not merely refused (#7649).
+      const held = tool === undefined ? undefined : heldWrite(ctx, user, tool, args);
+      if (held !== undefined) return reply(held);
+      if (tool === undefined || !visible(tool, ctx, user))
+        return refuse(-32602, `no tool named ${String(params["name"])}`);
       if (tool.writes && !plansOnly(tool, args) && !scopeAllows(ctx.auth.scope ?? "ro", "rw"))
         return reply({
           content: [
@@ -179,12 +186,16 @@ function rpcOne(
           ],
           isError: true,
         });
-      return Promise.resolve(tool.run(ctx, user, args)).then((answer) =>
-        reply(
+      return Promise.resolve(tool.run(ctx, user, args)).then((ran) => {
+        const answer = fenceAnswer(ctx, ran);
+        return reply(
           answer.ok
             ? {
                 content: [{ type: "text", text: JSON.stringify(answer.value) }],
-                ...cardResult(String(params["name"]), answer.value, ctx.url.origin, answer.card),
+                // The forge's agent reads the fenced text, never a card drawn around it.
+                ...(ctx.auth.through === undefined
+                  ? cardResult(String(params["name"]), answer.value, ctx.url.origin, answer.card)
+                  : {}),
               }
             : {
                 content: [
@@ -192,8 +203,8 @@ function rpcOne(
                 ],
                 isError: true,
               },
-        ),
-      );
+        );
+      });
     }
     default:
       return refuse(-32601, `no method ${String(m["method"])}`);
