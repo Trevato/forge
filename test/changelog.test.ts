@@ -7,7 +7,9 @@ import { createApp, type App } from "../src/app.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { forgetLive } from "../src/release/landings.ts";
+import { runGit } from "../src/git/env.ts";
+import { repoDir } from "../src/git/repos.ts";
+import { candidates, forgetLive } from "../src/release/landings.ts";
 
 const must = <T>(r: { ok: true; value: T } | { ok: false; error: unknown }): T => {
   if (!r.ok) throw new Error(JSON.stringify(r.error));
@@ -128,6 +130,103 @@ describe("changelog page", () => {
     expect(got["commit"]).toBe(oids[1]);
     expect(got["live"].map((l: { title: string }) => l.title)).toEqual(["A note app change", "Second thing", "First <b>thing</b>"]);
     expect(got["onItsWay"].map((l: { title: string }) => l.title)).toEqual(["Third thing"]);
+  });
+
+  test("with no FORGE_REPO the repository holding the running commit is the forge's own", async () => {
+    delete app.config.forgeRepo;
+    forgetLive();
+    try {
+      const body = await (await fetch(`${servers.url}/changelog`)).text();
+      expect(body.indexOf("On its way")).toBeLessThan(body.indexOf("Third thing"));
+      expect(body.indexOf("Third thing")).toBeLessThan(body.indexOf("Second thing"));
+      expect(body).not.toContain("A note app change");
+      const got = await mcp({ shipped: true });
+      expect(got["onItsWay"].map((l: { title: string }) => l.title)).toEqual(["Third thing"]);
+      // Production serves the third commit: it moves to live.
+      process.env["FORGE_COMMIT"] = oids[2]!;
+      const later = await mcp({ shipped: true });
+      expect(later["onItsWay"]).toEqual([]);
+      expect(later["live"].map((l: { title: string }) => l.title)).toContain("Third thing");
+    } finally {
+      process.env["FORGE_COMMIT"] = oids[1]!;
+      app.config.forgeRepo = "alice/forge";
+      forgetLive();
+    }
+  });
+
+  test("a private repository holding the running commit is never the forge's own", async () => {
+    delete app.config.forgeRepo;
+    forgetLive();
+    app.db.run("UPDATE repo SET visibility = 'private' WHERE name = 'forge'");
+    process.env["FORGE_COMMIT"] = oids[0]!;
+    try {
+      const body = await (await fetch(`${servers.url}/changelog`)).text();
+      expect(body).not.toContain("Second thing");
+    } finally {
+      app.db.run("UPDATE repo SET visibility = 'public' WHERE name = 'forge'");
+      process.env["FORGE_COMMIT"] = oids[1]!;
+      app.config.forgeRepo = "alice/forge";
+      forgetLive();
+    }
+  });
+
+  test("with several public repositories, the one holding the running commit is the forge's own", async () => {
+    const fork = must(await createRepo(app, alice, { name: "fork", visibility: "public" }));
+    const c = must(await commitToBranch(app, alice, fork, { message: "fork work", files: [{ path: "x.txt", content: "x\n" }] }));
+    const day = new Date().toISOString().slice(0, 10);
+    merge("fork", "Fork change", `${day}T23:00:00.000Z`, c.commitOid);
+    delete app.config.forgeRepo;
+    forgetLive();
+    process.env["FORGE_COMMIT"] = c.commitOid;
+    try {
+      const body = await (await fetch(`${servers.url}/changelog`)).text();
+      expect(body).toContain("Fork change");
+      expect(body).not.toContain("Second thing");
+    } finally {
+      process.env["FORGE_COMMIT"] = oids[1]!;
+      app.config.forgeRepo = "alice/forge";
+      forgetLive();
+    }
+  });
+
+  test("when a fork holds the running commit too, the repository with the most merged pulls wins", async () => {
+    // The fork takes the forge's history; its own pull is the newest merged.
+    const fetched = await runGit(["fetch", "-q", repoDir(app.reposRoot, "alice", "forge"), "+refs/heads/main:refs/heads/upstream"], {
+      cwd: repoDir(app.reposRoot, "alice", "fork"),
+    });
+    expect(fetched.ok).toBe(true);
+    delete app.config.forgeRepo;
+    forgetLive();
+    try {
+      const body = await (await fetch(`${servers.url}/changelog`)).text();
+      expect(body.indexOf("On its way")).toBeLessThan(body.indexOf("Third thing"));
+      expect(body).not.toContain("Fork change");
+    } finally {
+      app.config.forgeRepo = "alice/forge";
+      app.db.run("DELETE FROM issue WHERE title = 'Fork change'");
+      forgetLive();
+    }
+  });
+
+  test("a miss with no merged pulls yet is not remembered", async () => {
+    delete app.config.forgeRepo;
+    forgetLive();
+    app.db.run("UPDATE repo SET visibility = 'private'");
+    try {
+      expect(await (await fetch(`${servers.url}/changelog`)).text()).toContain("Nothing has shipped yet");
+      app.db.run("UPDATE repo SET visibility = 'public'");
+      const body = await (await fetch(`${servers.url}/changelog`)).text();
+      expect(body.indexOf("On its way")).toBeLessThan(body.indexOf("Third thing"));
+    } finally {
+      app.db.run("UPDATE repo SET visibility = 'public'");
+      app.config.forgeRepo = "alice/forge";
+      forgetLive();
+    }
+  });
+
+  test("candidates: most merged pulls first, then by name", () => {
+    const r = (repo: string) => ({ repo, number: 1, title: "", at: "", oid: "" });
+    expect(candidates([r("b/fork"), r("a/forge"), r("a/forge"), r("c/x"), r("a/y")])).toEqual(["a/forge", "a/y", "b/fork", "c/x"]);
   });
 
   test("the footer links to it", async () => {

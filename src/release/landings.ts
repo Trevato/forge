@@ -14,7 +14,7 @@
 
 import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
-import { getRepo } from "../core/repos.ts";
+import { getRepo, type Repo } from "../core/repos.ts";
 import { runGit } from "../git/env.ts";
 import { repoDir } from "../git/repos.ts";
 import { running } from "../kernel/version.ts";
@@ -85,6 +85,7 @@ export function keepLive(own: string, oids: Iterable<string>, at: number): void 
 /** Forget it, so the alarm is silent until the next read. */
 export function forgetLive(): void {
   kept = undefined;
+  found.clear();
 }
 
 function isLive(row: MergedRow, state: LiveState | undefined): boolean {
@@ -115,11 +116,51 @@ export function waitingSince(db: Database): string | undefined {
   return onItsWay.at(-1)?.at;
 }
 
+/** How long a miss is believed: a repository can turn public, or merge its first pull, after boot. */
+const MISS_MS = 60_000;
+
+/** The repository the running commit was built from, per running commit; "" when none held it at `at`. */
+const found = new Map<string, { repo: string; at: number }>();
+
+/**
+ * The forge's own repository: the one `FORGE_REPO` names or, where a deploy
+ * names none, the public repository with merged pulls whose history holds the
+ * running commit. When several do (a public fork), the one with the most
+ * merged pulls wins, then the first by name. Read-only: nothing here changes
+ * how releases cut.
+ */
+async function ownRepo(app: App, rows: readonly MergedRow[], now = Date.now()): Promise<Repo | undefined> {
+  const [owner = "", name = ""] = (app.config.forgeRepo ?? "").split("/");
+  if (owner !== "" && name !== "") return getRepo(app.db, owner, name);
+  const commit = running().commit;
+  if (commit === null) return undefined;
+  const known = found.get(commit);
+  if (known?.repo === "" && now - known.at < MISS_MS) return undefined;
+  for (const named of known?.repo ? [known.repo] : candidates(rows)) {
+    const [o = "", n = ""] = named.split("/");
+    const repo = getRepo(app.db, o, n);
+    if (repo === undefined || repo.visibility !== "public") continue;
+    const has = await runGit(["cat-file", "-e", `${commit}^{commit}`], { cwd: repoDir(app.reposRoot, repo.ownerName, repo.name) });
+    if (!has.ok) continue;
+    found.set(commit, { repo: named, at: now });
+    return repo;
+  }
+  // A miss is kept a minute so requests cost no git; with no merged pulls yet there is nothing to remember.
+  if (rows.length > 0) found.set(commit, { repo: "", at: now });
+  else found.delete(commit);
+  return undefined;
+}
+
+/** The repositories of `rows`, most merged pulls first, then by name. */
+export function candidates(rows: readonly MergedRow[]): string[] {
+  const count = new Map<string, number>();
+  for (const r of rows) count.set(r.repo, (count.get(r.repo) ?? 0) + 1);
+  return [...count].sort(([a, x], [b, y]) => y - x || (a < b ? -1 : a > b ? 1 : 0)).map(([r]) => r);
+}
+
 /** Ask git which of the forge's own merge commits the running commit contains. */
 async function askLive(app: App, rows: readonly MergedRow[]): Promise<void> {
-  const own = app.config.forgeRepo ?? "";
-  const [owner = "", name = ""] = own.split("/");
-  const repo = owner === "" || name === "" ? undefined : getRepo(app.db, owner, name);
+  const repo = await ownRepo(app, rows);
   if (repo === undefined) return;
   const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
   const head = running().commit ?? (await runGit(["rev-parse", "--verify", "-q", `refs/heads/${repo.defaultBranch}`], { cwd: dir }));
