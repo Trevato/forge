@@ -33,7 +33,7 @@ their own vocabulary instead of composing the named one.
 
 ## Finding 2 — the pages, and what each is for
 
-There are 66 top-level pages, one entry each: every static `GET` route in `src/http/server.ts`
+Every top-level page has one entry here: every static `GET` route in `src/http/server.ts`
 that returns a page (`test/design-audit.test.ts` holds this list to the router,
 both ways). Each entry reads `route` — module · what it is for · what
 duplicates it · what breaks `docs/DESIGN.md`. "Breaks" counts colour literals

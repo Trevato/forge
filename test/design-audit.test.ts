@@ -26,8 +26,6 @@ const pages = [
 const entries = [...doc.matchAll(/^- `(\/[^`]*)`/gm)].map((m) => m[1]!);
 
 test("every top-level page has an entry in the audit", () => {
-  const stated = /There are (\d+) top-level pages/.exec(doc)?.[1];
-  expect(pages.length).toBe(Number(stated));
   expect(entries.length).toBe(pages.length);
   expect(pages.filter((p) => !entries.includes(p))).toEqual([]);
 });
