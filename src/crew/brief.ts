@@ -179,7 +179,7 @@ export function systemPrompt(input: BriefInput): string {
       ...(input.previewUrl === undefined
         ? []
         : [
-            `- The preview of your pull is at ${input.previewUrl} once it is up.`,
+            `- The preview of your pull is at ${input.previewUrl} once it is up; fetch it, private repository or not, with \`curl -H "authorization: Bearer $FORGE_TOKEN" ${input.previewUrl}\`.`,
           ]),
       ...ownAppLines(input.ownApp),
     );
@@ -427,7 +427,7 @@ function taskBody(input: TaskInput): string {
       ...(input.previewUrl === undefined
         ? []
         : [
-            `- This pull's preview, at this head, is at ${input.previewUrl}. Use it as a person would: curl its pages, try the doors it offers. Judge this preview only — another pull's preview is not this change.`,
+            `- This pull's preview, at this head, is at ${input.previewUrl}. Use it as a person would: curl its pages with \`-H "authorization: Bearer $FORGE_TOKEN"\` (it works on a private repository), try the doors it offers. Judge this preview only — another pull's preview is not this change.`,
           ]),
       ...(input.looks !== undefined && input.looks.length > 0
         ? [

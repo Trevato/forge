@@ -33,6 +33,8 @@ import {
   type Repo,
   ownerInStanding,
 } from "../core/repos.ts";
+import { RateLimiter } from "../core/ratelimit.ts";
+import { verifyToken } from "../core/tokens.ts";
 import { getUserById, isActive, type User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { loadKey } from "../kernel/secret.ts";
@@ -548,6 +550,79 @@ function stillEntitled(
   );
 }
 
+/** What the app's host tells a signed-in reader it may not enter. */
+export const NOT_ENTITLED_WORDS =
+  "not found: this token can read the repository but may not enter its app. Ask a writer of the repository to add you to the app, or use a token of a writer or of the crew.";
+
+const BEARER_GRANT_MS = 60_000;
+/** Failed tokens one client may present per minute, across every app host. */
+const BEARER_FAILURES_PER_MINUTE = 30;
+const failedTokens = new WeakMap<App, RateLimiter>();
+
+/**
+ * A bearer token on a request to a guarded app, read the way the forge's
+ * own API reads it. It admits when its person may enter the app; a run's
+ * token only on the repository it was minted for. A person who can read
+ * the repository but not enter is told so (`hint`); anyone else — a token
+ * that cannot read it, an expired one — gets nothing to learn from.
+ */
+function bearerAdmission(
+  runtime: AppsRuntime,
+  request: Request,
+  target: AppTarget,
+): {
+  grant?: Grant;
+  hint?: string;
+  readOnly?: boolean;
+  retryAfter?: number;
+} | undefined {
+  const header = request.headers.get("authorization");
+  if (header === null || !header.startsWith("Bearer ")) return undefined;
+  if (
+    target.app.access !== "private" &&
+    sealedPull(runtime, target) === undefined
+  )
+    return undefined;
+  // Counted before the lookup, given back when the token is good: only
+  // failures use up the allowance.
+  let limiter = failedTokens.get(runtime.app);
+  if (limiter === undefined) {
+    limiter = new RateLimiter({
+      perMinute: BEARER_FAILURES_PER_MINUTE,
+      adminPerMinute: BEARER_FAILURES_PER_MINUTE,
+      enabled: true,
+    });
+    failedTokens.set(runtime.app, limiter);
+  }
+  const key = clientBucket(request);
+  const allowed = limiter.take(key, "ro");
+  if (!allowed.allowed) return { retryAfter: allowed.retryAfter };
+  const verified = verifyToken(runtime.app.db, header.slice(7));
+  if (!verified.ok) return undefined;
+  limiter.refund(key);
+  const { user, run, scope } = verified.value;
+  const repo = getRepoById(runtime.app.db, target.app.repoId);
+  if (repo === undefined) return undefined;
+  if (run !== undefined && run.repoId !== repo.id && run.forkId !== repo.id)
+    return undefined;
+  if (!canRead(runtime.app.db, repo, user)) return undefined;
+  const grant: Grant = {
+    who: {
+      id: user.id,
+      name: user.username,
+      // A read-only token is never an admin inside the app.
+      role:
+        scope !== "ro" && canWrite(runtime.app.db, repo, user)
+          ? "admin"
+          : "user",
+    },
+    expiresMs: Date.now() + BEARER_GRANT_MS,
+  };
+  return stillEntitled(runtime, target, grant)
+    ? { grant, readOnly: scope === "ro" }
+    : { hint: NOT_ENTITLED_WORDS };
+}
+
 /**
  * What a request addressed to an app must pass before anything is served:
  * a private app's grant, then a live port. One gate for both the request
@@ -560,10 +635,40 @@ function admit(
   target: AppTarget,
 ): Result<{ status: EnvStatus; port: number; grant?: Grant }, Response> {
   const cookie = cookieValue(request, grantCookieName(target));
-  const signed =
+  const cookieGrant =
     cookie === undefined
       ? undefined
       : readGrant(runtime.app.config.dataDir, cookie, target);
+  // No browser, no cookie: a bearer token of someone who may enter is as
+  // good as a grant for this one request (#7829).
+  const bearer =
+    cookieGrant === undefined
+      ? bearerAdmission(runtime, request, target)
+      : undefined;
+  if (bearer?.retryAfter !== undefined)
+    return err(
+      new Response("too many failed tokens", {
+        status: 429,
+        headers: {
+          "retry-after": String(bearer.retryAfter),
+          "cache-control": "no-store",
+        },
+      }),
+    );
+  // A read-only token reads: the forge's API refuses it writes, and the
+  // app's door is no wider.
+  if (
+    bearer?.readOnly === true &&
+    request.method !== "GET" &&
+    request.method !== "HEAD"
+  )
+    return err(
+      new Response("this token is read-only", {
+        status: 403,
+        headers: { "cache-control": "no-store" },
+      }),
+    );
+  const signed = cookieGrant ?? bearer?.grant;
   // A private app's grant is asked again on every request whether the
   // person it names may still enter: a grant outlives a change of heart —
   // a writer removed, the app made private — by up to twelve hours, and
@@ -594,6 +699,10 @@ function admit(
       // gets that answer here.
       const url = new URL(request.url);
       const navigating =
+        bearer?.hint === undefined &&
+        // A caller that presented a token is a script, not a person at a
+        // link: it is answered, not sent to sign in.
+        !(request.headers.get("authorization") ?? "").startsWith("Bearer ") &&
         (request.method === "GET" || request.method === "HEAD") &&
         (request.headers.get("accept") ?? "").includes("text/html") &&
         !url.pathname.startsWith("/__forge/");
@@ -609,7 +718,14 @@ function admit(
           }),
         );
       }
-      return err(new Response("not found", { status: 404 }));
+      return err(
+        new Response(bearer?.hint ?? "not found", {
+          status: 404,
+          ...(bearer?.hint === undefined
+            ? {}
+            : { headers: { "content-type": "text/plain; charset=utf-8" } }),
+        }),
+      );
     }
   }
   // An archived repository's app is put away: stopped, its data kept, and

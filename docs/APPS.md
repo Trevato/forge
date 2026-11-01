@@ -197,6 +197,10 @@ Under the box, four starter sentences are plain links (no script):
   to choose.
 - A **private** app answers only to someone the forge has vouched for
   (`canRead` on the repository, then a signed grant); a public one to anyone.
+  A scripted caller needs no browser: `Authorization: Bearer <token>` on the app's host
+  admits a token whose person may enter the app (a run's token only on its own
+  repository), and the header is stripped before the app sees the request. A
+  reader who may not enter is told so in the 404; anyone else gets the plain one.
 - **Every app has a terminal.** `ssh -p 2222 <name>@<forge>` runs the app's
   `tty` command from `forge.json` on a real pty over the environment's own
   data; `<name>--<pull>@<forge>` opens a preview's. The scaffold ships one.
