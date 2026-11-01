@@ -7,7 +7,7 @@ import { createApp } from "../src/app.ts";
 import { createRepo } from "../src/core/repos.ts";
 import { createUser } from "../src/core/users.ts";
 import { id } from "../src/kernel/id.ts";
-import { recordRelease } from "../src/release/record.ts";
+import { forgetLive, keepLive } from "../src/release/landings.ts";
 import { noReleaseAlarm } from "../src/flow/alarm_no_release.ts";
 
 const NOW = new Date("2026-10-26T12:00:00.000Z");
@@ -22,10 +22,8 @@ async function seed() {
   let n = 0;
   return {
     app,
-    release: (at: string) => {
-      const r = recordRelease(app.db, { sha: "abcdef1234567890", repoId: repo.value.id, pullNumber: null, ok: true, line: "ok" });
-      app.db.query(`UPDATE release SET created_at = ?1 WHERE id = ?2`).run(at, r.id);
-    },
+    /** The running commit was made at `at`: it contains every merge before it. */
+    release: (at: string) => keepLive("alice/r", [], Date.parse(at)),
     merge: (at: string) => {
       const issueId = id();
       n++;
@@ -35,11 +33,19 @@ async function seed() {
   };
 }
 
+process.env["FORGE_COMMIT"] = "abcdef1234567890";
+
 describe("no release alarm", () => {
+  test("says nothing until the running commit has been read", async () => {
+    const s = await seed();
+    forgetLive();
+    s.merge(minAgo(500));
+    expect(noReleaseAlarm(s.app.db, NOW).fired).toBe(false);
+  });
   test("fires when main moved 91 min ago and nothing went live since", async () => {
     const s = await seed();
-    s.release(minAgo(200));
     s.merge(minAgo(91));
+    s.release(minAgo(200));
     const a = noReleaseAlarm(s.app.db, NOW);
     expect(a.fired).toBe(true);
     expect(a.since).toBe(minAgo(91));
@@ -52,7 +58,6 @@ describe("no release alarm", () => {
     s.merge(minAgo(89));
     expect(noReleaseAlarm(s.app.db, NOW).fired).toBe(false);
     const t = await seed();
-    t.release(minAgo(200));
     t.merge(minAgo(150));
     t.release(minAgo(100));
     expect(noReleaseAlarm(t.app.db, NOW).fired).toBe(false);

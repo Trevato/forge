@@ -67,6 +67,7 @@ import { record as recordDegraded } from "./kernel/degraded_history.ts";
 import { vitals } from "./kernel/vitals.ts";
 import { proveRelease } from "./release/prove.ts";
 import { CHECK_EVERY_MS, setBehind, watchBehind } from "./release/behind.ts";
+import { readLandings } from "./release/landings.ts";
 import { ownTagsReader } from "./release/own_tags.ts";
 import { snapshotPlace } from "./actions/health.ts";
 import { capacityDefault } from "./core/capacity.ts";
@@ -619,6 +620,9 @@ if (app.config.forgeRepo) {
   setBehind(watch);
   void watch.tick();
   setInterval(() => void watch.tick(), CHECK_EVERY_MS);
+  // The no-release alarm reads what this keeps of the running commit (#7638).
+  void readLandings(app);
+  setInterval(() => void readLandings(app), 60_000);
 }
 // Only an agent is on a crew (the `repo_crew_agents_only` trigger refuses anyone else). A person
 // put on one before that is reported here for the owner to take off — the
