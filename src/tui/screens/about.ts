@@ -33,6 +33,7 @@ import {
 import { upstreamOffer, type UpstreamOffer } from "../../actions/offer_upstream.ts";
 import { listRefs } from "../../git/read.ts";
 import { directionNote } from "../../crew/direct.ts";
+import { whyRepo } from "../../flow/why.ts";
 import { setCrewOutsiders, updateRepoSettings } from "../../actions/repos.ts";
 import { showProvenance } from "../../actions/provenance.ts";
 import { appPace } from "../../actions/apps.ts";
@@ -55,6 +56,7 @@ import {
 } from "../../core/provenance.ts";
 import {
   canAdmin,
+  canWrite,
   forkParentFor,
   getRepoById,
   type Repo,
@@ -117,6 +119,7 @@ export function aboutScreen(
   const factRows = (): [string, string][] => [
     ...archivedRow(repo),
     ...flowRow(repo),
+    ...movingRow(f, repo),
     ...outsidersRow(repo),
     ...aboutFacts(f, src, facts, ref),
     ...paceRows(f, repo),
@@ -577,6 +580,13 @@ export function flowRow(repo: Repo | undefined): [string, string][] {
   if (repo === undefined) return [];
   const own = ownRepoPath() === `${repo.ownerName}/${repo.name}`;
   return [["Flow only", repo.flowOnly ? (own ? "on, off after 24 h clear" : "on") : "off"]];
+}
+
+/** Why the repository's builders are held, first gate only (`flow/why.ts`, as MCP `flow`); a writer's. */
+export function movingRow(f: Session, repo: Repo | undefined): [string, string][] {
+  if (repo === undefined || f.user === undefined || !canWrite(f.app.db, repo, f.user)) return [];
+  const { cause } = whyRepo(f.app, repo);
+  return [["Moving", cause === null ? "yes" : `no: ${cause.says} ${cause.clears}`]];
 }
 
 /** Who may direct the crew, in `OUTSIDERS_NOTE`'s words; every reader sees it. */
