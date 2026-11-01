@@ -22,9 +22,13 @@
  * log tails live;
  * shards that run side by side are written through whole as each
  * finishes, so the log reads one shard at a time. Either way the tail
- * names every failing test from every shard. The first red shard stops
- * the rest (fail-fast) so a known fail does not burn the remaining wall
- * clock. Exits non-zero if any shard does.
+ * names every failing test from every shard: every shard runs to the end,
+ * whatever goes red, so one red never hides another (#7788). A shard that
+ * crashed outside any test (an unhandled error between tests, a file that
+ * would not load, a process that died before its summary) is re-run once,
+ * whole, and judged by that run; the log keeps the crashed run quoted
+ * behind `  │ `. At most `CRASH_RERUNS` shards are re-run so. Exits
+ * non-zero if any shard does.
  *
  * `--keep-going` is the verification after landing (#7786): no shard stops
  * the rest, a file red on its own is run once more alone (green then, it
@@ -73,7 +77,9 @@ import {
   budgetLast,
   failingFiles,
   onlyTestFailures,
-  stopsTheRest,
+  crashedOutside,
+  quoteCrash,
+  CRASH_RERUNS,
   type ShardResult,
 } from "./shards.ts";
 import { gateFiles, gateRefusal, presentTests } from "./gate.ts";
@@ -472,9 +478,10 @@ const unmeasured = new Set<string>();
 
 // Failing files a red shard re-runs alone.
 const RETRY_CAP = 3;
-// Set once any shard has gone red for good: no retries then.
-let halted = false;
-const stopping = (): boolean => halted;
+// Shards re-run after a crash outside any test, so far.
+let crashReruns = 0;
+/** What a live first run shows once it has gone red: held until its end. */
+const RED_SIGN = /^(\(fail\)|# Unhandled error|error:)/m;
 
 type Timed = ShardResult & { seconds: number };
 
@@ -503,7 +510,7 @@ async function runShardIn(
   live: boolean,
   home: string,
 ): Promise<Timed> {
-  const started = performance.now();
+  let started = performance.now();
   const where = `${index + 1}/${slices.length}`;
   // Print before spawn so a mid-suite cgroup SIGKILL still leaves a breadcrumb.
   // stderr: Actions often block-buffers stdout until exit; an OOM never flushes.
@@ -562,9 +569,37 @@ async function runShardIn(
         process.stdout.write(text);
       }
     : undefined;
-  const first = await run(paths, cover, through);
+  // Live, the first run streams until the first sign of a red, then is held
+  // to its end: if it crashed it is quoted behind `  │` like a parallel
+  // shard's, never left bare, so nothing reading the log counts its
+  // `(fail)` lines beside the re-run. A clean run streams in full.
+  const mayRerun = crashReruns < CRASH_RERUNS;
+  const held: string[] = [];
+  const firstThrough =
+    through && mayRerun
+      ? (text: string): void => {
+          if (held.length > 0 || RED_SIGN.test(text)) held.push(text);
+          else through(text);
+        }
+      : through;
+  let first = await run(paths, cover, firstThrough);
+  // A crash outside any test re-runs the shard once, whole (#7788): the
+  // leaked-timer class ("Cannot use a closed database" between tests) is
+  // not this shard's tests failing. The re-run is the verdict, and its
+  // time the shard's time.
+  let quoted = "";
+  const crashed = crashReruns < CRASH_RERUNS && crashedOutside({ code: first.code, output: first.output.join("") });
+  if (!crashed && held.length > 0) through?.(held.join(""));
+  if (crashed) {
+    crashReruns++;
+    quoted = quoteCrash(where, first.code, first.output.join(""));
+    if (live) process.stdout.write(quoted);
+    process.stderr.write(`test-shards: re-run ${where} after a crash (exit ${first.code})\n`);
+    started = performance.now();
+    first = await run(paths, cover, through);
+  }
   let code = first.code;
-  let output = first.output;
+  let output = quoted === "" ? first.output : [quoted, ...first.output];
   // Kept going, a file red on its own is run once more alone: green then,
   // it was a flake, and its first output (the `(fail)` lines) is set aside.
   if (code !== 0 && keepGoing && slice.length === 1) {
@@ -583,13 +618,12 @@ async function runShardIn(
   // A sliced shard that went red: each failing file (the first few) is run
   // once alone, same env and flags. One that passes alone was red only
   // beside others, and does not fail the check; the log names it.
-  if (code !== 0 && slice.length > 1 && !covDir && !stopping()) {
-    const report = output.join("");
+  if (code !== 0 && slice.length > 1 && !covDir) {
+    const report = first.output.join("");
     // A file that errored (not a failed test) keeps the whole shard red.
     const red = onlyTestFailures(report) ? failingFiles(report) : [];
     const alone = new Map<string, boolean>();
     for (const file of red.slice(0, RETRY_CAP)) {
-      if (stopping()) break;
       const again = await run([file.startsWith("/") || file.startsWith("./") ? file : `./${file}`], []);
       alone.set(file, again.code === 0);
     }
@@ -629,27 +663,18 @@ async function runShardIn(
   };
 }
 
-/** Runs slices `from` up to `to`, at most `width` at once, in the slices' order.
- * Stops starting new slices after the first non-zero exit and signals
- * in-flight children so a red shard does not burn the rest of the wall. */
+/** Runs slices `from` up to `to`, at most `width` at once, in the slices' order. */
 async function pool(width: number, from: number, to: number): Promise<Timed[]> {
   const results: Timed[] = [];
   let next = from;
   async function worker(): Promise<void> {
     while (next < to) {
-      if (halted) break;
       const index = next++;
-      results[index] = await runShard(slices[index]!, index, width === 1);
-      // A verification after landing runs everything (#7786).
-      if (!keepGoing && stopsTheRest(results[index]!)) {
-        halted = true;
-        for (const child of children) child.kill("SIGTERM");
-      }
+      results[index - from] = await runShard(slices[index]!, index, width === 1);
     }
   }
   await Promise.all(Array.from({ length: width }, worker));
-  // Only slices that ran (parallel fail-fast leaves holes for never-started).
-  return results.filter((result): result is Timed => result !== undefined);
+  return results;
 }
 
 const started = performance.now();
@@ -665,12 +690,6 @@ const results = [
   // Budget files, one at a time, once the rest are done and green.
   ...(await pool(1, mainSlices.length, slices.length)),
 ];
-if (results.length < slices.length) {
-  const skipped = slices.length - results.length;
-  console.log(
-    `test-shards: fail-fast — skipped ${skipped} remaining shard${skipped === 1 ? "" : "s"} after a red exit`,
-  );
-}
 const wall = (performance.now() - started) / 1000;
 const ending = tally(results, wall);
 const spread = results.map((result) => result.seconds);

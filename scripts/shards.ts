@@ -394,11 +394,36 @@ export interface ShardResult {
 }
 
 /**
- * Whether a finished shard stops the shards not yet done (fail-fast): any
- * red does. A wall-clock budget cannot be one in a check (#7789).
+ * The most shards one run re-runs after a crash outside any test (#7788).
+ * One crash is a leaked timer or socket from a file before; more than
+ * this is a change that breaks loading, and re-running it only doubles
+ * the wall.
  */
-export function stopsTheRest(result: Pick<ShardResult, "code" | "output">): boolean {
-  return result.code !== 0;
+export const CRASH_RERUNS = 3;
+
+/**
+ * Whether a finished shard crashed outside any test: it went red and its
+ * report is not only failed tests ({@link onlyTestFailures}) — an
+ * unhandled error between tests ("Cannot use a closed database" from a
+ * timer the file before left), a file that would not load, a process that
+ * died before its summary. Such a shard is re-run once, whole.
+ */
+export function crashedOutside(result: Pick<ShardResult, "code" | "output">): boolean {
+  return result.code !== 0 && !onlyTestFailures(result.output);
+}
+
+/**
+ * The crashed run's output, kept in the log for whoever reads it, each line
+ * behind `  │ ` so nothing that reads the log (the tally, the failing-test
+ * list, the budget re-run) counts its reds beside the re-run's.
+ */
+export function quoteCrash(where: string, code: number, output: string): string {
+  const lines = output.replace(/\n$/, "").split("\n");
+  return [
+    `test-shards: shard ${where} crashed outside any test (exit ${code}); re-running it once. The crashed run:`,
+    ...lines.map((line) => `  │ ${line}`),
+    "",
+  ].join("\n");
 }
 
 /** What the log ends with, and the exit code of the whole run. */

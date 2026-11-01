@@ -62,12 +62,14 @@ describe("--keep-going", () => {
     expect(tests).not.toContain("test/a.test.ts");
   }, 60_000);
 
-  test("without it, the first red stops the rest and no map is written", async () => {
+  test("without it, a red shard no longer stops the rest (#7788), no lone re-run, and no map is written", async () => {
     rmSync(join(dir, "seen"), { force: true });
     rmSync(join(dir, ".impact.json"), { force: true });
     const { code, out } = await shards(["--impact"]);
     expect(code).toBe(1);
-    expect(out).toContain("fail-fast");
+    expect(out).not.toContain("fail-fast");
+    expect(out).not.toContain(FLAKY_ALONE);
+    expect(out).toContain("Ran 3 tests across 3 files");
     expect(existsSync(join(dir, ".impact.json"))).toBe(false);
   }, 60_000);
 
