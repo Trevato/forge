@@ -40,6 +40,7 @@ import {
 import { runGit } from "../git/env.ts";
 import { readTipOrAbsent } from "../git/tip.ts";
 import { repoDir } from "../git/repos.ts";
+import { forkFollowMode } from "./fork_follow.ts";
 import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
@@ -51,6 +52,8 @@ export interface Following {
   readonly db: Database;
   readonly reposRoot: string;
   readonly bus: EventBus;
+  /** Who a merge the forge makes for a fork's owner is written as; absent, a fork never merges by itself. */
+  readonly authorOf?: (userId: string) => (MergeIdentity & { readonly id: string }) | undefined;
 }
 
 interface Moved {
@@ -105,12 +108,19 @@ export function follow(forge: Following): () => void {
     if (moved.some((m) => m.ref === `refs/heads/${repo.defaultBranch}`))
       for (const fork of listForks(forge.db, repo.id))
         fastForwardFork(forge, fork, repo, actor)
-          .then((followed) => {
+          .then(async (followed) => {
             // A fork with work of its own cannot be moved; it is told the
             // parent moved, and whoever listens (the crew, a card) takes it
             // from there. The fast-forward is silent because it changed
             // nothing the fork's owner would want to know about.
             if (followed.ok) return;
+            // A fork that chose to take updates merges what git merges
+            // cleanly; a conflict is told like any other divergence.
+            const author = forge.authorOf?.(fork.ownerId);
+            if (author !== undefined && forkFollowMode(forge.db, fork.id) === "take-updates") {
+              const took = await takeUpdates(forge, fork, repo, author);
+              if (took.ok) return;
+            }
             forge.bus.append({
               kind: "fork.diverged",
               repoId: fork.id,

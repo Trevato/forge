@@ -4,6 +4,8 @@
  * side-effect-contained, so tests boot real forges by the dozen.
  */
 
+import { commitIdentity } from "./core/commit_identity.ts";
+import { getUserById } from "./core/users.ts";
 import type { MailConfig, Mailer } from "./kernel/mail.ts";
 import type { Database } from "bun:sqlite";
 import type { Decider } from "./crew/decide.ts";
@@ -239,7 +241,15 @@ export function createApp(config: ForgeConfig): App {
   bus.subscribe((event) => enqueueForEvent(db, event));
   // What a push moves besides its own branch: the pulls it heads elsewhere,
   // and the forks whose default branch is still a copy of this one's.
-  follow({ db, reposRoot, bus });
+  follow({
+    db,
+    reposRoot,
+    bus,
+    authorOf: (userId) => {
+      const who = getUserById(db, userId);
+      return who === undefined ? undefined : { id: who.id, ...commitIdentity(config, who) };
+    },
+  });
 
   const owner = id();
   const errors = forgeErrorLedger(owner);

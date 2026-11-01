@@ -18,9 +18,10 @@ import {
   type ForkRanking,
   type ForkRelation,
 } from "../../actions/forks.ts";
-import { convergeWords, takeOrTell, takeWords } from "../../actions/follow.ts";
+import { FOLLOW_MODE_REFUSALS, convergeWords, followModeOf, setFollowMode, takeOrTell, takeWords } from "../../actions/follow.ts";
 import { convergeState, type Converge } from "../../crew/converge.ts";
-import { canRead, canWrite, forkTree, listForks, type ForkNode, type Repo } from "../../core/repos.ts";
+import type { FollowMode } from "../../spawn/chain.ts";
+import { canAdmin, canRead, canWrite, forkTree, listForks, type ForkNode, type Repo } from "../../core/repos.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { style } from "../term/style.ts";
@@ -77,6 +78,7 @@ export function forkRows(
 export function followingRows(
   relation: ForkRelation | undefined,
   converge: Converge | undefined,
+  mode?: FollowMode,
 ): ForkRow[] {
   if (relation === undefined) return [];
   const { parent } = relation;
@@ -91,7 +93,12 @@ export function followingRows(
           ? `diverged · ${counts}${relation.clean ? " · merges cleanly" : ""}`
           : `${relation.state} · ${counts}`;
   return [
-    { repo: parent, name: `follows ${name}`, words, heading: "" },
+    {
+      repo: parent,
+      name: `follows ${name}`,
+      words: mode === undefined ? words : `${words} · ${mode === "take-updates" ? "takes updates" : "tells you"}`,
+      heading: "",
+    },
     ...(converge === undefined
       ? []
       : [
@@ -132,6 +139,7 @@ export function forksScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   let following: ForkRow[] = [];
   let relation: ForkRelation | undefined;
   let offer: string | undefined;
+  let mode: FollowMode | undefined;
   const state = new ListState();
   const rows = () => [...following, ...(ranked === undefined ? [] : forkRows(ranked, tree))];
   const read = async (): Promise<void> => {
@@ -144,7 +152,8 @@ export function forksScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       relation !== undefined && relation.state === "diverged" && !relation.clean
         ? convergeState(f.app, repo, relation.parent)
         : undefined;
-    following = followingRows(relation, converge);
+    mode = relation === undefined ? undefined : await followModeOf(f.app, repo);
+    following = followingRows(relation, converge, mode);
     ctx.invalidate();
   };
   const take = (): void => {
@@ -165,7 +174,7 @@ export function forksScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
             // The converge issue just opened or found is the line Enter opens.
             const e = took.ok ? undefined : took.error;
             if (typeof e === "object" && e.kind === "conflict" && "converge" in e && relation !== undefined) {
-              following = followingRows(relation, e.converge);
+              following = followingRows(relation, e.converge, mode);
               state.index = following.length - 1;
             }
             ctx.toast(words.message, words.tone === "danger" ? "danger" : "default");
@@ -175,6 +184,8 @@ export function forksScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       }),
     );
   };
+  const canSetMode = (): boolean =>
+    relation !== undefined && f.user?.kind === "user" && canAdmin(f.db, repo, f.user) && canWrite(f.db, repo, f.user);
   const self: Screen = {
     title: "Forks",
     get keys() {
@@ -182,6 +193,7 @@ export function forksScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         binding(["j", "k"], "move"),
         binding(["enter"], "open"),
         ...(offer === undefined ? [] : [binding(["t"], "take updates")]),
+        ...(canSetMode() ? [binding(["m"], "follow mode")] : []),
         binding(["esc"], "close"),
       ];
     },
@@ -230,6 +242,16 @@ export function forksScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       }
       if (e.key === "t" && offer !== undefined) {
         take();
+        return true;
+      }
+      if (e.key === "m" && canSetMode()) {
+        runAsync(ctx, async () => {
+          const next: FollowMode = mode === "take-updates" ? "tell-me" : "take-updates";
+          const set = await setFollowMode(f.app, f.user, repo, next);
+          if (!set.ok) return ctx.toast(FOLLOW_MODE_REFUSALS[set.error].message, "danger");
+          await read();
+          ctx.toast(`Now following in ${set.value} mode.`, "success");
+        });
         return true;
       }
       if (e.key === "esc" || e.key === "q") {

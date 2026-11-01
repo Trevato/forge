@@ -15,6 +15,7 @@ import { err, ok, type Result } from "../kernel/result.ts";
 import { chainOfRepo, forgeLinkOf, FOLLOW_MODES, isFollowMode, setChainMode, severChain, type FollowMode } from "../spawn/chain.ts";
 import { FAMILY_WORDS } from "./family_words.ts";
 import { FOLLOWS_NOTHING } from "./follow_words.ts";
+import { forkFollowMode, setForkFollowMode } from "../core/fork_follow.ts";
 import { requireUser } from "./access.ts";
 import { takeFromParent, type Taken } from "../spawn/take.ts";
 import { takeUpdates, type ForkSync, type TakeUpdatesError } from "./forks.ts";
@@ -98,6 +99,14 @@ export function takeForgeWords(r: TakeForgeResult): { tone?: "danger"; message: 
   return { message: "Already up to date." };
 }
 
+/** How a repository follows its parent now: the forge chain's record when it carries one, else the fork's own choice. */
+export async function followModeOf(app: App, repo: Repo): Promise<FollowMode> {
+  const link = await forgeLinkOf(app);
+  return link !== undefined && link.repo === `${repo.ownerName}/${repo.name}`
+    ? link.mode
+    : forkFollowMode(app.db, repo.id);
+}
+
 export type FollowModeError = SeverError | "invalid_mode" | "severed";
 
 /** The one answer every door gives a refused mode change, with the status an HTTP door sends. */
@@ -118,11 +127,16 @@ export async function setFollowMode(
 ): Promise<Result<FollowMode, FollowModeError>> {
   const who = requireUser(actor);
   if (!who.ok) return err("unauthorized");
-  if ((await chainOfRepo(app, repo)) === undefined) return err("not_following");
+  const carries = (await chainOfRepo(app, repo)) !== undefined;
+  if (!carries && repo.forkParentId === null) return err("not_following");
   if (!canAdmin(app.db, repo, who.value) || !canWrite(app.db, repo, who.value)) return err("forbidden");
   if (!isFollowMode(mode)) return err("invalid_mode");
-  const set = await setChainMode(app, mode);
-  if (!set.ok) return err(set.error);
+  if (carries) {
+    const set = await setChainMode(app, mode);
+    if (!set.ok) return err(set.error);
+  } else {
+    setForkFollowMode(app.db, repo.id, mode);
+  }
   app.bus.append({
     kind: "forge.follow_mode",
     repoId: repo.id,

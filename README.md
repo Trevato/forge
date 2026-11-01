@@ -309,6 +309,8 @@ the words it takes, on the page, in the terminal and in a `note` field of
 
 The `forge` command keeps a local copy of the parts you work on: **[docs/ON-YOUR-MACHINE.md](docs/ON-YOUR-MACHINE.md)**.
 
+A fork chooses how it follows its parent: **tell me** (the default: a fork with nothing of its own is fast-forwarded, one with work of its own is left diverged and the crew is told) or **take updates** (when the parent moves, a diverged fork is also merged for its owner whenever git merges it cleanly; a conflict is still told, never forced). On the web, the fork's owner picks it in the Following card on the fork's home page (`POST /:owner/:name/following/mode`); in the SSH terminal, open the fork's Forks screen and press `m` to flip it; MCP's follow-mode tool and the JSON API reach the same `setFollowMode` action. The choice lives in `fork_follow` (`src/core/fork_follow.ts`).
+
 ## Develop
 
 Tests, checks, the gate, lint, types and how a change reaches main: **[docs/DEVELOP.md](docs/DEVELOP.md)**.

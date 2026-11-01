@@ -37,8 +37,10 @@ import {
   type ParentReleases,
 } from "../../core/parent_releases.ts";
 import { running } from "../../kernel/version.ts";
+import { modeForm } from "./chain.ts";
+import type { FollowMode } from "../../spawn/chain.ts";
 import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
-import { convergeWords, takeOrTell, takeWords } from "../../actions/follow.ts";
+import { convergeWords, followModeOf, takeOrTell, takeWords } from "../../actions/follow.ts";
 import { FOLLOWS_NOTHING, PROPOSE_NEEDS_WRITE } from "../../actions/follow_words.ts";
 import { openProposal, proposeUpstream } from "../../actions/upstream.ts";
 import { field, readForm } from "../form.ts";
@@ -92,6 +94,8 @@ export interface Following {
   readonly converge: Converge | undefined;
   /** The parent forge's releases, when this forge names a parent forge. */
   readonly releases: { url: string; view: ParentReleases } | undefined;
+  /** How this repository follows its parent (`followModeOf`). */
+  readonly mode: FollowMode;
 }
 
 /** Everything the card needs, for a repo that follows something. */
@@ -119,7 +123,7 @@ export async function followingOf(
             loopback: ctx.app.config.parentLoopback === true,
           }),
         };
-  return { relation, converge, releases };
+  return { relation, converge, releases, mode: await followModeOf(ctx.app, repo) };
 }
 
 /** The parent, when the viewer may read it and an admin has archived it. */
@@ -354,6 +358,8 @@ export function followingCard(
     rows.push(...block.links);
   }
   if (foot !== null) prose.push(html`<p class="muted small">${foot}</p>`);
+  if (canAdmin(ctx.app.db, repo, ctx.auth.user) && writer)
+    prose.push(modeForm(base, following.mode, "How this fork follows its parent"));
   if (followers > 0)
     rows.push(
       row({

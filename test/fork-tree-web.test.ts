@@ -18,7 +18,7 @@ import { createApp, type App } from "../src/app.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { forgeLinkOf } from "../src/spawn/chain.ts";
+import { forkFollowMode } from "../src/core/fork_follow.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -88,19 +88,6 @@ beforeAll(async () => {
   );
   middle = must(await forkRepo(app, bea, original));
   must(await forkRepo(app, cal, middle));
-  // The middle fork carries the forge's own code, so its following page offers the modes.
-  await Bun.write(
-    join(dataDir, "parent.json"),
-    JSON.stringify({
-      forgeCode: {
-        repo: "bea/yard",
-        upstream: "ann/yard",
-        mode: "tell-me",
-        tip: "a".repeat(40),
-        chain: [{ repo: "ann/yard", forge: "", mode: null, tip: "a".repeat(40), ahead: null }],
-      },
-    }),
-  );
 }, 60_000);
 
 afterAll(async () => {
@@ -135,25 +122,35 @@ describe("the fork tree, on one forge", () => {
     expect(tree.indexOf("you are here", mark + 1)).toBe(-1);
   });
 
-  test("the following page offers the modes; posting one changes it, and the page shows it", async () => {
+  test("a plain fork's page offers the modes; posting one changes it, and the page shows it", async () => {
     const cookie = await signIn("bea");
-    const before = await (await get("/bea/yard/following", cookie)).text();
+    const before = await (await get("/bea/yard", cookie)).text();
     expect(before).toContain('name="mode" value="tell-me"');
     expect(before).toContain('name="mode" value="take-updates"');
     expect(before).toMatch(/value="tell-me"\s+checked/);
 
     const cross = await post("/bea/yard/following/mode", cookie, { mode: "take-updates" }, "https://evil.test");
     expect(cross.status).toBe(403);
-    expect((await forgeLinkOf(app))?.mode).toBe("tell-me");
+    expect(forkFollowMode(app.db, middle.id)).toBe("tell-me");
 
     const changed = await post("/bea/yard/following/mode", cookie, { mode: "take-updates" });
     expect(changed.status).toBe(303);
     expect(changed.headers.get("location")).toBe("/bea/yard/following");
-    expect((await forgeLinkOf(app))?.mode).toBe("take-updates");
+    expect(forkFollowMode(app.db, middle.id)).toBe("take-updates");
 
-    const after = await (await get("/bea/yard/following", cookie)).text();
+    const after = await (await get("/bea/yard", cookie)).text();
     expect(after).toMatch(/value="take-updates"\s+checked/);
     expect(after).not.toMatch(/value="tell-me"\s+checked/);
+
+    // A reader without write access is not offered the form.
+    const reader = await (await get("/bea/yard", await signIn("cal"))).text();
+    expect(reader).not.toContain('name="mode"');
+    expect(await (await fetch(`${servers.url}/bea/yard`)).text()).not.toContain('name="mode"');
+    expect(after).toContain("How this fork follows its parent");
+
+    const bad = await post("/bea/yard/following/mode", cookie, { mode: "nope" });
+    expect(bad.status).toBe(303);
+    expect(forkFollowMode(app.db, middle.id)).toBe("take-updates");
   });
 
   test("one POST from the offer page opens exactly one pull on the parent", async () => {
