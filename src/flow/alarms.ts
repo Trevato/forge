@@ -7,6 +7,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { landingStopped, stoppedSentence } from "../checks/gate_stopped.ts";
 import { redHref, redMain } from "../checks/red_main.ts";
 import { getRepo } from "../core/repos.ts";
 import { ownRepoPath } from "../kernel/own_repo.ts";
@@ -16,7 +17,7 @@ import { redMainAlarm } from "./alarm_red_main.ts";
 import { alarmStuck } from "./alarm_stuck.ts";
 
 export interface FiredAlarm {
-  readonly key: "red_main" | "stuck" | "idle_crew" | "no_release";
+  readonly key: "landing_stopped" | "red_main" | "stuck" | "idle_crew" | "no_release";
   readonly says: string;
   readonly since: string;
   /** A same-origin path to the item the alarm names. */
@@ -36,6 +37,10 @@ export function firedAlarms(
   opts: { readonly publicOnly?: boolean; readonly ceilingUsd?: number | null } = {},
 ): FiredAlarm[] {
   const out: FiredAlarm[] = [];
+  const [owner, name] = ownRepoPath().split("/");
+  const own = owner && name ? getRepo(db, owner, name) : undefined;
+  const stopped = own && !opts.publicOnly ? landingStopped(db, own.id) : undefined;
+  if (stopped) out.push({ key: "landing_stopped", says: stoppedSentence(stopped), since: stopped.since, href: "/boards" });
   const red = redMainAlarm(db, now);
   if (red.fired) out.push({ key: "red_main", says: red.says, since: red.since!, href: redMainHref(db) });
   const stuck = alarmStuck(db, now, opts.publicOnly ? { publicOnly: true } : {});

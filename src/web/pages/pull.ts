@@ -54,7 +54,8 @@ import {
   type Side,
 } from "../../core/reviews.ts";
 import { getUsersByIds } from "../../core/users.ts";
-import { canWrite, getRepoById, type Repo } from "../../core/repos.ts";
+import { canAdmin, canWrite, getRepoById, type Repo } from "../../core/repos.ts";
+import { bypassOffered, landPastGate, type BypassError } from "../../checks/bypass.ts";
 import { commitLog, readerFor } from "../../git/read.ts";
 import { wallOf } from "../../contract/policy.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -87,6 +88,7 @@ import {
   badge,
   btn,
   card,
+  field as formField,
   icon,
   labelCss,
   queuedPhrase,
@@ -587,12 +589,25 @@ function mergeBox(
       "Waiting on checks.",
       html`${why} ${reviewsChip(status.reviews, by)} ${checks}`,
       when(mayMerge, () =>
-        btn("Merge pull request", {
+        html`${btn("Merge pull request", {
           variant: "primary",
           icon: "merge",
           disabled: true,
           title: "A passing deploy of this head is required first",
-        }),
+        })}${when(
+          bypassOffered(ctx.app, ctx.auth.user, repo),
+          () => html`<form method="post" action="${thread}/land-past">
+            ${formField({
+              name: "reason",
+              label: "Land past the gate",
+              hint: "Landing has stopped. Say why this pull lands without its checks; it goes on the pull's trail. Review and conflicts still count.",
+              required: true,
+              minlength: 8,
+              maxlength: 500,
+            })}
+            <div class="form-actions">${btn("Land past the gate", { variant: "danger", icon: "merge" })}</div>
+          </form>`,
+        )}`,
       ),
     );
   }
@@ -1374,6 +1389,34 @@ export async function pullMergeSubmit(ctx: Ctx): Promise<Response> {
     });
   }
   return flashTo(ctx, dest, { message: "Pull request merged." });
+}
+
+// POST /:owner/:name/pulls/:number/land-past — the owner's break-glass (#7790).
+export async function pullLandPastSubmit(ctx: Ctx): Promise<Response> {
+  const found = pullContext(ctx);
+  if (found instanceof Response) return found;
+  const user = ctx.auth.user;
+  if (!user || user.kind === "agent" || !canAdmin(ctx.app.db, found.repo, user))
+    return new Response("forbidden", { status: 403 });
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const dest = `${repoBase(found.repo)}/pulls/${found.pull.number}`;
+  const landed = await landPastGate(ctx.app, user, found.repo, found.pull, field(form, "reason") ?? "");
+  if (!landed.ok) return flashTo(ctx, dest, { tone: "danger", message: bypassWords(landed.error) });
+  return flashTo(ctx, dest, { message: "Landed past the gate; the reason is on the trail." });
+}
+
+function bypassWords(e: BypassError): string {
+  switch (e.kind) {
+    case "reason":
+      return "Say why in 8 to 500 characters: it goes on the pull's trail.";
+    case "not_stopped":
+      return "Landing has not stopped, so there is no way past the gate: wait for the checks.";
+    case "merge":
+      return `Not landed: ${mergeFailure(e.error)}`;
+    default:
+      return "Only an owner can land a pull past the gate.";
+  }
 }
 
 /**

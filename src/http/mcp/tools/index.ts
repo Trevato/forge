@@ -71,6 +71,7 @@ export { tool as invites } from "./invites.ts";
 export { tool as issue } from "./issue.ts";
 export { tool as issue_teams } from "./issue_teams.ts";
 export { tool as labels } from "./labels.ts";
+export { tool as land_past_gate } from "./land_past_gate.ts";
 export { tool as limb } from "./limb.ts";
 export { tool as limits } from "./limits.ts";
 export { tool as make_it_yours } from "./make_it_yours.ts";

@@ -363,6 +363,8 @@ export async function mergePull(
   strategy: MergeStrategy,
   /** The merge queue's guard: land only onto this base, as this tree (#2036). */
   expect?: LandingExpect,
+  /** `pastGate`: the owner's break-glass (`checks/bypass.ts`) skips the checks requirement. */
+  opts: { readonly pastGate?: boolean } = {},
 ): Promise<
   Result<{ mergeOid: string; carried: boolean }, AccessError | MergePullError>
 > {
@@ -409,7 +411,7 @@ export async function mergePull(
       gate: {
         db: app.db,
         requireReview: repo.requireReview,
-        requireChecks: repo.requireChecks,
+        requireChecks: repo.requireChecks && opts.pastGate !== true,
       },
       strategy,
       ...(expect === undefined ? {} : { expect }),

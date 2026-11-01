@@ -41,6 +41,7 @@ import {
 } from "../../actions/pulls.ts";
 import { holdPull, releasePull } from "../../actions/holds.ts";
 import { getHold, type Hold } from "../../core/holds.ts";
+import { bypassOffered, cleanReason, landPastGate } from "../../checks/bypass.ts";
 import { revertPull } from "../../actions/revert.ts";
 import { takeBackWords } from "../../actions/revert_words.ts";
 import { openEnvUrl } from "../../actions/apps.ts";
@@ -692,6 +693,59 @@ export function pullScreen(
   };
 
   /**
+   * Whether `L` is on offer: an open pull, an owner who is a person, and
+   * landing stopped (`checks/bypass.ts`). The same rule the page's form follows.
+   */
+  const mayLandPast = (): boolean => {
+    if (repo === undefined || !bypassOffered(f.app, f.user, repo)) return false;
+    const row = getPull(f.db, repo.id, number);
+    return row !== undefined && row.mergedAt === null && detail?.issue.state === "open";
+  };
+
+  /** `L` — a reason, then a plan to confirm, then the landing; `landPastGate` decides. */
+  const landPast = (): void => {
+    if (repo === undefined) return;
+    const target = repo;
+    ctx.push(
+      promptScreen(ctx, screen, {
+        title: `Land #${number} past the gate`,
+        label: "Why this lands without its checks",
+        hint: "Landing has stopped. 8 to 500 characters; it goes on the pull's trail.",
+        onSubmit: (value) => {
+          const reason = cleanReason(value);
+          if (reason === undefined) return "Say why in 8 to 500 characters.";
+          // After the prompt closes itself, so the confirm is not the screen it pops.
+          return Promise.resolve().then(() => ctx.push(
+            confirmScreen(ctx, screen, {
+              title: `Land #${number} past the gate`,
+              body: [`Land "${getPull(f.db, target.id, number)?.title ?? ""}" without its checks?`, `Reason: ${reason}`, "Review and conflicts still count."],
+              actions: [{ label: "Cancel", variant: "ghost" }, { label: "Land past the gate", variant: "danger" }],
+              onChoose: (choice) => {
+                if (choice !== 1) return;
+                runAsync(ctx, async () => {
+                  const row = getPull(f.db, target.id, number);
+                  if (row === undefined) return;
+                  const landed = await landPastGate(f.app, f.user, target, row, reason);
+                  if (!landed.ok) {
+                    const e = landed.error;
+                    ctx.toast(
+                      e.kind === "merge" ? errorText(String(typeof e.error === "string" ? e.error : e.error.kind)) : `not landed: ${e.kind.replace("_", " ")}`,
+                      "danger",
+                    );
+                    return;
+                  }
+                  await reload();
+                  ctx.toast(`landed past the gate as ${landed.value.mergeOid.slice(0, 8)}`, "success");
+                });
+              },
+            }),
+          ));
+        },
+      }),
+    );
+  };
+
+  /**
    * Whether `T` takes this back: a shipped pull on a local repository, for a
    * person who may write. The same gate `revertPull` holds; it decides only
    * whether the key is shown.
@@ -866,6 +920,7 @@ export function pullScreen(
                 ? [binding(["v"], "see the conflict blocks")]
                 : []),
               binding(["m"], "merge", { disabled: state() !== "ready" }),
+              ...(mayLandPast() ? [binding(["L"], "land past the gate")] : []),
               ...(tab === 1 && view.threadHere() !== null
                 ? [
                     binding(
@@ -1062,6 +1117,10 @@ export function pullScreen(
               },
             }),
           );
+        return true;
+      }
+      if (e.key === "L" && mayLandPast()) {
+        landPast();
         return true;
       }
       if (e.key === "R" && mayWrite()) {

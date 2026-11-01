@@ -295,6 +295,7 @@ describe("the forge over MCP", () => {
       "subscriptions",
       "usage",
       "labels",
+      "land_past_gate",
       "repo_labels",
       "wait_for",
       "confirm_wait",

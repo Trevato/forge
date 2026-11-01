@@ -71,6 +71,7 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   "pull.reopened",
   "pull.opened",
   "pull.merged",
+  "pull.bypassed",
   "issue.opened",
   "spend.reported",
   "forge.proposal",
