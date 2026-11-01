@@ -68,13 +68,15 @@ for (const [path, names] of PAGES)
     // Timers jitter on a busy machine: judge the best of several requests.
     let left = Infinity;
     let total = Infinity;
+    let last = "";
     for (let i = 0; i < SAMPLES; i++) {
       const res = await get();
       await res.text();
       const parts = (res.headers.get("server-timing") ?? "").split(", ");
       const dur = (n: string) => Number(parts.find((p) => p.startsWith(`${n};`))!.split("dur=")[1]);
+      last = parts.join(", ");
       for (const name of ["app", ...names])
-        expect(parts.find((p) => p.startsWith(`${name};`))).toMatch(/^[a-z]+;dur=\d+\.\d$/);
+        expect(parts.find((p) => p.startsWith(`${name};`)), `phase ${name} in ${last}`).toMatch(/^[a-z]+;dur=\d+\.\d$/);
       total = Math.min(total, dur("app"));
       // Phases name the whole request: what is left over is small.
       left = Math.min(left, Math.abs(dur("app") - names.reduce((sum, n) => sum + dur(n), 0)));
@@ -82,7 +84,12 @@ for (const [path, names] of PAGES)
     expectBudget(total, { ms: BUDGET_MS, against });
     // The unnamed stretch (routing, before `session`) is fixed work, ~0.9 ms quiet and ~1.7 ms in a loaded
     // shard (#7519): it stretches with the machine, so it is judged against the same-run baseline like speed.
-    expectBudget(left, { ms: ACCOUNTING_MS, against });
+    try {
+      expectBudget(left, { ms: ACCOUNTING_MS, against });
+    } catch (e) {
+      // Name the phases, so a red says whether the machine stalled or a phase went missing.
+      throw new Error(`${(e as Error).message}; best app ${total.toFixed(1)} ms; last request ${last}`);
+    }
   });
 
 // Signed out, the redirect to sign-in is still a named phase.
