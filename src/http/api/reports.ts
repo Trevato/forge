@@ -12,13 +12,15 @@ import {
   acceptReport,
   dismissReport,
   fileReport,
+  reportViews,
   waitingReports,
 } from "../../actions/reports.ts";
-import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../../core/reports.ts";
+import { BODY_MAX, REQUEST_MAX, TITLE_MAX, byFiler } from "../../core/reports.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { keyedPage, keyedWindow, loadRepo, originAware, withLabels } from "../api.ts";
 import type { Handler } from "../context.ts";
 import { clientBucket } from "../peer.ts";
+import { proofOf } from "../report_filer.ts";
 import {
   apiError,
   body,
@@ -32,7 +34,11 @@ import {
 import type { Router } from "../router.ts";
 
 /** What a refused report is told: the shape that would have been taken. */
-const REPORT_HINT = `send JSON {title, body?, page?}: plain text, a title of 1-${TITLE_MAX} characters, a body of at most ${BODY_MAX}, page an http(s) address`;
+const REPORT_HINT =
+  "send JSON {title, body?, page?, agent?}: plain text, " +
+  `a title of 1-${TITLE_MAX} characters, a body of at most ${BODY_MAX}, ` +
+  "page an http(s) address, agent a name of letters, digits, . _ - " +
+  "(a claim unless a token proves it)";
 
 export function reportRoutes(router: Router<Handler>): void {
   // ── reports from outside — no account, a person decides ──────────────
@@ -46,8 +52,14 @@ export function reportRoutes(router: Router<Handler>): void {
     const filed = fileReport(
       ctx.app,
       repo,
-      { title: str(input.title), body: str(input.body), page: str(input.page) },
+      {
+        title: str(input.title),
+        body: str(input.body),
+        page: str(input.page),
+        agent: str(input.agent),
+      },
       clientBucket(ctx.request),
+      proofOf(ctx),
     );
     if (!filed.ok) {
       const refusal = filed.error;
@@ -70,6 +82,7 @@ export function reportRoutes(router: Router<Handler>): void {
       {
         id: filed.value.id,
         state: filed.value.state,
+        filedBy: filed.value.filedBy,
         message: REPORT_RECEIVED,
       },
       202,
@@ -91,13 +104,15 @@ export function reportRoutes(router: Router<Handler>): void {
     );
     if (!waiting.ok) return respondAccess(waiting.error, 403);
     return timePhase(ctx.request, "render", () =>
-      json(
-        keyedPage(
-          waiting.value.map((r) => ({ ...r, from: "outside" })),
+      json({
+        ...keyedPage(
+          reportViews(ctx.app, repo, waiting.value),
           (r) => r.id,
           window,
         ),
-      ),
+        // Every waiting report's filer, not only this page's.
+        byAgent: byFiler(waiting.value),
+      }),
     );
   });
 

@@ -10,7 +10,7 @@
 
 import { REPORT_ALREADY_DECIDED } from "../../actions/origin_app_words.ts";
 import { acceptReport, dismissReport, waitingCount, waitingReports } from "../../actions/reports.ts";
-import type { Report } from "../../core/reports.ts";
+import { byFiler, filerWords, type Report } from "../../core/reports.ts";
 import type { Repo } from "../../core/repos.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -54,7 +54,11 @@ export function reportsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   };
 
   const rows = (list: readonly Report[]): ListRow[] =>
-    list.map((r) => ({ title: r.title, secondary: r.page ?? "", meta: ago(r.createdAt) }));
+    list.map((r) => ({ title: r.title, secondary: filerWords(r.filedBy), meta: ago(r.createdAt) }));
+
+  /** The waiting reports' filers with a count each, most first: "2 @muse · 1 anonymous". */
+  const counts = (list: readonly Report[]): string =>
+    byFiler(list).map((g) => `${g.count} ${filerWords(g)}`).join(" · ");
 
   const screen: Screen = {
     title: `Reports: ${repo.ownerName}/${repo.name}`,
@@ -63,7 +67,12 @@ export function reportsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       const c = ctx.theme.c;
       const list = load();
       const [head, body] = split(area, "v", [len(1), fill(1)]);
-      const status = list.length === 0 ? "Nothing waits." : note === "" ? "Sent from outside, unchecked. a accepts as an issue, d dismisses." : "";
+      const status =
+        list.length === 0
+          ? "Nothing waits."
+          : note === ""
+            ? `From ${counts(list)}; unchecked. a accepts as an issue, d dismisses.`
+            : "";
       const text = [note, status].filter((t) => t !== "").join(" ");
       s.text(head!.x, head!.y, truncate(text, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
       const { main, aside } = beside(body!, ctx.twoPane, { main: pct(45), aside: fill(1) });
@@ -73,7 +82,8 @@ export function reportsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       const x = aside.x + 1;
       const w = Math.max(0, aside.w - 2);
       const lines = [
-        `Sent ${ago(picked.createdAt)}${picked.page === null ? "" : ` from ${picked.page}`}`,
+        `Sent ${ago(picked.createdAt)} by ${filerWords(picked.filedBy)}`,
+        ...(picked.page === null ? [] : [`From ${picked.page}`]),
         "",
         ...wrap(picked.body === "" ? "(no words)" : picked.body, w),
       ];

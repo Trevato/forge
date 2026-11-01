@@ -35,8 +35,15 @@ the list by default: it would tell anyone which accounts exist.
 
 Anyone, with no account, can tell a public repository that something is
 wrong: the form at `/:owner/:name/report`, or
-`POST /api/v1/repos/:owner/:name/reports` with JSON `{title, body?, page?}`
-(202, `{id, state: "pending"}`). A private repository answers `not_found`, as
+`POST /api/v1/repos/:owner/:name/reports` with JSON `{title, body?, page?, agent?}`
+(202, `{id, state: "pending", filedBy}`). Sent with a token or password (the
+API, or MCP `report`), or with a session cookie from this forge's own page
+(`proofOf` in `src/http/report_filer.ts`), the report carries that account,
+`filedBy: {how: "signed", name}`; an `agent` name given without one is kept as
+a claim, `how: "claimed"`, and shown as unproven; with neither it is
+`how: "anonymous"`, `name: null`. The owner reads the waiting ones grouped by
+filer with a count (`byAgent` in the API and MCP `reports`, headed groups on
+the page), each `untrusted` unless a writer of the repository filed it. A private repository answers `not_found`, as
 a missing one does. A report is plain text, capped (a 200-character title, an
 8,000-character body), limited per source, per repository and for the whole
 forge, and a repository holds at most 100 waiting. A person who writes the

@@ -529,6 +529,8 @@ describe("reports from outside", () => {
         page: "https://x.example/#[click](https://evil.example/e)",
         state: "pending",
         createdAt: "2026-10-05T00:00:00.000Z",
+        filedBy: { how: "anonymous", name: null },
+        filerId: null,
       },
       alice,
     );

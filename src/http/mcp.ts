@@ -27,6 +27,7 @@ import { resourceMetadataUrl } from "./oauth.ts";
 import { body, boundedBody, json } from "./respond.ts";
 import type { Router } from "./router.ts";
 import { clientBucket } from "./peer.ts";
+import { proofOf } from "./report_filer.ts";
 import { fileReport } from "../actions/reports.ts";
 import { REPORT_RECEIVED } from "../actions/report_words.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
@@ -207,7 +208,7 @@ function rpcOne(
 export const REPORT_TOOL = {
   name: "report",
   /** Its row in docs/MCP.md (`bun scripts/mcp-tools.ts`); never sent to a client. */
-  doc: "`{ repo, title, body?, page? }`: report a problem in a public repository, the one tool open without a token; it still stores the report, which a person reads first; plain text",
+  doc: "`{ repo, title, body?, page?, agent? }`: report a problem in a public repository, the one tool open without a token; it still stores the report, which a person reads first; plain text. With a token the report carries your account; `agent` without one is shown as a claim",
   writes: true,
   description:
     "Report a problem in a public repository, no account needed. Plain text; a person reads it first.",
@@ -220,6 +221,11 @@ export const REPORT_TOOL = {
       page: {
         type: "string",
         description: "Address where seen.",
+      },
+      agent: {
+        type: "string",
+        maxLength: 64,
+        description: "Your name; a claim without a token.",
       },
     },
     required: ["repo", "title"],
@@ -266,8 +272,10 @@ function reportCall(ctx: Ctx, message: unknown): unknown | undefined {
       title: typeof args["title"] === "string" ? args["title"] : "",
       body: typeof args["body"] === "string" ? args["body"] : "",
       page: typeof args["page"] === "string" ? args["page"] : "",
+      agent: typeof args["agent"] === "string" ? args["agent"] : "",
     },
     clientBucket(ctx.request),
+    proofOf(ctx),
   );
   if (!filed.ok) {
     const e = filed.error;
@@ -276,7 +284,7 @@ function reportCall(ctx: Ctx, message: unknown): unknown | undefined {
         ? "not_found: no such public repository (owner/name)"
         : e.error === "rate_limited"
           ? `rate_limited: try again in ${e.retryAfter} seconds`
-          : `${e.error}: plain text, a title of 1-${TITLE_MAX} characters, a body of at most ${BODY_MAX}`,
+          : `${e.error}: plain text, a title of 1-${TITLE_MAX} characters, a body of at most ${BODY_MAX}, agent a name of letters, digits, . _ -`,
       true,
     );
   }
@@ -336,11 +344,11 @@ export function mcpRoutes(router: Router<Handler>): void {
       JSON.stringify({
         error: "unauthorized",
         message:
-          "send a forge token: Authorization: Bearer <token>. Without one, the tool `report` (tools/call, name \"report\", arguments {repo, title, body?, page?}) files a problem report on a public repository; see /llms.txt",
+          "send a forge token: Authorization: Bearer <token>. Without one, the tool `report` (tools/call, name \"report\", arguments {repo, title, body?, page?, agent?}) files a problem report on a public repository; see /llms.txt",
         report: {
           method: "tools/call",
           name: "report",
-          arguments: ["repo", "title", "body", "page"],
+          arguments: ["repo", "title", "body", "page", "agent"],
         },
       }),
       {
