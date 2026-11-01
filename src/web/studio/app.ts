@@ -28,6 +28,7 @@ import {
   type PreviewLatency,
 } from "../../core/runs.ts";
 import { autonomyStatus } from "../../crew/autonomy.ts";
+import { governorSeen } from "../../crew/governed.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, repoBase, repoHeader, repoPalette } from "../chrome.ts";
@@ -312,6 +313,8 @@ export async function studioApp(
     !ownerFacts || repo.autonomy === "off"
       ? undefined
       : timePhase(req, "autonomy", () => autonomyStatus(ctx.app, repo));
+  // The governor's reason, one line on the crew card (#7644).
+  const governor = timePhase(req, "governor", () => governorSeen(ctx.app, ctx.auth.user, repo, new Date()));
 
   // ---- the app itself ----
   // `deployTailing` says the head card is tailing production's own deploy —
@@ -463,6 +466,10 @@ export async function studioApp(
                 </dd>
                 <dt>Slots</dt>
                 <dd>${autonomy.active} of ${autonomy.slots} in use</dd>
+                ${governor === undefined
+                  ? null
+                  : html`<dt>Governor</dt>
+                      <dd>${governor.why}</dd>`}
                 ${autonomy.paused
                   ? html`<dt>Paused</dt>
                       <dd>

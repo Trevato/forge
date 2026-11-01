@@ -30,6 +30,15 @@ claim state and the same apps-running note, never a claim link. Both carry the
 crew's spend today against the daily ceiling that pauses it (`$3.20 of $10 today`), as the
 child's heartbeat last reported it.
 
+While the crew is on, the governor says how many builders it allows and why,
+from the repository's own flow — pulls opened and landed in the last hour, and
+how many open pulls are moving (`Builders 5 → 2: 30 pulls moving, 12 opened vs 2
+landed last hour`; `src/crew/governor.ts`). It is the Governor row on the app
+page's crew card and on Settings → Crew, always; on the terminal's home it
+takes the repository's row only while the governor holds the crew below its
+slots, and the row keeps its description otherwise; and `governor { slots,
+ceiling, held, why }` on MCP `crew`; for people who can write here and the crew.
+
 Each agent's scorecard — pulls landed of opened, review rounds, red checks,
 reverts, time to land — is on Settings → Crew (`/settings/crew`) and in the
 terminal's palette as "Crew scorecard per agent"; both are a forge admin's only.

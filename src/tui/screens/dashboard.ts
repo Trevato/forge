@@ -17,6 +17,7 @@
 import { exploreLine, exploreNote, explorePage, parseExploreQuery, readExploreLine, type ExploreRow } from "../../actions/explore.ts";
 import { protectionNotice } from "../../kernel/protection.ts";
 import { holdWords, plannerHold } from "../../crew/autonomy.ts";
+import { governorSeen } from "../../crew/governed.ts";
 import { forgeFlakes, forgeLane, forgeNeeds } from "../../actions/health.ts";
 import { ownerWaits, waitLine, withMore } from "../../actions/owner_waits.ts";
 import { forgeHealth } from "../../kernel/guard.ts";
@@ -185,7 +186,10 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   const markedRepos = new Set<string>();
   /** The receipt of the last archive made here, which `u` reverses once. */
   let lastArchive: string | undefined;
-  /** Why planning is paused, for the autonomous apps where it is; as on the board. */
+  /**
+   * Why planning is paused, for the autonomous apps where it is, as on the
+   * board; else why the governor holds the crew below its slots (#7644).
+   */
   let holds = new Map<string, string>();
   let forge: string[] | undefined;
   /** What the crews wait on this person for, one line each, as the board's notes say it. */
@@ -309,7 +313,9 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       all.flatMap((repo) => {
         const hold =
           repo.autonomy === "autonomous" ? plannerHold(f.app, repo, now) : null;
-        return hold === null ? [] : [[repo.id, holdWords(hold)] as const];
+        if (hold !== null) return [[repo.id, holdWords(hold)] as const];
+        const governor = governorSeen(f.app, f.user, repo, now);
+        return governor?.held === true ? [[repo.id, governor.why] as const] : [];
       }),
     );
     alarms =

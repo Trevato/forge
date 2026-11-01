@@ -126,3 +126,15 @@ test("config shows for the admin and not for a plain reader", async () => {
   expect(seen.value.crew[0].config).toBeUndefined();
   await crew(admin, { remove: "robo", dryRun: false });
 });
+
+test("the listing carries the governor's slots and reason for a writer while the crew is on; null when off or for a reader (#7644)", async () => {
+  expect((await crew(admin, {})).value.governor).toBeNull(); // the crew is off
+  app.db.query("UPDATE repo SET autonomy = 'assisted', autonomy_slots = 4 WHERE name = 'game'").run();
+  try {
+    const on = (await crew(admin, {})).value.governor;
+    expect(on).toEqual({ slots: 4, ceiling: 4, held: false, why: "Builders 4: a quiet hour, 0 of 0 open pulls moving" });
+    expect((await crew(bob, {})).value.governor).toBeNull(); // bob cannot write to alice/game
+  } finally {
+    app.db.query("UPDATE repo SET autonomy = 'off' WHERE name = 'game'").run();
+  }
+});

@@ -31,6 +31,7 @@ import { getAppByRepo } from "../../core/apps.ts";
 import { canAdmin, canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
 import { crewHasCredential } from "../../core/subscriptions.ts";
 import { autonomyStatus } from "../../crew/autonomy.ts";
+import { governorSeen } from "../../crew/governed.ts";
 import { crewOffInPreview } from "../../crew/preview.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase } from "../chrome.ts";
@@ -255,6 +256,7 @@ function autonomyCard(ctx: Ctx, repo: Repo, base: string, admin: boolean): Html 
     (c) => c.role === "planner",
   );
   const status = repo.autonomy === "off" ? undefined : autonomyStatus(ctx.app, repo);
+  const governor = governorSeen(ctx.app, ctx.auth.user, repo, new Date());
   const state = crewOffInPreview()
     ? html`<p class="muted small">
         The crew is off in a preview: nothing here plans, picks or runs an
@@ -275,6 +277,10 @@ function autonomyCard(ctx: Ctx, repo: Repo, base: string, admin: boolean): Html 
           </dd>
           <dt>Slots</dt>
           <dd>${status.active} of ${status.slots} in use</dd>
+          ${governor === undefined
+            ? null
+            : html`<dt>Governor</dt>
+                <dd>${governor.why}</dd>`}
           ${status.paused
             ? html`<dt>Paused</dt>
                 <dd>
