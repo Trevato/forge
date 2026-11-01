@@ -51,6 +51,44 @@ export type KpiTimer = <T>(name: KpiPart, fn: () => T) => T;
 
 const untimed: KpiTimer = (_name, fn) => fn();
 
+/**
+ * When each landing in [since, to] put something new on main. A pull counts
+ * when it merged onto its repository's default branch with a commit other
+ * than its base, and no pull of that repository merged the same commit
+ * earlier (by `merged_at`, then `issue_id`) — at any time, not only today.
+ *
+ * One pass (#7627): every merged pull whose commit some landing in the window
+ * carries, read once, and the first per (repo, commit) kept here. A per-row
+ * `NOT EXISTS` over every pull cost seconds on a production-size forge.
+ */
+function firstLandings(db: Database, since: string, to: string): string[] {
+  const rows = db
+    .query<{ repo: string; oid: string; at: string; issue: string; landing: number }, [string, string]>(
+      `SELECT i.repo_id AS repo, q.merged_oid AS oid, q.merged_at AS at, q.issue_id AS issue,
+              (q.base_branch = r.default_branch AND q.merged_at >= ?1
+                AND q.merged_oid != q.base_oid) AS landing
+         FROM pull q JOIN issue i ON i.id = q.issue_id JOIN repo r ON r.id = i.repo_id
+        WHERE q.merged_at IS NOT NULL AND q.merged_at <= ?2
+          AND q.merged_oid IN (
+            SELECT merged_oid FROM pull
+             WHERE merged_at >= ?1 AND merged_at <= ?2 AND merged_oid IS NOT NULL AND merged_oid != '')`,
+    )
+    .all(since, to);
+  const first = new Map<string, { at: string; issue: string }>();
+  for (const row of rows) {
+    const key = `${row.repo}\0${row.oid}`;
+    const seen = first.get(key);
+    if (!seen || row.at < seen.at || (row.at === seen.at && row.issue < seen.issue)) first.set(key, row);
+  }
+  const out: string[] = [];
+  for (const row of rows) {
+    if (!row.landing) continue;
+    const seen = first.get(`${row.repo}\0${row.oid}`)!;
+    if (row.at === seen.at && row.issue === seen.issue) out.push(row.at);
+  }
+  return out;
+}
+
 export function readKpis(
   db: Database,
   now: Date,
@@ -62,20 +100,8 @@ export function readKpis(
   const since = new Date(end - HOURS * HOUR_MS).toISOString();
 
   const landedHours = new Array<number>(HOURS).fill(0);
-  const landings = time("kpis.landed", () => db
-    .query<{ at: string }, [string, string]>(
-      `SELECT p.merged_at AS at
-         FROM pull p JOIN issue i ON i.id = p.issue_id JOIN repo r ON r.id = i.repo_id
-        WHERE p.base_branch = r.default_branch
-          AND p.merged_at >= ?1 AND p.merged_at <= ?2
-          AND p.merged_oid IS NOT NULL AND p.merged_oid != '' AND p.merged_oid != p.base_oid
-          AND NOT EXISTS (
-            SELECT 1 FROM pull q JOIN issue j ON j.id = q.issue_id
-             WHERE j.repo_id = i.repo_id AND q.merged_oid = p.merged_oid
-               AND (q.merged_at < p.merged_at OR (q.merged_at = p.merged_at AND q.issue_id < p.issue_id)))`,
-    )
-    .all(since, to));
-  for (const { at } of landings) {
+  const landings = time("kpis.landed", () => firstLandings(db, since, to));
+  for (const at of landings) {
     const h = Math.floor((end - Date.parse(at)) / HOUR_MS);
     if (h >= 0 && h < HOURS) landedHours[h]! += 1;
   }
