@@ -141,7 +141,7 @@ async function watch(root: URL, token: string, heavy: Heavy, fetch: typeof globa
   const headers: Record<string, string> = { "user-agent": AGENTS["desktop"]! };
   const pages = HEAVY_PAGES.map((p) => (p === REPO_HOME && heavy.repo ? heavy.repo : p));
   // An answer between `slowMs` and twice it is slow; none by then is a hang.
-  const once = async (path: string): Promise<{ failure: Failure | null; slow: boolean }> => {
+  const once = async (path: string): Promise<{ failure: Failure | null; slow: boolean; hung?: boolean }> => {
     const url = new URL(path, root).href;
     const started = performance.now();
     const failureFor = (why: string, status: number | string = "error"): Failure => ({ url, agent: "desktop", status, contentType: "", why });
@@ -160,7 +160,7 @@ async function watch(root: URL, token: string, heavy: Heavy, fetch: typeof globa
       if (!body.trim()) return gone(`${path} answered with an empty body`, res.status);
       return { failure: null, slow: false };
     } catch (error) {
-      return gone(`${path} did not answer within ${slowMs * 2} ms (${error})`);
+      return { ...gone(`${path} did not answer within ${slowMs * 2} ms (${error})`), hung: true };
     }
   };
   // The cause of 0.7.279's 1098 ms /boards is unconfirmed; a cold cache after
@@ -181,7 +181,11 @@ async function watch(root: URL, token: string, heavy: Heavy, fetch: typeof globa
   const deadline = Date.now() + (heavy.watchMs ?? WATCH_MS);
   const pollMs = heavy.pollMs ?? WATCH_POLL_MS;
   for (let tick = 0; Date.now() < deadline; tick++) {
-    const failed = (await once("/healthz")).failure ?? (await once(pages[tick % pages.length]!)).failure;
+    // One lost answer in a minute of polling (#7724) is asked again at once;
+    // two in a row is a hang and fails the proof.
+    let health = await once("/healthz");
+    if (health.hung) health = await once("/healthz");
+    const failed = health.failure ?? (await once(pages[tick % pages.length]!)).failure;
     if (failed) return failed;
     await Bun.sleep(pollMs);
   }

@@ -96,3 +96,13 @@ test("a hung first load is not asked again", async () => {
   const failures = await smoke(forge(0, seen, () => undefined, (p, hit) => (p === "/boards" && hit === 1 ? 2_000 : 0)), "t", { heavy });
   expect(failures.some((f) => f.url.endsWith("/boards") && f.why.includes("did not answer"))).toBe(true);
 });
+
+test("a /healthz that gets no answer once in the watch is asked again and passes (#7724)", async () => {
+  const failures = await smoke(forge(0, [], () => undefined, (p, hit) => (p === "/healthz" && hit === 4 ? 1_000 : 0)), "t", { heavy });
+  expect(failures.filter((f) => f.url.endsWith("/healthz"))).toEqual([]);
+});
+
+test("a /healthz that gets no answer twice in a row in the watch fails (#7724)", async () => {
+  const failures = await smoke(forge(0, [], () => undefined, (p, hit) => (p === "/healthz" && (hit === 4 || hit === 5) ? 1_000 : 0)), "t", { heavy });
+  expect(failures.some((f) => f.url.endsWith("/healthz") && f.why.includes("did not answer"))).toBe(true);
+});
