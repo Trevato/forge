@@ -10,7 +10,7 @@
 import type { Database } from "bun:sqlite";
 import { backupAge, backupFull, backupOverdue, buildersValue, checkTime, reactNote, speedWords, spendCeilingWords, spendFull, spendValue, usersValue, visitorsNote, visitorsValue, waitingWords } from "../../flow/kpi_words.ts";
 import type { IdleReason } from "../../crew/idle_reason.ts";
-import type { Kpis } from "../../flow/kpis.ts";
+import type { KpiTimer, Kpis } from "../../flow/kpis.ts";
 import { clogLines, readClog } from "../../flow/clog_read.ts";
 import { vitalsLine } from "../../flow/vitals.ts";
 import { cachedKpis, cachedVitals, cachedWaiting } from "./home_cache.ts";
@@ -165,10 +165,10 @@ export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null, now
 }
 
 /** The figures count every repository, so the caller shows this to an admin only. */
-export function kpiRow(db: Database, opts: { ceilingUsd?: number; dataDir?: string; idle?: IdleReason | null; now?: Date } = {}): Html {
+export function kpiRow(db: Database, opts: { ceilingUsd?: number; dataDir?: string; idle?: IdleReason | null; now?: Date; time?: KpiTimer } = {}): Html {
   const now = opts.now ?? new Date();
   const forge = { ceilingUsd: opts.ceilingUsd ?? null, ...(opts.dataDir === undefined ? {} : { dataDir: opts.dataDir }) };
-  return kpiRowFor(cachedKpis(db, now, forge), liveNow(), now, opts.idle ?? null);
+  return kpiRowFor(cachedKpis(db, now, forge, opts.time), liveNow(), now, opts.idle ?? null);
 }
 
 /**

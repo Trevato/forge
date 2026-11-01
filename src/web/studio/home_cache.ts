@@ -10,7 +10,7 @@
 import type { Database } from "bun:sqlite";
 import type { Answer } from "../../boards/query.ts";
 import { writeStamp } from "../../core/write_clock.ts";
-import { readKpis, type Kpis } from "../../flow/kpis.ts";
+import { readKpis, type KpiTimer, type Kpis } from "../../flow/kpis.ts";
 import { readVitals, type Vitals } from "../../flow/vitals.ts";
 import { Stamped } from "../../kernel/stamped.ts";
 
@@ -63,11 +63,12 @@ export function cachedKpis(
   db: Database,
   now: Date,
   forge: { readonly ceilingUsd: number | null; readonly dataDir?: string },
+  time?: KpiTimer,
 ): Kpis {
   const stamp = writeStamp(db);
-  if (stamp === undefined) return readKpis(db, now, forge);
+  if (stamp === undefined) return readKpis(db, now, forge, time);
   const key = `kpi:${now.toISOString().slice(0, 13)}:${forge.ceilingUsd ?? "none"}:${forge.dataDir ?? ""}`;
-  return kpiCache(db).get(key, stamp, () => readKpis(db, now, forge));
+  return kpiCache(db).get(key, stamp, () => readKpis(db, now, forge, time));
 }
 
 /**

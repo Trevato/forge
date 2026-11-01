@@ -7,6 +7,9 @@
  * last hour, bucket 23 the one that ended 23 hours ago. Nothing here reads
  * the clock. One query per figure.
  *
+ * `time`, when given, wraps each part so a caller can name what it cost
+ * (`kpis.landed` … `kpis.backup`, #7626); left out, each part just runs.
+ *
  * A landing counts when it put something on main. A pull that closed as
  * carried (its change was already there, #2036) lands no commit: its
  * `merged_oid` is the base it found, or a commit an earlier pull landed.
@@ -41,17 +44,25 @@ export interface Kpis {
   readonly reach: Reach;
 }
 
+/** The parts `readKpis` names to its `time` callback, in the order it runs them. */
+export const KPI_PARTS = ["kpis.landed", "kpis.live", "kpis.checks", "kpis.builders", "kpis.spend", "kpis.reach", "kpis.backup"] as const;
+export type KpiPart = (typeof KPI_PARTS)[number];
+export type KpiTimer = <T>(name: KpiPart, fn: () => T) => T;
+
+const untimed: KpiTimer = (_name, fn) => fn();
+
 export function readKpis(
   db: Database,
   now: Date,
   forge: { readonly ceilingUsd: number | null; readonly dataDir?: string } = { ceilingUsd: null },
+  time: KpiTimer = untimed,
 ): Kpis {
   const end = now.getTime();
   const to = now.toISOString();
   const since = new Date(end - HOURS * HOUR_MS).toISOString();
 
   const landedHours = new Array<number>(HOURS).fill(0);
-  const landings = db
+  const landings = time("kpis.landed", () => db
     .query<{ at: string }, [string, string]>(
       `SELECT p.merged_at AS at
          FROM pull p JOIN issue i ON i.id = p.issue_id JOIN repo r ON r.id = i.repo_id
@@ -63,45 +74,50 @@ export function readKpis(
              WHERE j.repo_id = i.repo_id AND q.merged_oid = p.merged_oid
                AND (q.merged_at < p.merged_at OR (q.merged_at = p.merged_at AND q.issue_id < p.issue_id)))`,
     )
-    .all(since, to);
+    .all(since, to));
   for (const { at } of landings) {
     const h = Math.floor((end - Date.parse(at)) / HOUR_MS);
     if (h >= 0 && h < HOURS) landedHours[h]! += 1;
   }
 
-  const live = db
+  const live = time("kpis.live", () => db
     .query<{ sha: string; at: string }, [string]>(
       `SELECT commit_oid AS sha, serving_at AS at FROM run
         WHERE kind = 'deploy' AND env = 'production' AND serving_at IS NOT NULL AND serving_at <= ?1
         ORDER BY serving_at DESC LIMIT 1`,
     )
-    .get(to);
+    .get(to));
 
-  const spans = db
+  const spans = time("kpis.checks", () => db
     .query<{ ms: number }, [string, string]>(
       `SELECT (julianday(finished_at) - julianday(started_at)) * 86400000.0 AS ms FROM run
         WHERE kind = 'check' AND state IN ('ok','failed') AND started_at IS NOT NULL
           AND finished_at >= ?1 AND finished_at <= ?2`,
     )
     .all(since, to)
-    .map((r) => Math.round(r.ms));
+    .map((r) => Math.round(r.ms)));
 
-  const builders = db
+  const builders = time("kpis.builders", () => db
     .query<{ running: number; slots: number }, []>(
       `SELECT (SELECT COUNT(*) FROM run WHERE kind = 'agent' AND state = 'running') AS running,
               (SELECT COALESCE(SUM(autonomy_slots), 0) FROM repo WHERE autonomy != 'off') AS slots`,
     )
-    .get() ?? { running: 0, slots: 0 };
+    .get() ?? { running: 0, slots: 0 });
 
-  const todayUsd = spentTodayEverywhere(db, now);
+  const spend = time("kpis.spend", () => {
+    const todayUsd = spentTodayEverywhere(db, now);
+    return { todayUsd, ceilingUsd: forge.ceilingUsd, hitAt: ceilingReached(todayUsd, forge.ceilingUsd) ? ceilingHitAt(db, now, forge.ceilingUsd) : null };
+  });
 
-  const backupAt = forge.dataDir === undefined ? null : lastOffBox(forge.dataDir);
+  const reach = time("kpis.reach", () => readReach(db, now));
+
+  const backupAt = time("kpis.backup", () => (forge.dataDir === undefined ? null : lastOffBox(forge.dataDir)));
 
   return {
     backupAt,
     builders,
-    reach: readReach(db, now),
-    spend: { todayUsd, ceilingUsd: forge.ceilingUsd, hitAt: ceilingReached(todayUsd, forge.ceilingUsd) ? ceilingHitAt(db, now, forge.ceilingUsd) : null },
+    reach,
+    spend,
     landedHours,
     landed: landedHours.reduce((a, b) => a + b, 0),
     live: live ?? null,

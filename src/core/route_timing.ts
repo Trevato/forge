@@ -217,8 +217,8 @@ export interface Phase {
   readonly hit?: boolean;
 }
 
-/** A phase name is a header token: lowercase letters, nothing a viewer chose. */
-const PHASE_NAME = /^[a-z][a-z0-9-]{0,15}$/;
+/** A phase name is a header token: lowercase letters, a dot for a part (`kpis.live`), nothing a viewer chose. */
+const PHASE_NAME = /^[a-z][a-z0-9.-]{0,15}$/;
 
 const phaseLists = new WeakMap<Request, Phase[]>();
 

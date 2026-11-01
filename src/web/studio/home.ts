@@ -59,6 +59,7 @@ import { feedCandidateCache } from "../../feed/feed.ts";
 import { notePhase, notePhaseRest, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { idleReason } from "../../crew/idle_reason.ts";
 import { kpiCache, panelCache, waitingCache } from "./home_cache.ts";
+import type { KpiTimer } from "../../flow/kpis.ts";
 import { archivedAppCount } from "../pages/apps.ts";
 import { pinnedPanels } from "./pinned.ts";
 import { isNavigation, lastVisit, noteVisit } from "../../core/home_visit.ts";
@@ -286,7 +287,9 @@ export async function studioHome(
   const ask = firstSteps ?? everydayCard(ctx, user);
   const figures = user.isAdmin && steps === undefined;
   const ceilingUsd = forgeCeiling(ctx.app.config);
-  const kpiOpts = { idle: figures ? idleReason(ctx.app, new Date()) : null, dataDir: ctx.app.config.dataDir, ...(ceilingUsd === null ? {} : { ceilingUsd }) };
+  // Each part of a cold read is its own Server-Timing entry (#7626); a cache hit names none.
+  const kpiTime: KpiTimer = (name, fn) => timePhase(ctx.request, name, fn);
+  const kpiOpts = { idle: figures ? idleReason(ctx.app, new Date()) : null, dataDir: ctx.app.config.dataDir, time: kpiTime, ...(ceilingUsd === null ? {} : { ceilingUsd }) };
   const body = html`<h1 class="sr-only">Home</h1>
     ${ask} ${address} ${figures
       ? timePhase(ctx.request, "kpis", () => kpiRow(ctx.app.db, kpiOpts), () => kpiCache(ctx.app.db))
