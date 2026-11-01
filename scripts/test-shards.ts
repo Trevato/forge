@@ -24,8 +24,7 @@
  * finishes, so the log reads one shard at a time. Either way the tail
  * names every failing test from every shard. The first red shard stops
  * the rest (fail-fast) so a known fail does not burn the remaining wall
- * clock — unless every red in it is a budget test, which the forge re-runs
- * once after the gate (#7354). Exits non-zero if any shard does.
+ * clock. Exits non-zero if any shard does.
  *
  * `--keep-going` is the verification after landing (#7786): no shard stops
  * the rest, a file red on its own is run once more alone (green then, it
@@ -641,8 +640,7 @@ async function pool(width: number, from: number, to: number): Promise<Timed[]> {
       if (halted) break;
       const index = next++;
       results[index] = await runShard(slices[index]!, index, width === 1);
-      // A shard red only on budget tests lets the rest run (#7354);
-      // a verification after landing runs everything (#7786).
+      // A verification after landing runs everything (#7786).
       if (!keepGoing && stopsTheRest(results[index]!)) {
         halted = true;
         for (const child of children) child.kill("SIGTERM");

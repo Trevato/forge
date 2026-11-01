@@ -108,8 +108,11 @@ bun run src/main.ts   # boots on :3000, data in ./data
   timeout near the real duration, a wall-clock bound under 200 ms on a
   request or a spawn (`test/flake.test.ts` refuses one). A speed is bounded only
   with `expectBudget` (`test/helpers/budget.ts`): relative to a same-run
-  baseline, absolute only when `FORGE_TEST_QUIET=1` (set by hand on a quiet machine; no
-  lane sets it yet, so absolute budgets are not enforced anywhere);
+  baseline. No check the forge runs fails on it, a pull's or the merge queue's
+  gate: a time over budget is only warned. It is enforced only with
+  `FORGE_TEST_TIMING=1`, by the nightly `timing` workflow (one file at a time,
+  `FORGE_TEST_QUIET=1`, `Red:` issues). To fail a regression in a pull, count work
+  (statements, bytes, phases) or use a fake clock (#7789);
   `test/flake.test.ts` refuses a raw `under N ms` title or bound.
 - **Every non-trivial change ships with a test.** Prefer protocol-level tests
   that boot a real app (`createApp` + `serve`) over unit mocks. Adversarial

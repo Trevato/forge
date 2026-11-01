@@ -2,10 +2,13 @@
 import { afterEach, expect, test } from "bun:test";
 import { BASELINE_FACTOR, MAX_RELAXATION, budgetLimit, expectBudget } from "./helpers/budget.ts";
 
+const savedTiming = process.env.FORGE_TEST_TIMING;
 const saved = process.env.FORGE_TEST_QUIET;
 afterEach(() => {
   if (saved === undefined) delete process.env.FORGE_TEST_QUIET;
   else process.env.FORGE_TEST_QUIET = saved;
+  if (savedTiming === undefined) delete process.env.FORGE_TEST_TIMING;
+  else process.env.FORGE_TEST_TIMING = savedTiming;
 });
 
 test("a quiet cell holds the absolute ms, whatever the baseline", () => {
@@ -32,8 +35,16 @@ test("only FORGE_TEST_QUIET=1 means quiet", () => {
   expect(budgetLimit(50, 1000)).toBe(50 * MAX_RELAXATION);
 });
 
-test("expectBudget fails a page that regressed to 150 ms beside a 5 ms baseline", () => {
+test("expectBudget fails a page that regressed to 150 ms beside a 5 ms baseline, when timing is enforced", () => {
   delete process.env.FORGE_TEST_QUIET;
+  process.env.FORGE_TEST_TIMING = "1";
   expect(() => expectBudget(150, { ms: 50, against: 5 })).toThrow();
   expect(() => expectBudget(40, { ms: 50, against: 5 })).not.toThrow();
+});
+
+test("without FORGE_TEST_TIMING a slow time never fails: load alone cannot turn a pull red (#7789)", () => {
+  delete process.env.FORGE_TEST_TIMING;
+  expect(() => expectBudget(5000, { ms: 50, against: 5 })).not.toThrow();
+  // A missing phase is not a slow one: it still fails.
+  expect(() => expectBudget(Number.NaN, { ms: 50, against: 5 })).toThrow();
 });

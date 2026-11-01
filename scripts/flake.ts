@@ -357,20 +357,52 @@ export function firstFailing(run: FileRun): string {
     : "none named; the file failed outside a test";
 }
 
-/** The issue for a file outside the gate that is red. */
+/** Files that test the budget helper itself, not a speed: never in the timing run. */
+export const TIMING_EXCLUDED: readonly string[] = ["test/budget.test.ts"];
+
+/** How a file says it bounds a wall-clock speed: it imports the budget helper and calls it. */
+const BUDGET_IMPORT = /from\s+["']\.\/helpers\/budget\.ts["']/;
+const BUDGET_CALL = /\bexpectBudget\(/;
+
+/**
+ * The files the nightly timing run holds to their wall-clock budgets (#7789):
+ * each present test that imports `test/helpers/budget.ts` and calls
+ * `expectBudget`, less {@link TIMING_EXCLUDED}. A file that only mentions the
+ * name, in a string or a comment, is not one.
+ */
+export function timingFiles(
+  present: readonly string[],
+  read: (file: string) => string,
+): string[] {
+  return present.filter((file) => {
+    if (TIMING_EXCLUDED.includes(file)) return false;
+    const text = read(file);
+    return BUDGET_IMPORT.test(text) && BUDGET_CALL.test(text);
+  });
+}
+
+/** Which scheduled run found a file red: the files outside the gate, or the wall-clock budgets. */
+export type RedRun = "outside" | "timing";
+
+/** The issue for a file the scheduled run found red. */
 export function redIssueFor(
   run: FileRun,
   where: string,
+  kind: RedRun = "outside",
 ): { title: string; body: string } {
   const fence = "```";
   return {
     title: `${RED_TITLE}${run.file}`,
     body: [
-      `\`${run.file}\` is outside the gate and was red in the scheduled run. This issue closes itself when the file passes again.`,
+      kind === "timing"
+        ? `\`${run.file}\` was over a wall-clock budget, or red, in the nightly timing run (one file at a time, absolute budgets). This issue closes itself when the file passes again.`
+        : `\`${run.file}\` is outside the gate and was red in the scheduled run. This issue closes itself when the file passes again.`,
       "",
       `- first failing test: ${firstFailing(run)}`,
       `- run: ${where || "(a local run)"}`,
-      `- reproduce: \`bun test --timeout 60000 ./${run.file}\``,
+      kind === "timing"
+        ? `- reproduce: \`FORGE_TEST_TIMING=1 FORGE_TEST_QUIET=1 bun test --timeout 60000 ./${run.file}\``
+        : `- reproduce: \`bun test --timeout 60000 ./${run.file}\``,
       "",
       fence,
       run.text || "(no failure text captured)",
