@@ -338,6 +338,9 @@ a.sha:hover { color: var(--accent); }
 /* Cards stacked in normal flow space themselves. Inside a container that
    already manages its own spacing with gap, that margin would double it. */
 .card + .card { margin-top: 12px; }
+/* The open pulls a held issue waits on: a wrapping line of touch-sized links. */
+.held-pulls { display: flex; flex-wrap: wrap; gap: 0 4px; align-items: center; }
+.held-pulls a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 8px; }
 :is(.stack, .split, .timeline) > .card + .card { margin-top: 0; }
 .card-head {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;

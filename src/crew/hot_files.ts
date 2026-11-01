@@ -139,6 +139,21 @@ export function pullCounts(
   return counts;
 }
 
+/** The most pulls a hold names. */
+export const PULLS_NAMED = 8;
+
+/** The numbers of the open pulls that touch `path`, oldest first, at most `PULLS_NAMED`. Memory only. */
+export function pullsTouching(
+  repoId: string,
+  path: string,
+  admit: (pullNumber: number) => boolean = () => true,
+): number[] {
+  const out: number[] = [];
+  for (const { files, number } of touched.get(repoId)?.values() ?? [])
+    if (files.length <= WIDE_PULL && admit(number) && files.includes(path)) out.push(number);
+  return out.sort((a, b) => a - b).slice(0, PULLS_NAMED);
+}
+
 /** Every file of `repo` that `HOT_PULLS` or more open pulls touch, with how many. */
 export function hotFiles(
   repoId: string,

@@ -109,7 +109,8 @@ test("the three planned bodies are held by nothing on their own hot files; a pla
     expect(heldOf(map, tui.number)).toBeNull();
     expect(heldOf(map, cli.number)).toBeNull();
     expect(heldOf(map, mcp.number)).toBeNull();
-    expect(heldOf(map, plain.number)).toEqual({ by: "hot_file", detail: `src/tui/forge.ts is in ${HOT_PULLS + 1} open pulls` });
+    expect(heldOf(map, plain.number)).toMatchObject({ by: "hot_file", detail: `src/tui/forge.ts is in ${HOT_PULLS + 1} open pulls` });
+    expect((heldOf(map, plain.number) as { pulls?: number[] } | undefined)?.pulls).toHaveLength(HOT_PULLS + 1);
     expect(map.startable.sort((a, b) => a - b)).toEqual([tui.number, cli.number, mcp.number]);
   }
 });

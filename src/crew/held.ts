@@ -47,7 +47,7 @@ import { flowOnlyHolds } from "./flow_only.ts";
 import { interruptionOf } from "./interrupted.ts";
 import { PARK_STRIKES, parkedCount } from "./parks.ts";
 import { heldFiles, type FileHold } from "./file_holds.ts";
-import { expectedFiles, hotFiles, hotOverlap, relievedFiles } from "./hot_files.ts";
+import { expectedFiles, hotFiles, hotOverlap, pullsTouching, relievedFiles } from "./hot_files.ts";
 import { coveredByRedFix } from "./red_fix.ts";
 
 export const HOLDS = [
@@ -257,6 +257,8 @@ export function stuckOf(held: Held): Stuck | undefined {
 export interface MapHold {
   readonly by: HoldName;
   readonly detail: string;
+  /** For a hot file: the open pulls that touch it, oldest first, at most 8. */
+  readonly pulls?: readonly number[];
 }
 
 const HOLD_WORDS: Readonly<Record<HoldName, string>> = {
@@ -289,6 +291,7 @@ export function mapHolds(
   for (const name of HOLDS) {
     for (const issue of held.by[name]) {
       let detail = HOLD_WORDS[name];
+      let pulls: number[] | undefined;
       if (name === "hot_file") {
         const pin = held.pinned.get(issue.number);
         const top = hotOverlap(issue, hot)[0];
@@ -296,17 +299,19 @@ export function mapHolds(
         if (pin !== undefined) detail = `${pin.path} is held by an admin`;
         else if (top === undefined && rel !== undefined)
           detail = `waits: ${rel.path} is already being relieved by #${rel.by}`;
-        else if (top !== undefined)
+        else if (top !== undefined) {
           detail = `${top.path} is in ${top.pulls} open ${top.pulls === 1 ? "pull" : "pulls"}`;
+          pulls = pullsTouching(repo.id, top.path, admit);
+        }
       }
-      holds.set(issue.number, { by: name, detail });
+      holds.set(issue.number, { by: name, detail, ...(pulls === undefined ? {} : { pulls }) });
     }
   }
   return { holds, startable: held.startable.map((r) => r.issue.number) };
 }
 
 /** The pulls a viewer of `scope` may see: all with the sealed scope, else the unsealed and their own. */
-function admits(app: App, repo: Repo, scope: { sealed?: true; sealedBy?: string }) {
+export function admits(app: App, repo: Repo, scope: { sealed?: true; sealedBy?: string }) {
   if (scope.sealed === true) return () => true;
   return (n: number): boolean => {
     const row = sealedRowByNumber(app.db, repo.id, n);

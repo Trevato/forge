@@ -209,8 +209,8 @@ export function heldLines(rows: readonly HeldRow[], inner: number): string[] {
   if (rows.length === 0) return ["Ready, and why it waits: no repository runs on its own."];
   return [
     "Ready, and why it waits:",
-    ...rows.flatMap((r) =>
-      wrap(
+    ...rows.flatMap((r) => [
+      ...wrap(
         [
           r.repo,
           `startable=${r.startable}`,
@@ -219,7 +219,10 @@ export function heldLines(rows: readonly HeldRow[], inner: number): string[] {
         ].join(" "),
         inner,
       ),
-    ),
+      ...r.hot.flatMap((h) =>
+        wrap(`  #${h.number} waits: ${h.detail}: ${h.pulls.map((n) => `#${n}`).join(" ")}`, inner),
+      ),
+    ]),
   ];
 }
 
