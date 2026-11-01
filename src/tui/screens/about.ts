@@ -163,8 +163,12 @@ export function aboutScreen(
       ctx.invalidate();
     })().catch(() => {
       cell = [["check cell", "forge.json's check could not be read"]];
-      rows = factRows();
-      ctx.invalidate();
+      try {
+        rows = factRows();
+        ctx.invalidate();
+      } catch {
+        // The screen outlived its database (a closing forge): there is nothing left to draw.
+      }
     });
   }
   const cloneUrl = rows.find(([label]) => label.startsWith("clone"))?.[1] ?? "";
