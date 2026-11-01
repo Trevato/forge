@@ -17,17 +17,23 @@
  * proof stands for its head until a push, or until the base has moved that
  * far — a red that was main's may be gone from a newer main.
  *
- * A proof cut off (the forge stopping, the Job lost) is no verdict: nothing
- * is kept, and the next sweep proves it again. One that has not answered by
- * the gate's own deadline (`GATE_DEADLINE_MS`, #3430) is cut off the same
- * way, its run aborted, so a hung proof never holds its pull or a check slot
- * for good. One proof runs at a time per
- * pull, and only one beyond the first while no check slot is spare.
+ * A proof is a run (#7706, `core/proof_runs.ts`, kind `proof`): waiting for
+ * a check slot, running, then green, red or cut off. A proof that cannot
+ * start (no slot spare, the head does not merge onto the base tip) says why
+ * on the pull, once per head. A proof cut off (the forge stopping, the Job
+ * lost) is no verdict: its run ends cut off, the pull is told, and the next
+ * sweep proves it again. One that has not answered by the gate's own
+ * deadline (`GATE_DEADLINE_MS`, #3430) is cut off the same way, its run
+ * aborted, so a hung proof never holds its pull or a check slot for good.
+ * One proof runs at a time per pull, and only one beyond the first while no
+ * check slot is spare.
  */
 
 import type { Database } from "bun:sqlite";
 import { latestDecision, recordDecision } from "../core/decisions.ts";
+import { cutOffBefore, cutSummary, endedBefore, endProofRun, latestProofRun, openProofRun, startProofRun } from "../core/proof_runs.ts";
 import type { Pull } from "../core/pulls.ts";
+import { STOPPED_SUMMARY } from "../core/runs.ts";
 import { runGit } from "../git/env.ts";
 import { mergeable } from "../git/merge.ts";
 import { GATE_DEADLINE_MS } from "./queue.ts";
@@ -160,18 +166,69 @@ export interface ProofRun {
   readonly room: () => number;
   /** The proof was judged and kept. */
   readonly done: (proof: Proof, verdict: LandVerdict) => void;
+  /** Said to the pull: a proof that cannot start, or was cut off. Once per head and reason. */
+  readonly told?: (words: string) => void;
   /** How long the proof may run before it is cut off; the gate's deadline unless a test shortens it. */
   readonly deadlineMs?: number;
 }
 
+/** Why a proof waits or cannot start: the run's summary, and what the pull is told. */
+export const WAIT_SLOT = "no check slot is spare";
+export const WAIT_MERGE = "cannot start: the head does not merge onto the base tip";
+
+/**
+ * Say once per head why the proof has not started: a waiting run (`queued`)
+ * for no slot, a failed one for a head that does not merge.
+ */
+function refuse(x: ProofRun, summary: string, words: string): void {
+  const last = latestProofRun(x.db, x.pull.id);
+  // Once per head: any run of it that already waited or failed for this reason was told.
+  const state = summary === WAIT_SLOT ? "queued" : "failed";
+  const told = endedBefore(x.db, x.pull.id, x.pull.headOid, state, summary);
+  if (told && last?.commitOid === x.pull.headOid && last.summary === summary) return;
+  if (summary === WAIT_SLOT) {
+    openProofRun(x.db, { repoId: x.repoId, pullId: x.pull.id, head: x.pull.headOid, base: x.tip, state: "queued", summary });
+  } else if (last !== undefined && last.state === "queued" && last.commitOid === x.pull.headOid) {
+    endProofRun(x.db, last.id, "failed", summary);
+  } else {
+    const run = openProofRun(x.db, { repoId: x.repoId, pullId: x.pull.id, head: x.pull.headOid, base: x.tip, state: "running", summary });
+    endProofRun(x.db, run.id, "failed", summary);
+  }
+  if (!told) x.told?.(words);
+}
+
+/** End a proof run cut off for `reason`, and tell the pull once per head and reason. */
+function cutOff(x: ProofRun, runId: string, head: string, reason: string): void {
+  const told = cutOffBefore(x.db, x.pull.id, head, reason, runId);
+  endProofRun(x.db, runId, "cancelled", cutSummary(reason));
+  if (!told && head === x.pull.headOid) x.told?.(cutWords(reason));
+}
+
+/** What a pull is told when its proof was cut off. */
+const cutWords = (why: string): string =>
+  `The full-suite proof of this head was cut off (${why}), so it has no verdict. It is proved again on the next sweep.`;
+
 /**
  * Start proving `pull` on `tip` beside the caller, which does not wait.
  * False when it did not start: a proof of this head runs already, no slot
- * is free, or the head does not merge onto the tip.
+ * is free, or the head does not merge onto the tip. The last two are kept
+ * as a run and told to the pull, once per head.
  */
 export async function startProof(x: ProofRun): Promise<boolean> {
   if (proving.has(x.pull.id)) return false;
-  if (proving.size > 0 && x.room() <= 0) return false;
+  // A run still `running` that this process does not hold was cut off by a restart.
+  const orphan = latestProofRun(x.db, x.pull.id);
+  if (orphan?.state === "running") {
+    cutOff(x, orphan.id, orphan.commitOid, STOPPED_SUMMARY);
+  }
+  if (proving.size > 0 && x.room() <= 0) {
+    refuse(
+      x,
+      WAIT_SLOT,
+      `The full-suite proof of this head is waiting: ${WAIT_SLOT}. It starts when one frees.`,
+    );
+    return false;
+  }
   proving.set(x.pull.id, x.pull.headOid);
   let commit: string | undefined;
   try {
@@ -181,13 +238,28 @@ export async function startProof(x: ProofRun): Promise<boolean> {
   }
   if (commit === undefined) {
     proving.delete(x.pull.id);
+    refuse(
+      x,
+      WAIT_MERGE,
+      `The full-suite proof cannot start: this head does not merge onto ${x.pull.baseBranch} (${x.tip.slice(0, 7)}). Bring the pull up to date with the base and push; it is proved then.`,
+    );
     return false;
+  }
+  const waiting = latestProofRun(x.db, x.pull.id);
+  let runId: string;
+  if (waiting?.state === "queued" && waiting.commitOid === x.pull.headOid) {
+    runId = waiting.id;
+    startProofRun(x.db, runId, x.tip);
+  } else {
+    runId = openProofRun(x.db, { repoId: x.repoId, pullId: x.pull.id, head: x.pull.headOid, base: x.tip, state: "running", summary: "" }).id;
   }
   const abandon = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let deadline = false;
   // A proof that never answers is cut off at the deadline: no verdict (#3430).
   const cut = new Promise<LandVerdict>((resolve) => {
     timer = setTimeout(() => {
+      deadline = true;
       abandon.abort();
       resolve({ lands: false, interrupted: true });
     }, x.deadlineMs ?? GATE_DEADLINE_MS);
@@ -198,14 +270,19 @@ export async function startProof(x: ProofRun): Promise<boolean> {
         // Released before the answer is acted on: `done` may sweep, and must not read it as running.
         clearTimeout(timer);
         proving.delete(x.pull.id);
-        if ("interrupted" in verdict) return;
+        if ("interrupted" in verdict) {
+          cutOff(x, runId, x.pull.headOid, deadline ? "at the deadline" : "the gate was interrupted");
+          return;
+        }
         const proof: Proof = { head: x.pull.headOid, base: x.tip, green: verdict.lands };
         keepProof(x.db, x.repoId, x.pull.id, proof);
+        endProofRun(x.db, runId, verdict.lands ? "ok" : "failed", verdict.lands ? "green" : "red");
         x.done(proof, verdict);
       },
       () => {
         clearTimeout(timer);
         proving.delete(x.pull.id);
+        cutOff(x, runId, x.pull.headOid, "the gate failed to answer");
       },
     );
   return true;

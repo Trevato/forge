@@ -23,16 +23,23 @@ import {
   STALE_LANDINGS,
   standing,
   startProof,
+  WAIT_MERGE,
+  WAIT_SLOT,
 } from "../src/checks/proof.ts";
 import { enqueue, type Queued } from "../src/checks/queue.ts";
 import { provideChecksForTest, type ChecksHandle } from "../src/checks/service.ts";
-import { landVerdict } from "../src/checks/tiers.ts";
+import { landVerdict, type LandVerdict } from "../src/checks/tiers.ts";
 import { listComments } from "../src/core/issues.ts";
+import { openProofRun } from "../src/core/proof_runs.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
+import { listRuns } from "../src/core/runs.ts";
+import { nextActor, proofWords } from "../src/flow/next_actor.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
-import { sweepGreen } from "../src/crew/autonomy.ts";
+import { sweepGreen, toldWhileOpen } from "../src/crew/autonomy.ts";
+import { mergePull } from "../src/actions/pulls.ts";
+import { setIssueState } from "../src/actions/issues.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { logLevel, setLogLevel } from "../src/kernel/log.ts";
 
@@ -314,5 +321,252 @@ describe("the proof before the merge queue", () => {
     expect(ran).toBe(false);
     expect(proofsInFlight()).toBe(0);
     expect(await standing(app.db, dir, pull, mainOf(repo))).toBe("unproved");
+  });
+
+  test("a proof waits while every check slot is taken, says so once, and starts when one frees", async () => {
+    const repo = await autonomousRepo("proof-slots", false);
+    const first = await greenPull(repo, "one.ts");
+    const second = await greenPull(repo, "two.ts");
+    const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    const tip = mainOf(repo);
+    let release: (v: LandVerdict) => void = () => {};
+    expect(
+      await startProof({
+        db: app.db, repoId: repo.id, pull: first, dir, tip, room: () => 1, done: () => {},
+        run: () => new Promise<LandVerdict>((resolve) => (release = resolve)),
+      }),
+    ).toBe(true);
+    const told: string[] = [];
+    let free = 0;
+    const again = () =>
+      startProof({
+        db: app.db, repoId: repo.id, pull: second, dir, tip, room: () => free, done: () => {},
+        told: (w) => told.push(w), run: async () => ({ lands: true }),
+      });
+    expect(await again()).toBe(false);
+    expect(await again()).toBe(false);
+    expect(told).toHaveLength(1);
+    expect(told[0]).toContain("no check slot is spare");
+    const waiting = listRuns(app.db, repo.id, { kind: "proof", issueId: second.id });
+    expect(waiting).toHaveLength(1);
+    expect(waiting[0]!.state).toBe("queued");
+    release({ lands: true });
+    await until(() => proofsInFlight() === 0);
+    free = 1;
+    expect(await again()).toBe(true);
+    await until(() => proofsInFlight() === 0);
+    const ran = listRuns(app.db, repo.id, { kind: "proof", issueId: second.id });
+    expect(ran).toHaveLength(1);
+    expect(ran[0]!.id).toBe(waiting[0]!.id);
+    expect(ran[0]!.state).toBe("ok");
+    // The runs list carries proofs among the rest.
+    expect(listRuns(app.db, repo.id, { withProofs: true }).some((r) => r.kind === "proof")).toBe(true);
+  });
+
+  test("a head that does not merge says so on the pull once, and its next names the wait", async () => {
+    const repo = await autonomousRepo("proof-says", false);
+    const pull = await greenPull(repo, "README.md", "# theirs\n");
+    const moved = await commitToBranch(app, alice, repo, { message: "ours", files: [{ path: "README.md", content: "# ours\n" }] });
+    if (!moved.ok) throw new Error(JSON.stringify(moved.error));
+    const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    const told: string[] = [];
+    const go = () =>
+      startProof({
+        db: app.db, repoId: repo.id, pull, dir, tip: mainOf(repo), room: () => 1, done: () => {},
+        told: (w) => told.push(w), run: async () => ({ lands: true }),
+      });
+    expect(await go()).toBe(false);
+    expect(await go()).toBe(false);
+    expect(told).toHaveLength(1);
+    expect(told[0]).toContain("does not merge");
+    const run = listRuns(app.db, repo.id, { kind: "proof" })[0]!;
+    expect(run.state).toBe("failed");
+    expect(proofWords(app.db, pull, pull.headOid)).toBe(WAIT_MERGE);
+    expect(
+      nextActor({ held: null, conflicted: false, check: "ok", changesRequested: 0, approvals: 1, pushedSince: 0, proof: "cannot start: the head does not merge onto the base tip" }).why,
+    ).toContain("its proof cannot start");
+  });
+
+  test("a proof cut off leaves a cut-off run and a comment, and is proved again", async () => {
+    const repo = await autonomousRepo("proof-cut", false);
+    const pull = await greenPull(repo, "cut.ts");
+    const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    const tip = mainOf(repo);
+    const told: string[] = [];
+    const go = (run: () => Promise<LandVerdict>, deadlineMs?: number) =>
+      startProof({
+        db: app.db, repoId: repo.id, pull, dir, tip, room: () => 1, done: () => {},
+        told: (w) => told.push(w), run, ...(deadlineMs === undefined ? {} : { deadlineMs }),
+      });
+    expect(await go(() => new Promise(() => {}), 50)).toBe(true);
+    await until(() => proofsInFlight() === 0);
+    const cut = listRuns(app.db, repo.id, { kind: "proof", issueId: pull.id })[0]!;
+    expect(cut.state).toBe("cancelled");
+    expect(cut.summary).toContain("deadline");
+    expect(told).toHaveLength(1);
+    expect(told[0]).toContain("cut off");
+    expect(proofWords(app.db, pull, pull.headOid)).toBe("was cut off: at the deadline; it is proved again on the next sweep");
+    // The next sweep proves it again.
+    expect(await go(async () => ({ lands: true }))).toBe(true);
+    await until(() => proofsInFlight() === 0);
+    expect(listRuns(app.db, repo.id, { kind: "proof", issueId: pull.id })[0]!.state).toBe("ok");
+  });
+
+  test("a proof cut off twice on one head tells the pull once", async () => {
+    const repo = await autonomousRepo("proof-cut-twice", false);
+    const pull = await greenPull(repo, "twice.ts");
+    const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    const told: string[] = [];
+    const go = () =>
+      startProof({
+        db: app.db, repoId: repo.id, pull, dir, tip: mainOf(repo), room: () => 1, done: () => {},
+        told: (w) => told.push(w), run: () => new Promise(() => {}), deadlineMs: 30,
+      });
+    expect(await go()).toBe(true);
+    await until(() => proofsInFlight() === 0);
+    expect(await go()).toBe(true);
+    await until(() => proofsInFlight() === 0);
+    const runs = listRuns(app.db, repo.id, { kind: "proof", issueId: pull.id });
+    expect(runs.map((r) => r.state)).toEqual(["cancelled", "cancelled"]);
+    expect(told).toHaveLength(1);
+  });
+
+  test("a push ends the old head's waiting proof as superseded", async () => {
+    const repo = await autonomousRepo("proof-superseded", false);
+    const first = await greenPull(repo, "super.ts");
+    const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    let release: (v: LandVerdict) => void = () => {};
+    const other = await greenPull(repo, "other.ts");
+    expect(
+      await startProof({
+        db: app.db, repoId: repo.id, pull: other, dir, tip: mainOf(repo), room: () => 1, done: () => {},
+        run: () => new Promise<LandVerdict>((resolve) => (release = resolve)),
+      }),
+    ).toBe(true);
+    const wait = () =>
+      startProof({ db: app.db, repoId: repo.id, pull: getPull(app.db, repo.id, first.number)!, dir, tip: mainOf(repo), room: () => 0, done: () => {}, run: async () => ({ lands: true }) });
+    expect(await wait()).toBe(false);
+    const queued = listRuns(app.db, repo.id, { kind: "proof", issueId: first.id });
+    expect(queued.map((r) => r.state)).toEqual(["queued"]);
+    const pushed = await commitToBranch(app, alice, repo, {
+      branch: "feature/super.ts", base: "main", message: "more", files: [{ path: "more.ts", content: "export const m = 1;\n" }],
+    });
+    if (!pushed.ok) throw new Error(JSON.stringify(pushed.error));
+    expect(await wait()).toBe(false);
+    const after = listRuns(app.db, repo.id, { kind: "proof", issueId: first.id });
+    expect(after.map((r) => [r.state, r.summary])).toEqual([
+      ["queued", "no check slot is spare"],
+      ["cancelled", "superseded by a push"],
+    ]);
+    expect(after[0]!.commitOid).not.toBe(queued[0]!.commitOid);
+    release({ lands: true });
+    await until(() => proofsInFlight() === 0);
+  });
+
+  test("a proof a restart left running is cut off and told, then proved again", async () => {
+    const repo = await autonomousRepo("proof-restart", false);
+    const pull = await greenPull(repo, "restart.ts");
+    const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    openProofRun(app.db, { repoId: repo.id, pullId: pull.id, head: pull.headOid, base: "", state: "running", summary: "" });
+    const told: string[] = [];
+    expect(
+      await startProof({
+        db: app.db, repoId: repo.id, pull, dir, tip: mainOf(repo), room: () => 1, done: () => {},
+        told: (w) => told.push(w), run: async () => ({ lands: true }),
+      }),
+    ).toBe(true);
+    await until(() => proofsInFlight() === 0);
+    const runs = listRuns(app.db, repo.id, { kind: "proof", issueId: pull.id });
+    expect(runs.map((r) => r.state)).toEqual(["ok", "cancelled"]);
+    expect(told[0]).toContain("the forge stopped");
+  });
+
+  test("a gate that fails to answer cuts the proof off and tells the pull once", async () => {
+    const repo = await autonomousRepo("proof-throws", false);
+    const pull = await greenPull(repo, "throws.ts");
+    const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    const told: string[] = [];
+    const go = () =>
+      startProof({
+        db: app.db, repoId: repo.id, pull, dir, tip: mainOf(repo), room: () => 1, done: () => {},
+        told: (w) => told.push(w), run: () => Promise.reject(new Error("no gate")),
+      });
+    expect(await go()).toBe(true);
+    await until(() => proofsInFlight() === 0);
+    expect(await go()).toBe(true);
+    await until(() => proofsInFlight() === 0);
+    const runs = listRuns(app.db, repo.id, { kind: "proof", issueId: pull.id });
+    expect(runs.map((r) => [r.state, r.summary])).toEqual([
+      ["cancelled", "cut off: the gate failed to answer"],
+      ["cancelled", "cut off: the gate failed to answer"],
+    ]);
+    expect(told).toHaveLength(1);
+    expect(told[0]).toContain("the gate failed to answer");
+  });
+
+  test("a head that cannot merge, then waits for a slot, then cannot merge is told each reason once", async () => {
+    const repo = await autonomousRepo("proof-says-once", false);
+    const pull = await greenPull(repo, "README.md", "# theirs\n");
+    const moved = await commitToBranch(app, alice, repo, { message: "ours", files: [{ path: "README.md", content: "# ours\n" }] });
+    if (!moved.ok) throw new Error(JSON.stringify(moved.error));
+    const other = await greenPull(repo, "busy.ts");
+    const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    const told: string[] = [];
+    const go = (room: number) =>
+      startProof({
+        db: app.db, repoId: repo.id, pull, dir, tip: mainOf(repo), room: () => room, done: () => {},
+        told: (w) => told.push(w), run: async () => ({ lands: true }),
+      });
+    expect(await go(1)).toBe(false);
+    let release: (v: LandVerdict) => void = () => {};
+    expect(
+      await startProof({
+        db: app.db, repoId: repo.id, pull: other, dir, tip: mainOf(repo), room: () => 1, done: () => {},
+        run: () => new Promise<LandVerdict>((resolve) => (release = resolve)),
+      }),
+    ).toBe(true);
+    expect(await go(0)).toBe(false);
+    release({ lands: true });
+    await until(() => proofsInFlight() === 0);
+    expect(await go(1)).toBe(false);
+    expect(told).toHaveLength(2);
+    expect(told[0]).toContain("does not merge");
+    expect(told[1]).toContain("no check slot is spare");
+    expect(listRuns(app.db, repo.id, { kind: "proof", issueId: pull.id }).map((r) => r.state)).toEqual(["failed", "failed"]);
+  });
+
+  for (const ending of ["merge", "close"] as const)
+    test(`${ending === "merge" ? "landing" : "closing"} a pull ends its waiting proof`, async () => {
+      const repo = await autonomousRepo(`proof-${ending}-ends`, false);
+      const pull = await greenPull(repo, `${ending}-ends.ts`);
+      openProofRun(app.db, { repoId: repo.id, pullId: pull.id, head: pull.headOid, base: "", state: "queued", summary: WAIT_SLOT });
+      if (ending === "merge") {
+        const landed = await mergePull(app, alice, repo, pull, "merge");
+        if (!landed.ok) throw new Error(String(landed.error));
+      } else {
+        const closed = setIssueState(app, alice, repo, pull, "closed");
+        if (!closed.ok) throw new Error(String(closed.error));
+      }
+      const runs = listRuns(app.db, repo.id, { kind: "proof", issueId: pull.id });
+      expect(runs.map((r) => [r.state, r.summary])).toEqual([["cancelled", ending === "merge" ? "pull landed" : "pull closed"]]);
+    });
+
+  test("a proof's words reach the pull only while it is open on the head proved", async () => {
+    const repo = await autonomousRepo("proof-told-guard", false);
+    const pull = await greenPull(repo, "guard.ts");
+    const said = () => listComments(app.db, pull.id).filter((c) => c.body.startsWith("guard:")).length;
+    toldWhileOpen(app, repo, alice, pull)("guard: current");
+    expect(said()).toBe(1);
+    const pushed = await commitToBranch(app, alice, repo, {
+      branch: "feature/guard.ts", base: "main", message: "more", files: [{ path: "guard2.ts", content: "export const g = 2;\n" }],
+    });
+    if (!pushed.ok) throw new Error(JSON.stringify(pushed.error));
+    toldWhileOpen(app, repo, alice, pull)("guard: stale head");
+    expect(said()).toBe(1);
+    const now = getPull(app.db, repo.id, pull.number)!;
+    const closed = setIssueState(app, alice, repo, now, "closed");
+    if (!closed.ok) throw new Error(String(closed.error));
+    toldWhileOpen(app, repo, alice, now)("guard: closed");
+    expect(said()).toBe(1);
   });
 });

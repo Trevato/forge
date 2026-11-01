@@ -2076,6 +2076,18 @@ async function admit(
 }
 
 /**
+ * What a proof says to `pull`, said only while the pull is open on the head
+ * it proved: a push or a close since makes the words about nothing.
+ */
+export function toldWhileOpen(app: App, repo: Repo, by: User, pull: Pull): (words: string) => void {
+  return (words) => {
+    const now = getPull(app.db, repo.id, pull.number);
+    if (now !== undefined && now.headOid === pull.headOid && now.state === "open")
+      addComment(app, by, repo, getIssueById(app.db, pull.id) ?? now, words);
+  };
+}
+
+/**
  * Why a pull waits on its proof (#7616), or undefined when it is proved on
  * `baseTip`. An unproved pull's proof is started here, beside the sweep:
  * green admits it at once (`landIfGreen`), red is told to the pull with
@@ -2101,6 +2113,7 @@ async function proofWait(
     tip: baseTip,
     run: async (commitOid, signal) => (await proveCandidate(app, repo, pull, dir, commitOid, signal)) ?? { lands: true },
     room: () => checksFor(app)?.spareSlots() ?? 0,
+    told: toldWhileOpen(app, repo, by, pull),
     done: (proof, verdict) => {
       log.info(`proof ${proof.green ? "green" : "red"}`, {
         repo: `${repo.ownerName}/${repo.name}`,

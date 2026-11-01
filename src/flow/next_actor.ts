@@ -7,6 +7,7 @@
 import type { Database } from "bun:sqlite";
 import { getHold } from "../core/holds.ts";
 import type { Pull } from "../core/pulls.ts";
+import { latestProofRun } from "../core/proof_runs.ts";
 import { checkSummary, type RunState } from "../core/runs.ts";
 import { reviewSummary } from "../core/reviews.ts";
 
@@ -27,6 +28,8 @@ export interface NextInput {
   readonly approvals: number;
   /** Verdicts passed on an older head: the pull was pushed to since. */
   readonly pushedSince: number;
+  /** What the pull's proof on this head is doing when it is not green (#7706): "waits: no check slot is spare". */
+  readonly proof?: string | null;
 }
 
 const WAITING = {
@@ -44,6 +47,7 @@ export function nextActor(i: NextInput): Next {
     return { who: "builder", why: "changes were asked on this head" };
   if (i.check === "failed") return { who: "builder", why: "its check is red" };
   if (i.approvals > 0) {
+    if (i.check === "ok" && i.proof) return { who: "queue", why: `approved and green, but its proof ${i.proof}` };
     if (i.check === "ok") return { who: "queue", why: "approved and green" };
     return { who: "queue", why: `approved, ${WAITING[i.check]}` };
   }
@@ -51,6 +55,24 @@ export function nextActor(i: NextInput): Next {
     who: "reviewer",
     why: i.pushedSince > 0 ? "pushed since the last review" : "no review yet",
   };
+}
+
+/** What the pull's proof on `head` is doing, in words; null when it is green or has not been tried. */
+export function proofWords(db: Database, pull: Pull, head: string): string | null {
+  const run = latestProofRun(db, pull.id);
+  if (run === undefined || run.commitOid !== head) return null;
+  switch (run.state) {
+    case "queued":
+      return `waits: ${run.summary}`;
+    case "running":
+      return "is running";
+    case "failed":
+      return run.summary === "red" ? "is red" : run.summary;
+    case "cancelled":
+      return `was ${run.summary}; it is proved again on the next sweep`;
+    default:
+      return null;
+  }
 }
 
 /** The next actor of an open pull at `headOid`; null once it is merged or closed. */
@@ -69,5 +91,6 @@ export function nextOfPull(
     changesRequested: reviews.changesRequested,
     approvals: reviews.approvals,
     pushedSince: reviews.stale,
+    proof: proofWords(db, pull, live.headOid),
   });
 }

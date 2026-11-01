@@ -9,6 +9,7 @@ import { id } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { transact } from "../kernel/db.ts";
 import { repoVisible } from "./visibility.ts";
+import { endProofRunsForPull } from "./proof_runs.ts";
 
 export type IssueKind = "issue" | "pull";
 export type IssueState = "open" | "closed";
@@ -548,6 +549,8 @@ export function setIssueState(
        WHERE id = ?4 AND state != ?1`,
     )
     .run(state, closedAt, now, issueId, why, parked).changes;
+  // A closed pull's waiting proof would sit queued for good (#7706).
+  if (changed > 0 && state === "closed") endProofRunsForPull(db, issueId, "pull closed");
   return changed > 0 ? getIssueById(db, issueId) : undefined;
 }
 

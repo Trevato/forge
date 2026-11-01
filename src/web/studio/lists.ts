@@ -581,11 +581,11 @@ export async function changesList(ctx: Ctx): Promise<Response> {
 /** Which runs a list shows: all three kinds by default, or the one that
  * `?kind=` asks for — the narrowing dev's list offered, kept so a link
  * written to it keeps meaning what it said. */
-type RunsKind = "agent" | "deploy" | "check";
+type RunsKind = "agent" | "deploy" | "check" | "proof";
 
 function readRunsKind(ctx: Ctx): RunsKind | undefined {
   const raw = ctx.url.searchParams.get("kind");
-  return raw === "agent" || raw === "deploy" || raw === "check"
+  return raw === "agent" || raw === "deploy" || raw === "check" || raw === "proof"
     ? raw
     : undefined;
 }
@@ -637,6 +637,7 @@ const RUNS_KIND_WORDS: Record<RunsKind, string> = {
   agent: "Agent runs",
   deploy: "Deploys",
   check: "Checks",
+  proof: "Proofs",
 };
 
 /**
@@ -661,6 +662,7 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
   const listed = listRepoRuns(ctx.app, ctx.auth.user, repo, {
     kind,
     state,
+    withProofs: true,
     limit: LIST_PAGE,
     ...(cursor ? { cursor } : {}),
   });
@@ -754,7 +756,7 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
       )}
     </div>
     <p class="muted small mt">
-      Show ${(["agent", "deploy", "check"] as const).map(
+      Show ${(["agent", "deploy", "check", "proof"] as const).map(
         (k, i) =>
           html`${i > 0 ? " · " : ""}${k === kind
               ? html`<strong>${RUNS_KIND_WORDS[k]}</strong>`

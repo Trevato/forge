@@ -3551,7 +3551,7 @@ export function apiRoutes(router: Router<Handler>): void {
     // the branch.
     const runs = timePhase(ctx.request, "runs", () => {
       const listed = listRepoRuns(ctx.app, ctx.auth.user, repo, {
-        ...(kind === "deploy" || kind === "agent" ? { kind } : {}),
+        ...(kind === "deploy" || kind === "agent" || kind === "proof" ? { kind } : { withProofs: true }),
         ...(env !== null && isEnvName(env) ? { env } : {}),
         ...(q.get("cursor") ? { cursor: q.get("cursor")! } : {}),
         limit,

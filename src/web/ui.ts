@@ -369,14 +369,14 @@ export function runStateBadge(state: RunState, kind: RunKind = "deploy"): Html {
     case "running":
       return badge("Running", { icon: "loader", tone: "attn" });
     case "ok":
-      return badge(kind === "agent" ? "Done" : "Passed", {
+      return badge(kind === "agent" ? "Done" : kind === "proof" ? "Green" : "Passed", {
         icon: "check",
         tone: "success",
       });
     case "failed":
       return badge("Failed", { icon: "x", tone: "danger" });
     case "cancelled":
-      return badge("Cancelled", { icon: "ban", variant: "outline" });
+      return badge(kind === "proof" ? "Cut off" : "Cancelled", { icon: "ban", variant: "outline" });
   }
 }
 

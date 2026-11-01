@@ -11,8 +11,10 @@
 import type { Database } from "bun:sqlite";
 import { BUDGET_PREFIX } from "../kernel/budgets.ts";
 import { id } from "../kernel/id.ts";
+import { getProofRun, listProofRuns } from "./proof_runs.ts";
 
-export type RunKind = "deploy" | "agent" | "check";
+/** `proof` is read from `proof_run` (`core/proof_runs.ts`), never stored in `run`. */
+export type RunKind = "deploy" | "agent" | "check" | "proof";
 
 /**
  * The one summary a run cancelled by the forge's own restart carries — never
@@ -24,7 +26,7 @@ export const STOPPED_SUMMARY = "the forge stopped";
 
 /** The kinds that pass judgement on a commit: a preview's deploy, or a repository's own check. */
 export const CHECK_KINDS: readonly RunKind[] = ["deploy", "check"];
-export const RUN_KINDS: readonly RunKind[] = ["deploy", "agent", "check"];
+export const RUN_KINDS: readonly RunKind[] = ["deploy", "agent", "check", "proof"];
 /** Every state a run can be in — the type is read off this list, so a new state is named here once. */
 export const RUN_STATES = ["queued", "running", "ok", "failed", "cancelled"] as const;
 export type RunState = (typeof RUN_STATES)[number];
@@ -206,7 +208,7 @@ export function getRun(db: Database, runId: string): Run | undefined {
   const row = db
     .query<RunRow, [string]>("SELECT * FROM run WHERE id = ?1")
     .get(runId);
-  return row ? toRun(row) : undefined;
+  return row ? toRun(row) : getProofRun(db, runId);
 }
 
 /**
@@ -688,6 +690,13 @@ export interface ListRunsOptions {
   limit?: number | undefined;
   /** Resume after this run id (exclusive) — lists run newest first. */
   cursor?: string | undefined;
+  /**
+   * With no `kind`, merge in the proof runs (`core/proof_runs.ts`, #7706):
+   * for the lists that show the whole story. Off, the rest of the callers
+   * (counts, "latest run" lookups) read `run` alone. A proof has no
+   * environment, so `env` leaves proofs out.
+   */
+  withProofs?: boolean | undefined;
 }
 
 export function listRuns(
@@ -695,6 +704,15 @@ export function listRuns(
   repoId: string,
   options: ListRunsOptions = {},
 ): Run[] {
+  const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
+  // A proof is read from its own table; the rest of the list is `run`'s.
+  const proofs =
+    options.kind === "proof" || (options.kind === undefined && options.withProofs === true)
+      ? options.env === undefined
+        ? listProofRuns(db, repoId, { state: options.state, issueId: options.issueId, cursor: options.cursor, limit })
+        : []
+      : [];
+  if (options.kind === "proof") return proofs;
   const params: (string | number)[] = [repoId];
   let where = "repo_id = ?1";
   if (options.kind !== undefined) {
@@ -717,13 +735,14 @@ export function listRuns(
     params.push(options.cursor);
     where += ` AND id < ?${params.length}`;
   }
-  params.push(Math.min(Math.max(options.limit ?? 50, 1), 200));
-  return db
+  params.push(limit);
+  const rows = db
     .query<RunRow, (string | number)[]>(
       `SELECT * FROM run WHERE ${where} ORDER BY id DESC LIMIT ?${params.length}`,
     )
     .all(...params)
     .map(toRun);
+  return proofs.length === 0 ? rows : [...rows, ...proofs].sort((a, b) => (a.id < b.id ? 1 : -1)).slice(0, limit);
 }
 
 /** Queued runs of one kind, oldest first — what a worker takes from. */
