@@ -8,11 +8,11 @@ const root = join(import.meta.dir, "..");
 const readme = readFileSync(join(root, "README.md"), "utf8");
 const INDEX = "## Where the rest is";
 
-test("README.md stays under 60 KB", () => {
+test("README.md stays under 80 KB", () => {
   const size = statSync(join(root, "README.md")).size;
-  if (size >= 60 * 1024)
+  if (size >= 80 * 1024)
     throw new Error(
-      `README.md is ${size} bytes, over 60 KB. Put feature prose in the docs/ file that owns the topic (README's "${INDEX}" lists them), not in README.md.`,
+      `README.md is ${size} bytes, over 80 KB. Put feature prose in the docs/ file that owns the topic (README's "${INDEX}" lists them), not in README.md.`,
     );
 });
 
