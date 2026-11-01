@@ -75,3 +75,19 @@ test("the admin's home prints the reason's line; nobody else's does", async () =
   expect(await firstScreen(alice)).toContain(idleLine(reason!));
   expect(await firstScreen(bob)).not.toContain("Builders idle");
 });
+
+test("the builders line ends with the reason's word while a slot is free; with every slot busy it has none", async () => {
+  const repo = forge.db.query("SELECT id FROM repo WHERE name = 'svc'").get() as { id: string };
+  forge.db.query("UPDATE repo SET autonomy_ceiling_usd = 1000 WHERE id = ?1").run(repo.id);
+  const reason = idleReason(forge, new Date());
+  expect(reason?.word).toBe("nothing ready");
+  const free = await firstScreen(alice);
+  expect(free).toMatch(new RegExp(`Builders running .* · ${reason!.word}`));
+
+  const bot = getUserByName(forge.db, "idlebot")!;
+  for (let i = 0; i < 2; i++) createRun(forge.db, { repoId: repo.id, kind: "agent", actorId: bot.id });
+  expect(idleReason(forge, new Date())).toBeNull();
+  const busy = await firstScreen(alice);
+  expect(busy).toContain("Builders running");
+  expect(busy).not.toContain("nothing ready");
+});
