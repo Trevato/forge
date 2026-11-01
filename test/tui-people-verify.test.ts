@@ -32,6 +32,10 @@ describe("verify an email from the People screen", () => {
     alice = a.value;
     bob = b.value;
     markUnproven(forge.db, bob.id);
+    // The list is newest first, ties by username. Argon2 is cheap under test,
+    // so both sign-ups can share a millisecond and put alice on top; the
+    // cursor's first row must be bobby whatever the clock did.
+    forge.db.query("UPDATE user SET created_at = '2000-01-01T00:00:00.000Z' WHERE id = ?1").run(alice.id);
   });
 
   afterAll(async () => {
