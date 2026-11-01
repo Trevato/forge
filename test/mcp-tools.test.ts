@@ -50,6 +50,17 @@ describe("the gathered tools", () => {
     expect(md).toBe(withTable(md, tableText([...TOOLS, REPORT_TOOL])));
   });
 
+  test("are ordered by code point, not the machine's locale", () => {
+    const names = TOOLS.map((t) => t.name);
+    expect(names).toEqual([...names].sort());
+    const rows = tableText([
+      { name: "b", doc: "x", writes: false },
+      { name: "B", doc: "x", writes: false },
+      { name: "a", doc: "x", writes: false },
+    ]).split("\n").filter((l) => l.startsWith("| `"));
+    expect(rows.map((l) => l.split("`")[1])).toEqual(["B", "a", "b"]);
+  });
+
   test("a new file is one new line in the index, touching no other", () => {
     const before = indexText(["a", "c"]).split("\n");
     const after = indexText(["a", "b", "c"]).split("\n");

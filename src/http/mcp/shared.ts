@@ -227,3 +227,7 @@ export function boardFailed(e: BoardError): Answer {
   if (typeof e === "object") return bad("refused", e.refused);
   return bad(e, BOARD_NOT_SAVED);
 }
+
+/** Orders by name's code points, never the machine's locale: the tool list and its docs table read the same everywhere. */
+export const byName = (a: { readonly name: string }, b: { readonly name: string }): number =>
+  a.name < b.name ? -1 : a.name > b.name ? 1 : 0;

@@ -14,6 +14,7 @@
  */
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { byName } from "../src/http/mcp/shared.ts";
 
 const ROOT = join(import.meta.dir, "..");
 const DIR = join(ROOT, "src/http/mcp/tools");
@@ -44,7 +45,7 @@ type Documented = { readonly name: string; readonly doc?: string; readonly write
 export function tableText(tools: readonly Documented[]): string {
   const rows = [...tools]
     .filter((t) => t.doc !== undefined)
-    .sort((a, b) => a.name.localeCompare(b.name))
+    .sort(byName)
     .map((t) => `| \`${t.name}\` | ${t.doc} | ${t.writes ? "yes" : ""} |`);
   return [BEGIN, "", "| tool | does | writes |", "| ---- | ---- | ------ |", ...rows, "", END].join("\n");
 }
