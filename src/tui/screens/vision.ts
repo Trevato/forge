@@ -14,6 +14,7 @@
 import { canAdmin, canRead, getRepoById, type Repo } from "../../core/repos.ts";
 import { getIssueById } from "../../core/issues.ts";
 import { NO_VISION, NO_VISION_LINE, type Vision } from "../../core/vision.ts";
+import { directionStall } from "../../crew/planner.ts";
 import { directionParts, readDefaultVision, type DirectionPart } from "../../crew/vision.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -49,11 +50,11 @@ function hanging(lead: string, text: string, width: number): string[] {
 }
 
 /** The screen's lines at `width` columns: purpose, numbered pillars, rules. */
-export function visionLines(v: Vision, width: number, direction?: Direction): VisionLine[] {
+export function visionLines(v: Vision, width: number, direction?: Direction, stall?: string): VisionLine[] {
   const body = (text: string): VisionLine => ({ text, head: false });
   const head = (text: string): VisionLine => ({ text, head: true });
   const empty = v.purpose === null && v.order.length === 0 && v.rules.length === 0;
-  if (empty && direction === undefined) return wrap(NO_VISION_LINE, width).map(body);
+  if (empty && direction === undefined && stall === undefined) return wrap(NO_VISION_LINE, width).map(body);
   const out: VisionLine[] = empty ? wrap(NO_VISION_LINE, width).map(body) : [];
   if (v.purpose !== null) out.push(...wrap(v.purpose, width).map(body));
   if (v.order.length > 0) {
@@ -79,7 +80,18 @@ export function visionLines(v: Vision, width: number, direction?: Direction): Vi
       out.push(...wrap(p.text, width).map(body));
     }
   }
+  if (stall !== undefined) {
+    if (out.length > 0) out.push(body(""));
+    out.push(head("Direction"));
+    out.push(...wrap(stall, width).map(body));
+  }
   return out;
+}
+
+/** Why a saved direction has no issue, for someone who may read the settings; undefined otherwise. */
+function readStall(f: Session, repo: Repo): string | undefined {
+  const fresh = getRepoById(f.db, repo.id) ?? repo;
+  return canAdmin(f.db, fresh, f.user) ? (directionStall(f.app, fresh) ?? undefined) : undefined;
 }
 
 /** The open direction issue and its parts, for someone who may read the settings; undefined otherwise. */
@@ -95,6 +107,7 @@ export function visionScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   const scroll = new Scroll();
   let vision: Vision | undefined;
   let direction: Direction | undefined;
+  let stall: string | undefined;
   let lines: VisionLine[] = [];
   return {
     title: "Vision",
@@ -104,13 +117,14 @@ export function visionScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       // viewer who may not read the repository is shown nothing of it.
       vision = canRead(f.db, repo, f.user) ? ((await readDefaultVision(f.app.reposRoot, repo)) ?? NO_VISION) : HIDDEN;
       direction = vision === HIDDEN ? undefined : readDirection(f, repo);
+      stall = vision === HIDDEN ? undefined : readStall(f, repo);
       ctx.invalidate();
     },
     render(area, s) {
       const c = ctx.theme.c;
       // One column for the scrollbar `drawLines` keeps, one for breathing room.
       const width = Math.max(1, area.w - 2);
-      lines = vision === undefined ? [{ text: "Reading…", head: false }] : visionLines(vision, width, direction);
+      lines = vision === undefined ? [{ text: "Reading…", head: false }] : visionLines(vision, width, direction, stall);
       const spans = lines.map((l) => [{ text: l.text, style: l.head ? style(c.accent, c.bg, BOLD) : style(c.fg, c.bg) }]);
       drawLines(s, area, c, scroll, spans);
       hitScroll(ctx, area, scroll, lines.length);

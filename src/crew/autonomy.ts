@@ -45,6 +45,7 @@ import {
   crewRole,
 } from "../core/agents.ts";
 import { pickBuilder, routeIssue } from "./route.ts";
+import { ensurePlanner } from "./planner.ts";
 import { readyNow, repoGraph, type Ranked } from "../core/dependencies.ts";
 import {
   type Decision,
@@ -710,10 +711,12 @@ async function planIfThin(
   const limbs = pendingReplans(app.db, repo);
   const reserve = reserveOf(ready, repo.autonomySlots);
   if (!short(reserve) && handed.length === 0 && limbs.length === 0) return false;
-  const planner = crew.find((c) => c.role === "planner")?.agent;
-  if (planner === undefined) return notPlanned(repo, "no planner on the crew");
   if (repo.autonomyDirection.trim() === "")
     return notPlanned(repo, "no direction written");
+  // A direction with no planner would go nowhere; the forge lends one (#7637).
+  const planner =
+    crew.find((c) => c.role === "planner")?.agent ?? ensurePlanner(app, repo, by);
+  if (planner === undefined) return notPlanned(repo, "no planner on the crew");
   const direction = ensureDirectionIssue(app, by, repo);
   if (!direction) return notPlanned(repo, "no direction issue");
   if (active.some((r) => r.issueId === direction.id))

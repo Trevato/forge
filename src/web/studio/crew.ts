@@ -39,6 +39,7 @@ import { html, raw, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
 import { crewReadiness } from "../pages/crew.ts";
 import { grantsSection } from "../pages/subscriptions.ts";
+import { directionStall } from "../../crew/planner.ts";
 import { directionMarked } from "./direction.ts";
 import { fileHoldsCard } from "./file_holds.ts";
 import { markOf } from "../../core/marks.ts";
@@ -255,6 +256,7 @@ function autonomyCard(ctx: Ctx, repo: Repo, base: string, admin: boolean): Html 
   const planner = listCrewRoles(ctx.app.db, repo.id).find(
     (c) => c.role === "planner",
   );
+  const stall = admin ? directionStall(ctx.app, repo) : null;
   const status = repo.autonomy === "off" ? undefined : autonomyStatus(ctx.app, repo);
   const governor = governorSeen(ctx.app, ctx.auth.user, repo, new Date());
   const state = crewOffInPreview()
@@ -336,6 +338,7 @@ ${repo.autonomyDirection}</textarea
               : html`No planner on the crew yet — set one under Crew, or the
                 map is only what people write.`}
           </p>
+          ${stall === null ? null : html`<p class="hint" id="direction-stall">${stall}</p>`}
         </div>
         ${selectField({
           label: "Decisions here",

@@ -464,6 +464,14 @@ leading `Bearer ` are dropped (`normalizeToken`, `src/core/subscriptions.ts`),
 and what is left is sealed if it is not empty and at most 4096 characters. Its
 shape is not judged; the provider answers a wrong key on the first call.
 
+A repository in auto mode with a direction and no planner on its crew is lent
+one (#7637): at the next planning turn the forge adds, through the same
+`addToCrew` an admin uses, the agent that plans on the most of the *owner's*
+other repositories, and hands it the direction. If the owner has none, or the
+autonomy actor may not add it, nothing is lent and the reason shows in the
+Direction field of the autonomy card (admins), the terminal's Vision screen,
+and MCP `vision` as `directionStall`.
+
 The running list of what the forge does, one bullet each, lives in
 [`docs/STATUS.md`](docs/STATUS.md).
 
