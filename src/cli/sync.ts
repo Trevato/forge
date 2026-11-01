@@ -112,6 +112,16 @@ export async function syncOnce(opts: SyncOptions): Promise<SyncReport> {
   };
 }
 
+/** Clone one repo into the same place a sync would, and report it. */
+export async function cloneOne(
+  pin: Pin,
+  opts: Omit<SyncOptions, "fetch">,
+): Promise<RepoReport> {
+  const root = join(opts.root, hostDir(opts.api.url));
+  await mkdir(root, { recursive: true });
+  return visit(root, pin.owner, pin.name, pin, { ...opts, fetch: true });
+}
+
 /** Every `<owner>/<name>` git repo under the host directory. */
 export async function scanLocal(root: string): Promise<string[]> {
   const out: string[] = [];

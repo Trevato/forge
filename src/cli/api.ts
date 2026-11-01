@@ -49,6 +49,14 @@ export interface PullSummary {
   readonly held: boolean;
 }
 
+/** What `forge new` needs from the forge's answer. */
+export interface NewApp {
+  readonly pin: Pin;
+  readonly pageUrl: string;
+  /** The app's live address, when the forge serves it. */
+  readonly liveUrl: string | null;
+}
+
 /** Pages of 100 a listing follows before it says it is cut. */
 const PULL_PAGES = 20;
 
@@ -254,6 +262,38 @@ export class ForgeApi {
       `/api/v1/user/pins/${encode(owner)}/${encode(name)}`,
       { method: "DELETE" },
     );
+  }
+
+  /**
+   * Make an app (`POST /api/v1/apps`). The repo comes back as a `Pin`. The
+   * API's repo JSON carries no `cloneUrl` today, so the URL is derived from
+   * the answer's owner and name, as for pins; a `cloneUrl` in the answer
+   * wins. Never built from what was typed.
+   */
+  async newApp(input: {
+    name: string;
+    description?: string;
+    visibility: "public" | "private";
+    owner?: string;
+  }): Promise<ApiResult<NewApp>> {
+    const out = await this.call<Record<string, unknown>>("/api/v1/apps", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    if (!out.ok) return out;
+    const pin = this.toPins([out.value["repo"]])[0];
+    if (pin === undefined)
+      return err({
+        code: "bad_response",
+        message: "the forge answered without a repository",
+        status: 200,
+      });
+    const app = out.value["app"];
+    const live =
+      typeof app === "object" && app !== null
+        ? str((app as Record<string, unknown>)["url"])
+        : undefined;
+    return ok({ pin, pageUrl: this.webUrl(pin.owner, pin.name), liveUrl: live ?? null });
   }
 
   /** One pull, without its diff: title, state, mergeable, hold. */

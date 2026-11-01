@@ -10,6 +10,7 @@
  *   forge search <words>      code, issues, pulls and repos you can read
  *   forge asks --ship 1 3     decide asks by their numbers: planned, then a y/N
  *   forge asks --undo <id>    take back what that decided
+ *   forge new <name> [words]  make an app and clone it into your forge folder
  *   forge map                 the plan: being built, ready now, what waits
  *   forge ship <number>       land a pull after a y/N, as its Merge button does
  *
@@ -34,7 +35,7 @@ export { EXIT };
 /** Every command by name, built once from `commands/index.ts`. */
 const TABLE = new Map(commands.map((c) => [c.name, c]));
 
-const VALUE_FLAGS = ["token", "interval", "root", "url", "limit", "repo", "kind", "reason"];
+const VALUE_FLAGS = ["token", "interval", "root", "url", "limit", "repo", "kind", "reason", "owner"];
 
 export async function main(
   argv: readonly string[],

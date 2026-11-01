@@ -289,6 +289,29 @@ look    alice/shop   Pull #3 is green — look and merge  https://forge.example.
 parked  alice/notes  Issue #9 waits on a decision  https://forge.example.com/alice/notes/issues/9
 ```
 
+## forge new
+
+Makes an app from the shell, as `POST /api/v1/apps` does, then clones its
+repository into the same folder `forge sync` fills (cloned from the address
+the forge answers with) and prints the app's page and, when it has one, its
+live address. A refusal (name taken, invalid name, repository, storage or app
+limit) prints the forge's own words and exits 5, and nothing is cloned. No
+name is exit 2.
+
+Flags:
+
+- `--private` — only you can see it (public otherwise).
+- `--owner org` — make it under an organization you belong to.
+- `--root DIR` — the library folder to clone into.
+
+```console
+$ forge new notes a notes app for the team
+✓ made alice/notes
+https://forge.example.com/alice/notes
+https://notes--alice.example.com
+  cloned to /home/alice/src/forge.example.com/alice/notes
+```
+
 ## forge map
 
 The plan of the repository: three groups that do not overlap, each headed
