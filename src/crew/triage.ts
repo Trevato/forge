@@ -199,6 +199,14 @@ export interface Thought {
   readonly text: string;
 }
 
+const SLUG = /^(?:https?:\/\/[^\s/]+\/)?[\w.-]+\/[\w.-]+(?:\.git)?\/?$/;
+
+/** Nothing to act on: empty, or only a repository slug or a URL to one. */
+export function isNote(text: string): boolean {
+  const t = text.trim();
+  return t === "" || SLUG.test(t);
+}
+
 /** Place one thought. Always answers: a best placement, and a question when unsure. */
 export async function placeThought(
   app: App,
@@ -208,6 +216,9 @@ export async function placeThought(
   now = new Date(),
 ): Promise<Placement> {
   const slug = `${repo.ownerName}/${repo.name}`;
+  // A note has no kind of its own: "decision" by "rule" with an empty `placed` stands in for it.
+  if (isNote(thought.text))
+    return finish(app, thought, "decision", "rule", true, [], `Kept as a note: what should change in ${slug}?`, now);
   const set = pillarsOf(app.db, repo);
   const direction = ensureDirectionIssue(app, by, repo);
   const open = openIssues(app, repo, set, direction);
