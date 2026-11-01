@@ -486,13 +486,30 @@ export function frontInput(
   return { pinned, hidden, weights };
 }
 
+/** One app on the front page as JSON. */
+export type FrontRowJson = {
+  readonly repo: string;
+  readonly description: string;
+  readonly url: string;
+  readonly state: EnvState | null;
+  readonly picture: string | null;
+  readonly pinned: boolean;
+  readonly score: number;
+  readonly signals: FrontSignals;
+};
+
+/** The front page as JSON, as `frontJson` answers it. */
+export type FrontJson = {
+  readonly featured: (FrontRowJson & { readonly crew: CrewAtWork }) | null;
+  readonly apps: readonly FrontRowJson[];
+  readonly total: number;
+  readonly picks?: FrontPicksJson;
+};
+
 /** The front page as JSON: what a stranger is shown; a site admin also gets the picks. */
-export function frontJson(
-  app: App,
-  viewer: User | undefined,
-): Record<string, unknown> {
+export function frontJson(app: App, viewer: User | undefined): FrontJson {
   const front = frontPage(app);
-  const row = (e: FrontEntry) => ({
+  const row = (e: FrontEntry): FrontRowJson => ({
     repo: `${e.repo.ownerName}/${e.repo.name}`,
     description: e.repo.description,
     url: `/${e.repo.ownerName}/${e.repo.name}`,

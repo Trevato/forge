@@ -253,6 +253,24 @@ The terminal's issue and pull screens stay whole on purpose: they are a
 scrolling text view of one thread already in memory, not a page a phone
 downloads, so there is no weight to cut and no second key to learn.
 
+## The front page
+
+What a stranger is shown at `/`, ranked with its numbers, and a site admin's
+say over it: pinned apps first (the first public pin is featured), hidden apps
+never, a private app never. Every door reads `frontJson` in
+`src/actions/front.ts` and sets through `setFront`, so they never disagree.
+
+- **Web:** `/` for everyone; the admin's front-page settings pin, hide and weigh.
+- **API:** `GET` and `PUT /api/v1/front`.
+- **MCP:** `front_page` reads the list; a site admin passes `pinned`, `hidden`
+  or `weights` (a dry run unless `dryRun: false`).
+- **Terminal:** palette → "Front page" lists the same apps in the same order,
+  each with forks, ships, use and fresh. For a site admin who is a person, `p`
+  pins the selected app first (or unpins it) and `h` hides it (or shows it
+  again, from the hidden rows at the end); each shows the plan, the dry run of
+  `setFront`, and applies on Apply. Anyone else, signed out included, has the
+  list and neither key.
+
 ## Who can see it
 
 Every repository page says, beside the Private/Public badge, who can see it in

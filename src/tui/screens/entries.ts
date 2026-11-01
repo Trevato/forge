@@ -14,6 +14,7 @@ import { entry as cloud } from "./cloud.ts";
 import { entry as crewHandover } from "./crewhandover.ts";
 import { entry as crewSplits } from "./crewsplits.ts";
 import { entry as domains } from "./domains.ts";
+import { entry as front } from "./front.ts";
 import { entry as forges } from "./forges.ts";
 import { entry as invites } from "./invites.ts";
 import { entry as limits } from "./limits.ts";
@@ -67,6 +68,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   subscriptions,
   cloud,
   domains,
+  front,
   owner,
   forges,
 ];
