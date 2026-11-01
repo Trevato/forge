@@ -27,11 +27,13 @@ describe("a scorecard row per team", () => {
   let repoId = "";
   let reviewer = "";
   const ids: Record<string, string> = {};
+  // Opened two days before the run, so "the last 30 days" holds whatever the date.
+  const twoDaysAgo = new Date(Date.now() - 2 * 86_400_000).toISOString();
 
   function pull(author: string, title: string, merged: boolean, hours = 2, openedAt?: string) {
     const issue = createIssue(app.db, { repoId, authorId: ids[author]!, title, kind: "pull" });
     if (!issue.ok) throw new Error(issue.error);
-    const opened = openedAt ?? "2026-10-01T00:00:00.000Z";
+    const opened = openedAt ?? twoDaysAgo;
     app.db.query(`UPDATE issue SET created_at = ?2 WHERE id = ?1`).run(issue.value.id, opened);
     const mergedAt = merged ? new Date(Date.parse(opened) + hours * 3_600_000).toISOString() : null;
     app.db
@@ -114,7 +116,7 @@ describe("a scorecard row per team", () => {
     expect(cards.has(three!)).toBe(false);
     // The members' own cards are unchanged by pooling.
     expect(crewScorecards(app.db).get(ids.a1!)!.reviewRounds).toBe(1);
-    // Oct 1 is inside the last 30 days; the idle team is still absent.
+    // Two days ago is inside the last 30 days; the idle team is still absent.
     expect(teamScorecards(app.db, recentWindow()).has(three!)).toBe(false);
   });
 
@@ -137,8 +139,8 @@ describe("a scorecard row per team", () => {
     const cells = [...row.matchAll(/<td class="num">([\s\S]*?)<\/td>/g)].map((m) =>
       m[1]!.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim(),
     );
-    // Landed, review rounds, red checks, then reverts.
-    expect(cells.slice(0, 4)).toEqual(["4 of 4", "0.3", "25%", "0"]);
+    // 30 days beside all time: landed, review rounds, red checks; then reverts.
+    expect(cells.slice(0, 7)).toEqual(["4 of 4", "4 of 4", "0.3", "0.3", "25%", "25%", "0"]);
     // A team without a card has no row, and the team rows sit under the agents.
     expect(table).not.toContain(`data-team="${three}"`);
     expect(table.indexOf("a1")).toBeLessThan(table.indexOf(`data-team="${one}"`));
