@@ -154,6 +154,12 @@ describe("the shell sandbox", () => {
     const builder = systemPrompt(input("builder"));
     expect(builder).toContain("bun install");
     expect(builder).toContain("bun x tsc --noEmit");
+    expect(builder).toContain("bun scripts/gate.ts");
+    expect(builder).toContain("Do not push while any of them is red");
+    expect(builder).toContain("say which and why");
+    expect(builder.indexOf("bun scripts/gate.ts")).toBeLessThan(
+      builder.indexOf("bun x tsc --noEmit"),
+    );
     expect(builder).toContain(
       "files=$(bun scripts/fast.ts) && bun test $files",
     );
