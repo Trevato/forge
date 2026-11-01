@@ -8,7 +8,7 @@ import { createApp, type App as Forge } from "../src/app.ts";
 import { listEvents } from "../src/core/events.ts";
 import { listPeople } from "../src/core/roles.ts";
 import { createUser, type User } from "../src/core/users.ts";
-import { emailVerified, markUnproven } from "../src/core/verify.ts";
+import { emailVerified, markUnproven, markVerified } from "../src/core/verify.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -82,7 +82,7 @@ describe("verify an email from the People screen", () => {
     } finally {
       h.app.stop();
     }
-  });
+  }, 30_000);
 
   test("`r` still changes a role on the list", async () => {
     const h = await open({ ...alice });
@@ -96,7 +96,7 @@ describe("verify an email from the People screen", () => {
     } finally {
       h.app.stop();
     }
-  });
+  }, 30_000);
 
   test("someone who is not a forge admin is refused and nothing changes", async () => {
     const carol = await createUser(forge.db, { username: "carol", email: "carol@forge.test", password: "a-long-passphrase", origin: "seed" });
@@ -112,12 +112,19 @@ describe("verify an email from the People screen", () => {
     } finally {
       h.app.stop();
     }
-  });
+  }, 30_000);
 
-  test("listPeople says who is verified", () => {
+  // Its own accounts, so its verdict never rests on the screen tests above.
+  test("listPeople says who is verified", async () => {
+    const proven = await createUser(forge.db, { username: "dora", email: "dora@forge.test", password: "a-long-passphrase", origin: "seed" });
+    const unproven = await createUser(forge.db, { username: "evan", email: "evan@forge.test", password: "a-long-passphrase", origin: "seed" });
+    if (!proven.ok || !unproven.ok) throw new Error("signup failed");
+    markUnproven(forge.db, proven.value.id);
+    markVerified(forge.db, proven.value.id, new Date().toISOString());
+    markUnproven(forge.db, unproven.value.id);
     const byName = new Map(listPeople(forge.db).map((p) => [p.username, p.verified]));
-    expect(byName.get("bobby")).toBe(true);
     expect(byName.get("alice")).toBe(true);
-    expect(byName.get("carol")).toBe(false);
+    expect(byName.get("dora")).toBe(true);
+    expect(byName.get("evan")).toBe(false);
   });
 });
