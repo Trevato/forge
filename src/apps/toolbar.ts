@@ -362,10 +362,14 @@ export const toolbarJs = `(function () {
     var saved = window.localStorage.getItem(KEY);
     if (CORNERS.indexOf(saved) >= 0) corner = saved;
   } catch (e) {}
+  var NARROW_MAX = 600, CAMERA_TOP = "48px";
   function place(c) {
     corner = c;
     var top = c.charAt(0) === "t", left = c.charAt(1) === "l";
-    host.style.top = top ? "12px" : "auto";
+    var narrow = top && window.innerWidth <= NARROW_MAX;
+    host.style.top = top ? (narrow ? CAMERA_TOP : "12px") : "auto";
+    // The cssText cap assumes a pill 12px down; 36px lower, the cap drops by as much.
+    panel.style.maxHeight = narrow ? "min(70vh,calc(100vh - 124px))" : "";
     host.style.bottom = top ? "auto" : "12px";
     host.style.left = left ? "12px" : "auto";
     host.style.right = left ? "auto" : "12px";
