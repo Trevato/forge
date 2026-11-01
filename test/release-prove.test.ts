@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { lastProof, proofNeed, proveRelease } from "../src/release/prove.ts";
+import { lastProof, proofDue, proofNeed, proveRelease, proveRunning, retryAfter, RETRY_MS, startProving, type Proof } from "../src/release/prove.ts";
 import { owned } from "../src/crew/incidents.ts";
 
 const CSS = '<html><link rel="stylesheet" href="/a.css"></html>';
@@ -110,8 +110,125 @@ describe("proving a release", () => {
     expect(p?.ok).toBe(false);
     expect(t).toBeLessThanOrEqual(10 * 60_000);
     expect(t).toBeGreaterThan(9 * 60_000);
-    expect(proofNeed(dir)?.sentence).toBe("Release 1.0.0 is unproven: the public URL never answered as 1.0.0.");
+    expect(proofNeed(dir)?.sentence).toStartWith("Release 1.0.0 is unproven: the public URL never answered as 1.0.0. It is proven again at ");
     expect(old.hits.every((h) => h === "/healthz")).toBe(true);
+  });
+
+  test("a failed version is proven again after RETRY_MS, and a pass clears the card (#7622)", async () => {
+    let t = Date.parse("2026-10-28T12:00:00Z");
+    const clock = { now: () => t };
+    await run("4.0.0", site("4.0.0", { "/healthz": () => new Response("slow", { status: 503, headers: { "x-forge-version": "4.0.0" } }) }).fake, clock);
+    const need = proofNeed(dir)!;
+    expect(need.sentence).toContain("Release 4.0.0 is unproven");
+    t += RETRY_MS - 1;
+    const early = site("4.0.0");
+    expect(await run("4.0.0", early.fake, clock)).toBeUndefined();
+    expect(early.hits).toEqual([]);
+    t += 1;
+    expect((await run("4.0.0", site("4.0.0").fake, clock))?.ok).toBe(true);
+    expect(proofNeed(dir)).toBeUndefined();
+    // proven now, so never again for this version
+    t += 10 * RETRY_MS;
+    const later = site("4.0.0");
+    expect(await run("4.0.0", later.fake, clock)).toBeUndefined();
+    expect(later.hits).toEqual([]);
+  });
+
+  test("a retry that fails again keeps the card's first since", async () => {
+    let t = Date.parse("2026-10-28T12:00:00Z");
+    const clock = { now: () => t };
+    const broken = () => site("4.1.0", { "/": () => new Response("x", { status: 500 }) }).fake;
+    await run("4.1.0", broken(), clock);
+    const since = proofNeed(dir)!.since;
+    t += RETRY_MS;
+    expect((await run("4.1.0", broken(), clock))?.ok).toBe(false);
+    expect(proofNeed(dir)?.since).toBe(since);
+    expect(lastProof(dir)?.at).not.toBe(since);
+  });
+
+  test("each failure in a row doubles the wait, up to an hour", async () => {
+    expect([1, 2, 3, 4, 5, 99].map(retryAfter)).toEqual([5, 10, 20, 40, 60, 60].map((m) => m * 60_000));
+    let t = Date.parse("2026-10-28T12:00:00Z");
+    const clock = { now: () => t };
+    const broken = () => site("4.3.0", { "/": () => new Response("x", { status: 500 }) }).fake;
+    await run("4.3.0", broken(), clock);
+    expect(lastProof(dir)?.failures).toBe(1);
+    expect(proofNeed(dir)?.sentence).toEndWith(" It is proven again at 12:05 UTC.");
+    t += RETRY_MS;
+    await run("4.3.0", broken(), clock);
+    expect(lastProof(dir)?.failures).toBe(2);
+    // the card names the later try: 12:05 plus ten minutes
+    expect(proofNeed(dir)?.sentence).toEndWith(" It is proven again at 12:15 UTC.");
+    // the third try waits ten minutes, not five
+    t += RETRY_MS;
+    const early = site("4.3.0");
+    expect(await run("4.3.0", early.fake, clock)).toBeUndefined();
+    expect(early.hits).toEqual([]);
+    t += RETRY_MS;
+    await run("4.3.0", broken(), clock);
+    expect(lastProof(dir)?.failures).toBe(3);
+  });
+
+  test("a proof kept before failures were counted is retried as a first failure", () => {
+    const at = "2026-10-28T12:00:00.000Z";
+    const old: Proof = { version: "4.4.0", at, ok: false, failure: "x" };
+    expect(proofDue(old, "4.4.0", Date.parse(at) + RETRY_MS - 1)).toBe(false);
+    expect(proofDue(old, "4.4.0", Date.parse(at) + RETRY_MS)).toBe(true);
+    expect(proofDue({ ...old, ok: true }, "4.4.0", Date.parse(at) + 100 * RETRY_MS)).toBe(false);
+    expect(proofDue(old, "4.5.0", Date.parse(at))).toBe(true);
+  });
+
+  test("startProving proves at once, schedules the next tick only when one ends, and stops", async () => {
+    const queued: { fn: () => void; ms: number }[] = [];
+    const schedule = (fn: () => void, ms: number) => {
+      const job = { fn, ms };
+      queued.push(job);
+      return () => void queued.splice(queued.indexOf(job), 1);
+    };
+    const results: (Proof | undefined)[] = [{ version: "4.2.0", at: "a", ok: false, failure: "x" }, undefined, { version: "4.2.0", at: "b", ok: true }];
+    let finish: (() => void) | undefined;
+    let proofs = 0;
+    const prove = () => {
+      proofs++;
+      return new Promise<Proof | undefined>((resolve) => (finish = () => resolve(results.shift())));
+    };
+    const heard: Proof[] = [];
+    const stop = startProving({ dataDir: dir, version: "4.2.0", url: "https://forge.test" }, (p) => heard.push(p), 60_000, schedule, prove);
+    expect(proofs).toBe(1);
+    expect(queued).toEqual([]); // nothing scheduled while a proof runs
+    for (let i = 0; i < 3; i++) {
+      finish!();
+      await Bun.sleep(0);
+      expect(queued.map((q) => q.ms)).toEqual([60_000]);
+      if (i < 2) queued.shift()!.fn();
+    }
+    expect(proofs).toBe(3);
+    expect(heard.map((p) => p.ok)).toEqual([false, true]);
+    stop();
+    expect(queued).toEqual([]);
+  });
+
+  test("proveRunning, what main.ts boots, logs each verdict that ran as one release proof line", async () => {
+    const lines: [string, unknown][] = [];
+    const queued: (() => void)[] = [];
+    const results: (Proof | undefined)[] = [{ version: "4.6.0", at: "a", ok: false, failure: "slow" }, undefined, { version: "4.6.0", at: "b", ok: true }];
+    const stop = proveRunning(
+      { dataDir: dir, version: "4.6.0", url: "https://forge.test" },
+      { info: (msg, fields) => void lines.push([msg, fields]) },
+      60_000,
+      (fn) => (queued.push(fn), () => {}),
+      async () => results.shift(),
+    );
+    for (let i = 0; i < 3; i++) {
+      await Bun.sleep(0);
+      queued.shift()?.();
+    }
+    await Bun.sleep(0);
+    stop();
+    expect(lines).toEqual([
+      ["release proof", { version: "4.6.0", ok: "false", failure: "slow" }],
+      ["release proof", { version: "4.6.0", ok: "true" }],
+    ]);
   });
 
   test("an unstamped forge proves nothing", async () => {

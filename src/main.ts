@@ -65,7 +65,7 @@ import { configProblem, dataDirOf, preflight } from "./kernel/preflight.ts";
 import { running } from "./kernel/version.ts";
 import { record as recordDegraded } from "./kernel/degraded_history.ts";
 import { vitals } from "./kernel/vitals.ts";
-import { proveRelease } from "./release/prove.ts";
+import { proveRunning } from "./release/prove.ts";
 import { CHECK_EVERY_MS, setBehind, watchBehind } from "./release/behind.ts";
 import { readLandings } from "./release/landings.ts";
 import { ownTagsReader } from "./release/own_tags.ts";
@@ -595,8 +595,8 @@ const holdTimer = setInterval(() => {
 }, 60_000);
 const processTimer = setInterval(processTick, 60_000);
 processTick();
-// A new version proves itself against the public URL once (release/prove.ts).
-void proveRelease({
+// A new version proves itself against the public URL; a failed one again, 5 min after and backing off to hourly (release/prove.ts).
+proveRunning({
   dataDir: app.config.dataDir,
   version: running().version,
   url: forgeUrl,
@@ -606,7 +606,7 @@ void proveRelease({
     const first = listApps(app.db)[0];
     return apps && first ? apps.urlFor(first, "production") : undefined;
   })(),
-}).then((p) => p && app.log.info("release proof", { version: p.version, ok: String(p.ok), ...(p.failure ? { failure: p.failure } : {}) }));
+}, app.log);
 // The release tags of the forge's own repository are its shipped releases (release/shipped.ts);
 // production behind the newest for over an hour is a card (release/behind.ts).
 // A FORGE_REPO that is not owner/name is dropped by releaseEnv; say so, or the list stops at the frozen one unexplained.
