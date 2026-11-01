@@ -55,6 +55,12 @@ const text = (body: Uint8Array): string => new TextDecoder().decode(body);
 // A fetch that fails should say so now, not after the forge's patience.
 fastFirstFetch();
 
+// A test that runs a whole mirror spawns real git against a second forge and
+// then imports: ~0.2 s idle, past 2 s on a machine three times oversubscribed.
+// Bun's 5 s default would make the verdict a measure of the check machine's
+// load; what these tests judge is the order and the outcome, not the speed.
+const MIRROR_MS = 60_000;
+
 describe("RepoSource: one repository, two places to read it from", () => {
   let dataDir: string;
   let originDataDir: string;
@@ -578,7 +584,7 @@ describe("RepoSource: one repository, two places to read it from", () => {
     );
     // And they carried something to read: "2 labels", "1 issue", …
     expect(seen).toContain("issues");
-  });
+  }, MIRROR_MS);
 
   test("mirroring busts what the browse cache believed", async () => {
     const source = live("octo/widgets");
@@ -619,7 +625,7 @@ describe("RepoSource: one repository, two places to read it from", () => {
         >("SELECT COUNT(*) AS n FROM repo WHERE origin_full_name = ?1")
         .get("octo/ghost")!.n,
     ).toBe(1);
-  });
+  }, MIRROR_MS);
 
   test("a failed fetch lands in the job and in fetch_error, scrubbed", async () => {
     const job = await settled(
@@ -648,7 +654,7 @@ describe("RepoSource: one repository, two places to read it from", () => {
       .get("octo/ghost")!;
     expect(row.fetch_error).not.toBe("");
     expect(row.fetch_error).not.toContain(ORIGIN_TOKEN);
-  });
+  }, MIRROR_MS);
 
   // ---- the equivalence that makes the interface worth having ----
 
@@ -1004,7 +1010,7 @@ describe("RepoSource: one repository, two places to read it from", () => {
         })
       ).status,
     ).toBe(404);
-  });
+  }, MIRROR_MS);
 
   test("the process-wide cache is the one the sources use", async () => {
     clearViewCache();
