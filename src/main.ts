@@ -25,6 +25,7 @@ import { startUpstreamWatch } from "./spawn/upstream.ts";
 import { pruneSessions } from "./core/sessions.ts";
 import { runDelivery } from "./core/webhooks.ts";
 import { isHookName, runHookClient } from "./git/hooks.ts";
+import { drainBudgets } from "./drain.ts";
 import { drainStreams } from "./http/sse.ts";
 import { serve } from "./http/server.ts";
 import { checkDue } from "./actions/upstream_follow.ts";
@@ -405,9 +406,11 @@ const checks =
         redHoldMs: RED_HOLD_MS,
         landSettleMs: LAND_SETTLE_MS,
         // A roll lets running checks and merge-queue gates finish this long
-        // before cutting them off: a full gate takes about ten minutes, and
-        // the pod's grace (charts/app, 720 s) is longer still (#6722).
-        drainMs: positive(process.env.FORGE_CHECKS_DRAIN_S, 660) * 1000,
+        // before cutting them off, and no longer: the new forge holds its
+        // own queue work until this one stops writing, so the write pause
+        // of a release is this budget (#7799). A gate cut off is queued
+        // again and resumes on the new forge.
+        drainMs: drainBudgets(process.env).checksMs,
         // Main is verified after landing at most this often (#7786).
         verifyEveryMs: VERIFY_EVERY_MS,
       });
@@ -730,7 +733,7 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
     linger,
     prompts.stop(),
     notifier.stop(),
-    crew?.stop({ drain: true }),
+    crew?.stop({ drain: true, drainMs: drainBudgets(process.env).crewMs }),
     // Routers still send this process requests for the linger's length;
     // its apps answer them, and stop only after (#4496).
     (linger ?? Promise.resolve()).then(() => apps?.stop()).finally(() => presence?.stop()),

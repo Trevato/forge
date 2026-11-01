@@ -238,6 +238,65 @@ sleep 120
     expect(again[0]!.summary).toContain("carries on");
   }, 40_000);
 
+  test("a draining crew hands a long run back queued within its budget (#7799)", async () => {
+    await crew?.stop();
+    crew = undefined;
+    // The run the test before put back on the queue would take the one slot.
+    for (const left of listQueued(app.db, "agent")) cancelRun(app.db, left.id, "cleared for the next test");
+    const created = await createRepo(app, alice, { name: "thicket", visibility: "private" });
+    if (!created.ok) throw new Error(String(created.error));
+    const repo = created.value;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "# thicket\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    expect(addToCrew(app, alice, repo, "bot").ok).toBe(true);
+    const issued = openIssue(app, alice, repo, { title: "Clear", body: "" });
+    if (!issued.ok) throw new Error(String(issued.error));
+    const issue = issued.value;
+    const long = join(dataDir, "long-claude");
+    writeFileSync(
+      long,
+      `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
+cat > /dev/null &
+echo '{"type":"system","subtype":"init","session_id":"long-1","model":"fake"}'
+sleep 120
+`,
+    );
+    chmodSync(long, 0o755);
+    const queuedRun = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: issue.id,
+      actorId: bot.id,
+      reason: "assigned",
+    });
+    crew = await startCrew(app, {
+      forgeUrl: servers.url,
+      localUrl: servers.url,
+      binary: long,
+      concurrency: 1,
+      budgetUsd: 1,
+      runTimeoutMs: 60_000,
+    });
+    const deadline = Date.now() + 20_000;
+    while (getRun(app.db, queuedRun.id)?.state !== "running" && Date.now() < deadline) await Bun.sleep(100);
+    expect(getRun(app.db, queuedRun.id)?.state).toBe("running");
+
+    const started = Date.now();
+    await crew.stop({ drain: true, drainMs: 1_000 });
+    crew = undefined;
+    expect(Date.now() - started).toBeLessThan(15_000);
+
+    const ended = getRun(app.db, queuedRun.id)!;
+    expect(ended.state === "cancelled" || ended.state === "failed").toBe(true);
+    const again = listQueued(app.db, "agent").filter((r) => r.issueId === issue.id && r.state === "queued");
+    expect(again).toHaveLength(1);
+    expect(again[0]!.summary).toContain("carries on");
+  }, 40_000);
+
   test("a draining crew lets a run in flight finish and land; nothing is queued again", async () => {
     await crew?.stop();
     crew = undefined;

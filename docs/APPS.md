@@ -1500,7 +1500,8 @@ a link to the milestone (`docs/PLANNING.md`); its progress never does.
 | `FORGE_CREW_CONCURRENCY`  | 1 per 3 GiB above 2 GiB, 2–16   | agent runs at once (live: Settings → Capacity)    |
 | `FORGE_CHECKS_CONCURRENCY` | `1`                            | checks at once (live: Settings → Capacity)        |
 | `FORGE_CHECKS_PLACEMENT`  | `process`                       | `job` runs a check's commands as a cluster Job (see Placement above) |
-| `FORGE_CHECKS_DRAIN_S`       | `660`                          | seconds a roll lets running checks finish first   |
+| `FORGE_CHECKS_DRAIN_S`       | `10`                           | seconds a roll lets running checks finish first   |
+| `FORGE_CREW_DRAIN_S`         | `10`                           | seconds a roll lets crew runs finish before they are queued again |
 | `FORGE_CHECK_SHARDS`      | the machine's cores             | test shards per check (live: Settings → Capacity) |
 | `FORGE_CELLS_EGRESS`      | `enforce`                       | `report` lets undeclared egress through on 80/443 (live: Settings → Capacity) |
 | `FORGE_CELL_CGROUP`       | `/sys/fs/cgroup` at a namespace root | the delegated cgroup v2 whose children cap each cell's memory; `off` watches only |

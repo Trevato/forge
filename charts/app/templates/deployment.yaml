@@ -32,10 +32,11 @@ spec:
       annotations:
         plat.sh/user-env-rev: {{ .Values.userEnvRev | default "init" | quote }}
     spec:
-      # The crew drains for three minutes, then runs are cut and resume on
-      # the next pod. Checks and merge-queue gates under way drain for
-      # FORGE_CHECKS_DRAIN_S (660 s, a full gate's ten minutes and more), so
-      # a roll does not cut a gate off; a minute more than that here (#6722).
+      # The crew, checks and merge-queue gates under way get ten seconds
+      # (FORGE_CREW_DRAIN_S, FORGE_CHECKS_DRAIN_S), then are handed back
+      # queued to resume on the next pod: the old pod stops writing at once,
+      # so the new one's queue work waits seconds, not minutes (#7799). The
+      # long grace stays for SSH sessions that are still connected.
       terminationGracePeriodSeconds: 720
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
