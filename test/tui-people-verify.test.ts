@@ -42,9 +42,12 @@ describe("verify an email from the People screen", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  async function open(user: User) {
+  // A toast lives four wall-clock seconds by default, and a loaded check
+  // machine can take longer than that to settle after the key that raised it.
+  // These tests read toasts after a settle, so the toast outlasts the test.
+  async function open(user: User, toastMs = 10 * 60_000) {
     const terminal = headlessTerminal(120, 40);
-    const { app } = createForgeApp(forge, { sshUsername: "alice", remoteAddress: "127.0.0.1", fingerprint: "SHA256:test", user }, { terminal, exitHooks: false });
+    const { app } = createForgeApp(forge, { sshUsername: "alice", remoteAddress: "127.0.0.1", fingerprint: "SHA256:test", user }, { terminal, exitHooks: false, toastMs });
     app.start();
     const press = async (...keys: string[]): Promise<void> => {
       for (const key of keys) app.dispatch({ type: "key", key, ctrl: false, alt: false, shift: false });
@@ -83,6 +86,22 @@ describe("verify an email from the People screen", () => {
       // already verified: refused, nothing changes
       await h.press("v", "y");
       expect(h.text()).toContain("already verified");
+    } finally {
+      h.app.stop();
+    }
+  }, 30_000);
+
+  test("a toast is gone once its time has passed, which is why the tests above hold it up", async () => {
+    const fred = await createUser(forge.db, { username: "fred", email: "fred@forge.test", password: "a-long-passphrase", origin: "seed" });
+    if (!fred.ok) throw new Error("signup failed");
+    markUnproven(forge.db, fred.value.id);
+    const h = await open({ ...alice }, 1);
+    try {
+      await h.press("v", "y");
+      expect(emailVerified(forge.db, fred.value.id)).toBe(true);
+      await Bun.sleep(20);
+      await settleApp(h.app);
+      expect(h.text()).not.toContain("fred's email is verified.");
     } finally {
       h.app.stop();
     }

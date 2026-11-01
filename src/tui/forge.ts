@@ -623,6 +623,8 @@ function askFor(
 
 export interface ForgeAppOptions extends SessionOpts {
   readonly terminal: Terminal;
+  /** How long a toast stays up; a test that reads one after a settle makes it long. */
+  readonly toastMs?: number;
 }
 
 /** Assemble the terminal app for one identity, theme persistence included. */
