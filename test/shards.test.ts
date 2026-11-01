@@ -4,7 +4,7 @@
  * red run whose tail names every failing test from every shard.
  */
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveLimits } from "../src/apps/contain.ts";
@@ -12,6 +12,8 @@ import {
   SECONDS_PER_BYTE_DEFAULT,
   SHARDS_MAX,
   besideOthers,
+  budgetLast,
+  callsBudget,
   failingFiles,
   onlyTestFailures,
   WORKER_MEMORY_BYTES,
@@ -947,4 +949,150 @@ describe("a failing file is run once more alone", () => {
     expect(got.code).toBe(1);
     expect(got.out).not.toContain("fails only beside others");
   }, 30_000);
+});
+
+describe("budget files last, and a fixture suite in six shards (#7617)", () => {
+  const script = new URL("../scripts/test-shards.ts", import.meta.url).pathname;
+  const fixture = (files: Record<string, string>): string => {
+    const dir = mkdtempSync(join(tmpdir(), "shards-fixture-"));
+    for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
+    return dir;
+  };
+  const run = async (
+    dir: string,
+    shards: string,
+    names: string[],
+    env: Record<string, string> = {},
+  ): Promise<{ code: number; out: string; stdout: string }> => {
+    const child = Bun.spawn(["bun", script, ...names], {
+      cwd: dir,
+      env: { ...process.env, FORGE_CHECK_SHARDS: shards, ...env },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, err] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    const code = await child.exited;
+    return { code, out: stdout + err, stdout };
+  };
+  const passing = (n: number): string =>
+    `import { test } from "bun:test";\ntest("passes ${n}", () => {});\n`;
+  const budgeted = `import { test } from "bun:test";\ntest("budgeted", () => { expectBudget(() => {}, 1); });\nfunction expectBudget(f: () => void, _s: number) { f(); }\n`;
+  /** The files named on the `── shard N/M…: files` lines, in the order shards ran. */
+  const finished = (stdout: string): string[] =>
+    [...stdout.matchAll(/^── shard \d+\/\d+(?: \(exit \d+, [\d.]+s\))?: (.*)$/gm)].map((m) => m[1]!);
+
+  test("callsBudget sees a call, not a mention in a comment or a string", () => {
+    expect(callsBudget("expectBudget(1, 2)")).toBe(true);
+    expect(callsBudget("await expectBudget (x)")).toBe(true);
+    expect(callsBudget("// expectBudget(1)\nlet a = 1")).toBe(false);
+    expect(callsBudget("/* expectBudget(1) */")).toBe(false);
+    expect(callsBudget('const note = "expectBudget is a helper"')).toBe(false);
+    expect(callsBudget(undefined)).toBe(false);
+  });
+
+  test("budgetLast sets aside the files that call expectBudget, in order", () => {
+    const text: Record<string, string> = { "a": "x", "b": "expectBudget(1)", "c": "y", "d": "expectBudget(2)", "e": "// expectBudget(3)" };
+    const got = budgetLast(["a", "b", "c", "d", "e", "gone"], (file) => text[file]);
+    expect(got.rest).toEqual(["a", "c", "e", "gone"]);
+    expect(got.budget).toEqual(["b", "d"]);
+  });
+
+  test("twelve files in six shards: the plan has six slices and each file runs exactly once", async () => {
+    const names = Array.from({ length: 12 }, (_, i) => `s${i}.test.ts`);
+    const dir = fixture(Object.fromEntries(names.map((name, i) => [name, passing(i)])));
+    const six = await run(dir, "6", names);
+    rmSync(dir, { recursive: true, force: true });
+    expect(six.code).toBe(0);
+    expect(six.out).toContain("12 files in 6 shards");
+    expect(six.out.match(/test-shards: start \d+\/6 /g)?.length).toBe(6);
+    const ran = finished(six.stdout).flatMap((line) => line.split(" "));
+    for (const name of names) expect(ran.filter((file) => file === name).length).toBe(1);
+    expect(six.out).toMatch(/Ran 12 tests across 12 files/);
+  }, 60_000);
+
+  test("a failure in any shard reds the run and names the test", async () => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 5; i++) files[`ok${i}.test.ts`] = passing(i);
+    files["bad.test.ts"] = `import { test, expect } from "bun:test";\ntest("the broken one", () => { expect(1).toBe(2); });\n`;
+    const dir = fixture(files);
+    const got = await run(dir, "3", Object.keys(files));
+    rmSync(dir, { recursive: true, force: true });
+    expect(got.code).not.toBe(0);
+    expect(got.out).toContain("(fail) the broken one");
+  }, 60_000);
+
+  test("budget files run last, alone, after the others", async () => {
+    const dir = fixture({
+      "a.test.ts": passing(1),
+      "b.test.ts": passing(2),
+      "c.test.ts": passing(3),
+      "slow.test.ts": budgeted,
+    });
+    const got = await run(dir, "4", ["slow.test.ts", "a.test.ts", "b.test.ts", "c.test.ts"]);
+    rmSync(dir, { recursive: true, force: true });
+    expect(got.code).toBe(0);
+    expect(got.out).toContain("1 budget files last");
+    const order = finished(got.stdout);
+    expect(order.at(-1)).toBe("slow.test.ts");
+    expect(order.slice(0, -1).join(" ").split(" ").sort()).toEqual(["a.test.ts", "b.test.ts", "c.test.ts"]);
+  }, 60_000);
+
+  test("a red shard skips the budget files: the run is red and nothing crashes", async () => {
+    const dir = fixture({
+      "bad.test.ts": `import { test, expect } from "bun:test";\ntest("the broken one", () => { expect(1).toBe(2); });\n`,
+      "a.test.ts": passing(1),
+      "slow.test.ts": budgeted,
+    });
+    const got = await run(dir, "2", ["bad.test.ts", "a.test.ts", "slow.test.ts"]);
+    rmSync(dir, { recursive: true, force: true });
+    expect(got.code).not.toBe(0);
+    expect(got.out).toContain("(fail) the broken one");
+    expect(got.out).toMatch(/fail-fast — skipped \d+ remaining shards? after a red exit/);
+    expect(finished(got.stdout).flat().join(" ")).not.toContain("slow.test.ts");
+    expect(got.out).not.toContain("undefined");
+    expect(got.out).not.toContain("TypeError");
+  }, 60_000);
+
+  test("each shard gets its own empty FORGE_APP_DATA and TMPDIR, removed after", async () => {
+    const probe = (n: number): string =>
+      `import { test, expect } from "bun:test";
+import { readdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+test("probe ${n}", () => {
+  const data = process.env.FORGE_APP_DATA!;
+  expect(readdirSync(data)).toEqual([]);
+  expect(readdirSync(tmpdir())).toEqual([]);
+  writeFileSync(data + "/mark", "${n}");
+  console.log("PROBE-DATA " + data + " PROBE-TMP " + tmpdir());
+});
+`;
+    const names = ["p0.test.ts", "p1.test.ts", "p2.test.ts"];
+    const dir = fixture(Object.fromEntries(names.map((name, i) => [name, probe(i)])));
+    const root = mkdtempSync(join(tmpdir(), "shards-root-"));
+    const got = await run(dir, "3", names, { TMPDIR: root, FORGE_APP_DATA: root });
+    rmSync(dir, { recursive: true, force: true });
+    const seen = [...got.out.matchAll(/PROBE-DATA (\S+) PROBE-TMP (\S+)/g)];
+    const leaked = readdirSync(root);
+    rmSync(root, { recursive: true, force: true });
+    expect(got.code).toBe(0);
+    expect(new Set(seen.map((m) => m[1])).size).toBe(3);
+    expect(new Set(seen.map((m) => m[2])).size).toBe(3);
+    for (const m of seen) expect(m[1]!.startsWith(root)).toBe(true);
+    expect(leaked).toEqual([]);
+  }, 60_000);
+
+  test("a FORGE_APP_DATA the cell set is nested under, not replaced", async () => {
+    const dir = fixture({
+      "d.test.ts": `import { test } from "bun:test";\ntest("d", () => { console.log("PROBE-DATA " + process.env.FORGE_APP_DATA); });\n`,
+    });
+    const data = mkdtempSync(join(tmpdir(), "shards-data-"));
+    const got = await run(dir, "1", ["d.test.ts"], { FORGE_APP_DATA: data });
+    rmSync(dir, { recursive: true, force: true });
+    const leaked = readdirSync(data);
+    rmSync(data, { recursive: true, force: true });
+    expect(got.code).toBe(0);
+    expect(got.out).toContain(`PROBE-DATA ${data}/data-0`);
+    expect(leaked).toEqual([]);
+  }, 60_000);
 });

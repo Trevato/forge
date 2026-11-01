@@ -71,6 +71,7 @@ import {
   tally,
   weigher,
   besideOthers,
+  budgetLast,
   failingFiles,
   onlyTestFailures,
   stopsTheRest,
@@ -408,10 +409,23 @@ const serialFiles = !record && count.value === 1;
 // refreshes the time of every file it ran (#1797).
 const timed = !record && !serialFiles && gate && tier === "full" && "none" in shardSpec;
 const perFile = record || measure || serialFiles || timed;
-const slices =
-  perFile
-    ? heaviestFirst(files, weight).map((file) => [file])
-    : splitCapped(files, count.value, weight);
+// Files that bound a speed run last and alone, after every other shard,
+// so the gate's own load cannot redden them (#7617).
+const ordered = budgetLast(files, (file) => {
+  try {
+    return readFileSync(file, "utf8");
+  } catch {
+    return undefined;
+  }
+});
+const slicesOf = (list: string[]): string[][] =>
+  list.length === 0
+    ? []
+    : perFile
+      ? heaviestFirst(list, weight).map((file) => [file])
+      : splitCapped(list, count.value, weight);
+const mainSlices = slicesOf(ordered.rest);
+const slices = [...mainSlices, ...ordered.budget.map((file) => [file])];
 const work = files.reduce((sum, file) => sum + weight(file), 0);
 
 const banner = record
@@ -428,6 +442,8 @@ const banner = record
         `expected ${slices.map((slice) => slice.reduce((sum, file) => sum + weight(file), 0).toFixed(0) + "s").join(" ")}`;
 console.log(banner);
 process.stderr.write(banner + "\n");
+if (ordered.budget.length > 0)
+  console.log(`test-shards: ${ordered.budget.length} budget files last, one at a time`);
 
 const children = new Set<Bun.Subprocess>();
 for (const signal of ["SIGINT", "SIGTERM"] as const)
@@ -469,10 +485,24 @@ type Timed = ShardResult & { seconds: number };
  * output is held and written through whole when the shard ends, so shards
  * running side by side never interleave.
  */
-async function runShard(
+async function runShard(slice: string[], index: number, live: boolean): Promise<Timed> {
+  // Its own temp and data directories: shards side by side never share a
+  // path. They sit under the TMPDIR the cell set (tmpdir() reads it), and a
+  // FORGE_APP_DATA the cell set is nested under, never replaced. Removed
+  // however the shard ends.
+  const home = mkdtempSync(join(tmpdir(), "shard-"));
+  try {
+    return await runShardIn(slice, index, live, home);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
+async function runShardIn(
   slice: string[],
   index: number,
   live: boolean,
+  home: string,
 ): Promise<Timed> {
   const started = performance.now();
   const where = `${index + 1}/${slices.length}`;
@@ -486,6 +516,10 @@ async function runShard(
     file.startsWith("/") || file.startsWith("./") ? file : `./${file}`,
   );
   const childEnv = { ...process.env };
+  childEnv["TMPDIR"] = join(home, "tmp");
+  childEnv["FORGE_APP_DATA"] = join(process.env["FORGE_APP_DATA"] ?? home, `data-${index}`);
+  mkdirSync(childEnv["TMPDIR"], { recursive: true });
+  mkdirSync(childEnv["FORGE_APP_DATA"], { recursive: true });
   delete childEnv["FORGE_CHECK_SHARDS"];
   delete childEnv["FORGE_CHECK_SHARD_INDEX"];
   delete childEnv["FORGE_CHECK_SHARD_TOTAL"];
@@ -568,6 +602,8 @@ async function runShard(
       if (verdict.red.length === 0) code = 0;
     }
   }
+  if (process.env["FORGE_APP_DATA"])
+    rmSync(childEnv["FORGE_APP_DATA"], { recursive: true, force: true });
   const text = output.join("");
   const seconds = ((performance.now() - started) / 1000).toFixed(1);
   process.stdout.write(
@@ -594,23 +630,20 @@ async function runShard(
   };
 }
 
-/** Runs every slice, at most `width` at once, in the slices' order.
+/** Runs slices `from` up to `to`, at most `width` at once, in the slices' order.
  * Stops starting new slices after the first non-zero exit and signals
  * in-flight children so a red shard does not burn the rest of the wall. */
-async function pool(width: number): Promise<Timed[]> {
+async function pool(width: number, from: number, to: number): Promise<Timed[]> {
   const results: Timed[] = [];
-  let next = 0;
-  let stop = false;
+  let next = from;
   async function worker(): Promise<void> {
-    while (next < slices.length) {
-      if (stop) break;
+    while (next < to) {
+      if (halted) break;
       const index = next++;
-      if (stop) break;
       results[index] = await runShard(slices[index]!, index, width === 1);
       // A shard red only on budget tests lets the rest run (#7354);
       // a verification after landing runs everything (#7786).
       if (!keepGoing && stopsTheRest(results[index]!)) {
-        stop = true;
         halted = true;
         for (const child of children) child.kill("SIGTERM");
       }
@@ -624,10 +657,16 @@ async function pool(width: number): Promise<Timed[]> {
 const started = performance.now();
 // Serial one-file processes when SHARDS=1; record keeps its worker width;
 // multi-shard still runs every slice side by side.
-const results = await pool(
-  // Never more side by side than the count: capped slices outnumber it.
-  serialFiles ? 1 : Math.min(count.value, slices.length),
-);
+const results = [
+  ...(await pool(
+    // Never more side by side than the count: capped slices outnumber it.
+    serialFiles ? 1 : Math.max(1, Math.min(count.value, mainSlices.length)),
+    0,
+    mainSlices.length,
+  )),
+  // Budget files, one at a time, once the rest are done and green.
+  ...(await pool(1, mainSlices.length, slices.length)),
+];
 if (results.length < slices.length) {
   const skipped = slices.length - results.length;
   console.log(
