@@ -39,7 +39,9 @@ export async function crewAdd(ctx: Ctx): Promise<Response> {
   const gate = await adminForm(ctx);
   if (gate instanceof Response) return gate;
   const { repo, form } = gate;
-  const added = addToCrew(ctx.app, ctx.auth.user, repo, field(form, "agent"));
+  // The team card's one button names the seat it fills.
+  const role = field(form, "role");
+  const added = addToCrew(ctx.app, ctx.auth.user, repo, field(form, "agent"), isCrewRole(role) ? role : undefined);
   return flashTo(
     ctx,
     `${repoBase(repo)}/settings#crew`,

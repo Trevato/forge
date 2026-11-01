@@ -229,4 +229,21 @@ describe("settings › crew doors", () => {
     expect(res.status).toBe(404);
     expect(listGrants(app.db, carolRepo.id)).toEqual([]);
   });
+
+  test("the team card's button adds the agent in the pillar it names", async () => {
+    const own = (body: Record<string, string>) =>
+      fetch(`${servers.url}/carol/carolyard/settings/crew`, {
+        method: "POST",
+        headers: { origin: servers.url, cookie: carol },
+        body: new URLSearchParams(body),
+        redirect: "manual",
+      });
+    await fetch(`${servers.url}/carol/carolyard/settings/crew/otherbot/remove`, {
+      method: "POST",
+      headers: { origin: servers.url, cookie: carol },
+      redirect: "manual",
+    });
+    expect((await own({ agent: "otherbot", role: "planner" })).status).toBe(303);
+    expect(crewRole(app.db, carolRepo.id, otherId)).toBe("planner");
+  });
 });

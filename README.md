@@ -42,6 +42,7 @@ ceiling, held, why }` on MCP `crew`; for people who can write here and the crew.
 Each agent's scorecard — pulls landed of opened, review rounds, red checks,
 reverts, time to land — is on Settings → Crew (`/settings/crew`) and in the
 terminal's palette as "Crew scorecard per agent"; both are a forge admin's only.
+The crew has three seats, planner, builder and reviewer (`seatsOf`, `docs/features/team.md`): Settings → Crew opens with "Your team", the MCP `crew` tool returns `seats`, and the terminal's About card (`I`) lists them, with `p` putting the first free agent on the first empty seat (a repository admin's).
 The terminal's scorecard also ends each agent's row with `spend $ 5h · today · 7d`,
 its cost over the last 5 hours, since 00:00 UTC and the last 7 days, as
 `/settings/spend` reads it; `—` means nothing was spent in that span (`spend —`,

@@ -29,6 +29,7 @@ import { listAllAgents, listCrew } from "../../actions/crew.ts";
 import { CREW_ROLES, listCrewRoles, type CrewRole } from "../../core/agents.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { canAdmin, canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
+import { seatsOf, type Seat } from "../../crew/seats.ts";
 import { crewHasCredential } from "../../core/subscriptions.ts";
 import { autonomyStatus, smallShareWords } from "../../crew/autonomy.ts";
 import { governorSeen } from "../../crew/governed.ts";
@@ -44,7 +45,9 @@ import { directionMarked } from "./direction.ts";
 import { fileHoldsCard } from "./file_holds.ts";
 import { markOf } from "../../core/marks.ts";
 import {
+  badge,
   btn,
+  type Tone,
   card,
   empty,
   field,
@@ -106,6 +109,78 @@ function aboutCard(
       <div class="form-actions">${btn("Save", { variant: "primary" })}</div>
     </form>`,
     { head: html`${icon("pencil")}<h2>About</h2>` },
+  );
+}
+
+const SEAT_LEAD: Record<Seat["state"], "check" | "alert" | "plus"> = {
+  filled: "check",
+  warn: "alert",
+  invite: "plus",
+};
+
+const SEAT_BADGE: Record<Seat["state"], { text: string; tone: Tone }> = {
+  filled: { text: "filled", tone: "success" },
+  warn: { text: "empty", tone: "attn" },
+  invite: { text: "open seat", tone: "default" },
+};
+
+/**
+ * Your team, as three seats (`seatsOf`, the same facts the MCP `crew` tool
+ * returns): whether it works on its own, who fills each seat, what it does,
+ * and — for an empty one — a warning when the team is on its own, a calm
+ * invitation when it is not, each with one button that puts an agent in it.
+ */
+function teamCard(
+  ctx: Ctx,
+  repo: Repo,
+  base: string,
+  admin: boolean,
+  candidate: string | undefined,
+): Html {
+  const team = seatsOf(ctx.app.db, repo, crewOffInPreview());
+  const fill = (p: Seat): Html | undefined => {
+    if (!admin || p.state === "filled") return undefined;
+    if (candidate === undefined)
+      return ctx.auth.user?.isAdmin
+        ? btn("Add an agent", { href: "/settings/crew", size: "sm" })
+        : undefined;
+    return html`<form class="row-actions" method="post" action="${base}/settings/crew">
+      <input type="hidden" name="agent" value="${candidate}" />
+      <input type="hidden" name="role" value="${p.role}" />
+      ${btn(`Put ${candidate} on ${p.role}`, {
+        size: "sm",
+        variant: p.state === "warn" ? "primary" : "secondary",
+      })}
+    </form>`;
+  };
+  const rows = team.seats.map((p) => {
+    const fillBy = fill(p);
+    const b = SEAT_BADGE[p.state];
+    return row({
+      lead: icon(SEAT_LEAD[p.state]),
+      title: p.role[0]!.toUpperCase() + p.role.slice(1),
+      meta: html`${p.by.length > 0 ? html`${p.by.map((u, i) => html`${i > 0 ? ", " : ""}${userLink(u)}`)}: ` : null}${p.does}${p.state === "warn" ? ` No ${p.role}: ${p.without}.` : null}`,
+      trail: html`${badge(b.text, { tone: b.tone })}${fillBy ?? null}`,
+      data: { seat: p.role, state: p.state },
+    });
+  });
+  const intro = crewOffInPreview()
+    ? "The crew is off in a preview, so nobody here is working."
+    : team.auto
+      ? `Auto mode is on (${team.mode}): your team works on its own — a planner decides what is next, a builder builds it, a reviewer checks it.`
+      : "Auto mode is off: your team works only when you ask. Fill the seats you want, then turn auto mode on under On its own.";
+  return card(
+    html`<p class="small" id="auto-mode" data-auto="${team.auto ? "on" : "off"}">
+        ${intro}
+      </p>
+      <ul class="list setting-list">
+        ${rows}
+      </ul>`,
+    {
+      id: "team",
+      head: html`${icon("users")}
+        <h2>Your team</h2>`,
+    },
   );
 }
 
@@ -242,6 +317,7 @@ function crewCard(ctx: Ctx, repo: Repo, base: string, admin: boolean): Html {
         })()
       : null;
   return html`<div id="crew">
+    ${teamCard(ctx, repo, base, admin, available[0]?.user.username)}
     ${admin ? crewReadiness(ctx) : null}
     ${card(html`${rows}`, {
       head: html`${icon("bot")}
@@ -374,16 +450,6 @@ ${repo.autonomyDirection}</textarea
         })}
         <div class="form-actions">${btn("Save", { variant: "primary" })}</div>
       </form>`;
-  // An autonomous repository with no reviewer lands nothing an agent wrote
-  // on its own: each such pull waits for a person's review (#597).
-  const noReviewer =
-    repo.autonomy === "autonomous" &&
-    !listCrewRoles(ctx.app.db, repo.id).some((c) => c.role === "reviewer")
-      ? html`<p class="small" id="no-reviewer">
-          <b>No reviewer: agent pulls wait for you.</b> Put a reviewer on the
-          crew under Crew to have them reviewed and land on their own.
-        </p>`
-      : null;
   const flowOnly = !admin
     ? null
     : html`<form method="post" action="${base}/settings/flow-only" id="flow-only">
@@ -394,7 +460,7 @@ ${repo.autonomyDirection}</textarea
           ${btn(repo.flowOnly ? "Turn off" : "Turn on", { size: "sm" })}
         </p>
       </form>`;
-  return card(html`${state}${noReviewer}${form}${flowOnly}`, {
+  return card(html`${state}${form}${flowOnly}`, {
     id: "autonomy",
     head: html`${icon("play")}
       <h2>On its own</h2>`,

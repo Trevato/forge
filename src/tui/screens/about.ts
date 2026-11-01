@@ -33,6 +33,10 @@ import {
 import { upstreamOffer, type UpstreamOffer } from "../../actions/offer_upstream.ts";
 import { listRefs } from "../../git/read.ts";
 import { directionNote } from "../../crew/direct.ts";
+import { seatsOf } from "../../crew/seats.ts";
+import { crewOffInPreview } from "../../crew/preview.ts";
+import { addToCrew } from "../../actions/crew.ts";
+import { listAgents, listCrewRoles } from "../../core/agents.ts";
 import { whyRepo } from "../../flow/why.ts";
 import { setCrewOutsiders, updateRepoSettings } from "../../actions/repos.ts";
 import { showProvenance } from "../../actions/provenance.ts";
@@ -114,6 +118,10 @@ export function aboutScreen(
   // Danger zone card's gate (#7452).
   const mayDetach = (): boolean =>
     mayFlow() && repo !== undefined && repo.forkParentId !== null;
+  // The team card's button: the first agent not yet on the crew, in the first empty seat.
+  const emptySeat = () =>
+    repo === undefined ? undefined : seatsOf(f.db, repo, crewOffInPreview()).seats.find((x) => x.by.length === 0);
+  const mayFill = (): boolean => may() && f.user?.kind !== "agent" && emptySeat() !== undefined;
   const checking = (): boolean =>
     repo !== undefined && followShown(f.app, repo, f.user)?.enabled === true;
   const factRows = (): [string, string][] => [
@@ -121,6 +129,7 @@ export function aboutScreen(
     ...flowRow(repo),
     ...movingRow(f, repo),
     ...outsidersRow(repo),
+    ...seatRows(f, repo),
     ...aboutFacts(f, src, facts, ref),
     ...paceRows(f, repo),
     ...trailRows(f, repo),
@@ -234,6 +243,7 @@ export function aboutScreen(
                   : `see #${offered.openNumber} upstream`,
               ),
             ]),
+        ...(mayFill() ? [binding(["p"], `fill ${emptySeat()!.role}`)] : []),
         binding(["esc"], "close"),
       ];
     },
@@ -327,6 +337,22 @@ export function aboutScreen(
             ? newPullScreen(f, ctx, repo)
             : pullScreen(f, ctx, local(f, forkParent), offered.openNumber),
         );
+        return true;
+      }
+      if (e.key === "p" && repo !== undefined && mayFill()) {
+        const seat = emptySeat()!;
+        const onCrew = new Set(listCrewRoles(f.db, repo.id).map((c) => c.agent.user.id));
+        const agent = listAgents(f.db).find((a) => !onCrew.has(a.user.id));
+        if (agent === undefined) {
+          ctx.toast("no agent to put there: make one under Crew first", "danger");
+          return true;
+        }
+        const done = addToCrew(f.app, f.user, repo, agent.user.username, seat.role);
+        if (done.ok) {
+          rows = factRows();
+          ctx.toast(`${agent.user.username} is on ${seat.role}`, "success");
+        } else ctx.toast("that could not be changed", "danger");
+        ctx.invalidate();
         return true;
       }
       if (e.key === "d" && repo !== undefined && mayOutsiders()) {
@@ -587,6 +613,19 @@ export function movingRow(f: Session, repo: Repo | undefined): [string, string][
   if (repo === undefined || f.user === undefined || !canWrite(f.app.db, repo, f.user)) return [];
   const { cause } = whyRepo(f.app, repo);
   return [["Moving", cause === null ? "yes" : `no: ${cause.says} ${cause.clears}`]];
+}
+
+/** The three seats, in the crew card's words: who fills each, and what an empty one costs. */
+export function seatRows(f: Session, repo: Repo | undefined): [string, string][] {
+  if (repo === undefined) return [];
+  return seatsOf(f.db, repo, crewOffInPreview()).seats.map((x): [string, string] => [
+    x.role[0]!.toUpperCase() + x.role.slice(1),
+    x.by.length > 0
+      ? x.by.join(", ")
+      : x.state === "warn"
+        ? `empty. No ${x.role}: ${x.without}.`
+        : "open seat",
+  ]);
 }
 
 /** Who may direct the crew, in `OUTSIDERS_NOTE`'s words; every reader sees it. */

@@ -138,3 +138,13 @@ test("the listing carries the governor's slots and reason for a writer while the
     app.db.query("UPDATE repo SET autonomy = 'off' WHERE name = 'game'").run();
   }
 });
+
+test("the crew answer carries the three seats, empty ones named", async () => {
+  const r: any = await mcpTool(servers.url, admin, "crew", { repo: "alice/game" });
+  const team = r.value.seats;
+  expect(team.seats.map((p: any) => p.role)).toEqual(["planner", "builder", "reviewer"]);
+  for (const p of team.seats) {
+    expect(typeof p.does).toBe("string");
+    if (p.by.length === 0) expect(p.without).toBeString();
+  }
+});

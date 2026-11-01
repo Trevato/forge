@@ -19,6 +19,7 @@ import {
   listCrew as queryCrew,
   listCrewRoles,
   removeCrew as deleteCrew,
+  setCrewRole,
   updateAgent as patchAgent,
   type Agent,
   type AgentPatch,
@@ -242,6 +243,7 @@ export function addToCrew(
   actor: User | undefined,
   repo: Repo,
   username: string,
+  role?: CrewRole,
 ): Result<Agent, "not_found" | "no_such_agent" | "not_an_agent" | "unverified"> {
   const admin = requireRepoAdmin(app, actor, repo);
   if (!admin.ok) return admin;
@@ -252,6 +254,8 @@ export function addToCrew(
   if (!agent)
     return err(getUserByName(app.db, username) ? "not_an_agent" : "no_such_agent");
   if (insertCrew(app.db, repo.id, agent.user.id, admin.value.id)) {
+    // A seat is named only for an agent who joins now; one already on the crew keeps its role.
+    if (role !== undefined) setCrewRole(app.db, repo.id, agent.user.id, role);
     app.bus.append({
       kind: "crew.added",
       repoId: repo.id,
