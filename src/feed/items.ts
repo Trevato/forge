@@ -13,7 +13,7 @@ import { listDecidedIn } from "../core/decisions.ts";
 import { audienceFilter } from "../core/event_audience.ts";
 import { listEventsVisibleTo, type ForgeEvent } from "../core/events.ts";
 import { getReview } from "../core/reviews.ts";
-import { commentAnchor, getIssuesByNumbers, numberKey, type Issue } from "../core/issues.ts";
+import { commentAnchor, getIssuesByIds, getIssuesByNumbers, numberKey, type Issue } from "../core/issues.ts";
 import {
   listDetachedMirrors,
   listOrigins,
@@ -423,9 +423,13 @@ export function candidatesFor(
   out.push(...frozenCandidates(db, viewer, now));
   out.push(...chooseCandidates(db, writable));
   out.push(...hotCandidates(writable));
+  // A decision about a pull or a tell links to it, one tap from its diff;
+  // one about nothing in particular keeps the pulls list.
+  const about = getIssuesByIds(db, decided.flatMap((d) => (d.issueId === null ? [] : [d.issueId])));
   for (const d of decided) {
     const repo = repos.get(d.repoId);
     if (!repo) continue;
+    const subject = d.issueId === null ? undefined : about.get(d.issueId);
     out.push({
       id: `decision:${d.id}`,
       kind: "decision",
@@ -434,7 +438,9 @@ export function candidatesFor(
       actorId: null,
       actor: null,
       at: d.outcomeAt ?? d.createdAt,
-      link: `${base(repo)}/pulls`,
+      link: subject === undefined
+        ? `${base(repo)}/pulls`
+        : `${base(repo)}/${subject.kind === "pull" ? "pulls" : "issues"}/${subject.number}`,
       what: clip(`${d.by} chose “${clip(d.answer, 40)}” on a ${d.kind} and it ended ${d.outcome}`),
       urgency: 0,
     });
