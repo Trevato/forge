@@ -629,9 +629,48 @@ function runsHref(
   return text === "" ? `${base}/runs` : `${base}/runs?${text}`;
 }
 
+/** What a queued run waits on, in the words its row says it by: a builder
+ * for an agent run, a slot for a check, the deploy lane for a deploy; a run
+ * paused on a limit says it resumes later. */
+export function whatRunWaitsOn(run: Run): string {
+  if (run.notBefore !== null) return "paused on a limit, resumes soon";
+  return run.kind === "agent"
+    ? "waiting for a builder"
+    : run.kind === "check"
+      ? "waiting for a check slot"
+      : "waiting for the deploy lane";
+}
+
+/** Whether a run is doing something at this moment — the only runs under
+ * Working. A deploy is not counted: the flow report's stages are builders,
+ * reviewers and checks, and the tab's count is held to theirs. */
+export function isWorkingNow(run: Run): boolean {
+  return run.state === "running" && run.kind !== "deploy";
+}
+
+/** Whether a run belongs on the page asked for. Working is exactly the
+ * runs running now. With no word chosen a check or a deploy that finished
+ * is news too, and an explicit `?state=` shows every run it fetched: the
+ * default list is the whole story, newest first. Otherwise the word rules. */
+export function onRunsList(
+  run: Run,
+  word: Word,
+  filter: WordFilter | undefined,
+  state: RunState | undefined,
+): boolean {
+  if (filter === "working") return isWorkingNow(run);
+  if (filter === undefined && (run.kind !== "agent" || state !== undefined))
+    return true;
+  return inWordFilter(word, filter);
+}
+
 /** A check's state in the words its row names it by. */
 const checkState = (run: Run): string =>
-  run.state === "ok" ? "passed" : run.state;
+  run.state === "ok"
+    ? "passed"
+    : run.state === "queued"
+      ? whatRunWaitsOn(run)
+      : run.state;
 
 const RUNS_KIND_WORDS: Record<RunsKind, string> = {
   agent: "Agent runs",
@@ -661,7 +700,9 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
   const reading = performance.now();
   const listed = listRepoRuns(ctx.app, ctx.auth.user, repo, {
     kind,
-    state,
+    // Working is what runs now: read only the running ones, so the page
+    // is not spent on finished rows it would drop.
+    state: state ?? (filter === "working" ? "running" : undefined),
     withProofs: true,
     limit: LIST_PAGE,
     ...(cursor ? { cursor } : {}),
@@ -682,11 +723,7 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
   const rows = fetched
     .map((run, i) => ({ run, info: words[i]! }))
     .filter(
-      // With no word chosen a check or a deploy that finished is news too:
-      // the default list is the whole story, newest first.
-      (r) =>
-        (filter === undefined && (r.run.kind !== "agent" || state !== undefined)) ||
-        inWordFilter(r.info.word, filter),
+      (r) => onRunsList(r.run, r.info.word, filter, state),
     );
 
   notePhase(ctx.request, "runs", performance.now() - reading);
@@ -724,7 +761,7 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
                   ? html`${run.commitOid.slice(0, 7)} · ${checkState(run)}
                     ${when(durationText(run), (d) => html` · took ${d}`)} ·
                     ${time(run.finishedAt ?? run.createdAt)}`
-                  : html`${run.kind === "agent" ? html`${who} · ` : null}${info.note}
+                  : html`${run.kind === "agent" ? html`${who} · ` : null}${run.state === "queued" ? whatRunWaitsOn(run) : info.note}
               · ${time(run.finishedAt ?? run.createdAt)}`,
               trail: wordBadge(info.word),
             });
