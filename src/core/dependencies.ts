@@ -15,6 +15,7 @@ import { pillarsOf, structuralIds, type Pillars } from "./pillars.ts";
 import { getRepoById, type Repo } from "./repos.ts";
 import { unadoptedAmong } from "../crew/direct.ts";
 import { raisedAt, raisedInRepo } from "./thought_links.ts";
+import { firstAt, firstInRepo } from "./first.ts";
 import { limbRanks, limbTree, readPlaces } from "./limb_order.ts";
 
 export type DependencyError = "self" | "cross_repo" | "cycle" | "not_an_issue";
@@ -249,6 +250,8 @@ export interface Graph {
    * ready ahead of the rest, the latest raise first.
    */
   readonly raised?: ReadonlyMap<string, string>;
+  /** When a writer put an issue first (#7806): ready ahead of everything else. */
+  readonly first?: ReadonlyMap<string, string>;
 }
 
 /**
@@ -449,6 +452,10 @@ export function repoGraph(
       whole === undefined
         ? raisedAt(db, issues.map((i) => i.id))
         : raisedInRepo(db, repoId),
+    first:
+      whole === undefined
+        ? firstAt(db, issues.map((i) => i.id))
+        : firstInRepo(db, repoId),
     issues,
     unadopted:
       repo === undefined ? new Set() : unadoptedAmong(db, repo, issues),
@@ -655,10 +662,17 @@ export function readyNow(graph: Graph): Ranked[] {
   const of = (r: Ranked) => rank?.get(r.issue.id) ?? Number.MAX_SAFE_INTEGER;
   if (rank !== undefined) ready.sort((a, b) => of(a) - of(b));
   const raised = graph.raised;
-  if (raised === undefined || raised.size === 0) return ready;
-  // What the owner said again comes first (stable: the rest keep their order).
-  const at = (r: Ranked) => raised.get(r.issue.id) ?? "";
-  return ready.sort((a, b) => at(b).localeCompare(at(a)));
+  if (raised !== undefined && raised.size > 0) {
+    // What the owner said again comes first (stable: the rest keep their order).
+    const at = (r: Ranked) => raised.get(r.issue.id) ?? "";
+    ready.sort((a, b) => at(b).localeCompare(at(a)));
+  }
+  // What a person put first comes before all of it, the latest first. It only
+  // orders what is already ready: no rank lifts the Later gate or a blocker.
+  const first = graph.first;
+  if (first === undefined || first.size === 0) return ready;
+  const when = (r: Ranked) => first.get(r.issue.id) ?? "";
+  return ready.sort((a, b) => when(b).localeCompare(when(a)));
 }
 
 /**

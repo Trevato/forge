@@ -36,6 +36,7 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   // the admins' (`repo.upstream_follow`).
   "repo.following",
   "issue.labeled",
+  "issue.first",
   "issue.closed",
   "issue.commented",
   "usage.delta",

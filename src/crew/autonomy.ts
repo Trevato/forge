@@ -45,6 +45,7 @@ import {
   crewRole,
 } from "../core/agents.ts";
 import { pickBuilder, routeIssue } from "./route.ts";
+import { firstAt } from "../core/first.ts";
 import { ensurePlanner } from "./planner.ts";
 import { readyNow, repoGraph, type Ranked } from "../core/dependencies.ts";
 import {
@@ -376,11 +377,16 @@ function inSlotOrder(app: App, repo: Repo, ready: readonly Ranked[], slotted: re
   const issues = ready.map((r) => r.issue);
   const small = smallIssues(app.db, issues);
   const roadmap = roadmapIssues(app.db, repo, issues.map((i) => i.id));
+  const first = firstAt(app.db, issues.map((i) => i.id));
   const raised = raisedAt(app.db, issues.map((i) => i.id));
   const running = smallOfIds(app.db, slotted.flatMap((r) => (r.issueId === null ? [] : [r.issueId])));
   return slotOrder(
     ready,
-    (r) => ({ raised: raised.has(r.issue.id), roadmap: roadmap.has(r.issue.id), small: small.has(r.issue.id) }),
+    (r) => ({
+      raised: raised.has(r.issue.id) || first.has(r.issue.id),
+      roadmap: roadmap.has(r.issue.id),
+      small: small.has(r.issue.id) && !first.has(r.issue.id),
+    }),
     running,
     smallCap(slots, smallShare(app.db)),
   );

@@ -68,6 +68,7 @@ import {
 } from "../origins/import.ts";
 import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { clearFirst } from "../core/first.ts";
 import { inheritPillar } from "./pillars.ts";
 import {
   requireParticipant,
@@ -471,6 +472,7 @@ export function setIssueState(
       : [];
   const changed = app.db.transaction(() => {
     const written = writeState(app.db, issue.id, state, reason);
+    if (written && state === "closed") clearFirst(app.db, issue.id);
     if (written && doneBy.length > 0)
       insertComment(app.db, {
         issueId: issue.id,
