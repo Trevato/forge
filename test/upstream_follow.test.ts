@@ -32,6 +32,7 @@ import { runGit } from "../src/git/env.ts";
 import { REMOTE_PROTOCOLS } from "../src/git/remote-env.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { MIRROR_REFUSED, provideMirrorOutboundForTest, vettedEnv } from "../src/origins/git-mirror.ts";
+import { mirrorOutbound } from "./helpers/globals.ts";
 import {
   getFollow,
   listFollowing,
@@ -156,9 +157,10 @@ describe("checking an upstream (layer 2)", () => {
   beforeAll(async () => {
     target = ok(await createRepo(app, alice, { name: "checked", visibility: "public" }));
     dir = repoDir(app.reposRoot, target.ownerName, target.name);
-    provideMirrorOutboundForTest({ allow: ["127.0.0.1"] });
   });
-  afterAll(() => provideMirrorOutboundForTest({}));
+  // Given back as found: a bare `{}` here refused loopback to every file
+  // after this one in its shard (#7686).
+  mirrorOutbound({ allow: ["127.0.0.1"] });
   /** A server that records every request and answers with `refs` as a dumb-http `info/refs`. */
   function upstream(refs: () => string, delayMs = 0) {
     const seen: Request[] = [];

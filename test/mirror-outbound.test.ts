@@ -10,14 +10,14 @@ import {
   provideMirrorOutboundForTest,
 } from "../src/origins/git-mirror.ts";
 import { remoteGitEnv, pinFor } from "../src/git/remote-env.ts";
+import { mirrorOutbound } from "./helpers/globals.ts";
 
 let dir: string;
+mirrorOutbound({});
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), "mirror-outbound-"));
-  provideMirrorOutboundForTest({});
 });
 afterAll(async () => {
-  provideMirrorOutboundForTest({ allow: ["127.0.0.1", "::1"] });
   await rm(dir, { recursive: true, force: true });
 });
 
