@@ -7,11 +7,14 @@ import { checkStale } from "../../../checks/stale.ts";
 import { checkSummary } from "../../../core/runs.ts";
 import { nextOfPull } from "../../../flow/next_actor.ts";
 import { appView } from "../../../actions/apps.ts";
+import { countThread, EMBEDDED_COMMENTS, listComments } from "../../../core/issues.ts";
+import { isCrew } from "../../../core/agents.ts";
+import { markReaders } from "../../../crew/direct.ts";
 import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
 
 export const tool: Tool = {
   name: "pull",
-  doc: "`{ repo, number }`: a pull's title, state, head and base, and for an open pull whether it merges into the base's current head (`mergeable`) and the paths that stop it (`conflicts`), and `next: { who, why }` (open only; who acts next: builder, reviewer, queue or person), and `check: { state, baseOid }`: the latest check's state and the base tip it was merged with (empty when it merged nothing); `mergeable` and `conflicts` are the same fields as `GET …/pulls/:number`, `check` is `state` and `run.baseOid` from `GET …/pulls/:number/checks`; draws the `ui://forge/pull` card: `#N title`, state with check and conflicts while open, `head → base` linked to the pull, and the preview link when the pull has an environment",
+  doc: "`{ repo, number }`: a pull's title, state, head and base, and for an open pull whether it merges into the base's current head (`mergeable`) and the paths that stop it (`conflicts`), and `next: { who, why }` (open only; who acts next: builder, reviewer, queue or person), and `comments` (the newest 50: author, body, at, `untrusted` on an outsider's), `commentsTotal` and `commentsNext` (older: `GET …/issues/:number/comments?cursor=`), and `check: { state, baseOid }`: the latest check's state and the base tip it was merged with (empty when it merged nothing); `mergeable` and `conflicts` are the same fields as `GET …/pulls/:number`, `check` is `state` and `run.baseOid` from `GET …/pulls/:number/checks`; draws the `ui://forge/pull` card: `#N title`, state with check and conflicts while open, `head → base` linked to the pull, and the preview link when the pull has an environment",
   description:
     "A pull: title, state, head, base; open: `mergeable`, `conflicts`, `checkStale`, `check`.",
   inputSchema: {
@@ -40,7 +43,21 @@ export const tool: Tool = {
       pull.state === "open" &&
       pull.mergedAt === null &&
       checkStale(check.run, await resolveOid(dir, `refs/heads/${pull.baseBranch}`));
+    const db = ctx.app.db;
+    // Marked only for a crew agent, as the issue and the API do.
+    const marking = user.kind === "agent" && isCrew(db, repo.id, user.id);
+    const rows = listComments(db, pull.id, { newest: true, limit: EMBEDDED_COMMENTS });
+    const comments = marking ? markReaders(db, repo, rows) : rows;
+    const total = countThread(db, pull.id);
     const answer = good({
+      comments: comments.map((c) => ({
+        author: c.authorName,
+        body: c.body,
+        at: c.createdAt,
+        ...("untrusted" in c && c.untrusted !== undefined ? { untrusted: true } : {}),
+      })),
+      commentsTotal: total,
+      commentsNext: comments.length > 0 && comments.length < total ? comments[0]!.id : null,
       number: pull.number,
       title: pull.title,
       state: pull.mergedAt !== null ? "merged" : pull.state,

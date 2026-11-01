@@ -141,13 +141,22 @@ function headroomSpent(db: Database, now: Date): boolean {
   );
 }
 
-function sharedFacts(app: App, repo: Repo, now: Date): Pick<WhyFacts, "ceilingUsd" | "builders" | "noHeadroom"> {
+type Shared = Pick<WhyFacts, "ceilingUsd" | "builders" | "noHeadroom">;
+
+/** The facts that hold for the whole forge, read once for a batch. */
+function forgeFacts(app: App, now: Date): Pick<Shared, "ceilingUsd" | "noHeadroom"> {
   const cap = forgeCeiling(app.config);
   return {
     ...(cap !== null && ceilingHitAt(app.db, now, cap) !== null ? { ceilingUsd: cap } : {}),
-    builders: listCrewRoles(app.db, repo.id).filter((c) => c.role === "builder").length,
     noHeadroom: headroomSpent(app.db, now),
   };
+}
+
+const buildersOf = (app: App, repo: Repo): number =>
+  listCrewRoles(app.db, repo.id).filter((c) => c.role === "builder").length;
+
+function sharedFacts(app: App, repo: Repo, now: Date): Shared {
+  return { ...forgeFacts(app, now), builders: buildersOf(app, repo) };
 }
 
 /** Why the repository's builders are held, whatever the issue. */
@@ -195,6 +204,7 @@ export function whyPull(
   pull: Pull,
   live: { readonly headOid: string; readonly conflicts: number },
   now = new Date(),
+  shared: Shared = sharedFacts(app, repo, now),
 ): Why {
   if (pull.mergedAt !== null) return { cause: null, settled: "merged" };
   if (pull.state !== "open") return { cause: null, settled: "closed" };
@@ -205,7 +215,28 @@ export function whyPull(
     actor: next.who,
     redCheck: next.who === "builder" && check === "failed",
     waitingReview: next.who === "reviewer",
-    ...sharedFacts(app, repo, now),
+    ...shared,
   });
   return { cause, next };
+}
+
+/**
+ * `whyPull` for a pile of pulls (#7655): the forge-wide facts and each
+ * repository's builders are read once, not once per pull. The stored head
+ * stands for the live one and no conflict is looked for: a pile touches no git.
+ */
+export function whyPulls(
+  app: App,
+  rows: readonly { readonly repo: Repo; readonly pull: Pull }[],
+  now = new Date(),
+): Why[] {
+  const forge = forgeFacts(app, now);
+  const builders = new Map<string, number>();
+  return rows.map(({ repo, pull }) => {
+    if (!builders.has(repo.id)) builders.set(repo.id, buildersOf(app, repo));
+    return whyPull(app, repo, pull, { headOid: pull.headOid, conflicts: 0 }, now, {
+      ...forge,
+      builders: builders.get(repo.id)!,
+    });
+  });
 }

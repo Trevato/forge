@@ -523,6 +523,37 @@ export function openPullsForRepos(
   return out;
 }
 
+/** An open, unmerged pull as the pile lists it before it is hydrated. */
+export interface PileRow {
+  readonly id: string;
+  readonly repoId: string;
+  readonly sealed: boolean;
+  readonly authorId: string;
+}
+
+/**
+ * Every open, unmerged pull on the forge, oldest first, in one query: the
+ * pile an MCP caller pages (#7655). Reading rights are the caller's to apply
+ * to the rows (`canRead`, `mayView`); no git is touched.
+ */
+export function openPullPileRows(db: Database): PileRow[] {
+  return db
+    .query<{ id: string; repo_id: string; sealed: number; author_id: string }, []>(
+      `SELECT issue.id, issue.repo_id, issue.sealed, issue.author_id
+         FROM issue JOIN pull ON pull.issue_id = issue.id
+        WHERE issue.state = 'open' AND pull.merged_at IS NULL
+        ORDER BY issue.created_at, issue.id`,
+    )
+    .all()
+    .map((r) => ({ id: r.id, repoId: r.repo_id, sealed: r.sealed === 1, authorId: r.author_id }));
+}
+
+/** These pulls by issue id, in the order asked. */
+export function pullsByIssueIds(db: Database, ids: readonly string[]): Pull[] {
+  const issues = getIssuesByIds(db, ids);
+  return joinMany(db, ids.flatMap((id) => issues.get(id) ?? []));
+}
+
 export type ListPullsOptions = Omit<ListIssuesOptions, "kind">;
 
 export function listPulls(
