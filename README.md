@@ -447,6 +447,14 @@ pan. The header shows its pixel size, file size and format; **Source**,
 binary picture where the terminal can, and otherwise names the file and its
 size; SVG there shows as its source text.
 
+A model key is taken as pasted, wherever one is given (Settings →
+Subscriptions, MCP `subscription_add`, the terminal's Crew subscriptions
+screen `a`, a new forge's
+`modelKey`): every space, line break, non-breaking or zero-width space and a
+leading `Bearer ` are dropped (`normalizeToken`, `src/core/subscriptions.ts`),
+and what is left is sealed if it is not empty and at most 4096 characters. Its
+shape is not judged; the provider answers a wrong key on the first call.
+
 The running list of what the forge does, one bullet each, lives in
 [`docs/STATUS.md`](docs/STATUS.md).
 

@@ -229,13 +229,13 @@ describe("+ New forge", () => {
     const key = await post(admin, [
       ["name", "kai"],
       ["apps", "alice/bakery"],
-      ["modelKey", "sk-ant-api03 pasted with a space"],
+      ["modelKey", "\u200b"],
       ["budgetUsd", "5"],
       ["do", "plan"],
     ]);
     expect(key.status).toBe(422);
     expect(await key.text()).toMatch(
-      /id="f-modelKey-err"[^>]*>[^<]*one line with no spaces/,
+      /id="f-modelKey-err"[^>]*>[^<]*is empty/,
     );
   });
 

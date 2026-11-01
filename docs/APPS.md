@@ -1374,7 +1374,8 @@ or until the next one.
 One token in the environment is one account for the whole forge. An admin
 with more than one — a personal plan and a work plan — adds each under
 Settings → Subscriptions (a token from `claude setup-token`, or an API key;
-sealed under the forge's key, never shown again) and grants it:
+whitespace and a `Bearer ` prefix from the paste are dropped; sealed under the
+forge's key, never shown again) and grants it:
 
 - on a repository's Settings → Crew, to everyone on the crew or to one agent;
 - on an organization's page, for every repository under it.

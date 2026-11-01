@@ -12,7 +12,7 @@ import type { App } from "../app.ts";
 import { maxChildren } from "../core/capacity.ts";
 import { getAgentByName } from "../core/agents.ts";
 import { canRead, getRepo } from "../core/repos.ts";
-import { kindOfToken, parseApiBase } from "../core/subscriptions.ts";
+import { kindOfToken, normalizeToken, parseApiBase } from "../core/subscriptions.ts";
 import type { User } from "../core/users.ts";
 import { repoDir } from "../git/repos.ts";
 import type { Ctx } from "../http/context.ts";
@@ -215,11 +215,11 @@ export async function spawnDoor(
   }
   const modelKey = raw["modelKey"];
   if (modelKey !== undefined) {
-    const kind = typeof modelKey === "string" ? kindOfToken(modelKey) : undefined;
+    const kind = typeof modelKey === "string" ? kindOfToken(normalizeToken(modelKey)) : undefined;
     if (kind === undefined)
       return invalid(
         "modelKey",
-        "must be one line with no spaces: an Anthropic key (sk-ant-api…, sk-ant-usr…), a `claude setup-token` token (sk-ant-oat…), or a gateway's key with its base URL",
+        "is empty or over 4096 characters once spaces, line breaks and a `Bearer ` prefix are dropped: paste an Anthropic key, a `claude setup-token` token, or your gateway's key (with its base URL)",
       );
     if (kind === "oauth" && modelEndpoint !== undefined)
       return invalid("modelEndpoint", "a subscription token (sk-ant-oat…) talks to Anthropic itself and takes no base URL");

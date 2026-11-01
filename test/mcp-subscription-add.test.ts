@@ -88,9 +88,10 @@ describe("MCP subscription_add", () => {
   });
 
   test("a bad token is refused with the page's words", async () => {
-    const bad = await tool(alice, { name: "Other", token: "not a token" });
+    const bad = await tool(alice, { name: "Other", token: "  \u200b " });
     expect(bad.error).toContain(addRefusal("invalid_token", "Other"));
     expect(bad.error).toContain("claude setup-token");
+    expect(bad.error).not.toContain("no spaces");
     const base = await tool(alice, { name: "Other", token: TOKEN, apiBase: "https://x.example" });
     expect(base.error).toContain(addRefusal("invalid_api_base", "Other"));
   });

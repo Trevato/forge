@@ -7,7 +7,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App as Forge } from "../src/app.ts";
-import { addSubscription, deleteSubscription, listSubscriptions } from "../src/core/subscriptions.ts";
+import { addSubscription, deleteSubscription, listSubscriptions, subscriptionAad } from "../src/core/subscriptions.ts";
+import { open as unseal } from "../src/kernel/secret.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { subscriptionsScreen } from "../src/tui/screens/subscriptions.ts";
@@ -123,7 +124,7 @@ describe("adding and removing a subscription in the terminal", () => {
     await h.press("enter");
     await h.until("Token for empty");
     await h.press("enter");
-    await h.until("That is not a model token");
+    await h.until("That token is empty or over 4096 characters");
     expect(listSubscriptions(forge.db)).toHaveLength(1);
     await h.press("esc", "a");
     await h.type("gamma");
@@ -149,6 +150,29 @@ describe("adding and removing a subscription in the terminal", () => {
     await h.until("gamma is removed.");
     expect(listSubscriptions(forge.db)).toHaveLength(0);
     for (const frame of h.frames) expect(frame).not.toContain("secretgamma");
+    h.stop();
+  });
+
+  test("a key pasted with a Bearer prefix and a space is sealed cleaned, as on the page and in MCP", async () => {
+    const h = boot("alice");
+    await open(h);
+    await h.press("a");
+    await h.type("pasted");
+    await h.press("enter");
+    await h.until("Token for pasted");
+    await h.type("Bearer sk-ant-oat01-secret pasted");
+    await h.press("enter");
+    await h.until("API base for pasted");
+    await h.press("enter");
+    await h.until("pasted is in the pool.");
+    const [sub] = listSubscriptions(forge.db).filter((s) => s.name === "pasted");
+    // Judged after cleaning: with the prefix kept it would be taken as an API key.
+    expect(sub!.kind).toBe("oauth");
+    const row = forge.db
+      .query<{ token_enc: string }, [string]>("SELECT token_enc FROM subscription WHERE id = ?")
+      .get(sub!.id)!;
+    expect(unseal(dataDir, row.token_enc, subscriptionAad(sub!.id))).toEqual({ ok: true, value: "sk-ant-oat01-secretpasted" });
+    deleteSubscription(forge.db, sub!.id);
     h.stop();
   });
 

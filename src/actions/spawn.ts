@@ -45,6 +45,7 @@ import {
   addSubscription,
   getSubscriptionByName,
   lockBudget,
+  normalizeToken,
   setGrants,
   subscriptionAad,
 } from "../core/subscriptions.ts";
@@ -226,6 +227,8 @@ async function make(
   plan: SpawnPlan,
   deps: SpawnDeps,
 ): Promise<Result<Spawned, SpawnError>> {
+  // The key as the person meant it: whitespace and a `Bearer ` prefix from the paste dropped.
+  if (deps.modelKey !== undefined) deps = { ...deps, modelKey: normalizeToken(deps.modelKey) };
   const planHash = sha256(JSON.stringify(plan));
   let ledger = await readLedger(app, plan.name);
   if (ledger) {

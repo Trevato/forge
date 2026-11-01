@@ -14,7 +14,7 @@ export const SUBSCRIPTION_WORDS = {
   name_taken: (name: string): string =>
     `There is already a subscription called ${name.trim()}.`,
   invalid_token:
-    "That is not a model token: one line, no spaces. One from `claude setup-token` begins sk-ant-oat; anything else is taken as an API key (sk-ant-api…, sk-ant-usr…, sk-or-v1-…, or a gateway's own with its base URL).",
+    "That token is empty or over 4096 characters once spaces, line breaks and a `Bearer ` prefix are dropped. One from `claude setup-token` begins sk-ant-oat; anything else is taken as an API key (sk-ant-api…, sk-ant-usr…, sk-or-v1-…, or a gateway's own with its base URL).",
   invalid_api_base:
     "The API base URL must be https, with no credentials, query, or hash. For OpenRouter use https://openrouter.ai/api (a Claude subscription token cannot use a gateway).",
   headroom_range: `Headroom is a whole percent from 0 to ${HEADROOM_MAX}.`,
