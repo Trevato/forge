@@ -341,6 +341,14 @@ function freshPullFor(
   );
 }
 
+/** Whether `spentUsd` has reached the repository's daily ceiling: the test that stops a run being queued. */
+export function atCeiling(
+  repo: Pick<Repo, "autonomyCeilingUsd">,
+  spentUsd: number,
+): boolean {
+  return spentUsd >= repo.autonomyCeilingUsd;
+}
+
 /** Queue a run about an issue for an agent, unless one is already waiting. */
 export function queueAgentRun(
   app: App,
@@ -373,7 +381,7 @@ export function queueAgentRun(
   if (
     reason !== "assigned" &&
     repo.autonomy === "autonomous" &&
-    spentToday(app.db, repo.id) >= repo.autonomyCeilingUsd
+    atCeiling(repo, spentToday(app.db, repo.id))
   ) {
     log.info("at the ceiling; not queued", {
       repo: `${repo.ownerName}/${repo.name}`,
