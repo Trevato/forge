@@ -137,8 +137,8 @@ describe("a scorecard row per team", () => {
     const cells = [...row.matchAll(/<td class="num">([\s\S]*?)<\/td>/g)].map((m) =>
       m[1]!.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim(),
     );
-    // 30 days beside all time: landed, review rounds, red checks; then reverts.
-    expect(cells.slice(0, 7)).toEqual(["4 of 4", "4 of 4", "0.3", "0.3", "25%", "25%", "0"]);
+    // Landed, review rounds, red checks, then reverts.
+    expect(cells.slice(0, 4)).toEqual(["4 of 4", "0.3", "25%", "0"]);
     // A team without a card has no row, and the team rows sit under the agents.
     expect(table).not.toContain(`data-team="${three}"`);
     expect(table.indexOf("a1")).toBeLessThan(table.indexOf(`data-team="${one}"`));
