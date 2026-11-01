@@ -42,6 +42,7 @@ import {
 import type { ForgeEvent } from "../core/events.ts";
 import {
   deleteLooks,
+  deleteStrangerThumbs,
   DEFAULT_PAGE,
   LEGACY_THUMB_WIDTH,
   DARK_KINDS,
@@ -368,8 +369,11 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
     const sealed = sealedPreview(app.db, repo.id, item.env);
     const everyone =
       !sealed && repo.visibility === "public" && record.access === "public";
+    // A private app turns a signed-out visitor away to sign in, on another
+    // host: its thumb is taken through the grant door as the owner, like
+    // its other pictures, and never leaves the app's host (#7830).
     const asNobody = (kind: LookKind): boolean =>
-      !sealed && (everyone || kind === "thumb");
+      !sealed && (everyone || (kind === "thumb" && record.access === "public"));
     const owner = getUserById(app.db, repo.ownerId);
     const asOwner: GrantWho | undefined =
       owner === undefined
@@ -593,6 +597,24 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
   }
 
   /**
+   * Before #7830 a private app's thumb was taken as a signed-out visitor,
+   * who is sent to sign in on another host: its picture is a certificate
+   * warning. Those thumbs are deleted, and the sweep takes them again as
+   * the owner. Returns how many went.
+   */
+  function retakeStrangerThumbs(record: AppRecord): number {
+    if (record.access === "public") return 0;
+    const bad = deleteStrangerThumbs(app.db, record.id);
+    if (bad.length === 0) return 0;
+    remove(bad);
+    log.info("thumbs of a private app taken as a stranger, to be retaken", {
+      app: record.slug,
+      count: bad.length,
+    });
+    return bad.length;
+  }
+
+  /**
    * Pictures on disk for apps that no longer exist, or previews whose pull
    * closed while no forge was listening, are nobody's: the same sweep the
    * runtime makes over its checkouts on boot.
@@ -612,6 +634,7 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         rmSync(join(root, appId), { recursive: true, force: true });
         continue;
       }
+      retakeStrangerThumbs(record);
       for (const env of readdirSync(join(root, appId))) {
         if (!isEnvName(env) || env === "production") continue;
         const pull = getPull(app.db, record.repoId, Number(env.slice(5)));

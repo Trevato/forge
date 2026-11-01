@@ -181,6 +181,32 @@ export function parseRecorded(raw: unknown): Recorded {
   };
 }
 
+/**
+ * Whether the page the browser ended on is the one asked for: why it is
+ * not, or undefined when it is. A browser's own error page (a certificate
+ * warning, a refused connection) or a page on another host is never a
+ * picture of the app, so the look fails and the last good one stays.
+ */
+export function refusal(
+  host: string,
+  navigationError: string | undefined,
+  href: string,
+): string | undefined {
+  if (navigationError !== undefined && navigationError !== "")
+    return `the browser showed an error page instead of the app (${navigationError.slice(0, 100)})`;
+  let url: URL;
+  try {
+    url = new URL(href);
+  } catch {
+    return "the browser ended on a page with no address";
+  }
+  if (url.protocol === "chrome-error:")
+    return "the browser showed an error page instead of the app";
+  if (url.hostname !== host)
+    return `the page left the app's host for ${url.hostname === "" ? url.protocol : url.hostname}`;
+  return undefined;
+}
+
 /** The DevTools endpoint Chromium writes into its profile once it listens. */
 async function endpoint(
   profile: string,
@@ -421,10 +447,24 @@ async function shoot(
         sessionId,
       );
       const loaded = dt.heard("Page.loadEventFired", sessionId);
-      await dt.send("Page.navigate", { url: input.url }, sessionId);
+      const nav = await dt.send("Page.navigate", { url: input.url }, sessionId);
       // A page that never finishes loading is pictured as it stands.
       await Promise.race([loaded, Bun.sleep(LOAD_MS)]);
       await Bun.sleep(SETTLE_MS);
+      const where = await dt.send(
+        "Runtime.evaluate",
+        { expression: "location.href", returnByValue: true },
+        sessionId,
+      );
+      const href = String(
+        (where["result"] as { value?: unknown } | undefined)?.value ?? "",
+      );
+      const refused = refusal(
+        host,
+        typeof nav["errorText"] === "string" ? nav["errorText"] : undefined,
+        href,
+      );
+      if (refused !== undefined) throw new Error(refused);
       let recorded = parseRecorded(undefined);
       try {
         const read = await dt.send(

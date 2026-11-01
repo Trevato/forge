@@ -12,7 +12,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { enableApp, newApp, openEnvUrl } from "../src/actions/apps.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
@@ -237,8 +237,8 @@ describe("the look", () => {
     expect(pngSize(join(dataDir, thumb.path))).toEqual([640, 400]);
     const desktop = rows.find((l) => l.kind === "desktop")!;
     expect(pngSize(join(dataDir, desktop.path))).toEqual([1280, 800]);
-    // The thumb's grant names nobody: the tile a stranger is shown is the
-    // page as a stranger sees it.
+    // This app is private: a stranger is sent to sign in on another host,
+    // so its thumb is taken as the owner, through the same grant door (#7830).
     const thumbCall = calls.find((c) => c.out.endsWith("-thumb.png"))!;
     const thumbGrant = readGrant(
       dataDir,
@@ -246,7 +246,8 @@ describe("the look", () => {
       { app: record, env: "production" },
     );
     expect(thumbGrant).toBeDefined();
-    expect(thumbGrant?.who).toBeUndefined();
+    expect(thumbGrant?.who?.name).toBe("alice");
+    expect(thumb.takenAs).toBe("owner");
     const url = new URL(phone.url);
     expect(url.host).toBe(`hello.${DOMAIN}:${servers.port}`);
     expect(url.pathname).toBe("/__forge/grant");
@@ -877,7 +878,69 @@ describe("the look", () => {
     expect(after).toContain(`${commitOid}/phone-dark.png?v=`);
   }, 120_000);
 
-  test("the sweep pictures a running production missing one: a thumb from before thumbs were the page is retaken as a stranger; one that failed is not retried each sweep", async () => {
+  test("a private app's thumb taken as a stranger by an older forge is deleted on boot, to be retaken", async () => {
+    const old = "c".repeat(40);
+    const path = `looks/${record.id}/production/${old}-thumb.png`;
+    mkdirSync(join(dataDir, dirname(path)), { recursive: true });
+    writeFileSync(join(dataDir, path), "certificate warning");
+    recordLook(app.db, {
+      appId: record.id,
+      env: "production",
+      commitOid: old,
+      kind: "thumb",
+      path,
+      takenAs: "nobody",
+    });
+    const again = startLooks(app, { localUrl: servers.url, capture: fake });
+    await again.stop();
+    expect(
+      looksForEnv(app.db, record.id, "production").some((l) => l.commitOid === old),
+    ).toBe(false);
+    expect(existsSync(join(dataDir, path))).toBe(false);
+  });
+
+  test("the boot prune spares an owner-taken thumb, an attached one, and every thumb of a public app", async () => {
+    const put = (oid: string, extra: Partial<Parameters<typeof recordLook>[1]>) => {
+      const path = `looks/${record.id}/production/${oid}-thumb.png`;
+      mkdirSync(join(dataDir, dirname(path)), { recursive: true });
+      writeFileSync(join(dataDir, path), "a picture");
+      recordLook(app.db, {
+        appId: record.id,
+        env: "production",
+        commitOid: oid,
+        kind: "thumb",
+        path,
+        ...extra,
+      });
+      return path;
+    };
+    const owned = put("d".repeat(40), { takenAs: "owner" });
+    const attached = put("e".repeat(40), { takenAs: "nobody", attachedBy: alice.id });
+    const stranger = put("f".repeat(40), { takenAs: "nobody" });
+    const alive = (path: string): boolean => existsSync(join(dataDir, path));
+    const rows = (): string[] =>
+      looksForEnv(app.db, record.id, "production").map((l) => l.path);
+
+    // A public app's thumbs are taken as a stranger by design: all stay.
+    app.db.run("UPDATE app SET access = 'public' WHERE id = ?1", [record.id]);
+    await startLooks(app, { localUrl: servers.url, capture: fake }).stop();
+    app.db.run("UPDATE app SET access = 'private' WHERE id = ?1", [record.id]);
+    for (const path of [owned, attached, stranger]) {
+      expect(rows()).toContain(path);
+      expect(alive(path)).toBe(true);
+    }
+
+    // Private again: only the stranger's goes, row and file.
+    await startLooks(app, { localUrl: servers.url, capture: fake }).stop();
+    expect(rows()).toContain(owned);
+    expect(rows()).toContain(attached);
+    expect(rows()).not.toContain(stranger);
+    expect(alive(owned)).toBe(true);
+    expect(alive(attached)).toBe(true);
+    expect(alive(stranger)).toBe(false);
+  });
+
+  test("the sweep pictures a running production missing one: a thumb from before thumbs were the page is retaken (as the owner, the app being private); one that failed is not retried each sweep", async () => {
     const status = runtime.envStatus(record, "production")!;
     expect(status.state).toBe("running");
     const head = status.commitOid;
@@ -908,8 +971,8 @@ describe("the look", () => {
       readGrant(dataDir, new URL(retaken.url).searchParams.get("t") ?? "", {
         app: record,
         env: "production",
-      })?.who,
-    ).toBeUndefined();
+      })?.who?.name,
+    ).toBe("alice");
     expect(pngSize(join(dataDir, thumbAtHead()!.path))).toEqual([640, 400]);
 
     // A whole set: nothing to take.
@@ -1266,6 +1329,41 @@ describe("the look", () => {
         "utf8",
       );
       expect(seen).toContain(`${alice.id}|alice|admin|`);
+    },
+    120_000,
+  );
+  test.skipIf(chromium === undefined)(
+    "a capture that ends on the browser's error page fails with its reason and writes no picture",
+    async () => {
+      const page: ReturnType<typeof Bun.serve> = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        // Off the app's host, on a name that resolves to loopback without DNS.
+        fetch: (request): Response =>
+          new URL(request.url).pathname === "/"
+            ? new Response(null, {
+                status: 302,
+                headers: { location: `http://localhost:${page.port}/landed` },
+              })
+            : new Response("<!doctype html><p>elsewhere</p>", {
+                headers: { "content-type": "text/html" },
+              }),
+      });
+      try {
+        const out = join(dataDir, "refused.png");
+        const taken = await takeLook({
+          url: `http://127.0.0.1:${page.port}/`,
+          out,
+          width: 390,
+          height: 844,
+          timeoutMs: 30_000,
+        });
+        expect(JSON.stringify(taken)).toContain("left the app's host for localhost");
+        // The guard throws before the screenshot: no picture was written.
+        expect(existsSync(out)).toBe(false);
+      } finally {
+        page.stop(true);
+      }
     },
     120_000,
   );
