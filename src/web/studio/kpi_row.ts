@@ -9,6 +9,7 @@
 
 import type { Database } from "bun:sqlite";
 import { backupAge, backupFull, backupOverdue, buildersValue, checkTime, reactNote, speedWords, spendCeilingWords, spendFull, spendValue, usersValue, visitorsNote, visitorsValue, waitingWords } from "../../flow/kpi_words.ts";
+import type { IdleReason } from "../../crew/idle_reason.ts";
 import type { Kpis } from "../../flow/kpis.ts";
 import { clogLines, readClog } from "../../flow/clog_read.ts";
 import { vitalsLine } from "../../flow/vitals.ts";
@@ -91,7 +92,8 @@ export function liveNow(): { sha: string; at: string } | null {
   return commit === null ? null : { sha: commit, at: BOOTED };
 }
 
-export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null, now: Date = new Date()): Html {
+/** `idle` is why the builders are idle now (`idleReason`), asked at render time: it moves with the clock, which the cached figures do not. */
+export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null, now: Date = new Date(), idle: IdleReason | null = null): Html {
   const overdue = backupOverdue(k.backupAt, now);
   const spendWords = spendCeilingWords(k.spend);
   const rate = k.landed / k.landedHours.length;
@@ -123,10 +125,10 @@ export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null, now
     )}
     ${tile(
       "Builders running",
-      "/settings/crew",
+      idle?.href ?? "/settings/crew",
       buildersValue(k.builders),
       buildersValue(k.builders),
-      k.builders.slots === 0 ? "No slots set" : "running now",
+      k.builders.slots === 0 ? "No slots set" : idle?.word ?? "running now",
       k.builders.slots === 0 ? "No slots set" : `Crew builders running now, of ${k.builders.slots} ${k.builders.slots === 1 ? "slot" : "slots"}`,
     )}
     ${tile(
@@ -163,10 +165,10 @@ export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null, now
 }
 
 /** The figures count every repository, so the caller shows this to an admin only. */
-export function kpiRow(db: Database, opts: { ceilingUsd?: number; dataDir?: string; now?: Date } = {}): Html {
+export function kpiRow(db: Database, opts: { ceilingUsd?: number; dataDir?: string; idle?: IdleReason | null; now?: Date } = {}): Html {
   const now = opts.now ?? new Date();
   const forge = { ceilingUsd: opts.ceilingUsd ?? null, ...(opts.dataDir === undefined ? {} : { dataDir: opts.dataDir }) };
-  return kpiRowFor(cachedKpis(db, now, forge), liveNow(), now);
+  return kpiRowFor(cachedKpis(db, now, forge), liveNow(), now, opts.idle ?? null);
 }
 
 /**

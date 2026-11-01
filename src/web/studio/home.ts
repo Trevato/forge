@@ -57,6 +57,7 @@ import { alarmLines, cachedAlarms, flowOnlyOffer } from "./alarm_lines.ts";
 import { clogRow, kpiRow, vitalsRow, waitingLine } from "./kpi_row.ts";
 import { feedCandidateCache } from "../../feed/feed.ts";
 import { notePhase, notePhaseRest, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
+import { idleReason } from "../../crew/idle_reason.ts";
 import { kpiCache, panelCache, waitingCache } from "./home_cache.ts";
 import { archivedAppCount } from "../pages/apps.ts";
 import { pinnedPanels } from "./pinned.ts";
@@ -285,7 +286,7 @@ export async function studioHome(
   const ask = firstSteps ?? everydayCard(ctx, user);
   const figures = user.isAdmin && steps === undefined;
   const ceilingUsd = forgeCeiling(ctx.app.config);
-  const kpiOpts = { dataDir: ctx.app.config.dataDir, ...(ceilingUsd === null ? {} : { ceilingUsd }) };
+  const kpiOpts = { idle: figures ? idleReason(ctx.app, new Date()) : null, dataDir: ctx.app.config.dataDir, ...(ceilingUsd === null ? {} : { ceilingUsd }) };
   const body = html`<h1 class="sr-only">Home</h1>
     ${ask} ${address} ${figures
       ? timePhase(ctx.request, "kpis", () => kpiRow(ctx.app.db, kpiOpts), () => kpiCache(ctx.app.db))
