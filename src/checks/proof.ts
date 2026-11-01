@@ -41,11 +41,16 @@ import type { LandVerdict } from "./tiers.ts";
  */
 export const STALE_LANDINGS = 16;
 
+/** A red proof is tried again this long after it, in case what failed was not the pull. */
+export const RED_PROOF_RETRY_MS = 30 * 60_000;
+
 /** What a proof found: the head it ran on, the base tip it was squashed onto, and whether it was green. */
 export interface Proof {
   readonly head: string;
   readonly base: string;
   readonly green: boolean;
+  /** When the ledger kept it. */
+  readonly at?: string;
 }
 
 /** Where a pull stands before the line. */
@@ -67,7 +72,7 @@ export function proofOf(db: Database, pullId: string): Proof | undefined {
   if (typeof state !== "object" || state === null) return undefined;
   const { head, base } = state as Record<string, unknown>;
   if (typeof head !== "string" || typeof base !== "string") return undefined;
-  return { head, base, green: row.answer === "green" };
+  return { head, base, green: row.answer === "green", at: row.createdAt };
 }
 
 /** Keep a proof's verdict on the ledger. */
@@ -106,12 +111,22 @@ export async function current(dir: string, proof: Proof, tip: string): Promise<b
 }
 
 /** Where `pull` at its head stands on the base tip `tip`. */
-export async function standing(db: Database, dir: string, pull: Pull, tip: string): Promise<Standing> {
+export async function standing(
+  db: Database,
+  dir: string,
+  pull: Pull,
+  tip: string,
+  now: number = Date.now(),
+): Promise<Standing> {
   if (proving.get(pull.id) === pull.headOid) return "proving";
   const proof = proofOf(db, pull.id);
   if (proof === undefined || proof.head !== pull.headOid) return "unproved";
   if (!(await current(dir, proof, tip))) return "unproved";
-  return proof.green ? "proved" : "red";
+  if (proof.green) return "proved";
+  // A red says something only about the main it ran on, and for a while: a flake or a
+  // broken gate must not strand a pull until its next push.
+  const fresh = proof.at !== undefined && now - Date.parse(proof.at) < RED_PROOF_RETRY_MS;
+  return proof.base === tip && fresh ? "red" : "unproved";
 }
 
 /** The pull's head squashed onto `tip`, as a commit the gate can run on; undefined when it does not merge. */

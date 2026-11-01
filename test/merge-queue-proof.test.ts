@@ -18,6 +18,7 @@ import {
   proofOf,
   proofRedWords,
   proofsInFlight,
+  RED_PROOF_RETRY_MS,
   resetProofsForTest,
   STALE_LANDINGS,
   standing,
@@ -147,7 +148,7 @@ describe("the proof before the merge queue", () => {
     expect(proved.filter((p) => p.repo === repo.id)).toHaveLength(1);
     const [proof] = proved.filter((p) => p.repo === repo.id);
     expect(git(repo, "rev-parse", `${proof!.commit}^`)).toBe(mainOf(repo));
-    expect(proofOf(app.db, pull.id)).toEqual({ head: pull.headOid, base: mainOf(repo), green: false });
+    expect(proofOf(app.db, pull.id)).toMatchObject({ head: pull.headOid, base: mainOf(repo), green: false });
     await until(() => listComments(app.db, pull.id).length > 0);
     const told = listComments(app.db, pull.id).map((c) => c.body).join("\n");
     expect(told).toContain("has not joined the merge queue");
@@ -274,6 +275,19 @@ describe("the proof before the merge queue", () => {
     await Bun.sleep(100);
     expect(answered).toBe(false);
     expect(proofOf(app.db, pull.id)).toBeUndefined();
+  });
+
+  test("a red proof stands only on the main it ran on, and only for a while", async () => {
+    const repo = await autonomousRepo("proof-red-retry", false);
+    const pull = await greenPull(repo, "red.txt", "red\n");
+    const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    const tip = mainOf(repo);
+    keepProof(app.db, repo.id, pull.id, { head: pull.headOid, base: tip, green: false });
+    expect(await standing(app.db, dir, pull, tip)).toBe("red");
+    expect(await standing(app.db, dir, pull, tip, Date.now() + RED_PROOF_RETRY_MS + 1000)).toBe("unproved");
+    const moved = await commitToBranch(app, alice, repo, { message: "on", files: [{ path: "on.txt", content: "on\n" }] });
+    if (!moved.ok) throw new Error(JSON.stringify(moved.error));
+    expect(await standing(app.db, dir, pull, mainOf(repo))).toBe("unproved");
   });
 
   test("a head that does not merge onto the tip is not proved, and holds no slot", async () => {
