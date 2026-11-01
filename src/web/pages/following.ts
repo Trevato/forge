@@ -41,7 +41,7 @@ import { modeForm } from "./chain.ts";
 import type { FollowMode } from "../../spawn/chain.ts";
 import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
 import { convergeWords, followModeOf, takeOrTell, takeWords } from "../../actions/follow.ts";
-import { FOLLOWS_NOTHING, PROPOSE_NEEDS_WRITE } from "../../actions/follow_words.ts";
+import { FOLLOWS_NOTHING, proposeRefusalWords } from "../../actions/follow_words.ts";
 import { openProposal, proposeUpstream } from "../../actions/upstream.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
@@ -417,14 +417,7 @@ export async function followingSubmit(ctx: Ctx): Promise<Response> {
       const e = proposed.error;
       return flashOrJson(ctx, base, {
         tone: "danger",
-        message:
-          e === "not_a_fork"
-            ? FOLLOWS_NOTHING
-            : e === "nothing_to_propose"
-              ? `Nothing here is ahead of ${parentName}.`
-              : typeof e === "string"
-                ? PROPOSE_NEEDS_WRITE
-                : `${parentName} did not take the proposal: ${e.reason}.`,
+        message: proposeRefusalWords(e, parentName),
       });
     }
     const { pull, opened, changes } = proposed.value;

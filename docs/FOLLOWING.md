@@ -228,6 +228,17 @@ following page and MCP `take_updates` do. The answer is the page's sentence
 or found, and `enter` opens it. A reader, an agent, a fork in step and a
 repository that follows nothing are not offered `t`.
 
+On a fork, a person who can write to it presses `u` on the forks screen. A
+confirm says how many commits are ahead and which repository they would go to;
+confirming calls `proposeUpstream`, as the following page's Propose button
+does, and one pull opens on the parent. When a proposal is already open the
+screen shows `#N is open on owner/name`, and `u` (or `enter` on that row)
+opens that pull instead of making another. Readers and agents are not offered
+`u`. Refusals are said in the following page's words (`actions/follow_words.ts`):
+`This repository follows nothing.`, `Nothing here is ahead of owner/name.`,
+`You need write access to propose from here.` and `owner/name did not take the
+proposal: …`.
+
 Forks with nothing ahead (or whose standing git cannot read) follow under
 `N forks with nothing new`. At most 60 forks are ranked per view; past that
 the page says `Ranking the first 60 of N forks`. A fork's standing is cached

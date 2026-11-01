@@ -19,6 +19,9 @@ import {
   type ForkRelation,
 } from "../../actions/forks.ts";
 import { FOLLOW_MODE_REFUSALS, convergeWords, followModeOf, setFollowMode, takeOrTell, takeWords } from "../../actions/follow.ts";
+import { FOLLOWS_NOTHING, proposeRefusalWords } from "../../actions/follow_words.ts";
+import { openProposal, proposeUpstream } from "../../actions/upstream.ts";
+import type { Pull } from "../../core/pulls.ts";
 import { convergeState, type Converge } from "../../crew/converge.ts";
 import type { FollowMode } from "../../spawn/chain.ts";
 import { canAdmin, canRead, canWrite, forkTree, listForks, type ForkNode, type Repo } from "../../core/repos.ts";
@@ -33,6 +36,7 @@ import { issueScreen } from "./issue.ts";
 import { local } from "./where.ts";
 import { repoScreen } from "./workspace.ts";
 import { ListState, confirmScreen, drawList, plural, runAsync, type ListRow } from "./common.ts";
+import { pullScreen } from "./pull.ts";
 
 /** One line of the screen; `issue` is a converge issue on the fork, which Enter opens. */
 export interface ForkRow {
@@ -139,14 +143,56 @@ export function forksScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   let following: ForkRow[] = [];
   let relation: ForkRelation | undefined;
   let offer: string | undefined;
+  let open: Pull | undefined;
   let mode: FollowMode | undefined;
   const state = new ListState();
-  const rows = () => [...following, ...(ranked === undefined ? [] : forkRows(ranked, tree))];
+  /** Only a person who writes to a fork may propose its work upstream. */
+  const mayPropose = () => f.user !== undefined && f.user.kind !== "agent" && canWrite(f.db, repo, f.user);
+  const parentName = () =>
+    relation === undefined ? "" : `${relation.parent.ownerName}/${relation.parent.name}`;
+  const openIt = (pull: Pull) => {
+    if (relation !== undefined) ctx.push(pullScreen(f, ctx, local(f, relation.parent), pull.number));
+  };
+  const propose = () => {
+    if (relation === undefined) return ctx.toast(FOLLOWS_NOTHING, "danger");
+    if (open !== undefined) return openIt(open);
+    const name = parentName();
+    if (relation.ahead === 0) return ctx.toast(proposeRefusalWords("nothing_to_propose", name), "danger");
+    ctx.push(
+      confirmScreen(ctx, self, {
+        title: "Propose upstream",
+        body: [`${plural(relation.ahead, "commit")} ahead would go to ${name} as one pull.`],
+        actions: [{ label: "Cancel", variant: "ghost" }, { label: "Propose" }],
+        onChoose: (i) => {
+          if (i !== 1) return;
+          runAsync(ctx, async () => {
+            const made = await proposeUpstream(f.app, f.user, repo);
+            if (!made.ok) return ctx.toast(proposeRefusalWords(made.error, name), "danger");
+            const { pull, opened, changes } = made.value;
+            open = pull;
+            ctx.toast(
+              opened
+                ? `Proposed to ${name}: ${changes === 1 ? "one change" : changes === 0 ? "the commits ahead" : `${changes} changes`}, as #${pull.number}.`
+                : `Already proposed to ${name} as #${pull.number}.`,
+              "success",
+            );
+            ctx.invalidate();
+          });
+        },
+      }),
+    );
+  };
+  const rows = (): ForkRow[] => [
+    ...(open === undefined || relation === undefined ? [] : [openRow(open, relation.parent)]),
+    ...following,
+    ...(ranked === undefined ? [] : forkRows(ranked, tree)),
+  ];
   const read = async (): Promise<void> => {
     const forks = listForks(f.db, repo.id).filter((r) => canRead(f.db, r, f.user));
     ranked = await rankedForksOf(f.app, repo, forks);
     tree = forkTree(f.db, repo.id, f.user);
     relation = await relationOf(f.app, f.user, repo);
+    open = relation === undefined ? undefined : openProposal(f.app, repo, relation.parent);
     offer = takeOffer(relation, canWrite(f.db, repo, f.user), f.user?.kind === "user");
     const converge =
       relation !== undefined && relation.state === "diverged" && !relation.clean
@@ -193,6 +239,9 @@ export function forksScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         binding(["j", "k"], "move"),
         binding(["enter"], "open"),
         ...(offer === undefined ? [] : [binding(["t"], "take updates")]),
+        ...(relation !== undefined && mayPropose()
+          ? [binding(["u"], open === undefined ? "propose upstream" : "open proposal")]
+          : []),
         ...(canSetMode() ? [binding(["m"], "follow mode")] : []),
         binding(["esc"], "close"),
       ];
@@ -236,8 +285,13 @@ export function forksScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       if (state.key(e, list.length)) return true;
       if (e.key === "enter") {
         const row = list[state.index];
-        if (row?.issue !== undefined) ctx.push(issueScreen(f, ctx, local(f, repo), row.issue));
+        if (open !== undefined && state.index === 0) openIt(open);
+        else if (row?.issue !== undefined) ctx.push(issueScreen(f, ctx, local(f, repo), row.issue));
         else if (row !== undefined) ctx.push(repoScreen(f, ctx, local(f, row.repo)));
+        return true;
+      }
+      if (e.key === "u" && relation !== undefined && mayPropose()) {
+        propose();
         return true;
       }
       if (e.key === "t" && offer !== undefined) {
@@ -262,4 +316,14 @@ export function forksScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     },
   };
   return self;
+}
+
+/** The line that says a proposal is already open, so `u` opens it instead of making another. */
+function openRow(pull: Pull, parent: Repo): ForkRow {
+  return {
+    repo: parent,
+    name: `#${pull.number} is open on ${parent.ownerName}/${parent.name}`,
+    words: "enter or u opens it",
+    heading: "",
+  };
 }
