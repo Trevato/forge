@@ -141,12 +141,13 @@ matching.
 **Live triage files issues.** On the same tick, an open issue an hour old
 that serves no pillar is filed: under the pillar its title, else its body,
 names by its short form (`P0`) or whole label (`P0 Trust`) — a bare word like
-"trust" does not count — otherwise behind the Later gate. Each gets a comment
-marked automatic. Directions, umbrellas and the gate are skipped, as is a
-repository with neither pillars nor a gate. To undo it, name a pillar (link
-its umbrella to wait for the issue) or unlink the gate; the comment stays, so
-triage does not file that issue again. The tick line counts `labelled=N`, and
-shows `triageMiss=N` for old issues it could not file (no gate to defer to).
+"trust" does not count. An issue naming no pillar is left as it is: nothing is
+held for lacking one. Each filed issue gets a comment marked automatic.
+Directions, umbrellas and the gate are skipped, as is a repository with no
+pillars. To undo a filing, unlink the umbrella; the comment stays, so triage
+does not file that issue again. The tick line counts `labelled=N`, and
+shows `triageMiss=N` for issues naming a pillar that the per-tick cap left for
+the next tick.
 
 Live triage also folds questions. An open issue opened by a person who can
 write here, whose title starts `Question:`, `Wish:` or `Idea:` or ends in `?`,
