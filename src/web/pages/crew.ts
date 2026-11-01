@@ -35,6 +35,7 @@ import {
   type Scorecard,
   type SplitScorecard,
 } from "../../core/scorecard.ts";
+import { wastedDays, type WastedDay } from "../../core/wasted_days.ts";
 import { modelDays, type ModelDay } from "../../core/model_days.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { listTeams, type Team } from "../../core/teams.ts";
@@ -438,6 +439,7 @@ function loadScorecards(ctx: Ctx) {
     byModel: agentSplits(ctx.app.db, "model"),
     byPrompt: agentSplits(ctx.app.db, "prompt_version"),
     byModelDay: modelDays(ctx.app.db),
+    wasted: wastedDays(ctx.app.db),
   };
 }
 
@@ -475,7 +477,7 @@ function crewView(
     splitScorecards,
     recentSplitScorecards,
   } = data.scorecards;
-  const { scorecards, byModel, byPrompt, byModelDay } = data.scorecards;
+  const { scorecards, byModel, byPrompt, byModelDay, wasted } = data.scorecards;
   const { spending } = data;
   const usernameError =
     error !== undefined && /username/i.test(error) ? error : undefined;
@@ -587,6 +589,7 @@ function crewView(
     () => html`<span class="muted">default</span>`,
   )}
   ${modelDaysCard(byModelDay)}
+  ${wastedDaysCard(wasted)}
   ${splitsCard(
     "Per prompt version",
     "Prompt version",
@@ -704,6 +707,36 @@ function modelDaysCard(rows: readonly ModelDay[]): Html {
       </table>
     </div>`,
     { pad: false, head: html`<h2>Per model per day</h2>` },
+  );
+}
+
+/** Runs that ended on work not theirs to do, per day: the pull closed, nothing pushed, already done. */
+function wastedDaysCard(rows: readonly WastedDay[]): Html {
+  if (rows.length === 0) return html``;
+  return card(
+    html`<div class="table-scroll">
+      <table class="table" id="crew-wasted-days">
+        <thead>
+          <tr>
+            <th>Day</th>
+            <th>Wasted runs</th>
+            <th>Of runs</th>
+            <th>Spent</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(
+            (r) => html`<tr>
+              <td class="mono">${r.day}</td>
+              <td class="num">${r.wasted}</td>
+              <td class="num">${r.runs}</td>
+              <td class="num">$${r.spentUsd.toFixed(2)}</td>
+            </tr>`,
+          )}
+        </tbody>
+      </table>
+    </div>`,
+    { pad: false, head: html`<h2>Wasted runs per day</h2>` },
   );
 }
 

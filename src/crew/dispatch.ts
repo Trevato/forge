@@ -9,6 +9,7 @@
  */
 
 import { flowOnlyHolds } from "./flow_only.ts";
+import { twinNote, twinOf, type Twin } from "./twin.ts";
 import { NO_MERGE } from "../checks/merged.ts";
 import { markHeard } from "../core/issues.ts";
 import { capacityCount, noteBooted } from "../core/capacity.ts";
@@ -282,6 +283,13 @@ export async function startCrew(
   return handle;
 }
 
+/** Tell the issue's thread why nothing started, once per twin and standing. */
+function tellTwin(app: App, repo: Repo, issue: Issue, by: User, twin: Twin): void {
+  const note = twinNote(twin);
+  if (listComments(app.db, issue.id).some((c) => c.body === note)) return;
+  addComment(app, by, repo, issue, note);
+}
+
 /** Say the hand-over on the pull's thread, once per hand-over. */
 function handOver(
   app: App,
@@ -423,6 +431,7 @@ export function queueAgentRun(
   // forge processes share this database, and both may react to the same
   // thing — a run checked for by one and inserted by the other would be the
   // same work twice (docs/ARCHITECTURE.md, "Two processes at once").
+  let refusedAsTwin: Twin | undefined;
   const run = transact(app.db, () => {
     // A follow-up is the builder's: a reviewer's own run on the pull, still
     // running as it posts its verdict, is not the run that hears it.
@@ -461,7 +470,24 @@ export function queueAgentRun(
         return undefined;
       }
     }
+    // The same title is the same work: while a twin has a run going or a
+    // pull open, or its pull landed since this issue was opened, a build
+    // here only repeats it. Variants are the exception: they share a title
+    // on purpose, several tries in one group.
     const group = variantGroup ?? variantGroupOf(app.db, issue.id);
+    if (reason === "assigned" && group === undefined) {
+      const twin = twinOf(app.db, issue);
+      if (twin !== undefined) {
+        log.info("build run refused: a twin holds the work", {
+          repo: `${repo.ownerName}/${repo.name}`,
+          issue: issue.number,
+          twin: twin.number,
+          standing: twin.standing,
+        });
+        refusedAsTwin = twin;
+        return undefined;
+      }
+    }
     return createRun(app.db, {
       repoId: repo.id,
       kind: "agent",
@@ -476,6 +502,7 @@ export function queueAgentRun(
     });
   });
   if (run !== undefined) announceRun(app, run, actorId);
+  else if (refusedAsTwin !== undefined) tellTwin(app, repo, issue, agent.user, refusedAsTwin);
   return run;
 }
 

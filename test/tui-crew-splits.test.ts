@@ -81,6 +81,21 @@ test("an admin's terminal shows the cuts, with the empty key as default / not re
   h.stop();
 });
 
+test("an admin's terminal lists the wasted runs per day", async () => {
+  const repoId = forge.db.query<{ id: string }, []>("SELECT id FROM repo LIMIT 1").get()?.id ?? "";
+  const agentId = getUserByName(forge.db, "smith")!.id;
+  const run = createRun(forge.db, { repoId, kind: "agent", actorId: agentId });
+  claimRun(forge.db, run.id);
+  finishRun(forge.db, run.id, { state: "ok", summary: "no changes pushed", costUsd: 0.4 });
+  const h = boot("alice");
+  await h.palette("Crew scorecard");
+  await h.enter();
+  expect(h.text()).toContain(`wasted ${new Date().toISOString().slice(0, 10)}`);
+  expect(h.text()).toContain("1 of 3 runs");
+  expect(h.text()).toContain("$0.40 spent");
+  h.stop();
+});
+
 test("a non-admin has no command", async () => {
   const h = boot("bob");
   await h.palette("Crew scorecard");

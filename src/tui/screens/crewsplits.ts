@@ -1,10 +1,11 @@
 /**
  * The crew scorecard in the terminal, a forge admin's (#2682): agent runs
- * cut by the model they ran on, by prompt version and by model per day, as Settings → Crew
+ * cut by the model they ran on, by prompt version, by model per day and wasted runs per day, as Settings → Crew
  * has them (`agentSplits`). The gate is the page's: an admin.
  */
 
 import { modelDays, type ModelDay } from "../../core/model_days.ts";
+import { wastedDays, type WastedDay } from "../../core/wasted_days.ts";
 import { agentSplits, type SplitTotals } from "../../core/runs.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -35,6 +36,14 @@ export function modelDayRows(days: readonly ModelDay[]): ListRow[] {
   }));
 }
 
+export function wastedDayRows(days: readonly WastedDay[]): ListRow[] {
+  return days.map((d) => ({
+    title: `wasted ${d.day}`,
+    secondary: `${d.wasted} of ${d.runs} runs`,
+    meta: `$${d.spentUsd.toFixed(2)} spent`,
+  }));
+}
+
 export function crewSplitsScreen(f: Session, ctx: Ctx): Screen {
   const state = new ListState();
   const allowed = f.user?.isAdmin === true;
@@ -44,6 +53,7 @@ export function crewSplitsScreen(f: Session, ctx: Ctx): Screen {
         ...splitRows("model", "default", agentSplits(f.db, "model")),
         ...splitRows("prompt", "not recorded", agentSplits(f.db, "prompt_version")),
         ...modelDayRows(modelDays(f.db)),
+        ...wastedDayRows(wastedDays(f.db)),
       ]
     : [];
   return {
