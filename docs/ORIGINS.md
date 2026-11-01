@@ -156,7 +156,7 @@ someone else's name with someone else's token.
 header (`p` on a row in the terminal, `P` on a repo's home) says "keep this on
 my machine", and the dashboard grows an **On your machine** card listing them.
 The server remembers only the choice — nothing about the state of a laptop —
-and `forge sync` (the README's "On your machine") is what acts on it.
+and `forge sync` (docs/ON-YOUR-MACHINE.md) is what acts on it.
 
 ## Flows
 
