@@ -14,6 +14,7 @@ import { createRepo } from "../src/actions/repos.ts";
 import { requeueAbandonedChecks, sweepCheckouts } from "../src/checks/service.ts";
 import { ensureEnvData, removeEnv } from "../src/apps/data.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
+import { GATE_DEADLINE_MS } from "../src/checks/queue.ts";
 import { STALE_AFTER_MS } from "../src/runs/lease.ts";
 import { createUser } from "../src/core/users.ts";
 
@@ -77,6 +78,20 @@ test("the abandoned-checks timer sweeps a finished run's home, not a live one's"
   requeueAbandonedChecks(app, STALE_AFTER_MS);
   expect(existsSync(home(live.id))).toBe(true);
   expect(existsSync(home(done.id))).toBe(false);
+});
+
+test("the timer leaves a running gate's checkout and home alone, and removes them once no gate could be using them", () => {
+  const root = join(dataDir, "checks");
+  const dir = join(root, "gate-0123456789ab");
+  const home = `${dir}.home`;
+  mkdirSync(dir, { recursive: true });
+  mkdirSync(home, { recursive: true });
+  requeueAbandonedChecks(app, STALE_AFTER_MS);
+  expect(existsSync(dir)).toBe(true);
+  expect(existsSync(home)).toBe(true);
+  sweepCheckouts(app, Date.now() + GATE_DEADLINE_MS + 60_000);
+  expect(existsSync(dir)).toBe(false);
+  expect(existsSync(home)).toBe(false);
 });
 
 test("a lapsed run's home is removed", () => {

@@ -98,7 +98,7 @@ import { JOB_VANISHED, runJobStep } from "./job_step.ts";
 import { cellInstall, checkInstallCache, installWithRetry, prefillInstallCache, withLock } from "./install.ts";
 import { checkStage, type GateStage } from "./gate_reason.ts";
 import { proofsInFlight } from "./proof.ts";
-import { extraGates, gateQueued, gateRunId, gatesInFlight, watchGates } from "./queue.ts";
+import { extraGates, GATE_DEADLINE_MS, gateQueued, gateRunId, gatesInFlight, watchGates } from "./queue.ts";
 import type { JobOptions } from "../cluster/jobs.ts";
 import type { CheckDetail } from "../core/runs.ts";
 
@@ -334,6 +334,15 @@ export function removeRunDir(path: string): void {
 /** Where a check's checkout lives while it runs. */
 const checksRoot = (dataDir: string): string => join(dataDir, "checks");
 
+/** Whether a gate's checkout, this forge's or a peer's during a roll, is younger than a gate may run. */
+function gateMayBeRunning(path: string, now: number): boolean {
+  try {
+    return now - lstatSync(path).mtimeMs < GATE_DEADLINE_MS;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Remove the checkouts nobody is using: one whose run is not running with a
  * live lease, or has no run at all. A forge booting during a roll shares this
@@ -344,6 +353,8 @@ export function sweepCheckouts(app: App, now: number = Date.now()): void {
   const root = checksRoot(app.config.dataDir);
   if (!existsSync(root)) return;
   for (const name of readdirSync(root)) {
+    // A gate has no run row: its checkout is spared until no gate could still be using it.
+    if (name.startsWith("gate-") && gateMayBeRunning(join(root, name), now)) continue;
     // `<id>.home` is the home of run `<id>`: it lives and dies with it.
     const run = getRun(app.db, name.endsWith(".home") ? name.slice(0, -5) : name);
     const live =
