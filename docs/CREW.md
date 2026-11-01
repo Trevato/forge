@@ -302,7 +302,17 @@ the planner's, found done on main and waiting for a person to close it
 (`done_on_main`, never re-planned), stalled, at its run cap, parked twice, covered by a red-main
 fix, or a setting's finding. The flow panel on `/boards` draws the same per autonomous app as one
 bar, and the terminal's Flow command prints it as a line per app
-(`flow/held.ts`, kept 5 s). When nothing is startable while builder slots are free and some of the
+(`flow/held.ts`, kept 5 s). Of the startable, what the owner raised again
+stays on top, then the roadmap is picked
+(#7571, `crew/small_share.ts`): an issue under an open epic or a P0/P1 pillar,
+then other work, then small issues — a title like "A test pins …" or
+"Tests: …", or a label `test`, `tests`, `tests-only` or `small` — and small issues hold
+at most `slots.smallShare` percent of the builder slots (default 30, rounded up:
+2 of 5; an admin sets it on `/settings/capacity`). At the cap a small issue is
+skipped, not waited on, raised or not. The tick line's `small: 1/2`, the
+Flow command's `small 1/2`, the app's row in Today on `/boards` (`small
+issues: 1 of 2 slots`) and the studio's crew panel show small issues in
+flight of what they may hold. When nothing is startable while builder slots are free and some of the
 held are stalled, capped or parked twice, the planner is owed one pass with
 that breakdown in its brief, to re-plan them into smaller, fresh issues; a
 full plate and its own unanswered decline do not hold that pass, and the

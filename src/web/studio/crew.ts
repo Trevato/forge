@@ -30,7 +30,7 @@ import { CREW_ROLES, listCrewRoles, type CrewRole } from "../../core/agents.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { canAdmin, canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
 import { crewHasCredential } from "../../core/subscriptions.ts";
-import { autonomyStatus } from "../../crew/autonomy.ts";
+import { autonomyStatus, smallShareWords } from "../../crew/autonomy.ts";
 import { governorSeen } from "../../crew/governed.ts";
 import { crewOffInPreview } from "../../crew/preview.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -277,6 +277,8 @@ function autonomyCard(ctx: Ctx, repo: Repo, base: string, admin: boolean): Html 
           </dd>
           <dt>Slots</dt>
           <dd>${status.active} of ${status.slots} in use</dd>
+          <dt>Small issues</dt>
+          <dd>${smallShareWords(ctx.app, repo)} slots</dd>
           ${governor === undefined
             ? null
             : html`<dt>Governor</dt>

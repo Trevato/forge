@@ -10,6 +10,7 @@
 
 import type { App } from "../app.ts";
 import { listAutonomousRepos } from "../core/repos.ts";
+import { smallShareWords } from "../crew/autonomy.ts";
 import { heldCounts, heldNow, type HoldName } from "../crew/held.ts";
 
 export interface HeldRow {
@@ -18,6 +19,8 @@ export interface HeldRow {
   readonly public: boolean;
   readonly startable: number;
   readonly counts: Readonly<Record<HoldName, number>>;
+  /** `1/2`: small issues in flight of the builder slots they may hold (#7571). */
+  readonly small: string;
 }
 
 /** How long the rows are kept. */
@@ -38,6 +41,7 @@ export function readHeld(app: App, owner: boolean, now = Date.now()): HeldRow[] 
           public: repo.visibility === "public",
           startable: held.startable.length,
           counts: heldCounts(held),
+          small: smallShareWords(app, repo),
         };
       }),
     };

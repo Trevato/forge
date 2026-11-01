@@ -24,7 +24,8 @@ export type CapacityKey =
   | "children.max"
   | "cells.egress"
   | "guard_new_accounts"
-  | "signin.edge";
+  | "signin.edge"
+  | "slots.smallShare";
 
 interface Definition {
   /** What the settings page and the API call it. */
@@ -107,6 +108,13 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
     kind: { type: "choice", values: ["on", "off"] },
     fallback: "on",
     help: "on reads the platform edge's identity headers (when the forge has an edge secret) and offers its sign-in; off ignores them on every door, so people sign in with the forge's own methods — password and passkey. Accounts the edge made keep their names but have no password until they set one. Takes effect on the next request.",
+  },
+  "slots.smallShare": {
+    label: "Builder slots small issues may hold (%)",
+    env: "FORGE_SLOTS_SMALL_SHARE",
+    kind: { type: "count", min: 0, max: 100 },
+    fallback: "30",
+    help: "The most of a repository's builder slots that tests-only and small-addition issues (\"A test pins …\", or a label test, tests, tests-only or small) hold at once, as a percent rounded up: 30 lets 2 of 5 slots go to them. At the cap a small issue is skipped and the slot goes to roadmap work; roadmap work is picked first either way. 100 lifts the cap; 0 starts none. Read on every pick.",
   },
 };
 
@@ -329,6 +337,11 @@ export function queueDepth(db: Database): number {
 /** The most pulls one merge-queue candidate carries (#6674); the line adapts below it. */
 export function queueBatch(db: Database): number {
   return Number(capacityValue(db, "queue.batch"));
+}
+
+/** The percent of builder slots small issues may hold (#7571). */
+export function smallShare(db: Database): number {
+  return Number(capacityValue(db, "slots.smallShare"));
 }
 
 /** Whether the platform edge's identity is read at all; on every request. */
