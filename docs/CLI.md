@@ -47,6 +47,7 @@ command without a config file at all.
 | 3 | not signed in, or the stored token is unusable |
 | 4 | partial: the run finished, but at least one repo did not |
 | 5 | refused: the forge heard the request and said no (a rule, a conflict, a hold) |
+| 6 | rate limited: the forge said "not now" and named when to try again |
 
 A script can branch on these without parsing text.
 
@@ -286,6 +287,33 @@ Flags:
 $ forge asks
 look    alice/shop   Pull #3 is green — look and merge  https://forge.example.com/alice/shop/pulls/3
 parked  alice/notes  Issue #9 waits on a decision  https://forge.example.com/alice/notes/issues/9
+```
+
+## forge search
+
+Code, issues, pulls and repositories the token can read, from
+`/api/v1/search`. Each kind is headed by its name and count, then one hit a
+line: `owner/name:path:line  text` for code, `owner/name#N  title  state`
+for issues and pulls, `owner/name  description` for repositories. With no
+hit it prints `Nothing found for "…".` A 429 prints the forge's words with
+the retry time and exits 6; a 401 exits 3.
+
+Flags:
+
+- `--kind code|issues|pulls|repos|all` — one kind (exit 2 for anything
+  else). `issues` and `pulls` ask the API for its whole window and cut to
+  `--limit` after keeping the one kind.
+- `--limit N` — at most N hits per kind, a whole number above 0.
+- `--json` — the forge's answer as it came; for `--kind issues|pulls`,
+  narrowed, with `truncated.issues` set when more matched.
+
+```console
+$ forge search retry budget
+code (1)
+alice/shop:src/retry.ts:14  const budget = retry(attempts);
+
+issues (1)
+alice/shop#7  Retry budget runs out  open
 ```
 
 ## forge ship

@@ -16,6 +16,8 @@ export interface ApiError {
   readonly code: string;
   readonly message: string;
   readonly status: number;
+  /** Seconds the forge asked us to wait (`retry-after`), when it said. */
+  readonly retryAfter?: number;
 }
 
 export type ApiResult<T> = Result<T, ApiError>;
@@ -137,6 +139,7 @@ export class ForgeApi {
     }
     if (!response.ok) {
       const body = parsed as { error?: unknown; message?: unknown };
+      const retryAfter = Number(response.headers.get("retry-after") ?? "");
       // Some refusals are a bare code (`{ error: "checks_required" }`): the
       // code is then the forge's own word, and better than a status line.
       return err({
@@ -148,6 +151,7 @@ export class ForgeApi {
               ? body.error
               : `${response.status} from ${path}`,
         status: response.status,
+        ...(Number.isInteger(retryAfter) && retryAfter > 0 ? { retryAfter } : {}),
       });
     }
     return ok(parsed as T);
@@ -354,6 +358,22 @@ export class ForgeApi {
         asks.push({ kind: "forge", repo: "", title, url: this.absolute("/") });
     }
     return ok({ raw: out.value, asks });
+  }
+
+  /**
+   * `GET /api/v1/search`: code, issues, pulls and repositories the token can
+   * read. The answer is handed back as the forge gave it — the CLI prints
+   * from it and `--json` prints it unchanged. `kind` and `limit` are left to
+   * the forge's defaults when not given.
+   */
+  async search(
+    q: string,
+    options: { kind?: string; limit?: number } = {},
+  ): Promise<ApiResult<unknown>> {
+    const query = new URLSearchParams({ q });
+    if (options.kind !== undefined) query.set("kind", options.kind);
+    if (options.limit !== undefined) query.set("limit", String(options.limit));
+    return this.call<unknown>(`/api/v1/search?${query}`);
   }
 
   /**

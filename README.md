@@ -330,6 +330,8 @@ forge asks --repo owner/name       # only that repository's; --json for the API'
 forge asks --ship 1 3              # decide by the line numbers just printed: planned, then Apply? [y/N]
 forge asks --close 2 --reason "words"   # also --dismiss 4; --yes skips the question (needed without a TTY)
 forge asks --undo <id>             # take back a decision by the receipt id it printed
+forge search retry budget          # code, issues, pulls and repos you can read; exits 6 on "not now"
+forge search x --kind pulls --limit 5   # one kind, five hits; --json marks truncated.issues when more matched
 ```
 
 `forge ship <number>` reads the repository from `--repo owner/name` or from
