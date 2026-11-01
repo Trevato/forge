@@ -14,6 +14,7 @@ import { style } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
 import type { Session } from "../session.ts";
 import { ListState, confirmScreen, drawList, type ListRow } from "./common.ts";
+import type { PaletteEntry } from "./entries.ts";
 
 function drillLine(d: ResilienceRow): string {
   if (d.drill.name === null) return `Not drilled: ${d.drill.why}`;
@@ -127,3 +128,12 @@ export function domainsScreen(f: Session, ctx: Ctx): Screen {
   };
   return screen;
 }
+
+/** Each failure domain and its last drill, as Settings → Backups → Failure domains says it (#1945). */
+export const entry: PaletteEntry = {
+  id: "domains",
+  title: "Failure domains",
+  hint: "failure domains and their last drill",
+  offered: (session) => session.user?.isAdmin === true && session.user.kind !== "agent",
+  run: (session, ctx) => ctx.push(domainsScreen(session, ctx)),
+};

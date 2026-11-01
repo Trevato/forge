@@ -51,7 +51,6 @@ import { trustedHostsPrompt } from "./screens/trustedhosts.ts";
 import { flagsScreen } from "./screens/flags.ts";
 import { secretsScreen } from "./screens/secrets.ts";
 import { scorecardScreen } from "./screens/scorecard.ts";
-import { cloudScreen } from "./screens/cloud.ts";
 import { crewSplitsScreen } from "./screens/crewsplits.ts";
 import { crewHandoverScreen } from "./screens/crewhandover.ts";
 import { usageScreen } from "./screens/usage.ts";
@@ -67,8 +66,7 @@ import { signInsScreen } from "./screens/signins.ts";
 import { limitsScreen } from "./screens/limits.ts";
 import { quotasScreen } from "./screens/quotas.ts";
 import { teamsScreen } from "./screens/teams.ts";
-import { domainsScreen } from "./screens/domains.ts";
-import { ownerScreen } from "./screens/owner.ts";
+import { ENTRIES } from "./screens/entries.ts";
 import { capacityScreen, mayCapacity } from "./screens/capacity.ts";
 import { resilienceScreen } from "./screens/resilience.ts";
 import { forgeCeiling } from "../flow/ceiling.ts";
@@ -593,30 +591,9 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         hint: "each account's budget and rest; wake one, set its budget, add or remove one",
         run: () => ctx.push(subscriptionsScreen(session, ctx)),
       });
-    // Cloud accounts, as Settings → Cloud accounts has them: a forge admin (#2199).
-    if (session.user?.isAdmin === true)
-      commands.push({
-        id: "cloud",
-        title: "Cloud accounts",
-        hint: "provider tokens, what they are used for, today's calls",
-        run: () => ctx.push(cloudScreen(session, ctx)),
-      });
-    // Each failure domain and its last drill, as Settings → Backups → Failure domains says it (#1945).
-    if (session.user?.isAdmin === true && session.user.kind !== "agent")
-      commands.push({
-        id: "domains",
-        title: "Failure domains",
-        hint: "failure domains and their last drill",
-        run: () => ctx.push(domainsScreen(session, ctx)),
-      });
-    // What needs the owner: needs, snapshot store, every failure domain (#1236).
-    if (session.user?.isAdmin === true && session.user.kind !== "agent")
-      commands.push({
-        id: "owner",
-        title: "Owner's needs",
-        hint: "what needs the owner, snapshots, failure domains",
-        run: () => ctx.push(ownerScreen(session, ctx)),
-      });
+    // Entries that live beside their screen: cloud, domains, owner.
+    for (const e of ENTRIES)
+      if (e.offered(session)) commands.push({ id: e.id, title: e.title, hint: e.hint, run: () => e.run(session, ctx) });
     // The forges this one sent, as /forges lists them: an admin's only.
     if (session.user?.isAdmin === true)
       commands.push({
