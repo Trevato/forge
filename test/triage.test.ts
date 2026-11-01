@@ -98,6 +98,15 @@ describe("triage", () => {
     expect(placementOf(app.db, t.id)?.reply).toBe(p.reply);
   });
 
+  test("work that names no pillar opens an issue on no edge: the old Later-gate rule is gone (#7801)", async () => {
+    app.config.decider = stub({ somewhere: ["work", 0.9, "none"] });
+    const p = await placeThought(app, fresh(), alice, think("somewhere to put a thing"));
+    expect(p.placed[0]!.action).toBe("opened");
+    const issue = getIssue(app.db, repo.id, p.placed[0]!.number)!;
+    const edges = app.db.query<{ c: number }, [string]>("SELECT count(*) c FROM issue_dependency WHERE issue_id = ?1").get(issue.id)!.c;
+    expect(edges).toBe(0);
+  });
+
   test("a thought with nothing to act on opens nothing and is kept as a note", async () => {
     app.config.decider = { name: "boom", async decide() { throw new Error("asked"); } } as never;
     const count = () => app.db.query<{ c: number }, []>("SELECT count(*) c FROM issue").get()!.c;
