@@ -327,6 +327,7 @@ forge ls                           # what is here, and how stale
 forge open owner/name --web        # the page, in a browser
 forge ship 12                      # land pull #12 after a y/N, as Merge does
 forge pulls                        # open pulls of this clone, newest first
+forge runs                         # the crew's last 10 runs here: state, agent, #N, title, age, cost
 forge asks                         # what waits on you, most important first
 forge asks --repo owner/name       # only that repository's; --json for the API's answer
 forge asks --ship 1 3              # decide by the line numbers just printed: planned, then Apply? [y/N]
@@ -382,6 +383,15 @@ says `no token sent`.
 one: the library of clones, then a lazygit-shaped working-tree screen —
 `space` stages, `enter` opens the hunks, `s` stages one, `c` commits, `P`
 pushes, `b` branches, `l` log, `z` stashes, `?` shows every binding.
+
+`forge runs` lists the last 10 runs of the same repository (`--repo
+owner/name` names another, `--json` prints the API's answer). Each row of
+`GET /api/v1/repos/:owner/:name/runs` carries `agent` (the agent run's
+username, null for a check or deploy), `number` and `title` (its pull or
+issue, null for none), so no client reads them out of a branch name. The SSH
+terminal's door is `H` on a repository: the runs screen
+(`src/tui/screens/runs.ts`), read through the same `listRepoRuns`, so a guest
+sees only what the page shows them and a stranger sees no cost or session.
 
 In the SSH terminal, `enter` on a run opens its log (the last 200 lines, following new ones while it runs; "Not found" where the web would say so), and `o` there prints the web address (`src/tui/screens/runlog.ts`).
 

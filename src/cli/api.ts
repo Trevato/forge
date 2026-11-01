@@ -386,6 +386,17 @@ export class ForgeApi {
     return ok({ ...first, items, next_cursor: cursor });
   }
 
+  /** The latest runs of one repository, newest first, in the API's own shape. */
+  async runs(
+    owner: string,
+    name: string,
+    limit: number,
+  ): Promise<ApiResult<{ items: unknown[]; next_cursor: unknown }>> {
+    return this.call(
+      `/api/v1/repos/${encode(owner)}/${encode(name)}/runs?limit=${limit}`,
+    );
+  }
+
   /**
    * What waits on the user, most consequential first (`GET /api/v1/asks`).
    * A row of a kind this client has never heard of is kept, not dropped: it

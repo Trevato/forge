@@ -16,7 +16,7 @@ import { requireVerified } from "./verify.ts";
 import { requireAbility } from "./roles.ts";
 import type { App } from "../app.ts";
 import { steerRun } from "../crew/runner.ts";
-import { getIssueById } from "../core/issues.ts";
+import { getIssueById, getIssuesByIds } from "../core/issues.ts";
 import { addComment } from "./issues.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import { canEnterApp, canSeeOwnerFacts, onCrew, type Repo } from "../core/repos.ts";
@@ -28,7 +28,7 @@ import {
   type Run,
   setRunErrorLine,
 } from "../core/runs.ts";
-import type { User } from "../core/users.ts";
+import { getUsersByIds, type User } from "../core/users.ts";
 import { abortAgentRun } from "../crew/running.ts";
 import { queueAgentRun, taskOf } from "../crew/dispatch.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -167,6 +167,40 @@ export function listRepoRuns(
       .filter((r) => mayViewId(app.db, repo, r.issueId, actor))
       .map(runForReader(app, actor, repo)),
   );
+}
+
+/** A run as the runs API lists it: the agent's name, and the pull or issue it is about. */
+export type NamedRun = Run & {
+  readonly agent: string | null;
+  readonly number: number | null;
+  readonly title: string | null;
+};
+
+/**
+ * Names runs already read for this reader (`listRepoRuns`) in two grouped
+ * reads: `agent` is the username behind an agent run (null for a check or
+ * deploy), `number` and `title` the pull or issue the run is about (null when
+ * it is about none). A sealed issue never reaches here: `listRepoRuns` drops
+ * its runs for a reader who may not see it.
+ */
+export function nameRuns(app: App, runs: readonly Run[]): NamedRun[] {
+  const actors = getUsersByIds(
+    app.db,
+    runs.flatMap((r) => (r.kind === "agent" && r.actorId !== null ? [r.actorId] : [])),
+  );
+  const issues = getIssuesByIds(
+    app.db,
+    runs.flatMap((r) => (r.issueId === null ? [] : [r.issueId])),
+  );
+  return runs.map((r) => {
+    const issue = r.issueId === null ? undefined : issues.get(r.issueId);
+    return {
+      ...r,
+      agent: r.kind === "agent" && r.actorId !== null ? (actors.get(r.actorId)?.username ?? null) : null,
+      number: issue?.number ?? null,
+      title: issue?.title ?? null,
+    };
+  });
 }
 
 /**

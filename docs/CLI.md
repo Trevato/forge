@@ -269,6 +269,29 @@ $ forge pulls --repo alice/shop
 #2  Dark print view           carol  red
 ```
 
+## forge runs
+
+What the crew is doing on a repository: its last 10 runs, newest first, one
+line each: the state (`queued`, `running`, `ok`, `failed`, `cancelled`), the
+agent, the pull or issue number, the title, the age (of the finish, else the
+start) and the cost when there is one. The agent, number and title are the
+runs API's own `agent`, `number` and `title` fields: a check or deploy has no
+agent, and a run about no pull or issue has no number or title, so those
+columns are blank rather than guessed from the branch. The repository is `--repo`, or else the current folder's `origin` (exit
+2 otherwise). Not logged in exits 3; any other refusal prints the forge's words
+and exits 1. With none, it prints `No runs yet.`
+
+Flags:
+
+- `--repo owner/name` — the repository (exit 2 if it is not `owner/name`).
+- `--json` — the forge's answer as it came.
+
+```console
+$ forge runs --repo alice/shop
+running  scout  #6038  Login fix                   now  $0.50
+failed          #7696  Tidy the header              2h
+```
+
 ## forge asks
 
 What waits on you, one line each, most important first: the kind, the

@@ -199,6 +199,7 @@ import {
   checkOfCommit,
   getRepoRun,
   listRepoRuns,
+  nameRuns,
   runForReader,
   runLog,
 } from "../actions/runs.ts";
@@ -3544,18 +3545,21 @@ export function apiRoutes(router: Router<Handler>): void {
     const kind = q.get("kind");
     const env = q.get("env");
     const limit = Math.min(Math.max(Number(q.get("limit")) || 50, 1), 200);
-    const runs = timePhase(ctx.request, "runs", () =>
-      listRepoRuns(ctx.app, ctx.auth.user, repo, {
+    // Already as this reader may see them (`runForReader`): a stranger's
+    // runs carry no cost, turns, agent session or node. Each row also names
+    // its agent and its pull or issue (`nameRuns`), so a client never parses
+    // the branch.
+    const runs = timePhase(ctx.request, "runs", () => {
+      const listed = listRepoRuns(ctx.app, ctx.auth.user, repo, {
         ...(kind === "deploy" || kind === "agent" ? { kind } : {}),
         ...(env !== null && isEnvName(env) ? { env } : {}),
         ...(q.get("cursor") ? { cursor: q.get("cursor")! } : {}),
         limit,
-      }),
-    );
-    if (!runs.ok) return notFound();
-    // Already as this reader may see them (`runForReader`): a stranger's
-    // runs carry no cost, turns, agent session or node.
-    return timePhase(ctx.request, "render", () => json(paged(runs.value, limit, (r) => r.id)));
+      });
+      return listed.ok ? nameRuns(ctx.app, listed.value) : undefined;
+    });
+    if (runs === undefined) return notFound();
+    return timePhase(ctx.request, "render", () => json(paged(runs, limit, (r) => r.id)));
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/runs/:id", (ctx) => {
