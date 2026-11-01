@@ -27,13 +27,13 @@ import {
 import { getIssueById, type Issue } from "../src/core/issues.ts";
 import { getPull } from "../src/core/pulls.ts";
 import { submitReview } from "../src/core/reviews.ts";
+import { provideChecksForTest, type ChecksHandle } from "../src/checks/service.ts";
 import { claimRun, createRun, finishRun, listRuns } from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { setCrewRole } from "../src/core/agents.ts";
 import type { Answer, Decider, Questions } from "../src/crew/decide.ts";
 import { driveRepo, landIfGreen } from "../src/crew/autonomy.ts";
 import { answerFailedCheck, judgeFailedCheck } from "../src/crew/dispatch.ts";
-import { startChecks } from "../src/checks/service.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
 /** A decider that answers from a script: question name → choice. */
@@ -270,7 +270,12 @@ describe("the decision ledger", () => {
   test("stop is not the last word on a red check: the environment's fault runs it again, once per commit, before anything is parked", async () => {
     const { getAgentByName } = await import("../src/core/agents.ts");
     const scoutAgent = getAgentByName(app.db, "scout")!;
-    const checks = startChecks(app, { forgeUrl: servers.url, concurrency: 1 });
+    // A stand-in lane: the retry is queued as the real one queues it, but no
+    // check runs, so the verdict does not wait on this machine's load.
+    provideChecksForTest(app, {
+      request: async (r: Repo, env: string, commitOid: string, reason: string, issueId?: string) =>
+        createRun(app.db, { repoId: r.id, kind: "check", issueId, env, commitOid, reason }),
+    } as unknown as ChecksHandle);
     try {
       const branch = await commitToBranch(app, alice, repo, {
         branch: "feature/flaky",
@@ -353,10 +358,9 @@ describe("the decision ledger", () => {
       ).toBe("reworked");
       expect(getPull(app.db, repo.id, pull.number)?.state).toBe("open");
     } finally {
-      await checks.stop();
       delete script["cause"];
     }
-  }, 60_000);
+  });
 
   test("conflicts come first: a green pull that no longer merges gets a conflict run before anyone decides", async () => {
     const branch = await commitToBranch(app, alice, repo, {
