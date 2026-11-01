@@ -12,7 +12,8 @@
  * conflicted pulls, the idle crew pulls (#6479) and the pulls with
  * changes requested waiting on a builder and on a reviewer (`flow/requested.ts`, #2172); then each
  * autonomous repository's ready list, startable beside the count per
- * filter that holds the rest (`flow/held.ts`, #2244), as the flow panel draws it.
+ * filter that holds the rest (`flow/held.ts`, #2244), as the flow panel draws it;
+ * last, how long each main has gone unverified after landing (`flow/verified.ts`, #7786).
  * Read-only; Enter, Esc or q closes it.
  */
 
@@ -23,6 +24,7 @@ import { pullCounts } from "../../crew/hot_files.ts";
 import { warmingLine } from "../../crew/hot_history.ts";
 import { ago } from "../../feed/rank.ts";
 import type { HeldRow } from "../../flow/held.ts";
+import { verifiedSays, type VerifiedRow } from "../../flow/verified.ts";
 import { conflictedSays, rebaseLaneSays } from "../../flow/conflicted.ts";
 import { IDLE_LIMIT, type IdlePull } from "../../flow/idle_pulls.ts";
 import { pileSays } from "../../flow/pile.ts";
@@ -60,6 +62,8 @@ export function flowLines(
   held?: readonly HeldRow[],
   /** The forge's daily ceiling, which the idle-crew alarm needs to know it is not paused on purpose. */
   ceilingUsd: number | null = null,
+  /** How long each main has gone unverified after landing (`readVerified`, already cut to what the reader may see). */
+  verified?: readonly VerifiedRow[],
 ): string[] {
   const stages = readPipeline(db, now);
   const flow = readThroughput(db, stages.map((s) => s.key), now);
@@ -122,6 +126,9 @@ export function flowLines(
     ...(reviewing === null ? [] : ["", ...wrap(reviewing, inner)]),
     ...(warming === "" ? [] : ["", ...warming.split("\n").flatMap((l) => wrap(l, inner))]),
     ...(held === undefined ? [] : ["", ...heldLines(held, inner)]),
+    ...(verified === undefined || verified.length === 0
+      ? []
+      : ["", ...verified.flatMap((r) => wrap(`${r.repo}: ${verifiedSays(r, now.getTime())}`, inner))]),
     "",
     ...duplicateLines(dups, inner),
   ];

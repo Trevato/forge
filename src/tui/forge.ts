@@ -56,6 +56,7 @@ import { capacityScreen, mayCapacity } from "./screens/capacity.ts";
 import { forgeCeiling } from "../flow/ceiling.ts";
 import { flowLines, flowScreen } from "./screens/flow.ts";
 import { readHeld } from "../flow/held.ts";
+import { readVerified } from "../flow/verified.ts";
 import { memoryScreen } from "./screens/system.ts";
 import { noteRead, telemetryReader } from "../actions/telemetry.ts";
 import { queuesFor, systemFor } from "../system/telemetry.ts";
@@ -298,6 +299,7 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
               flowReader.kind === "agent" ? { queues: queuesFor(session.app, flowReader, new Date(), { batches: true }) } : undefined,
               readHeld(session.app, flowReader.kind === "owner"),
               forgeCeiling(session.app.config),
+              readVerified(session.app, flowReader.kind === "owner"),
             )));
         },
       });

@@ -43,6 +43,7 @@ import { buildYieldSays } from "../../flow/build_yield.ts";
 import { reviewLatencySays } from "../../flow/review_latency.ts";
 import { openerCounts } from "../../flow/openers.ts";
 import { readHeld } from "../../flow/held.ts";
+import { readVerified, verifiedSays, type VerifiedRow } from "../../flow/verified.ts";
 import type { App } from "../../app.ts";
 import { html, type Html } from "../html.ts";
 import { gatesCard } from "./boards-gates.ts";
@@ -211,12 +212,34 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
       </div>`,
       { head: html`<h2>Pipeline</h2><a class="muted small" href="/settings/capacity">Capacity</a>`, id: "pipeline", pad: false },
     )}
+    ${verifiedCard(readVerified(app, reader.kind === "owner"), now)}
     ${hotFilesCard(app, reader)}
     ${heldCard(readHeld(app, reader.kind === "owner", now))}
     ${queueCard(queuesFor(app, reader, new Date(now), { batches: true }))}
     ${gatesCard(app.db, reader.kind === "owner", now)}
     ${url.searchParams.get("idle") === "all" && idle.length > 0 ? idleList(idle) : null}
     ${listed === null || shown === undefined ? null : outList(shown, listed.hour, now)}`;
+}
+
+/**
+ * How long main has gone unverified, per repository whose main is verified
+ * after landing (#7786): the whole suite runs there on a schedule, after
+ * landings that were judged on lint and types.
+ */
+function verifiedCard(rows: readonly VerifiedRow[], now: number): Html {
+  return card(
+    html`<h2>Verified after landing</h2>
+      ${rows.length === 0
+        ? html`<p class="muted">No repository verifies its main after landing yet: it declares <span class="mono">check.verify</span> in forge.json.</p>`
+        : rows.map(
+            (r) =>
+              html`<p data-verified="${r.repo}" data-unverified-since="${r.unverifiedSince ?? ""}">
+                <a href="/${r.repo}">${r.repo}</a>: ${verifiedSays(r, now)}
+                ${r.last === null ? null : html`· <a class="small" href="/${r.repo}/runs/${r.last.runId}">run</a>`}
+              </p>`,
+          )}`,
+    { id: "verified" },
+  );
 }
 
 /** The count, `20+` when the read stopped at its limit. */

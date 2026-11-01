@@ -7,6 +7,7 @@
  *   bun scripts/test-shards.ts [bun test flags…] --tier fast --diff <base>..<head>
  *   bun scripts/test-shards.ts --record [bun test flags…] test/a.test.ts …
  *   bun scripts/test-shards.ts [bun test flags…] -- a b …   (test/a.test.ts …)
+ *   bun scripts/test-shards.ts [bun test flags…] --gate --impact --keep-going --nice
  *
  * `--gate` runs the files `scripts/gate.ts` admits (every test file not
  * excluded), which is how
@@ -26,6 +27,14 @@
  * clock — unless every red in it is a budget test, which the forge re-runs
  * once after the gate (#7354). Exits non-zero if any shard does.
  *
+ * `--keep-going` is the verification after landing (#7786): no shard stops
+ * the rest, a file red on its own is run once more alone (green then, it
+ * is named flaky and does not fail the run), and a measuring run writes
+ * the impact of every file that ended green even when another is red.
+ * `--nice` runs it all at the lowest CPU priority, so the checks a landing
+ * waits on go first. `FORGE_CHECK_ONLY` (comma-separated test files, set
+ * by the forge for a bisection step) keeps only those files.
+ *
  * The whole gate, unsliced (`--gate` on the full tier, as `check.run`),
  * runs one file per `bun test`, heaviest first into whichever worker is
  * free, so every file is timed alone; when it is green it writes those
@@ -40,7 +49,7 @@
  * table is rewritten from those times when every file is green.
  */
 
-import { availableParallelism, tmpdir, totalmem } from "node:os";
+import { availableParallelism, setPriority, tmpdir, totalmem } from "node:os";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolveLimits } from "../src/apps/contain.ts";
@@ -74,6 +83,7 @@ import { importsReader, readImpact } from "./tier-input.ts";
 import { fastSet, duration } from "../src/checks/tiers.ts";
 import { CHECK_CACHE } from "../src/checks/cache.ts";
 import { parseCheck } from "../src/apps/manifest.ts";
+import { FLAKY_ALONE, onlyFiles } from "../src/checks/verify.ts";
 
 const TIMES = new URL("./test-times.json", import.meta.url).pathname;
 // The forge hands the map over in the checkout (`src/checks/impact-store.ts`):
@@ -90,6 +100,15 @@ const argv = process.argv.slice(2);
 const record = argv.includes("--record");
 const gate = argv.includes("--gate");
 const measure = argv.includes("--impact");
+const keepGoing = argv.includes("--keep-going");
+const nice = argv.includes("--nice");
+// Every `bun test` this spawns inherits it.
+if (nice)
+  try {
+    setPriority(19);
+  } catch (error) {
+    console.log(`test-shards: --nice refused (${String(error)}); running at normal priority`);
+  }
 
 /**
  * Measured seconds where a table has them, bytes scaled to seconds where
@@ -175,7 +194,7 @@ function takeValue(
 }
 
 const tierArg = takeValue(
-  argv.filter((arg) => arg !== "--record" && arg !== "--gate" && arg !== "--impact"),
+  argv.filter((arg) => !["--record", "--gate", "--impact", "--keep-going", "--nice"].includes(arg)),
   "--tier",
 );
 const diffArg = takeValue(tierArg.rest, "--diff");
@@ -286,6 +305,13 @@ if (tier === "fast") {
     process.exit(0);
   }
   files = plan.files;
+}
+
+const only = onlyFiles(process.env["FORGE_CHECK_ONLY"]);
+if (only !== undefined) {
+  const named = new Set(only);
+  files = files.filter((file) => named.has(file) || named.has(file.replace(/^\.\//, "")));
+  console.log(`test-shards: FORGE_CHECK_ONLY keeps ${files.length} of ${only.length} named file(s)`);
 }
 
 if (files.length === 0) {
@@ -505,7 +531,22 @@ async function runShard(
     : undefined;
   const first = await run(paths, cover, through);
   let code = first.code;
-  const output = first.output;
+  let output = first.output;
+  // Kept going, a file red on its own is run once more alone: green then,
+  // it was a flake, and its first output (the `(fail)` lines) is set aside.
+  if (code !== 0 && keepGoing && slice.length === 1) {
+    // The red run's coverage is not the green one's.
+    if (covDir) {
+      rmSync(covDir, { recursive: true, force: true });
+      mkdirSync(covDir);
+    }
+    const again = await run(paths, cover, through);
+    if (again.code === 0) {
+      code = 0;
+      output = [...again.output, `test-shards: ${FLAKY_ALONE} ${slice[0]}\n`];
+      through?.(output.at(-1)!);
+    } else output = again.output;
+  }
   // A sliced shard that went red: each failing file (the first few) is run
   // once alone, same env and flags. One that passes alone was red only
   // beside others, and does not fail the check; the log names it.
@@ -534,7 +575,10 @@ async function runShard(
       ? `${text.endsWith("\n") || text === "" ? "" : "\n"}── shard ${where} done (exit ${code}, ${seconds}s)\n`
       : `\n── shard ${where} (exit ${code}, ${seconds}s): ${slice.join(" ")}\n${text}${text.endsWith("\n") ? "" : "\n"}`,
   );
-  if (covDir) {
+  if (covDir && keepGoing && code !== 0) {
+    // A red file's coverage is not its impact; the map keeps its old row.
+    rmSync(covDir, { recursive: true, force: true });
+  } else if (covDir) {
     try {
       measured.set(slice[0]!, executedFiles(readFileSync(join(covDir, "lcov.info"), "utf8")));
     } catch {
@@ -563,8 +607,9 @@ async function pool(width: number): Promise<Timed[]> {
       const index = next++;
       if (stop) break;
       results[index] = await runShard(slices[index]!, index, width === 1);
-      // A shard red only on budget tests lets the rest run (#7354).
-      if (stopsTheRest(results[index]!)) {
+      // A shard red only on budget tests lets the rest run (#7354);
+      // a verification after landing runs everything (#7786).
+      if (!keepGoing && stopsTheRest(results[index]!)) {
         stop = true;
         halted = true;
         for (const child of children) child.kill("SIGTERM");
@@ -622,8 +667,11 @@ if (record || timed) {
   }
 }
 if (measure) {
-  if (ending.code !== 0 || unmeasured.size > 0) {
-    console.log(`test-shards: not writing ${IMPACT_NAME}: the run was not green and measured`);
+  if ((ending.code !== 0 && !keepGoing) || unmeasured.size > 0 || measured.size === 0) {
+    console.log(
+      `test-shards: not writing ${IMPACT_NAME}: the run was not green and measured` +
+        (unmeasured.size > 0 ? ` (no coverage from ${[...unmeasured].join(", ")})` : ""),
+    );
   } else {
     // A partial run refreshes what it ran and forgets nothing else.
     let old = new Map<string, string[]>();

@@ -16,6 +16,7 @@ import { type QueueReading, readQueues } from "../flow/queue.ts";
 import { reviewersBusy, reviewingSays } from "../flow/reviewing.ts";
 import { requestedSays, requestedWaits } from "../flow/requested.ts";
 import { readThroughput, stageOut, throughputSays } from "../flow/throughput.ts";
+import { readVerified, verifiedSays } from "../flow/verified.ts";
 import type { Reader } from "../actions/telemetry.ts";
 import { agentView, live } from "./live.ts";
 import type { SystemView } from "./view.ts";
@@ -38,6 +39,8 @@ export function flowFor(app: App, reader: Reader, now = new Date()) {
   const parked = readParked(app.db, now, reader.kind === "agent");
   return {
     says: verdict(stages, now.getTime()),
+    // How long each main has gone unverified after landing (#7786); private repositories for the owner only.
+    verified: readVerified(app, reader.kind === "owner").map((row) => ({ ...row, says: verifiedSays(row, now.getTime()) })),
     // Issues the crew parked in the last 24 h and 7 d, the newest three named (#6471).
     parked: { says: parkedSays(parked), ...parked },
     // Open pulls, opened and landed in 1 h and 6 h, and conflicted, against #5924's targets (#5935).

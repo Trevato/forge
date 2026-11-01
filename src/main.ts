@@ -35,6 +35,7 @@ import { listApps } from "./core/apps.ts";
 import { holdAppHosts, releaseAppHosts } from "./apps/holding.ts";
 import { resolveAppDomain } from "./apps/host.ts";
 import { LAND_SETTLE_MS, requeueAbandonedChecks, startChecks } from "./checks/service.ts";
+import { VERIFY_EVERY_MS } from "./checks/verify.ts";
 import { RED_HOLD_MS } from "./checks/red_main.ts";
 import { stopQueue } from "./checks/queue.ts";
 import { startLooks } from "./looks/service.ts";
@@ -407,6 +408,8 @@ const checks =
         // before cutting them off: a full gate takes about ten minutes, and
         // the pod's grace (charts/app, 720 s) is longer still (#6722).
         drainMs: positive(process.env.FORGE_CHECKS_DRAIN_S, 660) * 1000,
+        // Main is verified after landing at most this often (#7786).
+        verifyEveryMs: VERIFY_EVERY_MS,
       });
 // Migrated repositories kept as a read-only mirror push to their source.
 const mirrorOut = startMirrorOut(app);

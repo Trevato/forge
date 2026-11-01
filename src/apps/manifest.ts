@@ -311,6 +311,12 @@ export interface CheckManifest {
   readonly fast: string | null;
   /** The full tier, run once when a pull lands. Defaults to `run`. */
   readonly full: string;
+  /**
+   * The verification after landing (#7786): the whole suite, run on the
+   * default branch on a schedule, never as a landing's requirement. `null`:
+   * nothing verifies main after it lands.
+   */
+  readonly verify: string | null;
   /** Seconds the check may take before it fails. */
   readonly timeout: number;
   /** Hosts its steps may reach besides the forge and the npm registry. */
@@ -347,6 +353,8 @@ export function parseCheck(
   if (!fast.ok) return fast;
   const full = command(check, "full", "check");
   if (!full.ok) return full;
+  const verify = command(check, "verify", "check");
+  if (!verify.ok) return verify;
   const pkg = packageJson === undefined ? undefined : readPackage(packageJson);
   if (pkg !== undefined && !pkg.ok) return pkg;
   const timeout = check["timeout"];
@@ -368,6 +376,7 @@ export function parseCheck(
     run: run.value,
     fast: fast.value || null,
     full: full.value || run.value,
+    verify: verify.value || null,
     egress: egress.value,
     limits: limits.value,
     install:
