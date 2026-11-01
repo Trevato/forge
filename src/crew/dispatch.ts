@@ -38,7 +38,6 @@ import { accountActive } from "../core/accounts.ts";
 import { runningLimitSentence, runningRuns } from "../settings/quotas.ts";
 import { appendRunLog } from "../runs/log.ts";
 import { decideAndRecord } from "./ledger.ts";
-import { triesChanged } from "./tries.ts";
 import { byDials } from "./team_share.ts";
 import { ARCHIVED_WHY, getRepoById, type Repo } from "../core/repos.ts";
 import { listReviews } from "../core/reviews.ts";
@@ -941,11 +940,8 @@ export type CheckAnswer = "reran" | "reworked" | "parked" | "waiting";
  *   the check runs again, once for that commit, without spending the
  *   agent's tries. A stop on that would throw away a change nobody has
  *   found fault with.
- * - `stop` — the pull is parked, with a reason that says which of the two
- *   it was, so the next reader (and the planner) can tell a change that
- *   failed from a change that was unlucky. The re-run is bounded by
- *   `retriedChecks`: a permanently broken runner parks on the second red.
- * - `again` — the agent reworks it, as ever.
+ * - otherwise the agent reworks it. The try limit (`CHECK_FAILED_LIMIT`) is
+ *   what parks a pull: one red, or one model's guess, never does.
  */
 export async function answerFailedCheck(
   app: App,
@@ -993,50 +989,8 @@ export async function answerFailedCheck(
       );
     return "reran";
   }
-  if (judged.retry === "stop") {
-    // The decider's stop is the crew's stop: parked, never waiting, in a
-    // repository on its own.
-    const pull = getPull(app.db, repo.id, issue.number);
-    const tries =
-      pull && judged.cause !== "environment"
-        ? await triesChanged(app, repo, pull, failed.since).catch(() => [])
-        : [];
-    if (
-      pull &&
-      parkPull(
-        app,
-        repo,
-        pull,
-        [parkedReason(judged, failed.kind, head), ...tries].join("\n"),
-      )
-    )
-      return "parked";
-    log.info("check failed; waiting for a person", { issue: issue.number });
-    return "waiting";
-  }
   queueAgentRun(app, repo, issue, agent, "check_failed");
   return "reworked";
-}
-
-/**
- * Why a parked pull was parked, in the two cases a reader must tell apart:
- * a change that failed, and a change that was unlucky. It names what
- * failed too — a preview that would not boot is not a red test.
- */
-function parkedReason(
-  judged: CheckJudgement,
-  kind: string,
-  head: string,
-): string {
-  const what = kind === "deploy" ? "the preview's deploy" : "the check";
-  if (judged.cause !== "environment") {
-    const named =
-      judged.failingTest === undefined ? "" : ` ("${judged.failingTest}")`;
-    return `${what} failed${named} and the decider saw no point in another try`;
-  }
-  return retriedChecks.has(head)
-    ? `${what} failed in the place it ran, not in the change, and failed the same way when it was run again`
-    : `${what} failed in the place it ran, not in the change, and it could not be run again`;
 }
 
 export function agentFor(app: App, issue: Issue): Agent | undefined {
