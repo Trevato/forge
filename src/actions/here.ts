@@ -360,6 +360,19 @@ function repoActions(
   const record = getAppByRepo(db, repo.id);
   if (record !== undefined && canEnterApp(db, repo, record, viewer))
     out.push({ do: "open the app", http: `GET ${r}/app/production/open` });
+  // The copy is for whoever cannot write the app (the web's button, `!canWrite`);
+  // its dry run is `ro`, so a read-only token sees it too.
+  if (
+    record !== undefined &&
+    canEnterApp(db, repo, record, viewer) &&
+    !canWrite(db, repo, viewer)
+  )
+    out.push({
+      do: "make it yours",
+      http: `POST ${r}/make-it-yours`,
+      mcp: "make_it_yours",
+      ...(viewer === undefined ? { account: true } : unproven),
+    });
   if (!acts) return out;
   const tellSsh = sshTellCommand(app);
   if (mayDirectCrew(db, repo, viewer))

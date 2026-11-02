@@ -77,6 +77,18 @@ describe("the manifest: what you can do here, as who you are", () => {
       visibility: "private",
     });
     if (!vault.ok) throw new Error(String(vault.error));
+    const pub = await newApp(app, alice, {
+      name: "pub",
+      owner: "acme",
+      visibility: "public",
+    });
+    if (!pub.ok) throw new Error(String(pub.error));
+    const plain = await createRepo(app, alice, {
+      name: "plain",
+      owner: "acme",
+      visibility: "public",
+    });
+    if (!plain.ok) throw new Error(String(plain.error));
     const bot = await createAgent(app, alice, { username: "bot" });
     if (!bot.ok) throw new Error(String(bot.error));
     expect(addToCrew(app, alice, game.value.repo, "bot").ok).toBe(true);
@@ -321,6 +333,27 @@ describe("the manifest: what you can do here, as who you are", () => {
     expect(offer.verify).toBe(true);
     const carol = (await manifest("/acme/game", "carol")).body;
     expect(carol.actions.find((a: any) => a.do === "offer a change").verify).toBeUndefined();
+  });
+
+  test("a repository with an app offers make it yours to whoever cannot write it", async () => {
+    const find = (m: any) => m.actions.find((a: any) => a.do === "make it yours");
+    const carol = find((await manifest("/acme/pub", "carol")).body);
+    expect(carol).toEqual({
+      do: "make it yours",
+      http: "POST /api/v1/repos/acme/pub/make-it-yours",
+      mcp: "make_it_yours",
+    });
+    expect(find((await manifest("/acme/pub", "una")).body).verify).toBe(true);
+    const out = find((await manifest("/acme/pub")).body);
+    expect(out.account).toBe(true);
+    expect(out.verify).toBeUndefined();
+  });
+
+  test("a writer, and a repository without an app, are not offered make it yours", async () => {
+    expect(does((await manifest("/acme/pub", "wes")).body)).not.toContain("make it yours");
+    expect(does((await manifest("/acme/pub", "alice")).body)).not.toContain("make it yours");
+    expect(does((await manifest("/acme/plain", "carol")).body)).not.toContain("make it yours");
+    expect(does((await manifest("/acme/plain")).body)).not.toContain("make it yours");
   });
 
   test("an org's own pages are the org's, not a missing repository", async () => {
