@@ -15,6 +15,7 @@ import { crossOrigin, type Ctx } from "../../http/context.ts";
 import { STRANGER_MAX } from "../../http/limits.ts";
 import { clientAddress, clientBucket } from "../../http/peer.ts";
 import { boundedBody, json, str } from "../../http/respond.ts";
+import { CAME_FROM_ELSEWHERE } from "../chrome.ts";
 import { relying, store } from "./passkeys.ts";
 import { EDGE_NAME_MESSAGE, inviteOf, pinnedTo, safeNext, sessionCookie, signinAllowed, signupSlot } from "./site.ts";
 import { EMAIL_TAKEN_MESSAGE, INVALID_USERNAME_MESSAGE, NAME_RESERVED, USERNAME_TAKEN } from "../../actions/signup_words.ts";
@@ -50,7 +51,7 @@ function tooMany(wait: number): Response {
 }
 
 function guard(ctx: Ctx): Response | undefined {
-  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, "forbidden");
+  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, CAME_FROM_ELSEWHERE);
   const wait = signinAllowed(ctx, `signup:${clientAddress(ctx.request)}`);
   return wait === undefined ? undefined : tooMany(wait);
 }

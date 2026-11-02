@@ -63,6 +63,8 @@ import {
   pageHead,
   repoBase,
   signInFirst,
+  NOT_YOURS_TO_DO,
+  forbiddenPage,
 } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
@@ -500,7 +502,7 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
   }
   if (!made.ok) {
     if (made.error === "forbidden_owner" || made.error === "unauthorized")
-      return new Response("forbidden", { status: 403 });
+      return forbiddenPage(ctx, NOT_YOURS_TO_DO);
     const ownerId = getUserByName(
       ctx.app.db,
       values.owner || ctx.auth.user.username,

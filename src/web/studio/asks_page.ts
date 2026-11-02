@@ -30,7 +30,7 @@ import type { User } from "../../core/users.ts";
 import { onYouAnswer, onYouRegion } from "./home.ts";
 import { liveRegionsJs } from "../client.ts";
 import { liveClientJs } from "../live.ts";
-import { notFoundPage, repoBase, signInFirst } from "../chrome.ts";
+import { notFoundPage, repoBase, signInFirst, NOT_YOURS_TO_DO, forbiddenPage } from "../chrome.ts";
 import { backTo, field, readForm } from "../form.ts";
 import { MAX_BODY } from "../../core/issues.ts";
 import { issueTitles } from "../../core/proposals.ts";
@@ -759,7 +759,7 @@ export function asksProposal(verb: ProposalVerb) {
       return done.error.code === "not_found"
         ? notFoundPage(ctx)
         : done.error.code === "forbidden" || done.error.code === "unauthorized"
-          ? new Response("forbidden", { status: 403 })
+          ? forbiddenPage(ctx, NOT_YOURS_TO_DO)
           : await asksScreen(ctx, nothingDone(done.error.message));
     return redirect(backTo(form, "/asks"));
   };

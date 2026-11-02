@@ -66,6 +66,7 @@ import {
   repoHeader,
   repoPalette,
   signInFirst,
+  forbiddenPage,
 } from "../chrome.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import type { DiffLaps } from "../../git/diff.ts";
@@ -1351,7 +1352,7 @@ export async function pullChecksSubmit(ctx: Ctx): Promise<Response> {
   const found = pullContext(ctx);
   if (found instanceof Response) return found;
   if (!ctx.auth.user || !canWrite(ctx.app.db, found.repo, ctx.auth.user))
-    return new Response("forbidden", { status: 403 });
+    return forbiddenPage(ctx, "Only someone who can write to this repository can do this.");
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
   // The home's card asks to come back to the home (only "/" is honoured).
@@ -1372,7 +1373,7 @@ export async function pullMergeSubmit(ctx: Ctx): Promise<Response> {
   const found = pullContext(ctx);
   if (found instanceof Response) return found;
   if (!ctx.auth.user || !canWrite(ctx.app.db, found.repo, ctx.auth.user))
-    return new Response("forbidden", { status: 403 });
+    return forbiddenPage(ctx, "Only someone who can write to this repository can do this.");
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
 
@@ -1400,7 +1401,7 @@ export async function pullLandPastSubmit(ctx: Ctx): Promise<Response> {
   if (found instanceof Response) return found;
   const user = ctx.auth.user;
   if (!user || user.kind === "agent" || !canAdmin(ctx.app.db, found.repo, user))
-    return new Response("forbidden", { status: 403 });
+    return forbiddenPage(ctx, "Only a person who administers this repository can do this.");
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
   const dest = `${repoBase(found.repo)}/pulls/${found.pull.number}`;

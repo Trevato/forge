@@ -11,7 +11,7 @@ import { REFUSED, sayYes, waitingConfirms } from "../../actions/conversation_con
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { ASKING } from "../../crew/conversation_confirm.ts";
 import type { Ctx } from "../../http/context.ts";
-import { settingsLayout, signInFirst } from "../chrome.ts";
+import { settingsLayout, signInFirst, forbiddenPage } from "../chrome.ts";
 import { readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
@@ -70,7 +70,7 @@ export async function confirmYes(ctx: Ctx): Promise<Response> {
   const user = ctx.auth.user;
   if (user === undefined) return signInFirst(ctx);
   // A browser's own session, as the API's door: never a token or a password.
-  if (ctx.auth.via !== "session") return new Response("forbidden", { status: 403 });
+  if (ctx.auth.via !== "session") return forbiddenPage(ctx, "Answer this from your own signed-in browser.");
   const form = await readForm(ctx);
   if (form instanceof Response) return form;
   const yes = await sayYes(ctx, user, ctx.params["id"] ?? "");

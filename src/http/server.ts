@@ -399,7 +399,7 @@ import {
   browseTree,
 } from "../web/pages/browse.ts";
 import { pushThrough } from "../origins/push-through.ts";
-import { notFoundPage } from "../web/chrome.ts";
+import { CAME_FROM_ELSEWHERE, forbiddenPage, notFoundPage, SENT_FROM_ELSEWHERE } from "../web/chrome.ts";
 import { targetForShortCode } from "../origins/oauth.ts";
 import { apiRoutes } from "./api.ts";
 import { pageParamRefused } from "./cursor_lists.ts";
@@ -2440,8 +2440,14 @@ async function answerGet(
   }
 
   // A cookie's identity never acts for another site: one door for every route.
+  // A browser's form gets the forge's own page saying why; a script keeps the JSON.
   const originRefusal = originGate(app, request, url, auth);
-  if (originRefusal !== undefined) return originRefusal;
+  if (originRefusal !== undefined) {
+    if (isApiPath || !prefersHtml(request, url.pathname)) return originRefusal;
+    const themeCookie = cookieValue(request, "forge_theme") ?? "";
+    const theme = isThemeName(themeCookie) ? themeCookie : undefined;
+    return forbiddenPage({ app, request, url, params: {}, auth, theme }, SENT_FROM_ELSEWHERE, CAME_FROM_ELSEWHERE);
+  }
 
   // A proposal token reaches nothing but what its gate names; every other
   // request it makes ends here, before the limiter or any handler.

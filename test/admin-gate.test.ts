@@ -129,7 +129,7 @@ describe("the admin gate", () => {
         expect(res.status, path).toBe(403);
         expect(res.headers.get("content-type")).toContain("text/html");
         const body = await res.text();
-        expect(body).toContain("<h1>403</h1>");
+        expect(body).toContain("<h1>You can't do that here</h1>");
         expect(body).toContain(NOT_AN_ADMIN.replace("'", "&#39;"));
       }
     }

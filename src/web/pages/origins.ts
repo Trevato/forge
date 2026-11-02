@@ -57,6 +57,8 @@ import {
   settingsLayout,
   signInFirst,
   type SettingsSection,
+  NOT_ADMIN_HERE,
+  forbiddenPage,
 } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
@@ -277,7 +279,7 @@ export function accountOnly(ctx: Ctx): Response | undefined {
   if (ctx.auth.via === "session" || ctx.auth.via === "password")
     return undefined;
   if (ctx.auth.scope === "admin") return undefined;
-  return new Response("forbidden", { status: 403 });
+  return forbiddenPage(ctx, "This takes your own signed-in account or an admin token.");
 }
 
 // ---- the origin list ----
@@ -1023,14 +1025,14 @@ export async function originTrustedHosts(ctx: Ctx): Promise<Response> {
   const denied = accountOnly(ctx);
   if (denied) return denied;
   if (!mayEditTrustedHosts(ctx.auth.user))
-    return new Response("forbidden", { status: 403 });
+    return forbiddenPage(ctx, NOT_ADMIN_HERE);
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
   const text = field(form, "hosts");
   const saved = updateTrustedHosts(ctx.app.db, ctx.auth.user, text);
   if (!saved.ok) {
     if (saved.error === "forbidden")
-      return new Response("forbidden", { status: 403 });
+      return forbiddenPage(ctx, NOT_ADMIN_HERE);
     const values = blankValues();
     values.trustedText = text.slice(0, 4000);
     values.trustedError = rejectedSentence(saved.rejected);

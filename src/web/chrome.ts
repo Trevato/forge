@@ -24,6 +24,7 @@ import { canEnterApp, type Repo } from "../core/repos.ts";
 import { parentUrl, shownTrail, sourceLabel } from "../core/provenance.ts";
 import type { Database } from "bun:sqlite";
 import type { Ctx } from "../http/context.ts";
+import { apiError, prefersJson } from "../http/respond.ts";
 import { html, raw, when, type Html } from "./html.ts";
 import { icon } from "./icons.ts";
 import { page, redirect, type PaletteItem } from "./layout.ts";
@@ -96,6 +97,40 @@ export function notFoundPage(ctx: Ctx, opts: { plain?: boolean } = {}): Response
 }
 
 export const repoNotFound = notFoundPage;
+
+/** Why a refusal happened, in the words a person reads on the 403 page. */
+export const NOT_ADMIN_HERE = "Only an admin of this forge can do this.";
+export const SENT_FROM_ELSEWHERE =
+  "This form was sent from another site, so it was not used — go back and send it again.";
+/** The same refusal for a script, which has no page to go back to. */
+export const CAME_FROM_ELSEWHERE = "This request came from another site, so it was not used.";
+export const SIGN_IN_TO_DO = "Sign in to do this.";
+export const NOT_YOURS_TO_DO = "Your account is not allowed to do this here.";
+
+/** The one 403 a browser sees: the forge's chrome, one plain sentence why,
+ * and the way back — Home, and Sign in for someone anonymous. A caller that
+ * asked for JSON gets the API's `{ error, message }` instead, in `forScripts`'
+ * words when the page's would not suit it. */
+export function forbiddenPage(ctx: Ctx, why: string, forScripts: string = why): Response {
+  if (prefersJson(ctx.request)) return apiError("forbidden", 403, forScripts);
+  const anonymous = ctx.auth.user === undefined;
+  return page(
+    {
+      ctx,
+      title: "Not allowed",
+      body: html`<div class="page-head"><h1>You can't do that here</h1></div>
+        ${empty({
+          icon: "lock",
+          title: why,
+          action: anonymous
+            ? html`${btn("Sign in", { href: signInHref(ctx), variant: "primary" })}
+                ${btn("Go home", { href: "/" })}`
+            : btn("Go home", { href: "/", variant: "primary" }),
+        })}`,
+    },
+    403,
+  );
+}
 
 /** Send an anonymous visitor to sign in, and back where they were going. */
 export function signInFirst(ctx: Ctx): Response {

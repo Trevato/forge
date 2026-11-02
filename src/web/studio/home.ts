@@ -25,7 +25,7 @@ import { type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { activeEdgeToken, edgeLoginUrl, edgeStrangerLogin } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
-import { repoBase, signInFirst } from "../chrome.ts";
+import { repoBase, signInFirst, NOT_ADMIN_HERE, forbiddenPage } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { liveRegionsJs } from "../client.ts";
 import { html, when, type Html } from "../html.ts";
@@ -709,7 +709,7 @@ export async function frontUpdate(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return signInFirst(ctx);
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
-  if (!ctx.auth.user.isAdmin) return new Response("forbidden", { status: 403 });
+  if (!ctx.auth.user.isAdmin) return forbiddenPage(ctx, NOT_ADMIN_HERE);
   const next = nextPicks(frontPicksJson(ctx.app), field(form, "action"), form);
   if (next === undefined) return new Response("bad request", { status: 400 });
   const set = setFront(ctx.app, ctx.auth.user, next);

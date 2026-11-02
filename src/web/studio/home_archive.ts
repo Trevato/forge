@@ -8,7 +8,7 @@
 import { applyFleetIds, getFleetOp, undoFleetOp } from "../../actions/fleet.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
-import { signInFirst } from "../chrome.ts";
+import { signInFirst, NOT_ADMIN_HERE, forbiddenPage } from "../chrome.ts";
 import { readForm } from "../form.ts";
 import { html } from "../html.ts";
 import { page, redirect } from "../layout.ts";
@@ -29,7 +29,7 @@ export async function homeArchive(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return signInFirst(ctx);
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
-  if (!ctx.auth.user.isAdmin) return new Response("forbidden", { status: 403 });
+  if (!ctx.auth.user.isAdmin) return forbiddenPage(ctx, NOT_ADMIN_HERE);
   const ids = picked(form);
   if (ids.length === 0 || ids.length > MAX_ROWS)
     return redirect("/", {

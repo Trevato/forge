@@ -14,7 +14,7 @@ import type { Ctx } from "../../http/context.ts";
 import { listReleases, type Release } from "../../release/record.ts";
 import { BOOTED, canRollBackTo, mayRead, mayRollBack, rollBackTo } from "../../release/gate.ts";
 import { liveSince, NO_RELEASES_YET } from "../../release/words.ts";
-import { notFoundPage, signInFirst } from "../chrome.ts";
+import { notFoundPage, signInFirst, NOT_ADMIN_HERE, SIGN_IN_TO_DO, forbiddenPage } from "../chrome.ts";
 import { readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
@@ -91,10 +91,10 @@ export async function releasesPage(ctx: Ctx): Promise<Response> {
 
 export async function rollbackSubmit(ctx: Ctx): Promise<Response> {
   const user = ctx.auth.user;
-  if (user === undefined) return new Response("forbidden", { status: 403 });
+  if (user === undefined) return forbiddenPage(ctx, SIGN_IN_TO_DO);
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
-  if (!mayRollBack(ctx.app, user)) return new Response("forbidden", { status: 403 });
+  if (!mayRollBack(ctx.app, user)) return forbiddenPage(ctx, NOT_ADMIN_HERE);
   const target = ctx.params["sha"] ?? "";
   const refuse = (message: string): Response =>
     flashTo(ctx, "/releases", { tone: "danger", message });

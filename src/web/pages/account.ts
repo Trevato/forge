@@ -52,6 +52,7 @@ import {
   settingsLayout,
   signInFirst,
   type SettingsSection,
+  forbiddenPage,
 } from "../chrome.ts";
 import { accountSections } from "./origins.ts";
 import { field, readForm } from "../form.ts";
@@ -713,7 +714,7 @@ export async function tokenCreate(ctx: Ctx): Promise<Response> {
   // the platform edge's sign-in, or the password — never from another token
   // (no privilege bootstrapping). readForm below refuses a cross-site post.
   if (!isAccountItself(ctx.auth)) {
-    return new Response("forbidden", { status: 403 });
+    return forbiddenPage(ctx, "A token is made from your own signed-in account, never by another token.");
   }
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;

@@ -21,7 +21,7 @@ import { turnRunning } from "../../crew/conversation.ts";
 import type { Ctx } from "../../http/context.ts";
 import { json } from "../../http/respond.ts";
 import { eventStream } from "../../http/sse.ts";
-import { signInFirst } from "../chrome.ts";
+import { signInFirst, forbiddenPage } from "../chrome.ts";
 import { readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
@@ -153,7 +153,7 @@ export async function talkSend(ctx: Ctx): Promise<Response> {
 export async function talkConfirm(ctx: Ctx): Promise<Response> {
   const user = ctx.auth.user;
   if (user === undefined) return signInFirst(ctx);
-  if (ctx.auth.via !== "session") return new Response("forbidden", { status: 403 });
+  if (ctx.auth.via !== "session") return forbiddenPage(ctx, "Answer this from your own signed-in browser.");
   const form = await readForm(ctx);
   if (form instanceof Response) return form;
   const answer = form.get("answer");
