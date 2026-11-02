@@ -78,6 +78,7 @@ test("a site-admin person is offered the whole roster", () => {
     ["system-memory", "System memory", "RSS beside the JS heap, hourly for 24 h"],
     ["flow", "Flow", "the pipeline's bottleneck and throughput"],
     ["system", "System", "the machine now: CPU, memory, disks, processes"],
+    ["valves", "Valves", "the week's budget as a valve per repository; turn one and the crew obeys"],
     ["telemetry", "Telemetry", "which agents may read flow and system; enter flips the grant"],
     ["capacity", "Capacity", "concurrency and guards, live; e changes a settable one"],
     ["resilience", "Resilience", "where snapshots go and the mirror; each protection green, red or untested"],

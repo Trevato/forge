@@ -8,6 +8,7 @@
  * path segment and can never smuggle a path of its own.
  */
 
+import { recordLook } from "../../flow/valve_store.ts";
 import { immutableWhenAddressed } from "../../http/addressed.ts";
 import { cachedTree, keepTree, resolveCommit } from "./tree_cache.ts";
 import { behindLine, followingLine } from "./upstream-follow.ts";
@@ -1179,6 +1180,12 @@ export function rawResponse(
   return new Response(blob.body, { headers });
 }
 
+/** A forge admin looking at a repository is counted, to suggest a valve on /flow and never to set one. */
+function noteLook(ctx: Ctx, repoId: string): void {
+  const user = ctx.auth.user;
+  if (user?.isAdmin === true && user.kind !== "agent") recordLook(ctx.app.db, user.id, repoId);
+}
+
 // GET /:owner/:name — the repo home. An app's home is the app, for every
 // viewer: what it serves, who is on it, what it asks; its code is one tab
 // deeper, at /files. Any other repository's home is its code. An older
@@ -1186,6 +1193,7 @@ export function rawResponse(
 export async function repoHome(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
+  noteLook(ctx, repo.id);
   const record = getAppByRepo(ctx.app.db, repo.id);
   if (record === undefined) return await codeHome(ctx, repo);
   if (ctx.url.searchParams.has("ref"))

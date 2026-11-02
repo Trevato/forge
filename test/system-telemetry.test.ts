@@ -400,14 +400,10 @@ describe("telemetry:read: the owner grants it, an agent reads with it, nobody el
     expect(flowCommand()).toBeUndefined();
   });
 
-  test("GET /flow is a permanent redirect to /boards, for anyone", async () => {
-    for (const token of [undefined, tokens["alice"]]) {
-      const res = await fetch(`${servers.url}/flow`, { redirect: "manual", headers: token ? { authorization: `Bearer ${token}` } : {} });
-      expect(res.status).toBe(301);
-      expect(res.headers.get("location")).toBe("/boards");
-    }
-    const drill = await fetch(`${servers.url}/flow?out=approved&hour=3`, { redirect: "manual" });
-    expect(drill.headers.get("location")).toBe("/boards?out=approved&hour=3");
+  test("GET /flow is the pipes page, no longer a redirect to /boards", async () => {
+    const res = await fetch(`${servers.url}/flow`, { redirect: "manual", headers: { authorization: `Bearer ${tokens["alice"]}` } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("location")).toBeNull();
   });
 
   test("in the terminal, the owner is offered System and Telemetry; nobody else is", () => {

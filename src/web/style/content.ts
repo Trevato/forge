@@ -849,6 +849,19 @@ textarea.editor:focus-visible { outline: none; }
     #needs-you #asks-phone-more > .stack { margin-top: 0; }
   }
 }
+/* Flow (#8698): the week's pipes. Width is spend; a valve is drawn open,
+   half-open (a share) or shut, in tokens. */
+.pipes { width: 100%; height: auto; display: block; }
+.pipe { fill: none; stroke: currentColor; opacity: .5; }
+.pipe-out { color: var(--series-3); }
+.pipe-out.pipe-valve-shut { stroke-dasharray: 4 4; opacity: .35; }
+.pipe-valve rect { fill: var(--bg); stroke: var(--border); stroke-width: 1.5; }
+.pipe-valve-share rect { stroke: var(--series-1); }
+.pipe-valve-shut rect { stroke: var(--series-5); fill: var(--bg); }
+.pipe-label { font-size: 12.5px; fill: var(--fg); }
+.pipe-repo { font-size: 12.5px; fill: var(--muted-fg); }
+.valve-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0; }
+.valve-range { flex: 1 1 12rem; min-width: 8rem; }
 /* The config form (#7336): nested objects as quiet fieldsets, scalar
    arrays as a wrapping row of chips, object arrays as cards. */
 .config-group { border-left: 2px solid var(--border); padding-left: 12px; }

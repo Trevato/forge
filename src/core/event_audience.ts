@@ -188,6 +188,8 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     kind === "repo.upstream_follow" ||
     kind === "repo.upstream_checked" ||
     kind === "repo.crew_outsiders" ||
+    // A valve turn names a repository and the owner's budget: for those who administer it (`actions/valves.ts`).
+    kind === "valve.turned" ||
     // A clog starting names the forge's own pile-up: the owner's to hear (#6524).
     kind.startsWith("clog.") ||
     // The release keeper's steps name images and probe numbers: the forge owner's (`keeper/keeper.ts`, #7557).

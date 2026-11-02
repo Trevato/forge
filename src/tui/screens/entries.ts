@@ -40,6 +40,7 @@ import { entry as subscriptions } from "./subscriptions.ts";
 import { entry as system } from "./system.ts";
 import { entry as teams } from "./teams.ts";
 import { entry as telemetry } from "./telemetry.ts";
+import { entry as valves } from "./valves.ts";
 
 export interface PaletteEntry {
   readonly id: string;
@@ -63,6 +64,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   system,
   telemetry,
   resilience,
+  valves,
   access,
   audit,
   secrets,

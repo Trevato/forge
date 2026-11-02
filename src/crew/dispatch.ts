@@ -43,6 +43,7 @@ import { runningLimitSentence, runningRuns } from "../settings/quotas.ts";
 import { appendRunLog } from "../runs/log.ts";
 import { decideAndRecord } from "./ledger.ts";
 import { byDials } from "./team_share.ts";
+import { gateQueue } from "../flow/valve_gate.ts";
 import { ARCHIVED_WHY, getRepoById, type Repo } from "../core/repos.ts";
 import { listReviews } from "../core/reviews.ts";
 import {
@@ -1414,8 +1415,15 @@ function pump(
   const started: string[] = [];
   const noted = notedBy.get(app) ?? new Set<string>();
   notedBy.set(app, noted);
-  // Builder starts go to teams in proportion to their dials (`team_share.ts`).
-  for (const queued of byDials(app.db, listQueued(app.db, "agent", 50))) {
+  // Builder starts go to teams in proportion to their dials (`team_share.ts`),
+  // then through the valves a person turned (`flow/valve_gate.ts`).
+  const gated = gateQueue(app.db, byDials(app.db, listQueued(app.db, "agent", 50)));
+  for (const shut of gated.held) {
+    if (noted.has(shut.id)) continue;
+    noted.add(shut.id);
+    appendRunLog(app.config.dataDir, shut.id, "queued, not started: its repository's valve is shut (/flow)");
+  }
+  for (const queued of gated.order) {
     if (queued.issueId !== null && runningIssues.has(queued.issueId)) continue;
     const fresh = getRun(app.db, queued.id);
     if (!fresh || fresh.state !== "queued") continue;

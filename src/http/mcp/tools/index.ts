@@ -165,6 +165,7 @@ export { tool as tokens } from "./tokens.ts";
 export { tool as trail } from "./trail.ts";
 export { tool as upstream } from "./upstream.ts";
 export { tool as usage } from "./usage.ts";
+export { tool as valves } from "./valves.ts";
 export { tool as variant } from "./variant.ts";
 export { tool as vision } from "./vision.ts";
 export { tool as wait_for } from "./wait_for.ts";

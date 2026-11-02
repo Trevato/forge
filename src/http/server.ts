@@ -267,6 +267,7 @@ import { appNowFragment } from "../web/studio/now.ts";
 import { appStateFragment } from "../web/studio/previews.ts";
 import { changesList, tellsList } from "../web/studio/lists.ts";
 import { dependencySubmit } from "../web/pages/thread.ts";
+import { flowPage, suggestionTake, valveSet } from "../web/pages/flow.ts";
 import { heldApply, heldPage, liftHoldSubmit } from "../web/pages/gate.ts";
 import {
   assigneeSubmit,
@@ -776,7 +777,10 @@ export function buildRouter(): Router<Handler> {
   // Every app on one canvas; a literal route, so it must sit above /:owner.
   router.add("GET", "/map", globalMapPage);
   // The pipeline moved to a panel on /boards (#2774); the old address follows it. Literal, above /:owner.
-  router.add("GET", "/flow", (ctx) => new Response(null, { status: 301, headers: { location: `/boards${ctx.url.search}` } }));
+  // /flow is the week's valves (#8698); a query string is an old pipeline drill, which went to /boards.
+  router.add("GET", "/flow", flowPage);
+  router.add("POST", "/flow/valve", valveSet);
+  router.add("POST", "/flow/suggestion", suggestionTake);
   router.add("GET", "/system", systemPage);
   router.add("GET", "/system/stream", systemStream);
   router.add("GET", "/contribute", contributePage);
