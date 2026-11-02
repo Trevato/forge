@@ -26,7 +26,7 @@ import { readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
-import { btn } from "../ui.ts";
+import { btn, time } from "../ui.ts";
 import { talkCss, talkJs } from "./talk_client.ts";
 
 /** A stream lasts this long at most; the client reconnects from its last turn id. */
@@ -65,11 +65,30 @@ function confirmButtons(id: string, tool: string): Html {
   </div>`;
 }
 
+/** Who said it and when, with the copy button: the line under a message. */
+const meta = (who: string, at: string): Html =>
+  html`<p class="talk-meta small muted">${who} · ${time(at)}</p>`;
+
+/** A tool call or its outcome as a quiet card: closed, the name alone; open, the whole line. */
+const toolCard = (id: string, says: string, name: string, at: string): Html =>
+  html`<li class="talk-turn talk-tool" id="${id}"><details><summary>${name.slice(0, 60)} <span class="talk-when">${time(at)}</span></summary><p>${says}</p></details></li>`;
+
+/** What an empty chat offers to start with; each is a link that fills the composer (`?q=`), so it works without the script. */
+const SUGGESTIONS = ["What needs my attention?", "What did the crew do today?", "Show me my apps"] as const;
+
 /** One turn as the page and the stream both draw it; `waiting` is the confirms still open. */
 export function turnHtml(turn: Turn, waiting: ReadonlySet<string>): Html {
   const id = `t-${turn.id}`;
-  if (turn.role === "person") return html`<li class="talk-turn talk-person" id="${id}">${turn.text}</li>`;
-  if (turn.role === "agent") return html`<li class="talk-turn talk-agent" id="${id}">${renderMarkdown(turn.text)}</li>`;
+  if (turn.role === "person")
+    return html`<li class="talk-turn talk-person" id="${id}">
+      <div class="talk-body talk-plain">${turn.text}</div>
+      ${meta("You", turn.createdAt)}
+    </li>`;
+  if (turn.role === "agent")
+    return html`<li class="talk-turn talk-agent" id="${id}">
+      <div class="talk-body">${renderMarkdown(turn.text)}</div>
+      ${meta("Forge", turn.createdAt)}
+    </li>`;
   const data = parse(turn.text);
   if (turn.role === "confirm") {
     const confirm = String(data?.["confirm"] ?? "");
@@ -83,12 +102,13 @@ export function turnHtml(turn: Turn, waiting: ReadonlySet<string>): Html {
   if (data !== undefined && "confirm" in data) {
     const tool = String(data["tool"] ?? "");
     const says = data["cancelled"] === true ? `Cancelled: ${tool}.` : data["done"] === true ? `Done: ${tool}.${typeof data["undo"] === "string" ? ` To undo: ${data["undo"]}.` : ""}` : `${tool} did not go through: ${String(data["message"] ?? data["error"] ?? "")}`;
-    return html`<li class="talk-turn talk-tool" id="${id}">${says}</li>`;
+    return toolCard(id, says, tool, turn.createdAt);
   }
-  return html`<li class="talk-turn talk-tool" id="${id}">${turn.text.slice(0, 300)}</li>`;
+  const call = turn.text.slice(0, 300);
+  return toolCard(id, call, call.split(/[\s(:{]/, 1)[0] ?? "tool", turn.createdAt);
 }
 
-function talkPage(ctx: Ctx, before: string | undefined): Response {
+function talkPage(ctx: Ctx, before: string | undefined, prefill: string): Response {
   const user = ctx.auth.user!;
   const conversation = openConversation(ctx.app.db, user.id);
   const listed = listTurns(ctx.app.db, user.id, conversation.id, {
@@ -101,24 +121,25 @@ function talkPage(ctx: Ctx, before: string | undefined): Response {
   // Paging back, the log ends before the newest turn: it does not follow.
   const last = turns.at(-1)?.id ?? "";
   const body = html`<div class="page-head"><h1>Talk</h1></div>
-    <div class="talk" data-talk data-paged="${before === undefined ? "0" : "1"}" data-running="${running && before === undefined ? "1" : "0"}">
+    <div class="talk" data-talk data-user="${user.id}" data-paged="${before === undefined ? "0" : "1"}" data-running="${running && before === undefined ? "1" : "0"}">
       <div>
         ${turns.length === DEFAULT_PAGE && turns[0] !== undefined
           ? html`<p class="talk-more small"><a href="${HERE}?before=${turns[0].id}">Earlier</a></p>`
           : null}
         ${before === undefined ? null : html`<p class="talk-more small"><a href="${HERE}">Latest</a></p>`}
-        <ol class="talk-log" data-last="${last}" aria-label="Conversation with the forge">
+        <ol class="talk-log" role="log" data-last="${last}" aria-label="Conversation with the forge">
           ${turns.length === 0
-            ? html`<li class="muted talk-turn">Ask the forge anything, or tell it what to change. It acts as you, with your permissions, and asks before anything hard to undo.</li>`
+            ? html`<li class="muted talk-turn">Ask the forge anything, or tell it what to change. It acts as you, with your permissions, and asks before anything hard to undo.
+                <span class="talk-suggest">${SUGGESTIONS.map((q) => html`<a class="btn" href="${HERE}?q=${encodeURIComponent(q)}" data-suggest="${q}">${q}</a>`)}</span></li>`
             : turns.map((t) => turnHtml(t, waiting))}
         </ol>
         <div id="end"></div>
       </div>
       <form class="talk-compose" method="post" action="${HERE}">
         <p class="talk-status small muted" role="status" aria-live="polite">${running ? "The forge is answering…" : ""}</p>
-        <textarea class="input" name="text" rows="2" maxlength="${WORDS_MAX}" required placeholder="Talk to the forge" aria-label="Talk to the forge"></textarea>
+        <textarea class="input" name="text" rows="1" maxlength="${WORDS_MAX}" required placeholder="Talk to the forge" aria-label="Talk to the forge">${prefill}</textarea>
         <div class="bar">
-          <span class="muted small">Ctrl+Enter sends</span>
+          <span class="muted small" data-hint></span>
           <span class="spacer"></span>
           ${btn("Send", { variant: "primary" })}
         </div>
@@ -132,7 +153,8 @@ export function talkView(ctx: Ctx): Response {
   if (ctx.auth.user === undefined) return signInFirst(ctx);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const before = ctx.url.searchParams.get("before");
-  return timePhase(ctx.request, "render", () => talkPage(ctx, before !== null && TURN_ID.test(before) && before !== "" ? before : undefined));
+  const q = ctx.url.searchParams.get("q");
+  return timePhase(ctx.request, "render", () => talkPage(ctx, before !== null && TURN_ID.test(before) && before !== "" ? before : undefined, q !== null && SUGGESTIONS.some((s) => s === q) ? q : ""));
 }
 
 // POST /talk — the plain form, for a browser without the script.

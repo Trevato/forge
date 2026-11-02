@@ -116,6 +116,124 @@ describe("the page", () => {
     expect((await post("/talk", bob, { text: "  " })).status).toBe(303);
   });
 
+  test("a message shows who and when, with a copy button; a tool call is a closed card; an empty chat offers starters", async () => {
+    const carol = await createUser(app.db, { origin: "seed", trusted: true, username: "dana", email: "dana@forge.local", password: "a-good-passphrase" });
+    if (!carol.ok) throw new Error(carol.error);
+    promote(app.db, carol.value);
+    const empty = await (await get("/talk", carol.value)).text();
+    expect(empty).toContain('href="/talk?q=What%20needs%20my%20attention%3F"');
+    expect(empty).not.toMatch(/<button[^>]*(data-suggest|data-copy|data-jump)/);
+    say(carol.value, "person", "hi");
+    say(carol.value, "agent", "hello");
+    say(carol.value, "tool", "list_issues {\"repo\":\"x\"}");
+    const page = await (await get("/talk", carol.value)).text();
+    expect(page).not.toContain("data-suggest=");
+    expect(page).toContain("You · <time");
+    expect(page).toContain("Forge · <time");
+    expect(page).not.toContain("data-copy");
+    expect(page).toContain('role="log"');
+    expect(page).toMatch(/<details><summary>list_issues /);
+    expect(page).not.toMatch(/<details open/);
+  });
+
+  test("a suggestion link prefills the composer without the script, and only with a known suggestion", async () => {
+    const q = "What needs my attention?";
+    const page = await (await get(`/talk?q=${encodeURIComponent(q)}`, alice)).text();
+    expect(page).toMatch(/<textarea[^>]*>What needs my attention\?<\/textarea>/);
+    const other = await (await get(`/talk?q=${encodeURIComponent("<script>x</script>")}`, alice)).text();
+    expect(other).not.toContain("<script>x</script>");
+    expect(other).not.toMatch(/<textarea[^>]*>[^<]/);
+  });
+
+  describe("the script, driven against a DOM", () => {
+    const boot = async (user = "u1", store: Record<string, string> = {}) => {
+      const sources: Array<{ on: Record<string, (e: { data: string }) => void> }> = [];
+      const { Window } = await import("happy-dom");
+      const { talkJs } = await import("../src/web/pages/talk_client.ts");
+      const window = new Window({ url: "http://localhost/talk" });
+      const doc = window.document as any;
+      doc.body.innerHTML = `<div class="talk" data-talk data-user="${user}" data-paged="0" data-running="1"><div>
+        <ol class="talk-log" role="log" data-last=""><li class="talk-turn talk-agent" id="t-1"><div class="talk-body"><pre><code>let a = 1;</code></pre></div><p class="talk-meta">Forge · now</p></li></ol><div id="end"></div></div>
+        <form class="talk-compose"><p class="talk-status" role="status"></p><textarea name="text"></textarea><span data-hint></span></form></div>`;
+      const sent: string[] = [];
+      const copied: string[] = [];
+      const fetchStub = async (_u: string, init: { body: string }) => { sent.push(JSON.parse(init.body).text); return { ok: true, json: async () => ({}) }; };
+      const local = { getItem: (k: string) => store[k] ?? null, setItem: (k: string, v: string) => { store[k] = v; }, removeItem: (k: string) => { delete store[k]; } };
+      const nav = { clipboard: { writeText: async (t: string) => { copied.push(t); } } };
+      class ES { on: Record<string, (e: { data: string }) => void> = {}; constructor() { sources.push(this); } addEventListener(n: string, f: (e: { data: string }) => void) { this.on[n] = f; } close() {} }
+      doc.getElementById("end").scrollIntoView = () => {};
+      new Function("document", "window", "EventSource", "fetch", "localStorage", "navigator", talkJs)(doc, window, ES, fetchStub, local, nav);
+      const box = doc.querySelector("textarea");
+      const key = (init: object) => box.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, ...init }));
+      const emit = (id: string, html: string) => sources.at(-1)!.on["turn"]!({ data: JSON.stringify({ id, html }) });
+      return { emit, window, doc, box, sent, copied, store, key, status: doc.querySelector(".talk-status") };
+    };
+    const tick = () => new Promise((r) => setTimeout(r, 5));
+
+    test("Enter submits; Shift+Enter and an IME composition do not", async () => {
+      const t = await boot();
+      t.box.value = "hello";
+      expect(t.key({ shiftKey: true })).toBe(true);
+      expect(t.key({ isComposing: true })).toBe(true);
+      await tick();
+      expect(t.sent).toEqual([]);
+      expect(t.key({})).toBe(false);
+      await tick();
+      expect(t.sent).toEqual(["hello"]);
+      expect(t.doc.querySelector("[data-hint]").textContent).toContain("Enter sends");
+      await t.window.happyDOM.close();
+    });
+
+    test("the draft is stored per person on input, restored on load, and cleared on send", async () => {
+      const t = await boot("u1");
+      t.box.value = "half";
+      t.box.dispatchEvent(new t.window.Event("input", { bubbles: true }));
+      expect(t.store["talk-draft:u1"]).toBe("half");
+      const again = await boot("u1", t.store);
+      expect(again.box.value).toBe("half");
+      const other = await boot("u2", t.store);
+      expect(other.box.value).toBe("");
+      again.key({});
+      await tick();
+      expect(again.store["talk-draft:u1"]).toBeUndefined();
+    });
+
+    test("copy buttons are drawn by the script, code first in tab order, and copy the text", async () => {
+      const t = await boot();
+      const pre = t.doc.querySelector("pre");
+      expect(pre.firstElementChild.getAttribute("data-copy")).toBe("");
+      expect(t.doc.querySelector(".talk-meta [data-copy]")).not.toBeNull();
+      pre.firstElementChild.dispatchEvent(new t.window.MouseEvent("click", { bubbles: true }));
+      await tick();
+      expect(t.copied).toEqual(["let a = 1;"]);
+    });
+
+    test("a code block in a streamed turn gets its Copy button too", async () => {
+      const t = await boot();
+      t.emit("2", '<li class="talk-turn" id="t-2"><div class="talk-body"><pre><code>x</code></pre></div><p class="talk-meta">Forge</p></li>');
+      expect(t.doc.querySelectorAll("#t-2 pre [data-copy]").length).toBe(1);
+      expect(t.doc.querySelectorAll("#t-2 .talk-meta [data-copy]").length).toBe(1);
+    });
+
+    test("the jump button shows only when scrolled up, and a new message is announced", async () => {
+      const t = await boot();
+      const jump = t.doc.querySelector(".talk-jump");
+      t.emit("2", '<li class="talk-turn" id="t-2">a</li>');
+      expect(jump.hidden).toBe(true);
+      expect(t.status.textContent).not.toContain("New message");
+      Object.defineProperty(t.window, "innerHeight", { value: 800, configurable: true });
+      Object.defineProperty(t.window, "scrollY", { value: 0, configurable: true });
+      Object.defineProperty(t.doc.documentElement, "scrollHeight", { value: 5000, configurable: true });
+      t.window.dispatchEvent(new t.window.Event("scroll"));
+      t.emit("3", '<li class="talk-turn" id="t-3">b</li>');
+      expect(jump.hidden).toBe(false);
+      expect(t.status.textContent).toBe("New message");
+      Object.defineProperty(t.window, "scrollY", { value: 4400, configurable: true });
+      t.window.dispatchEvent(new t.window.Event("scroll"));
+      expect(jump.hidden).toBe(true);
+    });
+  });
+
   test("Talk is one tap away: the chrome, the palette and home", async () => {
     const home = await (await get("/explore", alice)).text();
     expect(home).toContain('href="/talk"');

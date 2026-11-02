@@ -18,10 +18,23 @@ export const talkCss = /* css */ `
 .talk-confirm .bar { margin-top: 8px; gap: 8px; }
 .talk-confirm .btn { min-height: 2.75rem; flex: 1 1 8rem; }
 .talk-compose { position: sticky; bottom: 0; background: var(--bg); padding: 0.5rem 0 max(0.5rem, env(safe-area-inset-bottom)); border-top: 1px solid var(--border); z-index: 8; }
-.talk-compose textarea { width: 100%; min-height: 56px; max-height: 40dvh; font-size: 16px; resize: vertical; box-sizing: border-box; }
+.talk-compose textarea { width: 100%; min-height: 44px; max-height: 40dvh; font-size: 16px; resize: none; overflow-y: auto; box-sizing: border-box; }
 .talk-compose .bar { margin-top: 6px; gap: 8px; align-items: center; }
 .talk-compose .btn { min-height: 2.75rem; }
 .talk-status { min-height: 1.5em; margin: 0; }
+.talk-meta { margin: 4px 0 0; display: flex; gap: 6px; align-items: center; }
+.talk-copy { margin-left: auto; background: none; border: 0; color: inherit; font: inherit; cursor: pointer; padding: 6px 8px; min-height: 2rem; opacity: 0.7; }
+.talk-copy:hover { opacity: 1; text-decoration: underline; }
+.talk-plain { white-space: pre-wrap; }
+.talk-tool details { border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 2px 10px; }
+.talk-tool summary { cursor: pointer; padding: 6px 0; min-height: 1.5rem; }
+.talk-tool details p { margin: 0 0 8px; white-space: pre-wrap; }
+.talk-suggest { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.talk-suggest .btn { min-height: 2.75rem; }
+.talk-jump { position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); z-index: 9; min-height: 2.75rem; }
+.talk-jump[hidden] { display: none; }
+.talk-body pre { position: relative; }
+.talk-body pre .talk-copy { position: absolute; top: 2px; right: 2px; }
 .talk-more { text-align: center; }
 `;
 
@@ -38,7 +51,54 @@ if (root) {
   let retry = 0;
   const paged = root.dataset.paged === "1";
   const say = (words) => { status.textContent = words; };
-  const toEnd = () => { const end = document.getElementById("end"); if (end) end.scrollIntoView({ block: "end" }); };
+  const hint = root.querySelector("[data-hint]");
+  if (hint) hint.textContent = "Enter sends, Shift+Enter adds a line";
+  const jump = Object.assign(document.createElement("button"), { type: "button", className: "btn talk-jump", textContent: "Latest ↓", hidden: true });
+  jump.setAttribute("aria-label", "Jump to the latest message");
+  form.appendChild(jump);
+  const nearEnd = () => window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 120;
+  let stuck = true;
+  const toEnd = (force) => {
+    if (!force && !stuck) { jump.hidden = false; say("New message"); return; }
+    const end = document.getElementById("end");
+    if (end) end.scrollIntoView({ block: "end" });
+    jump.hidden = true;
+  };
+  window.addEventListener("scroll", () => { stuck = nearEnd(); if (stuck) jump.hidden = true; }, { passive: true });
+  jump.addEventListener("click", () => { stuck = true; toEnd(true); box.focus(); });
+  const draftKey = "talk-draft:" + (root.dataset.user || "");
+  try { if (!box.value) box.value = localStorage.getItem(draftKey) || ""; } catch (_) {}
+  const grow = () => { box.style.height = "auto"; box.style.height = Math.min(box.scrollHeight, window.innerHeight * 0.4) + "px"; };
+  box.addEventListener("input", () => { grow(); try { localStorage.setItem(draftKey, box.value); } catch (_) {} });
+  grow();
+  const copyButton = (label) => {
+    const b = Object.assign(document.createElement("button"), { type: "button", className: "talk-copy", textContent: "Copy" });
+    b.setAttribute("data-copy", "");
+    b.setAttribute("aria-label", label);
+    return b;
+  };
+  root.addEventListener("click", async (e) => {
+    const s = e.target.closest("[data-suggest]");
+    if (s) { e.preventDefault(); box.value = s.dataset.suggest; grow(); box.focus(); return; }
+    const c = e.target.closest("[data-copy]");
+    if (!c) return;
+    const pre = c.closest("pre");
+    const src = pre ? pre.querySelector("code") : c.closest(".talk-turn").querySelector(".talk-body");
+    try { await navigator.clipboard.writeText(src.textContent); c.textContent = "Copied"; say("Copied."); } catch (_) { say("Copy is not allowed here."); }
+    setTimeout(() => { c.textContent = "Copy"; }, 1500);
+  });
+  // Copy buttons are drawn here, not by the server: without the script they would do nothing.
+  const decorate = (scope) => {
+    scope.querySelectorAll(".talk-body pre:not([data-c])").forEach((pre) => {
+      pre.dataset.c = "1";
+      pre.insertBefore(copyButton("Copy this code"), pre.firstChild);
+    });
+    scope.querySelectorAll(".talk-turn:not([data-m]) > .talk-meta").forEach((m) => {
+      m.parentNode.dataset.m = "1";
+      m.appendChild(copyButton("Copy this message"));
+    });
+  };
+  decorate(log);
   const follow = () => {
     if (paged) return;
     if (source) source.close();
@@ -46,7 +106,7 @@ if (root) {
     source.addEventListener("turn", (e) => {
       const turn = JSON.parse(e.data);
       last = turn.id;
-      if (!document.getElementById("t-" + turn.id)) log.insertAdjacentHTML("beforeend", turn.html);
+      if (!document.getElementById("t-" + turn.id)) { log.insertAdjacentHTML("beforeend", turn.html); decorate(log); }
       retry = 0;
       toEnd();
     });
@@ -78,6 +138,9 @@ if (root) {
         return;
       }
       box.value = "";
+      grow();
+      try { localStorage.removeItem(draftKey); } catch (_) {}
+      stuck = true;
       if (paged) { location.href = "/talk"; return; }
       follow();
     } catch (_) {
@@ -86,7 +149,7 @@ if (root) {
   };
   form.addEventListener("submit", send);
   box.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) form.requestSubmit();
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit(); }
   });
   log.addEventListener("submit", async (e) => {
     const f = e.target.closest("form[data-confirm]");
@@ -105,7 +168,7 @@ if (root) {
       say("That was not sent: no connection.");
     }
   });
-  toEnd();
+  toEnd(true);
   if (root.dataset.running === "1" && !paged) follow();
 }
 `;

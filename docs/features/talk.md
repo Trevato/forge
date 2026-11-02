@@ -17,3 +17,26 @@ Reached from the Talk icon in every page's top bar, "Talk to the forge" in the p
 A reply streams in over `GET /talk/stream?after=<turn id>` (server-sent events, one `turn` frame per turn, each carrying the server-rendered markup). The stream ends with the turn (`done`), or after 40 seconds (`more`), well inside the edge's timeout; the page then reconnects from the last turn id it saw (`Last-Event-ID` works too). Without the script the composer is a plain form and a reload shows the answer.
 
 When the agent asks first (`needs_confirm`), the turn draws **Confirm** (the existing yes) and **Cancel** (a no: the confirm is spent, nothing runs, a turn says it was cancelled). A result shown once (an invite link) is drawn by Settings → Confirms instead, where Confirm leads.
+
+## Chat features: have, adding, not adding (#8752)
+
+Prior art read: Vercel AI Elements (Apache-2.0 React on shadcn; anatomy and behaviour ported, no code copied), AI SDK UI, ChatGPT and Claude.ai. No React: the page stays server-drawn with a small script.
+
+| Feature | Status | Why |
+| --- | --- | --- |
+| Server-drawn history, streaming over SSE, resume from turn id | have | the base of this page |
+| Confirm / Cancel in place for held writes | have | trust rule |
+| Enter sends, Shift+Enter breaks a line, autosizing box | this pull | what every chat does |
+| Draft kept on reload (localStorage, this device) | this pull | cheap, local |
+| Who and when under each message; copy a message; copy a code block | this pull | AI Elements `Message`, `CodeBlock` |
+| Tool calls as closed cards | this pull | AI Elements `Tool` |
+| Starter questions on an empty chat (links to `/talk?q=`, so they work without the script) | this pull | AI Elements `Suggestion` |
+| Stick to bottom, "Latest" jump button | this pull | AI Elements `Conversation` |
+| Many conversations: new, list, search, rename, archive, URL each | next pull | needs a migration: today one row per person |
+| Edit and resend, regenerate, Stop, queue | next pulls | need turn deletion and a cancel on `crew/conversation.ts` |
+| Attachments, cost and context left, tables, thinking, plan line | later | need storage / token data / markdown tables |
+| Syntax highlighting while streaming | not adding yet | re-tokenising a half-open fence makes text jump |
+
+**Without the script** the page is a plain form: Enter adds a line, starters are links that prefill the box, and Copy and Latest are not drawn (the script draws them, along with the "Enter sends" hint). The log is `role="log"`; with the script, a new message while you are scrolled up is announced in the status line.
+
+**The terminal** (`ssh <forge> talk <words>`, `forge talk`) sends one line and prints the answer; it has no log, so who/when, copy, tool cards, starters and the jump button do not apply to it. The conversation's whole history is read through `GET /api/v1/conversation/turns`, where every turn carries its role and time.

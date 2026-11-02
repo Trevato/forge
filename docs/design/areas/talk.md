@@ -12,3 +12,9 @@
 - `.talk-compose` — the composer, sticky to the bottom of the viewport (padded for the phone's safe area), so it stays reachable; its textarea is 16px so iOS does not zoom.
 - `.talk-status` — one polite line (sending, answering, an error); it always takes its line, so nothing shifts.
 - `.talk-more` — the "Earlier" link above the log.
+- `.talk-body` — the text of one turn, above its meta line.
+- `.talk-plain` — a person's words, shown as typed (line breaks kept).
+- `.talk-meta` — who said it and when, with the copy button.
+- `.talk-copy` — a quiet text button that copies a message or a code block.
+- `.talk-suggest` — the starter questions on an empty chat; each fills the composer.
+- `.talk-jump` — "Latest" button, shown when you have scrolled up from the end.
