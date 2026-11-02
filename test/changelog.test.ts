@@ -330,9 +330,40 @@ describe("the browser regroups the changelog into the reader's days", () => {
     expect(doc.getElementById("shipped-today")!.textContent).toBe("2 shipped today.");
     await window.happyDOM.close();
   });
+
+  test("with no cards and an empty #shipped-today the script leaves the span empty; with text or cards it writes the count", async () => {
+    const { Window } = await import("happy-dom");
+    const { localDaysJs } = await import("../src/web/pages/changelog.ts");
+    const run = (inner: string) => {
+      const window = new Window();
+      const doc = window.document as any;
+      doc.body.innerHTML = `<div id="shipped">${inner}</div>`;
+      new Function("document", localDaysJs)(doc);
+      const text = doc.getElementById("shipped-today")!.textContent;
+      void window.happyDOM.close();
+      return text;
+    };
+    expect(run('<p><span id="shipped-today"></span></p>')).toBe("");
+    expect(run('<p><span id="shipped-today">Nothing shipped today (UTC).</span></p>')).toBe("Nothing shipped today.");
+  });
 });
 
 describe("the top line names what is running", () => {
+  test("nothing ever shipped: the shipped-today sentence is left out, its id stays", async () => {
+    const { shippedRegion } = await import("../src/web/pages/changelog.ts");
+    const out = String(shippedRegion({ live: [], onItsWay: [], version: "dev", commit: null, own: "a/forge" } as any, "all"));
+    expect(out).toContain('<span id="shipped-today"></span>');
+    expect(out).not.toContain("Nothing shipped today");
+    expect(out).toContain("Nothing has shipped yet");
+  });
+
+  test("shipped before today: the sentence still says nothing shipped today", async () => {
+    const { shippedRegion } = await import("../src/web/pages/changelog.ts");
+    const old = { repo: "a/forge", title: "Old", at: "2026-10-01T00:00:00.000Z", number: 1, sha: "a".repeat(40) };
+    const out = String(shippedRegion({ live: [old], onItsWay: [], version: "dev", commit: null, own: "a/forge" } as any, "all", new Date("2026-11-02T12:00:00Z")));
+    expect(out).toContain("Nothing shipped today (UTC).");
+  });
+
   const top = async (version: string, commit: string | null) => {
     const { shippedRegion } = await import("../src/web/pages/changelog.ts");
     const read = { live: [], onItsWay: [], version, commit, own: "a/forge" } as any;

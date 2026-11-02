@@ -99,7 +99,9 @@ export const localDaysJs = /* js */ `
       var ref = after ? after.nextSibling : parent.firstChild;
       made.forEach(function (c) { parent.insertBefore(c, ref); });
     }
-    if (top) {
+    // An empty #shipped-today with no cards is the server saying nothing has ever shipped:
+    // writing the count here would bring back the second empty state.
+    if (top && (cards.length || top.textContent)) {
       var n = (seen[today] || []).length;
       top.textContent = shippedToday(n, false);
     }
@@ -127,7 +129,7 @@ export function shippedRegion(
   const version =
     read.version !== "dev" ? (commit === null ? read.version : html`${read.version} · ${commit}`) : (commit ?? "a development build");
   const top = html`<p class="small muted" id="shipped-top">
-    Live: ${version}.${toLive !== undefined && toLive.version === read.version ? html` Landed to live in ${secondsWords(toLive.seconds)}.` : null} <span id="shipped-today">${shippedToday(today, zone === "UTC")}</span>
+    Live: ${version}.${toLive !== undefined && toLive.version === read.version ? html` Landed to live in ${secondsWords(toLive.seconds)}.` : null} <span id="shipped-today">${live.length === 0 ? "" : shippedToday(today, zone === "UTC")}</span>
   </p>`;
   const way =
     onItsWay.length === 0
