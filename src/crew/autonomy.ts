@@ -101,6 +101,8 @@ import { grantedAccounts } from "../core/subscriptions.ts";
 import { reviewSummary } from "../core/reviews.ts";
 import { standing } from "../core/standing.ts";
 import { pace, type Pace } from "./pacing.ts";
+import { heldByGateAlone, releaseFromGate } from "./release_later.ts";
+import { weekFor } from "./week_read.ts";
 import { announceGovernor, governorFor } from "./governed.ts";
 import { BREAKER_NOTE, breakerTripped } from "./breaker.ts";
 import { given, pendingReplans } from "../core/limb_replan.ts";
@@ -362,7 +364,31 @@ export function repoPace(app: App, repo: Repo, now = new Date()): Pace {
   );
   const paced = pace(accounts, repo.autonomySlots, meanRunUsd(app.db, repo.id), now);
   const governed = governorFor(app, repo, now).slots;
-  return governed < paced.slots ? { ...paced, slots: governed } : paced;
+  const limited = governed < paced.slots ? { ...paced, slots: governed } : paced;
+  // The week's own pace and the reserve for people (#8695).
+  const week = weekFor(app, repo, now, { idleSlots: 0, startable: 0, gated: 0 });
+  return week !== null && week.slots < limited.slots
+    ? { ...limited, slots: week.slots, reason: `${week.slots} of ${repo.autonomySlots} slots: ${week.sentence}` }
+    : limited;
+}
+
+/**
+ * Behind the week's pace with builders idle and nothing startable, the next
+ * gated issue (the lowest number the Later gate alone holds) is released:
+ * one per look, each logged and noted on the issue with why (#8695).
+ */
+function releaseForPace(app: App, repo: Repo, by: User, slotted: number, startable: number, now: Date): number | undefined {
+  const gated = heldByGateAlone(app.db, repo.id);
+  const week = weekFor(app, repo, now, { idleSlots: Math.max(0, repo.autonomySlots - slotted), startable, gated: gated.length });
+  const next = gated[0];
+  if (week === null || !week.release || next === undefined) return undefined;
+  const [number] = releaseFromGate(app.db, repo.id, [next.number]);
+  if (number === undefined) return undefined;
+  const why = `Released from Later to use the week's subscription: ${week.sentence}`;
+  log.info("released", { repo: `${repo.ownerName}/${repo.name}`, issue: number, why });
+  const issue = getIssueById(app.db, next.id);
+  if (issue !== undefined) addComment(app, by, repo, issue, why);
+  return number;
 }
 
 /** The builder slots free now: none while paused, else the paced slots less what is slotted. */
@@ -405,7 +431,7 @@ export function smallShareWords(app: App, repo: Repo, now = new Date()): string 
   return shareWords(running, cap);
 }
 
-export type Drove = "off" | "paused" | "waiting" | "full" | "picked" | "planned" | "idle";
+export type Drove = "off" | "paused" | "waiting" | "full" | "picked" | "planned" | "released" | "idle";
 
 /**
  * One turn of the loop for one repository. Returns what it did, for the
@@ -452,6 +478,8 @@ export async function driveRepo(
     held.relieving,
   );
   const ready = held.startable;
+  if (slotted.length < paced.slots && releaseForPace(app, repo, by, slotted.length, ready.length, now) !== undefined)
+    return "released";
   if (slotted.length >= paced.slots) {
     // The builders are busy; the planner can still refill the map, when
     // the reserve is short — counted, never assumed: a full crew with a
