@@ -25,6 +25,7 @@ import { openPull } from "../actions/pulls.ts";
 import { commitToBranch, createRepo } from "../actions/repos.ts";
 import { turnValveFor } from "../actions/valves.ts";
 import { insertBet } from "../core/bets.ts";
+import { addDependency } from "../core/dependencies.ts";
 import { claimRun, createRun, finishRun } from "../core/runs.ts";
 import { noteLimit } from "../core/standing.ts";
 import { addSubscription } from "../core/subscriptions.ts";
@@ -43,6 +44,9 @@ export const PREVIEW_REPO = "sample";
  * other number rather than leave that look on a 404.
  */
 export const PREVIEW_PULL = 3;
+/** The seeded wave's version and headline, which the owner's /waves look shows. */
+export const PREVIEW_WAVE = "0.1.0";
+export const PREVIEW_WAVE_HEADLINE = "The sample says hello";
 /** The board whose panels are pinned to home. */
 const PREVIEW_BOARD = "preview";
 const SEEDED = "preview_seeded";
@@ -128,6 +132,7 @@ async function seedWorld(app: App, admin: User): Promise<Result<void, string>> {
   ].map((input) => openIssue(app, admin, repo.value, input));
   const failed = issues.find((i) => !i.ok);
   if (failed !== undefined && !failed.ok) return err(`an issue: ${String(failed.error)}`);
+  const [milestone, held] = issues.flatMap((i) => (i.ok ? [i.value] : []));
   const pull = await openPull(app, admin, repo.value, {
     title: "Say hello",
     body: "Adds a greeting.",
@@ -166,6 +171,10 @@ async function seedWorld(app: App, admin: User): Promise<Result<void, string>> {
   }
   const priced = seedPrices(app, admin, repo.value);
   if (!priced.ok) return priced;
+  const milestoned = seedMilestone(app, milestone!, [held!, ...priced.value.slice(0, 2)]);
+  if (!milestoned.ok) return milestoned;
+  const waved = await seedWave(app, admin, repo.value, pull.value.title);
+  if (!waved.ok) return waved;
   const bets = seedBets(app, admin, repo.value, open);
   if (!bets.ok) return bets;
   const valve = turnValveFor(app, admin, `${PREVIEW_ADMIN}/${PREVIEW_REPO}`, 60);
@@ -193,7 +202,8 @@ async function seedWorld(app: App, admin: User): Promise<Result<void, string>> {
  * granted to no repository or owner, so `pickSubscription` (which joins
  * on grants) never offers it to a run or a conversation.
  */
-function seedPrices(app: App, admin: User, repo: Repo): Result<void, string> {
+function seedPrices(app: App, admin: User, repo: Repo): Result<Issue[], string> {
+  const finished: Issue[] = [];
   for (const [at, usd] of [1.5, 2, 2.5, 3].entries()) {
     const made = openIssue(app, admin, repo, {
       title: `Done work ${at + 1}`,
@@ -211,6 +221,7 @@ function seedPrices(app: App, admin: User, repo: Repo): Result<void, string> {
     finishRun(app.db, run.id, { state: "ok", summary: "A seeded run", costUsd: usd });
     const closed = setIssueState(app, admin, repo, made.value, "closed", { reason: "done" });
     if (!closed.ok) return err(`closing a finished issue: ${String(closed.error)}`);
+    finished.push(made.value);
   }
   const added = addSubscription(app.db, app.config.dataDir, {
     name: "preview sample",
@@ -245,7 +256,47 @@ function seedPrices(app: App, admin: User, repo: Repo): Result<void, string> {
     said: "weekly limit",
   });
   spend(1, new Date(now - DAY));
+  return ok(finished);
+}
+
+/**
+ * One milestone for /milestones: the first issue waits for three others,
+ * two finished and one open, so it reads as two of three done.
+ */
+function seedMilestone(app: App, milestone: Issue, holding: readonly Issue[]): Result<void, string> {
+  for (const blocker of holding) {
+    const linked = addDependency(app.db, milestone, blocker, undefined);
+    if (!linked.ok) return err(`a milestone's dependency: ${linked.error}`);
+  }
   return ok();
+}
+
+/** The wave for /waves: `waves/<version>.md` on the default branch, naming the seeded pull. */
+async function seedWave(app: App, admin: User, repo: Repo, pullTitle: string): Promise<Result<void, string>> {
+  const url = `https://preview.invalid/${PREVIEW_ADMIN}/${PREVIEW_REPO}/pulls/${String(PREVIEW_PULL)}`;
+  const text = [
+    "---",
+    `version: ${PREVIEW_WAVE}`,
+    `date: ${new Date().toISOString().slice(0, 10)}`,
+    `headline: ${PREVIEW_WAVE_HEADLINE}`,
+    "---",
+    "",
+    "## Highlights",
+    "",
+    "- **A greeting** — So the sample says hello.",
+    "- **A week to see** — So /flow has pipes to draw.",
+    "- **A plan to read** — So milestones move as issues close.",
+    "",
+    "## Pulls",
+    "",
+    `- [#${String(PREVIEW_PULL)} ${pullTitle}](${url})`,
+    "",
+  ].join("\n");
+  const done = await commitToBranch(app, admin, repo, {
+    message: `Cut wave ${PREVIEW_WAVE}`,
+    files: [{ path: `waves/${PREVIEW_WAVE}.md`, content: text }],
+  });
+  return done.ok ? ok() : err(`the wave: ${JSON.stringify(done.error)}`);
 }
 
 /** One bet backed at 20% of the week and one proposed, over the open issues. */

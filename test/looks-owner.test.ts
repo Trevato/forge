@@ -34,7 +34,7 @@ import { ok } from "../src/kernel/result.ts";
 import type { Capture, LookInput } from "../src/looks/capture.ts";
 import { startLooks, type LooksHandle } from "../src/looks/service.ts";
 import { previewIdentityKey } from "../src/spawn/preview-owner.ts";
-import { PREVIEW_ADMIN, PREVIEW_PULL, PREVIEW_REPO, seedPreview } from "../src/spawn/preview-seed.ts";
+import { PREVIEW_ADMIN, PREVIEW_PULL, PREVIEW_REPO, PREVIEW_WAVE, PREVIEW_WAVE_HEADLINE, seedPreview } from "../src/spawn/preview-seed.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -270,7 +270,7 @@ describe("the forge's own owner looks, over the preview seed", () => {
   test("forge.json takes home, /flow, the seeded repository and its pull as the owner, desk and phone", () => {
     const manifest = parseManifest(readFileSync(join(import.meta.dir, "..", "forge.json"), "utf8"), undefined);
     if (!manifest.ok) throw new Error(JSON.stringify(manifest.error));
-    for (const page of ["/", "/flow", repoHome, pullPage]) {
+    for (const page of ["/", "/flow", repoHome, pullPage, `${repoHome}/waves`, `${repoHome}/milestones`]) {
       expect(manifest.value.looks).toContain(page);
       expect(manifest.value.looksAsOwner).toContain(page);
     }
@@ -293,6 +293,16 @@ describe("the forge's own owner looks, over the preview seed", () => {
     const page = await asOwner(repoHome);
     expect(page).toContain('<h1 class="repo-title">');
     expect(page).toContain(`href="${repoHome}">${PREVIEW_REPO}`);
+  });
+
+  test("/waves holds the wave and /milestones a milestone that is two of three done", async () => {
+    const waves = await asOwner(`${repoHome}/waves`);
+    expect(waves).toContain(PREVIEW_WAVE);
+    expect(waves).toContain(PREVIEW_WAVE_HEADLINE);
+    expect(waves).toContain("1 pull");
+    const milestones = await asOwner(`${repoHome}/milestones`);
+    expect(milestones).toContain("The home page says hello");
+    expect(milestones).toContain("2 of 3 done");
   });
 
   test("the pull's page carries the Ship decision", async () => {

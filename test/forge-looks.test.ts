@@ -22,6 +22,8 @@ quietLogs();
 const NOT_A_PAGE: Record<string, string> = {
   "/deploy-to": "a form for a forge admin that fills from its link; covered by test/pinned-page.test.ts",
   "/asked": "no picture: the cap of 24 looks went to /notes, the page that now leads with a person's thoughts; /asked is covered by test/asked.test.ts",
+  "/forges": "no picture: the cap of 24 looks went to the preview's /waves and /milestones; the page is covered by its own tests",
+  "/family": "no picture: the cap of 24 looks went to the preview's /waves and /milestones; the page is covered by its own tests",
   "/llms.txt": "plain markdown for machines, not a page to picture",
   "/robots.txt": "plain text for crawlers",
   "/openapi.json": "a redirect to the contract document",
