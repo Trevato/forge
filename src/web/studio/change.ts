@@ -85,7 +85,7 @@ import { visionPreviewCard } from "./direction.ts";
 import { holdCard } from "./hold.ts";
 import { pullMayRun } from "../../core/pull_trust.ts";
 import { nextOfPull } from "../../flow/next_actor.ts";
-import { STEP_MEANS, STEPS, stepOfPull, type PathStep } from "../../flow/path.ts";
+import { STEP_MEANS, STEPS, stepOfPull, stepWord, type PathStep } from "../../flow/path.ts";
 import { changeHref } from "./nouns.ts";
 import { pullWord, servingHistory, wordBadge, type WordCtx } from "./words.ts";
 
@@ -274,7 +274,7 @@ export function changeHead(
 export function pathLine(p: PathStep): Html {
   const at = STEPS.indexOf(p.step);
   const words = STEPS.map((s, i) => {
-    const label = `${s.charAt(0).toUpperCase()}${s.slice(1)}`;
+    const label = stepWord(s);
     if (i === at)
       return html`<strong aria-current="step" title="${STEP_MEANS[s]}">${label}</strong>${p.done ? html` ${badge("done", { tone: "success" })}` : null}`;
     return html`<span title="${STEP_MEANS[s]}">${label}</span>`;

@@ -9,6 +9,7 @@
  * `/pulls`.
  */
 
+import type { Database } from "bun:sqlite";
 import { sealedScope } from "../../core/sealed.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { getAppByRepo } from "../../core/apps.ts";
@@ -19,10 +20,12 @@ import {
   type Issue,
   type Label,
 } from "../../core/issues.ts";
-import { listPulls, openPullsClosing } from "../../core/pulls.ts";
+import { listPulls, openPullsClosing, type Pull } from "../../core/pulls.ts";
+import { stepOfStored } from "../../flow/path.ts";
 import { canRead, canWrite, type Repo } from "../../core/repos.ts";
 import { FLOW_LABEL } from "../../core/flow_label.ts";
 import { flowButton } from "../flow_button.ts";
+import { stepLink } from "./step_link.ts";
 import { waitingCount } from "../../actions/reports.ts";
 
 import { listRepoRuns } from "../../actions/runs.ts";
@@ -486,6 +489,12 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
   return response;
 }
 
+/** The pull's step beside its row, as a sibling of the row's link: `after`. */
+function stepAfter(db: Database, repo: Repo, pull: Pull): { after?: Html } {
+  const step = stepOfStored(db, repo, pull);
+  return step === null ? {} : { after: stepLink(step) };
+}
+
 /**
  * GET /:owner/:name/pulls: every pull request, for every
  * repository and every viewer — one row per pull in its studio word, who
@@ -552,6 +561,7 @@ export async function changesList(ctx: Ctx): Promise<Response> {
                 : pull.authorName} · ${info.note} ·
               ${when(answered.get(pull.number), (t) => html`${tellLine(base, t)} · `)}${time(pull.updatedAt)}`,
               trail: wordBadge(info.word),
+              ...stepAfter(db, repo, pull),
             }),
           ),
         );

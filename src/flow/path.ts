@@ -13,7 +13,7 @@
 
 import type { Database } from "bun:sqlite";
 import { getAppByRepo } from "../core/apps.ts";
-import type { Pull } from "../core/pulls.ts";
+import { getPull, type Pull } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
 import { reviewSummary } from "../core/reviews.ts";
 import { checkSummary, type RunState } from "../core/runs.ts";
@@ -124,4 +124,21 @@ export function stepOfPull(
     approvals: reviewSummary(db, pull.id, live.headOid).approvals,
     next,
   });
+}
+
+/** The step as its heading reads: "Check". The one capitalisation every surface shares. */
+export const stepWord = (step: Step): string => `${step.charAt(0).toUpperCase()}${step.slice(1)}`;
+
+/** The step and why in one plain line, for the terminal and anywhere text is all there is. */
+export const stepLine = (p: PathStep): string => `${stepWord(p.step)}${p.done ? " (done)" : ""} — ${p.why}`;
+
+/** `stepOfPull` for a list: the head as stored, no conflict probe (a list does not open the repository). */
+export function stepOfStored(db: Database, repo: Repo, pull: Pull): PathStep | null {
+  return stepOfPull(db, repo, pull, { headOid: pull.headOid, conflicts: 0 });
+}
+
+/** `stepOfStored` for the pull a repository numbers `number`; null for an issue, a missing number, or a pull closed unmerged. */
+export function stepOfNumber(db: Database, repo: Repo, number: number): PathStep | null {
+  const pull = getPull(db, repo.id, number);
+  return pull === undefined ? null : stepOfStored(db, repo, pull);
 }

@@ -13,6 +13,7 @@ import { openIssueThrough } from "../../actions/issues.ts";
 import type { IssueKind, Label } from "../../core/issues.ts";
 import { getIssuesByNumbers, numberKey } from "../../core/issues.ts";
 import { LATER, pillarsOf, servedBy, type Pillar } from "../../core/pillars.ts";
+import { stepLine, stepOfNumber } from "../../flow/path.ts";
 import { mergedPullNumbers } from "../../core/pulls.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Repo } from "../../core/repos.ts";
@@ -93,6 +94,8 @@ export function issuesScreen(
    * set: one grouped query for the whole page, never one per row.
    */
   const verdicts = new Map<number, Verdict>();
+  /** Which of check, review, land, live each open pull is at, and why: the web row's step. */
+  const steps = new Map<number, string>();
   /**
    * The pillars of this repository and the one each row's issue serves,
    * read once per reload: `servedBy` answers for the whole repository in two
@@ -147,6 +150,11 @@ export function issuesScreen(
       numbers,
     ))
       verdicts.set(number, verdict);
+    if (repo === undefined) return;
+    for (const row of rows) {
+      const step = stepOfNumber(f.db, repo, row.number);
+      if (step !== null) steps.set(row.number, stepLine(step));
+    }
     ctx.invalidate();
   };
 
@@ -174,6 +182,7 @@ export function issuesScreen(
   const reload = async (): Promise<void> => {
     merged.clear();
     verdicts.clear();
+    steps.clear();
     tags.clear();
     items = await take();
     loaded = true;
@@ -345,6 +354,7 @@ export function issuesScreen(
               ? ("open" as const)
               : ("closed" as const),
           secondary: item.labels.map((l) => l.name).join(" "),
+          ...(steps.has(item.number) ? { note: steps.get(item.number)! } : {}),
           // An imported row is the origin's author, marked as upstream: a
           // login from another forge must never read as an account here.
           meta: metaOf(

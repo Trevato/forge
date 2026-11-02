@@ -8,6 +8,7 @@
 
 import { decay, type Affinity, type Weighted, type Why } from "./affinity.ts";
 import type { Candidate, FeedAsk, FeedLook } from "./items.ts";
+import type { PathStep } from "../flow/path.ts";
 import type { Settled } from "./settled.ts";
 
 export interface FeedItem {
@@ -32,6 +33,8 @@ export interface FeedItem {
   readonly look?: FeedLook;
   /** For a post about a pull or an issue that is over: how it ended. Absent while open. */
   readonly settled?: Settled;
+  /** For a post about a pull: which of check, review, land, live it is at, and why. */
+  readonly step?: PathStep;
 }
 
 const RECENCY_MAX = 4;

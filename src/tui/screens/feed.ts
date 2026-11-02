@@ -17,6 +17,7 @@ import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import type { Session } from "../session.ts";
 import { fill, len, split } from "../ui/layout.ts";
+import { stepLine } from "../../flow/path.ts";
 import { emptyState } from "../ui/widgets.ts";
 import { ListState, ago, drawList, errorText, runAsync, type ListRow } from "./common.ts";
 import type { PaletteEntry } from "./entries.ts";
@@ -86,6 +87,7 @@ export function feedScreen(f: Session, ctx: Ctx): Screen {
         title: oneLine(`${item.actor ?? item.app} ${item.what}`),
         secondary: item.app,
         meta: ago(item.at),
+        ...(item.step === undefined ? {} : { note: stepLine(item.step) }),
       }));
       drawList(s, list!, c, state, rows);
       if (composer.open) composer.render(s, box!, c, ctx);

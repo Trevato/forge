@@ -29,6 +29,7 @@ import { fragment } from "../layout.ts";
 import { draftJs } from "../draft.ts";
 import { outboxJs } from "../outbox.ts";
 import { avatar, btn, card, disclosure, empty, nameMark, row, stateBadge, time } from "../ui.ts";
+import { stepLink } from "./step_link.ts";
 import { writableAppsOf } from "./asks.ts";
 
 /** Events that can change what the feed says. */
@@ -134,6 +135,7 @@ export function feedCard(
       : html`<a class="look" data-slot="feed" href="${item.link}" tabindex="-1" aria-hidden="true"
           ><img src="${picture.src}" width="${picture.width}" height="${picture.height}" alt="" loading="lazy" decoding="async"
         /></a>`}
+    ${item.step === undefined ? null : html`<p class="break">${stepLink(item.step)}</p>`}
     ${saysMore(item) ? html`<p class="small muted break">${item.reason}</p>` : null}`;
   const foot = disclosure(
     `${reply ? "Reply or " : ""}${target ? "Steer" : "Tell"} · more`,

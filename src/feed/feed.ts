@@ -19,6 +19,7 @@ import { writeStamp } from "../core/write_clock.ts";
 import { Stamped } from "../kernel/stamped.ts";
 import { foldBursts } from "./fold.ts";
 import { rank, type FeedItem } from "./rank.ts";
+import { stepsOf } from "./step.ts";
 import { settledOf } from "./settled.ts";
 
 export const FEED_LIMIT_DEFAULT = 20;
@@ -200,9 +201,11 @@ export function readFeedPage(
   const started = performance.now();
   const settled = settledOf(db, page);
   options.phase?.("settled", performance.now() - started);
+  const steps = stepsOf(db, page);
   const items = page.map((i) => {
     const state = settled.get(i.id);
-    return state === undefined ? i : { ...i, settled: state };
+    const step = steps.get(i.id);
+    return { ...i, ...(state === undefined ? {} : { settled: state }), ...(step === undefined ? {} : { step }) };
   });
   const last = items[items.length - 1];
   return {

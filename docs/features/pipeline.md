@@ -34,12 +34,19 @@ Under every pull's title (both tabs) the line reads, for example,
 `Check · **Review** · Land · Live — No review yet.`, linked to `/pipeline`.
 A finished path (live, or landed where nothing deploys) carries a "done" badge.
 The MCP `pull` tool answers `step: { step, why, done }`, and the terminal's pull
-screen says `step: review` beside `next:` in its header line.
+screen says `step: Review — No review yet.` beside `next:` in its header line.
+The same word and sentence (from `stepOfStored`) sit on a pull's post in the feed,
+its row on the repository's pulls list and on `/review` (the word links to
+`/pipeline`), and under its row in the terminal's feed, pulls list and on-you
+list (#7783). List rows skip the merge-conflict probe (it costs a git run per
+pull), so a conflicted pull can read differently on its own page than on a list;
+the row links to the pull, whose page answers.
+The step is looked up per row (a few queries each); batching it is left for when
+the lists measure slow.
 `changeHead` computes "who acts next" once and hands it to `stepOfPull`.
 
 ## Not here yet
 
 The rest of #7703 is filed as its own issues: remove the proof (#7779), run
 the full suite as a scheduled report (#7780), re-run a shard that crashed
-outside any test (#7781), reuse a verdict for the same tree (#7782), carry the
-step to the feed and the lists (#7783; the pull page, MCP and terminal have it), and measure each step (#7784).
+outside any test (#7781), reuse a verdict for the same tree (#7782), and measure each step (#7784).

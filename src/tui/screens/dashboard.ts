@@ -53,6 +53,7 @@ import {
   previewAsksBulk,
   undoAsksBulk,
 } from "../../actions/asks_bulk.ts";
+import { stepLine, stepOfNumber } from "../../flow/path.ts";
 import { reviewSetOf, type ReviewSet } from "../../web/studio/review_set.ts";
 import { staleWords } from "../../flow/kpi_words.ts";
 import { askMeasureWeek, asksMeasureEmpty, asksMeasureWords } from "../../core/ask_ledger.ts";
@@ -175,6 +176,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   let pins: Pin[] = [];
   let pinned = new Set<string>();
   let onYou: OnYouItem[] = [];
+  /** Where each pull on you stands on the path (check, review, land, live), by issue id. */
+  let onYouSteps = new Map<string, string>();
   /** The week's asks line, read on reload; drawing only reads it. */
   let asksLine: string | undefined;
   /** Wave proposals that wait for this person's nod, listed after the rows above. */
@@ -335,6 +338,12 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     pinned = f.user ? pinnedRepoIds(f.db, f.user.id) : new Set<string>();
     all = listReposVisibleTo(f.db, f.user, { limit: 200 });
     onYou = assignedToMe();
+    onYouSteps = new Map(
+      onYou.flatMap((item) => {
+        const step = item.issue.kind === "pull" ? stepOfNumber(f.db, item.repo, item.issue.number) : null;
+        return step === null ? [] : [[item.issue.id, stepLine(step)] as const];
+      }),
+    );
     asksLine = undefined;
     if (f.user !== undefined && f.user.kind === "user") {
       const m = askMeasureWeek(f.db, f.user.id);
@@ -1316,6 +1325,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
               : ISSUE_MARK;
         return {
           title: `${marked.has(item.issue.id) ? "[x] " : ""}${item.hand === true ? "parked " : item.over === true ? "handed over " : item.late !== undefined ? "waiting " : ""}${mark} #${item.issue.number} ${item.issue.title} · ${item.repo.ownerName}/${item.repo.name}`,
+          ...(onYouSteps.has(item.issue.id) ? { note: onYouSteps.get(item.issue.id)! } : {}),
           meta: `${item.waiting.word} · on ${item.waiting.on}${item.passed === undefined ? "" : ` · handed to you: ${item.passed}`}${item.late?.advice ?? item.overAdvice ?? ""}`,
         };
       }),

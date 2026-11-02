@@ -71,7 +71,7 @@ test("the terminal's pull screen says who acts next, as the page does", async ()
       await Bun.sleep(20);
     }
     // The page's step line, too: this pull is at review.
-    if (!tui.screen.toText().includes("step: review")) throw new Error(tui.screen.toText());
+    if (!tui.screen.toText().includes("step: Review — ")) throw new Error(tui.screen.toText());
   } finally {
     tui.stop();
   }
