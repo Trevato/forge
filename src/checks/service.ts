@@ -114,6 +114,7 @@ import {
   prefillInstallCache,
   withLock,
 } from "./install.ts";
+import { evictSoon, lend } from "./install_evict.ts";
 import { meterEgress } from "../apps/egress.ts";
 import { checkStage, type GateStage } from "./gate_reason.ts";
 import { proofsInFlight } from "./proof.ts";
@@ -1247,11 +1248,21 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
                     });
                     if (!fill.ok) return fill;
                     filled = fill.value;
+                    void evictSoon(warm, process.env);
                   }
                   return once(log);
                 }
                 mkdirSync(shared, { recursive: true });
-                const held = await withLock(`${shared}.lock`, () => once(log), { signal });
+                const held = await withLock(
+                  `${shared}.lock`,
+                  async () => {
+                    const done = await once(log);
+                    if (done.ok) lend(shared, dir);
+                    return done;
+                  },
+                  { signal },
+                );
+                if (held.ok && held.value.ok) void evictSoon(shared, process.env);
                 return held.ok ? held.value : held;
               },
               { log: write, signal, retryMs: options.installRetryMs },

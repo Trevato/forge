@@ -41,7 +41,8 @@ describe("private destinations in the terminal", () => {
     listEvents(forge.db, { repoId: repo.id }).filter((e) => e.kind.startsWith("app.egress."));
 
   function boot(user: User) {
-    const terminal = headlessTerminal(120, 32);
+    // Wide enough that the About card's hint line reaches `e  egress`.
+    const terminal = headlessTerminal(180, 32);
     const identity: TuiIdentity = { sshUsername: "t", remoteAddress: "127.0.0.1", user };
     const { app } = createForgeApp(forge, identity, { terminal, exitHooks: false });
     app.start();
@@ -205,7 +206,8 @@ describe("private destinations in the terminal", () => {
     const before = changes().length;
     const view = await egressView(forge, erin, repo);
     expect(view.ok && view.value.rows.length).toBe(2);
-    const terminal = headlessTerminal(120, 32);
+    // Wide enough that the About card's hint line reaches `e  egress`.
+    const terminal = headlessTerminal(180, 32);
     const identity: TuiIdentity = { sshUsername: "t", remoteAddress: "127.0.0.1", user: erin };
     const { app, session } = createForgeApp(forge, identity, { terminal, exitHooks: false });
     app.start();

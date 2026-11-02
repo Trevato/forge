@@ -717,7 +717,15 @@ fails and says `infrastructure`. A check in a cell installs into its own
 home, so its bun cache is shared with nothing. An uncontained check uses
 its repository's cache (`<data>/check-install/<repo>/bun`), and installs
 into it take turns under a lock file, so two never extract one package
-into the same directory. A `job` check installs in its own pod and is not
+into the same directory. That cache is bounded (`src/checks/install_evict.ts`,
+#7574): a fill, or an uncontained install, marks the packages its `bun.lock`
+names as lent, and under the same lock, in the background and at most hourly,
+the forge removes entries not lent for 30 days (`FORGE_CHECK_CACHE_DAYS`), then
+the oldest until the repository's cache is under 2 GB (`FORGE_CHECK_CACHE_MB`).
+An evicted package is fetched again by the next install. Only the text
+`bun.lock` is read: a repository on a binary `bun.lockb` lends nothing, so its
+packages age out after 30 days and are fetched again (a cell never fills from
+one at all). A `job` check installs in its own pod and is not
 retried.
 
 **An app environment installs from that same cache** (`src/apps/process.ts`,
@@ -1553,6 +1561,8 @@ a link to the milestone (`docs/PLANNING.md`); its progress never does.
 | `FORGE_CHECKS_DRAIN_S`       | `10`                           | seconds a roll lets running checks finish first   |
 | `FORGE_CREW_DRAIN_S`         | `10`                           | seconds a roll lets crew runs finish before they are queued again |
 | `FORGE_CHECK_SHARDS`      | the machine's cores             | test shards per check (live: Settings → Capacity) |
+| `FORGE_CHECK_CACHE_DAYS`  | `30`                            | days a package may go unlent before the check install cache drops it |
+| `FORGE_CHECK_CACHE_MB`    | `2048`                          | size one repository's check install cache is swept down to |
 | `FORGE_CELLS_EGRESS`      | `enforce`                       | `report` lets undeclared egress through on 80/443 (live: Settings → Capacity) |
 | `FORGE_CELL_CGROUP`       | `/sys/fs/cgroup` at a namespace root | the delegated cgroup v2 whose children cap each cell's memory; `off` watches only |
 | `FORGE_CREW_CPUS`         | `4` | cores one crew run may use (`cpu.max` on its own cell cgroup, where the cpu controller is delegated) |

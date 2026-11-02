@@ -21,6 +21,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { formatBytes } from "../core/storage.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { lend } from "./install_evict.ts";
 
 /** What an install prints when the machine, not the code, failed it. */
 export const TRANSIENT_INSTALL = /Fail extracting tarball|EINTEGRITY|ECONNRESET/;
@@ -172,7 +173,9 @@ export async function prefillInstallCache(options: {
         try {
           await Promise.all([lines(proc.stdout), lines(proc.stderr)]);
           const code = await proc.exited;
-          return code === 0 ? ok(true) : err(`filling the install cache exited ${code}`);
+          if (code !== 0) return err(`filling the install cache exited ${code}`);
+          lend(cache, dir);
+          return ok(true);
         } finally {
           clearTimeout(timer);
           signal.removeEventListener("abort", stop);
