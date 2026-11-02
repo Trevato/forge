@@ -42,7 +42,7 @@ describe("private destinations in the terminal", () => {
 
   function boot(user: User) {
     // Wide enough that the About card's hint line reaches `e  egress`.
-    const terminal = headlessTerminal(180, 32);
+    const terminal = headlessTerminal(200, 32);
     const identity: TuiIdentity = { sshUsername: "t", remoteAddress: "127.0.0.1", user };
     const { app } = createForgeApp(forge, identity, { terminal, exitHooks: false });
     app.start();

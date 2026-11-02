@@ -155,6 +155,32 @@ describe("SSH keys in the terminal", () => {
     h.stop();
   });
 
+  test("e renames the selected key: prefilled, esc keeps it, a bad name is refused", async () => {
+    const h = boot("alice");
+    await h.open();
+    const first = names("alice")[0]!;
+    await h.press("e");
+    expect(h.text()).toContain("Rename SSH key");
+    expect(h.text()).toContain(first);
+    await h.press("esc");
+    expect(names("alice")[0]).toBe(first);
+
+    await h.press("e");
+    for (let i = 0; i < first.length; i++) await h.press("backspace");
+    await h.press("enter");
+    expect(h.text()).toContain("a name is 1 to 64 printable characters");
+    expect(names("alice")[0]).toBe(first);
+    await h.press("esc");
+
+    await h.press("e");
+    await h.type(" at home");
+    await h.press("enter");
+    expect(names("alice")[0]).toBe(`${first} at home`);
+    expect(h.text()).toContain(`${first}: renamed to ${first} at home.`);
+    expect(names("bob")).toEqual(["bobs-secret-box"]);
+    h.stop();
+  });
+
   test("d removes the selected key only after a confirm", async () => {
     const h = boot("alice");
     await h.open();

@@ -11,7 +11,9 @@ import { addPasskey, findPasskey } from "../core/passkeys.ts";
 import {
   addKey,
   deleteKey,
+  keyName,
   parseAuthorizedKey,
+  renameKey,
   type UserKey,
 } from "../core/keys.ts";
 import { turnstileVerifier } from "../core/turnstile.ts";
@@ -442,6 +444,25 @@ export function deleteSshKey(
     kind: "user.key_removed",
     actorId: user.value.id,
     payload: { fingerprint: removed.fingerprint, name: removed.name },
+  });
+  return ok();
+}
+
+/** Rename one of the actor's keys, so each says which machine holds it. */
+export function renameSshKey(
+  app: App,
+  actor: User | undefined,
+  keyId: string,
+  name: string,
+): Result<void, "unauthorized" | "not_found" | "invalid_name"> {
+  const user = requireUser(actor);
+  if (!user.ok) return user;
+  if (keyName(name) === undefined) return err("invalid_name");
+  if (!renameKey(app.db, user.value.id, keyId, name)) return err("not_found");
+  app.bus.append({
+    kind: "user.key_renamed",
+    actorId: user.value.id,
+    payload: { keyId },
   });
   return ok();
 }

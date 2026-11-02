@@ -35,6 +35,7 @@ export const keyWords = (error: string): string =>
     invalid_key: "not a public key in authorized_keys form",
     key_exists: "that key is already registered",
     not_found: "no such key of yours",
+    invalid_name: "a name is 1 to 64 printable characters",
   })[error] ?? error;
 
 export const bad = (error: string, message: string): Answer => ({

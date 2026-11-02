@@ -195,7 +195,7 @@ door (`s`) cannot let that person in. They add an SSH key under Settings → Key
 once signed in on the web; after that the terminal signs them straight in as
 that account, as for anyone with a key.
 
-In the terminal the palette's `SSH keys` (ctrl+k) lists your own keys; `a` adds one (a title, then the authorized_keys line) and `d` removes the selected key after a confirm that warns when it is this session's key. Refusals read in MCP `ssh_keys`'s words (`keyWords`).
+In the terminal the palette's `SSH keys` (ctrl+k) lists your own keys; `a` adds one (a title, then the authorized_keys line), `e` renames the selected key (prefilled with its name; 1 to 64 printable characters, so each key can say which machine holds it; a name added from any door is fitted to the same rule, so the prefill always renames) and `d` removes the selected key after a confirm that warns when it is this session's key. Refusals read in MCP `ssh_keys`'s words (`keyWords`). Renaming is terminal-only for now: the web's Settings → Keys and MCP `ssh_keys` add and remove but do not rename.
 
 Beside it the palette's `Passkeys` (ctrl+k, people only, not agents or guests) lists your own passkeys, read only: each row is the name, then `added YYYY-MM-DD, used YYYY-MM-DD` (or `used never`). The head line says it is read only and points at Settings › Passkeys to add or remove one; with none it reads "None yet. Add one on the web: Settings › Passkeys." (`src/tui/screens/passkeys.ts`, the same rows as MCP `whoami_can kind: passkeys`).
 

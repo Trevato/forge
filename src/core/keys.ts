@@ -177,7 +177,7 @@ export function addKey(
   ).run(
     keyId,
     userId,
-    name.trim().slice(0, 100) || parsed.algo,
+    keyName(fitKeyName(name)) ?? parsed.algo,
     parsed.algo,
     Buffer.from(parsed.blob).toString("base64"),
     fp,
@@ -211,6 +211,44 @@ export function deleteKey(
     >("DELETE FROM user_key WHERE id = ?1 AND user_id = ?2 RETURNING *")
     .get(keyId, userId);
   return row ? toKey(row) : undefined;
+}
+
+export const KEY_NAME_MAX = 64;
+
+/** A key's name, trimmed, or undefined when it is not 1–64 printable
+ * characters: no control or format characters, so a name cannot paint the
+ * terminal it is drawn in. */
+export function keyName(raw: string): string | undefined {
+  const name = raw.trim();
+  if (name.length === 0 || [...name].length > KEY_NAME_MAX) return undefined;
+  if (/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(name)) return undefined;
+  return name;
+}
+
+/** `raw` made to pass `keyName` where it can: control and format characters
+ * become spaces and the rest is cut to 64 characters. Adding a key fits the
+ * name it is given (often the authorized_keys comment) rather than refusing
+ * it, so every stored name is one a rename would accept. */
+export function fitKeyName(raw: string): string {
+  const spaced = raw.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, " ").trim();
+  return [...spaced].slice(0, KEY_NAME_MAX).join("").trim();
+}
+
+/** Rename one of `userId`'s keys. False, and nothing changed, when the name
+ * is refused or the key is not theirs. */
+export function renameKey(
+  db: Database,
+  userId: string,
+  keyId: string,
+  raw: string,
+): boolean {
+  const name = keyName(raw);
+  if (name === undefined) return false;
+  return (
+    db
+      .query("UPDATE user_key SET name = ?1 WHERE id = ?2 AND user_id = ?3")
+      .run(name, keyId, userId).changes === 1
+  );
 }
 
 export interface KeyMatch {
