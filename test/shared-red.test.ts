@@ -255,12 +255,9 @@ describe("a failure outside a named test names its file and hook (#4582)", () =>
 
   test("summary names the file and the hook, not (unnamed)", () => {
     const failure = summariseCheckFailure(captured, "check exited with code 1");
-    expect(failure.detail?.names).toEqual([
-      "a.test.ts > beforeEach/afterEach (timeout)",
-      "c.test.ts > s > (unnamed): error: late",
-      "(unnamed)",
-    ]);
-    expect(failure.summary).toContain("a.test.ts > beforeEach/afterEach (timeout)");
+    // The (unnamed) fallout shows only when nothing else is named (#8730).
+    expect(failure.detail?.names).toEqual(["a.test.ts > beforeEach/afterEach (timeout)"]);
+    expect(failure.summary).toBe('2 of 12 tests — "a.test.ts > beforeEach/afterEach (timeout)" and 1 more');
   });
 
   test("the recap after the summary is not given the last file's name", () => {

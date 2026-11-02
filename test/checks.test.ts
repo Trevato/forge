@@ -172,6 +172,51 @@ describe("parseBunTestFailure: a convenience over one known runner, not a genera
     });
   });
 
+  test("a shard's named failure leads; the (unnamed) fallout behind it is not named", () => {
+    const lines = [
+      "── shard 1/1 (exit 1, 3s): test/a.test.ts",
+      "test/a.test.ts:",
+      "(fail) a > writes the row [2ms]",
+      "error: database is closed",
+      "(fail) (unnamed) [1ms]",
+      " 4 pass",
+      " 2 fail",
+    ];
+    expect(parseBunTestFailure(lines)?.names).toEqual(["a > writes the row"]);
+    // Only a shard that named nothing else is named by its fallout.
+    const only = ["test/b.test.ts:", "error: boom", "(fail) (unnamed)", " 0 pass", " 1 fail"];
+    expect(parseBunTestFailure(only)?.names).toEqual(["test/b.test.ts > (unnamed): error: boom"]);
+  });
+
+  test("shards that finished out of order are named in shard order, each shard's first failure first", () => {
+    const lines = [
+      "── shard 3/3 (exit 1, 2s): test/c.test.ts",
+      "test/c.test.ts:",
+      "(fail) c one [1ms]",
+      "(fail) c two [1ms]",
+      " 1 pass",
+      " 2 fail",
+      "── shard 1/3 (exit 1, 9s): test/a.test.ts",
+      "test/a.test.ts:",
+      "error: boom",
+      "(fail) (unnamed) [1ms]",
+      " 3 pass",
+      " 1 fail",
+      "── shard 2/3 (exit 0, 5s): test/b.test.ts",
+      " 7 pass",
+      " 0 fail",
+      "2 of 3 shards failed:",
+      "(fail) test/a.test.ts > (unnamed): error: boom [1ms] [shard 1]",
+      "(fail) c one [1ms] [shard 3]",
+      "(fail) c two [1ms] [shard 3]",
+    ];
+    expect(parseBunTestFailure(lines)).toEqual({
+      passed: 11,
+      failed: 3,
+      names: ["test/a.test.ts > (unnamed): error: boom", "c one", "c two"],
+    });
+  });
+
   test("output that is not bun test's own shape is not guessed at", () => {
     expect(
       parseBunTestFailure([
