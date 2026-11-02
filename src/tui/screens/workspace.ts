@@ -1881,12 +1881,34 @@ export function workspaceScreen(
         admin() &&
         getMirrorTarget(f.db, repo.id) !== undefined
       ) {
-        const stopped = stopMirroring(f.app, f.user, repo);
-        ctx.toast(
-          stopped.ok && stopped.value ? "stopped mirroring" : "not mirrored",
-          stopped.ok && stopped.value ? "success" : "danger",
+        const source = getMirrorTarget(f.db, repo.id)?.fullName ?? "";
+        // The only way out of a mirror, and there is no way back in from
+        // here: ask first, naming the repository and where it goes.
+        ctx.push(
+          confirmScreen(ctx, screen, {
+            title: "Stop mirroring",
+            body: [
+              `Stop mirroring ${repo.ownerName}/${repo.name} to ${source}?`,
+              "Nothing more is pushed there, and this cannot be",
+              "turned back on from here.",
+            ],
+            actions: [
+              { label: "Cancel", variant: "ghost" },
+              { label: "Stop mirroring", variant: "danger" },
+            ],
+            selected: 0,
+            width: 64,
+            onChoose: (choice) => {
+              if (choice !== 1) return;
+              const stopped = stopMirroring(f.app, f.user, repo);
+              ctx.toast(
+                stopped.ok && stopped.value ? "stopped mirroring" : "not mirrored",
+                stopped.ok && stopped.value ? "success" : "danger",
+              );
+              ctx.invalidate();
+            },
+          }),
         );
-        ctx.invalidate();
         return true;
       }
       if (plain && e.key === "Y" && f.signedIn && repo !== undefined) {

@@ -220,7 +220,8 @@ describe("the terminal workspace", () => {
       await h.settle();
       await open(h);
       expect(h.text()).toContain("Mirrored to octo/lighthouse, stopped:");
-      await h.press("U");
+      // U asks first (test/tui-workspace-unmirror.test.ts); choose Stop mirroring.
+      await h.press("U", "right", "enter");
       expect(getMirrorTarget(forge.db, repo.id)).toBeUndefined();
       expect(h.text()).not.toContain("Mirrored to octo/lighthouse");
     } finally {
