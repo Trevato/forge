@@ -197,6 +197,8 @@ that account, as for anyone with a key.
 
 In the terminal the palette's `SSH keys` (ctrl+k) lists your own keys; `a` adds one (a title, then the authorized_keys line) and `d` removes the selected key after a confirm that warns when it is this session's key. Refusals read in MCP `ssh_keys`'s words (`keyWords`).
 
+Beside it the palette's `Passkeys` (ctrl+k, people only, not agents or guests) lists your own passkeys, read only: each row is the name, then `added YYYY-MM-DD, used YYYY-MM-DD` (or `used never`). The head line says it is read only and points at Settings › Passkeys to add or remove one; with none it reads "None yet. Add one on the web: Settings › Passkeys." (`src/tui/screens/passkeys.ts`, the same rows as MCP `whoami_can kind: passkeys`).
+
 ## Page-view beacon
 
 Every page links one static, immutable script (`src/web/beacon.ts`, under 2 KB, no dependency) that sends, once per page view with `sendBeacon`, the route's path, TTFB, load time, LCP, INP (the worst interaction) and CLS to `POST /_measure`. The route is same-origin only, validates every field, caps the body at 512 bytes and the rate per client, and answers 204. Reports land in `page_vital` (bun:sqlite) keyed by route *pattern*; no IP and no user agent string is stored. A unique visitor is a hash under a salt that rotates daily (yesterday's salt is deleted), rows are kept 90 days. Do-Not-Track and the `forge_measure=off` cookie send nothing, and the server stores nothing for them either. The CSP is unchanged: the script is nonce'd like the shell's.

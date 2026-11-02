@@ -49,6 +49,7 @@ import { canScreen } from "./screens/can.ts";
 import { modelScreen } from "./screens/model.ts";
 import { notifyScreen } from "./screens/notify.ts";
 import { sshKeysScreen } from "./screens/sshkeys.ts";
+import { passkeysScreen } from "./screens/passkeys.ts";
 import { confirmsScreen } from "./screens/confirms.ts";
 import { proposalTokensPrompt } from "./screens/proposal_tokens.ts";
 import { signInsScreen } from "./screens/signins.ts";
@@ -271,6 +272,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "SSH keys",
         hint: "list, add and remove the keys that sign in as you",
         run: () => ctx.push(sshKeysScreen(session, ctx)),
+      });
+    // Settings › Passkeys and MCP `whoami_can kind: passkeys`, read only (#8044).
+    if (session.signedIn && session.user?.kind !== "agent")
+      commands.push({
+        id: "passkeys",
+        title: "Passkeys",
+        hint: "the passkeys that sign in as you",
+        run: () => ctx.push(passkeysScreen(session, ctx)),
       });
     if (session.signedIn)
       commands.push(
