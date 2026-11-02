@@ -38,6 +38,7 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   "issue.labeled",
   "issue.first",
   "issue.closed",
+  "issue.gate_reviewed",
   "issue.commented",
   "usage.delta",
   "issue.raised",

@@ -68,6 +68,7 @@ import {
 } from "../origins/import.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { clearFirst } from "../core/first.ts";
+import { followLabel } from "./gate.ts";
 import { inheritPillar } from "./pillars.ts";
 import {
   requireParticipant,
@@ -705,6 +706,7 @@ export function setIssueLabels(
     if (!label) return err("unknown_label");
     if (!resolved.some((l) => l.id === label.id)) resolved.push(label);
   }
+  const before = labelsFor(app.db, issue.id);
   writeLabels(
     app.db,
     issue.id,
@@ -716,6 +718,13 @@ export function setIssueLabels(
     actorId: writer.value.id,
     payload: { number: issue.number, labels: resolved.map((l) => l.name) },
   });
+  // `Later` is the Later gate made visible: changing the label changes the gate.
+  const followed = followLabel(app, writer.value, repo, issue, before, resolved);
+  if (!followed.ok) {
+    // The label and the gate move together or not at all.
+    writeLabels(app.db, issue.id, before.map((l) => l.id));
+    return err("forbidden");
+  }
   return ok(labelsFor(app.db, issue.id));
 }
 

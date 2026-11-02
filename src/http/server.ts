@@ -266,6 +266,7 @@ import { appNowFragment } from "../web/studio/now.ts";
 import { appStateFragment } from "../web/studio/previews.ts";
 import { changesList, tellsList } from "../web/studio/lists.ts";
 import { dependencySubmit } from "../web/pages/thread.ts";
+import { heldApply, heldPage, liftHoldSubmit } from "../web/pages/gate.ts";
 import {
   assigneeSubmit,
   labelsSubmit,
@@ -1020,6 +1021,9 @@ export function buildRouter(): Router<Handler> {
     "/:owner/:name/issues/:number/dependencies",
     dependencySubmit,
   );
+  router.add("POST", "/:owner/:name/issues/:number/lift", liftHoldSubmit);
+  router.add("GET", "/:owner/:name/held", heldPage);
+  router.add("POST", "/:owner/:name/held/apply", heldApply);
   router.add("GET", "/:owner/:name/map", mapPage);
   router.add("POST", "/:owner/:name/issues/:number/first", firstSubmit);
   router.add("GET", "/:owner/:name/milestones", milestonesPage);

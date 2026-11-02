@@ -73,6 +73,7 @@ import { keeperScreen } from "./screens/keeper.ts";
 import { releasesScreen } from "./screens/releases.ts";
 import { mayRead } from "../release/gate.ts";
 import { fileHoldsPrompt } from "./screens/fileholds.ts";
+import { heldScreen } from "./screens/held.ts";
 import { stalledScreen } from "./screens/stalled.ts";
 import { issuesScreen, newIssueScreen } from "./screens/issues.ts";
 import { limbsScreen } from "./screens/limbs.ts";
@@ -108,6 +109,12 @@ const REPO_VERBS: readonly {
     id: "issues",
     title: "Issues in a repository",
     open: (f, ctx, repo) => issuesScreen(f, ctx, local(f, repo), "issue"),
+  },
+  {
+    // What the Later gate holds, as /held shows it: reading is the repository's own.
+    id: "held",
+    title: "Held by the Later gate",
+    open: (f, ctx, repo) => heldScreen(f, ctx, repo),
   },
   {
     id: "pulls",

@@ -57,6 +57,12 @@ export const ASKING: Readonly<Record<string, Asking>> = {
   model_grant: { does: "give an account a monthly model grant", undo: () => "`model_grant` with `usdPerMonth: 0` takes it back" },
   model_ceiling: { does: "cap an account's model spend", undo: () => "`model_ceiling` with both `null` clears it" },
   limits: { does: "change one of the forge's limits", undo: () => "`limits` with `value: \"\"` restores the default" },
+  // Closing the Later gate's unchosen ideas in one go; reading its proposal asks nothing.
+  held: {
+    does: "close the issues the Later gate review proposed to close",
+    asks: (a) => a["apply"] !== undefined,
+    undo: () => "`lift` on each issue revives it",
+  },
   // Secrets and credentials.
   secrets: { does: "set or remove a sealed secret", asks: not("action", "list") },
   app_env: { does: "set or unset an app's variable", asks: not("action", "list") },

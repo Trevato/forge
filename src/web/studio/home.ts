@@ -52,6 +52,7 @@ import { writableAppsOf } from "./asks.ts";
 import { needsYouSection } from "./asks_page.ts";
 import { flowCards } from "./flow_card.ts";
 import { composer, feedJs, feedNote, feedRegion, registerWorkerJs } from "./feed.ts";
+import { heldLine } from "./held.ts";
 import { appChips, movingRegion, tellBox } from "./living.ts";
 import { alarmLines, cachedAlarms } from "./alarm_lines.ts";
 import { kpiRow, waitingLine } from "./kpi_row.ts";
@@ -299,7 +300,7 @@ export async function studioHome(
   ) {
     const apps = await clientApps(ctx, user);
     const lean = html`<h1 class="sr-only">Home</h1>
-      ${firstSteps} ${address} ${crewKeyNote(ctx)} ${apps}
+      ${firstSteps} ${address} ${crewKeyNote(ctx)} ${heldLine(ctx, user)} ${apps}
       <div class="stack">
         ${composer(ctx, user)}
         <p class="small muted">
@@ -327,6 +328,7 @@ export async function studioHome(
   const body = html`<h1 class="sr-only">Home</h1>
     ${tellBox(ctx, user)}
     ${ask} ${address}
+    ${timePhase(ctx.request, "held", () => heldLine(ctx, user))}
     <section class="stack" aria-label="The forge">${kpis}</section>
     ${timePhase(ctx.request, "moving", () => movingRegion(ctx.app.db, user))}
     ${appChips(ctx, user)}
