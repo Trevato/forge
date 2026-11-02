@@ -921,6 +921,7 @@ export async function proxyApp(
       ),
     );
     const ssh = doorSsh(runtime, target, signed?.who);
+    const report = reportUrl(runtime, target);
     const where = timePhase(request, "pull", () =>
       pillWhere(runtime, target, signed?.who),
     );
@@ -947,6 +948,7 @@ export async function proxyApp(
           ...(serving === undefined ? {} : { serving }),
           forgeUrl: runtime.options.forgeUrl,
           ...(ssh === undefined ? {} : { ssh }),
+          ...(report === undefined ? {} : { report: "/__forge/report" }),
           ...(tell === undefined ? { signin: "/__forge/signin" } : { tell }),
         },
         request.method === "HEAD",

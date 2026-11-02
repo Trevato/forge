@@ -480,3 +480,27 @@ test("the door names the crew run working here, linked, to who may see it", asyn
   finishRun(app.db, hidden.id, { state: "ok", summary: "d" });
   expect(await (await door(`notes.${DOMAIN}`, cookie)).text()).not.toContain("is working on this");
 });
+
+test("a public app's door links the report form on its own host; a private one's does not", async () => {
+  const html = await (await door(`notes.${DOMAIN}`)).text();
+  expect(html).toContain('<a href="/__forge/report">Report a problem, no account needed</a>');
+  // The link resolves: the same public host answers it with the forge's form.
+  const gone = await fetch(`${servers.url}/__forge/report`, {
+    headers: { host: `notes.${DOMAIN}` },
+    redirect: "manual",
+  });
+  expect(gone.status).toBe(303);
+  const to = new URL(gone.headers.get("location")!);
+  expect(`${to.origin}${to.pathname}`).toBe(`${servers.url}/alice/notes/report`);
+  const owner = getUserById(app.db, alice)!;
+  const made = await newApp(app, owner, { name: "closed", description: "x", visibility: "private" });
+  if (!made.ok) throw new Error(String(made.error));
+  const closed = getAppByRepo(app.db, made.value.repo.id)!;
+  const target = { app: closed, env: "production" } as AppTarget;
+  const grant = signGrant(dataDir, target, 60_000, Date.now(), { id: alice, name: "alice", role: "admin" });
+  const mine = await (
+    await door(`closed.${DOMAIN}`, `forge_grant_${closed.id.slice(-8)}=${grant}`)
+  ).text();
+  expect(mine).toContain("<h1>closed</h1>");
+  expect(mine).not.toContain("/__forge/report");
+});

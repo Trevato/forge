@@ -27,6 +27,8 @@ export type DoorFacts = {
   pulls?: DoorPullLine[] | undefined;
   /** Who of the crew is working here now, as the pill's crew line says it. */
   crew?: CrewNow | undefined;
+  /** This host's own report door, only for a public app anyone may report on. */
+  report?: string | undefined;
 };
 
 /** How many pulls the door lists; one more read than this means there are others. */
@@ -132,6 +134,8 @@ export function doorPage(facts: DoorFacts, head: boolean): Response {
   if (facts.tell !== undefined) links.push(link(facts.tell, "Tell the crew"));
   else if (facts.signin !== undefined)
     links.push(link(facts.signin, "Sign in to tell the crew"));
+  if (facts.report !== undefined)
+    links.push(link(facts.report, "Report a problem, no account needed"));
   const terminal =
     facts.ssh === undefined
       ? ""
