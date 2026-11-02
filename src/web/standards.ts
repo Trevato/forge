@@ -339,7 +339,7 @@ function runningSentence(): string {
 }
 
 /** llms.txt and its ETag per origin, valid while the listing read, the build and the tell command are the same. */
-const llmsBodies = new Map<string, { repos: LlmsListing; running: string; tell: string | undefined; body: string; etag: string }>();
+const llmsBodies = new Map<string, { signedIn: boolean; repos: LlmsListing; running: string; tell: string | undefined; body: string; etag: string }>();
 
 /**
  * GET /llms.txt — the forge as an agent should meet it (llmstxt.org): what
@@ -352,26 +352,30 @@ export function llmsTxt(ctx: Ctx): Response {
   const tell = sshTellCommand(ctx.app);
   const running = runningSentence();
   const repos = timePhase(ctx.request, "repos", () => llmsRepos(ctx.app.db));
-  let kept = llmsBodies.get(o);
+  // The tools section depends on who asks, so the signed-in and the anonymous body are kept apart.
+  const signedIn = ctx.auth.user !== undefined;
+  const key = `${o} ${signedIn}`;
+  let kept = llmsBodies.get(key);
   if (kept === undefined || kept.repos !== repos || kept.running !== running || kept.tell !== tell) {
-    const body = timePhase(ctx.request, "render", () => renderLlmsTxt(ctx, o, tell, running, repos));
+    const body = timePhase(ctx.request, "render", () => renderLlmsTxt(ctx, o, tell, running, repos, signedIn));
     const etag = timePhase(ctx.request, "etag", () => `"${new Bun.CryptoHasher("sha256").update(body).digest("hex").slice(0, 32)}"`);
-    kept = { repos, running, tell, body, etag };
+    kept = { signedIn, repos, running, tell, body, etag };
     // Origins come from the Host header: keep a handful, not one per guess.
     if (llmsBodies.size >= 16) llmsBodies.clear();
-    llmsBodies.set(o, kept);
+    llmsBodies.set(key, kept);
   }
   const cache = "public, max-age=3600";
   const sent = ctx.request.headers.get("if-none-match");
   if (sent !== null && sent.split(",").some((t) => t.trim() === kept.etag))
-    return new Response(null, { status: 304, headers: { etag: kept.etag, "cache-control": cache } });
+    return new Response(null, { status: 304, headers: { etag: kept.etag, "cache-control": cache, vary: "Cookie, Authorization" } });
   const res = text(kept.body, "text/markdown; charset=utf-8");
   res.headers.set("etag", kept.etag);
+  res.headers.append("vary", "Cookie, Authorization");
   return res;
 }
 
 /** The llms.txt document for one origin. */
-function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: string, repos: LlmsListing): string {
+function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: string, repos: LlmsListing, signedIn: boolean): string {
   const mcp = mcpPointers(o);
   return (
     [
@@ -424,7 +428,7 @@ function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: s
       `- API: ${o}/api/v1, Authorization: Bearer <token>`,
       `- OpenAPI: GET ${o}/api/v1/openapi.json (redirects to ${o}/contract/openapi.json)`,
       "",
-      ...mcpToolsSection(),
+      ...mcpToolsSection(o, signedIn),
       "## Public repositories",
       "",
       // Names and addresses only: a description is whatever its owner
