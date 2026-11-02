@@ -133,6 +133,32 @@ describe("+ New forge", () => {
     expect(html).toContain("user accounts");
   });
 
+  test("the Template field lists Blank first and selected; starter reaches the plan from the door's own body; an unknown id is refused on the field", async () => {
+    const page = (await (await get(admin, "/forges/new")).text()).replace(/\s+/g, " ");
+    const at = page.indexOf('name="template"');
+    expect(at).toBeGreaterThan(0);
+    const field = page.slice(at, page.indexOf("</select>", at));
+    expect(field).toMatch(/<option value="blank" selected >\s*Blank/);
+    expect(field.indexOf('value="blank"')).toBeLessThan(field.indexOf('value="starter"'));
+    expect(field).toContain("Starter app");
+
+    const plan = await post(admin, [["name", "tpl"], ["do", "plan"], ["template", "starter"]]);
+    expect(plan.status).toBe(200);
+    const planned = (await plan.text()).replace(/\s+/g, " ");
+    expect(planned).toContain("starts from the <b>Starter app</b> template");
+    expect(planned).toMatch(/<option value="starter" selected >/);
+
+    const blank = await post(admin, [["name", "tpl"], ["do", "plan"], ["template", "blank"]]);
+    expect(await blank.text()).not.toContain("template.</li>");
+
+    const bad = await post(admin, [["name", "tpl"], ["do", "plan"], ["template", "nope"]]);
+    expect(bad.status).toBe(422);
+    const body = await bad.text();
+    expect(body).toContain("template must be blank or starter");
+    expect(body).toContain('value="tpl"');
+    expect(await children()).toBe(0);
+  });
+
   test("a post from another origin is refused, and nothing is made", async () => {
     const res = await post(
       admin,

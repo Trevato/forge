@@ -86,6 +86,8 @@ In the terminal, the Capacity screen (palette: Capacity, a forge admin who is a 
 
 An admin's home and the terminal's Flow dialog also say when the forge is clogged and how long the last clog took to notice and to clear: `docs/features/clog-watch.md`. A fork whose parent is archived shows one quiet line instead of its ahead/behind count, and its admin can detach it from the parent (Settings › Danger zone, the terminal's About `x`, MCP `detach`): `docs/features/detach.md`.
 
+**Templates:** `/forges/new` has a Template picker, Blank first (the default) or Starter app; the plan names the one chosen. In the terminal's New forge screen, tab to Template and press left or right (or type `starter`); the plan shows `Template: …`. Agents: `template` on `spawn`. Blank sends nothing.
+
 **Forge it:** a **Forge it** button beside Fork on a repository page (and the terminal's palette entry `Forge it`) makes a fresh forge, named for the repository, with it as the app, and lands on that forge's claim link, where you pick a username and password and become its admin. A second press makes no second forge and shows no second link. Agents: `spawn` with `apps: ["owner/name"]`. `docs/features/forge-it.md`.
 
 A pull the merge queue holds as red alone (red on its own merge at its current head; cleared by a new head or a moved main) says so under its checks line: "red alone at <time>, waiting for a new head or a new main", on the pull page, its live checks line and the studio change step, and in the checks row of the pull's terminal screen (`redMark` in `src/checks/queue.ts`). Nothing is drawn when it is not held.
