@@ -183,6 +183,7 @@ import {
 } from "../web/pages/edit.ts";
 import { configPage, configSubmit } from "../web/pages/config.ts";
 import { commitPage, commitsPage } from "../web/pages/commits.ts";
+import { eventsList } from "../web/pages/events.ts";
 import {
   issueCommentSubmit,
   issuePrivateSubmit,
@@ -1105,6 +1106,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/app/notes", noteModerate);
   router.add("POST", "/:owner/:name/app/:env/redeploy", appRedeploy);
   router.add("POST", "/:owner/:name/app/:env/stop", appStop);
+  router.add("GET", "/:owner/:name/events", eventsList);
   router.add("GET", "/:owner/:name/runs", runsList);
   router.add("GET", "/:owner/:name/runs/:id", runPage);
   router.add("POST", "/:owner/:name/runs/:id/cancel", runCancel);

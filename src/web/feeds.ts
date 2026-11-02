@@ -60,7 +60,7 @@ export const stamp = (iso: string): string =>
   /Z$|[+-]\d\d:\d\d$/.test(iso) ? iso : `${iso}Z`;
 
 /** The branch a push moved, from the one payload field a push always has. */
-function pushedBranch(event: ForgeEvent): string {
+export function pushedBranch(event: ForgeEvent): string {
   const updates = event.payload["updates"];
   const ref = Array.isArray(updates)
     ? (updates[0] as { ref?: unknown } | undefined)?.ref

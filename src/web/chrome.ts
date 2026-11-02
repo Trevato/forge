@@ -125,6 +125,7 @@ export type RepoTab =
   | "branches"
   | "app"
   | "runs"
+  | "events"
   | "api"
   | "settings"
   /** A page that belongs to no tab (waves): nothing is marked current. */
@@ -293,6 +294,15 @@ export function scopeHeader(
       current: active === "runs",
       shortcut: "g r",
     });
+  // What happened on the repository, as the reader may see it: the events
+  // page, for any repository kept here.
+  if (repo !== undefined)
+    items.push({
+      label: "Events",
+      href: `${base}/events`,
+      icon: "activity",
+      current: active === "events",
+    });
   // An app that serves /openapi.json gets its API reference one tab over.
   // The spec is read in the background and remembered, so a header never waits.
   if (repo !== undefined && record !== undefined && canEnterApp(ctx.app.db, repo, record, ctx.auth.user)) {
@@ -450,6 +460,7 @@ export function repoPalette(ctx: Ctx, repo: Repo): PaletteItem[] {
       ...(mayReadRuns(ctx.app, ctx.auth.user, repo)
         ? [{ t: `${name} — Runs`, h: `${base}/runs`, c: "This repo" }]
         : []),
+      { t: `${name} — Events`, h: `${base}/events`, c: "This repo" },
       { t: `${name} — Settings`, h: `${base}/settings`, c: "This repo" },
     ];
   }
@@ -463,6 +474,7 @@ export function repoPalette(ctx: Ctx, repo: Repo): PaletteItem[] {
     ...(mayReadRuns(ctx.app, ctx.auth.user, repo)
       ? [{ t: `${name} — Runs`, h: `${base}/runs`, c: "This repo" }]
       : []),
+    { t: `${name} — Events`, h: `${base}/events`, c: "This repo" },
     { t: `${name} — Settings`, h: `${base}/settings`, c: "This repo" },
   ];
 }
