@@ -10,6 +10,7 @@
  * behaviour that a page depends on to be usable.
  */
 
+import { actNowJs } from "./act_now.ts";
 import { imageViewJs } from "./render/image.ts";
 import { STAGE_BADGE_JS } from "./stage-row.ts";
 import { paletteHelpersJs } from "./palette.ts";
@@ -1272,7 +1273,7 @@ export const editorJs = /* js */ `
 })();
 `;
 
-export const shellJs = /* js */ `
+const shellCore = /* js */ `
 (function () {
   var doc = document;
   ${modalJs}
@@ -2004,6 +2005,9 @@ export const shellJs = /* js */ `
   });
 })();
 `;
+
+/** The shell and the one script that makes actions answer at once (`act_now.ts`). */
+export const shellJs = `${shellCore}\n${actNowJs}`;
 
 /**
  * Live regions. A page marks the parts of itself that change while it is

@@ -521,7 +521,7 @@ export function composer(ctx: Ctx, o: ComposerOptions): Html {
   // action. The state form sits outside; the button joins it by id.
   const stateForm =
     o.stateAction !== undefined && !o.locked
-      ? html`<form method="post" action="${o.stateAction}" id="thread-state">
+      ? html`<form method="post" action="${o.stateAction}" id="thread-state" data-now="${o.state === "open" ? "Closed" : "Reopened"}" data-now-once>
           <input
             type="hidden"
             name="state"
@@ -633,8 +633,8 @@ export function labelsCard(
   const mayEdit = canWrite(ctx.app.db, repo, ctx.auth.user);
   const chips =
     applied.length === 0
-      ? html`<p class="muted small">None yet.</p>`
-      : html`<div class="bar">
+      ? html`<p class="muted small" id="labels-now">None yet.</p>`
+      : html`<div class="bar" id="labels-now">
           ${applied.map((l) =>
             labelChip(
               l,
@@ -651,7 +651,7 @@ export function labelsCard(
   const applies = new Set(applied.map((l) => l.id));
   return card(
     html`${chips}
-      <form method="post" action="${action}" class="mt">
+      <form method="post" action="${action}" class="mt" data-now="Applied" data-now-into="#labels-now" data-now-from="labels">
         <fieldset class="stack">
           <legend class="sr-only">Labels on this thread</legend>
           ${all.map(
@@ -729,8 +729,8 @@ export function assigneeCard(
   const mayEdit = canWrite(ctx.app.db, repo, ctx.auth.user);
   const current =
     issue.assigneeName === null
-      ? html`<p class="muted small">Nobody yet.</p>`
-      : html`<p class="bar">
+      ? html`<p class="muted small" id="assignee-now">Nobody yet.</p>`
+      : html`<p class="bar" id="assignee-now">
           ${when(issue.assigneeIsAgent, () => icon("bot"))}
           ${userLink(issue.assigneeName, {
             mark: marksByName(ctx.app.db, [issue.assigneeName]).get(
@@ -746,7 +746,7 @@ export function assigneeCard(
   const candidates = assigneeCandidates(ctx, repo, issue);
   return card(
     html`${current}
-      <form method="post" action="${action}" class="edit-row mt">
+      <form method="post" action="${action}" class="edit-row mt" data-now="Assigned" data-now-into="#assignee-now" data-now-from="assignee">
         <label class="sr-only" for="f-assignee">Assign to</label>
         <select class="input" id="f-assignee" name="assignee">
           <option
@@ -789,7 +789,7 @@ export async function assigneeSubmit(
   const name = field(form, "assignee").trim();
   const assignee = name === "" ? null : getUserByName(ctx.app.db, name);
   if (assignee === undefined)
-    return flashTo(ctx, dest, {
+    return flashOrJson(ctx, dest, {
       tone: "danger",
       message: `There is no account named ${name}.`,
     });
@@ -807,12 +807,12 @@ export async function assigneeSubmit(
       forbidden: "You need write access to assign.",
       archived: ARCHIVED_WHY,
     };
-    return flashTo(ctx, dest, {
+    return flashOrJson(ctx, dest, {
       tone: "danger",
       message: words[assigned.error] ?? "That could not be assigned.",
     });
   }
-  return flashTo(ctx, dest, {
+  return flashOrJson(ctx, dest, {
     message:
       assignee === null
         ? "Unassigned."
@@ -951,7 +951,7 @@ export async function labelsSubmit(
     chosen,
   );
   if (!applied.ok) {
-    return flashTo(ctx, dest, {
+    return flashOrJson(ctx, dest, {
       tone: "danger",
       message:
         originError(applied.error) ??
@@ -960,7 +960,7 @@ export async function labelsSubmit(
           : THREAD_SAYS.labelsForbidden),
     });
   }
-  return flashTo(ctx, dest, {
+  return flashOrJson(ctx, dest, {
     message:
       applied.value.length === 0
         ? "Labels cleared."
@@ -977,14 +977,14 @@ export async function flowSubmit(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
   const asked = field(form, "flow");
   const dest = backTo(form, `${repoBase(found.repo)}/issues/${found.issue.number}`);
-  if (asked !== "0" && asked !== "1") return flashTo(ctx, dest, { tone: "danger", message: NOT_CHANGED });
+  if (asked !== "0" && asked !== "1") return flashOrJson(ctx, dest, { tone: "danger", message: NOT_CHANGED });
   const applied = await putFlowFirst(ctx.app, ctx.auth.user, found.repo, found.issue, asked === "1");
   if (!applied.ok)
-    return flashTo(ctx, dest, {
+    return flashOrJson(ctx, dest, {
       tone: "danger",
       message: originError(applied.error) ?? THREAD_SAYS.labelsForbidden,
     });
-  return flashTo(ctx, dest, { message: asked === "1" ? "Flow first." : "No longer first." });
+  return flashOrJson(ctx, dest, { message: asked === "1" ? "Flow first." : "No longer first." });
 }
 
 // ---- teams ----

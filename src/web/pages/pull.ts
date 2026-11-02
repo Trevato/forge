@@ -452,7 +452,7 @@ function mergeBox(
   // A reader's head runs nothing until a writer approves it; say so rather
   // than leave "no checks yet" waiting for something that will not come.
   const checks = pullChecksLine(ctx, repo, pull, status, check, isApp, tier, stale);
-  const reopen = html`<form method="post" action="${thread}/state">
+  const reopen = html`<form method="post" action="${thread}/state" data-now="Reopened" data-now-once>
     <input type="hidden" name="state" value="open" />
     ${btn("Reopen", { size: "sm", icon: "pull" })}
   </form>`;

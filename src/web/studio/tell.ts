@@ -452,7 +452,7 @@ async function studioTell(
     doneBy.length === 0
       ? null
       : card(
-          html`<form method="post" action="${thread}/state" class="row">
+          html`<form method="post" action="${thread}/state" class="row" data-now="Closed" data-now-once>
             <input type="hidden" name="state" value="closed" />
             <input type="hidden" name="reason" value="done" />
             <span

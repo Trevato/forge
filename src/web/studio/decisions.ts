@@ -352,6 +352,6 @@ function proposalForms(d: Decision, back?: string): Html {
   const id = askFormId(d);
   const post = (verb: string) => `/asks/proposal/${d.proposal!.id}/${verb}`;
   const where = back === undefined ? null : html`<input type="hidden" name="back" value="${back}" />`;
-  return html`<form id="${id}" method="post" action="${post("approve")}" hidden>${where}</form>
+  return html`<form id="${id}" method="post" action="${post("approve")}" hidden data-now="Approved" data-now-once>${where}</form>
     <form id="${id}-later" method="post" action="${post("later")}" hidden>${where}</form>`;
 }

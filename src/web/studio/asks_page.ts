@@ -31,7 +31,8 @@ import { onYouAnswer, onYouRegion } from "./home.ts";
 import { liveRegionsJs } from "../client.ts";
 import { liveClientJs } from "../live.ts";
 import { notFoundPage, repoBase, signInFirst, NOT_YOURS_TO_DO, forbiddenPage } from "../chrome.ts";
-import { backTo, field, readForm } from "../form.ts";
+import { backTo, field, prefersJson, readForm } from "../form.ts";
+import { json } from "../../http/respond.ts";
 import { MAX_BODY } from "../../core/issues.ts";
 import { issueTitles } from "../../core/proposals.ts";
 import { actOnProposal, type ProposalVerb } from "../../actions/proposals.ts";
@@ -760,8 +761,10 @@ export function asksProposal(verb: ProposalVerb) {
         ? notFoundPage(ctx)
         : done.error.code === "forbidden" || done.error.code === "unauthorized"
           ? forbiddenPage(ctx, NOT_YOURS_TO_DO)
-          : await asksScreen(ctx, nothingDone(done.error.message));
-    return redirect(backTo(form, "/asks"));
+          : prefersJson(ctx)
+            ? json({ ok: false, error: done.error.message }, 422)
+            : await asksScreen(ctx, nothingDone(done.error.message));
+    return prefersJson(ctx) ? json({ ok: true, flash: "Done." }) : redirect(backTo(form, "/asks"));
   };
 }
 
