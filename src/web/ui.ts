@@ -10,7 +10,7 @@
  * reaches for an inline `style` attribute, because the CSP forbids it.
  */
 
-import { type EnvState, type EnvStatus } from "../apps/runtime.ts";
+import type { EnvState, EnvStatus } from "../apps/runtime.ts";
 import type { PreviewData } from "../apps/data.ts";
 import type { Mark } from "../core/marks.ts";
 import type { RunKind, RunState } from "../core/runs.ts";

@@ -14,6 +14,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { VERIFYING_NOTE } from "./env_phrase.ts";
 import { listEgressGrants } from "../core/egress_grants.ts";
 import { recordCarried } from "../core/carried.ts";
 import { releaseOfCommit } from "../core/release_subject.ts";
@@ -165,10 +166,6 @@ export type EnvState =
 const SLEEP_AFTER_MS = { production: 24 * 3_600_000, preview: 30 * 60_000 };
 const SWEEP_EVERY_MS = 60_000;
 const BUSY_GRACE_MS = 45 * 60_000;
-
-/** The sentence a serving environment carries while its tests still run;
- * the studio reads the same constant to word its badge. */
-export const VERIFYING_NOTE = "serving — still verifying its tests";
 
 /** What a finished deploy's summary ends with: the studio words its green
  * from these, so a pull says whether its tests ran (`words.ts`). */
