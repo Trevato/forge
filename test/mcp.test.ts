@@ -894,7 +894,8 @@ describe("the forge over MCP", () => {
         t.annotations?.readOnlyHint ?? false,
       ]),
     );
-    expect([hints.map, hints.wait_for]).toEqual([true, false]);
+    // map writes only when given `first`, so it spells no read-only hint.
+    expect([hints.map, hints.wait_for]).toEqual([false, false]);
 
     expect(
       (await tool(rw, "wait_for", { app: "alice/game", issue: b, blockedBy: a }))
