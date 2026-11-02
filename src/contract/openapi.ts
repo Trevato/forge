@@ -12,7 +12,21 @@
  */
 
 import type { Route } from "./openapi/shared.ts";
+import { OAUTH_SCOPES, type OAuthScope } from "../core/oauth.ts";
 import * as each from "./openapi/routes/index.ts";
+
+/** What each OAuth scope grants; a scope added to OAUTH_SCOPES without a line here fails the type check. */
+const SCOPE_WORDS: Readonly<Record<OAuthScope, string>> = {
+  ro: "Read the API as the person",
+  rw: "Read and write the API as the person",
+};
+
+/**
+ * The one scope an operation asks for. Scopes in one requirement are all
+ * required (OpenAPI 3.1 §4.8.30) and `/oauth/authorize` grants a single
+ * one, so a read asks for `ro` and anything else for `rw`, which reads too.
+ */
+export const oauthScopeFor = (method: Route["method"]): OAuthScope => (method === "get" ? "ro" : "rw");
 
 /** Every row, sorted by operationId: the index's order. */
 export const ROUTES: readonly Route[] = Object.values(each);
@@ -74,7 +88,7 @@ export function openapi(origin: string, version: string): Record<string, unknown
               },
             },
           }),
-      ...(r.auth ? { security: [{ token: [] }] } : {}),
+      ...(r.auth ? { security: [{ token: [] }, { oauth2: [oauthScopeFor(r.method)] }] } : {}),
       responses: {
         [String(r.status ?? 200)]: {
           description: "Done",
@@ -114,7 +128,22 @@ export function openapi(origin: string, version: string): Record<string, unknown
     servers: [{ url: origin }],
     paths,
     components: {
-      securitySchemes: { token: { type: "http", scheme: "bearer" } },
+      securitySchemes: {
+        token: { type: "http", scheme: "bearer" },
+        // RFC 6749 §4.1 authorization code (with PKCE), §6 refresh; the token endpoint serves both grants.
+        oauth2: {
+          type: "oauth2",
+          flows: {
+            authorizationCode: {
+              authorizationUrl: `${origin}/oauth/authorize`,
+              tokenUrl: `${origin}/oauth/token`,
+              refreshUrl: `${origin}/oauth/token`,
+              scopes: Object.fromEntries(OAUTH_SCOPES.map((scope) => [scope, SCOPE_WORDS[scope]])),
+            },
+          },
+        },
+        openid: { type: "openIdConnect", openIdConnectUrl: `${origin}/.well-known/openid-configuration` },
+      },
     },
   };
 }
