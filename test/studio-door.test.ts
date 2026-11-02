@@ -748,7 +748,7 @@ describe("the studio head says why the app is not up", () => {
     expect(mine).not.toContain("<install>");
     expect(mine).toContain(`href="/alice/notes/runs/${deploy}"`);
     expect(mine).toContain('action="/alice/notes/app/production/redeploy"');
-    expect(mine).toContain('action="/alice/notes/app/production/stop"');
+    expect(mine).toContain('href="/-/confirm?to=%2Falice%2Fnotes%2Fapp%2Fproduction%2Fstop"');
     expect(mine).not.toContain('href="/alice/notes/app/production/open"');
     expect(mine).toContain('title="The last deploy failed"');
 
@@ -757,7 +757,7 @@ describe("the studio head says why the app is not up", () => {
     expect(theirs).toContain("the deploy failed: &lt;install&gt; exited 1");
     expect(theirs).toContain(`href="/alice/notes/runs/${deploy}"`);
     expect(theirs).not.toContain("/app/production/redeploy");
-    expect(theirs).not.toContain("/app/production/stop");
+    expect(theirs).not.toContain("%2Fapp%2Fproduction%2Fstop");
     expect(theirs).not.toContain('href="/alice/notes/app/production/open"');
   });
 
@@ -777,7 +777,7 @@ describe("the studio head says why the app is not up", () => {
     const mine = await head(writer);
     expect(mine).toContain("not running");
     expect(mine).toContain('action="/alice/notes/app/production/redeploy"');
-    expect(mine).not.toContain('action="/alice/notes/app/production/stop"');
+    expect(mine).not.toContain('href="/-/confirm?to=%2Falice%2Fnotes%2Fapp%2Fproduction%2Fstop"');
     expect(mine).not.toContain('href="/alice/notes/app/production/open"');
     expect(mine).toContain('title="Not running"');
     expect(await shelfBadge(writer)).toBe("not running");

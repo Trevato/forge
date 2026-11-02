@@ -783,7 +783,12 @@ async function envForm(
  * a form field; with no referer the fallback is the repository's home.
  */
 function envBack(ctx: Ctx, repo: Repo): string {
-  return safeBack(ctx) ?? repoBase(repo);
+  // Arriving from the confirm page, going "back" would ask again; the
+  // repository's page is where the person can see what changed.
+  const back = safeBack(ctx);
+  if (back === undefined || back.split("?")[0] === "/-/confirm")
+    return repoBase(repo);
+  return back;
 }
 
 function envFailure(ctx: Ctx, repo: Repo, error: string): Response {

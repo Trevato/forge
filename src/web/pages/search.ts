@@ -691,6 +691,16 @@ const DESTRUCTIVE: {
     }),
   },
   {
+    pattern: /^\/([^/]+)\/([^/]+)\/app\/(production|pull-[1-9]\d*)\/stop$/,
+    describe: (m) => ({
+      verb: "Stop",
+      title: `Stop ${m[3]} of ${m[1]}/${m[2]}?`,
+      detail:
+        "It stops answering at its address until someone presses Redeploy. Its data stays where it is.",
+      phrase: "",
+    }),
+  },
+  {
     pattern: /^\/settings\/crew\/([^/]+)\/delete$/,
     describe: (m) => ({
       verb: "Retire agent",

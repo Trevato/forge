@@ -609,9 +609,11 @@ export function envActions(
         ${when(
           env.state !== "stopped",
           () =>
-            html`<form method="post" action="${base}/app/${env.env}/stop">
-              ${btn("Stop", { size: "sm", icon: "square" })}
-            </form>`,
+            confirmAction({
+              action: `${base}/app/${env.env}/stop`,
+              verb: "Stop",
+              size: "sm",
+            }),
         )}`,
   );
 }
