@@ -101,11 +101,12 @@ describe("MCP restore_drill", () => {
       expect(r.error).toBe(false);
       expect(JSON.parse(r.text)).toEqual({ verdict: "red", failedStep: "unseal", says: "The drill failed at unseal." });
     });
-    test("a drill that throws is an answer, not an error", async () => {
+    test("a drill that throws is kept as a red drill, not as nothing (#8742)", async () => {
       mode = "throw";
       const r = await call(token("alice"));
       expect(r.error).toBe(false);
-      expect(JSON.parse(r.text)).toEqual({ verdict: "none", says: "The drill could not run: Error: store went away" });
+      expect(JSON.parse(r.text)).toEqual({ verdict: "red", failedStep: "restore", says: "The drill failed at restore." });
+      expect(lastDrill(app.db)?.reason).toContain("store went away");
     });
     test("an admin's read-only token is refused and nothing runs", async () => {
       const r = await call(token("alice", "ro"));

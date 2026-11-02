@@ -143,7 +143,7 @@ export function kpiLines(k: Kpis, live: { sha: string; since: string } | null, n
     `Median check time ${checkTime(k.medianCheckMs)}`,
     `Builders running ${buildersValue(k.builders)}${k.builders.slots === 0 ? ", no slots set" : ""}${k.builders.idle === null ? "" : ` · ${k.builders.idle.word}`}`,
     `Crew spend today ${spendValue(k.spend)}${spendLineNote(k.spend)}`,
-    `Last off-box backup ${backupAge(k.backupAt, now)}${backupOverdue(k.backupAt, now) ? ", overdue" : ""}`,
+    k.backup ? k.backup.line : `Last off-box backup ${backupAge(k.backupAt, now)}${backupOverdue(k.backupAt, now) ? ", overdue" : ""}`,
     `Visitors ${visitorsValue(k.reach)}, ${visitorsNote(k.reach)}  ${trendText(k.reach.visitorDays)}  30 days`,
     `Accounts ${usersValue(k.reach)} signed in today`,
     `Page speed ${k.reach.loadP75 === null ? "no page views measured yet" : `loads in ${speedWords(k.reach.loadP75)}`}, ${reactNote(k.reach)}`,

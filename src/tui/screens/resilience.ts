@@ -30,6 +30,8 @@ import {
   type DestinationInput,
 } from "../../actions/destination.ts";
 import { forgetMirror, saveMirror } from "../../actions/mirror.ts";
+import { backupVerdict } from "../../snapshot/bucket.ts";
+import { lastDrill } from "../../snapshot/drills.ts";
 import { resolveDestination } from "../../snapshot/destination.ts";
 import { snapshotsOf } from "../../snapshot/service.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -69,6 +71,17 @@ export function destinationLine(f: Session): string {
 export function mirrorLine(f: Session): string {
   const where = snapshotsOf(f.app)?.mirror?.where;
   return where === undefined ? "Mirror: none." : `Mirror: ${where}`;
+}
+
+/** The bucket's verdict, as home and the MCP's `backups` say it: the line, each lane's newest, what is wrong. */
+export function verdictLines(f: Session): string[] {
+  const v = backupVerdict(f.app.config.dataDir, lastDrill(f.app.db));
+  const mark = v.state === "red" ? "RED" : v.state === "unknown" ? "unknown" : "ok";
+  return [
+    ...wrap(`Backups ${mark}: ${v.line}`, INNER),
+    ...v.lanes.flatMap((l) => wrap(`  ${l.state === "red" ? "!" : " "} ${l.says}`, INNER)),
+    ...[...v.reasons, ...v.unknowns].flatMap((r) => wrap(`  - ${r}`, INNER)),
+  ];
 }
 
 const STEPS: readonly { key: keyof DestinationInput; label: string; placeholder?: string; mask?: true }[] = [
@@ -238,6 +251,7 @@ export function resilienceScreen(f: Session, ctx: Ctx): Screen {
     const out: string[] = [];
     if (asking !== undefined) out.push(QUESTION[asking], "");
     else if (said !== "") out.push(...wrap(said, INNER), "");
+    out.push(...verdictLines(f), "");
     out.push(...wrap(destinationLine(f), INNER), ...wrap(mirrorLine(f), INNER));
     if (note !== "") out.push(...wrap(note, INNER));
     if (mayChange()) out.push("d sets where snapshots go, x forgets it.", "m sets the mirror, f forgets it.", "t tests where snapshots go.");

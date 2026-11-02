@@ -92,7 +92,7 @@ export function liveNow(): { sha: string; at: string } | null {
 
 export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null, now: Date = new Date()): Html {
   const idle = k.builders.idle;
-  const overdue = backupOverdue(k.backupAt, now);
+  const overdue = k.backup ? k.backup.state === "red" : backupOverdue(k.backupAt, now);
   const spendWords = spendCeilingWords(k.spend);
   const rate = k.landed / k.landedHours.length;
   return html`<section class="stats kpi-row mb" aria-label="The last 24 hours, as of this page load">
@@ -142,10 +142,10 @@ export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null, now
     ${tile(
       "Last off-box backup",
       "/settings/backups",
-      backupAge(k.backupAt, now),
+      k.backup?.state === "unknown" && k.backupAt === null ? "—" : backupAge(k.backupAt, now),
       backupFull(k.backupAt),
-      k.backupAt === null ? "no backup off the machine yet" : overdue ? "overdue, more than 24 h" : "off the machine",
-      overdue ? "Overdue: the last off-box backup is more than 24 h old" : "Age of the last off-box backup",
+      k.backup ? k.backup.note : k.backupAt === null ? "no backup off the machine yet" : overdue ? "overdue, more than 24 h" : "off the machine",
+      k.backup ? (k.backup.reasons[0] ?? k.backup.unknowns[0] ?? k.backup.line) : overdue ? "Overdue: the last off-box backup is more than 24 h old" : "Age of the last off-box backup",
       null,
       overdue ? "attn" : null,
     )}

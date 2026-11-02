@@ -16,6 +16,8 @@
  * Those are not counted.
  */
 
+import { backupVerdict, isWatched, type BackupVerdict } from "../snapshot/bucket.ts";
+import { lastDrill } from "../snapshot/drills.ts";
 import type { Database } from "bun:sqlite";
 import { spentTodayEverywhere } from "../crew/autonomy.ts";
 import { ceilingHitAt, ceilingReached } from "./ceiling.ts";
@@ -46,6 +48,8 @@ export interface Kpis {
   readonly spend: { readonly todayUsd: number; readonly ceilingUsd: number | null; /** When the run that crossed the cap was created (ISO); null while under it. */ readonly hitAt?: string | null };
   /** When a snapshot was last known off the machine (a bucket destination or the mirror, `off_box.ts`); null when never. */
   readonly backupAt: string | null;
+  /** The verdict on what is in the bucket, read by this process (`snapshot/bucket.ts`); null when the forge is not watching one. */
+  readonly backup?: BackupVerdict | null;
   /** Accounts, visitors and page speed (`reach.ts`). */
   readonly reach: Reach;
 }
@@ -163,10 +167,15 @@ export function readKpis(
 
   const reach = time("kpis.reach", () => readReach(db, now));
 
-  const backupAt = time("kpis.backup", () => (forge.dataDir === undefined ? null : lastOffBox(forge.dataDir)));
+  const backup = time("kpis.backup", () =>
+    forge.dataDir !== undefined && isWatched(forge.dataDir) ? backupVerdict(forge.dataDir, lastDrill(db), end) : null,
+  );
+  // Read from the bucket when it is watched; a job's own report only where nothing watches.
+  const backupAt = backup !== null ? backup.newestAt : forge.dataDir === undefined ? null : lastOffBox(forge.dataDir);
 
   return {
     backupAt,
+    backup,
     builders,
     reach,
     spend,

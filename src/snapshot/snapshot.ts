@@ -25,6 +25,7 @@
  */
 
 import { Database } from "bun:sqlite";
+import { vacuumFile, vacuumInto } from "./vacuum.ts";
 import { mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
@@ -182,17 +183,6 @@ export const snapshotName = (at: Date): string =>
 const SQLITE = /\.(db|sqlite|sqlite3)$/;
 const SIDE_FILE = /\.(db|sqlite|sqlite3)-(wal|shm|journal)$/;
 
-/** A consistent copy of a SQLite file, made by SQLite itself. */
-async function vacuumInto(source: string, target: string): Promise<void> {
-  const { Database } = await import("bun:sqlite");
-  const db = new Database(source, { readonly: true });
-  try {
-    db.run("VACUUM INTO ?1", [target]);
-  } finally {
-    db.close();
-  }
-}
-
 /** Every file under `dir`, relative to it. */
 function filesUnder(dir: string): string[] {
   const out: string[] = [];
@@ -305,7 +295,7 @@ export async function takeSnapshot(
   try {
     // The database, consistently, from the live connection.
     const dbCopy = join(scratch, "forge.db");
-    forge.db.run("VACUUM INTO ?1", [dbCopy]);
+    await vacuumInto(forge.db, dbCopy);
     const copy = new Database(dbCopy, { readonly: true });
     try {
       dbCounts = countRows(copy);
@@ -386,7 +376,7 @@ export async function takeSnapshot(
             `app-${app.id}-${f.replace(/[\/\\]/g, "__")}`,
           );
           try {
-            await vacuumInto(source, copy);
+            await vacuumFile(source, copy);
             await putFile(`apps/${app.id}/production/data/${f}`, copy);
           } catch (error) {
             log.warn("app database not copied consistently; copied as a file", {
