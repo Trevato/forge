@@ -9,7 +9,13 @@
  * checked on its POST.
  */
 import type { App } from "../app.ts";
-import { createClient, OAUTH_SCOPES, parseRegistration, redeemCode } from "../core/oauth.ts";
+import {
+  createClient,
+  OAUTH_SCOPES,
+  parseRegistration,
+  redeemCode,
+  revokeOAuthToken,
+} from "../core/oauth.ts";
 import { jwks, OIDC_SCOPES, userinfo } from "../core/oidc.ts";
 import { RateLimiter } from "../core/ratelimit.ts";
 import type { Handler } from "./context.ts";
@@ -21,19 +27,27 @@ import { authorizePage, authorizeSubmit } from "../web/pages/oauth.ts";
 
 /** Registrations per address per minute. */
 const REGISTER_PER_MINUTE = 10;
+/** Revocations per address per minute: a token is 40 random characters, not guessable at this rate. */
+const REVOKE_PER_MINUTE = 60;
+/** Revocations per minute across every address: the whole-forge cap beside the per-address one. */
+const REVOKE_ALL_PER_MINUTE = 600;
 /** A registration is a few hundred bytes; refuse anything past this. */
 const BODY_MAX = 16 * 1024;
 
 const limiters = new WeakMap<App, RateLimiter>();
-const limiterOf = (app: App): RateLimiter => {
-  let limiter = limiters.get(app);
+const revokeLimiters = new WeakMap<App, RateLimiter>();
+const revokeAllLimiters = new WeakMap<App, RateLimiter>();
+
+/** The app's limiter in `store`, made with `perMinute` the first time. */
+const limiterIn = (
+  store: WeakMap<App, RateLimiter>,
+  app: App,
+  perMinute: number,
+): RateLimiter => {
+  let limiter = store.get(app);
   if (limiter === undefined) {
-    limiter = new RateLimiter({
-      perMinute: REGISTER_PER_MINUTE,
-      adminPerMinute: REGISTER_PER_MINUTE,
-      enabled: true,
-    });
-    limiters.set(app, limiter);
+    limiter = new RateLimiter({ perMinute, adminPerMinute: perMinute, enabled: true });
+    store.set(app, limiter);
   }
   return limiter;
 };
@@ -107,6 +121,30 @@ export function oauthRoutes(router: Router<Handler>): void {
       noStore,
     );
   });
+  router.add("POST", "/oauth/revoke", async (ctx) => {
+    const verdict = [
+      limiterIn(revokeLimiters, ctx.app, REVOKE_PER_MINUTE).take(clientBucket(ctx.request), "ro"),
+      limiterIn(revokeAllLimiters, ctx.app, REVOKE_ALL_PER_MINUTE).take("all", "ro"),
+    ].find((v) => !v.allowed) ?? { allowed: true, retryAfter: 0 };
+    if (!verdict.allowed)
+      return json({ error: "rate_limited" }, 429, {
+        ...noStore,
+        "retry-after": String(verdict.retryAfter),
+      });
+    const get = await tokenParams(ctx.request);
+    if (get === null) return grantError("invalid_request", 413);
+    const presented = get("token");
+    // RFC 7009 §2.2: unknown, foreign and already-revoked tokens all get the
+    // same empty 200, so the route never says whether a token existed.
+    const revoked = presented === "" ? null : revokeOAuthToken(ctx.app.db, presented);
+    if (revoked !== null)
+      ctx.app.bus.append({
+        kind: "token.deleted",
+        actorId: revoked.userId,
+        payload: { tokenId: revoked.tokenId, via: "oauth_revoke" },
+      });
+    return new Response(null, { status: 200, headers: noStore });
+  });
   router.add("GET", "/oauth/jwks", async (ctx) =>
     json(await jwks(ctx.app.db, ctx.app.config.dataDir), 200, docHeaders),
   );
@@ -129,6 +167,7 @@ export function oauthRoutes(router: Router<Handler>): void {
         issuer: ctx.url.origin,
         authorization_endpoint: `${ctx.url.origin}/oauth/authorize`,
         token_endpoint: `${ctx.url.origin}/oauth/token`,
+        revocation_endpoint: `${ctx.url.origin}/oauth/revoke`,
         userinfo_endpoint: `${ctx.url.origin}/oauth/userinfo`,
         jwks_uri: `${ctx.url.origin}/oauth/jwks`,
         registration_endpoint: `${ctx.url.origin}/oauth/register`,
@@ -139,6 +178,7 @@ export function oauthRoutes(router: Router<Handler>): void {
         id_token_signing_alg_values_supported: ["ES256"],
         code_challenge_methods_supported: ["S256"],
         token_endpoint_auth_methods_supported: ["none"],
+        revocation_endpoint_auth_methods_supported: ["none"],
         claims_supported: ["sub", "iss", "aud", "exp", "iat", "nonce", "name", "preferred_username", "email", "email_verified"],
       },
       200,
@@ -165,19 +205,21 @@ export function oauthRoutes(router: Router<Handler>): void {
         issuer: ctx.url.origin,
         authorization_endpoint: `${ctx.url.origin}/oauth/authorize`,
         token_endpoint: `${ctx.url.origin}/oauth/token`,
+        revocation_endpoint: `${ctx.url.origin}/oauth/revoke`,
         registration_endpoint: `${ctx.url.origin}/oauth/register`,
         scopes_supported: [...OAUTH_SCOPES],
         response_types_supported: ["code"],
         grant_types_supported: ["authorization_code"],
         code_challenge_methods_supported: ["S256"],
         token_endpoint_auth_methods_supported: ["none"],
+        revocation_endpoint_auth_methods_supported: ["none"],
       },
       200,
       docHeaders,
     ),
   );
   router.add("POST", "/oauth/register", async (ctx) => {
-    const verdict = limiterOf(ctx.app).take(clientBucket(ctx.request), "ro");
+    const verdict = limiterIn(limiters, ctx.app, REGISTER_PER_MINUTE).take(clientBucket(ctx.request), "ro");
     if (!verdict.allowed)
       return json(
         {

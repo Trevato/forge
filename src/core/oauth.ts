@@ -334,6 +334,10 @@ export async function redeemCode(
       ? {}
       : { expiresAt: new Date(Date.now() + row.lifetime_s * 1000).toISOString() }),
   });
+  db.query("INSERT INTO oauth_token (token_id, client_id) VALUES (?1, ?2)").run(
+    minted.id,
+    row.client_id,
+  );
   const scopes = row.oidc_scopes === "" ? [] : row.oidc_scopes.split(" ");
   if (scopes.length === 0)
     return ok({ token: minted.token, scope: row.scope, expiresIn: row.lifetime_s });
@@ -346,4 +350,25 @@ export async function redeemCode(
     nonce: row.nonce,
   });
   return ok({ token: minted.token, scope: row.scope, expiresIn: row.lifetime_s, idToken });
+}
+
+/**
+ * End a token the OAuth endpoint minted (RFC 7009 §2.1). A token of any
+ * other kind, or none at all, is left alone and the caller learns nothing:
+ * the lookup is the same either way. Returns the token and its owner when
+ * one was revoked, so the caller can leave the audit trail.
+ */
+export function revokeOAuthToken(
+  db: Database,
+  presented: string,
+): { tokenId: string; userId: string } | null {
+  const row = db
+    .query<{ id: string; user_id: string }, [string]>(
+      `SELECT t.id, t.user_id FROM token t JOIN oauth_token o ON o.token_id = t.id
+        WHERE t.token_hash = ?1`,
+    )
+    .get(sha256(presented));
+  if (row === null) return null;
+  db.query("DELETE FROM token WHERE id = ?1").run(row.id);
+  return { tokenId: row.id, userId: row.user_id };
 }
