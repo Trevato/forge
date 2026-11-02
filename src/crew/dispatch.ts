@@ -42,6 +42,7 @@ import { accountActive } from "../core/accounts.ts";
 import { runningLimitSentence, runningRuns } from "../settings/quotas.ts";
 import { appendRunLog } from "../runs/log.ts";
 import { decideAndRecord } from "./ledger.ts";
+import { bugsFirst } from "../flow/bugs.ts";
 import { byDials } from "./team_share.ts";
 import { gateQueue } from "../flow/valve_gate.ts";
 import { ARCHIVED_WHY, getRepoById, type Repo } from "../core/repos.ts";
@@ -1403,6 +1404,15 @@ export function sweepAssigned(app: App): void {
 /** Per app, the runs already told why they wait, so the log says it once. */
 const notedBy = new WeakMap<App, Set<string>>();
 
+/**
+ * The order queued agent runs are started in: the team dials first, then bugs
+ * ahead of everything (#8709), then the valves a person turned. A bug outranks the dials by policy: the clock
+ * is a promise, the dials a share of the rest.
+ */
+export function startOrder(app: App): ReturnType<typeof gateQueue> {
+  return gateQueue(app.db, bugsFirst(app.db, byDials(app.db, listQueued(app.db, "agent", 50))));
+}
+
 /** Take queued runs, oldest first, up to the limit — one per issue at a time. */
 function pump(
   app: App,
@@ -1423,7 +1433,7 @@ function pump(
   notedBy.set(app, noted);
   // Builder starts go to teams in proportion to their dials (`team_share.ts`),
   // then through the valves a person turned (`flow/valve_gate.ts`).
-  const gated = gateQueue(app.db, byDials(app.db, listQueued(app.db, "agent", 50)));
+  const gated = startOrder(app);
   for (const shut of gated.held) {
     if (noted.has(shut.id)) continue;
     noted.add(shut.id);

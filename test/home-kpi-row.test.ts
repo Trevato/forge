@@ -1,6 +1,6 @@
 /** Home's figures row (#2871): the tiles, their links, studio words only, a sparkline of 24 points and one of 30 days of visitors (#3186). */
 import { Database } from "bun:sqlite";
-import { reachTables } from "./helpers/reach-tables.ts";
+import { bugTables, reachTables } from "./helpers/reach-tables.ts";
 import { NO_REACH, readReach } from "../src/flow/reach.ts";
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -125,7 +125,8 @@ describe("the builders figure from the database", () => {
     db.run("CREATE TABLE repo (autonomy TEXT, autonomy_slots INTEGER, default_branch TEXT, id TEXT)");
     db.run("CREATE TABLE run (id TEXT, kind TEXT, state TEXT, started_at TEXT, finished_at TEXT, serving_at TEXT, env TEXT, commit_oid TEXT, cost_usd REAL, created_at TEXT)");
     db.run("CREATE TABLE pull (carried INTEGER NOT NULL DEFAULT 0, merged_at TEXT, merged_oid TEXT, base_oid TEXT, base_branch TEXT, issue_id TEXT)");
-    db.run("CREATE TABLE issue (id TEXT, repo_id TEXT)");
+    db.run("CREATE TABLE issue (id TEXT, repo_id TEXT, kind TEXT, state TEXT, created_at TEXT)");
+    bugTables(db);
     reachTables(db);
     db.run("INSERT INTO repo VALUES ('autonomous', 3, 'main', 'a'), ('autonomous', 1, 'main', 'b'), ('off', 8, 'main', 'c')");
     db.run("INSERT INTO run (id, kind, state) VALUES ('1','agent','running'), ('2','agent','running'), ('3','agent','queued'), ('4','check','running')");
@@ -189,7 +190,8 @@ describe("the spend figure from the database", () => {
     db.run("CREATE TABLE repo (autonomy TEXT, autonomy_slots INTEGER, default_branch TEXT, id TEXT)");
     db.run("CREATE TABLE run (id TEXT, kind TEXT, state TEXT, started_at TEXT, finished_at TEXT, serving_at TEXT, env TEXT, commit_oid TEXT, cost_usd REAL, created_at TEXT)");
     db.run("CREATE TABLE pull (carried INTEGER NOT NULL DEFAULT 0, merged_at TEXT, merged_oid TEXT, base_oid TEXT, base_branch TEXT, issue_id TEXT)");
-    db.run("CREATE TABLE issue (id TEXT, repo_id TEXT)");
+    db.run("CREATE TABLE issue (id TEXT, repo_id TEXT, kind TEXT, state TEXT, created_at TEXT)");
+    bugTables(db);
     reachTables(db);
     db.run(
       `INSERT INTO run (id, kind, cost_usd, created_at) VALUES
@@ -241,7 +243,8 @@ describe("home kpi row: the last off-box backup", () => {
     db.run("CREATE TABLE repo (autonomy TEXT, autonomy_slots INTEGER, default_branch TEXT, id TEXT)");
     db.run("CREATE TABLE run (id TEXT, kind TEXT, state TEXT, started_at TEXT, finished_at TEXT, serving_at TEXT, env TEXT, commit_oid TEXT, cost_usd REAL, created_at TEXT)");
     db.run("CREATE TABLE pull (carried INTEGER NOT NULL DEFAULT 0, merged_at TEXT, merged_oid TEXT, base_oid TEXT, base_branch TEXT, issue_id TEXT)");
-    db.run("CREATE TABLE issue (id TEXT, repo_id TEXT)");
+    db.run("CREATE TABLE issue (id TEXT, repo_id TEXT, kind TEXT, state TEXT, created_at TEXT)");
+    bugTables(db);
     reachTables(db);
     expect(readKpis(db, NOW, { ceilingUsd: null, dataDir: dir }).backupAt).toBeNull();
     recordMirror(dir, { where: "b2", attemptAt: hoursAgo(1), reachable: true, newest: "s1", newestAt: hoursAgo(3) });
@@ -431,7 +434,8 @@ describe("the forge ceiling hit (#5798)", () => {
     db.run("CREATE TABLE repo (autonomy TEXT, autonomy_slots INTEGER, default_branch TEXT, id TEXT)");
     db.run("CREATE TABLE run (id TEXT, kind TEXT, state TEXT, started_at TEXT, finished_at TEXT, serving_at TEXT, env TEXT, commit_oid TEXT, cost_usd REAL, created_at TEXT)");
     db.run("CREATE TABLE pull (carried INTEGER NOT NULL DEFAULT 0, merged_at TEXT, merged_oid TEXT, base_oid TEXT, base_branch TEXT, issue_id TEXT)");
-    db.run("CREATE TABLE issue (id TEXT, repo_id TEXT)");
+    db.run("CREATE TABLE issue (id TEXT, repo_id TEXT, kind TEXT, state TEXT, created_at TEXT)");
+    bugTables(db);
     reachTables(db);
     db.run(
       `INSERT INTO run (id, kind, cost_usd, created_at) VALUES

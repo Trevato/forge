@@ -24,7 +24,7 @@ const names = (parts: string[]): string[] => parts.map((p) => p.split(";")[0]!);
 
 test("a cold look at the owner's home names each part of the kpis read", async () => {
   const cold = names(await timing(f.ownerCookie));
-  expect(KPI_PARTS).toEqual(["kpis.landed", "kpis.live", "kpis.checks", "kpis.builders", "kpis.spend", "kpis.reach", "kpis.backup"]);
+  expect(KPI_PARTS).toEqual(["kpis.landed", "kpis.live", "kpis.checks", "kpis.builders", "kpis.spend", "kpis.reach", "kpis.backup", "kpis.bugs"]);
   expect(cold).toEqual(expect.arrayContaining(["kpis", ...KPI_PARTS]));
 });
 

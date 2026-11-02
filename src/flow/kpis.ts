@@ -24,6 +24,7 @@ import { ceilingHitAt, ceilingReached } from "./ceiling.ts";
 import type { IdleReason } from "../crew/idle_reason.ts";
 import { lastOffBox } from "../snapshot/off_box.ts";
 import { readReach, type Reach } from "./reach.ts";
+import { countBugs, type BugCount } from "./bugs.ts";
 import { HOURS, median } from "./throughput.ts";
 
 const HOUR_MS = 3_600_000;
@@ -48,6 +49,8 @@ export interface Kpis {
   readonly spend: { readonly todayUsd: number; readonly ceilingUsd: number | null; /** When the run that crossed the cap was created (ISO); null while under it. */ readonly hitAt?: string | null };
   /** When a snapshot was last known off the machine (a bucket destination or the mirror, `off_box.ts`); null when never. */
   readonly backupAt: string | null;
+  /** Open bugs, and those past their clock (`bugs.ts`). */
+  readonly bugs?: BugCount;
   /** The verdict on what is in the bucket, read by this process (`snapshot/bucket.ts`); null when the forge is not watching one. */
   readonly backup?: BackupVerdict | null;
   /** Accounts, visitors and page speed (`reach.ts`). */
@@ -55,7 +58,7 @@ export interface Kpis {
 }
 
 /** The parts `readKpis` names to its `time` callback, in the order it runs them. */
-export const KPI_PARTS = ["kpis.landed", "kpis.live", "kpis.checks", "kpis.builders", "kpis.spend", "kpis.reach", "kpis.backup"] as const;
+export const KPI_PARTS = ["kpis.landed", "kpis.live", "kpis.checks", "kpis.builders", "kpis.spend", "kpis.reach", "kpis.backup", "kpis.bugs"] as const;
 export type KpiPart = (typeof KPI_PARTS)[number];
 export type KpiTimer = <T>(name: KpiPart, fn: () => T) => T;
 
@@ -173,7 +176,10 @@ export function readKpis(
   // Read from the bucket when it is watched; a job's own report only where nothing watches.
   const backupAt = backup !== null ? backup.newestAt : forge.dataDir === undefined ? null : lastOffBox(forge.dataDir);
 
+  const bugs = time("kpis.bugs", () => countBugs(db, now));
+
   return {
+    bugs,
     backupAt,
     backup,
     builders,

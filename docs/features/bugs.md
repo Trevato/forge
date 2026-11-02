@@ -1,23 +1,12 @@
-# A bug closes with a reason
+# Bugs on a clock
 
-An issue labelled `bug` cannot be closed by hand with nothing behind it. Unless
-a merged pull closed it, commits on main already name it, or it was split into
-other issues, the close needs a `note`: one sentence, at most 300 characters. It
-is posted as a comment (`Closed as won't fix: …` when the reason is `dropped`,
-`Closed: …` otherwise). A missing note is `reason_required`; a note that is too
-long or not text is `invalid_note`.
+An open issue labelled `bug` is answered, fixed or closed as won't fix within a limit.
 
-- Page: the close form has a "why" field beside the reason select; it is
-  optional for any issue that is not a bug.
-- API: `PATCH …/issues/:number` with `{ state: "closed", note }`; without it on a bug, `422 reason_required`.
-- MCP: `close` takes `note`; the same refusals.
-- Terminal: `close <issue> "why"`. The reason is a note on every issue, bug or not.
-  The issue screen's `x` has no field for one, so it refuses a bug and points to the page.
-
-Exempt, because they say why themselves: the crew's live triage (`triage`), its
-stale sweeps (`stale`), and the forge's own closes (`system`: the sentinel, the
-superseded-pull sweep, the gate review, an app note withdrawn). Each is tested in
-`test/bug-close-doors.test.ts`.
-
-On a mirrored repository the close is forwarded to the origin, but the note is
-kept as a comment on this forge only: the origin does not see why.
+- **Which labels count.** `bug` makes an issue a bug. Also `high`, `priority: high` or `priority:high` (any case) makes it high priority. Pull requests are not bugs.
+- **Clocks.** 4 h from the issue's creation when high, 48 h otherwise (`src/flow/bugs.ts`).
+- **Pickup order.** Queued agent runs about an open bug start before every other run (`startOrder` in `src/crew/dispatch.ts`). This is policy: bugs also outrank the team dials, which then order the rest. Within each side the queue keeps its order.
+- **Alarm.** One `bug_clock` alarm names the bug that has gone longest past its clock, and how many more there are. It appears wherever alarms do (home, `/boards`, MCP and API telemetry). For a guest or an agent it counts public repositories only.
+- **Tile.** Home's **Open bugs** tile (admins only) shows the open count and how many are past their clock; it links to `/boards`.
+- **Terminal.** The **Bugs** palette entry shows the same count (admins who are people) and the alarm (cut to public for everyone else).
+- **Closing.** Closing a bug needs a reason: see `bug-close.md`.
+- **Not yet.** The polish share, shortcuts and hunters' findings of #8709 are not built.

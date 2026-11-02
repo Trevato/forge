@@ -149,6 +149,16 @@ export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null, now
       null,
       overdue ? "attn" : null,
     )}
+    ${k.bugs === undefined ? null : tile(
+      "Open bugs",
+      "/boards",
+      String(k.bugs.open),
+      `${k.bugs.open} open ${k.bugs.open === 1 ? "bug" : "bugs"}`,
+      k.bugs.overdue > 0 ? `${k.bugs.overdue} past its clock` : "none past its clock",
+      "Open bugs, and those past their clock: 4 h high, 48 h otherwise",
+      null,
+      k.bugs.overdue > 0 ? "attn" : null,
+    )}
     ${tile("Visitors", "/boards/reach", visitorsValue(k.reach), `${visitorsValue(k.reach)}, ${visitorsNote(k.reach)}`, visitorsNote(k.reach), "Distinct browsers per day, summed over 7 days", visitorsSpark(k.reach.visitorDays))}
     ${tile("Accounts", "/boards/reach", usersValue(k.reach), usersValue(k.reach), "signed in today", "Accounts signed in today (UTC), of all accounts")}
     ${tile(

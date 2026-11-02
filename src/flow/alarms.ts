@@ -11,6 +11,7 @@ import { landingStopped, stoppedSentence } from "../checks/gate_stopped.ts";
 import { redHref, redMain } from "../checks/red_main.ts";
 import { getRepo } from "../core/repos.ts";
 import { ownRepoPath } from "../kernel/own_repo.ts";
+import { bugClockAlarm } from "./bugs.ts";
 import { alarmIdleCrew } from "./alarm_idle_crew.ts";
 import { noReleaseAlarm } from "./alarm_no_release.ts";
 import { redMainAlarm } from "./alarm_red_main.ts";
@@ -19,7 +20,7 @@ import { alarmSilent } from "./alarm_silent.ts";
 import { alarmStuck } from "./alarm_stuck.ts";
 
 export interface FiredAlarm {
-  readonly key: "landing_stopped" | "red_main" | "stuck" | "idle_crew" | "no_release" | "silent" | "repeat" | "unreachable";
+  readonly key: "landing_stopped" | "red_main" | "stuck" | "idle_crew" | "no_release" | "bug_clock" | "silent" | "repeat" | "unreachable";
   readonly says: string;
   readonly since: string;
   /** A same-origin path to the item the alarm names. */
@@ -59,5 +60,7 @@ export function firedAlarms(
   }
   const release = noReleaseAlarm(db, now);
   if (release.fired) out.push({ key: "no_release", says: release.says, since: release.since!, href: "/releases" });
+  const bug = bugClockAlarm(db, now, opts.publicOnly ? { publicOnly: true } : {});
+  if (bug.fired) out.push({ key: "bug_clock", says: bug.says, since: bug.since!, href: bug.href });
   return out;
 }

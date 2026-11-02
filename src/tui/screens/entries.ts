@@ -14,6 +14,7 @@ import { entry as archived } from "./archived.ts";
 import { entry as audit } from "./audit.ts";
 import { entry as bets } from "./bets.ts";
 import { entry as boards } from "./boards.ts";
+import { entry as bugs } from "./bugs.ts";
 import { entry as bulk } from "./bulk.ts";
 import { entry as cloud } from "./cloud.ts";
 import { entry as connections } from "./connections.ts";
@@ -65,6 +66,7 @@ export interface PaletteEntry {
 export const ENTRIES: readonly PaletteEntry[] = [
   sentinel,
   boards,
+  bugs,
   homePins,
   system,
   telemetry,
