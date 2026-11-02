@@ -41,6 +41,7 @@ import {
 } from "../../core/runs.ts";
 import { html, type Html } from "../html.ts";
 import { icon } from "../ui.ts";
+import type { Paused } from "../../crew/autonomy.ts";
 
 /**
  * The empty crew, said once: the shelf's stuck tell, the app page's autonomy
@@ -535,28 +536,59 @@ export function productionFact(
   return failed ?? shipped;
 }
 
+/** The colour a word is drawn in. */
+export type WordVariant = "success" | "danger" | "accent" | "secondary";
+
+/**
+ * Each word's colour, decided once: the badge draws it and the board
+ * colours its cards by it, so a word added to `Word` cannot render
+ * uncoloured anywhere — the `Record` will not compile without it.
+ * `cancelled` draws the same quiet, secondary look as `waiting` and
+ * `planned` — a restart is never the danger red a real failure earns.
+ */
+const WORD_VARIANT: Record<Word, WordVariant> = {
+  working: "accent",
+  look: "success",
+  shipped: "success",
+  stopped: "danger",
+  waiting: "secondary",
+  planned: "secondary",
+  told: "secondary",
+  done: "success",
+  cancelled: "secondary",
+  silent: "danger",
+  "needs input": "secondary",
+};
+
+export const wordVariant = (word: Word): WordVariant => WORD_VARIANT[word];
+
 /** One of the five (or six) studio words, as a badge. An id names the one a
- * live script repaints as a run finishes (`studioRunJs`). `cancelled` draws
- * the same quiet, secondary look as `waiting` and `planned` — a restart is
- * never the danger red a real failure earns. */
+ * live script repaints as a run finishes (`studioRunJs`). */
 export function wordBadge(word: Word, id?: string): Html {
-  const variant =
-    word === "look" || word === "shipped" || word === "done"
-      ? "success"
-      : word === "stopped" || word === "silent"
-        ? "danger"
-        : word === "working"
-          ? "accent"
-          : "secondary";
   return html`<span
     class="badge"
-    data-variant="${variant}"
+    data-variant="${wordVariant(word)}"
     data-word="${word}"
     ${id === undefined ? null : html`id="${id}"`}
     >${word === "working" ? icon("loader") : null}${word === "told"
       ? "open"
       : word}</span
   >`;
+}
+
+/** Why an app that runs on its own is not running right now, in words —
+ * the app page's *On its own* card and the board's *Today* row both. */
+export function pausedWords(paused: Paused): string {
+  switch (paused) {
+    case "ceiling":
+      return "at the ceiling, until 00:00 UTC";
+    case "forge ceiling":
+      return "at the forge's ceiling, until 00:00 UTC";
+    case "nobody":
+      return "nobody turned it on";
+    case "no crew":
+      return "no crew";
+  }
 }
 
 /** A word at rest: one small coloured dot, the word (and its note) for a

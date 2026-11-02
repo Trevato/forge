@@ -481,14 +481,24 @@ front page's "All public apps" leads here.
 (**Focus** on that card opens it): no top bar, dark unless you chose a
 theme, four regions that fill the window. **Working now** is one card per
 run in flight — who, which app, what it is on, why, how long, what it has
-cost — ordered by when it started. **Landed** is the last dozen shipped
+cost — ordered by when it started. **Landed** is the last dozen merged
 changes across your apps, each with the app's production look on a phone;
 for an app with pillars it leads with what merged in the last 7 days by
 pillar, each a link to that pillar's issues (`docs/PLANNING.md`).
 **Decided** is the last dozen entries in the decision ledger: which issue
 next, ship or show, try again — the answer, how sure the decider was, and
-what came of it. **Today** is one row per app that runs on its own: spend
-against the ceiling, runs, shipped, and whether it is paused — plus any
+what came of it. The board speaks the same five words as every studio page
+and nothing of its own: a run card's word is `runWord`'s, a landed change's
+`pullWord`'s, and what came of a decision is where its pull or tell stands
+now (`pullWord`/`tellWord`, `studio/words.ts`) — never the ledger's own
+outcome — so a merge production has not served yet reads _waiting_ on the
+wall exactly as it does on the app's page, and _shipped_ only once
+production is serving it. Every word is coloured by `wordVariant`, the
+same map the badge draws from, so a word added later is never uncoloured.
+**Today** is one row per app that runs on its own: spend against the
+ceiling, runs, shipped, and whether it is paused — the app page's own
+reads (`autonomyStatus`, `agentRunTotals`, `mergedPullCount`) over today,
+and its paused words (`pausedWords`) — plus any
 other app the crew spent on this week — and beneath it the efficiency
 signal: spend per shipped change over the last 7 days (the usage ledger's
 `cost_usd` ÷ pulls merged, `core/efficiency.ts`, every app in one grouped

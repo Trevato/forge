@@ -3,7 +3,7 @@ import { stylesheetAsset } from "../src/web/asset.ts";
  * The board: a live wall of the crews at work. Signed in, four live
  * regions; a run in flight and a merged pull on it; `?apps=` narrows it;
  * `?wall` is its wall mode, where every old `/big` address lands;
- * anonymous is sent to sign in.
+ * anonymous is sent to sign in. Its words are the studio's own.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -11,6 +11,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
+import { AppsRuntime } from "../src/apps/runtime.ts";
 import { forgeNeeds } from "../src/actions/health.ts";
 import { changeCapacity } from "../src/actions/capacity.ts";
 import { enableApp } from "../src/actions/apps.ts";
@@ -247,8 +248,11 @@ describe("the board", () => {
       html.indexOf('id="working"'),
       html.indexOf('id="landed"'),
     );
-    expect(working).toContain(">working</span");
-    expect(working).toContain(">queued</span");
+    // In the studio's words (`runWord`): in flight is *working*, queued
+    // is *waiting* — the board has no words of its own.
+    expect(working).toContain('data-word="working"');
+    expect(working).toContain('data-word="waiting"');
+    expect(working).not.toContain(">queued</span");
     expect(working.indexOf("on the cart")).toBeLessThan(
       working.indexOf("Make the notes page load"),
     );
@@ -405,6 +409,176 @@ describe("the board", () => {
     expect(res.headers.get("location")).toBe("/board?apps=alice%2Fnotes&wall");
     const next = await fetch(`${base}/board?wall`, { redirect: "manual" });
     expect(next.headers.get("location")).toMatch(/^\/signin\?next=/);
+  });
+});
+
+describe("the board speaks the studio's words", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let runtime: AppsRuntime;
+  let cookie: string;
+
+  const board = async () =>
+    (
+      await fetch(`${servers.url}/board`, {
+        headers: { cookie },
+        redirect: "manual",
+      })
+    ).text();
+  const between = (html: string, from: string, to: string) =>
+    html.slice(html.indexOf(`id="${from}"`), html.indexOf(`id="${to}"`));
+
+  /** Production at this commit, as the runtime would report it — the same
+   * stand-in `test/studio.test.ts` uses for its words. */
+  const serving = (appId: string, commitOid: string): void => {
+    const envs = (runtime as unknown as { envs: Map<string, unknown> }).envs;
+    const record = { id: appId };
+    envs.set(`${appId}/production`, {
+      app: record,
+      env: "production",
+      chain: Promise.resolve(),
+      restarts: [],
+      live: {
+        commitOid,
+        handle: { port: 4321 },
+        runId: "fake",
+        since: new Date().toISOString(),
+        manifest: { tty: null },
+      },
+    });
+  };
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-board-words-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    // Never started: nothing deploys on its own, so production stands
+    // exactly where `serving` puts it.
+    runtime = new AppsRuntime(app, {
+      domain: "board-words.test",
+      scheme: "http",
+      publicPort: servers.port,
+      forgeUrl: servers.url,
+      concurrency: 1,
+    });
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    cookie = (
+      (
+        await fetch(`${servers.url}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "alice",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+  }, 30_000);
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("a merge production has not served is not shipped; a run in flight is working; the regions are as they were", async () => {
+    const alice = getUserByName(app.db, "alice")!;
+    const made = await createRepo(app, alice, { name: "notes" });
+    if (!made.ok) throw new Error(String(made.error));
+    const repo = made.value;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "start\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, alice, repo, { slug: "notes" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    const record = getAppByRepo(app.db, repo.id)!;
+
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/fast",
+      base: "main",
+      message: "Faster",
+      files: [{ path: "FAST.md", content: "fast\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Faster notes",
+      body: "",
+      baseBranch: "main",
+      headBranch: "feature/fast",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    recordDecision(app.db, {
+      kind: "land",
+      repoId: repo.id,
+      issueId: opened.value.id,
+      state: {},
+      answer: "ship",
+      p: 0.9,
+      by: "typesafe",
+      ms: 1,
+    });
+    const merged = await mergePull(app, alice, repo, opened.value, "squash");
+    if (!merged.ok) throw new Error(JSON.stringify(merged.error));
+    const pull = getPull(app.db, repo.id, opened.value.number)!;
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      reason: "feedback",
+      summary: "on the list",
+    });
+    claimRun(app.db, run.id);
+
+    // Production is still on the commit before the merge.
+    serving(record.id, seeded.value.commitOid);
+    const before = await board();
+    const landed = between(before, "landed", "decided");
+    expect(landed).toContain("Faster notes");
+    expect(landed).toMatch(/data-variant="secondary"\s+data-word="waiting"/);
+    expect(landed).not.toContain('data-word="shipped"');
+    // The ledger wrote *shipped* at the merge; the board does not repeat it.
+    const decided = between(before, "decided", "today");
+    expect(decided).toContain("ship or show");
+    expect(decided).toContain('data-word="waiting"');
+    expect(decided).not.toContain(">shipped<");
+    expect(decided).not.toContain("data-outcome");
+    const working = between(before, "working", "landed");
+    expect(working).toMatch(
+      /data-variant="accent"\s+data-word="working"/,
+    );
+    expect(working).toContain("on what you said");
+    // The regions themselves are as they were.
+    expect(before).toMatch(
+      /id="working"\s+data-live="run\.queued,run\.started,run\.finished"/,
+    );
+    expect(before).toMatch(
+      /id="landed"\s+data-live="pull\.merged,run\.finished"/,
+    );
+    expect(before).toMatch(
+      /id="decided"\s+data-live="run\.queued,run\.started,run\.finished,pull\.\*"/,
+    );
+    expect(before).toMatch(
+      /id="today"\s+data-live="run\.queued,run\.started,run\.finished,pull\.merged"/,
+    );
+
+    // Production caught up with the merge: shipped, in both lists.
+    serving(record.id, pull.mergedOid!);
+    const after = await board();
+    expect(between(after, "landed", "decided")).toMatch(
+      /data-variant="success"\s+data-word="shipped"/,
+    );
+    expect(between(after, "decided", "today")).toContain(
+      'data-word="shipped"',
+    );
   });
 });
 

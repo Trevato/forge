@@ -59,7 +59,7 @@ import { nowCard, nowRegion } from "./now.ts";
 import { repoAsks } from "./asks.ts";
 import { notesCard } from "./notes.ts";
 import { appPanels } from "./previews.ts";
-import { noCrewLine, servingHistory, type WordCtx } from "./words.ts";
+import { noCrewLine, pausedWords, servingHistory, type WordCtx } from "./words.ts";
 import { crewKeyNote } from "./crew.ts";
 import {
   notePhase,
@@ -472,11 +472,7 @@ export async function studioApp(
                       <dd>${governor.why}</dd>`}
                 ${autonomy.paused
                   ? html`<dt>Paused</dt>
-                      <dd>
-                        ${autonomy.paused === "ceiling"
-                          ? "at the ceiling, until 00:00 UTC"
-                          : autonomy.paused}
-                      </dd>`
+                      <dd>${pausedWords(autonomy.paused)}</dd>`
                   : null}
               </dl>
               ${when(crew.length === 0, () => noCrewLine(`${base}/settings`))}`,
