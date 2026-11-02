@@ -7,6 +7,7 @@
  */
 import type { Database } from "bun:sqlite";
 import { withoutWaiting } from "../kernel/db.ts";
+import { quietly } from "../core/write_clock.ts";
 
 export const FINE_MS = 15_000;
 export const COARSE_MS = 300_000;
@@ -104,7 +105,7 @@ export function record(db: Database, points: readonly Point[], now: number): voi
         lag_ms, lag_ms_max, checks, agents)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
-  withoutWaiting(db, db.transaction(() => {
+  withoutWaiting(db, db.transaction(() => quietly(db, () => {
     for (const p of points) {
       const c = p.celsius ?? null;
       const lag = p.lagMs ?? null;
@@ -137,5 +138,5 @@ export function record(db: Database, points: readonly Point[], now: number): voi
     }
     db.query("DELETE FROM machine_sample WHERE step = 15 AND at < ?").run(iso(now - FINE_KEEP_MS));
     db.query("DELETE FROM machine_sample WHERE step = 300 AND at < ?").run(iso(now - COARSE_KEEP_MS));
-  }));
+  })));
 }

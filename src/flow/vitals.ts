@@ -71,7 +71,7 @@ export function readVitals(db: Database, now = new Date(), publicOnly = false): 
     .query<Omit<Vitals, "conflicted" | "red" | "queued" | "oldestApprovedHours" | "strandedUsd" | "gateMinutes1h" | "pullCheckMinutes1h" | "batches6h" | "redBatchRate">, [string, string, string, number]>(
       `SELECT
          (SELECT COUNT(*) FROM pull p JOIN issue i ON i.id = p.issue_id JOIN repo r ON r.id = i.repo_id
-           WHERE (?4 = 0 OR r.visibility = 'public') AND i.state = 'open' AND p.merged_at IS NULL) AS open,
+           WHERE (?4 = 0 OR r.visibility = 'public') AND i.kind = 'pull' AND i.state = 'open' AND p.merged_at IS NULL) AS open,
          (SELECT COUNT(*) FROM pull p JOIN issue i ON i.id = p.issue_id JOIN repo r ON r.id = i.repo_id
            WHERE (?4 = 0 OR r.visibility = 'public') AND i.created_at >= ?1 AND i.created_at <= ?3) AS opened1h,
          (SELECT COUNT(*) FROM pull p JOIN issue i ON i.id = p.issue_id JOIN repo r ON r.id = i.repo_id

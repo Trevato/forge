@@ -20,6 +20,7 @@
 
 import type { Database } from "bun:sqlite";
 import { withoutWaiting } from "../kernel/db.ts";
+import { quietly } from "./write_clock.ts";
 
 /** Upper edges in ms; bucket `i` holds durations `<= EDGES_MS[i]`, the last is everything slower. */
 export const EDGES_MS = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500] as const;
@@ -129,7 +130,7 @@ export function createRouteTiming(
       );
       const hourNo = Math.floor(now() / HOUR_MS);
       // Behind another process's lock this throws at once and the records go back (#6957).
-      withoutWaiting(db, db.transaction(() => {
+      withoutWaiting(db, db.transaction(() => quietly(db, () => {
         for (const [key, v] of batch) {
           const [h, pattern, b] = key.split(SEP) as [string, string, string];
           upsert.run(hourText(Number(h)), pattern, Number(b), v.n, v.us);
@@ -140,7 +141,7 @@ export function createRouteTiming(
           );
           prunedHour = hourNo;
         }
-      }));
+      })));
     } catch (err) {
       prunedHour = -1;
       for (const [key, v] of batch) {

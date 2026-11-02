@@ -291,6 +291,17 @@ fixture; all three caches hit):
 The anonymous door (1.5 ms, 10 statements), the app shelf, and the
 "On you" card. Each costs less than its cache's key would.
 
+## Telemetry does not invalidate (#7896)
+
+The write clock counts every row the connection changes, and a signed-in
+visit itself writes: route timings a second after the request, usage
+counts, flag reads, the session's last-seen time, the home visit, page
+vitals, machine and memory samples. Counted, they kept every cache cold
+for the next visitor. These writers run inside `quietly` (`core/write_clock.ts`),
+which leaves their rows out of the stamp. Wrap only a write to a table no
+cached page is built from; a page that shows telemetry is bounded by the
+30 seconds a cache entry lives. `test/write-clock-quiet.test.ts` proves it.
+
 ## The writes that invalidate
 
 Each row is an action (or, for a push, the post-receive hook, the one

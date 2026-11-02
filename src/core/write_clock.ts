@@ -20,12 +20,38 @@
  * `limb_place` writes do not. A coarse clock costs hit rate; a wrong one
  * would cost a stale page. We pay the first.
  *
+ * Telemetry is not a write the pages can show: route timings, usage counts,
+ * flag reads, a session's last-seen time, page vitals, samples. They land
+ * on this connection every second or so and would keep every cache cold
+ * forever (#7896), so the writers that only record how the forge is used
+ * run inside `quietly`, and the stamp does not count their rows. A page
+ * that shows telemetry is bounded by its cache's age (30 s), not by the clock.
+ *
  * Inside an open transaction there is no stamp: a rolled-back write leaves
  * `total_changes` where it went, so a value read mid-transaction could
  * outlive the rows it saw.
  */
 
 import type { Database } from "bun:sqlite";
+
+const quiet = new WeakMap<Database, number>();
+
+const changesOf = (db: Database): number =>
+  db.query<{ n: number }, []>("SELECT total_changes() AS n").get()?.n ?? 0;
+
+/**
+ * Run a telemetry write: the rows it changes (kept or rolled back) are left
+ * out of the stamp. Wrap only statements that touch tables no cached page
+ * is built from; anything else written inside would go unseen by the caches.
+ */
+export function quietly<T>(db: Database, write: () => T): T {
+  const before = changesOf(db);
+  try {
+    return write();
+  } finally {
+    quiet.set(db, (quiet.get(db) ?? 0) + changesOf(db) - before);
+  }
+}
 
 /** The forge's write clock now, or undefined inside a transaction (cache nothing). */
 export function writeStamp(db: Database): string | undefined {
@@ -35,5 +61,5 @@ export function writeStamp(db: Database): string | undefined {
       "SELECT total_changes() AS n, (SELECT data_version FROM pragma_data_version) AS v",
     )
     .get();
-  return row === null ? undefined : `${row.v}.${row.n}`;
+  return row === null ? undefined : `${row.v}.${row.n - (quiet.get(db) ?? 0)}`;
 }

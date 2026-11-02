@@ -99,11 +99,13 @@ function waitingTally(db: Database, sql: string, ...args: string[]): Tally {
   return { waiting: r?.n ?? 0, active: 0, oldest: r?.oldest ?? null };
 }
 
-// CROSS JOIN keeps SQLite's order: the ask's runs, their branch's pulls by
-// `pull_head_branch`, then each pull's issue, never every open issue (#3693).
+// CROSS JOIN keeps SQLite's order: the repositories that run themselves, then
+// their open issues by `issue_repo_kind_state_number`, never every issue
+// (#7896); and the ask's runs, their branch's pulls by `pull_head_branch`,
+// then each pull's issue, never every open issue (#3693).
 const READY = `
   SELECT i.created_at AS since
-    FROM issue i JOIN repo r ON r.id = i.repo_id
+    FROM repo r CROSS JOIN issue i ON i.repo_id = r.id
    WHERE i.kind = 'issue' AND i.state = 'open' AND r.autonomy != 'off'
      AND (r.direction_issue_id IS NULL OR r.direction_issue_id != i.id)
      AND NOT EXISTS (SELECT 1 FROM issue_dependency d JOIN issue b ON b.id = d.blocked_by_id

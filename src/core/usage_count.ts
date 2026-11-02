@@ -15,6 +15,7 @@
 
 import type { Database } from "bun:sqlite";
 import { withoutWaiting } from "../kernel/db.ts";
+import { quietly } from "./write_clock.ts";
 
 export const ROLES = ["anon", "user", "admin", "agent"] as const;
 export const SURFACES = ["api", "mcp", "web"] as const;
@@ -125,14 +126,14 @@ export function createUsageCounter(
          DO UPDATE SET n = n + excluded.n`,
       );
       // Behind another process's lock this throws at once and the counts go back (#6957).
-      withoutWaiting(db, db.transaction(() => {
+      withoutWaiting(db, db.transaction(() => quietly(db, () => {
         for (const [key, n] of batch) {
           const [hour, pattern, method, status, role, surface] = key.split(
             SEP,
           ) as [string, string, string, string, string, string];
           upsert.run(hour, pattern, method, status, role, surface, n);
         }
-      }));
+      })));
     } catch (err) {
       // Put the counts back so a failed write loses nothing.
       for (const [key, n] of batch)
