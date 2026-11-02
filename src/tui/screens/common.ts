@@ -398,6 +398,8 @@ export function confirmScreen(
     selected?: number;
     /** `y` chooses the first action and `n` dismisses, for a plain yes/no question. */
     yesNo?: boolean;
+    /** Columns of the dialog, for a body line longer than the default fits. */
+    width?: number;
   },
 ): Screen {
   let selected = o.selected ?? 0;
@@ -415,6 +417,7 @@ export function confirmScreen(
         body: o.body,
         actions: o.actions,
         selected,
+        ...(o.width !== undefined ? { width: o.width } : {}),
       });
       // Clicking a button *is* choosing it: a dialog has no browsing to do,
       // so the two-click rule that protects a list would only be in the way.
