@@ -32,7 +32,15 @@ import { spans } from "../kernel/degraded_history.ts";
 import { QUEUE_WAIT_MAX_MS } from "../kernel/vitals.ts";
 import { STALE_AFTER_MS } from "../runs/lease.ts";
 import { isOutageSummary } from "./network.ts";
-import { pullsFailedSince, SHARED_PULLS, SHARED_WINDOW_MS } from "../checks/shared_red.ts";
+import {
+  assertionLines,
+  mainVerdict,
+  pullsFailedSince,
+  SHARED_PULLS,
+  SHARED_WINDOW_MS,
+  sharedRuns,
+} from "../checks/shared_red.ts";
+import { readRunLogTail } from "../runs/log.ts";
 import { clip } from "../text/clip.ts";
 
 const log = createLog("sentinel");
@@ -367,7 +375,7 @@ export function repeatedErrors(now: number): Finding[] {
  * Each cause whose spans total more than ten minutes in the day ending at
  * `now`, quoting its sentence. Shorter totals stay in the history.
  */
-export function degradedCauses(db: Database, now: number, forgeRepoId?: string): Finding[] {
+export function degradedCauses(db: Database, now: number, forgeRepoId?: string, dataDir?: string): Finding[] {
   const from = now - DAY_MS;
   const byCause = new Map<string, { sentence: string; href: string; first: number; opened: number; ms: number }>();
   for (const s of spans(db, from, now)) {
@@ -397,6 +405,7 @@ export function degradedCauses(db: Database, now: number, forgeRepoId?: string):
         `first open: ${new Date(d.first).toISOString()}`,
         `total: ${minutes} minutes in the day`,
         `href: ${d.href}`,
+        ...sharedLines(db, cause, now, forgeRepoId, dataDir),
       ],
       pillar: "P0 Trust: the forge says when it is not well, and is well again",
       lookFor: `\`${cause}\` stays out of the degraded list for a day, or holds under ${DEGRADED_DAY_MS / 60_000} minutes.`,
@@ -436,7 +445,7 @@ export function ownCause(cause: string, forgeRepoId: string | undefined): boolea
  * at once, not when the day has added up. The finding shares its key with
  * `degradedCauses`, so one cause is one issue.
  */
-export function budgetBreaches(db: Database, now: number, forgeRepoId?: string): Finding[] {
+export function budgetBreaches(db: Database, now: number, forgeRepoId?: string, dataDir?: string): Finding[] {
   const out: Finding[] = [];
   for (const s of spans(db, now - DAY_MS, now)) {
     if (s.closedAt !== null || !BREACH_CAUSE.test(s.cause) || !ownCause(s.cause, forgeRepoId)) continue;
@@ -449,6 +458,7 @@ export function budgetBreaches(db: Database, now: number, forgeRepoId?: string):
         `since: ${new Date(s.openedAt).toISOString()}`,
         `href: ${s.href}`,
         ...runLogLines(db, s.cause),
+        ...sharedLines(db, s.cause, now, forgeRepoId, dataDir),
       ],
       pillar: "P0 Trust: the forge says when it is not well, and is well again",
       lookFor: `\`${s.cause}\` is gone from the degraded list and the cause is fixed, not waited out.`,
@@ -476,16 +486,63 @@ function runLogLines(db: Database, cause: string): string[] {
   return run === null ? [] : [`run ${id}: ${run.state}${run.summary ? `, ${oneLine(run.summary)}` : ""}`];
 }
 
+/** How many log lines a shared finding reads from the end of its newest run's log: never the whole file. */
+const SHARED_LOG_TAIL = 400;
+
+/**
+ * What a builder needs to reproduce a `shared:` cause (#8286): the pulls
+ * and runs that failed its test, newest first, the base the newest merged,
+ * the newest one's assertion lines from the tail of its log, and whether
+ * main's newest check passes the test. A private repository's pulls and log
+ * lines stay out of a finding filed anywhere but in that repository.
+ */
+function sharedLines(
+  db: Database,
+  cause: string,
+  now: number,
+  forgeRepoId: string | undefined,
+  dataDir: string | undefined,
+): string[] {
+  if (!cause.startsWith("shared:")) return [];
+  const repoId = cause.split(":")[1] ?? "";
+  const repo = db
+    .query<{ visibility: string }, [string]>("SELECT visibility FROM repo WHERE id = ?1")
+    .get(repoId);
+  if (repo === null || (repo.visibility !== "public" && repoId !== forgeRepoId)) return [];
+  const found = sharedRuns(db, cause, now);
+  if (found === undefined) return [];
+  const [newest] = found.runs;
+  const out = [
+    `test: ${oneLine(found.test)}`,
+    ...found.runs.map((r) => `failed: pull #${r.pull}, check run ${r.runId}`),
+  ];
+  if (newest !== undefined) {
+    out.push(`base: ${newest.baseOid || "none recorded"} (run ${newest.runId})`);
+    const quoted =
+      dataDir === undefined ? [] : assertionLines(readRunLogTail(dataDir, newest.runId, SHARED_LOG_TAIL).lines, found.test);
+    out.push(...quoted.map((l) => `log: ${clip(oneLine(l), QUOTE_MAX)}`));
+  }
+  const main = mainVerdict(db, repoId, found.test);
+  out.push(
+    main === undefined
+      ? "main: no check of main recorded"
+      : main.passes
+        ? `main: passes on main's newest check, run ${main.runId} at ${main.commitOid}`
+        : `main: fails on main's newest check too, run ${main.runId} at ${main.commitOid}`,
+  );
+  return out;
+}
+
 /** Everything the sentinel reads, in one pass. */
-export function findFaults(db: Database, now = Date.now(), forgeRepoId?: string): Finding[] {
+export function findFaults(db: Database, now = Date.now(), forgeRepoId?: string, dataDir?: string): Finding[] {
   const found = [
-    ...budgetBreaches(db, now, forgeRepoId),
+    ...budgetBreaches(db, now, forgeRepoId, dataDir),
     ...heldSlots(db, now),
     ...strayTriggers(db),
     ...ledgerStreaks(db, now),
     ...runStreaks(db),
     ...repeatedErrors(now),
-    ...degradedCauses(db, now, forgeRepoId),
+    ...degradedCauses(db, now, forgeRepoId, dataDir),
   ];
   const keys = new Set<string>();
   return found
@@ -746,7 +803,7 @@ export function hunt(
   let commented = 0;
   const [owner = "", name = ""] = repoPath.split("/");
   const repo = getRepo(app.db, owner, name);
-  const findings = findFaults(app.db, now, repo?.id);
+  const findings = findFaults(app.db, now, repo?.id, app.config.dataDir);
   const actor = sentinelActor(app.db);
   if (repo !== undefined && actor !== undefined) {
     for (const f of findings) {
