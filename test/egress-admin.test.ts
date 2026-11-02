@@ -4,7 +4,7 @@
  * Nobody else is offered the screen.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -51,6 +51,10 @@ describe("egress grants in the terminal", () => {
     });
     if (!committed.ok) throw new Error(JSON.stringify(committed.error));
   }, 60_000);
+  // A grant left by one test must not decide the next.
+  beforeEach(() => {
+    app.db.query("DELETE FROM egress_grant WHERE repo_id = ?1").run(repo.id);
+  });
   afterAll(async () => {
     app.close();
     await rm(dir, { recursive: true, force: true });
