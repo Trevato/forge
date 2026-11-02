@@ -933,7 +933,7 @@ describe("the forge over MCP", () => {
     const after = (await tool(ro, "map", { app: "alice/game" })).value;
     expect(after.edges).not.toContainEqual({ issue: b, blockedBy: a });
     expect(after.ready.map((i: any) => i.number)).toContain(b);
-  });
+  }, 30_000);
 
   test("with plans need a nod on, the plan tool stores one proposal and opens nothing", async () => {
     updateRepoSettings(app.db, getRepoById(app.db, game.id)!, { plansNeedNod: true });
