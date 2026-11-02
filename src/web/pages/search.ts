@@ -664,6 +664,16 @@ const DESTRUCTIVE: {
     }),
   },
   {
+    pattern: /^\/settings\/cloud\/remove\?provider=([a-z0-9_-]+)&name=([a-z][a-z0-9_]{0,31})$/,
+    describe: (m) => ({
+      verb: "Remove account",
+      title: `Remove the ${m[1]} account ${m[2]}?`,
+      detail:
+        "Its sealed token is deleted from this forge. Anything that used it stops reaching that provider until you add an account again. Nothing at the provider is touched.",
+      phrase: "",
+    }),
+  },
+  {
     pattern: /^\/settings\/keys\/([^/]+)\/delete$/,
     describe: () => ({
       verb: "Remove key",

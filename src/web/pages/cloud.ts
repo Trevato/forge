@@ -30,7 +30,7 @@ import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { btn, card, icon, row, time } from "../ui.ts";
+import { btn, card, confirmAction, icon, row, time } from "../ui.ts";
 import { accountSections } from "./origins.ts";
 
 const BACK = "/settings/cloud";
@@ -86,9 +86,11 @@ function accountsCard(accounts: CloudAccount[], reads: CloudRead[], uses: Map<st
             autocomplete="off" spellcheck="false" required />
           ${btn("Rename", { size: "sm", label: `Rename ${a.name}` })}
         </form>
-        <form method="post" action="/settings/cloud/remove">
-          ${hidden(a.provider, a.name)}${btn("Remove", { size: "sm", icon: "x", label: `Remove ${a.name}` })}
-        </form>
+        ${confirmAction({
+          action: `/settings/cloud/remove?provider=${encodeURIComponent(a.provider)}&name=${encodeURIComponent(a.name)}`,
+          verb: "Remove",
+          size: "sm",
+        })}
       </div>`,
     });
   });
@@ -275,6 +277,10 @@ export async function cloudRemove(ctx: Ctx): Promise<Response> {
   if (denied) return denied;
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
-  const r = removeAccount(ctx.app, ctx.auth.user, field(form, "provider"), field(form, "name"));
+  // The confirm page posts to its `to` exactly, so the account arrives in the query.
+  const query = ctx.url.searchParams;
+  const provider = field(form, "provider") || (query.get("provider") ?? "");
+  const name = field(form, "name") || (query.get("name") ?? "");
+  const r = removeAccount(ctx.app, ctx.auth.user, provider, name);
   return said(ctx, r, "Removed.", r.ok ? undefined : r.error);
 }
