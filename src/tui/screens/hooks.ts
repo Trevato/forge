@@ -1,14 +1,14 @@
 /**
  * A repository's webhooks in the terminal, an admin's: each hook's url,
- * kinds and last delivery, never its secret. `a` asks for url, kinds and a
- * secret (typed masked, 16–200 characters) and adds it through
- * `createWebhook`; `d` removes the selected one after a confirm through
+ * kinds and last delivery, never its secret. `enter` opens its last 20
+ * deliveries. `a` asks for url, kinds and a secret (typed masked, 16–200
+ * characters) and adds it through `createWebhook`; `d` removes the selected one after a confirm through
  * `deleteWebhook`. The words of a refusal are MCP `hooks`'s.
  */
 
 import { createWebhook, deleteWebhook } from "../../actions/repos.ts";
 import { canAdmin, type Repo } from "../../core/repos.ts";
-import { listWebhooks, recentDeliveries, type Webhook } from "../../core/webhooks.ts";
+import { listWebhooks, recentDeliveries, type DeliveryInfo, type Webhook } from "../../core/webhooks.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import type { Command } from "../app/palette.ts";
 import { binding } from "../app/keys.ts";
@@ -43,6 +43,43 @@ function lastDelivery(f: Session, hook: Webhook): string {
   if (d === undefined) return "no delivery yet";
   const how = d.lastStatus !== null ? ` ${d.lastStatus}` : d.lastError !== null ? ` ${clean(d.lastError)}` : "";
   return `last ${d.kind}: ${d.state}${how}`;
+}
+
+/** One hook's last 20 deliveries, newest first: kind · state · status or reason · attempts. */
+function deliveriesScreen(f: Session, ctx: Ctx, hook: Webhook, allowed: () => boolean): Screen {
+  const state = new ListState();
+  let all: DeliveryInfo[] = [];
+  return {
+    title: "Deliveries",
+    keys: [binding(["j", "k"], "move"), binding(["esc", "q"], "back")],
+    render(area, s) {
+      if (!allowed()) {
+        ctx.pop();
+        return;
+      }
+      const c = ctx.theme.c;
+      const [head, body] = split(area, "v", [len(1), fill(1)]);
+      s.text(head!.x, head!.y, truncate(clean(hook.url), head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
+      all = recentDeliveries(f.db, hook.id, 20);
+      if (all.length === 0) {
+        emptyState(s, body!, c, { title: "No deliveries yet." });
+        return;
+      }
+      const rows: ListRow[] = all.map((d) => ({
+        title: `${d.kind} · ${d.state} · ${d.lastError !== null ? clean(d.lastError) : (d.lastStatus ?? "—")} · ${d.attempts}`,
+        tone: d.state === "ok" ? "success" : d.state === "failed" ? "danger" : "attn",
+      }));
+      drawList(s, body!, c, state, rows);
+    },
+    key(e) {
+      if (e.ctrl || e.alt) return false;
+      if (!allowed() || e.key === "esc" || e.key === "q") {
+        ctx.pop();
+        return true;
+      }
+      return state.key(e, all.length);
+    },
+  };
 }
 
 export function hooksScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
@@ -113,6 +150,7 @@ export function hooksScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       binding(["j", "k"], "move"),
       binding(["a"], "add a webhook"),
       binding(["d"], "remove the selected one"),
+      binding(["enter"], "its deliveries"),
     ],
     render(area, s) {
       const c = ctx.theme.c;
@@ -138,7 +176,11 @@ export function hooksScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       if (state.key(e, hooks().length)) return true;
       if (e.ctrl || e.alt || !allowed()) return false;
       if (e.key === "a") ask();
-      else if (e.key === "d") {
+      else if (e.key === "enter") {
+        const hook = hooks()[state.index];
+        if (hook === undefined) return false;
+        ctx.push(deliveriesScreen(f, ctx, hook, allowed));
+      } else if (e.key === "d") {
         const hook = hooks()[state.index];
         if (hook === undefined) return false;
         remove(hook);
