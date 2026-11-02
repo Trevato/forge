@@ -91,7 +91,7 @@ export const hiddenFrom = (user: User, viewer: User | undefined): boolean =>
 
 // The minimum counts characters, the cap (`hash-gate.ts`) counts bytes: the
 // hash reads bytes, and a person never meets the difference at these sizes.
-const MIN_PASSWORD = 10;
+export const MIN_PASSWORD = 10;
 const MAX_EMAIL = 254;
 const MAX_DISPLAY_NAME = 80;
 

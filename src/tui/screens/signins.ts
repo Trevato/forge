@@ -11,14 +11,28 @@
  * a scope, and for admin a second explicit `y`. The secret is shown once on a
  * screen of its own and forgotten when that screen is left. Only a person
  * minting from a terminal session may: an agent is not offered `m`.
+ * `p` changes your password through the action `changePassword` (what
+ * Settings › Password and the API use, so the sign-in throttle applies and
+ * `user.updated` is emitted): the current one, the new one and the new one
+ * again, each in a masked prompt. The typed passwords live only in the
+ * prompts' closures for the call; refusals read in Settings' words. An agent
+ * is not offered `p`, as it is not offered `m`.
  * This terminal is held by its key, not a browser session, and cannot be
  * ended from here.
  */
 
 import { accountSignIns, endAccountSession } from "../../actions/signins.ts";
-import { createToken, deleteToken } from "../../actions/users.ts";
+import {
+  CHANGE_PASSWORD_WORDS,
+  PASSWORD_CHANGED_WORDS,
+  changePassword,
+  createToken,
+  deleteToken,
+} from "../../actions/users.ts";
+import { withinPasswordCap } from "../../core/hash-gate.ts";
 import { listKeys } from "../../core/keys.ts";
 import { ADMIN_TOKEN_WORDS, type TokenScope } from "../../core/tokens.ts";
+import { MIN_PASSWORD } from "../../core/users.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { style } from "../term/style.ts";
@@ -222,9 +236,63 @@ export function signInsScreen(f: Session, ctx: Ctx): Screen {
     ctx.push(askName(user.isAdmin));
   };
 
+  /** Calls the action; the passwords are arguments only, never kept here. */
+  const change = async (current: string, next: string): Promise<void> => {
+    const changed = await changePassword(f.app, f.user, { current, next, source: f.identity.remoteAddress });
+    note = changed.ok ? PASSWORD_CHANGED_WORDS : CHANGE_PASSWORD_WORDS[changed.error];
+    ctx.invalidate();
+  };
+
+  const askAgain = (current: string, next: string) =>
+    later(ctx, () =>
+      promptScreen(ctx, screen, {
+        title: "Change your password",
+        label: "New password, again",
+        mask: true,
+        onSubmit: (again) => (again === next ? change(current, next) : "The two new passwords don't match."),
+      }),
+    );
+
+  const askNext = (current: string) =>
+    later(ctx, () =>
+      promptScreen(ctx, screen, {
+        title: "Change your password",
+        label: "New password",
+        mask: true,
+        // Refused here, in Settings' words, so a weak one is not typed twice;
+        // the action checks again.
+        onSubmit: (next) => {
+          if (next === "") return "Type a new password.";
+          if (next.length < MIN_PASSWORD) return CHANGE_PASSWORD_WORDS.weak_password;
+          if (!withinPasswordCap(next)) return CHANGE_PASSWORD_WORDS.password_too_long;
+          return askAgain(current, next);
+        },
+      }),
+    );
+
+  const askCurrent = () =>
+    promptScreen(ctx, screen, {
+      title: "Change your password",
+      label: "Current password",
+      mask: true,
+      onSubmit: (current) => (current === "" ? "Type your current password." : askNext(current)),
+    });
+
+  const rotate = (): void => {
+    const user = f.user;
+    // An agent signs in with a key, not a password; a guest has no account.
+    if (user === undefined || user.kind === "agent") return;
+    ctx.push(askCurrent());
+  };
+
   const screen: Screen = {
     title: "Signed in",
-    keys: [binding(["j", "k"], "move cursor"), binding(["d"], "sign a browser out or revoke a token"), binding(["m"], "make a token")],
+    keys: [
+      binding(["j", "k"], "move cursor"),
+      binding(["d"], "sign a browser out or revoke a token"),
+      binding(["m"], "make a token"),
+      binding(["p"], "change your password"),
+    ],
     render(area, s) {
       const c = ctx.theme.c;
       const all = signInsOf(f);
@@ -234,7 +302,9 @@ export function signInsScreen(f: Session, ctx: Ctx): Screen {
           ? note
           : f.user === undefined
             ? "Sign in to see where you are signed in."
-            : "Where you are signed in. d signs a browser out or revokes a token, m makes a token.";
+            : f.user.kind === "agent"
+              ? "Where you are signed in. d signs a browser out or revokes a token."
+              : "Where you are signed in. d signs a browser out or revokes a token, m makes a token, p changes your password.";
       s.text(head!.x, head!.y, truncate(text, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
       drawList(s, body!, c, state, rows(all));
     },
@@ -245,6 +315,10 @@ export function signInsScreen(f: Session, ctx: Ctx): Screen {
       if (e.ctrl || e.alt) return false;
       if (e.key === "m") {
         make();
+        return true;
+      }
+      if (e.key === "p") {
+        rotate();
         return true;
       }
       if (e.key !== "d") return false;

@@ -3,7 +3,7 @@
  * an account authenticates with over the SSH listener.
  */
 
-import { withinPasswordCap } from "../core/hash-gate.ts";
+import { PASSWORD_TOO_LONG, withinPasswordCap } from "../core/hash-gate.ts";
 import { emailChanged, welcome } from "./verify.ts";
 import type { App } from "../app.ts";
 import type { Credential } from "../auth/webauthn.ts";
@@ -361,6 +361,21 @@ export type ChangePasswordError =
   | "throttled"
   | "weak_password"
   | "password_too_long";
+
+/**
+ * What a refused password change reads as, one sentence each: Settings ›
+ * Password and the terminal's Sessions screen say the same words.
+ */
+export const CHANGE_PASSWORD_WORDS: Record<ChangePasswordError, string> = {
+  unauthorized: "Something went wrong.",
+  bad_credentials: "That isn't your current password.",
+  throttled: "Too many attempts. Try again in a minute.",
+  weak_password: "Passwords need at least 10 characters.",
+  password_too_long: PASSWORD_TOO_LONG,
+};
+
+/** What a changed password reads as, on every surface. */
+export const PASSWORD_CHANGED_WORDS = "Password changed. Existing sessions stay signed in.";
 
 /** Replace the password; the current one must be presented and verified. */
 export async function changePassword(

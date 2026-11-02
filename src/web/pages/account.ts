@@ -9,16 +9,17 @@
  * has been read once.
  */
 
-import { PASSWORD_TOO_LONG } from "../../core/hash-gate.ts";
 import { resendVerification } from "../../actions/verify.ts";
 import { clientAddress } from "../../http/peer.ts";
 import { emailVerified } from "../../core/verify.ts";
 import {
   addSshKey,
+  CHANGE_PASSWORD_WORDS,
   changePassword,
   createToken,
   deleteSshKey,
   deleteToken,
+  PASSWORD_CHANGED_WORDS,
   updateProfile,
 } from "../../actions/users.ts";
 import {
@@ -509,29 +510,14 @@ export async function passwordUpdate(ctx: Ctx): Promise<Response> {
     source: clientAddress(ctx.request),
   });
   if (!changed.ok) {
-    const error =
-      changed.error === "bad_credentials"
-        ? {
-            field: "current" as const,
-            text: "That isn't your current password.",
-          }
-        : changed.error === "throttled"
-          ? {
-              field: "current" as const,
-              text: "Too many attempts. Try again in a minute.",
-            }
-          : changed.error === "password_too_long"
-          ? { field: "next" as const, text: PASSWORD_TOO_LONG }
-          : changed.error === "weak_password"
-          ? {
-              field: "next" as const,
-              text: "Passwords need at least 10 characters.",
-            }
-          : { field: "current" as const, text: "Something went wrong." };
+    const error = {
+      field: changed.error === "weak_password" || changed.error === "password_too_long" ? ("next" as const) : ("current" as const),
+      text: CHANGE_PASSWORD_WORDS[changed.error],
+    };
     return accountShell(ctx, "password", "Password", passwordView(error), 422);
   }
   return flashTo(ctx, "/settings/password", {
-    message: "Password changed. Existing sessions stay signed in.",
+    message: PASSWORD_CHANGED_WORDS,
   });
 }
 
