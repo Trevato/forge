@@ -8,14 +8,10 @@ rulebook: the invariants you must not break, and how to work here.
 
 **Read docs/VISION.md first: it says what the forge is for and the order of work.**
 
-**Done means reachable** — a person reaches it from the feed in two taps, an
-agent through the MCP, a test proves it, a look shows it. A function nobody can
-call is not done.
-
-The whole point of forge is that **one person can hold it in their head**. Every
-change should leave it that way. When something fights you, step up and
-understand the system before adding code — a workaround usually means the system
-isn't understood yet.
+**Done means reachable**, and the rest of what the forge holds to is in
+docs/PRINCIPLES.md with what enforces each; read it. This file does not repeat it. When
+something fights you, step up and understand the system before adding code — a
+workaround usually means the system isn't understood yet.
 
 ## Invariants — do not break these
 
@@ -30,9 +26,8 @@ isn't understood yet.
 3. **Real git, thin wrapper.** Never reimplement pack negotiation, diff, blame,
    or merge. Spawn the `git` binary and plumb bytes carefully. Correctness comes
    from git; our job is safe arguments and clean I/O.
-4. **Git is truth; the DB is a derived index.** SQLite holds nothing that can't
-   be rebuilt from the bare repos. `core/reconcile.ts` self-heals the index from
-   git on boot. Don't invent state that lives only in the DB (or only in memory).
+4. **Derived index** (docs/PRINCIPLES.md). Don't invent state that lives only
+   in the DB (or only in memory).
 5. **State changes go through the event outbox.** Every meaningful mutation
    `bus.append(...)`s a durable event (`core/events.ts`). Webhooks and SSE ride
    that outbox; delivery is retried. Never fire-and-forget something important.
@@ -49,9 +44,9 @@ canAdmin`), token scope (`readForm` floor + `minScope`), and branch
 9. **`not_found` is deliberately ambiguous.** A missing resource and a resource
    you can't see both return `not_found`, so private repos never leak their
    existence. Keep that conflation when you add routes.
-10. **The crew proposes; a person lands.** An agent (`user.kind === "agent"`)
-    never moves the default branch — the pre-receive hook refuses it,
-    protected or not — and `mergePull` refuses an agent actor. Its only grant
+10. **The crew proposes; a person lands** (docs/PRINCIPLES.md). An agent
+    (`user.kind === "agent"`) is refused by the pre-receive hook, protected
+    or not, and by `mergePull`. Its only grant
     is `repo_crew` (read + write, never admin); its only credential is a
     token minted for a run with an expiry, deleted when the run ends, and
     bound to the run's repository and the fork it pushes to — every other
@@ -106,20 +101,17 @@ bun run src/main.ts   # boots on :3000, data in ./data
   `EXCLUDED`, so never hand-edit that move. Never add `retry` — fix the
   cause: a shared port, a real clock, order dependence, a leaked server, a
   timeout near the real duration, a wall-clock bound under 200 ms on a
-  request or a spawn (`test/flake.test.ts` refuses one). A speed is never bounded by a clock: count work
-  instead (SQL statements with `test/helpers/statements.ts`, spawns, bytes,
-  phases), assert it with `expectWork` (`test/helpers/work.ts`), or use a fake
-  clock (#7789, #7824); `test/flake.test.ts` refuses a raw `under N ms` title
-  or bound.
+  request or a spawn (`test/flake.test.ts` refuses one). Speed is counted in work (docs/PRINCIPLES.md): SQL
+  statements with `test/helpers/statements.ts`, spawns, bytes, phases,
+  asserted with `expectWork` (`test/helpers/work.ts`), or a fake clock
+  (#7789, #7824).
 - **Every non-trivial change ships with a test.** Prefer protocol-level tests
   that boot a real app (`createApp` + `serve`) over unit mocks. Adversarial
   tests (can this be bypassed?) are worth more than happy-path ones.
-- **Done means reachable.** A new action is called from a route, a page or an
-  MCP tool in the same pull, and a new screen is linked from a page a person
-  can get to. `scripts/hollow.ts` (run by `test/hollow.test.ts` in the gate,
-  or `bun scripts/hollow.ts`) names an exported function in `src/actions/`
-  that nothing that runs reaches (a page function no route names does not
-  count as a caller) and a screen no page links to.
+- **Reachable** (docs/PRINCIPLES.md). A new action is called from a route, a
+  page or an MCP tool in the same pull, and a new screen is linked from a page
+  a person can get to. `bun scripts/hollow.ts` names what is not (a page
+  function no route names does not count as a caller).
   `scripts/hollow-allow.ts` is for hollow work an issue already owns, never
   for new work.
 - **TypeScript is strict**: `noUncheckedIndexedAccess` (index access is `T |

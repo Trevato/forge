@@ -64,4 +64,22 @@ describe("who reads it", () => {
     expect(prompt).toContain("docs/PRINCIPLES.md");
     expect(prompt).toContain("Done means reachable");
   });
+
+  const builder = systemPrompt({
+    agent: { user: { username: "bot", displayName: "" }, brief: "" },
+    repo: { ownerName: "a", name: "forge", defaultBranch: "main" },
+    issue: { number: 1 },
+    branch: "b",
+    forgeUrl: "http://f",
+    isApp: true,
+  } as unknown as BriefInput);
+
+  test("the builder brief is at least 100 bytes shorter than on main before #8737 (7303 bytes, an app on the forge)", () => {
+    expect(Buffer.byteLength(builder)).toBeLessThanOrEqual(7303 - 100);
+  });
+
+  test("the brief points at the file, and no longer spells out the two taps", () => {
+    expect(builder).toContain("docs/PRINCIPLES.md");
+    expect(builder).not.toContain("two taps");
+  });
 });
