@@ -560,6 +560,7 @@ This page is the front door. Everything else is a file of its own under
 - [`docs/CLOUD.md`](docs/CLOUD.md) — clouds are capacity, never dependency, and the cloud accounts an admin keeps.
 - [`docs/CLUSTER.md`](docs/CLUSTER.md) — the check lane as Kubernetes Jobs.
 - [`docs/EXTRACT.md`](docs/EXTRACT.md) — the forge on a machine of its own, and the platform it grew up in switched off: what a host owes it, the moves in order, and what is given up.
+- [`docs/PLATFORM.md`](docs/PLATFORM.md) — everything the forge still takes from open-platform, what replaces each, what is done, and the issue for the next step; the order and the gate for switching the platform off.
 - [`docs/ops/ROLL.md`](docs/ops/ROLL.md) — rolling a release.
 
 **Design and records**
