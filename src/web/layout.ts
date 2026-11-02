@@ -314,6 +314,9 @@ const STATIC_PALETTE: PaletteItem[] = [
   { t: "Origins", h: "/settings/origins", c: "Settings" },
 ];
 
+/** What a signed-out visitor can reach: places to go, not Create and Settings rows that end at a sign-in wall. */
+const VISITOR_PALETTE = new Set(["Home", "Apps", "Explore", "Front page", "Search"]);
+
 /** First path segments that are the forge's own pages, never an owner: no repository read for them. */
 const NOT_AN_OWNER = new Set([
   ...STATIC_PALETTE.map((p) => p.h.split("/")[1] ?? ""),
@@ -410,7 +413,16 @@ function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
             }),
       };
     }),
-    ...STATIC_PALETTE,
+    ...(ctx.auth.user
+      ? STATIC_PALETTE
+      : [
+          ...STATIC_PALETTE.filter((p) => VISITOR_PALETTE.has(p.t)),
+          {
+            t: "Sign in",
+            h: signInHref(ctx),
+            c: "Go to",
+          },
+        ]),
     ...(sendsForges(ctx)
       ? [{ t: "New forge", h: "/forges/new", c: "Create" }]
       : []),
@@ -509,6 +521,13 @@ function flashToast(flash: Flash): Html {
 
 // ---- the chrome ----
 
+/** Where a signed-out visitor's way in leads: the topbar button and the palette's Sign in share it. */
+export function signInHref(ctx: Ctx): string {
+  const token = activeEdgeToken(ctx.app);
+  if (edgeStrangerLogin(ctx.request, token, ctx.auth.user) !== undefined) return "/signup";
+  return token === undefined ? "/signin" : edgeLoginUrl(ctx.url.pathname + ctx.url.search);
+}
+
 /** The skip link and the topbar: the wordmark, the crumbs, the tools. */
 function topbar(
   ctx: Ctx,
@@ -552,11 +571,7 @@ function topbar(
                   : { label: "Sign out", post: "/logout", icon: "signOut" },
               )}`
           : html`${guestMenu(theme)}${btn("Sign in", {
-              href: edgeStrangerLogin(ctx.request, activeEdgeToken(ctx.app), ctx.auth.user) !== undefined
-                ? "/signup"
-                : activeEdgeToken(ctx.app) === undefined
-                  ? "/signin"
-                  : edgeLoginUrl(ctx.url.pathname + ctx.url.search),
+              href: signInHref(ctx),
             })}`}
       </span>
     </header>`;

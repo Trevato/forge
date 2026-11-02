@@ -106,3 +106,41 @@ test("a private app is not known to a stranger by search, and is to its owner", 
   expect(await flag(zed)).toBe(false);
   expect(await flag(undefined)).toBe(false);
 });
+
+test("a visitor's palette holds places to go and Sign in; a signed-in one holds the full list", async () => {
+  const rows = async (headers: Record<string, string>, path: string) => {
+    const html = await (await fetch(`${servers.url}${path}`, { headers })).text();
+    const m = /<script type="application\/json" id="palette-index">([\s\S]*?)<\/script>/.exec(html)!;
+    return (JSON.parse(m[1]!) as { items: { t: string; h: string; c?: string }[] }).items.filter((i) => i.c !== "Repositories");
+  };
+  const out = await rows({}, "/explore?q=a%26b");
+  expect(out.map((i) => i.t)).toEqual(["Home", "Apps", "Explore", "Front page", "Search", "Sign in"]);
+  expect(out.find((i) => i.t === "Sign in")!.h).toBe("/signin");
+  const inn = (await rows({ cookie }, "/explore")).map((i) => i.t);
+  for (const t of ["New app", "New repository", "Migrate a repository", "New organization", "What you asked for", "Account settings", "Access tokens", "SSH keys", "Origins", "Map"]) expect(inn).toContain(t);
+  expect(inn).not.toContain("Sign in");
+});
+
+test("the palette's Sign in leads where the topbar's button does, on an edge-login forge too", async () => {
+  const edgeDir = await mkdtemp(join(tmpdir(), "forge-palette-edge-"));
+  const edgeApp = createApp({ dataDir: edgeDir, port: 0, edgeToken: "edge-secret-for-palette" });
+  const edgeServers = await serve(edgeApp);
+  try {
+    const items = async (headers: Record<string, string> = {}) => {
+      const body = await (await fetch(`${edgeServers.url}/explore?q=a`, { headers })).text();
+      const index = JSON.parse(body.match(/id="palette-index">([^<]*)</)![1]!) as { items: { t: string; h: string }[] };
+      const button = body.match(/<a\s+href="([^"]*)"[^>]*>\s*Sign in\s*<\/a/)![1]!;
+      return { palette: index.items.find((i) => i.t === "Sign in")!.h, button: button.replaceAll("&amp;", "&") };
+    };
+    const visitor = await items();
+    expect(visitor.palette).toBe("/_plat/login?rd=%2Fexplore%3Fq%3Da");
+    expect(visitor.button).toBe(visitor.palette);
+    const stranger = await items({ "x-plat-user": "newcomer", "x-plat-edge-token": "edge-secret-for-palette" });
+    expect(stranger.palette).toBe("/signup");
+    expect(stranger.button).toBe("/signup");
+  } finally {
+    edgeServers.stop();
+    edgeApp.close();
+    await rm(edgeDir, { recursive: true, force: true });
+  }
+});

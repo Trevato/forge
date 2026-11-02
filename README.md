@@ -25,6 +25,8 @@ child's own data, and `/forges` says how many are running and why any is not. Ea
 with why (also in the terminal and the MCP `forges`): "Not reporting" (no word
 in 24 hours), "App down", or "Unclaimed" three days after it was sent; the rest
 follow by last activity.
+A signed-out visitor's command palette (Cmd-K) lists only places they can reach (Home, Apps, Explore, Front page, Search, public repositories) plus **Sign in**, which goes where the topbar's button does (`signInHref` in `src/web/layout.ts`: `/signin`, `/signup` for an edge stranger, the edge's login when an edge token is active); no Create or Settings rows. After signing in from the palette the visitor lands on the default page, not the one they were on. The terminal's guest palette already hides the signed-in verbs (New repository, Migrate, New forge and the rest) and offers Sign in.
+
 In the terminal an admin's palette offers "Forges you sent": each forge with its
 claim state and the same apps-running note, never a claim link. Both carry the
 crew's spend today against the daily ceiling that pauses it (`$3.20 of $10 today`), as the
