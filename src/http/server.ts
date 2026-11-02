@@ -2348,14 +2348,28 @@ export async function serve(app: App): Promise<Servers> {
       }
       // A hosted child's app (`<app>--<child>--<parentHost>`) is the child's
       // own runtime's, as the parent's apps are the parent's.
-      if (runtime === undefined || ownUnknown) {
-        const hit = await resolveHostedChildApp(app, request);
-        if (hit === "unknown")
-          return securityFloor(new Response("not found", { status: 404 }));
-        if (hit !== undefined) {
-          notePeer(request, server.requestIP(request)?.address, trust);
-          return proxyApp(hit.runtime, request, hit.target, server);
-        }
+      // A child in its own cell answers through this one door, for its pages and its apps.
+      const fromCell = async (name?: string): Promise<Response> => {
+        // The child sees only this forge's relay, so it is told who the client is.
+        notePeer(request, server.requestIP(request)?.address, trust);
+        armClose(request, () => server.timeout(request, 1));
+        const response = await answered(app, request, () => answerFromCell(app, request, name));
+        counted(app, request, response, started);
+        logged(app.config.dataDir, request, response, started);
+        await settleBody(request);
+        if (!mustClose(request)) return response;
+        server.timeout(request, 1);
+        return withHeader(response, "connection", "close");
+      };
+      // Asked whatever the parent's own apps said: their domain need not be the
+      // one children hang from, and then it does not claim this host at all.
+      const hit = await resolveHostedChildApp(app, request);
+      if (hit === "unknown")
+        return securityFloor(new Response("not found", { status: 404 }));
+      if (hit !== undefined) {
+        if ("cell" in hit) return fromCell(hit.cell);
+        notePeer(request, server.requestIP(request)?.address, trust);
+        return proxyApp(hit.runtime, request, hit.target, server);
       }
       // A hosted child's Host (`<name>--<parentHost>`) is answered by that
       // child's own App before the parent's pages. Ingress routes the label
@@ -2364,18 +2378,7 @@ export async function serve(app: App): Promise<Servers> {
         const child = await resolveHostedChild(app, request);
         if (child === "unknown")
           return securityFloor(new Response("not found", { status: 404 }));
-        if (child === "cell") {
-          // The child sees only this forge's relay, so it is told who the client is.
-          notePeer(request, server.requestIP(request)?.address, trust);
-          armClose(request, () => server.timeout(request, 1));
-          const response = await answered(app, request, () => answerFromCell(app, request));
-          counted(app, request, response, started);
-          logged(app.config.dataDir, request, response, started);
-          await settleBody(request);
-          if (!mustClose(request)) return response;
-          server.timeout(request, 1);
-          return withHeader(response, "connection", "close");
-        }
+        if (child === "cell") return fromCell();
         if (child !== undefined) {
           const key = child.config.dataDir;
           let http = childHttps.get(key);

@@ -233,6 +233,11 @@ export interface ChildAppHit {
   readonly target: AppTarget;
 }
 
+/** A child app in a child's own cell: its runtime is in that process, so the request is carried there. */
+export interface CellAppHit {
+  readonly cell: string;
+}
+
 /**
  * The child app a Host names, `"unknown"` when it is shaped like one of a
  * child that exists but names no app of it, undefined when it is no child
@@ -241,7 +246,7 @@ export interface ChildAppHit {
 export async function resolveHostedChildApp(
   parent: App,
   request: Request,
-): Promise<ChildAppHit | "unknown" | undefined> {
+): Promise<ChildAppHit | CellAppHit | "unknown" | undefined> {
   const host = request.headers.get("host");
   if (host === null) return undefined;
   const label = parseHostedChildAppLabel(host, childHost(parent));
@@ -257,6 +262,7 @@ export async function resolveHostedChildApp(
     if (!CHILD_NAME.test(name)) continue;
     const ledger = readLedgerSync(parent, name);
     if (ledger === undefined || !ledger.done) continue;
+    if (ledger.placement === "cell") return { cell: name };
     const child = await openOnce(parent, ledger);
     const runtime = appsRuntime(child);
     if (runtime === undefined) return "unknown";
@@ -275,8 +281,8 @@ export const hostedChildApps = childAppsSummary;
  * is up, and when it is not (just spawned, a parent that restarted, a
  * child that stopped) start it and answer 503 at once.
  */
-export async function answerFromCell(parent: App, request: Request): Promise<Response> {
-  const name = parseHostedChildName(request.headers.get("host") ?? "", childHost(parent));
+export async function answerFromCell(parent: App, request: Request, named?: string): Promise<Response> {
+  const name = named ?? parseHostedChildName(request.headers.get("host") ?? "", childHost(parent));
   const ledger = name === undefined ? undefined : readLedgerSync(parent, name);
   if (ledger === undefined || ledger.placement !== "cell") return new Response("not found", { status: 404 });
   const child = cellChildren(parent).get(ledger.bodyId);
