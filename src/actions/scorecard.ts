@@ -12,6 +12,7 @@ import {
   type SplitScorecard,
 } from "../core/scorecard.ts";
 import { modelDays, type ModelDay } from "../core/model_days.ts";
+import { readReview } from "./model_review.ts";
 import { wastedDays, type WastedDay } from "../core/wasted_days.ts";
 import { listAgents } from "../core/agents.ts";
 import type { User } from "../core/users.ts";
@@ -42,7 +43,12 @@ const figures = (c: Scorecard): Scorecard => ({
 export function readScorecards(
   app: App,
   actor: User | undefined,
-): { agents: AgentScorecard[]; modelDays: ModelDay[]; wastedDays: WastedDay[] } | undefined {
+): {
+  agents: AgentScorecard[];
+  modelDays: ModelDay[];
+  wastedDays: WastedDay[];
+  modelReview: ReturnType<typeof readReview>;
+} | undefined {
   if (actor?.isAdmin !== true) return undefined;
   const window = recentWindow();
   const all = crewScorecards(app.db);
@@ -52,6 +58,7 @@ export function readScorecards(
   const key = (p: SplitScorecard) => `${p.model}\u0000${p.promptVersion}`;
   return {
     modelDays: modelDays(app.db),
+    modelReview: readReview(app),
     wastedDays: wastedDays(app.db),
     agents: listAgents(app.db).map((agent) => {
       const id = agent.user.id;

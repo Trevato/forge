@@ -157,6 +157,8 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     kind.startsWith("drill.") ||
     // A snapshot moving is the forge owner's too, and has no repository.
     kind.startsWith("backup.") ||
+    // The weekly model review's changes and results are the owner's (`actions/model_review.ts`).
+    kind.startsWith("crew.model_") ||
     // A clog is the whole forge's flow, the owner's to hear (`flow/clog_tick.ts`).
     kind.startsWith("clog.") ||
     // The forge letting go of FLOW ONLY after 24 h clear is the admins' to hear (`flow/flow_only_auto.ts`).

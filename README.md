@@ -48,6 +48,8 @@ its cost over the last 5 hours, since 00:00 UTC and the last 7 days, as
 `/settings/spend` reads it; `—` means nothing was spent in that span (`spend —`,
 in all three).
 Runs on P0, `opus`-labelled, planner and twice-bounced work use Opus (`docs/features/model-escalation.md`); the "Per model per day" spend and landed table is on Settings → Crew, in the terminal's "Crew scorecard" list, and in `GET /api/v1/crew/scorecard`.
+
+**Weekly model review** (`docs/features/model-review.md`): once a week the forge reads its own ledger and moves each crew member to the cheapest model that holds its quality, or asks. A forge admin reads the verdicts and the trail, and answers an ask, in Settings → Crew ("Model review": *Move to …* / *Leave it*), in the terminal (`:` → "Crew scorecard per agent": the rows below the figures; put the cursor on a `waiting` row, `m` moves the agent and `n` leaves it, each after a `y` to confirm), in `GET /api/v1/crew/scorecard` and the MCP `scorecard` tool (`modelReview`). An ask nobody answers lapses after two weeks.
 Settings → Crew also shows, each only when it has something, a "Handed to the
 planner" card (issues the crew parked twice: repo, issue link, when last
 parked, why) and a "Restore drill" card (the last drill's pass or fail and

@@ -35,6 +35,7 @@ import {
   type Scorecard,
   type SplitScorecard,
 } from "../../core/scorecard.ts";
+import { decideChange, readReview } from "../../actions/model_review.ts";
 import { wastedDays, type WastedDay } from "../../core/wasted_days.ts";
 import { modelDays, type ModelDay } from "../../core/model_days.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
@@ -455,6 +456,109 @@ function loadSpending(ctx: Ctx) {
   }));
 }
 
+/** The weekly model review (#7815): each member's models side by side, the verdict, the button, the trail. */
+function modelReviewCard(ctx: Ctx): Html {
+  const r = readReview(ctx.app);
+  const names = new Map(listAllAgentsByName(ctx));
+  const cell = (n: number | null, f: (n: number) => string) =>
+    n === null ? html`<td class="num muted">—</td>` : html`<td class="num">${f(n)}</td>`;
+  const asked = r.changes.filter((c) => c.state === "asked");
+  return card(
+    html`<p class="muted small">At most one change of model per agent a week, to the cheapest that holds its quality.
+        A step up always asks; a step down ${r.limits.auto ? "applies on its own" : "asks too"} (Settings → Limits).
+        Under ${r.limits.minLanded} landed changes nothing. A week after a change the result is reported, and the
+        change undone if quality fell. An ask nobody answers lapses after two weeks.</p>
+      <div class="table-scroll">
+        <table class="table" id="model-review">
+          <thead>
+            <tr><th>Agent</th><th>Model</th><th>Landed</th><th>Per landed</th><th>Red</th><th>Rework</th><th>Reverts</th><th>Hard</th></tr>
+          </thead>
+          <tbody>
+            ${r.agents.flatMap((a) =>
+              a.models.map(
+                (m) => html`<tr>
+                  <td>${a.username}</td>
+                  <td class="mono">${m.model === "" ? "unrecorded" : m.model}</td>
+                  <td class="num">${m.landed} <span class="muted small">of ${m.opened}</span></td>
+                  ${cell(m.costPerLanded, (n) => `$${n.toFixed(2)}`)}
+                  ${cell(m.redRate, (n) => `${Math.round(100 * n)}%`)}
+                  ${cell(m.reworkRounds, (n) => n.toFixed(1))}
+                  <td class="num">${m.reverts}</td>
+                  ${cell(m.hardShare, (n) => `${Math.round(100 * n)}%`)}
+                </tr>`,
+              ),
+            )}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-scroll">
+        <table class="table" id="model-review-verdicts">
+          <thead><tr><th>Agent</th><th>Model</th><th>Verdict</th></tr></thead>
+          <tbody>
+            ${r.agents.map(
+              (a) => html`<tr data-agent="${a.username}">
+                <td>${a.username}</td>
+                <td class="mono">${a.model === "" ? "default" : a.model}</td>
+                <td>${a.verdict.kind === "hold"
+                  ? a.verdict.note
+                  : `Would move to ${a.verdict.to}. ${a.verdict.why}`}</td>
+              </tr>`,
+            )}
+          </tbody>
+        </table>
+      </div>
+      ${asked.length === 0
+        ? null
+        : html`<ul class="list" id="model-review-asks">
+            ${asked.map(
+              (c) => html`<li data-change="${c.id}">
+                <div class="row">
+                  <span class="row-main">
+                    <span class="row-title">${names.get(c.agentId) ?? "an agent"}: ${c.fromModel} → ${c.toModel}</span>
+                    <span class="row-meta">${c.why}</span>
+                  </span>
+                  <div class="row-actions">
+                    <form method="post" action="/settings/crew/model-review/${c.id}/take">
+                      ${btn(`Move to ${c.toModel}`, { type: "submit", size: "sm" })}
+                    </form>
+                    <form method="post" action="/settings/crew/model-review/${c.id}/decline">
+                      ${btn("Leave it", { type: "submit", size: "sm", variant: "ghost" })}
+                    </form>
+                  </div>
+                </div>
+              </li>`,
+            )}
+          </ul>`}
+      <div class="table-scroll">
+        <table class="table" id="model-review-trail">
+          <thead><tr><th>When</th><th>Agent</th><th>Change</th><th>State</th><th>Why and result</th></tr></thead>
+          <tbody>
+            ${r.changes.map(
+              (c) => html`<tr data-change="${c.id}">
+                <td>${time(c.createdAt)}</td>
+                <td>${names.get(c.agentId) ?? "an agent"}</td>
+                <td class="mono">${c.fromModel} → ${c.toModel}</td>
+                <td>${c.state}</td>
+                <td>${c.why}${c.result === "" ? "" : ` Result: ${c.result}`}</td>
+              </tr>`,
+            )}
+          </tbody>
+        </table>
+      </div>`,
+    {
+      extra: "mt mb",
+      head: html`${icon("activity")}
+        <h2>Model review</h2>
+        <span class="muted small">Weekly, from the last ${r.windowDays} days of the ledger</span>`,
+    },
+  );
+}
+
+function listAllAgentsByName(ctx: Ctx): [string, string][] {
+  const listed = listAllAgents(ctx.app, ctx.auth.user);
+  return (listed.ok ? listed.value : []).map((a) => [a.user.id, a.user.username]);
+}
+
 interface CrewData {
   scorecards: ReturnType<typeof loadScorecards>;
   spending: ReturnType<typeof loadSpending>;
@@ -582,6 +686,7 @@ function crewView(
       recentSplitScorecards,
     ),
   )}
+  ${when(agents.length > 0, () => modelReviewCard(ctx))}
   ${splitsCard(
     "Per model",
     "Model",
@@ -952,3 +1057,17 @@ export async function agentDelete(ctx: Ctx): Promise<Response> {
       : { tone: "danger" as const, message: "No such agent." }),
   });
 }
+
+// POST /settings/crew/model-review/:id/take and /decline
+export async function modelReviewDecide(ctx: Ctx, take: boolean): Promise<Response> {
+  const form = await adminForm(ctx);
+  if (form instanceof Response) return form;
+  const done = decideChange(ctx.app, ctx.auth.user, ctx.params.id ?? "", take);
+  return flashTo(ctx, "/settings/crew", {
+    ...(done.ok
+      ? { message: take ? `${done.value.toModel} it is.` : "Left as it was." }
+      : { tone: "danger" as const, message: "That change is no longer waiting." }),
+  });
+}
+export const modelReviewTake = (ctx: Ctx) => modelReviewDecide(ctx, true);
+export const modelReviewDecline = (ctx: Ctx) => modelReviewDecide(ctx, false);

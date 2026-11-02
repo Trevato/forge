@@ -4,6 +4,7 @@
  * environment-only — a handful of variables, all with sane defaults.
  */
 
+import { runModelReview } from "./actions/model_review.ts";
 import { BOOT_ACTOR, setSignup, signupFromEnv } from "./settings/signup.ts";
 import { startMemorySampler } from "./boards/memory.ts";
 import { startSampler } from "./boards/sampler.ts";
@@ -601,6 +602,14 @@ const holdTimer = setInterval(() => {
     app.log.warn("hold expiry failed", { error: String(error) });
   }
 }, 60_000);
+// The weekly model review (#7815): settles last week's changes, then proposes this week's; it runs once a week whatever the tick.
+const modelReviewTimer = setInterval(() => {
+  try {
+    runModelReview(app);
+  } catch (error) {
+    app.log.warn("model review failed", { error: String(error) });
+  }
+}, 3_600_000);
 const processTimer = setInterval(processTick, 60_000);
 processTick();
 // A new version proves itself against the public URL; a failed one again, 5 min after and backing off to hourly (release/prove.ts).
@@ -744,6 +753,7 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
   stopClogTick();
   clearInterval(processTimer);
   clearInterval(holdTimer);
+  clearInterval(modelReviewTimer);
   clearInterval(leaseTimer);
   // The platform's SIGTERM: the listener stays open while routers learn
   // this process is going. A person's Ctrl-C does not wait for routers.

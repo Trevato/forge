@@ -36,7 +36,10 @@ export type LimitKey =
   | "signin.per_forge"
   | "signup.per_source"
   | "signup.per_forge"
-  | "api.anonymous_per_source";
+  | "api.anonymous_per_source"
+  | "model_review.auto"
+  | "model_review.min_landed"
+  | "model_review.slack_pct";
 
 export interface LimitDef {
   readonly label: string;
@@ -167,6 +170,30 @@ export const LIMITS: Record<LimitKey, LimitDef> = {
     min: 1,
     max: 100_000,
     reason: "A token's reads are counted by the token; a stranger's have no token to count, so one source reading without one has a ceiling of its own.",
+  },
+  "model_review.auto": {
+    label: "Weekly model review applies a cheaper model on its own",
+    unit: "0 asks first, 1 applies",
+    default: 0,
+    min: 0,
+    max: 1,
+    reason: "A step to a cheaper model is undone if quality falls, but only the owner says whether it may happen unasked; a step up always asks.",
+  },
+  "model_review.min_landed": {
+    label: "Landed pulls a model needs before the weekly review judges it",
+    unit: "pulls",
+    default: 8,
+    min: 3,
+    max: 1_000,
+    reason: "A handful of pulls is luck, not a rate, so a smaller sample changes nothing.",
+  },
+  "model_review.slack_pct": {
+    label: "Red-check rate a cheaper model may be worse by",
+    unit: "percentage points",
+    default: 10,
+    min: 0,
+    max: 100,
+    reason: "Past this the weekly review undoes its own change, so quality is the bar the saving is held to.",
   },
 };
 

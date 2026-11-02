@@ -344,6 +344,8 @@ import {
 import {
   agentCreate,
   agentDelete,
+  modelReviewDecline,
+  modelReviewTake,
   agentPage,
   agentUpdate,
   crewPage,
@@ -983,6 +985,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/settings/crew/:username", agentPage);
   router.add("POST", "/settings/crew/:username", agentUpdate);
   router.add("POST", "/settings/crew/:username/delete", agentDelete);
+  router.add("POST", "/settings/crew/model-review/:id/take", modelReviewTake);
+  router.add("POST", "/settings/crew/model-review/:id/decline", modelReviewDecline);
   // Where an OAuth authorization comes back to. Deliberately a plain route
   // and not an API one: it is a browser redirect, possibly from a phone, and
   // the only thing it carries is a `state` this forge issued minutes ago.
