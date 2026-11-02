@@ -52,6 +52,8 @@ const NOT_A_PAGE: Record<string, string> = {
   "/apple-touch-icon.png": "an icon, not a page",
   "/apple-touch-icon-precomposed.png": "an icon, not a page",
   "/events": "a live event stream that never ends",
+  "/boards": "the list of boards; /board is pictured, and the slot went to the preview seed's repository as its owner (#8865); covered by test/boards-page.test.ts",
+  "/changelog": "the merged changes in words; /releases is pictured, and the slot went to the preview seed's pull as its owner (#8865); covered by test/changelog.test.ts",
   "/migrate": "an import form, nothing to picture until a job runs; the look slot went to /repos",
 };
 
@@ -87,8 +89,11 @@ const topLevel = () =>
     .patterns()
     .filter((p) => p === "/" || /^\/[^/:*]+$/.test(p));
 
-const declared = (): string[] =>
-  JSON.parse(readFileSync(join(import.meta.dir, "..", "forge.json"), "utf8")).app.looks;
+const manifest = (): { looks: string[]; looksAsOwner: string[] } =>
+  JSON.parse(readFileSync(join(import.meta.dir, "..", "forge.json"), "utf8")).app;
+const isTopLevel = (p: string) => p === "/" || /^\/[^/]+$/.test(p);
+/** The top-level pages; a deeper one is the preview seed's, taken as the owner (test/looks-owner.test.ts). */
+const declared = (): string[] => manifest().looks.filter(isTopLevel);
 
 const get = (path: string) =>
   fetch(`${servers.url}${path}`, {
@@ -114,6 +119,15 @@ test("every listed path answers 200 to an admin", async () => {
 });
 
 test("app.looks stays within 24 paths, each once", () => {
-  expect(declared().length).toBeLessThanOrEqual(24);
-  expect(new Set(declared()).size).toBe(declared().length);
+  const { looks } = manifest();
+  expect(looks.length).toBeLessThanOrEqual(24);
+  expect(new Set(looks).size).toBe(looks.length);
+});
+
+test("a look below the top level is the preview seed's, taken as the owner", () => {
+  const { looks, looksAsOwner } = manifest();
+  for (const p of looks.filter((p) => !isTopLevel(p))) {
+    expect(p.startsWith("/preview-admin/sample")).toBe(true);
+    expect(looksAsOwner).toContain(p);
+  }
 });

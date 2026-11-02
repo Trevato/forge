@@ -30,6 +30,12 @@ import { err, ok, type Result } from "../kernel/result.ts";
 export const PREVIEW_ADMIN = "preview-admin";
 /** The repository the admin's pages are about. */
 export const PREVIEW_REPO = "sample";
+/**
+ * The seeded pull's number: two issues come first and share its count.
+ * forge.json `app.looksAsOwner` names its page, so the seed refuses any
+ * other number rather than leave that look on a 404.
+ */
+export const PREVIEW_PULL = 3;
 /** The board whose panels are pinned to home. */
 const PREVIEW_BOARD = "preview";
 const SEEDED = "preview_seeded";
@@ -122,6 +128,7 @@ async function seedWorld(app: App, admin: User): Promise<Result<void, string>> {
     headBranch: "greeting",
   });
   if (!pull.ok) return err(`the pull: ${String(pull.error)}`);
+  if (pull.value.number !== PREVIEW_PULL) return err(`the pull is #${String(pull.value.number)}, not #${String(PREVIEW_PULL)}`);
 
   // A flow week: agent runs that started and spent this week, and a valve
   // turned part way, so /flow has a pipe to draw and one to turn.

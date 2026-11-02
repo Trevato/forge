@@ -8,7 +8,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createHmac } from "node:crypto";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,7 +32,7 @@ import { ok } from "../src/kernel/result.ts";
 import type { Capture, LookInput } from "../src/looks/capture.ts";
 import { startLooks, type LooksHandle } from "../src/looks/service.ts";
 import { previewIdentityKey } from "../src/spawn/preview-owner.ts";
-import { PREVIEW_ADMIN, PREVIEW_REPO, seedPreview } from "../src/spawn/preview-seed.ts";
+import { PREVIEW_ADMIN, PREVIEW_PULL, PREVIEW_REPO, seedPreview } from "../src/spawn/preview-seed.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -182,6 +182,74 @@ describe("a preview hears its parent's admin as the preview admin", () => {
     const production = await forge(undefined);
     expect((await flow(production, identity("admin"))).status).not.toBe(200);
   }, 30_000);
+});
+
+describe("the forge's own owner looks, over the preview seed", () => {
+  // Each page forge.json takes as the owner, and what shows it is not blank (#8865).
+  const repoHome = `/${PREVIEW_ADMIN}/${PREVIEW_REPO}`;
+  const pullPage = `${repoHome}/pulls/${String(PREVIEW_PULL)}`;
+  const KEY = "the-parents-identity-key";
+  let dataDir: string;
+  let app: App;
+  let s: Servers;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-owner-looks-"));
+    app = createApp({ dataDir, port: 0, previewIdentityKey: KEY });
+    const seeded = await seedPreview(app, { FORGE_APP_ENV: "preview" });
+    if (!seeded.ok) throw new Error(seeded.error);
+    s = await serve(app);
+  }, 30_000);
+  afterAll(async () => {
+    s.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  const asOwner = async (path: string) => {
+    const said = `u1|trevato|admin|${String(Date.now() + 60_000)}`;
+    const res = await fetch(`${s.url}${path}`, {
+      headers: { "x-forge-identity": said, "x-forge-signature": createHmac("sha256", KEY).update(said).digest("base64url") },
+      redirect: "manual",
+    });
+    expect(res.status).toBe(200);
+    return res.text();
+  };
+
+  test("forge.json takes home, /flow, the seeded repository and its pull as the owner, desk and phone", () => {
+    const manifest = parseManifest(readFileSync(join(import.meta.dir, "..", "forge.json"), "utf8"), undefined);
+    if (!manifest.ok) throw new Error(JSON.stringify(manifest.error));
+    for (const page of ["/", "/flow", repoHome, pullPage]) {
+      expect(manifest.value.looks).toContain(page);
+      expect(manifest.value.looksAsOwner).toContain(page);
+    }
+    const repo = getRepo(app.db, PREVIEW_ADMIN, PREVIEW_REPO)!;
+    expect(listPulls(app.db, repo.id).map((p) => p.number)).toEqual([PREVIEW_PULL]);
+  });
+
+  test("home holds the pins, and the fragment it fills them from draws them", async () => {
+    expect(await asOwner("/")).toContain('data-refresh="/live/home/panels"');
+    const pins = await asOwner("/live/home/panels");
+    expect(pins).toContain('aria-label="Pinned panels"');
+    expect(pins).toContain("Runs by kind");
+  });
+
+  test("/flow draws a pipe", async () => {
+    expect(await asOwner("/flow")).toContain('class="pipe ');
+  });
+
+  test("the repository's home carries the head's title", async () => {
+    const page = await asOwner(repoHome);
+    expect(page).toContain('<h1 class="repo-title">');
+    expect(page).toContain(`href="${repoHome}">${PREVIEW_REPO}`);
+  });
+
+  test("the pull's page carries the Ship decision", async () => {
+    const page = await asOwner(pullPage);
+    const decide = page.indexOf('id="decide"');
+    expect(decide).toBeGreaterThan(-1);
+    expect(page.slice(decide, decide + 2000)).toMatch(/data-variant="primary"[^>]*>\s*Ship\s*</);
+  });
 });
 
 describe("looks of a public app", () => {
