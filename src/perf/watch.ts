@@ -6,7 +6,7 @@
  */
 
 import { found, type Finding } from "../hunt/finding.ts";
-import { budgetFor } from "./budgets.ts";
+import { budgetFor, gitBudgetFor } from "./budgets.ts";
 import { summarize, WINDOW_MS, type PerfRecord } from "./record.ts";
 
 export { WINDOW_MS };
@@ -49,6 +49,33 @@ export function evaluate(record: PerfRecord, now: number): Finding[] {
         // Stable: the numbers move every tick, the title is how "already open" matches.
         `${pattern} is over its budget: ${phase}`,
         lines.join("\n"),
+      ),
+    );
+  }
+  return out;
+}
+
+/**
+ * A git subcommand whose p95 has been over its `gitBudgetFor` for the window (#8158),
+ * held to the route rule: enough processes, watched most of the window. One
+ * key per subcommand, so one issue.
+ */
+export function evaluateGit(record: PerfRecord, now: number): Finding[] {
+  const out: Finding[] = [];
+  for (const key of record.patterns()) {
+    const budget = gitBudgetFor(key);
+    const stat = summarize(record.traffic(key, now - WINDOW_MS));
+    if (stat === null || stat.n < MIN_REQUESTS || stat.p95 <= budget.p95Ms) continue;
+    if (now - (record.first(key) ?? now) < WINDOW_MS * 0.9) continue;
+    out.push(
+      found(
+        "performance-watcher",
+        key,
+        `${key} is over its budget`,
+        [
+          `Budget: ${budget.words} (${budget.p95Ms} ms), waiting for a permit included.`,
+          `Subcommand: ${key}, ${stat.n} processes in 15 min: p50 ${Math.round(stat.p50)} ms, p95 ${Math.round(stat.p95)} ms, p99 ${Math.round(stat.p99)} ms.`,
+        ].join("\n"),
       ),
     );
   }

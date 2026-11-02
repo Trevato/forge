@@ -1,4 +1,4 @@
-/** Budgets per route pattern, in words with the number beside it (#7559). One file. */
+/** Budgets per route pattern and per git subcommand, in words with the number beside it (#7559, #8158). One file. */
 
 export interface Budget {
   /** The router pattern, or a prefix ending in `*`. */
@@ -23,4 +23,22 @@ export function budgetFor(pattern: string): Budget | undefined {
     BUDGETS.find((b) => b.pattern === pattern) ??
     BUDGETS.find((b) => b.pattern.endsWith("*") && pattern.startsWith(b.pattern.slice(0, -1)))
   );
+}
+
+/** A plumbing git subcommand's budget (#8158): a single process past this at p95 is a queue or a loaded machine. */
+export const GIT_BUDGET: Budget = { pattern: "git *", words: "each git process p95 under 250 ms", p95Ms: 250 };
+
+/**
+ * Subcommands that move or rewrite whole packs are slow on a healthy machine,
+ * so 250 ms would file a finding per subcommand; they are held to 10 s.
+ */
+const HEAVY_GIT = new Set([
+  "clone", "fetch", "pull", "push", "gc", "repack", "pack-objects", "index-pack",
+  "unpack-objects", "archive", "bundle", "upload-pack", "receive-pack", "fsck", "prune",
+]);
+export const HEAVY_GIT_BUDGET: Budget = { pattern: "git *", words: "a pack-moving git process p95 under 10 s", p95Ms: 10_000 };
+
+/** The budget a `git <subcommand>` key is held to. */
+export function gitBudgetFor(key: string): Budget {
+  return HEAVY_GIT.has(key.slice(4)) ? HEAVY_GIT_BUDGET : GIT_BUDGET;
 }

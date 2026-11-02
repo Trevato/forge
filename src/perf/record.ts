@@ -50,12 +50,13 @@ export function percentile(xs: readonly number[], p: number): number | null {
   return sorted[Math.max(1, Math.ceil((p / 100) * sorted.length)) - 1]!;
 }
 
-export function createPerfRecord(): PerfRecord {
+/** `valid` says which keys are kept: route patterns here, `git <subcommand>` in `git.ts`. */
+export function createPerfRecord(valid: (key: string) => boolean = validPattern): PerfRecord {
   const real = new Map<string, Sample[]>();
   const firsts = new Map<string, number>();
   return {
     add(pattern, sample) {
-      if (!validPattern(pattern) || !Number.isFinite(sample.ms) || sample.ms < 0) return;
+      if (!valid(pattern) || !Number.isFinite(sample.ms) || sample.ms < 0) return;
       let list = real.get(pattern);
       if (list === undefined) {
         if (real.size >= MAX_PATTERNS) return;

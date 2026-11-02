@@ -83,9 +83,9 @@ import { reapLeftoverBridges } from "./crew/leftovers.ts";
 import { crewRoot } from "./crew/workdir.ts";
 import { createLog } from "./kernel/log.ts";
 import { watchStalls } from "./kernel/loop_lag.ts";
-import { startPerfWatcher } from "./perf/duty.ts";
+import { startPerfWatcher, TICK_MS } from "./perf/duty.ts";
 import { stallLine } from "./perf/loop.ts";
-import { loopWatch, perfRecord } from "./perf/live.ts";
+import { gitRecord, loopWatch, perfRecord } from "./perf/live.ts";
 import { timeStatements } from "./kernel/slow_sql.ts";
 import { waitForPeer } from "./runs/peer.ts";
 
@@ -305,7 +305,7 @@ loadTrustedHosts(app.db);
 const bootSignup = signupFromEnv(process.env.FORGE_SIGNUP);
 if (bootSignup.ok && bootSignup.value !== null)
   setSignup(app.db, bootSignup.value, BOOT_ACTOR);
-startPerfWatcher(app, perfRecord);
+startPerfWatcher(app, perfRecord, Date.now, TICK_MS, gitRecord);
 const flagTimer = setInterval(() => flushFlagUses(app.db), 10_000);
 await reconcile(app);
 // Issues linked under a pillar's umbrella before pillars had labels.

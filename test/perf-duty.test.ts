@@ -8,6 +8,7 @@ import { listIssues } from "../src/core/issues.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { createUser } from "../src/core/users.ts";
 import { startPerfWatcher } from "../src/perf/duty.ts";
+import { createGitRecord } from "../src/perf/git.ts";
 import { createPerfRecord, WINDOW_MS } from "../src/perf/record.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { proveAll } from "./helpers/verified.ts";
@@ -73,4 +74,13 @@ test("a missing forge repo is skipped quietly", async () => {
   other.close();
   expect(warn).not.toHaveBeenCalled();
   expect(after.n).toBe(before.n);
+});
+test("the watcher files a slow git subcommand once (#8158)", async () => {
+  const git = createGitRecord();
+  for (let i = 0; i < 100; i++)
+    git.add("git rev-parse", { at: now - WINDOW_MS + (i * WINDOW_MS) / 100, ms: 7000, signedIn: false, phases: [] });
+  const stop = startPerfWatcher(app, createPerfRecord(), () => now, 5, git);
+  await Bun.sleep(60);
+  stop();
+  expect(titles().filter((t) => t.startsWith("git "))).toEqual(["git rev-parse is over its budget"]);
 });
