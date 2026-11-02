@@ -230,8 +230,9 @@ describe("what the open web expects", () => {
     expect(section).toContain(`${base}/mcp`);
     expect(section).toContain(`${base}/.well-known/oauth-protected-resource`);
     expect(section).toContain("streamable HTTP");
-    expect(section).toContain("Claude Code plugin");
-    expect(section).toContain("OpenCode plugin");
+    // trevato/forge is not here, so no install line is printed that could not work.
+    expect(section).toContain("Harness plugins: not offered on this forge (their source is private)");
+    expect(section).not.toContain("needs that repository to be public");
   });
 
   test("sitemap and llms.txt are each built once for 50 requests, and a repository made private drops out at once", async () => {

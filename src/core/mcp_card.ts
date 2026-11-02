@@ -6,6 +6,8 @@
  * The MCP server-card format is still a draft, so the card may not match a
  * later standard's field names; when one settles, the card follows it.
  */
+import type { Database } from "bun:sqlite";
+import { getRepo } from "./repos.ts";
 import { running, type Running } from "../kernel/version.ts";
 
 /** The endpoint and the protected-resource metadata that names how to sign in. */
@@ -34,8 +36,14 @@ export interface HarnessPlugin {
   readonly setup: string;
 }
 
-/** The repository that holds the plugins; it must be public on the forge for the lines to work. */
+/** The repository that holds the plugins; the lines are offered only while it is public on this forge. */
 const PLUGIN_REPO = "trevato/forge";
+
+/** Whether the plugin source can be read without a token here, so every printed install line works. */
+export function pluginsOffered(db: Database): boolean {
+  const [owner = "", name = ""] = PLUGIN_REPO.split("/");
+  return getRepo(db, owner, name)?.visibility === "public";
+}
 
 /** The clone URL of that repository on this forge's origin. */
 export function pluginSource(origin: string): string {
@@ -67,7 +75,7 @@ export const HARNESS_PLUGINS: readonly HarnessPlugin[] = [
  * true is named: who answers, where, over what transport, how to sign in,
  * and the one tool that needs no token.
  */
-export function mcpCard(origin: string, now: Running = running()) {
+export function mcpCard(origin: string, offered: boolean, now: Running = running()) {
   const { url, oauth } = mcpPointers(origin);
   return {
     name: "forge",
@@ -79,7 +87,7 @@ export function mcpCard(origin: string, now: Running = running()) {
     documentation: `${origin}/llms.txt`,
     openapi: `${origin}/contract/openapi.json`,
     tokenFreeTools: [...TOKEN_FREE_TOOLS],
-    plugins: HARNESS_PLUGINS.map((p) => ({
+    plugins: (offered ? HARNESS_PLUGINS : []).map((p) => ({
       harness: p.harness,
       path: p.path,
       source: pluginSource(origin),
