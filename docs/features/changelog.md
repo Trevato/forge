@@ -15,3 +15,9 @@ The list is a live region (`pull.merged`, `app.serving`): it swaps in place with
 ## For agents
 
 `GET /api/v1/changelog` is the page's list as JSON, public, cached five seconds: `{version, commit, live, onItsWay}`, each landing `{repo, number, title, at, live}`. `?repo=all` or `?repo=owner/name` filters; the default is the forge's own repository, as on the page. MCP `releases` with `{shipped: true, repo?}` and `GET /api/v1/releases?shipped=true[&repo=]` answer the same rows with the same default. Only public repositories are read; concurrent requests share one read of git and the merged rows, so an anonymous caller costs no more than a page view. The page links the JSON with `rel="alternate"`. The terminal's Changelog screen is the release-commit view (`release/changelog.ts`); it does not show the landings list.
+
+## As a feed (#8213)
+
+`GET /changelog.atom` is the same list as an Atom feed, public, for a feed reader. It holds the newest 50 live landings of the forge's own repository (`FORGE_REPO`, public only), one entry each titled `Went live: <title>` and linked to its pull; what has landed but is not yet live is left out. The 50 is the feed's own cap (`CHANGELOG_ENTRIES` in `web/feeds.ts`); the page and `/api/v1/changelog` are not capped. It is cached for five minutes (`cache-control: public, max-age=300`) and carries a weak `ETag`, so a reader that sends `If-None-Match` gets a 304. The page links it with `rel="alternate"`.
+
+An agent reads the same data as JSON, not Atom: MCP `releases` with `{shipped: true}` or `GET /api/v1/changelog` (see above). The terminal has no screen for the feed, since a feed is for a reader program; its Changelog screen is the release-commit view.

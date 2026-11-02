@@ -135,7 +135,7 @@ import { confirmPage, searchPage } from "../web/pages/search.ts";
 import { chainPage, checkSubmit, modeSubmit, proposeParentSubmit, severSubmit, takeSubmit } from "../web/pages/chain.ts";
 import { followingSubmit } from "../web/pages/following.ts";
 import { reconnectSubmit } from "../web/pages/frozen.ts";
-import { activityAtom } from "../web/feeds.ts";
+import { activityAtom, changelogAtom } from "../web/feeds.ts";
 import { auditCsv, auditPage, auditProbeSubmit } from "../web/pages/audit.ts";
 import { apiPage, appApiPage } from "../web/pages/api.ts";
 import { changelogJson, changelogPage } from "../web/pages/changelog.ts";
@@ -745,6 +745,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/audit", auditPage);
   router.add("GET", "/releases", releasesPage);
   router.add("GET", "/changelog", changelogPage);
+  router.add("GET", "/changelog.atom", changelogAtom);
   router.add("GET", "/:owner/:name/api", appApiPage);
   router.add("POST", "/releases/:sha/rollback", rollbackSubmit);
   router.add("POST", "/releases/hold", releaseHoldSubmit);

@@ -20,7 +20,8 @@ import { listEvents, type ForgeEvent } from "../core/events.ts";
 import { getIssuesByRef } from "../core/issues.ts";
 import { canRead, forkParentFor, getRepo } from "../core/repos.ts";
 import { getUsersByIds } from "../core/users.ts";
-import { notePhase, takeSessionTime, timePhase } from "../core/route_timing.ts";
+import { shippedAnswer } from "../release/answer.ts";
+import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../core/route_timing.ts";
 import type { Ctx } from "../http/context.ts";
 import { notFound } from "../http/respond.ts";
 
@@ -188,4 +189,44 @@ ${entries.join("\n")}
       vary,
     },
   });
+}
+
+const CHANGELOG_ENTRIES = 50;
+
+/**
+ * `GET /changelog.atom`: what went live, as /changelog lists it (the forge's
+ * own repository, public pulls only). Landed-but-not-shipped is left out.
+ */
+export async function changelogAtom(ctx: Ctx): Promise<Response> {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const answer = await timePhaseAsync(ctx.request, "releases", () => shippedAnswer(ctx.app));
+  const origin = ctx.url.origin;
+  const live = answer.live.slice(0, CHANGELOG_ENTRIES);
+  const etag = `W/"${Bun.hash(JSON.stringify([answer.version, live.map((l) => [l.repo, l.number, l.title, l.at])])).toString(36)}"`;
+  const headers = { etag, "cache-control": "public, max-age=300" };
+  if (holds(ctx.request.headers.get("if-none-match"), etag)) return new Response(null, { status: 304, headers });
+  const entries = live.map((l) => {
+    const link = `${origin}/${l.repo}/pulls/${l.number}`;
+    return `  <entry>
+    <id>urn:forge:landing:${xml(l.repo)}#${l.number}</id>
+    <title>${xml(`Went live: ${l.title}`)}</title>
+    <updated>${xml(stamp(l.at))}</updated>
+    <link rel="alternate" type="text/html" href="${xml(link)}"/>
+  </entry>`;
+  });
+  const updated = live[0]?.at ?? new Date(0).toISOString();
+  const body = `<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <id>${xml(origin)}/changelog.atom</id>
+  <title>Changelog</title>
+  <subtitle>What went live</subtitle>
+  <author><name>forge</name></author>
+  <updated>${xml(stamp(updated))}</updated>
+  <link rel="self" type="application/atom+xml" href="${xml(origin)}/changelog.atom"/>
+  <link rel="alternate" type="text/html" href="${xml(origin)}/changelog"/>
+  <generator>forge</generator>
+${entries.join("\n")}
+</feed>
+`;
+  return new Response(body, { headers: { ...headers, "content-type": "application/atom+xml; charset=utf-8" } });
 }

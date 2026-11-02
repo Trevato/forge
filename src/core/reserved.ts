@@ -107,6 +107,7 @@ export const SYSTEM_NAMES: readonly string[] = [
   "sitemap.xml",
   "releases",
   "releases.json",
+  "changelog.atom",
   "sw.js",
   "tell",
   "talk",
