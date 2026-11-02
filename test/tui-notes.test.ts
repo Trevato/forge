@@ -22,7 +22,7 @@ import { repoScreen } from "../src/tui/screens/repo.ts";
 import { local } from "../src/tui/screens/where.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
-import { settleApp } from "./helpers/tui.ts";
+import { settleApp, settlePalette } from "./helpers/tui.ts";
 import { proveAll } from "./helpers/verified.ts";
 
 quietLogs();
@@ -46,7 +46,7 @@ async function palette(user: User, repo: Repo, keys: string[]): Promise<string> 
   await settleApp(tui);
   for (const k of keys) {
     terminal.feed(k);
-    await settleApp(tui);
+    await settlePalette(tui);
   }
   const text = tui.screen.toText();
   tui.stop?.();
