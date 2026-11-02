@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { clearAccountCeiling, daySpent, setAccountCeiling } from "../src/core/account_ceiling.ts";
+import { recordWrite } from "../src/core/conversation_writes.ts";
 import { listTurns, openConversation } from "../src/core/conversations.ts";
 import { monthSpent } from "../src/core/model_grant.ts";
 import { addSubscription, getSubscription, PLATFORM, setGrants, wakeSubscription } from "../src/core/subscriptions.ts";
@@ -172,6 +173,25 @@ describe("a conversation turn", () => {
     // Once: a second boot finds nothing to resume.
     expect(resumeInterrupted(app, options(stub("never", "sess-cut", "answer")))).toHaveLength(0);
     expect(existsSync(join(dir, "never.argv"))).toBe(false);
+  });
+
+  test("a resume carries what the cut turn finished; a fresh message clears it (#8321)", async () => {
+    const stop = new AbortController();
+    const cut = say(app, options(stub("cut2", "sess-cut2", "hang"), stop.signal), alice.id, "close issue 2");
+    while (!existsSync(join(dir, "cut2.first"))) await Bun.sleep(20);
+    const via = `conversation:${openConversation(app.db, alice.id).id}`;
+    const args = { repo: "alice/x", number: 2 };
+    const carried = (v: string): boolean => app.db.query("SELECT 1 FROM conversation_write WHERE via = ?1 AND resumed = 1").get(v) !== null;
+    recordWrite(app.db, via, "close", args);
+    // Not carried yet: the turn is still its own.
+    expect(carried(via)).toBe(false);
+    stop.abort();
+    if (cut.ok) await cut.value.done;
+    await Promise.all(resumeInterrupted(app, options(stub("resumed2", "sess-cut2", "answer"))));
+    expect(carried(via)).toBe(true);
+    const fresh = say(app, options(stub("fresh2", "sess-cut2", "answer")), alice.id, "and again");
+    if (fresh.ok) await fresh.value.done;
+    expect(carried(via)).toBe(false);
   });
 
   test("a person with no account and no admin is refused, and nothing is stored as a run", async () => {

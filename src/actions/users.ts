@@ -260,6 +260,9 @@ export function createToken(
   return ok(minted);
 }
 
+/** Most conversation tokens one person holds alive at once (#8321). */
+export const CONVERSATION_TOKENS_MAX = 30;
+
 /**
  * Mint the token the forge's agent acts with in one conversation: the
  * person's own, rw, expiring within the turn (`core/via_token.ts`), gated to
@@ -273,7 +276,7 @@ export function mintConversationToken(
   app: App,
   actor: User | undefined,
   input: { conversation?: string; words: string },
-): Result<{ id: string; token: string; expiresAt: string; via: string }, "unauthorized" | "invalid_via"> {
+): Result<{ id: string; token: string; expiresAt: string; via: string }, "unauthorized" | "invalid_via" | "rate_limited"> {
   const user = requireUser(actor);
   if (!user.ok) return user;
   const via = `conversation:${input.conversation ?? id()}`;
@@ -285,6 +288,13 @@ export function mintConversationToken(
       .get(via, user.value.id);
     if (!theirs || theirs.n === 0) return err("invalid_via");
   }
+  // A token lives an hour, so what is alive is what one session minted in it.
+  const alive = app.db
+    .query<{ n: number }, [string, string]>(
+      "SELECT COUNT(*) AS n FROM via_token v JOIN token t ON t.id = v.token_id WHERE t.user_id = ?1 AND t.expires_at > ?2",
+    )
+    .get(user.value.id, new Date().toISOString());
+  if (alive !== null && alive.n >= CONVERSATION_TOKENS_MAX) return err("rate_limited");
   const expiresAt = new Date(Date.now() + VIA_TOKEN_MAX_MS).toISOString();
   const minted = mintViaToken(app.db, user.value.id, via, input.words, expiresAt);
   if (!minted.ok) return err("invalid_via");

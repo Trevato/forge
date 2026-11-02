@@ -1224,6 +1224,8 @@ export function apiRoutes(router: Router<Handler>): void {
     });
     if (!minted.ok && minted.error === "invalid_via")
       return apiError("invalid_conversation", 422, "not a conversation of yours");
+    if (!minted.ok && minted.error === "rate_limited")
+      return json({ error: "rate_limited", message: "too many conversation tokens are alive; wait for one to expire" }, 429, { "retry-after": "60" });
     if (!minted.ok) return unauthorized();
     return json(minted.value, 201);
   });

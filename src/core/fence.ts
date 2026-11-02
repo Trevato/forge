@@ -29,7 +29,8 @@ export const WORDS_MAX = 20_000;
  * own addresses — and so are left bare. Every other string in an answer is
  * fenced wherever it sits: a body, a comment, a reason, a label, a branch or
  * file name, a display name. Allow-listed, so a field a tool adds tomorrow
- * is fenced until someone writes it in here.
+ * is fenced until someone writes it in here. `repo` is not on it: the name
+ * is an outsider's to choose.
  */
 export const BARE_KEYS: ReadonlySet<string> = new Set([
   "id",
@@ -46,7 +47,6 @@ export const BARE_KEYS: ReadonlySet<string> = new Set([
   "uri",
   "mimeType",
   "tool",
-  "repo",
   "needs_confirm",
 ]);
 
@@ -56,6 +56,9 @@ const bareKey = (key: string): boolean => BARE_KEYS.has(key) || /[a-z](Id|At)$/.
 /** Keys that hold an address. */
 const ADDRESS_KEYS: ReadonlySet<string> = new Set(["url", "href", "uri"]);
 
+/** What an id, an enum or a timestamp looks like: short, with no space, bracket or quote. */
+const MADE_FORM = /^[A-Za-z0-9_.:/+-]{1,64}$/;
+
 /**
  * A string under a bare key is left bare only while it still looks like one
  * the forge made (#8230): one short run with no space and no bracket, and an
@@ -63,8 +66,8 @@ const ADDRESS_KEYS: ReadonlySet<string> = new Set(["url", "href", "uri"]);
  * someone else chose, is fenced like any other text.
  */
 const bareValue = (key: string, value: string, origin: string | undefined): boolean => {
+  if (!ADDRESS_KEYS.has(key)) return MADE_FORM.test(value);
   if (!/^[^\s[\]]{1,300}$/.test(value)) return false;
-  if (!ADDRESS_KEYS.has(key)) return true;
   return /^\/(?!\/)/.test(value) || (origin !== undefined && value.startsWith(`${origin}/`));
 };
 
@@ -174,6 +177,10 @@ const says = (words: string, w: string): boolean => {
   return false;
 };
 
+/** Whether these words hold `value` as whole words: not inside a longer word ("bug" is not in "debug"). */
+const saysValue = (words: string, value: string): boolean =>
+  new RegExp(`(?<![a-z0-9])${escapeRe(plain(value))}(?![a-z0-9])`).test(words);
+
 /** Whether these words hold the whole number `n` (`12`, `#12`; not `w12`, `121`). */
 const saysNumber = (words: string, n: number): boolean =>
   new RegExp(`(^|[^0-9a-z])${n}($|[^0-9a-z])`).test(words);
@@ -189,7 +196,7 @@ const leaves = (v: unknown): unknown[] =>
  * Whether the person's words name this write. The verb: every word of the
  * tool's name, or every switch it sets (a boolean field, `allowForks` as "allow
  * forks"), not negated. Then every value it is given: the repository's name,
- * every other string as written (a label, a branch, a collaborator, a body),
+ * every other string as written, as whole words (a label, a branch, a collaborator, a body),
  * and every whole number (an issue, a pull, `into`). Strict on purpose: a
  * write it misses is a confirm the person answers, never a write done.
  */
@@ -204,8 +211,7 @@ export function named(words: string, tool: string, args: Record<string, unknown>
     for (const leaf of leaves(v)) {
       if (typeof leaf === "string") {
         const value = k === "repo" ? (leaf.split("/").pop() ?? "") : leaf;
-        if (value !== "" && !said.includes(plain(value))) return false;
-        if (k === "repo" && !says(said, value)) return false;
+        if (value !== "" && !saysValue(said, value)) return false;
       } else if (typeof leaf === "number") {
         if (!Number.isInteger(leaf) || !saysNumber(said, leaf)) return false;
       }

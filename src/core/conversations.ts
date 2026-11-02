@@ -14,6 +14,8 @@ export type TurnRole = (typeof TURN_ROLES)[number];
 
 /** Longest turn text kept, in characters; longer is refused, not cut. */
 export const MAX_TURN_CHARS = 20_000;
+/** Most turns a conversation keeps; each new turn past it pushes the oldest out. */
+export const TURNS_KEPT = 1000;
 export const DEFAULT_PAGE = 50;
 export const MAX_PAGE = 200;
 
@@ -105,6 +107,9 @@ export function appendTurn(
     "INSERT INTO conversation_turn (id, conversation_id, role, text, created_at) VALUES (?1,?2,?3,?4,?5)",
   ).run(row.id, row.conversation_id, row.role, row.text, row.created_at);
   db.query("UPDATE conversation SET updated_at = ?2 WHERE id = ?1").run(conversationId, now);
+  db.query(
+    "DELETE FROM conversation_turn WHERE conversation_id = ?1 AND rowid < (SELECT rowid FROM conversation_turn WHERE conversation_id = ?1 ORDER BY rowid DESC LIMIT 1 OFFSET ?2)",
+  ).run(conversationId, TURNS_KEPT - 1);
   return ok(turnOf(row));
 }
 
