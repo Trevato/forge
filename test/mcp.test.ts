@@ -146,6 +146,34 @@ describe("the forge over MCP", () => {
     expect(get.headers.get("allow")).toBe("POST");
   });
 
+  test("a browser opening /mcp reads what it is; a client still gets the bare 405", async () => {
+    const browser = await fetch(`${base}/mcp`, { headers: { accept: "text/html" } });
+    expect(browser.status).toBe(405);
+    expect(browser.headers.get("allow")).toBe("POST");
+    expect(browser.headers.get("x-content-type-options")).toBe("nosniff");
+    const text = await browser.text();
+    expect(text).toContain("This is the forge's MCP server");
+    expect(text).toContain("/llms.txt");
+    expect(text).toContain("/.well-known/mcp.json");
+    const stream = await fetch(`${base}/mcp`, { headers: { accept: "text/event-stream" } });
+    expect(stream.status).toBe(405);
+    expect(stream.headers.get("allow")).toBe("POST");
+    expect(await stream.text()).toBe("");
+    const bare = await fetch(`${base}/mcp`);
+    expect(bare.status).toBe(405);
+    expect(await bare.text()).toBe("");
+    const anon = await (await fetch(`${base}/mcp`, { headers: { accept: "text/html" } })).text();
+    expect(anon).toContain('href="/signin"');
+    expect(anon).not.toContain('href="/settings/tokens">Settings');
+    const signedIn = await fetch(`${base}/mcp`, {
+      headers: { accept: "text/html", authorization: `Bearer ${rw}` },
+    });
+    expect(signedIn.status).toBe(405);
+    const page = await signedIn.text();
+    expect(page).toContain('<a href="/settings/tokens">Settings › Tokens</a>');
+    expect(page).not.toContain("to make a token");
+  });
+
   test("it speaks the protocol: initialize, a notification, ping, tools/list", async () => {
     const init = await call(rw, "initialize", {
       protocolVersion: "2025-03-26",
