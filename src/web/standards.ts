@@ -254,6 +254,12 @@ export function webManifest(ctx: Ctx): Response {
           method: "GET",
           params: { title: "title", text: "text", url: "url" },
         },
+        // A long-press on the installed icon: what is on the owner, or a
+        // word with the forge's agents, one tap from the home screen.
+        shortcuts: [
+          { name: "On you", short_name: "On you", url: "/asks", icons: [{ src: "/icons/forge-192.png", sizes: "192x192", type: "image/png" }] },
+          { name: "Talk", short_name: "Talk", url: "/talk", icons: [{ src: "/icons/forge-192.png", sizes: "192x192", type: "image/png" }] },
+        ],
         // The default light theme's ground, read from the theme registry
         // so the installed app's splash matches the page it opens on.
         background_color: metaThemeColor("light"),

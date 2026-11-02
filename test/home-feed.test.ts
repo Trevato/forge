@@ -207,6 +207,25 @@ describe("home is the feed", () => {
     expect(owners.map((i) => i.kind).sort()).toEqual(["look", "run"]);
   });
 
+  test("the installed icon's long-press offers On you and Talk, same-origin pages that answer", async () => {
+    const manifest = (await fetch(`${servers.url}/manifest.webmanifest`).then((r) => r.json())) as {
+      shortcuts: { name: string; short_name: string; url: string; icons: { src: string }[] }[];
+    };
+    expect(manifest.shortcuts.map((s) => [s.short_name, s.url])).toEqual([
+      ["On you", "/asks"],
+      ["Talk", "/talk"],
+    ]);
+    for (const s of manifest.shortcuts) {
+      expect(s.icons[0]!.src).toBe("/icons/forge-192.png");
+      expect(new URL(s.url, servers.url).origin).toBe(servers.url);
+      const signedIn = await get(s.url, aliceCookie);
+      expect(signedIn.status).toBe(200);
+      const anon = await fetch(`${servers.url}${s.url}`, { redirect: "manual" });
+      expect(anon.status).toBe(303);
+      expect(anon.headers.get("location")).toBe(`/signin?next=${encodeURIComponent(s.url)}`);
+    }
+  });
+
   test("a phone's share sheet opens the composer with the shared words, escaped, and sends nothing", async () => {
     const manifest = (await fetch(`${servers.url}/manifest.webmanifest`).then((r) =>
       r.json(),
