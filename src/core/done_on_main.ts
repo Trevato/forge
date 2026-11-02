@@ -104,3 +104,17 @@ export function leftNote(number: number, left: readonly string[]): string {
     .slice(0, 3)
     .join("; ")}${left.length > 3 ? "; …" : ""}).`;
 }
+
+/** What the note on an issue left open by a landing starts with (#8482). */
+export const LANDED_LEAD = "Left open after pull #";
+
+/**
+ * The note the issue itself carries when a pull that closes it lands with
+ * boxes unticked: which pull, what is left, and that the crew waits for a
+ * person rather than sending a builder to redo shipped work.
+ */
+export function landedNote(pull: number, left: readonly string[]): string {
+  return `${LANDED_LEAD}${pull} landed: ${left.length} unticked ${left.length === 1 ? "item remains" : "items remain"} (${left
+    .slice(0, 3)
+    .join("; ")}${left.length > 3 ? "; …" : ""}). Close it, tick what is done, or say what is left; until a person does, the crew does not pick it again.`;
+}

@@ -5,7 +5,7 @@
  */
 
 import { addComment as addIssueComment } from "../core/issues.ts";
-import { leftNote, unticked } from "../core/done_on_main.ts";
+import { landedNote, leftNote, unticked } from "../core/done_on_main.ts";
 import { resolveOpen } from "../core/decisions.ts";
 import type { App } from "../app.ts";
 import { landVision } from "../crew/vision.ts";
@@ -465,6 +465,22 @@ export async function mergePull(
           repoId: repo.id,
           actorId: writer.value.id,
           payload: { number: pull.number, body, commentId: noted.value.id },
+        });
+      }
+      // And on the issue, so whoever reads it sees why it is still open;
+      // the picker holds it until a person answers (`crew/landed.ts`).
+      const why = landedNote(pull.number, left);
+      const told = addIssueComment(app.db, {
+        issueId: issue.id,
+        authorId: writer.value.id,
+        body: why,
+      });
+      if (told.ok) {
+        app.bus.append({
+          kind: "issue.commented",
+          repoId: repo.id,
+          actorId: writer.value.id,
+          payload: { number: issue.number, body: why, commentId: told.value.id },
         });
       }
       continue;

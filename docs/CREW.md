@@ -278,7 +278,8 @@ Every tick says why each ready issue a builder cannot start is held, counted
 under the first filter that holds it (`crew/held.ts`): `held: running=1
 open_pull=10 stalled=12 run_cap=11` — a run on it, an open pull proposing it,
 the planner's, found done on main and waiting for a person to close it
-(`done_on_main`, never re-planned), stalled, at its run cap, parked twice, covered by a red-main
+(`done_on_main`, never re-planned), shipped by a merged pull that left boxes
+unticked and waiting for a person to answer (`landed`, `crew/landed.ts`), stalled, at its run cap, parked twice, covered by a red-main
 fix, or a setting's finding. The flow panel on `/boards` draws the same per autonomous app as one
 bar, and the terminal's Flow command prints it as a line per app
 (`flow/held.ts`, kept 5 s). Of the startable, what the owner raised again
