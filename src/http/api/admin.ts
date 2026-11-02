@@ -6,7 +6,7 @@
  */
 
 
-import { DEFAULT_SECONDS, MAX_SECONDS, sampleStacks } from "../../perf/sample.ts";
+import { MAX_SECONDS, sampleStacks } from "../../perf/sample.ts";
 import { listAccounts, removeAccount, retireAndRemoveAccount, retirementPlan, suspendAccount, unsuspendAccount, verifyAccount } from "../../actions/accounts.ts";
 import { ADMIN_WORDS } from "../../actions/admin_words.ts";
 import { changeCapacity, listCapacity } from "../../actions/capacity.ts";
@@ -54,7 +54,8 @@ export function adminRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
-    const asked = Number(ctx.url.searchParams.get("seconds") ?? DEFAULT_SECONDS);
+    // Asked for by name: a sample holds the profiler on, so a bare GET never starts one.
+    const asked = Number(ctx.url.searchParams.get("seconds") ?? Number.NaN);
     if (!Number.isFinite(asked)) return apiError("invalid", 422, `seconds is a number from 1 to ${MAX_SECONDS}`);
     const sampled = await sampleStacks(asked);
     return sampled ? json(sampled) : apiError("busy", 409, "a sample is already running");

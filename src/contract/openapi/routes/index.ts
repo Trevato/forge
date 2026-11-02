@@ -34,6 +34,7 @@ export { route as getApiV1AdminDrills } from "./getApiV1AdminDrills.ts";
 export { route as getApiV1AdminInvites } from "./getApiV1AdminInvites.ts";
 export { route as getApiV1AdminLimits } from "./getApiV1AdminLimits.ts";
 export { route as getApiV1AdminPeople } from "./getApiV1AdminPeople.ts";
+export { route as getApiV1AdminProfile } from "./getApiV1AdminProfile.ts";
 export { route as getApiV1AdminQuotas } from "./getApiV1AdminQuotas.ts";
 export { route as getApiV1AdminSettings } from "./getApiV1AdminSettings.ts";
 export { route as getApiV1AdminTeams } from "./getApiV1AdminTeams.ts";
