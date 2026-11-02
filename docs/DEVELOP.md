@@ -210,12 +210,8 @@ longer hollow turns the check red, so the list only shrinks.
 `bun scripts/hollow.ts` prints the same lines on their own.
 
 
-## Budget tests run last
+## Shards
 
-A test file that calls `expectBudget(` (a call in code, not a mention in a
-comment or string) bounds a speed and only passes with the machine quiet. The
-sharded gate (`scripts/test-shards.ts`) sets those files aside and runs them
-one at a time after every other shard is green; a red shard skips them. The
-rule is `callsBudget` in `scripts/shards.ts`. Each shard also gets its own
+Each shard gets its own
 `TMPDIR` and `FORGE_APP_DATA` (nested under the cell's, when it set one),
 removed when the shard ends.

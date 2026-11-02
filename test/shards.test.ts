@@ -15,8 +15,6 @@ import {
   crashedOutside,
   CRASH_RERUNS,
   quoteCrash,
-  budgetLast,
-  callsBudget,
   failingFiles,
   onlyTestFailures,
   WORKER_MEMORY_BYTES,
@@ -1042,7 +1040,7 @@ describe("every shard runs to the end, and a crashed one once more", () => {
   }, 30_000);
 });
 
-describe("budget files last, and a fixture suite in six shards (#7617)", () => {
+describe("a fixture suite in six shards (#7617)", () => {
   const script = new URL("../scripts/test-shards.ts", import.meta.url).pathname;
   const fixture = (files: Record<string, string>): string => {
     const dir = mkdtempSync(join(tmpdir(), "shards-fixture-"));
@@ -1068,26 +1066,9 @@ describe("budget files last, and a fixture suite in six shards (#7617)", () => {
   };
   const passing = (n: number): string =>
     `import { test } from "bun:test";\ntest("passes ${n}", () => {});\n`;
-  const budgeted = `import { test } from "bun:test";\ntest("budgeted", () => { expectBudget(() => {}, 1); });\nfunction expectBudget(f: () => void, _s: number) { f(); }\n`;
   /** The files named on the `── shard N/M…: files` lines, in the order shards ran. */
   const finished = (stdout: string): string[] =>
     [...stdout.matchAll(/^── shard \d+\/\d+(?: \(exit \d+, [\d.]+s\))?: (.*)$/gm)].map((m) => m[1]!);
-
-  test("callsBudget sees a call, not a mention in a comment or a string", () => {
-    expect(callsBudget("expectBudget(1, 2)")).toBe(true);
-    expect(callsBudget("await expectBudget (x)")).toBe(true);
-    expect(callsBudget("// expectBudget(1)\nlet a = 1")).toBe(false);
-    expect(callsBudget("/* expectBudget(1) */")).toBe(false);
-    expect(callsBudget('const note = "expectBudget is a helper"')).toBe(false);
-    expect(callsBudget(undefined)).toBe(false);
-  });
-
-  test("budgetLast sets aside the files that call expectBudget, in order", () => {
-    const text: Record<string, string> = { "a": "x", "b": "expectBudget(1)", "c": "y", "d": "expectBudget(2)", "e": "// expectBudget(3)" };
-    const got = budgetLast(["a", "b", "c", "d", "e", "gone"], (file) => text[file]);
-    expect(got.rest).toEqual(["a", "c", "e", "gone"]);
-    expect(got.budget).toEqual(["b", "d"]);
-  });
 
   test("twelve files in six shards: the plan has six slices and each file runs exactly once", async () => {
     const names = Array.from({ length: 12 }, (_, i) => `s${i}.test.ts`);
@@ -1111,38 +1092,6 @@ describe("budget files last, and a fixture suite in six shards (#7617)", () => {
     rmSync(dir, { recursive: true, force: true });
     expect(got.code).not.toBe(0);
     expect(got.out).toContain("(fail) the broken one");
-  }, 60_000);
-
-  test("budget files run last, alone, after the others", async () => {
-    const dir = fixture({
-      "a.test.ts": passing(1),
-      "b.test.ts": passing(2),
-      "c.test.ts": passing(3),
-      "slow.test.ts": budgeted,
-    });
-    const got = await run(dir, "4", ["slow.test.ts", "a.test.ts", "b.test.ts", "c.test.ts"]);
-    rmSync(dir, { recursive: true, force: true });
-    expect(got.code).toBe(0);
-    expect(got.out).toContain("1 budget files last");
-    const order = finished(got.stdout);
-    expect(order.at(-1)).toBe("slow.test.ts");
-    expect(order.slice(0, -1).join(" ").split(" ").sort()).toEqual(["a.test.ts", "b.test.ts", "c.test.ts"]);
-  }, 60_000);
-
-  test("a red shard does not skip the budget files: the run is red and nothing crashes", async () => {
-    const dir = fixture({
-      "bad.test.ts": `import { test, expect } from "bun:test";\ntest("the broken one", () => { expect(1).toBe(2); });\n`,
-      "a.test.ts": passing(1),
-      "slow.test.ts": budgeted,
-    });
-    const got = await run(dir, "2", ["bad.test.ts", "a.test.ts", "slow.test.ts"]);
-    rmSync(dir, { recursive: true, force: true });
-    expect(got.code).not.toBe(0);
-    expect(got.out).toContain("(fail) the broken one");
-    expect(got.out).not.toContain("fail-fast");
-    expect(finished(got.stdout).flat().join(" ")).toContain("slow.test.ts");
-    expect(got.out).not.toContain("undefined");
-    expect(got.out).not.toContain("TypeError");
   }, 60_000);
 
   test("each shard gets its own empty FORGE_APP_DATA and TMPDIR, removed after", async () => {

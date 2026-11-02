@@ -188,32 +188,6 @@ export function splitCapped(
   );
 }
 
-/** Whether a test file's code (comments dropped) calls `expectBudget(`. */
-export function callsBudget(text: string | undefined): boolean {
-  if (text === undefined) return false;
-  const code = text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
-  return /\bexpectBudget\s*\(/.test(code);
-}
-
-/**
- * Splits `files` into those that bound a speed (a call to `expectBudget(`, which only
- * passes with the cell quiet enough) and the rest. The runner runs the
- * budget files last, one at a time, after every other shard is done, so the
- * load of the gate's own shards cannot redden them (#7617). `read` returns
- * a file's text; one it cannot read counts as no budget. Each list keeps
- * the input's order.
- */
-export function budgetLast(
-  files: readonly string[],
-  read: (file: string) => string | undefined,
-): { rest: string[]; budget: string[] } {
-  const rest: string[] = [];
-  const budget: string[] = [];
-  for (const file of files)
-    (callsBudget(read(file)) ? budget : rest).push(file);
-  return { rest, budget };
-}
-
 /** How a test file is named: the same rule `scripts/test-shards.ts` uses. */
 export const TEST_FILE = /\.test\.[cm]?[jt]sx?$/;
 
@@ -415,7 +389,7 @@ export function crashedOutside(result: Pick<ShardResult, "code" | "output">): bo
 /**
  * The crashed run's output, kept in the log for whoever reads it, each line
  * behind `  │ ` so nothing that reads the log (the tally, the failing-test
- * list, the budget re-run) counts its reds beside the re-run's.
+ * list) counts its reds beside the re-run's.
  */
 export function quoteCrash(where: string, code: number, output: string): string {
   const lines = output.replace(/\n$/, "").split("\n");

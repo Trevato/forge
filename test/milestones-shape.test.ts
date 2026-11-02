@@ -7,10 +7,10 @@ import { createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { planStamp, readPlan } from "../src/core/milestones.ts";
-import { getIssuesOfRepo } from "../src/core/issues.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
-import { expectBudget } from "./helpers/budget.ts";
+import { expectWork } from "./helpers/work.ts";
+import { statements } from "./helpers/statements.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { proveAll } from "./helpers/verified.ts";
 
@@ -92,23 +92,11 @@ const BEFORE = [
   ["P10 Pillar 10", 198, 180, 18, 36, 0, 63],
 ];
 
-test("a plan of 2,000 closed and 300 open issues, 3,000 pulls and 1,500 runs reads in under 50 ms with the same limbs", async () => {
+test("a plan of 2,000 closed and 300 open issues, 3,000 pulls and 1,500 runs reads in a bounded number of statements with the same limbs", async () => {
   const repo = getRepo(app.db, "alice", "forge")!;
-  // the same run's yardstick: the plan's own first stretch, every issue of the repository read lean, which slows with the machine as the plan does
-  let against = Infinity;
-  for (let n = 0; n < 5; n++) {
-    const t = performance.now();
-    getIssuesOfRepo(app.db, repo.id, "issue", true);
-    against = Math.min(against, performance.now() - t);
-  }
   readPlan(app.db, repo, { spend: true });
-  const times: number[] = [];
-  for (let n = 0; n < 7; n++) {
-    const start = performance.now();
-    readPlan(app.db, repo, { spend: true });
-    times.push(performance.now() - start);
-  }
-  expectBudget(Math.min(...times), { ms: 50, against });
+  // Counted, not timed: the plan is a fixed number of reads however many issues, pulls and runs there are.
+  expectWork(await statements(app.db, () => void readPlan(app.db, repo, { spend: true })), { max: 24 });
   expect(weights(true)).toEqual(BEFORE);
   expect(weights(false).map((w) => w.slice(0, 6))).toEqual(BEFORE.map((w) => w.slice(0, 6)));
 });
@@ -126,9 +114,8 @@ test("a sealed issue is in no limb a viewer cannot see", () => {
 test("the stamp is kept while nothing is written, and moves when an issue is", async () => {
   const repo = getRepo(app.db, "alice", "forge")!;
   const first = planStamp(app.db, repo);
-  const start = performance.now();
   for (let n = 0; n < 20; n++) expect(planStamp(app.db, repo)).toBe(first);
-  expectBudget((performance.now() - start) / 20, { ms: 2, against: 1 });
+  expectWork((await statements(app.db, () => { for (let n = 0; n < 20; n++) planStamp(app.db, repo); })) / 20, { max: 1 });
   expect(openIssue(app, getUserByName(app.db, "alice")!, repo, { title: "Fresh" }).ok).toBe(true);
   expect(planStamp(app.db, repo)).not.toBe(first);
 });

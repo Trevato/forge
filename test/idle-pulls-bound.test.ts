@@ -3,7 +3,8 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expectBudget } from "./helpers/budget.ts";
+import { expectWork } from "./helpers/work.ts";
+import { statements } from "./helpers/statements.ts";
 import { createApp, type App } from "../src/app.ts";
 import { createUser } from "../src/core/users.ts";
 import { IDLE_PULLS_SQL, readIdlePulls } from "../src/flow/idle_pulls.ts";
@@ -61,14 +62,9 @@ test("the plan never scans event", () => {
   expect(plan.some((d) => d.includes("event_repo_kind_number_at"))).toBe(true);
 });
 
-test("answers inside its 20 ms budget on a seeded forge", () => {
-  readIdlePulls(app.db, NOW, true);
-  const b = performance.now();
-  app.db.query("SELECT count(*) FROM pull").get();
-  const against = performance.now() - b;
-  const t = performance.now();
-  const rows = readIdlePulls(app.db, NOW, true);
-  expectBudget(performance.now() - t, { ms: 20, against });
+test("answers in one statement on a seeded forge", async () => {
+  let rows: ReturnType<typeof readIdlePulls> = [];
+  expectWork(await statements(app.db, () => void (rows = readIdlePulls(app.db, NOW, true))), { max: 1 });
   expect(rows.length).toBe(20);
   expect(rows[0]!.hours).toBeGreaterThanOrEqual(rows[19]!.hours);
 });

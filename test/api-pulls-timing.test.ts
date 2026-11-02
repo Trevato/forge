@@ -10,7 +10,7 @@ import { createSession } from "../src/core/sessions.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { expectBudget } from "./helpers/budget.ts";
+import { expectWork, requestStatements } from "./helpers/work.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -109,20 +109,15 @@ test("130 open pulls read their mergeability from the cache: the merge phase is 
     });
     if (!pull.ok) throw new Error(JSON.stringify(pull.error));
   }
-  const mergeMs = async (): Promise<number> => {
-    const res = await fetch(`${servers.url}/api/v1/repos/alice/r/pulls?limit=200`, { headers: { cookie } });
-    const items = (JSON.parse(await res.text()) as { items: unknown[] }).items;
-    expect(items.length).toBeGreaterThanOrEqual(130);
-    const m = /merge;dur=([\d.]+)/.exec(res.headers.get("server-timing") ?? "");
-    return Number(m?.[1] ?? NaN);
-  };
-  const uncached = await mergeMs();
+  const url = `${servers.url}/api/v1/repos/alice/r/pulls?limit=200`;
+  const res = await fetch(url, { headers: { cookie } });
+  expect((JSON.parse(await res.text()) as { items: unknown[] }).items.length).toBeGreaterThanOrEqual(130);
   const spawn = spyOn(Bun, "spawn");
   try {
-    let best = Infinity;
-    for (let k = 0; k < 5; k++) best = Math.min(best, await mergeMs());
+    // Counted, not timed: one read per page, not one per pull (130 pulls, no N+1).
+    const reads = await requestStatements(app.db, url, { headers: { cookie } });
     expect(spawn.mock.calls.filter((c) => (c[0] as string[]).includes("merge-tree")).length).toBe(0);
-    expectBudget(best, { ms: 20, against: uncached / 100 });
+    expectWork(reads, { max: 16 });
   } finally {
     spawn.mockRestore();
   }

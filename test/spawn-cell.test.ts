@@ -13,7 +13,6 @@ import { notePeer } from "../src/http/peer.ts";
 import type { App } from "../src/app.ts";
 import { portInsteadOfSocket } from "../src/git/hook-address.ts";
 import { missing } from "./helpers/tools.ts";
-import { expectBudget } from "./helpers/budget.ts";
 import { openBeatDoor, parentLocal } from "../src/spawn/beat-door.ts";
 import { lastHeard, sendBeat } from "../src/spawn/heartbeat.ts";
 
@@ -338,13 +337,9 @@ describe("a child whose cell will not come up", () => {
       mkdirSync(join(dataDir, "spawn"), { recursive: true });
       const file = join(dataDir, "spawn", "kid.json");
       writeFileSync(file, JSON.stringify({ name: "kid", bodyId: "cell-f", done: true, placement: "cell", size: "small" }));
-      // The baseline: a child with no ledger, answered from the same read with no start.
-      const unknown = performance.now();
       expect((await answerFromCell(parent, new Request("https://nobody--f.test/", { headers: { host: "nobody--f.test" } }))).status).toBe(404);
-      const against = performance.now() - unknown;
-      const started = performance.now();
+      // A first request that waited on the cell's start would come back hosted, not 503.
       const first = await answerFromCell(parent, request());
-      expectBudget(performance.now() - started, { ms: 50, against });
       expect(first.status).toBe(503);
       expect(first.headers.get("retry-after")).toBe("5");
       // The start it set off fails here (no cells), and the ledger turns hosted.

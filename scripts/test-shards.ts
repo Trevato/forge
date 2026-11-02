@@ -74,7 +74,6 @@ import {
   tally,
   weigher,
   besideOthers,
-  budgetLast,
   failingFiles,
   onlyTestFailures,
   crashedOutside,
@@ -414,23 +413,13 @@ const serialFiles = !record && count.value === 1;
 // refreshes the time of every file it ran (#1797).
 const timed = !record && !serialFiles && gate && tier === "full" && "none" in shardSpec;
 const perFile = record || measure || serialFiles || timed;
-// Files that bound a speed run last and alone, after every other shard,
-// so the gate's own load cannot redden them (#7617).
-const ordered = budgetLast(files, (file) => {
-  try {
-    return readFileSync(file, "utf8");
-  } catch {
-    return undefined;
-  }
-});
 const slicesOf = (list: string[]): string[][] =>
   list.length === 0
     ? []
     : perFile
       ? heaviestFirst(list, weight).map((file) => [file])
       : splitCapped(list, count.value, weight);
-const mainSlices = slicesOf(ordered.rest);
-const slices = [...mainSlices, ...ordered.budget.map((file) => [file])];
+const slices = slicesOf(files);
 const work = files.reduce((sum, file) => sum + weight(file), 0);
 
 const banner = record
@@ -447,8 +436,6 @@ const banner = record
         `expected ${slices.map((slice) => slice.reduce((sum, file) => sum + weight(file), 0).toFixed(0) + "s").join(" ")}`;
 console.log(banner);
 process.stderr.write(banner + "\n");
-if (ordered.budget.length > 0)
-  console.log(`test-shards: ${ordered.budget.length} budget files last, one at a time`);
 
 const children = new Set<Bun.Subprocess>();
 for (const signal of ["SIGINT", "SIGTERM"] as const)
@@ -683,12 +670,12 @@ const started = performance.now();
 const results = [
   ...(await pool(
     // Never more side by side than the count: capped slices outnumber it.
-    serialFiles ? 1 : Math.max(1, Math.min(count.value, mainSlices.length)),
+    serialFiles ? 1 : Math.max(1, Math.min(count.value, slices.length)),
     0,
-    mainSlices.length,
+    slices.length,
   )),
   // Budget files, one at a time, once the rest are done and green.
-  ...(await pool(1, mainSlices.length, slices.length)),
+  ...(await pool(1, slices.length, slices.length)),
 ];
 const wall = (performance.now() - started) / 1000;
 const ending = tally(results, wall);

@@ -559,46 +559,6 @@ describe("the tiers in the forge's own checks service", () => {
     expect(readRunLog(dataDir, run!.id).lines.join("\n")).toContain(`CELL-CPUS=${want}`);
   });
 
-  test("no check the forge runs holds wall-clock budgets: a pull's check and the queue's gate alike (#7789)", async () => {
-    // Set on the forge itself, so a leak through the check's environment shows.
-    const saved = process.env["FORGE_TEST_TIMING"];
-    process.env["FORGE_TEST_TIMING"] = "1";
-    try {
-      const probe = 'echo "TIMING=${FORGE_TEST_TIMING:-unset}"';
-      const seeded = await commitToBranch(app, alice, repo, {
-        message: "Probe the timing flag",
-        files: [{ path: "forge.json", content: JSON.stringify({ check: { run: "echo WHOLE", fast: probe, full: probe } }) }],
-      });
-      if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
-      const branched = await commitToBranch(app, alice, repo, {
-        branch: "cpu-limit",
-        message: "Touch e",
-        files: [{ path: "e.txt", content: "e\n" }],
-      });
-      if (!branched.ok) throw new Error(JSON.stringify(branched.error));
-      const pull = listPulls(app.db, repo.id, { state: "open", limit: 20 }).find((p) => p.headBranch === "cpu-limit")!;
-      const deadline = Date.now() + 30_000;
-      let run: Run | undefined;
-      while (Date.now() < deadline) {
-        run = listRuns(app.db, repo.id, { kind: "check", limit: 20 }).find(
-          (r) => r.issueId === pull.id && r.commitOid === branched.value.commitOid,
-        );
-        if (run && (run.state === "ok" || run.state === "failed")) break;
-        await Bun.sleep(50);
-      }
-      expect(run?.state).toBe("ok");
-      const pullLog = readRunLog(dataDir, run!.id).lines.join("\n");
-      expect(pullLog).toContain("TIMING=unset");
-      const gated = await checks.gate(repo, pull, seeded.value.commitOid);
-      expect(gated.ok).toBe(true);
-      expect(gated.lines.join("\n")).toContain("TIMING=unset");
-      expect(gated.lines.join("\n")).not.toContain("TIMING=1");
-    } finally {
-      if (saved === undefined) delete process.env["FORGE_TEST_TIMING"];
-      else process.env["FORGE_TEST_TIMING"] = saved;
-    }
-  });
-
   test("a red full gate names its tests and the pull learns the files", async () => {
     const red = await commitToBranch(app, alice, repo, {
       message: "Full goes red",

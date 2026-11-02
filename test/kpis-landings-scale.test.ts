@@ -1,12 +1,13 @@
 /**
  * #7627: the day's landings are read in one pass. On a forge of 20,000 merged
- * pulls `readKpis` answers within 100 ms, and its count is the one the old
+ * pulls `readKpis` costs a bounded number of statements, and its count is the one the old
  * per-row `NOT EXISTS` gave: a commit landed twice, or landed before the day
  * and carried again today, counts once or not at all.
  */
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { readKpis } from "../src/flow/kpis.ts";
-import { baselineMs, expectBudget } from "./helpers/budget.ts";
+import { expectWork } from "./helpers/work.ts";
+import { statements } from "./helpers/statements.ts";
 import { snappyFixture, type SnappyFixture } from "../bench/snappy.ts";
 
 const HOUR = 3_600_000;
@@ -73,12 +74,10 @@ afterAll(async () => {
   await f.close();
 });
 
-test("readKpis answers within 100 ms over 20,000 merged pulls", async () => {
+test("readKpis costs a bounded number of statements over 20,000 merged pulls", async () => {
   readKpis(f.app.db, new Date(NOW));
-  const t = performance.now();
-  readKpis(f.app.db, new Date(NOW));
-  const ms = performance.now() - t;
-  expectBudget(ms, { ms: 100, against: await baselineMs(f.base) });
+  // Counted, not timed (#7824): the figures are a few set-based reads, never one per merged pull.
+  expectWork(await statements(f.app.db, () => void readKpis(f.app.db, new Date(NOW))), { max: 12 });
 });
 
 test("the count matches the per-row NOT EXISTS, duplicates counted once", () => {

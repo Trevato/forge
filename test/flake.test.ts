@@ -26,8 +26,6 @@ import {
   redFile,
   redIssueFor,
   readRun,
-  TIMING_EXCLUDED,
-  timingFiles,
   retries,
   ROOT_CAUSES,
   shuffled,
@@ -359,7 +357,6 @@ describe("no raw wall-clock budget in a test (#4429)", () => {
     expect(rawBudgets("x", "expect(dur(\"app\")).toBeLessThan(50);")).toHaveLength(1);
     expect(rawBudgets("x", "expect(total).toBeLessThan(50);")).toHaveLength(1);
     expect(rawBudgets("x", "test(`GET /a answers under 50 ms`, () => {});")).toHaveLength(1);
-    expect(rawBudgets("x", "expectBudget(dur(\"app\"), { ms: 50, against });")).toEqual([]);
     expect(rawBudgets("x", "expect(elapsed).toBeLessThan(5_000);")).toEqual([]); // a hang guard
     expect(rawBudgets("x", "expect(res.status).toBeLessThan(400);")).toEqual([]);
     expect(rawBudgets("x", "expect(lines.length).toBeLessThan(20);")).toEqual([]);
@@ -425,46 +422,5 @@ describe("the scheduled run of the files outside the gate", () => {
     expect(redFile("Red: ../x.test.ts")).toBeUndefined();
     expect(redFile("Flaky: test/a.test.ts")).toBeUndefined();
     expect(redFile("Red: test/a.test.ts")).toBe("test/a.test.ts");
-  });
-});
-
-describe("the nightly timing run (#7789)", () => {
-  const run = (file: string, failing: string[] = []) =>
-    readRun(file, 0, failing.length ? 1 : 0, failing.map((f) => `(fail) ${f}`).join("\n"));
-  // Built, not written out, so this file is not itself a budget file.
-  const helper = ["./helpers", "budget.ts"].join("/");
-  const imports = `import { expectBudget } from "${helper}";\n`;
-  const files: Record<string, string> = {
-    "test/a-timing.test.ts": `${imports}expectBudget(dur, { ms: 50, against });\n`,
-    "test/b-mentions.test.ts": 'expect(rawBudgets("x", "expectBudget(dur, { ms: 50, against });")).toEqual([]);\n',
-    "test/c-imports-only.test.ts": `import { baselineMs } from "${helper}";\n`,
-    "test/budget.test.ts": `${imports}expectBudget(150, { ms: 50, against: 5 });\n`,
-  };
-
-  test("holds only files that import the budget helper and call expectBudget, less the helper's own test", () => {
-    expect(TIMING_EXCLUDED).toContain("test/budget.test.ts");
-    expect(timingFiles(Object.keys(files), (f) => files[f]!)).toEqual(["test/a-timing.test.ts"]);
-  });
-
-  test("the real selection names budget files and nothing that merely mentions the name", () => {
-    const picked = timingFiles(presentTests(), (f) => readFileSync(f, "utf8"));
-    expect(picked.length).toBeGreaterThan(0);
-    expect(picked).not.toContain("test/flake.test.ts");
-    for (const f of TIMING_EXCLUDED) expect(picked).not.toContain(f);
-  });
-
-  test("a timing Red: issue says it is a budget and reproduces with timing on", () => {
-    const red = run("test/a-timing.test.ts", ["page"]);
-    const issue = redIssueFor(red, "http://run/2", "timing");
-    expect(issue.title).toBe("Red: test/a-timing.test.ts");
-    expect(issue.body).toContain("wall-clock budget");
-    expect(issue.body).toContain("FORGE_TEST_TIMING=1 FORGE_TEST_QUIET=1 bun test");
-    expect(issue.body).not.toContain("outside the gate");
-  });
-
-  test("flake-hunt names the timing mode in its usage", () => {
-    const out = Bun.spawnSync(["bun", "scripts/flake-hunt.ts", "nope"]);
-    expect(out.exitCode).toBe(2);
-    expect(out.stderr.toString()).toContain("timing [--file-issues]");
   });
 });
