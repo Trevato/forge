@@ -151,7 +151,7 @@ export const mirrorJs = /* js */ `
       paint(job.stage, job.detail);
       if (job.stage === 'done' && job.repo) {
         source.close();
-        location.href = '/' + job.repo.ownerName + '/' + job.repo.name;
+        location.href = list.getAttribute('data-landing') || '/' + job.repo.ownerName + '/' + job.repo.name;
       } else if (job.stage === 'failed') {
         // The page for a failed job carries the reason and a way to retry,
         // and does not stream — so this loads it once, and stops.

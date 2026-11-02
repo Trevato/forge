@@ -422,6 +422,7 @@ function newAppForm(
         </div>
       </form>`,
     )}
+    <p class="muted">Already have an app on another forge? <a href="/bring">Bring it here whole</a>.</p>
   </div>`;
 }
 

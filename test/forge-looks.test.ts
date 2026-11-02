@@ -45,6 +45,7 @@ const NOT_A_PAGE: Record<string, string> = {
   "/theme": "a mutation, answers 404 to a GET",
   "/tell": "answers 404 to a GET",
   "/asks": "redirects to /#needs-you",
+  "/bring": "a form that needs a sign-in and a link to another forge; covered by test/bring.test.ts",
   "/big": "redirects to /board?wall",
   "/pipeline": "four static words on how a change travels; /flow is the page with numbers",
   "/login": "redirects to /signin",

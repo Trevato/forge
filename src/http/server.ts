@@ -410,6 +410,7 @@ import {
   browseRaw,
   browseTree,
 } from "../web/pages/browse.ts";
+import { bringEnvSubmit, bringJobPage, bringPage, bringRun, bringSubmit } from "../web/pages/bring.ts";
 import { pushThrough } from "../origins/push-through.ts";
 import { CAME_FROM_ELSEWHERE, forbiddenPage, notFoundPage, SENT_FROM_ELSEWHERE } from "../web/chrome.ts";
 import { targetForShortCode } from "../origins/oauth.ts";
@@ -768,6 +769,11 @@ export function buildRouter(): Router<Handler> {
   // is registered before /:owner/:name can claim the shape.
   router.add("GET", "/-/confirm", confirmPage);
   router.add("GET", "/new", newRepoPage);
+  router.add("GET", "/bring", bringPage);
+  router.add("POST", "/bring", bringSubmit);
+  router.add("GET", "/bring/:id/:job", bringJobPage);
+  router.add("POST", "/bring/:id/:job/run", bringRun);
+  router.add("POST", "/bring/:id/:job/env", bringEnvSubmit);
   router.add("GET", "/new/issue", newIssueAnywhere);
   router.add("GET", "/repos", myReposPage);
   router.add("GET", "/now/:stage", nowPage);

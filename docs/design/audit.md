@@ -53,6 +53,7 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/board` — `pages/board.ts` (1,231 lines) · every app the viewer can see, with a wall mode · `/boards` (saved queries as panels), `/flow`, `/` · colour 1, sizes 6.
 - `/board/returns` — `pages/returns.ts` · what the window's dollars bought · `/settings/subscriptions` spend tables, `/settings/usage` · none seen.
 - `/big` — `pages/board.ts` (`bigRedirect`) · a redirect kept for old addresses into the board's wall mode · it is `/board` · none (no page of its own).
+- `/bring` — `pages/bring.ts` · bring an app whole from another forge, with its history, as a private linked app · `/new`, the palette · none seen.
 - `/boards` — `pages/boards-view.ts` · saved queries as panels · `/board` · none seen.
 - `/feed` — `studio/home.ts` · the composer and one timeline, what home was before it became the living pipeline (#8015) · `/` · none seen.
 - `/boards/data` — `pages/boards.ts` · the boards' query/data surface · `/board` · none seen.

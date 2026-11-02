@@ -1011,13 +1011,14 @@ const STAGES: { name: MirrorStage; label: string }[] = [
 const ORDER = STAGES.map((s) => s.name);
 
 /** The checklist. Its shape is what `mirrorJs` updates in place. */
-export function stageList(job: MirrorJob, streamUrl: string): Html {
+export function stageList(job: MirrorJob, streamUrl: string, landing = ""): Html {
   return html`<ol
     class="list stages"
     aria-live="polite"
     id="stages"
     data-stream="${streamUrl}"
     data-stage="${job.stage}"
+    ${landing === "" ? null : html`data-landing="${landing}"`}
     data-repo="${job.repo === undefined
       ? ""
       : `/${job.repo.ownerName}/${job.repo.name}`}"

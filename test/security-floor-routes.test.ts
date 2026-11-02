@@ -52,6 +52,7 @@ const HOOK = "needs a webhook, which the seed does not register";
 const UNSEEDED: Record<string, string> = {
   "/:owner/-/teams/:team": ORG,
   "/talk/:id": TALK,
+  "/bring/:id/:job": "needs a bring job of the signed-in person; the seed brings nothing",
   "/:owner/:name/bets/:id": BET,
   "/:owner/:name/looks/:env/:commit/:kind.png": LOOK,
   "/:owner/:name/milestones/:number/limb/:op": LIMB,

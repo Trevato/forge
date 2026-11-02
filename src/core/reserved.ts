@@ -68,6 +68,7 @@ export const SYSTEM_NAMES: readonly string[] = [
   "deploy-to",
   "pipeline",
   "events",
+  "bring",
   "explore",
   "family",
   "favicon.ico",
