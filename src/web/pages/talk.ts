@@ -20,6 +20,7 @@ import { REFUSED, sayNo, sayYes, waitingConfirms } from "../../actions/conversat
 import { DEFAULT_PAGE, lastExchange, listTurns, MAX_PAGE, openConversation, turnsAfter, type Turn } from "../../core/conversations.ts";
 import { contextOf, contextText, dollars, turnCosts, type Context } from "../../core/conversation_cost.ts";
 import { WORDS_MAX } from "../../core/fence.ts";
+import { thinkingOf, worksOf, type Work } from "../../core/talk_work.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { ASKING } from "../../crew/conversation_confirm.ts";
 import { turnRunning, type RedoHow } from "../../crew/conversation.ts";
@@ -78,6 +79,10 @@ const meta = (who: string, at: string): Html =>
 const toolCard = (id: string, says: string, name: string, at: string, set = ""): Html =>
   html`<li class="talk-turn talk-tool${set}" id="${id}"><details><summary>${name.slice(0, 60)} <span class="talk-when">${time(at)}</span></summary><p>${says}</p></details></li>`;
 
+/** The quiet steps line and the links to what the turn opened or changed, under its reply. */
+const workHtml = (work: Work): Html =>
+  html`<p class="talk-steps small muted">${work.steps}</p>${work.links.length === 0 ? null : html`<p class="talk-links small">${work.links.map((l) => html`<a href="${l.href}">${l.label}</a>`)}</p>`}`;
+
 /** What an empty chat offers to start with; each is a link that fills the composer (`?q=`), so it works without the script. */
 const SUGGESTIONS = ["What needs my attention?", "What did the crew do today?", "Show me my apps"] as const;
 
@@ -110,7 +115,7 @@ const contextLine = (c: Context | undefined): Html =>
 const costLine = (usd: number): Html => html`<p class="talk-cost small muted">${dollars(usd)} this turn</p>`;
 
 /** One turn as the page and the stream both draw it; `waiting` is the confirms still open. */
-export function turnHtml(turn: Turn, waiting: ReadonlySet<string>, cost?: number, act?: Html): Html {
+export function turnHtml(turn: Turn, waiting: ReadonlySet<string>, cost?: number, act?: Html, work?: Work): Html {
   const id = `t-${turn.id}`;
   const set = turn.replaced ? " talk-replaced" : "";
   const acts = act === undefined ? null : html`<div class="talk-acts">${act}</div>`;
@@ -128,10 +133,12 @@ export function turnHtml(turn: Turn, waiting: ReadonlySet<string>, cost?: number
   if (turn.role === "agent")
     return html`<li class="talk-turn talk-agent${set}" id="${id}">
       <div class="talk-body prose">${renderMarkdown(turn.text)}</div>
+      ${work === undefined ? null : workHtml(work)}
       ${label("Forge")}
       ${cost === undefined ? null : costLine(cost)}${acts}
     </li>`;
   const data = parse(turn.text);
+  const thought = thinkingOf(turn);
   if (turn.role === "confirm") {
     const confirm = String(data?.["confirm"] ?? "");
     const tool = String(data?.["tool"] ?? "");
@@ -140,6 +147,8 @@ export function turnHtml(turn: Turn, waiting: ReadonlySet<string>, cost?: number
       ${waiting.has(confirm) && !turn.replaced ? confirmButtons(confirm, tool) : html`<p class="muted small">Answered or past its ten minutes.</p>`}
     </li>`;
   }
+  if (thought !== undefined)
+    return html`<li class="talk-turn talk-tool talk-thinking${set}" id="${id}"><details><summary>Thinking <span class="talk-when">${time(turn.createdAt)}</span></summary><p>${thought}</p></details></li>`;
   // A tool turn: the confirm's outcome as JSON, or the call the agent made as text.
   if (data !== undefined && "confirm" in data) {
     const tool = String(data["tool"] ?? "");
@@ -162,6 +171,7 @@ function talkPage(ctx: Ctx, before: string | undefined, prefill: string, edit: b
   const running = clock.running(ctx.app, user.id);
   const costs = turnCosts(ctx.app.db, conversation.id);
   const context = contextOf(ctx.app.db, conversation.id);
+  const works = worksOf(ctx.app.db, user.id, conversation.id, turns);
   // Paging back, the log ends before the newest turn: it does not follow.
   const last = turns.at(-1)?.id ?? "";
   const acts = before === undefined ? exchangeActs(ctx.app.db, user.id, conversation.id, running) : new Map<string, Html>();
@@ -179,7 +189,7 @@ function talkPage(ctx: Ctx, before: string | undefined, prefill: string, edit: b
           ${turns.length === 0
             ? html`<li class="muted talk-turn">Ask the forge anything, or tell it what to change. It acts as you, with your permissions, and asks before anything hard to undo.
                 <span class="talk-suggest">${SUGGESTIONS.map((q) => html`<a class="btn" href="${HERE}?q=${encodeURIComponent(q)}" data-suggest="${q}">${q}</a>`)}</span></li>`
-            : turns.map((t) => turnHtml(t, waiting, costs.get(t.id), acts.get(t.id)))}
+            : turns.map((t) => turnHtml(t, waiting, costs.get(t.id), acts.get(t.id), works.get(t.id)))}
         </ol>
         <div id="end"></div>
       </div>
@@ -291,8 +301,9 @@ export function talkStream(ctx: Ctx): Response {
       const fresh = turnsAfter(app.db, user.id, conversation.id, cursor);
       if (fresh.length > 0) {
         const waiting = new Set(waitingConfirms(ctx, user).map((w) => w.id));
+        const works = worksOf(app.db, user.id, conversation.id, fresh);
         for (const turn of fresh) {
-          emit("turn", { id: turn.id, html: turnHtml(turn, waiting).text }, turn.id);
+          emit("turn", { id: turn.id, html: turnHtml(turn, waiting, undefined, undefined, works.get(turn.id)).text }, turn.id);
           cursor = turn.id;
         }
       }

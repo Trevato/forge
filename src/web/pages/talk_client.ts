@@ -35,6 +35,8 @@ export const talkCss = /* css */ `
 .talk-tool details { border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 2px 10px; }
 .talk-tool summary { cursor: pointer; padding: 6px 0; min-height: 1.5rem; }
 .talk-tool details p { margin: 0 0 8px; white-space: pre-wrap; }
+.talk-steps { margin: 4px 0 0; }
+.talk-links { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 2px 0 0; }
 .talk-suggest { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .talk-suggest .btn { min-height: 2.75rem; }
 .talk-jump { position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); z-index: 9; min-height: 2.75rem; }

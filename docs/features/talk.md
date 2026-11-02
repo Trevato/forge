@@ -55,23 +55,24 @@ Prior art read: Vercel AI Elements (Apache-2.0 React on shadcn; anatomy and beha
 | Tool calls as closed cards | this pull | AI Elements `Tool` |
 | Starter questions on an empty chat (links to `/talk?q=`, so they work without the script) | this pull | AI Elements `Suggestion` |
 | Stick to bottom, "Latest" jump button | this pull | AI Elements `Conversation` |
+| Thinking as one closed line; a steps line under a reply ("read 3 files, opened #12"); links to each issue, pull, file or app the turn opened or changed | this pull | AI Elements `Reasoning`, `ChainOfThought` |
 | Many conversations: new, list, search, rename, archive, URL each | next pull | needs a migration: today one row per person |
 | Edit and resend, regenerate, Retry (see below) | have (#8817) | replaced turns are kept and marked, not deleted |
 | Queue | next pull | needs a queue on `crew/conversation.ts` |
 | Cost under each reply and how full the context is (header, and in the terminal) | this pull | the run's own usage record, never an estimate |
-| Attachments, tables, thinking, plan line | later | need storage / token data / markdown tables |
+| Attachments, tables, plan line | later | need storage / token data / markdown tables |
 | Code highlighting and tables in replies | this pull (#8816) | a reply is stored whole and drawn whole, so no half-open fence is ever tokenised |
 
 **Without the script** the page is a plain form: Enter adds a line, starters are links that prefill the box, and Copy and Latest are not drawn (the script draws them, along with the "Enter sends" hint). The log is `role="log"`; with the script, a new message while you are scrolled up is announced in the status line.
 
 **Cost and context.** Under a finished reply a quiet line gives the turn's dollars (`$0.12 this turn`); above the log, "Context 85% full (170k of 200k tokens)". Both are read from the run's record (`conversation_run`: `cost_usd`, and `context_tokens`/`context_window` from the last message's usage and the result's `modelUsage`), shown by `core/conversation_cost.ts`. When a run names no window, 200k is assumed and the line says so by showing it. From 80 % the line adds that a new conversation answers faster and costs less (information only: there is no way to start another yet, see "Many conversations"). A reply that streams in gets both when the stream ends; the terminal prints the last turn's cost and the share after its confirmation line.
 
-**The terminal** (`ssh <forge> talk <words>`, `forge talk`) sends one line and prints the answer; it has no log, so who/when, copy, tool cards, starters and the jump button do not apply to it. The conversation's whole history is read through `GET /api/v1/conversation/turns`, where every turn carries its role and time.
+**The terminal** (`ssh <forge> talk <words>`, `forge talk`) sends one line and prints the answer; it has no log, so who/when, copy, tool cards, starters and the jump button do not apply to it. `forge talk` prints a thought as one `thinking:` line, then the reply, the steps line and the links as paths (the API's agent turns carry `work: {steps, links}`). The steps line says "opened" for a read issue or pull and "changed" for a tool that writes one (`CHANGES` in `core/talk_work.ts`, held to the MCP tools' `writes` by a test); numbers carry their repo when a turn touched more than one. A reply first on an older page, or first in a stream batch, reads its calls from the turns before the page (`worksOf`), so it says the same on every door. The conversation's whole history is read through `GET /api/v1/conversation/turns`, where every turn carries its role and time.
 
 ## Code, tables and Copy in a reply (#8816)
 
 An agent reply is Markdown, drawn on the server by the same renderer as a README: fenced code is highlighted, tables and links render, and everything else is escaped (a `<script>` in a reply shows as text). A table wider than the column scrolls inside it; the page does not. The reply sits in the column like a person's turn, with none of the README's padding or line measure.
 
-A reply arrives as one finished turn, never as growing text, and the page only appends a turn whose id it has not drawn (a repeat is ignored). Turns already on the page are not touched, so nothing above a new reply moves, and the page follows the end only if you were already there (otherwise "Latest" appears). An unfinished fence in a stored reply is closed for drawing. The page's own bytes are held by a test: the stylesheet under 3.5 KB, the script under 6.5 KB, and a page with a code reply under 40 KB.
+A reply arrives as one finished turn, never as growing text, and the page only appends a turn whose id it has not drawn (a repeat is ignored). Turns already on the page are not touched, so nothing above a new reply moves, and the page follows the end only if you were already there (otherwise "Latest" appears). An unfinished fence in a stored reply is closed for drawing. The page's own bytes are held by a test: the stylesheet under 3.5 KB, the script under 7.4 KB, and a page with a code reply under 40 KB.
 
 **Copy:** each code block and each message has a Copy button, which copies the text, not the markup. The buttons are drawn by the script: with JavaScript off there are none, and the code is still there to select.

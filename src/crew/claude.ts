@@ -57,7 +57,7 @@ export interface ClaudeInput {
   /** The session id, once the init record names it (a restart resumes it). */
   readonly onSession?: ((sessionId: string) => void) | undefined;
   /** What the agent said or called, as each assistant message arrives. */
-  readonly onSaid?: ((said: { readonly kind: "text" | "tool"; readonly text: string }) => void) | undefined;
+  readonly onSaid?: ((said: { readonly kind: "text" | "tool" | "thinking"; readonly text: string }) => void) | undefined;
   /**
    * How long a session may stay silent after a result while its input is
    * still open (a steer was pending) before it is closed and settled as
@@ -368,6 +368,8 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
           const b = (block ?? {}) as Record<string, unknown>;
           if (b["type"] === "text" && typeof b["text"] === "string")
             input.onSaid({ kind: "text", text: b["text"] });
+          else if (b["type"] === "thinking" && typeof b["thinking"] === "string")
+            input.onSaid({ kind: "thinking", text: b["thinking"] });
           else if (b["type"] === "tool_use" && typeof b["name"] === "string")
             input.onSaid({ kind: "tool", text: `${b["name"]} ${JSON.stringify(b["input"] ?? {})}` });
         }

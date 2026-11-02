@@ -12,6 +12,7 @@ import { DEFAULT_PAGE, listTurns, MAX_PAGE, openConversation } from "../../core/
 import { WORDS_MAX } from "../../core/fence.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { scopeAllows } from "../../core/tokens.ts";
+import { worksOf } from "../../core/talk_work.ts";
 import { turnRunning } from "../../crew/conversation.ts";
 import { crossOrigin, type Handler } from "../context.ts";
 import { apiError, boundedBody, forbidden, json, unauthorized } from "../respond.ts";
@@ -67,6 +68,10 @@ export function conversationTalkRoutes(router: Router<Handler>): void {
       limit: turnsLimit(ctx.url.searchParams.get("limit")),
       ...(ctx.url.searchParams.get("before") ? { before: ctx.url.searchParams.get("before")! } : {}),
     });
-    return json({ running: turnRunning(ctx.app, user.id), turns: turns.ok ? turns.value : [] });
+    // An agent turn carries the steps line and links of the calls before it (`core/talk_work.ts`).
+    const all = turns.ok ? turns.value : [];
+    const works = worksOf(ctx.app.db, user.id, conversation.id, all);
+    const shown = all.map((t) => (t.role === "agent" ? { ...t, work: works.get(t.id) ?? null } : t));
+    return json({ running: turnRunning(ctx.app, user.id), turns: shown });
   });
 }

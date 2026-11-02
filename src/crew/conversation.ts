@@ -22,6 +22,7 @@ import { dailyLeft } from "../core/account_ceiling.ts";
 import { appendTurn, lastExchange, listTurns, openConversation, removeTurn, restoreTurns, setAsideFrom, setClaudeSession, type Conversation } from "../core/conversations.ts";
 import { carryWrites, forgetWrites, unended } from "../core/conversation_writes.ts";
 import { cancelHeld, WORDS_MAX } from "../core/fence.ts";
+import { thinkingOf } from "../core/talk_work.ts";
 import { PLATFORM, pickSubscription, type Pick } from "../core/subscriptions.ts";
 import { getUserById } from "../core/users.ts";
 import { mintViaToken, VIA_TOKEN_MAX_MS } from "../core/via_token.ts";
@@ -146,6 +147,9 @@ export const sessionsDir = (dataDir: string, configured?: string): string => {
 /** Claude Code's refusal to resume a session whose file is gone. */
 export const lostSession = (result: string): boolean => /No conversation found with session ID/i.test(result);
 
+/** Most of a thought kept for the page; the rest is not shown. */
+const THINKING_CHARS = 4_000;
+
 const HISTORY_TURNS = 40;
 const HISTORY_TURN_CHARS = 2_000;
 const HISTORY_CHARS = 20_000;
@@ -163,7 +167,8 @@ export function withHistory(app: App, conversation: Conversation, prompt: string
   const before = last !== undefined && last.role === "person" && last.text === prompt ? stored.slice(0, -1) : stored;
   const lines: string[] = [];
   let size = 0;
-  for (const t of before.filter((t) => t.role !== "confirm" && !t.replaced && !t.failed).reverse()) {
+  // A confirm is asked of the person, and a thought is the model's own: neither is replayed.
+  for (const t of before.filter((t) => t.role !== "confirm" && !t.replaced && !t.failed && thinkingOf(t) === undefined).reverse()) {
     const line = `${t.role === "person" ? "Person" : t.role === "agent" ? "You" : "Tool"}: ${t.text.slice(0, HISTORY_TURN_CHARS)}`;
     if (size + line.length > HISTORY_CHARS) break;
     size += line.length;
@@ -408,7 +413,10 @@ function begin(
           },
           onSaid: (said) => {
             if (said.kind === "text") lastText = said.text;
-            if (said.text.trim() !== "") put(said.kind === "text" ? "agent" : "tool", said.text);
+            if (said.text.trim() === "") return;
+            // Thinking is kept as a tool turn of its own shape, so the page can fold it.
+            if (said.kind === "thinking") put("tool", JSON.stringify({ thinking: said.text.slice(0, THINKING_CHARS) }));
+            else put(said.kind === "text" ? "agent" : "tool", said.text);
           },
         });
         const lost = !outcome.ok && lostSession(outcome.result);

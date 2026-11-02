@@ -18,6 +18,8 @@
 - `.talk-copy` — a quiet text button that copies a message or a code block.
 - `.talk-suggest` — the starter questions on an empty chat; each fills the composer.
 - `.talk-jump` — "Latest" button, shown when you have scrolled up from the end.
+- `.talk-steps` — the quiet steps line under a reply ("read 3 files, opened #12").
+- `.talk-links` — the links under a reply to what the turn opened or changed.
 - `.talk-replaced` — a turn the person edited, regenerated or retried past: kept in the log, dimmer, labelled "replaced".
 - `.talk-failed` — the plain-words line for a run that could not answer; Retry sits under it.
 - `.talk-acts` — the row under the last message and last reply holding Edit, Regenerate or Retry; server-drawn, so it works without the script.
