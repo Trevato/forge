@@ -31,7 +31,9 @@ let repo: Repo;
 let n = 0;
 const requested: string[] = [];
 
-const T0 = new Date("2026-11-02T12:00:00.000Z");
+// From the clock, not a date: rows the test makes carry today's real time, and a fixed T0 stops
+// passing once the day reaches it.
+const T0 = new Date();
 const at = (minutes: number) => new Date(T0.getTime() + minutes * 60_000);
 
 beforeAll(async () => {
