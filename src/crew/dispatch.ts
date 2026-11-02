@@ -8,6 +8,7 @@
  * time. A missed wake-up costs a tick, never a run.
  */
 
+import { freshPullFor } from "./fresh_pull.ts";
 import { twinNote, twinOf, type Twin } from "./twin.ts";
 import { NO_MERGE } from "../checks/merged.ts";
 import { resolveListConflicts } from "../actions/list-conflicts.ts";
@@ -359,29 +360,6 @@ function unstickDue(app: App, repo: Repo, issue: Issue): boolean {
   return unstickOwed(app.db, repo, last?.at ?? "");
 }
 
-/** How long after a crew pull opens its issue takes no second build run. */
-export const BUILD_SETTLE_MS = 10 * 60_000;
-
-/** The crew pull opened for the issue within `BUILD_SETTLE_MS`, if any. */
-function freshPullFor(
-  app: App,
-  issue: Issue,
-  agent: Agent,
-): { number: number } | undefined {
-  const since = new Date(Date.now() - BUILD_SETTLE_MS).toISOString();
-  const name = agent.user.username.replace(/[\\%_]/g, "\\$&");
-  return (
-    app.db
-      .query<{ number: number }, [string, string, string, string]>(
-        `SELECT i.number FROM pull p JOIN issue i ON i.id = p.issue_id
-          WHERE i.repo_id = ?1 AND i.created_at > ?2
-            AND (p.head_branch = ?3 OR p.head_branch LIKE ?4 ESCAPE '\\')
-          LIMIT 1`,
-      )
-      .get(issue.repoId, since, `${agent.user.username}/${issue.number}`, `${name}/${issue.number}-%`) ?? undefined
-  );
-}
-
 /** Whether `spentUsd` has reached the repository's daily ceiling: the test that stops a run being queued. */
 export function atCeiling(
   repo: Pick<Repo, "autonomyCeilingUsd">,
@@ -486,7 +464,7 @@ export function queueAgentRun(
     // One build run per issue: a pull opened a moment ago is that run's
     // answer, and a second build beside it is the same work twice.
     if (reason === "assigned") {
-      const fresh = freshPullFor(app, issue, agent);
+      const fresh = freshPullFor(app.db, repo.id, issue.number, [agent.user.username]);
       if (fresh !== undefined) {
         log.info("build run refused: a pull opened in the last 10 minutes", {
           repo: `${repo.ownerName}/${repo.name}`,

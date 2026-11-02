@@ -198,6 +198,33 @@ describe("the tick says why each ready issue cannot start", () => {
     expect(stuckOf(held)).toBeUndefined();
   });
 
+  test("an issue whose pull opened in the last 10 minutes is held, so the next one starts (#8473)", async () => {
+    const { repo, mason } = await crewed(app, alice, "settle");
+    const first = issue(repo, "First in line");
+    const second = issue(repo, "Second in line");
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "# settle\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const headBranch = `mason/${first.number}-first`;
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: headBranch,
+      base: "main",
+      message: "First",
+      files: [{ path: "first.ts", content: "export const n = 1;\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    // The pull names no issue, so only the branch ties it to the first.
+    const pull = await openPull(app, mason, repo, { title: "First", body: "Done.", baseBranch: "main", headBranch });
+    if (!pull.ok) throw new Error(String(pull.error));
+
+    const held = heldNow(app, getRepoById(app.db, repo.id)!);
+    expect(held.by.open_pull.map((i) => i.number)).toEqual([first.number]);
+    expect(held.startable.map((r) => r.issue.number)).toEqual([second.number]);
+    expect(heldWords(held)).toBe("open_pull=1");
+  });
+
   test("a sentinel finding is a builder's to start on the next tick, never parked on the sentinel (#3002)", async () => {
     const { repo, mason } = await crewed(app, alice, "watched");
     const fresh = () => getRepoById(app.db, repo.id)!;
