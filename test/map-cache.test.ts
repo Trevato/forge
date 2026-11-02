@@ -210,21 +210,24 @@ describe("/map after a write", () => {
     const privateName = privateRepo!.split("/")[1]!;
     const privateTitle = "Plan 2 step 0";
 
-    const warmed = await get(servers, "/map", f.ownerCookie);
+    // A lane is drawn when asked for (`?lane=`), so the drawings are asked for.
+    const pubLane = `/map?lane=${pub.ownerName}/${pub.name}`;
+    const privLane = `/map?lane=${privateRepo}`;
+    const warmed = await get(servers, pubLane, f.ownerCookie);
     expect(warmed).toContain("Hidden hole in login");
-    expect(warmed).toContain(privateTitle);
+    expect(await get(servers, privLane, f.ownerCookie)).toContain(privateTitle);
 
-    for (const path of ["/map", "/api/v1/map"]) {
+    for (const path of ["/map", pubLane, privLane, "/api/v1/map"]) {
       const seen = await get(servers, path, f.strangerCookie);
       expect(seen).not.toContain("Hidden hole in login");
       expect(seen).not.toContain(privateTitle);
       expect(seen).not.toContain(privateName);
     }
     // And the other way: the stranger warming first does not hide it from the owner.
-    expect(await get(servers, "/map", f.ownerCookie)).toContain("Hidden hole in login");
+    expect(await get(servers, pubLane, f.ownerCookie)).toContain("Hidden hole in login");
     // Unsealing is a write the doc names: the stranger sees it next.
     if (sealed.ok) setIssueSealed(f.app, owner, pub, sealed.value, false);
-    expect(await get(servers, "/map", f.strangerCookie)).toContain("Hidden hole in login");
+    expect(await get(servers, pubLane, f.strangerCookie)).toContain("Hidden hole in login");
     expect(stranger.id).not.toBe(owner.id);
   });
 });
