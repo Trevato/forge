@@ -310,6 +310,7 @@ describe("the forge over MCP", () => {
       "flags",
       "flow",
       "system",
+      "backups",
       "telemetry_history",
       "contribute",
       "limits",

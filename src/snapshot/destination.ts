@@ -91,6 +91,14 @@ export function clearSealed(db: Database): void {
   for (const name of SEALED_NAMES) deleteSecret(db, "forge", "", name);
 }
 
+/** An error as one short sentence: the target's keys struck out, at most 200 characters. */
+export function scrubReason(target: S3Target | undefined, error: unknown): string {
+  let reason = error instanceof Error ? error.message : String(error);
+  for (const secret of target ? [target.accessKeyId, target.secretAccessKey] : [])
+    if (secret) reason = reason.split(secret).join("…");
+  return reason.slice(0, 200);
+}
+
 /** Does this target answer? One sentence either way, never a key in it. */
 export async function testTarget(target: S3Target): Promise<string> {
   const store = s3Store(target);
@@ -98,9 +106,6 @@ export async function testTarget(target: S3Target): Promise<string> {
     const keys = await store.list("");
     return `Reached ${store.where}: ${keys.length === 1 ? "1 object" : `${keys.length} objects`} listed.`;
   } catch (error) {
-    let reason = error instanceof Error ? error.message : String(error);
-    for (const secret of [target.accessKeyId, target.secretAccessKey])
-      reason = reason.split(secret).join("…");
-    return `Could not list ${store.where}: ${reason.slice(0, 200)}`;
+    return `Could not list ${store.where}: ${scrubReason(target, error)}`;
   }
 }
