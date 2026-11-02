@@ -411,7 +411,7 @@ import {
 } from "../web/pages/settings.ts";
 import { dangerPage, repoDelete } from "../web/pages/danger.ts";
 import { detachSubmit } from "../web/pages/detach.ts";
-import { hooksPage, webhookCreate, webhookDelete } from "../web/pages/hooks.ts";
+import { hooksPage, webhookCreate, webhookDelete, webhookPing } from "../web/pages/hooks.ts";
 import {
   crewAdd,
   crewRemove,
@@ -1545,6 +1545,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/settings/hooks", hooksPage);
   router.add("POST", "/:owner/:name/settings/hooks", webhookCreate);
   router.add("POST", "/:owner/:name/settings/hooks/:id/delete", webhookDelete);
+  router.add("POST", "/:owner/:name/settings/hooks/:id/ping", webhookPing);
   router.add("GET", "/:owner/:name/settings/danger", dangerPage);
   router.add("POST", "/:owner/:name/settings/delete", repoDelete);
   router.add("POST", "/:owner/:name/settings/detach", detachSubmit);

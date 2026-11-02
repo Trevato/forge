@@ -7,7 +7,7 @@
 
 import { createWebhook, deleteWebhook } from "../../actions/repos.ts";
 import { notePhase, timePhase } from "../../core/route_timing.ts";
-import { listWebhooks, recentDeliveries } from "../../core/webhooks.ts";
+import { getWebhook, listWebhooks, pingWebhook, recentDeliveries } from "../../core/webhooks.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase, repoNotFound } from "../chrome.ts";
 import { field } from "../form.ts";
@@ -85,6 +85,9 @@ export function hooksPage(ctx: Ctx): Response {
               head: html`<span class="grow truncate mono" title="${hook.url}"
                   >${hook.url}</span
                 >
+                <form method="post" action="${base}/settings/hooks/${hook.id}/ping">
+                  ${btn("Send ping", { size: "sm" })}
+                </form>
                 <span class="badge" data-variant="secondary"
                   >${hook.kinds}</span
                 >
@@ -186,5 +189,22 @@ export async function webhookDelete(ctx: Ctx): Promise<Response> {
     removed.ok
       ? { message: "Webhook deleted." }
       : { tone: "danger", message: "That webhook no longer exists." },
+  );
+}
+
+export async function webhookPing(ctx: Ctx): Promise<Response> {
+  const gate = await adminForm(ctx);
+  if (gate instanceof Response) return gate;
+  const { repo } = gate;
+  const to = `${repoBase(repo)}/settings/hooks`;
+  const hook = getWebhook(ctx.app.db, repo.id, ctx.params.id ?? "");
+  if (!hook) return flashTo(ctx, to, { tone: "danger", message: "That webhook no longer exists." });
+  const pinged = pingWebhook(ctx.app.db, `${repo.ownerName}/${repo.name}`, hook);
+  return flashTo(
+    ctx,
+    to,
+    pinged.ok
+      ? { message: "Ping queued: it shows among this webhook's deliveries." }
+      : { tone: "danger", message: `Too many pings: try again in ${pinged.error.retryAfter} s.` },
   );
 }

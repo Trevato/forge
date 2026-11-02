@@ -1,7 +1,9 @@
 /**
  * A repository's webhooks in the terminal, an admin's: each hook's url,
  * kinds and last delivery, never its secret. `enter` opens its last 20
- * deliveries; `r` there sends a failed one again through `redeliver`.
+ * deliveries; `r` there sends a failed one again through `redeliver`, and
+ * `p` sends the hook a `ping` through `pingWebhook` (a refusal past the rate
+ * limit says how long to wait).
  * `a` asks for url, kinds and a secret (typed masked, 16–200 characters)
  * and adds it through `createWebhook`; `p` pauses or resumes the selected
  * one through `pauseWebhook` (a paused row reads `paused` and gets no
@@ -15,7 +17,14 @@ import {
   pauseWebhook,
 } from "../../actions/repos.ts";
 import { canAdmin, type Repo } from "../../core/repos.ts";
-import { listWebhooks, recentDeliveries, redeliver, type DeliveryInfo, type Webhook } from "../../core/webhooks.ts";
+import {
+  listWebhooks,
+  pingWebhook,
+  recentDeliveries,
+  redeliver,
+  type DeliveryInfo,
+  type Webhook,
+} from "../../core/webhooks.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import type { Command } from "../app/palette.ts";
 import { binding } from "../app/keys.ts";
@@ -53,7 +62,7 @@ function lastDelivery(f: Session, hook: Webhook): string {
 }
 
 /** One hook's last 20 deliveries, newest first: kind · state · status or reason · attempts. */
-function deliveriesScreen(f: Session, ctx: Ctx, hook: Webhook, allowed: () => boolean): Screen {
+function deliveriesScreen(f: Session, ctx: Ctx, repo: Repo, hook: Webhook, allowed: () => boolean): Screen {
   const state = new ListState();
   let all: DeliveryInfo[] = [];
   return {
@@ -63,6 +72,7 @@ function deliveriesScreen(f: Session, ctx: Ctx, hook: Webhook, allowed: () => bo
       return [
         binding(["j", "k"], "move"),
         binding(["r"], "redeliver", { disabled: !failed }),
+        binding(["p"], "send a ping"),
         binding(["esc", "q"], "back"),
       ];
     },
@@ -97,6 +107,14 @@ function deliveriesScreen(f: Session, ctx: Ctx, hook: Webhook, allowed: () => bo
         const done = redeliver(f.db, d.id, hook.id);
         if (done.ok) ctx.toast("queued again", "success");
         else ctx.toast("that delivery cannot be sent again", "danger");
+        ctx.invalidate();
+        return true;
+      }
+      if (e.key === "p") {
+        const sent = pingWebhook(f.db, `${repo.ownerName}/${repo.name}`, hook);
+        if (sent.ok) ctx.toast("ping queued", "success");
+        else ctx.toast(`too many pings: try again in ${sent.error.retryAfter} s`, "danger");
+        state.index = 0;
         ctx.invalidate();
         return true;
       }
@@ -203,7 +221,7 @@ export function hooksScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       else if (e.key === "enter") {
         const hook = hooks()[state.index];
         if (hook === undefined) return false;
-        ctx.push(deliveriesScreen(f, ctx, hook, allowed));
+        ctx.push(deliveriesScreen(f, ctx, repo, hook, allowed));
       } else if (e.key === "p") {
         const hook = hooks()[state.index];
         if (hook === undefined) return false;

@@ -9,7 +9,7 @@
 import { createWebhook, deleteWebhook } from "../../actions/repos.ts";
 import { canAdmin } from "../../core/repos.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
-import { getWebhook, listWebhooks, recentDeliveries } from "../../core/webhooks.ts";
+import { getWebhook, listWebhooks, pingWebhook, recentDeliveries } from "../../core/webhooks.ts";
 import { loadRepo, pageOf, pageParams } from "../api.ts";
 import type { Handler } from "../context.ts";
 import { body, json, notFound, requireScope, respondAccess, str } from "../respond.ts";
@@ -36,6 +36,23 @@ export function hookRoutes(router: Router<Handler>): void {
     if (!repo || !canAdmin(ctx.app.db, repo, ctx.auth.user)) return notFound();
     if (!getWebhook(ctx.app.db, repo.id, ctx.params.id!)) return notFound();
     return json({ items: recentDeliveries(ctx.app.db, ctx.params.id!, 20) });
+  });
+
+  router.add("POST", "/api/v1/repos/:owner/:name/hooks/:id/ping", (ctx) => {
+    const denied = requireScope(ctx, "admin");
+    if (denied) return denied.status === 403 ? notFound() : denied;
+    const repo = loadRepo(ctx);
+    if (!repo || !canAdmin(ctx.app.db, repo, ctx.auth.user)) return notFound();
+    const hook = getWebhook(ctx.app.db, repo.id, ctx.params.id!);
+    if (!hook) return notFound();
+    const pinged = pingWebhook(ctx.app.db, `${ctx.params.owner}/${ctx.params.name}`, hook);
+    if (!pinged.ok)
+      return json(
+        { error: "rate_limited", message: `too many pings: try again in ${pinged.error.retryAfter} s` },
+        429,
+        { "retry-after": String(pinged.error.retryAfter) },
+      );
+    return json({ id: pinged.value.id }, 202);
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/hooks", async (ctx) => {

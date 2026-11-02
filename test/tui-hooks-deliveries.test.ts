@@ -1,7 +1,8 @@
 /**
  * Enter on a webhook in the terminal's Hooks screen opens its last 20
  * deliveries (#7873): state, status and why it failed, never a secret;
- * esc or q returns to the same row; losing admin closes it.
+ * esc or q returns to the same row; losing admin closes it. `r` redelivers
+ * a failed row (#8075); `p` sends the hook a ping (#7872).
  */
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -11,7 +12,7 @@ import { createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
-import { createWebhook, enqueueForEvent, listWebhooks } from "../src/core/webhooks.ts";
+import { createWebhook, enqueueForEvent, listWebhooks, PING_LIMIT } from "../src/core/webhooks.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { hooksScreen } from "../src/tui/screens/hooks.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
@@ -172,5 +173,34 @@ test("a person who lost admin cannot redeliver with r: the row stays failed", as
   await h.feed("r");
   expect(h.text()).not.toContain("queued again");
   expect(app.db.query("SELECT 1 FROM webhook_delivery WHERE state = 'pending'").get()).toBeNull();
+  h.stop();
+});
+
+test("p sends the hook a ping that shows at once among its deliveries; past the limit it says how long to wait", async () => {
+  const h = open();
+  await h.feed("j", "j", "enter");
+  expect(h.text()).toContain("No deliveries yet.");
+  for (let i = 0; i < PING_LIMIT; i++) {
+    await h.feed("p");
+    expect(h.text()).toContain("ping queued");
+  }
+  expect(h.text()).toMatch(/ping · pending · — · 0/);
+  await h.feed("p");
+  expect(h.text()).toMatch(/too many pings: try again in \d+ s/);
+  const hook = listWebhooks(app.db, repo.id)[2]!;
+  expect(app.db.query("SELECT COUNT(*) AS n FROM webhook_ping WHERE webhook_id = ?1").get(hook.id)).toEqual({
+    n: PING_LIMIT,
+  });
+  h.stop();
+});
+
+test("a person who lost admin cannot ping with p", async () => {
+  const before = (app.db.query("SELECT COUNT(*) AS n FROM webhook_ping").get() as { n: number }).n;
+  const h = open();
+  await h.feed("enter");
+  (h.session as { user: User }).user = bob;
+  await h.feed("p");
+  expect(h.text()).not.toContain("ping queued");
+  expect((app.db.query("SELECT COUNT(*) AS n FROM webhook_ping").get() as { n: number }).n).toBe(before);
   h.stop();
 });

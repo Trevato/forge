@@ -187,6 +187,49 @@ export function enqueueForEvent(db: Database, event: ForgeEvent): number {
   return queued;
 }
 
+/** Pings one hook may be sent in a minute. */
+export const PING_LIMIT = 3;
+const PING_WINDOW_MS = 60_000;
+
+/**
+ * Queue one `ping` delivery for one hook, whatever kinds it subscribes to.
+ * The payload lives on the delivery row, never in the event log, so no feed,
+ * stream or other hook hears of it; the request is made later by `deliverDue`, which keeps the
+ * egress refusal. `retryAfter` is in seconds when the hook was pinged too
+ * often.
+ */
+export function pingWebhook(
+  db: Database,
+  repoSlug: string,
+  hook: Webhook,
+  now = new Date(),
+): Result<{ id: string }, { retryAfter: number }> {
+  const since = new Date(now.getTime() - PING_WINDOW_MS).toISOString();
+  const recent = db
+    .query<{ n: number; first: string | null }, [string, string]>(
+      `SELECT COUNT(*) AS n, MIN(created_at) AS first
+       FROM webhook_ping
+       WHERE webhook_id = ?1 AND created_at > ?2`,
+    )
+    .get(hook.id, since)!;
+  if (recent.n >= PING_LIMIT) {
+    const first = recent.first ? Date.parse(recent.first) : now.getTime();
+    const wait = Math.ceil((first + PING_WINDOW_MS - now.getTime()) / 1000);
+    return err({ retryAfter: Math.max(1, wait) });
+  }
+  const at = now.toISOString();
+  const deliveryId = id();
+  db.query(
+    "INSERT INTO webhook_ping (id, webhook_id, payload, created_at) VALUES (?1, ?2, ?3, ?4)",
+  ).run(
+    deliveryId,
+    hook.id,
+    JSON.stringify({ kind: "ping", repo: repoSlug, hook: hook.id, at }),
+    at,
+  );
+  return ok({ id: deliveryId });
+}
+
 export type RedeliverError = "not_found" | "not_failed" | "sealed";
 
 /**
@@ -244,7 +287,9 @@ function redeliverIn(db: Database, deliveryId: string, webhookId: string): Resul
 interface DueRow {
   id: string;
   webhook_id: string;
-  event_id: string;
+  event_id: string | null;
+  /** True when the row is in `webhook_ping`, not `webhook_delivery`. */
+  ping: boolean;
   attempts: number;
   url: string;
   secret: string;
@@ -271,9 +316,9 @@ export async function deliverDue(
   outbound: OutboundOptions = {},
 ): Promise<number> {
   const nowIso = now.toISOString();
-  const due = db
+  const events = db
     .query<DueRow, [string]>(
-      `SELECT d.id, d.webhook_id, d.event_id, d.attempts,
+      `SELECT d.id, d.webhook_id, d.event_id, 0 AS ping, d.attempts,
               w.url, w.secret,
               e.kind, e.repo_id, e.actor_id, e.payload, e.created_at
        FROM webhook_delivery d
@@ -284,6 +329,20 @@ export async function deliverDue(
        ORDER BY d.id LIMIT 50`,
     )
     .all(nowIso);
+  const pings = db
+    .query<DueRow, [string]>(
+      `SELECT d.id, d.webhook_id, NULL AS event_id, 1 AS ping, d.attempts,
+              w.url, w.secret,
+              'ping' AS kind, NULL AS repo_id, NULL AS actor_id,
+              d.payload, d.created_at
+       FROM webhook_ping d
+       JOIN webhook w ON w.id = d.webhook_id
+       WHERE d.state = 'pending' AND w.active = 1
+         AND (d.next_try_at IS NULL OR d.next_try_at <= ?1)
+       ORDER BY d.id LIMIT 50`,
+    )
+    .all(nowIso);
+  const due = [...events, ...pings].map((r) => ({ ...r, ping: !!r.ping }));
 
   for (const row of due) {
     // Claimed before it is sent: two forge processes over one database (a
@@ -295,7 +354,7 @@ export async function deliverDue(
     const claimAt = Date.now();
     const claimed = db
       .query(
-        `UPDATE webhook_delivery SET next_try_at = ?2
+        `UPDATE ${tableOf(row)} SET next_try_at = ?2
           WHERE id = ?1 AND state = 'pending'
             AND (next_try_at IS NULL OR next_try_at <= ?3)`,
       )
@@ -324,6 +383,11 @@ export async function deliverDue(
   return due.length;
 }
 
+/** Where a due row lives: a ping has its own table, never the event log's. */
+function tableOf(row: DueRow): "webhook_ping" | "webhook_delivery" {
+  return row.ping ? "webhook_ping" : "webhook_delivery";
+}
+
 async function deliverOne(
   db: Database,
   log: Log,
@@ -331,14 +395,18 @@ async function deliverOne(
   now: Date,
   outbound: OutboundOptions,
 ): Promise<void> {
-  const body = JSON.stringify({
-    id: row.event_id,
-    kind: row.kind,
-    repo_id: row.repo_id,
-    actor_id: row.actor_id,
-    payload: JSON.parse(row.payload),
-    created_at: row.created_at,
-  });
+  // A ping's body is its payload as it stands: { kind, repo, hook, at }.
+  const body =
+    row.ping
+      ? row.payload
+      : JSON.stringify({
+          id: row.event_id,
+          kind: row.kind,
+          repo_id: row.repo_id,
+          actor_id: row.actor_id,
+          payload: JSON.parse(row.payload),
+          created_at: row.created_at,
+        });
   const signature = await sign(row.secret, body);
   const attempt = row.attempts + 1;
 
@@ -370,7 +438,7 @@ async function deliverOne(
       // seconds, so there is nothing to retry: fail it now, with the reason.
       log.warn("webhook delivery refused", { delivery: row.id });
       db.query(
-        "UPDATE webhook_delivery SET state = 'failed', attempts = ?1, last_status = NULL, last_error = ?2 WHERE id = ?3",
+        `UPDATE ${tableOf(row)} SET state = 'failed', attempts = ?1, last_status = NULL, last_error = ?2 WHERE id = ?3`,
       ).run(attempt, error.message, row.id);
       return;
     }
@@ -383,7 +451,7 @@ async function deliverOne(
   const ok2xx = status >= 200 && status < 300;
   if (ok2xx) {
     db.query(
-      "UPDATE webhook_delivery SET state = 'ok', attempts = ?1, last_status = ?2, last_error = NULL WHERE id = ?3",
+      `UPDATE ${tableOf(row)} SET state = 'ok', attempts = ?1, last_status = ?2, last_error = NULL WHERE id = ?3`,
     ).run(attempt, status, row.id);
     return;
   }
@@ -401,7 +469,7 @@ function backOff(
   const attempt = row.attempts + 1;
   if (attempt >= MAX_ATTEMPTS) {
     db.query(
-      "UPDATE webhook_delivery SET state = 'failed', attempts = ?1, last_status = ?2 WHERE id = ?3",
+      `UPDATE ${tableOf(row)} SET state = 'failed', attempts = ?1, last_status = ?2 WHERE id = ?3`,
     ).run(attempt, status, row.id);
     log.warn("webhook delivery gave up", {
       delivery: row.id,
@@ -414,7 +482,7 @@ function backOff(
   const delayMs = attempt * attempt * 10_000;
   const nextTry = new Date(now.getTime() + delayMs).toISOString();
   db.query(
-    "UPDATE webhook_delivery SET attempts = ?1, last_status = ?2, next_try_at = ?3 WHERE id = ?4",
+    `UPDATE ${tableOf(row)} SET attempts = ?1, last_status = ?2, next_try_at = ?3 WHERE id = ?4`,
   ).run(attempt, status, nextTry, row.id);
 }
 
@@ -484,9 +552,14 @@ export function recentDeliveries(
       },
       [string, number]
     >(
-      `SELECT d.id, d.state, d.attempts, d.last_status, d.last_error, e.kind
-       FROM webhook_delivery d JOIN event e ON e.id = d.event_id
-       WHERE d.webhook_id = ?1 ORDER BY d.id DESC LIMIT ?2`,
+      `SELECT id, state, attempts, last_status, last_error, kind FROM (
+         SELECT d.id, d.state, d.attempts, d.last_status, d.last_error, e.kind
+         FROM webhook_delivery d JOIN event e ON e.id = d.event_id
+         WHERE d.webhook_id = ?1
+         UNION ALL
+         SELECT id, state, attempts, last_status, last_error, 'ping' AS kind
+         FROM webhook_ping WHERE webhook_id = ?1
+       ) ORDER BY id DESC LIMIT ?2`,
     )
     .all(webhookId, limit);
   return rows.map((r) => ({
