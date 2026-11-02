@@ -36,10 +36,8 @@ import type { Issue } from "../../core/issues.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { cachedLayout } from "../map_cache.ts";
 import { holdsFor } from "../../core/holds.ts";
-import {
-  getRepoById,
-  type Repo,
-} from "../../core/repos.ts";
+import { firstMarksInRepo } from "../../core/first.ts";
+import { canWrite, getRepoById, type Repo } from "../../core/repos.ts";
 import { listActiveRuns, type Run, type RunState } from "../../core/runs.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -960,6 +958,7 @@ function rankedList(
   say: (r: Ranked) => string,
   empty: string,
   issueHref: (base: string, number: number) => string,
+  first?: { writer: boolean; by: ReadonlyMap<string, string> },
 ): Html {
   const base = repoBase(repo);
   return html`<section class="stack-tight">
@@ -973,7 +972,20 @@ function rankedList(
                 href: issueHref(base, r.issue.number),
                 title: r.issue.title,
                 titleAttr: r.issue.title,
-                meta: html`#${r.issue.number} · ${say(r)}`,
+                meta: html`#${r.issue.number} · ${say(r)}${first?.by.has(r.issue.id)
+                  ? ` · first, by ${first.by.get(r.issue.id)}`
+                  : ""}`,
+                ...(first?.writer
+                  ? {
+                      trail: html`<form
+                        method="post"
+                        action="${base}/issues/${r.issue.number}/first"
+                      >
+                        <input type="hidden" name="back" value="${base}/map" />
+                        ${btn("First", { variant: "outline", size: "sm" })}
+                      </form>`,
+                    }
+                  : {}),
               }),
             )}
           </ul>`,
@@ -1444,6 +1456,13 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
                   : `finishing it frees ${r.holdsUp}`,
               "Nothing is ready: everything open waits for something.",
               tellHref,
+              {
+                writer:
+                  ctx.auth.user !== undefined &&
+                  ctx.auth.user.kind !== "agent" &&
+                  canWrite(db, repo, ctx.auth.user),
+                by: new Map([...firstMarksInRepo(db, repo.id)].map(([id, m]) => [id, m.by])),
+              },
             )}
         ${rankedList(
           repo,

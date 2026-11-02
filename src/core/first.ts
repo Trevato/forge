@@ -62,14 +62,23 @@ export function firstAt(db: Database, issueIds: readonly string[]): Map<string, 
   return out;
 }
 
-/** Every rank in one repository. */
-export function firstInRepo(db: Database, repoId: string): Map<string, string> {
-  const out = new Map<string, string>();
+/** Every rank in one repository: when it was put first, and by whom (username). */
+export function firstMarksInRepo(
+  db: Database,
+  repoId: string,
+): Map<string, { at: string; by: string }> {
+  const out = new Map<string, { at: string; by: string }>();
   for (const r of db
-    .query<{ issue_id: string; at: string }, [string]>(
-      `SELECT f.issue_id, f.at FROM issue_first f JOIN issue i ON i.id = f.issue_id WHERE i.repo_id = ?1`,
+    .query<{ issue_id: string; at: string; username: string }, [string]>(
+      `SELECT f.issue_id, f.at, u.username FROM issue_first f
+       JOIN issue i ON i.id = f.issue_id JOIN user u ON u.id = f.actor_id WHERE i.repo_id = ?1`,
     )
     .all(repoId))
-    out.set(r.issue_id, r.at);
+    out.set(r.issue_id, { at: r.at, by: r.username });
   return out;
+}
+
+/** Every rank in one repository, as when each was put. */
+export function firstInRepo(db: Database, repoId: string): Map<string, string> {
+  return new Map([...firstMarksInRepo(db, repoId)].map(([id, m]) => [id, m.at]));
 }

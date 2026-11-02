@@ -241,6 +241,7 @@ import { issuePicture } from "../web/studio/picture.ts";
 import { tellHerePage } from "../web/studio/tell_here.ts";
 import { globalMapPage } from "../web/pages/global-map.ts";
 import { mapPage } from "../web/pages/map.ts";
+import { firstSubmit } from "../web/pages/first.ts";
 import {
   milestonePage,
   milestonesPage,
@@ -1199,6 +1200,7 @@ export function buildRouter(): Router<Handler> {
     dependencySubmit,
   );
   router.add("GET", "/:owner/:name/map", mapPage);
+  router.add("POST", "/:owner/:name/issues/:number/first", firstSubmit);
   router.add("GET", "/:owner/:name/milestones", milestonesPage);
   router.add("GET", "/:owner/:name/milestones/:number", milestonePage);
   router.add("POST", "/:owner/:name/milestones/:number/watch", milestoneWatch);
