@@ -83,9 +83,10 @@ describe("MCP backups", () => {
 
   test("a listing that fails is a short sentence with no key in it", async () => {
     const secret = "SECRETKEY-do-not-leak";
-    // An endpoint that is not a URL: the store throws at once and, as it is
-    // told, echoes what it was given.
-    const env = { S3_ENDPOINT: `not a url ${secret}`, S3_BUCKET: "b", S3_ACCESS_KEY: "ACCESSKEY-do-not-leak", S3_SECRET_KEY: secret };
+    // A loopback store that answers 500 at once and echoes the key in its
+    // body: the verdict rests on our code, not on how Bun parses a bad URL.
+    const fake = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response(`boom ${secret} ACCESSKEY-do-not-leak`, { status: 500 }) });
+    const env = { S3_ENDPOINT: `http://127.0.0.1:${fake.port}`, S3_BUCKET: "b", S3_ACCESS_KEY: "ACCESSKEY-do-not-leak", S3_SECRET_KEY: secret };
     delete process.env["FORGE_SNAPSHOT_DIR"];
     Object.assign(process.env, env);
     try {
@@ -101,6 +102,7 @@ describe("MCP backups", () => {
     } finally {
       for (const k of Object.keys(env)) delete process.env[k];
       process.env["FORGE_SNAPSHOT_DIR"] = snapDir;
+      await fake.stop(true);
     }
   }, 20_000);
 
