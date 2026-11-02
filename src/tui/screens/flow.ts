@@ -43,6 +43,7 @@ import { buildYieldSays } from "../../flow/build_yield.ts";
 import { reviewLatencySays } from "../../flow/review_latency.ts";
 import type { Opener } from "../../flow/openers.ts";
 import { clogLines, readClog } from "../../flow/clog_read.ts";
+import { readRepeats } from "../../flow/repeats.ts";
 import { readVerdicts } from "../../flow/culprits.ts";
 import { readQueues, redBatchWords } from "../../flow/queue.ts";
 import { reviewingSays } from "../../flow/reviewing.ts";
@@ -134,6 +135,7 @@ export function flowLines(
       ? []
       : wrap(`Red batches, last hour: ${red.map((q) => `${q.repo} ${redBatchWords(q)}`).join(", ")}.`, inner)),
     ...verdictLines(readVerdicts(db, now, agent !== undefined), inner),
+    ...repeatLines(readRepeats(db, "", now, agent !== undefined), inner),
     ...(lane === null ? [] : ["", ...wrap(`Rebases: ${lane}.`, inner)]),
     ...(conflicted === null ? [] : ["", ...wrap(conflicted, inner)]),
     ...idleLines(fig.idle, inner),
@@ -161,6 +163,12 @@ export function verdictLines(v: ReturnType<typeof readVerdicts>, inner: number):
       truncate(`  ${r.repo}${r.pull === null ? "" : `#${r.pull}`} ${r.kind} (${r.why}) · ${r.action}${r.tests[0] === undefined ? "" : ` · ${r.tests[0]}`}`, inner),
     ),
   ];
+}
+
+/** What reviewers repeated (#8716): the line, only once a finding was proposed or a review comment seen. */
+export function repeatLines(r: ReturnType<typeof readRepeats>, inner: number): string[] {
+  if (r.proposed === 0 && r.thisWeek.comments === 0 && r.lastWeek.comments === 0) return [];
+  return ["", ...wrap(`Review repeats: ${r.says}.`, inner)];
 }
 
 /** Gates shown under each repository's queue line. */

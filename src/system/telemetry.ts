@@ -5,6 +5,7 @@
  * node's history. Everything here is counts, rates and names of public
  * things — no sealed value, no private repository's content, no person.
  */
+import { readRepeats } from "../flow/repeats.ts";
 import { readVerdicts } from "../flow/culprits.ts";
 import type { App } from "../app.ts";
 import { SOURCES } from "../boards/sources.ts";
@@ -53,6 +54,8 @@ export function flowFor(app: App, reader: Reader, now = new Date()) {
     vitals: { says: vitalsLine(vitals), misses: vitalsMisses(vitals), ...vitals },
     // What the last red batches were: the pull named and returned with its failing tests, or a load red (#7639).
     redBatches: readVerdicts(app.db, now, reader.kind === "agent"),
+    // Findings reviewers repeated, proposed as checks and retired, beside review comments per pull (#8716).
+    reviewRepeats: readRepeats(app.db, "", now, reader.kind === "agent"),
     // The four alarms (#5930) that are firing now; empty when none is.
     alarms: firedAlarms(app.db, now, { publicOnly: reader.kind === "agent" }),
     // Review runs in flight per reviewer, cut to public repositories for an agent (#4733).

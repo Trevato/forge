@@ -131,6 +131,7 @@ import { recheckRedApproved } from "./red_approved.ts";
 import { sweepStaleReds } from "./stale_reds.ts";
 import { parkPull, strikeNote } from "./park_pull.ts";
 import { keepVerdict } from "../flow/culprits.ts";
+import { sweepRepeats } from "./repeat_checks.ts";
 import { keepBatch } from "../flow/red_batches.ts";
 import { recordQueueFlakes } from "../checks/flake.ts";
 import { readVitals, vitalsMisses, vitalsWords } from "../flow/vitals.ts";
@@ -1253,6 +1254,12 @@ export async function autonomyTick(
           error: String(error),
         });
       });
+      // What reviewers keep asking for becomes an issue to automate it (#8716).
+      try {
+        sweepRepeats(app, current, now);
+      } catch (error) {
+        log.error("repeat check sweep failed", { repo: `${repo.ownerName}/${repo.name}`, error: String(error) });
+      }
       // Before the picks: a pull a reviewer answered is finished before new
       // work takes the slots it needs (#2172).
       const requested = await moveRequested(app, current, freeSlots(app, current, now), now);
