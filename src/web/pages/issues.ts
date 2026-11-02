@@ -13,6 +13,7 @@ import {
 import type { Issue } from "../../core/issues.ts";
 import { canRead, type Repo } from "../../core/repos.ts";
 import { privateRepoForSealed } from "../../actions/repos.ts";
+import { sealedWords, sealRefusedWords } from "../../actions/seal_issue_words.ts";
 import { BODY_TOO_LONG, TITLE_TOO_LONG } from "../../actions/thread_limits_words.ts";
 import { COMMENT_EMPTY, COMMENT_NOT_POSTED } from "../../actions/comment_words.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
@@ -233,18 +234,8 @@ export async function issueSealSubmit(ctx: Ctx): Promise<Response> {
     ctx,
     dest,
     done.ok
-      ? {
-          message: sealed
-            ? "Sealed: only people who can write here and the crew see it now."
-            : "Unsealed: everyone who can read this repository sees it now.",
-        }
-      : {
-          tone: "danger",
-          message:
-            done.error === "mirrored"
-              ? "A mirror's issues live on its origin, in the open: nothing here can be sealed."
-              : "Only someone who can write here seals or unseals.",
-        },
+      ? { message: sealedWords(sealed) }
+      : { tone: "danger", message: sealRefusedWords(done.error) },
   );
 }
 

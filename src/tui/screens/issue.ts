@@ -22,8 +22,10 @@ import {
   mayEditIssue,
   setIssueLabelsThrough,
   setIssueStateThrough,
+  setIssueSealed,
   TAKEN_UP,
 } from "../../actions/issues.ts";
+import { sealedWords, sealRefusedWords } from "../../actions/seal_issue_words.ts";
 import {
   dependencyWords,
   linkIssue,
@@ -419,6 +421,41 @@ export function issueScreen(
     });
   };
 
+  /** `S` — seal or unseal this report, after a confirm that says who will see it. */
+  const seal = (): void => {
+    const at = row();
+    if (at?.issue === undefined) return;
+    const { repo: target, issue } = at;
+    const sealed = !issue.sealed;
+    ctx.push(
+      confirmScreen(ctx, screen, {
+        title: sealed ? "Seal this report?" : "Unseal this report?",
+        body: [
+          sealed
+            ? `Seal #${issue.number}? Only people who can write here and the crew will see it.`
+            : `Unseal #${issue.number}? Everyone who can read ${target.ownerName}/${target.name} sees it and its fix.`,
+        ],
+        actions: [
+          // Unsealing shows the report and its fix to every reader: the danger button.
+          { label: sealed ? "Seal" : "Unseal", variant: sealed ? "default" : "danger" },
+          { label: "Cancel", variant: "ghost" },
+        ],
+        selected: 1,
+        width: 90,
+        onChoose: (index) => {
+          if (index !== 0) return;
+          const done = setIssueSealed(f.app, f.user, target, issue, sealed);
+          if (!done.ok) {
+            ctx.toast(sealRefusedWords(done.error), "danger");
+            return;
+          }
+          ctx.toast(sealedWords(sealed), "success");
+          runAsync(ctx, reload);
+        },
+      }),
+    );
+  };
+
   /**
    * `w` — a number to wait for. A new one links it; one it already waits
    * for asks first, then stops the wait. Refusals in `dependencyWords`.
@@ -510,6 +547,7 @@ export function issueScreen(
               binding(["t"], "teams"),
               ...(mayGoAhead() ? [binding(["g"], "go ahead")] : []),
               binding(["w"], "waits for"),
+              binding(["S"], issueRow?.sealed === true ? "unseal" : "seal"),
               ...(issueRow?.sealed === true
                 ? [binding(["p"], "private repo")]
                 : []),
@@ -787,6 +825,10 @@ export function issueScreen(
       }
       if (e.key === "w" && mayWrite()) {
         waitFor();
+        return true;
+      }
+      if (e.key === "S" && mayWrite()) {
+        seal();
         return true;
       }
       if (e.key === "p" && mayWrite()) {
