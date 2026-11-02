@@ -508,6 +508,8 @@ How it works and how to turn it on: [`docs/features/release-keeper.md`](docs/fea
 
 `/changelog` lists the last 30 releases of `FORGE_REPO` (public only) with their pulls, for anyone; the terminal's palette has `Changelog` for the same list. In the terminal, `/` takes a word and keeps the releases whose version or pull titles contain it (`esc` clears it); Enter on a release lists its pulls, and Enter on a pull opens it (`docs/features/changelog.md`).
 
+The web changelog's days and its "shipped today" count follow the reader's clock: a small script regroups the server-rendered cards into the browser's own days (Today, Yesterday, then a date) at load and after each live swap. With no script the days are UTC and the page says UTC. The script runs at `DOMContentLoaded`, before the first paint of this small page, and rebuilds the cards from the first one, so only the UTC mark leaves; that shift is accepted. `happy-dom` is a dev dependency, used only by the test that runs this script against a DOM.
+
 A repository admin cuts a wave from two doors, both through `cutWaveFor` (`src/actions/cut_wave.ts`): Settings → *Cut a wave*, and `c` on the terminal's waves screen, which says how many pulls would go in, asks `cut wave N? y/n` (`y` and `n` choose outright) and shows the draft pull's number (Enter opens it). Each opens a draft pull listing the pulls merged since the last wave; nothing merged, an earlier wave that does not parse, or a viewer who is not an admin is refused in the action's words, writing nothing.
 
 Cmd-K finds a repository by its name first (exact, then prefix; your own ahead); a repository with an app has an "Open the app of …" option under it, and Cmd/Ctrl+Enter on the repository opens the app (`docs/features/cmd-k-repositories.md`).

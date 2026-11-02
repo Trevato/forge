@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, setSystemTime, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -238,5 +238,96 @@ describe("changelog page", () => {
     app.db.run("UPDATE pull SET merged_at = NULL");
     const body = await (await fetch(`${servers.url}/changelog`)).text();
     expect(body).toContain("Nothing has shipped yet");
+  });
+});
+
+describe("changelog days follow a time zone", () => {
+  const landing = (at: string) => ({ repo: "a/forge", number: 1, title: "Late merge", at, commit: "" }) as any;
+  const read = (at: string) => ({ live: [landing(at)], onItsWay: [], version: "1", commit: null, own: "a/forge" }) as any;
+  // 6:30 pm on 1 Nov in Chicago (UTC-5 after the clocks went back) is already 2 Nov in UTC.
+  const at = "2026-11-01T23:30:00.000Z";
+  const now = new Date("2026-11-02T00:10:00.000Z");
+
+  test("a merge late in the day west of UTC is today there, and the next day in UTC", async () => {
+    const { shippedRegion } = await import("../src/web/pages/changelog.ts");
+    const west = String(shippedRegion(read(at), "all", now, "America/Chicago"));
+    expect(west).toContain(">Today<");
+    expect(west).toContain('data-day="2026-11-01"');
+    expect(west).toContain("1 shipped today.");
+    expect(west).not.toContain("(UTC)");
+    expect(west).not.toContain("· UTC");
+    const utc = String(shippedRegion(read(at), "all", new Date("2026-11-02T10:00:00.000Z")));
+    expect(utc).toContain(">Yesterday<");
+    expect(utc).toContain("(UTC)");
+    expect(utc).toContain("data-zone");
+  });
+
+  test("headings read Today, Yesterday, then a date", async () => {
+    const { dayHeading, dayOf, daysJs } = await import("../src/release/days.ts");
+    expect(dayHeading("2026-11-02", "2026-11-02")).toBe("Today");
+    expect(dayHeading("2026-11-01", "2026-11-02")).toBe("Yesterday");
+    expect(dayHeading("2026-10-30", "2026-11-02")).toBe("Fri 30 Oct");
+    expect(dayHeading("2025-12-31", "2026-01-01")).toBe("Yesterday");
+    expect(dayHeading("2025-12-30", "2026-01-01")).toBe("Tue 30 Dec 2025");
+    expect(dayOf(at, "America/Chicago")).toBe("2026-11-01");
+    expect(dayOf(at, "UTC")).toBe("2026-11-01");
+    expect(dayOf("2026-11-02T01:30:00Z", "America/Chicago")).toBe("2026-11-01");
+    expect(dayOf("2026-11-02T01:30:00Z", "UTC")).toBe("2026-11-02");
+    // The source sent to the browser answers the same.
+    const shipped = new Function(`${daysJs}; return { dayOf, dayHeading };`)();
+    expect(shipped.dayHeading("2026-10-30", "2026-11-02")).toBe("Fri 30 Oct");
+    expect(shipped.dayOf("2026-11-02T01:30:00Z")).toMatch(/^2026-11-0[12]$/);
+  });
+});
+
+describe("the browser regroups the changelog into the reader's days", () => {
+  const rows = [
+    { repo: "a/forge", number: 3, title: "Three", at: "2026-11-03T02:00:00.000Z", commit: "" },
+    { repo: "a/forge", number: 2, title: "Two", at: "2026-11-02T20:00:00.000Z", commit: "" },
+    { repo: "a/forge", number: 1, title: "One", at: "2026-11-02T01:30:00.000Z", commit: "" },
+  ] as any[];
+  const read = { live: rows, onItsWay: [], version: "1", commit: null, own: "a/forge" } as any;
+  const server = async () => {
+    const { shippedRegion } = await import("../src/web/pages/changelog.ts");
+    return `<div id="shipped">${String(shippedRegion(read, "all", new Date("2026-11-03T03:00:00.000Z")))}</div>`;
+  };
+  const titles = (card: any) => [...(card.querySelectorAll(".row-title") as any[])].map((e: any) => e.textContent);
+  let zone: string | undefined;
+  afterEach(() => {
+    setSystemTime();
+    if (zone === undefined) delete process.env["TZ"];
+    else process.env["TZ"] = zone;
+  });
+
+  test("west of UTC rows move between cards, headings read Today and Yesterday, counts and the UTC marks follow", async () => {
+    const { Window } = await import("happy-dom");
+    const { localDaysJs } = await import("../src/web/pages/changelog.ts");
+    zone = process.env["TZ"];
+    process.env["TZ"] = "America/Chicago";
+    setSystemTime(new Date("2026-11-03T03:00:00.000Z")); // 9 pm on 2 Nov in Chicago
+    const window = new Window();
+    const doc = window.document as any;
+    doc.body.innerHTML = await server();
+    // What the server drew: UTC days, one of them emptied below, and the UTC marks.
+    expect(doc.querySelectorAll("[data-day]").length).toBe(2);
+    expect(doc.getElementById("shipped-today")!.textContent).toBe("1 shipped today (UTC).");
+    expect(doc.querySelectorAll("[data-zone]").length).toBe(2);
+    new Function("document", localDaysJs)(doc);
+    const cards = [...doc.querySelectorAll("[data-day]")];
+    expect(cards.map((c) => c.getAttribute("data-day"))).toEqual(["2026-11-02", "2026-11-01"]);
+    expect(cards.map((c) => c.querySelector("h2 time")!.textContent)).toEqual(["Today", "Yesterday"]);
+    expect(cards.map(titles)).toEqual([["Three", "Two"], ["One"]]);
+    expect(cards.map((c) => c.querySelector(".badge")!.textContent)).toEqual(["2", "1"]);
+    expect(doc.getElementById("shipped-today")!.textContent).toBe("2 shipped today.");
+    expect(doc.querySelectorAll("[data-zone]").length).toBe(0);
+    expect(doc.body.textContent).not.toContain("UTC");
+
+    // A swap puts the server's UTC cards back; the client regroups them again.
+    doc.getElementById("shipped")!.innerHTML = (await server()).replace(/^<div id="shipped">|<\/div>$/g, "");
+    expect(doc.querySelectorAll("[data-day]").length).toBe(2);
+    doc.dispatchEvent(new window.Event("forge:swapped") as unknown as Event);
+    expect([...doc.querySelectorAll("[data-day]")].map(titles)).toEqual([["Three", "Two"], ["One"]]);
+    expect(doc.getElementById("shipped-today")!.textContent).toBe("2 shipped today.");
+    await window.happyDOM.close();
   });
 });
