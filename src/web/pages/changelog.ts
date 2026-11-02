@@ -8,6 +8,7 @@
 
 import { notePhase, takeSessionTime, timePhaseAsync } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
+import { newestLive, secondsWords } from "../../keeper/landed.ts";
 import { dayHeading, dayOf, daysJs, shippedToday } from "../../release/days.ts";
 import { readLandings, type Landing, type Landings } from "../../release/landings.ts";
 import { liveRegionsJs } from "../client.ts";
@@ -109,7 +110,13 @@ export const localDaysJs = /* js */ `
 `;
 
 /** The region: the top line, what is on its way, and what went live by day. */
-export function shippedRegion(read: Landings, choice: string, now: Date = new Date(), zone = "UTC"): Html {
+export function shippedRegion(
+  read: Landings,
+  choice: string,
+  now: Date = new Date(),
+  zone = "UTC",
+  toLive?: { version: string; seconds: number },
+): Html {
   const keep = (l: Landing) => choice === "all" || l.repo === choice;
   const live = read.live.filter(keep);
   const onItsWay = read.onItsWay.filter(keep);
@@ -120,7 +127,7 @@ export function shippedRegion(read: Landings, choice: string, now: Date = new Da
   const version =
     read.version !== "dev" ? (commit === null ? read.version : html`${read.version} · ${commit}`) : (commit ?? "a development build");
   const top = html`<p class="small muted" id="shipped-top">
-    Live: ${version}. <span id="shipped-today">${shippedToday(today, zone === "UTC")}</span>
+    Live: ${version}.${toLive !== undefined && toLive.version === read.version ? html` Landed to live in ${secondsWords(toLive.seconds)}.` : null} <span id="shipped-today">${shippedToday(today, zone === "UTC")}</span>
   </p>`;
   const way =
     onItsWay.length === 0
@@ -147,7 +154,7 @@ export async function changelogPage(ctx: Ctx): Promise<Response> {
     ...others.map((r) => ({ label: r, href: `/changelog?repo=${encodeURIComponent(r)}`, current: choice === r })),
   ]);
   const body = html`${pageHead("Changelog", { sub: "What went live, as it happens." })}${filters}
-    <div id="shipped" data-live="${LIVE}" aria-live="polite">${shippedRegion(read, choice)}</div>`;
+    <div id="shipped" data-live="${LIVE}" aria-live="polite">${shippedRegion(read, choice, new Date(), "UTC", newestLive(ctx.app.db))}</div>`;
   const response = page({ ctx, title: "Changelog", body, scriptJs: `${liveRegionsJs}\n${localDaysJs}` });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;

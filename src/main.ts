@@ -675,7 +675,12 @@ if (app.config.forgeRepo) {
 // known-good image and hold. Off unless FORGE_RELEASE_KEEPER=on in a cluster (keeper/wire.ts).
 const keeperOn = keeperEnv(process.env);
 if (keeperOn.on) {
-  const ports = keeperPorts(app, { forgeUrl, deployment: keeperOn.deployment, container: keeperOn.container });
+  const ports = keeperPorts(
+    app,
+    keeperOn.mode === "swap"
+      ? { forgeUrl, deployment: "", container: "", swap: true }
+      : { forgeUrl, deployment: keeperOn.deployment, container: keeperOn.container },
+  );
   if (typeof ports === "string") app.log.warn("the release keeper is off", { why: ports });
   else {
     let said = "";

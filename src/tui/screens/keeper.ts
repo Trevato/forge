@@ -1,14 +1,16 @@
 /**
  * The release keeper in the terminal (#7557), the /releases card's read:
  * what holds the next cut, then each release the keeper cut with its stage,
- * the known-good version it rolls back to and what the probes counted.
+ * its short commit, landed to live (#8042), the known-good version it rolls
+ * back to and what the probes counted.
  * Gated by `release/gate.ts` as the page is. `h` holds releases with a
  * reason and `h` with `lift N` lifts an owner's hold, through the same
  * functions the card and MCP `release_hold` call.
  */
 
 import { blocking, holdAs, liftAs, standingHolds } from "../../keeper/hold.ts";
-import { listKeeperReleases, type KeeperRelease, type Stage } from "../../keeper/record.ts";
+import { secondsWords, withLandedToLive, type LandedRelease } from "../../keeper/landed.ts";
+import { listKeeperReleases, type Stage } from "../../keeper/record.ts";
 import { mayRead, mayRollBack } from "../../release/gate.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -29,22 +31,24 @@ const STAGE: Record<Stage, { label: string; tone: Tone }> = {
 export interface KeeperRead {
   /** What holds the next cut, or the line that says nothing does. */
   readonly blocked: string;
-  readonly releases: readonly KeeperRelease[];
+  readonly releases: readonly LandedRelease[];
 }
 
 /** The card's content for this person; undefined for anyone the page would 404. */
 export function readKeeper(f: Session): KeeperRead | undefined {
   if (!mayRead(f.app, f.user)) return undefined;
-  return { blocked: blocking(standingHolds(f.db)) ?? "Nothing holds the next cut.", releases: listKeeperReleases(f.db) };
+  return { blocked: blocking(standingHolds(f.db)) ?? "Nothing holds the next cut.", releases: withLandedToLive(f.db, listKeeperReleases(f.db)) };
 }
 
-export function keeperRows(releases: readonly KeeperRelease[]): ListRow[] {
+export function keeperRows(releases: readonly LandedRelease[]): ListRow[] {
   return releases.map((r) => ({
     title: r.version,
     tone: STAGE[r.stage].tone,
     meta: metaOf(
       STAGE[r.stage].label,
+      r.commit,
       `cut ${ago(r.cutAt)}`,
+      r.landedToLiveSeconds === null ? "not live yet" : `landed to live ${secondsWords(r.landedToLiveSeconds)}`,
       `known good ${r.knownGood.version}`,
       `roll ${r.rollNon200}/${r.rollProbes} non-200`,
       `${r.probes} probes, ${r.pages} pages`,

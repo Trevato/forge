@@ -134,7 +134,11 @@ test("warm home holds p95 under the stated budget", async () => {
   panelCache(f.app.db).clear();
   const missed = await counted();
   expect(missed.hits).toEqual({ kpis: false, panels: false });
-  const missOnly = [...missed.ran.keys()].filter((sql) => !warm.ran.has(sql));
+  // Reads only: a route-timing flush that lands inside this one request (its INSERTs, PRAGMAs,
+  // total_changes) is a write any request may carry, not the cache missing.
+  const missOnly = [...missed.ran.keys()].filter(
+    (sql) => !warm.ran.has(sql) && /^\s*SELECT\b/i.test(sql) && !sql.includes("total_changes()"),
+  );
   // The KPI reads (eight on this fixture) and the pinned panel's own query.
   expect(missOnly.length).toBeGreaterThan(5);
   expect(missOnly).toContain('SELECT "kind" AS "group", COUNT(*) AS "value" FROM "run" GROUP BY 1 ORDER BY 1 LIMIT 1000');

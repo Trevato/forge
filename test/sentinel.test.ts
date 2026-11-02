@@ -61,6 +61,8 @@ function plantRun(
 }
 
 beforeAll(async () => {
+  // The error ledger is the process's: a file run before this one in the same shard leaves its lines there.
+  clearErrors();
   dataDir = await mkdtemp(join(tmpdir(), "forge-sentinel-"));
   app = createApp({ dataDir, port: 0 });
   const a = await createUser(app.db, {

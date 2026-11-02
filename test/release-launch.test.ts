@@ -154,7 +154,10 @@ test("a record that is not one reads as none", () => {
 test("the image starts the launcher, and the launcher imports nothing a release could break", async () => {
   const repo = join(import.meta.dir, "..");
   expect(await Bun.file(join(repo, "Dockerfile")).text()).toContain('CMD ["bun", "src/release/launch.ts"]');
-  const source = await Bun.file(join(repo, "src/release/launch.ts")).text();
-  const imports = new Bun.Transpiler({ loader: "ts" }).scanImports(source).map((i) => i.path);
-  expect(imports.every((p) => p.startsWith("node:") || p === "bun")).toBe(true);
+  // serving.ts (#8042) is the launcher's own sibling, node built-ins only, so the rule holds for both.
+  for (const [file, sibling] of [["launch.ts", "./serving.ts"], ["serving.ts", undefined]] as const) {
+    const source = await Bun.file(join(repo, "src/release", file)).text();
+    const imports = new Bun.Transpiler({ loader: "ts" }).scanImports(source).map((i) => i.path);
+    expect(imports.every((p) => p.startsWith("node:") || p === "bun" || p === sibling)).toBe(true);
+  }
 });
