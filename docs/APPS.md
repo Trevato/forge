@@ -917,7 +917,9 @@ repository: it sends anyone, with no account, to the repository's report
 form (STANDARDS.md, "Reports from outside") with the page they came from,
 and is answered without waking the app, since the app being down is the
 usual reason to ask. Such an app's HTML responses, and the forge's own "not
-running" page for it, carry `Link: </__forge/report>; rel="help"`, and the
+running" page for it, carry `Link: </__forge/report>; rel="help"` and a second `Link` with
+`rel="alternate"; type="application/json"` to the forge's
+`/api/v1/here?path=/<owner>/<repo>` manifest, and the
 template's footer links to it. A private app or repository offers none of
 this.
 

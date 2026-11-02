@@ -368,6 +368,12 @@ work here.
 
 ## What works today
 
+A public app of a public repository tells an agent that lands on it what it can
+do: its HTML pages, and the "not running" page, carry two `Link` headers —
+`rel="help"` to `/__forge/report` and `rel="alternate"` to the forge's
+`/api/v1/here?path=/<owner>/<repo>` manifest (`discoveryLinks`,
+`src/apps/proxy.ts`). A private app, a nested host and non-HTML answers get none.
+
 Open an image or SVG in a repository and it is drawn, fit to the pane. Press
 **Actual size** (or click the picture) for 100%; the pane scrolls or drags to
 pan. The header shows its pixel size, file size and format; **Source**,

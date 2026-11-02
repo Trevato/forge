@@ -753,19 +753,39 @@ function admit(
  * public. A private one offers nothing, and a nested host is its guest's.
  */
 export function reportUrl(runtime: AppsRuntime, target: AppTarget): URL | undefined {
+  const repo = publicRepo(runtime, target);
+  return repo === undefined ? undefined : reportOf(runtime, repo);
+}
+
+/** The repository of an app that is public along with it, else nothing. */
+function publicRepo(runtime: AppsRuntime, target: AppTarget): Repo | undefined {
   if (target.nested || target.app.access !== "public") return undefined;
   const repo = getRepoById(runtime.app.db, target.app.repoId);
-  if (repo === undefined || !canRead(runtime.app.db, repo, undefined))
-    return undefined;
-  return new URL(
-    `/${repo.ownerName}/${repo.name}/report`,
-    runtime.options.forgeUrl,
-  );
+  return repo !== undefined && canRead(runtime.app.db, repo, undefined)
+    ? repo
+    : undefined;
 }
+
+const reportOf = (runtime: AppsRuntime, repo: Repo): URL =>
+  new URL(`/${repo.ownerName}/${repo.name}/report`, runtime.options.forgeUrl);
 
 /** The link relation a public app's pages carry to `/__forge/report`. */
 const REPORT_LINK =
   `</__forge/report>; rel="help"; title="${REPORT_LINK_TITLE}"`;
+
+/**
+ * The `Link` values a public app's pages carry: the report door and the
+ * forge's role-aware manifest for the app's repository, so an agent that
+ * landed on the app finds what it can do. One repository read serves both;
+ * a private app, a nested host or a vanished repository gets none.
+ */
+export function discoveryLinks(runtime: AppsRuntime, target: AppTarget): string[] {
+  const repo = publicRepo(runtime, target);
+  if (repo === undefined) return [];
+  const here = new URL("/api/v1/here", runtime.options.forgeUrl);
+  here.search = `?path=${encodeURIComponent(`/${repo.ownerName}/${repo.name}`)}`;
+  return [REPORT_LINK, `<${here.href}>; rel="alternate"; type="application/json"`];
+}
 
 const isHtml = (headers: Headers): boolean =>
   (headers.get("content-type") ?? "").toLowerCase().startsWith("text/html");
@@ -1077,8 +1097,8 @@ export async function proxyApp(
   for (const name of HOP_BY_HOP) out.delete(name);
   // An agent reading a public app's page learns where to report a problem
   // without the app having to say so.
-  if (isHtml(out) && reportUrl(runtime, target) !== undefined)
-    out.append("link", REPORT_LINK);
+  if (isHtml(out))
+    for (const link of discoveryLinks(runtime, target)) out.append("link", link);
   const eventStream =
     response.body !== null &&
     (response.headers.get("content-type") ?? "")
@@ -1535,7 +1555,8 @@ function unavailable(
         : gone
           ? "This preview is gone: its pull was closed, and its data with it."
           : "Nothing is running here yet.");
-  const report = reportUrl(runtime, target) !== undefined;
+  const links = discoveryLinks(runtime, target);
+  const report = links.length > 0;
   const runLink =
     status?.runId === undefined
       ? ""
@@ -1564,7 +1585,7 @@ ${report ? '<p><a href="/__forge/report">Report a problem</a> to the people who 
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-store",
       ...(deploying ? { "retry-after": "3" } : {}),
-      ...(report ? { link: REPORT_LINK } : {}),
+      ...(report ? { link: links.join(", ") } : {}),
     },
   });
 }
