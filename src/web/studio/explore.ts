@@ -31,6 +31,7 @@ function numbers(row: ExploreRow): { apps: string; rest: string } {
   const n = row.numbers;
   const rest = [
     n.forks > 0 ? `${n.forks} fork${n.forks === 1 ? "" : "s"}` : "",
+    n.likes > 0 ? `${n.likes} like${n.likes === 1 ? "" : "s"}` : "",
     n.ships > 0 ? `${n.ships} shipped this month` : "",
     n.awakeHours > 0 ? `${n.awakeHours} h in use` : "",
     row.shippedAt !== null ? `last shipped ${timeAgo(row.shippedAt)}` : "",
@@ -142,6 +143,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
     { label: "Best", sort: "score" as const },
     { label: "Forks", sort: "forks" as const },
     { label: "Shipped", sort: "ships" as const },
+    { label: "Liked", sort: "likes" as const },
     { label: "Use", sort: "use" as const },
     { label: "Fresh", sort: "fresh" as const },
   ];

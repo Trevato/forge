@@ -1389,6 +1389,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     return metaOf(
       row.kind === "person" ? plural(n.apps, "app") : "",
       n.forks > 0 ? plural(n.forks, "fork") : "",
+      n.likes > 0 ? plural(n.likes, "like") : "",
       n.ships > 0 ? `${n.ships} shipped this month` : "",
       n.awakeHours > 0 ? `${n.awakeHours} h in use` : "",
       row.shippedAt !== null ? `shipped ${ago(row.shippedAt)}` : "",

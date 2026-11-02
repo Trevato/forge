@@ -31,7 +31,7 @@ describe("readExploreLine", () => {
   });
 
   test("the note names what is taken", () => {
-    expect(exploreNote(["sort:bogus"])).toBe("sort:bogus is not a sort — use score, forks, ships, use, fresh, name");
+    expect(exploreNote(["sort:bogus"])).toBe("sort:bogus is not a sort — use score, forks, ships, likes, use, fresh, name");
     expect(exploreNote(["kind:x"])).toBe("kind:x is not a kind — use app, person, forge");
   });
 });
@@ -55,7 +55,7 @@ describe("the page and the API", () => {
     const q = encodeURIComponent("sort:bogus garden");
     const out = await (await fetch(`${servers.url}/explore?q=${q}`)).text();
     expect(out.split("is not a sort").length).toBe(2);
-    expect(out).toContain("sort:bogus is not a sort — use score, forks, ships, use, fresh, name");
+    expect(out).toContain("sort:bogus is not a sort — use score, forks, ships, likes, use, fresh, name");
     expect(out).not.toContain(encodeURIComponent("sort:bogus"));
     expect(out).toContain(`href="/explore?q=${encodeURIComponent("kind:app garden")}"`);
   });

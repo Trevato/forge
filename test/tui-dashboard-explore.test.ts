@@ -169,3 +169,14 @@ test("owner:<name> alone lists that owner's apps as the explorer", async () => {
   expect(text).toContain("alice/zed");
   expect(text).not.toContain("bob/zed-one");
 });
+
+test("sort:likes lists the apps by likes and each row says how many", async () => {
+  const ant = (await explorePage(forge, alice, parseExploreQuery("kind:app"), null))!.items.find((r) => r.name === "alice/ant")!;
+  const id = (await forge.db.query<{ id: string }, [string]>("SELECT id FROM repo WHERE name = ?1").get("ant"))!.id;
+  expect(ant.numbers.likes).toBe(0);
+  for (const who of [alice, bob])
+    forge.db.run("INSERT INTO feed_like (viewer_id, item_id, repo_id) VALUES (?1, ?2, ?3)", [who.id, "post-ant", id]);
+  const text = await typed("kind:app sort:likes");
+  expect(text).toContain("2 likes");
+  expect(text.indexOf("alice/ant")).toBeLessThan(text.indexOf("alice/zed"));
+});
