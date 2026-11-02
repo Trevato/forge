@@ -20,7 +20,7 @@
  * runs `outsideFiles` nightly and files a `Red:` issue for each that fails (#812).
  */
 
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 export type Exclusion = {
@@ -274,6 +274,18 @@ export async function whyNowRefusal(cwd: string = process.cwd()): Promise<string
   return whyNowProblems(parseNameStatus(diff.out), log.out.split("\0").map((m) => m.trim()).filter(Boolean));
 }
 
+/** Review findings that repeated (#8888): see `src/kernel/review_rules.ts`. */
+export function reviewRefusal(root = "."): string[] {
+  // Loaded by `require` so `treeGate`, which loads this file alone, never needs it.
+  const { reviewProblems } = require("../src/kernel/review_rules.ts") as typeof import("../src/kernel/review_rules.ts");
+  const dir = join(root, "test");
+  if (!existsSync(dir)) return [];
+  const sources = readdirSync(dir)
+    .filter((f) => f.endsWith(".test.ts"))
+    .map((f) => ({ path: `test/${f}`, text: readFileSync(join(dir, f), "utf8") }));
+  return reviewProblems(sources);
+}
+
 /**
  * A pull that changes a reachable surface must say how to try it on its
  * preview (#8889). Same base and same pass-when-unknown as `whyNowRefusal`.
@@ -295,7 +307,7 @@ export async function tryItRefusal(cwd: string = process.cwd()): Promise<string[
 // `bun scripts/gate.ts`: the audit alone, first in `forge.json`'s check, so
 // a stale exclusion fails in under a second — not after install and tsc.
 if (import.meta.main) {
-  const refusal = [...gateRefusal(presentTests()), ...(await pinRefusal()), ...(await whyNowRefusal()), ...(await tryItRefusal())];
+  const refusal = [...gateRefusal(presentTests()), ...(await pinRefusal()), ...(await whyNowRefusal()), ...(await tryItRefusal()), ...reviewRefusal()];
   for (const line of refusal) console.error(`gate: ${line}`);
   process.exit(refusal.length === 0 ? 0 : 2);
 }
