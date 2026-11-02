@@ -8,8 +8,9 @@ import { addComment as addIssueComment } from "../core/issues.ts";
 import { landedNote, leftNote, unticked } from "../core/done_on_main.ts";
 import { resolveOpen } from "../core/decisions.ts";
 import type { App } from "../app.ts";
+import { applyBoxPass, holdPass, landHeldPass, type BoxPass } from "./box_pass.ts";
 import { landVision } from "../crew/vision.ts";
-import { isCrew } from "../core/agents.ts";
+import { crewRole, isCrew } from "../core/agents.ts";
 import {
   getIssueById,
   setAssignee,
@@ -446,6 +447,8 @@ export async function mergePull(
   // lands, as the person who landed it — which is what frees the map. Not
   // the plan's own issues: no change finishes an umbrella or opens the
   // Later gate, whatever its body says; a person closes those by hand.
+  // The reviewer's boxes first, so what it ticked at this head closes with it.
+  landHeldPass(app, repo, getPull(app.db, repo.id, pull.number) ?? pull);
   const plan = pillarsOf(app.db, repo);
   for (const n of closesFromBody(pull.body)) {
     const issue = getIssue(app.db, repo.id, n);
@@ -528,6 +531,8 @@ export interface SubmitReviewInput {
   readonly body?: string;
   /** Line comments posted with the verdict, all or none. */
   readonly comments?: readonly ReviewInput[];
+  /** An approval by a crew reviewer: the boxes of the issues the pull closes it ticks or leaves (`box_pass.ts`). */
+  readonly pass?: BoxPass | undefined;
 }
 
 /**
@@ -657,6 +662,17 @@ export async function submitReview(
       reviewId: recorded.value.id,
     },
   });
+  // The boxes the reviewer read at this head: only a crew reviewer's approval
+  // counts. A pull yet to land holds them for its landing, which applies them
+  // only if the head is still this one; one that landed takes them now.
+  if (
+    input.state === "approved" &&
+    input.pass !== undefined &&
+    crewRole(app.db, repo.id, user.id) === "reviewer"
+  ) {
+    if (pull.mergedAt !== null) applyBoxPass(app, repo, pull, user, input.pass);
+    else holdPass(app, pull, user, status.headOid, input.pass);
+  }
   return recorded;
 }
 

@@ -8,6 +8,7 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { MAX_PASS, passOf } from "../actions/box_pass.ts";
 import { homeTruth } from "../system/home_truth.ts";
 import { upstreamFacts } from "../actions/upstream_follow.ts";
 import { FAMILY_WORDS } from "../actions/family_words.ts";
@@ -2795,12 +2796,19 @@ export function apiRoutes(router: Router<Handler>): void {
           422,
           `comments is a list of {"path","line","side","body"}. ${ANCHOR_FORMAT}`,
         );
+      const pass = passOf(input.ticks, input.left);
+      if (pass === undefined)
+        return apiError(
+          "invalid_boxes",
+          422,
+          `ticks is a list of {"issue","box"} and left a list of {"issue","box","why"}, at most ${MAX_PASS} each; box counts the issue's unticked boxes from 1`,
+        );
       const submitted = await submitReview(
         ctx.app,
         ctx.auth.user,
         found.repo,
         found.pull,
-        { state, body: str(input.body), comments },
+        { state, body: str(input.body), comments, pass },
       );
       if (!submitted.ok) {
         if (submitted.error === "self_review")

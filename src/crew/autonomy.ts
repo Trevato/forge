@@ -135,6 +135,7 @@ import { keepBatch } from "../flow/red_batches.ts";
 import { recordQueueFlakes } from "../checks/flake.ts";
 import { readVitals, vitalsMisses, vitalsWords } from "../flow/vitals.ts";
 import { moveRequested, tallyRequested, tallyWords } from "./requested.ts";
+import { passLanded } from "./box_pass.ts";
 import { reviewersOf, sendToReview, sweepReviews } from "./review.ts";
 import { lastWaits, noteWaits, tallyWaits, type Wait, waitWords } from "./waits.ts";
 import { bootCounts } from "../kernel/boots.ts";
@@ -438,6 +439,8 @@ export async function driveRepo(
   const sorted = () => heldBy(app, repo, readyNow(repoGraph(app.db, repo.id, { sealed: true })), crew, active);
   let held = sorted();
   if (freeParked(app, repo, by, held) > 0) held = sorted();
+  // An issue a landing left open with boxes is given the reviewer's pass once (#8682).
+  passLanded(app, repo, held.by.landed);
   holdHot(
     repo.id,
     held.by.hot_file,

@@ -109,7 +109,7 @@ describe("a landing with boxes unticked waits for a person", () => {
     const notes = listComments(app.db, partial.id).map((c) => c.body);
     expect(notes).toEqual([landedNote(pull.number, ["two"])]);
     expect(notes[0]).toBe(
-      `Left open after pull #${pull.number} landed: 1 unticked item remains (two). Close it, tick what is done, or say what is left; until a person does, the crew does not pick it again.`,
+      `Left open after pull #${pull.number} landed: 1 unticked item remains (two). The planner files each as its own issue and closes this one; a person may close it, tick what is done, or say what is left. Until then the crew does not pick it again.`,
     );
     // The landing's own note, though alice wrote it, is not an answer.
     expect(landedUnanswered(app.db, fresh(), now(partial))?.number).toBe(pull.number);

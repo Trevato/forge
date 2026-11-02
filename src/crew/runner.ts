@@ -131,6 +131,7 @@ import { interruptedSummary } from "./interrupted.ts";
 import { laterGate } from "./later.ts";
 import { handedLimbs } from "./handed_limbs.ts";
 import { parkedTwice } from "./parks.ts";
+import { boxesOf, landedBoxes } from "./box_pass.ts";
 import { heldNow, stuckOf } from "./held.ts";
 import { reserveOf } from "./reserve.ts";
 import { owed } from "./team_share.ts";
@@ -1158,6 +1159,7 @@ async function work(
       ...(reason === "review" && pull
         ? {
             ...(await reviewInputs(app, repo, pull, record, bare)),
+            boxes: boxesOf(app, repo, pull),
             retry: app.db
               .query<{ n: number }, [string, string, string]>(
                 `SELECT COUNT(*) AS n FROM run WHERE issue_id = ?1 AND kind = 'agent'
@@ -1178,6 +1180,7 @@ async function work(
             ...(() => {
               const held = heldNow(app, repo);
               return {
+                landed: landedBoxes(held.by.landed),
                 stuck: stuckOf(held),
                 reserve: reserveOf(held.startable.length, repo.autonomySlots),
               };
