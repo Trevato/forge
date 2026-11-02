@@ -46,6 +46,7 @@ import { PARK_STRIKES, parkedCount } from "./parks.ts";
 import { heldFiles, type FileHold } from "./file_holds.ts";
 import { expectedFiles, hotFiles, hotOverlap, pullsTouching, relievedFiles } from "./hot_files.ts";
 import { coveredByRedFix } from "./red_fix.ts";
+import { landedUnder } from "./stalls.ts";
 
 export const HOLDS = [
   "running",
@@ -93,6 +94,8 @@ export function stalled(app: App, repo: Repo, issue: Issue): boolean {
   if (last === null || last === undefined) return false;
   if (last.state === "queued" || last.state === "running") return true;
   if (/opened pull #|updated pull #/.test(last.summary)) return false;
+  // Its pull landed under it: the work is on the base, not stalled (#8481).
+  if (landedUnder(last)) return false;
   // Cut short by the provider or a restart: nobody tried it, so the clock
   // tries again (`interrupted.ts`).
   if (last.state === "failed" && interruptionOf(last.summary) !== undefined)

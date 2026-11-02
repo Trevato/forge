@@ -323,7 +323,8 @@ export const PULL_STOPPED = ["the pull closed", "the pull landed"] as const;
  * A run its pull closed under it, which had in fact reached its own answer
  * (already done on main): that answer replaces the pull's
  * summary, so the park or the note says what the builder said and not
- * "the pull closed". Only such a cancelled run is touched.
+ * "the pull closed". Only such a cancelled run is touched: one its pull
+ * landed under keeps "the pull landed", which is no stall (#8481).
  */
 export function answerCancelled(
   db: Database,
@@ -333,9 +334,9 @@ export function answerCancelled(
   const changes = db
     .query(
       `UPDATE run SET state = ?2, summary = ?3
-       WHERE id = ?1 AND state = 'cancelled' AND summary IN (?4, ?5)`,
+       WHERE id = ?1 AND state = 'cancelled' AND summary = ?4`,
     )
-    .run(runId, outcome.state, outcome.summary.slice(0, 500), ...PULL_STOPPED)
+    .run(runId, outcome.state, outcome.summary.slice(0, 500), PULL_STOPPED[0])
     .changes;
   return changes > 0 ? getRun(db, runId) : undefined;
 }

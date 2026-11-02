@@ -107,7 +107,7 @@ import { given, pendingReplans } from "../core/limb_replan.ts";
 import { handedOverPulls, SKIP_SUMMARY, skipsReplan } from "./guard.ts";
 import { atRunCap, type Held, heldBy, heldWords, replannable } from "./held.ts";
 import { holdHot, hotFiles, hotWords, learnPullFiles } from "./hot_files.ts";
-import { NO_PULL, shunnedBy, stallReason, unstickOwed } from "./stalls.ts";
+import { landedUnder, NO_PULL, shunnedBy, stallReason, unstickOwed } from "./stalls.ts";
 import { alreadyDone, BY_CREW, DONE_LIKE } from "../core/done_on_main.ts";
 import { repoDir } from "../git/repos.ts";
 import { ALREADY_NOTE, alreadyDoneOids } from "./already.ts";
@@ -559,6 +559,8 @@ export function freeStalled(app: App, repo: Repo, by: User, held: Held): number 
       )
       .get(issue.id);
     if (!last || last.state === "queued" || last.state === "running") continue;
+    // A run its pull landed under left the work on the base: no park, no strike (#8481).
+    if (landedUnder(last)) continue;
     const who = last.actor === null ? undefined : getUserById(app.db, last.actor)?.username;
     if (parkAs(app, by, repo, issue, stallReason(who, last.summary || last.state), "unstuck"))
       freed++;
