@@ -12,7 +12,7 @@
  *   stays free.
  *
  * Small is read from the issue alone: a title like "A test pins …" or
- * "Tests: …", or a label `test`, `tests`, `tests-only` or `small`. Plain data in,
+ * "Tests: …", or a label `test`, `tests`, `tests-only`, `small` or `polish`. Plain data in,
  * plain data out; the reads are two grouped queries whatever the count.
  */
 
@@ -22,7 +22,7 @@ import { labelsForIssues } from "../core/issues.ts";
 /** Titles that say an issue only pins a behaviour with a test, or is a small addition. */
 const SMALL_TITLE = /^(a test (pins|proves|shows|names|covers)\b|tests?( only)?:|small:)/i;
 /** Labels that say the same. */
-const SMALL_LABELS = new Set(["test", "tests", "tests-only", "small"]);
+const SMALL_LABELS = new Set(["test", "tests", "tests-only", "small", "polish"]);
 /** Whether an issue's title or labels mark it tests-only or a small addition. */
 export function isSmall(title: string, labels: readonly string[]): boolean {
   return SMALL_TITLE.test(title.trim()) || labels.some((l) => SMALL_LABELS.has(l.toLowerCase()));

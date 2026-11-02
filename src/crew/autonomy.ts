@@ -34,6 +34,7 @@ import { queueBatch, queueDepth, smallShare } from "../core/capacity.ts";
 import { shareWords, slotOrder, smallCap, smallIssues, smallOfIds } from "./small_share.ts";
 import { backedBetOf, betsInUse } from "../core/bets.ts";
 import { mayPick } from "./bets.ts";
+import { tickPolish } from "./polish_cap.ts";
 import { raisedAt } from "../core/thought_links.ts";
 import { readConflictLane, readConflictRoom } from "./conflict_room.ts";
 import { mergeable, resolveOid, treeOf } from "../git/merge.ts";
@@ -486,6 +487,7 @@ async function driveOnce(
 ): Promise<Drove> {
   if (repo.autonomy === "off") return "off";
   tickBets(app, repo, now);
+  tickPolish(app, repo, now);
   const status = autonomyStatus(app, repo, now);
   if (status.paused !== null) return "paused";
   const by = getUserById(app.db, repo.autonomyBy!);

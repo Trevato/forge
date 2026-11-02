@@ -291,7 +291,7 @@ at most `slots.smallShare` percent of the builder slots (default 30, rounded up:
 skipped, not waited on, unless the owner ranked it. The tick line's `small: 1/2`, the
 Flow command's `small 1/2`, the app's row in Today on `/boards` (`small
 issues: 1 of 2 slots`) and the studio's crew panel show small issues in
-flight of what they may hold. When nothing is startable while builder slots are free and some of the
+flight of what they may hold. An issue labelled `polish` is a small issue too, and its run is stopped past `polish.capMinutes` (default 60) with one comment saying what is left (`crew/polish_cap.ts`, `docs/features/polish-cap.md`). When nothing is startable while builder slots are free and some of the
 held are stalled, capped or parked twice, the planner is owed one pass with
 that breakdown in its brief, to re-plan them into smaller, fresh issues; a
 full plate and its own unanswered decline do not hold that pass, and the

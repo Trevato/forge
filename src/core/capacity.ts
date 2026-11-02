@@ -25,7 +25,8 @@ export type CapacityKey =
   | "cells.egress"
   | "guard_new_accounts"
   | "signin.edge"
-  | "slots.smallShare";
+  | "slots.smallShare"
+  | "polish.capMinutes";
 
 interface Definition {
   /** What the settings page and the API call it. */
@@ -115,6 +116,13 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
     kind: { type: "count", min: 0, max: 100 },
     fallback: "30",
     help: "The most of a repository's builder slots that tests-only and small-addition issues (\"A test pins …\", or a label test, tests, tests-only or small) hold at once, as a percent rounded up: 30 lets 2 of 5 slots go to them. At the cap a small issue is skipped and the slot goes to the next issue in the Next up order; a ranked small issue is still taken. 100 lifts the cap; 0 starts none. Read on every pick.",
+  },
+  "polish.capMinutes": {
+    label: "Run time a polish issue may take (minutes)",
+    env: "FORGE_POLISH_CAP_MINUTES",
+    kind: { type: "count", min: 1, max: 1440 },
+    fallback: "60",
+    help: "An issue labelled polish is small work: a builder run on it that has gone this many minutes is stopped, not extended, and the issue gets one comment saying what is left. Read on every tick.",
   },
 };
 
@@ -342,6 +350,11 @@ export function queueBatch(db: Database): number {
 /** The percent of builder slots small issues may hold (#7571). */
 export function smallShare(db: Database): number {
   return Number(capacityValue(db, "slots.smallShare"));
+}
+
+/** The minutes of run time a polish issue may take before its run is stopped (#8852). */
+export function polishCapMinutes(db: Database): number {
+  return Number(capacityValue(db, "polish.capMinutes"));
 }
 
 /** Whether the platform edge's identity is read at all; on every request. */
