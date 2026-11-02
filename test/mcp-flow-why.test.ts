@@ -162,6 +162,7 @@ describe("MCP flow with a subject", () => {
     expect(holdFile(app.db, repo.id, "src/pinned.ts", "alice").ok).toBe(true);
     const r = await call(ownerTok, { repo: "alice/one", issue: pinned.number });
     expect(r.value).toMatchObject({ moving: false, cause: "hot_file" });
+    expect(JSON.stringify(r.value)).toContain("An admin holds new work on src/pinned.ts");
     expect(r.value.says).toContain("src/pinned.ts");
   });
 

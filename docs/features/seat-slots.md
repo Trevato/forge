@@ -26,6 +26,8 @@ A change takes effect on the next tick and is a `repo.settings_updated` line on 
 | Direction | Keep: what the planner plans against. |
 | Ceiling per day | Keep: the only dollar limit. |
 | Decisions here, Plans need a nod, Outsiders may trigger the crew | Keep: each is who answers, and none holds work silently. |
-| File holds, team dials, subscriptions | Not reviewed here; they are other pages' settings. |
+| File holds (Settings › Held files) | Keep: an admin's explicit, named hold on one path; it is the only setting here that holds work, so it says so where the work waits: the hold's row lists the issues it keeps waiting, and `flow` on such an issue says an admin holds the file, not that it is hot. |
+| Team dials (Settings › Teams) | Keep: a share between teams, not a seat's number; it only reorders queued starts and holds nothing (all at 0 is the order the forge always had). |
+| Subscriptions (the crew's grants) | Keep: whose model credential the crew spends is not a limit; without one the crew card already says it cannot start. |
 
-Not done: no other setting was deleted, and the governor's automatic lowering of builder slots is unchanged (it can only go below the number set here, never above).
+Not done: no setting was deleted (the three above were reviewed in #8732 and kept), and the governor's automatic lowering of builder slots is unchanged (it can only go below the number set here, never above).

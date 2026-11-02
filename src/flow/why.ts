@@ -22,6 +22,9 @@ import { heldNow, mapHolds } from "../crew/held.ts";
 import { nextOfPull, type Actor } from "./next_actor.ts";
 import { wallWords } from "./wall_wait.ts";
 
+/** How `crew/held.ts` words a file an admin holds, the one hold that is a person's setting. */
+const HELD_BY_ADMIN = " is held by an admin";
+
 export const CAUSES = [
   "wall",
   "ceiling",
@@ -79,7 +82,9 @@ const RULES: Readonly<Record<CauseName, (f: WhyFacts) => Omit<Cause, "name"> | n
   hot_file: (f) =>
     f.hotFile !== undefined
       ? {
-          says: `A file it names is hot: ${f.hotFile}.`,
+          says: f.hotFile.endsWith(HELD_BY_ADMIN)
+            ? `An admin holds new work on ${f.hotFile.slice(0, -HELD_BY_ADMIN.length)}, so it waits (Settings › Held files).`
+            : `A file it names is hot: ${f.hotFile}.`,
           clears: "land or close the open pulls on that file, or release an admin's hold on it.",
         }
       : null,
