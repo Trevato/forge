@@ -42,6 +42,11 @@ export const talkCss = /* css */ `
 .talk-body pre { position: relative; }
 .talk-body pre .talk-copy { position: absolute; top: 2px; right: 2px; }
 .talk-more { text-align: center; }
+.talk-replaced { opacity: 0.55; }
+.talk-failed form { margin-top: 6px; }
+.talk-failed .btn, .talk-act { min-height: 2.75rem; }
+.talk-acts { display: flex; gap: 6px; justify-content: flex-end; margin-top: 4px; }
+.talk-agent .talk-acts { justify-content: flex-start; }
 `;
 
 /** Runs after DOMContentLoaded (`pageScriptAsset`). Reads the page's own `data-talk-*`; sends with fetch, follows with EventSource. */
@@ -86,6 +91,16 @@ if (root) {
   root.addEventListener("click", async (e) => {
     const s = e.target.closest("[data-suggest]");
     if (s) { e.preventDefault(); box.value = s.dataset.suggest; grow(); box.focus(); return; }
+    const a = e.target.closest("[data-act]");
+    if (a) {
+      e.preventDefault();
+      editing = true;
+      box.value = a.closest(".talk-turn").querySelector(".talk-body").textContent;
+      grow();
+      box.focus();
+      say("Editing your last message. Send resends it; Escape keeps it as it was.");
+      return;
+    }
     const c = e.target.closest("[data-copy]");
     if (!c) return;
     const pre = c.closest("pre");
@@ -105,8 +120,27 @@ if (root) {
     });
   };
   decorate(log);
+  // Edit, Regenerate and Retry are drawn by the server (forms and a link that work without
+  // this script); here they only act in place. They are taken away while a turn runs and
+  // the server sends the new ones with done.
+  let editing = form.hasAttribute("data-edit");
+  const dropActs = () => log.querySelectorAll(".talk-acts").forEach((a) => a.remove());
+  const again = async (how, body) => {
+    say(how === "edit" ? "Sending…" : "Asking again…");
+    try {
+      const res = await fetch("/talk/again/" + how, { method: "POST", headers: { accept: "application/json" }, body });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok) { say(out.message || "That was not done."); return false; }
+      stuck = true;
+      location.reload();
+      return true;
+    } catch (_) {
+      say("That was not sent: no connection.");
+      return false;
+    }
+  };
   // While a reply streams, Send is Stop; Escape stops too.
-  const action = form.querySelector(".bar .btn");
+  const action = form.querySelector(".bar button.btn");
   const sendLabel = action.textContent;
   let answering = false;
   const mode = (on) => {
@@ -128,6 +162,7 @@ if (root) {
   const follow = () => {
     if (paged) return;
     if (source) source.close();
+    dropActs();
     source = new EventSource("/talk/stream?after=" + encodeURIComponent(last));
     source.addEventListener("turn", (e) => {
       const turn = JSON.parse(e.data);
@@ -136,12 +171,16 @@ if (root) {
       retry = 0;
       toEnd();
     });
-    source.addEventListener("running", () => { mode(true); say("The forge is answering…"); });
+    source.addEventListener("running", () => { dropActs(); mode(true); say("The forge is answering…"); });
     source.addEventListener("done", (e) => {
-      mode(false); say(""); source.close(); source = null;
+      mode(false); dropActs(); say(""); source.close(); source = null;
       const o = JSON.parse(e.data), c = root.querySelector("[data-context]");
       for (const k of o.costs || []) { const li = document.getElementById(k.id); if (li && !li.querySelector(".talk-cost")) li.insertAdjacentHTML("beforeend", k.html); }
-      if (o.context && c) { c.textContent = o.context; c.hidden = false; }
+      if (o.context && c) { c.hidden = false; c.textContent = o.context; }
+      for (const a of o.acts || []) {
+        const li = document.getElementById(a.id);
+        if (li) li.insertAdjacentHTML("beforeend", '<div class="talk-acts">' + a.html + "</div>");
+      }
     });
     source.addEventListener("more", () => { source.close(); follow(); });
     source.addEventListener("drain", () => { source.close(); setTimeout(follow, 1000); });
@@ -156,6 +195,10 @@ if (root) {
     e.preventDefault();
     const text = box.value.trim();
     if (!text) return;
+    if (editing) {
+      if (await again("edit", new URLSearchParams({ text }))) { try { localStorage.removeItem(draftKey); } catch (_) {} }
+      return;
+    }
     say("Sending…");
     try {
       const res = await fetch("/api/v1/conversation/messages", {
@@ -180,9 +223,12 @@ if (root) {
   };
   form.addEventListener("submit", send);
   box.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && editing) { editing = false; box.value = ""; grow(); say(""); return; }
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit(); }
   });
   log.addEventListener("submit", async (e) => {
+    const r = e.target.closest("form[data-again]");
+    if (r) { e.preventDefault(); again(r.dataset.again, new URLSearchParams()); return; }
     const f = e.target.closest("form[data-confirm]");
     if (!f) return;
     e.preventDefault();

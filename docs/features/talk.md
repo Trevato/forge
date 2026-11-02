@@ -18,6 +18,18 @@ A reply streams in over `GET /talk/stream?after=<turn id>` (server-sent events, 
 
 When the agent asks first (`needs_confirm`), the turn draws **Confirm** (the existing yes) and **Cancel** (a no: the confirm is spent, nothing runs, a turn says it was cancelled). A result shown once (an invite link) is drawn by Settings → Confirms instead, where Confirm leads.
 
+## Edit, regenerate, retry (#8817)
+
+Three actions on the last exchange, one door, `talkAgain()` in `src/actions/talk.ts` (the same 12-a-minute throttle and refusals as sending):
+
+- **Edit** replaces your last message with new words and asks again. **Regenerate** asks the same message again for a new reply. **Retry** asks again after a failed turn.
+- What is replaced stays in the conversation, marked replaced (`replaced: true` in `GET /api/v1/conversation/turns`), dimmed on the page; the agent no longer reads it, and the new turn starts a fresh session from the turns that still stand.
+- A turn that could not answer (a failed run, a resting account) says what happened in plain words, never the raw error, and shows **Retry**.
+- Refused while a turn runs (`running`, 409), or when there is nothing to act on (`nothing`, 409).
+- **Web:** Edit under your last message (opens the composer holding it, `/talk?edit=1`; Send resends), Regenerate under the last reply, Retry under a failed one. All are plain forms or links, so they work without the script, which only does them in place. They post to `POST /talk/again/edit|regenerate|retry`, from your own signed-in browser only.
+- **Terminal:** `ssh <forge> talk-again edit <words>`, `ssh <forge> talk-again regenerate`, `ssh <forge> talk-again retry`.
+- There is no API or MCP door for these yet.
+
 ## Stop
 
 A turn can be ended mid-reply (`stopTalk` in `src/actions/talk.ts`, `stopTurn` in `src/crew/conversation.ts`). The agent's process group ends with everything it started; the words it had said stay, followed by a `Stopped.` line; the run is stored as `failed`. Held writes waiting on a Confirm are cancelled before the kill and again after, so nothing lands while the process goes down.
@@ -44,7 +56,8 @@ Prior art read: Vercel AI Elements (Apache-2.0 React on shadcn; anatomy and beha
 | Starter questions on an empty chat (links to `/talk?q=`, so they work without the script) | this pull | AI Elements `Suggestion` |
 | Stick to bottom, "Latest" jump button | this pull | AI Elements `Conversation` |
 | Many conversations: new, list, search, rename, archive, URL each | next pull | needs a migration: today one row per person |
-| Edit and resend, regenerate, Stop, queue | next pulls | need turn deletion and a cancel on `crew/conversation.ts` |
+| Edit and resend, regenerate, Retry (see below) | have (#8817) | replaced turns are kept and marked, not deleted |
+| Queue | next pull | needs a queue on `crew/conversation.ts` |
 | Cost under each reply and how full the context is (header, and in the terminal) | this pull | the run's own usage record, never an estimate |
 | Attachments, tables, thinking, plan line | later | need storage / token data / markdown tables |
 | Code highlighting and tables in replies | this pull (#8816) | a reply is stored whole and drawn whole, so no half-open fence is ever tokenised |

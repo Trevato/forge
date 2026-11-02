@@ -19,7 +19,7 @@ import { chmodSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { dailyLeft } from "../core/account_ceiling.ts";
-import { appendTurn, listTurns, openConversation, removeTurn, setClaudeSession, type Conversation } from "../core/conversations.ts";
+import { appendTurn, lastExchange, listTurns, openConversation, removeTurn, restoreTurns, setAsideFrom, setClaudeSession, type Conversation } from "../core/conversations.ts";
 import { carryWrites, forgetWrites, unended } from "../core/conversation_writes.ts";
 import { cancelHeld, WORDS_MAX } from "../core/fence.ts";
 import { PLATFORM, pickSubscription, type Pick } from "../core/subscriptions.ts";
@@ -163,7 +163,7 @@ export function withHistory(app: App, conversation: Conversation, prompt: string
   const before = last !== undefined && last.role === "person" && last.text === prompt ? stored.slice(0, -1) : stored;
   const lines: string[] = [];
   let size = 0;
-  for (const t of before.filter((t) => t.role !== "confirm").reverse()) {
+  for (const t of before.filter((t) => t.role !== "confirm" && !t.replaced && !t.failed).reverse()) {
     const line = `${t.role === "person" ? "Person" : t.role === "agent" ? "You" : "Tool"}: ${t.text.slice(0, HISTORY_TURN_CHARS)}`;
     if (size + line.length > HISTORY_CHARS) break;
     size += line.length;
@@ -217,6 +217,52 @@ export function say(app: App, options: ConversationOptions, userId: string, text
   return ok({ how: "started", done: started.value });
 }
 
+export type RedoHow = "edit" | "regenerate" | "retry";
+export type RedoRefusal = SayRefusal | "running" | "nothing";
+
+/**
+ * Ask again, in place of the last exchange (#8817). `edit` replaces the
+ * person's last message with `text`; `regenerate` asks the same message again
+ * for a new reply; `retry` asks it again after a failed run. What is replaced
+ * is kept in history, marked, and the agent no longer reads it: the turn
+ * starts a fresh session whose context is the turns that still stand. Refused
+ * while a turn runs, or when the last exchange is not what the action is for.
+ */
+export function redo(app: App, options: ConversationOptions, userId: string, how: RedoHow, text = ""): Result<Said, RedoRefusal> {
+  const user = getUserById(app.db, userId);
+  if (user === undefined) return err("unauthorized");
+  const conversation = openConversation(app.db, userId);
+  if (live.has(conversation.id)) return err("running");
+  const { person, after } = lastExchange(app.db, userId, conversation.id);
+  if (person === undefined) return err("nothing");
+  const last = after.at(-1);
+  if (how === "retry" && last?.failed !== true) return err("nothing");
+  if (how === "regenerate" && (last === undefined || last.role !== "agent" || last.failed)) return err("nothing");
+  if (how === "edit") {
+    if (text.trim() === "") return err("empty");
+    if (text.length > WORDS_MAX) return err("too_long");
+  }
+  if (live.size >= (options.liveMax ?? TURNS_LIVE_MAX)) return err("busy");
+  const words = how === "edit" ? text : person.text;
+  // Edit sets the message itself aside; the others keep it and set aside what answered it.
+  const first = how === "edit" ? person.id : (after[0]?.id ?? "");
+  const aside = first === "" ? [] : setAsideFrom(app.db, userId, conversation.id, first);
+  const refuse = (why: RedoRefusal, added?: string): Result<Said, RedoRefusal> => {
+    if (added !== undefined) removeTurn(app.db, userId, conversation.id, added);
+    restoreTurns(app.db, userId, conversation.id, aside);
+    return err(why);
+  };
+  let added: string | undefined;
+  if (how === "edit") {
+    const stored = appendTurn(app.db, userId, conversation.id, { role: "person", text });
+    if (!stored.ok) return refuse("too_long");
+    added = stored.value.id;
+  }
+  const started = begin(app, options, conversation, withHistory(app, conversation, words), 0, undefined);
+  if (!started.ok) return refuse(started.error, added);
+  return ok({ how: "started", done: started.value });
+}
+
 /**
  * Turns the last run of the forge left `running` are resumed once, from their
  * stored session, with one line to the person. A turn already resumed once
@@ -260,6 +306,13 @@ function limitLine(app: App, picked: Pick, message: string): string {
   return account === undefined
     ? `The forge's own model window is full until ${whenText(until)}; try again then.`
     : `${account.name} is resting until ${whenText(until)}.`;
+}
+
+/** What a run that did not end well says to the person: what happened, never the raw error. */
+export function failureLine(reason: string): string {
+  if (reason === "timeout") return "That took longer than a turn may, so I stopped.";
+  if (reason === "max_budget_reached") return "That would have cost more than one turn may spend, so I stopped. Ask for less, or try again.";
+  return "I could not answer that just now.";
 }
 
 function begin(
@@ -399,15 +452,19 @@ function begin(
         return;
       }
       const answer = outcome?.result ?? "";
-      if (outcome !== undefined && isRateLimited(outcome)) {
-        // The provider's words are not shown: the streamed copy of them goes.
+      // A turn that could not answer says so in plain words, flagged so the page draws Retry;
+      // whatever the provider or process printed, streamed as text, is taken back first.
+      const couldNot = (text: string, raw: (said: string) => boolean): void => {
+        for (const turn of streamed) if (raw(turn.text)) removeTurn(app.db, userId, conversation.id, turn.id);
+        appendTurn(app.db, userId, conversation.id, { role: "agent", text, failed: true });
+      };
+      if (outcome === undefined) couldNot(failureLine("error"), () => false);
+      else if (isRateLimited(outcome)) {
         const first = outcome.result.split("\n").find((l) => l.trim() !== "")?.trim() ?? "";
-        for (const turn of streamed)
-          if (turn.text === outcome.result || (first !== "" && turn.text.includes(first))) removeTurn(app.db, userId, conversation.id, turn.id);
-        put("agent", limitLine(app, picked, outcome.result));
-      }
+        couldNot(limitLine(app, picked, outcome.result), (said) => said === outcome!.result || (first !== "" && said.includes(first)));
+      } else if (!outcome.ok) couldNot(failureLine(outcome.reason), (said) => said === outcome!.result);
       else if (answer.trim() !== "" && answer !== lastText) put("agent", answer);
-      else if (answer.trim() === "" && lastText === "") put("agent", "I could not answer that just now.");
+      else if (answer.trim() === "" && lastText === "") couldNot(failureLine("error"), () => false);
       app.db
         .query(
           "UPDATE conversation_run SET state = ?2, tokens_in = ?3, tokens_out = ?4, cost_usd = ?5, finished_at = ?6, context_tokens = ?7, context_window = ?8 WHERE id = ?1",

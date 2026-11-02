@@ -33,6 +33,10 @@ export interface Turn {
   readonly role: TurnRole;
   readonly text: string;
   readonly createdAt: string;
+  /** Set aside by an edit, a regenerate or a retry: kept in history, no longer part of the conversation. */
+  readonly replaced: boolean;
+  /** The line saying a run could not answer; the page draws Retry beside it. */
+  readonly failed: boolean;
 }
 
 interface ConversationRow {
@@ -49,6 +53,8 @@ interface TurnRow {
   role: TurnRole;
   text: string;
   created_at: string;
+  replaced_at: string | null;
+  failed: number;
 }
 
 const conversationOf = (r: ConversationRow): Conversation => ({
@@ -65,6 +71,8 @@ const turnOf = (r: TurnRow): Turn => ({
   role: r.role,
   text: r.text,
   createdAt: r.created_at,
+  replaced: r.replaced_at !== null,
+  failed: r.failed === 1,
 });
 
 /** The person's conversation, made on first use. */
@@ -89,7 +97,7 @@ export function appendTurn(
   db: Database,
   userId: string,
   conversationId: string,
-  input: { readonly role: string; readonly text: string },
+  input: { readonly role: string; readonly text: string; readonly failed?: boolean },
 ): Result<Turn, "not_found" | "bad_role" | "empty_text" | "text_too_long"> {
   if (!owned(db, userId, conversationId)) return err("not_found");
   if (!(TURN_ROLES as readonly string[]).includes(input.role)) return err("bad_role");
@@ -102,10 +110,12 @@ export function appendTurn(
     role: input.role as TurnRole,
     text: input.text,
     created_at: now,
+    replaced_at: null,
+    failed: input.failed === true ? 1 : 0,
   };
   db.query(
-    "INSERT INTO conversation_turn (id, conversation_id, role, text, created_at) VALUES (?1,?2,?3,?4,?5)",
-  ).run(row.id, row.conversation_id, row.role, row.text, row.created_at);
+    "INSERT INTO conversation_turn (id, conversation_id, role, text, created_at, failed) VALUES (?1,?2,?3,?4,?5,?6)",
+  ).run(row.id, row.conversation_id, row.role, row.text, row.created_at, row.failed);
   db.query("UPDATE conversation SET updated_at = ?2 WHERE id = ?1").run(conversationId, now);
   db.query(
     "DELETE FROM conversation_turn WHERE conversation_id = ?1 AND rowid < (SELECT rowid FROM conversation_turn WHERE conversation_id = ?1 ORDER BY rowid DESC LIMIT 1 OFFSET ?2)",
@@ -117,6 +127,46 @@ export function appendTurn(
 export function removeTurn(db: Database, userId: string, conversationId: string, turnId: string): void {
   if (!owned(db, userId, conversationId)) return;
   db.query("DELETE FROM conversation_turn WHERE id = ?1 AND conversation_id = ?2").run(turnId, conversationId);
+}
+
+/**
+ * Set aside the turn `fromId` and every turn after it that still stands: they
+ * stay in history, marked replaced. Returns the ids set aside, so a refusal
+ * can put them back (`restoreTurns`).
+ */
+export function setAsideFrom(db: Database, userId: string, conversationId: string, fromId: string): string[] {
+  if (!owned(db, userId, conversationId)) return [];
+  const now = new Date().toISOString();
+  const rows = db
+    .query(
+      "UPDATE conversation_turn SET replaced_at = ?3 WHERE conversation_id = ?1 AND replaced_at IS NULL AND rowid >= (SELECT rowid FROM conversation_turn WHERE id = ?2 AND conversation_id = ?1) RETURNING id",
+    )
+    .all(conversationId, fromId, now) as { id: string }[];
+  return rows.map((r) => r.id);
+}
+
+/** Put back turns just set aside, as when the message that replaced them could not be answered. */
+export function restoreTurns(db: Database, userId: string, conversationId: string, ids: readonly string[]): void {
+  if (!owned(db, userId, conversationId)) return;
+  for (const turnId of ids)
+    db.query("UPDATE conversation_turn SET replaced_at = NULL WHERE id = ?1 AND conversation_id = ?2").run(turnId, conversationId);
+}
+
+/**
+ * The person's last message that still stands and the turns after it, oldest
+ * first; `person` is undefined when none stands. Edit, Regenerate and Retry
+ * each look at this and at nothing older.
+ */
+export function lastExchange(db: Database, userId: string, conversationId: string): { person: Turn | undefined; after: Turn[] } {
+  if (!owned(db, userId, conversationId)) return { person: undefined, after: [] };
+  const row = db
+    .query("SELECT rowid AS at, * FROM conversation_turn WHERE conversation_id = ?1 AND role = 'person' AND replaced_at IS NULL ORDER BY rowid DESC LIMIT 1")
+    .get(conversationId) as (TurnRow & { at: number }) | null;
+  if (row === null) return { person: undefined, after: [] };
+  const after = db
+    .query("SELECT * FROM conversation_turn WHERE conversation_id = ?1 AND replaced_at IS NULL AND rowid > ?2 ORDER BY rowid LIMIT ?3")
+    .all(conversationId, row.at, MAX_PAGE) as TurnRow[];
+  return { person: turnOf(row), after: after.map(turnOf) };
 }
 
 /**

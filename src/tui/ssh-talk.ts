@@ -7,12 +7,16 @@
  * control character is refused before anything runs. `talk /stop` (or
  * `--stop`) ends the running answer, as Stop does on /talk: what the agent
  * had said stays, its processes end, a held write is cancelled.
+ *
+ * `talk-again edit <words>`, `talk-again regenerate` and `talk-again retry`
+ * are the same three actions the page has (#8817), through `talkAgain`.
  */
 
-import { TALK_WORDS, stopTalk, talk } from "../actions/talk.ts";
+import { TALK_WORDS, stopTalk, talk, talkAgain } from "../actions/talk.ts";
 import { contextOf, contextText, dollars, turnCosts } from "../core/conversation_cost.ts";
 import { openConversation } from "../core/conversations.ts";
 import type { App } from "../app.ts";
+import type { RedoHow } from "../crew/conversation.ts";
 import type { User } from "../core/users.ts";
 import { CONTROL_WORDS } from "./ssh-tell.ts";
 import type { SshSession } from "../ssh/server.ts";
@@ -60,5 +64,25 @@ export function serveTalk(app: App, session: SshSession, user: User | undefined,
     if (last !== undefined) session.write(`last turn ${dollars(last)}${CRLF}`);
     if (context !== undefined) session.write(`${contextText(context)}${CRLF}`);
   }
+  session.exit(0);
+}
+
+/** `talk-again <edit words | regenerate | retry>`; undefined when the command is not one. */
+export function parseTalkAgain(command: string | undefined): { how: RedoHow; words: string } | undefined {
+  if (command === undefined) return undefined;
+  const m = /^talk-again[ \t]+(edit|regenerate|retry)(?:[ \t]+([\s\S]*))?$/.exec(command.trim());
+  return m === null ? undefined : { how: m[1] as RedoHow, words: m[2] ?? "" };
+}
+
+/** Run one `talk-again` exec for `user` (undefined: an unknown key). */
+export function serveTalkAgain(app: App, session: SshSession, user: User | undefined, how: RedoHow, words: string): void {
+  const refuse = (text: string): void => {
+    session.writeStderr(`forge: ${text}${CRLF}`);
+    session.exit(1);
+  };
+  if (/[\x00-\x1f\x7f-\x9f\u2028\u2029]/.test(words)) return refuse(CONTROL_WORDS);
+  const said = talkAgain(app, user, how, words);
+  if (!said.ok) return refuse(TALK_WORDS[said.error][1]);
+  session.write(`the forge's agent is answering again${CRLF}`);
   session.exit(0);
 }

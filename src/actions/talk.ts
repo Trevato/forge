@@ -8,13 +8,13 @@
 import type { App } from "../app.ts";
 import { RateLimiter } from "../core/ratelimit.ts";
 import type { User } from "../core/users.ts";
-import { conversationOptions, say, stopTurn, type SayRefusal, type Said } from "../crew/conversation.ts";
+import { conversationOptions, redo, say, stopTurn, type RedoHow, type RedoRefusal, type SayRefusal, type Said } from "../crew/conversation.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
 /** Messages a person may send in a minute. */
 export const TALK_PER_MINUTE = 12;
 
-export type TalkRefusal = SayRefusal | "off" | "rate_limited";
+export type TalkRefusal = SayRefusal | RedoRefusal | "off" | "rate_limited";
 
 /** What each refusal says, with its status. */
 export const TALK_WORDS: Readonly<Record<TalkRefusal, readonly [number, string]>> = {
@@ -25,24 +25,45 @@ export const TALK_WORDS: Readonly<Record<TalkRefusal, readonly [number, string]>
   resting: [429, "the account that serves you is resting or out of budget; try again later"],
   busy: [429, "the forge's agent is answering as many people as it can at once; try again in a minute"],
   off: [503, "the forge's agent is not running here"],
+  running: [409, "the forge is still answering; wait for it to finish"],
+  nothing: [409, "there is nothing here to do that to"],
   rate_limited: [429, `at most ${TALK_PER_MINUTE} messages a minute`],
 };
 
 const limiters = new WeakMap<App, RateLimiter>();
 
-export function talk(app: App, user: User | undefined, text: string): Result<Said, TalkRefusal> {
-  if (user === undefined) return err("unauthorized");
-  const options = conversationOptions(app);
-  if (options === undefined) return err("off");
+/** Throttle by identity: false past `TALK_PER_MINUTE` a minute. */
+function take(app: App, user: User): boolean {
   let limiter = limiters.get(app);
   if (limiter === undefined) {
     limiter = new RateLimiter({ perMinute: TALK_PER_MINUTE, adminPerMinute: TALK_PER_MINUTE, enabled: true });
     limiters.set(app, limiter);
   }
-  if (!limiter.take(`talk:${user.id}`, "rw").allowed) return err("rate_limited");
+  return limiter.take(`talk:${user.id}`, "rw").allowed;
+}
+
+const watch = (app: App, said: Said): void => {
+  said.done?.catch((error: unknown) => app.log.error("conversation turn crashed", { error: String(error) }));
+};
+
+export function talk(app: App, user: User | undefined, text: string): Result<Said, TalkRefusal> {
+  if (user === undefined) return err("unauthorized");
+  const options = conversationOptions(app);
+  if (options === undefined) return err("off");
+  if (!take(app, user)) return err("rate_limited");
   const said = say(app, options, user.id, text);
-  if (said.ok && said.value.done !== undefined)
-    said.value.done.catch((error: unknown) => app.log.error("conversation turn crashed", { error: String(error) }));
+  if (said.ok) watch(app, said.value);
+  return said;
+}
+
+/** Edit the last message and resend it, regenerate the last reply, or retry a failed turn (#8817). */
+export function talkAgain(app: App, user: User | undefined, how: RedoHow, text = ""): Result<Said, TalkRefusal> {
+  if (user === undefined) return err("unauthorized");
+  const options = conversationOptions(app);
+  if (options === undefined) return err("off");
+  if (!take(app, user)) return err("rate_limited");
+  const said = redo(app, options, user.id, how, text);
+  if (said.ok) watch(app, said.value);
   return said;
 }
 
