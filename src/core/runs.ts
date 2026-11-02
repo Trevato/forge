@@ -1004,8 +1004,10 @@ export function latestRunsForIssues(
 }
 
 /**
- * How many automatic follow-ups an agent has had on a pull since a person
- * last spoke: the bound behind rule 7 in docs/APPS.md. `since` is the
+ * How many automatic follow-ups for a failed check an agent has had on a
+ * pull since a person last spoke: the bound behind rule 7 in docs/APPS.md.
+ * A bring-up-to-date run (`conflict`) is no try: main moving is not the
+ * change's failing, and those runs are bounded where they are queued. `since` is the
  * moment of the last human comment or review, or the pull's creation.
  */
 export function automaticRunsSince(
@@ -1017,7 +1019,7 @@ export function automaticRunsSince(
     .query<{ n: number }, [string, string]>(
       `SELECT COUNT(*) AS n FROM run
        WHERE kind = 'agent' AND issue_id = ?1 AND created_at > ?2
-         AND reason IN ('check_failed','conflict')`,
+         AND reason = 'check_failed'`,
     )
     .get(issueId, since);
   return row?.n ?? 0;
@@ -1041,7 +1043,7 @@ export function automaticRunsSinceFor(
         `WITH since (issue_id, at) AS (VALUES ${batch.map((_, n) => `(?${2 * n + 1}, ?${2 * n + 2})`).join(",")})
          SELECT run.issue_id, COUNT(*) AS n FROM run JOIN since ON since.issue_id = run.issue_id
          WHERE run.kind = 'agent' AND run.created_at > since.at
-           AND run.reason IN ('check_failed','conflict')
+           AND run.reason = 'check_failed'
          GROUP BY run.issue_id`,
       )
       .all(...batch.flat());

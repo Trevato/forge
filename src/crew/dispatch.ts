@@ -10,6 +10,7 @@
 
 import { twinNote, twinOf, type Twin } from "./twin.ts";
 import { NO_MERGE } from "../checks/merged.ts";
+import { resolveListConflicts } from "../actions/list-conflicts.ts";
 import { markHeard } from "../core/issues.ts";
 import { capacityCount, noteBooted } from "../core/capacity.ts";
 import { tmpdir } from "node:os";
@@ -114,6 +115,30 @@ const log = createLog("crew");
 /** Automatic follow-ups after a failed check, before a person must speak. */
 export const CHECK_FAILED_LIMIT = 2;
 const TICK_MS = 5_000;
+
+/** Whether the check run's red is a pull that does not merge into its base. */
+function conflictSummary(app: App, runId: unknown): boolean {
+  if (typeof runId !== "string") return false;
+  return getRun(app.db, runId)?.summary.includes(NO_MERGE) === true;
+}
+
+/**
+ * A pull's check could not start for a conflict: the forge keeps both sides
+ * of a list-doc clash itself, else queues one bring-up-to-date run. Neither
+ * is a try (`automaticRunsSince` counts failed checks only); one in flight is
+ * enough.
+ */
+async function bringUpAfterNoMerge(app: App, repo: Repo, issue: Issue, agent: Agent): Promise<void> {
+  const pull = getPull(app.db, repo.id, issue.number);
+  if (!pull) return;
+  if (await resolveListConflicts(app, repo, pull)) return;
+  if (activeRunFor(app.db, "agent", issue.id) !== undefined) return;
+  queueAgentRun(app, repo, issue, agent, "conflict", undefined, {
+    notBefore: new Date().toISOString(),
+    attempt: 0,
+    summary: "main moved: the pull does not merge into its base",
+  });
+}
 
 export interface CrewHandle {
   /** Whether a usable Claude Code was found at start. */
@@ -730,6 +755,18 @@ function route(app: App, event: ForgeEvent): void {
         log.info("check failed while the builder's run is at work; deciding when it ends", {
           issue: issue.number,
         });
+        return;
+      }
+      // A pull that does not merge is no failed try: the forge settles a
+      // list-doc clash itself, else a bring-up-to-date run is queued. It
+      // counts towards no limit and parks nothing (#7909).
+      if (conflictSummary(app, event.payload["runId"])) {
+        void bringUpAfterNoMerge(app, repo, issue, agent).catch((error) =>
+          log.error("bringing a conflicted pull up to date failed", {
+            issue: issue.number,
+            error: String(error),
+          }),
+        );
         return;
       }
       // A red that main shares (#1971), or that three pulls share within

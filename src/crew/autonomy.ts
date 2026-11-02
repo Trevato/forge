@@ -12,6 +12,7 @@
  * repository's origin.
  */
 
+import { onlyListDocs, resolveListConflicts } from "../actions/list-conflicts.ts";
 import { closedToday, closeStale } from "./stale_pulls.ts";
 import { authorsInRepoPull } from "./authors_pull.ts";
 import type { Database } from "bun:sqlite";
@@ -1821,6 +1822,14 @@ export async function sweepConflicts(
     // push must not be queued again on every tick.
     const tried = asked.get(pull.id);
     if (tried?.tip === baseTip && tried.n >= RUNS_PER_TIP) continue;
+    // A clash only in list docs is settled by the forge, with no run: its
+    // push is a check, and the next tick sees the pull clean (#7909).
+    if (onlyListDocs(files) && room > 0 && (await resolveListConflicts(app, repo, pull)) !== undefined) {
+      room--;
+      acted++;
+      checked.delete(pull.id);
+      continue;
+    }
     // Its push is a check: none starts that the lane has no slot for (#4459).
     if (room <= 0) continue;
     if (bringUpToDate(app, repo, pull, files, since) !== undefined) {
