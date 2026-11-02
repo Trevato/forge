@@ -691,6 +691,15 @@ const DESTRUCTIVE: {
     }),
   },
   {
+    pattern: /^\/([^/]+)\/-\/teams\/([^/]+)\/remove\?user=([A-Za-z0-9_.-]+)$/,
+    describe: (m) => ({
+      verb: "Remove from team",
+      title: `Remove @${m[3]} from this team?`,
+      detail: `They lose whatever access this team grants them in ${m[1]}. Their account is untouched.`,
+      phrase: "",
+    }),
+  },
+  {
     pattern: /^\/([^/]+)\/([^/]+)\/settings\/app\/disable$/,
     describe: (m) => ({
       verb: STOP_APP,

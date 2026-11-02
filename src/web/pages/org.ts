@@ -550,10 +550,11 @@ export function teamPage(ctx: Ctx): Response {
             trail: when(
               !protectedTeam || members.length > 1,
               () =>
-                html`<form method="post" action="${teamBase}/remove">
-                  <input type="hidden" name="user" value="${m.username}" />
-                  ${btn("Remove", { variant: "danger", size: "sm" })}
-                </form>`,
+                confirmAction({
+                  action: `${teamBase}/remove?user=${encodeURIComponent(m.username)}`,
+                  verb: "Remove",
+                  size: "sm",
+                }),
             ),
           }),
         ),
@@ -641,7 +642,13 @@ export async function teamMemberAdd(ctx: Ctx): Promise<Response> {
 export async function teamMemberRemove(ctx: Ctx): Promise<Response> {
   const r = await teamAction(ctx);
   if (r instanceof Response) return r;
-  const username = field(r.form, "user").trim();
+  // The confirm page posts to its `to` path exactly, so the member arrives
+  // in the query; a form that names one still wins.
+  const username = (
+    field(r.form, "user") ||
+    ctx.url.searchParams.get("user") ||
+    ""
+  ).trim();
   const dest = `/${r.org.username}/-/teams/${r.team.id}`;
   const removed = removeTeamMember(
     ctx.app,
