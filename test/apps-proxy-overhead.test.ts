@@ -24,7 +24,7 @@ const DOMAIN = "apps.test";
 const RUNS = 25;
 const MEDIAN_MS = 5;
 const P95_MS = 20;
-const ROUNDS = 12;
+const ROUNDS = 20;
 // About the size of the scaffold app's home page.
 const PAGE = `<!doctype html><html><head><title>notes</title></head><body>${"<p>hello hello hello</p>".repeat(60)}</body></html>`;
 
@@ -128,13 +128,15 @@ for (const [label, pill] of [["with the toolbar rewrite", undefined], ["without 
     toolbar = pill;
     const direct = `http://127.0.0.1:${backend.port}/`;
     const proxied = `${servers.url}/`;
-    for (let i = 0; i < 2; i++) {
+    // The first test in the file pays for cold code (the rewrite, the JIT) that
+    // the second never sees, so warm both paths well past the first few calls.
+    for (let i = 0; i < 30; i++) {
       await time(direct, { accept: "text/html" });
       await time(proxied, HEADERS);
     }
     // Load only ever adds time, so the proxy's own cost is the floor of what
-    // is measured: judge the lowest median and the lowest p95 over a dozen short
-    // rounds. A change that costs more than the budget raises that floor in
+    // is measured: judge the lowest median and the lowest p95 over several short
+    // rounds (ROUNDS). A change that costs more than the budget raises that floor in
     // every round and fails; a noisy round cannot.
     let median = Infinity;
     let p95 = Infinity;
