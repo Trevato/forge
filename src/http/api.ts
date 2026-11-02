@@ -35,7 +35,6 @@ import { readScorecards } from "../actions/scorecard.ts";
 import {
   accountSignIns,
   endAccountSession,
-  signOutHere,
 } from "../actions/signins.ts";
 import { STRANGER_MAX } from "./limits.ts";
 import { VIA_FORM, WORDS_MAX } from "../core/fence.ts";
@@ -109,7 +108,6 @@ import {
 } from "../actions/repos.ts";
 import {
   createToken,
-  deleteToken,
   HUMAN_CHECK_MESSAGE,
   mintConversationToken,
   PASSKEY_REQUIRED_MESSAGE,
@@ -165,9 +163,7 @@ import {
   listReviews,
   withOutdated,
 } from "../core/reviews.ts";
-import { createSession } from "../core/sessions.ts";
 import { mintProposal } from "../actions/proposal_tokens.ts";
-import { ADMIN_TOKEN_WORDS, listTokens } from "../core/tokens.ts";
 import {
   headInNamespace,
   PROPOSAL_BODY_MAX,
@@ -177,8 +173,6 @@ import {
 import {
   getUserByName,
   hiddenFrom,
-  verifyPasswordThrottled,
-  type User,
 } from "../core/users.ts";
 import { isPinned } from "../core/pins.ts";
 import { diffCommit } from "../git/diff.ts";
@@ -279,7 +273,7 @@ import {
   undoFleetOp,
   type FleetError,
 } from "../actions/fleet.ts";
-import { EDGE_NAME_MESSAGE, pinnedTo, sessionCookie, signupSlot } from "../web/pages/site.ts";
+import { EDGE_NAME_MESSAGE, pinnedTo, signupSlot } from "../web/pages/site.ts";
 import {
   FIRST_ADMIN_TOKEN_MAX_S,
   FIRST_ADMIN_TOKEN_MIN_S,
@@ -304,7 +298,6 @@ import {
   respondAccess,
   str,
   unauthorized,
-  tooManyAttempts,
 } from "./respond.ts";
 import {
   explorePage,
@@ -323,6 +316,7 @@ import { agentRoutes } from "./api/agents.ts";
 import { boardRoutes } from "./api/boards.ts";
 import { followingRoutes } from "./api/following.ts";
 import { labelsRoutes } from "./api/labels.ts";
+import { tokenRoutes } from "./api/tokens.ts";
 import { accountAdmin, adminRoutes } from "./api/admin.ts";
 import { issueRoutes, labelsHandler } from "./api/issues.ts";
 import { userRoutes } from "./api/user.ts";
@@ -1113,38 +1107,7 @@ export function apiRoutes(router: Router<Handler>): void {
     );
   });
 
-  router.add("POST", "/api/v1/sessions", async (ctx) => {
-    // The answer sets a cookie, so a page on another site must not be able
-    // to sign a visitor in as someone else (login CSRF).
-    if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
-    // Anyone may call this, so its body is a stranger's (`http/limits.ts`).
-    const input = await boundedBody(ctx.request, STRANGER_MAX);
-    if (input === "too_large")
-      return apiError("too_large", 413, `at most ${STRANGER_MAX} bytes`);
-    const verified = await verifyPasswordThrottled(ctx.app.db, {
-      username: str(input.username),
-      password: str(input.password),
-      source: clientAddress(ctx.request),
-    });
-    if (!verified.ok)
-      return verified.error.reason === "throttled"
-        ? tooManyAttempts(verified.error.retryAfter)
-        : unauthorized();
-    const session = createSession(ctx.app.db, verified.value.id);
-    return json(publicUser(verified.value), 201, {
-      "set-cookie": sessionCookie(session.token, session.expiresAt, ctx.url, ctx.app.config.url),
-    });
-  });
-
-  router.add("DELETE", "/api/v1/sessions", (ctx) => {
-    // Cookie-authenticated logout, so it must be same-origin like any other
-    // cookie mutation — otherwise it's a cross-site forced-logout.
-    if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
-    signOutHere(ctx.app, cookieValue(ctx.request, "forge_session"));
-    return json({}, 200, {
-      "set-cookie": sessionCookie("", new Date(0), ctx.url, ctx.app.config.url),
-    });
-  });
+  tokenRoutes(router);
 
   userRoutes(router);
   adminRoutes(router);
@@ -1215,67 +1178,6 @@ export function apiRoutes(router: Router<Handler>): void {
     const card = timePhase(ctx.request, "scorecard", () => readScorecards(ctx.app, ctx.auth.user));
     if (!card) return apiError("forbidden", 403, ADMIN_WORDS.scorecard);
     return timePhase(ctx.request, "render", () => json(card));
-  });
-
-  // Tokens are minted, listed, and revoked with the account itself (a
-  // session or the password) — never with another token.
-  router.add("POST", "/api/v1/tokens", async (ctx) => {
-    // Anyone may call this, so its body is a stranger's (`http/limits.ts`).
-    const input = await boundedBody(ctx.request, STRANGER_MAX);
-    if (input === "too_large")
-      return apiError("too_large", 413, `at most ${STRANGER_MAX} bytes`);
-    let user: User | undefined;
-    if (
-      (ctx.auth.via === "session" || ctx.auth.via === "edge") &&
-      ctx.auth.user
-    ) {
-      if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
-      // From a page, a site admin's token is minted only on purpose (#596).
-      if (ctx.auth.user.isAdmin && input.adminConfirm !== true)
-        return json(
-          {
-            error: "admin_confirm",
-            message:
-              "you are the forge's admin: send adminConfirm: true to mean a token that acts as admin, or mint it from your everyday account",
-          },
-          422,
-        );
-      user = ctx.auth.user;
-    } else {
-      const verified = await verifyPasswordThrottled(ctx.app.db, {
-        username: str(input.username),
-        password: str(input.password),
-        source: clientAddress(ctx.request),
-      });
-      if (!verified.ok && verified.error.reason === "throttled")
-        return tooManyAttempts(verified.error.retryAfter);
-      if (verified.ok) user = verified.value;
-      // With the password too, a site admin's token is minted on purpose.
-      if (user?.isAdmin && input.adminConfirm !== true)
-        return json(
-          {
-            error: "admin_confirm",
-            message:
-              "you are the forge's admin: send adminConfirm: true to mean a token that acts as admin, or mint it from your everyday account",
-          },
-          422,
-        );
-    }
-    if (!user) return unauthorized();
-    const scope = str(input.scope);
-    if (scope !== "ro" && scope !== "rw" && scope !== "admin") {
-      return json({ error: "invalid_scope" }, 422);
-    }
-    const minted = createToken(
-      ctx.app,
-      user,
-      str(input.name) || "unnamed",
-      scope,
-    );
-    if (!minted.ok && minted.error === "forbidden")
-      return apiError("forbidden", 403, ADMIN_TOKEN_WORDS);
-    if (!minted.ok) return unauthorized();
-    return json(minted.value, 201);
   });
 
   // The token the forge's agent acts with in one conversation (#7648): only
@@ -1381,22 +1283,6 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!recovered.ok) return apiError("refused", 403, FIRST_ADMIN_WORDS.refused);
     const { user, id, token, expiresAt } = recovered.value;
     return json({ user: publicUser(user), scope, id, token, expiresAt, expiresIn }, 201);
-  });
-
-  router.add("GET", "/api/v1/tokens", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const denied = requireAccount(ctx);
-    if (denied) return denied;
-    const tokens = timePhase(ctx.request, "tokens", () => listTokens(ctx.app.db, ctx.auth.user!.id));
-    return timePhase(ctx.request, "render", () => json(tokens));
-  });
-
-  router.add("DELETE", "/api/v1/tokens/:id", (ctx) => {
-    const denied = requireAccount(ctx);
-    if (denied) return denied;
-    const removed = deleteToken(ctx.app, ctx.auth.user, ctx.params.id!);
-    if (!removed.ok) return respondAccess(removed.error, 422);
-    return new Response(null, { status: 204 });
   });
 
   // Where an account is signed in: its person, or the forge's owner for any

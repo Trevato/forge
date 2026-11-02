@@ -29,7 +29,7 @@ setDefaultTimeout(60_000);
  * until it is walked here or named.
  */
 const WALKED: Record<string, number> = {
-  "src/http/api.ts": 4, // import, password sign-in, sign-out (+1 mention)
+  "src/http/api/tokens.ts": 4, // password sign-in, sign-out: a set-cookie header and a sessionCookie() call each
   "src/http/server.ts": 1, // the mode switch
   "src/http/rp.ts": 6, // parent sign-in and link: state cookie set and cleared
   "src/apps/proxy.ts": 2, // app grant, app sign-out
