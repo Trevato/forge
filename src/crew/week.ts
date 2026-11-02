@@ -32,11 +32,11 @@ export const WEEK = {
   /** The share of the week's crew capacity kept for conversations and a person's own requests. */
   reserve: 0.1,
   /** Slots never fall below this while the reserve holds. */
-  floorSlots: 1,
+  floorSlots: 2,
   /** Slots the crew holds at while the week's capacity is unknown. */
   unknownSlots: 2,
   /** How many hours back the burn is read over. */
-  burnHours: 3,
+  burnHours: 1,
 } as const;
 
 export type Status = "on pace" | "ahead" | "behind" | "unknown";

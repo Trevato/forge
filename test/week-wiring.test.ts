@@ -135,7 +135,7 @@ test("on pace, the gated issue stays behind the gate", async () => {
 
 test("ahead of pace, the pace cuts the slots, and the reserve stops them", () => {
   week(70, 6);
-  expect(repoPace(app, repo, NOW).slots).toBe(1);
+  expect(repoPace(app, repo, NOW).slots).toBe(2);
   expect(repoPace(app, repo, NOW).reason).toContain("Ahead of pace");
   week(95);
   expect(repoPace(app, repo, NOW).slots).toBe(0);

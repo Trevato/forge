@@ -32,7 +32,7 @@ describe("weekDecision", () => {
   });
 
   test("settings are plain values", () => {
-    expect(WEEK).toEqual({ tolerance: 0.25, reserve: 0.1, floorSlots: 1, unknownSlots: 2, burnHours: 3 });
+    expect(WEEK).toEqual({ tolerance: 0.25, reserve: 0.1, floorSlots: 2, unknownSlots: 2, burnHours: 1 });
   });
 
   test("on pace: a burn near allowed keeps the ceiling", () => {
@@ -79,7 +79,7 @@ describe("weekDecision", () => {
   test("a fast burn slows the crew", () => {
     const fast = used(50, { burnPctPerHour: 2.7 });
     expect(fast.status).toBe("ahead");
-    expect(fast.slots).toBe(1);
+    expect(fast.slots).toBe(WEEK.floorSlots);
     expect(fast.runsOutAt).not.toBeNull();
     expect(fast.sentence).toContain("running out about");
   });
