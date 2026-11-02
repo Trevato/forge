@@ -739,7 +739,7 @@ function admit(
     runtime.rouse(target.app, target.env);
   const status = runtime.envStatus(target.app, target.env);
   if (status === undefined || status.port === undefined) {
-    return err(unavailable(runtime, target, status));
+    return err(unavailable(runtime, target, status, undefined, grant?.who));
   }
   return ok(
     grant === undefined
@@ -1538,11 +1538,12 @@ function cookieValue(request: Request, name: string): string | undefined {
  * The page an environment that is not serving shows: what it is doing, in
  * words, with the run to look at. Never a bare gateway error.
  */
-function unavailable(
+export function unavailable(
   runtime: AppsRuntime,
   target: AppTarget,
   status: EnvStatus | undefined,
   reason?: string,
+  who?: GrantWho,
 ): Response {
   const name = target.app.slug;
   const where =
@@ -1551,10 +1552,21 @@ function unavailable(
       : `the preview of pull #${target.env.slice(5)}`;
   const state = status?.state ?? "stopped";
   const deploying = state === "deploying";
-  // A preview the forge no longer knows is gone, not broken: its pull closed
-  // and its data went with it. That is a 404, which also lets this page
-  // through an edge that replaces every 5xx with one of its own.
-  const gone = status === undefined && target.env !== "production";
+  // A preview is gone when its pull is closed, merged or no longer exists:
+  // its data went with it. That is a 404, which also lets this page through
+  // an edge that replaces every 5xx with one of its own. An open pull with no
+  // environment is not gone: it deploys again on the next push.
+  const at = pillWhere(runtime, target, who);
+  const pull =
+    at.pull === undefined
+      ? undefined
+      : getIssue(runtime.app.db, target.app.repoId, at.pull);
+  const preview = target.env !== "production";
+  const gone = preview && (pull === undefined || pull.state === "closed");
+  // Nothing was ever deployed for an open pull: also a 404, for the same
+  // edge, since there is nothing at this address yet. A stopped or failed
+  // environment keeps its 502.
+  const absent = preview && !gone && status === undefined;
   const message =
     reason ??
     (deploying
@@ -1563,13 +1575,32 @@ function unavailable(
         ? (status?.error ?? "The last deploy failed.")
         : gone
           ? "This preview is gone: its pull was closed, and its data with it."
-          : "Nothing is running here yet.");
+          : absent
+            ? "The preview is not running. It starts again with the next push to the pull, or with app_deploy redeploy."
+            : "Nothing is running here yet.");
   const links = discoveryLinks(runtime, target);
   const report = links.length > 0;
   const runLink =
     status?.runId === undefined
       ? ""
       : `<p><a href="${escape(runtime.options.forgeUrl)}/runs/${escape(status.runId)}">See the run on the forge</a></p>`;
+  const forge = runtime.options.forgeUrl;
+  const exits: string[] = [];
+  if (preview && at.repo !== undefined && at.pull !== undefined) {
+    const href = new URL(`/${at.repo}/pulls/${at.pull}`, forge).href;
+    exits.push(
+      `<a href="${escape(href)}">Pull #${at.pull}${at.title === undefined ? "" : `: ${escape(at.title)}`}</a>`,
+    );
+  }
+  // A private app's address, like its repository's name, goes only to a reader.
+  const mayNameProduction = target.app.access === "public" || at.repo !== undefined;
+  if (
+    preview &&
+    mayNameProduction &&
+    runtime.envStatus(target.app, "production")?.port !== undefined
+  )
+    exits.push(`<a href="${escape(runtime.urlFor(target.app, "production"))}">Production</a>`);
+  exits.push(`<a href="${escape(new URL("/", forge).href)}">Forge home</a>`);
   const html = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -1586,10 +1617,11 @@ ${deploying ? '<meta http-equiv="refresh" content="3">' : ""}
 <p>This is ${escape(where)}. ${escape(message)}</p>
 ${deploying ? "<p>This page refreshes on its own.</p>" : ""}
 ${runLink}
+<p>${exits.join(" · ")}</p>
 ${report ? '<p><a href="/__forge/report">Report a problem</a> to the people who keep it; no account needed.</p>' : ""}
 `;
   return new Response(html, {
-    status: deploying ? 503 : gone ? 404 : 502,
+    status: deploying ? 503 : gone || absent ? 404 : 502,
     headers: {
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-store",
