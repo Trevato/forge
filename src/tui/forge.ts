@@ -79,6 +79,7 @@ import { newPullScreen } from "./screens/newpull.ts";
 import { newForgeScreen } from "./screens/newforge.ts";
 import { newOrgScreen } from "./screens/neworg.ts";
 import { migrateScreen } from "./screens/migrate.ts";
+import { newAppScreen } from "./screens/newapp.ts";
 import { newRepoScreen } from "./screens/newrepo.ts";
 import { repoScreen } from "./screens/repo.ts";
 import { signInScreen } from "./screens/signin.ts";
@@ -214,6 +215,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
               ctx.push(signInScreen(session, ctx, () => ctx.invalidate())),
           },
     );
+    // An app from a sentence, as /apps/new makes it: a person's, never an agent's.
+    if (session.user !== undefined && session.user.kind !== "agent")
+      commands.push({
+        id: "new-app",
+        title: "New app",
+        hint: "say what it does in a sentence; the crew starts on it",
+        run: () => ctx.push(newAppScreen(session, ctx, blank("New app"))),
+      });
     // An organization you own, as /organizations/new and MCP `org_create` make it: a person's, never an agent's (#7260).
     if (session.user !== undefined && session.user.kind !== "agent")
       commands.push({

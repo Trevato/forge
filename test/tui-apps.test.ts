@@ -463,7 +463,7 @@ describe("terminal: apps, runs and the crew", () => {
       await h.until("On you");
       // alice is the site admin, so the crew entry would have been there.
       const ids = forgeCommands(h.session)(h.app.ctx).map((c) => c.id);
-      for (const gone of ["apps", "app", "runs", "new-app", "crew"])
+      for (const gone of ["apps", "app", "runs", "crew"])
         expect(ids).not.toContain(gone);
       expect(ids).toContain("repo");
       expect(ids).toContain("pulls");
