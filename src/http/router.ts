@@ -85,37 +85,55 @@ export class Router<H> {
 
   match(method: string, pathname: string): Match<H> | undefined {
     const parts = pathname === "/" ? [""] : pathname.slice(1).split("/");
-    outer: for (const route of this.routes_) {
+    for (const route of this.routes_) {
       if (route.method !== method) continue;
-      const params: Params = {};
-      for (const [i, segment] of route.segments.entries()) {
-        if (segment.kind === "rest") {
-          const decoded = parts.slice(i).map(decodeSegment);
-          if (decoded.some((d) => d === undefined)) continue outer;
-          params[segment.name] = decoded.join("/");
-          return { handler: route.handler, params, pattern: route.pattern };
-        }
-        const part = parts[i];
-        if (part === undefined) continue outer;
-        if (segment.kind === "literal") {
-          if (part !== segment.value) continue outer;
-        } else {
-          if (segment.suffix !== "" && !part.endsWith(segment.suffix))
-            continue outer;
-          const raw =
-            segment.suffix === ""
-              ? part
-              : part.slice(0, -segment.suffix.length);
-          const decoded = decodeSegment(raw);
-          if (decoded === undefined || decoded === "") continue outer;
-          params[segment.name] = decoded;
-        }
-      }
-      if (parts.length !== route.segments.length) continue;
-      return { handler: route.handler, params, pattern: route.pattern };
+      const params = matchSegments(route, parts);
+      if (params) return { handler: route.handler, params, pattern: route.pattern };
     }
     return undefined;
   }
+
+  /**
+   * The methods whose routes match the path, method ignored, sorted, with HEAD
+   * wherever GET is. Asked only after `match` has failed, to tell a wrong
+   * method from a wrong path.
+   */
+  allowed(pathname: string): string[] {
+    const parts = pathname === "/" ? [""] : pathname.slice(1).split("/");
+    const methods = new Set<string>();
+    for (const route of this.routes_) {
+      if (methods.has(route.method)) continue;
+      if (matchSegments(route, parts)) methods.add(route.method);
+    }
+    if (methods.has("GET")) methods.add("HEAD");
+    return [...methods].sort();
+  }
+}
+
+/** The params a route's segments take from the path, or undefined when they do not fit. */
+function matchSegments<H>(route: CompiledRoute<H>, parts: string[]): Params | undefined {
+  const params: Params = {};
+  for (const [i, segment] of route.segments.entries()) {
+    if (segment.kind === "rest") {
+      const decoded = parts.slice(i).map(decodeSegment);
+      if (decoded.some((d) => d === undefined)) return undefined;
+      params[segment.name] = decoded.join("/");
+      return params;
+    }
+    const part = parts[i];
+    if (part === undefined) return undefined;
+    if (segment.kind === "literal") {
+      if (part !== segment.value) return undefined;
+    } else {
+      if (segment.suffix !== "" && !part.endsWith(segment.suffix)) return undefined;
+      const raw =
+        segment.suffix === "" ? part : part.slice(0, -segment.suffix.length);
+      const decoded = decodeSegment(raw);
+      if (decoded === undefined || decoded === "") return undefined;
+      params[segment.name] = decoded;
+    }
+  }
+  return parts.length === route.segments.length ? params : undefined;
 }
 
 function decodeSegment(raw: string): string | undefined {

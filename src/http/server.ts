@@ -456,6 +456,7 @@ import {
 import {
   apiError,
   json,
+  methodNotAllowed,
   noRoute,
   notFound,
   pageNotFoundAsJson,
@@ -2413,6 +2414,10 @@ async function answerGet(
       // No session was read, so it cannot tell signed-out from signed-in:
       // it offers no sign-in rather than one to someone who has signed in.
       return notFoundPage(anonCtx, { plain: true });
+    }
+    if (isApiPath && request.method !== "OPTIONS") {
+      const allowed = apiRouter.allowed(url.pathname);
+      if (allowed.length > 0) return methodNotAllowed(request.method, allowed);
     }
     return noRoute(request.method, url.pathname);
   }
