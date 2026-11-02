@@ -22,7 +22,10 @@ export const content = /* css */ `
   .repo-head p.muted.small a { display: block; padding: 12px 0; min-height: 44px; box-sizing: border-box; }
 }
 .repo-head p.muted.small { margin-top: 4px; text-wrap: pretty; }
-.repo-head .tabs { margin-top: 12px; }
+.repo-head .tabs, .repo-head .repo-nav { margin-top: 12px; }
+.repo-nav { display: flex; align-items: flex-start; gap: 4px; border-bottom: 1px solid var(--border); }
+.repo-nav .tabs { margin-top: 0; border-bottom: 0; flex: 1 1 auto; }
+.repo-nav .menu { margin-top: 4px; }
 
 /* Provenance and pinning: one line under the title, so a <form> never has to
    live inside the <h1>. */
