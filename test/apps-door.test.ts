@@ -432,6 +432,17 @@ test("the door links a dormant preview to itself, and says so when more than fiv
   expect((html.match(/ · check /g) ?? []).length).toBe(5);
 });
 
+test("a preview links What changed for a reader only, never on production or for a guest", async () => {
+  const forgeUrl = "http://forge.test";
+  const text = (where: PillWhere) => doorPage({ where, forgeUrl }, false).text();
+  const reader = await text({ app: "notes", env: "pull-7", pull: 7, repo: "alice/notes" });
+  expect(reader).toContain('<li><a href="http://forge.test/alice/notes/pulls/7/files">What changed</a></li>');
+  expect(reader.indexOf("The repository")).toBeLessThan(reader.indexOf("What changed"));
+  expect(reader.indexOf("What changed")).toBeLessThan(reader.indexOf("Make it yours"));
+  expect(await text({ app: "notes", env: "pull-7", pull: 7 })).not.toContain("What changed");
+  expect(await text({ app: "notes", env: "production", repo: "alice/notes" })).not.toContain("What changed");
+});
+
 test("the door names the crew run working here, linked, to who may see it", async () => {
   const bob = await createUser(app.db, {
     origin: "seed",

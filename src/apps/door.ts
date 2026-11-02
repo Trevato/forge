@@ -124,6 +124,8 @@ export function doorPage(facts: DoorFacts, head: boolean): Response {
   if (where.repo !== undefined) {
     const repoUrl = new URL(`/${where.repo}`, forgeUrl).href;
     links.push(link(repoUrl, `The repository, ${where.repo}`));
+    if (where.pull !== undefined)
+      links.push(link(new URL(`/${where.repo}/pulls/${where.pull}/files`, forgeUrl).href, "What changed"));
     links.push(link(`${repoUrl}/make-it-yours`, "Make it yours"));
     morePulls = `${repoUrl}/pulls`;
   }
