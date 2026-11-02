@@ -79,7 +79,8 @@ describe("egress grants in the terminal", () => {
       // The palette searches on a debounce no settle can see; enter on an empty list opens nothing.
       await settleUntil(tui, "ada/arm");
       await press("enter", "enter");
-      await settleUntil(tui, "ada/arm");
+      // "ada/arm" is on screen from the palette and the dashboard before the repository opens; its one-line file is the sign it has.
+      await settleUntil(tui, "1 line");
       await press("I");
       await settleUntil(tui, "clone (http)");
     };
