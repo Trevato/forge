@@ -68,6 +68,8 @@ export interface PaletteItem {
   x?: string;
   o?: string;
   m?: 1;
+  /** A mutation: the palette posts these fields to `h`, as the page's own form does. */
+  p?: Record<string, string>;
 }
 
 export interface PageOptions {

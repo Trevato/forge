@@ -8,6 +8,7 @@
  * it needs.
  */
 
+import { pullRoster } from "../studio/pull_roster.ts";
 import { askCheck } from "../../checks/again.ts";
 import { addCommentThrough } from "../../actions/issues.ts";
 import { COMMENT_EMPTY, COMMENT_NOT_POSTED } from "../../actions/comment_words.ts";
@@ -477,7 +478,8 @@ function mergeBox(
       icon("x"),
       "Closed without merging.",
       html`Nothing was applied to <span class="mono">${pull.baseBranch}</span>.`,
-      when(ctx.auth.user !== undefined, () => reopen),
+      // Reopening is its author's or a writer's (`setIssueState`), as in the palette.
+      when(ctx.auth.user !== undefined && (ctx.auth.user.id === pull.authorId || mayMerge), () => reopen),
     );
   }
 
@@ -1022,7 +1024,31 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     ctx,
     title: `Files · ${pull.title} · ${repo.name}`,
     crumbs: crumbsFor(repo),
-    palette: repoPalette(ctx, repo),
+    palette: [
+      ...repoPalette(ctx, repo),
+      ...pullRoster({
+        base,
+        number: pull.number,
+        headBranch: pull.headBranch,
+        crossRepo: pull.crossRepo,
+        signedIn: ctx.auth.user !== undefined,
+        writer: mayMerge,
+        state: pull.state === "closed" ? "closed" : "open",
+        merged: pull.mergedAt !== null,
+        // The merge box's enabled button, by the same gates in the same order.
+        labels: allLabels.length > 0,
+        mayState: ctx.auth.user !== undefined && (ctx.auth.user.id === pull.authorId || mayMerge),
+        mergeReady:
+          mayMerge &&
+          pull.state === "open" &&
+          pull.mergedAt === null &&
+          repo.origin === null &&
+          pull.originHeadRepo === null &&
+          status.mergeable &&
+          !(status.reviews !== null && !status.reviews.mergeable) &&
+          !checksHold(repo.requireChecks, check.state, stale),
+      }),
+    ],
     body,
     styleCss: labelCss([...allLabels, ...applied]),
     scriptJs: `${liveClientJs}\n${liveRegionsJs}`,

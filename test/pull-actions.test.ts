@@ -3,7 +3,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { snappyFixture, type SnappyFixture } from "../bench/snappy.ts";
 import { mergePull, openPull } from "../src/actions/pulls.ts";
 import { commitToBranch } from "../src/actions/repos.ts";
-import { pullActions } from "../src/web/studio/change.ts";
+import { pullRoster, type PullRosterInput } from "../src/web/studio/pull_roster.ts";
 
 let f: SnappyFixture;
 let base = "";
@@ -76,20 +76,26 @@ test("every action is in the palette", async () => {
   ])
     expect(text).toContain(`"h":"${h}"`);
   for (const t of ["Ship", "Check again", "Hold", "Comment", "Close pull request", "Edit"])
-    expect(text).toContain(`#${number} — ${t}`);
+    expect(text).toContain(`"t":"${t}","h":`);
 });
 
-test("pullActions offers what the viewer may do and nothing else", () => {
-  const o = { base: "/a/b", name: "a/b", number: 7 };
-  const labels = (x: Parameters<typeof pullActions>[0]) => pullActions(x).map((i) => i.t);
-  const all = labels({ ...o, open: true, writer: true, mayClose: true, shippable: true, takeBack: false, mayEdit: true });
+test("the roster offers what the viewer may do and nothing else", () => {
+  const o: PullRosterInput = {
+    base: "/a/b", number: 7, headBranch: "t", crossRepo: false, signedIn: true, writer: true,
+    state: "open", merged: false, mergeReady: false, labels: false, mayState: true,
+  };
+  const labels = (x: Partial<PullRosterInput>) => pullRoster({ ...o, ...x }).map((i) => i.t);
+  const change = { shippable: true, conflicted: false, mayEdit: true, takeBack: false };
+  const all = labels({ change });
   for (const w of ["Conversation", "Files", "Ship", "Check again", "Hold", "Comment", "Close pull request", "Edit"])
-    expect(all.some((t) => t.includes(w))).toBe(true);
-  const merged = labels({ ...o, open: false, writer: true, mayClose: false, shippable: false, takeBack: true, mayEdit: false });
-  expect(merged.some((t) => t.includes("Take it back"))).toBe(true);
-  expect(merged.some((t) => t.includes("Ship"))).toBe(false);
-  const reader = labels({ ...o, open: true, writer: false, mayClose: false, shippable: false, takeBack: false, mayEdit: false });
-  expect(reader.length).toBeLessThanOrEqual(4);
+    expect(all).toContain(w);
+  expect(all).not.toContain("Diff");
+  expect(labels({ change: { ...change, conflicted: true } })).toContain("Bring up to date");
+  const merged = labels({ state: "closed", merged: true, mayState: false, change: { ...change, shippable: false, mayEdit: false, takeBack: true } });
+  expect(merged).toContain("Take it back");
+  expect(merged).not.toContain("Ship");
+  const reader = labels({ writer: false, mayState: false, change: { ...change, shippable: false, mayEdit: false } });
+  expect(reader.length).toBeLessThanOrEqual(5);
 });
 
 const getAs = async (cookie: string, path: string): Promise<string> =>

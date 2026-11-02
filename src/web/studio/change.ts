@@ -88,6 +88,7 @@ import { STEP_MEANS, STEPS, stepOfPull, stepWord, type PathStep } from "../../fl
 import { changeHref } from "./nouns.ts";
 import { pullWord, servingHistory, stateDot, wordDot, type WordCtx } from "./words.ts";
 import { getHold } from "../../core/holds.ts";
+import { pullRoster } from "./pull_roster.ts";
 
 /** The pull and its repo, or the response that refuses to say why not. */
 export function pullContext(ctx: Ctx): { repo: Repo; pull: Pull } | Response {
@@ -205,41 +206,6 @@ function reviewEntry(
       )}`,
     }),
   };
-}
-
-/**
- * Everything the page does, as palette rows (#8773): the page shows its one
- * primary action and folds the rest away, so each of them is a keystroke
- * from Cmd-K. Only what this viewer may do is offered.
- */
-export function pullActions(o: {
-  base: string;
-  name: string;
-  number: number;
-  open: boolean;
-  writer: boolean;
-  mayClose: boolean;
-  shippable: boolean;
-  /** Shipping would only be refused: the verb is the one that fixes it. */
-  conflicted?: boolean;
-  takeBack: boolean;
-  mayEdit: boolean;
-}): { t: string; h: string; c: string }[] {
-  const c = "This pull request";
-  const at = `${o.base}/pulls/${o.number}`;
-  const row = (verb: string, h: string) => ({ t: `${o.name} #${o.number} — ${verb}`, h, c });
-  return [
-    row("Conversation", at),
-    row("Files", `${at}/files`),
-    // The where strip rests on the repository's home; one step from here.
-    { t: `${o.name} — Where it is read from`, h: o.base, c },
-    ...(o.shippable ? [row(o.conflicted ? "Bring up to date" : "Ship", `${at}#decide`)] : []),
-    ...(o.open && o.writer ? [row("Check again", `${at}#live-checks`), row("Hold", `${at}?more=1#hold`)] : []),
-    ...(o.open ? [row("Comment", `${at}#comment-body`)] : []),
-    ...(o.open && o.mayClose ? [row("Close pull request", `${at}#comment-body`)] : []),
-    ...(o.mayEdit ? [row("Edit", `${at}#edit`)] : []),
-    ...(o.takeBack ? [row("Take it back", `${at}?more=1#take-back`)] : []),
-  ];
 }
 
 /** A change's head, the same on both of its tabs: the title, its state,
@@ -675,17 +641,24 @@ async function changeConversation(
     crumbs: crumbsFor(repo),
     palette: [
       ...repoPalette(ctx, repo),
-      ...pullActions({
+      ...pullRoster({
         base,
-        name: `${repo.ownerName}/${repo.name}`,
         number: pull.number,
-        open: pull.state === "open" && pull.mergedAt === null,
+        headBranch: pull.headBranch,
+        crossRepo: pull.crossRepo,
+        signedIn: ctx.auth.user !== undefined,
         writer,
-        mayClose: ctx.auth.user !== undefined && (ctx.auth.user.id === pull.authorId || writer),
-        shippable: decision !== undefined,
-        conflicted,
-        takeBack: mayTakeBack,
-        mayEdit: mayEditIssue(ctx.app, repo, pull, ctx.auth.user).ok && !mirrored,
+        state: pull.state === "closed" ? "closed" : "open",
+        merged: pull.mergedAt !== null,
+        labels: false,
+        mayState: ctx.auth.user !== undefined && (ctx.auth.user.id === pull.authorId || writer),
+        mergeReady: false,
+        change: {
+          shippable: decision !== undefined,
+          conflicted: conflicted === true,
+          mayEdit: mayEditIssue(ctx.app, repo, pull, ctx.auth.user).ok && !mirrored,
+          takeBack: mayTakeBack,
+        },
       }),
     ],
   }));

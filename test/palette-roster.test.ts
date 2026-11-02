@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -277,4 +277,177 @@ test("signed out, the palette offers sign-in and the public entries", () => {
     ["chain", "Chain", "the forges this forge's code descends from, root first"],
     ["quit", "Quit", "disconnect"],
   ]);
+});
+
+// ---- the pull page's palette: the page's actions and the palette's rows are one set ----
+
+import { openPull } from "../src/actions/pulls.ts";
+import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { serve, type Servers } from "../src/http/server.ts";
+import { pullRoster, type PullRosterInput } from "../src/web/studio/pull_roster.ts";
+
+describe("on a pull's Files step the palette lists what the page offers this reader", () => {
+  let pdir: string;
+  let papp: App;
+  let servers: Servers;
+  let writerCookie = "";
+  let readerCookie = "";
+  const thread = "/wendy/lib/pulls/1";
+
+  const signIn = async (username: string) => {
+    const res = await fetch(`${servers.url}/signin`, {
+      method: "POST",
+      body: new URLSearchParams({ username, password: "a-good-passphrase" }),
+      redirect: "manual",
+    });
+    return (res.headers.get("set-cookie") ?? "").split(";")[0]!;
+  };
+
+  beforeAll(async () => {
+    pdir = await mkdtemp(join(tmpdir(), "forge-palette-pull-"));
+    papp = createApp({ dataDir: pdir, port: 0, host: "forge.test" });
+    servers = await serve(papp);
+    const mk = async (username: string, adminIfFirst: boolean) => {
+      const r = await createUser(papp.db, {
+        origin: "seed", trusted: true, username, email: `${username}@forge.local`,
+        password: "a-good-passphrase", adminIfFirst,
+      });
+      if (!r.ok) throw new Error(r.error);
+      return r.value;
+    };
+    const wendy = await mk("wendy", true);
+    await mk("rhea", false);
+    const r = await createRepo(papp, wendy, { name: "lib", visibility: "public" });
+    if (!r.ok) throw new Error(String(r.error));
+    for (const [branch, content] of [["main", "a\n"], ["feat", "a\nb\n"]] as const) {
+      const done = await commitToBranch(papp, wendy, r.value, {
+        branch, message: branch, files: [{ path: "f.txt", content }],
+      });
+      if (!done.ok) throw new Error(JSON.stringify(done.error));
+    }
+    const opened = await openPull(papp, wendy, r.value, { title: "Feat", baseBranch: "main", headBranch: "feat" });
+    if (!opened.ok) throw new Error(String(opened.error));
+    // A second pull, closed without merging: its page offers Reopen.
+    const second = await openPull(papp, wendy, r.value, { title: "Gone", baseBranch: "main", headBranch: "feat" });
+    if (!second.ok) throw new Error(String(second.error));
+    writerCookie = await signIn("wendy");
+    readerCookie = await signIn("rhea");
+  }, 120_000);
+
+  afterAll(async () => {
+    await servers.stop();
+    papp.close();
+    await rm(pdir, { recursive: true, force: true });
+  });
+
+  // The page's form actions, by the palette row that stands for each.
+  const STANDS_FOR: Record<string, string> = {
+    checks: "Check again", merge: "Merge pull request", "review-state": "Review", assignee: "Assign",
+    labels: "Labels", ship: "Ship", hold: "Hold", state: "Close pull request", edit: "Edit", comments: "Comment",
+  };
+  const READING = ["Conversation", "Files", "Branch", "Commits"];
+
+  const read = async (path: string, cookie: string, at = thread) => {
+    const html = await (await fetch(`${servers.url}${path}`, { headers: { cookie } })).text();
+    const index = JSON.parse(/id="palette-index">([^<]*)</.exec(html)![1]!) as {
+      items: { t: string; h: string; c?: string; p?: Record<string, string> }[];
+    };
+    const forms = [...html.matchAll(/<form\s[^>]*action="([^"]+)"/g)]
+      .map((m) => m[1]!)
+      .filter((a) => a.startsWith(`${at}/`))
+      .map((a) => {
+        const verb = STANDS_FOR[a.slice(at.length + 1)];
+        if (verb === undefined) throw new Error(`the page has a form the palette does not know: ${a}`);
+        return verb;
+      });
+    return { rows: index.items.filter((i) => i.c === "This pull"), forms };
+  };
+
+  for (const [who, kind] of [["writer", () => writerCookie], ["reader", () => readerCookie]] as const) {
+    for (const [tab, path] of [["Conversation", thread], ["Files", `${thread}/files`]] as const) {
+      test(`on the ${tab} tab a ${who}'s action rows are exactly the page's forms`, async () => {
+        const { rows, forms } = await read(path, kind());
+        // The Files tab has no comment form of its own: its Comment row links to the Conversation's.
+        const acts = rows.map((r) => r.t).filter((t) => !READING.includes(t) && !(tab === "Files" && t === "Comment"));
+        const same = (t: string) => (t === "Bring up to date" ? "Ship" : t);
+        expect(acts.map(same).sort()).toEqual([...new Set(forms)].sort());
+        // A row that posts goes to a form action the page has, with a path of its own.
+        for (const r of rows.filter((x) => x.p)) expect(r.h.startsWith(`${thread}/`)).toBe(true);
+        // No title twice.
+        expect(new Set(rows.map((r) => r.t)).size).toBe(rows.length);
+      });
+    }
+  }
+
+  test("on a closed pull, Reopen is on the page and in the palette for its author or a writer alone", async () => {
+    const at = "/wendy/lib/pulls/2";
+    const shut = await fetch(`${servers.url}${at}/state`, {
+      method: "POST",
+      headers: { cookie: writerCookie, origin: servers.url, "content-type": "application/x-www-form-urlencoded" },
+      body: "state=closed",
+      redirect: "manual",
+    });
+    expect(shut.status).toBeLessThan(400);
+    const same = (t: string) => (t === "Close pull request" ? "Reopen pull request" : t);
+    for (const [cookie, may] of [[writerCookie, true], [readerCookie, false]] as const) {
+      for (const path of [at, `${at}/files`]) {
+        const { rows, forms } = await read(path, cookie, at);
+        const acts = rows
+          .map((r) => r.t)
+          .filter((t) => !READING.includes(t) && !(path.endsWith("/files") && t === "Comment"));
+        expect(acts.sort()).toEqual([...new Set(forms.map(same))].sort());
+        const reopen = rows.find((r) => r.t === "Reopen pull request");
+        if (may) expect(reopen).toMatchObject({ h: `${at}/state`, p: { state: "open" } });
+        else expect(reopen).toBeUndefined();
+      }
+    }
+  });
+
+  test("both tabs list the same reading rows, and no row points at the Files page twice", async () => {
+    for (const path of [thread, `${thread}/files`]) {
+      const { rows } = await read(path, writerCookie);
+      expect(rows.filter((r) => READING.includes(r.t)).map((r) => r.t)).toEqual(READING);
+      expect(rows.filter((r) => r.h === `${thread}/files`).length).toBe(1);
+    }
+  });
+
+  test("a reader may review and comment on the Files tab, but not assign, check or merge", async () => {
+    const titles = (await read(`${thread}/files`, readerCookie)).rows.map((r) => r.t);
+    expect(titles).toEqual(expect.arrayContaining(["Conversation", "Files", "Branch", "Comment", "Review"]));
+    for (const t of ["Assign", "Labels", "Check again", "Merge pull request"]) expect(titles).not.toContain(t);
+  });
+
+  test("a writer is offered every action the page has", async () => {
+    const titles = (await read(`${thread}/files`, writerCookie)).rows.map((r) => r.t);
+    expect(titles).toEqual(
+      expect.arrayContaining(["Conversation", "Files", "Branch", "Commits", "Comment", "Review", "Assign", "Check again", "Merge pull request"]),
+    );
+  });
+
+  test("a signed-out visitor is offered only the reading rows", async () => {
+    const titles = (await read(`${thread}/files`, "")).rows.map((r) => r.t);
+    expect(titles).toEqual(["Conversation", "Files", "Branch", "Commits"]);
+  });
+
+  test("the rules, one by one", () => {
+    const base: PullRosterInput = {
+      base: "/o/r", number: 3, headBranch: "a b", crossRepo: false, signedIn: true, writer: true,
+      state: "open", merged: false, mergeReady: true, labels: true, mayState: true,
+    };
+    const titles = (o: Partial<PullRosterInput>) => pullRoster({ ...base, ...o }).map((r) => r.t);
+    expect(pullRoster(base).find((r) => r.t === "Merge pull request")).toMatchObject({ h: "/o/r/pulls/3/merge", p: { strategy: "merge" } });
+    expect(titles({ mergeReady: false })).not.toContain("Merge pull request");
+    expect(pullRoster(base).find((r) => r.t === "Branch")!.h).toBe("/o/r/tree/a%20b");
+    expect(titles({ crossRepo: true })).not.toContain("Branch");
+    expect(titles({ merged: true })).not.toContain("Comment");
+    expect(titles({ state: "closed" })).not.toContain("Check again");
+    expect(titles({ labels: false })).not.toContain("Labels");
+    expect(titles({ labels: true })).toContain("Labels");
+    expect(titles({})).not.toContain("Diff");
+    expect(titles({})).not.toContain("Reopen pull request");
+    expect(titles({ state: "closed" })).toContain("Reopen pull request");
+    expect(titles({ state: "closed", mayState: false })).not.toContain("Reopen pull request");
+    expect(titles({ state: "closed", merged: true })).not.toContain("Reopen pull request");
+    expect(pullRoster(base).filter((r) => r.p).every((r) => r.h.startsWith("/o/r/pulls/3/"))).toBe(true);
+  });
 });

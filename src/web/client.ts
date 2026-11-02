@@ -1756,6 +1756,7 @@ const shellCore = /* js */ `
       if (i.m === 1) r.m = 1;
       if (i.x) r.x = String(i.x);
       if (i.o && String(i.o).charAt(0) === '/') r.o = String(i.o);
+      if (i.p && typeof i.p === 'object' && r.h.charAt(0) === '/') r.p = i.p;
       return r;
     });
     var tellApp = (loadIndex().tell || {}).app;
@@ -1781,6 +1782,7 @@ const shellCore = /* js */ `
       a.setAttribute('aria-selected', 'false');
       // Same-origin paths only: the index is ours, and this keeps it so.
       a.setAttribute('href', r.h.charAt(0) === '/' ? r.h : '/');
+      if (r.p) a.setAttribute('data-post', JSON.stringify(r.p));
       var t = doc.createElement('span');
       t.className = 'grow';
       t.textContent = r.t;
@@ -1978,6 +1980,27 @@ const shellCore = /* js */ `
         e.preventDefault();
         close();
         tellFromHere(tellApp, a.getAttribute('data-tell'));
+        return;
+      }
+      if (a.hasAttribute('data-post')) {
+        // A mutation posts the page's own form; it is never followed as a GET.
+        e.preventDefault();
+        close();
+        var pf = doc.createElement('form');
+        pf.method = 'post'; pf.action = a.getAttribute('href') || '/';
+        var fields = {};
+        try { fields = JSON.parse(a.getAttribute('data-post') || '{}'); } catch (_) {}
+        Object.keys(fields).forEach(function (k) {
+          var hid = doc.createElement('input');
+          hid.type = 'hidden'; hid.name = k; hid.value = String(fields[k]);
+          pf.appendChild(hid);
+        });
+        var go = doc.createElement('button');
+        go.type = 'submit';
+        pf.appendChild(go);
+        pf.hidden = true;
+        doc.body.appendChild(pf);
+        go.click();
         return;
       }
       remember(shown[i]);
