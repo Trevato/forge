@@ -307,6 +307,11 @@ function forgeActions(
       mcp: "contribute",
       ...tokenFree("contribute"),
     },
+    {
+      do: "read the HTTP contract",
+      http: "GET /contract/openapi.json",
+      account: false,
+    },
     ...(viewer === undefined
       ? [{ do: "use the MCP", http: "POST /mcp", account: true }]
       : [{ do: "use the MCP", http: "POST /mcp" }]),

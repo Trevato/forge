@@ -30,7 +30,7 @@ test("every http route the manifest names is described", () => {
 });
 
 test("every described route is registered in the router", () => {
-  const src = ["src/http/server.ts", "src/http/api.ts", "src/http/mcp.ts", "src/http/passport_edge.ts", "src/http/feed.ts", "src/http/checks_recheck.ts",
+  const src = ["src/http/server.ts", "src/http/api.ts", "src/http/mcp.ts", "src/http/passport_edge.ts", "src/http/feed.ts", "src/http/checks_recheck.ts", "src/contract/served.ts",
     ...readdirSync("src/http/api").map((f) => `src/http/api/${f}`)]
     .map((f) => readFileSync(f, "utf8"))
     .join("\n")

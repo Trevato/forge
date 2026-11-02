@@ -268,6 +268,21 @@ describe("the manifest: what you can do here, as who you are", () => {
     }
   });
 
+  test("the forge's manifest names the OpenAPI document, and it answers", async () => {
+    for (const who of [undefined, "carol"]) {
+      const { body, size } = await manifest("/", who);
+      expect(body.actions).toContainEqual({
+        do: "read the HTTP contract",
+        http: "GET /contract/openapi.json",
+        account: false,
+      });
+      expect(size).toBeLessThan(2048);
+    }
+    const res = await fetch(`${base}/contract/openapi.json`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/json");
+  });
+
   test("/explore and /search name their query API and MCP tool, the query carried over", async () => {
     for (const who of [undefined, "carol"]) {
       const e = (await manifest("/explore?q=kind:app", who)).body;
