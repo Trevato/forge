@@ -2,17 +2,17 @@ import { pageLimit } from "../../../core/issues.ts";
 import { listReposByOwner } from "../../../core/repos.ts";
 import { getUserByName, hiddenFrom } from "../../../core/users.ts";
 import { paged, publicProfile } from "../../respond.ts";
-import { good, bad, type Tool } from "../shared.ts";
+import { good, bad, badLimit, type Tool } from "../shared.ts";
 
 export const tool: Tool = {
   name: "person",
-  doc: "`{ username, limit?, cursor? }`: a person's public profile and the repositories you may see, as `GET /api/v1/users/:username` and its `/repos`; a private one you cannot read is never listed",
+  doc: "`{ username, limit? (1 to 200), cursor? }`: a person's public profile and the repositories you may see, as `GET /api/v1/users/:username` and its `/repos`; a private one you cannot read is never listed",
   description: "A person's profile and repos you may see.",
   inputSchema: {
     type: "object",
     properties: {
       username: { type: "string" },
-      limit: { type: "integer" },
+      limit: { type: "integer", minimum: 1, maximum: 200 },
       cursor: { type: "string" },
     },
     required: ["username"],
@@ -22,8 +22,8 @@ export const tool: Tool = {
     const { username, limit, cursor } = args;
     if (typeof username !== "string" || username === "" || username.length > 100)
       return bad("invalid", "`username` is 1 to 100 characters");
-    if (limit !== undefined && (typeof limit !== "number" || !Number.isFinite(limit)))
-      return bad("invalid", "`limit` is a number");
+    const limitRefused = badLimit(limit);
+    if (limitRefused) return limitRefused;
     if (cursor !== undefined && typeof cursor !== "string")
       return bad("invalid", "`cursor` is the one a previous answer gave");
     const person = getUserByName(ctx.app.db, username);

@@ -103,6 +103,15 @@ describe("MCP person", () => {
     expect(next.value.repos.items[0].name).not.toBe(first.value.repos.items[0].name);
   });
 
+  test("a limit outside 1 to 200 is refused, 1 and 200 pass", async () => {
+    for (const bad of [0, -5, 9999, 201, 1.5, "x"])
+      expect((await tool(bobRo, { username: "guild", limit: bad })).error).toContain(
+        "invalid_limit",
+      );
+    expect((await tool(bobRo, { username: "guild", limit: 1 })).value.repos.items).toHaveLength(1);
+    expect((await tool(bobRo, { username: "guild", limit: 200 })).value).toBeDefined();
+  });
+
   test("a suspended person is not found to a non-admin, and still found by an admin", async () => {
     expect((await tool(carolRo, { username: "dave" })).error).toContain("no such person");
     expect((await tool(aliceRo, { username: "dave" })).value.username).toBe("dave");

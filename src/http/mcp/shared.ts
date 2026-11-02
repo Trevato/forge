@@ -1,5 +1,5 @@
 import { mayView } from "../../core/sealed.ts";
-import { getIssue } from "../../core/issues.ts";
+import { getIssue, LIST_LIMIT_MAX } from "../../core/issues.ts";
 import { canRead, getRepo, type Repo } from "../../core/repos.ts";
 import { scopeAllows } from "../../core/tokens.ts";
 import { getUserByName, type User } from "../../core/users.ts";
@@ -43,6 +43,13 @@ export const bad = (error: string, message: string): Answer => ({
   error,
   message,
 });
+
+/** The refusal for a `limit` that is not a whole number from 1 to LIST_LIMIT_MAX, as the HTTP list routes say it; undefined when it is absent or fine. */
+export const badLimit = (limit: unknown): Answer | undefined =>
+  limit === undefined ||
+  (typeof limit === "number" && Number.isInteger(limit) && limit >= 1 && limit <= LIST_LIMIT_MAX)
+    ? undefined
+    : bad("invalid_limit", `limit is a whole number from 1 to ${LIST_LIMIT_MAX}`);
 
 export interface Tool {
   readonly name: string;

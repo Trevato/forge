@@ -121,6 +121,10 @@ describe("MCP pins", () => {
     expect(second.pins.map((p: any) => p.repo)).toContain("alice/pc");
     expect(second.next_cursor).toBeNull();
     expect((await tool(bobRw, { limit: "x" })).error).toContain("invalid");
+    for (const bad of [0, -5, 9999, 201, 1.5, "x"])
+      expect((await tool(bobRw, { limit: bad })).error).toContain("invalid_limit");
+    expect((await tool(bobRw, { limit: 1 })).value.pins).toHaveLength(1);
+    expect((await tool(bobRw, { limit: 200 })).value.pins.length).toBeGreaterThan(0);
     for (const n of ["pa", "pb", "pc"]) await tool(bobRw, { action: "unpin", repo: `alice/${n}` });
   });
 
