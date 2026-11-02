@@ -14,9 +14,13 @@ import type { App } from "../app.ts";
 import { createLog } from "../kernel/log.ts";
 import { firstSeen, reportVerdict, seedFirstSeen } from "./verdict.ts";
 import {
+  JOURNAL,
   KEEP,
   listSnapshots,
   pruneSnapshots,
+  RESUME_WINDOW_MS,
+  SNAPSHOT_PREFIX,
+  snapshotStart,
   takeSnapshot,
   type Manifest,
   type Progress,
@@ -164,7 +168,7 @@ export function startSnapshots(
   let running: Progress | undefined;
   let last: { manifest?: Manifest; error?: string; at?: string } = {};
 
-  const take = (): Promise<Manifest> => {
+  const take = (resume?: Date): Promise<Manifest> => {
     // Whether this run's store is off the machine, for home's backup age (#3701).
     let offBox: boolean | undefined;
     // After the one before it, however that ended: chained on a failure as it
@@ -186,6 +190,7 @@ export function startSnapshots(
           reposRoot: app.reposRoot,
           version: options.version,
           passphrase: options.passphrase,
+          resume: resume !== undefined,
           onLand: (p) => {
             running = p;
             if (Date.now() - toldAt < (options.progressEventMs ?? PROGRESS_EVENT_MS)) return;
@@ -194,6 +199,7 @@ export function startSnapshots(
           },
         },
         store,
+        resume,
       ).finally(() => {
         running = undefined;
       });
@@ -232,6 +238,21 @@ export function startSnapshots(
     return inFlight;
   };
 
+  // The newest snapshot a release cut short that is newer than the newest
+  // whole one and not stale: its journal says what need not go up again.
+  const cutShort = async (store: Store, newestWhole: string | undefined): Promise<Date | undefined> => {
+    try {
+      const names = (await store.names(SNAPSHOT_PREFIX)).sort().reverse();
+      const name = names.find((n) => newestWhole === undefined || n > newestWhole);
+      const at = name === undefined ? undefined : snapshotStart(name);
+      if (name === undefined || at === undefined) return undefined;
+      if ((options.now ?? Date.now)() - at.getTime() > RESUME_WINDOW_MS) return undefined;
+      return (await store.get(`${SNAPSHOT_PREFIX}${name}/${JOURNAL}`)) === undefined ? undefined : at;
+    } catch {
+      return undefined;
+    }
+  };
+
   // A restart takes the night's snapshot if the store does not hold it: a
   // release at 08:21 killed the one in flight and nothing took it again (#8742).
   // The manifest is written last, so a snapshot cut short is not one.
@@ -247,8 +268,9 @@ export function startSnapshots(
       return false;
     }
     if (stopped || active > 0 || !snapshotDue(newest?.finishedAt, (options.now ?? Date.now)())) return false;
-    log.info("snapshot due or lost; taking one", { newest: newest?.name ?? "none" });
-    await take().catch(() => {});
+    const cut = await cutShort(store, newest?.name);
+    log.info("snapshot due or lost; taking one", { newest: newest?.name ?? "none", resuming: cut?.toISOString() ?? "no" });
+    await take(cut).catch(() => {});
     return true;
   };
 

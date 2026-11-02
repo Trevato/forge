@@ -6,7 +6,7 @@
 - **Catch-up.** A boot with the newest snapshot older than the last 08:00 UTC slot takes one two minutes later (`snapshotDue`). A snapshot cut short by a release has no manifest, so it counts as lost.
 - **In the terminal.** The Resilience dialog (palette: Resilience, admins) opens with the same verdict, each lane's newest, and every reason. On the web it is home's backup tile and `/settings/backups`; for an agent, `verdict` in the MCP `backups` tool.
 - **Off the serving thread.** `VACUUM INTO` runs in a worker (`vacuum.ts`).
-- **Not done, tracked:** snapshots outside the serving process or resumable (#8828; the off-process probe is below). Catch-up retakes a lost snapshot whole.
+- **Not done, tracked:** snapshots outside the serving process (#8828); resuming across a release is below, and so is the off-process probe.
 
 ## Platform backup lanes (#8811)
 
@@ -57,8 +57,21 @@ unreadable or empty; or the newest manifest's `finishedAt` older than the
 limit (default 36 h: one nightly plus grace). Use read-only credentials.
 Logic lives in `src/snapshot/probe.ts`; tests in `test/backup-probe.test.ts`.
 
-### Not done yet
+## Resuming across a release (#8828)
 
-Snapshots are still taken inside the serving process; a release mid-snapshot
-is caught up by retaking it whole after boot. Resuming across a release (or
-moving the snapshot into its own process) is a separate, larger change, tracked in #8828.
+A snapshot cut short has no manifest, but it is no longer retaken whole.
+`takeSnapshot` writes `partial.json` under the snapshot's prefix (after the
+first landed object, every 100 more, every 15 s while something new landed,
+and on failure; a release kills the process without running any cleanup, so
+the clock is what leaves it): the repository bundles and run bundles that
+landed, with their sizes and SHA-256 digests. The catch-up after boot (`takeIfDue`) finds the
+newest prefix newer than the newest manifest, begun within 24 h, that holds a
+journal, and takes the snapshot again under that name and start time with
+`resume`. A bundle or run bundle the journal lists with the same size and digest is
+not put again; the database, key, ssh files, app data and recent run logs always are,
+since they change while the forge runs. The journal is deleted once the
+manifest is written. `pruneSnapshots` removes a prefix with no manifest that
+is older than the newest whole snapshot or past the window.
+
+Not done: the snapshot still runs in the serving process (the database copy is
+in a worker). Tests: `test/snapshot-resume.test.ts`.
