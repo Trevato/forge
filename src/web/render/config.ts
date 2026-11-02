@@ -1,18 +1,15 @@
 /**
- * A JSON config file on the blob page: its values as a form, read-only, with
- * "Edit as form" one click away (`pages/config.ts` is the editor, and draws
- * the schema the file names). A file that is not valid JSON says why, at
- * which line, above its text; Source keeps its highlighted view.
+ * A JSON, YAML or TOML config file on the blob page: its values as a form,
+ * read-only, with "Edit as form" one click away (`pages/config.ts` is the
+ * editor, and draws the schema the file names). A file that is not valid says
+ * why, at which line, above its text; Source keeps its highlighted view.
  */
 
 import { html, type Html } from "../html.ts";
 import { btn } from "../ui.ts";
 import { configFields, countFields, MAX_FIELDS } from "./config-form.ts";
-import { parseJson } from "./json-doc.ts";
+import { languageOf, parseConfig } from "./config-format.ts";
 import type { Rendered, RenderInput } from "./renderers.ts";
-
-/** Only JSON draws as a form; YAML, TOML and the rest keep their source. */
-export const isFormJson = (path: string): boolean => /\.json$/i.test(path);
 
 /**
  * `/:owner/:name/media/:ref/*path` → `/:owner/:name/config/:ref/*path`: the
@@ -26,11 +23,11 @@ function editHref(input: RenderInput): string | undefined {
   return `${head.slice(0, cut)}/config/${head.slice(cut + "/media/".length)}/${input.path}`;
 }
 
-function brokenJson(text: string, line: number, column: number, message: string): Html {
+function brokenConfig(language: string, text: string, line: number, column: number, message: string): Html {
   const lines = text.split("\n");
   return html`<div class="card" role="alert">
-      <p><strong>Not valid JSON:</strong> ${message} at line ${String(line)}, column ${String(column)}.</p>
-      <p class="muted small">The form needs valid JSON. Source shows the file highlighted.</p>
+      <p><strong>Not valid ${language}:</strong> ${message} at line ${String(line)}, column ${String(column)}.</p>
+      <p class="muted small">The form needs valid ${language}. Source shows the file highlighted.</p>
     </div>
     <pre class="card mono">${lines.map((l, i) => (i + 1 === line ? html`<mark>${l}</mark>\n` : `${l}\n`))}</pre>`;
 }
@@ -38,10 +35,11 @@ function brokenJson(text: string, line: number, column: number, message: string)
 export function config(input: RenderInput): Rendered {
   const text = new TextDecoder().decode(input.body);
   const lines = text === "" ? 0 : text.replace(/\n$/, "").split("\n").length;
-  const parsed = parseJson(text);
+  const language = languageOf(input.path);
+  const parsed = parseConfig(input.path, text);
   if (!parsed.ok) {
     const e = parsed.error;
-    return { lines, content: brokenJson(text, e.line, e.column, e.message) };
+    return { lines, content: brokenConfig(language, text, e.line, e.column, e.message) };
   }
   if (countFields(parsed.value) > MAX_FIELDS)
     return {

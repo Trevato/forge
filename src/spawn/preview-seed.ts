@@ -16,7 +16,7 @@
 
 import type { App } from "../app.ts";
 import type { Issue } from "../core/issues.ts";
-import type { Repo } from "../core/repos.ts";
+import { getRepo, type Repo } from "../core/repos.ts";
 import { pinPanel } from "../actions/board-pins.ts";
 import { writeBoard } from "../actions/boards.ts";
 import { backBet } from "../actions/bets.ts";
@@ -33,6 +33,7 @@ import { recordUsage } from "../core/usage.ts";
 import { getUserSetting, setUserSetting } from "../core/settings.ts";
 import { createUser, getUserByName, type User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { PREVIEW_CONFIG_FILES } from "./preview-config.ts";
 
 /** The preview-only site admin's name. */
 export const PREVIEW_ADMIN = "preview-admin";
@@ -50,6 +51,7 @@ export const PREVIEW_WAVE_HEADLINE = "The sample says hello";
 /** The board whose panels are pinned to home. */
 const PREVIEW_BOARD = "preview";
 const SEEDED = "preview_seeded";
+const CONFIG_SEEDED = "preview_config_seeded";
 
 type Env = Record<string, string | undefined>;
 
@@ -89,12 +91,32 @@ export async function seedPreview(
   }
   if (!admin.isAdmin || admin.kind === "agent")
     return err("the preview admin's name is someone else's");
-  if (getUserSetting(app.db, admin.id, SEEDED) !== undefined)
-    return ok({ seeded: false });
+  if (getUserSetting(app.db, admin.id, SEEDED) !== undefined) {
+    const files = await seedConfigFiles(app, admin);
+    return files.ok ? ok({ seeded: false }) : files;
+  }
   const world = await seedWorld(app, admin);
   if (!world.ok) return world;
   setUserSetting(app.db, admin.id, SEEDED, new Date().toISOString());
-  return ok({ seeded: true });
+  const files = await seedConfigFiles(app, admin);
+  return files.ok ? ok({ seeded: true }) : files;
+}
+
+/**
+ * The config files the form is tried on, once: a sample seeded before they
+ * existed gets them on its next boot, in a commit of their own.
+ */
+async function seedConfigFiles(app: App, admin: User): Promise<Result<void, string>> {
+  if (getUserSetting(app.db, admin.id, CONFIG_SEEDED) !== undefined) return ok(undefined);
+  const repo = getRepo(app.db, admin.username, PREVIEW_REPO);
+  if (repo === undefined) return err("the sample repository is gone");
+  const added = await commitToBranch(app, admin, repo, {
+    message: "Config files to try the form on",
+    files: [...PREVIEW_CONFIG_FILES],
+  });
+  if (!added.ok) return err(`the config files: ${JSON.stringify(added.error)}`);
+  setUserSetting(app.db, admin.id, CONFIG_SEEDED, new Date().toISOString());
+  return ok(undefined);
 }
 
 const panel = (title: string, source: string, groupBy: string) => ({

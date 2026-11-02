@@ -35,6 +35,9 @@ import type { Capture, LookInput } from "../src/looks/capture.ts";
 import { startLooks, type LooksHandle } from "../src/looks/service.ts";
 import { previewIdentityKey } from "../src/spawn/preview-owner.ts";
 import { PREVIEW_ADMIN, PREVIEW_PULL, PREVIEW_REPO, PREVIEW_WAVE, PREVIEW_WAVE_HEADLINE, seedPreview } from "../src/spawn/preview-seed.ts";
+import { PREVIEW_CONFIG_FILES } from "../src/spawn/preview-config.ts";
+import { localSource } from "../src/view/local.ts";
+import { isFormConfig, parseConfig } from "../src/web/render/config-format.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -132,6 +135,33 @@ describe("the preview seed", () => {
 
     expect(await seedPreview(app, { FORGE_APP_ENV: "preview" })).toEqual(ok({ seeded: false }));
     expect(listPins(app.db, admin.id).length).toBe(2);
+  }, 30_000);
+
+  test("the sample holds a YAML and a TOML file that open as a form; a sample seeded before them gets them once", async () => {
+    const admin = getUserByName(app.db, PREVIEW_ADMIN)!;
+    const repo = getRepo(app.db, PREVIEW_ADMIN, PREVIEW_REPO)!;
+    const fileAt = async (path: string): Promise<string | undefined> => {
+      const blob = await localSource(app, repo, undefined).blob(repo.defaultBranch, path);
+      return blob.ok && blob.value.kind === "text" ? new TextDecoder().decode(blob.value.body) : undefined;
+    };
+    for (const { path, content } of PREVIEW_CONFIG_FILES) {
+      expect(isFormConfig(path)).toBe(true);
+      expect(parseConfig(path, content).ok).toBe(true);
+      expect(await fileAt(path)).toBe(content);
+    }
+    // An older preview: seeded, without the files or the note that it has them.
+    const gone = await commitToBranch(app, admin, repo, {
+      message: "as before #7337",
+      files: PREVIEW_CONFIG_FILES.map(({ path }) => ({ path, content: null })),
+    });
+    expect(gone.ok).toBe(true);
+    app.db.query("DELETE FROM user_setting WHERE user_id = ?1 AND key = 'preview_config_seeded'").run(admin.id);
+    expect(await seedPreview(app, { FORGE_APP_ENV: "preview" })).toEqual(ok({ seeded: false }));
+    for (const { path, content } of PREVIEW_CONFIG_FILES) expect(await fileAt(path)).toBe(content);
+    // And only once: removed again, a later boot leaves them removed.
+    await commitToBranch(app, admin, repo, { files: PREVIEW_CONFIG_FILES.map(({ path }) => ({ path, content: null })) });
+    expect(await seedPreview(app, { FORGE_APP_ENV: "preview" })).toEqual(ok({ seeded: false }));
+    expect(await fileAt("service.yml")).toBeUndefined();
   }, 30_000);
 });
 

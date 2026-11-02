@@ -13,7 +13,8 @@
  * browser; the server never runs a regular expression a repository wrote.
  */
 
-import { NUMBER, getAt, parseJson, pointer, splitPointer, type Json } from "./json-doc.ts";
+import { isFormConfig, parseConfig } from "./config-format.ts";
+import { NUMBER, getAt, pointer, splitPointer, type Json } from "./json-doc.ts";
 
 export interface Schema {
   readonly type?: string | readonly string[];
@@ -204,7 +205,7 @@ export async function findSchema(
     if (found !== undefined) return found;
   }
 
-  const name = path.slice(dir.length).replace(/\.json$/i, "");
+  const name = path.slice(dir.length).replace(/\.(?:json|ya?ml|toml)$/i, "");
   const sibling = await tryRead(`${dir}${name}.schema.json`);
   if (sibling !== undefined) return sibling;
 
@@ -221,8 +222,8 @@ export async function findSchema(
 }
 
 /**
- * Why a JSON file's new text breaks the schema it names, as one sentence, or
- * undefined when it keeps it (or is not JSON, or has no schema). The
+ * Why a config file's new text breaks the schema it names, as one sentence, or
+ * undefined when it keeps it (or is not a config file, or has no schema). The
  * terminal asks this before a commit, as the form does before a save.
  */
 export async function schemaRefusal(
@@ -230,8 +231,8 @@ export async function schemaRefusal(
   text: string,
   read: (path: string) => Promise<string | undefined>,
 ): Promise<string | undefined> {
-  if (!/\.json$/i.test(path)) return undefined;
-  const parsed = parseJson(text);
+  if (!isFormConfig(path)) return undefined;
+  const parsed = parseConfig(path, text);
   if (!parsed.ok) return undefined;
   const found = await findSchema(path, parsed.value, read);
   const errors = [...validate(parsed.value, found)];
