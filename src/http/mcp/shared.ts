@@ -105,6 +105,20 @@ export function heldWrite(ctx: Ctx, user: User, tool: Tool, args: Args): Record<
   };
 }
 
+/**
+ * A write the cut turn already sent, as the resumed agent reads it: nothing
+ * is done again, and what was answered (or that it never ended) is said.
+ */
+export function alreadyDone(tool: string, result: string | null): Record<string, unknown> {
+  const says =
+    result === null
+      ? "this write was started before the forge restarted and its end was not recorded, so it was not done again: read to see whether it happened, and send it again only if it did not"
+      : "this write was already done before the forge restarted, so it was not done again; its answer then is in `was`";
+  return {
+    content: [{ type: "text", text: JSON.stringify({ already_done: true, tool, says, ...(result === null ? {} : { was: result }) }) }],
+  };
+}
+
 /** A call whose arguments a person could not read whole is refused, not kept. */
 const tooBig = (tool: string): Record<string, unknown> => ({
   content: [

@@ -154,12 +154,17 @@ describe("a conversation turn", () => {
     // Mid-turn the token is alice's own.
     const live = verifyToken(app.db, readFileSync(join(dir, "cut.token"), "utf8"));
     expect(live.ok && live.value.user.id).toBe(alice.id);
+    // A write the cut turn sent, recorded as it began.
+    const via = `conversation:${openConversation(app.db, alice.id).id}`;
+    app.db.query("INSERT INTO conversation_write (id, via, tool, args_hash, created_at) VALUES ('w1', ?1, 'close', 'h', '')").run(via);
     stop.abort(); // the forge stops: the row stays running
     if (cut.ok) await cut.value.done;
     expect(app.db.query("SELECT state FROM conversation_run WHERE state = 'running'").all()).toHaveLength(1);
 
     const again = resumeInterrupted(app, options(stub("resumed", "sess-cut", "answer")));
     expect(again).toHaveLength(1);
+    // The resumed turn keeps the cut turn's writes, marked so a repeat is answered from them.
+    expect(app.db.query<{ resumed: number }, []>("SELECT resumed FROM conversation_write WHERE id = 'w1'").get()?.resumed).toBe(1);
     await Promise.all(again);
     const args = lines("resumed");
     expect(args[args.indexOf("--resume") + 1]).toBe("sess-cut");

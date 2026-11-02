@@ -32,7 +32,8 @@ import { fileReport } from "../actions/reports.ts";
 import { REPORT_RECEIVED } from "../actions/report_words.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
 import { everydayOf } from "../core/everyday.ts";
-import { type Args, visible, plansOnly, str, REPO_ARG, lean, fenceAnswer, heldWrite, askedFirst, readThrough } from "./mcp/shared.ts";
+import { claimDone, completeWrite, dropWrite, recordWrite } from "../core/conversation_writes.ts";
+import { type Args, alreadyDone, visible, plansOnly, str, REPO_ARG, lean, fenceAnswer, heldWrite, askedFirst, readThrough } from "./mcp/shared.ts";
 import { CONVERSATION_BRIEF } from "../crew/conversation_brief.ts";
 import { TOOLS } from "./mcp/tools.ts";
 
@@ -201,9 +202,23 @@ function rpcOne(
           ],
           isError: true,
         });
+      // The forge's agent's write is recorded before it runs; one a cut turn
+      // already sent is answered with what was done, not done again (#8254).
+      const via = ctx.auth.through;
+      const writing = via !== undefined && tool.writes && !plansOnly(tool, args);
+      if (writing) {
+        const done = claimDone(ctx.app.db, via, tool.name, args);
+        if (done !== undefined) return reply(alreadyDone(tool.name, done.result));
+      }
+      const recorded = writing ? recordWrite(ctx.app.db, via, tool.name, args) : undefined;
       readThrough(ctx);
       return Promise.resolve(tool.run(ctx, user, args)).then((ran) => {
         const answer = fenceAnswer(ctx, ran);
+        if (recorded !== undefined) {
+          // A refused or failed write did nothing, so a resumed turn may send it again.
+          if (answer.ok) completeWrite(ctx.app.db, recorded, JSON.stringify(answer.value));
+          else dropWrite(ctx.app.db, recorded);
+        }
         return reply(
           answer.ok
             ? {

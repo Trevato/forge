@@ -9,8 +9,10 @@
  * A message sent while a turn runs is steered into it (`steerRun`). A turn
  * the forge's restart cut short is found at boot (`resumeInterrupted`, as
  * `interrupted.ts` finds runs) and resumed once from its session. Resuming
- * repeats no write: a held write is single-use (`core/fence.ts`), and the
- * resumed turn is told to check what is done before doing anything.
+ * repeats no write: a held write is single-use (`core/fence.ts`), every write
+ * the cut turn sent is recorded and answered from its record if sent again
+ * (`core/conversation_writes.ts`), and the resumed turn is told to check
+ * what is done before doing anything.
  */
 
 import { mkdirSync } from "node:fs";
@@ -18,6 +20,7 @@ import { join } from "node:path";
 import type { App } from "../app.ts";
 import { dailyLeft } from "../core/account_ceiling.ts";
 import { appendTurn, openConversation, removeTurn, setClaudeSession, type Conversation } from "../core/conversations.ts";
+import { carryWrites, forgetWrites } from "../core/conversation_writes.ts";
 import { WORDS_MAX } from "../core/fence.ts";
 import { PLATFORM, pickSubscription, type Pick } from "../core/subscriptions.ts";
 import { getUserById } from "../core/users.ts";
@@ -149,6 +152,7 @@ export function resumeInterrupted(app: App, options: ConversationOptions): Promi
   for (const row of rows) {
     // The cut turn's token is revoked now, resumed or not.
     app.db.query("DELETE FROM token WHERE id IN (SELECT token_id FROM via_token WHERE via = ?1)").run(`conversation:${row.conversation_id}`);
+    carryWrites(app.db, `conversation:${row.conversation_id}`);
     app.db.query("UPDATE conversation_run SET state = 'failed', finished_at = ?2 WHERE id = ?1").run(row.id, new Date().toISOString());
     if (row.resumes >= 1) continue;
     const conversation = openConversation(app.db, row.user_id);
@@ -200,6 +204,8 @@ function begin(
   // A new turn's token replaces the last one's.
   const via = `conversation:${conversation.id}`;
   app.db.query("DELETE FROM token WHERE id IN (SELECT token_id FROM via_token WHERE via = ?1)").run(via);
+  // A fresh turn starts with no writes; a resumed one keeps what the cut turn did.
+  if (resumes === 0) forgetWrites(app.db, via);
   const lifetime = Math.min(options.timeoutMs + 60_000, VIA_TOKEN_MAX_MS - 1000);
   const minted = mintViaToken(app.db, userId, via, prompt.slice(0, WORDS_MAX), new Date(now.getTime() + lifetime).toISOString());
   if (!minted.ok) return err("unauthorized");
