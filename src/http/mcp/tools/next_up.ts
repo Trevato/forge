@@ -1,9 +1,16 @@
 import { placeOf, rankIssue } from "../../../actions/next.ts";
 import { nextUp, TOP, type NextRow } from "../../../core/next_up.ts";
+import { weekView, type WeekView } from "../../../flow/week.ts";
 import { sealedScope } from "../../../core/sealed.ts";
 import { bad, good, type Tool, APP_ARG, planRepo, isAnswer, issueArg } from "../shared.ts";
 
-const brief = (r: NextRow) => ({
+const brief = (r: NextRow, week?: WeekView) => ({
+  ...(week === undefined
+    ? {}
+    : {
+        estimate: week.priced.find((p) => p.number === r.issue.number)?.estimate,
+        thisWeek: week.cut.fits.includes(r.issue.number),
+      }),
   issue: r.issue.number,
   title: r.issue.title,
   place: r.place,
@@ -15,7 +22,7 @@ const brief = (r: NextRow) => ({
 
 export const tool: Tool = {
   name: "next_up",
-  doc: "an app's one ranked list, the crew builds strictly from the top (`app`; with `issue` and `to` — `top`, `not-now` or `after:<number>` — a writer moves that issue and it saves at once; `top` lifts a gated issue past the Later gate; `all` lists beyond the top ten)",
+  doc: "an app's one ranked list, the crew builds strictly from the top (`app`; with `issue` and `to` — `top`, `not-now` or `after:<number>` — a writer moves that issue and it saves at once; `top` lifts a gated issue past the Later gate; `all` lists beyond the top ten; each row carries its cost `estimate` range and `thisWeek`, and `projection` is one sentence on what the week can ship)",
   description: "The ranked list the crew builds from; `issue` + `to` (top, not-now, after:N) moves one.",
   inputSchema: {
     type: "object",
@@ -43,11 +50,13 @@ export const tool: Tool = {
     }
     const next = nextUp(ctx.app.db, repo, sealedScope(ctx.app.db, repo, user));
     const all = args["all"] === true;
+    const week = weekView(ctx.app.db, repo.id, next.rows, new Date());
     return good({
-      next: (all ? next.rows : next.rows.slice(0, TOP)).map(brief),
+      projection: week.sentence,
+      next: (all ? next.rows : next.rows.slice(0, TOP)).map((r) => brief(r, week)),
       more: all ? 0 : Math.max(0, next.rows.length - TOP),
       notNow: next.notNowTotal,
-      ...(all ? { notNowRows: next.notNow.map(brief) } : {}),
+      ...(all ? { notNowRows: next.notNow.map((r) => brief(r)) } : {}),
     });
   },
 };

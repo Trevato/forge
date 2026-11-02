@@ -11,6 +11,7 @@ import { nextUp, TOP, type NextRow } from "../../core/next_up.ts";
 import { canWrite, type Repo } from "../../core/repos.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { sealedScope } from "../../core/sealed.ts";
+import { rangeWords, weekView, type Cut, type Priced } from "../../flow/week.ts";
 import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, loadRepo, notFoundPage, repoBase, repoHeader, repoPalette, signInFirst } from "../chrome.ts";
 import { backTo, field, readForm } from "../form.ts";
@@ -75,7 +76,15 @@ function move(base: string, number: number, to: string, label: string, key: stri
   </form>`;
 }
 
-function line(base: string, rows: readonly NextRow[], at: number, writer: boolean, back: string, away: boolean): Html {
+function line(
+  base: string,
+  rows: readonly NextRow[],
+  at: number,
+  writer: boolean,
+  back: string,
+  away: boolean,
+  priced: readonly Priced[] = [],
+): Html {
   const r = rows[at]!;
   const n = r.issue.number;
   const numbers = rows.map((x) => x.issue.number);
@@ -94,11 +103,18 @@ function line(base: string, rows: readonly NextRow[], at: number, writer: boolea
     titleAttr: r.issue.title,
     lead: html`${r.place === null ? "·" : String(r.place)}`,
     meta: html`${badge(r.role === "blocker" ? "Blocker" : "Enabler", { variant: r.role === "blocker" ? "secondary" : "outline" })}
-      #${n} · ${r.roleWhy}${r.onIt === null ? "" : ` · on it: ${r.onIt}`}${r.why === null ? "" : ` · ${r.why}`}`,
+      #${n} · ${r.roleWhy}${away ? null : html` · <span class="estimate">${rangeWords(priced.find((p) => p.number === n)?.estimate ?? { known: false, samples: 0, basis: "no estimate" })}</span>`}${r.onIt === null ? "" : ` · on it: ${r.onIt}`}${r.why === null ? "" : ` · ${r.why}`}`,
     nav: true,
     data: { number: String(n) },
     ...(controls === null ? {} : { after: controls }),
   });
+}
+
+/** The cut line: everything above it fits this week's capacity, everything below reads as next week. */
+function cutMark(cut: Cut, top: boolean): Html {
+  return html`<li class="cut-line" role="separator">${top
+    ? "Nothing here fits what is left of this week: all of this reads as next week."
+    : `This week ends here (${cut.fits.length} fit): below this line reads as next week.`}</li>`;
 }
 
 export function nextPage(ctx: Ctx): Response {
@@ -113,6 +129,15 @@ export function nextPage(ctx: Ctx): Response {
   const rest = next.rows.length - shown.length;
   const back = all ? `${base}/next?all=1` : `${base}/next`;
   const rendering = performance.now();
+  const { priced, cut, sentence } = weekView(ctx.app.db, repo.id, next.rows, new Date());
+  const rowsHtml = (): Html[] => {
+    const out: Html[] = [];
+    shown.forEach((_, at) => {
+      if (at === cut.fits.length && cut.unsure === null) out.push(cutMark(cut, at === 0));
+      out.push(line(base, next.rows, at, writer, back, false, priced));
+    });
+    return out;
+  };
   const body = html`${repoHeader(ctx, repo, "issues")}
     <div class="page-head mt">
       <h1>Next up</h1>
@@ -124,12 +149,13 @@ export function nextPage(ctx: Ctx): Response {
         Dependencies order work within the list; they are shown, not edited.
       </p>
     </div>
+    <p class="muted" id="next-week">${sentence} <a href="${base}/week">The week</a></p>
     <p class="error" id="next-flash" role="alert" hidden></p>
     ${next.rows.length === 0
       ? html`<p class="muted">Nothing is ready: everything open waits for something. <a href="${base}/map">See the map</a>.</p>`
       : card(
           html`<ul class="list setting-list" id="next-list">
-            ${shown.map((_, at) => line(base, next.rows, at, writer, back, false))}
+            ${rowsHtml()}
           </ul>`,
           { pad: false },
         )}

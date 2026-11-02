@@ -862,6 +862,9 @@ textarea.editor:focus-visible { outline: none; }
 .pipe-repo { font-size: 12.5px; fill: var(--muted-fg); }
 .valve-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0; }
 .valve-range { flex: 1 1 12rem; min-width: 8rem; }
+/* The week on Next up (#8704): the cut line and a row's cost range. */
+.cut-line { list-style: none; padding: 6px 16px; font-size: 13px; color: var(--muted-fg); border-top: 2px dashed var(--series-1); border-bottom: 1px solid var(--border); background: var(--bg); }
+.estimate { color: var(--fg); font-variant-numeric: tabular-nums; }
 /* The config form (#7336): nested objects as quiet fieldsets, scalar
    arrays as a wrapping row of chips, object arrays as cards. */
 .config-group { border-left: 2px solid var(--border); padding-left: 12px; }

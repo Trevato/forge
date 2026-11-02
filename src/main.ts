@@ -5,6 +5,8 @@
  */
 
 import { runModelReview } from "./actions/model_review.ts";
+import { getRepoById } from "./core/repos.ts";
+import { plannedRepoIds, tickWeeks } from "./flow/retro.ts";
 import { BOOT_ACTOR, setSignup, signupFromEnv } from "./settings/signup.ts";
 import { startMemorySampler } from "./boards/memory.ts";
 import { startSampler } from "./boards/sampler.ts";
@@ -640,6 +642,16 @@ const modelReviewTimer = setInterval(() => {
     app.log.warn("model review failed", { error: String(error) });
   }
 }, 3_600_000);
+// The week is the sprint (#8704): at each weekly reset the forge writes its retrospective, unasked.
+const weekTimer = setInterval(() => {
+  try {
+    const repos = plannedRepoIds(app.db).flatMap((id) => getRepoById(app.db, id) ?? []);
+    for (const repo of tickWeeks(app.db, repos, new Date()))
+      app.bus.append({ kind: "week.retro", repoId: repo.id, payload: {} });
+  } catch (error) {
+    app.log.warn("week retrospective failed", { error: String(error) });
+  }
+}, 3_600_000);
 const processTimer = setInterval(processTick, 60_000);
 processTick();
 // A new version proves itself against the public URL; a failed one again, 5 min after and backing off to hourly (release/prove.ts).
@@ -791,6 +803,7 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
   clearInterval(processTimer);
   clearInterval(holdTimer);
   clearInterval(modelReviewTimer);
+  clearInterval(weekTimer);
   clearInterval(leaseTimer);
   // The platform's SIGTERM: the listener stays open while routers learn
   // this process is going. A person's Ctrl-C does not wait for routers.

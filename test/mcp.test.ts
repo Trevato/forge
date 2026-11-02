@@ -333,6 +333,7 @@ describe("the forge over MCP", () => {
       "repo_labels",
       "wait_for",
       "next_up",
+      "week",
       "lift",
       "held",
       "confirm_wait",

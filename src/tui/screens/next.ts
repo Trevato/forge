@@ -15,6 +15,7 @@ import { rankedWords, rankIssue, stepTo, type Place, placeOf } from "../../actio
 import { nextUp, type NextRow } from "../../core/next_up.ts";
 import { canRead, canWrite, type Repo } from "../../core/repos.ts";
 import { sealedScope } from "../../core/sealed.ts";
+import { rangeWords, weekView, type WeekView } from "../../flow/week.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { fill, len, split } from "../ui/layout.ts";
@@ -32,6 +33,7 @@ export function nextScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   const state = new ListState();
   let rows: readonly NextRow[] = [];
   let away = 0;
+  let week: WeekView | undefined;
   let loaded = false;
   // Read at use, not at open: access can change under a session.
   const may = (): boolean =>
@@ -41,10 +43,12 @@ export function nextScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     if (!canRead(f.db, repo, f.user)) {
       rows = [];
       away = 0;
+      week = undefined;
     } else {
       const next = nextUp(f.db, repo, sealedScope(f.db, repo, f.user));
       rows = next.rows;
       away = next.notNowTotal;
+      week = weekView(f.db, repo.id, rows, new Date());
     }
     loaded = true;
     if (follow !== undefined) {
@@ -78,12 +82,21 @@ export function nextScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     if (row !== undefined) ctx.push(issueScreen(f, ctx, local(f, repo), row.issue.number));
   };
 
+  // The cut line is a muted line under the last row that fits, as on the page.
   const listRows = (): ListRow[] =>
-    rows.map((r) => ({
-      title: `${r.place === null ? "·" : r.place}. #${r.issue.number} ${r.issue.title}`,
-      secondary: r.role === "blocker" ? "Blocker" : "Enabler",
-      meta: [r.onIt === null ? "" : `on it: ${r.onIt}`, r.why ?? ""].filter((x) => x !== "").join(" · "),
-    }));
+    rows.map((r, at) => {
+      const estimate = week?.priced.find((p) => p.number === r.issue.number)?.estimate;
+      const cut = week?.cut;
+      const ends = cut !== undefined && cut.unsure === null && cut.fits.length > 0 && at === cut.fits.length - 1;
+      return {
+        title: `${r.place === null ? "·" : r.place}. #${r.issue.number} ${r.issue.title}`,
+        secondary: r.role === "blocker" ? "Blocker" : "Enabler",
+        meta: [estimate === undefined ? "" : rangeWords(estimate), r.onIt === null ? "" : `on it: ${r.onIt}`, r.why ?? ""]
+          .filter((x) => x !== "")
+          .join(" · "),
+        ...(ends ? { note: `── this week ends here (${cut.fits.length} fit): below reads as next week ──` } : {}),
+      };
+    });
 
   const screen: Screen = {
     title: "Next up",
@@ -110,7 +123,7 @@ export function nextScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         ? "Loading…"
         : rows.length === 0
           ? "Nothing is ready: everything open waits for something."
-          : `The crew builds strictly from the top${may() ? "" : " · you can read this order, not change it"}${away > 0 ? ` · ${away} not now` : ""}`;
+          : `${week?.sentence ?? ""}${may() ? "" : " · you can read this order, not change it"}${away > 0 ? ` · ${away} not now` : ""}`;
       s.text(head!.x, head!.y, truncate(note, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
       drawList(s, list!, c, state, listRows());
       hitList(ctx, list!, state, rows.length, { open });
