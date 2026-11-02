@@ -44,7 +44,7 @@ describe("the page-view beacon", () => {
     expect(await script.text()).toBe(beaconJs);
     const home = await fetch(base + "/");
     expect(await home.text()).toContain(asset.path);
-    expect(home.headers.get("content-security-policy")).toContain("script-src 'nonce-");
+    expect(home.headers.get("content-security-policy")).toContain("script-src 'self'");
     expect(home.headers.get("content-security-policy")).not.toContain("unsafe");
   });
 

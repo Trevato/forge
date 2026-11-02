@@ -16,6 +16,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { readFeed } from "../src/feed/feed.ts";
 import { feedCard } from "../src/web/studio/feed.ts";
 import { promote } from "./helpers/members.ts";
+import { withScripts } from "./helpers/page-script.ts";
 
 describe("the feed on the home page", () => {
   let dataDir: string;
@@ -153,6 +154,6 @@ describe("the feed on the home page", () => {
   test("the page carries the feed script and a card is focusable for j/k", async () => {
     const text = await (await get("/feed", aliceCookie)).text();
     expect(text).toContain("data-nav");
-    expect(text).toContain("/api/v1/feed/interactions");
+    expect(await withScripts(servers.url, text)).toContain("/api/v1/feed/interactions");
   });
 });

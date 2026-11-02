@@ -172,6 +172,7 @@ describe("the releases page", () => {
     expect(body).toContain('href="/releases"');
     // An admin's tile, or the plain line anyone else gets: both name the live version.
     expect(body).toMatch(/live: <span class="sha">aaaaaaa|Live version: a{7}/);
+    expect(body).toContain("aaaaaaa");
   });
 
   test("a signed-out visitor is sent to sign in", async () => {

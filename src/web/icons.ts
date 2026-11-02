@@ -13,14 +13,12 @@
  * Icons are decorative: they carry `aria-hidden`, and any control that shows
  * only an icon must carry its own `aria-label`.
  *
- * A drawing is sent once per page, not once per use. `icon()` renders the
- * 16px slot with a one-line `<use>` inside it; the page's markup is read for
- * those references and `iconSprite()` emits one `<symbol>` per distinct icon
- * the page actually used, at the end of `<body>` (`layout.ts`) — legal, and
- * resolved fine by a `<use>` earlier in the document. The stroke, the fill
- * and the viewBox ride on the `<symbol>`, so the slot itself is four
- * attributes; `currentColor` still resolves against whatever colour the
- * `<use>` sits in, which is what keeps every theme working.
+ * A drawing is sent once per browser, not once per page. `icon()` renders the
+ * 16px slot with a one-line `<use>` inside it; `layout.ts` aims every
+ * reference at the one hashed sprite file (`spriteSvg()`, served immutable).
+ * The stroke, the fill and the viewBox ride on the `<symbol>`, so the slot
+ * itself is four attributes; `currentColor` still resolves against whatever
+ * colour the `<use>` sits in, which is what keeps every theme working.
  *
  * A fragment (`layout.fragment()`) is markup dropped into a document it does
  * not own, so it cannot reference a sprite it did not ship: `inlineIcons()`
@@ -117,51 +115,29 @@ export function icon(name: IconName, size: 16 | 20 = 16): Html {
 /** The reference `icon()` leaves behind, and the only thing read back. */
 const REFERENCE = /<use href="#i-([A-Za-z]+)"\/>/g;
 
-/** What `REFERENCE` starts with, so a page can be searched for it by `indexOf`. */
+/** What `icon()` writes before the name; `pointAtSprite` finds it by this. */
 const REFERENCE_OPEN = '<use href="#i-';
 
 /**
- * Every icon this markup references, once each, in first-seen order. Found
- * with `indexOf`, which skips through a long page far faster than a regular
- * expression does, and accepts exactly what `REFERENCE` accepts: letters,
- * then `"/>`.
+ * Every drawing the forge has, as one SVG document of `<symbol>`s. It is
+ * served once, hashed, immutable (`/assets/i-<hash>.svg`, `web/asset.ts`), so
+ * no page carries a drawing: a page carries four attributes and a `<use>`.
  */
-export function referenced(markup: string): IconName[] {
-  const names: IconName[] = [];
-  let at = markup.indexOf(REFERENCE_OPEN);
-  while (at !== -1) {
-    const start = at + REFERENCE_OPEN.length;
-    let end = start;
-    while (end < markup.length) {
-      const c = markup.charCodeAt(end) | 32;
-      if (c < 97 || c > 122) break;
-      end++;
-    }
-    if (end > start && markup.startsWith('"/>', end)) {
-      const name = markup.slice(start, end);
-      if (name in PATHS && !names.includes(name as IconName))
-        names.push(name as IconName);
-    }
-    at = markup.indexOf(REFERENCE_OPEN, end);
-  }
-  return names;
+export function spriteSvg(): string {
+  const symbols = (Object.keys(PATHS) as IconName[])
+    .map((name) => `<symbol id="i-${name}" ${DRAW}>${PATHS[name]}</symbol>`)
+    .join("");
+  return `<svg xmlns="http://www.w3.org/2000/svg">${symbols}</svg>`;
 }
 
 /**
- * The drawings a page used, defined once each. Sat at the end of `<body>`
- * (`layout.ts`), zero-sized by `.sprite` so it can never move a layout;
- * `<symbol>` content is never rendered where it is defined, only where a
- * `<use>` instantiates it.
+ * A document's markup with every `<use href="#i-name"/>` aimed at the hashed
+ * sprite file at `spritePath`. Same-origin, so `img-src 'self'` and
+ * `connect-src 'self'` both admit it; `currentColor` still resolves against
+ * the `<use>`'s own colour, so every theme works.
  */
-export function iconSprite(markup: string): Html {
-  const names = referenced(markup);
-  if (names.length === 0) return raw("");
-  const symbols = names
-    .map((name) => `<symbol id="i-${name}" ${DRAW}>${PATHS[name]}</symbol>`)
-    .join("");
-  return raw(
-    `<svg class="sprite" width="0" height="0" aria-hidden="true" focusable="false">${symbols}</svg>`,
-  );
+export function pointAtSprite(markup: string, spritePath: string): string {
+  return markup.replaceAll(REFERENCE_OPEN, `<use href="${spritePath}#i-`);
 }
 
 /**

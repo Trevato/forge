@@ -31,6 +31,7 @@ import type { TuiIdentity } from "../src/tui/session.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
+import { withScripts } from "./helpers/page-script.ts";
 
 quietLogs();
 
@@ -258,7 +259,7 @@ describe("raise and lower a limb in the terminal", () => {
 
   test("the milestones page carries the live client and hears limb.moved", async () => {
     const res = await fetch(`${servers.url}/alice/order/milestones`);
-    const body = await res.text();
+    const body = await withScripts(servers.url, await res.text());
     expect(body).toContain('id="live"');
     expect(body).toContain("limb.moved");
     // A hand-over to the planner, or taking it back, reaches an open page too.

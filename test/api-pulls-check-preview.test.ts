@@ -117,12 +117,18 @@ test("a preview address only where an environment exists, and only for those who
   const address = runtime.urlFor(record(), `pull-${pulls["green"]!.number}`);
 
   // A public app: every reader gets the address for the pull that has an environment, null for the rest.
+  const heldNow = () => new Set(runtime.status(record()).map((e) => e.env as string));
+  const before = heldNow();
   const open = await listed();
+  const after = heldNow();
   expect(open["green"]!["preview"]).toBe(address);
-  // The runtime may have brought some others up itself; an address is given exactly where one exists.
-  const held = new Set(runtime.status(record()).map((e) => e.env));
-  for (const item of Object.values(open))
-    expect(item["preview"] === null).toBe(!held.has(`pull-${item["number"]}` as never));
+  // The runtime brings others up (and drops them) on its own while the request runs; an address is
+  // given exactly where one exists, judged on the pulls whose environment held steady across it.
+  for (const item of Object.values(open)) {
+    const env = `pull-${item["number"]}`;
+    if (before.has(env) !== after.has(env)) continue;
+    expect(item["preview"] === null).toBe(!after.has(env));
+  }
 
   // A private app on a public repository: a guest and a plain reader get none; the writer does.
   app.db.query("UPDATE app SET access = 'private' WHERE repo_id = ?1").run(repoId);

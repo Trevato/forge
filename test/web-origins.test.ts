@@ -35,6 +35,8 @@ import {
   type FakeForge,
   type FakeOAuth,
 } from "./fake-origin.ts";
+import { pointAtSprite } from "../src/web/icons.ts";
+import { spriteAsset } from "../src/web/asset.ts";
 import { adminCookie, seedAdmin } from "./helpers/admin.ts";
 
 quietLogs();
@@ -247,9 +249,9 @@ describe("origins on the web", () => {
         // The lead is the caret (it is rotated when open); the brand glyph
         // is in the title beside the name.
         const lead = /<span class="row-lead">([\s\S]*?)<\/span>/.exec(summary)![1]!;
-        expect(lead).toBe(icon("chevronRight").text);
-        expect(lead).not.toBe(icon(brand).text);
-        expect(/<span\s+class="row-title"[^>]*>([\s\S]*?)<\/span\s*>/.exec(summary)![1]).toContain(icon(brand).text);
+        expect(lead).toBe(pointAtSprite(icon("chevronRight").text, spriteAsset().path));
+        expect(lead).not.toBe(pointAtSprite(icon(brand).text, spriteAsset().path));
+        expect(/<span\s+class="row-title"[^>]*>([\s\S]*?)<\/span\s*>/.exec(summary)![1]).toContain(pointAtSprite(icon(brand).text, spriteAsset().path));
       }
     }
     expect(fold(closed, "connect-token").open).toBe(true);

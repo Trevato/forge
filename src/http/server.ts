@@ -111,6 +111,10 @@ import {
   assetResponse,
   highlightAsset,
   beaconAsset,
+  fileResponse,
+  pageScriptNamed,
+  speculationAsset,
+  spriteAsset,
   shellAsset,
   stylesheetAsset,
   stylesheetRedirect,
@@ -732,10 +736,19 @@ export function buildRouter(): Router<Handler> {
     if (ctx.params.name === beaconAsset().name)
       return assetResponse(ctx.request, beaconAsset());
     if (ctx.params.name === TOOLBAR_NAME) return toolbarResponse(ctx.request);
+    const own = pageScriptNamed(ctx.params.name!, ctx.app.config.dataDir);
+    if (own !== undefined) return fileResponse(ctx.request, own);
     const asset = await highlightAsset();
     if (asset === null || ctx.params.name !== asset.name) return notFound();
     return assetResponse(ctx.request, asset);
   });
+  // The icon sprite and the speculation rules: hashed, immutable, one file each.
+  router.add("GET", "/assets/:name.svg", (ctx) =>
+    ctx.params.name === spriteAsset().name ? fileResponse(ctx.request, spriteAsset()) : notFound(),
+  );
+  router.add("GET", "/assets/:name.json", (ctx) =>
+    ctx.params.name === speculationAsset().name ? fileResponse(ctx.request, speculationAsset()) : notFound(),
+  );
   // The service worker: root scope needs a root path, and it must never be
   // cached by the browser's HTTP cache or an update would wait a day.
   router.add("GET", "/sw.js", serviceWorker);

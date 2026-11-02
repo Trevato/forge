@@ -57,6 +57,7 @@ import {
 } from "../src/web/studio/words.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { appendRunLog } from "../src/runs/log.ts";
+import { withScripts } from "./helpers/page-script.ts";
 
 describe("the studio's slot count", () => {
   let dataDir: string;
@@ -603,9 +604,10 @@ describe("working: a run's own page in the studio", () => {
     appendRunLog(app.config.dataDir, run.id, "first");
     appendRunLog(app.config.dataDir, run.id, "second");
 
-    const page = await (
-      await get(`/alice/engine/runs/${run.id}`, writerCookie)
-    ).text();
+    const page = await withScripts(
+      base,
+      await (await get(`/alice/engine/runs/${run.id}`, writerCookie)).text(),
+    );
     // Every EventSource the page's HTML and script open is /events.
     const opened = [...page.matchAll(/new EventSource\(([^,;]*)/g)].map(
       (m) => m[1]!,
@@ -957,9 +959,10 @@ describe("working: a run's own page in the studio", () => {
         writerCookie,
       )
     ).text();
-    expect(script).toContain("getElementById('check-steps')");
-    expect(script).toContain("\\(fail\\) ");
-    expect(script).toContain("['role', 'tabindex', 'aria-label']");
+    const scripts = await withScripts(base, script);
+    expect(scripts).toContain("getElementById('check-steps')");
+    expect(scripts).toContain("\\(fail\\) ");
+    expect(scripts).toContain("['role', 'tabindex', 'aria-label']");
     const plain = await createRepo(app, alice, {
       name: "plain",
       visibility: "public",

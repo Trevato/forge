@@ -33,6 +33,7 @@ import {
   type Layout,
 } from "../src/web/pages/map.ts";
 import { promote } from "./helpers/members.ts";
+import { withScripts } from "./helpers/page-script.ts";
 
 // ---- the layout, on paper ----
 
@@ -412,8 +413,8 @@ describe("the map, per app and across the forge", () => {
       /<div[^>]*class="map-canvas"[^>]*id="map-canvas"[^>]*data-w="\d+"[^>]*data-h="\d+"/,
     );
     expect(page).toContain('data-map="fit"');
-    expect(page).toContain("new EventSource('/events')");
-    expect(page).toContain("forge:swapped");
+    expect(await withScripts(servers.url, page)).toContain("new EventSource('/events')");
+    expect(await withScripts(servers.url, page)).toContain("forge:swapped");
     // A card is a link to its issue, so it takes keyboard focus.
     expect(page).toMatch(
       /<a[^>]*class="map-node"[^>]*href="\/alice\/engine\/issues\/1"/,

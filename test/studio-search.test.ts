@@ -38,6 +38,7 @@ import {
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { promote } from "./helpers/members.ts";
+import { withScripts } from "./helpers/page-script.ts";
 
 describe("finding things in the studio: /search", () => {
   let dataDir: string;
@@ -797,7 +798,7 @@ describe("the studio's Stop and Redeploy come back to the page they were pressed
   test("the head card shows the new state where it stands: the live fragment, no second navigation", async () => {
     putLive();
     const serving = await studioPage();
-    expect(serving).toContain("serving");
+    expect(await withScripts(base, serving)).toContain("serving");
     expect(serving).toContain('href="/-/confirm?to=%2Falice%2Fnotes%2Fapp%2Fproduction%2Fstop"');
     // The page a person stays on is the one that refreshes itself: its live
     // mount asks for the app's state on a deploy event.
