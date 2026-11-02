@@ -10,6 +10,7 @@ import type { Command } from "../app/palette.ts";
 import type { Session } from "../session.ts";
 import { entry as access } from "./access.ts";
 import { entry as agents } from "./agents.ts";
+import { entry as archived } from "./archived.ts";
 import { entry as audit } from "./audit.ts";
 import { entry as boards } from "./boards.ts";
 import { entry as bulk } from "./bulk.ts";
@@ -70,6 +71,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   limits,
   teams,
   agents,
+  archived,
   invites,
   bulk,
   subscriptions,
