@@ -1,0 +1,130 @@
+/**
+ * The rolling record of real requests (#7559): per route pattern, the
+ * requests of the last `WINDOW_MS` with their total and each Server-Timing
+ * phase. Memory only, sized by time: older samples are dropped, and a route so
+ * busy that it passes `MAX_SAMPLES` is thinned to every second sample, which
+ * keeps the whole window and its percentiles. Keys are router patterns, never
+ * paths, ids or query strings; nothing about the viewer is kept but signed in
+ * or not. `first` is when a pattern was first seen, so a busy route is not
+ * mistaken for a young one.
+ */
+
+export const WINDOW_MS = 15 * 60_000;
+export const MAX_SAMPLES = 20_000;
+export const MAX_PATTERNS = 200;
+const MAX_PATTERN = 200;
+const MAX_PHASES = 16;
+
+export interface PhaseSample {
+  readonly name: string;
+  readonly ms: number;
+  readonly hit: boolean;
+}
+
+export interface Sample {
+  readonly at: number;
+  readonly ms: number;
+  readonly signedIn: boolean;
+  readonly phases: readonly PhaseSample[];
+}
+
+export interface PerfRecord {
+  /** Add one request; a pattern that is not a route pattern is dropped. */
+  add(pattern: string, sample: Sample): void;
+  /** Requests for `pattern` at or after `since`. */
+  traffic(pattern: string, since: number): Sample[];
+  /** When `pattern` was first seen in this process, undefined if never. */
+  first(pattern: string): number | undefined;
+  patterns(): string[];
+}
+
+const validPattern = (p: string): boolean =>
+  p.startsWith("/") && p.length <= MAX_PATTERN && !/[?#\s\u0000-\u001f]/.test(p);
+
+/** Nearest-rank percentile of `xs`, null when empty. */
+export function percentile(xs: readonly number[], p: number): number | null {
+  if (xs.length === 0) return null;
+  const sorted = [...xs].sort((a, b) => a - b);
+  return sorted[Math.max(1, Math.ceil((p / 100) * sorted.length)) - 1]!;
+}
+
+export function createPerfRecord(): PerfRecord {
+  const real = new Map<string, Sample[]>();
+  const firsts = new Map<string, number>();
+  return {
+    add(pattern, sample) {
+      if (!validPattern(pattern) || !Number.isFinite(sample.ms) || sample.ms < 0) return;
+      let list = real.get(pattern);
+      if (list === undefined) {
+        if (real.size >= MAX_PATTERNS) return;
+        list = [];
+        real.set(pattern, list);
+        firsts.set(pattern, sample.at);
+      }
+      const phases = sample.phases
+        .filter((p) => Number.isFinite(p.ms) && p.ms >= 0)
+        .slice(0, MAX_PHASES);
+      list.push({ ...sample, phases });
+      // A minute of slack past the window, so the drop is rare, not per request.
+      if (list[0]!.at < sample.at - WINDOW_MS - 60_000) {
+        const keep = list.findIndex((s) => s.at >= sample.at - WINDOW_MS);
+        list.splice(0, keep === -1 ? list.length : keep);
+      }
+      if (list.length > MAX_SAMPLES) {
+        const thinned = list.filter((_, i) => i % 2 === 1);
+        list.length = 0;
+        list.push(...thinned);
+      }
+    },
+    traffic: (pattern, since) => (real.get(pattern) ?? []).filter((s) => s.at >= since),
+    first: (pattern) => firsts.get(pattern),
+    patterns: () => [...real.keys()],
+  };
+}
+
+export interface PhaseStat {
+  readonly name: string;
+  readonly p95: number;
+  readonly share: number;
+  readonly hits: number;
+  readonly n: number;
+}
+
+export interface RouteStat {
+  readonly n: number;
+  readonly p50: number;
+  readonly p95: number;
+  readonly p99: number;
+  /** Phases, slowest p95 first. */
+  readonly phases: readonly PhaseStat[];
+}
+
+/** p50/p95/p99 of the totals, and each phase's p95, its share of the total p95 and its cache hits. */
+export function summarize(samples: readonly Sample[]): RouteStat | null {
+  if (samples.length === 0) return null;
+  const totals = samples.map((s) => s.ms);
+  const p95 = percentile(totals, 95)!;
+  const byName = new Map<string, PhaseSample[]>();
+  for (const s of samples)
+    for (const ph of s.phases) {
+      const list = byName.get(ph.name);
+      if (list === undefined) byName.set(ph.name, [ph]);
+      else list.push(ph);
+    }
+  const phases = [...byName].map(([name, list]) => {
+    const own = percentile(list.map((x) => x.ms), 95)!;
+    return { name, p95: own, share: p95 > 0 ? Math.min(1, own / p95) : 0, hits: list.filter((x) => x.hit).length, n: list.length };
+  });
+  phases.sort((a, b) => b.p95 - a.p95);
+  return { n: samples.length, p50: percentile(totals, 50)!, p95, p99: percentile(totals, 99)!, phases };
+}
+
+/** `app;dur=1.0, kpis;dur=4400.0;desc="hit"` as the phases it names; `app`, `db` included. */
+export function parseServerTiming(header: string): PhaseSample[] {
+  const out: PhaseSample[] = [];
+  for (const part of header.split(",").slice(0, MAX_PHASES)) {
+    const m = /^\s*([a-z][a-z0-9.-]{0,15});dur=([0-9.]+)(;desc="hit")?\s*$/.exec(part);
+    if (m) out.push({ name: m[1]!, ms: Number(m[2]), hit: m[3] !== undefined });
+  }
+  return out;
+}

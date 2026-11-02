@@ -83,6 +83,9 @@ import { reapLeftoverBridges } from "./crew/leftovers.ts";
 import { crewRoot } from "./crew/workdir.ts";
 import { createLog } from "./kernel/log.ts";
 import { watchStalls } from "./kernel/loop_lag.ts";
+import { startPerfWatcher } from "./perf/duty.ts";
+import { stallLine } from "./perf/loop.ts";
+import { loopWatch, perfRecord } from "./perf/live.ts";
 import { timeStatements } from "./kernel/slow_sql.ts";
 import { waitForPeer } from "./runs/peer.ts";
 
@@ -207,7 +210,11 @@ if (parentProblem !== null) {
 // The loop's lateness, from the first line of the boot: a stall over a
 // second is a warning that names its minute (kernel/loop_lag.ts, #6957),
 // draining included.
-watchStalls(createLog("loop"));
+const loopLog = createLog("loop");
+watchStalls(loopLog, undefined, undefined, undefined, (late, at) => {
+  const stall = loopWatch.stalled(late, at);
+  if (stall !== null) loopLog.warn(stallLine(stall));
+});
 
 const app = createApp({
   dataDir,
@@ -298,6 +305,7 @@ loadTrustedHosts(app.db);
 const bootSignup = signupFromEnv(process.env.FORGE_SIGNUP);
 if (bootSignup.ok && bootSignup.value !== null)
   setSignup(app.db, bootSignup.value, BOOT_ACTOR);
+startPerfWatcher(app, perfRecord);
 const flagTimer = setInterval(() => flushFlagUses(app.db), 10_000);
 await reconcile(app);
 // Issues linked under a pillar's umbrella before pillars had labels.

@@ -74,8 +74,10 @@ export function watchStalls(
   warnMs = STALL_WARN_MS,
   everyMs = LAG_EVERY_MS,
   now: () => number = () => performance.now(),
+  onStall?: (lateMs: number, at: number) => void,
 ): () => void {
   const lag = startLoopLag(everyMs, now, (late) => {
+    onStall?.(late, now());
     if (late >= warnMs) log.warn("event loop stalled", { lateMs: Math.round(late) });
   });
   return lag.stop;

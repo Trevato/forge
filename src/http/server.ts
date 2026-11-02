@@ -514,6 +514,8 @@ import {
   takeDbTime,
   type RouteTiming,
 } from "../core/route_timing.ts";
+import { loopWatch, perfRecord } from "../perf/live.ts";
+import { parseServerTiming } from "../perf/record.ts";
 import { methodOf, noteUsage, roleOf, surfaceOf, takeUsage } from "./usage_tag.ts";
 import { bearerChallenge, oauthRoutes } from "./oauth.ts";
 import { flushAccess, recordAccess } from "./access_log.ts";
@@ -2255,7 +2257,14 @@ export async function serve(app: App): Promise<Servers> {
     const tag = takeUsage(request);
     const ms = performance.now() - started;
     try {
-      response.headers.set("server-timing", serverTiming(ms, takeDbTime(request), takePhases(request)));
+      const header = serverTiming(ms, takeDbTime(request), takePhases(request));
+      response.headers.set("server-timing", header);
+      const end = performance.now();
+      perfRecord.add(
+        tag.pattern,
+        { at: Date.now(), ms, signedIn: tag.role !== "anon", phases: parseServerTiming(header) },
+      );
+      loopWatch.finished(tag.pattern, started, end);
     } catch {
       // A response the forge is only carrying keeps the headers it came with.
     }
