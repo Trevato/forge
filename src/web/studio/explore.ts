@@ -16,7 +16,8 @@ import {
 } from "../../actions/explore.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
-import { pageHead } from "../chrome.ts";
+import { edgeLoginUrl } from "../../http/edge.ts";
+import { offersSignup, pageHead } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { btn, empty, listCard, nameMark, row as rowOf, seg, timeAgo } from "../ui.ts";
@@ -94,7 +95,7 @@ function terms(query: ExploreQuery): { term: string; without: ExploreQuery }[] {
 }
 
 /** Nothing to list: a bare line means nothing is public yet, not a miss. */
-function emptyState(signedIn: boolean, query: ExploreQuery): Html {
+function emptyState(ctx: Ctx, query: ExploreQuery): Html {
   const line = exploreLine(query);
   if (line !== "")
     return empty({
@@ -112,12 +113,13 @@ function emptyState(signedIn: boolean, query: ExploreQuery): Html {
     icon: "search",
     title: "Nothing public yet",
     note: "Make the first app and it shows up here.",
-    action: signedIn
-      ? btn("Make an app", { href: "/apps/new", variant: "primary" })
-      : btn("Sign in to make one", {
-          href: "/signin?next=/apps/new",
-          variant: "primary",
-        }),
+    action:
+      ctx.auth.user !== undefined
+        ? btn("Make an app", { href: "/apps/new", variant: "primary" })
+        : offersSignup(ctx)
+          ? html`${btn("Create an account", { href: "/signup?next=/apps/new", variant: "primary" })}
+            ${btn("Sign in", { href: "/signin?next=/apps/new" })}`
+          : btn("Sign in", { href: edgeLoginUrl("/apps/new"), variant: "primary" }),
   });
 }
 
@@ -200,7 +202,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
       >
     </div>
     ${rows.length === 0
-      ? emptyState(ctx.auth.user !== undefined, query)
+      ? emptyState(ctx, query)
       : listCard(rows.map(rowHtml))}`;
   const response = page({ ctx, title: "Explore", body });
   notePhase(ctx.request, "render", performance.now() - rendering);

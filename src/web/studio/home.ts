@@ -23,9 +23,9 @@ import { LOOK_SIZES } from "../../core/looks.ts";
 import { canRead, getRepo } from "../../core/repos.ts";
 import { type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
-import { activeEdgeToken, edgeLoginUrl, edgeStrangerLogin } from "../../http/edge.ts";
+import { edgeLoginUrl } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
-import { repoBase, signInFirst, NOT_ADMIN_HERE, forbiddenPage } from "../chrome.ts";
+import { repoBase, offersSignup, signInFirst, NOT_ADMIN_HERE, forbiddenPage } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { liveRegionsJs } from "../client.ts";
 import { html, when, type Html } from "../html.ts";
@@ -608,7 +608,7 @@ export function studioDoor(ctx: Ctx): Response {
       <div class="bar">
         ${ctx.auth.user !== undefined
           ? null
-          : activeEdgeToken(ctx.app) === undefined || edgeStrangerLogin(ctx.request, activeEdgeToken(ctx.app), ctx.auth.user) !== undefined
+          : offersSignup(ctx)
             ? html`${btn("Create an account", {
                 href: `/signup${nextQuery}`,
                 variant: "primary",

@@ -164,6 +164,16 @@ export function signInHref(ctx: Ctx): string {
   return `/signin?next=${encodeURIComponent(next)}`;
 }
 
+/**
+ * Whether a signed-out visitor is offered Create an account beside Sign in.
+ * Behind a platform edge the edge is the one way in, unless it has vouched
+ * for them as a stranger who may sign up here. Home and explore share this.
+ */
+export function offersSignup(ctx: Ctx): boolean {
+  const token = activeEdgeToken(ctx.app);
+  return token === undefined || edgeStrangerLogin(ctx.request, token, ctx.auth.user) !== undefined;
+}
+
 // ---- repo header ----
 
 export type RepoTab =

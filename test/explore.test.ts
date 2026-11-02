@@ -17,7 +17,8 @@ import { createIssue } from "../src/core/issues.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
-import { serve, type Servers } from "../src/http/server.ts";
+import { edgeLoginUrl } from "../src/http/edge.ts";
+import { forgeHttp, serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { proveAll } from "./helpers/verified.ts";
 import { promote } from "./helpers/members.ts";
@@ -434,11 +435,13 @@ describe("explore on a forge with nothing public", () => {
     const out = await get("/explore", false);
     expect(out).toContain("Nothing public yet");
     expect(out).toContain('href="/signin?next=/apps/new"');
+    expect(out).toContain('href="/signup?next=/apps/new"');
+    expect(out).toContain("Create an account");
     expect(out).not.toContain("Clear the line");
     const mine = await get("/explore", true);
     expect(mine).toContain("Nothing public yet");
     expect(mine).toContain('href="/apps/new"');
-    expect(mine).not.toContain("Sign in to make one");
+    expect(mine).not.toContain("Create an account");
   });
 
   test("a query with no hits still says nothing matches", async () => {
@@ -629,4 +632,41 @@ test("isExploreLine is true for each explore key and false for plain words", () 
   for (const line of ["kind:app", "sort:forks", "updated:7d", "owner:trevato", "archived:yes", "garden OWNER:x"])
     expect(isExploreLine(line)).toBe(true);
   for (const line of ["", "garden", "zed-one", "downer:x"]) expect(isExploreLine(line)).toBe(false);
+});
+
+describe("explore's empty state behind a platform edge", () => {
+  const TOKEN = "edge-secret-for-explore";
+  let dataDir: string;
+  let app: App;
+  let http: ReturnType<typeof forgeHttp>;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-explore-edge-"));
+    app = createApp({ dataDir, port: 0, url: "https://forge.example", edgeToken: TOKEN });
+    http = forgeHttp(app);
+  }, 30_000);
+
+  afterAll(async () => {
+    http.close();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  const get = async (headers: Record<string, string>) =>
+    (await http.handle(new Request("http://forge.test/explore", { headers }))).text();
+
+  test("a stranger the edge has not vouched for gets one Sign in to the edge, no Create an account", async () => {
+    const out = await get({});
+    expect(out).toContain("Nothing public yet");
+    expect(out).toContain(`href="${edgeLoginUrl("/apps/new")}"`);
+    expect(out).not.toContain("/signup");
+    expect(out).not.toContain("Create an account");
+    expect(out).not.toContain('href="/signin?next=/apps/new"');
+  });
+
+  test("a stranger the edge vouches for is offered Create an account", async () => {
+    const out = await get({ "x-plat-edge-token": TOKEN, "x-plat-user": "newcomer" });
+    expect(out).toContain("Create an account");
+    expect(out).toContain('href="/signup?next=/apps/new"');
+  });
 });
