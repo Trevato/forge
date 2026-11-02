@@ -501,6 +501,8 @@ export interface ComposerOptions {
    * the button tells the crew, and `from` (a path on this forge, or null)
    * rides along as a hidden field so the tell remembers the page it was
    * said on (`actions/tell.ts`). `rows` sizes it; one is a single line. */
+  /** The page already has its one primary action; Comment steps down. */
+  plainSend?: boolean;
   tell?: { from: string | null; rows?: number; page?: string; pull?: number; text?: string; ask?: boolean };
 }
 
@@ -622,7 +624,7 @@ export function composer(ctx: Ctx, o: ComposerOptions): Html {
         ${reasons} ${closeButton}
         ${tell
           ? btn("Tell the crew", { variant: "primary", icon: "bot" })
-          : btn("Comment", { variant: "primary", icon: "comment" })}
+          : btn("Comment", { ...(o.plainSend ? {} : { variant: "primary" as const }), icon: "comment" })}
       </div>
     </form>`;
 }

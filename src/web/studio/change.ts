@@ -42,7 +42,7 @@ import {
   repoHeader,
   repoPalette,
 } from "../chrome.ts";
-import { html, when, type Html } from "../html.ts";
+import { html, raw, when, type Html } from "../html.ts";
 import type { IconName as Glyph } from "../icons.ts";
 import { threadLine } from "../describe.ts";
 import { fragment, page, redirect } from "../layout.ts";
@@ -56,7 +56,6 @@ import {
   icon,
   originTag,
   seg,
-  stateBadge,
   time,
   tlEvent,
   userLink,
@@ -87,7 +86,8 @@ import { pullMayRun } from "../../core/pull_trust.ts";
 import { nextOfPull } from "../../flow/next_actor.ts";
 import { STEP_MEANS, STEPS, stepOfPull, stepWord, type PathStep } from "../../flow/path.ts";
 import { changeHref } from "./nouns.ts";
-import { pullWord, servingHistory, wordDot, type WordCtx } from "./words.ts";
+import { pullWord, servingHistory, stateDot, wordDot, type WordCtx } from "./words.ts";
+import { getHold } from "../../core/holds.ts";
 
 /** The pull and its repo, or the response that refuses to say why not. */
 export function pullContext(ctx: Ctx): { repo: Repo; pull: Pull } | Response {
@@ -207,6 +207,41 @@ function reviewEntry(
   };
 }
 
+/**
+ * Everything the page does, as palette rows (#8773): the page shows its one
+ * primary action and folds the rest away, so each of them is a keystroke
+ * from Cmd-K. Only what this viewer may do is offered.
+ */
+export function pullActions(o: {
+  base: string;
+  name: string;
+  number: number;
+  open: boolean;
+  writer: boolean;
+  mayClose: boolean;
+  shippable: boolean;
+  /** Shipping would only be refused: the verb is the one that fixes it. */
+  conflicted?: boolean;
+  takeBack: boolean;
+  mayEdit: boolean;
+}): { t: string; h: string; c: string }[] {
+  const c = "This pull request";
+  const at = `${o.base}/pulls/${o.number}`;
+  const row = (verb: string, h: string) => ({ t: `${o.name} #${o.number} — ${verb}`, h, c });
+  return [
+    row("Conversation", at),
+    row("Files", `${at}/files`),
+    // The where strip rests on the repository's home; one step from here.
+    { t: `${o.name} — Where it is read from`, h: o.base, c },
+    ...(o.shippable ? [row(o.conflicted ? "Bring up to date" : "Ship", `${at}#decide`)] : []),
+    ...(o.open && o.writer ? [row("Check again", `${at}#live-checks`), row("Hold", `${at}?more=1#hold`)] : []),
+    ...(o.open ? [row("Comment", `${at}#comment-body`)] : []),
+    ...(o.open && o.mayClose ? [row("Close pull request", `${at}#comment-body`)] : []),
+    ...(o.mayEdit ? [row("Edit", `${at}#edit`)] : []),
+    ...(o.takeBack ? [row("Take it back", `${at}?more=1#take-back`)] : []),
+  ];
+}
+
 /** A change's head, the same on both of its tabs: the title, its state,
  * who opened it and in answer to whom, where it came from, and what the
  * crew spent on it. */
@@ -226,7 +261,7 @@ export function changeHead(
   return html`<div class="page-head">
     <h1>${pull.title} <span class="num">#${pull.number}</span></h1>
     <div class="page-head-sub bar muted small">
-      ${stateBadge(
+      ${stateDot(
         pullState(pull),
         getIssueById(ctx.app.db, pull.id)?.closeReason === "parked",
       )}
@@ -258,11 +293,7 @@ export function changeHead(
           >`,
       )}
     </div>
-    ${when(step, pathLine)}
-    ${when(
-      next,
-      (n) => html`<p class="next-actor muted small">Next: ${n.who}, ${n.why}.</p>`,
-    )}
+    ${when(step, (st) => pathLine(st, next === null ? undefined : `${next.who}, ${next.why}`))}
   </div>`;
 }
 
@@ -271,17 +302,17 @@ export function changeHead(
  * marked, and why it waits there. The words link to /pipeline, which says
  * what each one means and holds the finer steps.
  */
-export function pathLine(p: PathStep): Html {
+export function pathLine(p: PathStep, next?: string): Html {
   const at = STEPS.indexOf(p.step);
   const words = STEPS.map((s, i) => {
     const label = stepWord(s);
     if (i === at)
       return html`<strong aria-current="step" title="${STEP_MEANS[s]}">${label}</strong>${p.done ? html` ${badge("done", { tone: "success" })}` : null}`;
-    return html`<span title="${STEP_MEANS[s]}">${label}</span>`;
+    return html`<span>${label}</span>`;
   });
   return html`<p class="muted small" data-path="${p.step}">
     <a href="/pipeline">${words.map((w, i) => html`${i > 0 ? " · " : ""}${w}`)}</a>
-    — ${p.why}
+    — ${p.why}${next === undefined ? "" : html`<span class="next-actor"> Next: ${next}.</span>`}
   </p>`;
 }
 
@@ -597,11 +628,10 @@ async function changeConversation(
       ? await previewVision(ctx.app, repo, pull)
       : null;
   const decisionForms = decision ? decisionForm(decision) : null;
-  const decisionSection = when(decisionBody, (body) =>
-    card(body, {
-      head: html`${icon("alert")}
-        <h2>Decide</h2>`,
-    }),
+  // No card, no heading: the decision is the page's one primary action.
+  const decisionSection = when(
+    decisionBody,
+    (body) => html`<div class="mt mb" id="decide">${body}</div>`,
   );
 
   // A shipped change offers one more verb: open a new change that undoes
@@ -609,14 +639,16 @@ async function changeConversation(
   // open (nothing shipped to take back yet), never on a mirror (the origin
   // owns that history), never twice. The action re-checks all of this and
   // does the git work; this only decides whether to offer the button.
-  const takeBackSection = when(
+  const mayTakeBack =
     pull.mergedAt !== null &&
-      writer &&
-      repo.origin === null &&
-      pull.originHeadRepo === null &&
-      revertOf(db, repo.id, pull.id) === undefined,
+    writer &&
+    repo.origin === null &&
+    pull.originHeadRepo === null &&
+    revertOf(db, repo.id, pull.id) === undefined;
+  const takeBackSection = when(
+    mayTakeBack,
     () =>
-      html`<div class="bar mt">
+      html`<div class="bar mt" id="take-back">
         ${confirmAction({
           action: `${thread}/take-back`,
           verb: "Take it back",
@@ -636,16 +668,41 @@ async function changeConversation(
     top: html`${repoHeader(ctx, repo, "pulls", {
       compact: true,
       ownTitle: true,
+      quiet: true,
     })}
     ${changeHead(ctx, repo, pull, status === undefined ? null : { headOid, conflicts: status.conflicts.length })}
     ${changeTabs(repo, pull, "change")}`,
     crumbs: crumbsFor(repo),
-    palette: repoPalette(ctx, repo),
+    palette: [
+      ...repoPalette(ctx, repo),
+      ...pullActions({
+        base,
+        name: `${repo.ownerName}/${repo.name}`,
+        number: pull.number,
+        open: pull.state === "open" && pull.mergedAt === null,
+        writer,
+        mayClose: ctx.auth.user !== undefined && (ctx.auth.user.id === pull.authorId || writer),
+        shippable: decision !== undefined,
+        conflicted,
+        takeBack: mayTakeBack,
+        mayEdit: mayEditIssue(ctx.app, repo, pull, ctx.auth.user).ok && !mirrored,
+      }),
+    ],
   }));
+  const held = getHold(db, pull.id) !== undefined;
+  const holdForm = held ? null : holdCard(ctx, repo, pull, { act: true, bare: true });
+  // The rare actions, one step away: hold and take back.
+  const more =
+    holdForm === null && !mayTakeBack
+      ? null
+      : html`<details class="mt mb" id="more" ${ctx.url.searchParams.has("more") ? raw("open") : null}>
+          <summary class="muted small">More: hold, take it back</summary>
+          ${holdForm}${takeBackSection}
+        </details>`;
   const gate = tick(
     spent,
     "gate",
-    () => html`${holdCard(ctx, repo, pull, { act: true })}
+    () => html`${held ? holdCard(ctx, repo, pull, { act: true }) : null}
     ${approveHereCard(ctx, repo, pull, headOid, `${thread}/approve-here`)}
     ${teamsCard(teamVerdicts(db, { ...pull, headOid }))}
     ${when(wall, (w) => wallCard(w, writer ? thread : undefined))}`,
@@ -680,6 +737,7 @@ async function changeConversation(
     state: pull.state,
     locked: pull.mergedAt !== null,
     closeLabel: "Close pull request",
+    plainSend: decision !== undefined,
     crewNote: threadNote(ctx.app.db, repo, pull),
   });
   spent.reviews += performance.now() - reviewsAt;
@@ -696,12 +754,12 @@ async function changeConversation(
     <div id="pull-check">${checkLine}</div>
     ${when(runLine, (l) => l)} ${gate} ${decisionSection}
     ${when(visionPreview, (v) => visionPreviewCard(v))}
-    ${takeBackSection}
     ${look}
     <div class="split">
       <div>
         ${talk.node}
         ${reply}
+        ${more}
       </div>
       <aside><div id="pull-preview">${preview}</div></aside>
     </div>

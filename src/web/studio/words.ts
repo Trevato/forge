@@ -586,6 +586,16 @@ export function wordDot(word: Word, note?: string): Html {
   return html`<span class="dot" data-tone="${tone}" data-word="${word}" role="img" aria-label="${said}"></span>`;
 }
 
+/** A pull's own state at rest: the dot, its word for a screen reader. */
+export function stateDot(state: "open" | "closed" | "merged", parked = false): Html {
+  const said = state === "closed" && parked ? "parked" : state;
+  const tone = state === "open" ? "success" : state === "merged" ? "merged" : "none";
+  // Open is the quiet state; a settled one is written out beside its dot.
+  return html`<span class="dot" data-state="${state}" data-tone="${tone}" role="img" aria-label="${said}"></span>${
+    state === "open" ? null : html`<span class="word-text">${said === "merged" ? "Merged" : said === "parked" ? "Parked" : "Closed"}</span>`
+  }`;
+}
+
 // ---- what a subscription has left, and what a change costs ----
 
 /** One figure as a person reads it, and whether the forge worked it out

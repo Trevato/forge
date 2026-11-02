@@ -66,8 +66,8 @@ afterAll(async () => {
 const get = async (path: string) => (await fetch(`${servers.url}${path}`, { headers: { cookie } })).text();
 const bytes = (t: string) => new TextEncoder().encode(t).length;
 
-// Measured 31,622 and 24,540 (before: 31,751 and 24,738). The margin covers the port digits and times in the page (up to ~160 B seen), so it holds the page from growing, not a tighter squeeze.
-const BUDGET = { pull: 32_000, list: 24_900 };
+// Measured 30,889 and 24,540 (before: 31,622 on main with #8800, 31,968 before #8773 and 24,738). The margin covers the port digits and times in the page (up to ~160 B seen), so it holds the page from growing, not a tighter squeeze.
+const BUDGET = { pull: 31_100, list: 24_900 };
 
 test("the pull page's check is a line with a dot and its word, not a card around a badge", async () => {
   const text = await get(`/alice/r/pulls/${number}`);

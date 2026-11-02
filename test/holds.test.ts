@@ -684,6 +684,7 @@ describe("a hold is set, shown and lifted", () => {
     const cookie = await signIn("alice");
     const change = `/alice/garden/pulls/${pull.number}`;
     const before = await page(change, cookie);
+    expect(before).toContain(`id="hold"`);
     expect(before).toContain("Hold this pull request");
     expect(before).toContain(
       `action="/alice/garden/pulls/${pull.number}/hold"`,

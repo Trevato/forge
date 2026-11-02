@@ -209,6 +209,8 @@ export interface RepoHeaderOptions {
    * the repo name steps down to a plain element. Exactly one h1 per document.
    */
   ownTitle?: boolean;
+  /** Leave the where strip to the repository's home (#8773): a page about one change shows less at rest. */
+  quiet?: boolean;
 }
 
 /**
@@ -440,7 +442,7 @@ export function scopeHeader(
           <span class="mono">${scope.upstream}</span>
         </p>`,
     )}
-    ${studio ? studioOriginNote(repo) : whereRow(ctx, scope)}
+    ${studio ? studioOriginNote(repo) : options.quiet ? null : whereRow(ctx, scope)}
     ${tabs(items, "Repository")}
   </header>`;
 }
