@@ -6,6 +6,7 @@
  */
 
 
+import { DEFAULT_SECONDS, MAX_SECONDS, sampleStacks } from "../../perf/sample.ts";
 import { listAccounts, removeAccount, retireAndRemoveAccount, retirementPlan, suspendAccount, unsuspendAccount, verifyAccount } from "../../actions/accounts.ts";
 import { ADMIN_WORDS } from "../../actions/admin_words.ts";
 import { changeCapacity, listCapacity } from "../../actions/capacity.ts";
@@ -46,6 +47,18 @@ export function adminRoutes(router: Router<Handler>): void {
             ADMIN_WORDS.selfSuspend,
           )
         : apiError(error, 500, "the account could not be removed");
+
+  // What the main thread is doing right now, sampled for a few seconds
+  // (`perf/sample.ts`), so a stall can be read on the live forge (#8103).
+  router.add("GET", "/api/v1/admin/profile", async (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const denied = accountAdmin(ctx, "ro");
+    if (denied) return denied;
+    const asked = Number(ctx.url.searchParams.get("seconds") ?? DEFAULT_SECONDS);
+    if (!Number.isFinite(asked)) return apiError("invalid", 422, `seconds is a number from 1 to ${MAX_SECONDS}`);
+    const sampled = await sampleStacks(asked);
+    return sampled ? json(sampled) : apiError("busy", 409, "a sample is already running");
+  });
 
   // The forge's capacity (`core/capacity.ts`): read and changed live by an
   // admin, never by an agent; anyone else is told the door is not there.
