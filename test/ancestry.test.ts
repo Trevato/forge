@@ -50,3 +50,22 @@ test("an answer over a quarter of the bound is returned but not kept", async () 
   await cache.of("/r", "ok");
   expect(cache.has("/r", "ok")).toBe(true);
 });
+
+test("a new commit after a kept one grows from it; one that does not reach it reads the whole history (#8388)", async () => {
+  const { asked, read } = fake({ a: 3, x: 2 });
+  const since = async (_dir: string, oid: string, base: string) =>
+    oid === "x"
+      ? { added: new Set(["x"]), reaches: false }
+      : {
+          added: new Set([oid, `${oid}-1`]),
+          reaches: base === "a" || base === "b",
+        };
+  const cache = new AncestryCache(100, read, since);
+  await cache.of("/r", "a");
+  const b = await cache.of("/r", "b"); // a deploy on top of a
+  expect([...(b ?? [])].sort()).toEqual(["a0", "a1", "a2", "b", "b-1"]);
+  expect(cache.grown).toBe(1);
+  await cache.of("/r", "x"); // force-pushed: b is not its ancestor
+  expect(asked).toEqual(["/r:a", "/r:x"]);
+  expect(cache.reads).toBe(4); // a, b since a, x since b, then x whole
+});

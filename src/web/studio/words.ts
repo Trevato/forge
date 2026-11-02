@@ -9,7 +9,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { ancestries } from "./ancestry.ts";
+import { ancestries, type AncestryCache } from "./ancestry.ts";
 import {
   NO_TESTS_TAIL,
   TESTS_PASSED_TAIL,
@@ -98,6 +98,8 @@ export interface WordCtx {
   readonly history: ServingHistory;
   /** Who is reading: a private app's production is theirs only if they may enter it. */
   readonly viewer: User | undefined;
+  /** Where ancestries are kept; the process's own unless a test brings its own. */
+  readonly ancestries?: AncestryCache;
 }
 
 /** What a page read ahead for its rows, so `pullWord` and `runWord` do not read per row. */
@@ -252,7 +254,7 @@ async function caughtUp(
   const key = `${ctx.dir}\0${production.commitOid}`;
   let ancestry = ctx.history.get(key);
   if (ancestry === undefined) {
-    ancestry = ancestries.of(ctx.dir, production.commitOid);
+    ancestry = (ctx.ancestries ?? ancestries).of(ctx.dir, production.commitOid);
     ctx.history.set(key, ancestry);
   }
   return (await ancestry)?.has(commitOid) ?? false;

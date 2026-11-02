@@ -321,6 +321,34 @@ export async function ancestorsOf(
   return result.ok ? new Set(result.value.split("\n")) : undefined;
 }
 
+/**
+ * The commits reachable from `oid` but not from `base`, and whether `base`
+ * is itself an ancestor of `oid` — one spawn whose cost is the commits
+ * between them, not the whole history. `base` is an ancestor exactly when
+ * one of the listed commits names it as a parent (or it is `oid`).
+ */
+export async function ancestorsSince(
+  dir: string,
+  oid: string,
+  base: string,
+): Promise<{ added: ReadonlySet<string>; reaches: boolean } | undefined> {
+  if (!isSafeOid(oid) || !isSafeOid(base)) return undefined;
+  if (oid === base) return { added: new Set(), reaches: true };
+  const result = await runGit(["rev-list", "--parents", oid, `^${base}`], {
+    cwd: dir,
+  });
+  if (!result.ok) return undefined;
+  const added = new Set<string>();
+  let reaches = false;
+  for (const line of result.value.split("\n")) {
+    if (line === "") continue;
+    const [commit, ...parents] = line.split(" ");
+    added.add(commit!);
+    if (parents.includes(base)) reaches = true;
+  }
+  return { added, reaches };
+}
+
 /** The commits reachable from head but not base — what a proposal carries. */
 export async function aheadOids(
   dir: string,
