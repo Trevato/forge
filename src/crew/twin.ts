@@ -22,6 +22,9 @@ export interface Twin {
   readonly standing: "running" | "open" | "landed";
 }
 
+/** Same-title issues whose branches are asked after: the newest are the ones still in play. */
+const TWINS_ASKED = 8;
+
 const same = (title: string): string => title.trim().toLowerCase();
 
 /** The twin, if any, already holding `issue`'s work: running before open before landed. */
@@ -40,23 +43,29 @@ export function twinOf(db: Database, issue: Pick<Issue, "id" | "repoId" | "numbe
     .get(issue.repoId, issue.id, t);
   if (running !== null) return { number: running.number, standing: "running" };
   // A pull is another issue row; it answers a twin by its own title, or by
-  // the number its builder's branch carries (`<agent>/<number>-<slug>`).
+  // the number its builder's branch carries (`<agent>/<number>-<slug>`). The
+  // same-title issues are read first: this runs on the main thread inside
+  // queueAgentRun, and matching every pull against every issue took 10 s.
+  const numbers = db
+    .query<{ number: number }, [string, string, string]>(
+      `SELECT number FROM issue
+        WHERE repo_id = ?1 AND id != ?2 AND kind = 'issue' AND lower(trim(title)) = ?3
+        ORDER BY number DESC LIMIT ${TWINS_ASKED}`,
+    )
+    .all(issue.repoId, issue.id, t)
+    .map((r) => r.number);
+  const branches = numbers.flatMap((n) => [`%/${n}`, `%/${n}-%`]);
   const pull = db
-    .query<{ number: number; merged: number }, [string, string, string, string, string, string]>(
+    .query<{ number: number; merged: number }, string[]>(
       `SELECT p.number, (pl.merged_at IS NOT NULL) AS merged
          FROM issue p JOIN pull pl ON pl.issue_id = p.id
-        WHERE p.repo_id = ?1 AND p.kind = 'pull' AND p.id != ?2
-          AND (p.state = 'open' OR pl.merged_at >= ?6)
-          AND pl.head_branch NOT LIKE ?4 AND pl.head_branch NOT LIKE ?5
-          AND (lower(trim(p.title)) = ?3
-               OR EXISTS (SELECT 1 FROM issue i
-                           WHERE i.repo_id = p.repo_id AND i.id != ?2 AND i.kind = 'issue'
-                             AND lower(trim(i.title)) = ?3
-                             AND (pl.head_branch LIKE '%/' || i.number
-                                  OR pl.head_branch LIKE '%/' || i.number || '-%')))
+        WHERE p.repo_id = ? AND p.kind = 'pull' AND p.id != ?
+          AND (p.state = 'open' OR pl.merged_at >= ?)
+          AND pl.head_branch NOT LIKE ? AND pl.head_branch NOT LIKE ?
+          AND (lower(trim(p.title)) = ?${branches.map(() => " OR pl.head_branch LIKE ?").join("")})
         ORDER BY (pl.merged_at IS NOT NULL), p.number LIMIT 1`,
     )
-    .get(issue.repoId, issue.id, t, `%/${issue.number}`, `%/${issue.number}-%`, issue.createdAt);
+    .get(issue.repoId, issue.id, issue.createdAt, `%/${issue.number}`, `%/${issue.number}-%`, t, ...branches);
   if (pull === null) return undefined;
   return { number: pull.number, standing: pull.merged === 1 ? "landed" : "open" };
 }
