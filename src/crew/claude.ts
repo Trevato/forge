@@ -36,6 +36,8 @@ export interface ClaudeInput {
   readonly timeoutMs: number;
   readonly log: (line: string) => void;
   readonly signal: AbortSignal;
+  /** Images that go with the prompt, once: base64 data and its media type (#8820). */
+  readonly images?: readonly { readonly mediaType: string; readonly data: string }[] | undefined;
   /**
    * Hands the caller a way to say something to the agent while it runs.
    * The words arrive as its next user turn, after the step it is on; a
@@ -249,14 +251,20 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
   // closes its stdin after a turn nobody followed.
   let pending = 0;
   let open = true;
-  const say = (text: string): boolean => {
+  const say = (text: string, images: ClaudeInput["images"] = []): boolean => {
     if (!open || proc.exitCode !== null || proc.signalCode !== null)
       return false;
     try {
       proc.stdin.write(
         `${JSON.stringify({
           type: "user",
-          message: { role: "user", content: [{ type: "text", text }] },
+          message: {
+            role: "user",
+            content: [
+              ...images.map((i) => ({ type: "image", source: { type: "base64", media_type: i.mediaType, data: i.data } })),
+              { type: "text", text },
+            ],
+          },
         })}\n`,
       );
       proc.stdin.flush();
@@ -274,7 +282,7 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
       // already gone
     }
   };
-  say(input.prompt);
+  say(input.prompt, input.images);
   input.onSteer?.((text) => {
     if (!say(text)) return false;
     pending++;

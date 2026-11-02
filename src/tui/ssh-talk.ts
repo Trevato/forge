@@ -10,9 +10,16 @@
  *
  * `talk-again edit <words>`, `talk-again regenerate` and `talk-again retry`
  * are the same three actions the page has (#8817), through `talkAgain`.
+ *
+ * `talk --attach <name> <words>` sends one file with the words: its bytes are
+ * the exec's standard input (`cat shot.png | ssh <forge> talk --attach
+ * shot.png look at this`). The forge never opens a path of its own, so the
+ * client's file is the only one that can be sent; it is checked and kept as
+ * the page's attachments are (`core/conversation_files.ts`).
  */
 
 import { TALK_WORDS, stopTalk, talk, talkAgain } from "../actions/talk.ts";
+import { FILE_WORDS, IMAGE_MAX, pendingAmong, removePending, storeFile } from "../core/conversation_files.ts";
 import { contextOf, contextText, dollars, turnCosts } from "../core/conversation_cost.ts";
 import { openConversation } from "../core/conversations.ts";
 import type { App } from "../app.ts";
@@ -35,6 +42,33 @@ export function isStop(words: string): boolean {
   return words.trim() === "/stop" || words.trim() === "--stop";
 }
 
+/** `--attach <name> <words>`: the name given to the file and the words after it; undefined without the flag. */
+export function parseAttach(words: string): { name: string; words: string } | undefined {
+  const m = /^--attach[ \t]+(\S+)(?:[ \t]+([\s\S]*))?$/.exec(words.trim());
+  return m === null ? undefined : { name: m[1]!, words: m[2] ?? "" };
+}
+
+/** Standard input to its end, or `too_large` past `max` bytes. */
+function readStdin(session: SshSession, max: number): Promise<Uint8Array | "too_large"> {
+  return new Promise((resolve) => {
+    const parts: Uint8Array[] = [];
+    let size = 0;
+    let done = false;
+    const finish = (v: Uint8Array | "too_large"): void => {
+      if (done) return;
+      done = true;
+      resolve(v);
+    };
+    session.onData((d) => {
+      size += d.length;
+      if (size > max) return finish("too_large");
+      parts.push(d);
+    });
+    session.onEof(() => finish(Buffer.concat(parts)));
+    session.onClose(() => finish(Buffer.concat(parts)));
+  });
+}
+
 /** Run one `talk` exec for `user` (undefined: an unknown key). */
 export function serveTalk(app: App, session: SshSession, user: User | undefined, words: string): void {
   const refuse = (text: string): void => {
@@ -51,20 +85,34 @@ export function serveTalk(app: App, session: SshSession, user: User | undefined,
     session.write(`stopped the forge's agent; what it said stays${CRLF}`);
     return session.exit(0);
   }
-  const said = talk(app, user, words);
-  if (!said.ok) return refuse(TALK_WORDS[said.error][1]);
-  session.write(
-    `${said.value.how === "steered" ? "said to the forge's agent, mid-answer" : "the forge's agent is answering"}${CRLF}`,
-  );
-  if (user !== undefined) {
-    // The figures of the turn before this one, from its own usage record.
-    const conversation = openConversation(app.db, user.id);
-    const last = [...turnCosts(app.db, conversation.id).values()].at(-1);
-    const context = contextOf(app.db, conversation.id);
-    if (last !== undefined) session.write(`last turn ${dollars(last)}${CRLF}`);
-    if (context !== undefined) session.write(`${contextText(context)}${CRLF}`);
-  }
-  session.exit(0);
+  const finish = (said: ReturnType<typeof talk>): void => {
+    if (!said.ok) return refuse(TALK_WORDS[said.error][1]);
+    session.write(
+      `${said.value.how === "steered" ? "said to the forge's agent, mid-answer" : "the forge's agent is answering"}${CRLF}`,
+    );
+    if (user !== undefined) {
+      // The figures of the turn before this one, from its own usage record.
+      const conversation = openConversation(app.db, user.id);
+      const last = [...turnCosts(app.db, conversation.id).values()].at(-1);
+      const context = contextOf(app.db, conversation.id);
+      if (last !== undefined) session.write(`last turn ${dollars(last)}${CRLF}`);
+      if (context !== undefined) session.write(`${contextText(context)}${CRLF}`);
+    }
+    session.exit(0);
+  };
+  const attach = parseAttach(words);
+  if (attach === undefined) return finish(talk(app, user, words));
+  if (user === undefined) return refuse(TALK_WORDS.unauthorized[1]);
+  void readStdin(session, IMAGE_MAX).then((bytes) => {
+    if (bytes === "too_large") return refuse(FILE_WORDS.too_large[1]);
+    const stored = storeFile(app.db, app.config.dataDir, user.id, attach.name, bytes);
+    if (!stored.ok) return refuse(FILE_WORDS[stored.error][1]);
+    const files = pendingAmong(app.db, user.id, [stored.value.id]);
+    const said = talk(app, user, attach.words, files.ok ? files.value : []);
+    // A message that was not taken leaves no file waiting behind it.
+    if (!said.ok) removePending(app.db, app.config.dataDir, user.id, stored.value.id);
+    finish(said);
+  });
 }
 
 /** `talk-again <edit words | regenerate | retry>`; undefined when the command is not one. */

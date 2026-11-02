@@ -17,6 +17,7 @@
 import type { Database } from "bun:sqlite";
 import { TALK_WORDS, talk, talkAgain } from "../../actions/talk.ts";
 import { REFUSED, sayNo, sayYes, waitingConfirms } from "../../actions/conversation_confirms.ts";
+import { filesOfTurns, type ConversationFile } from "../../core/conversation_files.ts";
 import { DEFAULT_PAGE, lastExchange, listTurns, MAX_PAGE, openConversation, turnsAfter, type Turn } from "../../core/conversations.ts";
 import { contextOf, contextText, dollars, turnCosts, type Context } from "../../core/conversation_cost.ts";
 import { WORDS_MAX } from "../../core/fence.ts";
@@ -115,7 +116,7 @@ const contextLine = (c: Context | undefined): Html =>
 const costLine = (usd: number): Html => html`<p class="talk-cost small muted">${dollars(usd)} this turn</p>`;
 
 /** One turn as the page and the stream both draw it; `waiting` is the confirms still open. */
-export function turnHtml(turn: Turn, waiting: ReadonlySet<string>, cost?: number, act?: Html, work?: Work): Html {
+export function turnHtml(turn: Turn, waiting: ReadonlySet<string>, cost?: number, act?: Html, work?: Work, files: readonly ConversationFile[] = []): Html {
   const id = `t-${turn.id}`;
   const set = turn.replaced ? " talk-replaced" : "";
   const acts = act === undefined ? null : html`<div class="talk-acts">${act}</div>`;
@@ -123,6 +124,7 @@ export function turnHtml(turn: Turn, waiting: ReadonlySet<string>, cost?: number
   if (turn.role === "person")
     return html`<li class="talk-turn talk-person${set}" id="${id}">
       <div class="talk-body talk-plain">${turn.text}</div>
+      ${files.length === 0 ? null : html`<p class="talk-files">${files.map((f) => html`<a class="badge" href="/api/v1/conversation/files/${f.id}" download>${f.name}</a>`)}</p>`}
       ${label("You")}${acts}
     </li>`;
   if (turn.role === "agent" && turn.failed)
@@ -168,6 +170,7 @@ function talkPage(ctx: Ctx, before: string | undefined, prefill: string, edit: b
   });
   const turns = listed.ok ? listed.value : [];
   const waiting = new Set(waitingConfirms(ctx, user).map((w) => w.id));
+  const sent = filesOfTurns(ctx.app.db, user.id, turns.filter((t) => t.role === "person").map((t) => t.id));
   const running = clock.running(ctx.app, user.id);
   const costs = turnCosts(ctx.app.db, conversation.id);
   const context = contextOf(ctx.app.db, conversation.id);
@@ -189,15 +192,17 @@ function talkPage(ctx: Ctx, before: string | undefined, prefill: string, edit: b
           ${turns.length === 0
             ? html`<li class="muted talk-turn">Ask the forge anything, or tell it what to change. It acts as you, with your permissions, and asks before anything hard to undo.
                 <span class="talk-suggest">${SUGGESTIONS.map((q) => html`<a class="btn" href="${HERE}?q=${encodeURIComponent(q)}" data-suggest="${q}">${q}</a>`)}</span></li>`
-            : turns.map((t) => turnHtml(t, waiting, costs.get(t.id), acts.get(t.id), works.get(t.id)))}
+            : turns.map((t) => turnHtml(t, waiting, costs.get(t.id), acts.get(t.id), works.get(t.id), sent.get(t.id)))}
         </ol>
         <div id="end"></div>
       </div>
       <form class="talk-compose" id="compose" method="post" action="${editing === undefined ? HERE : `${HERE}/again/edit`}" ${editing === undefined ? null : html`data-edit`}>
         <p class="talk-status small muted" role="status" aria-live="polite">${running ? "The forge is answering…" : ""}</p>
+        <div class="talk-chips" data-chips role="group" aria-label="Attached files"></div>
         <textarea class="input" name="text" rows="1" maxlength="${WORDS_MAX}" required placeholder="Talk to the forge" aria-label="Talk to the forge">${editing === undefined ? prefill : editing.text}</textarea>
         <div class="bar">
           <span class="muted small" data-hint></span>
+          <label class="btn talk-attach" data-attach hidden>Attach<input type="file" multiple hidden data-pick /></label>
           <span class="spacer"></span>
           ${editing === undefined ? null : html`<a class="btn" href="${HERE}">Keep as it was</a>`}
           ${btn(editing === undefined ? "Send" : "Resend", { variant: "primary" })}
@@ -302,8 +307,9 @@ export function talkStream(ctx: Ctx): Response {
       if (fresh.length > 0) {
         const waiting = new Set(waitingConfirms(ctx, user).map((w) => w.id));
         const works = worksOf(app.db, user.id, conversation.id, fresh);
+        const sent = filesOfTurns(app.db, user.id, fresh.filter((t) => t.role === "person").map((t) => t.id));
         for (const turn of fresh) {
-          emit("turn", { id: turn.id, html: turnHtml(turn, waiting, undefined, undefined, works.get(turn.id)).text }, turn.id);
+          emit("turn", { id: turn.id, html: turnHtml(turn, waiting, undefined, undefined, works.get(turn.id), sent.get(turn.id)).text }, turn.id);
           cursor = turn.id;
         }
       }

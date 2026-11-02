@@ -56,6 +56,7 @@ const UNSEEDED: Record<string, string> = {
   "/:owner/:name/variants/:group": VARIANT,
   "/:owner/:name/waves/:version": WAVE,
   "/api/v1/boards/:slug/panels/:id": BOARD,
+  "/api/v1/conversation/files/:id": "an attachment id exists only once its owner uploads a file; the seed holds none",
   "/api/v1/fleet/ops/:id": FLEET,
   "/api/v1/migrate/:job": MIGRATE,
   "/api/v1/migrate/:job/stream": MIGRATE,

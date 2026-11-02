@@ -20,6 +20,7 @@ import { join } from "node:path";
 import type { App } from "../app.ts";
 import { dailyLeft } from "../core/account_ceiling.ts";
 import { appendTurn, lastExchange, listTurns, openConversation, removeTurn, restoreTurns, setAsideFrom, setClaudeSession, type Conversation } from "../core/conversations.ts";
+import { attach, deliver, NOTHING, release, type ConversationFile, type Delivery } from "../core/conversation_files.ts";
 import { carryWrites, forgetWrites, unended } from "../core/conversation_writes.ts";
 import { cancelHeld, WORDS_MAX } from "../core/fence.ts";
 import { thinkingOf } from "../core/talk_work.ts";
@@ -191,7 +192,7 @@ export function mcpConfig(localUrl: string): string {
   });
 }
 
-export type SayRefusal = "unauthorized" | "empty" | "too_long" | "no_account" | "resting" | "busy";
+export type SayRefusal = "unauthorized" | "empty" | "too_long" | "no_account" | "resting" | "busy" | "answering";
 
 export interface Said {
   /** `started` a new turn, or `steered` one already running. */
@@ -201,7 +202,7 @@ export interface Said {
 }
 
 /** Store a person's message and answer it: steer the turn that runs, or start one. */
-export function say(app: App, options: ConversationOptions, userId: string, text: string): Result<Said, SayRefusal> {
+export function say(app: App, options: ConversationOptions, userId: string, text: string, files: readonly ConversationFile[] = []): Result<Said, SayRefusal> {
   const user = getUserById(app.db, userId);
   if (user === undefined) return err("unauthorized");
   if (text.trim() === "") return err("empty");
@@ -209,15 +210,22 @@ export function say(app: App, options: ConversationOptions, userId: string, text
   const conversation = openConversation(app.db, userId);
   const stored = appendTurn(app.db, userId, conversation.id, { role: "person", text });
   if (!stored.ok) return err("too_long");
-  const running = live.get(conversation.id);
-  if (running !== undefined && steerRun(app, running, text)) return ok({ how: "steered" });
-  // A message nobody will answer is not kept: the door says why instead.
+  attach(app.db, files, stored.value.id);
+  // A message nobody will answer is not kept: the door says why instead, and its files wait for the next try.
   const refuse = (why: SayRefusal): Result<Said, SayRefusal> => {
+    release(app.db, stored.value.id);
     removeTurn(app.db, userId, conversation.id, stored.value.id);
     return err(why);
   };
+  const delivery = deliver(app.config.dataDir, userId, files);
+  const running = live.get(conversation.id);
+  if (running !== undefined) {
+    // A turn already going can be handed words, not pictures.
+    if (delivery.images.length > 0) return refuse("answering");
+    if (steerRun(app, running, text + delivery.text)) return ok({ how: "steered" });
+  }
   if (live.size >= (options.liveMax ?? TURNS_LIVE_MAX)) return refuse("busy");
-  const started = begin(app, options, conversation, text, 0, conversation.claudeSessionId || undefined);
+  const started = begin(app, options, conversation, text, 0, conversation.claudeSessionId || undefined, delivery);
   if (!started.ok) return refuse(started.error);
   return ok({ how: "started", done: started.value });
 }
@@ -327,6 +335,7 @@ function begin(
   prompt: string,
   resumes: number,
   resumeSession: string | undefined,
+  attached: Delivery = NOTHING,
 ): Result<Promise<void>, "no_account" | "resting" | "unauthorized"> {
   const userId = conversation.userId;
   const runId = id();
@@ -387,7 +396,9 @@ function begin(
         outcome = await runClaude({
           binary: options.binary,
           cwd,
-          prompt: resumes > 0 && session !== undefined ? RESUME_PROMPT : fresh,
+          // Attachments go with the message itself, never with a resume.
+          prompt: resumes > 0 && session !== undefined ? RESUME_PROMPT : fresh + attached.text,
+          images: resumes > 0 && session !== undefined ? [] : attached.images,
           appendSystemPrompt: CONVERSATION_BRIEF,
           model: options.model,
           budgetUsd: budget,

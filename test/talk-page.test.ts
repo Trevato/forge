@@ -191,8 +191,8 @@ describe("the page", () => {
 
   test("the page's own bytes are held: stylesheet and script stay small", async () => {
     const { talkCss, talkJs } = await import("../src/web/pages/talk_client.ts");
-    expect(Buffer.byteLength(talkCss)).toBeLessThan(3_500);
-    expect(Buffer.byteLength(talkJs)).toBeLessThan(9_500);
+    expect(Buffer.byteLength(talkCss)).toBeLessThan(3_600);
+    expect(Buffer.byteLength(talkJs)).toBeLessThan(11_600);
     say(alice, "agent", "```ts\nlet x = 1;\n```");
     const page = await get("/talk", alice);
     const size = (await page.arrayBuffer()).byteLength;
@@ -223,11 +223,20 @@ describe("the page", () => {
       const doc = window.document as any;
       doc.body.innerHTML = `<div class="talk" data-talk data-user="${user}" data-paged="0" data-running="1"><div>
         <ol class="talk-log" role="log" data-last=""><li class="talk-turn talk-agent" id="t-1"><div class="talk-body"><pre><code>let a = 1;</code></pre></div><p class="talk-meta">Forge · now</p></li></ol><div id="end"></div></div>
-        <form class="talk-compose"><p class="talk-status" role="status"></p><textarea name="text"></textarea><div class="bar"><span data-hint></span><button class="btn" type="submit">Send</button></div></form></div>`;
+        <form class="talk-compose"><p class="talk-status" role="status"></p><ul data-chips></ul><textarea name="text"></textarea><div class="bar"><span data-hint></span><label data-attach hidden><input type="file" data-pick /></label><button class="btn" type="submit">Send</button></div></form></div>`;
       const sent: string[] = [];
       const urls: string[] = [];
       const copied: string[] = [];
-      const fetchStub = async (u: string, init: { body: string }) => { urls.push(u); sent.push(JSON.parse(init.body).text); return { ok: true, json: async () => ({}) }; };
+      const bodies: { files?: string[] }[] = [];
+      const fetchStub = async (u: string, init: { body: string; method?: string }) => {
+        urls.push(u);
+        if (u.endsWith("/files")) return { ok: true, json: async () => ({ id: "f1", name: "shot.png" }) };
+        if (init.method === "DELETE") return { ok: true, json: async () => ({}) };
+        const body = JSON.parse(init.body);
+        sent.push(body.text);
+        bodies.push(body);
+        return { ok: true, json: async () => ({}) };
+      };
       const local = { getItem: (k: string) => store[k] ?? null, setItem: (k: string, v: string) => { store[k] = v; }, removeItem: (k: string) => { delete store[k]; } };
       const nav = { clipboard: { writeText: async (t: string) => { copied.push(t); } } };
       class ES { on: Record<string, (e: { data: string }) => void> = {}; constructor() { sources.push(this); } addEventListener(n: string, f: (e: { data: string }) => void) { this.on[n] = f; } close() {} }
@@ -236,9 +245,36 @@ describe("the page", () => {
       const box = doc.querySelector("textarea");
       const key = (init: object) => box.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, ...init }));
       const emit = (id: string, html: string) => sources.at(-1)!.on["turn"]!({ data: JSON.stringify({ id, html }) });
-      return { emit, sources, urls, window, doc, box, sent, copied, store, key, status: doc.querySelector(".talk-status") };
+      return { emit, bodies, sources, urls, window, doc, box, sent, copied, store, key, status: doc.querySelector(".talk-status") };
     };
     const tick = () => new Promise((r) => setTimeout(r, 5));
+
+    test("a pasted file becomes a chip with Remove, and a sent message carries its id once", async () => {
+      const t = await boot();
+      const paste = new t.window.Event("paste", { bubbles: true, cancelable: true }) as any;
+      paste.clipboardData = { files: [{ name: "shot.png" }] };
+      t.box.dispatchEvent(paste);
+      await tick();
+      const chips = t.doc.querySelector("[data-chips]");
+      expect(chips.textContent).toContain("shot.png");
+      expect(chips.querySelector("button").textContent).toBe("Remove");
+      t.box.value = "see this";
+      t.box.dispatchEvent(new t.window.Event("input", { bubbles: true }));
+      t.doc.querySelector("form").requestSubmit();
+      await tick();
+      expect(t.bodies.at(-1)!.files).toEqual(["f1"]);
+      expect(chips.children.length).toBe(0);
+      // A removed chip is not sent.
+      t.box.dispatchEvent(paste);
+      await tick();
+      chips.querySelector("button").click();
+      await tick();
+      expect(chips.children.length).toBe(0);
+      t.box.value = "again";
+      t.doc.querySelector("form").requestSubmit();
+      await tick();
+      expect(t.bodies.at(-1)!.files).toEqual([]);
+    });
 
     test("Enter submits; Shift+Enter and an IME composition do not", async () => {
       const t = await boot();

@@ -25,4 +25,9 @@
 - `.talk-acts` — the row under the last message and last reply holding Edit, Regenerate or Retry; server-drawn, so it works without the script.
 - `.talk-act` — one of those controls, at 44px high.
 
+- Attachments (#8820) — drawn in `src/web/pages/talk.ts` and `talk_client.ts` from the existing `.badge` (a file's name) and `.btn` (Remove, Attach); the only new classes are layout:
+  - `.talk-chips` — the row of chosen files above the box; hidden while empty.
+  - `.talk-files` — the line of file badges under a sent message; each links to the owner-only download.
+  - `.talk-attach` — the "Attach" file-picker label in the composer bar, a `.btn` that stays hidden until the script runs (the picker needs it).
+
 Under a reply, `.talk-cost` is one quiet line with the turn's dollars; above the log, `.talk-context` says how full the context is and, from 80 %, suggests a new conversation. Both are `small muted` text, no new colour.

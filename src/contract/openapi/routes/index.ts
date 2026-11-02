@@ -4,6 +4,7 @@ export { route as deleteApiV1AdminAccountsUsername } from "./deleteApiV1AdminAcc
 export { route as deleteApiV1AdminInvitesId } from "./deleteApiV1AdminInvitesId.ts";
 export { route as deleteApiV1AgentsUsername } from "./deleteApiV1AgentsUsername.ts";
 export { route as deleteApiV1BoardsSlug } from "./deleteApiV1BoardsSlug.ts";
+export { route as deleteApiV1ConversationFilesId } from "./deleteApiV1ConversationFilesId.ts";
 export { route as deleteApiV1OrgsOrgTeamsTeam } from "./deleteApiV1OrgsOrgTeamsTeam.ts";
 export { route as deleteApiV1OrgsOrgTeamsTeamMembersUsername } from "./deleteApiV1OrgsOrgTeamsTeamMembersUsername.ts";
 export { route as deleteApiV1ReposOwnerName } from "./deleteApiV1ReposOwnerName.ts";
@@ -54,6 +55,7 @@ export { route as getApiV1BoardsSources } from "./getApiV1BoardsSources.ts";
 export { route as getApiV1Changelog } from "./getApiV1Changelog.ts";
 export { route as getApiV1CloudAccounts } from "./getApiV1CloudAccounts.ts";
 export { route as getApiV1Contribute } from "./getApiV1Contribute.ts";
+export { route as getApiV1ConversationFilesId } from "./getApiV1ConversationFilesId.ts";
 export { route as getApiV1ConversationTurns } from "./getApiV1ConversationTurns.ts";
 export { route as getApiV1CrewNow } from "./getApiV1CrewNow.ts";
 export { route as getApiV1CrewScorecard } from "./getApiV1CrewScorecard.ts";
@@ -211,6 +213,7 @@ export { route as postApiV1AsksProposalIdVerb } from "./postApiV1AsksProposalIdV
 export { route as postApiV1BoardsPins } from "./postApiV1BoardsPins.ts";
 export { route as postApiV1BoardsQuery } from "./postApiV1BoardsQuery.ts";
 export { route as postApiV1ConversationConfirmsId } from "./postApiV1ConversationConfirmsId.ts";
+export { route as postApiV1ConversationFiles } from "./postApiV1ConversationFiles.ts";
 export { route as postApiV1ConversationMessages } from "./postApiV1ConversationMessages.ts";
 export { route as postApiV1ConversationStop } from "./postApiV1ConversationStop.ts";
 export { route as postApiV1ConversationTokens } from "./postApiV1ConversationTokens.ts";

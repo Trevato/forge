@@ -6,6 +6,7 @@
  */
 
 import type { App } from "../app.ts";
+import type { ConversationFile } from "../core/conversation_files.ts";
 import { RateLimiter } from "../core/ratelimit.ts";
 import type { User } from "../core/users.ts";
 import { conversationOptions, redo, say, stopTurn, type RedoHow, type RedoRefusal, type SayRefusal, type Said } from "../crew/conversation.ts";
@@ -23,6 +24,7 @@ export const TALK_WORDS: Readonly<Record<TalkRefusal, readonly [number, string]>
   too_long: [422, "the message is too long"],
   no_account: [403, "no Claude account is granted to you; ask an admin for a grant"],
   resting: [429, "the account that serves you is resting or out of budget; try again later"],
+  answering: [409, "the forge is still answering; send pictures when it has finished"],
   busy: [429, "the forge's agent is answering as many people as it can at once; try again in a minute"],
   off: [503, "the forge's agent is not running here"],
   running: [409, "the forge is still answering; wait for it to finish"],
@@ -46,12 +48,12 @@ const watch = (app: App, said: Said): void => {
   said.done?.catch((error: unknown) => app.log.error("conversation turn crashed", { error: String(error) }));
 };
 
-export function talk(app: App, user: User | undefined, text: string): Result<Said, TalkRefusal> {
+export function talk(app: App, user: User | undefined, text: string, files: readonly ConversationFile[] = []): Result<Said, TalkRefusal> {
   if (user === undefined) return err("unauthorized");
   const options = conversationOptions(app);
   if (options === undefined) return err("off");
   if (!take(app, user)) return err("rate_limited");
-  const said = say(app, options, user.id, text);
+  const said = say(app, options, user.id, text, files);
   if (said.ok) watch(app, said.value);
   return said;
 }

@@ -43,6 +43,9 @@ export const talkCss = /* css */ `
 .talk-jump[hidden] { display: none; }
 .talk-body pre { position: relative; }
 .talk-body pre .talk-copy { position: absolute; top: 2px; right: 2px; }
+.talk-chips, .talk-files { margin: 0 0 6px; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.talk-chips:empty { display: none; }
+.talk-files { justify-content: flex-end; }
 .talk-more { text-align: center; }
 .talk-replaced { opacity: 0.55; }
 .talk-failed form { margin-top: 6px; }
@@ -193,10 +196,55 @@ if (root) {
       else say("Lost the connection. Reload to see the rest.");
     };
   };
+  // Attachments are chosen, pasted or dropped here; each is stored at once and shown as a chip until it is sent or removed.
+  const chips = form.querySelector("[data-chips]");
+  const picker = form.querySelector("[data-pick]");
+  const attachLabel = form.querySelector("[data-attach]");
+  attachLabel.hidden = false;
+  const attached = [];
+  const drawChip = (f) => {
+    const li = Object.assign(document.createElement("span"), { className: "badge", textContent: f.name + " " });
+    const x = Object.assign(document.createElement("button"), { type: "button", className: "btn", textContent: "Remove" });
+    x.dataset.size = "sm";
+    x.setAttribute("aria-label", "Remove " + f.name);
+    x.addEventListener("click", async () => {
+      x.disabled = true;
+      try { await fetch("/api/v1/conversation/files/" + f.id, { method: "DELETE" }); } catch (_) {}
+      attached.splice(attached.indexOf(f), 1);
+      li.remove();
+    });
+    li.appendChild(x);
+    chips.appendChild(li);
+  };
+  const upload = async (file) => {
+    say("Attaching " + file.name + "…");
+    try {
+      const res = await fetch("/api/v1/conversation/files", { method: "POST", headers: { "x-file-name": encodeURIComponent(file.name || "pasted"), "content-type": "application/octet-stream" }, body: file });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) { say((file.name || "That file") + ": " + (body.message || "not attached.")); return; }
+      attached.push(body);
+      drawChip(body);
+      say("");
+    } catch (_) {
+      say("That file was not attached: no connection.");
+    }
+  };
+  const take = (files) => { for (const f of files) upload(f); };
+  picker.addEventListener("change", () => { take(picker.files); picker.value = ""; });
+  box.addEventListener("paste", (e) => {
+    const files = [...(e.clipboardData ? e.clipboardData.files : [])];
+    if (files.length) { e.preventDefault(); take(files); }
+  });
+  form.addEventListener("dragover", (e) => { if (e.dataTransfer && [...e.dataTransfer.types].includes("Files")) e.preventDefault(); });
+  form.addEventListener("drop", (e) => {
+    if (!e.dataTransfer || !e.dataTransfer.files.length) return;
+    e.preventDefault();
+    take(e.dataTransfer.files);
+  });
   const send = async (e) => {
     e.preventDefault();
     const text = box.value.trim();
-    if (!text) return;
+    if (!text) { if (attached.length) say("Add a few words about what you attached."); return; }
     if (editing) {
       if (await again("edit", new URLSearchParams({ text }))) { try { localStorage.removeItem(draftKey); } catch (_) {} }
       return;
@@ -206,7 +254,7 @@ if (root) {
       const res = await fetch("/api/v1/conversation/messages", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, files: attached.map((f) => f.id) }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -214,6 +262,8 @@ if (root) {
         return;
       }
       box.value = "";
+      attached.length = 0;
+      chips.replaceChildren();
       grow();
       try { localStorage.removeItem(draftKey); } catch (_) {}
       stuck = true;

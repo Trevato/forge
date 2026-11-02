@@ -5,7 +5,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -119,6 +119,7 @@ describe("talking to the forge's agent", () => {
       `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
 IFS= read -r first
+printf '%s' "$first" > "${dir}/first.json"
 echo '{"type":"system","subtype":"init","session_id":"s1","model":"fake"}'
 echo '{"type":"result","subtype":"success","is_error":false,"result":"Heard.","total_cost_usd":0.01,"num_turns":1,"session_id":"s1","terminal_reason":"completed","usage":{"input_tokens":1,"output_tokens":1}}'
 `,
@@ -442,5 +443,99 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Heard.","t
       expect(body.result.isError).toBe(true);
       expect(body.result.content[0]!.text).toContain("give both");
     }
+  });
+
+  describe("attachments (#8820)", () => {
+    const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
+    const upload = (t: string, name: string, body: Uint8Array | string, extra: Record<string, string> = {}) =>
+      fetch(`${servers.url}/api/v1/conversation/files`, { method: "POST", headers: { authorization: `Bearer ${t}`, "x-file-name": encodeURIComponent(name), ...extra }, body });
+    const send = (t: string, body: unknown) =>
+      fetch(`${servers.url}/api/v1/conversation/messages`, { method: "POST", headers: headers(t), body: JSON.stringify(body) });
+    let bob: string;
+    beforeAll(async () => {
+      const made = await createUser(app.db, { origin: "seed", trusted: true, username: "bob", email: "bob@forge.local", password: "a-good-passphrase" });
+      if (!made.ok) throw new Error(made.error);
+      bob = createToken(app.db, made.value.id, "personal", "rw").token;
+      app.db.query("UPDATE user SET is_admin = 1 WHERE id = ?1").run(made.value.id);
+    });
+    // Bob's own turn (alice's minute of messages is spent by the tests above).
+    let seen = "";
+    beforeAll(() => {
+      // Earlier tests swap in their own stand-ins; this one records the first message it is started with.
+      const mine = join(dir, "claude-records");
+      writeFileSync(mine, readFileSync(join(dir, "claude"), "utf8"));
+      chmodSync(mine, 0o755);
+      configureConversation(app, { binary: mine, localUrl: servers.url, budgetUsd: 1, timeoutMs: 30_000, signal: new AbortController().signal });
+      seen = existsSync(join(dir, "first.json")) ? readFileSync(join(dir, "first.json"), "utf8") : "";
+    });
+    const settleBob = async () => {
+      // The stand-in records the message it was started with; wait for a new one, then for the end.
+      for (let i = 0; i < 80 && readFileSync(join(dir, "first.json"), "utf8") === seen; i++) await Bun.sleep(25);
+      seen = readFileSync(join(dir, "first.json"), "utf8");
+      for (let i = 0; i < 200; i++) {
+        const r = (await (await fetch(`${servers.url}/api/v1/conversation/turns`, { headers: headers(bob) })).json()) as { running: boolean };
+        if (!r.running) return;
+        await Bun.sleep(25);
+      }
+    };
+
+    test("an image reaches the run as an image, and a text file as quoted data, for that turn alone", async () => {
+      const up = await upload(bob, "shot.png", PNG, { "content-type": "text/html" });
+      expect(up.status).toBe(201);
+      const png = (await up.json()) as { id: string; type: string; size: number };
+      expect(png.type).toBe("image/png");
+      const note = (await (await upload(bob, "notes.md", "remember the milk")).json()) as { id: string };
+      expect((await send(bob, { text: "look at these", files: [png.id, note.id] })).status).toBe(202);
+      await settleBob();
+      const first = JSON.parse(readFileSync(join(dir, "first.json"), "utf8")) as { message: { content: { type: string; text?: string; source?: { media_type: string; data: string } }[] } };
+      const image = first.message.content.find((c) => c.type === "image")!;
+      expect(image.source!.media_type).toBe("image/png");
+      expect(Buffer.from(image.source!.data, "base64")).toEqual(Buffer.from(PNG));
+      expect(first.message.content.find((c) => c.type === "text")!.text).toContain("remember the milk");
+      // Stored beside the conversation under the data dir, not in the repository.
+      expect(readdirSync(join(dir, "conversation-files")).length).toBe(1);
+      // The next message is not handed it again, and the files cannot be attached twice.
+      expect((await send(bob, { text: "again", files: [png.id] })).status).toBe(404);
+      expect((await send(bob, { text: "plain" })).status).toBe(202);
+      await settleBob();
+      expect(readFileSync(join(dir, "first.json"), "utf8")).not.toContain("image");
+      // The owner can read it back as a download with a fixed type.
+      const got = await fetch(`${servers.url}/api/v1/conversation/files/${png.id}`, { headers: headers(bob) });
+      expect(got.status).toBe(200);
+      expect(got.headers.get("content-type")).toBe("image/png");
+      expect(got.headers.get("content-disposition")).toStartWith("attachment");
+      expect(got.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(new Uint8Array(await got.arrayBuffer())).toEqual(PNG);
+    });
+
+    test("an oversized file, an empty one and a disguised one are refused in plain words", async () => {
+      expect((await upload(token, "empty.txt", "")).status).toBe(422);
+      const html = await upload(token, "page.png", "<script>alert(1)</script>", { "content-type": "image/png" });
+      expect(html.status).toBe(415);
+      expect((await upload(token, "run.exe", "MZ text")).status).toBe(415);
+      expect((await upload(token, "long.txt", "x".repeat(100 * 1024 + 1))).status).toBe(413);
+      // Last: the forge closes the connection after a body past the limit.
+      const big = await upload(token, "big.png", new Uint8Array(5 * 1024 * 1024 + 1).fill(1), { connection: "close" });
+      expect(big.status).toBe(413);
+      expect(((await big.json()) as { message: string }).message).toContain("5 MB");
+    });
+
+    test("another person cannot fetch, remove or send it", async () => {
+      const mine = (await (await upload(token, "private.txt", "mine")).json()) as { id: string };
+      const url = `${servers.url}/api/v1/conversation/files/${mine.id}`;
+      expect((await fetch(url, { headers: headers(bob) })).status).toBe(404);
+      expect((await fetch(url, { method: "DELETE", headers: headers(bob) })).status).toBe(404);
+      expect((await send(bob, { text: "stolen", files: [mine.id] })).status).toBe(404);
+      expect((await fetch(url)).status).toBe(401);
+      expect((await upload(bob, "x.txt", "x", { origin: "https://elsewhere.example" })).status).toBe(403);
+    });
+
+    test("a chosen file can be removed before it is sent", async () => {
+      const f = (await (await upload(token, "gone.txt", "bye")).json()) as { id: string };
+      const url = `${servers.url}/api/v1/conversation/files/${f.id}`;
+      expect((await fetch(url, { method: "DELETE", headers: headers(token) })).status).toBe(200);
+      expect((await fetch(url, { headers: headers(token) })).status).toBe(404);
+      expect(existsSync(join(dir, "conversation-files"))).toBe(true);
+    });
   });
 });
