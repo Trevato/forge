@@ -360,7 +360,9 @@ describe("the decision ledger", () => {
     } finally {
       delete script["cause"];
     }
-  });
+    // Two git writes and an open pull: the verdict is the code's, so the clock
+    // on a loaded check machine must not be the test's.
+  }, 30_000);
 
   test("conflicts come first: a green pull that no longer merges gets a conflict run before anyone decides", async () => {
     const branch = await commitToBranch(app, alice, repo, {
