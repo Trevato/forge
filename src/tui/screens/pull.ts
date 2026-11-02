@@ -46,6 +46,7 @@ import { revertPull } from "../../actions/revert.ts";
 import { takeBackWords } from "../../actions/revert_words.ts";
 import { openEnvUrl } from "../../actions/apps.ts";
 import { listRepoRuns, mayReadRunLog } from "../../actions/runs.ts";
+import { pullLooks, type PullLook } from "../../looks/readable.ts";
 import { pullLooksScreen } from "./pulllooks.ts";
 import { previewEnv } from "../../apps/data.ts";
 import { findingsWords, pullPreviewFindings } from "../../core/preview_findings.ts";
@@ -256,6 +257,8 @@ export function pullScreen(
   /** Whether the repository is an app, and its preview of this pull if so. */
   let isApp = false;
   let preview: EnvStatus | undefined;
+  /** The pictures taken of the preview, as the API would list them to this reader. */
+  let looks: PullLook[] = [];
   /** The deploy of the *current* head — what the merge box calls the checks. */
   let check: CheckSummary = NO_CHECK;
   /** The pull's base branch, to name what the check was merged with. */
@@ -321,6 +324,8 @@ export function pullScreen(
     // the checks at the live head (a row), and what the crew has done here.
     const record = repo === undefined ? undefined : getAppByRepo(f.db, repo.id);
     isApp = record !== undefined;
+    looks =
+      repo === undefined || row === undefined ? [] : pullLooks(f.app, repo, row, f.user);
     preview =
       record === undefined
         ? undefined
@@ -1113,7 +1118,10 @@ export function pullScreen(
       } else {
         if (width !== body!.w) {
           width = body!.w;
-          lines = threadLines(entries(), Math.max(20, body!.w - 1), c);
+          lines = [
+            ...threadLines(entries(), Math.max(20, body!.w - 1), c),
+            ...looksLines(looks, lookOrigin(f.app.config), Math.max(20, body!.w - 1), c),
+          ];
         }
         drawLines(s, body!, c, scroll, lines);
         hitScroll(ctx, body!, scroll, lines.length);
@@ -1796,4 +1804,48 @@ function drawMergeBox(
     );
     y++;
   }
+}
+
+const lookOrigin = (config: {
+  url?: string | undefined;
+  host?: string | undefined;
+  port?: number | undefined;
+}): string =>
+  (config.url ?? `http://${config.host ?? "localhost"}:${config.port ?? 3000}`).replace(
+    /\/+$/,
+    "",
+  );
+
+/**
+ * The Looks section under the conversation: one line each, absolute URL so a
+ * terminal can open it. Nothing at all when the pull has none.
+ */
+function looksLines(
+  items: readonly PullLook[],
+  origin: string,
+  width: number,
+  c: Tokens,
+): Span[][] {
+  if (items.length === 0) return [];
+  const clean = (t: string): string => t.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, " ");
+  const room = Math.max(10, width - 4);
+  return [
+    [],
+    [{ text: ` Looks (${items.length})`, style: style(c.fg, c.bg, BOLD) }],
+    ...items.flatMap((l): Span[][] => {
+      // The line may be cut to fit; the link never is — it takes its own
+      // indented line and wraps only when it is wider than the screen.
+      const says = truncate(
+        clean(`${l.width} · ${l.by ?? "forge"} · ${l.says ?? "taken by the forge"}`),
+        room,
+      );
+      const url = `${origin}${l.url}`;
+      const parts: string[] = [];
+      for (let i = 0; i < url.length; i += room) parts.push(url.slice(i, i + room));
+      return [
+        [{ text: `  ${says}`, style: style(c.mutedFg, c.bg) }],
+        ...parts.map((part): Span[] => [{ text: `    ${part}`, style: style(c.fg, c.bg) }]),
+      ];
+    }),
+  ];
 }
