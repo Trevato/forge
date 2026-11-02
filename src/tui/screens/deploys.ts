@@ -46,6 +46,9 @@
  *
  * The admin who is a person also gets `i`: the app's prompt source, the
  * Instagram account whose comments become the crew's tell (`prompts.ts`).
+ * That admin also gets `X`, stop running as an app: after typing
+ * `<owner>/<name>` it calls `disableApp`, as Settings does, and the screen
+ * then says the repository is no longer an app.
  */
 
 import {
@@ -54,12 +57,14 @@ import {
   appPullLines,
   appSideLines,
   appView,
+  disableApp,
   appVisitors,
   redeployEnv,
   stopEnv,
   type AppPreview,
   type AppPullLine,
 } from "../../actions/apps.ts";
+import { STOP_APP } from "../../web/danger_words.ts";
 import { envPhrase } from "../../apps/env_phrase.ts";
 import {
   addAppDomain,
@@ -86,7 +91,7 @@ import { listRepoRuns } from "../../actions/runs.ts";
 import { carriedByRuns, carriesText } from "../../core/carried.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { getAppByRepo } from "../../core/apps.ts";
-import { canWrite, type Repo } from "../../core/repos.ts";
+import { canAdmin, canWrite, type Repo } from "../../core/repos.ts";
 import type { Knock } from "../../contract/probe.ts";
 import { probeApp, type ProbeRow } from "../../contract/probes.ts";
 import type { Run } from "../../core/runs.ts";
@@ -203,6 +208,8 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   let production: Production = { state: "", redeploy: false, stop: false };
   let members = false;
   let prompts = false;
+  let stoppable = false;
+  let isApp = true;
   /** The app's domains, or undefined for anyone `listAppDomains` refuses. */
   let domains: AppDomainView[] | undefined;
 
@@ -233,6 +240,8 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     const listed = listAppDomains(f.app, f.user, repo);
     domains = listed.ok ? listed.value : undefined;
     prompts = mayManagePrompts(f, repo);
+    isApp = getAppByRepo(f.db, repo.id) !== undefined;
+    stoppable = isApp && f.user !== undefined && f.user.kind !== "agent" && canAdmin(f.db, repo, f.user);
     loaded = true;
     ctx.invalidate();
   };
@@ -296,6 +305,26 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     return p === undefined ? undefined : { p, stop: p.env.state !== "stopped" };
   };
 
+  const name = `${repo.ownerName}/${repo.name}`;
+  /** `X`: type the name, then `disableApp` as Settings does; wrong names change nothing. */
+  const stopApp = (): void => {
+    ctx.push(
+      promptScreen(ctx, screen, {
+        title: STOP_APP,
+        label: `Type ${name} to confirm`,
+        hint: "All environments stop, data goes; code stays.",
+        placeholder: name,
+        onSubmit: (typed) => {
+          if (typed !== name) return `Type ${name} to confirm.`;
+          const done = disableApp(f.app, f.user, repo);
+          ctx.toast(done.ok ? "no longer an app" : "That app is not there, or it is not yours to stop.", done.ok ? undefined : "danger");
+          read();
+          return undefined;
+        },
+      }),
+    );
+  };
+
   const screen: Screen = {
     title: "Deploys",
     get keys() {
@@ -317,6 +346,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         ...(members ? [binding(["m"], "members")] : []),
         ...(domains !== undefined ? [binding(["n"], "the app's own domains")] : []),
         ...(prompts ? [binding(["i"], "prompt source (Instagram)")] : []),
+        ...(stoppable ? [binding(["X"], STOP_APP.toLowerCase())] : []),
       ];
     },
     load: async () => read(),
@@ -392,7 +422,9 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         emptyState(s, body!, c, {
           title: loaded ? "No deploys" : "Reading…",
           body: loaded
-            ? "Nothing has been deployed to production yet."
+            ? isApp
+              ? "Nothing has been deployed to production yet."
+              : "This repository is no longer an app."
             : "Reading the deploys",
         });
         return;
@@ -472,6 +504,10 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       }
       if (e.key === "i" && prompts) {
         ctx.push(promptsScreen(f, ctx, repo));
+        return true;
+      }
+      if (e.key === "X" && stoppable) {
+        stopApp();
         return true;
       }
       return false;
