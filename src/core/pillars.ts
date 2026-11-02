@@ -299,7 +299,7 @@ function mergedPulls(
   const rows = db
     .query<{ id: string; body: string; at: string; oid: string | null }, string[]>(
       `SELECT i.id, i.body, p.merged_at AS at, p.merged_oid AS oid
-         FROM pull p JOIN issue i ON i.id = p.issue_id
+         FROM pull p INDEXED BY pull_merged CROSS JOIN issue i ON i.id = p.issue_id
         WHERE i.repo_id = ?1 AND p.merged_at IS NOT NULL AND p.merged_at >= ?2
           AND ${sealedClause("i", scope, 3)}
         ORDER BY p.merged_at DESC LIMIT 1000`,
