@@ -16,6 +16,7 @@ import { createSession } from "../src/core/sessions.ts";
 import { createUser } from "../src/core/users.ts";
 import { compress } from "../src/http/compress.ts";
 import { securityFloor } from "../src/http/respond.ts";
+import { setCrawlClock } from "../src/http/crawl.ts";
 import { forgeHttp, type ForgeHttp } from "../src/http/server.ts";
 import { webspec } from "../src/release/webspec.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -59,6 +60,9 @@ beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), "forge-webspec-"));
   app = createApp({ dataDir: dir, port: 0 });
   http = forgeHttp(app);
+  // The stranger budget shrinks while the check machine's event loop runs late (#8199); these tests walk pages, they do not measure the budget (crawl tests do), so each request gets a window of its own and the verdict never depends on load.
+  let minutes = 0;
+  setCrawlClock(app, () => Date.now() + 61_000 * ++minutes);
   const made = await createUser(app.db, {
     origin: "seed",
     trusted: true,
