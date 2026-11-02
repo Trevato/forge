@@ -38,7 +38,7 @@ import type { Ctx } from "../http/context.ts";
 import { notFound } from "../http/respond.ts";
 import { SITE_LINE } from "./site_line.ts";
 import { mcpToolsSection } from "./llms_tools.ts";
-import { HARNESS_PLUGINS, mcpCard, mcpPointers } from "../core/mcp_card.ts";
+import { HARNESS_PLUGINS, mcpCard, mcpPointers, pluginSource } from "../core/mcp_card.ts";
 import { running } from "../kernel/version.ts";
 import { timePhase, timePhaseAsync } from "../core/route_timing.ts";
 import { shippedReleases, type Shipped } from "../release/shipped.ts";
@@ -397,7 +397,7 @@ function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: s
       `- MCP endpoint: ${mcp.url} (streamable HTTP; OAuth metadata at ${mcp.oauth}). Or send a token as Authorization: Bearer.`,
       ...HARNESS_PLUGINS.map(
         (p) =>
-          `- ${p.label} plugin (source ${p.path} in this forge's repository; ${p.setup}): \`${p.install}\``,
+          `- ${p.label} plugin (source ${pluginSource(o)}, path ${p.path}; ${p.setup}; needs that repository to be public): \`${p.install(o)}\``,
       ),
       "",
       "## What you can do on any page",

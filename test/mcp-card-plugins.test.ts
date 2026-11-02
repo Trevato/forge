@@ -25,12 +25,21 @@ test("card and llms.txt name both plugins, their install lines, and paths that e
   const card = (await fetch(`${servers.url}/.well-known/mcp.json`).then((r) => r.json())) as any;
   const llms = await fetch(`${servers.url}/llms.txt`).then((r) => r.text());
   expect(card.plugins.map((p: any) => p.harness).sort()).toEqual(["claude-code", "opencode"]);
-  const claude = card.plugins.find((p: any) => p.harness === "claude-code");
-  expect(claude.install).toBe("claude --plugin-dir plugins/claude-code");
   for (const p of card.plugins) {
-    expect(existsSync(join(import.meta.dir, "..", p.path))).toBe(true);
+    expect(p.source).toBe(`${servers.url}/trevato/forge.git`);
+    expect(llms).toContain(p.source);
     expect(llms).toContain(p.install);
     expect(llms).toContain(p.path);
+    // Nothing outside what the line fetched: no bare plugins/ path, no clone-relative cp.
+    const bare = p.install.replace(/forge-plugin\/plugins\//g, "").replace(/sparse-checkout set plugins\//, "").replace(/\/raw\/main\/plugins\//g, "");
+    expect(bare).not.toMatch(/(^|\s)plugins\//);
+    expect(p.install).not.toMatch(/\bcp /);
   }
+  const claude = card.plugins.find((p: any) => p.harness === "claude-code");
+  expect(claude.install).toContain("--sparse");
+  expect(claude.install).toContain("--plugin-dir forge-plugin/plugins/claude-code");
+  const oc = card.plugins.find((p: any) => p.harness === "opencode");
+  expect(oc.install).toContain(`curl -fsSL ${servers.url}/trevato/forge/raw/main/plugins/opencode/forge.ts`);
+  for (const p of card.plugins) expect(existsSync(join(import.meta.dir, "..", p.path))).toBe(true);
   expect(card.name).toBe("forge");
 });

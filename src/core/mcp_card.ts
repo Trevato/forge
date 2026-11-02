@@ -28,9 +28,18 @@ export interface HarnessPlugin {
   readonly harness: string;
   readonly label: string;
   readonly path: string;
-  readonly install: string;
+  /** The one line, given the origin it was read from; it works in an empty directory. */
+  readonly install: (origin: string) => string;
   /** What to set before it runs. */
   readonly setup: string;
+}
+
+/** The repository that holds the plugins; it must be public on the forge for the lines to work. */
+const PLUGIN_REPO = "trevato/forge";
+
+/** The clone URL of that repository on this forge's origin. */
+export function pluginSource(origin: string): string {
+  return `${origin}/${PLUGIN_REPO}.git`;
 }
 
 /** The one list the card and /llms.txt both read, so they cannot drift. */
@@ -39,14 +48,16 @@ export const HARNESS_PLUGINS: readonly HarnessPlugin[] = [
     harness: "claude-code",
     label: "Claude Code",
     path: "plugins/claude-code",
-    install: "claude --plugin-dir plugins/claude-code",
+    install: (o) =>
+      `git clone --depth 1 --filter=blob:none --sparse ${pluginSource(o)} forge-plugin && git -C forge-plugin sparse-checkout set plugins/claude-code && claude --plugin-dir forge-plugin/plugins/claude-code`,
     setup: "set FORGE_URL, then sign in through /mcp with the forge server; or also set FORGE_TOKEN and use the forge-token server",
   },
   {
     harness: "opencode",
     label: "OpenCode",
     path: "plugins/opencode/forge.ts",
-    install: "mkdir -p .opencode/plugin && cp plugins/opencode/forge.ts .opencode/plugin/",
+    install: (o) =>
+      `mkdir -p .opencode/plugin && curl -fsSL ${o}/${PLUGIN_REPO}/raw/main/plugins/opencode/forge.ts -o .opencode/plugin/forge.ts`,
     setup: "set FORGE_URL and FORGE_TOKEN",
   },
 ];
@@ -71,7 +82,8 @@ export function mcpCard(origin: string, now: Running = running()) {
     plugins: HARNESS_PLUGINS.map((p) => ({
       harness: p.harness,
       path: p.path,
-      install: p.install,
+      source: pluginSource(origin),
+      install: p.install(origin),
     })),
   };
 }
