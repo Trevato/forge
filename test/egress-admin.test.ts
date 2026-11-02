@@ -76,6 +76,8 @@ describe("egress grants in the terminal", () => {
       await settleApp(tui);
       await press("/");
       for (const ch of "arm") await press(ch);
+      // The palette searches on a debounce no settle can see; enter on an empty list opens nothing.
+      await settleUntil(tui, "ada/arm");
       await press("enter", "enter");
       await settleUntil(tui, "ada/arm");
       await press("I");
