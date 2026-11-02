@@ -86,7 +86,7 @@ export function turnHtml(turn: Turn, waiting: ReadonlySet<string>): Html {
     </li>`;
   if (turn.role === "agent")
     return html`<li class="talk-turn talk-agent" id="${id}">
-      <div class="talk-body">${renderMarkdown(turn.text)}</div>
+      <div class="talk-body prose">${renderMarkdown(turn.text)}</div>
       ${meta("Forge", turn.createdAt)}
     </li>`;
   const data = parse(turn.text);

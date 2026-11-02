@@ -46,8 +46,16 @@ Prior art read: Vercel AI Elements (Apache-2.0 React on shadcn; anatomy and beha
 | Many conversations: new, list, search, rename, archive, URL each | next pull | needs a migration: today one row per person |
 | Edit and resend, regenerate, Stop, queue | next pulls | need turn deletion and a cancel on `crew/conversation.ts` |
 | Attachments, cost and context left, tables, thinking, plan line | later | need storage / token data / markdown tables |
-| Syntax highlighting while streaming | not adding yet | re-tokenising a half-open fence makes text jump |
+| Code highlighting and tables in replies | this pull (#8816) | a reply is stored whole and drawn whole, so no half-open fence is ever tokenised |
 
 **Without the script** the page is a plain form: Enter adds a line, starters are links that prefill the box, and Copy and Latest are not drawn (the script draws them, along with the "Enter sends" hint). The log is `role="log"`; with the script, a new message while you are scrolled up is announced in the status line.
 
 **The terminal** (`ssh <forge> talk <words>`, `forge talk`) sends one line and prints the answer; it has no log, so who/when, copy, tool cards, starters and the jump button do not apply to it. The conversation's whole history is read through `GET /api/v1/conversation/turns`, where every turn carries its role and time.
+
+## Code, tables and Copy in a reply (#8816)
+
+An agent reply is Markdown, drawn on the server by the same renderer as a README: fenced code is highlighted, tables and links render, and everything else is escaped (a `<script>` in a reply shows as text). A table wider than the column scrolls inside it; the page does not. The reply sits in the column like a person's turn, with none of the README's padding or line measure.
+
+A reply arrives as one finished turn, never as growing text, and the page only appends a turn whose id it has not drawn (a repeat is ignored). Turns already on the page are not touched, so nothing above a new reply moves, and the page follows the end only if you were already there (otherwise "Latest" appears). An unfinished fence in a stored reply is closed for drawing. The page's own bytes are held by a test: the stylesheet under 3.5 KB, the script under 6.5 KB, and a page with a code reply under 40 KB.
+
+**Copy:** each code block and each message has a Copy button, which copies the text, not the markup. The buttons are drawn by the script: with JavaScript off there are none, and the code is still there to select.

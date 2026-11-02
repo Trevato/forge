@@ -145,6 +145,60 @@ describe("the page", () => {
     expect(other).not.toMatch(/<textarea[^>]*>[^<]/);
   });
 
+  test("markdown in a reply: highlighted code, a table and a link render; every <script> is escaped", async () => {
+    const eve = await createUser(app.db, { origin: "seed", trusted: true, username: "eve", email: "eve@forge.local", password: "a-good-passphrase" });
+    if (!eve.ok) throw new Error(eve.error);
+    promote(app.db, eve.value);
+    say(eve.value, "agent", [
+      "Plain <script>alert(1)</script> and [docs](/docs) and [bad](javascript:alert(1))",
+      "",
+      "```ts",
+      "const s = \"<script>alert(2)</script>\";",
+      "```",
+      "",
+      "| name | note |",
+      "| --- | ---: |",
+      "| a | <script>alert(3)</script> |",
+    ].join("\n"));
+    const page = await (await get("/talk", eve.value)).text();
+    expect(page).not.toContain("<script>alert");
+    expect(page).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(page).toContain("&lt;script&gt;alert(2)&lt;/script&gt;");
+    expect(page).toContain("<td class=\"ta-r\">&lt;script&gt;alert(3)&lt;/script&gt;</td>");
+    expect(page).toMatch(/<pre><code class="language-ts">.*tok-keyword/s);
+    expect(page).toContain('<a href="/docs" rel="nofollow noopener">docs</a>');
+    expect(page).not.toContain('href="javascript:');
+    expect(page).toContain("<table>");
+  });
+
+  test("an unfinished code block closes itself and leaves what is above it as it was", async () => {
+    const { turnHtml } = await import("../src/web/pages/talk.ts");
+    const turn = (text: string) => ({ id: "9", role: "agent", text, createdAt: "2026-01-01T00:00:00Z" }) as any;
+    const above = "Intro **bold**\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\n";
+    const part = turnHtml(turn(`${above}\`\`\`ts\nconst a = 1;\nconst b`), new Set()).text;
+    const whole = turnHtml(turn(`${above}\`\`\`ts\nconst a = 1;\nconst b = 2;\n\`\`\`\n\nDone.`), new Set()).text;
+    const head = (h: string) => h.slice(0, h.indexOf("<pre>"));
+    expect(head(part)).toBe(head(whole));
+    expect(part.match(/<pre>/g)?.length).toBe(1);
+    expect(part).toContain("</code></pre>");
+  });
+
+  test("an agent turn carries no prose padding or measure into the column", async () => {
+    const { talkCss } = await import("../src/web/pages/talk_client.ts");
+    expect(talkCss).toContain(".talk-body.prose { padding: 0;");
+    expect(talkCss).toContain(".talk-body.prose > * { max-width: none; }");
+  });
+
+  test("the page's own bytes are held: stylesheet and script stay small", async () => {
+    const { talkCss, talkJs } = await import("../src/web/pages/talk_client.ts");
+    expect(Buffer.byteLength(talkCss)).toBeLessThan(3_500);
+    expect(Buffer.byteLength(talkJs)).toBeLessThan(6_500);
+    say(alice, "agent", "```ts\nlet x = 1;\n```");
+    const page = await get("/talk", alice);
+    const size = (await page.arrayBuffer()).byteLength;
+    expect(size).toBeLessThan(40_000);
+  });
+
   describe("the script, driven against a DOM", () => {
     test("while a reply streams Send is Stop, Escape stops too, and it is Send again when the turn ends", async () => {
       const t = await boot();
@@ -229,6 +283,32 @@ describe("the page", () => {
       t.emit("2", '<li class="talk-turn" id="t-2"><div class="talk-body"><pre><code>x</code></pre></div><p class="talk-meta">Forge</p></li>');
       expect(t.doc.querySelectorAll("#t-2 pre [data-copy]").length).toBe(1);
       expect(t.doc.querySelectorAll("#t-2 .talk-meta [data-copy]").length).toBe(1);
+    });
+
+    test("a turn that arrives again is not drawn twice or replaced, so what is above it keeps its place", async () => {
+      const t = await boot();
+      const first = t.doc.getElementById("t-1");
+      const copy = first.querySelector("pre [data-copy]");
+      t.emit("2", '<li class="talk-turn" id="t-2"><div class="talk-body"><pre><code>x</code></pre></div><p class="talk-meta">Forge</p></li>');
+      const second = t.doc.getElementById("t-2");
+      t.emit("2", '<li class="talk-turn" id="t-2"><div class="talk-body"><p>changed</p></div></li>');
+      expect(t.doc.querySelectorAll("#t-2").length).toBe(1);
+      expect(t.doc.getElementById("t-2")).toBe(second);
+      expect(t.doc.getElementById("t-1")).toBe(first);
+      expect(first.querySelector("pre [data-copy]")).toBe(copy);
+      expect(t.doc.querySelectorAll("#t-2 pre [data-copy]").length).toBe(1);
+    });
+
+    test("a turn arriving while scrolled up does not scroll the page", async () => {
+      const t = await boot();
+      let scrolled = 0;
+      t.doc.getElementById("end").scrollIntoView = () => { scrolled++; };
+      Object.defineProperty(t.window, "innerHeight", { value: 800, configurable: true });
+      Object.defineProperty(t.window, "scrollY", { value: 0, configurable: true });
+      Object.defineProperty(t.doc.documentElement, "scrollHeight", { value: 5000, configurable: true });
+      t.window.dispatchEvent(new t.window.Event("scroll"));
+      t.emit("2", '<li class="talk-turn" id="t-2"><div class="talk-body"><pre><code>x</code></pre></div></li>');
+      expect(scrolled).toBe(0);
     });
 
     test("the jump button shows only when scrolled up, and a new message is announced", async () => {

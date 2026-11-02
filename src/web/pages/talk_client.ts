@@ -11,6 +11,11 @@ export const talkCss = /* css */ `
 .talk-turn p { margin: 0 0 8px; }
 .talk-turn p:last-child { margin-bottom: 0; }
 .talk-turn pre { max-width: 100%; overflow-x: auto; }
+.talk-body.prose { padding: 0; font-size: inherit; }
+.talk-body.prose > * { max-width: none; }
+.talk-body.prose table { display: block; max-width: 100%; overflow-x: auto; }
+.talk-body.prose :is(p, ul, ol, pre, table, blockquote) { margin: 0 0 8px; }
+.talk-body.prose > :last-child { margin-bottom: 0; }
 .talk-person { justify-self: end; max-width: 85%; background: var(--muted); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 0.5rem 0.75rem; white-space: pre-wrap; }
 .talk-agent { justify-self: start; max-width: 100%; padding: 4px 0; }
 .talk-tool { color: var(--muted); font-size: var(--fs-min); padding: 0 4px; }
