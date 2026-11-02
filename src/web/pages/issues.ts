@@ -134,14 +134,14 @@ export function newIssuePage(ctx: Ctx): Response {
   notePhase(request, "session", takeSessionTime(request));
   const repo = timePhase(request, "repo", () => loadRepo(ctx));
   if (!repo) return timePhase(request, "render", () => notFoundPage(ctx));
+  // `?sealed=1`: the repository page's "report it sealed" link.
+  const sealed = ctx.url.searchParams.get("sealed") === "1";
   if (!ctx.auth.user) {
     const open = timePhase(request, "access", () => canRead(ctx.app.db, repo, undefined));
     return timePhase(request, "render", () =>
-      open ? accountOrReport(ctx, repo) : signInFirst(ctx),
+      open ? accountOrReport(ctx, repo, sealed) : signInFirst(ctx),
     );
   }
-  // `?sealed=1`: the repository page's "report it sealed" link.
-  const sealed = ctx.url.searchParams.get("sealed") === "1";
   return timePhase(request, "render", () =>
     composePage(ctx, repo, { title: "", body: "", sealed }),
   );
@@ -150,10 +150,32 @@ export function newIssuePage(ctx: Ctx): Response {
 /**
  * A stranger who asked to open an issue on a public repository: both doors,
  * the one that needs an account and the one that does not, rather than a
- * sign-in page that never says the second exists.
+ * sign-in page that never says the second exists. A stranger who asked for
+ * a sealed report (security.txt's Contact) is offered only the account: the
+ * report without one is not sealed, and there is no sealed door without one.
  */
-function accountOrReport(ctx: Ctx, repo: Repo): Response {
-  const base = repoBase(repo);
+function accountOrReport(ctx: Ctx, repo: Repo, sealed: boolean): Response {
+  const signIn = (variant: "primary" | "ghost") =>
+    btn("Sign in", { href: signInHref(ctx), variant });
+  const door = sealed
+    ? empty({
+        icon: "issue",
+        title: "A sealed security report needs an account",
+        note:
+          "Only the people who keep this repository see it until its fix is released. " +
+          "The report without an account is not sealed: do not use it for a vulnerability.",
+        action: signIn("primary"),
+      })
+    : empty({
+        icon: "issue",
+        title: "Opening an issue needs an account",
+        note: "Something wrong? You can report it without one; a person who keeps this repository reads it.",
+        action: html`${btn("Report a problem", {
+          href: `${repoBase(repo)}/report`,
+          variant: "primary",
+        })}
+        ${signIn("ghost")}`,
+      });
   return page({
     ctx,
     title: `New issue · ${repo.ownerName}/${repo.name}`,
@@ -162,16 +184,7 @@ function accountOrReport(ctx: Ctx, repo: Repo): Response {
         compact: true,
         ownTitle: true,
       })}
-      ${empty({
-        icon: "issue",
-        title: "Opening an issue needs an account",
-        note: "Something wrong? You can report it without one; a person who keeps this repository reads it.",
-        action: html`${btn("Report a problem", {
-          href: `${base}/report`,
-          variant: "primary",
-        })}
-        ${btn("Sign in", { href: signInHref(ctx), variant: "ghost" })}`,
-      })}`,
+      ${door}`,
   });
 }
 

@@ -84,6 +84,62 @@ describe("what the open web expects", () => {
     }
   });
 
+  test("security.txt's contact is the sealed form of the forge's public repository", async () => {
+    app.config.forgeRepo = "alice/open";
+    try {
+      const body = await fetch(`${base}/.well-known/security.txt`).then((r) => r.text());
+      expect(body).toContain(`Contact: ${base}/alice/open/issues/new?sealed=1\n`);
+      // The no-account report is not sealed: it is never offered beside
+      // the contact, and the footer names it for what is not a vulnerability.
+      expect(body).not.toContain(`${base}/alice/open/report`);
+      expect(body.indexOf("/report")).toBeGreaterThan(body.indexOf("Not a vulnerability?"));
+      // The configured contact still wins.
+      process.env["FORGE_SECURITY_CONTACT"] = "mailto:security@example.org";
+      try {
+        const set = await fetch(`${base}/.well-known/security.txt`).then((r) => r.text());
+        expect(set).toContain("Contact: mailto:security@example.org\n");
+        expect(set).not.toContain("alice/open");
+      } finally {
+        delete process.env["FORGE_SECURITY_CONTACT"];
+      }
+    } finally {
+      delete app.config.forgeRepo;
+    }
+  });
+
+  test("the sealed form, signed out, offers the account only and comes back sealed", async () => {
+    const form = await fetch(`${base}/alice/open/issues/new?sealed=1`).then((r) => r.text());
+    expect(form).toContain("A sealed security report needs an account");
+    expect(form).not.toContain(">Report a problem</a");
+    // The password form brings the stranger back to the sealed form.
+    const next = encodeURIComponent("/alice/open/issues/new?sealed=1");
+    expect(form).toContain(`href="/signin?next=${next}"`);
+    const plain = await fetch(`${base}/alice/open/issues/new`).then((r) => r.text());
+    expect(plain).toContain("Opening an issue needs an account");
+    expect(plain).toContain(">Report a problem</a");
+    // Behind a platform edge, the edge's login comes back sealed too.
+    app.config.edgeToken = "edge-secret-0123456789";
+    try {
+      const edge = await fetch(`${base}/alice/open/issues/new?sealed=1`).then((r) => r.text());
+      expect(edge).toContain(`href="/_plat/login?rd=${next}"`);
+    } finally {
+      delete app.config.edgeToken;
+    }
+  });
+
+  test("security.txt names a profile for a private or malformed forge repository", async () => {
+    for (const named of ["alice/closed", "alice"]) {
+      app.config.forgeRepo = named;
+      try {
+        const body = await fetch(`${base}/.well-known/security.txt`).then((r) => r.text());
+        expect(body).toContain(`Contact: ${base}/alice\n`);
+        expect(body).not.toContain("issues/new?sealed=1\n");
+      } finally {
+        delete app.config.forgeRepo;
+      }
+    }
+  });
+
   test("change-password sends a password manager to the right page", async () => {
     const res = await fetch(`${base}/.well-known/change-password`, {
       redirect: "manual",

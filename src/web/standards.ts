@@ -33,7 +33,8 @@ import { readLandings } from "../release/landings.ts";
 import { REPORT_LINK_TITLE } from "../actions/report_words.ts";
 import { sshTellCommand } from "../ssh/command.ts";
 import { llmsRepos, sitemapRepos, type LlmsListing } from "../core/listings.ts";
-import { canRead, getRepo } from "../core/repos.ts";
+import { canRead, getRepo, type Repo } from "../core/repos.ts";
+import { publicForgeRepo } from "../core/forge_repo.ts";
 import type { Ctx } from "../http/context.ts";
 import { notFound } from "../http/respond.ts";
 import { SITE_LINE } from "./site_line.ts";
@@ -54,13 +55,17 @@ function text(body: string, type = "text/plain; charset=utf-8"): Response {
 /**
  * Where a vulnerability report goes. An address is published only when the
  * operator wrote one down for the purpose: a default must never put a
- * person's email on the open web. Without one, the contact is the first
- * account's page on this forge — already public, and a real way to reach
- * whoever runs it.
+ * person's email on the open web. Without one, the contact is the sealed
+ * new-issue form of the forge's own repository (the one the changelog
+ * reads), a private place to send it; failing that, the first account's
+ * page on this forge — already public, and a real way to reach whoever
+ * runs it.
  */
-function securityContact(ctx: Ctx): string {
+function securityContact(ctx: Ctx, own: Repo | undefined): string {
   const configured = process.env["FORGE_SECURITY_CONTACT"]?.trim();
   if (configured) return configured;
+  if (own !== undefined)
+    return `${ctx.url.origin}/${own.ownerName}/${own.name}/issues/new?sealed=1`;
   const admin = ctx.app.db
     .query<
       { username: string },
@@ -81,7 +86,7 @@ export function securityTxt(ctx: Ctx): Response {
   const expires = new Date(Date.UTC(now.getUTCFullYear() + 1, 0, 1));
   return text(
     [
-      `Contact: ${securityContact(ctx)}`,
+      `Contact: ${securityContact(ctx, publicForgeRepo(ctx.app))}`,
       `Expires: ${expires.toISOString().replace(/\.\d{3}Z$/, "Z")}`,
       "Preferred-Languages: en",
       `Canonical: ${ctx.url.origin}/.well-known/security.txt`,
