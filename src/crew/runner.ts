@@ -123,6 +123,7 @@ import {
   limitOf,
   MAX_PAUSES,
   resumeAt,
+  takeLimit,
   whenText,
 } from "./limits.ts";
 import { clearStaleLocks, lockedOut } from "./locks.ts";
@@ -133,7 +134,6 @@ import { parkedTwice } from "./parks.ts";
 import { heldNow, stuckOf } from "./held.ts";
 import { reserveOf } from "./reserve.ts";
 import { owed } from "./team_share.ts";
-import { noteLimit } from "../core/standing.ts";
 import { pauseReason } from "./pacing.ts";
 import { grantLeft } from "../core/model_grant.ts";
 import { dailyLeft, reserveCeiling } from "../core/account_ceiling.ts";
@@ -143,7 +143,6 @@ import {
   MIN_RUN_USD,
   pickSubscription,
   PLATFORM,
-  restSubscription,
   type Pick,
 } from "../core/subscriptions.ts";
 import {
@@ -1523,30 +1522,17 @@ async function work(
     // A limit that never lifts is not waited on forever.
     let limitLifts: Date | undefined;
     if (isRateLimited(result) && !signal.aborted) {
-      const said = (
-        result.result.split("\n").find((l) => l.trim() !== "") ?? result.reason
-      ).slice(0, 160);
+      const now = new Date();
       // The account rests until the provider's time; another on the same
       // grant, if one is awake, takes the run straight away.
+      const { until, limit, said } = takeLimit(
+        app.db,
+        picked.kind === "ready" ? picked.subscription.id : undefined,
+        result.result,
+        result.reason,
+        now,
+      );
       if (picked.kind === "ready") {
-        const now = new Date();
-        const until = resumeAt(result.result, now);
-        // Which window is full and when it resets, in the provider's own
-        // words, for the account's standing (`core/standing.ts`).
-        const limit = limitOf(result.result, now);
-        if (limit !== undefined)
-          noteLimit(app.db, picked.subscription.id, {
-            window: limit.window,
-            resetsAt: limit.resetsAt.toISOString(),
-            observedAt: now.toISOString(),
-            said,
-          });
-        restSubscription(
-          app.db,
-          picked.subscription.id,
-          until.toISOString(),
-          said,
-        );
         // Only a look at who could take over: no reservation is made here.
         // The run pauses, and on resume it picks again with its reserve.
         const next = pickSubscription(
@@ -1571,18 +1557,6 @@ async function work(
             costUsd: result.costUsd,
           };
         }
-      } else {
-        // The platform's token is not rested — nothing else would take the
-        // run — but its window is noted, so its standing reads true.
-        const now = new Date();
-        const limit = limitOf(result.result, now);
-        if (limit !== undefined)
-          noteLimit(app.db, PLATFORM, {
-            window: limit.window,
-            resetsAt: limit.resetsAt.toISOString(),
-            observedAt: now.toISOString(),
-            said,
-          });
       }
       if (run.attempt < MAX_PAUSES) {
         const at = resumeAt(result.result, new Date());

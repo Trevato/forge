@@ -14,7 +14,7 @@ import { createApp, type App } from "../src/app.ts";
 import { clearAccountCeiling, daySpent, setAccountCeiling } from "../src/core/account_ceiling.ts";
 import { listTurns, openConversation } from "../src/core/conversations.ts";
 import { monthSpent } from "../src/core/model_grant.ts";
-import { PLATFORM } from "../src/core/subscriptions.ts";
+import { addSubscription, getSubscription, PLATFORM, setGrants, wakeSubscription } from "../src/core/subscriptions.ts";
 import { verifyToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { TOOLS } from "../src/crew/claude.ts";
@@ -233,5 +233,67 @@ describe("a conversation turn", () => {
     expect(viaTokens()).toBe(0);
     const last = app.db.query<{ state: string }, [string]>("SELECT state FROM conversation_run WHERE user_id = ?1 ORDER BY rowid DESC LIMIT 1").get(alice.id);
     expect(last?.state).toBe("failed");
+  });
+
+  /** A `claude` the provider turns away: it answers a session limit and nothing else. */
+  function limitedStub(name: string): string {
+    const path = join(dir, name);
+    writeFileSync(
+      path,
+      `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
+IFS= read -r first
+echo '{"type":"system","subtype":"init","session_id":"s-limit","model":"fake"}'
+echo '{"type":"assistant","session_id":"s-limit","message":{"id":"m1","content":[{"type":"text","text":"You have hit your session limit · resets 7:20am (UTC)"}],"usage":{"input_tokens":1,"output_tokens":1}}}'
+echo '{"type":"result","subtype":"success","is_error":true,"result":"You have hit your session limit · resets 7:20am (UTC)","total_cost_usd":0,"num_turns":1,"session_id":"s-limit","terminal_reason":"api_error","usage":{"input_tokens":1,"output_tokens":1}}'
+`,
+    );
+    chmodSync(path, 0o755);
+    return path;
+  }
+
+  test("a turn the provider rate-limits rests the account, says so once, and the next message is refused while it rests", async () => {
+    const account = addSubscription(app.db, dir, { name: "home", token: "sk-ant-api-test-home" });
+    if (!account.ok) throw new Error("account");
+    setGrants(app.db, alice.id, "", [account.value.id]);
+    try {
+      const said = say(app, options(limitedStub("limited")), alice.id, "hello?");
+      expect(said.ok).toBe(true);
+      if (said.ok) await said.value.done;
+      const line = turns(alice).at(-1)!;
+      expect(line).toMatch(/^agent:home is resting until \d\d:\d\d UTC\.$/);
+      expect(turns(alice).filter((t) => t.includes("session limit"))).toEqual([]);
+      const rested = getSubscription(app.db, account.value.id)!;
+      expect(rested.restingUntil).not.toBeNull();
+      const noted = app.db.query<{ span: string }, [string]>("SELECT span FROM subscription_limit WHERE subscription_id = ?1").all(account.value.id);
+      expect(noted.map((r) => r.span)).toEqual(["5h"]);
+
+      const before = turns(alice).length;
+      const refused = say(app, options(stub("while-resting", "s", "answer")), alice.id, "again?");
+      expect(refused.ok ? "started" : refused.error).toBe("resting");
+      expect(turns(alice)).toHaveLength(before);
+
+      wakeSubscription(app.db, account.value.id);
+      const woke = say(app, options(stub("after-wake", "s", "answer")), alice.id, "now?");
+      expect(woke.ok).toBe(true);
+      if (woke.ok) await woke.value.done;
+      expect(turns(alice).at(-1)).toBe("agent:All quiet.");
+    } finally {
+      setGrants(app.db, alice.id, "", []);
+    }
+  });
+
+  test("a turn on the forge's own token says its window is full, rests nothing, and notes the window", async () => {
+    const said = say(app, options(limitedStub("platform-limited")), alice.id, "on the platform?");
+    expect(said.ok).toBe(true);
+    if (said.ok) await said.value.done;
+    expect(turns(alice).at(-1)).toMatch(/^agent:The forge's own model window is full until \d\d:\d\d UTC; try again then\.$/);
+    expect(turns(alice).filter((t) => t.includes("session limit"))).toEqual([]);
+    const noted = app.db.query<{ span: string }, [string]>("SELECT span FROM subscription_limit WHERE subscription_id = ?1").all(PLATFORM);
+    expect(noted.map((r) => r.span)).toEqual(["5h"]);
+    // Nothing rests, so the next message is accepted.
+    const next = say(app, options(stub("platform-next", "s", "answer")), alice.id, "again?");
+    expect(next.ok).toBe(true);
+    if (next.ok) await next.value.done;
   });
 });

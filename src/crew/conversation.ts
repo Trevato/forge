@@ -19,7 +19,7 @@ import type { App } from "../app.ts";
 import { dailyLeft } from "../core/account_ceiling.ts";
 import { appendTurn, openConversation, removeTurn, setClaudeSession, type Conversation } from "../core/conversations.ts";
 import { WORDS_MAX } from "../core/fence.ts";
-import { PLATFORM, pickSubscription } from "../core/subscriptions.ts";
+import { PLATFORM, pickSubscription, type Pick } from "../core/subscriptions.ts";
 import { getUserById } from "../core/users.ts";
 import { mintViaToken, VIA_TOKEN_MAX_MS } from "../core/via_token.ts";
 import { id } from "../kernel/id.ts";
@@ -27,6 +27,7 @@ import { err, ok, type Result } from "../kernel/result.ts";
 import { appendRunLog } from "../runs/log.ts";
 import { runClaude, type ClaudeOutcome } from "./claude.ts";
 import { CONVERSATION_BRIEF } from "./conversation_brief.ts";
+import { isRateLimited, takeLimit, whenText } from "./limits.ts";
 import { credentialEnv, listenForSteer, steerRun } from "./runner.ts";
 import { sandboxPolicy } from "./sandbox.ts";
 
@@ -160,6 +161,20 @@ export function resumeInterrupted(app: App, options: ConversationOptions): Promi
   return done;
 }
 
+/**
+ * The provider turned the turn away: the account rests and its window is
+ * noted as a run's is (`takeLimit`). Returns the one line the person sees,
+ * never the provider's words. The forge's own token cannot rest, so the next
+ * message is accepted; the line says the window is full, not that anything rests.
+ */
+function limitLine(app: App, picked: Pick, message: string): string {
+  const account = picked.kind === "ready" ? picked.subscription : undefined;
+  const { until } = takeLimit(app.db, account?.id, message, "", new Date());
+  return account === undefined
+    ? `The forge's own model window is full until ${whenText(until)}; try again then.`
+    : `${account.name} is resting until ${whenText(until)}.`;
+}
+
 function begin(
   app: App,
   options: ConversationOptions,
@@ -195,9 +210,13 @@ function begin(
     .run(runId, conversation.id, userId, subscriptionId, prompt, resumes, resumeSession ?? "", now.toISOString());
   live.set(conversation.id, runId);
   const put = (role: "agent" | "tool", text: string): void => {
-    appendTurn(app.db, userId, conversation.id, { role, text: text.slice(0, 20_000) });
+    const stored = appendTurn(app.db, userId, conversation.id, { role, text: text.slice(0, 20_000) });
+    if (stored.ok && role === "agent") streamed.push({ id: stored.value.id, text });
   };
   let lastText = "";
+  // What the turn said as it went, by turn id, so a provider's refusal
+  // printed as assistant text can be taken back.
+  const streamed: { id: string; text: string }[] = [];
   // The policy only shapes a shell's sandbox; an MCP-only turn has no shell
   // and no file tools (`claudeSettings` with `mcp` omits it), so there is
   // nothing to enforce and an unenforced policy cannot fail the turn.
@@ -264,7 +283,14 @@ function begin(
     }
     app.db.query("DELETE FROM token WHERE id = ?1").run(minted.value.id);
     const answer = outcome?.result ?? "";
-    if (answer.trim() !== "" && answer !== lastText) put("agent", answer);
+    if (outcome !== undefined && isRateLimited(outcome)) {
+      // The provider's words are not shown: the streamed copy of them goes.
+      const first = outcome.result.split("\n").find((l) => l.trim() !== "")?.trim() ?? "";
+      for (const turn of streamed)
+        if (turn.text === outcome.result || (first !== "" && turn.text.includes(first))) removeTurn(app.db, userId, conversation.id, turn.id);
+      put("agent", limitLine(app, picked, outcome.result));
+    }
+    else if (answer.trim() !== "" && answer !== lastText) put("agent", answer);
     else if (answer.trim() === "" && lastText === "") put("agent", "I could not answer that just now.");
     app.db
       .query(
