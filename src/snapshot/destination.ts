@@ -103,7 +103,8 @@ export function scrubReason(target: S3Target | undefined, error: unknown): strin
 
 /** Does this target answer? One sentence either way, never a key in it. */
 export async function testTarget(target: S3Target): Promise<string> {
-  const store = s3Store(target);
+  // One attempt: a test that retries a refused port makes the answer wait on backoff.
+  const store = s3Store(target, 1);
   try {
     const keys = await store.list("");
     return `Reached ${store.where}: ${keys.length === 1 ? "1 object" : `${keys.length} objects`} listed.`;

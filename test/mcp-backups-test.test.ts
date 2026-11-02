@@ -93,6 +93,21 @@ describe("MCP backups_test", () => {
     expect(r.text).not.toContain("AKIAEXAMPLE");
   }, 20_000);
 
+  test("an unreachable one is tried once, not retried with backoff", async () => {
+    let calls = 0;
+    (Bun as any).S3Client = class {
+      async list() {
+        calls++;
+        throw new Error(`connect ECONNREFUSED ${SECRET}`);
+      }
+    };
+    const r = await test_(admin, fields("http://127.0.0.1:1"));
+    (Bun as any).S3Client = realS3;
+    expect(calls).toBe(1);
+    expect(JSON.parse(r.text).says).toStartWith("Could not list ");
+    expect(r.text).not.toContain(SECRET);
+  }, 20_000);
+
   test("a field the page would refuse is refused in the same words", async () => {
     const r = await test_(admin, { ...fields("ftp://x") });
     const out = JSON.parse(r.text);
