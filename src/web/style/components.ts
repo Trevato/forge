@@ -278,8 +278,42 @@ kbd {
   font-family: var(--mono); font-size: var(--fs-min); font-weight: 500; color: var(--muted-fg);
 }
 
+/* A menu or palette row's key sits in its own column (#8930); anywhere else a
+   key is a tooltip or an overlay and takes no room. */
 .keyhint { margin-left: 6px; }
 @media (pointer: coarse), (max-width: 640px) { .keyhint { display: none; } }
+
+/* ::before, because components already use ::after (the current tab's line,
+   a menu's caret). :where() keeps the host rule at zero specificity, so a
+   component that positions itself (sticky, absolute) keeps its position. The
+   text after "/" is the chip's accessible text: none, so a name is never read
+   with its key glued on; the key is \`aria-keyshortcuts\` instead. */
+:where([data-hint]) { position: relative; }
+[data-hint]::before {
+  content: attr(data-hint); content: attr(data-hint) / ""; position: absolute; z-index: 40;
+  top: calc(100% + 4px); left: 50%; transform: translateX(-50%);
+  min-width: 20px; padding: 2px 5px; box-sizing: border-box; text-align: center;
+  border: 1px solid var(--border); border-bottom-width: 2px;
+  border-radius: var(--radius-sm); background: var(--muted); color: var(--muted-fg);
+  font-family: var(--mono); font-size: var(--fs-min); font-weight: 500; line-height: 16px; white-space: nowrap;
+  opacity: 0; pointer-events: none; transition: opacity 120ms var(--ease);
+}
+@media (hover: hover) and (pointer: fine) {
+  [data-hint]:hover::before, [data-hint]:focus-visible::before, [data-hint]:focus-within::before,
+  html[data-hints] [data-hint]::before { opacity: 1; }
+}
+/* At the window's edges the chip hangs inward, so it never leaves the viewport. */
+.wordmark[data-hint]::before { left: 0; transform: none; }
+.topbar-tools [data-hint]::before { left: auto; right: 0; transform: none; }
+/* A card clips what leaves its box: there the chip sits on the element's top
+   right corner, mostly above it, clear of the label's text. */
+.card [data-hint]::before { top: 0; left: auto; right: 0; transform: translateY(-60%); }
+/* The tab strip scrolls sideways, so it clips above and below too: the chip is
+   small and sits in the tab's own top padding, above the label. */
+.tabs [data-hint]::before {
+  top: 0; min-width: 0; padding: 0 3px; border-bottom-width: 1px; line-height: 12px;
+}
+@media (pointer: coarse) { [data-hint]::before { display: none; } }
 
 .sha {
   font-family: var(--mono); font-size: 12.5px; padding: 1px 5px;

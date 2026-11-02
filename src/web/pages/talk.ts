@@ -270,7 +270,7 @@ function talkPage(ctx: Ctx, conversation: Conversation, before: string | undefin
         <div class="talk-chips" data-chips role="group" aria-label="Attached files"></div>
         <textarea class="input" name="text" rows="1" maxlength="${WORDS_MAX}" required placeholder="Talk to the forge" aria-label="Talk to the forge">${editing === undefined ? prefill : editing.text}</textarea>
         <div class="bar">
-          <span class="muted small" data-hint></span>
+          <span class="muted small" data-compose-hint></span>
           <label class="btn talk-attach" data-attach hidden>Attach<input type="file" multiple hidden data-pick /></label>
           <span class="spacer"></span>
           ${editing === undefined ? null : html`<a class="btn" href="${here}">Keep as it was</a>`}

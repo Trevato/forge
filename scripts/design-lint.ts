@@ -315,9 +315,9 @@ export function compare(base: Baseline, now: Scan, design: string, areas: readon
 }
 
 /** The quiet-page rules a machine can check (#8775, from #8719): markup and style only, never prose. */
-export type QuietRule = "label" | "caps" | "echo" | "inline-colour";
+export type QuietRule = "label" | "caps" | "echo" | "inline-colour" | "keyhint";
 export type QuietFinding = { line: number; rule: QuietRule; text: string; use: string };
-export const QUIET_RULES: readonly QuietRule[] = ["label", "caps", "echo", "inline-colour"];
+export const QUIET_RULES: readonly QuietRule[] = ["label", "caps", "echo", "inline-colour", "keyhint"];
 const STATUS_WORD = "open|closed|merged|draft|done|failed|passing|failing|pending|running|queued|shipped|blocked|active|ready";
 
 /** Where `text` breaks a quiet-page rule: file line, the offence, and what to use instead. */
@@ -341,12 +341,31 @@ export function quiet(text: string): QuietFinding[] {
       out.push({ line: at(m.index!), rule: "echo", text: `aria-label="${m[2]}" beside the visible "${visible}"`, use: "either the icon with the aria-label, or the visible word with the icon aria-hidden — never both" });
     }
   }
+  // A key hint takes no room at rest (#8930): inline only in a menu item, else `hintAttr`.
+  for (const m of code.matchAll(/(?<!function )\bkeyHint\(|<kbd class="keyhint"/g)) {
+    if (!inMenuItem(code, m.index!) && !code.slice(Math.max(0, m.index! - 60), m.index!).includes("function keyHint")) {
+      out.push({ line: at(m.index!), rule: "keyhint", text: m[0], use: "hintAttr(key): a tooltip on hover and an overlay on request; an inline hint only inside a menu item" });
+    }
+  }
   // A colour name in an inline style="": the stylesheet scan reads css templates only.
   for (const m of code.matchAll(/\bstyle="([^"]*)"/g)) {
     const bad = m[1]!.match(NAMED_RE);
     if (bad) out.push({ line: at(m.index!), rule: "inline-colour", text: bad[0].trim(), use: tokenFor(bad[0]) });
   }
   return out.sort((a, b) => a.line - b.line);
+}
+
+/** Is the position inside a still-open menu or palette row? The nearest earlier
+ * element whose class is `menu-item`/`palette-item`, not yet closed before here. */
+export function inMenuItem(code: string, at: number): boolean {
+  const before = code.slice(0, at);
+  const opens = [...before.matchAll(/<(a|button|div|li)\b[^>]*?\bclass="[^"]*\b(?:menu-item|palette-item)\b/g)];
+  const last = opens.at(-1);
+  if (!last) return false;
+  const rest = before.slice(last.index!);
+  const tag = last[1]!;
+  const depth = (rest.match(new RegExp(`<${tag}\\b`, "g")) ?? []).length - (rest.match(new RegExp(`</${tag}\\s*>`, "g")) ?? []).length;
+  return depth > 0;
 }
 
 export const QUIET_DEBT = "docs/design/quiet-debt.json";

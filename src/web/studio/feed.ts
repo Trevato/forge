@@ -29,7 +29,7 @@ import { DISMISS_KEY } from "../script_keys.ts";
 import { fragment } from "../layout.ts";
 import { draftJs } from "../draft.ts";
 import { outboxJs } from "../outbox.ts";
-import { avatar, btn, card, disclosure, empty, keyHint, nameMark, row, stateBadge, time } from "../ui.ts";
+import { avatar, btn, card, disclosure, empty, hintAttr, nameMark, row, stateBadge, time } from "../ui.ts";
 import { stepLink } from "./step_link.ts";
 import { writableAppsOf } from "./asks.ts";
 
@@ -170,7 +170,7 @@ export function feedCard(
         <span class="bar">${btn(target ? "Steer" : "Tell", reply ? { size: "sm" } : { size: "sm", variant: "primary" })}</span>
       </form>
       <span class="bar">
-        <button type="button" class="btn" data-variant="ghost" data-size="sm" data-feed="dismissed" title="Dismiss (${DISMISS_KEY})">Dismiss ${keyHint(DISMISS_KEY)}</button>
+        <button type="button" class="btn" data-variant="ghost" data-size="sm" data-feed="dismissed" ${hintAttr(DISMISS_KEY)}>Dismiss</button>
         ${item.kind === "ask" || item.kind === "milestone" || item.kind === "choose" ? null : html`<button type="button" class="btn" data-variant="ghost" data-size="sm" data-feed="muted" title="Mute ${item.app}">Mute app</button>`}
       </span>`,
     { small: true, label: target ? "Steer, dismiss or mute" : reply ? "Reply, tell the crew, dismiss or mute" : "Tell the crew, dismiss or mute" },

@@ -1462,6 +1462,12 @@ const shellCore = /* js */ `
     seq.length = 0; e.preventDefault();
     location.assign(p.indexOf('/new/issue') === 0 ? '/new/issue' : '/new/issue?from=' + encodeURIComponent(p));
   }
+  // Holding Option (Alt) lays each action's key over it; nothing moves (#8930).
+  function hints(on) { if (on) doc.documentElement.setAttribute('data-hints', ''); else doc.documentElement.removeAttribute('data-hints'); }
+  doc.addEventListener('keydown', function (e) { if (e.key === 'Alt') hints(true); });
+  doc.addEventListener('keyup', function (e) { if (e.key === 'Alt') hints(false); });
+  doc.addEventListener('keydown', function (e) { if (e.key === 'Escape') hints(false); });
+  window.addEventListener('blur', function () { hints(false); });
   doc.addEventListener('keydown', function (e) {
     var t = e.target;
     // Inside an open dialog the dialog owns the keys; none of these apply.
@@ -1507,7 +1513,11 @@ const shellCore = /* js */ `
     else if (e.key === '/') {
       var box = doc.querySelector('[data-search-input]');
       if (box) { seq.length = 0; e.preventDefault(); box.focus(); box.select(); }
-    } else if (e.key === '?') { seq.length = 0; e.preventDefault(); openHelp(); }
+    } else if (e.key === '?') {
+      seq.length = 0; e.preventDefault();
+      // First press lays the keys over the page; the second clears them and opens the help.
+      if (doc.documentElement.hasAttribute('data-hints')) { hints(false); openHelp(); } else hints(true);
+    }
     else if (e.key === ':') { seq.length = 0; e.preventDefault(); openPalette(); }
   });
 

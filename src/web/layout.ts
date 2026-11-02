@@ -57,7 +57,7 @@ import { html, raw, when, type Html } from "./html.ts";
 import { noRoom } from "../spawn/door.ts";
 import { quotaFull } from "../spawn/quota.ts";
 import { icon, inlineIcons, pointAtSprite, themeGlyph } from "./icons.ts";
-import { btn, copyField, kbd, keyHint, menu, type MenuItem } from "./ui.ts";
+import { btn, copyField, hintAttr, kbd, menu, type MenuItem } from "./ui.ts";
 import { SITE_LINE } from "./site_line.ts";
 
 /** One row of the command palette: title, href, category. */
@@ -565,8 +565,8 @@ function topbar(
   const user = ctx.auth.user;
   return html`<a class="skip" href="#main">Skip to content</a>
     <header class="topbar" role="banner">
-      <a href="/" class="wordmark" data-shortcut="g h"
-        ><span class="mark"></span>forge${keyHint("g h")}</a
+      <a href="/" class="wordmark" data-shortcut="g h" ${hintAttr("g h")}
+        ><span class="mark"></span>forge</a
       >
       ${when(
         crumbs,
@@ -585,9 +585,9 @@ function topbar(
       <span class="topbar-tools">
         ${searchBar()}
         ${user
-          ? html`<a class="btn btn-icon" href="/talk" aria-label="Talk to the forge" title="Talk to the forge" data-shortcut="g t"
-                >${icon("comment")}${keyHint("g t")}</a
-              ><a class="small" href="/asks" data-shortcut="g q">Asks${keyHint("g q")}</a
+          ? html`<a class="btn btn-icon" href="/talk" aria-label="Talk to the forge" data-shortcut="g t" ${hintAttr("g t", "Talk to the forge")}
+                >${icon("comment")}</a
+              ><a class="small" href="/asks" data-shortcut="g q" ${hintAttr("g q")}>Asks</a
               >${newMenu(ctx)}${userMenu(
                 ctx,
                 user,

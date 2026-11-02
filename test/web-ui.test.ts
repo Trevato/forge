@@ -973,7 +973,7 @@ describe("web ui", () => {
         const from = m[1] === "input" ? html.lastIndexOf("<label", m.index) : m.index;
         const close = m[1] === "input" ? "</label>" : `</${m[1]}>`;
         const el = html.slice(from, html.indexOf(close, m.index));
-        if (!el.includes(`<kbd class="keyhint">${chord}</kbd>`) && !chord.split(" ").every((k) => el.includes(`<kbd>${k}</kbd>`))) {
+        if (!new RegExp(`data-hint="(?:[^"]* · )?${chord}"`).test(el) && !el.includes(`<kbd class="keyhint">${chord}</kbd>`) && !chord.split(" ").every((k) => el.includes(`<kbd>${k}</kbd>`))) {
           throw new Error(`${path}: "${chord}" has no <kbd> beside its label`);
         }
         seen++;
@@ -991,9 +991,9 @@ describe("web ui", () => {
     expect(shellJs).toContain(`e.key === '${NEW_ISSUE_KEY}'`);
     for (const k of SCRIPT_KEYS) {
       const page = await (await fetch(`${base}${k.page}`, { headers: { cookie: `${owner}; forge_mode=studio` } })).text();
-      const hint = `<kbd class="keyhint">${k.key}</kbd>`;
-      const at = page.indexOf(hint);
-      const near = at < 0 ? "" : page.slice(Math.max(0, at - 400), at);
+      // A menu row draws the key in its column; anything else carries it as data-hint (#8930).
+      const at = Math.max(page.indexOf(`<kbd class="keyhint">${k.key}</kbd>`), page.indexOf(`data-hint="${k.key}"`));
+      const near = at < 0 ? "" : page.slice(Math.max(0, at - 400), at + 400);
       if (!near.includes(k.label)) throw new Error(`${k.page}: "${k.label}" shows no ${k.key} beside it`);
     }
   });

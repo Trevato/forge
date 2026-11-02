@@ -187,14 +187,14 @@ function btnAttrs(o: BtnOptions): Html {
   ${o.size ? html`data-size="${o.size}"` : null}
   ${o.title ? html`title="${o.title}"` : null}
   ${o.label ? html`aria-label="${o.label}"` : null}
-  ${o.shortcut ? html`data-shortcut="${o.shortcut}"` : null}
+  ${o.shortcut ? html`data-shortcut="${o.shortcut}" ${hintAttr(o.shortcut)}` : null}
   ${o.copy ? html`data-copy="${o.copy}"` : null}
   ${o.pressed !== undefined ? html`aria-pressed="${o.pressed ? "true" : "false"}"` : null}${o.current ? raw('aria-current="page"') : null}`;
 }
 
 /** A button or a link that looks like one. Content is the visible label. */
 export function btn(content: Html | string, o: BtnOptions = {}): Html {
-  const inner = html`${o.icon ? icon(o.icon) : null}${content}${o.shortcut ? keyHint(o.shortcut) : null}`;
+  const inner = html`${o.icon ? icon(o.icon) : null}${content}`;
   if (o.href !== undefined) {
     return html`<a
       href="${o.href}"
@@ -756,8 +756,21 @@ export function kbd(keys: string[]): Html {
   return html`${keys.map((k) => html`<kbd>${k}</kbd>`)}`;
 }
 
-/** The keys of a `g i`-style shortcut, shown beside the action that carries
- * it; phone widths and touch-only screens hide it (`.keyhint`). */
+/** The key of an action, as an attribute: it takes no room at rest, shows as a
+ * tooltip on hover or focus, and as an overlay while hints are held (#8930). An
+ * icon-only control passes its `name`, so the tooltip is its only one (no `title`). */
+export function hintAttr(shortcut: string, name?: string): Html {
+  const label = name === undefined ? shortcut : `${name} · ${shortcut}`;
+  // aria-keyshortcuts lists alternatives, not sequences: a chord like `g h`
+  // would read as "g or h", so only a single key is announced; the help lists the rest.
+  return shortcut.includes(" ")
+    ? html`data-hint="${label}"`
+    : html`data-hint="${label}" aria-keyshortcuts="${shortcut}"`;
+}
+
+/** The keys of a `g i`-style shortcut in a menu or palette row, where a column
+ * holds it (`.keyhint`). Never beside a button, tab or the top bar: those use
+ * `hintAttr`, and design-lint refuses a `keyHint(` outside a menu item. */
 export function keyHint(shortcut: string): Html {
   return html`<kbd class="keyhint">${shortcut}</kbd>`;
 }
@@ -993,11 +1006,11 @@ export function tabs(items: TabItem[], ariaLabel: string): Html {
         html`<a
           href="${t.href}"
           ${t.current ? raw('aria-current="page"') : null}
-          ${t.shortcut ? html`data-shortcut="${t.shortcut}"` : null}
+          ${t.shortcut ? html`data-shortcut="${t.shortcut}" ${hintAttr(t.shortcut)}` : null}
           >${t.icon ? icon(t.icon) : null}${t.label}${t.count !== undefined &&
           t.count > 0
             ? pill(t.count)
-            : null}${t.shortcut ? keyHint(t.shortcut) : null}</a
+            : null}</a
         >`,
     )}
   </nav>`;

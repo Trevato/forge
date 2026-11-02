@@ -267,7 +267,7 @@ describe("the page", () => {
       const doc = window.document as any;
       doc.body.innerHTML = `<div class="talk" data-talk data-user="${user}" data-paged="0" data-running="1"><div>
         <ol class="talk-log" role="log" data-last=""><li class="talk-turn talk-agent" id="t-1"><div class="talk-body"><pre><code>let a = 1;</code></pre></div><p class="talk-meta">Forge · now</p></li></ol><div id="end"></div></div>
-        <form class="talk-compose"><p class="talk-status" role="status"></p><ul data-chips></ul><textarea name="text"></textarea><div class="bar"><span data-hint></span><label data-attach hidden><input type="file" data-pick /></label><button class="btn" type="button" data-stop hidden>Stop</button><button class="btn" type="button" data-steer hidden>Steer</button><button class="btn" type="submit">Send</button></div></form></div>`;
+        <form class="talk-compose"><p class="talk-status" role="status"></p><ul data-chips></ul><textarea name="text"></textarea><div class="bar"><span data-compose-hint></span><label data-attach hidden><input type="file" data-pick /></label><button class="btn" type="button" data-stop hidden>Stop</button><button class="btn" type="button" data-steer hidden>Steer</button><button class="btn" type="submit">Send</button></div></form></div>`;
       const how = { value: "started" };
       const cancel = { status: 200 };
       const sent: string[] = [];
@@ -333,7 +333,7 @@ describe("the page", () => {
       expect(t.key({})).toBe(false);
       await tick();
       expect(t.sent).toEqual(["hello"]);
-      expect(t.doc.querySelector("[data-hint]").textContent).toContain("Enter sends");
+      expect(t.doc.querySelector("[data-compose-hint]").textContent).toContain("Enter sends");
       await t.window.happyDOM.close();
     });
 

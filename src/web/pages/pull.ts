@@ -92,7 +92,7 @@ import {
   card,
   field as formField,
   icon,
-  keyHint,
+  hintAttr,
   labelCss,
   queuedPhrase,
   row,
@@ -763,7 +763,7 @@ function reviewCard(ctx: Ctx, repo: Repo, pull: Pull, action: string): Html {
         <legend class="sr-only">Your verdict</legend>
         ${options.map(
           (option, i) =>
-            html`<label class="check">
+            html`<label class="check" ${hintAttr(option.key)}>
               <input
                 type="radio"
                 name="state"
@@ -773,7 +773,7 @@ function reviewCard(ctx: Ctx, repo: Repo, pull: Pull, action: string): Html {
                 ${i === options.length - 1 ? raw("checked") : null}
               />
               <span
-                >${option.label} ${keyHint(option.key)} <span class="hint">${option.hint}</span></span
+                >${option.label} <span class="hint">${option.hint}</span></span
               >
             </label>`,
         )}

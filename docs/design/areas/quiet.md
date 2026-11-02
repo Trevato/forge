@@ -12,3 +12,7 @@ markup and style, never in a paragraph's words. What already breaks one on main 
   repeats its own label: keep the label and hide the icon, or keep the icon and its aria-label.
 - `inline-colour` — a colour name in a `style=""` attribute. Colour is a token (`var(--…)`); hex and `rgb()` literals
   anywhere in `src/web` are already refused by the colour count.
+- `keyhint` — a `keyHint(` call or `<kbd class="keyhint">` that is not inside a menu item (#8930). A shortcut never
+  takes layout space beside a button, tab or the top bar: the element carries `hintAttr(key)` (`data-hint`), which shows
+  as a tooltip on hover or focus and as an overlay while Option is held, and never on touch. Only a menu or palette row,
+  which has a column for it, draws the `<kbd>`.

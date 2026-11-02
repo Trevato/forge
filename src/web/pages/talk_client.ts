@@ -72,7 +72,7 @@ if (root) {
   const paged = root.dataset.paged === "1";
   const { c: cid, here } = root.dataset;
   const say = (words) => { status.textContent = words; };
-  const hint = root.querySelector("[data-hint]");
+  const hint = root.querySelector("[data-compose-hint]");
   if (hint) hint.textContent = "Enter sends, Shift+Enter adds a line";
   const jump = Object.assign(document.createElement("button"), { type: "button", className: "btn talk-jump", textContent: "Latest ↓", hidden: true });
   jump.setAttribute("aria-label", "Jump to the latest message");

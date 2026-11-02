@@ -14,4 +14,4 @@ The palette's tell row (`data-tell`, last in the list) sends the typed sentence 
 
 ## Keys beside their actions
 
-`.keyhint` is the `<kbd>` of an action's shortcut (`keyHint()` in `ui.ts`); `btn`, `tabs`, menu links, the top bar and the review verdicts render it for every `data-shortcut`. It is hidden on phone widths and on touch-only screens (`pointer: coarse`), where there is no keyboard.
+An action's shortcut takes no room at rest (#8930, changing the "beside the action" rule of #8709). `btn`, `tabs`, the top bar, the feed's Dismiss and the review verdicts carry `data-hint` (`hintAttr()` in `ui.ts`); a `::before` draws it as a tooltip on hover or focus, and over every action while Option is held or after `?` (`html[data-hints]`, set by the shell script; Escape or a second `?` clears it). It is an overlay: nothing moves, and on touch-only screens it is not drawn. `.keyhint`, the inline `<kbd>`, stays only in menu items, where a column holds it; design-lint's `keyhint` rule refuses it elsewhere. A second `?` opens the help, which lists every key.
