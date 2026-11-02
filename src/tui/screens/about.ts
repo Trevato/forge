@@ -221,6 +221,10 @@ export function aboutScreen(
               binding(["f"], checking() ? "stop following upstream" : "follow upstream"),
             ]
           : []),
+        // Who can read it is a person's, an admin's call (#8008).
+        ...(mayPerson()
+          ? [binding(["V"], repo?.visibility === "public" ? "make private" : "make public")]
+          : []),
         ...(mayDetach() && detachJob(repo!.id)?.phase !== "repacking"
           ? [binding(["x"], "detach from parent")]
           : []),
@@ -263,7 +267,8 @@ export function aboutScreen(
       });
       const lead = inner.x + 1;
       const edge = inner.x + inner.w;
-      const visibility = facts?.visibility ?? repo?.visibility ?? "public";
+      // The row first: `V` changes it under facts read before the card opened.
+      const visibility = repo?.visibility ?? facts?.visibility ?? "public";
       let x = badge(s, inner.x, inner.y, c, {
         text: visibility,
         variant: visibility === "public" ? "success" : "secondary",
@@ -419,6 +424,45 @@ export function aboutScreen(
             }),
           );
         });
+        return true;
+      }
+      if (e.key === "V" && repo !== undefined && mayPerson()) {
+        const at = repo;
+        const visibility = at.visibility === "public" ? "private" : "public";
+        const name = `${at.ownerName}/${at.name}`;
+        ctx.push(
+          confirmScreen(ctx, screen, {
+            title: visibility === "public" ? "Make public" : "Make private",
+            body: wrap(
+              visibility === "public"
+                ? `Make ${name} public? Anyone with the link can read its code, issues and pulls, signed in or not.`
+                : `Make ${name} private? Only its members and the crew can read it from now on; forks and clones already made keep what they have.`,
+              52,
+            ),
+            actions: [
+              { label: visibility === "public" ? "Make public" : "Make private" },
+              { label: "Cancel" },
+            ],
+            selected: 1,
+            onChoose: (i) => {
+              if (i !== 0) return;
+              void updateRepoSettings(f.app, f.user, at, { visibility }).then((done) => {
+                if (done.ok) {
+                  repo = getRepoById(f.db, done.value.id) ?? done.value;
+                  rows = factRows();
+                  ctx.toast(`now ${visibility}`, "success");
+                } else
+                  ctx.toast(
+                    at.sealedFor !== null
+                      ? "a sealed report stays private until it merges"
+                      : "that could not be changed",
+                    "danger",
+                  );
+                ctx.invalidate();
+              });
+            },
+          }),
+        );
         return true;
       }
       if (e.key === "y" && cloneUrl !== "") {
