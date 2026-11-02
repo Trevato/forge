@@ -849,6 +849,9 @@ interface MergeReading {
   readonly conflicts: string[];
 }
 
+/** The merge check a reading runs: git's merge-tree, or a test's stand-in. */
+type MergeCheck = typeof mergeable;
+
 /** Readings by `head:base` oid: a merge-tree over two commits never changes. */
 const readings = new Map<string, MergeReading>();
 const READINGS_MAX = 500;
@@ -857,6 +860,7 @@ async function mergeReading(
   dir: string,
   baseOid: string,
   headOid: string,
+  check: MergeCheck = mergeable,
 ): Promise<MergeReading> {
   const key = `${headOid}:${baseOid}`;
   const known = readings.get(key);
@@ -865,16 +869,16 @@ async function mergeReading(
   let reading: MergeReading;
   if (ahead === 0) reading = { ahead, mergeable: false, conflicts: [] };
   else {
-    const check = await mergeable(dir, baseOid, headOid);
-    reading = check.ok
+    const merged = await check(dir, baseOid, headOid);
+    reading = merged.ok
       ? { ahead, mergeable: true, conflicts: [] }
       : {
           ahead,
           mergeable: false,
-          conflicts: check.error.kind === "conflict" ? check.error.files : [],
+          conflicts: merged.error.kind === "conflict" ? merged.error.files : [],
         };
     // A git failure is not a verdict about the commits: do not remember it.
-    if (!check.ok && check.error.kind !== "conflict") return reading;
+    if (!merged.ok && merged.error.kind !== "conflict") return reading;
   }
   if (readings.size >= READINGS_MAX)
     readings.delete(readings.keys().next().value!);
@@ -896,25 +900,100 @@ export async function pullMergeState(
   return { mergeable: clean, conflicts };
 }
 
-/** How many merge readings a list runs at once: a page is never a fork bomb. */
+/** How many merge readings run at once, across every list: never a fork bomb. */
 const READ_AT_ONCE = 4;
+
+/**
+ * How long a list waits for readings it does not have (#8156). Every landing
+ * moves the base and so invalidates every open pull's (head, base) pair; with
+ * 47 pulls, four readings at a time, a list waited 71 s. Past this budget
+ * the list answers what it knows and the readings finish in the background.
+ */
+export const MERGE_BUDGET_MS = 300;
+
+/** Readings in flight by `dir:head:base`: one per pair, however many lists ask. */
+const inflight = new Map<string, Promise<MergeReading>>();
+const waiting: (() => Promise<void>)[] = [];
+let running = 0;
+
+function pump(): void {
+  while (running < READ_AT_ONCE && waiting.length > 0) {
+    const job = waiting.shift()!;
+    running++;
+    void job().finally(() => {
+      running--;
+      pump();
+    });
+  }
+}
+
+/** A reading of the pair, queued behind at most `READ_AT_ONCE` others. */
+function readQueued(
+  dir: string,
+  baseOid: string,
+  headOid: string,
+  check: MergeCheck,
+): Promise<MergeReading> {
+  const key = `${dir}:${headOid}:${baseOid}`;
+  const known = inflight.get(key);
+  if (known !== undefined) return known;
+  const reading = new Promise<MergeReading>((resolve, reject) => {
+    waiting.push(() =>
+      mergeReading(dir, baseOid, headOid, check).then(resolve, reject),
+    );
+  }).finally(() => inflight.delete(key));
+  inflight.set(key, reading);
+  pump();
+  return reading;
+}
+
+/** Resolves when no reading is queued or running: for tests and shutdown. */
+export async function mergeReadingsSettled(): Promise<void> {
+  while (inflight.size > 0)
+    await Promise.allSettled([...inflight.values()]);
+}
+
+/**
+ * The last reading a list gave for a pull, by `dir:number`, and the head it
+ * was for. Kept so a pull whose base moved answers what it said a moment ago
+ * rather than nothing while its fresh reading runs.
+ */
+const lastByPull = new Map<string, { headOid: string; reading: MergeReading }>();
+
+function remember(key: string, headOid: string, reading: MergeReading): void {
+  lastByPull.delete(key);
+  if (lastByPull.size >= READINGS_MAX)
+    lastByPull.delete(lastByPull.keys().next().value!);
+  lastByPull.set(key, { headOid, reading });
+}
 
 /**
  * `pullMergeState` for a page of pulls: tips read from the ref files (no git
  * process), each answer remembered by (base tip, head tip) in `mergeReading`
- * so git runs only for a pair that moved, and at most `READ_AT_ONCE`
- * readings in flight. Same answers, same order as the input.
+ * so git runs only for a pair that moved, at most `READ_AT_ONCE` readings in
+ * flight, and at most one per pair.
+ *
+ * A list waits at most `budgetMs` for readings it has not got. A pair still
+ * reading after that answers the pull's last reading when its head has not
+ * moved — only the base moved, and what this head did against the base one
+ * landing ago is the best guess there is — and null when the head moved or
+ * the pull was never read: no reading of these commits exists, and a guess
+ * about new commits would be invented. A stale `mergeable: true` misleads
+ * nobody into a bad land: `mergePull` reads the pair afresh before it merges.
+ * The reading carries on in the background, so the next list has it.
  */
 export async function pullMergeStates(
   items: readonly { dir: string; pull: Pull }[],
+  opts: { budgetMs?: number; check?: MergeCheck } = {},
 ): Promise<({ mergeable: boolean; conflicts: string[] } | null)[]> {
+  const budgetMs = opts.budgetMs ?? MERGE_BUDGET_MS;
+  const check = opts.check ?? mergeable;
   const out: ({ mergeable: boolean; conflicts: string[] } | null)[] =
     new Array(items.length).fill(null);
-  let next = 0;
-  const worker = async (): Promise<void> => {
-    for (let i = next++; i < items.length; i = next++) {
-      const { dir, pull } = items[i]!;
-      if (pull.state !== "open" || pull.mergedAt !== null) continue;
+  const pending: Promise<void>[] = [];
+  await Promise.all(
+    items.map(async ({ dir, pull }, i) => {
+      if (pull.state !== "open" || pull.mergedAt !== null) return;
       const baseRef = `refs/heads/${pull.baseBranch}`;
       const headRef = pull.crossRepo
         ? `refs/pull/${pull.number}/head`
@@ -922,14 +1001,37 @@ export async function pullMergeStates(
       const live = await readTips(dir, [baseRef, headRef]);
       const baseOid = live.get(baseRef) ?? pull.baseOid;
       const headOid = live.get(headRef) ?? pull.headOid;
-      const r = await mergeReading(dir, baseOid, headOid);
-      out[i] = { mergeable: r.mergeable, conflicts: r.conflicts };
-    }
-  };
-  await Promise.all(
-    Array.from({ length: Math.min(READ_AT_ONCE, items.length) }, worker),
+      const pullKey = `${dir}:${pull.number}`;
+      // A pair already read answers now, never queued behind slow ones.
+      const known = readings.get(`${headOid}:${baseOid}`);
+      if (known !== undefined) {
+        remember(pullKey, headOid, known);
+        out[i] = { mergeable: known.mergeable, conflicts: [...known.conflicts] };
+        return;
+      }
+      const last = lastByPull.get(pullKey);
+      if (last !== undefined && last.headOid === headOid)
+        out[i] = { mergeable: last.reading.mergeable, conflicts: [...last.reading.conflicts] };
+      pending.push(
+        readQueued(dir, baseOid, headOid, check).then((r) => {
+          remember(pullKey, headOid, r);
+          out[i] = { mergeable: r.mergeable, conflicts: [...r.conflicts] };
+        }),
+      );
+    }),
   );
-  return out;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  // An infinite budget waits for every reading (setTimeout would fire at once).
+  const budget = Number.isFinite(budgetMs)
+    ? new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, budgetMs);
+      })
+    : new Promise<void>(() => {});
+  // A failed reading is answered by what the pull already holds.
+  await Promise.race([Promise.allSettled(pending), budget]);
+  clearTimeout(timer);
+  // Copies: a reading that lands after the answer must not change it.
+  return out.map((m) => (m === null ? null : { ...m, conflicts: [...m.conflicts] }));
 }
 
 /**

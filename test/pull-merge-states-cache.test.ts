@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readTips } from "../src/git/tips.ts";
-import { pullMergeStates, type Pull } from "../src/core/pulls.ts";
+import { mergeReadingsSettled, pullMergeStates, type Pull } from "../src/core/pulls.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 
 const env = gitClientEnv();
@@ -58,7 +58,7 @@ test("a second read of 130 pulls does no git work and spawns nothing; a moved he
   const items = Array.from({ length: N }, (_, i) => ({ dir, pull: pullOf(i) }));
   const spawn = spyOn(Bun, "spawn");
   try {
-    const first = await pullMergeStates(items);
+    const first = await pullMergeStates(items, { budgetMs: Infinity });
     expect(first.every((m) => m?.mergeable === true)).toBe(true);
     expect(spawn.mock.calls.length).toBeGreaterThan(0);
 
@@ -78,6 +78,7 @@ test("a second read of 130 pulls does no git work and spawns nothing; a moved he
     await git(work, "push", "-q", dir, "b7:b7");
     spawn.mockClear();
     await pullMergeStates(items);
+    await mergeReadingsSettled();
     const verbs = spawn.mock.calls.map((c) => (c[0] as string[]).filter((a) => !a.startsWith("-"))[1]);
     expect(verbs.filter((v) => v === "rev-list").length).toBe(1);
     expect(verbs.filter((v) => v === "merge-tree").length).toBe(1);
@@ -97,6 +98,7 @@ test("a base that moves recomputes every pull", async () => {
   const spawn = spyOn(Bun, "spawn");
   try {
     await pullMergeStates(items);
+    await mergeReadingsSettled();
     const revLists = spawn.mock.calls.filter((c) => (c[0] as string[]).includes("rev-list"));
     expect(revLists.length).toBe(N);
   } finally {
