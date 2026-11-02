@@ -65,8 +65,8 @@ describe("private destinations in the terminal", () => {
       await settlePalette(app);
       await press("enter");
       await press("I");
-      // The About card's footer is drawn once its repository has loaded.
-      await settleUntil(app, "About");
+      // "About" is in the breadcrumb at once; the footer's `v  events` key exists only once the repository has loaded.
+      await settleUntil(app, "v  events");
     };
     return { text: () => app.screen.toText(), press, toAbout, stop: () => app.stop() };
   }
