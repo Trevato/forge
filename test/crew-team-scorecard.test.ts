@@ -67,8 +67,8 @@ describe("a scorecard row per team", () => {
         trusted: true,
         username: name,
         email: `${name}@forge.local`,
-        password: "a-good-passphrase",
-        adminIfFirst: name === "boss",
+        // Agents hold no password (and cost no hash); only the admin has one.
+        ...(name === "boss" ? { password: "a-good-passphrase", adminIfFirst: true } : { agent: true }),
       });
       if (!made.ok) throw new Error(made.error);
       ids[name] = made.value.id;

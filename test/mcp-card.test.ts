@@ -56,14 +56,20 @@ describe("the MCP server card", () => {
     expect(prm.status).toBe(200);
     expect(((await prm.json()) as any).resource).toBe(card.endpoint);
 
+    // The OpenAPI description is named and live.
+    expect(card.openapi).toBe(`${base}/contract/openapi.json`);
+    const spec = await fetch(card.openapi);
+    expect(spec.status).toBe(200);
+    expect(spec.headers.get("content-type")).toContain("application/json");
+
     // The documentation link is live.
     expect((await fetch(card.documentation)).status).toBe(200);
   });
 
   test("carries the commit it runs, or null when nothing says", () => {
     const sha = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
-    expect(mcpCard("https://x", running({ FORGE_APP_COMMIT: sha })).commit).toBe(sha);
-    expect(mcpCard("https://x", running({})).commit).toBeNull();
+    expect(mcpCard("https://x", true, running({ FORGE_APP_COMMIT: sha })).commit).toBe(sha);
+    expect(mcpCard("https://x", true, running({})).commit).toBeNull();
   });
 
   test("the live card's commit is what running() says", async () => {

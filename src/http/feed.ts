@@ -13,6 +13,7 @@ import {
 import { parseFrom, TELL_TEXT_MAX } from "../actions/tell_from.ts";
 import { DIRECTION_NOTE } from "../crew/direct.ts";
 import { readInteraction } from "../feed/interact.ts";
+import { toggleLike } from "../feed/likes.ts";
 import {
   ITEM_ID,
   INTERACTION_KINDS,
@@ -54,6 +55,9 @@ import {
   str,
   unauthorized,
 } from "./respond.ts";
+
+/** What a card may report: the interaction kinds, and a like (a toggle, not a row of its own). */
+const DOOR_KINDS = [...INTERACTION_KINDS, "liked" as const];
 
 export function feedRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/feed", (ctx) => {
@@ -232,10 +236,12 @@ export function feedRoutes(router: Router<Handler>): void {
     const viewer = ctx.auth.user!;
     const db = ctx.app.db;
     const input = await body(ctx.request);
-    const act = readInteraction(db, viewer, input, INTERACTION_KINDS);
+    const act = readInteraction(db, viewer, input, DOOR_KINDS);
     if (!act.ok)
       return apiError(act.error.code, act.error.code === "not_found" ? 404 : 422, act.error.message);
     const { itemId, kind, target } = act.value;
+    // A like is a toggle: the second press takes it back (`feed/likes.ts`).
+    if (kind === "liked") return json(toggleLike(db, viewer.id, itemId, target.repoId), 201);
     const made = recordInteraction(db, {
       viewerId: viewer.id,
       itemId,

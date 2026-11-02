@@ -50,6 +50,7 @@ import { binding } from "../app/keys.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { style } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
+import { type Pace } from "../../core/pace.ts";
 import type { Session } from "../session.ts";
 import { issueScreen } from "./issue.ts";
 import { local } from "./where.ts";
@@ -121,6 +122,22 @@ export function replanLines(
   return { lines, start, shown };
 }
 
+const BLOCKS = "▁▂▃▄▅▆▇█";
+
+/** Issues closed per day as block characters, scaled to the largest day; all quiet is the lowest block. */
+export function paceSpark(days: readonly number[]): string {
+  const top = Math.max(1, ...days);
+  return days.map((n) => BLOCKS[Math.min(7, Math.floor((Math.max(0, n) / top) * 8))]).join("");
+}
+
+/** The pace line for `width` cells: sparkline, then the sentence; the sparkline goes first when narrow. */
+export function paceText(pace: Pace | undefined, width: number): string {
+  if (pace === undefined || pace.line === "" || width <= 0) return "";
+  const spark = paceSpark(pace.closedPerDay);
+  const both = `${spark} ${pace.line}`;
+  return both.length <= width ? both : truncate(pace.line, width);
+}
+
 const line = (n: number, title: string): string => `#${n} ${title}`;
 
 /** What a preview says before anything is written, as dialog lines. */
@@ -162,7 +179,7 @@ export function limbsScreen(
   /** What each limb here cost and landed, by issue number; empty unless owner facts. */
   let spends = new Map<number, NonNullable<Milestone["spend"]>>();
   /** Each limb's pace line, by issue number: on pace for a date, no movement, or done. */
-  let paces = new Map<number, string>();
+  let paces = new Map<number, Pace>();
   /** The receipt of the last move made here, which `u` reverses once. */
   let last: string | undefined;
   /** The limbs with the planner, by issue id (#761). */
@@ -206,7 +223,7 @@ export function limbsScreen(
       if (f.user?.kind === "user" && isWatching(f.db, f.user.id, m.issue.id))
         watching.add(m.issue.id);
       if (m.spend !== undefined) spends.set(l.issue.number, m.spend);
-      if (m.pace.line !== "") paces.set(l.issue.number, m.pace.line);
+      if (m.pace.line !== "") paces.set(l.issue.number, m.pace);
     }
     loaded = true;
     if (follow !== undefined) {
@@ -361,8 +378,10 @@ export function limbsScreen(
     ctx.push(limbsScreen(f, ctx, repo, String(number), limb.name));
   };
 
-  const rows = (): ListRow[] =>
+  /** One row per limb; a limb with a pace says it in a note under the row, `width` cells wide. */
+  const rows = (width: number): ListRow[] =>
     limbs.map((l, n) => ({
+      note: paceText(paces.get(l.issue.number), width),
       title: `${n + 1}. ${line(l.issue.number, l.name)}`,
       secondary: withPlanner.has(l.issue.id) ? "with the planner" : l.deferred ? "deferred" : "",
       meta: `${watching.has(l.issue.id) ? "watching · " : ""}${l.weight.done}/${l.weight.total} done`,
@@ -391,9 +410,8 @@ export function limbsScreen(
     render(area, s) {
       const c = ctx.theme.c;
       const spend = current() === undefined ? undefined : spends.get(current()!.issue.number);
-      const pace = current() === undefined ? undefined : paces.get(current()!.issue.number);
       const answered = current() === undefined ? undefined : replanned.get(current()!.issue.number);
-      const fixed = (pace === undefined ? 0 : 1) + (spend ? 2 : 0);
+      const fixed = spend ? 2 : 0;
       // The foot never takes more than half of what the header leaves.
       const block =
         answered === undefined
@@ -412,9 +430,8 @@ export function limbsScreen(
           ? "Nothing here waits for anything yet, so there is no milestone to show."
           : `${plural(limbs.length, "limb")} in the order the crew takes ready work${may() ? "" : " · you can read this order, not change it"}`;
       s.text(head!.x, head!.y, truncate(note, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
-      drawList(s, list!, c, state, rows());
+      drawList(s, list!, c, state, rows(list!.w - 5));
       const lines = [
-        ...(pace === undefined ? [] : [pace]),
         ...(spend === undefined ? [] : spendLines(spend)),
         ...block.lines,
       ];

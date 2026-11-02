@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { openPull } from "../src/actions/pulls.ts";
+import { mergeReadingsSettled } from "../src/core/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createSession } from "../src/core/sessions.ts";
 import type { Repo } from "../src/core/repos.ts";
@@ -112,6 +113,8 @@ test("130 open pulls read their mergeability from the cache: the merge phase is 
   const url = `${servers.url}/api/v1/repos/alice/r/pulls?limit=200`;
   const res = await fetch(url, { headers: { cookie } });
   expect((JSON.parse(await res.text()) as { items: unknown[] }).items.length).toBeGreaterThanOrEqual(130);
+  // Past the list's budget the first readings finish in the background (#8156).
+  await mergeReadingsSettled();
   const spawn = spyOn(Bun, "spawn");
   try {
     // Counted, not timed: one read per page, not one per pull (130 pulls, no N+1).

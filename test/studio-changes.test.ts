@@ -1129,7 +1129,7 @@ describe("the studio, continued", () => {
 
     // Erin's front door: the empty state and New app, never alice's public
     // app — #69's case, finally reachable.
-    const erinHome = await (await erinGet("/")).text();
+    const erinHome = await (await erinGet("/feed")).text();
     expect(erinHome).toContain("No apps yet");
     expect(erinHome).toContain('href="/apps/new"');
     expect(erinHome).toContain('href="/erin"');

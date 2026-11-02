@@ -2124,6 +2124,10 @@ export const liveRegionsJs = /* js */ `
   var timer = null;
   var last = 0;
   var MIN_GAP = 1500;
+  // A region with no address of its own is the whole page: one render of
+  // everything. That is never fetched per event, only once per PAGE_GAP.
+  var PAGE_GAP = 30000;
+  var lastPage = 0;
   // What each address last answered with, so the next ask is conditional:
   // a region that did not change comes back 304 and paints nothing.
   var tags = {};
@@ -2216,12 +2220,16 @@ export const liveRegionsJs = /* js */ `
     if (ids.length === 0) return;
     last = Date.now();
     var groups = {};
+    var held = false;
     ids.forEach(function (id) {
       var region = document.getElementById(id);
       if (!region) return;
       var src = region.getAttribute('data-live-src') || location.href;
+      if (src === location.href && last - lastPage < PAGE_GAP) { due[id] = true; held = true; return; }
       (groups[src] = groups[src] || []).push(id);
     });
+    if (groups[location.href]) lastPage = last;
+    if (held && timer === null) timer = setTimeout(refresh, lastPage + PAGE_GAP - Date.now());
     Object.keys(groups).forEach(function (src) { pull(src, groups[src]); });
   }
   var source = null;

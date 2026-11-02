@@ -29,6 +29,7 @@ export function openSearchXml(app: App): string {
   <Description>Search ${name}</Description>
   <InputEncoding>UTF-8</InputEncoding>
   <Url type="text/html" method="get" template="${escapeHtml(base)}/search?q={searchTerms}"/>
+  <Url type="application/json" method="get" template="${escapeHtml(base)}/api/v1/search?q={searchTerms}"/>
   <Url type="${OPENSEARCH_TYPE}" rel="self" template="${escapeHtml(base)}${OPENSEARCH_PATH}"/>
 </OpenSearchDescription>
 `;

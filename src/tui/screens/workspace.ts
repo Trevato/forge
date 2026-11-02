@@ -130,9 +130,12 @@ import { tellCommands } from "./tell.ts";
 import { workingCommands } from "./working.ts";
 import { forgeItCommands } from "./forge_it.ts";
 import { makeItYoursScreen, yoursCommands } from "./yours.ts";
+import { deleteRepoCommands } from "./deleterepo.ts";
+import { grantsCommands } from "./grants.ts";
 import { visionCommands } from "./vision.ts";
 import { labelsCommands } from "./labels.ts";
 import { appEnvCommands } from "./appenv.ts";
+import { autonomyCommands } from "./autonomy.ts";
 import { externalEditor, editorHint, hasExternalEditor } from "./external.ts";
 import { finderScreen } from "./finder.ts";
 import { issuesScreen } from "./issues.ts";
@@ -1433,6 +1436,7 @@ export function workspaceScreen(
   };
 
   const screen: Screen = {
+    ...(repo === undefined ? {} : { repoId: repo.id }),
     commands: () => [
       ...workingCommands(f, ctx, repo),
       ...tellCommands(f, ctx, () => screen, repo),
@@ -1440,11 +1444,14 @@ export function workspaceScreen(
       ...reportsCommands(f, ctx, repo),
       ...noteCommands(f, ctx, () => screen, repo),
       ...yoursCommands(f, ctx, repo),
+      ...deleteRepoCommands(f, ctx, repo),
+      ...grantsCommands(f, ctx, repo),
       ...forgeItCommands(f, ctx, repo, () => screen),
       ...hooksCommands(f, ctx, repo),
       ...visionCommands(f, ctx, repo),
       ...labelsCommands(f, ctx, repo),
       ...appEnvCommands(f, ctx, repo),
+      ...autonomyCommands(f, ctx, repo),
     ],
     get title() {
       return sourceName(src);

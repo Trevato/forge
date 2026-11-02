@@ -26,7 +26,7 @@ const post = (path: string, fields: Record<string, string>, who = "alice", heade
     headers: { authorization: `Bearer ${tok[who]}`, ...headers },
   });
 const home = async (who: string) =>
-  (await fetch(servers.url + "/", { headers: { authorization: `Bearer ${tok[who]}` } })).text();
+  (await fetch(servers.url + "/feed", { headers: { authorization: `Bearer ${tok[who]}` } })).text();
 const titles = (h: string) => [...h.matchAll(/<h2>(Pin [ABC])<\/h2>/g)].map((m) => m[1]);
 
 beforeAll(async () => {

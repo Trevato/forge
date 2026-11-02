@@ -16,7 +16,7 @@ import { actingVia } from "../core/acting_via.ts";
 import { appendTurn, MAX_TURN_CHARS, openConversation } from "../core/conversations.ts";
 import { answerHeld, HELD_TTL_MS, waitingFor, type YesRefusal } from "../core/fence.ts";
 import type { User } from "../core/users.ts";
-import { confirmSentence, keptOf, undoOf } from "../crew/conversation_confirm.ts";
+import { argumentsShown, confirmSentence, keptOf, undoOf } from "../crew/conversation_confirm.ts";
 import type { Ctx } from "../http/context.ts";
 import { TOOLS } from "../http/mcp/tools.ts";
 
@@ -25,6 +25,8 @@ export interface Waiting {
   readonly id: string;
   readonly tool: string;
   readonly does: string;
+  /** Every argument, whole: the sentence is a summary, this is what runs. */
+  readonly arguments: string;
   readonly createdAt: string;
   readonly expiresAt: string;
 }
@@ -35,6 +37,7 @@ export function waitingConfirms(ctx: Pick<Ctx, "app">, user: User, now: number =
     id: h.id,
     tool: h.tool,
     does: confirmSentence(h.tool, h.args),
+    arguments: argumentsShown(h.tool, h.args),
     createdAt: h.createdAt,
     expiresAt: new Date(Date.parse(h.createdAt) + HELD_TTL_MS).toISOString(),
   }));
@@ -88,4 +91,19 @@ export async function sayYes(ctx: Ctx, user: User, confirmId: string): Promise<Y
   const conversation = openConversation(ctx.app.db, user.id);
   appendTurn(ctx.app.db, user.id, conversation.id, { role: "tool", text: JSON.stringify(turn) });
   return { ok: true, done: ran.ok, turn, ...(ran.ok ? { result: ran.value } : {}) };
+}
+
+/**
+ * The person's no: the confirm is claimed so it can never be said yes to
+ * later, nothing is run, and a `tool` turn says it was cancelled. Same door
+ * rules as a yes — the person's own session, decided by the caller.
+ */
+export function sayNo(ctx: Pick<Ctx, "app">, user: User, confirmId: string): { ok: true; turn: Record<string, unknown> } | { ok: false; error: YesRefusal } {
+  if (!CONFIRM_ID.test(confirmId)) return { ok: false, error: "not_found" };
+  const answered = answerHeld(ctx.app.db, confirmId, user.id);
+  if (!answered.ok) return answered;
+  const turn = { confirm: answered.value.id, tool: answered.value.tool, done: false, cancelled: true };
+  const conversation = openConversation(ctx.app.db, user.id);
+  appendTurn(ctx.app.db, user.id, conversation.id, { role: "tool", text: JSON.stringify(turn) });
+  return { ok: true, turn };
 }

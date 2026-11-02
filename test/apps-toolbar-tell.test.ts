@@ -95,7 +95,7 @@ describe("tell the crew from the pill", () => {
     const make = (tag: string) => { const e = el(); e.tag = tag; if (tag === "a") links.push(e); return e; };
     const run = async (dataset: Record<string, string>, tell: unknown, page: string) => {
       links.length = 0;
-      const me = { src: `${forge}/assets/toolbar-x.js`, dataset };
+      const me = { src: "/__forge/toolbar-x.js", dataset: { forge, ...dataset } };
       const doc = {
         currentScript: me,
         createElement: make,

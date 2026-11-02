@@ -1,6 +1,7 @@
 /**
  * Every GET page names its Server-Timing phases (#3387). The routes come from
- * `src/http/server.ts` itself, so a new page is swept the day it is added.
+ * `src/http/server.ts` and `settings_routes.ts` themselves, so a new page is
+ * swept the day it is added.
  * `UNNAMED` is the debt: each page that still answers with `app` alone, and
  * the issue that will fix it. The list may not outlive its pages: a page that
  * starts naming `session` and `render` must come off it.
@@ -45,6 +46,7 @@ const REDIRECTS = new Set([
   "/big",
   "/flow",
   "/login",
+  "/openapi.json",
   "/settings/origins/callback",
   "/settings/resilience",
   "/sign-in",
@@ -52,7 +54,9 @@ const REDIRECTS = new Set([
 
 /** Every GET pattern the router source registers, one-line or wrapped. */
 function registeredGets(): Set<string> {
-  const source = readFileSync(join(import.meta.dir, "../src/http/server.ts"), "utf8");
+  const source = ["server.ts", "settings_routes.ts"]
+    .map((file) => readFileSync(join(import.meta.dir, "../src/http", file), "utf8"))
+    .join("\n");
   const found = new Set<string>();
   for (const m of source.matchAll(/router\.add\(\s*"GET",\s*"([^"]+)"/g)) found.add(m[1]!);
   return found;

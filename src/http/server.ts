@@ -13,20 +13,15 @@ import { signupOptions, signupPasskey } from "../web/pages/signup-passkey.ts";
 import { toolbarComment, toolbarPage } from "../web/studio/toolbar.ts";
 import { TOOLBAR_NAME, toolbarResponse } from "../apps/toolbar.ts";
 import { unsealReleased } from "../actions/sealed.ts";
-import { parentCallback, parentLinkStart, parentStart } from "./rp.ts";
+import { parentCallback, parentStart } from "./rp.ts";
 import { prerenderComments } from "../web/prerender.ts";
-import { accessPage } from "../web/pages/access.ts";
-import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
 import { systemPage, systemStream } from "../web/pages/system.ts";
-import { teamSet, teamsPage, teamsStream } from "../web/pages/teams.ts";
-import { telemetryPage, telemetrySet } from "../web/pages/telemetry.ts";
 import { contributePage } from "../web/pages/contribute.ts";
-import { flagsPage, flagsSet } from "../web/pages/flags.ts";
-import { usagePage } from "../web/pages/usage.ts";
-import { spendPage } from "../web/pages/spend-tab.ts";
+import { pipelinePage } from "../web/pages/pipeline.ts";
 import { resiliencePage } from "../web/pages/resilience.ts";
 import { limitsPage, limitsSet, quotasSet, signupSet, inviteMint, inviteRevoke } from "../web/pages/admin-limits.ts";
 import { measureSubmit } from "./measure.ts";
+import { settingsRoutes } from "./settings_routes.ts";
 import { boardsPage } from "../web/pages/boards.ts";
 import { boardNew, boardPin, boardPost, pinPost } from "../web/pages/boards-edit.ts";
 import { boardsHoldPost } from "../web/pages/boards-holds.ts";
@@ -38,14 +33,6 @@ import {
   noteCaller,
   sweepStanding,
 } from "./caller.ts";
-import {
-  accountAct,
-  retireAct,
-  retirePage,
-  accountsPage,
-  personSignInsPage,
-  signInAct,
-} from "../web/pages/accounts.ts";
 import { defect } from "../kernel/error.ts";
 import {
   armClose,
@@ -76,6 +63,7 @@ import {
   verifyPasswordThrottled,
 } from "../core/users.ts";
 import { activeEdgeToken, edgeIdentity } from "./edge.ts";
+import { crawlRefused, isCrawler, isDeepPath, noteCrawler, noteDeepStranger, takeCrawl, wasCrawler, wasDeepStranger } from "./crawl.ts";
 import { liveResponse, readyResponse } from "./health.ts";
 import { running } from "../kernel/version.ts";
 import { runGit } from "../git/env.ts";
@@ -110,6 +98,10 @@ import {
   assetResponse,
   highlightAsset,
   beaconAsset,
+  fileResponse,
+  pageScriptNamed,
+  speculationAsset,
+  spriteAsset,
   shellAsset,
   stylesheetAsset,
   stylesheetRedirect,
@@ -129,12 +121,8 @@ import {
   verifyPage,
   themeSubmit,
 } from "../web/pages/site.ts";
-import { confirmsList, confirmYes } from "../web/pages/confirms.ts";
+import { talkConfirm, talkSend, talkStream, talkView } from "../web/pages/talk.ts";
 import {
-  passkeyAdd,
-  passkeyDelete,
-  passkeyOptions,
-  passkeysPage,
   recoverFinish,
   recoverOptions,
   recoverPage,
@@ -147,49 +135,15 @@ import { confirmPage, searchPage } from "../web/pages/search.ts";
 import { chainPage, checkSubmit, modeSubmit, proposeParentSubmit, severSubmit, takeSubmit } from "../web/pages/chain.ts";
 import { followingSubmit } from "../web/pages/following.ts";
 import { reconnectSubmit } from "../web/pages/frozen.ts";
-import { activityAtom } from "../web/feeds.ts";
+import { activityAtom, changelogAtom } from "../web/feeds.ts";
 import { auditCsv, auditPage, auditProbeSubmit } from "../web/pages/audit.ts";
-import { secretDelete, secretSet, secretsPage } from "../web/pages/secrets.ts";
-import {
-  backupsClear,
-  backupsDestination,
-  backupsDrill,
-  backupsLive,
-  backupsMirror,
-  backupsMirrorClear,
-  backupsMirrorNow,
-  backupsNow,
-  backupsPage,
-  backupsTest,
-  domainsMoved,
-} from "../web/pages/backups.ts";
 import { apiPage, appApiPage } from "../web/pages/api.ts";
-import { changelogPage } from "../web/pages/changelog.ts";
+import { changelogJson, changelogPage } from "../web/pages/changelog.ts";
 import { releaseHoldSubmit, liftSubmit, releasesPage, rollbackSubmit } from "../web/pages/releases.ts";
-import {
-  cloudAdd,
-  cloudAudit,
-  cloudAuditPage,
-  cloudRename,
-  cloudRotate,
-  cloudPage,
-  cloudRemove,
-  cloudVerify,
-  cloudWrite,
-} from "../web/pages/cloud.ts";
-import {
-  subscriptionAdd,
-  subscriptionDelete,
-  subscriptionsPage,
-  subscriptionBudget,
-  subscriptionHeadroom,
-  subscriptionWake,
-} from "../web/pages/subscriptions.ts";
-import { peoplePage, roleAct } from "../web/pages/people.ts";
-import { ceilingAct, grantAct, modelAdd, modelPage } from "../web/pages/model.ts";
 import {
   changePassword,
   iconPng,
+  appleTouchIcon,
   favicon,
   llmsTxt,
   releasesJson,
@@ -229,6 +183,7 @@ import {
 } from "../web/pages/edit.ts";
 import { configPage, configSubmit } from "../web/pages/config.ts";
 import { commitPage, commitsPage } from "../web/pages/commits.ts";
+import { eventsList } from "../web/pages/events.ts";
 import {
   issueCommentSubmit,
   issuePrivateSubmit,
@@ -264,7 +219,6 @@ import {
   composerSubmit,
   tellSubmit,
 } from "../web/studio/actions.ts";
-import { everydayCreate, everydayKeep, everydayOptions, everydaySwitch } from "../web/pages/everyday.ts";
 import { claimFragmentPage, claimOptions, claimSubmit } from "../web/pages/claim.ts";
 import { firstAdminOptions, firstAdminPage, firstAdminSubmit } from "../web/pages/first-admin.ts";
 import { familyPage } from "../web/pages/family.ts";
@@ -288,6 +242,8 @@ import {
 import { keeperAnswer } from "../web/studio/keeper_row.ts";
 import { homeArchive, homeArchived, homeArchiveUndo } from "../web/studio/home_archive.ts";
 import { liveFeedFragment } from "../web/studio/feed.ts";
+import { likeSubmit } from "../web/studio/like.ts";
+import { liveChipsFragment, liveMovingFragment } from "../web/studio/living.ts";
 import { HOME_REGIONS } from "../web/studio/home_last.ts";
 import { serviceWorker } from "../web/sw.ts";
 import { explorePage } from "../web/studio/explore.ts";
@@ -297,6 +253,7 @@ import {
 } from "../web/studio/make_it_yours.ts";
 import {
   frontUpdate,
+  feedPage,
   liveAppsFragment,
   liveClientAppsFragment,
   liveHomeFragment,
@@ -347,15 +304,6 @@ import {
   fleetGraphLive,
   fleetGraphPage,
 } from "../web/pages/fleet-graph.ts";
-import {
-  agentCreate,
-  agentDelete,
-  modelReviewDecline,
-  modelReviewTake,
-  agentPage,
-  agentUpdate,
-  crewPage,
-} from "../web/pages/crew.ts";
 import { fileHoldUpdate } from "../web/pages/file_holds.ts";
 import { newPullPage, newPullSubmit } from "../web/pages/pulls.ts";
 import {
@@ -400,7 +348,7 @@ import {
 } from "../web/pages/settings.ts";
 import { dangerPage, repoDelete } from "../web/pages/danger.ts";
 import { detachSubmit } from "../web/pages/detach.ts";
-import { hooksPage, webhookCreate, webhookDelete } from "../web/pages/hooks.ts";
+import { hooksPage, webhookCreate, webhookDelete, webhookPing, webhookRedeliver } from "../web/pages/hooks.ts";
 import {
   crewAdd,
   crewRemove,
@@ -432,25 +380,6 @@ import {
   teamPage,
 } from "../web/pages/org.ts";
 import {
-  accountPage,
-  notifyUpdate,
-  edgeLink,
-  edgeUnlink,
-  parentUnlink,
-  accountUpdate,
-  keyCreate,
-  keyDelete,
-  keysPage,
-  passwordPage,
-  resendVerifyLink,
-  passwordUpdate,
-  tokenCreate,
-  sessionDelete,
-  tokenDelete,
-  tokensPage,
-} from "../web/pages/account.ts";
-import { completeOAuthCallback } from "../actions/origins.ts";
-import {
   browseBlob,
   browseBranchesPage,
   browseCommitPage,
@@ -468,25 +397,12 @@ import {
   browsePulls,
   browseRaw,
   browseTree,
-  mirrorJobPage,
 } from "../web/pages/browse.ts";
-import {
-  originAppCreate,
-  originAppDelete,
-  originConnectToken,
-  originDisconnect,
-  originOAuthStart,
-  originSyncSubmit,
-  originsPage,
-  originReplaceToken,
-  originTrustedHosts,
-} from "../web/pages/origins.ts";
-import { originFlowPage, originFlowPoll } from "../web/pages/origin-flow.ts";
-import { originMirrorSubmit, originReposPage } from "../web/pages/origin-repos.ts";
 import { pushThrough } from "../origins/push-through.ts";
-import { notFoundPage } from "../web/chrome.ts";
+import { CAME_FROM_ELSEWHERE, forbiddenPage, notFoundPage, SENT_FROM_ELSEWHERE } from "../web/chrome.ts";
 import { targetForShortCode } from "../origins/oauth.ts";
 import { apiRoutes } from "./api.ts";
+import { pageParamRefused } from "./cursor_lists.ts";
 import { inNamespace } from "../core/proposal_token.ts";
 import { proposalTokenMint, proposalTokenRevoke } from "../web/pages/proposal-tokens.ts";
 import { adminGate } from "./admin_gate.ts";
@@ -497,7 +413,7 @@ import { viaGate } from "./via_gate.ts";
 import { checksRecheckRoutes } from "./checks_recheck.ts";
 import { feedRoutes } from "./feed.ts";
 import type { Database } from "bun:sqlite";
-import { mcpRoutes } from "./mcp.ts";
+import { mcpRoutes, REPORT_TOOL } from "./mcp.ts";
 import { TOOLS } from "./mcp/tools.ts";
 import { setMcpTools } from "../web/llms_tools.ts";
 import { openapiRoute } from "../contract/served.ts";
@@ -514,6 +430,8 @@ import {
   takeDbTime,
   type RouteTiming,
 } from "../core/route_timing.ts";
+import { loopWatch, perfRecord } from "../perf/live.ts";
+import { parseServerTiming } from "../perf/record.ts";
 import { methodOf, noteUsage, roleOf, surfaceOf, takeUsage } from "./usage_tag.ts";
 import { bearerChallenge, oauthRoutes } from "./oauth.ts";
 import { flushAccess, recordAccess } from "./access_log.ts";
@@ -712,12 +630,20 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/llms.txt", llmsTxt);
   router.add("GET", "/.well-known/change-password", changePassword);
   router.add("GET", "/robots.txt", robotsTxt);
+  // The conventional path an agent guesses, answered as /api/v1/openapi.json is.
+  router.add(
+    "GET",
+    "/openapi.json",
+    () => new Response(null, { status: 308, headers: { location: "/contract/openapi.json", "cache-control": "public, max-age=86400" } }),
+  );
   router.add("GET", "/releases.json", releasesJson);
   router.add("GET", "/sitemap.xml", sitemapXml);
   router.add("GET", "/manifest.webmanifest", webManifest);
   router.add("GET", "/opensearch.xml", openSearch);
   router.add("GET", "/icons/:spec.png", iconPng);
   router.add("GET", "/favicon.ico", favicon);
+  router.add("GET", "/apple-touch-icon.png", appleTouchIcon);
+  router.add("GET", "/apple-touch-icon-precomposed.png", appleTouchIcon);
   // The highlighter bundle, content-addressed. A stale hash is a 404 rather
   // than a redirect: the page that asked for it names the hash it was built
   // with, so a miss means an old tab, and an old tab should reload.
@@ -727,10 +653,19 @@ export function buildRouter(): Router<Handler> {
     if (ctx.params.name === beaconAsset().name)
       return assetResponse(ctx.request, beaconAsset());
     if (ctx.params.name === TOOLBAR_NAME) return toolbarResponse(ctx.request);
+    const own = pageScriptNamed(ctx.params.name!, ctx.app.config.dataDir);
+    if (own !== undefined) return fileResponse(ctx.request, own);
     const asset = await highlightAsset();
     if (asset === null || ctx.params.name !== asset.name) return notFound();
     return assetResponse(ctx.request, asset);
   });
+  // The icon sprite and the speculation rules: hashed, immutable, one file each.
+  router.add("GET", "/assets/:name.svg", (ctx) =>
+    ctx.params.name === spriteAsset().name ? fileResponse(ctx.request, spriteAsset()) : notFound(),
+  );
+  router.add("GET", "/assets/:name.json", (ctx) =>
+    ctx.params.name === speculationAsset().name ? fileResponse(ctx.request, speculationAsset()) : notFound(),
+  );
   // The service worker: root scope needs a root path, and it must never be
   // cached by the browser's HTTP cache or an update would wait a day.
   router.add("GET", "/sw.js", serviceWorker);
@@ -810,6 +745,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/audit", auditPage);
   router.add("GET", "/releases", releasesPage);
   router.add("GET", "/changelog", changelogPage);
+  router.add("GET", "/changelog.atom", changelogAtom);
   router.add("GET", "/:owner/:name/api", appApiPage);
   router.add("POST", "/releases/:sha/rollback", rollbackSubmit);
   router.add("POST", "/releases/hold", releaseHoldSubmit);
@@ -836,8 +772,11 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/system", systemPage);
   router.add("GET", "/system/stream", systemStream);
   router.add("GET", "/contribute", contributePage);
-  router.add("GET", "/settings/telemetry", telemetryPage);
-  router.add("POST", "/settings/telemetry", telemetrySet);
+  // The one path a change follows, in four words (#7703); literal, above /:owner.
+  router.add("GET", "/pipeline", pipelinePage);
+  // Every /settings… page, in its own module (settings_routes.ts); literal, above /:owner.
+  // The usage page is handed the pattern list, so settings_routes.ts never imports server.ts.
+  settingsRoutes(router, knownPatterns);
   // Each THREATS.md protection against the last gate; literal, above /:owner.
   router.add("GET", "/resilience", resiliencePage);
   // A selection's spend and runs over time; literal, above /:owner.
@@ -851,6 +790,9 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/live/on-you", liveOnYouFragment);
   router.add("GET", "/live/client-apps", liveClientAppsFragment);
   router.add("GET", "/live/feed", liveFeedFragment);
+  router.add("GET", "/live/moving", liveMovingFragment);
+  router.add("GET", "/live/chips", liveChipsFragment);
+  router.add("GET", "/feed", feedPage);
   // The home's late regions, each drawn alone (#7660).
   for (const name of HOME_REGIONS) router.add("GET", `/live/home/${name}`, (ctx) => liveHomeFragment(ctx, name));
   // Whether a hostname is an app's verified domain — what Caddy's
@@ -868,31 +810,10 @@ export function buildRouter(): Router<Handler> {
     });
   });
   router.add("GET", "/runs/:id", runRedirect);
-  router.add("GET", "/settings", accountPage);
-  router.add("POST", "/settings", accountUpdate);
-  router.add("POST", "/settings/notify", notifyUpdate);
-  router.add("POST", "/settings/edge/link", edgeLink);
-  router.add("POST", "/settings/edge/unlink", edgeUnlink);
-  router.add("POST", "/settings/parent/link", parentLinkStart);
-  router.add("POST", "/settings/parent/unlink", parentUnlink);
-  router.add("POST", "/settings/email/verify", resendVerifyLink);
-  router.add("GET", "/settings/password", passwordPage);
-  router.add("POST", "/settings/password", passwordUpdate);
-  // The everyday account: an admin's daily account, apart from admin (#596).
-  router.add("POST", "/settings/everyday", everydayCreate);
-  router.add("POST", "/settings/everyday/options", everydayOptions);
-  router.add("POST", "/settings/everyday/switch", everydaySwitch);
-  router.add("POST", "/settings/everyday/keep", everydayKeep);
-  router.add("GET", "/settings/tokens", tokensPage);
-  router.add("POST", "/settings/tokens", tokenCreate);
-  router.add("POST", "/settings/tokens/:id/delete", tokenDelete);
-  router.add("POST", "/settings/sessions/:id/delete", sessionDelete);
-  router.add("GET", "/settings/confirms", confirmsList);
-  router.add("POST", "/settings/confirms/:id", confirmYes);
-  router.add("GET", "/settings/passkeys", passkeysPage);
-  router.add("POST", "/settings/passkeys/options", passkeyOptions);
-  router.add("POST", "/settings/passkeys", passkeyAdd);
-  router.add("POST", "/settings/passkeys/:id/delete", passkeyDelete);
+  router.add("GET", "/talk", talkView);
+  router.add("POST", "/talk", talkSend);
+  router.add("GET", "/talk/stream", talkStream);
+  router.add("POST", "/talk/confirm/:id", talkConfirm);
   router.add("POST", "/signin/passkey/options", signinOptions);
   router.add("POST", "/signin/passkey", signinPasskey);
   router.add("GET", "/recover", recoverPage);
@@ -901,33 +822,6 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/recover/passkey", recoverFinish);
   router.add("POST", "/signup/passkey/options", signupOptions);
   router.add("POST", "/signup/passkey", signupPasskey);
-  // The crew: a forge admin's section, hidden from everyone else.
-  router.add("GET", "/settings/subscriptions", subscriptionsPage);
-  router.add("POST", "/settings/subscriptions", subscriptionAdd);
-  router.add("POST", "/settings/subscriptions/:id/delete", subscriptionDelete);
-  router.add("POST", "/settings/subscriptions/:id/wake", subscriptionWake);
-  router.add(
-    "POST",
-    "/settings/subscriptions/:id/headroom",
-    subscriptionHeadroom,
-  );
-  router.add("POST", "/settings/subscriptions/:id/budget", subscriptionBudget);
-  router.add("GET", "/settings/secrets", secretsPage);
-  router.add("POST", "/settings/secrets", secretSet);
-  router.add("POST", "/settings/secrets/delete", secretDelete);
-  router.add("GET", "/settings/cloud", cloudPage);
-  router.add("POST", "/settings/cloud", cloudAdd);
-  router.add("POST", "/settings/cloud/verify", cloudVerify);
-  router.add("POST", "/settings/cloud/write", cloudWrite);
-  router.add("POST", "/settings/cloud/audit", cloudAudit);
-  router.add("GET", "/settings/cloud/audit", cloudAuditPage);
-  router.add("POST", "/settings/cloud/rotate", cloudRotate);
-  router.add("POST", "/settings/cloud/rename", cloudRename);
-  router.add("POST", "/settings/cloud/remove", cloudRemove);
-  router.add("GET", "/settings/access", accessPage);
-  router.add("GET", "/settings/resilience", domainsMoved);
-  router.add("GET", "/settings/capacity", capacityPage);
-  router.add("POST", "/settings/capacity", capacitySet);
   router.add("GET", "/boards", boardsList);
   router.add("GET", "/boards/data", boardsPage);
   router.add("POST", "/boards/new", boardNew);
@@ -937,86 +831,12 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/boards/:slug", boardShow);
   router.add("GET", "/boards/:slug/live", boardLive);
   router.add("POST", "/boards/:slug/:op", boardPost);
-  router.add("GET", "/settings/flags", flagsPage);
-  router.add("POST", "/settings/flags", flagsSet);
-  router.add("GET", "/settings/usage", (ctx) => usagePage(ctx, knownPatterns));
-  router.add("GET", "/settings/spend", spendPage);
   router.add("GET", "/admin/limits", limitsPage);
   router.add("POST", "/admin/limits", limitsSet);
   router.add("POST", "/admin/quotas", quotasSet);
   router.add("POST", "/admin/signup", signupSet);
   router.add("POST", "/admin/invites", inviteMint);
   router.add("POST", "/admin/invites/:id/revoke", inviteRevoke);
-  router.add("GET", "/settings/backups", backupsPage);
-  router.add("GET", "/settings/backups/live", backupsLive);
-  router.add("POST", "/settings/backups/now", backupsNow);
-  router.add("POST", "/settings/backups/drill", backupsDrill);
-  router.add("POST", "/settings/backups/destination", backupsDestination);
-  router.add("POST", "/settings/backups/test", backupsTest);
-  router.add("POST", "/settings/backups/clear", backupsClear);
-  router.add("POST", "/settings/backups/mirror", backupsMirror);
-  router.add("POST", "/settings/backups/mirror/clear", backupsMirrorClear);
-  router.add("POST", "/settings/backups/mirror/now", backupsMirrorNow);
-  router.add("GET", "/settings/accounts", accountsPage);
-  router.add("GET", "/settings/people", peoplePage);
-  router.add("POST", "/settings/people/:username/role", roleAct);
-  router.add("GET", "/settings/model", modelPage);
-  router.add("POST", "/settings/model", modelAdd);
-  router.add("POST", "/settings/accounts/:username/model", grantAct);
-  router.add("POST", "/settings/accounts/:username/ceiling", ceilingAct);
-  router.add("GET", "/settings/accounts/:username", personSignInsPage);
-  router.add(
-    "POST",
-    "/settings/accounts/:username/tokens/:id/delete",
-    signInAct("token"),
-  );
-  router.add(
-    "POST",
-    "/settings/accounts/:username/sessions/:id/delete",
-    signInAct("session"),
-  );
-  router.add(
-    "POST",
-    "/settings/accounts/:username/suspend",
-    accountAct("suspend"),
-  );
-  router.add(
-    "POST",
-    "/settings/accounts/:username/unsuspend",
-    accountAct("unsuspend"),
-  );
-  router.add("POST", "/settings/accounts/:username/remove", accountAct("remove"));
-  router.add("GET", "/settings/accounts/:username/retire", retirePage);
-  router.add("POST", "/settings/accounts/:username/retire", retireAct);
-  router.add("POST", "/settings/accounts/:username/verify", accountAct("verify"));
-  router.add("GET", "/settings/crew", crewPage);
-  router.add("POST", "/settings/crew", agentCreate);
-  router.add("GET", "/settings/teams", teamsPage);
-  router.add("GET", "/settings/teams/stream", teamsStream);
-  router.add("POST", "/settings/teams/:slug", teamSet);
-  router.add("GET", "/settings/crew/:username", agentPage);
-  router.add("POST", "/settings/crew/:username", agentUpdate);
-  router.add("POST", "/settings/crew/:username/delete", agentDelete);
-  router.add("POST", "/settings/crew/model-review/:id/take", modelReviewTake);
-  router.add("POST", "/settings/crew/model-review/:id/decline", modelReviewDecline);
-  // Where an OAuth authorization comes back to. Deliberately a plain route
-  // and not an API one: it is a browser redirect, possibly from a phone, and
-  // the only thing it carries is a `state` this forge issued minutes ago.
-  router.add("GET", "/settings/origins/callback", async (ctx) => {
-    const done = await completeOAuthCallback(ctx.app, ctx.auth.user, {
-      state: ctx.url.searchParams.get("state") ?? "",
-      code: ctx.url.searchParams.get("code") ?? "",
-    });
-    const query = !done.ok
-      ? "error=state"
-      : done.value.status === "done"
-        ? "connected=1"
-        : `error=${encodeURIComponent(done.value.detail.slice(0, 120))}`;
-    return new Response(null, {
-      status: 303,
-      headers: { location: `/settings/origins?${query}` },
-    });
-  });
 
   // The short link for a connect in flight, and the one route here that is
   // deliberately anonymous: the device typing it is a phone that has never
@@ -1042,26 +862,6 @@ export function buildRouter(): Router<Handler> {
       headers: { location: target, "cache-control": "no-store" },
     });
   });
-
-  // Origins. Literal thirds first, so `flows` and `apps` can never be
-  // captured as an origin id by the parameterized routes below them.
-  router.add("GET", "/settings/origins", originsPage);
-  router.add("POST", "/settings/origins/token", originConnectToken);
-  router.add("POST", "/settings/origins/oauth", originOAuthStart);
-  router.add("POST", "/settings/origins/apps", originAppCreate);
-  router.add("POST", "/settings/origins/trusted-hosts", originTrustedHosts);
-  router.add("POST", "/settings/origins/apps/:id/delete", originAppDelete);
-  router.add("GET", "/settings/origins/flows/:id", originFlowPage);
-  router.add("POST", "/settings/origins/flows/:id/poll", originFlowPoll);
-  router.add("GET", "/settings/origins/:id/repos", originReposPage);
-  router.add("POST", "/settings/origins/:id/mirror", originMirrorSubmit);
-  // A mirror is a job with stages, so it has a page of its own to watch it
-  // on. The literal "mirror" third segment is registered above the :id/:job
-  // shape for the same reason `flows` and `apps` are.
-  router.add("GET", "/settings/origins/:id/mirror/:job", mirrorJobPage);
-  router.add("POST", "/settings/origins/:id/sync", originSyncSubmit);
-  router.add("POST", "/settings/origins/:id/delete", originDisconnect);
-  router.add("POST", "/settings/origins/:id/token", originReplaceToken);
 
   // Browsing a repository on an origin, live and read-only. Registered here,
   // above every parameterized repo route, so `/origins` can never be captured
@@ -1109,10 +909,6 @@ export function buildRouter(): Router<Handler> {
     browseContributeSubmit,
   );
 
-  router.add("GET", "/settings/keys", keysPage);
-  router.add("POST", "/settings/keys", keyCreate);
-  router.add("POST", "/settings/keys/:id/delete", keyDelete);
-
   // git smart HTTP
   router.add("GET", "/:owner/:name.git/info/refs", (ctx) => {
     const service = ctx.url.searchParams.get("service");
@@ -1153,7 +949,7 @@ export function buildRouter(): Router<Handler> {
   // reclaim a path under `/api/`.
   // The forge as an MCP server: the studio's verbs for an assistant.
   mcpRoutes(router);
-  setMcpTools(TOOLS);
+  setMcpTools(TOOLS, [REPORT_TOOL]);
   // The public API as OpenAPI, for any client that reads it.
   openapiRoute(router);
   oauthRoutes(router);
@@ -1204,6 +1000,8 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/tell", tellSubmit);
   // The home's composer without a script: a tell to the app it names (#599).
   router.add("POST", "/tell", composerSubmit);
+  // A like from a card without a script (#7751): the feed's `liked`, then back to the feed.
+  router.add("POST", "/feed/like", likeSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/checks", pullChecksSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/ship", shipSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/say", saySubmit);
@@ -1315,6 +1113,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/app/notes", noteModerate);
   router.add("POST", "/:owner/:name/app/:env/redeploy", appRedeploy);
   router.add("POST", "/:owner/:name/app/:env/stop", appStop);
+  router.add("GET", "/:owner/:name/events", eventsList);
   router.add("GET", "/:owner/:name/runs", runsList);
   router.add("GET", "/:owner/:name/runs/:id", runPage);
   router.add("POST", "/:owner/:name/runs/:id/cancel", runCancel);
@@ -1510,6 +1309,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/settings/hooks", hooksPage);
   router.add("POST", "/:owner/:name/settings/hooks", webhookCreate);
   router.add("POST", "/:owner/:name/settings/hooks/:id/delete", webhookDelete);
+  router.add("POST", "/:owner/:name/settings/hooks/:id/deliveries/:delivery/redeliver", webhookRedeliver);
+  router.add("POST", "/:owner/:name/settings/hooks/:id/ping", webhookPing);
   router.add("GET", "/:owner/:name/settings/danger", dangerPage);
   router.add("POST", "/:owner/:name/settings/delete", repoDelete);
   router.add("POST", "/:owner/:name/settings/detach", detachSubmit);
@@ -1533,6 +1334,8 @@ export function buildApiRouter(): Router<Handler> {
   apiRoutes(router);
   feedRoutes(router);
   checksRecheckRoutes(router);
+  // What went live, as /changelog shows it; the page's own module answers.
+  router.add("GET", "/api/v1/changelog", changelogJson);
   // The reference page for these routes lives at their root, so it answers here.
   router.add("GET", "/api", apiPage);
   return router;
@@ -2255,7 +2058,14 @@ export async function serve(app: App): Promise<Servers> {
     const tag = takeUsage(request);
     const ms = performance.now() - started;
     try {
-      response.headers.set("server-timing", serverTiming(ms, takeDbTime(request), takePhases(request)));
+      const header = serverTiming(ms, takeDbTime(request), takePhases(request));
+      response.headers.set("server-timing", header);
+      const end = performance.now();
+      perfRecord.add(
+        tag.pattern,
+        { at: Date.now(), ms, signedIn: tag.role !== "anon" && tag.role !== "crawler", crawler: wasCrawler(request), deepStranger: wasDeepStranger(request), phases: parseServerTiming(header) },
+      );
+      loopWatch.finished(tag.pattern, started, end);
     } catch {
       // A response the forge is only carrying keeps the headers it came with.
     }
@@ -2307,7 +2117,7 @@ export async function serve(app: App): Promise<Servers> {
         if (response.status === 401 && !response.headers.has("www-authenticate")) {
           const url = publicUrl(request, owner.config.url);
           if (url.pathname.startsWith("/api/v1/"))
-            response.headers.set("www-authenticate", bearerChallenge(url.origin));
+            response.headers.set("www-authenticate", bearerChallenge(url.origin, request));
         }
         const done = await compress(request, response).then(securityFloor).then((r) => privateWhenSignedIn(request, r));
         if (namesFrame(request)) notePhase(request, "compress", performance.now() - compressing);
@@ -2618,9 +2428,26 @@ async function answerGet(
     noteCaller(request, app.db, auth.user.id, auth.sessionId);
   }
 
+  // A crawler nobody is signed in behind spends from its agent's budget and
+  // is refused before any page work (`crawl.ts`); a person or token never is.
+  if (auth.user === undefined && !request.headers.has("authorization")) {
+    const crawl = takeCrawl(app, request, url.pathname);
+    if (isCrawler(request)) {
+      noteCrawler(request);
+      noteUsage(request, { pattern: matched.pattern, role: "crawler" });
+    } else if (isDeepPath(url.pathname) && url.searchParams.get("fragment") !== "explorer") noteDeepStranger(request);
+    if (crawl !== undefined) return crawlRefused(crawl);
+  }
+
   // A cookie's identity never acts for another site: one door for every route.
+  // A browser's form gets the forge's own page saying why; a script keeps the JSON.
   const originRefusal = originGate(app, request, url, auth);
-  if (originRefusal !== undefined) return originRefusal;
+  if (originRefusal !== undefined) {
+    if (isApiPath || !prefersHtml(request, url.pathname)) return originRefusal;
+    const themeCookie = cookieValue(request, "forge_theme") ?? "";
+    const theme = isThemeName(themeCookie) ? themeCookie : undefined;
+    return forbiddenPage({ app, request, url, params: {}, auth, theme }, SENT_FROM_ELSEWHERE, CAME_FROM_ELSEWHERE);
+  }
 
   // A proposal token reaches nothing but what its gate names; every other
   // request it makes ends here, before the limiter or any handler.
@@ -2674,6 +2501,12 @@ async function answerGet(
       ),
       stranger,
     );
+  }
+
+  // A list that pages by cursor says so to `?page=`, one guard for all of them.
+  if (isApiPath && routeMethod === "GET") {
+    const byNumber = pageParamRefused(matched.pattern, url.searchParams);
+    if (byNumber !== undefined) return withRateHeaders(byNumber, verdict);
   }
 
   const themeCookie = cookieValue(request, "forge_theme") ?? "";

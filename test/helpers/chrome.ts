@@ -28,6 +28,19 @@ interface CdpMessage {
   error?: { message: string };
 }
 
+/**
+ * `promise`, or a rejection naming `what` after `ms`: every wait on chromium
+ * is bounded, so a stalled browser fails the test and the `finally` that
+ * kills it runs, instead of hanging the shard until it is killed.
+ */
+function within<T>(ms: number, what: string, promise: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`chromium: ${what} took longer than ${ms} ms`)), ms);
+  });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+}
+
 /** A CDP session over one page's own devtools socket. */
 class Cdp {
   private nextId = 1;
@@ -51,13 +64,13 @@ class Cdp {
 
   send(method: string, params: object = {}): Promise<any> {
     const id = this.nextId++;
-    return new Promise((resolve, reject) => {
+    return within(5_000, method, new Promise((resolve, reject) => {
       this.pending.set(id, (msg) => {
         if (msg.error !== undefined) reject(new Error(msg.error.message));
         else resolve(msg.result);
       });
       this.ws.send(JSON.stringify({ id, method, params }));
-    });
+    }));
   }
 
   /** Resolves the next time `method` fires as an event — a one-shot wait. */
@@ -73,7 +86,8 @@ async function findPageTarget(
   const httpBase = debuggerWsUrl
     .replace(/^ws:/, "http:")
     .replace(/\/devtools\/browser\/.*$/, "");
-  const list = (await (await fetch(`${httpBase}/json/list`)).json()) as {
+  const res = await fetch(`${httpBase}/json/list`, { signal: AbortSignal.timeout(5_000) });
+  const list = (await res.json()) as {
     type: string;
     webSocketDebuggerUrl: string;
   }[];
@@ -141,12 +155,12 @@ export async function evaluateLoaded(
     ]);
     const page = await findPageTarget(browserWsUrl);
     ws = new WebSocket(page.webSocketDebuggerUrl);
-    await new Promise<void>((resolve, reject) => {
+    await within(5_000, "opening the devtools socket", new Promise<void>((resolve, reject) => {
       ws!.addEventListener("open", () => resolve());
       ws!.addEventListener("error", () =>
         reject(new Error("chromium's devtools socket refused the connection")),
       );
-    });
+    }));
     const cdp = new Cdp(ws);
     await cdp.send("Page.enable");
     await cdp.send("Network.enable");
@@ -171,7 +185,7 @@ export async function evaluateLoaded(
       });
     const loaded = cdp.once("Page.loadEventFired");
     await cdp.send("Page.navigate", { url });
-    await loaded;
+    await within(10_000, `loading ${url}`, loaded);
     // The load event can be the blank start page's, fired late on a busy
     // machine: the page measured is the navigated one, loaded, or none.
     const deadline = Date.now() + 10_000;

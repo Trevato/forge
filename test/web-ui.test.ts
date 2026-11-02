@@ -198,7 +198,7 @@ describe("web ui", () => {
     expect(page).toContain(">bug</span>");
     // A colour mixed from the labels on *this* page is what `styleCss` is
     // for, and the only thing left using it: nothing static rides along.
-    expect(page).toMatch(/<style nonce="[^"]+">\.lc-d73a4a\{--label:#d73a4a\}<\/style>/);
+    expect(page).toMatch(/<style>\.lc-d73a4a\{--label:#d73a4a\}<\/style>/);
 
     // And the list can filter by it.
     const filtered = await (

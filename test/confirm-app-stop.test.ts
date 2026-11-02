@@ -18,6 +18,7 @@ import type { Repo } from "../src/core/repos.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { promote } from "./helpers/members.ts";
+import { withScripts } from "./helpers/page-script.ts";
 
 const PASSWORD = "a-good-passphrase";
 const TO = "/alice/notes/app/production/stop";
@@ -172,7 +173,7 @@ describe("Stop on an app's environment goes through the confirm page", () => {
   test("a reader is never offered Stop", async () => {
     putLive();
     const html = await (await get(bob, "/alice/notes")).text();
-    expect(html).toContain("serving");
+    expect(await withScripts(base, html)).toContain("serving");
     expect(html).not.toContain(encodeURIComponent(TO));
   });
 });

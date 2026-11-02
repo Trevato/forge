@@ -1,6 +1,6 @@
 import type { Repo } from "../../../core/repos.ts";
 import { search } from "../../../actions/search.ts";
-import { CODE_BUDGET_MS } from "../../../core/search.ts";
+import { CODE_BUDGET_MS, searchNote } from "../../../core/search.ts";
 import { good, bad, type Tool, repoArg, isAnswer } from "../shared.ts";
 
 export const tool: Tool = {
@@ -11,7 +11,7 @@ export const tool: Tool = {
   inputSchema: {
     type: "object",
     properties: {
-      q: { type: "string", minLength: 1, maxLength: 200 },
+      q: { type: "string", maxLength: 200 },
       kind: { type: "string", enum: ["issues", "repos", "code"] },
       repo: { type: "string", maxLength: 140 },
       all: { type: "boolean" },
@@ -21,8 +21,7 @@ export const tool: Tool = {
   writes: false,
   async run(ctx, user, args) {
     const q = args["q"];
-    if (typeof q !== "string" || q.trim() === "" || q.length > 200)
-      return bad("invalid", "`q` is 1 to 200 characters");
+    if (typeof q !== "string" || q.length > 200) return bad("invalid", "`q` is a string of at most 200 characters");
     const kind = args["kind"];
     if (kind !== undefined && kind !== "issues" && kind !== "repos" && kind !== "code")
       return bad("invalid", "`kind` is issues, repos or code");
@@ -35,13 +34,13 @@ export const tool: Tool = {
       if (isAnswer(repo)) return repo;
       only = repo;
     }
-    return good(
-      await search(ctx.app, user, {
-        q,
-        ...(kind ? { kind } : {}),
-        ...(only ? { repo: only } : {}),
-        ...(all === true ? {} : { codeBudgetMs: ctx.app.config.codeBudgetMs ?? CODE_BUDGET_MS }),
-      }),
-    );
+    const note = searchNote(q, kind ?? null);
+    const found = await search(ctx.app, user, {
+      q,
+      ...(kind ? { kind } : {}),
+      ...(only ? { repo: only } : {}),
+      ...(all === true ? {} : { codeBudgetMs: ctx.app.config.codeBudgetMs ?? CODE_BUDGET_MS }),
+    });
+    return good(note === undefined ? found : { ...found, note });
   },
 };

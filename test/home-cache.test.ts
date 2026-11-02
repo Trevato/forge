@@ -14,7 +14,18 @@ import { kpiCache, panelCache } from "../src/web/studio/home_cache.ts";
 import { snappyFixture, type SnappyFixture } from "../bench/snappy.ts";
 
 let f: SnappyFixture;
-const home = (cookie?: string): Promise<string> => freshHome(f.base, cookie);
+/** Home and the feed page, which together hold what home was: the figures, then the panels and the timeline. */
+const home = async (cookie?: string): Promise<string> => (await freshHome(f.base, cookie)) + (await freshHome(f.base, cookie, "/feed"));
+/** Both pages' answers: the worst status and every phase either named. */
+async function both(cookie: string): Promise<{ status: number; timing: string }> {
+  const answers = [];
+  for (const path of ["/", "/feed"]) {
+    const res = await fetch(`${f.base}${path}`, { headers: { cookie } });
+    await res.arrayBuffer();
+    answers.push(res);
+  }
+  return { status: Math.max(...answers.map((r) => r.status)), timing: answers.map((r) => r.headers.get("server-timing") ?? "").join(", ") };
+}
 
 beforeAll(async () => {
   f = await snappyFixture();
@@ -34,7 +45,7 @@ afterAll(async () => {
 
 test("a warm home reads neither the KPIs nor the panels again, even after a write", async () => {
   const a = await home(f.ownerCookie);
-  expect(a).toContain('class="stats mb"');
+  expect(a).toContain('class="stats kpi-row mb"');
   expect(a).toContain("<h2>Pin A</h2>");
   const kpi = kpiCache(f.app.db);
   const panel = panelCache(f.app.db);
@@ -42,7 +53,7 @@ test("a warm home reads neither the KPIs nor the panels again, even after a writ
   await home(f.ownerCookie);
   expect([kpi.misses, panel.misses]).toEqual([km, pm]);
   // The second look is a hit one layer in front of those caches (`home_last.ts`): both phases say so.
-  const timing = (await fetch(`${f.base}/`, { headers: { cookie: f.ownerCookie } })).headers.get("server-timing") ?? "";
+  const { timing } = await both(f.ownerCookie);
   expect(timing).toMatch(/kpis;dur=[\d.]+;desc="hit"/);
   expect(timing).toMatch(/panels;dur=[\d.]+;desc="hit"/);
 
@@ -55,7 +66,7 @@ test("the owner's KPIs and panels never render for another viewer, warm or not",
   await home(f.ownerCookie);
   for (const cookie of [f.peerCookie, undefined]) {
     const page = await home(cookie);
-    expect(page).not.toContain('class="stats mb"');
+    expect(page).not.toContain('class="stats kpi-row mb"');
     expect(page).not.toContain('class="stat"');
     expect(page).not.toContain("Pin A");
   }
@@ -84,10 +95,9 @@ interface Counted {
 async function counted(): Promise<Counted> {
   const before = writeStamp(f.app.db);
   f.counter.reset();
-  const res = await fetch(`${f.base}/`, { headers: { cookie: f.ownerCookie } });
-  await res.arrayBuffer();
+  const res = await both(f.ownerCookie);
   const ran = new Map(f.counter.top(10_000).map((s) => [s.sql, s.times]));
-  return { status: res.status, hits: phases(res.headers.get("server-timing")), ran, before, after: writeStamp(f.app.db) };
+  return { status: res.status, hits: phases(res.timing), ran, before, after: writeStamp(f.app.db) };
 }
 
 /**
@@ -124,7 +134,11 @@ test("warm home holds p95 under the stated budget", async () => {
   panelCache(f.app.db).clear();
   const missed = await counted();
   expect(missed.hits).toEqual({ kpis: false, panels: false });
-  const missOnly = [...missed.ran.keys()].filter((sql) => !warm.ran.has(sql));
+  // Reads only: a route-timing flush that lands inside this one request (its INSERTs, PRAGMAs,
+  // total_changes) is a write any request may carry, not the cache missing.
+  const missOnly = [...missed.ran.keys()].filter(
+    (sql) => !warm.ran.has(sql) && /^\s*SELECT\b/i.test(sql) && !sql.includes("total_changes()"),
+  );
   // The KPI reads (eight on this fixture) and the pinned panel's own query.
   expect(missOnly.length).toBeGreaterThan(5);
   expect(missOnly).toContain('SELECT "kind" AS "group", COUNT(*) AS "value" FROM "run" GROUP BY 1 ORDER BY 1 LIMIT 1000');

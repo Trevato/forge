@@ -4,7 +4,7 @@ export const route: Route = {
   method: "get",
   path: `${REPO}/labels`,
   summary:
-    "List a repository's labels by name, each { id, name, color }; a private repository needs a token; answers { items: [...], next_cursor }; limit 1 to 200, cursor from next_cursor",
+    "List a repository's labels by name, each { id, name, color } and, for a repository writer, open (its open issues and pulls, as on the labels page; a reader is told none, since sealed ones are counted); a private repository needs a token; answers { items: [...], next_cursor }; limit 1 to 200, cursor from next_cursor",
   auth: false,
   query: { limit: "integer", cursor: "string" },
   refusals: {

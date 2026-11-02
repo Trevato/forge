@@ -33,7 +33,7 @@ import { commitLog } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
-import { notFoundPage, pageHead, loadRepo, repoBase } from "../chrome.ts";
+import { notFoundPage, pageHead, loadRepo, repoBase, SIGN_IN_TO_DO, forbiddenPage } from "../chrome.ts";
 import { diffTotals, pathAnchor } from "../diff-view.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
@@ -282,7 +282,7 @@ export async function toolbarComment(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
   const user = ctx.auth.user;
-  if (!user) return new Response("forbidden", { status: 403 });
+  if (!user) return forbiddenPage(ctx, SIGN_IN_TO_DO);
   const where = parseEnv(field(form, "env"));
   if (where === undefined) return new Response("bad request", { status: 400 });
   const db = ctx.app.db;

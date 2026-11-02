@@ -35,6 +35,8 @@ const SIZE_CHOICES = Object.keys(SIZES) as Size[];
 
 const TEMPLATE_CHOICES = TEMPLATES.map((t) => t.id);
 
+const TEMPLATE_HINT = "blank (default) or starter: left and right choose, or type it.";
+
 const SPECS: readonly Spec[] = [
   { key: "name", label: "Name", hint: "Lowercase letters, digits and dashes." },
   { key: "for", label: "For whom", hint: "A person or client, for your list of forges sent. Optional." },
@@ -46,8 +48,14 @@ const SPECS: readonly Spec[] = [
   { key: "budgetUsd", label: "Budget in dollars", hint: `${MIN_BUDGET_USD}–${MAX_BUDGET_USD}, for the key's whole life. Needed with a key.` },
   { key: "followMode", label: "Follows this forge's code", hint: FOLLOW_LINE },
   { key: "size", label: "Size", hint: "small (default), medium or large: left and right choose, or type it.", choices: SIZE_CHOICES },
-  { key: "template", label: "Template", hint: "blank (default) or starter: left and right choose, or type it.", choices: TEMPLATE_CHOICES },
+  { key: "template", label: "Template", hint: TEMPLATE_HINT, choices: TEMPLATE_CHOICES },
 ];
+
+/** The chosen template's own sentence; a typed id that is no template keeps the general hint. */
+function templateHint(id: string): string {
+  const t = TEMPLATES.find((x) => x.id === id);
+  return t === undefined ? TEMPLATE_HINT : t.says;
+}
 
 /** The door's "field: reason" refusal, as the field it names and the reason. */
 function refusal(body: Record<string, unknown>): { key?: string; text: string } {
@@ -199,7 +207,7 @@ export function newForgeScreen(f: Session, ctx: Ctx): Screen {
           ...(focus === i ? { cursor: [...shown].length } : {}),
           ...(error !== undefined && (errorKey === spec.key || (errorKey === undefined && focus === i))
             ? { error }
-            : { hint: spec.hint }),
+            : { hint: spec.key === "template" ? templateHint(values["template"] || DEFAULT_TEMPLATE) : spec.hint }),
         });
         if (focus === i) cursor = at;
       });

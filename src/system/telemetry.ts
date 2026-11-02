@@ -12,7 +12,7 @@ import { firedAlarms } from "../flow/alarms.ts";
 import { readVitals, vitalsFor, vitalsLine, vitalsMisses } from "../flow/vitals.ts";
 import { parkedSays, readParked } from "../flow/parked.ts";
 import { readKeeper } from "../flow/keeper.ts";
-import { readPipeline, verdict } from "../flow/pipeline.ts";
+import { readPipeline, readStepStats, statWords, verdict } from "../flow/pipeline.ts";
 import { type QueueReading, readQueues } from "../flow/queue.ts";
 import { reviewersBusy, reviewingSays } from "../flow/reviewing.ts";
 import { requestedSays, requestedWaits } from "../flow/requested.ts";
@@ -40,6 +40,8 @@ export function flowFor(app: App, reader: Reader, now = new Date()) {
   const parked = readParked(app.db, now, reader.kind === "agent");
   return {
     says: verdict(stages, now.getTime()),
+    // Each step of the path: median time and red rate over 30 days (#7784); private repositories for the owner only.
+    steps: readStepStats(app.db, now, reader.kind === "agent").map((m) => ({ ...m, says: statWords(m) })),
     // The cause binding landings now and the keeper's last act (#7645).
     keeper: readKeeper(app.db, reader.kind === "owner"),
     // How long each main has gone unverified after landing (#7786); private repositories for the owner only.

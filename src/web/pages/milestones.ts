@@ -52,6 +52,8 @@ import {
   repoHeader,
   repoPalette,
   signInFirst,
+  NOT_YOURS_TO_DO,
+  forbiddenPage,
 } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import { field, readForm } from "../form.ts";
@@ -624,7 +626,7 @@ export async function milestoneWatch(ctx: Ctx): Promise<Response> {
   if (!set.ok)
     return set.error === "not_found"
       ? notFoundPage(ctx)
-      : new Response("forbidden", { status: 403 });
+      : forbiddenPage(ctx, NOT_YOURS_TO_DO);
   return redirect(milestoneHref(repoBase(repo), number));
 }
 

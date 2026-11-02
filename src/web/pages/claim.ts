@@ -51,7 +51,7 @@ import {
   type ClaimState,
   type Spawned,
 } from "../../spawn/claim.ts";
-import { pageHead } from "../chrome.ts";
+import { pageHead, CAME_FROM_ELSEWHERE } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { page, redirect } from "../layout.ts";
@@ -290,7 +290,7 @@ function problems(
 export async function claimOptions(ctx: Ctx): Promise<Response> {
   const refuse = (status: number, message: string) =>
     json({ error: "refused", message }, status);
-  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, "forbidden");
+  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, CAME_FROM_ELSEWHERE);
   const wait = signinAllowed(ctx, `claim:${clientAddress(ctx.request)}`);
   if (wait !== undefined)
     return json({ error: "rate_limited", message: `Too many attempts. Try again in ${wait}s.` }, 429, { "retry-after": String(wait) });

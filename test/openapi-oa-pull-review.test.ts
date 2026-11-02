@@ -16,5 +16,5 @@ test("review-states and looks are described with their method, auth and refusals
   expect(look?.requestBody).toBeDefined();
   expect(look?.responses?.["201"]).toBeDefined();
   expect(JSON.stringify(look)).toContain("not_open");
-  expect(paths[`${R}/looks`]?.get).toBeUndefined();
+  expect(paths[`${R}/looks`]?.get).toBeDefined();
 });

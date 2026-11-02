@@ -14,6 +14,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { VERIFYING_NOTE } from "./env_phrase.ts";
 import { listEgressGrants } from "../core/egress_grants.ts";
 import { recordCarried } from "../core/carried.ts";
 import { releaseOfCommit } from "../core/release_subject.ts";
@@ -32,6 +33,7 @@ import { mintAppToken, renewAppToken, revokeAppToken } from "./token.ts";
 import type { ForgeEvent } from "../core/events.ts";
 import { announceRun } from "../actions/runs.ts";
 import { requeueAbandonedChecks } from "../checks/service.ts";
+import { checkInstallCache } from "../checks/install.ts";
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
 import { pullMayRun } from "../core/pull_trust.ts";
 import { canEnterApp, getRepoById, type Repo } from "../core/repos.ts";
@@ -164,10 +166,6 @@ export type EnvState =
 const SLEEP_AFTER_MS = { production: 24 * 3_600_000, preview: 30 * 60_000 };
 const SWEEP_EVERY_MS = 60_000;
 const BUSY_GRACE_MS = 45 * 60_000;
-
-/** The sentence a serving environment carries while its tests still run;
- * the studio reads the same constant to word its badge. */
-export const VERIFYING_NOTE = "serving — still verifying its tests";
 
 /** What a finished deploy's summary ends with: the studio words its green
  * from these, so a pull says whether its tests ran (`words.ts`). */
@@ -1403,6 +1401,9 @@ export class AppsRuntime {
       log: write,
       warm,
       cell: this.cellFor(state.app, state.env),
+      // Every environment, production too, installs from the cache the
+      // repository's checks fill, so a new preview fetches nothing it has.
+      installCache: checkInstallCache(this.app.config.dataDir, repo.id),
     };
     this.noteCell(run.id, write);
     clock.lap("setup");
@@ -1481,6 +1482,7 @@ export class AppsRuntime {
       // Likewise an admin's flip of the egress mode.
       egressMode: egressSetting(this.app.db),
       label: `app:${record.slug}/${env}`,
+      repoId: record.repoId,
     };
   }
 

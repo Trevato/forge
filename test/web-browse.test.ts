@@ -29,6 +29,7 @@ import { settled } from "../src/origins/jobs.ts";
 import { forgetProviders } from "../src/origins/providers/index.ts";
 import { clearViewCache } from "../src/view/cache.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { pageScriptOf } from "./helpers/page-script.ts";
 import { newFakeState, serveFakeForge, type FakeForge } from "./fake-origin.ts";
 import { codeJs, mirrorJs } from "../src/web/client.ts";
 import { STAGE_BADGE, STAGE_BADGE_JS } from "../src/web/stage-row.ts";
@@ -548,7 +549,7 @@ describe("browsing an origin repository on the web", () => {
     expect(running).toContain(
       `data-stream="/api/v1/user/origins/${originId}/mirror/`,
     );
-    expect(running).toContain("new EventSource(url)");
+    expect(await pageScriptOf(base, running)).toContain("new EventSource(url)");
     // Each stage is a §5 row with a state badge, never a bare glyph.
     expect(running).not.toContain("stage-dot");
     expect(running).not.toContain("stage-detail");
@@ -559,8 +560,8 @@ describe("browsing an origin repository on the web", () => {
     // The live update is built from the same table the markup is.
     expect(mirrorJs).toContain(STAGE_BADGE_JS);
     for (const b of Object.values(STAGE_BADGE)) expect(STAGE_BADGE_JS).toContain(b.text);
-    expect(running).toMatch(/<script nonce="[^"]+">/);
-    expect(running).not.toMatch(/<script[^>]*src="(?!\/assets\/(?:shell|beacon)-)/);
+    expect(running).toMatch(/<script src="\/assets\/page-[0-9a-f]+\.js" defer>/);
+    expect(running).not.toMatch(/<script[^>]*src="(?!\/assets\/(?:shell|beacon|page)-)/);
 
     const done = await settled(jobPath.split("/").pop()!);
     expect(done?.stage).toBe("done");
@@ -607,7 +608,7 @@ describe("browsing an origin repository on the web", () => {
     const pages = {
       repo: await bodyOf(alice, "/alice/widgets"),
       picker: await bodyOf(alice, `/settings/origins/${originId}/repos`),
-      home: await bodyOf(alice, "/"),
+      home: await bodyOf(alice, "/feed"),
       search: await bodyOf(alice, "/search?q=widgets"),
     };
     const strip = stripOf(pages.repo);

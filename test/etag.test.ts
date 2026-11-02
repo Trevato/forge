@@ -58,14 +58,17 @@ test("a signed-in page carries no ETag, and If-None-Match never makes it a 304",
   expect(res.headers.has("etag")).toBe(false);
 });
 
-test("the nonce follows the body: stable for the same page, different once the page differs", async () => {
+test("no page carries a nonce: the same page is the same bytes, and its inline style is named by hash", async () => {
   const a = await get("/signin");
-  const b = await get("/signin");
-  expect(a.headers.get("content-security-policy")).toBe(b.headers.get("content-security-policy"));
-  const nonce = /nonce-([\w-]+)/.exec(a.headers.get("content-security-policy")!)![1]!;
-  expect(await a.text()).toContain(`nonce="${nonce}"`);
-  const other = await get("/explore");
-  expect(other.headers.get("content-security-policy")).not.toBe(a.headers.get("content-security-policy"));
+  const csp = a.headers.get("content-security-policy")!;
+  expect(csp).toBe((await get("/signin")).headers.get("content-security-policy")!);
+  expect(csp).not.toContain("nonce");
+  expect(csp).toContain("script-src 'self'");
+  const body = await a.text();
+  expect(body).not.toContain("nonce=");
+  const style = /<style>([\s\S]*?)<\/style>/.exec(body)![1]!;
+  const hash = new Bun.CryptoHasher("sha256").update(style).digest("base64");
+  expect(csp).toContain(`'sha256-${hash}'`);
 });
 
 test("a signed-out page showing a flash carries no ETag and is never a 304", async () => {

@@ -22,6 +22,7 @@ import { promote } from "./helpers/members.ts";
 
 describe("the list of causes", () => {
   const cases: [string, WhyFacts][] = [
+    ["wall", { actor: "person", wall: ["anyone signed out could read pack records"] }],
     ["ceiling", { actor: "builder", ceilingUsd: 20 }],
     ["hot_file", { actor: "builder", hotFile: "src/a.ts is in 3 open pulls" }],
     ["blocked_by", { actor: "builder", blockedBy: [4, 9] }],
@@ -263,6 +264,34 @@ describe("MCP flow about a pull", () => {
     app.db.query("UPDATE pull SET head_oid = ?2 WHERE issue_id = ?1").run(getPull(app.db, repo.id, n)!.id, "0".repeat(40));
     const r = await call({ repo: "alice/lib", pull: n });
     expect(r).toMatchObject({ moving: false, cause: "red_check", next: { who: "builder" } });
+  });
+
+  test("a walled pull, approved and green, is not moving and not the queue's (#7847)", async () => {
+    const n = await pullOn("walled");
+    const p = getPull(app.db, repo.id, n)!;
+    const live = p.headOid;
+    const run = createRun(app.db, { repoId: repo.id, kind: "check", issueId: p.id, env: `pull-${n}`, commitOid: live });
+    claimRun(app.db, run.id);
+    finishRun(app.db, run.id, { state: "ok", summary: "green" });
+    const bot = { id: alice.id };
+    app.db.run(
+      "INSERT INTO review (id, issue_id, author_id, state, commit_oid, created_at) VALUES ('rvw', ?1, ?2, 'approved', ?3, ?4)",
+      [p.id, bot.id, live, new Date().toISOString()],
+    );
+    // Before the wall speaks it reads as the queue's, as it always did.
+    expect(await call({ repo: "alice/lib", pull: n })).toMatchObject({ next: { who: "queue" } });
+    app.db.run(
+      "INSERT INTO decision (id, kind, repo_id, issue_id, state, answer, p, by, ms) VALUES ('dw', 'land', ?1, ?2, ?3, 'wall', 1, 'wall', 0)",
+      [repo.id, p.id, JSON.stringify({ head: live, cells: ["pack.read as anon: new, and yes"], plain: ["anyone signed out could read pack records"] })],
+    );
+    const r = await call({ repo: "alice/lib", pull: n });
+    expect(r).toMatchObject({ moving: false, cause: "wall", next: { who: "person" } });
+    expect(r.says).toContain("anyone signed out could read pack records");
+    expect(r.next.why).toContain("anyone signed out could read pack records");
+    // A push is a new head: the wall's word is about the old one.
+    app.db.query("UPDATE pull SET head_oid = ?2 WHERE issue_id = ?1").run(p.id, "0".repeat(40));
+    app.db.run("UPDATE decision SET state = ?1 WHERE id = 'dw'", [JSON.stringify({ head: "1".repeat(40), cells: [], plain: [] })]);
+    expect((await call({ repo: "alice/lib", pull: n })).cause).not.toBe("wall");
   });
 
   test("a merged pull is merged and a closed one is closed, neither moving", async () => {

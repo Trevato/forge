@@ -168,6 +168,6 @@ describe("the pill's script", () => {
   test("puts text in with textContent and checks the home href against the forge origin", () => {
     expect(toolbarJs).toContain("textContent = text");
     expect(toolbarJs).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML|document\.write/);
-    expect(toolbarJs).toContain("target.origin === new URL(me.src).origin");
+    expect(toolbarJs).toContain("target.origin === fo");
   });
 });

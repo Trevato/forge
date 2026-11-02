@@ -47,7 +47,7 @@ beforeAll(async () => {
 afterAll(() => servers.stop());
 
 test("the composer names its user for the draft key, and the script stays small", async () => {
-  const res = await fetch(`${servers.url}/`, { headers: { cookie: `forge_session=${cookie}; forge_mode=studio` } });
+  const res = await fetch(`${servers.url}/feed`, { headers: { cookie: `forge_session=${cookie}; forge_mode=studio` } });
   const page = await res.text();
   expect(page).toContain(`data-draft="${alice.id}"`);
   expect(feedJs).toContain("forgeDraft(");
@@ -153,7 +153,7 @@ test.skipIf(noChromium)("in a real browser: type, reload, find it; send, reload,
     const load = async () => {
       const loaded = once("Page.loadEventFired");
       loaded.catch(() => {});
-      await send("Page.navigate", { url: `${servers.url}/` });
+      await send("Page.navigate", { url: `${servers.url}/feed` });
       await loaded;
       await waitFor(`!!document.getElementById("composer")`);
     };
@@ -176,7 +176,7 @@ test.skipIf(noChromium)("in a real browser: type, reload, find it; send, reload,
 
     await load();
     await type("Water the tomatoes at dawn");
-    await waitFor(`localStorage.getItem(${JSON.stringify(`draft.${alice.id}/`)}) === "Water the tomatoes at dawn"`);
+    await waitFor(`localStorage.getItem(${JSON.stringify(`draft.${alice.id}/feed`)}) === "Water the tomatoes at dawn"`);
     await load();
     expect(await run(`${box}.value`)).toBe("Water the tomatoes at dawn");
 
@@ -203,7 +203,7 @@ test.skipIf(noChromium)("in a real browser: type, reload, find it; send, reload,
     await type("Mulch first");
     await run(`(() => { const c = document.getElementById("composer"); const o = document.createElement("option"); o.value = "alice/nowhere"; c.elements.app.append(o); c.elements.app.value = "alice/nowhere"; c.requestSubmit(); })()`);
     await waitFor(`!localStorage.getItem("forge.outbox") || localStorage.getItem("forge.outbox") === "[]"`);
-    await waitFor(`localStorage.getItem(${JSON.stringify(`draft.${alice.id}/`)}) === "Mulch first"`);
+    await waitFor(`localStorage.getItem(${JSON.stringify(`draft.${alice.id}/feed`)}) === "Mulch first"`);
     expect(await run(`${box}.value`)).toBe("Mulch first");
     await load();
     expect(await run(`${box}.value`)).toBe("Mulch first");
@@ -215,3 +215,20 @@ test.skipIf(noChromium)("in a real browser: type, reload, find it; send, reload,
 }, 90000);
 
 test.skipIf(!noChromium)("no chromium on this machine: the composer draft browser test did not run", () => {});
+
+test("a tell sent from the feed's composer comes back to the feed, the forge's too", async () => {
+  // Its own session: the browser test before it signs its session out.
+  const cookie = createSession(app.db, alice.id).token;
+  const page = await (await fetch(`${servers.url}/feed`, { headers: { cookie: `forge_session=${cookie}; forge_mode=studio` } })).text();
+  expect(page).toContain('name="back" value="/feed"');
+  for (const app of ["forge", "alice/garden"]) {
+    const res = await fetch(`${servers.url}/tell`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { cookie: `forge_session=${cookie}; forge_mode=studio`, origin: servers.url, "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ app, text: "Plant beans", back: "/feed" }),
+    });
+    expect(res.status).toBeLessThan(400);
+    expect(new URL(res.headers.get("location") ?? "", servers.url).pathname).toBe("/feed");
+  }
+});

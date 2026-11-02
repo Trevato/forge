@@ -34,6 +34,7 @@ import { local } from "../src/tui/screens/where.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
+import { withScripts } from "./helpers/page-script.ts";
 
 quietLogs();
 
@@ -301,7 +302,7 @@ describe("naming teams, at every door", () => {
     // The page's timeline carries it, and its live client listens for it.
     const page = await (await fetch(`${base()}/issues/${issue.number}`, { headers: { cookie: cookie(alice) } })).text();
     expect(page).toContain("changed the teams");
-    expect(page).toContain("'issue.teams'");
+    expect(await withScripts(servers.url, page)).toContain("'issue.teams'");
     // A reader of the terminal who cannot write still sees the teams.
     const terminal = headlessTerminal(140, 40);
     const { app: tui, session } = createForgeApp(

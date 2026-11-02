@@ -59,3 +59,23 @@ export function unpinnedAdds(
   }
   return names;
 }
+
+/**
+ * Pins already on main that the pull changed or deleted (#8352). `changes`
+ * is main's tip diffed to HEAD; `touched(path)` says the pull's own commits
+ * wrote that path. A squash-landed commit is not an ancestor of the pull,
+ * so its merge base predates the pin and the diff to it reads an edit as an
+ * add; the tip does not. A pin that only differs because the pull is
+ * behind main was never touched, and a rebased pull matches the tip.
+ */
+export function tipEdits(
+  changes: readonly Change[],
+  touched: (path: string) => boolean,
+): Change[] {
+  return changes.filter(
+    ({ status, path }) =>
+      (path.startsWith(PINS) || path === FROZEN) &&
+      (status.startsWith("M") || status.startsWith("D") || status.startsWith("T")) &&
+      touched(path),
+  );
+}

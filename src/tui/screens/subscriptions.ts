@@ -20,7 +20,10 @@ import {
   scopesOf,
   setBudget,
   wakeSubscription,
+  type Subscription,
 } from "../../core/subscriptions.ts";
+import { windowWords } from "../../actions/standing_words.ts";
+import { standings } from "../../core/standing.ts";
 import { SUBSCRIPTION_WORDS, addRefusal } from "../../core/subscriptions_words.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -37,16 +40,22 @@ export function subscriptionsScreen(f: Session, ctx: Ctx): Screen {
   const state = new ListState();
   let note = "";
   const admitted = () => f.user?.isAdmin === true && f.user.kind === "user";
-  const items = () => (admitted() ? listSubscriptions(f.app.db) : []);
 
-  const rows = (): ListRow[] => {
+  // What the screen shows, read once on open and again after each change it
+  // makes, so a keypress redraws from memory and never queries the database.
+  let all: Subscription[] = [];
+  let listed: ListRow[] = [];
+  const load = (): void => {
+    all = admitted() ? listSubscriptions(f.app.db) : [];
     const budgets = budgetsOf(f.app.db);
     const scopes = scopesOf(f.app.db);
+    const seen = standings(f.app.db, all.map((a) => a.id), new Date());
     const now = Date.now();
-    return items().map((s) => {
+    listed = all.map((s) => {
       const b = budgets.get(s.id);
       const resting = s.restingUntil !== null && Date.parse(s.restingUntil) > now;
       const pays = (scopes.get(s.id) ?? []).join(", ");
+      const st = seen.get(s.id);
       return {
         title: s.name,
         tone: resting ? "attn" : "success",
@@ -54,9 +63,14 @@ export function subscriptionsScreen(f: Session, ctx: Ctx): Screen {
         meta:
           `${b?.budgetUsd == null ? "no budget" : `budget ${money(b.budgetUsd)}`}  spent ${money(b?.spentUsd ?? 0)}  ` +
           (resting ? `resting until ${s.restingUntil}` : "awake"),
+        below:
+          st === undefined || st.windows.every((w) => w.cap === null && w.resetsAt === null && w.used.value === 0)
+            ? ["windows not seen yet"]
+            : st.windows.map(windowWords),
       };
     });
   };
+  load();
 
   const setTo = (id: string, raw: string): string | undefined => {
     const text = raw.trim().toLowerCase();
@@ -65,6 +79,7 @@ export function subscriptionsScreen(f: Session, ctx: Ctx): Screen {
     const refused = budgetRefusal(f.app.db, id, usd);
     if (refused) return refused.says.replace("or null for none", "or none");
     if (!setBudget(f.app.db, id, usd)) return "The budget was not saved.";
+    load();
     note = usd === null ? "No budget: it spends until you stop it." : `Budget set: ${money(Math.round(usd * 100) / 100)} in all.`;
     ctx.invalidate();
     return undefined;
@@ -92,6 +107,7 @@ export function subscriptionsScreen(f: Session, ctx: Ctx): Screen {
                 createdBy: f.user?.id,
               });
               if (!added.ok) return addRefusal(added.error, name);
+              load();
               note = `${added.value.name} is in the pool.`;
               ctx.invalidate();
               return undefined;
@@ -106,15 +122,13 @@ export function subscriptionsScreen(f: Session, ctx: Ctx): Screen {
     keys: [binding(["j", "k"], "move cursor"), binding(["w"], "wake"), binding(["b"], "set budget"), binding(["a"], "add"), binding(["D"], "remove"), binding(["esc"], "back")],
     render(area, s) {
       const c = ctx.theme.c;
-      const all = items();
       const [head, body] = split(area, "v", [len(1), fill(1)]);
       const text = note !== "" ? note : all.length === 0 ? "No subscription yet. a adds one." : "w wakes a resting one, b sets its budget, a adds, D removes.";
       s.text(head!.x, head!.y, truncate(text, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
-      drawList(s, body!, c, state, rows());
+      drawList(s, body!, c, state, listed);
     },
     key(e) {
       note = "";
-      const all = items();
       if (state.key(e, all.length)) return true;
       if (e.ctrl || e.alt || !admitted()) return false;
       const sub = all[state.index];
@@ -127,6 +141,7 @@ export function subscriptionsScreen(f: Session, ctx: Ctx): Screen {
           wakeSubscription(f.app.db, sub.id);
           note = `${sub.name}: in use again.`;
         }
+        load();
         ctx.invalidate();
       } else if (e.key === "b" && sub !== undefined) {
         ctx.push(
@@ -161,7 +176,8 @@ export function subscriptionsScreen(f: Session, ctx: Ctx): Screen {
             onChoose: (choice) => {
               if (choice !== 0 || !admitted()) return;
               note = deleteSubscription(f.app.db, sub.id) ? `${sub.name} is removed.` : SUBSCRIPTION_WORDS.not_found;
-              state.index = Math.max(0, Math.min(state.index, items().length - 1));
+              load();
+              state.clamp(all.length);
               ctx.invalidate();
             },
           }),

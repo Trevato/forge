@@ -11,9 +11,7 @@ import type { Database } from "bun:sqlite";
 import { backupAge, backupFull, backupOverdue, buildersValue, checkTime, reactNote, speedWords, spendCeilingWords, spendFull, spendValue, usersValue, visitorsNote, visitorsValue, waitingWords } from "../../flow/kpi_words.ts";
 import type { IdleReason } from "../../crew/idle_reason.ts";
 import type { KpiTimer, Kpis } from "../../flow/kpis.ts";
-import { clogLines, readClog } from "../../flow/clog_read.ts";
-import { vitalsLine } from "../../flow/vitals.ts";
-import { cachedKpis, cachedVitals, cachedWaiting } from "./home_cache.ts";
+import { cachedKpis, cachedWaiting } from "./home_cache.ts";
 import { escapeHtml, html, raw, type Html } from "../html.ts";
 import { BOOTED } from "../../release/gate.ts";
 import { running } from "../../kernel/version.ts";
@@ -97,7 +95,7 @@ export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null, now
   const overdue = backupOverdue(k.backupAt, now);
   const spendWords = spendCeilingWords(k.spend);
   const rate = k.landed / k.landedHours.length;
-  return html`<section class="stats mb" aria-label="The last 24 hours, as of this page load">
+  return html`<section class="stats kpi-row mb" aria-label="The last 24 hours, as of this page load">
     ${tile(
       "Shipped per hour",
       "/board",
@@ -191,18 +189,4 @@ export function waitingLine(db: Database, user: User, now: Date = new Date()): H
   // `.break` lets the words wrap; `.stack` puts the link on its own line. No ask title: the home stays bare of them.
   // The fold is a form, which cannot sit in the paragraph: it follows it.
   return html`${words === null ? null : html`<p class="small muted break stack stack-tight"><span>${words}</span><a href="/review">Review them</a></p>`}${stale.length === 0 ? null : staleArchive(stale)}`;
-}
-
-/** Home's flow vitals for an admin (#5935): one muted line of counts; the open count links to the boards. */
-export function vitalsRow(db: Database, now: Date = new Date()): Html {
-  const v = cachedVitals(db, now);
-  const rest = vitalsLine(v).split(" · ").slice(1).join(" · ");
-  return html`<p class="small muted"><a href="/boards">${v.open} open pulls</a> · ${rest}</p>`;
-}
-
-/** Home's clog lines for an admin (#6757): the clog standing now and the last cleared note; nothing when there is neither. */
-export function clogRow(db: Database, now: Date = new Date()): Html {
-  const lines = clogLines(readClog(db, now), now.getTime());
-  if (lines.length === 0) return html``;
-  return html`${lines.map((l) => html`<p class="small muted break">${l}</p>`)}`;
 }

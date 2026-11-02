@@ -282,10 +282,7 @@ export function deferredIn(
   for (const edge of graph.edges) {
     if (!open.has(edge.issueId)) continue;
     if (edge.blockedById === gate) out.add(edge.issueId);
-    waiters.set(edge.blockedById, [
-      ...(waiters.get(edge.blockedById) ?? []),
-      edge.issueId,
-    ]);
+    push(waiters, edge.blockedById, edge.issueId);
   }
   if (later !== undefined && open.has(later)) out.add(later);
   for (const id of also) if (open.has(id) && id !== gate) out.add(id);
@@ -301,6 +298,13 @@ export function deferredIn(
     }
   }
   return out;
+}
+
+/** Append to the list under `key`, which a spread would copy whole each time. */
+function push(into: Map<string, string[]>, key: string, value: string): void {
+  const list = into.get(key);
+  if (list === undefined) into.set(key, [value]);
+  else list.push(value);
 }
 
 const GRAPH_MAX = 400;
@@ -505,10 +509,7 @@ function deferredWhy(
     if (edge.blockedById === gate) behind.add(edge.issueId);
     if (edge.issueId === later) filed.add(edge.blockedById);
     if (deferred.has(edge.issueId))
-      waiters.set(edge.blockedById, [
-        ...(waiters.get(edge.blockedById) ?? []),
-        edge.issueId,
-      ]);
+      push(waiters, edge.blockedById, edge.issueId);
   }
   // The deferred limbs an issue hangs from: what above it was itself filed.
   const limbs = (id: string, seen: Set<string>): Pick<Issue, "id" | "number" | "title">[] => {
@@ -619,11 +620,30 @@ function waitsForMap(
   return memo;
 }
 
+/**
+ * What the rankings of one graph share: its open ids and both reach maps.
+ * `readyNow`, `idleFurniture` and `blockedOn` each ask for them on the same
+ * graph in one page, and each walk is the costliest step of the read (#8381),
+ * so a graph is walked once. A graph is plain data that is built, not changed.
+ */
+const reachMaps = new WeakMap<
+  Graph,
+  { open: Set<string>; holds: Map<string, Set<string>>; waits: Map<string, Set<string>> }
+>();
+
+export function reachOf(graph: Graph) {
+  let known = reachMaps.get(graph);
+  if (known === undefined) {
+    const open = openIds(graph);
+    known = { open, holds: holdsUpMap(graph, open), waits: waitsForMap(graph, open) };
+    reachMaps.set(graph, known);
+  }
+  return known;
+}
+
 /** Open issues nothing open stands in front of, whoever they are for, in the ready order. */
 function clearNow(graph: Graph): Ranked[] {
-  const open = openIds(graph);
-  const holds = holdsUpMap(graph, open);
-  const waits = waitsForMap(graph, open);
+  const { open, holds, waits } = reachOf(graph);
   const held = new Set(graph.held.map((h) => h.issueId));
   return graph.issues
     .filter(
@@ -698,9 +718,7 @@ export function idleFurniture(graph: Graph): Issue[] {
 
 /** Open issues that hold others up, the widest blockage first. */
 export function blockedOn(graph: Graph): Ranked[] {
-  const open = openIds(graph);
-  const holds = holdsUpMap(graph, open);
-  const waits = waitsForMap(graph, open);
+  const { open, holds, waits } = reachOf(graph);
   return graph.issues
     .filter((i) => open.has(i.id) && (holds.get(i.id)?.size ?? 0) > 0)
     .map((issue) => ({

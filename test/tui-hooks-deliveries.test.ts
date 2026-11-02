@@ -1,7 +1,8 @@
 /**
  * Enter on a webhook in the terminal's Hooks screen opens its last 20
  * deliveries (#7873): state, status and why it failed, never a secret;
- * esc or q returns to the same row; losing admin closes it.
+ * esc or q returns to the same row; losing admin closes it. `r` redelivers
+ * a failed row (#8075); `p` sends the hook a ping (#7872).
  */
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -11,7 +12,7 @@ import { createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
-import { createWebhook, enqueueForEvent, listWebhooks } from "../src/core/webhooks.ts";
+import { createWebhook, enqueueForEvent, listWebhooks, PING_LIMIT } from "../src/core/webhooks.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { hooksScreen } from "../src/tui/screens/hooks.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
@@ -135,5 +136,71 @@ test("losing admin closes the deliveries instead of showing them", async () => {
   (h.session as { user: User }).user = bob;
   await h.feed("j");
   expect(h.text()).not.toContain("refused: private address");
+  h.stop();
+});
+
+const states = (): string[] =>
+  app.db
+    .query<{ state: string }, []>(
+      "SELECT d.state FROM webhook_delivery d JOIN event e ON e.id = d.event_id WHERE d.webhook_id = (SELECT id FROM webhook ORDER BY rowid LIMIT 1 OFFSET 1) ORDER BY d.rowid DESC",
+    )
+    .all()
+    .map((r) => r.state);
+
+test("r on a failed row queues it again; on a row that is not failed it does nothing", async () => {
+  const h = open();
+  await h.feed("j", "enter");
+  // Newest first: issue.opened (failed) is on top, push (ok) below it.
+  await h.feed("j", "r");
+  expect(h.text()).toMatch(/push · ok · 204 · 1/);
+  expect(h.text()).not.toContain("queued again");
+  expect(states()).toEqual(["failed", "ok"]);
+  await h.feed("k", "r");
+  const t = h.text();
+  expect(t).toContain("queued again");
+  expect(t).toMatch(/issue\.opened · pending · — · 0/);
+  expect(t).not.toContain("refused: private address");
+  await h.feed("r");
+  expect(h.text()).toMatch(/issue\.opened · pending/);
+  h.stop();
+});
+
+test("a person who lost admin cannot redeliver with r: the row stays failed", async () => {
+  app.db.run("UPDATE webhook_delivery SET state = 'failed' WHERE state = 'pending'");
+  const h = open();
+  await h.feed("j", "enter");
+  (h.session as { user: User }).user = bob;
+  await h.feed("r");
+  expect(h.text()).not.toContain("queued again");
+  expect(app.db.query("SELECT 1 FROM webhook_delivery WHERE state = 'pending'").get()).toBeNull();
+  h.stop();
+});
+
+test("p sends the hook a ping that shows at once among its deliveries; past the limit it says how long to wait", async () => {
+  const h = open();
+  await h.feed("j", "j", "enter");
+  expect(h.text()).toContain("No deliveries yet.");
+  for (let i = 0; i < PING_LIMIT; i++) {
+    await h.feed("p");
+    expect(h.text()).toContain("ping queued");
+  }
+  expect(h.text()).toMatch(/ping · pending · — · 0/);
+  await h.feed("p");
+  expect(h.text()).toMatch(/too many pings: try again in \d+ s/);
+  const hook = listWebhooks(app.db, repo.id)[2]!;
+  expect(app.db.query("SELECT COUNT(*) AS n FROM webhook_ping WHERE webhook_id = ?1").get(hook.id)).toEqual({
+    n: PING_LIMIT,
+  });
+  h.stop();
+});
+
+test("a person who lost admin cannot ping with p", async () => {
+  const before = (app.db.query("SELECT COUNT(*) AS n FROM webhook_ping").get() as { n: number }).n;
+  const h = open();
+  await h.feed("enter");
+  (h.session as { user: User }).user = bob;
+  await h.feed("p");
+  expect(h.text()).not.toContain("ping queued");
+  expect((app.db.query("SELECT COUNT(*) AS n FROM webhook_ping").get() as { n: number }).n).toBe(before);
   h.stop();
 });

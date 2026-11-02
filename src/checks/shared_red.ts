@@ -47,15 +47,34 @@ export const NO_TEST_NAME = "(unnamed)";
  * the rest of its suite is not a gate, and a test keeps it existing.
  * Reserved names (#7809): each pull adding a top-level page without
  * reserving it ("keeper", "feed", "favicon.ico") failed it, main green.
+ * OpenAPI coverage (#8140): each pull adding an /api/v1 route without its
+ * row, or a route file without regenerating the index, failed it, main green.
+ * MCP tools (#7906): each pull adding a tool without `bun scripts/mcp-tools.ts`
+ * failed the index check, main green.
+ * The rest are top-level tests named whole (#8184): each reads only the tree.
  */
 export const TREE_GATES: readonly string[] = [
   "design check: nothing added outside the system (#2678) > ",
   "no polling in src/web > ",
   "reserved names > every top-level page of the forge is a reserved name",
+  // A route a pull added without its row in docs/openapi.
+  "every registered /api/v1 route has an OpenAPI row or is listed as not yet described",
+  "NOT_YET_DESCRIBED has no entry that is now described",
+  "NOT_YET_DESCRIBED is sorted and names registered routes",
+  // An import a pull added from scripts/ or test/ into src/.
+  "nothing under src/ imports from outside src/ (scripts/, test/, …)",
+  // A README a pull grew past its limit, or a docs/ link it broke.
+  "README.md stays under 80 KB",
+  "every docs/ link in README.md resolves",
+  // A route file a pull added without regenerating the index.
+  "the gathered routes > the index is current: run `bun scripts/openapi-routes.ts`",
+  // A tool file a pull added without regenerating the index (#7906).
+  "the gathered tools > the index is current: run `bun scripts/mcp-tools.ts`",
 ];
 
-/** Whether a failing test's name is one of {@link TREE_GATES}'. */
-export const isTreeGate = (test: string): boolean => TREE_GATES.some((g) => test.startsWith(g));
+/** Whether a failing test's name is one of {@link TREE_GATES}': under a suite prefix (`… > `), or a test's full name exactly. */
+export const isTreeGate = (test: string): boolean =>
+  TREE_GATES.some((g) => (g.endsWith(" > ") ? test.startsWith(g) : test === g));
 
 export interface SharedTest {
   readonly repoId: string;
@@ -142,6 +161,27 @@ export function sharedCause(t: Pick<SharedTest, "repoId" | "test">): string {
 }
 
 /**
+ * Distinct pulls whose check, created at or after `sinceMs`, failed the test
+ * a shared cause names (#8185): the reds a fix that landed then did not end,
+ * where the hour's window still holds the ones from before it.
+ */
+const FAILED_SINCE = `
+  SELECT DISTINCT run.issue_id, n.value AS test
+    FROM run,
+         json_each(CASE WHEN json_valid(run.check_detail) THEN run.check_detail ELSE '{}' END, '$.names') n
+   WHERE run.repo_id = ?1 AND run.id >= ?2 AND run.created_at >= ?3
+     AND run.kind = 'check' AND run.issue_id IS NOT NULL AND run.state = 'failed'
+     AND n.type = 'text'`;
+
+export function pullsFailedSince(db: Database, cause: string, sinceMs: number): number {
+  const repoId = cause.split(":")[1] ?? "";
+  const rows = db
+    .query<{ issue_id: string; test: string }, [string, string, string]>(FAILED_SINCE)
+    .all(repoId, idFloor(sinceMs), new Date(sinceMs).toISOString());
+  return new Set(rows.filter((r) => sharedCause({ repoId, test: r.test }) === cause).map((r) => r.issue_id)).size;
+}
+
+/**
  * The sentinel's finding key for a cause, `degraded:${keyPart(cause)}`
  * (`crew/sentinel.ts`, which reads the vitals and so is not imported here):
  * a shared cause is already lowercase base32 and base36, so only `:` moves.
@@ -170,4 +210,100 @@ export function flakeHref(db: Database, t: SharedTest): string {
 /** The card's sentence: which test, on how many pulls, and that they wait. */
 export function sharedSentence(t: SharedTest): string {
   return `${t.repo}: "${t.test}" failed on ${t.pulls} pulls in the last hour — the lane's red, not theirs; they wait for main's next green check, unparked.`;
+}
+
+/** One failed pull check on a shared test: which pull, which run, what base it merged. */
+export interface SharedRun {
+  readonly runId: string;
+  readonly pull: number;
+  readonly baseOid: string;
+}
+
+/** How many of a shared test's failed checks a finding names (#8286). */
+export const SHARED_RUNS_NAMED = 5;
+
+/**
+ * The failed pull checks in the window on the test a shared cause names,
+ * newest first, at most {@link SHARED_RUNS_NAMED} (#8286): what a builder
+ * needs to find the log and reproduce the red. Undefined when none is left.
+ */
+const FAILED_RUNS = `
+  SELECT run.id AS run_id, i.number AS pull, run.base_oid AS base_oid, n.value AS test
+    FROM run
+    JOIN issue i ON i.id = run.issue_id,
+         json_each(CASE WHEN json_valid(run.check_detail) THEN run.check_detail ELSE '{}' END, '$.names') n
+   WHERE run.repo_id = ?1 AND run.id >= ?2 AND run.finished_at >= ?3
+     AND run.kind = 'check' AND run.state = 'failed' AND n.type = 'text'
+   ORDER BY run.id DESC`;
+
+export function sharedRuns(
+  db: Database,
+  cause: string,
+  now: number = Date.now(),
+): { test: string; runs: SharedRun[] } | undefined {
+  const repoId = cause.split(":")[1] ?? "";
+  const rows = db
+    .query<{ run_id: string; pull: number; base_oid: string; test: string }, [string, string, string]>(FAILED_RUNS)
+    .all(repoId, idFloor(now - SHARED_WINDOW_MS - QUEUED_SLACK_MS), new Date(now - SHARED_WINDOW_MS).toISOString())
+    .filter((r) => sharedCause({ repoId, test: r.test }) === cause);
+  const first = rows[0];
+  if (first === undefined) return undefined;
+  return {
+    test: first.test,
+    runs: rows.slice(0, SHARED_RUNS_NAMED).map((r) => ({ runId: r.run_id, pull: r.pull, baseOid: r.base_oid })),
+  };
+}
+
+/** Main's newest finished check, and whether it failed the named test. */
+export function mainVerdict(
+  db: Database,
+  repoId: string,
+  test: string,
+): { runId: string; commitOid: string; passes: boolean } | undefined {
+  const row = db
+    .query<{ id: string; commit_oid: string; state: string; check_detail: string | null }, [string]>(
+      `SELECT r.id, r.commit_oid, r.state, r.check_detail FROM run r JOIN repo ON repo.id = r.repo_id
+        WHERE r.repo_id = ?1 AND r.kind = 'check' AND r.issue_id IS NULL
+          AND r.env = repo.default_branch AND r.state IN ('ok', 'failed')
+        ORDER BY r.id DESC LIMIT 1`,
+    )
+    .get(repoId);
+  if (row === null) return undefined;
+  let names: unknown = [];
+  try {
+    names = (JSON.parse(row.check_detail ?? "{}") as { names?: unknown }).names ?? [];
+  } catch {
+    names = [];
+  }
+  const failsIt = row.state === "failed" && Array.isArray(names) && names.includes(test);
+  return { runId: row.id, commitOid: row.commit_oid, passes: row.state === "ok" || !failsIt };
+}
+
+/** The most lines of a failing test's output a finding quotes. */
+export const ASSERTION_LINES = 20;
+
+const RESULT = /^\((?:pass|fail|skip|todo)\) /;
+const FILE_HEADER = /^\S+\.test\.[cm]?[jt]sx?:$/;
+/** bun's closing tally: a `(fail)` line under it is the recap, not the report. */
+const TALLY = /^\s*\d+ (?:pass|fail|skip|todo)$|^\d+ tests? failed:$|^Ran \d+ tests? /;
+
+/**
+ * What bun printed for one failing test: the lines above its `(fail)` line,
+ * back to the result or file header before them, at most
+ * {@link ASSERTION_LINES}. The newest report wins; bun's recap of `(fail)`
+ * lines under its tally quotes nothing. Empty when no report is in `lines`.
+ */
+export function assertionLines(lines: readonly string[], test: string): string[] {
+  for (let at = lines.length - 1; at >= 0; at--) {
+    const line = lines[at]!;
+    if (line !== `(fail) ${test}` && !line.startsWith(`(fail) ${test} [`)) continue;
+    let from = at;
+    while (from > 0 && at - from < ASSERTION_LINES && !RESULT.test(lines[from - 1]!) && !FILE_HEADER.test(lines[from - 1]!))
+      from--;
+    const block = lines.slice(from, at);
+    if (block.some((l) => TALLY.test(l))) continue;
+    const quoted = block.filter((l) => l.trim() !== "");
+    if (quoted.length > 0) return quoted;
+  }
+  return [];
 }

@@ -194,23 +194,37 @@ function git(args: string[], cwd: string = process.cwd()): { ok: boolean; out: s
  * Pins the pull edited, against its base: `$FORGE_CHECK_BASE`, else the
  * merge base with main. A pin whose migration is not on the base was never
  * history, so it is deleted and regenerated rather than left to a new migration.
- * With no base to compare to it says so on stderr and names nothing.
+ * It also compares HEAD to main's tip (#8352): a pin there that the pull's
+ * own commits changed or deleted is refused, though a squash landing left
+ * the merge base before it. A tree with no git history (the forge's full
+ * check exports one) has nothing to diff and says so on stderr; a repository
+ * where no base resolves is refused, never passed unchecked.
  */
 // Imported on use: `treeGate` loads this file alone, outside the repository.
 export async function pinRefusal(cwd: string = process.cwd()): Promise<string[]> {
-  const { parseNameStatus, pinEdits, unpinnedAdds } = await import("../src/kernel/pin_edits.ts");
-  const env = process.env.FORGE_CHECK_BASE;
-  const base =
-    env || git(["merge-base", "origin/main", "HEAD"], cwd).out || git(["merge-base", "main", "HEAD"], cwd).out;
-  if (!base) {
+  const { parseNameStatus, pinEdits, tipEdits, unpinnedAdds } = await import("../src/kernel/pin_edits.ts");
+  if (!git(["rev-parse", "--git-dir"], cwd).ok) {
     console.error("gate: no base to compare to (set FORGE_CHECK_BASE): migration pins not checked");
     return [];
   }
+  const env = process.env.FORGE_CHECK_BASE;
+  const base =
+    env || git(["merge-base", "origin/main", "HEAD"], cwd).out || git(["merge-base", "main", "HEAD"], cwd).out;
+  const tip =
+    env ||
+    git(["rev-parse", "--verify", "--quiet", "origin/main^{commit}"], cwd).out ||
+    git(["rev-parse", "--verify", "--quiet", "main^{commit}"], cwd).out;
+  const unchecked = (why: string) => [
+    `${why}: a migration on main is history, so its pins must be checked; set FORGE_CHECK_BASE or fetch origin/main`,
+  ];
+  if (!base || !tip) return unchecked("no base to compare to");
   const diff = git(["diff", "--name-status", "-M", `${base}..HEAD`], cwd);
-  if (!diff.ok) {
-    console.error(`gate: git diff against ${base} failed: migration pins not checked`);
-    return [];
-  }
+  if (!diff.ok) return unchecked(`git diff against ${base} failed`);
+  const fromTip = git(
+    ["diff", "--name-status", "--no-renames", tip, "HEAD", "--", "src/core/migration-pins", "src/core/migration-pins.json"],
+    cwd,
+  );
+  if (!fromTip.ok) return unchecked(`git diff against ${tip} failed`);
   const changes = parseNameStatus(diff.out);
   const edits = pinEdits(changes).map((path) => {
     const name = path.split("/").pop()?.replace(/\.pin$/, "") ?? "";
@@ -222,13 +236,23 @@ export async function pinRefusal(cwd: string = process.cwd()): Promise<string[]>
       ? `${path} was deleted: a migration on main is history, so restore it`
       : `${path} was changed: a migration on main is history, so add a new migration instead`;
   });
+  // Pins on main's tip the pull's commits wrote: by content, so a rebase passes.
+  const named = new Set(pinEdits(changes));
+  const touched = (path: string) => git(["log", "-1", "--format=%H", `${base}..HEAD`, "--", path], cwd).out !== "";
+  const landed = tipEdits(parseNameStatus(fromTip.out), touched)
+    .filter(({ path }) => !named.has(path))
+    .map(({ status, path }) =>
+      status.startsWith("D")
+        ? `${path} was deleted: a migration on main is history, so restore it`
+        : `${path} was changed: a migration on main is history, so add a new migration instead`,
+    );
   // Last, so the check's summary — its last line — names the one-step fix.
   const pinned = (name: string) => existsSync(join(cwd, "src/core/migration-pins", `${name}.pin`));
   const missing = unpinnedAdds(changes, pinned).map(
     (name) =>
       `this pull adds migration ${name} without its pin: run bun scripts/pin-migrations.ts and commit src/core/migration-pins/${name}.pin`,
   );
-  return [...edits, ...missing];
+  return [...edits, ...landed, ...missing];
 }
 
 // `bun scripts/gate.ts`: the audit alone, first in `forge.json`'s check, so

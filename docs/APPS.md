@@ -254,6 +254,27 @@ read the repository sees only the time, never a sha. The read is the `serving`
 Server-Timing phase. The prefix was already the forge's, so an app's own
 `/__forge/` path is not reachable.
 
+**Reading a slow app's Server-Timing.** A response the proxy relays keeps the
+app's own entries (`db`, `app`, …) and gains the forge's, each `forge-` named
+and in milliseconds only: `forge-route` (finding the target and its grant:
+the sum of `forge-lookup`, the server finding the app by its host,
+`forge-state`, the doors and the environment's state, and `forge-session`, the
+grant read), `forge-wake` (waiting for a sleeping or starting environment; 0
+when none), `forge-upstream` and `forge-ttfb` (the same wait, until the app's
+headers: `fetch` reports nothing of its connection, so the socket's opening
+is inside it), `forge-body` (reading a page whole for the pill) and
+`forge-rewrite` (pill injection with that read, when it ran). Big `forge-wake`
+is a cold start, big `forge-ttfb` is the app or its listener, big `forge-body`
+is an app slow to finish its page; if all are small, the time went before the
+request reached the forge. The forge opens no second socket to time the
+connect: it would take a backlog slot in the very case it is meant to find.
+The "app stopped answering" page carries `route`, `wake` and `upstream` too;
+the forge's own `/__forge/*` pages and the WebSocket upgrade name no forge-
+phases. A refused answer (sign in, not found, not running) names none either:
+the wake runs before the door is asked, so its time would tell a caller who may
+not read the app whether it was asleep. The proxy has one writer for these
+(`withPhases` over `notePhase`), which appends to the app's header.
+
 **Tell the crew from the pill.** Signed in as someone who may direct the crew,
 the panel also offers *Tell the crew* (`/__forge/crew` adds a `tell` link, only
 for them; signed out there is no action). It opens the forge's own
@@ -699,12 +720,52 @@ queued again, and the forge that carries on runs it from the start.
 or `ECONNRESET` is tried once more after 2 s. If it fails that way again,
 the check is `failed: infrastructure`. It is queued again, and the merge
 queue counts it as cut off, not red. If the re-run fails the same way, it
-fails and says `infrastructure`. A check in a cell installs into its own
-home, so its bun cache is shared with nothing. An uncontained check uses
-its repository's cache (`<data>/check-install/<repo>/bun`), and installs
-into it take turns under a lock file, so two never extract one package
-into the same directory. A `job` check installs in its own pod and is not
-retried.
+fails and says `infrastructure`. An uncontained check uses its
+repository's cache (`<data>/check-install/<repo>/bun`), and installs into
+it take turns under a lock file, so two never extract one package into the
+same directory. A `job` check installs in its own pod with its own cache
+and is not retried.
+
+**A contained check installs from the shared cache**
+(`src/checks/install.ts`, #7543). A check in a cell reads its repository's
+cache and never writes it: before the install, the forge fills it on the
+host from a scratch copy of the commit's checkout (no `bunfig.toml` or
+`.npmrc` of the pull's, `--frozen-lockfile --ignore-scripts`, under the
+same lock), and binds it read-only into the cell, which installs from it
+copying. A warm install downloads nothing. The forge fills only a lockfile
+whose every package is a plain `name@version` from the pinned registry
+with a sha512 integrity (`src/checks/fillable.ts`); anything else
+(workspaces, git, file or tarball URLs, patches, an override or
+resolution to any of those, a binary `bun.lockb`)
+installs into the cell's own cache as before, and the log says why.
+
+That cache is bounded (`src/checks/install_evict.ts`, #7574): a fill, or an
+uncontained install, marks the packages its `bun.lock` names as lent, and
+under the same lock, in the background and at most hourly, the forge
+removes entries not lent for 30 days (`FORGE_CHECK_CACHE_DAYS`), then the
+oldest until the repository's cache is under 2 GB (`FORGE_CHECK_CACHE_MB`).
+An evicted package is fetched again by the next install. Only the text
+`bun.lock` is read: a repository on a binary `bun.lockb` lends nothing, so
+its packages age out after 30 days and are fetched again.
+
+**An app environment installs from that same cache** (`src/apps/process.ts`,
+#7544). Before a cold checkout's `install`, production or a preview, the
+forge fills the repository's cache on the host from the checkout's
+`bun.lock`, the way checks fill it. The install then reads the cache:
+read-only and copying inside a cell (`BUN_INSTALL_CACHE_DIR`), or under the
+lock file without one. The environment's home stays its own, and a new
+preview fetches nothing the cache already holds. A checkout with no
+`bun.lock`, or one the fill does not trust, installs into its home as
+before; so does one whose fill fails (the registry unreachable, the lock
+cancelled, a timeout): the cache is an optimisation, and its failure is a
+`cache not filled:` line in the deploy's log, never a failed deploy. A warm
+start still runs no install.
+
+Uncontained, the install holds the cache's lock for its whole run, since
+an install outside a cell (its own lifecycle scripts included) could write
+the cache. The cost: two cold environments of one repository install one
+after the other there. Inside a cell the cache is read-only, so only the
+fill takes the lock and installs run side by side.
 
 **Placement.** `FORGE_CHECKS_PLACEMENT=process` (the default) runs a check
 in a cell on the forge's machine. `job` runs install and check as one
@@ -1293,7 +1354,11 @@ called the window full (a person's own use is not in the ledger, so it is
 a floor). An operator keeps a share of every window for people
 (Settings → Subscriptions, 0–90%); `crewRemaining` is what is left after
 it. Both read on `GET /api/v1/repos/:owner/:name/usage` and the MCP
-`usage` tool, under `standing`.
+`usage` tool, under `standing`. Without a repository, `GET /api/v1/usage` and
+the same tool answer for every app you can write: `today` (since 00:00 UTC)
+and `last24h` (rolling) named apart, per subscription, with each window's
+`headroom` as the percent of its limit still free (`null` until the provider
+has named a limit). Not in the terminal yet.
 
 Across repositories, the _fleet graph_ (`GET /fleet/graph`) draws a
 selection's spend and runs from the same ledger: the last 24 hours by UTC
@@ -1516,6 +1581,8 @@ a link to the milestone (`docs/PLANNING.md`); its progress never does.
 | `FORGE_CHECKS_DRAIN_S`       | `10`                           | seconds a roll lets running checks finish first   |
 | `FORGE_CREW_DRAIN_S`         | `10`                           | seconds a roll lets crew runs finish before they are queued again |
 | `FORGE_CHECK_SHARDS`      | the machine's cores             | test shards per check (live: Settings → Capacity) |
+| `FORGE_CHECK_CACHE_DAYS`  | `30`                            | days a package may go unlent before the check install cache drops it |
+| `FORGE_CHECK_CACHE_MB`    | `2048`                          | size one repository's check install cache is swept down to |
 | `FORGE_CELLS_EGRESS`      | `enforce`                       | `report` lets undeclared egress through on 80/443 (live: Settings → Capacity) |
 | `FORGE_CELL_CGROUP`       | `/sys/fs/cgroup` at a namespace root | the delegated cgroup v2 whose children cap each cell's memory; `off` watches only |
 | `FORGE_CREW_CPUS`         | `4` | cores one crew run may use (`cpu.max` on its own cell cgroup, where the cpu controller is delegated) |

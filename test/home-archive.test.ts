@@ -82,7 +82,7 @@ describe("home archive", () => {
 
   const body = (...ids: string[]) => ids.map((id) => `repo=${id}`).join("&");
   const home = async (cookie: string) => (await get("/live/apps", cookie)).text();
-  const full = async (cookie: string) => (await get("/", cookie)).text();
+  const full = async (cookie: string) => (await get("/feed", cookie)).text();
 
   test("an admin archives two, the answer lists them, Undo brings them back", async () => {
     const before = await full(rootCookie);

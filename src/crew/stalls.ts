@@ -17,6 +17,7 @@
 import type { Database } from "bun:sqlite";
 import { BY_CREW, DONE_LIKE, PARK_LIKE } from "../core/done_on_main.ts";
 import type { Repo } from "../core/repos.ts";
+import { PULL_STOPPED } from "../core/runs.ts";
 import { getUserById } from "../core/users.ts";
 import { speaksForCrew } from "./direct.ts";
 import { interruptionOf } from "./interrupted.ts";
@@ -28,9 +29,19 @@ export const NO_PULL = "run ended without a pull";
 /** How long a builder that stalled an issue leaves it to the others. */
 export const SHUN_MS = 60 * 60_000;
 
-/** Whether a finished run left its issue without a pull: not interrupted, no pull opened or updated. */
+/**
+ * Whether a run ended because its pull landed under it (#8481): the work is
+ * on the base, so it is no stall, no park and no strike. "The pull closed"
+ * (closed without landing) is not this.
+ */
+export function landedUnder(run: { readonly summary: string }): boolean {
+  return run.summary === PULL_STOPPED[1];
+}
+
+/** Whether a finished run left its issue without a pull: not interrupted, not landed, no pull opened or updated. */
 export function leftWithoutPull(run: { readonly state: string; readonly summary: string }): boolean {
   if (run.state !== "ok" && run.state !== "failed") return false;
+  if (landedUnder(run)) return false;
   if (/opened pull #|updated pull #/.test(run.summary)) return false;
   return !(run.state === "failed" && interruptionOf(run.summary) !== undefined);
 }

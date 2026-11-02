@@ -57,13 +57,14 @@ import { readLearned } from "./learned.ts";
 import { keepCache, restoreCache } from "./cache.ts";
 import { MAX_FILED, clearedFiles, fileOrderDependent } from "./order_dependent.ts";
 import { parseBunTestFailure } from "./bun-test.ts";
-import { passedAlone, recordFlakes, rerunCommand, rerunnable, pullOwnsRed } from "./flake.ts";
+import { recordCrashFlakes, passedAlone, recordFlakes, rerunCommand, rerunnable, pullOwnsRed } from "./flake.ts";
 import { diskRecovered, withDisk } from "./disk_red.ts";
 import { ASKED, redMain, unheld } from "./red_main.ts";
 import { proposeRevert } from "./revert_red.ts";
 import { rebasesFirst } from "./finishing_first.ts";
 import { IMPACT_FILE, keepImpact, seedImpact } from "./impact-store.ts";
 import { afterVerify } from "./culprit.ts";
+import { redDetail, reportRed } from "./report.ts";
 import {
   bisectOrigin,
   failedFiles,
@@ -106,9 +107,16 @@ import { summariseCheckFailure } from "./summary.ts";
 import type { Result } from "../kernel/result.ts";
 import { placementFromEnv, type Placement } from "./placement.ts";
 import { JOB_VANISHED, runJobStep } from "./job_step.ts";
-import { cellInstall, checkInstallCache, installWithRetry, prefillInstallCache, withLock } from "./install.ts";
+import {
+  cellInstall,
+  checkInstallCache,
+  meteredInstall,
+  installWithRetry,
+  prefillInstallCache,
+  withLock,
+} from "./install.ts";
+import { evictSoon, lend } from "./install_evict.ts";
 import { checkStage, type GateStage } from "./gate_reason.ts";
-import { proofsInFlight } from "./proof.ts";
 import { extraGates, GATE_DEADLINE_MS, gateQueued, gateRunId, gatesInFlight, watchGates } from "./queue.ts";
 import type { JobOptions } from "../cluster/jobs.ts";
 import type { CheckDetail } from "../core/runs.ts";
@@ -191,14 +199,6 @@ export interface ChecksHandle {
    * `signal` aborting (the queue's deadline, #3430) cuts it off the same way.
    */
   gate(repo: Repo, pull: Pull, commitOid: string, signal?: AbortSignal): Promise<GateDone>;
-  /**
-   * The proof before the line (#7616, `checks/proof.ts`): the gate's own
-   * run — command, environment, sharding — on the pull's head squashed onto
-   * its base, cut off as a gate is when `signal` aborts (its deadline). A
-   * lane without it (a test's stand-in) admits on the pull's own check, as
-   * before.
-   */
-  prove?(repo: Repo, pull: Pull, commitOid: string, signal?: AbortSignal): Promise<GateDone>;
   /**
    * The gate of `commitOid` this forge is running now, to wait on rather
    * than start again (#6611); undefined when none is.
@@ -375,8 +375,7 @@ function gateMayBeRunning(path: string, now: number): boolean {
  * directory and database with the old one, whose checks are still running in
  * theirs; those are left alone. A gate writes no run: its checkout is left
  * while it is younger than a gate's deadline, and past that while its
- * `check_gate` row is open, for as long as a check may run — the proof
- * step's full suite outlives the window, and lost its `node_modules` (#7673).
+ * `check_gate` row is open, for as long as a check may run.
  */
 export function sweepCheckouts(app: App, now: number = Date.now()): void {
   const root = checksRoot(app.config.dataDir);
@@ -598,7 +597,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     if (options.gate === undefined) gate.resize(limit);
     startVerify();
     // Every merge-queue gate in flight holds a slot, a line's first too (#6376).
-    while (slotted() < limit - gatesInFlight() - proofsInFlight()) {
+    while (slotted() < limit - gatesInFlight()) {
       // A pull's check waits while its main is red (`checks/red_main.ts`).
       const queued = unheld(
         listActive(app.db, "check").filter(
@@ -618,7 +617,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       const { rebases, rest: others } = rebasesFirst(app.db, queued);
       // While a gate is about to start, the last free slot is its: a pull's
       // check waits for it, a rebase's and a main check do not.
-      const held = holdsLastSlot(limit - gatesInFlight() - proofsInFlight() - slotted(), gateQueued());
+      const held = holdsLastSlot(limit - gatesInFlight() - slotted(), gateQueued());
       const next = startable(rebases) ?? startable(held ? others.filter((run) => run.issueId === null) : others);
       if (!next) return;
       const repo = getRepoById(app.db, next.repoId);
@@ -850,6 +849,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           log.error("revert proposal failed", { error: String(error) }),
         );
       // A red verification after landing names its culprit (#7786).
+      if (done && run.env === VERIFY_ENV)
+        reportRed(app, repo, done).forEach(write);
       if (done && inVerifyLane(run.env))
         await afterVerify(app, repo, done, (r, env, oid, reason) => request(r, env, oid, reason))
           .then((lines) => lines.forEach(write))
@@ -1217,28 +1218,50 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
               cell: revealed,
             });
           };
-          const installed = await installWithRetry(
-            async (log) => {
-              if (shared === undefined) {
-                if (warm !== undefined) {
-                  const fill = await prefillInstallCache({
-                    cache: warm,
-                    dir,
-                    env,
-                    log,
-                    signal,
-                    timeoutMs: manifest.timeout * 1000,
-                  });
-                  if (!fill.ok) return fill;
-                  filled = fill.value;
-                }
-                return once(log);
-              }
-              mkdirSync(shared, { recursive: true });
-              const held = await withLock(`${shared}.lock`, () => once(log), { signal });
-              return held.ok ? held.value : held;
-            },
-            { log: write, signal, retryMs: options.installRetryMs },
+          // What the cell's proxy received, for the one line that shows the cache
+          // working (#7546). Uncontained, nothing is logged: the shared cache
+          // is not metered, and its growth is wrong under concurrent checks.
+          // Stopped in `finally`, so a throw never leaves the label metered;
+          // over a MiB from the npm registry adds the miss line (#8382).
+          const installed = await meteredInstall(
+            cell === undefined ? undefined : `check:${run.id}`,
+            repo.id,
+            () =>
+              installWithRetry(
+                async (log) => {
+                  if (shared === undefined) {
+                    if (warm !== undefined) {
+                      const fill = await prefillInstallCache({
+                        cache: warm,
+                        dir,
+                        env,
+                        log,
+                        signal,
+                        timeoutMs: manifest.timeout * 1000,
+                      });
+                      if (!fill.ok) return fill;
+                      filled = fill.value;
+                      void evictSoon(warm, process.env);
+                    }
+                    return once(log);
+                  }
+                  mkdirSync(shared, { recursive: true });
+                  const held = await withLock(
+                    `${shared}.lock`,
+                    async () => {
+                      const done = await once(log);
+                      if (done.ok) lend(shared, dir);
+                      return done;
+                    },
+                    { signal },
+                  );
+                  if (held.ok && held.value.ok) void evictSoon(shared, process.env);
+                  return held.ok ? held.value : held;
+                },
+                { log: write, signal, retryMs: options.installRetryMs },
+            ),
+            write,
+            { fetched: true },
           );
           if (!installed.ok)
             return {
@@ -1348,6 +1371,14 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           write(`flake re-run failed: ${String(error)}`);
         }
       }
+      // A shard that crashed outside any test and ran green once more (#7781).
+      {
+        try {
+          recordCrashFlakes(app.db, app.bus, repo, checkLines, { runId: run.id, commit: run.commitOid, pull: x.isMain !== true }, ran.ok);
+        } catch (error) {
+          write(`crash flakes not recorded: ${String(error)}`);
+        }
+      }
       if (!ran.ok) {
         const { summary, detail } = summariseCheckFailure(
           checkLines,
@@ -1368,7 +1399,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         return {
           ok: false,
           error: killed ? ran.error : summary,
-          detail: files.length > 0 ? { ...(detail ?? { passed: 0, failed: files.length, names: [] }), files } : detail,
+          detail: redDetail(detail, files, checkLines),
           stage: checkStage(ran.error),
           ...(killed ? { killed } : {}),
         };
@@ -1647,12 +1678,11 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   const handle: ChecksHandle = {
     request,
     gate: gateRun,
-    prove: gateRun,
     adopt: (commitOid) => {
       for (const g of gates.values()) if (g.commitOid === commitOid) return g.done;
       return undefined;
     },
-    spareSlots: () => Math.max(0, capacity() - PULL_RESERVE - slotted() - extraGates() - proofsInFlight()),
+    spareSlots: () => Math.max(0, capacity() - PULL_RESERVE - slotted() - extraGates()),
     verifyDue: (now) => askVerifications(now),
     lane: gate,
     stop: async (stopOptions) => {

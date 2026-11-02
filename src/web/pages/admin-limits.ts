@@ -161,7 +161,13 @@ export function limitsPage(ctx: Ctx): Response {
   const inviteRows = (invites.ok ? invites.value : []).map((i) =>
     row({
       lead: icon("activity"),
-      title: html`<span class="mono">${i.id}</span> <span class="muted small">${i.state}</span>`,
+      title: html`<span class="mono">${i.id}</span> <span class="muted small">${
+        i.state !== "used"
+          ? i.state
+          : html`used${i.usedBy === null ? "" : html` by <a href="/${i.usedBy}">${i.usedBy}</a>`}${
+              i.usedAt === null ? "" : ` on ${i.usedAt.slice(0, 10)}`
+            }`
+      }</span>`,
       meta: html`Made ${time(i.createdAt)} · expires ${time(i.expiresAt)}`,
       trail:
         i.state === "open"

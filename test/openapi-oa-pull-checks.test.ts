@@ -9,7 +9,7 @@ test("GET and POST …/pulls/{number}/checks are described", () => {
   expect(paths[P]?.get?.summary).toContain("checks");
   expect(paths[P]?.post?.responses?.["202"]).toBeDefined();
   expect(paths[P]?.get?.security).toBeUndefined();
-  expect(paths[P]?.post?.security).toEqual([{ token: [] }]);
+  expect(paths[P]?.post?.security).toEqual([{ token: [] }, { oauth2: ["rw"] }]);
   const ok = (m: string, code: string) =>
     paths[P]?.[m]?.responses?.[code]?.content?.["application/json"]?.schema?.properties;
   expect(Object.keys(ok("get", "200"))).toEqual(["head", "state", "required", "run", "runs"]);

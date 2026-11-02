@@ -46,6 +46,7 @@
   "test/offline.test.ts": 3.5,
   "test/pulls.test.ts": 14.6,
   "test/run-secrets.test.ts": 2.8,
+  "test/shards-run.test.ts": 12.5,
   "test/shards.test.ts": 0.3,
   "test/share.test.ts": 16.2,
   "test/spawn-plan.test.ts": 0.2,

@@ -5,7 +5,7 @@ import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts"
 
 export const tool: Tool = {
   name: "runs",
-  doc: "`{ repo, kind?, limit? }`: the repository's recent runs (kind agent, deploy, check or proof — a proof is the full-suite run before the merge queue), newest first (id, kind, state, issue or pull number, started, ended), 1–50, default 20; read as the runs page reads them",
+  doc: "`{ repo, kind?, limit? }`: the repository's recent runs (kind agent, deploy or check), newest first (id, kind, state, issue or pull number, started, ended), 1–50, default 20; read as the runs page reads them",
   description:
     "A repository's runs, newest first: id, kind, state, number, start, end.",
   inputSchema: {
@@ -14,7 +14,7 @@ export const tool: Tool = {
       repo: REPO_ARG,
       kind: {
         type: "string",
-        enum: ["agent", "deploy", "check", "proof"],
+        enum: ["agent", "deploy", "check"],
         description: "Only runs of this kind; all kinds when omitted.",
       },
       limit: {
@@ -38,7 +38,7 @@ export const tool: Tool = {
     if (isAnswer(repo)) return repo;
     const runs = listRepoRuns(ctx.app, user, repo, {
       limit,
-      ...(kind === undefined ? { withProofs: true } : { kind: kind as RunKind }),
+      ...(kind === undefined ? {} : { kind: kind as RunKind }),
     });
     if (!runs.ok) return bad("not_found", "no such app or repository (owner/name)");
     const answer = good({

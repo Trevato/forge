@@ -94,6 +94,8 @@ export interface Crossing {
   readonly repo: Repo;
   readonly pull: { readonly number: number; readonly title: string };
   readonly cells: readonly string[];
+  /** The same, in plain words: "anyone signed out could read pack records" (#7847). */
+  readonly plain: readonly string[];
 }
 
 /** Every wall crossing not yet answered, across the repositories given. */
@@ -111,15 +113,17 @@ export function crossingsWaiting(
     const repo = byId.get(d.repoId);
     if (issue === undefined || repo === undefined) continue;
     if (issue.state !== "open") continue;
-    const state = d.state as { cells?: unknown } | null;
-    const cells = Array.isArray(state?.cells)
-      ? state.cells.filter((c): c is string => typeof c === "string")
-      : [];
+    const state = d.state as { cells?: unknown; plain?: unknown } | null;
+    const strings = (v: unknown): string[] =>
+      Array.isArray(v) ? v.filter((c): c is string => typeof c === "string") : [];
+    const cells = strings(state?.cells);
+    const plain = strings(state?.plain);
     out.push({
       decision: d,
       repo,
       pull: { number: issue.number, title: issue.title },
       cells,
+      plain: plain.length > 0 ? plain : cells,
     });
   }
   return out;

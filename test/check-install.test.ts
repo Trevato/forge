@@ -4,7 +4,7 @@
  * machine's — queued again, never the pull's red.
  */
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,11 +22,13 @@ import {
   transientLine,
   withLock,
 } from "../src/checks/install.ts";
+import { boundFrom, evictInstallCache, evictSoon, lend } from "../src/checks/install_evict.ts";
 import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
 import { INFRA_SUMMARY, listRuns, type Run } from "../src/core/runs.ts";
 import { createUser } from "../src/core/users.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { readRunLog } from "../src/runs/log.ts";
 import { err, ok, type Result } from "../src/kernel/result.ts";
 
 const never = new AbortController().signal;
@@ -158,6 +160,7 @@ describe("a check whose install fails on the machine", () => {
   let checks: ChecksHandle;
   let flaky: Repo;
   let broken: Repo;
+  let lender: Repo;
 
   // Fails once with bun's own line, then installs: the marker lives in the
   // checkout, which the retry shares and the next check does not.
@@ -180,7 +183,7 @@ describe("a check whose install fails on the machine", () => {
       adminIfFirst: true,
     });
     if (!a.ok) throw new Error(a.error);
-    const repoWith = async (name: string, script: string): Promise<Repo> => {
+    const repoWith = async (name: string, script: string, more: { path: string; content: string }[] = []): Promise<Repo> => {
       const made = await createRepo(app, a.value, { name, visibility: "public" });
       if (!made.ok) throw new Error(String(made.error));
       const c = await commitToBranch(app, a.value, made.value, {
@@ -188,6 +191,7 @@ describe("a check whose install fails on the machine", () => {
         files: [
           { path: "forge.json", content: forgeJson },
           { path: "install.sh", content: script },
+          ...more,
         ],
       });
       if (!c.ok) throw new Error(JSON.stringify(c.error));
@@ -195,6 +199,10 @@ describe("a check whose install fails on the machine", () => {
     };
     flaky = await repoWith("flaky", once);
     broken = await repoWith("broken", always);
+    // Leaves a package the lockfile names, and one it does not, both untouched for years.
+    const aged =
+      'for p in a@1.0.0@@@1 gone@1.0.0@@@1; do mkdir -p "$BUN_INSTALL_CACHE_DIR/$p"; touch -d 2000-01-01 "$BUN_INSTALL_CACHE_DIR/$p"; done\n';
+    lender = await repoWith("lender", aged, [{ path: "bun.lock", content: '{"packages": {"a": ["a@1.0.0"]}}\n' }]);
   });
   afterAll(async () => {
     await checks.stop();
@@ -220,6 +228,20 @@ describe("a check whose install fails on the machine", () => {
     expect(runs[0]!.state).toBe("ok");
     // Uncontained, the repository's own cache is the one bun is pointed at.
     expect(existsSync(checkInstallCache(dataDir, flaky.id))).toBe(true);
+    // Uncontained, no install line: its shared cache is not metered (#7546).
+    expect(
+      readRunLog(dataDir, runs[0]!.id).lines.some((l) => l.startsWith("install fetched")),
+    ).toBe(false);
+  });
+
+  test("an uncontained install lends what its lockfile names, and the sweep takes the rest (#7574)", async () => {
+    const runs = await settled(lender, (rs) => rs.some((r) => r.state === "ok" || r.state === "failed"));
+    expect(runs[0]?.state).toBe("ok");
+    const cache = checkInstallCache(dataDir, lender.id);
+    const deadline = Date.now() + 3_000;
+    while (existsSync(join(cache, "gone@1.0.0@@@1")) && Date.now() < deadline) await Bun.sleep(50);
+    expect(existsSync(join(cache, "gone@1.0.0@@@1"))).toBe(false);
+    expect(statSync(join(cache, "a@1.0.0@@@1")).mtimeMs).toBeGreaterThan(Date.now() - 86_400_000);
   });
 
   test("failing twice is infrastructure: queued again, not red; a second time it fails saying so", async () => {
@@ -246,6 +268,8 @@ describe("prefillInstallCache (#7543)", () => {
     const made = Bun.spawnSync(["tar", "-czf", join(dir, "fixture.tgz"), "-C", join(dir, "pkg"), "package"]);
     if (made.exitCode !== 0) throw new Error("tar is needed for the fixture registry");
     const tarball = new Uint8Array(await Bun.file(join(dir, "fixture.tgz")).arrayBuffer());
+    // As npm serves it: the fill trusts only a lockfile with sha512 integrities (`checks/fillable.ts`).
+    const integrity = `sha512-${new Bun.CryptoHasher("sha512").update(tarball).digest("base64")}`;
     const hits: string[] = [];
     const server: ReturnType<typeof Bun.serve> = Bun.serve({
       port: 0,
@@ -262,7 +286,7 @@ describe("prefillInstallCache (#7543)", () => {
               "1.0.0": {
                 name: "fixture-pkg",
                 version: "1.0.0",
-                dist: { tarball: `http://127.0.0.1:${server.port}/fixture-pkg/-/fixture-pkg-1.0.0.tgz` },
+                dist: { tarball: `http://127.0.0.1:${server.port}/fixture-pkg/-/fixture-pkg-1.0.0.tgz`, integrity },
               },
             },
           });
@@ -339,6 +363,122 @@ describe("prefillInstallCache (#7543)", () => {
     } finally {
       reg.stop();
       await rm(reg.dir, { recursive: true, force: true });
+    }
+  });
+
+  test("eviction drops the entry not lent for days, keeps the lent one, and the next install is offline (#7574)", async () => {
+    const reg = await registry();
+    try {
+      const co = await checkout(reg.url, reg.dir);
+      const cache = join(reg.dir, "cache");
+      const fill = () => prefillInstallCache({ cache, dir: co, env: envFor(reg.dir, reg.url), log: () => {}, signal: never });
+      expect(await fill()).toEqual({ ok: true, value: true });
+      const stale = join(cache, "old-pkg@2.0.0@@@1");
+      mkdirSync(stale);
+      writeFileSync(join(stale, "package.json"), "{}");
+      const long = new Date(Date.now() - 90 * 86_400_000);
+      utimesSync(stale, long, long);
+      // The locked package is old too, until a fill lends it.
+      const lent = readdirSync(cache).filter((n) => n.startsWith("fixture-pkg@1.0.0"));
+      expect(lent.length).toBeGreaterThan(0);
+      for (const n of lent) utimesSync(join(cache, n), long, long);
+      expect(await fill()).toEqual({ ok: true, value: true });
+      const removed = await evictInstallCache({ cache, bound: boundFrom({}), signal: never });
+      expect(removed).toEqual(["old-pkg@2.0.0@@@1"]);
+      expect(existsSync(stale)).toBe(false);
+      expect(existsSync(`${cache}.lock`)).toBe(false);
+      reg.stop();
+      expect(await fill()).toEqual({ ok: true, value: true });
+    } finally {
+      reg.stop();
+      await rm(reg.dir, { recursive: true, force: true });
+    }
+  });
+
+  test("past the size cap the oldest go first; the bound reads its env", async () => {
+    const dir = await scratch();
+    try {
+      const cache = join(dir, "cache");
+      const now = Date.now();
+      for (const [i, name] of ["a@1@@@1", "b@1@@@1", "c@1@@@1"].entries()) {
+        mkdirSync(join(cache, name), { recursive: true });
+        writeFileSync(join(cache, name, "f"), "x".repeat(1000));
+        const t = new Date(now - (3 - i) * 1000);
+        utimesSync(join(cache, name), t, t);
+      }
+      const removed = await evictInstallCache({ cache, bound: { maxAgeDays: 30, maxBytes: 2500 }, signal: never, now });
+      expect(removed).toEqual(["a@1@@@1"]);
+      expect(boundFrom({ FORGE_CHECK_CACHE_DAYS: "2", FORGE_CHECK_CACHE_MB: "5" })).toEqual({ maxAgeDays: 2, maxBytes: 5 * 1024 ** 2 });
+      expect(boundFrom({ FORGE_CHECK_CACHE_DAYS: "x", FORGE_CHECK_CACHE_MB: "-1" }).maxAgeDays).toBe(30);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a failing lend leaves the fill alone", async () => {
+    const dir = await scratch();
+    try {
+      writeFileSync(join(dir, "bun.lock"), '"a@1.0.0"');
+      // A cache that is a file: reading it throws ENOTDIR inside the lend.
+      const cache = join(dir, "c");
+      writeFileSync(cache, "");
+      expect(() => lend(cache, dir)).not.toThrow();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a sweep runs once an hour per cache, and a second while one runs collapses", async () => {
+    const dir = await scratch();
+    try {
+      const cache = join(dir, "cache");
+      const old = new Date(Date.now() - 40 * 86_400_000);
+      const stale = (name: string): string => {
+        mkdirSync(join(cache, name), { recursive: true });
+        utimesSync(join(cache, name), old, old);
+        return join(cache, name);
+      };
+      const a = stale("a@1@@@1");
+      // Hold the cache's lock so the first sweep waits under it.
+      const held = await withLock(
+        `${cache}.lock`,
+        async () => {
+          const first = evictSoon(cache, {});
+          const second = evictSoon(cache, {});
+          // A second sweep would wait on this lock too; it must be over at once.
+          const over = await Promise.race([second.then(() => true), Bun.sleep(200).then(() => false)]);
+          expect(existsSync(a)).toBe(true);
+          return { first, over };
+        },
+        { signal: never },
+      );
+      expect(held.ok && held.value.over).toBe(true);
+      if (held.ok) await held.value.first;
+      expect(existsSync(a)).toBe(false);
+      const b = stale("b@1@@@1");
+      await evictSoon(cache, {});
+      expect(existsSync(b)).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("an aborted sweep does not suppress the next one", async () => {
+    const dir = await scratch();
+    try {
+      const cache = join(dir, "cache");
+      mkdirSync(join(cache, "a@1@@@1"), { recursive: true });
+      writeFileSync(join(cache, "a@1@@@1", "f"), "x");
+      const old = new Date(Date.now() - 40 * 86_400_000);
+      utimesSync(join(cache, "a@1@@@1"), old, old);
+      const gone = new AbortController();
+      gone.abort();
+      expect(await evictInstallCache({ cache, bound: boundFrom({}), signal: gone.signal })).toBeUndefined();
+      expect(existsSync(join(cache, "a@1@@@1"))).toBe(true);
+      await evictSoon(cache, {});
+      expect(existsSync(join(cache, "a@1@@@1"))).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
     }
   });
 

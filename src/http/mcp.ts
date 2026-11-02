@@ -23,7 +23,7 @@ import { scopeAllows } from "../core/tokens.ts";
 import type { User } from "../core/users.ts";
 import type { Ctx, Handler } from "./context.ts";
 import { running } from "../kernel/version.ts";
-import { resourceMetadataUrl } from "./oauth.ts";
+import { bearerChallenge } from "./oauth.ts";
 import { body, boundedBody, json } from "./respond.ts";
 import type { Router } from "./router.ts";
 import { clientBucket } from "./peer.ts";
@@ -32,7 +32,8 @@ import { fileReport } from "../actions/reports.ts";
 import { REPORT_RECEIVED } from "../actions/report_words.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
 import { everydayOf } from "../core/everyday.ts";
-import { type Args, visible, plansOnly, str, REPO_ARG, lean, fenceAnswer, heldWrite, askedFirst } from "./mcp/shared.ts";
+import { claimDone, completeWrite, dropWrite, recordWrite } from "../core/conversation_writes.ts";
+import { type Args, alreadyDone, visible, plansOnly, str, REPO_ARG, lean, fenceAnswer, heldWrite, askedFirst, readThrough } from "./mcp/shared.ts";
 import { CONVERSATION_BRIEF } from "../crew/conversation_brief.ts";
 import { TOOLS } from "./mcp/tools.ts";
 
@@ -201,8 +202,23 @@ function rpcOne(
           ],
           isError: true,
         });
+      // The forge's agent's write is recorded before it runs; one a cut turn
+      // already sent is answered with what was done, not done again (#8254).
+      const via = ctx.auth.through;
+      const writing = via !== undefined && tool.writes && !plansOnly(tool, args);
+      if (writing) {
+        const done = claimDone(ctx.app.db, via, tool.name, args);
+        if (done !== undefined) return reply(alreadyDone(tool.name, done.result));
+      }
+      const recorded = writing ? recordWrite(ctx.app.db, via, tool.name, args) : undefined;
+      readThrough(ctx);
       return Promise.resolve(tool.run(ctx, user, args)).then((ran) => {
         const answer = fenceAnswer(ctx, ran);
+        if (recorded !== undefined) {
+          // A refused or failed write did nothing, so a resumed turn may send it again.
+          if (answer.ok) completeWrite(ctx.app.db, recorded, JSON.stringify(answer.value));
+          else dropWrite(ctx.app.db, recorded);
+        }
         return reply(
           answer.ok
             ? {
@@ -233,7 +249,7 @@ function rpcOne(
  */
 export const REPORT_TOOL = {
   name: "report",
-  /** Its row in docs/MCP.md (`bun scripts/mcp-tools.ts`); never sent to a client. */
+  /** Its line in /llms.txt's `## MCP tools`; never sent to a client. */
   doc: "`{ repo, title, body?, page?, agent? }`: report a problem in a public repository, the one tool open without a token; it still stores the report, which a person reads first; plain text. With a token the report carries your account; `agent` without one is shown as a claim",
   writes: true,
   description:
@@ -271,7 +287,7 @@ function reportCall(ctx: Ctx, message: unknown): unknown | undefined {
   if (
     m["jsonrpc"] !== "2.0" ||
     m["method"] !== "tools/call" ||
-    params["name"] !== "report" ||
+    params["name"] !== REPORT_TOOL.name ||
     m["id"] === undefined
   )
     return undefined;
@@ -381,7 +397,7 @@ export function mcpRoutes(router: Router<Handler>): void {
         status: 401,
         headers: {
           "content-type": "application/json",
-          "www-authenticate": `Bearer realm="forge", resource_metadata="${resourceMetadataUrl(ctx.url.origin)}"`,
+          "www-authenticate": bearerChallenge(ctx.url.origin, ctx.request),
           link: `<${ctx.url.origin}/llms.txt>; rel="service-doc"; type="text/markdown"`,
         },
       },

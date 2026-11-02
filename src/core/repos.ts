@@ -82,6 +82,35 @@ export const AUTONOMY: readonly Autonomy[] = ["off", "assisted", "autonomous"];
 export const isAutonomy = (value: unknown): value is Autonomy =>
   (AUTONOMY as readonly unknown[]).includes(value);
 
+/** What the settings page and the terminal say when autonomy input is out of bounds. */
+export const AUTONOMY_BOUNDS =
+  "Mode is off, assisted or autonomous; the ceiling is a number of dollars; slots are 1 to 8.";
+
+/** What each mode does, in one sentence: the settings page's flash and the terminal's toast. */
+export const AUTONOMY_SAID: Readonly<Record<Autonomy, string>> = {
+  off: "Autonomy is off.",
+  assisted: "Assisted: the crew works what is ready; green waits for you.",
+  autonomous: "Autonomous: the crew works what is ready and ships on green, as you.",
+};
+
+/** The mode, dollar ceiling and slots, checked once for every surface; the sentence is the refusal. */
+export function checkAutonomy(
+  mode: unknown,
+  ceiling: number,
+  slots: number,
+): { ok: true; mode: Autonomy } | { ok: false; message: string } {
+  if (
+    !isAutonomy(mode) ||
+    !Number.isFinite(ceiling) ||
+    ceiling < 0 ||
+    !Number.isInteger(slots) ||
+    slots < 1 ||
+    slots > 8
+  )
+    return { ok: false, message: AUTONOMY_BOUNDS };
+  return { ok: true, mode };
+}
+
 export interface Repo {
   readonly id: string;
   readonly ownerId: string;

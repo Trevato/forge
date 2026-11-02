@@ -7,7 +7,9 @@
  * 1. **Cut** on cadence (`cadence.ts`): the known-good version and image
  *    are recorded, then the annotated tag `v<version>` is made on main's
  *    head — a tag, never a commit, so no gate in flight is voided (#6640).
- * 2. **Promote**: the Deployment is set to the new version's image; it
+ * 2. **Promote**: the Deployment is set to the new version's image (or,
+ *    with `swapper.ts` as the deployer, #8042, main's tree is swapped in beside
+ *    this process on the same port: no image, no registry, no roll); it
  *    rolls with surge (`maxSurge 1, maxUnavailable 0`). The old forge
  *    probes `/healthz` each second while it still serves (`rollProbe`),
  *    so a roll that went dark says how long.
@@ -119,6 +121,7 @@ async function verifyAndDecide(p: KeeperPorts, r: KeeperRelease): Promise<string
     const numbers = { version: r.version, probes: kept.probes, pages: kept.pages, worstMs: kept.worstMs, secondsDark: kept.secondsDark, rollNon200: kept.rollNon200 };
     if (verdict.ok) {
       finish(p.db, r.id, "verified", "", p.now());
+      p.deployer.verified?.(r.version);
       const lifted = liftFixed(p.db, r.version, p.now());
       p.bus.append({ kind: "release.verified_live", repoId: p.repo.id, payload: { ...numbers, holdsLifted: lifted } });
       fileDark(p, getKeeperRelease(p.db, r.id)!);
@@ -160,7 +163,7 @@ export async function tick(p: KeeperPorts): Promise<string> {
     if (flying.stage === "rolling" && p.now() - Date.parse(flying.cutAt) > ROLL_DEADLINE_MS)
       return rollBack(p, flying, `${flying.version} was not live ${ROLL_DEADLINE_MS / 3_600_000} h after its cut`);
     // A promote that did not take (the API refused, or something set the image back) is sent again.
-    const want = imageAt(flying.knownGood.image, flying.version);
+    const want = refFor(p, flying.knownGood.image, flying.version, flying.sha);
     if (flying.stage === "rolling" && (await p.deployer.image()) !== want) await promote(p, flying.version, want);
     return `${flying.version} is ${flying.stage}`;
   }
@@ -180,16 +183,22 @@ export async function tick(p: KeeperPorts): Promise<string> {
     ...(p.minIntervalMs === undefined ? {} : { minIntervalMs: p.minIntervalMs }),
   });
   if (!decision.cut || main === undefined) return decision.cut ? "main is unreadable" : decision.why;
+  // A tree the deployer cannot release (dependencies changed, preflight red) is not cut: no tag, no row.
+  const refused = await p.deployer.admits?.(main);
+  if (refused !== undefined) return `not cut: ${refused}`;
   const image = await p.deployer.image();
   const knownGood = { version: p.live(), image };
   // The row first, the tag second: a crash between them leaves a `rolling` row
   // whose tag the next tick sends (`tagged`), never a tag the keeper has no row for.
   const r = recordCut(p.db, { version: decision.version, sha: main, knownGood, at: p.now() });
-  const refused = await tagged(p, r);
-  if (refused !== undefined) return refused;
-  const sent = await promote(p, r.version, imageAt(image, r.version));
+  const tagRefused = await tagged(p, r);
+  if (tagRefused !== undefined) return tagRefused;
+  const sent = await promote(p, r.version, refFor(p, image, r.version, main));
   return `cut ${r.version} at ${main.slice(0, 12)}; ${sent}; known good: ${knownGood.version}`;
 }
+
+const refFor = (p: KeeperPorts, image: string, version: string, sha: string): string =>
+  p.deployer.refFor?.(version, sha) ?? imageAt(image, version);
 
 /** Make the release's tag; when it is refused the cut is dropped and the line says why. */
 async function tagged(p: KeeperPorts, r: KeeperRelease): Promise<string | undefined> {

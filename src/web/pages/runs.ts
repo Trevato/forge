@@ -76,8 +76,6 @@ export function runTitle(
     const of = `Check of ${run.commitOid.slice(0, 7)}`;
     return number === undefined ? of : `${of} for #${number}`;
   }
-  if (run.kind === "proof")
-    return `Proof of ${run.commitOid.slice(0, 7)}${issue === undefined ? "" : ` for #${issue.number}`}`;
   if (run.kind === "deploy")
     return about === "" ? "Deploy production" : `Deploy preview ${about}`;
   const who = actor ?? "an agent";
@@ -235,7 +233,7 @@ export function runTitleFrom(
 }
 
 const kindIcon = (kind: RunKind) =>
-  icon(kind === "agent" ? "bot" : kind === "check" || kind === "proof" ? "check" : "rocket");
+  icon(kind === "agent" ? "bot" : kind === "check" ? "check" : "rocket");
 
 // ---- rows ----
 

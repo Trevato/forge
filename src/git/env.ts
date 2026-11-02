@@ -16,6 +16,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { memoryLimitBytes } from "../core/capacity.ts";
+import { noteGit } from "../perf/git.ts";
+import { gitRecord } from "../perf/live.ts";
 
 /** Base env for all server-side git. Nothing from the host leaks in. */
 export function gitEnv(extra?: Record<string, string>): Record<string, string> {
@@ -252,6 +254,8 @@ export async function runGitRaw(
   args: readonly string[],
   options: RunOptions = {},
 ): Promise<Result<Uint8Array, GitFailure>> {
+  // Timed from before the gate: a wait for a permit is the queue #8158 names.
+  const start = performance.now();
   return gitGate.run(async () => {
     const proc = Bun.spawn(["git", ...args], {
       ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
@@ -277,6 +281,7 @@ export async function runGitRaw(
     } finally {
       clearTimeout(timer);
       options.signal?.removeEventListener("abort", stop);
+      noteGit(gitRecord, args, start);
     }
   });
 }
@@ -308,6 +313,7 @@ export async function runGitCapture(
   args: readonly string[],
   options: RunOptions = {},
 ): Promise<GitCapture> {
+  const start = performance.now();
   return gitGate.run(async () => {
     const proc = Bun.spawn(["git", ...args], {
       ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
@@ -333,6 +339,7 @@ export async function runGitCapture(
       return { code, stdout, stderr, ...(timedOut ? { timedOut } : {}) };
     } finally {
       clearTimeout(timer);
+      noteGit(gitRecord, args, start);
     }
   });
 }

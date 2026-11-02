@@ -32,9 +32,10 @@ function repo(name: string) {
   return { dir, base: run(dir, "rev-parse", "HEAD") };
 }
 
-const withBase = async (base: string, f: () => Promise<string[]>) => {
+const withBase = async (base: string | undefined, f: () => Promise<string[]>) => {
   const old = process.env.FORGE_CHECK_BASE;
-  process.env.FORGE_CHECK_BASE = base;
+  if (base === undefined) delete process.env.FORGE_CHECK_BASE;
+  else process.env.FORGE_CHECK_BASE = base;
   try {
     return await f();
   } finally {
@@ -90,20 +91,96 @@ test("`bun scripts/gate.ts` exits 2 and names the edited pin", () => {
   expect(r.stderr.toString()).toContain("src/core/migration-pins/0001-a.pin");
 });
 
-test("with no base it warns on stderr instead of passing silently", async () => {
+test("in a repository with no base it refuses instead of passing unchecked", async () => {
   const { dir } = repo("nobase");
+  const out = await withBase(undefined, () => pinRefusal(dir));
+  expect(out).toHaveLength(1);
+  expect(out[0]).toStartWith("no base to compare to: a migration on main is history");
+});
+
+test("a tree with no git history (the full check's export) says so on stderr and passes", async () => {
+  const dir = join(root, "export");
+  put(dir, "src/core/migration-pins/0001-a.pin", "x");
   const seen: string[] = [];
   const orig = console.error;
   console.error = (...a: unknown[]) => void seen.push(a.join(" "));
-  const old = process.env.FORGE_CHECK_BASE;
-  delete process.env.FORGE_CHECK_BASE;
   try {
-    expect(await pinRefusal(dir)).toEqual([]);
+    expect(await withBase(undefined, () => pinRefusal(dir))).toEqual([]);
   } finally {
     console.error = orig;
-    if (old !== undefined) process.env.FORGE_CHECK_BASE = old;
   }
   expect(seen.join("\n")).toContain("pins not checked");
+});
+
+/**
+ * #8103's history (#8352): the branch lands a migration and its pin by
+ * squash, then, still holding its pre-squash commit, edits both. The merge
+ * base predates the squash, so against it the pin reads as added.
+ */
+function squashed(name: string) {
+  const { dir, base } = repo(name);
+  const migration = "src/core/migrations/0005-e.ts";
+  const pin = "src/core/migration-pins/0005-e.pin";
+  put(dir, migration, "create index e");
+  put(dir, pin, "v1");
+  run(dir, "add", "-A");
+  run(dir, "commit", "-qm", "add e");
+  run(dir, "checkout", "-q", "-b", "main", base);
+  put(dir, migration, "create index e");
+  put(dir, pin, "v1");
+  run(dir, "add", "-A");
+  run(dir, "commit", "-qm", "add e (#1) squashed");
+  run(dir, "update-ref", "refs/remotes/origin/main", "HEAD");
+  run(dir, "checkout", "-q", "work");
+  return { dir, migration, pin };
+}
+
+test("an edit to a pin a squash already landed on main is refused", async () => {
+  const { dir, migration, pin } = squashed("squash-edit");
+  put(dir, migration, "create index e2 where x");
+  put(dir, pin, "v2");
+  run(dir, "commit", "-qam", "edit e");
+  expect(await withBase(undefined, () => pinRefusal(dir))).toEqual([
+    `${pin} was changed: a migration on main is history, so add a new migration instead`,
+  ]);
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== "FORGE_CHECK_BASE"));
+  const r = Bun.spawnSync(["bun", gateScript], { cwd: dir, env });
+  expect(r.exitCode).toBe(2);
+  expect(r.stderr.toString()).toContain(`gate: ${pin} was changed: a migration on main is history`);
+});
+
+test("deleting a pin a squash already landed on main is refused", async () => {
+  const { dir, pin } = squashed("squash-delete");
+  run(dir, "rm", "-q", pin);
+  run(dir, "commit", "-qm", "rm e");
+  expect(await withBase(undefined, () => pinRefusal(dir))).toContain(
+    `${pin} was deleted: a migration on main is history, so restore it`,
+  );
+});
+
+test("a pull that keeps the squashed pin as landed passes", async () => {
+  const { dir } = squashed("squash-kept");
+  put(dir, "src/other.ts", "more work");
+  run(dir, "add", "-A");
+  run(dir, "commit", "-qm", "more");
+  expect(await withBase(undefined, () => pinRefusal(dir))).toEqual([]);
+});
+
+test("a pull rebased onto main passes, and so does one behind main's newer pins", async () => {
+  const { dir, base } = repo("rebased");
+  run(dir, "checkout", "-q", "-b", "main");
+  put(dir, "src/core/migrations/0006-f.ts", "f");
+  put(dir, "src/core/migration-pins/0006-f.pin", "x");
+  run(dir, "add", "-A");
+  run(dir, "commit", "-qm", "f on main");
+  run(dir, "update-ref", "refs/remotes/origin/main", "HEAD");
+  run(dir, "checkout", "-q", "-b", "behind", base);
+  put(dir, "src/other.ts", "work");
+  run(dir, "add", "-A");
+  run(dir, "commit", "-qm", "work");
+  expect(await withBase(undefined, () => pinRefusal(dir))).toEqual([]);
+  run(dir, "rebase", "-q", "main");
+  expect(await withBase(undefined, () => pinRefusal(dir))).toEqual([]);
 });
 
 test("a migration added without its pin is named with the one-step fix, last, as the check's summary", async () => {

@@ -17,7 +17,7 @@ import type { Database } from "bun:sqlite";
 import { withoutWaiting } from "../kernel/db.ts";
 import { quietly } from "./write_clock.ts";
 
-export const ROLES = ["anon", "user", "admin", "agent"] as const;
+export const ROLES = ["anon", "user", "admin", "agent", "crawler"] as const;
 export const SURFACES = ["api", "mcp", "web"] as const;
 export const METHODS = [
   "GET",

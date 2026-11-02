@@ -27,7 +27,7 @@ const parts = (res: Response): string[] => (res.headers.get("server-timing") ?? 
 
 test("the signed-in home names its session, reads and render and a cold feed read", async () => {
   const get = async (): Promise<Response> => {
-    const res = await fetch(`${f.base}/`, { headers: { cookie: f.ownerCookie } });
+    const res = await fetch(`${f.base}/feed`, { headers: { cookie: f.ownerCookie } });
     await res.arrayBuffer();
     return res;
   };
@@ -39,7 +39,7 @@ test("the signed-in home names its session, reads and render and a cold feed rea
   const res = await get();
   const all = parts(res);
   const names = all.map((p) => p.split(";")[0]!);
-  for (const n of ["session", "steps", "repos", "kpis", "panels", "feed", "render"])
+  for (const n of ["session", "repos", "panels", "feed", "render"])
     expect(names.filter((x) => x === n).length).toBe(1);
   // A miss is a bare `feed;dur=…`: a hit would carry `desc="hit"`.
   expect(all.find((p) => p.startsWith("feed;"))).toMatch(/^feed;dur=\d+(\.\d+)?$/);

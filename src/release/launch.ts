@@ -17,6 +17,15 @@
  * seconds after its crash, and a hang costs the grace (150 s, inside the
  * chart's three-minute startup probe).
  *
+ * A swapped release (#8042) is a good tree too: the keeper that verified it
+ * keeps it with `base`, the image version it was swapped over. On a restart
+ * of that same image the launcher starts the swapped tree first, so an older
+ * image never silently rolls production back; only a different image (a
+ * deliberate roll) takes precedence, and a swapped tree that is not ready in
+ * the grace falls back to the image, recorded as any rollback is. The
+ * process that took over is not the launcher's child; `serving.ts` names it
+ * and the launcher stays up as long as it does.
+ *
  * Node built-ins only, on purpose: it is the one part of a bad release that
  * has to work.
  */
@@ -25,6 +34,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, r
 import { dirname, join } from "node:path";
 import type { Subprocess } from "bun";
 import { hkdfSync } from "node:crypto";
+import { clearServing, follow, signalServing } from "./serving.ts";
 
 export const READY_GRACE_MS = 150_000;
 const POLL_MS = 500;
@@ -38,6 +48,8 @@ export interface Good {
   readonly version: string;
   readonly commit: string | null;
   readonly at: string;
+  /** The image version this was swapped in over; null for a tree the launcher itself started. */
+  readonly base: string | null;
 }
 
 export interface RolledBack {
@@ -78,13 +90,27 @@ export function lastGood(dataDir: string): Good | undefined {
   const version = g?.["version"];
   if (typeof version !== "string" || !VERSION.test(version) || typeof g?.["at"] !== "string") return undefined;
   if (!existsSync(join(goodTree(dataDir, version), "src", "main.ts"))) return undefined;
-  return { version, commit: typeof g["commit"] === "string" ? g["commit"] : null, at: g["at"] };
+  const base = g["base"];
+  return {
+    version,
+    commit: typeof g["commit"] === "string" ? g["commit"] : null,
+    at: g["at"],
+    base: typeof base === "string" && VERSION.test(base) ? base : null,
+  };
 }
 
 /** Keep `tree` as the last good release; drop the one it replaces and any standing rollback. */
-export function keepGood(dataDir: string, tree: string, version: string, commit: string | null, now = Date.now()): void {
-  if (!VERSION.test(version)) return;
-  if (lastGood(dataDir)?.version !== version) {
+export function keepGood(
+  dataDir: string,
+  tree: string,
+  version: string,
+  commit: string | null,
+  now = Date.now(),
+  base: string | null = null,
+): void {
+  if (!VERSION.test(version) || (base !== null && !VERSION.test(base))) return;
+  const kept = lastGood(dataDir);
+  if (kept?.version !== version || kept.commit !== commit || kept.base !== base) {
     const target = goodTree(dataDir, version);
     const staging = `${target}.partial-${process.pid}`;
     rmSync(staging, { recursive: true, force: true });
@@ -93,7 +119,7 @@ export function keepGood(dataDir: string, tree: string, version: string, commit:
       if (existsSync(join(tree, part))) cpSync(join(tree, part), join(staging, part), { recursive: true });
     rmSync(target, { recursive: true, force: true });
     renameSync(staging, target);
-    writeJson(goodFile(dataDir), { version, commit, at: new Date(now).toISOString() });
+    writeJson(goodFile(dataDir), { version, commit, at: new Date(now).toISOString(), base });
   }
   for (const name of readdirSync(join(releaseDir(dataDir), "good")))
     if (name !== version) rmSync(join(releaseDir(dataDir), "good", name), { recursive: true, force: true });
@@ -190,6 +216,8 @@ function start(input: LaunchInput, tree: string, version: string, commit: string
   for (const [k, v] of Object.entries(input.env)) if (v !== undefined) env[k] = v;
   env["FORGE_VERSION"] = version;
   env["FORGE_COMMIT"] = commit ?? "";
+  // What a swap in this process's descendants is over: the image, not the tree running now.
+  env["FORGE_BASE_VERSION"] = input.version;
   const child = Bun.spawn([process.execPath, join(tree, "src", "main.ts")], {
     cwd: tree,
     env,
@@ -201,42 +229,65 @@ function start(input: LaunchInput, tree: string, version: string, commit: string
   return child;
 }
 
+/** Wait for `child` to answer health as `version`: undefined once it does, else why it did not. */
+async function becomesReady(input: LaunchInput, child: Subprocess, version: string): Promise<string | undefined> {
+  const now = input.now ?? Date.now;
+  const grace = input.graceMs ?? READY_GRACE_MS;
+  const began = now();
+  for (;;) {
+    if (input.stopping?.()) return "asked to stop before it was ready";
+    if (gone(child)) return `it exited with ${child.exitCode ?? child.signalCode} before it was ready`;
+    if ((await versionAt(input.port, probeHeaders(input.dataDir))) === version) return undefined;
+    if (now() - began >= grace) return `not ready within ${Math.round(grace / 1000)}s`;
+    await Bun.sleep(POLL_MS);
+  }
+}
+
 /**
  * Start this image's forge and answer once it is ready (`release`), was
  * replaced by the last good one (`rollback`), or neither runs (`none`).
- * The child returned is the one to wait on.
+ * The child returned is the one to wait on. A swapped tree kept over this
+ * very image goes first (see the header).
  */
 export async function launch(input: LaunchInput): Promise<Launched> {
   const now = input.now ?? Date.now;
-  const grace = input.graceMs ?? READY_GRACE_MS;
-  const release = start(input, input.tree, input.version, input.commit);
-  const began = now();
-  let why: string;
-  for (;;) {
+  const swapped = lastGood(input.dataDir);
+  let passed: { version: string; why: string } | undefined;
+  if (swapped !== undefined && swapped.base === input.version && swapped.version !== input.version) {
+    const first = start(input, goodTree(input.dataDir, swapped.version), swapped.version, swapped.commit);
+    const failed = await becomesReady(input, first, swapped.version);
+    if (failed === undefined)
+      return { ran: "release", child: first, line: `${swapped.version} is ready: the swapped release kept over image ${input.version}` };
+    await stop(first);
     if (input.stopping?.()) return { ran: "none", line: "asked to stop before it was ready" };
-    if (gone(release)) {
-      why = `it exited with ${release.exitCode ?? release.signalCode} before it was ready`;
-      break;
+    passed = { version: swapped.version, why: failed };
+  }
+  const release = start(input, input.tree, input.version, input.commit);
+  const why = await becomesReady(input, release, input.version);
+  if (why === undefined) {
+    try {
+      keepGood(input.dataDir, input.tree, input.version, input.commit, now());
+    } catch (error) {
+      // Serving matters more than keeping: the next version falls back to the one before.
+      return { ran: "release", child: release, line: `${input.version} is ready; not kept: ${String(error).slice(0, 200)}` };
     }
-    if ((await versionAt(input.port, probeHeaders(input.dataDir))) === input.version) {
-      try {
-        keepGood(input.dataDir, input.tree, input.version, input.commit, now());
-      } catch (error) {
-        // Serving matters more than keeping: the next version falls back to the one before.
-        return { ran: "release", child: release, line: `${input.version} is ready; not kept: ${String(error).slice(0, 200)}` };
-      }
-      return { ran: "release", child: release, line: `${input.version} is ready and kept as the last good release` };
+    // The swapped tree that would not start: the image runs in its place, and the forge says so.
+    if (passed !== undefined) {
+      writeJson(rolledFile(input.dataDir), {
+        from: passed.version,
+        to: input.version,
+        at: new Date(now()).toISOString(),
+        why: passed.why,
+        paged: false,
+      } satisfies RolledBack);
+      return { ran: "rollback", child: release, line: `${passed.version}: ${passed.why}; the image ${input.version} runs instead` };
     }
-    if (now() - began >= grace) {
-      why = `not ready within ${Math.round(grace / 1000)}s`;
-      break;
-    }
-    await Bun.sleep(POLL_MS);
+    return { ran: "release", child: release, line: `${input.version} is ready and kept as the last good release` };
   }
   await stop(release);
   if (input.stopping?.()) return { ran: "none", line: "asked to stop before it was ready" };
   const good = lastGood(input.dataDir);
-  if (good === undefined || good.version === input.version)
+  if (good === undefined || good.version === input.version || passed?.version === good.version)
     return { ran: "none", line: `${input.version}: ${why}; no earlier release is kept to roll back to` };
   writeJson(rolledFile(input.dataDir), {
     from: input.version,
@@ -256,10 +307,14 @@ if (import.meta.main) {
   const graceS = Number(env["FORGE_READY_GRACE_S"] ?? "");
   let current: Subprocess | undefined;
   let stopping = false;
+  const dataHere = env["FORGE_DATA"] || "data";
+  // Whatever an earlier container left names processes that are not ours.
+  clearServing(dataHere);
   for (const signal of ["SIGTERM", "SIGINT"] as const)
     process.on(signal, () => {
       stopping = true;
       current?.kill(signal);
+      signalServing(dataHere, signal);
     });
   const launched = await launch({
     tree: join(import.meta.dir, "..", ".."),
@@ -275,5 +330,10 @@ if (import.meta.main) {
     stopping: () => stopping,
   });
   console.error(`launch: ${launched.line}`);
-  process.exit(launched.ran === "none" ? (stopping ? 0 : 1) : await launched.child.exited);
+  if (launched.ran === "none") process.exit(stopping ? 0 : 1);
+  const code = await launched.child.exited;
+  // A swapped release took over and the process we started has drained: this container is that
+  // process's now, and goes when it does (the pod then restarts on the newest good tree).
+  await follow(dataHere, launched.child.pid);
+  process.exit(code);
 }

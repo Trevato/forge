@@ -10,20 +10,26 @@ import type { Command } from "../app/palette.ts";
 import type { Session } from "../session.ts";
 import { entry as access } from "./access.ts";
 import { entry as agents } from "./agents.ts";
+import { entry as archived } from "./archived.ts";
 import { entry as audit } from "./audit.ts";
 import { entry as boards } from "./boards.ts";
 import { entry as bulk } from "./bulk.ts";
 import { entry as cloud } from "./cloud.ts";
+import { entry as connections } from "./connections.ts";
 import { entry as crewHandover } from "./crewhandover.ts";
 import { entry as crewSplits } from "./crewsplits.ts";
 import { entry as domains } from "./domains.ts";
+import { entry as feed } from "./feed.ts";
 import { entry as front } from "./front.ts";
 import { entry as forges } from "./forges.ts";
 import { entry as invites } from "./invites.ts";
 import { entry as limits } from "./limits.ts";
 import { modelCeilingEntry, modelGrantEntry } from "./model.ts";
+import { entry as orgGrants } from "./orggrants.ts";
+import { entry as orgTeams } from "./orgteams.ts";
 import { entry as owner } from "./owner.ts";
 import { entry as people } from "./people.ts";
+import { entry as profile } from "./profile.ts";
 import { entry as quotas } from "./quotas.ts";
 import { entry as resilience } from "./resilience.ts";
 import { entry as scorecard } from "./scorecard.ts";
@@ -68,15 +74,21 @@ export const ENTRIES: readonly PaletteEntry[] = [
   quotas,
   limits,
   teams,
+  orgTeams,
+  orgGrants,
   agents,
+  archived,
   invites,
   bulk,
   subscriptions,
   cloud,
+  connections,
   domains,
+  feed,
   front,
   owner,
   forges,
+  profile,
 ];
 
 /** Put each entry the session is offered into `commands`, after the command it names or at the end. */

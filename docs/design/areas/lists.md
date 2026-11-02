@@ -16,3 +16,5 @@ trails a palette row.
   minimum height, so it is a touch target on a 360px phone. Styled in `src/web/style/components.ts` (list rows).
 
 The proofs under a forge on `/forges` (#7959) are `row()` `children`, one per public address; the row's trail badge says "reachable" or "not reachable", so the state is a word and not only a colour. No new class.
+
+`/pipeline` (#7703) is a `.list` of `row()`s, one per step, each folding (`fold`) to the parts inside it; no new class. The pull page's path line marks a finished path with a `badge("done")`, so the state is a word.

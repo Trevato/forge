@@ -11,7 +11,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { childEnv } from "../src/apps/process.ts";
-import { TOOLBAR_PATH, toolbarJs, toolbarTag } from "../src/apps/toolbar.ts";
+import { TOOLBAR_ASSET_PATH, TOOLBAR_PATH, toolbarJs, toolbarTag } from "../src/apps/toolbar.ts";
 import { findChromium } from "../src/looks/capture.ts";
 import { chromiumRuns } from "./helpers/chrome.ts";
 
@@ -70,7 +70,7 @@ describe.skipIf(chromium === undefined)("the pill by keyboard", () => {
       hostname: "127.0.0.1",
       fetch(req) {
         const url = new URL(req.url);
-        if (url.pathname === TOOLBAR_PATH)
+        if (url.pathname === TOOLBAR_PATH || url.pathname === TOOLBAR_ASSET_PATH)
           return new Response(toolbarJs, { headers: { "content-type": "text/javascript" } });
         if (url.pathname === "/__forge/notes") return Response.json({ notes: [] });
         if (url.pathname === "/__forge/crew") return Response.json({});

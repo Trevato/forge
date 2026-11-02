@@ -9,6 +9,7 @@
 import { canAdmin, canRead, getRepo } from "../../core/repos.ts";
 import { notFound } from "../../http/respond.ts";
 import { holds, stamp, xml } from "../feeds.ts";
+import { STARTED } from "../started.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -138,7 +139,7 @@ export async function wavesAtom(ctx: Ctx): Promise<Response> {
   <id>${xml(base)}/waves.atom</id>
   <title>${xml(`${repo.ownerName}/${repo.name} waves`)}</title>
   <subtitle>${xml(repo.description === "" ? "Waves" : repo.description)}</subtitle>
-  <updated>${xml(newest ? updatedAt(newest.date) : new Date(0).toISOString())}</updated>
+  <updated>${xml(newest ? updatedAt(newest.date) : STARTED)}</updated>
   <link rel="self" type="application/atom+xml" href="${xml(base)}/waves.atom"/>
   <link rel="alternate" type="text/html" href="${xml(base)}/waves"/>
   <generator>forge</generator>

@@ -28,6 +28,9 @@ import { agentsLine } from "../../web/studio/client_home.ts";
 import { lastVisit } from "../../core/home_visit.ts";
 import { sinceDigest } from "../../web/studio/since.ts";
 import { askForSomething } from "./tell.ts";
+import { movingLines } from "./moving.ts";
+import { pipelineNow } from "../../web/studio/living.ts";
+import { askForEveryday, everydayOf, EVERYDAY_WHY, keepAdmin } from "../../core/everyday.ts";
 import { mayView } from "../../core/sealed.ts";
 import { applyFleetIds, previewFleetIds, undoFleetOp } from "../../actions/fleet.ts";
 import { plain } from "./boards.ts";
@@ -50,8 +53,10 @@ import {
   previewAsksBulk,
   undoAsksBulk,
 } from "../../actions/asks_bulk.ts";
+import { stepLine, stepOfNumber } from "../../flow/path.ts";
 import { reviewSetOf, type ReviewSet } from "../../web/studio/review_set.ts";
 import { staleWords } from "../../flow/kpi_words.ts";
+import { askMeasureWeek, asksMeasureEmpty, asksMeasureWords } from "../../core/ask_ledger.ts";
 import { mutedRepos, removeMutes } from "../../core/interactions.ts";
 import { chipsOf, KIND_CHIPS, setChip } from "../../core/feed_chips.ts";
 import type { Operation } from "../../core/fleet_ops.ts";
@@ -171,6 +176,10 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   let pins: Pin[] = [];
   let pinned = new Set<string>();
   let onYou: OnYouItem[] = [];
+  /** Where each pull on you stands on the path (check, review, land, live), by issue id. */
+  let onYouSteps = new Map<string, string>();
+  /** The week's asks line, read on reload; drawing only reads it. */
+  let asksLine: string | undefined;
   /** Wave proposals that wait for this person's nod, listed after the rows above. */
   let waves: { proposal: Proposal; repo: Repo }[] = [];
   /** Waves put aside with Later, which `B` brings back. */
@@ -198,6 +207,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   let clientLines: string[] = [];
   /** "Since you were here" and its lines: read from the web home's last-visit row, never written here. */
   let sinceLines: string[] = [];
+  /** The web home's living pipeline (#8015): Now for a site admin, then being built and just shipped. */
+  let moving: string[] = [];
   /** The ids of those apps, so the key that asks for something stays on them. */
   let clientRepoIds = new Set<string>();
   /** The live address of each of those apps that is running, by repo id; `o` shows it. */
@@ -210,6 +221,12 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   let decider: string | null = null;
   /** Home's three figures, as the web's row says them; empty unless an admin looks (they count every repository). */
   let figures: string[] = [];
+  /**
+   * The web home's everyday ask, as one muted line at the head (#8046): why,
+   * and the two answers, while an admin has made no choice; once linked, the
+   * name of the account used day to day. Nobody else gets the row.
+   */
+  let everyday: { line: string; asking: boolean } | undefined;
   /** One line per fired flow alarm; an admin reads every repository, anyone else public ones alone. */
   let alarms: string[] = [];
   /** The panels this admin pinned to the web home, by title and board, in their order. */
@@ -295,13 +312,43 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     ctx.invalidate();
   };
 
+  const everydayHead = (): typeof everyday => {
+    if (f.user === undefined || !f.user.isAdmin || f.user.kind !== "user") return undefined;
+    if (askForEveryday(f.db, f.user))
+      return { line: `${EVERYDAY_WHY} E makes it on the web · K keeps using admin`, asking: true };
+    const daily = everydayOf(f.db, f.user);
+    return daily === undefined
+      ? undefined
+      : { line: `Day to day you are ${daily.username}; this is the admin account.`, asking: false };
+  };
+
+  /** `K`: the admin keeps working as admin, recorded for web and terminal alike. */
+  const keepAdminHere = (): void => {
+    if (f.user === undefined) return;
+    keepAdmin(f.db, f.user);
+    reload();
+    ctx.toast("kept admin; you will not be asked again", "success");
+  };
+
   const reload = (): void => {
     // The server remembers the *choice* and nothing about the laptop, so
     // this is a list of decisions — never a status that would be stale.
     pins = f.user ? listPins(f.db, f.user.id) : [];
+    everyday = everydayHead();
     pinned = f.user ? pinnedRepoIds(f.db, f.user.id) : new Set<string>();
     all = listReposVisibleTo(f.db, f.user, { limit: 200 });
     onYou = assignedToMe();
+    onYouSteps = new Map(
+      onYou.flatMap((item) => {
+        const step = item.issue.kind === "pull" ? stepOfNumber(f.db, item.repo, item.issue.number) : null;
+        return step === null ? [] : [[item.issue.id, stepLine(step)] as const];
+      }),
+    );
+    asksLine = undefined;
+    if (f.user !== undefined && f.user.kind === "user") {
+      const m = askMeasureWeek(f.db, f.user.id);
+      if (!asksMeasureEmpty(m)) asksLine = asksMeasureWords(m);
+    }
     waitingSet = f.user === undefined ? undefined : reviewSetOf(f.db, f.user, new Date());
     waves = f.user === undefined ? [] : wavesFor();
     asideWaves = f.user === undefined ? [] : putAsideWaves(f.db, f.user);
@@ -344,6 +391,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     lane = forgeLane(f.app, f.user);
     flaky = forgeFlakes(f.app, f.user);
     decider = deciderLine(f.app, f.user);
+    moving = f.user ? movingLines(f.db, f.user, f.user.isAdmin ? pipelineNow(f.db) : undefined) : [];
     const commit = running().commit;
     const cleared = lastClearedNote(f.db, now);
     figures =
@@ -953,6 +1001,9 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         ...(focus === "repos" && f.user !== undefined && shown().some(mayArchive)
           ? [binding(["space"], "mark"), ...(markedRepos.size > 0 ? [binding(["a"], "archive marked")] : [])]
           : []),
+        ...(everyday?.asking === true
+          ? [binding(["E"], "everyday account"), binding(["K"], "keep admin")]
+          : []),
         binding(["r"], "refresh"),
       ];
     },
@@ -970,6 +1021,11 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       // A site admin's forge strip, as the board's: "All fine" or a line
       // per cause. Anyone else gets no rows and no reads.
       let body = area;
+      if (everyday !== undefined) {
+        const [strip, rest] = split(body, "v", [len(1), fill(1)]);
+        s.text(strip!.x, strip!.y, truncate(everyday.line, strip!.w), style(c.mutedFg, c.bg), strip!.x + strip!.w);
+        body = rest!;
+      }
       if (alarms.length > 0) {
         const [strip, rest] = split(body, "v", [len(alarms.length), fill(1)]);
         alarms.forEach((line, i) =>
@@ -996,6 +1052,13 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         const [strip, rest] = split(body, "v", [len(lines.length), fill(1)]);
         lines.forEach((line, i) =>
           s.text(strip!.x, strip!.y + i, truncate(line, strip!.w), style(i === 0 ? c.mutedFg : c.fg, c.bg), strip!.x + strip!.w),
+        );
+        body = rest!;
+      }
+      if (moving.length > 0) {
+        const [strip, rest] = split(body, "v", [len(moving.length), fill(1)]);
+        moving.forEach((line, i) =>
+          s.text(strip!.x, strip!.y + i, truncate(line, strip!.w), style(c.mutedFg, c.bg), strip!.x + strip!.w),
         );
         body = rest!;
       }
@@ -1197,6 +1260,15 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         ctx.push(migrateScreen(f, ctx));
         return true;
       }
+      if (e.key === "W" && asksLine !== undefined) {
+        openOnWeb(f, ctx, "/asks", "Asks");
+        return true;
+      }
+      if (e.key === "E" && everyday?.asking === true) {
+        openOnWeb(f, ctx, "/settings", "Making your everyday account");
+        return true;
+      }
+      if (e.key === "K" && everyday?.asking === true) return keepAdminHere(), true;
       if (e.key === "A" && f.user) {
         openOnWeb(f, ctx, "/settings", "Account settings");
         return true;
@@ -1219,11 +1291,17 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   function drawOnYou(s: Surface, r: Rect, c: Tokens, set: IconSet): void {
     const on = focus === "onyou";
     const footer = onYouFooter();
-    const inner = card(s, r, c, {
+    const frame = card(s, r, c, {
       title: `${icon("person", set)} ${TITLES.onyou}`,
       focused: on,
       ...(footer === undefined ? {} : { footer }),
     });
+    // The week's asks lead the pane, muted; absent when all four are 0, so the list sits where it did.
+    let inner = frame;
+    if (asksLine !== undefined && frame.h > 1) {
+      s.text(frame.x, frame.y, truncate(asksLine, frame.w), style(c.mutedFg, c.bg), frame.x + frame.w);
+      inner = { ...frame, y: frame.y + 1, h: frame.h - 1 };
+    }
     if (onYou.length + waves.length === 0) {
       note(s, inner, c, [
         silenced.size > 0
@@ -1247,6 +1325,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
               : ISSUE_MARK;
         return {
           title: `${marked.has(item.issue.id) ? "[x] " : ""}${item.hand === true ? "parked " : item.over === true ? "handed over " : item.late !== undefined ? "waiting " : ""}${mark} #${item.issue.number} ${item.issue.title} · ${item.repo.ownerName}/${item.repo.name}`,
+          ...(onYouSteps.has(item.issue.id) ? { note: onYouSteps.get(item.issue.id)! } : {}),
           meta: `${item.waiting.word} · on ${item.waiting.on}${item.passed === undefined ? "" : ` · handed to you: ${item.passed}`}${item.late?.advice ?? item.overAdvice ?? ""}`,
         };
       }),
@@ -1293,6 +1372,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
           : "1-4 chips · h hide author",
       );
     }
+    if (asksLine !== undefined) parts.push("W asks on the web");
     if (marked.size > 0) parts.push(`${marked.size} marked`);
     if (silenced.size > 0)
       parts.push(
@@ -1309,6 +1389,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     return metaOf(
       row.kind === "person" ? plural(n.apps, "app") : "",
       n.forks > 0 ? plural(n.forks, "fork") : "",
+      n.likes > 0 ? plural(n.likes, "like") : "",
       n.ships > 0 ? `${n.ships} shipped this month` : "",
       n.awakeHours > 0 ? `${n.awakeHours} h in use` : "",
       row.shippedAt !== null ? `shipped ${ago(row.shippedAt)}` : "",

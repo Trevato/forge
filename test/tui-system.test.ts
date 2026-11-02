@@ -157,7 +157,12 @@ describe("tui system history", () => {
 
 describe("tui system telemetry grant", () => {
   const boot = (user: User) => {
-    const { app: tui, session } = createForgeApp(app, identity(user), { terminal: headlessTerminal(120, 50), exitHooks: false });
+    // The refusal is a toast read after a settle; a loaded run must not outlast it.
+    const { app: tui, session } = createForgeApp(app, identity(user), {
+      terminal: headlessTerminal(120, 50),
+      exitHooks: false,
+      toastMs: 10 * 60_000,
+    });
     tui.start();
     tui.ctx.push(systemScreen(tui.ctx, ["CPU"], session));
     const press = async (...keys: string[]) => {

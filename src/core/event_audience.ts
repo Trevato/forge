@@ -132,6 +132,7 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   "user.updated",
   "user.key_added",
   "user.key_removed",
+  "user.key_renamed",
   "issue.unblocked",
   "issue.confirmed",
   "capacity.changed",

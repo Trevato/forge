@@ -6,8 +6,9 @@
 
 import { createLabel, deleteLabel, updateLabel } from "../../actions/repos.ts";
 import { LABEL_WORDS } from "../../actions/label_words.ts";
-import { listLabels } from "../../core/issues.ts";
+import { labelsWithOpen, listLabels } from "../../core/issues.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
+import { canWrite } from "../../core/repos.ts";
 import { loadRepo, pageOf, pageParams } from "../api.ts";
 import type { Handler } from "../context.ts";
 import { body, json, notFound, requireScope, respondAccess, str } from "../respond.ts";
@@ -20,7 +21,10 @@ export function labelsRoutes(router: Router<Handler>): void {
     if (!repo) return notFound();
     const page = pageParams(ctx);
     if (page instanceof Response) return page;
-    const rows = timePhase(ctx.request, "labels", () => listLabels(ctx.app.db, repo.id));
+    // Sealed items are counted, so only a writer is told how many are open.
+    const rows = timePhase(ctx.request, "labels", () =>
+      labelsWithOpen(ctx.app.db, repo.id, canWrite(ctx.app.db, repo, ctx.auth.user)),
+    );
     return timePhase(ctx.request, "render", () => pageOf(rows, page));
   });
 

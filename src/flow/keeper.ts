@@ -210,6 +210,7 @@ const GENERIC: Record<KeeperCause, string> = {
   usage: "Usage is the limit: no subscription has headroom.",
   unassigned: "Ready issues wait and no builder is running.",
   empty_pillar: "Nothing is ready: no pillar has an issue a builder can start.",
+  stale_reds: "Open crew pulls are red and no run is working them.",
   red_checks: "Open crew pulls have a red check.",
   stale_pile: "Open crew pulls are waiting on a builder or a reviewer.",
   capacity: "Every builder slot is busy.",

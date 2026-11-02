@@ -30,7 +30,7 @@ import type { User } from "../../core/users.ts";
 import { onYouAnswer, onYouRegion } from "./home.ts";
 import { liveRegionsJs } from "../client.ts";
 import { liveClientJs } from "../live.ts";
-import { notFoundPage, repoBase, signInFirst } from "../chrome.ts";
+import { notFoundPage, repoBase, signInFirst, NOT_YOURS_TO_DO, forbiddenPage } from "../chrome.ts";
 import { backTo, field, readForm } from "../form.ts";
 import { MAX_BODY } from "../../core/issues.ts";
 import { issueTitles } from "../../core/proposals.ts";
@@ -242,11 +242,60 @@ const rowHead = (kind: Decision["kind"], n: number): string => {
   return `${line.charAt(0).toUpperCase()}${line.slice(1)}`;
 };
 
+/** The flash's own query keys: dropped from the page a decision returns to, so Undo does not carry them. */
+const FLASH_KEYS = ["muted", "listened"] as const;
+
+/** This page as a path and query without the flash, for a form's `back`. */
+function here(ctx: Ctx): string {
+  const q = new URLSearchParams(ctx.url.searchParams);
+  for (const k of FLASH_KEYS) q.delete(k);
+  const rest = q.toString();
+  return ctx.url.pathname === "/asks" && rest !== "" ? `/asks?${rest}` : "/asks";
+}
+
+/** A `back` worth following after a mute: `/asks` or `/asks?…`, nothing else. */
+function asksBack(form: Parameters<typeof backTo>[0]): string {
+  const back = backTo(form, "/asks");
+  return back === "/asks" || (back.startsWith("/asks?") && !back.includes("#")) ? back : "/asks";
+}
+
+/** The same page with one flash key set, the others cleared. */
+function withFlash(back: string, key: (typeof FLASH_KEYS)[number], repoId: string): string {
+  const [path = "/asks", query = ""] = back.split("?");
+  const q = new URLSearchParams(query);
+  for (const k of FLASH_KEYS) q.delete(k);
+  q.set(key, repoId);
+  return `${path}?${q.toString()}`;
+}
+
+/** "Muted owner/name" or "Listening to owner/name again", with Undo, when the page was reached from a mute or listen. */
+function muteFlash(ctx: Ctx, user: NonNullable<Ctx["auth"]["user"]>): Html | null {
+  for (const key of FLASH_KEYS) {
+    const id = ctx.url.searchParams.get(key);
+    if (id === null || !/^[A-Za-z0-9_-]{1,64}$/.test(id)) continue;
+    const repo = getRepoById(ctx.app.db, id);
+    if (!repo || !canRead(ctx.app.db, repo, user)) continue;
+    const name = `${repo.ownerName}/${repo.name}`;
+    const muted = key === "muted";
+    return html`<div class="toast" data-tone="success" role="status">
+      ${icon("check")}
+      <div class="toast-body">${muted ? `Muted ${name}` : `Listening to ${name} again`}</div>
+      <form class="bar" method="post" action="${muted ? "/asks/listen" : "/asks/mute"}">
+        <input type="hidden" name="repo" value="${repo.id}" />
+        <input type="hidden" name="back" value="${here(ctx)}" />
+        ${btn("Undo", { size: "sm" })}
+      </form>
+    </div>`;
+  }
+  return null;
+}
+
 /** A row and, under it, the chip that mutes its repository (`asksMute`). */
 function mutableRow(ctx: Ctx, r: AskRow<Decision>, picked: ReadonlySet<string>): Html {
   return html`${rowCard(ctx, r, picked)}
     <form class="bar" method="post" action="/asks/mute">
       <input type="hidden" name="repo" value="${r.repo.id}" />
+      <input type="hidden" name="back" value="${here(ctx)}" />
       <button
         type="submit"
         class="btn" data-variant="ghost" data-size="sm"
@@ -334,7 +383,7 @@ function renderAsks(ctx: Ctx, top: AsksTop | undefined): Response {
   const response = page({
     ctx,
     title: "Asks",
-    body: html`<main class="stack"><h1 class="sr-only">Asks</h1>${onYouRegion(ctx, user, undefined, section.body)}<p class="small muted"><a href="/review">Review: one row per ask</a></p></main>`,
+    body: html`<main class="stack"><h1 class="sr-only">Asks</h1>${muteFlash(ctx, user)}${onYouRegion(ctx, user, undefined, section.body)}<p class="small muted"><a href="/review">Review: one row per ask</a></p></main>`,
     scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${section.scriptJs}`,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
@@ -710,7 +759,7 @@ export function asksProposal(verb: ProposalVerb) {
       return done.error.code === "not_found"
         ? notFoundPage(ctx)
         : done.error.code === "forbidden" || done.error.code === "unauthorized"
-          ? new Response("forbidden", { status: 403 })
+          ? forbiddenPage(ctx, NOT_YOURS_TO_DO)
           : await asksScreen(ctx, nothingDone(done.error.message));
     return redirect(backTo(form, "/asks"));
   };
@@ -739,7 +788,9 @@ export async function asksListen(ctx: Ctx): Promise<Response> {
     .filter((r): r is string => typeof r === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(r))
     .slice(0, BULK_MAX);
   removeMutes(ctx.app.db, ctx.auth.user.id, repos.map((r) => `repo:${r}`));
-  return redirect("/asks");
+  const only = repos.length === 1 ? repos[0] : undefined;
+  const back = asksBack(form);
+  return redirect(only === undefined ? back : withFlash(back, "listened", only));
 }
 
 /** POST /asks/mute — the viewer mutes one repository they can read: its asks leave their home, inbox and phone. */
@@ -753,5 +804,5 @@ export async function asksMute(ctx: Ctx): Promise<Response> {
   const repo = getRepoById(ctx.app.db, id);
   if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFoundPage(ctx);
   muteRepo(ctx.app.db, ctx.auth.user.id, repo.id);
-  return redirect("/asks");
+  return redirect(withFlash(asksBack(form), "muted", repo.id));
 }

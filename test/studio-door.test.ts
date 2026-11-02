@@ -50,6 +50,7 @@ import { liveClientJs } from "../src/web/live.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { promote } from "./helpers/members.ts";
+import { withScripts } from "./helpers/page-script.ts";
 
 let dataDir: string;
 let app: App;
@@ -527,7 +528,7 @@ describe("the studio home keeps itself current", () => {
   let readme: Issue;
 
   const get = (extraCookie = "") =>
-    fetch(`${base}/`, {
+    fetch(`${base}/feed`, {
       headers: {
         cookie: `${cookie}${extraCookie}; forge_mode=studio`,
       },
@@ -595,7 +596,7 @@ describe("the studio home keeps itself current", () => {
     const home = await res.text();
     expect(home).toMatch(/id="live-apps"\s*\n?\s*data-live="/);
     expect(home).not.toContain("live-on-you");
-    expect(home).toContain("new EventSource('/events')");
+    expect(await withScripts(servers.url, home)).toContain("new EventSource('/events')");
   });
 
   test("chips do not touch Your apps: it lists apps, not feed items", async () => {

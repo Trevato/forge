@@ -1,4 +1,5 @@
-import { listLabels } from "../../../core/issues.ts";
+import { labelsWithOpen, listLabels } from "../../../core/issues.ts";
+import { canWrite } from "../../../core/repos.ts";
 import { scopeAllows } from "../../../core/tokens.ts";
 import { createLabel, deleteLabel, updateLabel } from "../../../actions/repos.ts";
 import { LABEL_WORDS } from "../../../actions/label_words.ts";
@@ -7,7 +8,7 @@ import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts"
 
 export const tool: Tool = {
   name: "repo_labels",
-  doc: "`{ repo, action?, name?, color?, id? }`: list (`list`, the default, paged by `limit` 1–200 and `cursor`, as `{ items, next_cursor }`; a read-only token may), create (`create`, `name`, `color` six hex digits), rename or recolour (`update`, `id`, `name` and/or `color`, as the labels page) or remove (`remove`, `id`) the repository's labels, as `GET`/`POST …/labels` and `PATCH`/`DELETE …/labels/:id`; create, update and remove need an admin token and a repository admin",
+  doc: "`{ repo, action?, name?, color?, id? }`: list (`list`, the default, paged by `limit` 1–200 and `cursor`, as `{ items, next_cursor }`, each label with `open`, its open issues and pulls, for a writer; a read-only token may), create (`create`, `name`, `color` six hex digits), rename or recolour (`update`, `id`, `name` and/or `color`, as the labels page) or remove (`remove`, `id`) the repository's labels, as `GET`/`POST …/labels` and `PATCH`/`DELETE …/labels/:id`; create, update and remove need an admin token and a repository admin",
   description:
     "Repo labels: list (default), create, update, remove (admin token).",
   inputSchema: {
@@ -30,7 +31,11 @@ export const tool: Tool = {
     const repo = repoArg(ctx, user, args);
     if (isAnswer(repo)) return repo;
     const action = args["action"] ?? "list";
-    if (action === "list") return pageRows(listLabels(ctx.app.db, repo.id), (l) => l.id, args);
+    if (action === "list") {
+      // `open` is each label's open count, told to a writer only (sealed items are counted).
+      const rows = labelsWithOpen(ctx.app.db, repo.id, canWrite(ctx.app.db, repo, user));
+      return pageRows(rows, (l) => l.id, args);
+    }
     if (action !== "create" && action !== "update" && action !== "remove")
       return bad("invalid", "action is list, create, update or remove");
     // The API asks for an admin token on both routes; so does this.

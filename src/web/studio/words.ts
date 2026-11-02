@@ -9,7 +9,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { ancestries } from "./ancestry.ts";
+import { ancestries, type AncestryCache } from "./ancestry.ts";
 import {
   NO_TESTS_TAIL,
   TESTS_PASSED_TAIL,
@@ -19,7 +19,6 @@ import {
 import type { AppRecord } from "../../core/apps.ts";
 import { canEnterApp, getRepoById, type Repo } from "../../core/repos.ts";
 import type { User } from "../../core/users.ts";
-import type { Efficiency } from "../../core/efficiency.ts";
 import type { WindowStanding } from "../../core/standing.ts";
 import { whenText } from "../../crew/limits.ts";
 import { reviewWaitsFor, waitsForReviewer } from "../../crew/review.ts";
@@ -99,6 +98,8 @@ export interface WordCtx {
   readonly history: ServingHistory;
   /** Who is reading: a private app's production is theirs only if they may enter it. */
   readonly viewer: User | undefined;
+  /** Where ancestries are kept; the process's own unless a test brings its own. */
+  readonly ancestries?: AncestryCache;
 }
 
 /** What a page read ahead for its rows, so `pullWord` and `runWord` do not read per row. */
@@ -253,7 +254,7 @@ async function caughtUp(
   const key = `${ctx.dir}\0${production.commitOid}`;
   let ancestry = ctx.history.get(key);
   if (ancestry === undefined) {
-    ancestry = ancestries.of(ctx.dir, production.commitOid);
+    ancestry = (ctx.ancestries ?? ancestries).of(ctx.dir, production.commitOid);
     ctx.history.set(key, ancestry);
   }
   return (await ancestry)?.has(commitOid) ?? false;
@@ -602,14 +603,4 @@ export function windowWords(w: WindowStanding): WindowWords {
           },
     usedPct,
   };
-}
-
-/** An app's spend per shipped change (`core/efficiency.ts`) in a few words:
- * `$1.37 per shipped change`, or what is true when there is no ratio. */
-export function perShippedWords(e: Efficiency | undefined): string {
-  if (e === undefined || (e.spentUsd === 0 && e.shipped === 0))
-    return "nothing spent or shipped";
-  if (e.perShippedUsd === null)
-    return `${dollars(e.spentUsd)} spent, nothing shipped`;
-  return `${dollars(e.perShippedUsd)} per shipped change`;
 }

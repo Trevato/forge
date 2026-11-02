@@ -4,7 +4,11 @@
  * screen say the same thing without the terminal importing a web module.
  */
 
-import { VERIFYING_NOTE, type EnvStatus } from "./runtime.ts";
+import type { EnvStatus } from "./runtime.ts";
+
+/** The sentence a serving environment carries while its tests still run;
+ * `runtime.ts` sets it and the studio reads it to word its badge. */
+export const VERIFYING_NOTE = "serving — still verifying its tests";
 
 /** The tones an environment's word wears; the web's `Tone` and the terminal's both hold them. */
 export type EnvPhraseTone = "default" | "success" | "danger" | "attn";

@@ -46,6 +46,8 @@ import { revertPull } from "../../actions/revert.ts";
 import { takeBackWords } from "../../actions/revert_words.ts";
 import { openEnvUrl } from "../../actions/apps.ts";
 import { listRepoRuns, mayReadRunLog } from "../../actions/runs.ts";
+import { pullLooks, type PullLook } from "../../looks/readable.ts";
+import { pullLooksScreen } from "./pulllooks.ts";
 import { previewEnv } from "../../apps/data.ts";
 import { findingsWords, pullPreviewFindings } from "../../core/preview_findings.ts";
 import {
@@ -63,9 +65,11 @@ import { checkWords } from "../../checks/summary.ts";
 import { oneLine } from "../../checks/words.ts";
 import { resolveOid } from "../../git/merge.ts";
 import { nextOfPull, type Next } from "../../flow/next_actor.ts";
+import { stepLine, stepOfPull, type PathStep } from "../../flow/path.ts";
 import { getPull, pullDir, variantSiblings, type Pull } from "../../core/pulls.ts";
 import { voteVariant } from "../../actions/variants.ts";
 import { getRepoById, type Repo } from "../../core/repos.ts";
+import { wallOf, wallPlain, type Wall } from "../../contract/policy.ts";
 import { checkSummary, type CheckSummary } from "../../core/runs.ts";
 import { err, ok } from "../../kernel/result.ts";
 import { getUsersByIds } from "../../core/users.ts";
@@ -225,6 +229,8 @@ export function pullScreen(
   let threads: Thread[] = [];
   /** Who acts next, for a local open pull; the page says the same line. */
   let next: Next | null = null;
+  /** Which of check, review, land, live the pull is at; the page's step line. */
+  let step: PathStep | null = null;
   /** Where each team the issue names stands; empty when it names none. */
   let teams: TeamVerdict[] = [];
   /** Settled threads the reader has opened back up, for this visit only. */
@@ -251,6 +257,8 @@ export function pullScreen(
   /** Whether the repository is an app, and its preview of this pull if so. */
   let isApp = false;
   let preview: EnvStatus | undefined;
+  /** The pictures taken of the preview, as the API would list them to this reader. */
+  let looks: PullLook[] = [];
   /** The deploy of the *current* head — what the merge box calls the checks. */
   let check: CheckSummary = NO_CHECK;
   /** The pull's base branch, to name what the check was merged with. */
@@ -268,6 +276,8 @@ export function pullScreen(
   const mayWrite = (): boolean => src.capabilities.write && repo !== undefined;
   /** The hold that stands on this pull; undefined when none does. */
   let hold: Hold | undefined;
+  /** What the access wall holds this open pull for, read from git (#7847). */
+  let wall: Wall | undefined;
   /** `h` is a person's key: an agent's hold is refused by the action, so it is not offered. */
   const mayHold = (): boolean =>
     mayWrite() && f.user?.kind === "user" && issueRow !== undefined;
@@ -302,10 +312,20 @@ export function pullScreen(
     threads = row === undefined ? [] : readThreads(row);
     issueRow = repo === undefined ? undefined : getIssue(f.db, repo.id, number);
     hold = row === undefined ? undefined : getHold(f.db, row.id);
+    wall =
+      repo !== undefined && row !== undefined && row.state === "open" && row.mergedAt === null && facts !== null
+        ? await (async () => {
+            const dir = await pullDir(f.app.db, f.app.reposRoot, repo, row);
+            const base = await resolveOid(dir, `refs/heads/${row.baseBranch}`);
+            return base === undefined ? undefined : wallOf(dir, base, facts.headOid);
+          })()
+        : undefined;
     // The app half: the preview environment (in memory, from the runtime),
     // the checks at the live head (a row), and what the crew has done here.
     const record = repo === undefined ? undefined : getAppByRepo(f.db, repo.id);
     isApp = record !== undefined;
+    looks =
+      repo === undefined || row === undefined ? [] : pullLooks(f.app, repo, row, f.user);
     preview =
       record === undefined
         ? undefined
@@ -324,6 +344,19 @@ export function pullScreen(
             headOid: row.headOid || (facts?.headOid ?? ""),
             conflicts: facts?.conflicts.length ?? 0,
           });
+    step =
+      row === undefined || settings === undefined
+        ? null
+        : stepOfPull(
+            f.db,
+            settings,
+            row,
+            {
+              headOid: row.headOid || (facts?.headOid ?? ""),
+              conflicts: facts?.conflicts.length ?? 0,
+            },
+            next,
+          );
     checkProgress = runningProgress(f.app.config.dataDir, check);
     const spec =
       repo === undefined || !isApp
@@ -676,6 +709,23 @@ export function pullScreen(
     ctx.toast(resolved ? "thread resolved" : "thread reopened", "success");
   };
 
+  /** The wall's other answer: a request for changes, as `R` would send it. */
+  const sendBack = (): void => {
+    if (repo === undefined) return;
+    const target = repo;
+    const row = getPull(f.db, target.id, number);
+    if (row === undefined) return;
+    runAsync(ctx, async () => {
+      const sent = await submitReview(f.app, f.user, target, row, { state: "changes_requested" });
+      if (!sent.ok) {
+        ctx.toast(errorText(String(sent.error)), "danger");
+        return;
+      }
+      await reload();
+      ctx.toast("sent back", "success");
+    });
+  };
+
   const merge = (strategy: "merge" | "squash"): void => {
     if (repo === undefined) return;
     const target = repo;
@@ -892,6 +942,7 @@ export function pullScreen(
           ? [binding(["O"], "open the preview")]
           : []),
         ...(isApp ? [binding(["P"], "open production")] : []),
+        ...(isApp ? [binding(["I"], "looks")] : []),
         ...(takeBackKey ? [binding(["T"], "take it back")] : []),
         ...(isApp && preview !== undefined && !takeBackKey
           ? [binding(["T"], "the preview's terminal")]
@@ -920,6 +971,7 @@ export function pullScreen(
                 ? [binding(["v"], "see the conflict blocks")]
                 : []),
               binding(["m"], "merge", { disabled: state() !== "ready" }),
+              ...(wall !== undefined && mayWrite() ? [binding(["w"], "the access wall: allow or send back")] : []),
               ...(mayLandPast() ? [binding(["L"], "land past the gate")] : []),
               ...(tab === 1 && view.threadHere() !== null
                 ? [
@@ -1002,7 +1054,7 @@ export function pullScreen(
         x1,
         head!.y + 1,
         truncate(
-          ` ${facts?.mergedAt != null ? "merged" : issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)}${assignedText(issueRow, ctx.icons)}${facts?.proposal ? ` · ${proposedByText(facts.proposal)}` : ""}${hold === undefined ? "" : ` · held by ${hold.heldByName}: ${hold.why}`}${next === null ? "" : ` · next: ${next.who}, ${next.why}`}`,
+          ` ${facts?.mergedAt != null ? "merged" : issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)}${assignedText(issueRow, ctx.icons)}${facts?.proposal ? ` · ${proposedByText(facts.proposal)}` : ""}${hold === undefined ? "" : ` · held by ${hold.heldByName}: ${hold.why}`}${step === null ? "" : ` · step: ${stepLine(step)}`}${next === null ? "" : ` · next: ${next.who}, ${next.why}`}`,
           Math.max(0, edge - x1),
         ),
         style(c.mutedFg, c.bg),
@@ -1066,7 +1118,10 @@ export function pullScreen(
       } else {
         if (width !== body!.w) {
           width = body!.w;
-          lines = threadLines(entries(), Math.max(20, body!.w - 1), c);
+          lines = [
+            ...threadLines(entries(), Math.max(20, body!.w - 1), c),
+            ...looksLines(looks, lookOrigin(f.app.config), Math.max(20, body!.w - 1), c),
+          ];
         }
         drawLines(s, body!, c, scroll, lines);
         hitScroll(ctx, body!, scroll, lines.length);
@@ -1133,6 +1188,11 @@ export function pullScreen(
       }
       if (e.key === "O" && isApp && preview !== undefined) {
         openPreview();
+        return true;
+      }
+      if (e.key === "I" && isApp && repo !== undefined && detail !== undefined) {
+        const pull = getPull(f.db, repo.id, number);
+        if (pull !== undefined) ctx.push(pullLooksScreen(f, ctx, repo, pull));
         return true;
       }
       if (e.key === "P" && isApp) {
@@ -1258,6 +1318,32 @@ export function pullScreen(
             ? `changes requested by ${now.blocking.join(", ")}`
             : errorText("review_required"),
           "attn",
+        );
+        return true;
+      }
+      // `w` on a pull the access wall holds: the same two decisions as the
+      // page's card, through `mergePull` and `submitReview`, which check the write.
+      if (e.key === "w" && mayWrite() && wall !== undefined) {
+        const held = wall;
+        ctx.push(
+          confirmScreen(ctx, screen, {
+            title: `Access wall: #${number}`,
+            body: [
+              held.unsound !== undefined
+                ? "This pull's contract does not read; an app built on it does not boot."
+                : "This pull opens access wider; a person decides.",
+              ...(held.unsound ?? held.loosened.map(wallPlain)),
+            ],
+            actions: [
+              { label: "Cancel", variant: "ghost" },
+              { label: "Send it back", variant: "danger" },
+              { label: "Allow it and merge" },
+            ],
+            onChoose: (choice) => {
+              if (choice === 2) merge("squash");
+              if (choice === 1) sendBack();
+            },
+          }),
         );
         return true;
       }
@@ -1718,4 +1804,48 @@ function drawMergeBox(
     );
     y++;
   }
+}
+
+const lookOrigin = (config: {
+  url?: string | undefined;
+  host?: string | undefined;
+  port?: number | undefined;
+}): string =>
+  (config.url ?? `http://${config.host ?? "localhost"}:${config.port ?? 3000}`).replace(
+    /\/+$/,
+    "",
+  );
+
+/**
+ * The Looks section under the conversation: one line each, absolute URL so a
+ * terminal can open it. Nothing at all when the pull has none.
+ */
+function looksLines(
+  items: readonly PullLook[],
+  origin: string,
+  width: number,
+  c: Tokens,
+): Span[][] {
+  if (items.length === 0) return [];
+  const clean = (t: string): string => t.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, " ");
+  const room = Math.max(10, width - 4);
+  return [
+    [],
+    [{ text: ` Looks (${items.length})`, style: style(c.fg, c.bg, BOLD) }],
+    ...items.flatMap((l): Span[][] => {
+      // The line may be cut to fit; the link never is — it takes its own
+      // indented line and wraps only when it is wider than the screen.
+      const says = truncate(
+        clean(`${l.width} · ${l.by ?? "forge"} · ${l.says ?? "taken by the forge"}`),
+        room,
+      );
+      const url = `${origin}${l.url}`;
+      const parts: string[] = [];
+      for (let i = 0; i < url.length; i += room) parts.push(url.slice(i, i + room));
+      return [
+        [{ text: `  ${says}`, style: style(c.mutedFg, c.bg) }],
+        ...parts.map((part): Span[] => [{ text: `    ${part}`, style: style(c.fg, c.bg) }]),
+      ];
+    }),
+  ];
 }

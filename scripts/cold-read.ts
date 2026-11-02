@@ -137,7 +137,7 @@ if (parent !== undefined) {
     console.error(early.error);
     process.exit(2);
   }
-  const list = await fetch(`${early.url}?state=open&limit=500`, { headers: auth });
+  const list = await fetch(`${early.url}?state=open&limit=200`, { headers: auth });
   if (!list.ok) {
     console.error(`could not list open issues (${list.status}); filing nothing`);
     process.exit(1);

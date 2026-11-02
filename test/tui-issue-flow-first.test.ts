@@ -30,6 +30,9 @@ describe("the terminal's issue screen puts an issue first with f", () => {
   let bob: User;
   let repo: Repo;
 
+  /** Every terminal opened here, stopped before the database closes: a live one keeps drawing into the next file. */
+  const opened: { stop(): void }[] = [];
+
   const open = async (user: User, issue: Issue) => {
     const terminal = headlessTerminal(140, 40);
     const { app: tui, session } = createForgeApp(
@@ -38,6 +41,7 @@ describe("the terminal's issue screen puts an issue first with f", () => {
       { terminal, exitHooks: false },
     );
     tui.start();
+    opened.push(tui);
     await settleApp(tui);
     tui.push(issueScreen(session, tui.ctx, local(session, getRepoById(app.db, repo.id)!), issue.number));
     await settleApp(tui);
@@ -70,6 +74,7 @@ describe("the terminal's issue screen puts an issue first with f", () => {
   }, 30_000);
 
   afterAll(async () => {
+    for (const tui of opened) tui.stop();
     await new Promise((r) => setTimeout(r, 100));
     app.close();
     await rm(dataDir, { recursive: true, force: true });

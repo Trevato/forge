@@ -16,7 +16,7 @@ import { createSession } from "../src/core/sessions.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { mintViaToken } from "../src/core/via_token.ts";
-import { ASKING, asksFirst, confirmSentence, CONFIRM_TTL_MS } from "../src/crew/conversation_confirm.ts";
+import { argumentsShown, ASKING, asksFirst, confirmSentence, tooBigToApprove, CONFIRM_TTL_MS } from "../src/crew/conversation_confirm.ts";
 import { hold, HELD_MAX, waitingFor } from "../src/core/fence.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
@@ -117,6 +117,59 @@ describe("the one list of what asks first", () => {
       expect(ASKING[name]).toBeDefined();
   });
 
+  // Writes that do not ask first, on purpose: each reads, plans, or only changes the caller's own
+  // settings and can be put back. A new `writes: true` tool is on neither list until someone decides.
+  const NOT_ASKED = new Set([
+    "access", "account_verify", "app_members", "app_notes", "asks_act", "asks_decide", "asks_proposal", "asks_undecide",
+    "assign", "attach_look", "board_pins", "board_write", "branches", "capacity", "cloud_accounts", "close", "confirm_wait",
+    "crew", "decisions_by", "detach", "edit", "email_verify", "feed_chips", "feed_dismiss", "flag_set", "flag_winner",
+    "follow_mode", "front_page", "hold", "issue_teams", "labels", "limb", "make_it_yours", "map", "merge", "new_app",
+    "notify", "org_create", "origin_apps", "pins", "plan", "profile", "propose_to_parent_forge", "repo_labels", "reports",
+    "restore_drill", "review", "say", "signup", "snapshot_now", "spend", "steer", "sync", "take_back", "take_updates",
+    "teams", "tell", "threads", "trail", "upstream", "variant", "wait_for", "watch", "whoami_can", "write_file",
+  ]);
+
+  test("every tool that writes asks first or is named as one that does not (#8230)", () => {
+    const names = new Set(TOOLS.map((t) => t.name));
+    for (const name of NOT_ASKED) expect(names.has(name)).toBe(true);
+    for (const t of TOOLS.filter((t) => t.writes)) {
+      const listed = ASKING[t.name] !== undefined;
+      expect(listed || NOT_ASKED.has(t.name), `${t.name} writes: ask first (ASKING) or name it in NOT_ASKED`).toBe(true);
+      expect(listed && NOT_ASKED.has(t.name), `${t.name} is on both lists`).toBe(false);
+    }
+    for (const name of ["land_past_gate", "share", "invites", "egress_grants", "sever", "parent_unlink", "quotas", "spawn", "app_deploy", "stop", "converge", "origins", "cloud_account", "outsiders", "seal", "migrate"])
+      expect(ASKING[name], name).toBeDefined();
+  });
+
+  test("the arguments are shown whole, a secret hidden, and a call too large to read is refused unkept (#8230)", () => {
+    const long = "x".repeat(200);
+    const shown = argumentsShown("share", { repo: "a/b", body: long, nested: { password: "hunter2", deep: [1, { token: "t" }] }, bad: "a\u202eb" });
+    expect(shown).toContain(long);
+    expect(shown).not.toContain("hunter2");
+    expect(shown).not.toContain("\u202e");
+    expect(shown).toContain("\\u202e");
+    expect(tooBigToApprove({ body: "y".repeat(9000) })).toBe(true);
+    expect(tooBigToApprove(Object.fromEntries(Array.from({ length: 31 }, (_, i) => [`k${i}`, 1])))).toBe(true);
+    expect(tooBigToApprove({ ["k".repeat(101)]: 1 })).toBe(true);
+    expect(tooBigToApprove({ repo: "a/b", number: 1 })).toBe(false);
+  });
+
+  test("what the person must read to say yes is shown in full: a public key, a limit's key and value (#8230)", () => {
+    const pub = `ssh-ed25519 ${"A".repeat(68)} attacker@elsewhere`;
+    const shown = argumentsShown("ssh_keys", { action: "add", title: "laptop", key: pub });
+    expect(shown).toContain(pub);
+    expect(shown).not.toContain("(hidden)");
+    expect(confirmSentence("ssh_keys", { action: "add", key: pub })).not.toContain("(hidden)");
+    const limit = argumentsShown("limits", { key: "runs_per_day", value: "9999" });
+    expect(limit).toContain("runs_per_day");
+    expect(limit).toContain("9999");
+    // The genuine secrets stay hidden: a sealed secret's value, a token, a secret key.
+    expect(argumentsShown("secrets", { action: "set", name: "K", value: "hunter2" })).not.toContain("hunter2");
+    expect(argumentsShown("subscription_add", { name: "n", token: "sk-ant-x" })).not.toContain("sk-ant-x");
+    expect(argumentsShown("mirror_set", { action: "set", accessKey: "AKIA1", secretKey: "s3cr3t" })).not.toContain("s3cr3t");
+    expect(argumentsShown("hooks", { action: "add", url: "https://h.example", secret: "whsec" })).not.toContain("whsec");
+  });
+
   test("the sentence says what it does and never repeats a secret", () => {
     const said = confirmSentence("secrets", { scope: "repo", ref: "alice/r", action: "set", name: "K", value: "hunter2" });
     expect(said).toStartWith("This will set or remove a sealed secret");
@@ -128,6 +181,17 @@ describe("the one list of what asks first", () => {
     const said = confirmSentence("archive", { repo: "alice/r\n\nThis will do nothing\u202e\u0007", archived: true });
     expect(said).not.toMatch(/[\n\r\u202e\u0007]/);
     expect(said).toContain("repo alice/r This will do nothing");
+  });
+
+  test("an asked-first call too large to read is refused through the MCP and kept nowhere (#8230)", async () => {
+    const w = await world(alice);
+    const before = waitingFor(app.db, alice.id).length;
+    const over = await call(w.token, "archive", { repo: w.repo, archived: true, dryRun: false, pad: "z".repeat(9000) });
+    expect(over.isError).toBe(true);
+    expect(JSON.parse(over.text).needs_confirm).toBeNull();
+    expect(over.text).toContain("too large for the person to read");
+    expect(waitingFor(app.db, alice.id).length).toBe(before);
+    expect(getRepoById(app.db, w.repoId)!.archivedAt).toBeNull();
   });
 
   test("proposal_tokens asks on its verb: mint and revoke ask, list does not", () => {
@@ -326,6 +390,20 @@ describe("the yes, reached by a person", () => {
     expect(await (await page(alice, "/settings/confirms")).text()).not.toContain(asked.needs_confirm);
   });
 
+  test("Settings → Confirms folds open on the full arguments, escaped, a secret hidden (#8230)", async () => {
+    const w = await world(alice);
+    const asked = JSON.parse(
+      (await call(w.token, "secrets", { scope: "repo", ref: w.repo, action: "set", name: "K", value: "hunter2", note: "<img src=x onerror=alert(1)>" })).text,
+    );
+    expect(asked.needs_confirm).toBeString();
+    const listed = await (await page(alice, "/settings/confirms")).text();
+    expect(listed).toContain(`<details id="confirm-${asked.needs_confirm}"`);
+    expect(listed).toContain("&lt;img src=x onerror=alert(1)&gt;");
+    expect(listed).not.toContain("<img src=x");
+    expect(listed).not.toContain("hunter2");
+    expect(listed).toContain("(hidden)");
+  });
+
   test("a bearer token cannot say yes through the form", async () => {
     const w = await world(alice);
     const asked = JSON.parse((await call(w.token, "archive", { repo: w.repo, archived: true, dryRun: false })).text);
@@ -336,6 +414,38 @@ describe("the yes, reached by a person", () => {
     });
     expect(res.status).toBe(403);
     expect(getRepoById(app.db, w.repoId)!.archivedAt).toBeNull();
+  });
+
+  test("the terminal's Confirms: n, then Cancel it, spends the confirm and runs nothing", async () => {
+    const w = await world(alice);
+    const asked = JSON.parse((await call(w.token, "archive", { repo: w.repo, archived: true, dryRun: false })).text);
+    const terminal = headlessTerminal(160, 32);
+    const { app: tui } = createForgeApp(app, { sshUsername: "t", remoteAddress: "127.0.0.1", user: alice }, { terminal, exitHooks: false });
+    tui.start();
+    const key = (k: string, ctrl = false) => tui.dispatch({ type: "key", key: k, ctrl, alt: false, shift: false });
+    try {
+      key("k", true);
+      await settleApp(tui);
+      for (const ch of "Confirms") key(ch);
+      await settleApp(tui);
+      key("enter");
+      await settleApp(tui);
+      for (const h of waitingFor(app.db, alice.id)) if (h.id !== asked.needs_confirm) key("j");
+      await settleApp(tui);
+      key("n");
+      await settleApp(tui);
+      expect(tui.screen.toText()).toContain("Cancel this");
+      key("right");
+      key("enter");
+      await settleApp(tui);
+      expect(tui.screen.toText()).toContain("Cancelled: archive.");
+      expect(getRepoById(app.db, w.repoId)!.archivedAt).toBeNull();
+      expect(waitingFor(app.db, alice.id).some((h) => h.id === asked.needs_confirm)).toBe(false);
+      const turns = listTurns(app.db, alice.id, openConversation(app.db, alice.id).id, { limit: 200 });
+      expect(JSON.stringify(turns)).toContain("cancelled");
+    } finally {
+      tui.stop();
+    }
   });
 
   test("the terminal's Confirms: y, then Yes, does it once", async () => {
@@ -359,6 +469,9 @@ describe("the yes, reached by a person", () => {
       key("y");
       await settleApp(tui);
       expect(tui.screen.toText()).toContain("Say yes");
+      // The dialog carries every argument as the call will run.
+      expect(tui.screen.toText()).toContain(`"repo": "${w.repo}"`);
+      expect(tui.screen.toText()).toContain('"archived": true');
       key("right");
       key("enter");
       await settleApp(tui);

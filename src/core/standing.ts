@@ -382,3 +382,9 @@ function windowStanding(
     said: limit?.said ?? null,
   };
 }
+
+/** The share of a window's cap still free, in whole percent 0–100; null with no cap. */
+export function freePct(cap: number | null, used: number): number | null {
+  if (cap === null || cap <= 0) return null;
+  return Math.max(0, Math.min(100, Math.round(((cap - used) / cap) * 100)));
+}

@@ -30,6 +30,7 @@ import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { boardCss } from "../src/web/pages/board.ts";
 import { meter } from "../src/web/ui.ts";
+import { withScripts } from "./helpers/page-script.ts";
 
 describe("the board", () => {
   let dataDir: string;
@@ -151,8 +152,8 @@ describe("the board", () => {
     expect(html).toMatch(/\$0\.00<\/b> of\s+\$20/);
     expect(html).toContain('id="board-live"');
     expect(html).toContain('id="board-clock"');
-    expect(html).toContain("new EventSource('/events')");
-    expect(html).toContain("requestFullscreen");
+    expect(await withScripts(servers.url, html)).toContain("new EventSource('/events')");
+    expect(await withScripts(servers.url, html)).toContain("requestFullscreen");
     // A wall left open all day fetches its 13 KB of rules once, with the rest
     // of the design, instead of carrying them inline on every reload. The one
     // style element every page carries is the boot style that paints the

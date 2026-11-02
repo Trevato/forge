@@ -98,6 +98,14 @@ test("a red verification that fails alone too names the push that broke it in on
   const run = await until(() => finished(VERIFY_ENV, oid));
   expect(run.state).toBe("failed");
   expect(getRun(app.db, run.id)?.checkDetail?.files).toEqual(["t/a.test.ts"]);
+  // The service filled the failures and filed the report for the failing file.
+  expect(getRun(app.db, run.id)?.checkDetail?.failures).toEqual([{ file: "t/a.test.ts", name: "grp > works" }]);
+  const reported = await until(() =>
+    app.db
+      .query<{ body: string }, [string]>("SELECT body FROM issue WHERE repo_id = ?1 AND title = 'Full suite red: t/a.test.ts'")
+      .get(repo.id) ?? undefined,
+  );
+  expect(reported.body).toContain("grp > works");
   const issue = await until(() =>
     app.db
       .query<{ title: string; body: string }, [string]>("SELECT title, body FROM issue WHERE repo_id = ?1 AND kind = 'issue' AND title LIKE 'Red after landing:%'")

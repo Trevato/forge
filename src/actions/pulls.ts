@@ -4,6 +4,8 @@
  * issues — a pull is an issue with a diff.
  */
 
+import { addComment as addIssueComment } from "../core/issues.ts";
+import { landedNote, leftNote, unticked } from "../core/done_on_main.ts";
 import { resolveOpen } from "../core/decisions.ts";
 import type { App } from "../app.ts";
 import { landVision } from "../crew/vision.ts";
@@ -449,6 +451,40 @@ export async function mergePull(
     const issue = getIssue(app.db, repo.id, n);
     if (!issue || issue.kind !== "issue" || issue.state !== "open") continue;
     if (isStructural(plan, issue.id)) continue;
+    const left = unticked(issue.body);
+    if (left.length > 0) {
+      const body = leftNote(issue.number, left);
+      const noted = addIssueComment(app.db, {
+        issueId: pull.id,
+        authorId: writer.value.id,
+        body,
+      });
+      if (noted.ok) {
+        app.bus.append({
+          kind: "pull.commented",
+          repoId: repo.id,
+          actorId: writer.value.id,
+          payload: { number: pull.number, body, commentId: noted.value.id },
+        });
+      }
+      // And on the issue, so whoever reads it sees why it is still open;
+      // the picker holds it until a person answers (`crew/landed.ts`).
+      const why = landedNote(pull.number, left);
+      const told = addIssueComment(app.db, {
+        issueId: issue.id,
+        authorId: writer.value.id,
+        body: why,
+      });
+      if (told.ok) {
+        app.bus.append({
+          kind: "issue.commented",
+          repoId: repo.id,
+          actorId: writer.value.id,
+          payload: { number: issue.number, body: why, commentId: told.value.id },
+        });
+      }
+      continue;
+    }
     const closed = setIssueStateCore(app.db, issue.id, "closed");
     if (!closed) continue;
     app.bus.append({

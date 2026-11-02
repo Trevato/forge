@@ -79,6 +79,14 @@ region for the live-regions client (etag, 304). A post: who did it, what it
 says as a link into the thing, a small line of why, Steer (run
 cards, posts to the run's `steer`) or Tell the crew (everything else, posts to
 the app's `tell`), Dismiss and Mute app (the interactions API, same-origin).
+Reply (#8211): a post whose link is an issue or a pull (`/:owner/:name/issues/:n`
+or `/pulls/:n`) also offers Reply, a plain form posting the comment to that
+page's own `/comments` handler with `back=feed`, so the same-origin check, body
+limit and escaping apply; it returns to `/feed` with the flash "Reply posted."
+(a fixed word, never a URL from the form); an empty or refused reply returns there too, with the reason. Reply is the card's one primary button; Tell drops to plain beside it. Only a signed-in viewer who can read
+the repository sees it (`src/feed/reply.ts`, the comment action's own rule). In
+the terminal, `Feed` in the palette lists the same posts and `r` replies through
+the same `addCommentThrough`.
 Keys: `j`/`k`/Enter are the shell's, `x` dismisses the focused card.
 The `choose` card comes from `src/feed/choose.ts`, a run card offers Stop
 (`src/web/studio/cards.ts`), and `?cursor=` pages past the first 20
@@ -164,3 +172,9 @@ keeps them; signing out clears every draft. It lives in the feed's existing
 script (no new script, no dependency). Not covered: the "the forge" thought
 target posts as a plain form, so its draft is dropped on submit, and the
 lean client home has no feed script, so no draft.
+
+## Likes
+
+A like is a signal (#7751): `POST /api/v1/feed/interactions` with `kind: "liked"` (or the form at `POST /feed/like`) toggles the viewer's `feed_like` row: pressing again deletes it, so a person counts once per item. An item of `GET /api/v1/feed` carries `likes` and `liked` once anyone likes it (absent means 0 and false), and every card draws a Like button with the count. A like does not move the ranking. An item the viewer cannot read is a 404, as for every act.
+
+In the terminal, the Feed screen (`ssh` in, then Ctrl-K and "Feed") marks a liked post `♥ n` and one others like `♡ n`; `l` on the post under the cursor likes it and a second `l` takes it back. It runs the same `readInteraction` check and `toggleLike` as the page, and the write moves the forge's write clock, so web viewers see it on their next live refresh.

@@ -31,7 +31,8 @@ describe("the release gate", () => {
     // check that commit again) and `none` past its grace stop it at once.
     expect(step).toMatch(/ok\) [^\n]*exit 0/);
     expect(step).toMatch(/failed\) [^\n]*exit 1/);
-    expect(step).toMatch(/superseded\) [^\n]*exit 1/);
+    // A later landing cancelling the tag's check does not hold a release: the landing gate and the boot proof stand.
+    expect(step).toMatch(/superseded\) [^\n]*exit 0/);
     expect(step).toMatch(/none\) [^\n]*-lt 600 [^\n]*exit 1/);
   });
 

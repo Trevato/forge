@@ -18,6 +18,7 @@ import { placementsOf, type Placement } from "../../core/placements.ts";
 import { recentThoughts, type Thought } from "../../core/thoughts.ts";
 import { parseCursor, readFeedPage } from "../../feed/feed.ts";
 import type { FeedItem } from "../../feed/rank.ts";
+import { replyPath, replyRepo, threadOf } from "../../feed/reply.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { getRepo, getRepoById } from "../../core/repos.ts";
 import { DEFAULT_PAGE, looksForEnv, lookUrl } from "../../core/looks.ts";
@@ -28,6 +29,7 @@ import { fragment } from "../layout.ts";
 import { draftJs } from "../draft.ts";
 import { outboxJs } from "../outbox.ts";
 import { avatar, btn, card, disclosure, empty, nameMark, row, stateBadge, time } from "../ui.ts";
+import { stepLink } from "./step_link.ts";
 import { writableAppsOf } from "./asks.ts";
 
 /** Events that can change what the feed says. */
@@ -101,6 +103,24 @@ function settledBadge(settled: FeedItem["settled"]): Html | null {
 }
 
 /**
+ * The count of likes and, for a signed-in viewer, the button that toggles
+ * theirs. A form that posts back to the feed, so it works without a script;
+ * the script updates the same two nodes in place. The label never changes
+ * (the pressed state is `aria-pressed`) and the count is drawn at a fixed
+ * width, so a press moves nothing.
+ */
+function likeBar(item: FeedItem): Html {
+  const likes = item.likes ?? 0;
+  const liked = item.liked ?? false;
+  return html`<form method="post" action="/feed/like" class="like" data-like>
+    <input type="hidden" name="item" value="${item.id}" />
+    <input type="hidden" name="app" value="${item.app}" />
+    <input type="hidden" name="back" value="/feed" />
+    <button type="submit" class="btn" data-variant="ghost" data-size="sm" aria-pressed="${liked ? "true" : "false"}">Like <span data-likes>${likes}</span></button>
+  </form>`;
+}
+
+/**
  * One post: who, where and when; what it says, as a link into the thing;
  * why, when that is news; and one quiet control for the rest — say
  * something (steer a run, tell the crew), dismiss, mute.
@@ -109,7 +129,12 @@ export function feedCard(
   item: FeedItem,
   marks: ReadonlyMap<string, Mark> = new Map(),
   picture?: FeedPicture,
+  mayReply = false,
 ): Html {
+  // The thread must be in the post's own app: that is the repository `mayReply` was asked about.
+  const linked = mayReply ? threadOf(item.link) : undefined;
+  const thread = linked !== undefined && `${linked.owner}/${linked.name}` === item.app ? linked : undefined;
+  const reply = thread !== undefined;
   const steer = item.kind === "run" || item.kind === "cost";
   const target = steer && RUN_LINK.test(item.link) ? `${item.link}/steer` : null;
   const head = html`${avatar(item.actor ?? item.app)}
@@ -128,18 +153,26 @@ export function feedCard(
       : html`<a class="look" data-slot="feed" href="${item.link}" tabindex="-1" aria-hidden="true"
           ><img src="${picture.src}" width="${picture.width}" height="${picture.height}" alt="" loading="lazy" decoding="async"
         /></a>`}
-    ${saysMore(item) ? html`<p class="small muted break">${item.reason}</p>` : null}`;
+    ${item.step === undefined ? null : html`<p class="break">${stepLink(item.step)}</p>`}
+    ${saysMore(item) ? html`<p class="small muted break">${item.reason}</p>` : null}
+    ${likeBar(item)}`;
   const foot = disclosure(
-    `${target ? "Steer" : "Tell"} · more`,
-    html`<form method="post" action="${target ?? `/${item.app}/tell`}" class="stack">
+    `${reply ? "Reply or " : ""}${target ? "Steer" : "Tell"} · more`,
+    html`${reply
+        ? html`<form method="post" action="${thread === undefined ? "" : replyPath(thread)}" class="stack">
+        <input type="hidden" name="back" value="feed" />
+        <textarea class="input" name="body" rows="2" maxlength="20000" required aria-label="Reply on ${item.what}"></textarea>
+        <span class="bar">${btn("Reply", { size: "sm", variant: "primary" })}</span>
+      </form>`
+        : null}<form method="post" action="${target ?? `/${item.app}/tell`}" class="stack">
         <textarea class="input" name="text" rows="2" maxlength="2000" required aria-label="${target ? "Steer this run" : "Tell the crew"}"></textarea>
-        <span class="bar">${btn(target ? "Steer" : "Tell", { size: "sm", variant: "primary" })}</span>
+        <span class="bar">${btn(target ? "Steer" : "Tell", reply ? { size: "sm" } : { size: "sm", variant: "primary" })}</span>
       </form>
       <span class="bar">
         <button type="button" class="btn" data-variant="ghost" data-size="sm" data-feed="dismissed" title="Dismiss (x)">Dismiss</button>
         ${item.kind === "ask" || item.kind === "milestone" || item.kind === "choose" ? null : html`<button type="button" class="btn" data-variant="ghost" data-size="sm" data-feed="muted" title="Mute ${item.app}">Mute app</button>`}
       </span>`,
-    { small: true, label: target ? "Steer, dismiss or mute" : "Tell the crew, dismiss or mute" },
+    { small: true, label: target ? "Steer, dismiss or mute" : reply ? "Reply, tell the crew, dismiss or mute" : "Tell the crew, dismiss or mute" },
   );
   return card(body, {
     head,
@@ -226,6 +259,7 @@ export function composer(ctx: Ctx, user: User): Html {
   })}`;
   const form = html`<form id="composer" class="card" method="post" action="/tell">
     <div class="card-body stack">
+    <input type="hidden" name="back" value="/feed" />
     <textarea class="input" name="text" rows="2" maxlength="2000" required placeholder="Tell the crew what should change" aria-label="Tell the crew" data-draft="${user.id}">${sharedDraft(ctx.url.searchParams)}</textarea>
     <div class="bar">
       ${repos.length === 0
@@ -341,14 +375,14 @@ export function caughtUp(items: readonly FeedItem[], next: string | null, cursor
   // Ranked by score, not time: the last card is not always the oldest.
   const oldest = items.reduce<string | undefined>((min, item) => (min === undefined || item.at < min ? item.at : min), undefined);
   if (oldest === undefined) return null;
-  const newest = cursor === undefined ? html`` : html`<a href="/">Newest</a>`;
+  const newest = cursor === undefined ? html`` : html`<a href="/feed">Newest</a>`;
   return next === null
     ? html`<p class="bar muted small" data-caught-up="end"><span>That's everything</span><span class="spacer"></span>${newest}</p>`
     : html`<p class="bar muted small" data-caught-up="more">
         <span>You're caught up to ${time(oldest)}</span>
         <span class="spacer"></span>
         ${newest}
-        <a href="/?cursor=${encodeURIComponent(next)}&day=${encodeURIComponent(items[items.length - 1]!.at)}">Older posts</a>
+        <a href="/feed?cursor=${encodeURIComponent(next)}&day=${encodeURIComponent(items[items.length - 1]!.at)}">Older posts</a>
       </p>`;
 }
 
@@ -358,10 +392,17 @@ function drawRegion(user: User, ctx: Ctx, read: ReturnType<typeof readRegion>): 
   // One divider per change of day between neighbours, in the order the feed already has.
   const posts: Html[] = [];
   let before = lastDayOnPage;
+  // Whether this viewer may reply in a repository, asked once per app on the page.
+  const mayReply = new Map<string, boolean>();
+  const mayReplyOn = (app: string): boolean => {
+    let may = mayReply.get(app);
+    if (may === undefined) mayReply.set(app, (may = replyRepo(ctx.app.db, user, app) !== undefined));
+    return may;
+  };
   for (const item of items) {
     const [label] = dividers([item.at], now, before);
     if (label !== undefined) posts.push(html`<p class="muted small" role="separator" aria-label="${label}" data-day-divider="${label}">${label}</p>`);
-    posts.push(feedCard(item, marks, pictures.get(item.id)));
+    posts.push(feedCard(item, marks, pictures.get(item.id), mayReplyOn(item.app)));
     before = item.at;
   }
   const liveQuery = [
@@ -402,6 +443,9 @@ export function liveFeedFragment(ctx: Ctx): Response {
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
 }
+
+/** Offline: the worker keeps the last home and the page that shows it is stale (`sw.ts`). */
+export const registerWorkerJs = `if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () {});`;
 
 /**
  * When a card is hidden, the day divider just above it goes with it, unless
@@ -539,11 +583,29 @@ ${dayKeepJs}
     if (t.hasAttribute('data-feed-open')) { send(card, 'opened'); return; }
     act(card, t.getAttribute('data-feed'));
   });
+  // A like flips at once and then takes the count the forge answers; a
+  // refusal puts it back. Without fetch the form posts back to the feed.
+  function like(form, e) {
+    var btn = form.querySelector('button');
+    var count = form.querySelector('[data-likes]');
+    if (!btn || !count) return;
+    e.preventDefault();
+    var was = btn.getAttribute('aria-pressed') === 'true';
+    var n = Number(count.textContent) || 0;
+    var show = function (on, total) { btn.setAttribute('aria-pressed', on ? 'true' : 'false'); count.textContent = String(total); };
+    show(!was, Math.max(0, n + (was ? -1 : 1)));
+    fetch(form.getAttribute('action'), { method: 'POST', credentials: 'same-origin', headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(new FormData(form)).toString() })
+      .then(function (r) { if (!r.ok) throw r; return r.json(); })
+      .then(function (a) { show(a.liked, a.likes); })
+      .catch(function () { show(was, n); problem = 'The like was not saved. Check your connection and press Like again.'; paint(); });
+  }
   // A tell is kept and sent the same way; a steer needs the run, so it
   // stays an ordinary post and waits for the network.
   feed.addEventListener('submit', function (e) {
     var form = e.target;
     var card = form.closest && form.closest('[data-item]');
+    if (card && form.hasAttribute && form.hasAttribute('data-like')) { like(form, e); return; }
     var box = form.elements && form.elements.text;
     if (!card || !box || !/\\/tell$/.test(form.getAttribute('action') || '')) return;
     var text = box.value.trim();
@@ -599,7 +661,7 @@ ${dayKeepJs}
       if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage('clear');
     }
   });
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () {});
+  ${registerWorkerJs}
   paint();
   flush();
 })();

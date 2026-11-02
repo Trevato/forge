@@ -6,4 +6,5 @@ export const route: Route = {
   summary: "List the fleet operations, newest first; answers { items, next_cursor }",
   auth: true,
   query: { limit: "integer", cursor: "string" },
+  refusals: { invalid_limit: "limit is not a whole number from 1 to 200 (422)" },
 };

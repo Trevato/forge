@@ -3,12 +3,17 @@
  * repository for main and the tags, the merge queue for "mid-landing", the
  * kube API for the Deployment, and the public URL for the probes.
  *
- * On when `FORGE_RELEASE_KEEPER=on`, `FORGE_REPO` names a repository here,
- * and the forge runs in a cluster. The Deployment and its container are
- * `FORGE_KEEPER_DEPLOYMENT` and `FORGE_KEEPER_CONTAINER` (both default
- * `forge`); the pod's service account needs `get` and `patch` on it.
+ * Two modes. `FORGE_RELEASE_KEEPER=on`, with `FORGE_REPO` naming a
+ * repository here and the forge in a cluster, patches a Deployment: its name
+ * and container are `FORGE_KEEPER_DEPLOYMENT` and `FORGE_KEEPER_CONTAINER`
+ * (both default `forge`), and the pod's service account needs `get` and
+ * `patch` on it.
+ *
+ * `FORGE_RELEASE_KEEPER=swap` (#8042) needs no cluster and wants
+ * `FORGE_SELF_SWAP=1`: the keeper swaps main's tree in place (`swapper.ts`).
  */
 
+import { join } from "node:path";
 import type { App } from "../app.ts";
 import { originPush } from "../actions/branches.ts";
 import { serviceAccount } from "../cluster/jobs.ts";
@@ -22,7 +27,10 @@ import { repoDir } from "../git/repos.ts";
 import { ownProbeHeaders } from "../kernel/probe.ts";
 import { running } from "../kernel/version.ts";
 import { compareVersions, readTags, recordFor } from "../release/shipped.ts";
+import { checkoutRelease, preflightRelease } from "../release/checkout.ts";
+import { handover } from "../release/swap.ts";
 import { kubeDeployer } from "./deploy.ts";
+import { swapper } from "./swapper.ts";
 import type { KeeperPorts } from "./keeper.ts";
 import { timedGet, verifyUnderLoad } from "./verify.ts";
 
@@ -31,16 +39,26 @@ const OID = /^[0-9a-f]{40}$/;
 const VERSION = /^\d+\.\d+\.\d+$/;
 const ZERO = "0".repeat(40);
 
-export type KeeperEnv = { on: true; deployment: string; container: string } | { on: false; why: string };
+export type KeeperEnv =
+  | { on: true; mode: "kube"; deployment: string; container: string }
+  | { on: true; mode: "swap" }
+  | { on: false; why: string };
+
+/** In swap mode a release is only the swap, so the cadence is a minute, not half an hour. */
+export const SWAP_INTERVAL_MS = 60_000;
 
 /** Whether the keeper runs, from the environment. */
 export function keeperEnv(env: Record<string, string | undefined>): KeeperEnv {
+  if (env.FORGE_RELEASE_KEEPER === "swap") {
+    if (env.FORGE_SELF_SWAP !== "1") return { on: false, why: "FORGE_RELEASE_KEEPER=swap needs FORGE_SELF_SWAP=1" };
+    return { on: true, mode: "swap" };
+  }
   if (env.FORGE_RELEASE_KEEPER !== "on") return { on: false, why: "FORGE_RELEASE_KEEPER is not on" };
   if (!env.KUBERNETES_SERVICE_HOST) return { on: false, why: "not running in a cluster" };
   const deployment = env.FORGE_KEEPER_DEPLOYMENT || "forge";
   const container = env.FORGE_KEEPER_CONTAINER || "forge";
   if (!LABEL.test(deployment) || !LABEL.test(container)) return { on: false, why: "FORGE_KEEPER_DEPLOYMENT and FORGE_KEEPER_CONTAINER must be DNS labels" };
-  return { on: true, deployment, container };
+  return { on: true, mode: "kube", deployment, container };
 }
 
 /** The first active site admin that is a person: the account the page load signs in as. */
@@ -56,17 +74,33 @@ export function loadPages(repo: Pick<Repo, "ownerName" | "name">): string[] {
   return ["/boards", `/${encodeURIComponent(repo.ownerName)}/${encodeURIComponent(repo.name)}`, "/explore", "/"];
 }
 
-export function keeperPorts(app: App, input: { forgeUrl: string; deployment: string; container: string }): KeeperPorts | string {
+export function keeperPorts(app: App, input: { forgeUrl: string; deployment: string; container: string; swap?: boolean }): KeeperPorts | string {
   const named = app.config.forgeRepo;
   if (named === undefined) return "FORGE_REPO is not set";
   const [owner = "", name = ""] = named.split("/");
   const repo = getRepo(app.db, owner, name);
   if (repo === undefined) return `FORGE_REPO names ${named}, which is no repository on this forge`;
   const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
-  const deployer = kubeDeployer({ credentials: serviceAccount(), deployment: input.deployment, container: input.container });
+  const deployer =
+    input.swap === true
+      ? swapper({
+          dataDir: app.config.dataDir,
+          port: app.config.port ?? 0,
+          treeRoot: join(import.meta.dir, "..", ".."),
+          version: () => running().version,
+          commit: () => running().commit,
+          env: process.env,
+          checkout: (sha) => checkoutRelease(app.config.dataDir, dir, sha),
+          preflight: (tree) => preflightRelease(tree, app.config.dataDir),
+          drain: () => handover.drain?.(),
+          probe: ownProbeHeaders(app.config.dataDir),
+          ...(app.config.swapBudgetMs === undefined ? {} : { budgetMs: app.config.swapBudgetMs }),
+        })
+      : kubeDeployer({ credentials: serviceAccount(), deployment: input.deployment, container: input.container });
   const probeHeaders = ownProbeHeaders(app.config.dataDir);
   const at = (version: string) => runGit(["rev-parse", "--verify", "--quiet", `refs/tags/v${version}^{commit}`], { cwd: dir });
   return {
+    ...(input.swap === true ? { minIntervalMs: SWAP_INTERVAL_MS } : {}),
     db: app.db,
     bus: app.bus,
     repo: { id: repo.id, ownerId: repo.ownerId },
@@ -99,7 +133,8 @@ export function keeperPorts(app: App, input: { forgeUrl: string; deployment: str
       if (!made.ok) return made.error.stderr || "git refused the tag";
       const tagOid = await runGit(["rev-parse", `refs/tags/v${version}`], { cwd: dir });
       const owner = getUserById(app.db, repo.ownerId);
-      if (!tagOid.ok || owner === undefined) return undefined;
+      // A swap needs no origin: the tag is the forge's own record of the release.
+      if (!tagOid.ok || owner === undefined || input.swap === true) return undefined;
       // A tag the origin did not take is taken back here too: the keeper drops the cut, and a
       // tag left behind would be the newest, never live, and stall the cadence.
       const untag = async (why: string) => (await runGit(["tag", "--delete", `v${version}`], { cwd: dir }), why);

@@ -10,10 +10,12 @@
  * that was never meant to be confirmed.
  */
 
+import { DISCONNECT_DETAIL } from "../../actions/origin_words.ts";
 import { strangerCodeSearch } from "../../http/strangers.ts";
 import { search } from "../../actions/search.ts";
 import { envsFor } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
+import { openLabelCounts } from "../../core/issues.ts";
 import { getPull } from "../../core/pulls.ts";
 import { canAdmin, canWrite, enterableApps, getRepo } from "../../core/repos.ts";
 import { getMirrorTarget } from "../../core/migrate_mirror.ts";
@@ -639,12 +641,22 @@ const DESTRUCTIVE: {
   },
   {
     pattern: /^\/([^/]+)\/([^/]+)\/settings\/labels\/([^/]+)\/delete$/,
-    describe: (m) => ({
-      verb: "Delete label",
-      title: "Delete this label?",
-      detail: `It is removed from every issue and pull request in ${m[1]}/${m[2]} that carries it. The issues themselves are untouched.`,
-      phrase: "",
-    }),
+    describe: (m, ctx) => {
+      // Only a writer is told the count, so this page reads no private repository's work.
+      const repo = getRepo(ctx.app.db, m[1]!, m[2]!);
+      const n =
+        repo && canWrite(ctx.app.db, repo, ctx.auth.user)
+          ? (openLabelCounts(ctx.app.db, repo.id).get(m[3]!) ?? 0)
+          : 0;
+      const carried = n === 1 ? "item carries" : "items carry";
+      const count = n > 0 ? `${n} open ${carried} it. ` : "";
+      return {
+        verb: "Delete label",
+        title: "Delete this label?",
+        detail: `${count}It is removed from every issue and pull request in ${m[1]}/${m[2]} that carries it. The issues themselves are untouched.`,
+        phrase: "",
+      };
+    },
   },
   {
     pattern: /^\/boards\/([^/]+)\/delete$/,
@@ -652,6 +664,15 @@ const DESTRUCTIVE: {
       verb: "Delete board",
       title: `Delete the board ${decodeURIComponent(m[1] ?? "")}?`,
       detail: "Its panels and pins go with it. Nothing it reads is touched.",
+      phrase: "",
+    }),
+  },
+  {
+    pattern: /^\/boards\/([^/]+)\/remove\?index=(\d+)&title=([^&]+)$/,
+    describe: (m) => ({
+      verb: "Remove panel",
+      title: `Remove the panel ${decodedOr(m[3] ?? "")} from ${decodedOr(m[1] ?? "")}?`,
+      detail: "Only this panel goes; the board, its other panels and what it reads stay. A pin of it on home goes with it.",
       phrase: "",
     }),
   },
@@ -679,8 +700,7 @@ const DESTRUCTIVE: {
     describe: () => ({
       verb: "Disconnect origin",
       title: "Disconnect this origin?",
-      detail:
-        "The stored credential is destroyed here immediately, and the repositories mirroring it stop syncing — they keep their git objects, issues and comments, and go on being readable as ordinary local repositories. The grant is revoked upstream only where the forge allows it (GitHub, and only when this forge has a client secret configured); everywhere else revoke the token on the origin yourself. The message after this says which happened.",
+      detail: DISCONNECT_DETAIL,
       phrase: "",
     }),
   },
@@ -817,6 +837,15 @@ const DESTRUCTIVE: {
     }),
   },
 ];
+
+/** A path segment decoded, or as it came when it is not valid percent-encoding. */
+function decodedOr(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
 
 function describeTarget(to: string, ctx: Ctx): Destructive | undefined {
   for (const entry of DESTRUCTIVE) {

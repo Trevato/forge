@@ -260,13 +260,74 @@ describe("the manifest: what you can do here, as who you are", () => {
         do: "see how to help build this forge",
         http: "GET /api/v1/contribute",
         mcp: "contribute",
-        account: false,
       });
       expect(size).toBeLessThan(2048);
       expect(does((await manifest("/acme/game", who)).body)).not.toContain(
         "see how to help build this forge",
       );
     }
+  });
+
+  test("the forge's manifest names the changelog, for anyone", async () => {
+    for (const who of [undefined, "carol"]) {
+      const { body, size } = await manifest("/", who);
+      expect(body.actions).toContainEqual({
+        do: "see what went live",
+        http: "GET /api/v1/changelog",
+        mcp: "releases",
+      });
+      expect(size).toBeLessThan(2048);
+    }
+  });
+
+  test("an anonymous viewer is told how to get an account; a signed-in one is not", async () => {
+    const anon = (await manifest("/")).body.actions;
+    expect(anon).toContainEqual({
+      do: "make an account",
+      http: "GET /signup",
+      account: false,
+    });
+    expect(anon).toContainEqual({
+      do: "sign in",
+      http: "GET /signin",
+      account: false,
+    });
+    expect(anon.findIndex((a: any) => a.do === "use the MCP")).toBeLessThan(
+      anon.findIndex((a: any) => a.do === "make an account"),
+    );
+    const signedIn = does((await manifest("/", "carol")).body);
+    expect(signedIn).not.toContain("make an account");
+    expect(signedIn).not.toContain("sign in");
+  });
+
+  test("an edge-login forge offers sign in but no sign-up", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-here-edge-"));
+    const edgeApp = createApp({ dataDir: dir, port: 0, edgeToken: "e" });
+    const edgeServers = await serve(edgeApp);
+    try {
+      const res = await fetch(`${edgeServers.url}/api/v1/here`);
+      const names = (await res.json() as any).actions.map((a: any) => a.do);
+      expect(names).toContain("sign in");
+      expect(names).not.toContain("make an account");
+    } finally {
+      edgeServers.stop();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("the forge's manifest names the OpenAPI document, and it answers", async () => {
+    for (const who of [undefined, "carol"]) {
+      const { body, size } = await manifest("/", who);
+      expect(body.actions).toContainEqual({
+        do: "read the HTTP contract",
+        http: "GET /contract/openapi.json",
+        account: false,
+      });
+      expect(size).toBeLessThan(2048);
+    }
+    const res = await fetch(`${base}/contract/openapi.json`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/json");
   });
 
   test("/explore and /search name their query API and MCP tool, the query carried over", async () => {

@@ -22,6 +22,9 @@ import {
   type CapacityChange,
   type CapacityKey,
 } from "../core/capacity.ts";
+import { egressTotals, npmBytesLastHour, npmTopRepoLastHour, type EgressTotal } from "../apps/egress.ts";
+import { getRepoById } from "../core/repos.ts";
+import { selfSwapState, type SelfSwap } from "../release/swap.ts";
 import { passkeyIds } from "../core/passkeys.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -49,6 +52,34 @@ export interface CapacityRow {
   readonly changed?: { readonly at: string; readonly by: string };
 }
 
+/**
+ * What the egress proxies received over the last hour (#7546), the npm
+ * registry first: a warm bun cache keeps `npmBytesLastHour` near zero, so a
+ * figure in the hundreds of megabytes is the cache gone cold again (#7541).
+ */
+export interface EgressHour {
+  readonly npmBytesLastHour: number;
+  /**
+   * The repository whose contained installs the registry sent most this
+   * hour (#8382), as `owner/name`, attributed by the cell that fetched;
+   * null when no metered install fetched, or its repository is gone.
+   */
+  readonly npmTopRepoLastHour: { readonly repo: string; readonly bytes: number } | null;
+  /** The ten destinations that sent most this hour, with their totals since boot. */
+  readonly destinations: readonly EgressTotal[];
+}
+
+export function egressHour(db: Database, now = Date.now()): EgressHour {
+  const top = npmTopRepoLastHour(now);
+  const repo = top === undefined ? undefined : getRepoById(db, top.repoId);
+  return {
+    npmBytesLastHour: npmBytesLastHour(now),
+    npmTopRepoLastHour:
+      top === undefined || repo === undefined ? null : { repo: `${repo.ownerName}/${repo.name}`, bytes: top.bytes },
+    destinations: egressTotals(now).slice(0, 10),
+  };
+}
+
 function admin(actor: User | undefined): Result<User, "not_found"> {
   return actor?.isAdmin === true && actor.kind !== "agent"
     ? ok(actor)
@@ -70,7 +101,10 @@ export function changedOf(db: Database, key: CapacityKey): { changed?: { at: str
 export function listCapacity(
   app: App,
   actor: User | undefined,
-): Result<{ settings: CapacityRow[]; changes: CapacityChange[] }, "not_found"> {
+): Result<
+  { settings: CapacityRow[]; changes: CapacityChange[]; egress: EgressHour; selfSwap: SelfSwap },
+  "not_found"
+> {
   const who = admin(actor);
   if (!who.ok) return who;
   return ok({
@@ -85,6 +119,8 @@ export function listCapacity(
       ...changedOf(app.db, key),
     })),
     changes: capacityChanges(app.db),
+    egress: egressHour(app.db),
+    selfSwap: selfSwapState(app.config.selfSwap === true),
   });
 }
 

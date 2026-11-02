@@ -44,6 +44,7 @@ import type { User } from "../core/users.ts";
 import {
   createWebhook as insertWebhook,
   deleteWebhook as removeWebhook,
+  setWebhookActive,
   type CreateWebhookError,
   type Webhook,
 } from "../core/webhooks.ts";
@@ -642,6 +643,26 @@ export function deleteWebhook(
   if (!removeWebhook(app.db, repo.id, webhookId)) return err("not_found");
   app.bus.append({
     kind: "webhook.deleted",
+    repoId: repo.id,
+    actorId: admin.value.id,
+    payload: { webhookId },
+  });
+  return ok();
+}
+
+export function pauseWebhook(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  webhookId: string,
+  paused: boolean,
+): Result<void, "not_found"> {
+  const admin = requireRepoAdmin(app, actor, repo);
+  if (!admin.ok) return admin;
+  if (!setWebhookActive(app.db, repo.id, webhookId, !paused))
+    return err("not_found");
+  app.bus.append({
+    kind: paused ? "webhook.paused" : "webhook.resumed",
     repoId: repo.id,
     actorId: admin.value.id,
     payload: { webhookId },

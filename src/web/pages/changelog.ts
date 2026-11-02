@@ -8,10 +8,14 @@
 
 import { notePhase, takeSessionTime, timePhaseAsync } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
+import { canRead, getRepo } from "../../core/repos.ts";
+import { newestLive, secondsWords } from "../../keeper/landed.ts";
 import { dayHeading, dayOf, daysJs, shippedToday } from "../../release/days.ts";
-import { readLandings, type Landing, type Landings } from "../../release/landings.ts";
+import { chosenRepo, readLandings, type Landing, type Landings } from "../../release/landings.ts";
 import { liveRegionsJs } from "../client.ts";
 import { pageHead } from "../chrome.ts";
+import { json } from "../../http/respond.ts";
+import { shippedAnswer } from "../../release/answer.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { badge, card, empty, listCard, row, seg, sha, time } from "../ui.ts";
@@ -20,13 +24,6 @@ import { badge, card, empty, listCard, row, seg, sha, time } from "../ui.ts";
 const LIVE = "pull.merged,app.serving";
 /** Other repositories offered as filters: more than this is a search, not a chip. */
 const FILTERS = 6;
-
-/** Which repository the reader asked for: "" for this forge's own, "all", or one named in the list; anything else is the default. */
-export function chosenRepo(asked: string | null, all: readonly Landing[], own: string | undefined): string {
-  if (asked === "all") return "all";
-  if (asked !== null && all.some((l) => l.repo === asked)) return asked;
-  return own === undefined ? "all" : own;
-}
 
 function landingRow(l: Landing, own: string | undefined, showRepo: boolean): Html {
   return row({
@@ -98,7 +95,9 @@ export const localDaysJs = /* js */ `
       var ref = after ? after.nextSibling : parent.firstChild;
       made.forEach(function (c) { parent.insertBefore(c, ref); });
     }
-    if (top) {
+    // An empty #shipped-today with no cards is the server saying nothing has ever shipped:
+    // writing the count here would bring back the second empty state.
+    if (top && (cards.length || top.textContent)) {
       var n = (seen[today] || []).length;
       top.textContent = shippedToday(n, false);
     }
@@ -109,18 +108,27 @@ export const localDaysJs = /* js */ `
 `;
 
 /** The region: the top line, what is on its way, and what went live by day. */
-export function shippedRegion(read: Landings, choice: string, now: Date = new Date(), zone = "UTC"): Html {
+export function shippedRegion(
+  read: Landings,
+  choice: string,
+  now: Date = new Date(),
+  zone = "UTC",
+  toLive?: { version: string; seconds: number },
+  readable = true,
+): Html {
   const keep = (l: Landing) => choice === "all" || l.repo === choice;
   const live = read.live.filter(keep);
   const onItsWay = read.onItsWay.filter(keep);
   const todayIs = dayOf(now.toISOString(), zone);
   const today = live.filter((l) => dayOf(l.at, zone) === todayIs).length;
-  const commit = read.commit === null ? null : sha(read.commit);
+  // The short sha is a way in to the commit's page, unless there is no repository or the reader may not open it.
+  const commit =
+    read.commit === null ? null : sha(read.commit, readable && read.own !== undefined ? `/${read.own}/commit/${read.commit}` : undefined);
   // A build that is not a release has no version worth a reader's attention: the commit says it.
   const version =
     read.version !== "dev" ? (commit === null ? read.version : html`${read.version} · ${commit}`) : (commit ?? "a development build");
   const top = html`<p class="small muted" id="shipped-top">
-    Live: ${version}. <span id="shipped-today">${shippedToday(today, zone === "UTC")}</span>
+    Live: ${version}.${toLive !== undefined && toLive.version === read.version ? html` Landed to live in ${secondsWords(toLive.seconds)}.` : null} <span id="shipped-today">${live.length === 0 ? "" : shippedToday(today, zone === "UTC")}</span>
   </p>`;
   const way =
     onItsWay.length === 0
@@ -146,9 +154,17 @@ export async function changelogPage(ctx: Ctx): Promise<Response> {
     { label: "Everything", href: "/changelog?repo=all", current: choice === "all" },
     ...others.map((r) => ({ label: r, href: `/changelog?repo=${encodeURIComponent(r)}`, current: choice === r })),
   ]);
+  const ownRepo = read.own === undefined ? undefined : getRepo(ctx.app.db, ...(read.own.split("/") as [string, string]));
+  const readable = ownRepo !== undefined && canRead(ctx.app.db, ownRepo, ctx.auth.user);
   const body = html`${pageHead("Changelog", { sub: "What went live, as it happens." })}${filters}
-    <div id="shipped" data-live="${LIVE}" aria-live="polite">${shippedRegion(read, choice)}</div>`;
-  const response = page({ ctx, title: "Changelog", body, scriptJs: `${liveRegionsJs}\n${localDaysJs}` });
+    <div id="shipped" data-live="${LIVE}" aria-live="polite">${shippedRegion(read, choice, new Date(), "UTC", newestLive(ctx.app.db), readable)}</div>`;
+  const response = page({ ctx, title: "Changelog", body, feed: { href: "/changelog.atom", title: "Changelog" }, json: { href: `/api/v1/changelog${choice === read.own ? "" : `?repo=${encodeURIComponent(choice)}`}`, title: "Changelog (JSON)" }, scriptJs: `${liveRegionsJs}\n${localDaysJs}` });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
+}
+
+// GET /api/v1/changelog?repo=all|owner/name: the page's rows as JSON, public repositories only.
+export async function changelogJson(ctx: Ctx): Promise<Response> {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  return json(await shippedAnswer(ctx.app, ctx.url.searchParams.get("repo")), 200, { "cache-control": "public, max-age=5" });
 }

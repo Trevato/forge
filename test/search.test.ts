@@ -29,6 +29,7 @@ const read = async <T>(response: Response): Promise<T> =>
   (await response.json()) as T;
 
 interface Results {
+  note?: string;
   moreCode?: boolean;
   codeSkipped?: boolean;
   repos: (
@@ -391,7 +392,9 @@ describe("search: one query, four sources", () => {
   test("an empty or whitespace query costs nothing and finds nothing", async () => {
     for (const q of ["", "%20%20", "%00"]) {
       const results = await find(`q=${q}`);
-      expect(results).toEqual({
+      expect(results.note).toContain("q is empty");
+      expect({ ...results, note: undefined }).toEqual({
+        note: undefined,
         repos: [],
         issues: [],
         code: [],

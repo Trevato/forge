@@ -302,6 +302,7 @@ function repoPalette(
   if (local) {
     items.push(
       { t: `${name} — New issue`, h: `${base}/issues/new`, c: here },
+      { t: `${name} — Events`, h: `${base}/events`, c: here },
       { t: `${name} — Settings`, h: `${base}/settings`, c: here },
     );
   }

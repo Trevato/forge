@@ -89,6 +89,7 @@ import { fastSet, duration } from "../src/checks/tiers.ts";
 import { CHECK_CACHE } from "../src/checks/cache.ts";
 import { parseCheck } from "../src/apps/manifest.ts";
 import { FLAKY_ALONE, onlyFiles } from "../src/checks/verify.ts";
+import { crashFlakeLine } from "../src/checks/flake.ts";
 
 const TIMES = new URL("./test-times.json", import.meta.url).pathname;
 // The forge hands the map over in the checkout (`src/checks/impact-store.ts`):
@@ -584,6 +585,8 @@ async function runShardIn(
     process.stderr.write(`test-shards: re-run ${where} after a crash (exit ${first.code})\n`);
     started = performance.now();
     first = await run(paths, cover, through);
+    // Green the second time: the crash is a flake, named for the check to record.
+    if (first.code === 0) process.stderr.write(`${crashFlakeLine(where, quoted)}\n`);
   }
   let code = first.code;
   let output = quoted === "" ? first.output : [quoted, ...first.output];

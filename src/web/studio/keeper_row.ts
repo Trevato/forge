@@ -8,7 +8,7 @@
 import type { Database } from "bun:sqlite";
 import { answerKeeper, keeperLine, readKeeper } from "../../flow/keeper.ts";
 import type { Ctx } from "../../http/context.ts";
-import { signInFirst } from "../chrome.ts";
+import { signInFirst, NOT_ADMIN_HERE, forbiddenPage } from "../chrome.ts";
 import { readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { redirect } from "../layout.ts";
@@ -33,7 +33,7 @@ export async function keeperAnswer(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return signInFirst(ctx);
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
-  if (!ctx.auth.user.isAdmin) return new Response("forbidden", { status: 403 });
+  if (!ctx.auth.user.isAdmin) return forbiddenPage(ctx, NOT_ADMIN_HERE);
   const raw = form.get("id");
   const id = typeof raw === "string" && /^\d{1,12}$/.test(raw) ? Number(raw) : 0;
   const answered = id > 0 ? answerKeeper(ctx.app, id, ctx.auth.user.id) : { done: false, message: "That question is already answered." };

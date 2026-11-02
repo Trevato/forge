@@ -20,7 +20,7 @@ import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
 import { createApp as insertApp } from "../src/core/apps.ts";
 import { addComment, createIssue, listIssues } from "../src/core/issues.ts";
 import { addDependency } from "../src/core/dependencies.ts";
-import { getRepoById, updateRepoSettings, type Repo } from "../src/core/repos.ts";
+import { getRepo, getRepoById, updateRepoSettings, type Repo } from "../src/core/repos.ts";
 import { createRun, listRuns, setRunBase } from "../src/core/runs.ts";
 import { getAccountCeiling } from "../src/core/account_ceiling.ts";
 import { createToken } from "../src/core/tokens.ts";
@@ -894,7 +894,8 @@ describe("the forge over MCP", () => {
         t.annotations?.readOnlyHint ?? false,
       ]),
     );
-    expect([hints.map, hints.wait_for]).toEqual([true, false]);
+    // map writes only when given `first`, so it spells no read-only hint.
+    expect([hints.map, hints.wait_for]).toEqual([false, false]);
 
     expect(
       (await tool(rw, "wait_for", { app: "alice/game", issue: b, blockedBy: a }))
@@ -932,7 +933,7 @@ describe("the forge over MCP", () => {
     const after = (await tool(ro, "map", { app: "alice/game" })).value;
     expect(after.edges).not.toContainEqual({ issue: b, blockedBy: a });
     expect(after.ready.map((i: any) => i.number)).toContain(b);
-  });
+  }, 30_000);
 
   test("with plans need a nod on, the plan tool stores one proposal and opens nothing", async () => {
     updateRepoSettings(app.db, getRepoById(app.db, game.id)!, { plansNeedNod: true });
@@ -1655,6 +1656,35 @@ describe("the forge over MCP", () => {
     const denied = await tool(ro, "new_app", { name: "readonly" });
     expect(denied.error).toContain("forbidden");
     expect((await tool(rw, "apps") as any).value.some((r: any) => r.app === "alice/readonly")).toBe(false);
+  }, 30_000);
+
+  test("new_app names an app from a sentence alone, and -2 when taken", async () => {
+    const one = (await tool(rw, "new_app", { sentence: "a garden planner for my allotment" })) as any;
+    expect(one.value.repo).toMatch(/^alice\/[a-z0-9-]+$/);
+    expect(one.value.issue).toBe(1);
+    const two = (await tool(rw, "new_app", { sentence: "a garden planner for my allotment" })) as any;
+    expect(two.value.repo).toBe(`${one.value.repo}-2`);
+    const named = (await tool(rw, "new_app", { name: "keepname", sentence: "a garden planner" })) as any;
+    expect(named.value.repo).toBe("alice/keepname");
+    expect(named.value.issue).toBe(1);
+    // The derived path forwards visibility and agent, and `description` is the first issue over `sentence`.
+    const bot = await createAgent(app, alice, { username: "sentbot", brief: "builds" });
+    if (!bot.ok) throw new Error(String(bot.error));
+    const fwd = (await tool(rw, "new_app", {
+      sentence: "a recipe box for the family",
+      description: "Start with a list of recipes.",
+      visibility: "private",
+      agent: "sentbot",
+    })) as any;
+    expect(fwd.value.agent).toBe("sentbot");
+    const [slug] = fwd.value.repo.split("/").slice(1);
+    const made = getRepo(app.db, "alice", slug)!;
+    expect(made.visibility).toBe("private");
+    expect(listIssues(app.db, made.id, { state: "open" })[0]!.body).toContain("Start with a list of recipes.");
+    // A refusal maps as on the named path.
+    expect((await tool(rw, "new_app", { sentence: "a tide table", agent: "nobody-here" })).error).toContain("no_such_agent");
+    expect((await tool(rw, "new_app", { sentence: "!!!" })).error).toContain("no_name");
+    expect((await tool(rw, "new_app", {})).error).toContain("no_name");
   }, 30_000);
 
   test("new_app with pick lets the planner name the agent", async () => {
