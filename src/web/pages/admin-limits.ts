@@ -20,7 +20,7 @@ import { notFoundPage, settingsLayout } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { btn, card, icon, row, time } from "../ui.ts";
+import { btn, card, confirmAction, icon, row, time } from "../ui.ts";
 import { accountSections } from "./origins.ts";
 
 // GET /admin/limits
@@ -165,9 +165,7 @@ export function limitsPage(ctx: Ctx): Response {
       meta: html`Made ${time(i.createdAt)} · expires ${time(i.expiresAt)}`,
       trail:
         i.state === "open"
-          ? html`<form class="row-fields" method="post" action="/admin/invites/${i.id}/revoke">
-              ${btn("Revoke", { size: "sm", label: `Revoke invite ${i.id}` })}
-            </form>`
+          ? confirmAction({ action: `/admin/invites/${i.id}/revoke`, verb: "Revoke", size: "sm" })
           : html``,
     }),
   );
@@ -175,7 +173,6 @@ export function limitsPage(ctx: Ctx): Response {
     html`<div class="card-body">
       <p class="muted small">
         A link is shown once, when it is made, and is good for one signup.
-        Nothing reads these yet.
       </p>
       <form class="row-fields" method="post" action="/admin/invites">
         <label class="small">expires in (days)

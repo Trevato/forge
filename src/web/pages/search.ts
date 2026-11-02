@@ -717,6 +717,16 @@ const DESTRUCTIVE: {
       };
     },
   },
+  {
+    pattern: /^\/admin\/invites\/([^/]+)\/revoke$/,
+    describe: (m) => ({
+      verb: "Revoke",
+      title: `Revoke invite ${decodeURIComponent(m[1] ?? "")}?`,
+      detail:
+        "Whoever holds this link can no longer sign up with it. A new link has to be minted to let them in.",
+      phrase: "",
+    }),
+  },
 ];
 
 function describeTarget(to: string, ctx: Ctx): Destructive | undefined {
