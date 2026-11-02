@@ -11,7 +11,7 @@ import { nextUp, TOP, type NextRow } from "../../core/next_up.ts";
 import { canWrite, type Repo } from "../../core/repos.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { sealedScope } from "../../core/sealed.ts";
-import { rangeWords, weekView, type Cut, type Priced } from "../../flow/week.ts";
+import { CUT_TOP_WORDS, cutWords, FIT_COUNT_JS, rangeWords, rowCosts, weekView, type Cut, type Priced } from "../../flow/week.ts";
 import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, loadRepo, notFoundPage, repoBase, repoHeader, repoPalette, signInFirst } from "../chrome.ts";
 import { backTo, field, readForm } from "../form.ts";
@@ -19,7 +19,7 @@ import { html, type Html } from "../html.ts";
 import { flashOrJson, page } from "../layout.ts";
 import { badge, btn, card, kbd, row } from "../ui.ts";
 
-const KEYS_JS = `
+export const KEYS_JS = `
 (() => {
   const list = document.getElementById("next-list");
   const remembered = sessionStorage.getItem("next-focus");
@@ -36,10 +36,11 @@ const KEYS_JS = `
       const note = document.getElementById("next-flash");
       note.textContent = said.error || "That move was refused.";
       note.hidden = false;
-      return;
+      return false;
     }
     sessionStorage.setItem("next-focus", number);
     location.reload();
+    return true;
   };
   // One key, one action, on the row that has focus: the key is shown on the button.
   document.addEventListener("keydown", (e) => {
@@ -51,18 +52,61 @@ const KEYS_JS = `
     send(new FormData(form), row.dataset.number);
   });
   if (!list) return;
+  ${FIT_COUNT_JS}
+  const usd = list.dataset.capacity === undefined ? NaN : Number(list.dataset.capacity);
+  const numbered = () => [...list.querySelectorAll("li[data-number]")];
+  // Re-place the cut line from the rows' costs in their current order; while dragging, rows below it read as next week.
+  const place = (dragging) => {
+    if (!(usd >= 0)) return;
+    const rows = numbered();
+    const n = fitCount(rows.map((r) => Number(r.dataset.cost)), usd);
+    let mark = list.querySelector(".cut-line");
+    if (n >= rows.length) { if (mark) mark.remove(); }
+    else {
+      if (!mark) { mark = document.createElement("li"); mark.className = "cut-line"; mark.setAttribute("role", "separator"); }
+      mark.textContent = n === 0 ? ${JSON.stringify(CUT_TOP_WORDS)} : ${JSON.stringify(cutWords("{n}"))}.replace("{n}", n);
+      list.insertBefore(mark, rows[n]);
+    }
+    rows.forEach((r, i) => r.classList.toggle("next-week", dragging && i >= n));
+  };
   let held = null;
+  let origin = [];
+  let dropped = false;
+  const restore = () => {
+    origin.forEach((r) => list.appendChild(r));
+    place(false);
+  };
   list.querySelectorAll("li[data-number]").forEach((li) => { li.draggable = true; });
-  list.addEventListener("dragstart", (e) => { held = e.target.closest("li[data-number]"); });
-  list.addEventListener("dragover", (e) => { if (held) e.preventDefault(); });
-  list.addEventListener("drop", (e) => {
-    const over = e.target.closest("li[data-number]");
-    if (!held || !over || over === held) return;
+  list.addEventListener("dragstart", (e) => {
+    held = e.target.closest("li[data-number]");
+    origin = numbered();
+    dropped = false;
+  });
+  list.addEventListener("dragover", (e) => {
+    if (!held) return;
     e.preventDefault();
-    const rows = [...list.querySelectorAll("li[data-number]")];
-    const rest = rows.filter((r) => r !== held);
-    const at = rest.indexOf(over) + (rows.indexOf(over) > rows.indexOf(held) ? 1 : 0);
-    send({ number: held.dataset.number, to: at === 0 ? "top" : "after:" + rest[at - 1].dataset.number }, held.dataset.number);
+    const over = e.target.closest("li[data-number]");
+    if (!over || over === held) return;
+    const rows = numbered();
+    list.insertBefore(held, rows.indexOf(over) > rows.indexOf(held) ? over.nextSibling : over);
+    place(true);
+  });
+  list.addEventListener("dragend", () => {
+    if (!dropped) restore();
+    list.querySelectorAll(".next-week").forEach((r) => r.classList.remove("next-week"));
+    held = null;
+  });
+  list.addEventListener("drop", async (e) => {
+    if (!held) return;
+    e.preventDefault();
+    const rows = numbered();
+    const at = rows.indexOf(held);
+    if (at === origin.indexOf(held)) { restore(); return; }
+    dropped = true;
+    const before = at === 0 ? "top" : "after:" + rows[at - 1].dataset.number;
+    const number = held.dataset.number;
+    // On success the dragged order stays until the reload; only a refusal puts the rows back.
+    if (!(await send({ number, to: before }, number))) restore();
   });
 })();`;
 
@@ -84,6 +128,7 @@ function line(
   back: string,
   away: boolean,
   priced: readonly Priced[] = [],
+  cost: number | undefined = undefined,
 ): Html {
   const r = rows[at]!;
   const n = r.issue.number;
@@ -105,7 +150,7 @@ function line(
     meta: html`${badge(r.role === "blocker" ? "Blocker" : "Enabler", { variant: r.role === "blocker" ? "secondary" : "outline" })}
       #${n} · ${r.roleWhy}${away ? null : html` · <span class="estimate">${rangeWords(priced.find((p) => p.number === n)?.estimate ?? { known: false, samples: 0, basis: "no estimate" })}</span>`}${r.onIt === null ? "" : ` · on it: ${r.onIt}`}${r.why === null ? "" : ` · ${r.why}`}`,
     nav: true,
-    data: { number: String(n) },
+    data: { number: String(n), ...(cost === undefined ? {} : { cost: String(cost) }) },
     ...(controls === null ? {} : { after: controls }),
   });
 }
@@ -113,8 +158,8 @@ function line(
 /** The cut line: everything above it fits this week's capacity, everything below reads as next week. */
 function cutMark(cut: Cut, top: boolean): Html {
   return html`<li class="cut-line" role="separator">${top
-    ? "Nothing here fits what is left of this week: all of this reads as next week."
-    : `This week ends here (${cut.fits.length} fit): below this line reads as next week.`}</li>`;
+    ? CUT_TOP_WORDS
+    : cutWords(cut.fits.length)}</li>`;
 }
 
 export function nextPage(ctx: Ctx): Response {
@@ -129,12 +174,13 @@ export function nextPage(ctx: Ctx): Response {
   const rest = next.rows.length - shown.length;
   const back = all ? `${base}/next?all=1` : `${base}/next`;
   const rendering = performance.now();
-  const { priced, cut, sentence } = weekView(ctx.app.db, repo.id, next.rows, new Date());
+  const { priced, cut, capacity, sentence } = weekView(ctx.app.db, repo.id, next.rows, new Date());
+  const costs = rowCosts(priced);
   const rowsHtml = (): Html[] => {
     const out: Html[] = [];
     shown.forEach((_, at) => {
       if (at === cut.fits.length && cut.unsure === null) out.push(cutMark(cut, at === 0));
-      out.push(line(base, next.rows, at, writer, back, false, priced));
+      out.push(line(base, next.rows, at, writer, back, false, priced, costs?.[at]));
     });
     return out;
   };
@@ -154,7 +200,7 @@ export function nextPage(ctx: Ctx): Response {
     ${next.rows.length === 0
       ? html`<p class="muted">Nothing is ready: everything open waits for something. <a href="${base}/map">See the map</a>.</p>`
       : card(
-          html`<ul class="list setting-list" id="next-list">
+          html`<ul class="list setting-list" id="next-list"${costs !== null && capacity !== null && cut.unsure === null ? html` data-capacity="${String(capacity.usd)}"` : null}>
             ${rowsHtml()}
           </ul>`,
           { pad: false },

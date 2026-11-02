@@ -67,6 +67,25 @@ function fitting(rows: readonly Priced[], cost: (e: Estimate & { known: true }) 
   return out;
 }
 
+/** The client's half of the rule, as source: how many rows from the top fit `usd` (the page's drag re-places the line with it). */
+export const FIT_COUNT_JS = `function fitCount(costs, usd) {
+  let used = 0, n = 0;
+  for (const c of costs) { used += c; if (used > usd) break; n++; }
+  return n;
+}`;
+
+/** The cut line's two sentences, one place for the page and its script. */
+export const CUT_TOP_WORDS = "Nothing here fits what is left of this week: all of this reads as next week.";
+export const cutWords = (fit: number | string): string => `This week ends here (${fit} fit): below this line reads as next week.`;
+
+/** What each row counts for against the week: its mid, or the median mid when it has no estimate; null when no line can be drawn. */
+export function rowCosts(rows: readonly Priced[]): number[] | null {
+  const known = rows.flatMap((r) => (r.estimate.known ? [r.estimate.mid] : []));
+  if (known.length === 0) return null;
+  const fill = known.sort((a, b) => a - b)[Math.floor((known.length - 1) / 2)]!;
+  return rows.map((r) => (r.estimate.known ? r.estimate.mid : fill));
+}
+
 /**
  * Where the week's capacity ends on the ranked list. An issue with no
  * estimate counts as the median of those that have one; with none at all

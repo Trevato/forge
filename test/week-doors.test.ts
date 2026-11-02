@@ -23,8 +23,10 @@ import { createToken } from "../src/core/tokens.ts";
 import { recordUsage } from "../src/core/usage.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { latestRetro, takenOf, tickWeeks, failureClass } from "../src/flow/retro.ts";
-import { weekView } from "../src/flow/week.ts";
+import { CUT_TOP_WORDS, cutLine, cutWords, FIT_COUNT_JS, rowCosts, weekView } from "../src/flow/week.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { KEYS_JS } from "../src/web/pages/next.ts";
+import { Window } from "happy-dom";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -145,6 +147,75 @@ describe("the week's doors", () => {
     await servers.stop();
     forge.close();
     await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("the rows carry their cost and the list the capacity, and the client rule places the same line as weekView", async () => {
+    const rows = nextUp(forge.db, repo).rows;
+    const view = weekView(forge.db, repo.id, rows, new Date());
+    const page = await (await fetch(`${base}/alice/plan/next`, { headers: { cookie: aliceCookie } })).text();
+    const doc = new Window().document;
+    doc.body.innerHTML = page;
+    const list = doc.getElementById("next-list")!;
+    const capacity = Number(list.getAttribute("data-capacity"));
+    expect(capacity).toBe(view.capacity!.usd);
+    const lis = [...list.querySelectorAll("li[data-number]")];
+    expect(lis.length).toBe(Math.min(10, rows.length));
+    const costs = lis.map((li) => Number(li.getAttribute("data-cost")));
+    expect(costs.every((c) => Number.isFinite(c) && c >= 0)).toBe(true);
+    const fitCount = new Function(`${FIT_COUNT_JS}; return fitCount;`)() as (c: number[], usd: number) => number;
+    expect(fitCount(costs, capacity)).toBe(view.cut.fits.length);
+    // Reranked, both sides read the same costs: the full reversed list, one median.
+    const reversed = [...view.priced].reverse();
+    expect(fitCount(rowCosts(reversed)!, capacity)).toBe(cutLine(reversed, view.capacity).fits.length);
+  });
+
+  test("with no line drawn the list carries no capacity", async () => {
+    const page = await (await fetch(`${base}/alice/plan/next`, { headers: { cookie: aliceCookie } })).text();
+    const without = page.replace(/ data-capacity="[^"]*"/, "");
+    expect(without).not.toContain("data-capacity");
+    // The server and the script say the same sentences.
+    expect(KEYS_JS).toContain(JSON.stringify(CUT_TOP_WORDS));
+    expect(KEYS_JS).toContain(JSON.stringify(cutWords("{n}")));
+  });
+
+  test("dragging a row moves the line before any save, and a refusal puts it back", async () => {
+    const page = await (await fetch(`${base}/alice/plan/next`, { headers: { cookie: aliceCookie } })).text();
+    for (const accept of [true, false]) {
+      const window = new Window();
+      const doc = window.document;
+      doc.body.innerHTML = page;
+      const list = doc.getElementById("next-list")!;
+      const order = () => [...list.children].map((c) => c.getAttribute("data-number") ?? "|");
+      const before = order();
+      const posted: string[] = [];
+      let reloaded = false;
+      const fetcher = async (_u: string, init: { body: URLSearchParams }) => {
+        posted.push(init.body.toString());
+        return { ok: accept, json: async () => ({ error: "no" }) };
+      };
+      const location = { pathname: "/alice/plan/next", reload: () => { reloaded = true; } };
+      const store = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+      new Function("document", "sessionStorage", "fetch", "location", "FormData", KEYS_JS)(doc, store, fetcher, location, window.FormData);
+      const lis = [...list.querySelectorAll("li[data-number]")];
+      const fire = (el: { dispatchEvent(e: unknown): boolean }, type: string) => el.dispatchEvent(new window.Event(type, { bubbles: true, cancelable: true }));
+      fire(lis[0]!, "dragstart");
+      fire(lis[lis.length - 1]!, "dragover");
+      // Before the save: the row sits last and the line was re-placed for the new order.
+      expect(list.querySelectorAll("li[data-number]")[lis.length - 1]).toBe(lis[0]!);
+      expect(list.querySelectorAll(".cut-line").length).toBeLessThanOrEqual(1);
+      expect(posted).toHaveLength(0);
+      fire(lis[lis.length - 1]!, "drop");
+      await new Promise((r) => setTimeout(r, 10));
+      fire(lis[0]!, "dragend");
+      expect(posted).toHaveLength(1);
+      if (accept) {
+        expect(reloaded).toBe(true);
+        expect(order()).not.toEqual(before);
+      } else {
+        expect(reloaded).toBe(false);
+        expect(order()).toEqual(before);
+      }
+    }
   });
 
   test("once capacity is read, Next up draws the cut line and the rows below read as next week", async () => {
