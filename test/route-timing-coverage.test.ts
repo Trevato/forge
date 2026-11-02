@@ -106,22 +106,73 @@ async function timed(pattern: string): Promise<Answer> {
 const walked = (): string[] => getPatterns().filter((p) => !(p in UNEXERCISED));
 const WALK_MS = Math.ceil(walked().length / BATCH) * REQUEST_MS + 5_000;
 
-test("no GET route answers 200 without a session phase unless the allowlist names it", async () => {
+/** One walked route's whole allowance on the fixture (#8145): over it, the route is the finding. */
+const ROUTE_MS = 1_000;
+
+type Row = { pattern: string; answer: Answer };
+
+/** One row as `pattern -> status in ms`: the form every finding and the report print. */
+const line = ({ pattern, answer }: Row): string => `${pattern} -> ${answer.status} in ${answer.ms}ms`;
+
+/** The five slowest walked routes, slowest first. */
+const slowest = (rows: Row[], n = 5): string[] =>
+  [...rows].sort((a, b) => b.answer.ms - a.answer.ms).slice(0, n).map(line);
+
+/**
+ * The walk, run once and shared: each test that reads it awaits it, so either
+ * passes alone under --test-name-pattern. The five slowest are printed green or
+ * red, so the next slow route shows before it times out.
+ */
+let walking: Promise<Row[]> | undefined;
+const walk = (): Promise<Row[]> => walking ??= (async () => {
   const patterns = walked();
-  const results: Answer[] = [];
-  for (let i = 0; i < patterns.length; i += BATCH) {
-    results.push(...(await Promise.all(patterns.slice(i, i + BATCH).map((p) => timed(p)))));
+  const rows: Row[] = [];
+  try {
+    for (let i = 0; i < patterns.length; i += BATCH) {
+      const batch = patterns.slice(i, i + BATCH);
+      const answers = await Promise.all(batch.map((p) => timed(p)));
+      batch.forEach((pattern, j) => rows.push({ pattern, answer: answers[j]! }));
+    }
+  } finally {
+    console.log(`five slowest walked routes:\n  ${slowest(rows).join("\n  ")}`);
   }
+  return rows;
+})();
+
+test("no GET route answers 200 without a session phase unless the allowlist names it", async () => {
+  const rows = await walk();
   // A throttled or failing route is not a route that was checked.
   // Each finding names its pattern, status (0 = timed out) and elapsed ms, so a red run says which route.
-  const unchecked = patterns
-    .map((p, i) => `${p} -> ${results[i]!.status} in ${results[i]!.ms}ms`)
-    .filter((_, i) => results[i]!.status === 0 || results[i]!.status === 429 || results[i]!.status >= 500);
+  const unchecked = rows
+    .filter(({ answer: a }) => a.status === 0 || a.status === 429 || a.status >= 500)
+    .map(line);
   expect(unchecked).toEqual([]);
-  expect(results.filter((r) => r.status === 200).length).toBeGreaterThan(0);
-  const untimed = patterns.filter((_, i) => results[i]!.status === 200 && !results[i]!.session);
+  expect(rows.filter((r) => r.answer.status === 200).length).toBeGreaterThan(0);
+  const untimed = rows.filter((r) => r.answer.status === 200 && !r.answer.session).map((r) => r.pattern);
   expect(untimed.filter((p) => !(p in UNTIMED))).toEqual([]);
 }, WALK_MS);
+
+/**
+ * A batched answer's ms includes queueing behind its seven neighbours, so a
+ * route that reaches ROUTE_MS in the walk is asked again alone, and only a
+ * route still slow by itself is the finding.
+ */
+test("every walked route answers under 1 s on the fixture", async () => {
+  const rows = await walk();
+  expect(rows.length).toBeGreaterThan(0);
+  const slow: Row[] = [];
+  for (const { pattern, answer } of rows) {
+    if (answer.ms < ROUTE_MS) continue;
+    const alone = await timed(pattern);
+    if (alone.ms >= ROUTE_MS) slow.push({ pattern, answer: alone });
+  }
+  expect(slow.map(line)).toEqual([]);
+}, WALK_MS * 2);
+
+test("the slowest-five report orders by elapsed ms and names pattern, status and ms", () => {
+  const rows = [10, 900, 40, 1200, 5, 300, 70].map((ms, i) => ({ pattern: `/r${i}`, answer: { status: 200, session: true, ms } }));
+  expect(slowest(rows)).toEqual(["/r3 -> 200 in 1200ms", "/r1 -> 200 in 900ms", "/r5 -> 200 in 300ms", "/r6 -> 200 in 70ms", "/r2 -> 200 in 40ms"]);
+});
 
 test("an allowlisted route that now names session leaves the list", async () => {
   const patterns = new Set(getPatterns());
