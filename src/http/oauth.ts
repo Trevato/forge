@@ -14,6 +14,7 @@ import {
   OAUTH_SCOPES,
   parseRegistration,
   redeemCode,
+  refreshGrant,
   revokeOAuthToken,
 } from "../core/oauth.ts";
 import { jwks, OIDC_SCOPES, userinfo } from "../core/oidc.ts";
@@ -97,16 +98,33 @@ export function oauthRoutes(router: Router<Handler>): void {
   router.add("POST", "/oauth/token", async (ctx) => {
     const get = await tokenParams(ctx.request);
     if (get === null) return grantError("invalid_request", 413);
-    if (get("grant_type") !== "authorization_code")
+    const grantType = get("grant_type");
+    if (grantType !== "authorization_code" && grantType !== "refresh_token")
       return grantError("unsupported_grant_type");
-    const minted = await redeemCode(ctx.app.db, ctx.app.config.dataDir, {
-      code: get("code"),
-      clientId: get("client_id"),
-      redirectUri: get("redirect_uri"),
-      verifier: get("code_verifier"),
-      issuer: ctx.url.origin,
-    });
-    if (!minted.ok) return grantError(minted.error);
+    const minted =
+      grantType === "refresh_token"
+        ? refreshGrant(ctx.app.db, {
+            refreshToken: get("refresh_token"),
+            clientId: get("client_id"),
+            scope: get("scope"),
+          })
+        : await redeemCode(ctx.app.db, ctx.app.config.dataDir, {
+            code: get("code"),
+            clientId: get("client_id"),
+            redirectUri: get("redirect_uri"),
+            verifier: get("code_verifier"),
+            issuer: ctx.url.origin,
+          });
+    if (!minted.ok) {
+      const reuse = "reuse" in minted ? minted.reuse : undefined;
+      if (reuse !== undefined)
+        ctx.app.bus.append({
+          kind: "token.deleted",
+          actorId: reuse.userId,
+          payload: { tokenIds: [...reuse.tokenIds], via: "oauth_refresh_reuse" },
+        });
+      return grantError(minted.error);
+    }
     return json(
       {
         ...(minted.value.token === undefined ? {} : { access_token: minted.value.token }),
@@ -116,6 +134,9 @@ export function oauthRoutes(router: Router<Handler>): void {
         ...(minted.value.expiresIn === null
           ? {}
           : { expires_in: minted.value.expiresIn }),
+        ...(minted.value.refreshToken === undefined
+          ? {}
+          : { refresh_token: minted.value.refreshToken }),
       },
       200,
       noStore,
@@ -137,7 +158,8 @@ export function oauthRoutes(router: Router<Handler>): void {
     // RFC 7009 §2.2: unknown, foreign and already-revoked tokens all get the
     // same empty 200, so the route never says whether a token existed.
     const revoked = presented === "" ? null : revokeOAuthToken(ctx.app.db, presented);
-    if (revoked !== null)
+    // A family whose access token was already gone has no token to name.
+    if (revoked !== null && revoked.tokenId !== null)
       ctx.app.bus.append({
         kind: "token.deleted",
         actorId: revoked.userId,
@@ -173,7 +195,7 @@ export function oauthRoutes(router: Router<Handler>): void {
         registration_endpoint: `${ctx.url.origin}/oauth/register`,
         scopes_supported: [...OIDC_SCOPES, ...OAUTH_SCOPES],
         response_types_supported: ["code"],
-        grant_types_supported: ["authorization_code"],
+        grant_types_supported: ["authorization_code", "refresh_token"],
         subject_types_supported: ["public"],
         id_token_signing_alg_values_supported: ["ES256"],
         code_challenge_methods_supported: ["S256"],
@@ -209,7 +231,7 @@ export function oauthRoutes(router: Router<Handler>): void {
         registration_endpoint: `${ctx.url.origin}/oauth/register`,
         scopes_supported: [...OAUTH_SCOPES],
         response_types_supported: ["code"],
-        grant_types_supported: ["authorization_code"],
+        grant_types_supported: ["authorization_code", "refresh_token"],
         code_challenge_methods_supported: ["S256"],
         token_endpoint_auth_methods_supported: ["none"],
         revocation_endpoint_auth_methods_supported: ["none"],
@@ -243,7 +265,7 @@ export function oauthRoutes(router: Router<Handler>): void {
         client_name: client.name,
         redirect_uris: client.redirectUris,
         token_endpoint_auth_method: "none",
-        grant_types: ["authorization_code"],
+        grant_types: ["authorization_code", "refresh_token"],
         response_types: ["code"],
       },
       201,
