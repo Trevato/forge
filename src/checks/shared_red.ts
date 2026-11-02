@@ -9,6 +9,11 @@
  * for main's next green check, as a red main's pulls do, and the vitals
  * carry one card per shared test in place of a park per pull.
  *
+ * Many pulls failing one test is not enough (#8786): it is the lane's only
+ * when main's newest check fails it too, or a re-run passed it (a flake).
+ * A test main passes and no re-run passed is each pull's own
+ * ({@link pullsOwn}): its builder gets the follow-up, and no card is made.
+ *
  * Plain data: failed pull checks in the window, read by the `run_repo`
  * index (an id is time-sortable, so the window is a range), their recorded
  * test names unpacked by SQLite's own `json_each`.
@@ -39,38 +44,17 @@ const QUEUED_SLACK_MS = 6 * 3_600_000;
 export const NO_TEST_NAME = "(unnamed)";
 
 /**
- * Suites that are gates on the tree itself (#2868): each reads the source and
- * fails the pull that added the thing it forbids, the same way on any
- * machine. Many pulls tripping one in an hour is many pulls each adding
- * what it forbids (a class DESIGN.md does not name), not a lane's red, so they never make one.
- * A name here is a suite's `describe` prefix, or one test's full name when
- * the rest of its suite is not a gate, and a test keeps it existing.
- * Reserved names (#7809): each pull adding a top-level page without
- * reserving it ("keeper", "feed", "favicon.ico") failed it, main green.
- * OpenAPI coverage (#8140): each pull adding an /api/v1 route without its
- * row, or a route file without regenerating the index, failed it, main green.
- * MCP tools (#7906): each pull adding a tool without `bun scripts/mcp-tools.ts`
- * failed the index check, main green.
- * The rest are top-level tests named whole (#8184): each reads only the tree.
+ * Tests whose red is each pull's own however many pulls trip it, for what
+ * {@link pullsOwn} cannot see. A name here is a suite's `describe` prefix,
+ * or one test's full name, and a test keeps it existing.
+ *
+ * Empty since #8786: every gate once listed here (#2868's design check and
+ * polling scan, #7809's reserved names, #8140's OpenAPI rows and route index,
+ * #7906's tool index, #8184's import, README and link checks) reads only the
+ * tree, so main's check passes it and a pull's re-run fails it again: the
+ * rule calls it the pull's own. Add a name only for a red the rule misjudges.
  */
-export const TREE_GATES: readonly string[] = [
-  "design check: nothing added outside the system (#2678) > ",
-  "no polling in src/web > ",
-  "reserved names > every top-level page of the forge is a reserved name",
-  // A route a pull added without its row in docs/openapi.
-  "every registered /api/v1 route has an OpenAPI row or is listed as not yet described",
-  "NOT_YET_DESCRIBED has no entry that is now described",
-  "NOT_YET_DESCRIBED is sorted and names registered routes",
-  // An import a pull added from scripts/ or test/ into src/.
-  "nothing under src/ imports from outside src/ (scripts/, test/, …)",
-  // A README a pull grew past its limit, or a docs/ link it broke.
-  "README.md stays under 80 KB",
-  "every docs/ link in README.md resolves",
-  // A route file a pull added without regenerating the index.
-  "the gathered routes > the index is current: run `bun scripts/openapi-routes.ts`",
-  // A tool file a pull added without regenerating the index (#7906).
-  "the gathered tools > the index is current: run `bun scripts/mcp-tools.ts`",
-];
+export const TREE_GATES: readonly string[] = [];
 
 /** Whether a failing test's name is one of {@link TREE_GATES}': under a suite prefix (`… > `), or a test's full name exactly. */
 export const isTreeGate = (test: string): boolean =>
@@ -129,8 +113,9 @@ function pullsPerTest(db: Database, now: number, repoId: string | null): Row[] {
 /**
  * Whether a failed check fails only what the lane fails: it named at least
  * one test, and every one was failed by {@link SHARED_PULLS} or more pulls
- * (this one counted, once it is recorded) in the window. A check that named
- * nothing, or one test few others fail, is the pull's own.
+ * (this one counted, once it is recorded) in the window and is not each
+ * pull's own ({@link pullsOwn}). A check that named nothing, one test few
+ * others fail, or one main passes and no re-run passed, is the pull's own.
  */
 export function sharedWithPulls(
   db: Database,
@@ -139,14 +124,14 @@ export function sharedWithPulls(
 ): boolean {
   const names = run?.checkDetail?.names ?? [];
   if (run === undefined || names.length === 0) return false;
-  const pulls = new Map(pullsPerTest(db, now, run.repoId).map((r) => [r.test, r.pulls]));
-  return names.every((n) => (pulls.get(n) ?? 0) >= SHARED_PULLS);
+  const named = new Set(names);
+  const shared = new Set(lanes(db, pullsPerTest(db, now, run.repoId).filter((r) => named.has(r.test)), now).map((r) => r.test));
+  return names.every((n) => shared.has(n));
 }
 
 /** Every shared test across the forge's repositories, oldest first: one query. */
 export function sharedTests(db: Database, now: number = Date.now()): SharedTest[] {
-  return pullsPerTest(db, now, null)
-    .filter((r) => r.pulls >= SHARED_PULLS)
+  return lanes(db, pullsPerTest(db, now, null), now)
     .sort((a, b) => a.since.localeCompare(b.since))
     .map((r) => ({ repoId: r.repo_id, repo: r.repo, test: r.test, pulls: r.pulls, since: r.since }));
 }
@@ -254,12 +239,15 @@ export function sharedRuns(
   };
 }
 
-/** Main's newest finished check, and whether it failed the named test. */
-export function mainVerdict(
-  db: Database,
-  repoId: string,
-  test: string,
-): { runId: string; commitOid: string; passes: boolean } | undefined {
+/** Main's newest finished check: its run, its commit, its state and the tests it named failing. */
+interface MainCheck {
+  readonly runId: string;
+  readonly commitOid: string;
+  readonly state: string;
+  readonly names: readonly string[];
+}
+
+function mainCheck(db: Database, repoId: string): MainCheck | undefined {
   const row = db
     .query<{ id: string; commit_oid: string; state: string; check_detail: string | null }, [string]>(
       `SELECT r.id, r.commit_oid, r.state, r.check_detail FROM run r JOIN repo ON repo.id = r.repo_id
@@ -275,8 +263,84 @@ export function mainVerdict(
   } catch {
     names = [];
   }
-  const failsIt = row.state === "failed" && Array.isArray(names) && names.includes(test);
-  return { runId: row.id, commitOid: row.commit_oid, passes: row.state === "ok" || !failsIt };
+  const named = Array.isArray(names) ? names.filter((n): n is string => typeof n === "string") : [];
+  return { runId: row.id, commitOid: row.commit_oid, state: row.state, names: named };
+}
+
+/** Main's newest finished check, and whether it failed the named test. */
+export function mainVerdict(
+  db: Database,
+  repoId: string,
+  test: string,
+): { runId: string; commitOid: string; passes: boolean } | undefined {
+  const main = mainCheck(db, repoId);
+  if (main === undefined) return undefined;
+  const failsIt = main.state === "failed" && main.names.includes(test);
+  return { runId: main.runId, commitOid: main.commitOid, passes: !failsIt };
+}
+
+/**
+ * Whether main's newest check ran the test and passed it: green, or red on
+ * other tests it named. A red that named nothing (a build, a timeout) read
+ * no test, so it says nothing either way.
+ */
+const mainRanGreen = (main: MainCheck | undefined, test: string): boolean =>
+  main !== undefined && (main.state === "ok" || (main.names.length > 0 && !main.names.includes(test)));
+
+/**
+ * A re-run since `since` that passed the test: the check runner's re-run
+ * alone recorded it a flake (`checks/flake.ts`), or a pull's later check of
+ * the same commit finished without failing it — green, or red on other
+ * tests it named.
+ */
+const PASSED_AGAIN = `
+  SELECT 1 FROM check_flake WHERE repo_id = ?1 AND test = ?2 AND at >= ?3
+  UNION ALL
+  SELECT 1
+    FROM run f,
+         json_each(CASE WHEN json_valid(f.check_detail) THEN f.check_detail ELSE '{}' END, '$.names') n
+    JOIN run g ON g.repo_id = f.repo_id AND g.issue_id = f.issue_id AND g.commit_oid = f.commit_oid
+              AND g.kind = 'check' AND g.id > f.id
+   WHERE f.repo_id = ?1 AND f.id >= ?4 AND f.finished_at >= ?3
+     AND f.kind = 'check' AND f.issue_id IS NOT NULL AND f.state = 'failed'
+     AND n.type = 'text' AND n.value = ?2
+     AND (g.state = 'ok' OR (g.state = 'failed'
+          AND json_array_length(CASE WHEN json_valid(g.check_detail) THEN g.check_detail ELSE '{}' END, '$.names') > 0
+          AND NOT EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(g.check_detail) THEN g.check_detail ELSE '{}' END, '$.names') m
+                          WHERE m.value = ?2)))
+   LIMIT 1`;
+
+function passedAgain(db: Database, repoId: string, test: string, since: number): boolean {
+  return (
+    db
+      .query<{ 1: number }, [string, string, string, string]>(PASSED_AGAIN)
+      .get(repoId, test, new Date(since).toISOString(), idFloor(since - QUEUED_SLACK_MS)) !== null
+  );
+}
+
+/**
+ * Whether a test many pulls fail is each pull's own, not the lane's (#8786):
+ * main's newest check ran it and passed it, and no re-run since `since`
+ * passed it. A page, a tool or a row each pull added, or a main test written
+ * after a pull's base, fails that pull every time and passes on main. A test
+ * main fails too, a flake that passes on a re-run (#2266's disk), or one
+ * main's verdict cannot be read for stays the lane's.
+ */
+export function pullsOwn(db: Database, repoId: string, test: string, since: number): boolean {
+  return pullsOwnBy(mainCheck(db, repoId), db, repoId, test, since);
+}
+
+const pullsOwnBy = (main: MainCheck | undefined, db: Database, repoId: string, test: string, since: number): boolean =>
+  mainRanGreen(main, test) && !passedAgain(db, repoId, test, since);
+
+/** Of rows of {@link SHARED_PULLS} or more pulls, those that are the lane's: main read once per repository. */
+function lanes(db: Database, rows: readonly Row[], now: number): Row[] {
+  const mains = new Map<string, MainCheck | undefined>();
+  return rows.filter((r) => {
+    if (r.pulls < SHARED_PULLS) return false;
+    if (!mains.has(r.repo_id)) mains.set(r.repo_id, mainCheck(db, r.repo_id));
+    return !pullsOwnBy(mains.get(r.repo_id), db, r.repo_id, r.test, now - SHARED_WINDOW_MS);
+  });
 }
 
 /** The most lines of a failing test's output a finding quotes. */

@@ -41,6 +41,7 @@ import {
   assertionLines,
   mainVerdict,
   pullsFailedSince,
+  pullsOwn,
   SHARED_PULLS,
   SHARED_WINDOW_MS,
   sharedRuns,
@@ -804,9 +805,35 @@ function settled(db: Database, cause: string, test: string | undefined, now: num
   };
 }
 
+/** A finding's cause, read back from its evidence, once its span has left the day. */
+const causeOf = (evidence: readonly string[]): string | undefined =>
+  evidence.find((e) => e.startsWith("cause: "))?.slice(7);
+
+/**
+ * Why a shared finding's test is each pull's own (#8786): main's newest
+ * check passes it and no re-run since `since` passed it. Undefined while
+ * the test is the lane's, or unknown.
+ */
+function ownedByPulls(db: Database, cause: string, test: string | undefined, since: number): string[] | undefined {
+  if (!cause.startsWith("shared:") || test === undefined) return undefined;
+  const repoId = cause.split(":")[1] ?? "";
+  if (!pullsOwn(db, repoId, test, since)) return undefined;
+  const main = mainVerdict(db, repoId, test);
+  if (main === undefined) return undefined;
+  return [
+    `cause: ${cause}`,
+    `test: ${test}`,
+    `main: passes on main's newest check, run ${main.runId} at ${main.commitOid}`,
+    `re-runs that passed it since ${new Date(since).toISOString()}: none`,
+  ];
+}
+
 /**
  * A shared red that passed again on its own closes its own open issue as
- * dropped, before a builder is handed it and finds nothing to fix (#8287).
+ * dropped, before a builder is handed it and finds nothing to fix (#8287);
+ * so does one the rule now calls each pull's own (#8786: main passes it and
+ * no re-run did), saying so — its cause read from the issue's evidence when
+ * its span has left the day.
  * Not one a person has spoken on: they decide. If the cause opens again,
  * the next hunt files it fresh and quotes this one. A sentinel that may not
  * close issues here closes nothing and says so: no access check is skipped.
@@ -817,8 +844,8 @@ function settled(db: Database, cause: string, test: string | undefined, now: num
  */
 function settleShared(app: App, repo: Repo, actor: User, now: number): void {
   const open = app.db
-    .query<{ key: string; issue_id: string; evidence: string }, []>(
-      `SELECT t.key, t.issue_id, t.evidence FROM sentinel_finding t JOIN issue i ON i.id = t.issue_id
+    .query<{ key: string; issue_id: string; evidence: string; first_seen: string }, []>(
+      `SELECT t.key, t.issue_id, t.evidence, t.first_seen FROM sentinel_finding t JOIN issue i ON i.id = t.issue_id
         WHERE i.state = 'open' AND t.key LIKE 'degraded:shared-%'`,
     )
     .all();
@@ -830,10 +857,14 @@ function settleShared(app: App, repo: Repo, actor: User, now: number): void {
   const causes = new Map(spans(app.db, now - DAY_MS, now).map((s) => [`degraded:${keyPart(s.cause)}`, s.cause]));
   for (const t of open) {
     try {
-      const cause = causes.get(t.key);
-      if (cause === undefined) continue;
-      const done = settled(app.db, cause, testOf(t.evidence.split("\n")), now);
-      if (done === undefined || personSpoke(app.db, t.issue_id)) continue;
+      const evidence = t.evidence.split("\n");
+      const cause = causes.get(t.key) ?? causeOf(evidence);
+      if (cause === undefined || `degraded:${keyPart(cause)}` !== t.key) continue;
+      const test = testOf(evidence);
+      const firstSeen = Date.parse(t.first_seen);
+      const owned = ownedByPulls(app.db, cause, test, (Number.isNaN(firstSeen) ? now : firstSeen) - SHARED_WINDOW_MS);
+      const done = owned === undefined ? settled(app.db, cause, test, now) : undefined;
+      if ((owned === undefined && done === undefined) || personSpoke(app.db, t.issue_id)) continue;
       const issue = getIssueById(app.db, t.issue_id);
       if (issue === undefined || issue.repoId !== repo.id) continue;
       const said = addComment(
@@ -841,12 +872,19 @@ function settleShared(app: App, repo: Repo, actor: User, now: number): void {
         actor,
         repo,
         issue,
-        [
-          `Passed again on its own at ${new Date(done.at).toISOString()}; evidence:`,
-          ...done.evidence.map((e) => `- ${e}`),
-          "",
-          "Closing as dropped: there is nothing to fix. If it opens again it is filed fresh, quoting this.",
-        ].join("\n"),
+        owned !== undefined
+          ? [
+              "Each pull's own red, not the lane's (#8786): main's newest check passes this test and no re-run of a failing pull passed it, so each pull failed it for what it added. Evidence:",
+              ...owned.map((e) => `- ${e}`),
+              "",
+              "Closing as dropped: there is nothing for the lane to fix. Each pull's builder gets its red as its own follow-up, with the test named.",
+            ].join("\n")
+          : [
+              `Passed again on its own at ${new Date(done!.at).toISOString()}; evidence:`,
+              ...done!.evidence.map((e) => `- ${e}`),
+              "",
+              "Closing as dropped: there is nothing to fix. If it opens again it is filed fresh, quoting this.",
+            ].join("\n"),
       );
       if (!said.ok) {
         log.warn("sentinel could not comment", { key: t.key, error: String(said.error) });
@@ -994,6 +1032,8 @@ export function hunt(
         }
         // A shared red that passed again on its own is no work: the day's total does not file it again.
         if (settled(app.db, f.cause ?? "", testFor(app.db, f), now) !== undefined) continue;
+        // Nor is each pull's own red (#8786): its builders hold it, not the lane.
+        if (ownedByPulls(app.db, f.cause ?? "", testFor(app.db, f), now - SHARED_WINDOW_MS) !== undefined) continue;
         const told =
           sinceFix(app, repo, actor, f, evidence, at, now) ??
           (f.incident === undefined ? undefined : continuesDone(app, repo, actor, f, evidence, at, now));

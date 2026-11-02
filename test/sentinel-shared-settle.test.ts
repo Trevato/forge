@@ -4,8 +4,9 @@
  * passes it. The sentinel closes its own issue as dropped before a builder is
  * handed it, on the hourly hunt and on every tick, never one a person has
  * spoken on, never without write access, and files a repeat within the day
- * fresh, quoting the earlier one. The tests named "exception" guard what
- * must stay open; they pass without the change too.
+ * fresh, quoting the earlier one. One the rule now calls each pull's own
+ * (#8786) — main passes it and no re-run did — closes as dropped too, saying
+ * so. The tests named "exception" guard what must stay open.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -77,12 +78,22 @@ beforeEach(async () => {
   app.db.query("UPDATE degraded_span SET closed_at = ?1 WHERE cause = ?2").run(T - 20 * MIN, cause());
   check("ok", T - 15 * MIN);
 });
+
+/** The check runner re-ran the test alone and it passed: a flake, the lane's red (#8786). */
+function flaked(at: number): void {
+  app.db
+    .query("INSERT INTO check_flake (id, repo_id, run_id, commit_oid, test, file, at) VALUES (?1, ?2, 'r', 'e', ?3, 'b.test.ts', ?4)")
+    .run(`flake-${at}`, repo.id, TEST, new Date(at).toISOString());
+}
 afterEach(async () => {
   app.db.close();
   await rm(dir, { recursive: true, force: true });
 });
 
 describe("a shared red that passed again on its own (#8287)", () => {
+  // A re-run passed it: the lane's red, not each pull's own (#8786).
+  beforeEach(() => flaked(T - 44 * MIN));
+
   test("closes its own issue as dropped, saying when and why, and files nothing new", () => {
     hunt(app, "alice/forge", T);
     const [issue, ...more] = filed();
@@ -154,6 +165,7 @@ describe("a shared red that passed again on its own (#8287)", () => {
     app.db
       .query("INSERT INTO degraded_span (cause, sentence, href, opened_at) VALUES (?1, 'It is red on 3 pulls.', '/x', ?2)")
       .run(cause(), T + 3 * HOUR);
+    flaked(T + 3 * HOUR);
     expect(hunt(app, "alice/forge", T + 3 * HOUR + 5 * MIN).filed).toBe(1);
     const fresh = filed().find((i) => i.id !== earlier.id)!;
     expect(fresh.state).toBe("open");
@@ -167,8 +179,70 @@ describe("a shared red that passed again on its own (#8287)", () => {
     app.db
       .query("INSERT INTO degraded_span (cause, sentence, href, opened_at) VALUES (?1, 'It is red on 3 pulls.', '/x', ?2)")
       .run(cause(), T + 25 * HOUR);
+    flaked(T + 25 * HOUR);
     expect(hunt(app, "alice/forge", T + 25 * HOUR + 5 * MIN).filed).toBe(1);
     const fresh = filed().find((i) => i.state === "open")!;
     expect(getIssueById(app.db, fresh.id)!.body).not.toContain("Opened again within a day");
+  });
+});
+
+describe("a shared red the rule now calls each pull's own (#8786)", () => {
+  const owned = () =>
+    listComments(app.db, filed()[0]!.id).filter((c) => c.body.startsWith("Each pull's own red, not the lane's (#8786)"));
+
+  test("closes its open issue as dropped, saying main passes it and no re-run did, and files nothing new", () => {
+    hunt(app, "alice/forge", T);
+    const [issue, ...more] = filed();
+    expect(more).toEqual([]);
+    expect(issue!.state).toBe("closed");
+    expect(issue!.closeReason).toBe("dropped");
+    expect(owned().length).toBe(1);
+    expect(owned()[0]!.body).toContain(`- test: ${TEST}`);
+    expect(owned()[0]!.body).toContain("- main: passes on main's newest check");
+    expect(owned()[0]!.body).toContain(": none");
+    // The day's degraded total does not file it again.
+    hunt(app, "alice/forge", T + 2 * HOUR);
+    expect(filed().length).toBe(1);
+  });
+
+  test("closes it while pulls still fail it, and with its span gone from the day, by the cause its evidence names", () => {
+    redPull(9, T - 10 * MIN);
+    app.db.query("DELETE FROM degraded_span WHERE cause = ?1").run(cause());
+    hunt(app, "alice/forge", T);
+    expect(filed()[0]!.state).toBe("closed");
+    expect(owned().length).toBe(1);
+  });
+
+  test("a tick between hunts closes it, before a builder's next pick", () => {
+    const prior = process.env.FORGE_SENTINEL_REPO;
+    process.env.FORGE_SENTINEL_REPO = "alice/forge";
+    try {
+      expect(sentinelTick(app, T)).toBeNull();
+    } finally {
+      if (prior === undefined) delete process.env.FORGE_SENTINEL_REPO;
+      else process.env.FORGE_SENTINEL_REPO = prior;
+    }
+    expect(filed()[0]!.state).toBe("closed");
+    expect(owned().length).toBe(1);
+  });
+
+  test("exception: a flake recorded while it was red keeps it the lane's: it stays open while pulls fail it", () => {
+    flaked(T - 44 * MIN);
+    redPull(9, T - 10 * MIN);
+    hunt(app, "alice/forge", T);
+    expect(filed()[0]!.state).toBe("open");
+  });
+
+  test("exception: main's newest check failing the test keeps it the lane's", () => {
+    check("failed", T - 10 * MIN);
+    hunt(app, "alice/forge", T);
+    expect(filed()[0]!.state).toBe("open");
+  });
+
+  test("exception: an issue a person has commented on is never closed this way", () => {
+    addComment(app.db, { issueId: filed()[0]!.id, authorId: alice.id, body: "I am looking at this" });
+    hunt(app, "alice/forge", T);
+    expect(filed()[0]!.state).toBe("open");
+    expect(owned()).toEqual([]);
   });
 });
