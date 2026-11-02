@@ -70,6 +70,8 @@ interface LiveState {
   readonly own: string;
   /** Merge commits known to be in the running commit. */
   readonly oids: ReadonlySet<string>;
+  /** Merge commits found not to be in the running commit; they cannot become so while it stays. */
+  readonly misses: ReadonlySet<string>;
   /** When the running commit was made; stands in for a merge commit the pull never recorded. */
   readonly at: number;
   /** The running commit these were asked of. */
@@ -79,7 +81,7 @@ let kept: LiveState | undefined;
 
 /** Keep what the running commit contains; a test says it directly. */
 export function keepLive(own: string, oids: Iterable<string>, at: number): void {
-  kept = { own, oids: new Set(oids), at, commit: "" };
+  kept = { own, oids: new Set(oids), misses: new Set(), at, commit: "" };
 }
 
 /** Forget it, so the alarm is silent until the next read. */
@@ -166,22 +168,33 @@ async function askLive(app: App, rows: readonly MergedRow[]): Promise<void> {
   const head = running().commit ?? (await runGit(["rev-parse", "--verify", "-q", `refs/heads/${repo.defaultBranch}`], { cwd: dir }));
   const commit = typeof head === "string" ? head : head.ok ? head.value : undefined;
   if (commit === undefined) return;
-  const made = await runGit(["show", "-s", "--format=%ct", commit], { cwd: dir });
-  if (!made.ok) return;
   const named = `${repo.ownerName}/${repo.name}`;
-  // A live commit's ancestors stay ancestors; only a new running commit voids what was kept.
+  // For one running commit an ancestor stays one and a non-ancestor never becomes one:
+  // only a new running commit voids what was kept.
   const before = kept?.own === named && kept.commit === commit ? kept : undefined;
+  let at = before?.at;
+  if (at === undefined) {
+    const made = await runGit(["show", "-s", "--format=%ct", commit], { cwd: dir });
+    if (!made.ok) return;
+    at = Number(made.value) * 1000;
+  }
   const oids = new Set(before?.oids ?? []);
+  const misses = new Set(before?.misses ?? []);
   const wanted = rows
-    .filter((r) => r.repo.toLowerCase() === named.toLowerCase() && r.oid !== "" && !oids.has(r.oid))
+    .filter((r) => r.repo.toLowerCase() === named.toLowerCase() && r.oid !== "" && !oids.has(r.oid) && !misses.has(r.oid))
     .slice(0, ASKED);
   await Promise.all(
     wanted.map(async (r) => {
       const ancestor = await runGit(["merge-base", "--is-ancestor", r.oid, commit], { cwd: dir });
       if (ancestor.ok) oids.add(r.oid);
+      // Exit 1 is git's "no"; any other failure may pass, so it is asked again.
+      else if (ancestor.error.code === 1) misses.add(r.oid);
     }),
   );
-  kept = { own: named, oids, at: Number(made.value) * 1000, commit };
+  // Misses are kept only for the merged rows still listed.
+  const listed = new Set(rows.map((r) => r.oid));
+  for (const o of misses) if (!listed.has(o)) misses.delete(o);
+  kept = { own: named, oids, misses, at, commit };
 }
 
 /** Every landing, live or on its way, as of the running commit. */
