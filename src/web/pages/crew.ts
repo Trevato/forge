@@ -41,6 +41,7 @@ import { wastedDays, type WastedDay } from "../../core/wasted_days.ts";
 import { modelDays, type ModelDay } from "../../core/model_days.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { listTeams, type Team } from "../../core/teams.ts";
+import { isHostedChild } from "../../spawn/hosted-mark.ts";
 import { crewFor } from "../../crew/dispatch.ts";
 import { crewHandover, type CrewHandover } from "../../crew/handed.ts";
 import { MODELS } from "../../crew/models.ts";
@@ -105,6 +106,15 @@ function shell(ctx: Ctx, title: string, body: Html, status = 200): Response {
  */
 export function crewReadiness(ctx: Ctx): Html {
   const crew = crewFor(ctx.app);
+  if (crew === undefined && isHostedChild(ctx.app))
+    return card(
+      html`<p>
+        ${icon("alert")} This forge is hosted inside another forge's process,
+        which has no crew runner for it: assigned issues will wait. The crew
+        runs once this forge has a process of its own.
+      </p>`,
+      { tone: "danger", extra: "mb" },
+    );
   if (crew === undefined)
     return card(
       html`<p>

@@ -11,6 +11,7 @@ import { appsRuntime, type AppsRuntime } from "../apps/runtime.ts";
 import { resolveAppHost, type AppTarget } from "../apps/proxy.ts";
 import { childAppsSummary, startChildApps, stopChildApps } from "./child-apps.ts";
 import { childHost } from "./door.ts";
+import { markHostedChild } from "./hosted-mark.ts";
 import { firstBoot } from "./first-boot.ts";
 import {
   childHostSuffix,
@@ -96,6 +97,7 @@ async function openChild(parent: App, ledger: ChildLedger): Promise<App> {
       ? { clientIpHeader: parent.config.clientIpHeader }
       : {}),
   });
+  markHostedChild(child);
   await firstBoot(child);
   // Its apps run in this process's lanes, awake before the first visit.
   await startChildApps(parent, child, ledger.name);
