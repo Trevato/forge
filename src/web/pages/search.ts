@@ -542,6 +542,16 @@ const DESTRUCTIVE: {
     }),
   },
   {
+    pattern: /^\/([^/]+)\/([^/]+)\/settings\/detach$/,
+    describe: (m) => ({
+      verb: "Detach from parent",
+      title: `Detach ${m[1]}/${m[2]} from its parent?`,
+      detail:
+        "Every object it borrows is copied into its own store and the link is dropped: no updates to take, nothing to propose upstream. Branches, history, issues and pulls stay. There is no undo.",
+      phrase: "",
+    }),
+  },
+  {
     pattern: /^\/([^/]+)\/([^/]+)\/branches\/([^/]+)\/delete$/,
     describe: (m) => ({
       verb: "Delete branch",

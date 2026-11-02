@@ -197,7 +197,7 @@ describe("detach from parent", () => {
     const home = await (await fetch(`${servers.url}${base}`, { headers: { cookie } })).text();
     expect(home).toContain(`href="${base}/settings/danger#detach"`);
     const danger = await (await fetch(`${servers.url}${base}/settings/danger`, { headers: { cookie } })).text();
-    expect(danger).toContain(`action="${base}/settings/detach"`);
+    expect(danger).toContain(`href="/-/confirm?to=${encodeURIComponent(`${base}/settings/detach`)}"`);
     expect(danger).toContain("Detach from parent");
 
     const post = (origin: string) =>

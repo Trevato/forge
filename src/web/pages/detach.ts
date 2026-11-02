@@ -2,7 +2,8 @@
  * Settings › Danger zone › "Detach from parent" (#7452). The card is the
  * plan — what the detach copies and what it ends — and its button starts
  * it. While the repack runs the card says so and since when; a failure
- * stays on the card with git's line until the next try. The mechanics are
+ * stays on the card with git's line until the next try. The button goes
+ * through /-/confirm first (#7978): the detach has no undo. The mechanics are
  * `actions/detach.ts`.
  */
 
@@ -14,7 +15,7 @@ import { repoBase } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
 import { flashTo } from "../layout.ts";
-import { btn, card, timeAgo } from "../ui.ts";
+import { card, confirmAction, timeAgo } from "../ui.ts";
 import type { Database } from "bun:sqlite";
 import { adminForm } from "./settings.ts";
 
@@ -30,7 +31,6 @@ export function detachCard(
   const parent = forkParentFor(db, repo, viewer);
   const name = parent === undefined ? "its parent" : `${parent.ownerName}/${parent.name}`;
   const job = detachJob(repo.id);
-  const action = `${repoBase(repo)}/settings/detach`;
   const body =
     job?.phase === "repacking"
       ? html`<p data-detach-progress>
@@ -53,9 +53,9 @@ export function detachCard(
             Following card, no updates to take, nothing to propose upstream.
             Branches, history, issues and pulls stay. There is no undo.
           </p>
-          <form method="post" action="${action}" class="form-actions">
-            ${btn("Detach from parent", { variant: "danger", icon: "fork" })}
-          </form>`;
+          <div class="form-actions">
+            ${confirmAction({ action: `${repoBase(repo)}/settings/detach`, verb: "Detach from parent" })}
+          </div>`;
   return card(body, {
     id: "detach",
     tone: "danger",

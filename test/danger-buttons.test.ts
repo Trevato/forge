@@ -15,7 +15,6 @@ const allowed: readonly { file: string; button: string; reason: string }[] = [
   { file: "src/web/pages/boards-view.ts", button: `"Delete this board"`, reason: "board delete; waits for its confirm issue" },
   { file: "src/web/pages/org.ts", button: `"Remove"`, reason: "team member remove; waits for its confirm issue" },
   { file: "src/web/pages/edit.ts", button: `"Delete this file"`, reason: "the delete page is the confirmation, reached by a link" },
-  { file: "src/web/pages/detach.ts", button: `"Detach from parent"`, reason: "the detach page is the confirmation, reached from settings" },
   { file: "src/web/pages/pull.ts", button: `"Land past the gate"`, reason: "asks for a typed reason of at least 8 characters" },
   { file: "src/web/studio/notes.ts", button: "label", reason: "owner note ban; undone by unban on the same row" },
 ];
