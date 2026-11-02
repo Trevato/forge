@@ -71,7 +71,7 @@ import { style } from "../term/style.ts";
 import { truncate, wrap } from "../term/width.ts";
 import { badge, card } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
-import { PIN_MARK, ago, confirmScreen, drawFacts, plural, promptScreen } from "./common.ts";
+import { PIN_MARK, ago, confirmScreen, drawFacts, later, pickerScreen, plural, promptScreen, yesNo } from "./common.ts";
 import { connectionsScreen, egressScreen } from "./egress.ts";
 import { eventsScreen } from "./events.ts";
 import { newPullScreen } from "./newpull.ts";
@@ -128,7 +128,7 @@ export function aboutScreen(
     ...movingRow(f, repo),
     ...outsidersRow(repo),
     ...seatRows(f, repo),
-    ...aboutFacts(f, src, facts, ref),
+    ...aboutFacts(f, src, facts, ref, repo),
     ...paceRows(f, repo),
     ...trailRows(f, repo),
     ...upstreamRows(f, repo),
@@ -198,6 +198,7 @@ export function aboutScreen(
             ]
           : []),
         ...(mayPerson() ? [binding(["w"], "write description")] : []),
+        ...(mayPerson() ? [binding(["b"], "default branch")] : []),
         ...(mayOutsiders()
           ? [
               binding(
@@ -513,6 +514,57 @@ export function aboutScreen(
         );
         return true;
       }
+      if (e.key === "b" && repo !== undefined && mayPerson()) {
+        const at = repo;
+        void listRefs(repoDir(f.app.reposRoot, at.ownerName, at.name), "refs/heads/").then((refs) => {
+          if (!refs.ok) return ctx.toast("the branches could not be read", "danger");
+          const items = refs.value.map((r) => r.name.replace(/^refs\/heads\//, "")).sort().map((name) => ({
+            id: name,
+            label: name,
+            ...(name === at.defaultBranch ? { hint: "default" } : {}),
+          }));
+          ctx.push(
+            pickerScreen(ctx, screen, {
+              title: "Default branch",
+              items,
+              onPick: ([branch]) => {
+                if (branch === undefined || branch === at.defaultBranch) return;
+                const choose = (choice: number): void => {
+                  if (choice !== 0) return;
+                  void updateRepoSettings(f.app, f.user, at, { defaultBranch: branch }).then((done) => {
+                    if (done.ok) {
+                      repo = getRepoById(f.db, done.value.id) ?? done.value;
+                      rows = factRows();
+                      ctx.toast(`${branch} is the default branch`, "success");
+                    } else
+                      ctx.toast(
+                        done.error === "unknown_branch"
+                          ? `${branch} is no longer a branch here`
+                          : "that could not be changed",
+                        "danger",
+                      );
+                    ctx.invalidate();
+                  });
+                };
+                void later(ctx, () =>
+                  yesNo(
+                    ctx,
+                    confirmScreen(ctx, screen, {
+                      title: "Default branch",
+                      body: [`make ${branch} the default? y/n`],
+                      actions: [{ label: "Make default" }, { label: "Cancel", variant: "ghost" }],
+                      selected: 1,
+                      onChoose: choose,
+                    }),
+                    choose,
+                  ),
+                );
+              },
+            }),
+          );
+        });
+        return true;
+      }
       if (e.key === "t" && repo !== undefined && mayTrail()) {
         const shown = getProvenance(f.db, repo.id)?.shown === true;
         const done = showProvenance(f.app, f.user, repo, !shown);
@@ -738,6 +790,7 @@ function aboutFacts(
   src: RepoSource,
   facts: RepoFacts | undefined,
   ref: string,
+  current?: Repo,
 ): [string, string][] {
   const repo = localRepo(src);
   const counts: [string, string][] =
@@ -757,7 +810,8 @@ function aboutFacts(
               .join(" · "),
           ],
         ];
-  const branch = facts?.defaultBranch ?? repo?.defaultBranch ?? "";
+  // The card's own row first: `b` moves it under facts read before the card opened.
+  const branch = current?.defaultBranch ?? facts?.defaultBranch ?? repo?.defaultBranch ?? "";
   // Whose work this descends from. A fork at an origin is not `forkParentId`
   // — that is a fork made *here* — so the badge above cannot say it and this
   // row can.
