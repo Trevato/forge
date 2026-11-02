@@ -422,6 +422,17 @@ in the very sentence Settings › Subscriptions prints (`windowWords`,
 `src/actions/standing_words.ts`). A sentence wider than the terminal wraps
 onto the next line, so the reset time is never cut off.
 
+Inside a repository, the palette's Crew grants (`src/tui/screens/grants.ts`)
+sets which subscriptions each crew member may use there, as Settings › Crew
+does: one row for everyone on the crew and one per crew member, each
+subscription by name and kind (never its token) on its own line under the row.
+`j`/`k` choose the row, `h`/`l` the subscription, and `space` toggles it and
+saves the row whole through `setGrants`. Nothing ticked removes the row's
+grant, and the wider one applies: the owner's grant, or the forge's own token.
+It is offered to a person who is both a forge admin and an admin of the
+repository; anyone else, and every agent, is offered nothing. Settings › Crew
+shows a save on its next load.
+
 A repository in auto mode with a direction and no planner on its crew is lent
 one (#7637): at the next planning turn the forge adds, through the same
 `addToCrew` an admin uses, the agent that plans on the most of the *owner's*

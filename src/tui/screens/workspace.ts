@@ -131,6 +131,7 @@ import { workingCommands } from "./working.ts";
 import { forgeItCommands } from "./forge_it.ts";
 import { makeItYoursScreen, yoursCommands } from "./yours.ts";
 import { deleteRepoCommands } from "./deleterepo.ts";
+import { grantsCommands } from "./grants.ts";
 import { visionCommands } from "./vision.ts";
 import { labelsCommands } from "./labels.ts";
 import { appEnvCommands } from "./appenv.ts";
@@ -1444,6 +1445,7 @@ export function workspaceScreen(
       ...noteCommands(f, ctx, () => screen, repo),
       ...yoursCommands(f, ctx, repo),
       ...deleteRepoCommands(f, ctx, repo),
+      ...grantsCommands(f, ctx, repo),
       ...forgeItCommands(f, ctx, repo, () => screen),
       ...hooksCommands(f, ctx, repo),
       ...visionCommands(f, ctx, repo),
