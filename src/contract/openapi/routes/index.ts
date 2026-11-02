@@ -73,6 +73,7 @@ export { route as getApiV1OrgsOrg } from "./getApiV1OrgsOrg.ts";
 export { route as getApiV1OrgsOrgTeams } from "./getApiV1OrgsOrgTeams.ts";
 export { route as getApiV1OrgsOrgTeamsTeamMembers } from "./getApiV1OrgsOrgTeamsTeamMembers.ts";
 export { route as getApiV1PassportHealth } from "./getApiV1PassportHealth.ts";
+export { route as getApiV1Releases } from "./getApiV1Releases.ts";
 export { route as getApiV1Repos } from "./getApiV1Repos.ts";
 export { route as getApiV1ReposOwnerName } from "./getApiV1ReposOwnerName.ts";
 export { route as getApiV1ReposOwnerNameApp } from "./getApiV1ReposOwnerNameApp.ts";

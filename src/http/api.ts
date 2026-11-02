@@ -311,6 +311,7 @@ import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
 import { passportRoutes } from "./passport_edge.ts";
 import { egressGrantRoutes } from "./api/egress_grants.ts";
 import { forgeRoutes } from "./api/forges.ts";
+import { releasesRoutes } from "./api/releases.ts";
 import { hookRoutes } from "./api/hooks.ts";
 import { agentRoutes } from "./api/agents.ts";
 import { boardRoutes } from "./api/boards.ts";
@@ -3172,6 +3173,7 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   forgeRoutes(router);
+  releasesRoutes(router);
 
   router.add("GET", "/api/v1/apps", (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
