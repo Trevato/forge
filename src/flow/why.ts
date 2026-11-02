@@ -20,8 +20,10 @@ import { standings } from "../core/standing.ts";
 import { ceilingHitAt, forgeCeiling } from "./ceiling.ts";
 import { heldNow, mapHolds } from "../crew/held.ts";
 import { nextOfPull, type Actor } from "./next_actor.ts";
+import { wallWords } from "./wall_wait.ts";
 
 export const CAUSES = [
+  "wall",
   "ceiling",
   "hot_file",
   "blocked_by",
@@ -46,6 +48,8 @@ export interface WhyFacts {
   readonly noHeadroom?: boolean;
   readonly redCheck?: boolean;
   readonly waitingReview?: boolean;
+  /** What the access wall holds the pull for, in plain words (#7847). */
+  readonly wall?: readonly string[];
 }
 
 export interface Cause {
@@ -58,6 +62,13 @@ export interface Cause {
 const agentActs = (f: WhyFacts): boolean => f.actor === "builder" || f.actor === "reviewer";
 
 const RULES: Readonly<Record<CauseName, (f: WhyFacts) => Omit<Cause, "name"> | null>> = {
+  wall: (f) =>
+    f.wall !== undefined && f.wall.length > 0
+      ? {
+          says: `The access wall holds it for a person: ${f.wall.join("; ")}.`,
+          clears: "a person allows it (merges the pull) or sends it back (requests changes).",
+        }
+      : null,
   ceiling: (f) =>
     f.ceilingUsd !== undefined && agentActs(f)
       ? {
@@ -200,10 +211,12 @@ export function whyPull(
   const next = nextOfPull(app.db, pull, live);
   if (next === null) return { cause: null };
   const check = checkSummary(app.db, pull.id, live.headOid).state;
+  const wall = next.who === "person" ? wallWords(app.db, pull.id, live.headOid) : null;
   const cause = firstCause({
     actor: next.who,
     redCheck: next.who === "builder" && check === "failed",
     waitingReview: next.who === "reviewer",
+    ...(wall === null ? {} : { wall }),
     ...shared,
   });
   return { cause, next };

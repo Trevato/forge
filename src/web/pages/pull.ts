@@ -998,7 +998,7 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
             >`,
       )}
     </p>
-    ${when(wall, (w) => wallCard(w))}
+    ${when(wall, (w) => wallCard(w, mayMerge ? thread : undefined))}
     ${holdCard(ctx, repo, pull, { act: false })}
     ${teamsCard(teamVerdicts(ctx.app.db, { ...pull, headOid: status.headOid }))}
     ${mergeBox(ctx, repo, pull, status, mayMerge, by, check, isApp, tier, stale)}

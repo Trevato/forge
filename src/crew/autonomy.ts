@@ -62,7 +62,7 @@ import { decideAndRecord } from "./ledger.ts";
 import { sentinelTick } from "./sentinel.ts";
 import { triageTick } from "./triage.ts";
 import { liveTriage, none as noTriage, tickFields } from "./livetriage.ts";
-import { wallOf, wallSentence } from "../contract/policy.ts";
+import { wallOf, wallPlain, wallSentence } from "../contract/policy.ts";
 import {
   getIssue,
   getIssueById,
@@ -2037,6 +2037,7 @@ async function admit(
         state: {
           head: pull.headOid,
           cells,
+          plain: wall.unsound ?? wall.loosened.map(wallPlain),
           unsound: wall.unsound !== undefined,
         },
         answer: "wall",

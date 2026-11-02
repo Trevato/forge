@@ -25,7 +25,7 @@ import {
 } from "../src/core/decisions.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { readContract, type Contract } from "../src/contract/can.ts";
-import { loosened, wallOf, wallSentence } from "../src/contract/policy.ts";
+import { loosened, wallOf, wallPlain, wallSentence } from "../src/contract/policy.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { repoDir } from "../src/git/repos.ts";
@@ -66,6 +66,20 @@ describe("what counts as loosening", () => {
     expect(
       loosened(NOTES, withCan({ delete: "user" })).map(wallSentence),
     ).toEqual(["note.delete as user: was own, now yes"]);
+  });
+
+  test("a crossing reads in plain words (#7847)", () => {
+    expect(loosened(undefined, NOTES).map(wallPlain)).toEqual([
+      "anyone signed out could read note records",
+      "anyone signed out could list note records",
+    ]);
+    expect(loosened(NOTES, withCan({ delete: "user" })).map(wallPlain)).toEqual([
+      "any user could delete note records",
+    ]);
+    // No naive plural, and the own cell says whose.
+    expect(
+      wallPlain({ resource: "address", verb: "update", as: "user", answer: "own", from: "no", to: "own", floor: false } as never),
+    ).toBe("any user could change their own address records");
   });
 
   test("tightening, and the same table, loosen nothing", () => {

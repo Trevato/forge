@@ -67,6 +67,7 @@ import { stepOfPull, type PathStep } from "../../flow/path.ts";
 import { getPull, pullDir, variantSiblings, type Pull } from "../../core/pulls.ts";
 import { voteVariant } from "../../actions/variants.ts";
 import { getRepoById, type Repo } from "../../core/repos.ts";
+import { wallOf, wallPlain, type Wall } from "../../contract/policy.ts";
 import { checkSummary, type CheckSummary } from "../../core/runs.ts";
 import { err, ok } from "../../kernel/result.ts";
 import { getUsersByIds } from "../../core/users.ts";
@@ -271,6 +272,8 @@ export function pullScreen(
   const mayWrite = (): boolean => src.capabilities.write && repo !== undefined;
   /** The hold that stands on this pull; undefined when none does. */
   let hold: Hold | undefined;
+  /** What the access wall holds this open pull for, read from git (#7847). */
+  let wall: Wall | undefined;
   /** `h` is a person's key: an agent's hold is refused by the action, so it is not offered. */
   const mayHold = (): boolean =>
     mayWrite() && f.user?.kind === "user" && issueRow !== undefined;
@@ -305,6 +308,14 @@ export function pullScreen(
     threads = row === undefined ? [] : readThreads(row);
     issueRow = repo === undefined ? undefined : getIssue(f.db, repo.id, number);
     hold = row === undefined ? undefined : getHold(f.db, row.id);
+    wall =
+      repo !== undefined && row !== undefined && row.state === "open" && row.mergedAt === null && facts !== null
+        ? await (async () => {
+            const dir = await pullDir(f.app.db, f.app.reposRoot, repo, row);
+            const base = await resolveOid(dir, `refs/heads/${row.baseBranch}`);
+            return base === undefined ? undefined : wallOf(dir, base, facts.headOid);
+          })()
+        : undefined;
     // The app half: the preview environment (in memory, from the runtime),
     // the checks at the live head (a row), and what the crew has done here.
     const record = repo === undefined ? undefined : getAppByRepo(f.db, repo.id);
@@ -692,6 +703,23 @@ export function pullScreen(
     ctx.toast(resolved ? "thread resolved" : "thread reopened", "success");
   };
 
+  /** The wall's other answer: a request for changes, as `R` would send it. */
+  const sendBack = (): void => {
+    if (repo === undefined) return;
+    const target = repo;
+    const row = getPull(f.db, target.id, number);
+    if (row === undefined) return;
+    runAsync(ctx, async () => {
+      const sent = await submitReview(f.app, f.user, target, row, { state: "changes_requested" });
+      if (!sent.ok) {
+        ctx.toast(errorText(String(sent.error)), "danger");
+        return;
+      }
+      await reload();
+      ctx.toast("sent back", "success");
+    });
+  };
+
   const merge = (strategy: "merge" | "squash"): void => {
     if (repo === undefined) return;
     const target = repo;
@@ -936,6 +964,7 @@ export function pullScreen(
                 ? [binding(["v"], "see the conflict blocks")]
                 : []),
               binding(["m"], "merge", { disabled: state() !== "ready" }),
+              ...(wall !== undefined && mayWrite() ? [binding(["w"], "the access wall: allow or send back")] : []),
               ...(mayLandPast() ? [binding(["L"], "land past the gate")] : []),
               ...(tab === 1 && view.threadHere() !== null
                 ? [
@@ -1274,6 +1303,32 @@ export function pullScreen(
             ? `changes requested by ${now.blocking.join(", ")}`
             : errorText("review_required"),
           "attn",
+        );
+        return true;
+      }
+      // `w` on a pull the access wall holds: the same two decisions as the
+      // page's card, through `mergePull` and `submitReview`, which check the write.
+      if (e.key === "w" && mayWrite() && wall !== undefined) {
+        const held = wall;
+        ctx.push(
+          confirmScreen(ctx, screen, {
+            title: `Access wall: #${number}`,
+            body: [
+              held.unsound !== undefined
+                ? "This pull's contract does not read; an app built on it does not boot."
+                : "This pull opens access wider; a person decides.",
+              ...(held.unsound ?? held.loosened.map(wallPlain)),
+            ],
+            actions: [
+              { label: "Cancel", variant: "ghost" },
+              { label: "Send it back", variant: "danger" },
+              { label: "Allow it and merge" },
+            ],
+            onChoose: (choice) => {
+              if (choice === 2) merge("squash");
+              if (choice === 1) sendBack();
+            },
+          }),
         );
         return true;
       }

@@ -31,7 +31,7 @@ import {
 } from "../../core/pulls.ts";
 import { canAdmin, canWrite, type Repo } from "../../core/repos.ts";
 import { listReviews, type Review } from "../../core/reviews.ts";
-import { wallOf, wallSentence, type Wall } from "../../contract/policy.ts";
+import { wallOf, wallPlain, wallSentence, type Wall } from "../../contract/policy.ts";
 import { checkSummary } from "../../core/runs.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -107,7 +107,7 @@ export function pullContext(ctx: Ctx): { repo: Repo; pull: Pull } | Response {
  * so, in the same sentences the ledger keeps, and leaves the decision to
  * the person reading.
  */
-export function wallCard(wall: Wall): Html {
+export function wallCard(wall: Wall, act?: string): Html {
   return card(
     html`<p class="muted small">
         ${wall.unsound !== undefined
@@ -118,7 +118,28 @@ export function wallCard(wall: Wall): Html {
         ${(wall.unsound ?? wall.loosened.map(wallSentence)).map(
           (line) => html`<div>${line}</div>`,
         )}
-      </div>`,
+      </div>${when(
+        act,
+        (thread) => html`<p class="small">
+            ${wall.unsound !== undefined
+              ? "This one does not boot."
+              : `If you allow it, ${wall.loosened.map(wallPlain).join("; ")}.`}
+          </p>
+          <div class="bar mt">
+            <form method="post" action="${thread}/merge">
+              <input type="hidden" name="strategy" value="squash" />
+              ${btn("Allow it and merge", { variant: "primary", icon: "merge" })}
+            </form>
+            <form method="post" action="${thread}/review-state">
+              <input type="hidden" name="state" value="changes_requested" />
+              <label class="small"
+                >Why (optional)
+                <input name="body" autocomplete="off" />
+              </label>
+              ${btn("Send it back", { variant: "danger" })}
+            </form>
+          </div>`,
+      )}`,
     {
       tone: "attn",
       extra: "wall mt",
@@ -642,7 +663,7 @@ async function changeConversation(
     ${when(runLine, (l) => l)} ${holdCard(ctx, repo, pull, { act: true })}
     ${approveHereCard(ctx, repo, pull, headOid, `${thread}/approve-here`)}
     ${teamsCard(teamVerdicts(db, { ...pull, headOid }))}
-    ${when(wall, (w) => wallCard(w))} ${decisionSection}
+    ${when(wall, (w) => wallCard(w, ctx.auth.user !== undefined && canWrite(db, repo, ctx.auth.user) ? thread : undefined))} ${decisionSection}
     ${when(visionPreview, (v) => visionPreviewCard(v))}
     ${takeBackSection}
     ${when(record, (r) => lookCard(ctx, repo, r, pull, pull.headOid))}
