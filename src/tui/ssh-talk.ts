@@ -10,6 +10,8 @@
  */
 
 import { TALK_WORDS, stopTalk, talk } from "../actions/talk.ts";
+import { contextOf, contextText, dollars, turnCosts } from "../core/conversation_cost.ts";
+import { openConversation } from "../core/conversations.ts";
 import type { App } from "../app.ts";
 import type { User } from "../core/users.ts";
 import { CONTROL_WORDS } from "./ssh-tell.ts";
@@ -50,5 +52,13 @@ export function serveTalk(app: App, session: SshSession, user: User | undefined,
   session.write(
     `${said.value.how === "steered" ? "said to the forge's agent, mid-answer" : "the forge's agent is answering"}${CRLF}`,
   );
+  if (user !== undefined) {
+    // The figures of the turn before this one, from its own usage record.
+    const conversation = openConversation(app.db, user.id);
+    const last = [...turnCosts(app.db, conversation.id).values()].at(-1);
+    const context = contextOf(app.db, conversation.id);
+    if (last !== undefined) session.write(`last turn ${dollars(last)}${CRLF}`);
+    if (context !== undefined) session.write(`${contextText(context)}${CRLF}`);
+  }
   session.exit(0);
 }

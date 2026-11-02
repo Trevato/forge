@@ -27,6 +27,7 @@ export const talkCss = /* css */ `
 .talk-compose .bar { margin-top: 6px; gap: 8px; align-items: center; }
 .talk-compose .btn { min-height: 2.75rem; }
 .talk-status { min-height: 1.5em; margin: 0; }
+.talk-context, .talk-cost { margin: 0; }
 .talk-meta { margin: 4px 0 0; display: flex; gap: 6px; align-items: center; }
 .talk-copy { margin-left: auto; background: none; border: 0; color: inherit; font: inherit; cursor: pointer; padding: 6px 8px; min-height: 2rem; opacity: 0.7; }
 .talk-copy:hover { opacity: 1; text-decoration: underline; }
@@ -136,7 +137,12 @@ if (root) {
       toEnd();
     });
     source.addEventListener("running", () => { mode(true); say("The forge is answering…"); });
-    source.addEventListener("done", () => { mode(false); say(""); source.close(); source = null; });
+    source.addEventListener("done", (e) => {
+      mode(false); say(""); source.close(); source = null;
+      const o = JSON.parse(e.data), c = root.querySelector("[data-context]");
+      for (const k of o.costs || []) { const li = document.getElementById(k.id); if (li && !li.querySelector(".talk-cost")) li.insertAdjacentHTML("beforeend", k.html); }
+      if (o.context && c) { c.textContent = o.context; c.hidden = false; }
+    });
     source.addEventListener("more", () => { source.close(); follow(); });
     source.addEventListener("drain", () => { source.close(); setTimeout(follow, 1000); });
     source.onerror = () => {

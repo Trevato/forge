@@ -98,6 +98,10 @@ export interface ClaudeOutcome {
    */
   readonly tokensIn: number;
   readonly tokensOut: number;
+  /** What the last assistant message read: the session's context at its end; 0 when none reported. */
+  readonly contextTokens: number;
+  /** The model's context window in tokens, from the result's `modelUsage`; 0 when it named none. */
+  readonly contextWindow: number;
   /** `completed`, `max_budget_reached`, `timeout`, `cancelled`, `error`, `exit <n>`. */
   readonly reason: string;
 }
@@ -283,6 +287,8 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
   let turns = 0;
   let tokensIn = 0;
   let tokensOut = 0;
+  let contextTokens = 0;
+  let contextWindow = 0;
   let reason = "";
   let ok = false;
   let sawResult = false;
@@ -366,19 +372,24 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
             input.onSaid({ kind: "tool", text: `${b["name"]} ${JSON.stringify(b["input"] ?? {})}` });
         }
       }
-      if (input.onUsage && typeof message === "object" && message !== null) {
+      if (typeof message === "object" && message !== null) {
         const m = message as Record<string, unknown>;
         if (typeof m["usage"] === "object" && m["usage"] !== null) {
           const key =
             typeof m["id"] === "string" ? m["id"] : `#${perMessage.size}`;
-          perMessage.set(key, tokensOf(m["usage"]));
-          let tokensIn = 0;
-          let tokensOut = 0;
-          for (const t of perMessage.values()) {
-            tokensIn += t.tokensIn;
-            tokensOut += t.tokensOut;
+          const used = tokensOf(m["usage"]);
+          // What the last message read is the context the session holds.
+          contextTokens = used.tokensIn;
+          perMessage.set(key, used);
+          if (input.onUsage) {
+            let tokensIn = 0;
+            let tokensOut = 0;
+            for (const t of perMessage.values()) {
+              tokensIn += t.tokensIn;
+              tokensOut += t.tokensOut;
+            }
+            input.onUsage({ tokensIn, tokensOut, costUsd: 0 });
           }
-          input.onUsage({ tokensIn, tokensOut, costUsd: 0 });
         }
       }
       return;
@@ -389,6 +400,7 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
       result = typeof e["result"] === "string" ? e["result"] : "";
       costUsd =
         typeof e["total_cost_usd"] === "number" ? e["total_cost_usd"] : 0;
+      contextWindow = windowOf(e["modelUsage"]);
       turns = typeof e["num_turns"] === "number" ? e["num_turns"] : 0;
       ({ tokensIn, tokensOut } = tokensOf(e["usage"]));
       input.onUsage?.({ tokensIn, tokensOut, costUsd });
@@ -487,6 +499,8 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
       turns,
       tokensIn,
       tokensOut,
+      contextTokens,
+      contextWindow,
       reason: why,
     };
   }
@@ -500,10 +514,12 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
       turns,
       tokensIn,
       tokensOut,
+      contextTokens,
+      contextWindow,
       reason: `exit ${code}`,
     };
   }
-  return { ok, sessionId, result, costUsd, turns, tokensIn, tokensOut, reason };
+  return { ok, sessionId, result, costUsd, turns, tokensIn, tokensOut, contextTokens, contextWindow, reason };
 }
 
 /**
@@ -520,6 +536,17 @@ export function reapGroup(pgid: number): void {
   } catch {
     // the group is empty: nothing was left behind
   }
+}
+
+/** The largest `contextWindow` a result's `modelUsage` names, 0 when none. */
+export function windowOf(modelUsage: unknown): number {
+  if (typeof modelUsage !== "object" || modelUsage === null) return 0;
+  let most = 0;
+  for (const v of Object.values(modelUsage)) {
+    const w = typeof v === "object" && v !== null ? (v as Record<string, unknown>)["contextWindow"] : undefined;
+    if (typeof w === "number" && Number.isFinite(w) && w > most) most = Math.floor(w);
+  }
+  return most;
 }
 
 /**

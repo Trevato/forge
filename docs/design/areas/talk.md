@@ -18,3 +18,5 @@
 - `.talk-copy` — a quiet text button that copies a message or a code block.
 - `.talk-suggest` — the starter questions on an empty chat; each fills the composer.
 - `.talk-jump` — "Latest" button, shown when you have scrolled up from the end.
+
+Under a reply, `.talk-cost` is one quiet line with the turn's dollars; above the log, `.talk-context` says how full the context is and, from 80 %, suggests a new conversation. Both are `small muted` text, no new colour.

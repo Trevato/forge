@@ -269,6 +269,8 @@ describe("the provider's reset time", () => {
         turns: 0,
         tokensIn: 0,
         tokensOut: 0,
+        contextTokens: 0,
+        contextWindow: 0,
         reason: "error_during_execution",
       }),
     ).toBe(true);

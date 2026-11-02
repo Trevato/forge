@@ -14,6 +14,7 @@
 import { TALK_WORDS, talk } from "../../actions/talk.ts";
 import { REFUSED, sayNo, sayYes, waitingConfirms } from "../../actions/conversation_confirms.ts";
 import { DEFAULT_PAGE, listTurns, MAX_PAGE, openConversation, turnsAfter, type Turn } from "../../core/conversations.ts";
+import { contextOf, contextText, dollars, turnCosts, type Context } from "../../core/conversation_cost.ts";
 import { WORDS_MAX } from "../../core/fence.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { ASKING } from "../../crew/conversation_confirm.ts";
@@ -76,8 +77,15 @@ const toolCard = (id: string, says: string, name: string, at: string): Html =>
 /** What an empty chat offers to start with; each is a link that fills the composer (`?q=`), so it works without the script. */
 const SUGGESTIONS = ["What needs my attention?", "What did the crew do today?", "Show me my apps"] as const;
 
+/** How full the context is, one quiet line above the log; always drawn so a finished run can fill it. */
+const contextLine = (c: Context | undefined): Html =>
+  html`<p class="talk-context small muted" data-context ${c === undefined ? html`hidden` : null}>${c === undefined ? "" : contextText(c)}</p>`;
+
+/** The cost line under a reply. */
+const costLine = (usd: number): Html => html`<p class="talk-cost small muted">${dollars(usd)} this turn</p>`;
+
 /** One turn as the page and the stream both draw it; `waiting` is the confirms still open. */
-export function turnHtml(turn: Turn, waiting: ReadonlySet<string>): Html {
+export function turnHtml(turn: Turn, waiting: ReadonlySet<string>, cost?: number): Html {
   const id = `t-${turn.id}`;
   if (turn.role === "person")
     return html`<li class="talk-turn talk-person" id="${id}">
@@ -88,6 +96,7 @@ export function turnHtml(turn: Turn, waiting: ReadonlySet<string>): Html {
     return html`<li class="talk-turn talk-agent" id="${id}">
       <div class="talk-body prose">${renderMarkdown(turn.text)}</div>
       ${meta("Forge", turn.createdAt)}
+      ${cost === undefined ? null : costLine(cost)}
     </li>`;
   const data = parse(turn.text);
   if (turn.role === "confirm") {
@@ -118,11 +127,14 @@ function talkPage(ctx: Ctx, before: string | undefined, prefill: string): Respon
   const turns = listed.ok ? listed.value : [];
   const waiting = new Set(waitingConfirms(ctx, user).map((w) => w.id));
   const running = clock.running(ctx.app, user.id);
+  const costs = turnCosts(ctx.app.db, conversation.id);
+  const context = contextOf(ctx.app.db, conversation.id);
   // Paging back, the log ends before the newest turn: it does not follow.
   const last = turns.at(-1)?.id ?? "";
   const body = html`<div class="page-head"><h1>Talk</h1></div>
     <div class="talk" data-talk data-user="${user.id}" data-paged="${before === undefined ? "0" : "1"}" data-running="${running && before === undefined ? "1" : "0"}">
       <div>
+        ${contextLine(context)}
         ${turns.length === DEFAULT_PAGE && turns[0] !== undefined
           ? html`<p class="talk-more small"><a href="${HERE}?before=${turns[0].id}">Earlier</a></p>`
           : null}
@@ -131,7 +143,7 @@ function talkPage(ctx: Ctx, before: string | undefined, prefill: string): Respon
           ${turns.length === 0
             ? html`<li class="muted talk-turn">Ask the forge anything, or tell it what to change. It acts as you, with your permissions, and asks before anything hard to undo.
                 <span class="talk-suggest">${SUGGESTIONS.map((q) => html`<a class="btn" href="${HERE}?q=${encodeURIComponent(q)}" data-suggest="${q}">${q}</a>`)}</span></li>`
-            : turns.map((t) => turnHtml(t, waiting))}
+            : turns.map((t) => turnHtml(t, waiting, costs.get(t.id)))}
         </ol>
         <div id="end"></div>
       </div>
@@ -226,7 +238,10 @@ export function talkStream(ctx: Ctx): Response {
       }
       if (fresh.length >= MAX_PAGE) return;
       if (!running) {
-        emit("done", {});
+        // The run stored its figures before it stopped running: send them with the end.
+        const costs = [...turnCosts(app.db, conversation.id)].slice(-5).map(([id, usd]) => ({ id: `t-${id}`, html: costLine(usd).text }));
+        const context = contextOf(app.db, conversation.id);
+        emit("done", { costs, context: context === undefined ? "" : contextText(context) });
         close();
       } else if (Date.now() - started >= clock.streamMs) {
         emit("more", {});

@@ -19,6 +19,7 @@ import { mintViaToken } from "../src/core/via_token.ts";
 import { TALK_PER_MINUTE } from "../src/actions/talk.ts";
 import { turnsLimit } from "../src/http/api/conversation_talk.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { appendTurn, openConversation } from "../src/core/conversations.ts";
 import { forgeSshSession } from "../src/tui/ssh.ts";
 import { isStop, parseTalkCommand } from "../src/tui/ssh-talk.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -243,6 +244,22 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Heard.","t
     expect((await exec("talk   ")).code).toBe(1);
     expect(await persons()).toEqual(["by api", "by mcp", "by ssh $HOME"]);
   });
+
+  test("ssh talk prints the last turn's cost and the context share from the run's own record", async () => {
+    const id = app.db.query<{ id: string }, []>("SELECT id FROM user WHERE username = 'alice'").get()!.id;
+    const conversation = openConversation(app.db, id);
+    const reply = appendTurn(app.db, id, conversation.id, { role: "agent", text: "answered" });
+    if (!reply.ok) throw new Error(reply.error);
+    const at = new Date(Date.now() - 1000).toISOString();
+    app.db
+      .query("INSERT INTO conversation_run (id, conversation_id, user_id, prompt, state, cost_usd, context_tokens, context_window, started_at, finished_at) VALUES ('rc1',?1,?2,'x','ok',0.5,500000,1000000,?3,?4)")
+      .run(conversation.id, id, at, new Date(Date.now() + 1000).toISOString());
+    const r = await exec("talk and the figures");
+    expect(r.out).toContain("last turn $0.50");
+    expect(r.out).toContain("Context 50% full (500k of 1M tokens)");
+    app.db.query("DELETE FROM conversation_run WHERE id = 'rc1'").run();
+  });
+
 
   test("ssh talk /stop stops instead of speaking; with nothing running it says so (#8818)", async () => {
     expect(isStop("/stop")).toBe(true);

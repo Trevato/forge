@@ -192,7 +192,7 @@ describe("the page", () => {
   test("the page's own bytes are held: stylesheet and script stay small", async () => {
     const { talkCss, talkJs } = await import("../src/web/pages/talk_client.ts");
     expect(Buffer.byteLength(talkCss)).toBeLessThan(3_500);
-    expect(Buffer.byteLength(talkJs)).toBeLessThan(6_500);
+    expect(Buffer.byteLength(talkJs)).toBeLessThan(7_400);
     say(alice, "agent", "```ts\nlet x = 1;\n```");
     const page = await get("/talk", alice);
     const size = (await page.arrayBuffer()).byteLength;
@@ -522,5 +522,41 @@ describe("a long stream", () => {
       clock.streamMs = 40_000;
       await new Promise((r) => setTimeout(r, 300));
     }
+  });
+});
+
+describe("cost and context (#8822)", () => {
+  test("a run's stored usage gives the turn's cost under the reply and the context share in the header", async () => {
+    const erin = await createUser(app.db, { origin: "seed", trusted: true, username: "erin", email: "erin@forge.local", password: "a-good-passphrase" });
+    if (!erin.ok) throw new Error(erin.error);
+    promote(app.db, erin.value);
+    const conversation = openConversation(app.db, erin.value.id);
+    const before = await (await get("/talk", erin.value)).text();
+    expect(before).not.toContain("Context ");
+    say(erin.value, "person", "hello");
+    const reply = say(erin.value, "agent", "two");
+    if (!reply.ok) throw new Error(reply.error);
+    const at = new Date(Date.now() - 1000).toISOString();
+    app.db
+      .query("INSERT INTO conversation_run (id, conversation_id, user_id, prompt, state, cost_usd, tokens_in, tokens_out, context_tokens, context_window, started_at, finished_at) VALUES ('r1',?1,?2,'hello','ok',?3,?4,?5,?6,200000,?7,?8)")
+      .run(conversation.id, erin.value.id, 0.1234, 170030, 14, 170020, at, new Date(Date.now() + 1000).toISOString());
+    const html = await (await get("/talk", erin.value)).text();
+    expect(html).toContain("$0.12 this turn");
+    expect(html).toContain("Context 85% full (170k of 200k tokens)");
+    expect(html).toContain("A new conversation answers faster");
+    // A longer window is read from the run, not assumed.
+    app.db.query("UPDATE conversation_run SET context_window = 1000000").run();
+    expect(await (await get("/talk", erin.value)).text()).toContain("Context 17% full (170k of 1M tokens)");
+    app.db.query("UPDATE conversation_run SET context_window = 200000").run();
+    // The stream's end carries both, so a reply that streamed in gets them without a reload.
+    const done = (await frames("/talk/stream?after=", erin.value)).find((f) => f.event === "done");
+    const sent = JSON.parse(done?.data ?? "{}");
+    expect(sent.costs[0].html).toContain("$0.12 this turn");
+    expect(sent.context).toContain("Context 85% full");
+    // Under 80 %: no suggestion.
+    app.db.query("UPDATE conversation_run SET context_tokens = 40000").run();
+    const calm = await (await get("/talk", erin.value)).text();
+    expect(calm).toContain("Context 20% full");
+    expect(calm).not.toContain("A new conversation answers faster");
   });
 });

@@ -374,47 +374,51 @@ function begin(
       app.log.warn("conversation turn failed", { error: String(error) });
     } finally {
       unlisten();
+    }
+    // The turn is over for /talk only once its answer and its figures are stored.
+    try {
+      const cost = outcome?.costUsd ?? 0;
+      // Stopped for a restart: the row stays `running` for the next boot to
+      // find, keeping what the session had reported (Claude Code names the
+      // cost only in its result, so a cut turn keeps its tokens and the cost
+      // it had). Its token is revoked at boot (`resumeInterrupted`).
+      if (options.signal.aborted) {
+        app.db.query("UPDATE conversation_run SET tokens_in = ?2, tokens_out = ?3, cost_usd = ?4, context_tokens = ?5, context_window = ?6 WHERE id = ?1").run(runId, outcome?.tokensIn ?? 0, outcome?.tokensOut ?? 0, cost, outcome?.contextTokens ?? 0, outcome?.contextWindow ?? 0);
+        app.db.query("UPDATE subscription SET spent_usd = spent_usd + ?2 WHERE id = ?1").run(subscriptionId, cost);
+        return;
+      }
+      app.db.query("DELETE FROM token WHERE id = ?1").run(minted.value.id);
+      if (stopper.signal.aborted) {
+        // A write held after the stop was asked is cancelled too.
+        cancelHeld(app.db, via);
+        put("agent", STOPPED_LINE);
+        app.db
+          .query("UPDATE conversation_run SET state = 'failed', tokens_in = ?2, tokens_out = ?3, cost_usd = ?4, finished_at = ?5, context_tokens = ?6, context_window = ?7 WHERE id = ?1")
+          .run(runId, outcome?.tokensIn ?? 0, outcome?.tokensOut ?? 0, cost, new Date().toISOString(), outcome?.contextTokens ?? 0, outcome?.contextWindow ?? 0);
+        app.db.query("UPDATE subscription SET spent_usd = spent_usd + ?2 WHERE id = ?1").run(subscriptionId, cost);
+        return;
+      }
+      const answer = outcome?.result ?? "";
+      if (outcome !== undefined && isRateLimited(outcome)) {
+        // The provider's words are not shown: the streamed copy of them goes.
+        const first = outcome.result.split("\n").find((l) => l.trim() !== "")?.trim() ?? "";
+        for (const turn of streamed)
+          if (turn.text === outcome.result || (first !== "" && turn.text.includes(first))) removeTurn(app.db, userId, conversation.id, turn.id);
+        put("agent", limitLine(app, picked, outcome.result));
+      }
+      else if (answer.trim() !== "" && answer !== lastText) put("agent", answer);
+      else if (answer.trim() === "" && lastText === "") put("agent", "I could not answer that just now.");
+      app.db
+        .query(
+          "UPDATE conversation_run SET state = ?2, tokens_in = ?3, tokens_out = ?4, cost_usd = ?5, finished_at = ?6, context_tokens = ?7, context_window = ?8 WHERE id = ?1",
+        )
+        .run(runId, outcome?.ok ? "ok" : "failed", outcome?.tokensIn ?? 0, outcome?.tokensOut ?? 0, cost, new Date().toISOString(), outcome?.contextTokens ?? 0, outcome?.contextWindow ?? 0);
+      // Against the account's lifetime budget, like a run's cost (`subscription.spent_usd`).
+      app.db.query("UPDATE subscription SET spent_usd = spent_usd + ?2 WHERE id = ?1").run(subscriptionId, cost);
+    } finally {
       if (live.get(conversation.id) === runId) live.delete(conversation.id);
       if (stoppers.get(conversation.id)?.runId === runId) stoppers.delete(conversation.id);
     }
-    const cost = outcome?.costUsd ?? 0;
-    // Stopped for a restart: the row stays `running` for the next boot to
-    // find, keeping what the session had reported (Claude Code names the
-    // cost only in its result, so a cut turn keeps its tokens and the cost
-    // it had). Its token is revoked at boot (`resumeInterrupted`).
-    if (options.signal.aborted) {
-      app.db.query("UPDATE conversation_run SET tokens_in = ?2, tokens_out = ?3, cost_usd = ?4 WHERE id = ?1").run(runId, outcome?.tokensIn ?? 0, outcome?.tokensOut ?? 0, cost);
-      app.db.query("UPDATE subscription SET spent_usd = spent_usd + ?2 WHERE id = ?1").run(subscriptionId, cost);
-      return;
-    }
-    app.db.query("DELETE FROM token WHERE id = ?1").run(minted.value.id);
-    if (stopper.signal.aborted) {
-      // A write held after the stop was asked is cancelled too.
-      cancelHeld(app.db, via);
-      put("agent", STOPPED_LINE);
-      app.db
-        .query("UPDATE conversation_run SET state = 'failed', tokens_in = ?2, tokens_out = ?3, cost_usd = ?4, finished_at = ?5 WHERE id = ?1")
-        .run(runId, outcome?.tokensIn ?? 0, outcome?.tokensOut ?? 0, cost, new Date().toISOString());
-      app.db.query("UPDATE subscription SET spent_usd = spent_usd + ?2 WHERE id = ?1").run(subscriptionId, cost);
-      return;
-    }
-    const answer = outcome?.result ?? "";
-    if (outcome !== undefined && isRateLimited(outcome)) {
-      // The provider's words are not shown: the streamed copy of them goes.
-      const first = outcome.result.split("\n").find((l) => l.trim() !== "")?.trim() ?? "";
-      for (const turn of streamed)
-        if (turn.text === outcome.result || (first !== "" && turn.text.includes(first))) removeTurn(app.db, userId, conversation.id, turn.id);
-      put("agent", limitLine(app, picked, outcome.result));
-    }
-    else if (answer.trim() !== "" && answer !== lastText) put("agent", answer);
-    else if (answer.trim() === "" && lastText === "") put("agent", "I could not answer that just now.");
-    app.db
-      .query(
-        "UPDATE conversation_run SET state = ?2, tokens_in = ?3, tokens_out = ?4, cost_usd = ?5, finished_at = ?6 WHERE id = ?1",
-      )
-      .run(runId, outcome?.ok ? "ok" : "failed", outcome?.tokensIn ?? 0, outcome?.tokensOut ?? 0, cost, new Date().toISOString());
-    // Against the account's lifetime budget, like a run's cost (`subscription.spent_usd`).
-    app.db.query("UPDATE subscription SET spent_usd = spent_usd + ?2 WHERE id = ?1").run(subscriptionId, cost);
   })();
   return ok(turn);
 }
