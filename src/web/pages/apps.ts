@@ -14,13 +14,15 @@
 
 import { storageLimitMessage } from "../../core/storage.ts";
 import { repositoryLimitMessage } from "../../actions/repos.ts";
-import { REPO_INIT_FAILED, REPO_NAME_RULES } from "../../actions/repo_words.ts";
 import { appLimitWords } from "../../actions/app_limit.ts";
-import { NO_SUCH_AGENT } from "../../actions/crew_limit_words.ts";
 import { getUserByName } from "../../core/users.ts";
 import {
+  NEW_APP_ERRORS,
+  NO_NAME_ERROR,
   appView,
   newApp,
+  newAppFromSentence,
+  type NewAppResult,
   openEnvUrl,
   redeployEnv,
   stopEnv,
@@ -28,7 +30,7 @@ import {
 } from "../../actions/apps.ts";
 import { listAllAgents } from "../../actions/crew.ts";
 import { planningAvailable } from "../../crew/plan.ts";
-import { appNameJs, deriveAppName } from "./apps-name.ts";
+import { appNameJs } from "./apps-name.ts";
 import { STARTERS, starterFromQuery, starterHref } from "./apps-starters.ts";
 import { previewEnv, type EnvName } from "../../apps/data.ts";
 import { envRefusalText, redeployedText, stoppedText } from "../../actions/env_words.ts";
@@ -443,26 +445,6 @@ export function newAppPage(ctx: Ctx): Response {
   return response;
 }
 
-/** Nothing in the sentence a slug can carry: punctuation only, or a script `[a-z0-9]` cannot. */
-const NO_NAME_ERROR =
-  "That doesn't leave anything to make a name from — type one below.";
-
-/** How many suffixed names (`x-2`, `x-3`, …) a derived name will try before giving up. */
-const MAX_NAME_ATTEMPTS = 30;
-
-const NEW_APP_ERRORS: Record<string, string> = {
-  name_taken: "That owner already has a repository by that name.",
-  invalid_name: REPO_NAME_RULES,
-  git_init_failed: REPO_INIT_FAILED,
-  invalid_slug:
-    "That name makes no usable hostname — start it with a letter or digit.",
-  slug_taken:
-    "Another app already answers to that hostname. Pick another name.",
-  already_app: "That repository is already an app.",
-  scaffold_failed: "The starter app could not be committed.",
-  no_such_agent: NO_SUCH_AGENT,
-};
-
 // POST /apps/new
 export async function newAppSubmit(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return signInFirst(ctx);
@@ -482,8 +464,30 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
   // names the app — and the server derives that name itself (never trusting
   // whatever the field carried in): the field is only a client-side preview.
   const explicitName = values.name.trim();
-  const base = explicitName === "" ? deriveAppName(values.description) : explicitName;
-  if (base === undefined) {
+  const rest = {
+    owner: values.owner,
+    visibility: values.visibility === "public" ? "public" : "private",
+    ...(pickAgent
+      ? { pickAgent: true }
+      : values.agent === ""
+        ? {}
+        : { agent: values.agent }),
+  } as const;
+  const made: { ok: true; value: NewAppResult } | { ok: false; error: string } =
+    explicitName === ""
+      ? await newAppFromSentence(
+          ctx.app,
+          ctx.auth.user,
+          { ...rest, sentence: values.description },
+          phase,
+        ).then((r) => (r.ok ? { ok: true as const, value: r } : { ok: false as const, error: r.code }))
+      : await newApp(
+          ctx.app,
+          ctx.auth.user,
+          { ...rest, description: values.description, name: explicitName },
+          phase,
+        );
+  if (!made.ok && made.error === "no_name") {
     return page(
       {
         ctx,
@@ -493,29 +497,6 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
       },
       422,
     );
-  }
-  const rest = {
-    owner: values.owner,
-    description: values.description,
-    visibility: values.visibility === "public" ? "public" : "private",
-    ...(pickAgent
-      ? { pickAgent: true }
-      : values.agent === ""
-        ? {}
-        : { agent: values.agent }),
-  } as const;
-  let made = await newApp(ctx.app, ctx.auth.user, { ...rest, name: base }, phase);
-  // A derived name that collides tries `base-2`, `base-3`, … — the same
-  // `name_taken` check an explicit name gets, just run more than once.
-  for (
-    let n = 2;
-    explicitName === "" && !made.ok && made.error === "name_taken" && n <= MAX_NAME_ATTEMPTS;
-    n++
-  ) {
-    made = await newApp(ctx.app, ctx.auth.user, {
-      ...rest,
-      name: `${base}-${n}`,
-    }, phase);
   }
   if (!made.ok) {
     if (made.error === "forbidden_owner" || made.error === "unauthorized")
