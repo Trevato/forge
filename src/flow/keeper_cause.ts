@@ -17,12 +17,14 @@ import { atCeiling } from "../crew/dispatch.ts";
 import { heldNow } from "../crew/held.ts";
 import { pace } from "../crew/pacing.ts";
 import { readPile } from "./pile.ts";
+import { readStaleReds } from "./stale_reds.ts";
 
 export const KEEPER_CAUSES = [
   "ceiling",
   "usage",
   "unassigned",
   "empty_pillar",
+  "stale_reds",
   "red_checks",
   "stale_pile",
   "capacity",
@@ -51,6 +53,8 @@ export interface RepoFacts {
 export interface KeeperFacts {
   readonly repos: readonly RepoFacts[];
   readonly red: number;
+  /** Red pulls with no run for 30 min and no person holding them. */
+  readonly staleReds?: number;
   readonly stale: number;
 }
 
@@ -65,6 +69,7 @@ export interface Found {
 /** The pile that is not moving counts as stale from this many pulls; red from this many. */
 export const STALE_PULLS = 20;
 export const RED_PULLS = 5;
+export const STALE_REDS = 3;
 
 const hhmm = (iso: string): string => `${iso.slice(11, 16)} UTC`;
 
@@ -99,6 +104,10 @@ export function pickCause(f: KeeperFacts, skip: ReadonlySet<KeeperCause> = new S
   const first = f.repos[0];
   if (first && f.repos.every((r) => r.startable === 0)) {
     const found = hit({ cause: "empty_pillar", move: "file", repoId: first.repoId, says: "Nothing is ready: no pillar has an issue a builder can start." });
+    if (found) return found;
+  }
+  if (first && (f.staleReds ?? 0) >= STALE_REDS) {
+    const found = hit({ cause: "stale_reds", move: "say", repoId: first.repoId, says: `${f.staleReds} open crew pulls are red and no run is working them: the sweep reworks, parks or closes them a few a tick.` });
     if (found) return found;
   }
   if (first && f.red >= RED_PULLS) {
@@ -154,5 +163,5 @@ export function readKeeperFacts(app: App, now: Date): KeeperFacts {
     });
   }
   const pile = readPile(db);
-  return { repos, red: pile.red, stale: pile.awaitingReview + pile.changesAsked + pile.approved };
+  return { repos, red: pile.red, staleReds: readStaleReds(db, now).count, stale: pile.awaitingReview + pile.changesAsked + pile.approved };
 }
