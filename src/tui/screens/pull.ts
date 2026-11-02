@@ -46,6 +46,7 @@ import { revertPull } from "../../actions/revert.ts";
 import { takeBackWords } from "../../actions/revert_words.ts";
 import { openEnvUrl } from "../../actions/apps.ts";
 import { listRepoRuns, mayReadRunLog } from "../../actions/runs.ts";
+import { pullLooksScreen } from "./pulllooks.ts";
 import { previewEnv } from "../../apps/data.ts";
 import { findingsWords, pullPreviewFindings } from "../../core/preview_findings.ts";
 import {
@@ -936,6 +937,7 @@ export function pullScreen(
           ? [binding(["O"], "open the preview")]
           : []),
         ...(isApp ? [binding(["P"], "open production")] : []),
+        ...(isApp ? [binding(["I"], "looks")] : []),
         ...(takeBackKey ? [binding(["T"], "take it back")] : []),
         ...(isApp && preview !== undefined && !takeBackKey
           ? [binding(["T"], "the preview's terminal")]
@@ -1178,6 +1180,11 @@ export function pullScreen(
       }
       if (e.key === "O" && isApp && preview !== undefined) {
         openPreview();
+        return true;
+      }
+      if (e.key === "I" && isApp && repo !== undefined && detail !== undefined) {
+        const pull = getPull(f.db, repo.id, number);
+        if (pull !== undefined) ctx.push(pullLooksScreen(f, ctx, repo, pull));
         return true;
       }
       if (e.key === "P" && isApp) {

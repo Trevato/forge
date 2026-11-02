@@ -7,7 +7,6 @@
  * long as anyone likes and is never the wrong commit's.
  */
 
-import { sealedPreview } from "../../core/sealed.ts";
 import { closeSync, existsSync, openSync, readSync } from "node:fs";
 import { jpegHeader } from "../../design/image/jpeg.ts";
 import { isPng, pngHeader } from "../../design/image/png.ts";
@@ -27,10 +26,10 @@ import {
   lookVersion,
 } from "../../core/looks.ts";
 import type { Pull } from "../../core/pulls.ts";
-import { canEnterApp, canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
+import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFound } from "../../http/respond.ts";
-import { keepLook } from "../../looks/service.ts";
+import { mayFetchLook as mayFetchLookFor } from "../../looks/readable.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { loadRepo, repoBase } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
@@ -106,32 +105,13 @@ export function lookImage(ctx: Ctx): Response {
   return new Response(Bun.file(path), { headers });
 }
 
-/**
- * Who may fetch a picture (#727, #738). Writers, all of them. Anyone else
- * only what was taken as nobody, and only of an app they may open (anyone
- * for a public app, a writer, the crew or a named person for a private
- * one): the thumb always, a public app's phone and desktop too. A picture
- * taken as the owner, an admin, stays the writers'; so does a thumb from
- * before thumbs were taken as nobody (`keepLook`), until it is retaken.
- */
-export function mayFetchLook(
+/** `mayFetchLook` for a request (`looks/readable.ts`). */
+export const mayFetchLook = (
   ctx: Ctx,
   repo: Repo,
   record: AppRecord,
   look: Look,
-): boolean {
-  const user = ctx.auth.user;
-  if (canSeeOwnerFacts(ctx.app.db, repo, user)) return true;
-  // A sealed pull's pictures are the writers' (`core/sealed.ts`).
-  if (sealedPreview(ctx.app.db, repo.id, look.env)) return false;
-  // A private app's pictures are for whoever may enter it (#620, #752): a
-  // person it names sees them; a reader who is not named does not.
-  if (!canEnterApp(ctx.app.db, repo, record, user)) return false;
-  // Phone and desktop are a reader's only when taken as nobody — a public
-  // app's, since #738; one taken as the owner stays the writers' (#727).
-  if (look.kind !== "thumb") return look.takenAs === "nobody";
-  return keepLook(ctx.app.config.dataDir, look);
-}
+): boolean => mayFetchLookFor(ctx.app, repo, record, look, ctx.auth.user);
 
 /**
  * The Look card on a pull: phone and desktop side by side, the commit

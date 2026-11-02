@@ -9,16 +9,14 @@ import { nextOfPull } from "../../../flow/next_actor.ts";
 import { stepOfPull } from "../../../flow/path.ts";
 import { appView } from "../../../actions/apps.ts";
 import { countThread, EMBEDDED_COMMENTS, listComments } from "../../../core/issues.ts";
+import { pullLooks } from "../../../looks/readable.ts";
 import { isCrew } from "../../../core/agents.ts";
 import { markReaders } from "../../../crew/direct.ts";
-import { getAppByRepo } from "../../../core/apps.ts";
-import { looksForEnv, lookUrl } from "../../../core/looks.ts";
-import { canWrite } from "../../../core/repos.ts";
 import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
 
 export const tool: Tool = {
   name: "pull",
-  doc: "`{ repo, number }`: a pull's title, state, head and base, and for an open pull whether it merges into the base's current head (`mergeable`) and the paths that stop it (`conflicts`), and `next: { who, why }` (open only; who acts next: builder, reviewer, queue or person), `step: { step, why, done }` (check, review, land or live; null once closed unlanded), and `comments` (the newest 50: author, body, at, `untrusted` on an outsider's), `commentsTotal` and `commentsNext` (older: `GET …/issues/:number/comments?cursor=`), and `check: { state, baseOid }`: the latest check's state and the base tip it was merged with (empty when it merged nothing); `mergeable` and `conflicts` are the same fields as `GET …/pulls/:number`, `check` is `state` and `run.baseOid` from `GET …/pulls/:number/checks`; `looks` (newest first, for writers: `[{ id, width, says, by, commit, url, at }]`, the pictures taken or attached for the pull's preview; `[]` when there are none), draws the `ui://forge/pull` card: `#N title`, state with check and conflicts while open, `head → base` linked to the pull, and the preview link when the pull has an environment",
+  doc: "`{ repo, number }`: a pull's title, state, head and base, and for an open pull whether it merges into the base's current head (`mergeable`) and the paths that stop it (`conflicts`), and `next: { who, why }` (open only; who acts next: builder, reviewer, queue or person), `step: { step, why, done }` (check, review, land or live; null once closed unlanded), and `comments` (the newest 50: author, body, at, `untrusted` on an outsider's), `commentsTotal` and `commentsNext` (older: `GET …/issues/:number/comments?cursor=`), and `looks` (newest first: `{ id, width, says, by, commit, url, at }`, the same as `GET …/pulls/:number/looks`), and `check: { state, baseOid }`: the latest check's state and the base tip it was merged with (empty when it merged nothing); `mergeable` and `conflicts` are the same fields as `GET …/pulls/:number`, `check` is `state` and `run.baseOid` from `GET …/pulls/:number/checks`; draws the `ui://forge/pull` card: `#N title`, state with check and conflicts while open, `head → base` linked to the pull, and the preview link when the pull has an environment",
   description:
     "A pull: title, state, head, base; open: `mergeable`, `conflicts`, `checkStale`, `check`.",
   inputSchema: {
@@ -53,25 +51,7 @@ export const tool: Tool = {
     const rows = listComments(db, pull.id, { newest: true, limit: EMBEDDED_COMMENTS });
     const comments = marking ? markReaders(db, repo, rows) : rows;
     const total = countThread(db, pull.id);
-    // The pictures are the writers' (as `mayFetchLook` keeps them), so
-    // anyone else sees none.
-    const record = canWrite(db, repo, user) ? getAppByRepo(db, repo.id) : undefined;
-    const looks =
-      record === undefined
-        ? []
-        : looksForEnv(db, record.id, previewEnv(pull.number))
-            .filter((l) => l.error === null)
-            .map((l) => ({
-              id: l.id,
-              width: l.kind,
-              says: l.note ?? "",
-              by: l.attachedBy,
-              commit: l.commitOid,
-              url: lookUrl(`/${repo.ownerName}/${repo.name}`, l),
-              at: l.createdAt,
-            }));
     const answer = good({
-      looks,
       comments: comments.map((c) => ({
         author: c.authorName,
         body: c.body,
@@ -80,6 +60,7 @@ export const tool: Tool = {
       })),
       commentsTotal: total,
       commentsNext: comments.length > 0 && comments.length < total ? comments[0]!.id : null,
+      looks: pullLooks(ctx.app, repo, pull, user),
       number: pull.number,
       title: pull.title,
       state: pull.mergedAt !== null ? "merged" : pull.state,

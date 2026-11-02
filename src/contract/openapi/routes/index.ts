@@ -120,6 +120,7 @@ export { route as getApiV1ReposOwnerNamePrompts } from "./getApiV1ReposOwnerName
 export { route as getApiV1ReposOwnerNamePulls } from "./getApiV1ReposOwnerNamePulls.ts";
 export { route as getApiV1ReposOwnerNamePullsNumber } from "./getApiV1ReposOwnerNamePullsNumber.ts";
 export { route as getApiV1ReposOwnerNamePullsNumberChecks } from "./getApiV1ReposOwnerNamePullsNumberChecks.ts";
+export { route as getApiV1ReposOwnerNamePullsNumberLooks } from "./getApiV1ReposOwnerNamePullsNumberLooks.ts";
 export { route as getApiV1ReposOwnerNamePullsNumberReviewStates } from "./getApiV1ReposOwnerNamePullsNumberReviewStates.ts";
 export { route as getApiV1ReposOwnerNamePullsNumberReviews } from "./getApiV1ReposOwnerNamePullsNumberReviews.ts";
 export { route as getApiV1ReposOwnerNamePullsNumberThreads } from "./getApiV1ReposOwnerNamePullsNumberThreads.ts";

@@ -92,6 +92,7 @@ import {
 } from "../actions/pulls.ts";
 import { attachLook } from "../actions/attach_look.ts";
 import { lookUrl } from "../core/looks.ts";
+import { pullLooks } from "../looks/readable.ts";
 import { holdPull, releasePull } from "../actions/holds.ts";
 import { getHold, type Hold } from "../core/holds.ts";
 import { watchMilestone } from "../actions/watches.ts";
@@ -2629,6 +2630,19 @@ export function apiRoutes(router: Router<Handler>): void {
         },
         201,
       );
+    },
+  );
+
+  // A pull's looks, newest first, from its own preview environment and only
+  // the ones this reader may fetch as a picture (`looks/readable.ts`).
+  router.add(
+    "GET",
+    "/api/v1/repos/:owner/:name/pulls/:number/looks",
+    (ctx) => {
+      const found = loadPull(ctx);
+      if ("error" in found) return found.error;
+      const items = pullLooks(ctx.app, found.repo, found.pull, ctx.auth.user);
+      return json({ items });
     },
   );
 
