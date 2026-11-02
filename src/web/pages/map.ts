@@ -1392,26 +1392,31 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
   const db = ctx.app.db;
   const studio = studioRecord(ctx, repo) !== undefined;
   const showDone = ctx.url.searchParams.get("done") === "1";
-  // The read: graph, marks and pillars, one phase; `render` is the page's own.
-  const { shown, graph, ready, blocked, critical, placed, marks, readySet, counts, pillars, ask } =
-    timePhase(ctx.request, "map", () => {
-      const graph = repoGraph(db, repo.id, {
-        ...sealedScope(db, repo, ctx.auth.user),
-      });
-      const ready = readyNow(graph);
-      const blocked = blockedOn(graph);
-      const critical = criticalPath(graph);
-      const shown = showDone ? graph : openOnly(graph);
-      const placed = cachedLayout(shown, layout);
-      const marks = marksFor(db, repo.id, graph, listActiveRuns(db, [repo.id]));
-      const readySet = new Set(ready.map((r) => r.issue.id));
-      const counts = countWords(
-        graph.issues.map((i) => wordFor(i, readySet, marks)),
-      );
-      const pillars = pillarView(db, repo);
-      const ask = askToLiveFor(ctx.app, repo, pillars, ctx.auth.user);
-      return { shown, graph, ready, blocked, critical, placed, marks, readySet, counts, pillars, ask };
-    });
+  // The read, one Server-Timing phase per step (#8381); `render` is the page's own.
+  const rq = ctx.request;
+  const reading = performance.now();
+  const graph = timePhase(rq, "map-graph", () =>
+    repoGraph(db, repo.id, { ...sealedScope(db, repo, ctx.auth.user), lean: true }),
+  );
+  const ready = timePhase(rq, "map-ready", () => readyNow(graph));
+  const blocked = timePhase(rq, "map-blocked", () => blockedOn(graph));
+  const critical = timePhase(rq, "map-critical", () => criticalPath(graph));
+  const shown = timePhase(rq, "map-shown", () => (showDone ? graph : openOnly(graph)));
+  const placed = timePhase(rq, "map-layout", () => cachedLayout(shown, layout));
+  const marks = timePhase(rq, "map-marks", () =>
+    marksFor(db, repo.id, graph, listActiveRuns(db, [repo.id])),
+  );
+  const { readySet, counts } = timePhase(rq, "map-words", () => {
+    const readySet = new Set(ready.map((r) => r.issue.id));
+    return { readySet, counts: countWords(graph.issues.map((i) => wordFor(i, readySet, marks))) };
+  });
+  const pillars = timePhase(rq, "map-pillars", () => pillarView(db, repo));
+  const ask = timePhase(rq, "map-ask", () =>
+    askToLiveFor(ctx.app, repo, pillars, ctx.auth.user),
+  );
+  // The ten named steps above replace the old single `map` phase; `map` is
+  // still noted, by hand, as their total, for readers of the header.
+  notePhase(rq, "map", performance.now() - reading);
   const rendering = performance.now();
   const body = html`${repoHeader(ctx, repo, "map")}
     <div class="page-head mt">
