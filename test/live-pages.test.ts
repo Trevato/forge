@@ -170,6 +170,14 @@ describe("live browsing pages", () => {
     expect(liveRegionsJs).toContain("data-busy");
   });
 
+  test("the whole page is refetched at most once per 30 s, however many events arrive", async () => {
+    const { liveRegionsJs } = await import("../src/web/client.ts");
+    expect(liveRegionsJs).toContain("var PAGE_GAP = 30000;");
+    const refresh = liveRegionsJs.slice(liveRegionsJs.indexOf("function refresh("));
+    expect(refresh).toContain("src === location.href && last - lastPage < PAGE_GAP");
+    expect(refresh.indexOf("PAGE_GAP")).toBeLessThan(refresh.indexOf("pull(src"));
+  });
+
   test("a live region never swaps out from under ticked boxes", async () => {
     const { liveRegionsJs } = await import("../src/web/client.ts");
     expect(liveRegionsJs).toContain("input[type=checkbox]:checked");
