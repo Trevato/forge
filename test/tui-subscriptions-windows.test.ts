@@ -17,7 +17,7 @@ import { id } from "../src/kernel/id.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
-import { settleApp, settleUntil } from "./helpers/tui.ts";
+import { settleApp, settlePalette, settleUntil } from "./helpers/tui.ts";
 
 quietLogs();
 
@@ -88,6 +88,9 @@ describe("windows on the terminal's subscriptions screen", () => {
     key("k", true);
     for (const ch of "Crew subscriptions") key(ch);
     await settleUntil(app, "each account", { timeoutMs: 4_000 });
+    // Typing in the palette arms a 120ms and a 400ms search that Enter does not cancel;
+    // left to fire later they land in a test's counted window (#8278).
+    await settlePalette(app);
     key("enter");
     await settleUntil(app, "w wakes", { timeoutMs: 4_000 });
     return {
