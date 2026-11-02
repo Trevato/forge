@@ -88,6 +88,8 @@ export interface Screen {
   load?(signal: AbortSignal): Promise<void>;
   /** Palette rows only this screen offers, listed after the app's own. */
   commands?(): Command[];
+  /** The local repository this screen shows, so `leaveRepo` can find it when it is deleted. */
+  readonly repoId?: string;
 }
 
 /**
@@ -139,6 +141,11 @@ export interface Ctx {
   push(screen: Screen): void;
   pop(): void;
   replace(screen: Screen): void;
+  /**
+   * A repository is gone: drop its lowest screen and everything above it, down
+   * to the one beneath (never the root), so nothing reads the deleted row.
+   */
+  leaveRepo(repoId: string): void;
   invalidate(): void;
   toast(text: string, tone?: Tone): void;
   /** Where the terminal caret belongs this frame, if anywhere. */
@@ -395,6 +402,7 @@ export class App {
       push: (s) => app.push(s),
       pop: () => app.pop(),
       replace: (s) => app.replace(s),
+      leaveRepo: (id) => app.leaveRepo(id),
       invalidate: () => app.invalidate(),
       toast: (text, tone) => app.toast(text, tone),
       track: (work) => app.track(work),
@@ -465,6 +473,13 @@ export class App {
     // The cancellation Bubble Tea's commands cannot do: popping a screen
     // aborts whatever it had in flight, and nothing lands on a dead screen.
     this.stack.pop()?.abort.abort();
+    this.invalidate();
+  }
+
+  leaveRepo(repoId: string): void {
+    const at = this.stack.findIndex((e) => e.screen.repoId === repoId);
+    if (at < 0) return;
+    for (const e of this.stack.splice(Math.max(at, 1))) e.abort.abort();
     this.invalidate();
   }
 
