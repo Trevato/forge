@@ -71,30 +71,30 @@ describe("findings are grouped by what they ask for", () => {
 });
 
 describe("a finding repeated four times in a week becomes one issue", () => {
-  test("three is not enough; four proposes once, naming the comments", () => {
+  test("three is not enough; four proposes once, naming the comments", async () => {
     const pulls = [1, 2, 3].map((i) => reviewed(`- Escape the user name before rendering it into the page (${i})`));
-    expect(sweepRepeats(app, repo, now).proposed).toEqual([]);
+    expect((await sweepRepeats(app, repo, now)).proposed).toEqual([]);
     pulls.push(reviewed("- Escape the user name before rendering it into the page"));
     expect(REPEATS).toBe(4);
     const later = new Date(now.getTime() + 7 * 3_600_000);
-    const moves = sweepRepeats(app, repo, later);
+    const moves = await sweepRepeats(app, repo, later);
     expect(moves.proposed).toHaveLength(1);
     const issue = getIssue(app.db, repo.id, moves.proposed[0]!);
     expect(issue?.title).toContain("Automate a review finding");
     for (const n of pulls) expect(issue?.body).toContain(`#${n} (critic)`);
     // the same finding never opens a second issue
-    expect(sweepRepeats(app, repo, new Date(later.getTime() + 7 * 3_600_000)).proposed).toEqual([]);
+    expect((await sweepRepeats(app, repo, new Date(later.getTime() + 7 * 3_600_000))).proposed).toEqual([]);
   });
 
-  test("a sweep within six hours of the last does nothing", () => {
-    expect(sweepRepeats(app, repo, new Date(now.getTime() + 8 * 3_600_000))).toEqual({ proposed: [], retired: 0 });
+  test("a sweep within six hours of the last does nothing", async () => {
+    expect(await sweepRepeats(app, repo, new Date(now.getTime() + 8 * 3_600_000))).toEqual({ proposed: [], retired: 0 });
   });
 
-  test("done issue retires the finding; per-pull is shown beside it, reachable in flow", () => {
+  test("done issue retires the finding; per-pull is shown beside it, reachable in flow", async () => {
     const before = readRepeats(app.db, repo.id, now);
     expect(before).toMatchObject({ proposed: 1, retired: 0 });
     app.db.query(`UPDATE issue SET state = 'closed', close_reason = 'done' WHERE repo_id = ?1 AND title LIKE 'Automate%'`).run(repo.id);
-    sweepRepeats(app, repo, new Date(now.getTime() + 30 * 3_600_000));
+    await sweepRepeats(app, repo, new Date(now.getTime() + 30 * 3_600_000));
     const after = readRepeats(app.db, repo.id, now);
     expect(after.retired).toBe(1);
     expect(after.thisWeek).toMatchObject({ comments: 4, pulls: 4, per: 1 });
@@ -106,10 +106,10 @@ describe("a finding repeated four times in a week becomes one issue", () => {
     expect(repeatLines(readRepeats(app.db, "none", now), 80)).toEqual([]);
   });
 
-  test("a finding older than a week is not counted", () => {
+  test("a finding older than a week is not counted", async () => {
     const stale = Array.from({ length: 4 }, () => reviewed("- Rename the exported helper so its name says what it returns", 9 * 86_400_000));
     expect(stale).toHaveLength(4);
-    expect(sweepRepeats(app, repo, new Date(now.getTime() + 60 * 3_600_000)).proposed).toEqual([]);
+    expect((await sweepRepeats(app, repo, new Date(now.getTime() + 60 * 3_600_000))).proposed).toEqual([]);
   });
 });
 
@@ -145,10 +145,10 @@ describe("what is not a repeat", () => {
         .run(crypto.randomUUID(), p.id, reviewer.id, ask, at());
     }
     // three pulls, each saying it twice: six lines, three repeats
-    expect(sweepRepeats(app, made.value, new Date(now.getTime() + 60 * 3_600_000)).proposed).toEqual([]);
+    expect((await sweepRepeats(app, made.value, new Date(now.getTime() + 60 * 3_600_000))).proposed).toEqual([]);
     // one more pull makes four pulls, and proposes
     review(pullIn(made.value, builder).id, reviewer, `- ${ask}`);
-    expect(sweepRepeats(app, made.value, new Date(now.getTime() + 90 * 3_600_000)).proposed).toHaveLength(1);
+    expect((await sweepRepeats(app, made.value, new Date(now.getTime() + 90 * 3_600_000))).proposed).toHaveLength(1);
   });
 
   test("the pull's own author and other repositories do not add up", async () => {
@@ -160,8 +160,8 @@ describe("what is not a repeat", () => {
     for (let i = 0; i < 2; i++) review(pullIn(b.value, builder).id, reviewer, `- ${ask}`);
     for (let i = 0; i < 4; i++) review(pullIn(a.value, builder).id, builder, `- ${ask}`); // own comments
     const later = new Date(now.getTime() + 120 * 3_600_000);
-    expect(sweepRepeats(app, a.value, later).proposed).toEqual([]);
-    expect(sweepRepeats(app, b.value, later).proposed).toEqual([]);
+    expect((await sweepRepeats(app, a.value, later)).proposed).toEqual([]);
+    expect((await sweepRepeats(app, b.value, later)).proposed).toEqual([]);
   });
 });
 

@@ -285,15 +285,19 @@ export function runStreaks(db: Database): Finding[] {
     warnedUnresolved = true;
     log.warn("sentinel repository does not resolve; never-green checks are not filed", { repo: sentinelRepoPath() });
   }
-  const rows = db
-    .query<SummaryRow, [number]>(
-      `SELECT id, repo_id, kind, state, summary FROM (
-         SELECT id, repo_id, kind, state, summary,
-                ROW_NUMBER() OVER (PARTITION BY repo_id, kind ORDER BY created_at DESC, id DESC) AS n
-           FROM run WHERE kind IN ('check', 'agent') AND state IN ('ok', 'failed')
-       ) WHERE n <= ?1`,
+  // One top-N read per repository and kind, not one window over every run:
+  // the window sorted all of them, 150 ms on a production-sized table (#8848).
+  const pairs = db
+    .query<{ repo_id: string; kind: string }, []>(
+      "SELECT DISTINCT repo_id, kind FROM run WHERE kind IN ('check', 'agent') AND state IN ('ok', 'failed')",
     )
-    .all(RUNS_READ);
+    .all();
+  const latest = db.query<SummaryRow, [string, string, number]>(
+    `SELECT id, repo_id, kind, state, summary FROM run
+      WHERE repo_id = ?1 AND kind = ?2 AND state IN ('ok', 'failed')
+      ORDER BY created_at DESC, id DESC LIMIT ?3`,
+  );
+  const rows = pairs.flatMap((p) => latest.all(p.repo_id, p.kind, RUNS_READ));
   const groups = new Map<string, SummaryRow[]>();
   for (const r of rows) {
     const k = `${r.repo_id}\u0000${r.kind}`;

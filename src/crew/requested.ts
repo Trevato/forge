@@ -31,6 +31,7 @@ import { requestedPulls, verdictIsStale, type RequestedPull } from "../core/requ
 import { reviewSummary } from "../core/reviews.ts";
 import { activeRunFor } from "../core/runs.ts";
 import { getUserById } from "../core/users.ts";
+import { sliced } from "../kernel/breathe.ts";
 import { createLog } from "../kernel/log.ts";
 import { authorsInRepoPull, BACK_WITH_AUTHOR } from "./authors_pull.ts";
 import { queueAgentRun } from "./dispatch.ts";
@@ -112,7 +113,9 @@ export async function moveRequested(
   const crew = listCrewRoles(app.db, repo.id);
   const builders = crew.filter((c) => c.role === "builder").map((c) => c.agent);
   let slots = free;
+  const slice = sliced();
   for (const requested of requestedPulls(app.db, repo.id)) {
+    if (slice.due()) await slice.breathe();
     let move: RequestedMove;
     if (verdictIsStale(requested)) move = await askAgain(app, repo, requested, now);
     else if (slots <= 0) move = notMoved(requested, WAITS_FOR_BUILDER_SLOT);

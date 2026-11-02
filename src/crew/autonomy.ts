@@ -142,6 +142,7 @@ import { sweepStranded } from "./stranded.ts";
 import { parkPull, strikeNote } from "./park_pull.ts";
 import { keepVerdict } from "../flow/culprits.ts";
 import { sweepRepeats } from "./repeat_checks.ts";
+import { breathe } from "../kernel/breathe.ts";
 import { keepBatch } from "../flow/red_batches.ts";
 import { recordQueueFlakes } from "../checks/flake.ts";
 import { readVitals, vitalsMisses, vitalsWords } from "../flow/vitals.ts";
@@ -1311,9 +1312,12 @@ export async function autonomyTick(
       // the next batch is formed, not at its gate (#6611).
       pruneLine(app, repo);
       void startSweep(app, repo, sweep);
+      // Each pass below is one slice of the thread: a request waiting is served between them (#8848).
+      await breathe();
       // First of all: a slot freed goes to an approved pull that no longer
       // merges, before a changes-requested one or a new issue (#3682).
       const finishing = await finishApproved(app, repo, freeSlots(app, repo, now));
+      await breathe();
       // An approved pull red for a day gets one re-check, then goes back (#6349).
       await recheckRedApproved(app, repo, now).catch((error) =>
         log.error("red approved re-check failed", {
@@ -1321,6 +1325,7 @@ export async function autonomyTick(
           error: String(error),
         }),
       );
+      await breathe();
       // Quick, and before the picks: a pull main moved under is brought up
       // to date within this tick, not after a landing gate (#2039).
       await sweepConflicts(app, repo).catch((error) =>
@@ -1330,6 +1335,7 @@ export async function autonomyTick(
         }),
       );
       const current = getRepoById(app.db, repo.id) ?? repo;
+      await breathe();
       // A red pull nobody is working is checked again, reworked, parked or closed (#8245).
       await sweepStaleReds(app, current, now, freeSlots(app, current, now)).catch((error) => {
         log.error("stale red sweep failed", {
@@ -1339,15 +1345,18 @@ export async function autonomyTick(
       });
       // What reviewers keep asking for becomes an issue to automate it (#8716).
       try {
-        sweepRepeats(app, current, now);
+        await sweepRepeats(app, current, now);
       } catch (error) {
         log.error("repeat check sweep failed", { repo: `${repo.ownerName}/${repo.name}`, error: String(error) });
       }
+      await breathe();
       // Before the picks: a pull a reviewer answered is finished before new
       // work takes the slots it needs (#2172).
       const requested = await moveRequested(app, current, freeSlots(app, current, now), now);
+      await breathe();
       const unstuck = unstickNow(app, current, now);
       const did = await driveRepo(app, current, now);
+      await breathe();
       // Rules only, no run: an issue noted already done on the base closes.
       const triaged = await liveTriage(app, current, now).catch((error) => {
         log.error("live triage failed", {
@@ -1356,15 +1365,20 @@ export async function autonomyTick(
         });
         return noTriage();
       });
+      await breathe();
       // Every tick says what it did and why, so an app that sits still is
       // never a mystery: the numbers behind "idle" are on the line.
       const status = autonomyStatus(app, current, now);
+      await breathe();
       const approved = waitWords(lastWaits(current.id));
       const ready = readyNow(repoGraph(app.db, current.id, { sealed: true }));
       const crewNow = listCrewRoles(app.db, current.id);
       const activeNow = activeRuns(app, current.id);
+      await breathe();
       const held = heldBy(app, current, ready, crewNow, activeNow);
       const boots = bootCounts(app.config.dataDir);
+      await breathe();
+      await breathe();
       const staleToday = closedToday(app, current.id, now);
       // Says when the governor lowers the slots (#6375); one feed item per change.
       const governor = announceGovernor(app, current, now);
@@ -1424,18 +1438,21 @@ export async function autonomyTick(
       });
     }
   }
+  await breathe();
   // Every thought is placed within minutes (`crew/triage.ts`).
   try {
     await triageTick(app, now);
   } catch (error) {
     log.error("triage failed", { error: String(error) });
   }
+  await breathe();
   // The forge hunts its own faults on the same clock (`crew/sentinel.ts`).
   try {
     sentinelTick(app, now.getTime());
   } catch (error) {
     log.error("sentinel failed", { error: String(error) });
   }
+  await breathe();
   // Review is not autonomy's alone: an agent's green pull is read by the
   // crew's reviewer in every repository that has one.
   try {

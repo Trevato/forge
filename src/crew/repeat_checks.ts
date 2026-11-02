@@ -21,13 +21,13 @@ export interface RepeatMoves {
   readonly retired: number;
 }
 
-export function sweepRepeats(app: App, repo: Repo, now = new Date()): RepeatMoves {
+export async function sweepRepeats(app: App, repo: Repo, now = new Date()): Promise<RepeatMoves> {
   const last = swept.get(repo.id);
   if (last !== undefined && now.getTime() - last < EVERY_MS) return { proposed: [], retired: 0 };
   swept.set(repo.id, now.getTime());
   const retired = retireLanded(app.db, repo.id, now);
   const proposed: number[] = [];
-  for (const g of dueGroups(app.db, repo.id, now).slice(0, PER_SWEEP)) {
+  for (const g of (await dueGroups(app.db, repo.id, now)).slice(0, PER_SWEEP)) {
     const made = createIssue(app.db, {
       repoId: repo.id,
       authorId: g.findings[0]!.authorId,

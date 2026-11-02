@@ -90,7 +90,7 @@ import { createLog } from "./kernel/log.ts";
 import { watchStalls } from "./kernel/loop_lag.ts";
 import { startPerfWatcher, TICK_MS } from "./perf/duty.ts";
 import { stallLine } from "./perf/loop.ts";
-import { gitRecord, loopWatch, perfRecord } from "./perf/live.ts";
+import { bootStall, gitRecord, loopWatch, perfRecord } from "./perf/live.ts";
 import { timeStatements } from "./kernel/slow_sql.ts";
 import { waitForPeer } from "./runs/peer.ts";
 
@@ -217,6 +217,7 @@ if (parentProblem !== null) {
 // draining included.
 const loopLog = createLog("loop");
 watchStalls(loopLog, undefined, undefined, undefined, (late, at) => {
+  bootStall.note(late, at);
   const stall = loopWatch.stalled(late, at);
   if (stall !== null) loopLog.warn(stallLine(stall));
 });

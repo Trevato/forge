@@ -8,6 +8,7 @@ import type { Database } from "bun:sqlite";
 import { blocking, MAX_REASON, standingHolds } from "../../keeper/hold.ts";
 import { secondsWords, withLandedToLive } from "../../keeper/landed.ts";
 import { listKeeperReleases, type Stage } from "../../keeper/record.ts";
+import { stallWords } from "../../perf/boot_stall.ts";
 import { html, when, type Html } from "../html.ts";
 import { badge, btn, card, time, type Tone } from "../ui.ts";
 
@@ -24,7 +25,7 @@ export function keeperPanel(db: Database, mayHold = false): Html | undefined {
   const holds = standingHolds(db);
   const blocked = blocking(holds);
   if (releases.length === 0 && blocked === undefined && !mayHold) return undefined;
-  const rows = releases.map((r) => {
+  const rows = releases.map((r, i) => {
     const s = STAGE[r.stage];
     return html`<tr>
       <td>${r.version} <span class="small muted">${r.commit}</span> ${badge(s.label, { tone: s.tone })}</td>
@@ -34,13 +35,14 @@ export function keeperPanel(db: Database, mayHold = false): Html | undefined {
       <td>${r.rollNon200} of ${r.rollProbes}</td>
       <td>${r.probes} / ${r.pages}</td>
       <td>${r.worstMs} ms</td>
+      <td>${stallWords(r.worstStallMs, releases[i + 1]?.worstStallMs)}</td>
       <td>${r.secondsDark} s</td>
-    </tr>${when(r.reason !== "", () => html`<tr><td colspan="8" class="small muted">${r.reason}</td></tr>`)}`;
+    </tr>${when(r.reason !== "", () => html`<tr><td colspan="9" class="small muted">${r.reason}</td></tr>`)}`;
   });
   return card(html`<h2>Release keeper</h2>
     <p class="small ${blocked === undefined ? "muted" : ""}" id="keeper-blocked">${blocked ?? "Nothing holds the next cut."}</p>
     ${when(rows.length > 0, () => html`<div class="table-scroll" role="region" tabindex="0" aria-label="Keeper releases"><table class="table" data-sticky-lead>
-      <thead><tr><th>Version</th><th>Cut</th><th>Landed to live</th><th>Known good</th><th>Roll non-200</th><th>Probes / pages</th><th>Worst</th><th>Dark</th></tr></thead>
+      <thead><tr><th>Version</th><th>Cut</th><th>Landed to live</th><th>Known good</th><th>Roll non-200</th><th>Probes / pages</th><th>Worst</th><th>Stall, first 5 min</th><th>Dark</th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div>`)}
     ${when(mayHold, () => html`${holds.filter((h) => h.kind === "owner").map(

@@ -9,6 +9,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { sliced } from "../kernel/breathe.ts";
 
 const DAY_MS = 86_400_000;
 export const WEEK_MS = 7 * DAY_MS;
@@ -87,20 +88,71 @@ const similar = (a: readonly string[], b: readonly string[]): boolean => {
   return inter / (a.length + b.length - inter) >= SAME;
 };
 
-/** Findings grouped by what they ask for, the largest group first. */
+/**
+ * Findings grouped by what they ask for, the largest group first. A finding joins
+ * the first group it is {@link similar} to; the groups are found through a word
+ * index, not by comparing against every one (#8848: that was quadratic, 46 s on a
+ * week of findings). Two findings are the same only when they share at least half
+ * of the finding's words (Jaccard ≥ 0.5 needs |a∩b| ≥ |a|/2), so probing any
+ * |a| − ⌈|a|/2⌉ + 1 of its words, the rarest first, meets every group that can match.
+ */
 export function group(findings: readonly Finding[]): Group[] {
-  const groups: { words: string[]; g: Group }[] = [];
+  const grouper = newGrouper();
+  for (const f of findings) grouper.add(f);
+  return grouper.done();
+}
+
+/** {@link group}, handing the thread back between slices: a week of findings is thousands. */
+export async function groupSliced(findings: readonly Finding[]): Promise<Group[]> {
+  const grouper = newGrouper();
+  const slice = sliced();
   for (const f of findings) {
-    const words = wordsOf(f.text);
-    if (words.length < MIN_WORDS) continue;
-    const hit = groups.find((x) => similar(x.words, words));
-    // a pull says a finding once: its review body and its line comments are one ask
-    if (hit) {
-      if (!hit.g.findings.some((x) => x.repo === f.repo && x.pull === f.pull)) hit.g.findings.push(f);
-    }
-    else groups.push({ words, g: { key: words.join(" "), sample: f.text, findings: [f] } });
+    grouper.add(f);
+    if (slice.due()) await slice.breathe();
   }
-  return groups.map((x) => x.g).sort((a, b) => b.findings.length - a.findings.length);
+  return grouper.done();
+}
+
+function newGrouper(): { add(f: Finding): void; done(): Group[] } {
+  const groups: { words: string[]; set: Set<string>; pulls: Set<string>; g: Group }[] = [];
+  const postings = new Map<string, number[]>();
+  return {
+    add(f) {
+      const words = wordsOf(f.text);
+      if (words.length < MIN_WORDS) return;
+      const probe = words
+        .map((w) => [w, postings.get(w)] as const)
+        .sort((a, b) => (a[1]?.length ?? 0) - (b[1]?.length ?? 0))
+        .slice(0, words.length - Math.ceil(words.length / 2) + 1);
+      const candidates = new Set<number>();
+      for (const [, ids] of probe) for (const id of ids ?? []) candidates.add(id);
+      let hit: (typeof groups)[number] | undefined;
+      for (const id of [...candidates].sort((a, b) => a - b)) {
+        const x = groups[id]!;
+        const inter = words.filter((w) => x.set.has(w)).length;
+        if (inter / (x.words.length + words.length - inter) >= SAME) {
+          hit = x;
+          break;
+        }
+      }
+      // a pull says a finding once: its review body and its line comments are one ask
+      if (hit) {
+        if (!hit.pulls.has(`${f.repo}#${f.pull}`)) {
+          hit.pulls.add(`${f.repo}#${f.pull}`);
+          hit.g.findings.push(f);
+        }
+      } else {
+        const id = groups.length;
+        groups.push({ words, set: new Set(words), pulls: new Set([`${f.repo}#${f.pull}`]), g: { key: words.join(" "), sample: f.text, findings: [f] } });
+        for (const w of words) {
+          const ids = postings.get(w);
+          if (ids) ids.push(id);
+          else postings.set(w, [id]);
+        }
+      }
+    },
+    done: () => groups.map((x) => x.g).sort((a, b) => b.findings.length - a.findings.length),
+  };
 }
 
 interface Row {
@@ -184,12 +236,12 @@ export interface Repeats {
  * Groups worth a check and not yet asked for: a stored finding whose words are
  * the same one is never proposed twice.
  */
-export function dueGroups(db: Database, repoId: string, now: Date): Group[] {
+export async function dueGroups(db: Database, repoId: string, now: Date): Promise<Group[]> {
   const kept = db
     .query<{ key: string }, [string]>(`SELECT key FROM review_finding WHERE repo_id = ?1`)
     .all(repoId)
     .map((r) => r.key.split(" "));
-  return group(findingsIn(db, repoId, new Date(now.getTime() - WEEK_MS), now)).filter(
+  return (await groupSliced(findingsIn(db, repoId, new Date(now.getTime() - WEEK_MS), now))).filter(
     (g) => g.findings.length >= REPEATS && !kept.some((k) => similar(k, g.key.split(" "))),
   );
 }
