@@ -319,6 +319,7 @@ import { labelsRoutes } from "./api/labels.ts";
 import { visionRoutes } from "./api/vision.ts";
 import { tokenRoutes } from "./api/tokens.ts";
 import { accountAdmin, adminRoutes } from "./api/admin.ts";
+import { flagsRoutes } from "./api/flags.ts";
 import { issueRoutes, labelsHandler } from "./api/issues.ts";
 import { userRoutes } from "./api/user.ts";
 import { appRoutes } from "./api/app.ts";
@@ -1109,6 +1110,7 @@ export function apiRoutes(router: Router<Handler>): void {
 
   userRoutes(router);
   adminRoutes(router);
+  flagsRoutes(router);
 
   // Open read hooks (#1789): the owner, or an agent holding `telemetry:read`.
   // Anyone else is refused; every agent read is logged.

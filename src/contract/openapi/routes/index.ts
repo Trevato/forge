@@ -53,6 +53,7 @@ export { route as getApiV1Explore } from "./getApiV1Explore.ts";
 export { route as getApiV1Family } from "./getApiV1Family.ts";
 export { route as getApiV1Feed } from "./getApiV1Feed.ts";
 export { route as getApiV1FeedChips } from "./getApiV1FeedChips.ts";
+export { route as getApiV1Flags } from "./getApiV1Flags.ts";
 export { route as getApiV1FleetGraph } from "./getApiV1FleetGraph.ts";
 export { route as getApiV1FleetOps } from "./getApiV1FleetOps.ts";
 export { route as getApiV1FleetOpsId } from "./getApiV1FleetOpsId.ts";
