@@ -283,6 +283,7 @@ import {
   asksMute,
   asksPage,
 } from "../web/studio/asks_page.ts";
+import { keeperAnswer } from "../web/studio/keeper_row.ts";
 import { homeArchive, homeArchived, homeArchiveUndo } from "../web/studio/home_archive.ts";
 import { liveFeedFragment } from "../web/studio/feed.ts";
 import { serviceWorker } from "../web/sw.ts";
@@ -751,6 +752,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/explore", explorePage);
   router.add("POST", "/front", frontUpdate);
   router.add("POST", "/home/archive", homeArchive);
+  router.add("POST", "/flow/keeper/answer", keeperAnswer);
   router.add("GET", "/home/archived/:op", homeArchived);
   router.add("POST", "/home/archived/:op/undo", homeArchiveUndo);
   router.add("GET", "/signin", signinPage);

@@ -57,6 +57,7 @@ import { capacityScreen, mayCapacity } from "./screens/capacity.ts";
 import { forgeCeiling } from "../flow/ceiling.ts";
 import { flowLines, flowScreen } from "./screens/flow.ts";
 import { readHeld } from "../flow/held.ts";
+import { answerKeeper, readKeeper } from "../flow/keeper.ts";
 import { readVerified } from "../flow/verified.ts";
 import { memoryScreen } from "./screens/system.ts";
 import { noteRead, telemetryReader } from "../actions/telemetry.ts";
@@ -301,6 +302,8 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         hint: "the pipeline's bottleneck and throughput",
         run: () => {
           if (session.user) noteRead(session.app, session.user, flowReader, "flow");
+          const keeper = readKeeper(session.db, flowReader.kind === "owner");
+          const user = session.user;
           ctx.push(flowScreen(ctx, flowLines(
               session.db,
               new Date(),
@@ -309,7 +312,8 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
               readHeld(session.app, flowReader.kind === "owner"),
               forgeCeiling(session.app.config),
               readVerified(session.app, flowReader.kind === "owner"),
-            )));
+              keeper,
+            ), keeper.ask && user ? { ask: keeper.ask, answer: () => answerKeeper(session.app, keeper.ask!.id, user.id) } : undefined));
         },
       });
     // The forge's capacity and guards, as MCP `capacity` gates them: a forge admin who is a person.

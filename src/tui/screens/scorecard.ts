@@ -21,6 +21,7 @@ import {
   type Scorecard,
   type SplitScorecard,
 } from "../../core/scorecard.ts";
+import { keeperDays, type KeeperDay } from "../../flow/keeper_rate.ts";
 import type { Agent } from "../../core/agents.ts";
 import { listTeams, type Team } from "../../core/teams.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -136,6 +137,14 @@ export function scorecardRows(
   return [...agentRows, ...teamRows];
 }
 
+/** "Forge per day" as the page's table has it: hours the forge ran and pulls it landed, newest day first (#7645). */
+export function forgeDayRows(days: readonly KeeperDay[]): ListRow[] {
+  return [...days].reverse().map((d) => ({
+    title: `Forge ${d.day}`,
+    secondary: `${d.hoursRunning} hour${d.hoursRunning === 1 ? "" : "s"} running · ${d.landed} landed`,
+  }));
+}
+
 type Review = ReturnType<typeof readReview>;
 
 /**
@@ -195,7 +204,7 @@ export function scorecardScreen(f: Session, ctx: Ctx): Screen {
   const names = new Map((listed?.ok === true ? listed.value : []).map((a) => [a.user.id, a.user.username]));
   // Re-read after a decision, so the button's result shows at once.
   let review = allowed && cards.length > 0 ? reviewRows(readReview(f.app), names) : { rows: [], changeAt: [] };
-  const rows = (): ListRow[] => [...cards, ...review.rows];
+  const rows = (): ListRow[] => [...cards, ...review.rows, ...(allowed ? forgeDayRows(keeperDays(f.db, new Date())) : [])];
   const waiting = (): string | undefined => review.changeAt[state.index - cards.length];
   const decide = (take: boolean): void => {
     const id = waiting();

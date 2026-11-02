@@ -161,6 +161,8 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     kind.startsWith("crew.model_") ||
     // A clog is the whole forge's flow, the owner's to hear (`flow/clog_tick.ts`).
     kind.startsWith("clog.") ||
+    // What the throughput keeper did to lift a brake is the owner's too (`flow/keeper.ts`).
+    kind.startsWith("keeper.") ||
     // Events the retired FLOW ONLY switch wrote stay the admins' to hear.
     kind === "flow_only.cleared" ||
     // A report from outside waits for a person who decides; its arrival is

@@ -46,6 +46,7 @@ import { readHeld } from "../../flow/held.ts";
 import { readVerified, verifiedSays, type VerifiedRow } from "../../flow/verified.ts";
 import type { App } from "../../app.ts";
 import { html, type Html } from "../html.ts";
+import { keeperRow } from "../studio/keeper_row.ts";
 import { gatesCard } from "./boards-gates.ts";
 import { heldCard } from "./boards-held.ts";
 import { badge, card, meter } from "../ui.ts";
@@ -113,7 +114,7 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
   const newest = parked.newest[0];
   const listed = asked(url);
   const shown = listed === null ? undefined : out.get(listed.key);
-  return html`${card(
+  return html`${keeperRow(app.db, reader.kind === "owner")}${card(
       html`<p id="bottleneck" data-stage="${worst?.key ?? ""}">
           <strong>${verdict(stages, now)}</strong>
         </p>

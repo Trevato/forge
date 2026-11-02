@@ -15,6 +15,7 @@ import { modelDays, type ModelDay } from "../core/model_days.ts";
 import { readReview } from "./model_review.ts";
 import { wastedDays, type WastedDay } from "../core/wasted_days.ts";
 import { listAgents } from "../core/agents.ts";
+import { keeperDays, type KeeperDay } from "../flow/keeper_rate.ts";
 import type { User } from "../core/users.ts";
 
 export interface AgentScorecard {
@@ -47,6 +48,7 @@ export function readScorecards(
   agents: AgentScorecard[];
   modelDays: ModelDay[];
   wastedDays: WastedDay[];
+  keeperDays: KeeperDay[];
   modelReview: ReturnType<typeof readReview>;
 } | undefined {
   if (actor?.isAdmin !== true) return undefined;
@@ -58,6 +60,8 @@ export function readScorecards(
   const key = (p: SplitScorecard) => `${p.model}\u0000${p.promptVersion}`;
   return {
     modelDays: modelDays(app.db),
+    // Hours the forge ran and pulls landed, per UTC day of the last week (#7645).
+    keeperDays: keeperDays(app.db, new Date()),
     modelReview: readReview(app),
     wastedDays: wastedDays(app.db),
     agents: listAgents(app.db).map((agent) => {

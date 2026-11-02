@@ -11,6 +11,7 @@ import { conflictedPulls, conflictedSays, rebaseLane, rebaseLaneSays } from "../
 import { firedAlarms } from "../flow/alarms.ts";
 import { readVitals, vitalsFor, vitalsLine, vitalsMisses } from "../flow/vitals.ts";
 import { parkedSays, readParked } from "../flow/parked.ts";
+import { readKeeper } from "../flow/keeper.ts";
 import { readPipeline, verdict } from "../flow/pipeline.ts";
 import { type QueueReading, readQueues } from "../flow/queue.ts";
 import { reviewersBusy, reviewingSays } from "../flow/reviewing.ts";
@@ -39,6 +40,8 @@ export function flowFor(app: App, reader: Reader, now = new Date()) {
   const parked = readParked(app.db, now, reader.kind === "agent");
   return {
     says: verdict(stages, now.getTime()),
+    // The cause binding landings now and the keeper's last act (#7645).
+    keeper: readKeeper(app.db, reader.kind === "owner"),
     // How long each main has gone unverified after landing (#7786); private repositories for the owner only.
     verified: readVerified(app, reader.kind === "owner").map((row) => ({ ...row, says: verifiedSays(row, now.getTime()) })),
     // Issues the crew parked in the last 24 h and 7 d, the newest three named (#6471).

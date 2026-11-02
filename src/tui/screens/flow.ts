@@ -24,6 +24,7 @@ import { pullCounts } from "../../crew/hot_files.ts";
 import { warmingLine } from "../../crew/hot_history.ts";
 import { ago } from "../../feed/rank.ts";
 import type { HeldRow } from "../../flow/held.ts";
+import { keeperLine, type KeeperAsk, type KeeperRead } from "../../flow/keeper.ts";
 import { verifiedSays, type VerifiedRow } from "../../flow/verified.ts";
 import { conflictedSays, rebaseLaneSays } from "../../flow/conflicted.ts";
 import { IDLE_LIMIT, type IdlePull } from "../../flow/idle_pulls.ts";
@@ -47,6 +48,7 @@ import { binding } from "../app/keys.ts";
 import { pad, truncate, wrap } from "../term/width.ts";
 import { dialog } from "../ui/widgets.ts";
 import { live } from "../../system/live.ts";
+import { confirmScreen } from "./common.ts";
 import { duplicateLines } from "./system.ts";
 
 const WIDTH = 64;
@@ -64,6 +66,8 @@ export function flowLines(
   ceilingUsd: number | null = null,
   /** How long each main has gone unverified after landing (`readVerified`, already cut to what the reader may see). */
   verified?: readonly VerifiedRow[],
+  /** The keeper's cause and last act (`readKeeper`, already cut to what the reader may see). */
+  keeper?: KeeperRead,
 ): string[] {
   const stages = readPipeline(db, now);
   const flow = readThroughput(db, stages.map((s) => s.key), now);
@@ -85,6 +89,8 @@ export function flowLines(
   const ids = repoIds(db, queues.map((q) => q.repo));
   return [
     ...wrap(verdict(stages, now.getTime()), inner),
+    ...(keeper === undefined || keeperLine(keeper) === "" ? [] : ["", ...wrap(keeperLine(keeper), inner)]),
+    ...(keeper?.ask == null ? [] : wrap(`${keeper.ask.question} Press l to ${keeper.ask.button.toLowerCase()}.`, inner)),
     "",
     ...wrap(vitalsLine(vitalsFor(readVitals(db, now, agent !== undefined), agent === undefined)), inner),
     ...(agent === undefined ? clogLines(readClog(db, now), now.getTime()).flatMap((l) => wrap(l, inner)) : []),
@@ -226,10 +232,15 @@ export function heldLines(rows: readonly HeldRow[], inner: number): string[] {
   ];
 }
 
-export function flowScreen(ctx: Ctx, lines: readonly string[]): Screen {
-  return {
+export function flowScreen(
+  ctx: Ctx,
+  lines: readonly string[],
+  /** The keeper's open question (a site admin's); `answer` presses its one button and says what happened. */
+  keeper?: { ask: KeeperAsk; answer: () => { done: boolean; message: string } },
+): Screen {
+  const self: Screen = {
     title: "Flow",
-    keys: [binding(["enter", "esc", "q"], "close")],
+    keys: [binding(["enter", "esc", "q"], "close"), ...(keeper?.ask ? [binding(["l"], keeper.ask.button.toLowerCase())] : [])],
     render(area, s) {
       const buttons = dialog(s, area, ctx.theme.c, {
         title: "Flow",
@@ -242,7 +253,22 @@ export function flowScreen(ctx: Ctx, lines: readonly string[]): Screen {
     },
     key(e) {
       if (e.key === "enter" || e.key === "esc" || e.key === "q") ctx.pop();
+      else if (e.key === "l" && keeper)
+        ctx.push(
+          confirmScreen(ctx, self, {
+            title: keeper.ask.button,
+            body: wrap(keeper.ask.question, WIDTH - 6),
+            actions: [{ label: "Cancel", variant: "ghost" }, { label: keeper.ask.button }],
+            onChoose: (i) => {
+              if (i !== 1) return;
+              const answered = keeper.answer();
+              ctx.toast(answered.message, answered.done ? "success" : "danger");
+              ctx.pop();
+            },
+          }),
+        );
       return true;
     },
   };
+  return self;
 }

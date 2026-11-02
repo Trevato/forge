@@ -400,6 +400,10 @@ days drawn beside it, on its page, in the terminal's Milestones screen and in
 the MCP's `milestones` tool (`closedPerDay`, `paceDate`); `docs/PLANNING.md`
 has the rule.
 
+### The throughput keeper
+
+Once a minute the forge measures its landing rate, names the one cause binding it, and lifts Flow only or unsticks assigned issues when that is its to do; if landings do not rise in 2 h it puts the switch back and asks the owner one question with one button. It shows as a line on home and `/boards` (a site admin sees repository names; everyone else a repository-free cause), in the MCP `flow` report, in the terminal's Flow dialog (`l` answers) and as "Forge per day" on the crew scorecard. No model, no dependency. See `docs/features/keeper.md`.
+
 ## Where the rest is
 
 - [`docs/DEVELOP.md`](docs/DEVELOP.md) — developing the forge: tests, checks, the gate, lint and types.

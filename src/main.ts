@@ -51,7 +51,7 @@ import { failAbandonedRuns } from "./core/runs.ts";
 import { DRAIN_LINGER_MAX_S, drainLingerMs, startDraining } from "./http/health.ts";
 import { takePresence, warmBehind } from "./apps/presence.ts";
 import { STALE_AFTER_MS } from "./runs/lease.ts";
-import { startCrew } from "./crew/dispatch.ts";
+import { startCrew, sweepAssigned } from "./crew/dispatch.ts";
 import { CREW_OFF_IN_PREVIEW, crewOffInPreview } from "./crew/preview.ts";
 import { typeSafeDecider } from "./crew/decide.ts";
 import { graphInstagram } from "./crew/instagram.ts";
@@ -59,6 +59,7 @@ import { peopleOnCrews } from "./core/agents.ts";
 import { startNotifier } from "./crew/notify.ts";
 import { expireCrewHolds } from "./actions/holds.ts";
 import { startClogTick } from "./flow/clog_tick.ts";
+import { startKeeper } from "./flow/keeper.ts";
 import { sweepStaleAsks } from "./crew/stale_asks.ts";
 import { recordAskLedger } from "./web/studio/asks.ts";
 import { startPromptRoutine } from "./crew/prompts.ts";
@@ -593,6 +594,8 @@ const processTick = (): void => {
 };
 // The clog watch (#6524, #6757) reads the flow every minute; its state is the database's.
 const stopClogTick = startClogTick(app.db, app.bus, (error) => app.log.warn("clog tick failed", { error: String(error) }), 60_000);
+// The throughput keeper (#7645) names what binds landings each minute and lifts what is its to lift.
+const stopKeeper = startKeeper(app, () => sweepAssigned(app));
 // An agent's hold that has stood 24 h is released each minute (#6918).
 const holdTimer = setInterval(() => {
   try {
@@ -750,6 +753,7 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
   clearInterval(staleTimer);
   clearInterval(followTimer);
   stopClogTick();
+  stopKeeper();
   clearInterval(processTimer);
   clearInterval(holdTimer);
   clearInterval(modelReviewTimer);

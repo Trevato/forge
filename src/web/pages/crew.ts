@@ -35,6 +35,7 @@ import {
   type Scorecard,
   type SplitScorecard,
 } from "../../core/scorecard.ts";
+import { keeperDays, type KeeperDay } from "../../flow/keeper_rate.ts";
 import { decideChange, readReview } from "../../actions/model_review.ts";
 import { wastedDays, type WastedDay } from "../../core/wasted_days.ts";
 import { modelDays, type ModelDay } from "../../core/model_days.ts";
@@ -440,6 +441,7 @@ function loadScorecards(ctx: Ctx) {
     byModel: agentSplits(ctx.app.db, "model"),
     byPrompt: agentSplits(ctx.app.db, "prompt_version"),
     byModelDay: modelDays(ctx.app.db),
+    keeperDays: keeperDays(ctx.app.db, new Date()),
     wasted: wastedDays(ctx.app.db),
   };
 }
@@ -581,7 +583,7 @@ function crewView(
     splitScorecards,
     recentSplitScorecards,
   } = data.scorecards;
-  const { scorecards, byModel, byPrompt, byModelDay, wasted } = data.scorecards;
+  const { scorecards, byModel, byPrompt, byModelDay, wasted, keeperDays: forgeDays } = data.scorecards;
   const { spending } = data;
   const usernameError =
     error !== undefined && /username/i.test(error) ? error : undefined;
@@ -694,6 +696,7 @@ function crewView(
     () => html`<span class="muted">default</span>`,
   )}
   ${modelDaysCard(byModelDay)}
+  ${keeperDaysCard(forgeDays)}
   ${wastedDaysCard(wasted)}
   ${splitsCard(
     "Per prompt version",
@@ -780,6 +783,33 @@ function drillCard(drill: CrewHandover["drill"]): Html {
       head: html`${icon("clock")}
         <h2>Restore drill</h2>`,
     },
+  );
+}
+
+/** Hours the forge ran and pulls it landed, per day of the last week (#7645). */
+function keeperDaysCard(rows: readonly KeeperDay[]): Html {
+  return card(
+    html`<div class="table-scroll">
+      <table class="table" id="crew-keeper-days">
+        <thead>
+          <tr>
+            <th>Day</th>
+            <th>Hours running</th>
+            <th>Landed</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(
+            (r) => html`<tr>
+              <td class="mono">${r.day}</td>
+              <td class="num">${r.hoursRunning}</td>
+              <td class="num">${r.landed}</td>
+            </tr>`,
+          )}
+        </tbody>
+      </table>
+    </div>`,
+    { pad: false, head: html`<h2>Forge per day</h2>` },
   );
 }
 
