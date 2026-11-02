@@ -78,7 +78,7 @@ describe("a failed run's feed post", () => {
 
   test("home reads the words and links to the line", async () => {
     expect(ranOn).toBe(1);
-    const text = await (await fetch(`${servers.url}/`, { headers: { cookie: `${cookie}; forge_mode=studio` } })).text();
+    const text = await (await fetch(`${servers.url}/feed`, { headers: { cookie: `${cookie}; forge_mode=studio` } })).text();
     expect(text).toContain("an agent run on #1 failed: error: Cannot find module");
     expect(text).toContain(`/alice/garden/runs/${runId}?all=1#L3`);
   });
@@ -97,7 +97,7 @@ describe("a failed run's feed post", () => {
   });
 
   test("a reader who is not crew gets the summary and the plain link, never the log line", async () => {
-    const home = await (await fetch(`${servers.url}/`, { headers: { cookie: `${bobCookie}; forge_mode=studio` } })).text();
+    const home = await (await fetch(`${servers.url}/feed`, { headers: { cookie: `${bobCookie}; forge_mode=studio` } })).text();
     expect(home).toContain("failed");
     expect(home).not.toContain("Cannot find module");
     expect(home).not.toContain("#L3");

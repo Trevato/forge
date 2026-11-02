@@ -156,7 +156,7 @@ describe("live browsing pages", () => {
     ).split(";")[0]!;
 
     const html = await (
-      await fetch(`${base}/`, {
+      await fetch(`${base}/feed`, {
         headers: { cookie: `${cookie}; forge_mode=studio` },
       })
     ).text();

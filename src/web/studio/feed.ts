@@ -226,6 +226,7 @@ export function composer(ctx: Ctx, user: User): Html {
   })}`;
   const form = html`<form id="composer" class="card" method="post" action="/tell">
     <div class="card-body stack">
+    <input type="hidden" name="back" value="/feed" />
     <textarea class="input" name="text" rows="2" maxlength="2000" required placeholder="Tell the crew what should change" aria-label="Tell the crew" data-draft="${user.id}">${sharedDraft(ctx.url.searchParams)}</textarea>
     <div class="bar">
       ${repos.length === 0
@@ -341,14 +342,14 @@ export function caughtUp(items: readonly FeedItem[], next: string | null, cursor
   // Ranked by score, not time: the last card is not always the oldest.
   const oldest = items.reduce<string | undefined>((min, item) => (min === undefined || item.at < min ? item.at : min), undefined);
   if (oldest === undefined) return null;
-  const newest = cursor === undefined ? html`` : html`<a href="/">Newest</a>`;
+  const newest = cursor === undefined ? html`` : html`<a href="/feed">Newest</a>`;
   return next === null
     ? html`<p class="bar muted small" data-caught-up="end"><span>That's everything</span><span class="spacer"></span>${newest}</p>`
     : html`<p class="bar muted small" data-caught-up="more">
         <span>You're caught up to ${time(oldest)}</span>
         <span class="spacer"></span>
         ${newest}
-        <a href="/?cursor=${encodeURIComponent(next)}&day=${encodeURIComponent(items[items.length - 1]!.at)}">Older posts</a>
+        <a href="/feed?cursor=${encodeURIComponent(next)}&day=${encodeURIComponent(items[items.length - 1]!.at)}">Older posts</a>
       </p>`;
 }
 
@@ -402,6 +403,9 @@ export function liveFeedFragment(ctx: Ctx): Response {
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
 }
+
+/** Offline: the worker keeps the last home and the page that shows it is stale (`sw.ts`). */
+export const registerWorkerJs = `if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () {});`;
 
 /**
  * When a card is hidden, the day divider just above it goes with it, unless
@@ -599,7 +603,7 @@ ${dayKeepJs}
       if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage('clear');
     }
   });
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () {});
+  ${registerWorkerJs}
   paint();
   flush();
 })();

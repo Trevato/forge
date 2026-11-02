@@ -28,6 +28,8 @@ import { agentsLine } from "../../web/studio/client_home.ts";
 import { lastVisit } from "../../core/home_visit.ts";
 import { sinceDigest } from "../../web/studio/since.ts";
 import { askForSomething } from "./tell.ts";
+import { movingLines } from "./moving.ts";
+import { pipelineNow } from "../../web/studio/living.ts";
 import { askForEveryday, everydayOf, EVERYDAY_WHY, keepAdmin } from "../../core/everyday.ts";
 import { mayView } from "../../core/sealed.ts";
 import { applyFleetIds, previewFleetIds, undoFleetOp } from "../../actions/fleet.ts";
@@ -202,6 +204,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   let clientLines: string[] = [];
   /** "Since you were here" and its lines: read from the web home's last-visit row, never written here. */
   let sinceLines: string[] = [];
+  /** The web home's living pipeline (#8015): Now for a site admin, then being built and just shipped. */
+  let moving: string[] = [];
   /** The ids of those apps, so the key that asks for something stays on them. */
   let clientRepoIds = new Set<string>();
   /** The live address of each of those apps that is running, by repo id; `o` shows it. */
@@ -378,6 +382,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     lane = forgeLane(f.app, f.user);
     flaky = forgeFlakes(f.app, f.user);
     decider = deciderLine(f.app, f.user);
+    moving = f.user ? movingLines(f.db, f.user, f.user.isAdmin ? pipelineNow(f.db) : undefined) : [];
     const commit = running().commit;
     const cleared = lastClearedNote(f.db, now);
     figures =
@@ -1038,6 +1043,13 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         const [strip, rest] = split(body, "v", [len(lines.length), fill(1)]);
         lines.forEach((line, i) =>
           s.text(strip!.x, strip!.y + i, truncate(line, strip!.w), style(i === 0 ? c.mutedFg : c.fg, c.bg), strip!.x + strip!.w),
+        );
+        body = rest!;
+      }
+      if (moving.length > 0) {
+        const [strip, rest] = split(body, "v", [len(moving.length), fill(1)]);
+        moving.forEach((line, i) =>
+          s.text(strip!.x, strip!.y + i, truncate(line, strip!.w), style(c.mutedFg, c.bg), strip!.x + strip!.w),
         );
         body = rest!;
       }

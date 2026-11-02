@@ -109,6 +109,7 @@ export const SYSTEM_NAMES: readonly string[] = [
   "recover",
   "www",
   "asked",
+  "feed",
   "review",
   "claim",
   "first-admin",

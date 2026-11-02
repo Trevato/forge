@@ -78,7 +78,7 @@ describe("the feed on the home page", () => {
     });
 
   test("/ renders the ranked feed on first paint, escaped", async () => {
-    const res = await get("/", aliceCookie);
+    const res = await get("/feed", aliceCookie);
     expect(res.status).toBe(200);
     const text = await res.text();
     expect(text).toContain('id="live-feed"');
@@ -91,7 +91,7 @@ describe("the feed on the home page", () => {
   });
 
   test("a card links into the thing and steers or tells from where it is", async () => {
-    const text = await (await get("/", aliceCookie)).text();
+    const text = await (await get("/feed", aliceCookie)).text();
     expect(text).toContain('href="/alice/open/runs/r1"');
     expect(text).toContain('action="/alice/open/runs/r1/steer"');
     const item = readFeed(app.db, alice).items[0]!;
@@ -119,7 +119,7 @@ describe("the feed on the home page", () => {
   });
 
   test("a viewer sees only their own feed: no leak from a private app", async () => {
-    const text = await (await get("/", bobCookie)).text();
+    const text = await (await get("/feed", bobCookie)).text();
     expect(text).not.toContain("alice/secret");
     expect(text).not.toContain("hidden work");
     expect(text).toContain("alice/open");
@@ -151,7 +151,7 @@ describe("the feed on the home page", () => {
   });
 
   test("the page carries the feed script and a card is focusable for j/k", async () => {
-    const text = await (await get("/", aliceCookie)).text();
+    const text = await (await get("/feed", aliceCookie)).text();
     expect(text).toContain("data-nav");
     expect(text).toContain("/api/v1/feed/interactions");
   });

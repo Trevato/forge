@@ -24,7 +24,7 @@ afterAll(async () => {
   await f.close();
 });
 
-const look = async (cookie: string, path = "/") => {
+const look = async (cookie: string, path = "/feed") => {
   const res = await fetch(`${f.base}${path}`, { headers: { cookie } });
   const text = await res.text();
   const app = /app;dur=([\d.]+)/.exec(res.headers.get("server-timing") ?? "");
@@ -66,11 +66,14 @@ test("after a write, signed-in home is answered from memory within the budget an
     median = times[Math.floor(times.length / 2)]!;
   }
   expect(median).toBeLessThan(APP_BUDGET_MS);
-  for (const name of ["kpis", "waiting", "panels", "asked", "feed"]) {
+  for (const name of ["waiting", "panels", "asked", "feed"]) {
     expect(marked).toContain(`id="home-${name}"`);
   }
   expect(marked).toContain('data-refresh="/live/home/feed"');
-  expect(marked).toContain('data-refresh="/live/home/kpis"');
+  // The figures are on home itself, the feed's page holds the rest.
+  await look(f.ownerCookie, "/");
+  write(99);
+  expect((await look(f.ownerCookie, "/")).text).toContain('data-refresh="/live/home/kpis"');
 });
 
 test("the first response stays under its byte limit", async () => {
@@ -96,6 +99,7 @@ test("each late region answers alone, to its own viewer, and to no one else", as
 
 test("one viewer's remembered regions never reach another", async () => {
   await look(f.ownerCookie);
+  await look(f.ownerCookie, "/");
   write(99);
   const peer = await look(f.peerCookie);
   const owners = await look(f.ownerCookie);

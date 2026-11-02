@@ -72,7 +72,7 @@ test("homeTabs reads plain Asked at 0 or when not given, and the count otherwise
 
 test("with no asks the Asked tab is plain on all three pages", async () => {
   forgetHome(app.db);
-  for (const path of ["/?all=1", "/apps", "/asked"]) expect(await askedTab(path)).toBe("Asked");
+  for (const path of ["/feed?all=1", "/apps", "/asked"]) expect(await askedTab(path)).toBe("Asked");
 });
 
 test("three unshipped asks read Asked 3 on `/`, `/apps` and `/asked`", async () => {
@@ -81,8 +81,8 @@ test("three unshipped asks read Asked 3 on `/`, `/apps` and `/asked`", async () 
     if (!ask.ok) throw new Error(ask.error);
   }
   forgetHome(app.db);
-  for (const path of ["/?all=1", "/apps", "/asked"]) expect(await askedTab(path)).toBe("Asked 3");
-  const res = await fetch(`${servers.url}/?all=1`, { headers: { cookie } });
+  for (const path of ["/feed?all=1", "/apps", "/asked"]) expect(await askedTab(path)).toBe("Asked 3");
+  const res = await fetch(`${servers.url}/feed?all=1`, { headers: { cookie } });
   await res.arrayBuffer();
   expect(res.headers.get("server-timing") ?? "").toContain("asked;");
 });

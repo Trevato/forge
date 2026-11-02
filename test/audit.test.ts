@@ -432,7 +432,7 @@ describe("the audit reads every app's policy from git", () => {
 
   test("the way in: the studio home links the audit, and an app's page says its policy in one line", async () => {
     const home = await (
-      await fetch(`${servers.url}/`, {
+      await fetch(`${servers.url}/feed`, {
         headers: { cookie: `${cookie}; forge_mode=studio` },
       })
     ).text();

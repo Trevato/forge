@@ -14,7 +14,18 @@ import { kpiCache, panelCache } from "../src/web/studio/home_cache.ts";
 import { snappyFixture, type SnappyFixture } from "../bench/snappy.ts";
 
 let f: SnappyFixture;
-const home = (cookie?: string): Promise<string> => freshHome(f.base, cookie);
+/** Home and the feed page, which together hold what home was: the figures, then the panels and the timeline. */
+const home = async (cookie?: string): Promise<string> => (await freshHome(f.base, cookie)) + (await freshHome(f.base, cookie, "/feed"));
+/** Both pages' answers: the worst status and every phase either named. */
+async function both(cookie: string): Promise<{ status: number; timing: string }> {
+  const answers = [];
+  for (const path of ["/", "/feed"]) {
+    const res = await fetch(`${f.base}${path}`, { headers: { cookie } });
+    await res.arrayBuffer();
+    answers.push(res);
+  }
+  return { status: Math.max(...answers.map((r) => r.status)), timing: answers.map((r) => r.headers.get("server-timing") ?? "").join(", ") };
+}
 
 beforeAll(async () => {
   f = await snappyFixture();
@@ -42,7 +53,7 @@ test("a warm home reads neither the KPIs nor the panels again, even after a writ
   await home(f.ownerCookie);
   expect([kpi.misses, panel.misses]).toEqual([km, pm]);
   // The second look is a hit one layer in front of those caches (`home_last.ts`): both phases say so.
-  const timing = (await fetch(`${f.base}/`, { headers: { cookie: f.ownerCookie } })).headers.get("server-timing") ?? "";
+  const { timing } = await both(f.ownerCookie);
   expect(timing).toMatch(/kpis;dur=[\d.]+;desc="hit"/);
   expect(timing).toMatch(/panels;dur=[\d.]+;desc="hit"/);
 
@@ -84,10 +95,9 @@ interface Counted {
 async function counted(): Promise<Counted> {
   const before = writeStamp(f.app.db);
   f.counter.reset();
-  const res = await fetch(`${f.base}/`, { headers: { cookie: f.ownerCookie } });
-  await res.arrayBuffer();
+  const res = await both(f.ownerCookie);
   const ran = new Map(f.counter.top(10_000).map((s) => [s.sql, s.times]));
-  return { status: res.status, hits: phases(res.headers.get("server-timing")), ran, before, after: writeStamp(f.app.db) };
+  return { status: res.status, hits: phases(res.timing), ran, before, after: writeStamp(f.app.db) };
 }
 
 /**

@@ -527,7 +527,7 @@ describe("the studio home keeps itself current", () => {
   let readme: Issue;
 
   const get = (extraCookie = "") =>
-    fetch(`${base}/`, {
+    fetch(`${base}/feed`, {
       headers: {
         cookie: `${cookie}${extraCookie}; forge_mode=studio`,
       },

@@ -379,7 +379,7 @@ describe("home waiting line", () => {
       const cookie = (signin.headers.get("set-cookie") ?? "").split(";")[0]!;
       const review = await (await fetch(`${servers.url}/review`, { headers: { cookie } })).text();
       expect(review.split("<li").filter((r) => r.includes('class="row"')).length).toBe(stale.length);
-      return await (await fetch(`${servers.url}/`, { headers: { cookie } })).text();
+      return await (await fetch(`${servers.url}/feed`, { headers: { cookie } })).text();
     } finally {
       await servers.stop();
       app.close();

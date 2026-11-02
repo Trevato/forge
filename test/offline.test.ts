@@ -156,7 +156,7 @@ describe("the service worker and the server", () => {
   });
 
   test("the home page registers the worker, has the note, and allows workers", async () => {
-    const res = await fetch(`${servers.url}/`, { headers: { cookie } });
+    const res = await fetch(`${servers.url}/feed`, { headers: { cookie } });
     const text = await res.text();
     expect(text).toContain("serviceWorker");
     expect(text).toContain('id="feed-note"');
@@ -165,7 +165,7 @@ describe("the service worker and the server", () => {
   });
 
   test("the live client resumes /events from the last seen id", async () => {
-    const text = await (await fetch(`${servers.url}/`, { headers: { cookie } })).text();
+    const text = await (await fetch(`${servers.url}/feed`, { headers: { cookie } })).text();
     expect(text).toContain("/events?since=");
     expect(text).toContain("'online'");
   });

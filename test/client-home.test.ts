@@ -176,7 +176,7 @@ describe("a client's first screen", () => {
     expect(apps).toContain('href="/marias/bakery"');
     expect(apps).toMatch(/data-agents="(working|waiting)"/);
     expect(apps).toContain("agents are waiting");
-    expect(home).not.toContain('id="live-apps"');
+    expect(home).not.toContain('id="live-chips"');
     for (const gone of ['href="/map"', 'href="/board"', 'href="/audit"', 'href="/settings"'])
       expect(home).not.toContain(gone);
     expect(home).toContain('href="/?all=1"');
@@ -359,7 +359,7 @@ describe("a client's first screen", () => {
 
   test("asked for, the whole home is still there", async () => {
     const home = await page(owner, "/?all=1");
-    expect(home).toContain('id="live-apps"');
+    expect(home).toContain('id="live-chips"');
     expect(home).not.toContain('id="client-apps"');
   });
 

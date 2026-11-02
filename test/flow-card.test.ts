@@ -83,7 +83,7 @@ describe("stalled steps on the home", () => {
       .run(r.id, hoursAgo(hours), state);
   };
   const home = async (): Promise<string> =>
-    (await fetch(`${servers.url}/`, { headers: { cookie: `${cookie}; forge_mode=studio` } })).text();
+    (await fetch(`${servers.url}/feed`, { headers: { cookie: `${cookie}; forge_mode=studio` } })).text();
   const stalled = (user = alice) => readStalled(app.db, user, new Date());
 
   beforeAll(async () => {

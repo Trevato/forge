@@ -127,7 +127,7 @@ describe("the viewer's stream", () => {
   });
 
   test("the studio pages carry live regions and the script that keeps them fresh", async () => {
-    const res = await fetch(`${servers.url}/`, {
+    const res = await fetch(`${servers.url}/feed`, {
       headers: { cookie: `${cookie}; forge_mode=studio` },
     });
     const page = await res.text();

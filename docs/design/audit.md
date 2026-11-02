@@ -54,6 +54,7 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/board/returns` — `pages/returns.ts` · what the window's dollars bought · `/settings/subscriptions` spend tables, `/settings/usage` · none seen.
 - `/big` — `pages/board.ts` (`bigRedirect`) · a redirect kept for old addresses into the board's wall mode · it is `/board` · none (no page of its own).
 - `/boards` — `pages/boards-view.ts` · saved queries as panels · `/board` · none seen.
+- `/feed` — `studio/home.ts` · the composer and one timeline, what home was before it became the living pipeline (#8015) · `/` · none seen.
 - `/boards/data` — `pages/boards.ts` · the boards' query/data surface · `/board` · none seen.
 - `/asks` — `studio/asks_page.ts` · what the crew is waiting on me for · `/` "needs me" list · colours 2.
 - `/asked` — `studio/asked_page.ts` · what I answered, as a record · `/asks` · none seen.

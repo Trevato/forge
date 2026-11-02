@@ -599,7 +599,7 @@ describe("origins on the web", () => {
     expect(picker).toContain("mirrored as");
     expect(picker).toContain("this machine");
 
-    const dash = await (await asUser(`${alice}; forge_mode=dev`, "/")).text();
+    const dash = await (await asUser(`${alice}; forge_mode=dev`, "/feed")).text();
     expect(dash).toContain("On your machine");
     expect(dash).toContain("forge sync");
     expect(dash).toContain('href="/alice/widgets"');

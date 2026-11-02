@@ -230,7 +230,7 @@ describe("surfaces adversarial: web", () => {
       },
     );
     expect(assignedToAlice.status).toBe(303);
-    const dash = await bodyOf(alice, "/");
+    const dash = await bodyOf(alice, "/feed");
     expect(dash).not.toContain(payload);
     expect(dash).toContain(escaped);
 

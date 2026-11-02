@@ -607,7 +607,7 @@ describe("browsing an origin repository on the web", () => {
     const pages = {
       repo: await bodyOf(alice, "/alice/widgets"),
       picker: await bodyOf(alice, `/settings/origins/${originId}/repos`),
-      home: await bodyOf(alice, "/"),
+      home: await bodyOf(alice, "/feed"),
       search: await bodyOf(alice, "/search?q=widgets"),
     };
     const strip = stripOf(pages.repo);

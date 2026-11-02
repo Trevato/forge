@@ -84,7 +84,7 @@ test("the real home never contradicts its own figures; with one figure changed i
   const honest = await run([servers.url]);
   expect(honest.out).toMatch(/errors 0 ·/);
   expect(honest.out).not.toMatch(/^wrong /m);
-  const home = await (await fetch(`${servers.url}/`, { headers: { cookie } })).text();
+  const home = await (await fetch(`${servers.url}/feed`, { headers: { cookie } })).text();
   expect(home).toContain("3 waiting on you");
   // A stand-in in front of the forge: the real home with one figure wrong, every API read passed through.
   stub = Bun.serve({
