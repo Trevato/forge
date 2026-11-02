@@ -139,7 +139,7 @@ test("ahead of pace, the pace cuts the slots, and the reserve stops them", () =>
   expect(repoPace(app, repo, NOW).reason).toContain("Ahead of pace");
   week(95);
   expect(repoPace(app, repo, NOW).slots).toBe(0);
-  week(50, 1.4);
+  week(50, 0.47);
   expect(repoPace(app, repo, NOW).slots).toBe(4);
 });
 
