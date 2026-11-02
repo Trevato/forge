@@ -13,6 +13,7 @@ import { addSshKey, changePassword, deleteSshKey, updateProfile } from "../../ac
 import { VERIFY_WORDS } from "../../actions/verify_words.ts";
 import { resendVerification } from "../../actions/verify.ts";
 import { listAssignedTo } from "../../core/issues.ts";
+import { nextStepsFor } from "../../core/next-steps.ts";
 import { listKeys, publicKey } from "../../core/keys.ts";
 import { listOrgsForUser } from "../../core/orgs.ts";
 import { canRead, getReposByIds } from "../../core/repos.ts";
@@ -727,6 +728,16 @@ export function userRoutes(router: Router<Handler>): void {
       return out;
     });
     return timePhase(ctx.request, "render", () => json({ items, next_cursor: null }));
+  });
+
+  // The first three steps on a spawned forge, as MCP `next_steps`: empty
+  // elsewhere, for an agent, and for anyone but the forge's owner.
+  router.add("GET", "/api/v1/user/next-steps", async (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const denied = requireScope(ctx, "ro");
+    if (denied) return denied;
+    const steps = await nextStepsFor(ctx.app, ctx.auth.user);
+    return json({ steps: steps ?? [] });
   });
 
   router.add("DELETE", "/api/v1/user/pins/:owner/:name", (ctx) => {

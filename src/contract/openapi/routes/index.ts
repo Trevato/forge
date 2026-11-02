@@ -133,6 +133,7 @@ export { route as getApiV1Tokens } from "./getApiV1Tokens.ts";
 export { route as getApiV1User } from "./getApiV1User.ts";
 export { route as getApiV1UserAssigned } from "./getApiV1UserAssigned.ts";
 export { route as getApiV1UserKeys } from "./getApiV1UserKeys.ts";
+export { route as getApiV1UserNextSteps } from "./getApiV1UserNextSteps.ts";
 export { route as getApiV1UserOrgs } from "./getApiV1UserOrgs.ts";
 export { route as getApiV1UserOriginApps } from "./getApiV1UserOriginApps.ts";
 export { route as getApiV1UserOrigins } from "./getApiV1UserOrigins.ts";
