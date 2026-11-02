@@ -120,6 +120,7 @@ export { route as getApiV1ReposOwnerNameRunsIdLog } from "./getApiV1ReposOwnerNa
 export { route as getApiV1ReposOwnerNameTags } from "./getApiV1ReposOwnerNameTags.ts";
 export { route as getApiV1ReposOwnerNameUpstream } from "./getApiV1ReposOwnerNameUpstream.ts";
 export { route as getApiV1ReposOwnerNameUsage } from "./getApiV1ReposOwnerNameUsage.ts";
+export { route as getApiV1ReposOwnerNameVision } from "./getApiV1ReposOwnerNameVision.ts";
 export { route as getApiV1ReposOwnerNameWaves } from "./getApiV1ReposOwnerNameWaves.ts";
 export { route as getApiV1ReposOwnerNameWavesVersion } from "./getApiV1ReposOwnerNameWavesVersion.ts";
 export { route as getApiV1Returns } from "./getApiV1Returns.ts";

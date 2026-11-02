@@ -8,7 +8,10 @@
 
 import type { App } from "../app.ts";
 import { isVisionPull } from "../core/placements.ts";
-import { parseVision, type Vision } from "../core/vision.ts";
+import { NO_VISION, parseVision, type Vision } from "../core/vision.ts";
+import { directionStall } from "./planner.ts";
+import { runGit } from "../git/env.ts";
+import { getPull } from "../core/pulls.ts";
 import { canAdmin, getRepoById, updateRepoSettings } from "../core/repos.ts";
 import { createLog } from "../kernel/log.ts";
 import { editFiles } from "../actions/contents.ts";
@@ -64,6 +67,29 @@ export async function readDefaultVision(reposRoot: string, repo: Repo): Promise<
   const dir = repoDir(reposRoot, repo.ownerName, repo.name);
   const blob = await blobForRender(dir, repo.defaultBranch, VISION_PATH, VISION_MAX_BYTES);
   return blob.kind === "text" ? parseVision(new TextDecoder().decode(blob.body)) : null;
+}
+
+/**
+ * What MCP `vision` and `GET /api/v1/repos/:owner/:name/vision` both answer.
+ * `direction`, `directionStall`, `directionParts` and `preview` are admin-only
+ * (null otherwise); `number` names an open vision pull to preview.
+ */
+export async function answerVision(app: App, user: User | undefined, repo: Repo, number?: number) {
+  const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+  const read = await readDefaultVision(app.reposRoot, repo);
+  const vision = read ?? NO_VISION;
+  const last = read !== null ? await runGit(["log", "-1", "--format=%cI", repo.defaultBranch, "--", VISION_PATH], { cwd: dir }) : undefined;
+  const admin = canAdmin(app.db, repo, user);
+  const pull = admin && number !== undefined ? getPull(app.db, repo.id, number) : undefined;
+  const shown = pull ? await previewVision(app, repo, pull) : null;
+  return {
+    ...vision,
+    direction: admin ? repo.autonomyDirection : null,
+    directionStall: admin ? directionStall(app, repo) : null,
+    directionParts: admin ? directionParts(repo.autonomyDirection) : null,
+    preview: shown === null ? null : shown.ok ? { today: shown.today, after: shown.after } : { why: shown.why },
+    updatedAt: last?.ok && last.value.trim() ? last.value.trim() : null,
+  };
 }
 
 async function readVision(app: App, repo: Repo): Promise<string | null> {

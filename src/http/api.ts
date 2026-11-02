@@ -315,6 +315,7 @@ import { agentRoutes } from "./api/agents.ts";
 import { boardRoutes } from "./api/boards.ts";
 import { followingRoutes } from "./api/following.ts";
 import { labelsRoutes } from "./api/labels.ts";
+import { visionRoutes } from "./api/vision.ts";
 import { tokenRoutes } from "./api/tokens.ts";
 import { accountAdmin, adminRoutes } from "./api/admin.ts";
 import { issueRoutes, labelsHandler } from "./api/issues.ts";
@@ -1857,6 +1858,7 @@ export function apiRoutes(router: Router<Handler>): void {
   // ── labels ───────────────────────────────────────────────────────────
 
   labelsRoutes(router);
+  visionRoutes(router);
   router.add(
     "PUT",
     "/api/v1/repos/:owner/:name/pulls/:number/labels",

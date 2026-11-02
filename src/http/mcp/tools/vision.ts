@@ -1,10 +1,4 @@
-import { getPull } from "../../../core/pulls.ts";
-import { directionParts, previewVision, readDefaultVision } from "../../../crew/vision.ts";
-import { directionStall } from "../../../crew/planner.ts";
-import { canAdmin } from "../../../core/repos.ts";
-import { NO_VISION } from "../../../core/vision.ts";
-import { runGit } from "../../../git/env.ts";
-import { repoDir } from "../../../git/repos.ts";
+import { answerVision } from "../../../crew/vision.ts";
 import { good, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
 
 export const tool: Tool = {
@@ -21,24 +15,7 @@ export const tool: Tool = {
   async run(ctx, user, args) {
     const repo = repoArg(ctx, user, args);
     if (isAnswer(repo)) return repo;
-    const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
-    const read = await readDefaultVision(ctx.app.reposRoot, repo);
-    const found = read !== null;
-    const vision = read ?? NO_VISION;
-    const last = found
-      ? await runGit(["log", "-1", "--format=%cI", repo.defaultBranch, "--", "docs/VISION.md"], { cwd: dir })
-      : undefined;
-    const admin = canAdmin(ctx.app.db, repo, user);
     const n = args["number"];
-    const pull = admin && typeof n === "number" && Number.isInteger(n) && n > 0 ? getPull(ctx.app.db, repo.id, n) : undefined;
-    const shown = pull ? await previewVision(ctx.app, repo, pull) : null;
-    return good({
-      ...vision,
-      direction: admin ? repo.autonomyDirection : null,
-      directionStall: admin ? directionStall(ctx.app, repo) : null,
-      directionParts: admin ? directionParts(repo.autonomyDirection) : null,
-      preview: shown === null ? null : shown.ok ? { today: shown.today, after: shown.after } : { why: shown.why },
-      updatedAt: last?.ok && last.value.trim() ? last.value.trim() : null,
-    });
+    return good(await answerVision(ctx.app, user, repo, typeof n === "number" && Number.isInteger(n) && n > 0 ? n : undefined));
   },
 };
