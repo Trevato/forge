@@ -92,9 +92,10 @@ export const toolbarJs = `(function () {
   link.textContent = "Home";
   link.rel = "noopener";
   link.style.cssText = LS;
+  var hasHome = false;
   try {
     var target = new URL(home);
-    if (target.origin === fo) link.href = target.href;
+    if (target.origin === fo) { link.href = target.href; hasHome = true; }
   } catch (e) {}
   // Tell the builders: one box, one button, no account. The note goes to
   // this app's own host (same-origin, so the sender's cookie goes along) and
@@ -295,7 +296,7 @@ export const toolbarJs = `(function () {
   var crew = document.createElement("div");
   crew.setAttribute("aria-live", "polite");
   panel.appendChild(crew);
-  panel.appendChild(link);
+  if (hasHome) panel.appendChild(link);
   // The actions live on a forge page, opened in a tab of its own: the bar
   // posts nothing and reads nothing of this page beyond its address.
   if (d.repo && /^[\\w.-]+\\/[\\w.-]+$/.test(d.repo)) {
@@ -303,7 +304,7 @@ export const toolbarJs = `(function () {
     act.textContent = "Comment, tell, make it yours";
     act.target = "_blank";
     act.rel = "noopener noreferrer";
-    act.style.cssText = "color:#8ab4ff;text-decoration:none;margin-top:4px";
+    act.style.cssText = LS + ";margin-top:4px";
     try {
       var dest = new URL(home);
       dest.pathname = "/" + d.repo + "/toolbar";

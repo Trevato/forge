@@ -684,3 +684,18 @@ describe("readPage", () => {
     expect((await readPage(stream(["  \nplain"]), 100, 1000)).whole).toBe(false);
   });
 });
+
+describe("pill link tap targets (#8462)", () => {
+  const js = toolbarJs;
+  test("the Comment link carries the 44 px floor of LS", () => {
+    expect(js).toContain('act.style.cssText = LS + ";margin-top:4px"');
+    expect(js).toContain("min-height:44px");
+  });
+  test("Home is appended only after its href is set", () => {
+    const set = js.indexOf("link.href = target.href");
+    const add = js.indexOf("panel.appendChild(link)");
+    expect(set).toBeGreaterThan(0);
+    expect(add).toBeGreaterThan(set);
+    expect(js).toContain("if (hasHome) panel.appendChild(link)");
+  });
+});
