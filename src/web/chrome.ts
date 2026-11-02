@@ -409,7 +409,7 @@ export function scopeHeader(
     >
     ${facts.visibility === "private"
       ? badge("Private", { icon: "lock", variant: "secondary" })
-      : badge("Public", { variant: "secondary" })}
+      : null}
     ${actions.text.trim() !== ""
       ? html`<span class="repo-actions">${actions}</span>`
       : null}`;

@@ -87,7 +87,7 @@ import { pullMayRun } from "../../core/pull_trust.ts";
 import { nextOfPull } from "../../flow/next_actor.ts";
 import { STEP_MEANS, STEPS, stepOfPull, stepWord, type PathStep } from "../../flow/path.ts";
 import { changeHref } from "./nouns.ts";
-import { pullWord, servingHistory, wordBadge, type WordCtx } from "./words.ts";
+import { pullWord, servingHistory, wordDot, type WordCtx } from "./words.ts";
 
 /** The pull and its repo, or the response that refuses to say why not. */
 export function pullContext(ctx: Ctx): { repo: Repo; pull: Pull } | Response {
@@ -405,27 +405,26 @@ async function pullPanels(ctx: Ctx, repo: Repo, pull: Pull, spent: Spent = newSp
       deploy = { id: production.runId, commitOid: production.commitOid };
   }
 
-  const checkLine = card(
-    html`<p
-      class="studio-pull-check"
-      data-head="${pull.mergedOid ?? pull.headOid}"
-    >
-      ${wordBadge(word)} <span class="muted small">${note}</span>
-      ${when(
-        tick(spent, "tells", () => tellsAnswered(db, repo.id, [pull]).get(pull.number)),
-        (t) => html`<span class="sep" aria-hidden="true">·</span
-          >${tellLine(base, t)}`,
-      )}
-      ${when(
-        deploy,
-        (d) =>
-          html`<span class="sep" aria-hidden="true">·</span
-            ><a href="${base}/runs/${d.id}"
-              >deploy ${d.commitOid.slice(0, 7)}</a
-            >`,
-      )}
-    </p>`,
-  );
+  // At rest the check is a line, not a card: a dot, its word, the note.
+  const checkLine = html`<p
+    class="studio-pull-check"
+    data-head="${pull.mergedOid ?? pull.headOid}"
+  >
+    ${wordDot(word)}
+    <span class="word-text" data-pull-word>${word === "told" ? "open" : word}</span>
+    <span class="muted small">${note}</span>
+    ${when(
+      tick(spent, "tells", () => tellsAnswered(db, repo.id, [pull]).get(pull.number)),
+      (t) => html`<span class="sep" aria-hidden="true">·</span
+        >${tellLine(base, t)}`,
+    )}
+    ${when(
+      deploy,
+      (d) =>
+        html`<span class="sep" aria-hidden="true">·</span
+          ><a href="${base}/runs/${d.id}">deploy ${d.commitOid.slice(0, 7)}</a>`,
+    )}
+  </p>`;
 
   const preview = tick(spent, "preview", () =>
     when(record, () => previewCard(ctx, repo, pull)),
@@ -617,19 +616,16 @@ async function changeConversation(
       pull.originHeadRepo === null &&
       revertOf(db, repo.id, pull.id) === undefined,
     () =>
-      card(
-        html`<p class="muted small">
-            Take it back — opens a new change that undoes exactly what this
-            one shipped, for a person to ship.
-          </p>
-          <div class="bar mt">
-            ${confirmAction({
-              action: `${thread}/take-back`,
-              verb: "Take it back",
-              size: "sm",
-            })}
-          </div>`,
-      ),
+      html`<div class="bar mt">
+        ${confirmAction({
+          action: `${thread}/take-back`,
+          verb: "Take it back",
+          size: "sm",
+        })}
+        <span class="muted small"
+          >opens a new change that undoes exactly what this one shipped</span
+        >
+      </div>`,
   );
 
   const siblings = variantSiblings(db, [pull])[0] ?? [];

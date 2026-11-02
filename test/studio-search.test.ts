@@ -1124,8 +1124,10 @@ describe("the studio names a person on the app's page, and the crew only for the
     const onList = rowWith(changes, `/pulls/${personPull.number}`);
     expect(onApp).toContain("ivy");
     expect(onApp).not.toContain("the crew");
-    // The same name the list gives, and the same initials beside it.
-    expect(initialsIn(onApp)).toBe(initialsIn(onList));
+    // The same name the list gives; the list's row wears a status dot in
+    // place of an avatar (#8719), so the initials are the app page's alone.
+    expect(onList).toContain("ivy");
+    expect(onList).not.toContain("the crew");
     expect(initialsIn(onApp)).toBe("i");
     expect(change).toContain("ivy");
 

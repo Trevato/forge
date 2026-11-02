@@ -619,14 +619,13 @@ export async function changesList(ctx: Ctx): Promise<Response> {
             row({
               href: changeHref(base, pull.number),
               nav: true,
-              lead: avatar(pull.authorName),
+              lead: wordDot(info.word, info.note),
               title: titled(pull.title, labels.get(pull.id)),
               titleAttr: pull.title,
-              meta: html`${pull.originAuthor
+              meta: html`${wordText(info.word)}${pull.originAuthor
                 ? originTag(pull.originAuthor, originGlyph(repo))
-                : pull.authorName} · ${info.note} ·
+                : pull.authorName} ·
               ${when(answered.get(pull.number), (t) => html`${tellLine(base, t)} · `)}${time(pull.updatedAt)}`,
-              trail: wordBadge(info.word),
               ...stepAfter(steps.get(pull.id)),
             }),
           ),

@@ -267,7 +267,7 @@ export const liveClientJs = /* js */ `
         });
         var mark = document.querySelector('#pull-check [data-head]');
         if (mark && mark.getAttribute('data-head')) head = mark.getAttribute('data-head');
-        var word = textOf(document.querySelector('#pull-check .badge'));
+        var word = textOf(document.querySelector('#pull-check [data-pull-word]'));
         if (status && word) status.textContent = word.charAt(0).toUpperCase() + word.slice(1);
       })
       .catch(function () {})
