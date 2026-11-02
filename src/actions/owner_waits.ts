@@ -10,6 +10,7 @@ import { getIssuesByIds, type Issue } from "../core/issues.ts";
 import { joinMany } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
 import { plannerDeclines } from "../crew/autonomy.ts";
+import { reviewerPaused } from "../crew/reviewer_paused.ts";
 import { reviewersOf, waitsForPerson } from "../crew/review.ts";
 import type { Database } from "bun:sqlite";
 
@@ -51,7 +52,7 @@ export function reviewWaits(db: Database, repos: readonly Repo[]): OwnerWait[] {
         const w = waitsForPerson(db, repo.id, p);
         return w === undefined ? [] : [w];
       });
-    const paused = repo.reviewerSlots === 0;
+    const paused = reviewerPaused(repo);
     const none = reviewersOf(db, repo.id).length === 0;
     if (!none && !paused && waits.length === 0) return [];
     return [

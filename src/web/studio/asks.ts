@@ -59,6 +59,8 @@ import { breakerParked, WAITING_NOTES } from "../../crew/breaker.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
 import { handoversOf, passReasonOf, type Handover } from "../../crew/guard.ts";
 import { conflictsOf, isStalePull, mergesAgainSince, staleGreen } from "../../crew/stale_asks.ts";
+import { reviewSays } from "../../crew/review_says.ts";
+import { reviewerPaused } from "../../crew/reviewer_paused.ts";
 import { reviewWaitsFor, type ReviewWait } from "../../crew/review.ts";
 import type { Ctx } from "../../http/context.ts";
 import { NO_LONGER_ASKS } from "../../actions/asks_words.ts";
@@ -1015,21 +1017,15 @@ function lineOf(c: AskCandidate): string {
     return `"${c.pull?.title ?? ""}" had three reviews asking for changes and waits for you`;
   const title = c.pull?.title ?? "";
   if (c.kind === "review")
-    return `"${title}" waits for your review: ${reviewWhy(c.reviewWait)}`;
+    return `"${title}" waits for your review: ${reviewWhy(c.reviewWait, reviewerPaused(c.repo))}`;
   return c.kind === "stopped"
     ? `the crew stopped on "${title}"`
     : `"${title}" is green, waiting for your look`;
 }
 
 /** Why an agent's change waits for a person's review, in a clause. */
-export const reviewWhy = (wait: ReviewWait | undefined): string =>
-  wait?.why === "rounds"
-    ? `the reviewer asked for changes three times, since ${wait.since.slice(0, 10)}`
-    : wait?.why === "lapsed" && wait.lateCheckMinutes !== undefined
-    ? `review ran late: the check took ${wait.lateCheckMinutes} min, and the reviewer did not answer, since ${wait.since.slice(0, 10)}`
-    : wait?.why === "lapsed"
-    ? `the reviewer did not answer, since ${wait.since.slice(0, 10)}`
-    : `no reviewer on the crew, since ${wait?.since.slice(0, 10) ?? "it went green"}`;
+export const reviewWhy = (wait: ReviewWait | undefined, paused = false): string =>
+  `${reviewSays(wait, paused)}, since ${wait?.since.slice(0, 10) ?? "it went green"}`;
 
 /** A collapsed row in a line: how many, and of what. */
 export const ROW_PLURAL: Readonly<Record<DecisionKind, (n: number) => string>> = {

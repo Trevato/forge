@@ -13,6 +13,10 @@ import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { commitToBranch, createRepo, updateRepoSettings } from "../src/actions/repos.ts";
 import { setCrewRole } from "../src/core/agents.ts";
+import { crewNow } from "../src/actions/crew_now.ts";
+import { reviewSays } from "../src/crew/review_says.ts";
+import { askLinesFor } from "../src/web/studio/asks.ts";
+import { getPull } from "../src/core/pulls.ts";
 import { reviewWaits, waitLine } from "../src/actions/owner_waits.ts";
 import { checkAutonomy, getRepoById, type Repo } from "../src/core/repos.ts";
 import { openPull } from "../src/actions/pulls.ts";
@@ -183,6 +187,60 @@ test("a paused reviewer is said to be paused in what waits for the owner", () =>
   expect(w[0]).toMatchObject({ kind: "review", paused: true });
   expect(waitLine(w[0]!)).toContain("the reviewer is paused");
   app.db.query("UPDATE repo SET reviewer_slots = 8 WHERE id = ?1").run(repo.id);
+});
+
+test("a lapsed review says why on the now list, the MCP and the asks: paused, unanswered, or no reviewer", async () => {
+  // A green agent pull, its check long done, one review sent and never answered.
+  const mason = getUserByName(app.db, "mason")!;
+  ok(await commitToBranch(app, alice, fresh(), { branch: "feature/lapse", base: "main", message: "lapse", files: [{ path: "lapse.ts", content: "export const n = 1;\n" }] }));
+  const opened = ok(await openPull(app, alice, fresh(), { title: "lapse", baseBranch: "main", headBranch: "feature/lapse" }));
+  app.db.query("UPDATE issue SET author_id = ?2 WHERE id = ?1").run(opened.id, mason.id);
+  const pull = getPull(app.db, repo.id, opened.number)!;
+  const check = createRun(app.db, { repoId: repo.id, kind: "check", issueId: pull.id, env: `pull-${pull.number}`, commitOid: pull.headOid, reason: "pull" });
+  claimRun(app.db, check.id);
+  finishRun(app.db, check.id, { state: "ok", summary: "green" });
+  app.db.query("INSERT OR IGNORE INTO app (id, repo_id, slug, access, preview_data) VALUES (?1, ?2, 'yard', 'public', 'copy')").run(`app-${repo.id}`, repo.id);
+  ok(await updateRepoSettings(app, alice, fresh(), { reviewerSlots: 8 }));
+  expect(await sendToReview(app, fresh(), getPull(app.db, repo.id, pull.number)!)).toBe("sent");
+  for (const run of app.db.query<{ id: string }, [string]>("SELECT id FROM run WHERE issue_id = ?1 AND reason = 'review' AND state = 'queued'").all(pull.id)) {
+    claimRun(app.db, run.id);
+    finishRun(app.db, run.id, { state: "failed", summary: "reviewed: no verdict was posted" });
+  }
+  const old = new Date(Date.now() - 30 * 24 * 3_600_000).toISOString();
+  app.db.query("UPDATE run SET created_at = ?2, finished_at = ?2 WHERE issue_id = ?1").run(pull.id, old);
+  app.db.query("UPDATE issue SET author_id = ?2 WHERE id = ?1").run(pull.id, mason.id);
+
+  const says = async () => {
+    const rows = crewNow({ app } as never, alice).flatMap((r) => (r.why === "review" && "says" in r ? [r] : []));
+    expect(rows).toHaveLength(1);
+    const viaMcp = (await mcpTool(servers.url, admin, "now", {})).value as { why: string; says?: string }[];
+    expect(viaMcp.find((r) => r.why === "review")?.says).toBe(rows[0]!.says);
+    const ask = askLinesFor(app.db, alice).find((l) => l.id === `review:${pull.id}`);
+    return { now: rows[0]!.says, ask: ask?.line ?? "" };
+  };
+  const judge = getUserByName(app.db, "judge")!;
+
+  const live = await says();
+  expect(live.now).toBe("the reviewer did not answer");
+  expect(live.ask).toContain("the reviewer did not answer");
+
+  app.db.query("UPDATE repo SET reviewer_slots = 0 WHERE id = ?1").run(repo.id);
+  const paused = await says();
+  expect(paused.now).toBe("the reviewer is paused");
+  expect(paused.ask).toContain("the reviewer is paused");
+  app.db.query("UPDATE repo SET reviewer_slots = 8 WHERE id = ?1").run(repo.id);
+
+  setCrewRole(app.db, repo.id, judge.id, "builder");
+  const none = await says();
+  expect(none.now).toBe("no reviewer on the crew");
+  expect(none.ask).toContain("no reviewer on the crew");
+  setCrewRole(app.db, repo.id, judge.id, "reviewer");
+});
+
+test("three change requests are worded as such, never as an empty crew", () => {
+  const rounds = { why: "rounds", since: "2026-10-01T00:00:00Z" } as const;
+  expect(reviewSays(rounds, false)).toBe("the reviewer asked for changes three times");
+  expect(reviewSays(rounds, true)).toBe("the reviewer asked for changes three times");
 });
 
 test("over the MCP: read, plan, apply, and refuse an agent or a bad number", async () => {

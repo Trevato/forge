@@ -20,6 +20,7 @@ import { btn } from "../ui.ts";
 import { thumbLook } from "../pages/looks.ts";
 import { changeHref } from "./nouns.ts";
 import { testsClause } from "./words.ts";
+import { reviewerPaused } from "../../crew/reviewer_paused.ts";
 import { reviewWhy, scoredFor, waitingOn, type Decision, type Scored } from "./asks.ts";
 
 /** Dollars as a person reads them: cents when small, whole when not. */
@@ -156,8 +157,8 @@ export function decisionsFor(
         repo: c.repo,
         pull: c.pull,
         who: c.who,
-        says: `${c.who}'s "${c.pull.title}" is green and waits for a review: ${reviewWhy(c.reviewWait)}. An agent's change never ships unreviewed; ship it, or say what is off.`,
-        short: `green; waits for a review — ${reviewWhy(c.reviewWait)}`,
+        says: `${c.who}'s "${c.pull.title}" is green and waits for a review: ${reviewWhy(c.reviewWait, reviewerPaused(c.repo))}. An agent's change never ships unreviewed; ship it, or say what is off.`,
+        short: `green; waits for a review — ${reviewWhy(c.reviewWait, reviewerPaused(c.repo))}`,
       };
     if (c.kind === "look" && c.pull) {
       const picture = pictureOf(c.repo, c.pull);
