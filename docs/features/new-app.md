@@ -22,3 +22,10 @@ limit sentences. Nothing is made and no screen is pushed.
 
 Try it: `ssh` to the forge (`$FORGE_APP_SSH` on an app), press the palette key,
 pick **New app**.
+
+## From the API and the MCP
+
+`POST /api/v1/apps` and the MCP `new_app` tool take a `sentence` with no
+`name` and go through the same `newAppFromSentence`: the name is derived, a
+repeat gets `-2`, and nothing to name from is `no_name` (422 on the API). When
+both are given, `name` wins and `sentence` is ignored.

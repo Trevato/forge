@@ -1658,6 +1658,16 @@ describe("the forge over MCP", () => {
     expect((await tool(rw, "apps") as any).value.some((r: any) => r.app === "alice/readonly")).toBe(false);
   }, 30_000);
 
+  test("new_app with a sentence and no name derives the name; name wins when both are given", async () => {
+    const first = (await tool(rw, "new_app", { sentence: "Keep notes" })) as any;
+    expect(first.error).toBeUndefined();
+    const again = (await tool(rw, "new_app", { sentence: "Keep notes" })) as any;
+    expect(again.value.repo).toBe(`${first.value.repo}-2`);
+    const named = (await tool(rw, "new_app", { name: "wins", sentence: "Something else" })) as any;
+    expect(named.value.repo).toBe("alice/wins");
+    expect((await tool(rw, "new_app", { sentence: "!!!" })).error).toContain("no_name");
+  }, 30_000);
+
   test("new_app with pick lets the planner name the agent", async () => {
     const picked = await createAgent(app, alice, { username: "pickbot", brief: "builds" });
     if (!picked.ok) throw new Error(String(picked.error));

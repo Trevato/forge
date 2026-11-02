@@ -182,7 +182,13 @@ import { appLimitWords, appsOwnedBy } from "../actions/app_limit.ts";
 import { getQuota } from "../settings/quotas.ts";
 import { isSafeRef, isSafeTreePath } from "../git/guard.ts";
 import { compareBranches, listBranchRows } from "../git/branches.ts";
-import { newApp } from "../actions/apps.ts";
+import {
+  NO_NAME_ERROR,
+  newApp,
+  newAppFromSentence,
+  type NewAppInput,
+  type NewAppResult,
+} from "../actions/apps.ts";
 import { listDomains } from "../core/domains.ts";
 import {
   migrateMessage,
@@ -3223,19 +3229,43 @@ export function apiRoutes(router: Router<Handler>): void {
     if (denied) return denied;
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const input = await body(ctx.request);
-    const made = await newApp(ctx.app, ctx.auth.user, {
-      name: str(input.name),
+    const options: Omit<NewAppInput, "name" | "description"> = {
       ...(typeof input.owner === "string" ? { owner: input.owner } : {}),
-      ...(typeof input.description === "string"
-        ? { description: input.description }
-        : {}),
       ...(input.visibility === "public" || input.visibility === "private"
         ? { visibility: input.visibility }
         : {}),
       ...(typeof input.agent === "string" ? { agent: input.agent } : {}),
       // Only a real boolean asks; like the other fields, anything else is ignored.
       ...(input.pick === true ? { pickAgent: true } : {}),
-    }, (name, ms) => notePhase(ctx.request, name, ms));
+    };
+    const onPhase = (name: string, ms: number) => notePhase(ctx.request, name, ms);
+    // No `name` but a `sentence`: the name is derived, as the web form and terminal do.
+    const fromSentence = str(input.name) === "" && typeof input.sentence === "string";
+    let made: { ok: true; value: NewAppResult } | { ok: false; error: string };
+    if (fromSentence) {
+      const r = await newAppFromSentence(
+        ctx.app,
+        ctx.auth.user,
+        { ...options, sentence: str(input.sentence) },
+        onPhase,
+      );
+      made = r.ok ? { ok: true, value: r } : { ok: false, error: r.code };
+    } else {
+      made = await newApp(
+        ctx.app,
+        ctx.auth.user,
+        {
+          name: str(input.name),
+          ...(typeof input.description === "string"
+            ? { description: input.description }
+            : {}),
+          ...options,
+        },
+        onPhase,
+      );
+    }
+    if (!made.ok && made.error === "no_name")
+      return apiError("no_name", 422, NO_NAME_ERROR);
     if (!made.ok) {
       if (made.error === "repository_limit")
         return apiError("repository_limit", 403, repositoryLimitMessage(ctx.app, ctx.auth.user!));
