@@ -336,7 +336,7 @@ function authForm(
           type: "email",
           value: values.email ?? "",
           autocomplete: "email",
-          hint: "Optional. Given, we send a link to prove it.",
+          hint: "Optional. If you add one, we send a link to confirm it.",
           // A pinned name is not editable, so the keyboard goes to the email.
           ...(vouched !== undefined ? { autofocus: true } : {}),
           ...(errors.email ? { error: errors.email } : {}),
