@@ -864,6 +864,9 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 .bgrid h2 { font-size: 14px; }
 @media (max-width: 720px) { .bgrid { grid-template-columns: minmax(0, 1fr); } .bp-w2, .bp-w3 { grid-column: auto; } }
 
+/* Home's slot for pinned panels holds one panel row until the fragment lands, then the panels size it. */
+.home-panels-slot[data-refresh] { min-height: 240px; margin-bottom: 16px; }
+
 /* ---- settings shell ---- */
 .settings { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; margin-top: 16px; }
 .settings-nav {

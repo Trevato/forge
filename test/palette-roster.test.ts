@@ -74,6 +74,7 @@ test("a site-admin person is offered the whole roster", () => {
     ["signins", "Signed in", "your browsers and tokens; d signs a browser out"],
     ["sentinel", "Sentinel", "the forge's open faults"],
     ["boards", "Boards", "the forge's boards and their panels"],
+    ["home-pins", "Pinned panels", "the panels pinned to home: reorder and unpin"],
     ["origin-apps", "Origin apps", "your OAuth apps for connecting origins; a adds, d removes"],
     ["system-memory", "System memory", "RSS beside the JS heap, hourly for 24 h"],
     ["flow", "Flow", "the pipeline's bottleneck and throughput"],

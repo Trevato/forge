@@ -65,7 +65,7 @@ import { accessFingerprint } from "../../core/access_fingerprint.ts";
 import { homeFresh, homeRegion, homeVariant, refreshJs, type HomeRegion } from "./home_last.ts";
 import type { KpiTimer } from "../../flow/kpis.ts";
 import { archivedAppCount } from "../pages/apps.ts";
-import { pinnedPanels } from "./pinned.ts";
+import { pinnedPanels, pinnedSlot } from "./pinned.ts";
 import { isNavigation, lastVisit, noteVisit } from "../../core/home_visit.ts";
 import { sinceYouWere } from "./since.ts";
 import { homeTabs, unshippedAsks } from "./home_tabs.ts";
@@ -330,6 +330,7 @@ export async function studioHome(
     ${ask} ${address}
     ${timePhase(ctx.request, "held", () => heldLine(ctx, user))}
     <section class="stack" aria-label="The forge">${kpis}</section>
+    ${pinnedSlot(ctx.app.db, user)}
     ${timePhase(ctx.request, "moving", () => movingRegion(ctx.app.db, user))}
     ${appChips(ctx, user)}
     ${when(

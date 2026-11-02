@@ -204,6 +204,8 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
   if (
     kind === "repo.pinned" ||
     kind === "repo.unpinned" ||
+    // A person's pinned panels changed (`actions/board-pins.ts`): theirs alone.
+    kind === "board.pins" ||
     kind.startsWith("fleet.") ||
     kind.startsWith("thought.")
   )

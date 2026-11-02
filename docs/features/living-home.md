@@ -10,7 +10,9 @@ Signed in, `/` is five things and nothing else:
 
 The terminal's home carries the same lines (`movingLines` in `src/tui/screens/moving.ts`): Now for a site admin, then being built and just shipped, read for the viewer; its tell is the box.
 
-The feed — the composer, the timeline, what is on you, since you were here, pinned panels — is `/feed`, linked from home.
+6. **Pinned panels** — an admin's own pins, in their order, right after the KPIs. With no pin nothing is drawn. With one, home holds an empty `#home-panels` slot (one panel row tall, so nothing shifts) that the refresh script fills from `/live/home/panels` after first paint, keeping Up, Down and Unpin; with no script a link opens the same fragment. The panels sit in a live region (`#home-pins`) that redraws on `board.pins`, the event every pin, unpin and move makes for its owner alone, so a change from a board, the terminal, the API or the MCP shows at once. In the terminal the same list is the palette's Pinned panels (`src/tui/screens/home_pins.ts`): `<`/`>` move, `u` unpins, `enter` opens the board. `/feed` still draws them too.
+
+The feed — the composer, the timeline, what is on you, since you were here — is `/feed`, linked from home.
 
 Left out on purpose: the waiting-on-you line, the clog, vitals and keeper lines (the boards and the Flow dialog still show them), and "slowest right now" (it needs a timing read the home does not have). The box posts to `/tell` today; it becomes the `/talk` entry (#7652) when that lands.
 

@@ -150,6 +150,7 @@ const WORDS: Record<string, string> = {
   "repo.imported": "imported issues and pulls",
   "repo.pinned": "pinned a repository",
   "repo.unpinned": "unpinned a repository",
+  "board.pins": "changed their pinned panels",
   "branch.created": "created a branch",
   "branch.deleted": "deleted a branch",
   "label.created": "added a label",

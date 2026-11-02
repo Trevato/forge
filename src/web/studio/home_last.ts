@@ -121,7 +121,7 @@ export const refreshJs = /* js */ `
         var holder = document.createElement('template');
         holder.innerHTML = text;
         var root = holder.content.firstElementChild;
-        if (!root) return;
+        if (!root) { el.removeAttribute('data-refresh'); return; }
         // A region that owns its element (the feed, bound once by its script) is swapped inside it.
         var inner = root.children.length === 1 ? root.firstElementChild : null;
         var mine = inner && inner.id ? el.querySelector('#' + inner.id) : null;
@@ -129,7 +129,7 @@ export const refreshJs = /* js */ `
         el.removeAttribute('data-refresh');
         el.dispatchEvent(new CustomEvent('forge:swapped', { bubbles: true }));
       })
-      .catch(function () {});
+      .catch(function () { el.removeAttribute('data-refresh'); });
   });
 })();
 `;

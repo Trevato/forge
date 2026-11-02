@@ -22,6 +22,7 @@ import { entry as domains } from "./domains.ts";
 import { entry as feed } from "./feed.ts";
 import { entry as front } from "./front.ts";
 import { entry as forges } from "./forges.ts";
+import { entry as homePins } from "./home_pins.ts";
 import { entry as invites } from "./invites.ts";
 import { entry as limits } from "./limits.ts";
 import { modelCeilingEntry, modelGrantEntry } from "./model.ts";
@@ -61,6 +62,7 @@ export interface PaletteEntry {
 export const ENTRIES: readonly PaletteEntry[] = [
   sentinel,
   boards,
+  homePins,
   system,
   telemetry,
   resilience,
