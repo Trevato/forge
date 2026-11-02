@@ -13,16 +13,18 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openPull } from "../src/actions/pulls.ts";
-import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { commitToBranch, createRepo, updateRepoSettings } from "../src/actions/repos.ts";
 import { setCrewRole, type Agent } from "../src/core/agents.ts";
 import type { Pull } from "../src/core/pulls.ts";
-import type { Repo } from "../src/core/repos.ts";
+import { getRepoById, type Repo } from "../src/core/repos.ts";
 import type { Review } from "../src/core/reviews.ts";
 import { claimRun, createRun, finishRun, listRuns } from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import {
   pickReviewer,
   reviewLoad,
+  reviewsInFlight,
+  sendToReview,
   REVIEW_LAPSE_MS,
   REVIEW_WAIT_MS,
   reviewStage,
@@ -248,6 +250,29 @@ describe("every green pull an agent wrote is sent to review", () => {
 
     // The next tick sends nothing twice.
     expect(await sweepReviews(app)).toBe(0);
+  });
+
+  test("the reviewer's slots bound the reviews in flight: at the cap a green pull waits, and none sends nothing", async () => {
+    const scout = getUserByName(app.db, "scout")!;
+    const late = await pullBy(scout, "capped", "src/web/capped.ts");
+    pass(late);
+    const fresh = () => getRepoById(app.db, repo.id)!;
+    const inFlight = reviewsInFlight(app.db, repo.id);
+    expect(inFlight).toBeGreaterThan(0);
+    // The cap is what is already out: nothing more goes.
+    await updateRepoSettings(app, alice, repo, { reviewerSlots: inFlight });
+    expect(await sendToReview(app, fresh(), late)).toBe("wait");
+    expect(reviewer(late)).toEqual([]);
+    // Paused: no review at all, as with no reviewer.
+    await updateRepoSettings(app, alice, repo, { reviewerSlots: 0 });
+    expect(await sendToReview(app, fresh(), late)).toBe("none");
+    // One more slot than are out: it is sent.
+    await updateRepoSettings(app, alice, repo, { reviewerSlots: inFlight + 1 });
+    expect(await sendToReview(app, fresh(), late)).toBe("sent");
+    expect(reviewer(late)).toHaveLength(1);
+    await updateRepoSettings(app, alice, repo, { reviewerSlots: 8 });
+    // Closed, so the sweep below counts what it did before.
+    app.db.query("UPDATE issue SET state = 'closed' WHERE id = ?1").run(late.id);
   });
 
   test("60 open green agent pulls: the oldest is sent on the first pass, and a pass sends a bounded few", async () => {

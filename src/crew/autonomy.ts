@@ -720,6 +720,8 @@ async function planIfThin(
   const limbs = pendingReplans(app.db, repo);
   const reserve = reserveOf(ready, repo.autonomySlots);
   if (!short(reserve) && handed.length === 0 && limbs.length === 0) return false;
+  // Paused by its pillar's setting (#7668): the planner stays on the crew.
+  if (repo.plannerSlots === 0) return notPlanned(repo, "the planner is paused");
   if (repo.autonomyDirection.trim() === "")
     return notPlanned(repo, "no direction written");
   // A direction with no planner would go nowhere; the forge lends one (#7637).

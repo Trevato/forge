@@ -346,6 +346,9 @@ const AUDITED = [
   "crewOutsiders",
   "decisionsBy",
   "plansNeedNod",
+  "autonomySlots",
+  "plannerSlots",
+  "reviewerSlots",
 ] as const;
 
 export type { SettingsChanged };

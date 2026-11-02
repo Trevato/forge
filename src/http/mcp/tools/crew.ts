@@ -6,12 +6,14 @@ import { crewAsSeen, addToCrew, removeFromCrew } from "../../../actions/crew.ts"
 import { emailVerified } from "../../../core/verify.ts";
 import { governorSeen } from "../../../crew/governed.ts";
 import { crewOffInPreview } from "../../../crew/preview.ts";
+import { setSeatSlots, seatSlotsSaid } from "../../../actions/seat_slots.ts";
+import { checkSeatSlots, seatSlotsOf } from "../../../crew/seat_slots.ts";
 import { seatsOf } from "../../../crew/seats.ts";
 import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
 
 export const tool: Tool = {
   name: "crew",
-  doc: "`{ repo, add?, remove?, dryRun? }`: without `add` or `remove`, the repository's crew as Settings › Crew reads it (`username`, `displayName`, `role`, and `config` for those who may see it) and `seats { auto, mode, seats[{ role, by, does, without?, state }] }`, the three seats and which are empty, and `governor { slots, ceiling, held, why }`, the builders the governor allows now and why (`null` while the crew is off or for a reader who cannot write here); `add` or `remove` (an agent's username) says what would change, planned first (`dryRun` is true unless `false`); applying is the repository's admin with an admin token, never an agent; refusals are `no_such_agent`, `not_an_agent`, `unverified`",
+  doc: "`{ repo, add?, remove?, dryRun? }`: without `add` or `remove`, the repository's crew as Settings › Crew reads it (`username`, `displayName`, `role`, and `config` for those who may see it) and `seats { auto, mode, seats[{ role, by, does, without?, state }] }`, the three seats and which are empty, `slots[{ role, slots, max, running, waiting, spentUsd, sharePct }]`, how much each may do at once now and today's spend (0 is paused, still on the crew), and `governor { slots, ceiling, held, why }`, the builders the governor allows now and why (`null` while the crew is off or for a reader who cannot write here); `seat` (planner, builder or reviewer) with `slots` (0 to 8, the planner 0 or 1) sets how much that seat may do at once, 0 pausing it, on the trail at once; `add` or `remove` (an agent's username) says what would change, planned first (`dryRun` is true unless `false`); applying is the repository's admin with an admin token, never an agent; refusals are `no_such_agent`, `not_an_agent`, `unverified`",
   description: "List a repository's crew, or add or remove an agent. Plans first; admin token.",
   inputSchema: {
     type: "object",
@@ -19,6 +21,8 @@ export const tool: Tool = {
       repo: REPO_ARG,
       add: { type: "string" },
       remove: { type: "string" },
+      seat: { type: "string" },
+      slots: { type: "integer" },
       dryRun: { type: "boolean" },
     },
   },
@@ -30,10 +34,26 @@ export const tool: Tool = {
     const { app } = ctx;
     const add = args["add"];
     const remove = args["remove"];
+    const seat = args["seat"];
+    if (seat !== undefined || args["slots"] !== undefined) {
+      if (add !== undefined || remove !== undefined) return bad("invalid", "give `seat` and `slots`, or `add` or `remove`, not both");
+      const checked = typeof seat === "string" ? checkSeatSlots(seat, args["slots"]) : undefined;
+      if (checked === undefined) return bad("invalid", "`seat` is planner, builder or reviewer and `slots` a whole number from 0 (paused) to 8, the planner 0 or 1");
+      if (args["dryRun"] !== undefined && typeof args["dryRun"] !== "boolean") return bad("invalid", "`dryRun` is true or false");
+      if (user.kind === "agent") return bad("forbidden", "changing the crew is a person's call, not an agent's");
+      if (!canAdmin(app.db, repo, user)) return bad("forbidden", "only an admin of this repository changes its crew");
+      const was = seatSlotsOf(app.db, repo).find((p) => p.role === checked.role)!.slots;
+      if (args["dryRun"] !== false)
+        return good({ seat: checked.role, from: was, to: checked.slots, changes: was !== checked.slots, says: `This is the plan; nothing changed. ${seatSlotsSaid(checked.role, checked.slots)} Send dryRun: false to apply.` });
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin")) return bad("forbidden", "changing the crew needs an admin token");
+      const done = await setSeatSlots(app, user, repo, checked.role, checked.slots);
+      if (!done.ok) return bad("not_found", "no such app or repository (owner/name)");
+      return good({ seat: checked.role, from: was, to: checked.slots, changed: was !== checked.slots, says: seatSlotsSaid(checked.role, checked.slots) });
+    }
     if (add === undefined && remove === undefined) {
       const seen = crewAsSeen(app, user, repo);
       if (!seen.ok) return bad("not_found", "no such app or repository (owner/name)");
-      return good({ crew: seen.value, governor: governorSeen(app, user, repo, new Date()) ?? null, seats: seatsOf(app.db, repo, crewOffInPreview()) });
+      return good({ crew: seen.value, governor: governorSeen(app, user, repo, new Date()) ?? null, seats: seatsOf(app.db, repo, crewOffInPreview()), slots: seatSlotsOf(app.db, repo) });
     }
     if ((add !== undefined && typeof add !== "string") || (remove !== undefined && typeof remove !== "string"))
       return bad("invalid", "`add` and `remove` are an agent's username");

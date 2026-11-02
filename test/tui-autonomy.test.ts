@@ -202,6 +202,28 @@ describe("autonomy in the terminal", () => {
     h.stop();
   });
 
+  test("p, s and r set the planner, builder and reviewer; 0 pauses and the audit line says from what to what", async () => {
+    const h = boot(ada);
+    await h.open();
+    expect(h.text()).toContain("Planner");
+    expect(h.text()).toContain("Reviewer");
+    for (const [key, value] of [["p", "0"], ["s", "0"], ["r", "2"]] as const) {
+      await h.press(key);
+      for (let i = 0; i < 4; i++) await h.press("backspace");
+      await h.type(value);
+      await h.press("enter");
+    }
+    expect(saved()).toMatchObject({ plannerSlots: 0, autonomySlots: 0, reviewerSlots: 2 });
+    expect(h.text()).toContain("Paused");
+    await h.press("p");
+    for (let i = 0; i < 4; i++) await h.press("backspace");
+    await h.type("2");
+    await h.press("enter");
+    expect(saved().plannerSlots).toBe(0);
+    expect(h.text()).toContain(AUTONOMY_BOUNDS);
+    h.stop();
+  });
+
   test("a ceiling or slots out of range are refused with the page's sentence and nothing is saved", async () => {
     const h = boot(ada);
     await h.open();
@@ -214,7 +236,7 @@ describe("autonomy in the terminal", () => {
       expect(h.text()).toContain(AUTONOMY_BOUNDS);
       expect(saved().autonomyCeilingUsd).toBe(before.autonomyCeilingUsd);
     }
-    for (const bad of ["0", "9", "2.5", "x"]) {
+    for (const bad of ["9", "2.5", "x", "-1"]) {
       await h.press("s");
       for (let i = 0; i < 4; i++) await h.press("backspace");
       await h.type(bad);
@@ -233,7 +255,7 @@ describe("autonomy in the terminal", () => {
       const before = saved();
       const h = boot(get());
       await h.open();
-      expect(h.text()).not.toContain("Slots");
+      expect(h.text()).not.toContain("Builder");
       expect(h.text()).not.toContain("Ceiling");
       expect(h.text()).not.toContain("Mode ");
       await h.press("m", "left", "enter", "c", "s");
@@ -249,7 +271,7 @@ describe("autonomy in the terminal", () => {
   test("an agent who administers the repository changes it, as the page's API lets it", async () => {
     const h = boot(bot);
     await h.open();
-    expect(h.text()).toContain("Slots");
+    expect(h.text()).toContain("Builder");
     await h.press("s");
     for (let i = 0; i < 4; i++) await h.press("backspace");
     await h.type("2");

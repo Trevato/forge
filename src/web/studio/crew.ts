@@ -40,6 +40,7 @@ import { html, raw, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
 import { crewReadiness } from "../pages/crew.ts";
 import { grantsSection } from "../pages/subscriptions.ts";
+import { seatSlotsOf, seatSlotsWords, SEAT_UNIT } from "../../crew/seat_slots.ts";
 import { directionStall } from "../../crew/planner.ts";
 import { directionMarked } from "./direction.ts";
 import { fileHoldsCard } from "./file_holds.ts";
@@ -153,22 +154,40 @@ function teamCard(
       })}
     </form>`;
   };
+  const seatSlots = new Map(seatSlotsOf(ctx.app.db, repo).map((p) => [p.role, p]));
   const rows = team.seats.map((p) => {
     const fillBy = fill(p);
     const b = SEAT_BADGE[p.state];
+    const slots = seatSlots.get(p.role)!;
+    const paused = slots.slots === 0;
+    const setter = html`<form class="row-fields" method="post" action="${base}/settings/pillars">
+      <input type="hidden" name="seat" value="${p.role}" />
+      <label class="sr-only" for="f-seat-${p.role}">${p.role}: ${SEAT_UNIT[p.role]}</label>
+      <input class="input input-sm" id="f-seat-${p.role}" name="slots" type="number" inputmode="numeric"
+        min="0" max="${String(slots.max)}" value="${String(slots.slots)}" />
+      ${btn("Set", { size: "sm" })}
+    </form>`;
     return row({
       lead: icon(SEAT_LEAD[p.state]),
       title: p.role[0]!.toUpperCase() + p.role.slice(1),
       meta: html`${p.by.length > 0 ? html`${p.by.map((u, i) => html`${i > 0 ? ", " : ""}${userLink(u)}`)}: ` : null}${p.does}${p.state === "warn" ? ` No ${p.role}: ${p.without}.` : null}`,
-      trail: html`${badge(b.text, { tone: b.tone })}${fillBy ?? null}`,
+      trail: html`${paused ? badge("paused", { tone: "attn" }) : badge(b.text, { tone: b.tone })}${fillBy ?? null}`,
       data: { seat: p.role, state: p.state },
+      children: [
+        row({
+          title: paused ? "Paused" : `${String(slots.slots)} ${SEAT_UNIT[p.role]}`,
+          meta: html`${seatSlotsWords(slots)}`,
+          ...(admin ? { trail: setter } : {}),
+          data: { slots: p.role, at: String(slots.slots) },
+        }),
+      ],
     });
   });
   const intro = crewOffInPreview()
     ? "The crew is off in a preview, so nobody here is working."
     : team.auto
       ? `Auto mode is on (${team.mode}): your team works on its own — a planner decides what is next, a builder builds it, a reviewer checks it.`
-      : "Auto mode is off: your team works only when you ask. Fill the seats you want, then turn auto mode on under On its own.";
+      : "Auto mode is off: your team works only when you ask. Fill the seats you want, then turn auto mode on under On its own. Each seat says how much it may do at once; 0 pauses it without taking it off the team.";
   return card(
     html`<p class="small" id="auto-mode" data-auto="${team.auto ? "on" : "off"}">
         ${intro}
@@ -440,13 +459,6 @@ ${repo.autonomyDirection}</textarea
           value: String(repo.autonomyCeilingUsd),
           type: "number",
           hint: `Dollars of agent spend on this ${getAppByRepo(ctx.app.db, repo.id) === undefined ? "repository" : "app"} per UTC day. At the ceiling the crew stops picking until midnight; nothing in flight is cut.`,
-        })}
-        ${field({
-          label: "Slots",
-          name: "slots",
-          value: String(repo.autonomySlots),
-          type: "number",
-          hint: "Agent runs at once here. This is the WIP limit.",
         })}
         <div class="form-actions">${btn("Save", { variant: "primary" })}</div>
       </form>`;

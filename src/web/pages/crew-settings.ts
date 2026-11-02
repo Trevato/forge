@@ -5,6 +5,8 @@
  * form here redirects back to its `#crew` anchor with a flash.
  */
 
+import { seatSlotsSaid, setSeatSlots } from "../../actions/seat_slots.ts";
+import { checkSeatSlots } from "../../crew/seat_slots.ts";
 import { addToCrew, listCrew, removeFromCrew } from "../../actions/crew.ts";
 import { getAgentByName, isCrewRole, setCrewRole } from "../../core/agents.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -92,4 +94,26 @@ export async function crewRoleUpdate(ctx: Ctx): Promise<Response> {
   return flashTo(ctx, `${base}/settings#crew`, {
     message: `${agent.user.username} is a ${role} here.`,
   });
+}
+
+// POST /:owner/:name/settings/pillars
+export async function pillarUpdate(ctx: Ctx): Promise<Response> {
+  const gate = await adminForm(ctx);
+  if (gate instanceof Response) return gate;
+  const { repo, form } = gate;
+  const base = repoBase(repo);
+  const checked = checkSeatSlots(field(form, "seat"), field(form, "slots"));
+  if (checked === undefined)
+    return flashTo(ctx, `${base}/settings#team`, {
+      tone: "danger",
+      message: "A pillar may do a whole number at once, from 0 (paused) to 8; the planner 0 or 1.",
+    });
+  const done = await setSeatSlots(ctx.app, ctx.auth.user, repo, checked.role, checked.slots);
+  return flashTo(
+    ctx,
+    `${base}/settings#team`,
+    done.ok
+      ? { message: seatSlotsSaid(checked.role, checked.slots) }
+      : { tone: "danger", message: "That could not be saved." },
+  );
 }

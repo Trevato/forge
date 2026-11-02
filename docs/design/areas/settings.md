@@ -33,3 +33,7 @@ The terminal's Labels screen (`src/tui/screens/labels.ts`) shows the same counts
 
 Settings → Confirms (`src/web/pages/confirms.ts`, #8230) is a `listCard()` of `row()`s that fold (`fold`) open on the call's full
 arguments in a `messageText()` block, with the Yes form beside the row (`after`); no new class.
+
+## Team card: a seat's number
+
+Each seat row (`row`) holds one child row: its title says how much the seat may do at once ("2 builds at once", "Paused"), its meta says what it is doing and spending, and its trail holds a one-line form: a number `input input-sm` (the same small control as the Crew card's role select, in a `row-fields` form) and a small Set button. No new class. At phone width the row wraps as every row does; the form stays on one line because it is a number and a button.

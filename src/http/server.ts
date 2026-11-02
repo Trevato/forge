@@ -353,6 +353,7 @@ import {
   crewAdd,
   crewRemove,
   crewRoleUpdate,
+  pillarUpdate,
   crewSettingsPage,
   crewSubscriptionsSave,
 } from "../web/pages/crew-settings.ts";
@@ -1298,6 +1299,7 @@ export function buildRouter(): Router<Handler> {
     "/:owner/:name/settings/crew/:username/role",
     crewRoleUpdate,
   );
+  router.add("POST", "/:owner/:name/settings/pillars", pillarUpdate);
   router.add("GET", "/:owner/:name/settings/autonomy", autonomySettingsPage);
   router.add("POST", "/:owner/:name/settings/autonomy", autonomySettingsUpdate);
   router.add("POST", "/:owner/:name/settings/holds", fileHoldUpdate);

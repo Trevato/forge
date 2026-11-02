@@ -84,7 +84,7 @@ export const isAutonomy = (value: unknown): value is Autonomy =>
 
 /** What the settings page and the terminal say when autonomy input is out of bounds. */
 export const AUTONOMY_BOUNDS =
-  "Mode is off, assisted or autonomous; the ceiling is a number of dollars; slots are 1 to 8.";
+  "Mode is off, assisted or autonomous; the ceiling is a number of dollars; slots are 0 (paused) to 8.";
 
 /** What each mode does, in one sentence: the settings page's flash and the terminal's toast. */
 export const AUTONOMY_SAID: Readonly<Record<Autonomy, string>> = {
@@ -104,12 +104,15 @@ export function checkAutonomy(
     !Number.isFinite(ceiling) ||
     ceiling < 0 ||
     !Number.isInteger(slots) ||
-    slots < 1 ||
-    slots > 8
+    slots < 0 ||
+    slots > PILLAR_MAX
   )
     return { ok: false, message: AUTONOMY_BOUNDS };
   return { ok: true, mode };
 }
+
+/** The most any pillar may be set to at once. */
+export const PILLAR_MAX = 8;
 
 export interface Repo {
   readonly id: string;
@@ -140,6 +143,10 @@ export interface Repo {
   readonly autonomyDirection: string;
   readonly autonomyCeilingUsd: number;
   readonly autonomySlots: number;
+  /** Planning passes at once: 0 pauses the planner, 1 is the most. */
+  readonly plannerSlots: number;
+  /** Reviews at once: 0 pauses the reviewer. */
+  readonly reviewerSlots: number;
   readonly autonomyBy: string | null;
   /**
    * "Outsiders may trigger the crew": whether someone who cannot write here
@@ -195,6 +202,8 @@ interface RepoRow {
   autonomy_direction: string;
   autonomy_ceiling_usd: number;
   autonomy_slots: number;
+  planner_slots: number;
+  reviewer_slots: number;
   autonomy_by: string | null;
   crew_outsiders: number;
   decisions_by: string;
@@ -235,6 +244,8 @@ function toRepo(row: RepoRow): Repo {
     autonomyDirection: row.autonomy_direction,
     autonomyCeilingUsd: row.autonomy_ceiling_usd,
     autonomySlots: row.autonomy_slots,
+    plannerSlots: row.planner_slots,
+    reviewerSlots: row.reviewer_slots,
     autonomyBy: row.autonomy_by,
     crewOutsiders: row.crew_outsiders === 1,
     decisionsBy: isDecisionsBy(row.decisions_by) ? row.decisions_by : "me",
@@ -1195,6 +1206,8 @@ export interface RepoSettings {
   autonomyDirection?: string;
   autonomyCeilingUsd?: number;
   autonomySlots?: number;
+  plannerSlots?: number;
+  reviewerSlots?: number;
   /** Who the forge acts as when it assigns and lands on its own. */
   autonomyBy?: string | null;
   /** Whether someone who cannot write here may start or steer a run. */
@@ -1226,7 +1239,7 @@ export function updateRepoSettings(
        default_branch = ?4, require_review = ?5, require_checks = ?7,
        autonomy = ?8, autonomy_direction = ?9, autonomy_ceiling_usd = ?10,
        autonomy_slots = ?11, autonomy_by = ?12, crew_outsiders = ?13, decisions_by = ?14,
-       plans_need_nod = ?15
+       plans_need_nod = ?15, planner_slots = ?16, reviewer_slots = ?17
      WHERE id = ?6`,
   ).run(
     settings.visibility ?? repo.visibility,
@@ -1244,6 +1257,8 @@ export function updateRepoSettings(
     (settings.crewOutsiders ?? repo.crewOutsiders) ? 1 : 0,
     settings.decisionsBy ?? repo.decisionsBy,
     (settings.plansNeedNod ?? repo.plansNeedNod) ? 1 : 0,
+    settings.plannerSlots ?? repo.plannerSlots,
+    settings.reviewerSlots ?? repo.reviewerSlots,
   );
   forgetListings(db);
   return getRepoById(db, repo.id)!;

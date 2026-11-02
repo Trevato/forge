@@ -1430,7 +1430,9 @@ export async function autonomySettingsUpdate(ctx: Ctx): Promise<Response> {
   const { repo, form } = gate;
   const base = repoBase(repo);
   const ceiling = Number(field(form, "ceiling"));
-  const slots = Number(field(form, "slots"));
+  // The builders' slots are the Builder pillar's number on the team card; this form only keeps them.
+  const slotsField = field(form, "slots");
+  const slots = slotsField === "" ? repo.autonomySlots : Number(slotsField);
   const checked = checkAutonomy(field(form, "autonomy"), ceiling, slots);
   if (!checked.ok)
     return flashTo(ctx, `${base}/settings#autonomy`, {

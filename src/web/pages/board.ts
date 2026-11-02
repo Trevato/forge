@@ -435,7 +435,7 @@ function reviewNotes(ctx: Ctx, scope: BoardScope): Note[] {
             key: `review:${w.repo.id}`,
             need: true,
             line: html`<a data-need href="/asks"
-              >${dot("attn")} <b>${w.repo.name}</b>: ${w.none ? "No reviewer: agent pulls wait for you" : "agent pulls wait for your review"}${w.waiting === 0 || w.since === null
+              >${dot("attn")} <b>${w.repo.name}</b>: ${w.none ? "No reviewer: agent pulls wait for you" : w.paused ? "The reviewer is paused: agent pulls wait for you" : "agent pulls wait for your review"}${w.waiting === 0 || w.since === null
                 ? null
                 : html` · <b>${w.waiting}</b> waiting since ${w.since.slice(0, 10)}`}</a
             >`,
