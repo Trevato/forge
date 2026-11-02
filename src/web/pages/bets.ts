@@ -13,7 +13,7 @@ import {
 import { type Bet, betRuns, betScopes, getBet, listBets } from "../../core/bets.ts";
 import { getUserById } from "../../core/users.ts";
 import { canAdmin, type Repo } from "../../core/repos.ts";
-import { budgetSeconds, MAX_BACKED, scopeState, spentSeconds } from "../../crew/bets.ts";
+import { budgetSeconds, MAX_BACKED, mayBack, scopeState, spentSeconds } from "../../crew/bets.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { crumbsFor, loadRepo, notFoundPage, pageHead, repoBase, repoHeader, repoPalette } from "../chrome.ts";
@@ -71,6 +71,35 @@ function oneButton(repo: Repo, b: Bet, verb: string, label: string, variant: "da
   return html`<form method="post" action="${post(repo, b, verb)}">${btn(label, { variant })}</form>`;
 }
 
+/**
+ * A proposed bet as one card for the owner: name, journeys, its issues as a
+ * count that opens the list, and one button that backs it at the proposed
+ * share. When the cap or the week forbids it the button is disabled and the
+ * reason sits beside it. Changing the share is one disclosure away.
+ */
+function proposedCard(ctx: Ctx, repo: Repo, b: Bet, backed: readonly Bet[]): Html {
+  const scopes = betScopes(ctx.app.db, b.id);
+  const journeys = b.journeys.split("\n").filter((j) => j !== "");
+  const why = mayBack(backed, b.appetite);
+  const issues = scopes.length === 0
+    ? html`<p class="muted">No issues yet.</p>`
+    : html`<details><summary>${scopes.length} ${scopes.length === 1 ? "issue" : "issues"}</summary>
+        <ul>${scopes.map((s) => html`<li><a href="${repoBase(repo)}/issues/${s.number}">#${s.number} ${s.title}</a></li>`)}</ul>
+      </details>`;
+  return card(
+    html`<h2><a href="${betHref(repo, b.id)}">${b.name}</a></h2>
+      ${journeys.length === 0 ? null : html`<ul>${journeys.map((j) => html`<li>${j}</li>`)}</ul>`}
+      ${issues}
+      <form method="post" action="${post(repo, b, "back")}">
+        <input type="hidden" name="share" value="${String(b.appetite)}">
+        ${btn(`Back it at ${b.appetite}%`, { variant: "primary", disabled: why !== null })}
+        ${why === null ? null : html`<p class="muted" role="note">${why[0]!.toUpperCase() + why.slice(1)}.</p>`}
+      </form>
+      <details class="mt"><summary>Change the share</summary>${backForm(repo, b, "Back it")}</details>
+      <div class="mt">${oneButton(repo, b, "cut", "Cut it", "danger")}</div>`,
+  );
+}
+
 /** What the owner can do with a bet, by where it is. */
 function ownerActions(repo: Repo, b: Bet): Html | null {
   if (b.state === "proposed") return html`${backForm(repo, b, "Back it")}${oneButton(repo, b, "cut", "Cut it", "danger")}`;
@@ -90,12 +119,16 @@ export function betsPage(ctx: Ctx): Response {
   const now = new Date();
   const bets = listBets(ctx.app.db, repo.id);
   const owner = ctx.auth.user !== undefined && ctx.auth.user.kind !== "agent" && canAdmin(ctx.app.db, repo, ctx.auth.user);
-  const running = bets.filter((b) => b.state === "backed").length;
+  const backed = bets.filter((b) => b.state === "backed");
+  const running = backed.length;
+  const proposed = owner ? bets.filter((b) => b.state === "proposed") : [];
+  const rest = owner ? bets.filter((b) => b.state !== "proposed") : bets;
   const body = html`${repoHeader(ctx, repo, "issues")}
     ${pageHead("Bets", { sub: `A few named wholes, each with a share of the week. ${running} of ${MAX_BACKED} running. Builders pick only from running bets, the owner's own asks and small fixes.` })}
     ${bets.length === 0
       ? html`<p class="muted">No bets yet. The planner proposes them from the open work.</p>`
-      : listCard(bets.map((b) => betRow(ctx, repo, b, now, owner)))}
+      : html`${owner ? proposed.map((b) => proposedCard(ctx, repo, b, backed)) : null}
+        ${rest.length === 0 ? null : listCard(rest.map((b) => betRow(ctx, repo, b, now, owner)))}`}
     ${owner
       ? html`<form method="post" action="${repoBase(repo)}/bets/propose" class="mt">${btn("Ask the planner to propose bets", { variant: "secondary" })}</form>`
       : null}

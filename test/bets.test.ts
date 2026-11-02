@@ -552,3 +552,30 @@ describe("the terminal", () => {
     h.stop();
   });
 });
+
+describe("a proposed bet is one card backed with one tap", () => {
+  test("the card shows the button at the proposed share; one POST backs it; a sixth is disabled with the reason and refused", async () => {
+    app.db.query("DELETE FROM bet WHERE repo_id = ?1").run(repo.id);
+    const cookie = await signIn("alice");
+    const one = fresh2("Tap");
+    const html1 = await (await fetch(`${servers.url}/alice/notes/bets`, { headers: { cookie } })).text();
+    expect(html1).toContain("Back it at 10%");
+    expect(html1).toContain("Change the share");
+    expect(html1).not.toMatch(/<button[^>]*disabled[^>]*>\s*Back it at 10%/);
+    const res = await act(cookie, `/alice/notes/bets/${one.id}/back`, { share: "10" });
+    expect(res.status).toBe(303);
+    expect(getBet(app.db, one.id)!.appetite).toBe(10);
+    expect(stateOf(one.id)).toBe("backed");
+    for (let i = 0; i < 4; i++) markBacked(app.db, fresh2(`Run${i}`).id, 10, "owner", NOW);
+    const sixth = fresh2("Sixth");
+    const page = await (await fetch(`${servers.url}/alice/notes/bets`, { headers: { cookie } })).text();
+    expect(page).toContain("5 bets already run");
+    expect(page).toMatch(/<button[^>]*disabled[^>]*>\s*Back it at 10%/);
+    const refused = await act(cookie, `/alice/notes/bets/${sixth.id}/back`, { share: "10" });
+    expect(stateOf(sixth.id)).toBe("proposed");
+    expect(refused.status).toBe(303);
+    const flash = refused.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
+    const shown = await (await fetch(new URL(refused.headers.get("location")!, servers.url), { headers: { cookie: `${cookie}; ${flash}` } })).text();
+    expect(shown).toContain("5 bets already run");
+  });
+});
