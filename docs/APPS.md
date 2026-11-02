@@ -149,7 +149,7 @@ Under the box, four starter sentences are plain links (no script):
   one opens the run's log; a run on work you may not see is left out),
   *Tell the crew*, *Report a problem* (one text, an issue
   titled by its first line, through `openIssueThrough`) and *Make it yours*
-  (for those who cannot write the repository: `Y` on the repository screen, or the palette row, asks for a name, defaulting to the original's, and a visibility, `tab` to switch, then shows the plan and copies only after a confirm, and the copy opens), and *Vision*
+  (for those who cannot write the repository: `Y` on the repository screen, or the palette row, asks for a name, defaulting to the original's, and a visibility, `tab` to switch, then shows the plan and copies only after a confirm, and the copy opens), *Labels* (a read-only list of its labels with their hex), and *Vision*
   (docs/VISION.md on the default branch: the purpose, each pillar numbered,
   the rules, through the one read MCP `vision` makes; when there is none the
   terminal says so in one line of its own, where MCP answers an empty `order`;

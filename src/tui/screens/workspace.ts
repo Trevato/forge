@@ -131,6 +131,7 @@ import { workingCommands } from "./working.ts";
 import { forgeItCommands } from "./forge_it.ts";
 import { makeItYoursScreen, yoursCommands } from "./yours.ts";
 import { visionCommands } from "./vision.ts";
+import { labelsCommands } from "./labels.ts";
 import { appEnvCommands } from "./appenv.ts";
 import { externalEditor, editorHint, hasExternalEditor } from "./external.ts";
 import { finderScreen } from "./finder.ts";
@@ -1442,6 +1443,7 @@ export function workspaceScreen(
       ...forgeItCommands(f, ctx, repo, () => screen),
       ...hooksCommands(f, ctx, repo),
       ...visionCommands(f, ctx, repo),
+      ...labelsCommands(f, ctx, repo),
       ...appEnvCommands(f, ctx, repo),
     ],
     get title() {
