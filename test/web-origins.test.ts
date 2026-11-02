@@ -788,7 +788,8 @@ describe("origins on the web", () => {
       text
         .replaceAll(/nonce="[^"]*"/g, 'nonce="N"')
         .replaceAll(/here\?path=[^"&\s]*/g, "here?path=")
-        .replaceAll(/next=[^"]*/g, "next=");
+        .replaceAll(/next=[^"]*/g, "next=")
+        .replaceAll(/\/new\/issue\?from=[^"]*/g, "/new/issue?from=");
     const staleText = await stale.text();
     const unknownText = await unknown.text();
     expect(sameBut(staleText)).toBe(sameBut(unknownText));

@@ -440,7 +440,8 @@ describe("web ui", () => {
       t
         .replaceAll(/nonce-?="?[\w-]+/g, "nonce")
         .replaceAll(/here\?path=[^"&\s]*/g, "here?path=")
-        .replaceAll(/next=[^"]*/g, "next=");
+        .replaceAll(/next=[^"]*/g, "next=")
+        .replaceAll(/\/new\/issue\?from=[^"]*/g, "/new/issue?from=");
     expect(scrub(await hidden.text())).toBe(scrub(await absent.text()));
   });
 
@@ -456,7 +457,7 @@ describe("web ui", () => {
     const hidden = await (await fetch(`${base}/kim/secret`)).text();
     const absent = await (await fetch(`${base}/kim/nothing`)).text();
     const scrub = (t: string) =>
-      t.replaceAll(/nonce-?="?[\w-]+/g, "nonce").replaceAll(/here\?path=[^"&\s]*/g, "here?path=").replaceAll(/next=[^"]*/g, "").replaceAll(/q=[^"]*"/g, 'q="').replaceAll(/Search for ‘[^’]*’/g, "Search for");
+      t.replaceAll(/nonce-?="?[\w-]+/g, "nonce").replaceAll(/here\?path=[^"&\s]*/g, "here?path=").replaceAll(/next=[^"]*/g, "").replaceAll(/\/new\/issue\?from=[^"]*/g, "/new/issue?from=").replaceAll(/q=[^"]*"/g, 'q="').replaceAll(/Search for ‘[^’]*’/g, "Search for");
     expect(scrub(hidden)).toBe(scrub(absent));
 
     const signedIn = await (

@@ -7,6 +7,7 @@
  * `/search`), and every dialog (a link to a real page).
  */
 
+import { newIssueHref } from "./issue_from.ts";
 import { OPENSEARCH_PATH, OPENSEARCH_TITLE, OPENSEARCH_TYPE } from "./opensearch.ts";
 import { protectionNotice } from "../kernel/protection.ts";
 import { administersAny } from "../core/admin_repos.ts";
@@ -186,10 +187,19 @@ const helpItem = html`<button class="menu-item js-only hide-sm" type="button" da
 </button>`;
 
 /** Someone not signed in has no user menu; theme and help share this one. */
-function guestMenu(theme: ThemeName | undefined): Html {
+/**
+ * "New issue" from this page, with no script (`c` is the same door): a link
+ * in the menus. Read-only origin browse has nowhere to write, so it has none.
+ */
+const newIssueItem = (ctx: Ctx): MenuItem[] =>
+  ctx.url.pathname.startsWith("/origins/")
+    ? []
+    : [{ label: "New issue", href: newIssueHref(ctx.url.pathname) }];
+
+function guestMenu(ctx: Ctx, theme: ThemeName | undefined): Html {
   return menu({
     trigger: themeGlyph,
-    items: [helpItem, themeForm(theme)],
+    items: [...newIssueItem(ctx), helpItem, themeForm(theme)],
     label: "Appearance and help",
     triggerOptions: { extra: "btn-icon" },
   });
@@ -216,6 +226,7 @@ const forgeDoor = (ctx: Ctx): MenuItem[] => {
 
 function newMenu(ctx: Ctx): Html {
   const items: MenuItem[] = [
+    ...newIssueItem(ctx),
     { label: "New app", href: "/apps/new", icon: "rocket" },
     { label: "New repository", href: "/new", icon: "repo" },
     { label: "Migrate", href: "/migrate", icon: "download" },
@@ -247,6 +258,7 @@ function userMenu(
     { label: "Map", href: "/map", icon: "map" },
     { separator: true, label: "" },
     // The "+" menu shows on every width; these repeat it for the user menu.
+    ...newIssueItem(ctx),
     { label: "New app", href: "/apps/new", icon: "rocket" },
     { label: "New repository", href: "/new", icon: "repo" },
     { label: "Migrate", href: "/migrate", icon: "download" },
@@ -587,7 +599,7 @@ function topbar(
                     }
                   : { label: "Sign out", post: "/logout", icon: "signOut" },
               )}`
-          : html`${guestMenu(theme)}${btn("Sign in", {
+          : html`${guestMenu(ctx, theme)}${btn("Sign in", {
               href: signInHref(ctx),
             })}`}
       </span>

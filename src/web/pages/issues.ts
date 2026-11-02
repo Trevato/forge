@@ -11,7 +11,7 @@ import {
   setIssueSealed,
 } from "../../actions/issues.ts";
 import type { Issue } from "../../core/issues.ts";
-import { canRead, type Repo } from "../../core/repos.ts";
+import { canRead, getRepo, listReposWritableTo, type Repo } from "../../core/repos.ts";
 import { privateRepoForSealed } from "../../actions/repos.ts";
 import { sealedWords, sealRefusedWords } from "../../actions/seal_issue_words.ts";
 import { BODY_TOO_LONG, TITLE_TOO_LONG } from "../../actions/thread_limits_words.ts";
@@ -30,8 +30,9 @@ import {
 } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, raw, type Html } from "../html.ts";
-import { flashTo, page } from "../layout.ts";
-import { btn, empty, field as formField } from "../ui.ts";
+import { flashTo, page, redirect } from "../layout.ts";
+import { cleanFrom, repoOfPath, withFromLine } from "../issue_from.ts";
+import { btn, empty, field as formField, listCard, row } from "../ui.ts";
 import {
   originError,
   parseNumber,
@@ -54,7 +55,7 @@ import {
 function composePage(
   ctx: Ctx,
   repo: Repo,
-  values: { title: string; body: string; sealed?: boolean },
+  values: { title: string; body: string; sealed?: boolean; from?: string | undefined },
   error?: string,
 ): Response {
   const heading = PAGE_TITLES.compose;
@@ -84,13 +85,17 @@ function composePage(
 
 function newIssueForm(
   repo: Repo,
-  values: { title: string; body: string; sealed?: boolean },
+  values: { title: string; body: string; sealed?: boolean; from?: string | undefined },
   submit: string,
   cancelHref: string,
   error?: string,
 ): Html {
   return html`<div class="narrow-wide mt">
     <form method="post" action="${repoBase(repo)}/issues/new">
+      ${values.from === undefined
+        ? null
+        : html`<input type="hidden" name="from" value="${values.from}" />
+            <p class="small muted">From <code>${values.from}</code></p>`}
       ${formField({
         label: "Title",
         name: "title",
@@ -143,7 +148,7 @@ export function newIssuePage(ctx: Ctx): Response {
     );
   }
   return timePhase(request, "render", () =>
-    composePage(ctx, repo, { title: "", body: "", sealed }),
+    composePage(ctx, repo, { title: "", body: "", sealed, from: cleanFrom(ctx.url.searchParams.get("from")) }),
   );
 }
 
@@ -188,6 +193,44 @@ function accountOrReport(ctx: Ctx, repo: Repo, sealed: boolean): Response {
   });
 }
 
+// GET /new/issue[?from=/path]
+/**
+ * The header's door: signed out, the sign-in path; from a page inside a
+ * repository, that repository's form; anywhere else, a picker over the
+ * repositories the viewer may write. Each carries `from` along.
+ */
+export function newIssueAnywhere(ctx: Ctx): Response {
+  const user = ctx.auth.user;
+  if (user === undefined) return signInFirst(ctx);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const from = cleanFrom(ctx.url.searchParams.get("from"));
+  const query = from === undefined ? "" : `?from=${encodeURIComponent(from)}`;
+  const named = from === undefined ? undefined : repoOfPath(from);
+  const here = named && getRepo(ctx.app.db, named[0], named[1]);
+  if (here && canRead(ctx.app.db, here, user))
+    return redirect(`${repoBase(here)}/issues/new${query}`);
+  const repos = listReposWritableTo(ctx.app.db, user, { limit: 200, withoutArchived: true });
+  const rendering = performance.now();
+  const response = page({
+    ctx,
+    title: "New issue",
+    body: html`<div class="page-head"><h1>New issue</h1></div>
+      ${repos.length === 0
+        ? empty({ icon: "issue", title: "No repository to open an issue in", note: "Open one from a repository you can see." })
+        : html`<p class="muted">Which repository?</p>${listCard(
+            repos.map((r) =>
+              row({
+                href: `${repoBase(r)}/issues/new${query}`,
+                nav: true,
+                title: html`<span class="truncate">${r.ownerName}/${r.name}</span>`,
+              }),
+            ),
+          )}`}`,
+  });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
+}
+
 // POST /:owner/:name/issues/new
 export async function newIssueSubmit(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
@@ -196,11 +239,16 @@ export async function newIssueSubmit(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
 
-  const values = {
+  const from = cleanFrom(field(form, "from"));
+  const typed = {
     title: field(form, "title"),
     body: field(form, "body"),
     sealed: form.get("sealed") !== null,
+    ...(from === undefined ? {} : { from }),
   };
+  // The line naming the page is added to what is stored, never to what is
+  // sent back to the form on a refusal.
+  const values = { ...typed, body: withFromLine(typed.body, from) };
   // The `…Through` twin: on a mirror the origin creates the issue, so the
   // number and the timestamps are the origin's rather than ones we invented.
   const created = await openIssueThrough(ctx.app, ctx.auth.user, repo, values);
@@ -215,7 +263,7 @@ export async function newIssueSubmit(ctx: Ctx): Promise<Response> {
           : created.error === "body_too_long"
             ? BODY_TOO_LONG
             : "You cannot open an issue here.");
-    return composePage(ctx, repo, values, message);
+    return composePage(ctx, repo, typed, message);
   }
   return flashTo(ctx, `${repoBase(repo)}/issues/${created.value.number}`, {
     message: `Issue #${created.value.number} opened.`,

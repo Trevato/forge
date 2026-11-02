@@ -194,6 +194,7 @@ import {
   issueSealSubmit,
   issueThreadFragment,
   newIssuePage,
+  newIssueAnywhere,
   newIssueSubmit,
 } from "../web/pages/issues.ts";
 import { noteModerate } from "../web/studio/notes.ts";
@@ -763,6 +764,7 @@ export function buildRouter(): Router<Handler> {
   // is registered before /:owner/:name can claim the shape.
   router.add("GET", "/-/confirm", confirmPage);
   router.add("GET", "/new", newRepoPage);
+  router.add("GET", "/new/issue", newIssueAnywhere);
   router.add("GET", "/repos", myReposPage);
   router.add("GET", "/now/:stage", nowPage);
   router.add("GET", "/audit", auditPage);

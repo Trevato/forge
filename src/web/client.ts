@@ -1454,6 +1454,13 @@ const shellCore = /* js */ `
     if (f.tagName === 'TEXTAREA') { var n = f.value.length; f.setSelectionRange(n, n); }
     return true;
   }
+  // The "new issue from here" door: c on a page with no box of
+  // its own, Shift C on any page.
+  function openNewIssue(e) {
+    var p = location.pathname;
+    seq.length = 0; e.preventDefault();
+    location.assign(p.indexOf('/new/issue') === 0 ? '/new/issue' : '/new/issue?from=' + encodeURIComponent(p));
+  }
   doc.addEventListener('keydown', function (e) {
     var t = e.target;
     // Inside an open dialog the dialog owns the keys; none of these apply.
@@ -1493,7 +1500,9 @@ const shellCore = /* js */ `
     if (e.key === 'j') { seq.length = 0; e.preventDefault(); move(1); }
     else if (e.key === 'k') { seq.length = 0; e.preventDefault(); move(-1); }
     else if (e.key === 'o' || e.key === 'Enter') { seq.length = 0; openFocused(); }
-    else if (e.key === 'c') { if (focusBox()) { seq.length = 0; e.preventDefault(); } }
+    else if (e.key === 'c') {
+      if (focusBox()) { seq.length = 0; e.preventDefault(); } else openNewIssue(e);
+    } else if (e.key === 'C') openNewIssue(e);
     else if (e.key === '/') {
       var box = doc.querySelector('[data-search-input]');
       if (box) { seq.length = 0; e.preventDefault(); box.focus(); box.select(); }
@@ -1512,6 +1521,10 @@ const shellCore = /* js */ `
   function pageKeys() {
     var out = [];
     if (pageBox() && !doc.querySelector('[data-shortcut="c"]')) out.push(['c', doc.querySelector('[data-box]').getAttribute('data-box') || 'Write here']);
+    // A page that keeps c for its own box shows Shift C alone; any other
+    // page opens the new issue on either.
+    var ownC = pageBox() || doc.querySelector('[data-shortcut="c"]');
+    out.push([ownC ? 'Shift C' : 'c / Shift C', 'New issue from this page']);
     if (doc.querySelector('form[data-submit-key]')) out.push(['Cmd/Ctrl Enter', 'Submit the box you are typing in']);
     return out;
   }
