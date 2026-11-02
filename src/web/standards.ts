@@ -370,11 +370,13 @@ export function llmsTxt(ctx: Ctx): Response {
     if (llmsBodies.size >= 16) llmsBodies.clear();
     llmsBodies.set(key, kept);
   }
-  const cache = "public, max-age=3600";
+  // The third line names the running commit: a client revalidates (one small 304) rather than keep an old build for an hour.
+  const cache = "private, no-cache";
   const sent = ctx.request.headers.get("if-none-match");
   if (sent !== null && sent.split(",").some((t) => t.trim() === kept.etag))
     return new Response(null, { status: 304, headers: { etag: kept.etag, "cache-control": cache, vary: "Cookie, Authorization" } });
   const res = text(kept.body, "text/markdown; charset=utf-8");
+  res.headers.set("cache-control", cache);
   res.headers.set("etag", kept.etag);
   res.headers.append("vary", "Cookie, Authorization");
   return res;

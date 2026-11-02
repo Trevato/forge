@@ -39,7 +39,7 @@ describe("/llms.txt MCP tools", () => {
   test("lists, for a signed-in reader, exactly the tools in the index and `report`, by their `doc`, with (admin) and (writes)", async () => {
     const res = await fetch(`${servers.url}/llms.txt`, { headers: { authorization: `Bearer ${token}` } });
     expect(res.status).toBe(200);
-    expect(res.headers.get("cache-control")).toContain("max-age");
+    expect(res.headers.get("cache-control")).toContain("no-cache");
     const lines = (await res.text()).split("\n");
     const start = lines.indexOf("## MCP tools");
     expect(start).toBeGreaterThan(-1);

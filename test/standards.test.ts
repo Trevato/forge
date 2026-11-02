@@ -270,6 +270,10 @@ describe("what the open web expects", () => {
     expect(again.status).toBe(304);
     expect(await again.text()).toBe("");
     expect(again.headers.get("etag")).toBe(etag);
+    expect(first.headers.get("cache-control")).toBe("private, no-cache");
+    expect(again.headers.get("cache-control")).toBe("private, no-cache");
+    expect(again.headers.get("vary")).toContain("Cookie");
+    expect(again.headers.get("x-content-type-options")).toBe("nosniff");
     const made = await createRepo(app, alice, { name: "etagged", visibility: "public" });
     if (!made.ok) throw new Error(String(made.error));
     // A new repository reaches the listing when its minute is up.
@@ -278,6 +282,26 @@ describe("what the open web expects", () => {
     expect(after.status).toBe(200);
     expect(after.headers.get("etag")).not.toBe(etag);
     expect(await after.text()).toContain("alice/etagged");
+  });
+
+  test("llms.txt changes its ETag when the running commit changes", async () => {
+    const saved = { c: process.env["FORGE_COMMIT"], a: process.env["FORGE_APP_COMMIT"] };
+    try {
+      delete process.env["FORGE_COMMIT"];
+      process.env["FORGE_APP_COMMIT"] = "aaaaaaa1111111";
+      const one = await fetch(`${base}/llms.txt`);
+      await one.text();
+      process.env["FORGE_APP_COMMIT"] = "bbbbbbb2222222";
+      const two = await fetch(`${base}/llms.txt`, { headers: { "if-none-match": one.headers.get("etag")! } });
+      expect(two.status).toBe(200);
+      expect(two.headers.get("etag")).not.toBe(one.headers.get("etag"));
+      expect(await two.text()).toContain("at bbbbbbb");
+    } finally {
+      for (const [k, v] of [["FORGE_COMMIT", saved.c], ["FORGE_APP_COMMIT", saved.a]] as const) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
   });
 
   test("llms.txt opens with the version, and the short commit only when one is known", async () => {
