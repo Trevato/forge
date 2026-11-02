@@ -23,6 +23,10 @@
  * (`env_words.ts`). A stopped production offers only `D`; a reader sees
  * neither key.
  *
+ * With a preview selected, `D` and `S` do the same to that pull's preview
+ * (`redeploy #N's preview? y/n`), the env name read from its `appPreviews`
+ * row; `S` is offered only while it runs, and a reader sees neither.
+ *
  * A writer — whom the MCP tool `probe` lets knock — gets `p`: the same
  * `probeApp` against the running production app, every door tried as
  * nobody, a user and an admin, read-only, one line per door.
@@ -73,6 +77,7 @@ import {
   domainStateWord,
   recordsInWords,
 } from "../../actions/domain_words.ts";
+import type { EnvName } from "../../apps/data.ts";
 import { envLabel, envRefusalText, redeployedText, stoppedText } from "../../actions/env_words.ts";
 import { trendLine, visitorsLine } from "../../apps/vitals.ts";
 import { egressModeSentence, undeclaredHosts } from "../../apps/egress_report.ts";
@@ -237,50 +242,77 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   // The MCP tool's gate, read once: only a writer is offered the knock.
   const mayProbe = canWrite(f.db, repo, f.user);
 
-  const confirm = (verb: "Redeploy" | "Stop", act: () => Promise<{ text: string; refused: boolean }>): void => {
+  /** Redeploy or stop `env` and say the answer in the page's words; one path for production and previews. */
+  const act = async (verb: "Redeploy" | "Stop", env: EnvName): Promise<{ text: string; refused: boolean }> => {
+    if (verb === "Redeploy") {
+      const queued = await redeployEnv(f.app, f.user, repo, env);
+      return queued.ok
+        ? { text: redeployedText(env, queued.value), refused: false }
+        : { text: envRefusalText(queued.error), refused: true };
+    }
+    const stopped = await stopEnv(f.app, f.user, repo, env);
+    return stopped.ok
+      ? { text: stoppedText(env), refused: false }
+      : { text: envRefusalText(stopped.error), refused: true };
+  };
+
+  /**
+   * Production asks with buttons; a preview asks `redeploy #N's preview? y/n`.
+   * Either way the action gates again and a refusal toasts in red.
+   */
+  const confirm = (verb: "Redeploy" | "Stop", env: EnvName, pull?: number): void => {
+    const go = (): void =>
+      runAsync(ctx, async () => {
+        const answer = await act(verb, env);
+        ctx.toast(answer.text, answer.refused ? "danger" : undefined);
+        read();
+      });
     ctx.push(
-      confirmScreen(ctx, screen, {
-        title: `${verb} ${envLabel("production")}`,
-        body: [`${verb} ${envLabel("production")} of ${repo.ownerName}/${repo.name}?`],
-        actions: [{ label: "Cancel", variant: "ghost" }, { label: verb }],
-        selected: 1,
-        onChoose: (choice) => {
-          if (choice !== 1) return;
-          runAsync(ctx, async () => {
-            const answer = await act();
-            ctx.toast(answer.text, answer.refused ? "danger" : undefined);
-            read();
-          });
-        },
-      }),
+      confirmScreen(
+        ctx,
+        screen,
+        pull === undefined
+          ? {
+              title: `${verb} ${envLabel(env)}`,
+              body: [`${verb} ${envLabel(env)} of ${repo.ownerName}/${repo.name}?`],
+              actions: [{ label: "Cancel", variant: "ghost" }, { label: verb }],
+              selected: 1,
+              onChoose: (choice) => choice === 1 && go(),
+            }
+          : {
+              title: `${verb} preview`,
+              body: [`${verb.toLowerCase()} #${pull}'s preview? y/n`],
+              actions: [{ label: verb }, { label: "Cancel", variant: "ghost" }],
+              yesNo: true,
+              onChoose: (choice) => choice === 0 && go(),
+            },
+      ),
     );
   };
 
-  const redeploy = (): void =>
-    confirm("Redeploy", async () => {
-      const queued = await redeployEnv(f.app, f.user, repo, "production");
-      return queued.ok
-        ? { text: redeployedText("production", queued.value), refused: false }
-        : { text: envRefusalText(queued.error), refused: true };
-    });
-
-  const stop = (): void =>
-    confirm("Stop", async () => {
-      const stopped = await stopEnv(f.app, f.user, repo, "production");
-      return stopped.ok
-        ? { text: stoppedText("production"), refused: false }
-        : { text: envRefusalText(stopped.error), refused: true };
-    });
+  /** The selected preview and what may be done to it, or undefined outside the group or for a reader. */
+  const previewActs = (): { p: AppPreview; stop: boolean } | undefined => {
+    const p = inPreviews && production.redeploy ? previews?.[previewState.index] : undefined;
+    return p === undefined ? undefined : { p, stop: p.env.state !== "stopped" };
+  };
 
   const screen: Screen = {
     title: "Deploys",
     get keys() {
+      const preview = previewActs();
       return [
         binding(["j", "k"], "move"),
         binding(["enter"], inPreviews ? "open the pull" : "open the log"),
         binding(["r"], "refresh (the open pulls below the deploys: check, preview)"),
-        ...(production.redeploy ? [binding(["D"], "redeploy production")] : []),
-        ...(production.stop ? [binding(["S"], "stop production")] : []),
+        ...(inPreviews
+          ? [
+              ...(preview !== undefined ? [binding(["D"], "redeploy preview")] : []),
+              ...(preview?.stop === true ? [binding(["S"], "stop preview")] : []),
+            ]
+          : [
+              ...(production.redeploy ? [binding(["D"], "redeploy production")] : []),
+              ...(production.stop ? [binding(["S"], "stop production")] : []),
+            ]),
         ...(mayProbe ? [binding(["p"], "probe the running app's doors")] : []),
         ...(members ? [binding(["m"], "members")] : []),
         ...(domains !== undefined ? [binding(["n"], "the app's own domains")] : []),
@@ -412,12 +444,18 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         read();
         return true;
       }
+      if ((e.key === "D" || e.key === "S") && inPreviews) {
+        const target = previewActs();
+        if (target !== undefined && (e.key === "D" || target.stop))
+          confirm(e.key === "D" ? "Redeploy" : "Stop", target.p.env.env, target.p.number);
+        return true;
+      }
       if (e.key === "D" && production.redeploy) {
-        redeploy();
+        confirm("Redeploy", "production");
         return true;
       }
       if (e.key === "S" && production.stop) {
-        stop();
+        confirm("Stop", "production");
         return true;
       }
       if (e.key === "p" && mayProbe) {
