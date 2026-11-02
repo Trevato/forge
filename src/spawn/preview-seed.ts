@@ -15,13 +15,20 @@
  */
 
 import type { App } from "../app.ts";
+import type { Issue } from "../core/issues.ts";
+import type { Repo } from "../core/repos.ts";
 import { pinPanel } from "../actions/board-pins.ts";
 import { writeBoard } from "../actions/boards.ts";
-import { openIssue } from "../actions/issues.ts";
+import { backBet } from "../actions/bets.ts";
+import { openIssue, setIssueState } from "../actions/issues.ts";
 import { openPull } from "../actions/pulls.ts";
 import { commitToBranch, createRepo } from "../actions/repos.ts";
 import { turnValveFor } from "../actions/valves.ts";
+import { insertBet } from "../core/bets.ts";
 import { claimRun, createRun, finishRun } from "../core/runs.ts";
+import { noteLimit } from "../core/standing.ts";
+import { addSubscription } from "../core/subscriptions.ts";
+import { recordUsage } from "../core/usage.ts";
 import { getUserSetting, setUserSetting } from "../core/settings.ts";
 import { createUser, getUserByName, type User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -130,6 +137,21 @@ async function seedWorld(app: App, admin: User): Promise<Result<void, string>> {
   if (!pull.ok) return err(`the pull: ${String(pull.error)}`);
   if (pull.value.number !== PREVIEW_PULL) return err(`the pull is #${String(pull.value.number)}, not #${String(PREVIEW_PULL)}`);
 
+  // Issues and pulls share one numbering, so the pull above keeps PREVIEW_PULL
+  // and the ones /next lists and the bets hold come after it.
+  const listed = [
+    { title: "Next up shows a cut line", body: "So a reviewer sees what fits the week." },
+    { title: "The bets page lists a backed bet", body: "Backed at a share of the week." },
+    { title: "A proposed bet waits for a tap", body: "The owner may back it." },
+    { title: "Issues carry a price", body: "From what past issues cost." },
+    { title: "The week ends on a Sunday", body: "And the list reads as next week below the line." },
+  ].map((input) => openIssue(app, admin, repo.value, input));
+  const open: Issue[] = [];
+  for (const i of listed) {
+    if (!i.ok) return err(`an issue: ${String(i.error)}`);
+    open.push(i.value);
+  }
+
   // A flow week: agent runs that started and spent this week, and a valve
   // turned part way, so /flow has a pipe to draw and one to turn.
   for (const usd of [0.42, 1.18, 0.75]) {
@@ -142,6 +164,10 @@ async function seedWorld(app: App, admin: User): Promise<Result<void, string>> {
     claimRun(app.db, run.id);
     finishRun(app.db, run.id, { state: "ok", summary: "A seeded run", costUsd: usd });
   }
+  const priced = seedPrices(app, admin, repo.value);
+  if (!priced.ok) return priced;
+  const bets = seedBets(app, admin, repo.value, open);
+  if (!bets.ok) return bets;
   const valve = turnValveFor(app, admin, `${PREVIEW_ADMIN}/${PREVIEW_REPO}`, 60);
   if (!valve.ok) return err(`the valve: ${valve.error}`);
 
@@ -157,4 +183,88 @@ async function seedWorld(app: App, admin: User): Promise<Result<void, string>> {
     if (!pinned.ok) return err(`a pin: ${pinned.error}`);
   }
   return ok();
+}
+
+/**
+ * Finished issues that cost something, so `weekView` can price the open
+ * ones, and a weekly capacity it can cut the list by: an inert account
+ * that the provider refused at $8 last week and that has spent a little
+ * since. Its token is no credential, only the shape one has, and it is
+ * granted to no repository or owner, so `pickSubscription` (which joins
+ * on grants) never offers it to a run or a conversation.
+ */
+function seedPrices(app: App, admin: User, repo: Repo): Result<void, string> {
+  for (const [at, usd] of [1.5, 2, 2.5, 3].entries()) {
+    const made = openIssue(app, admin, repo, {
+      title: `Done work ${at + 1}`,
+      body: "Finished before this preview.",
+    });
+    if (!made.ok) return err(`a finished issue: ${String(made.error)}`);
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: made.value.id,
+      actorId: admin.id,
+      reason: "seed",
+    });
+    claimRun(app.db, run.id);
+    finishRun(app.db, run.id, { state: "ok", summary: "A seeded run", costUsd: usd });
+    const closed = setIssueState(app, admin, repo, made.value, "closed", { reason: "done" });
+    if (!closed.ok) return err(`closing a finished issue: ${String(closed.error)}`);
+  }
+  const added = addSubscription(app.db, app.config.dataDir, {
+    name: "preview sample",
+    token: "sk-ant-oat01-preview-sample-not-a-credential",
+  });
+  if (!added.ok) return err(`the sample account: ${added.error}`);
+  const spend = (usd: number, at: Date) => {
+    const run = createRun(app.db, { repoId: repo.id, kind: "agent", actorId: admin.id, reason: "seed" });
+    claimRun(app.db, run.id);
+    finishRun(app.db, run.id, { state: "ok", summary: "A seeded run" });
+    recordUsage(app.db, {
+      runId: run.id,
+      repoId: repo.id,
+      issueId: null,
+      agentId: null,
+      subscriptionId: added.value.id,
+      tokensIn: 1,
+      tokensOut: 1,
+      costUsd: usd,
+      wallMs: 1000,
+      outcome: "ok",
+      at: at.toISOString(),
+    });
+  };
+  const now = Date.now();
+  const DAY = 86_400_000;
+  spend(8, new Date(now - 4 * DAY));
+  noteLimit(app.db, added.value.id, {
+    window: "week",
+    resetsAt: new Date(now - 3.5 * DAY).toISOString(),
+    observedAt: new Date(now - 3.5 * DAY - 3_600_000).toISOString(),
+    said: "weekly limit",
+  });
+  spend(1, new Date(now - DAY));
+  return ok();
+}
+
+/** One bet backed at 20% of the week and one proposed, over the open issues. */
+function seedBets(app: App, admin: User, repo: Repo, open: readonly Issue[]): Result<void, string> {
+  const bet = (name: string, from: number) =>
+    insertBet(
+      app.db,
+      {
+        repoId: repo.id,
+        name,
+        journeys: "Someone can see it",
+        appetite: 20,
+        leadId: null,
+        issueIds: open.slice(from, from + 2).map((i) => i.id),
+      },
+      new Date(),
+    );
+  const backed = bet("Show the week", 2);
+  bet("Price the list", 4);
+  const result = backBet(app, admin, repo, backed.id, 20);
+  return result.ok ? ok() : err(`backing a bet: ${result.error.message}`);
 }

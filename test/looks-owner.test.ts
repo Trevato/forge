@@ -21,6 +21,8 @@ import { readGrant } from "../src/apps/proxy.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import { createApp, type App } from "../src/app.ts";
 import { listPins } from "../src/boards/pins.ts";
+import { listBets } from "../src/core/bets.ts";
+import { pickSubscription } from "../src/core/subscriptions.ts";
 import { looksForEnv } from "../src/core/looks.ts";
 import { listPulls } from "../src/core/pulls.ts";
 import { getRepo } from "../src/core/repos.ts";
@@ -103,13 +105,25 @@ describe("the preview seed", () => {
     const issues = app.db
       .query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM issue WHERE repo_id = ?1 AND kind = 'issue'")
       .get(repo.id);
-    expect(issues?.n).toBe(2);
+    expect(issues?.n).toBe(11);
     expect(listPulls(app.db, repo.id).length).toBe(1);
     expect(listRuns(app.db, repo.id, { kind: "agent" }).every((r) => r.state === "ok")).toBe(true);
     const pipes = readPipes(app.db, admin.id);
     expect(pipes.usd).toBeGreaterThan(0);
     expect(pipes.valves.find((v) => v.slug === `${PREVIEW_ADMIN}/${PREVIEW_REPO}`)?.level).toBe(60);
     expect(listPins(app.db, admin.id).length).toBe(2);
+    const bets = listBets(app.db, repo.id).map((b) => [b.name, b.state, b.appetite]);
+    expect(bets).toEqual([
+      ["Show the week", "backed", 20],
+      ["Price the list", "proposed", 20],
+    ]);
+
+    // The sample account that prices the week has no grant, so no run or
+    // conversation in a preview can be handed its inert token: the admin
+    // falls through to the platform's own credential.
+    expect(app.db.query("SELECT COUNT(*) AS n FROM subscription WHERE name = 'preview sample'").get()).toEqual({ n: 1 });
+    const picked = pickSubscription(app.db, app.config.dataDir, { repoId: repo.id, ownerId: admin.id, agentId: "" }, new Date());
+    expect(picked.kind).toBe("env");
 
     expect(await seedPreview(app, { FORGE_APP_ENV: "preview" })).toEqual(ok({ seeded: false }));
     expect(listPins(app.db, admin.id).length).toBe(2);
@@ -166,6 +180,19 @@ describe("a preview hears its parent's admin as the preview admin", () => {
     ])
       expect((await flow(preview, headers)).status).not.toBe(200);
   }, 30_000);
+
+  test("Next up has a cut line inside the list and /bets a backed bet and a proposed one", async () => {
+    const preview = servers[0]!;
+    const base = `${preview.url}/${PREVIEW_ADMIN}/${PREVIEW_REPO}`;
+    const next = await (await fetch(`${base}/next`, { headers: identity("admin") })).text();
+    expect(next).toContain('role="separator"');
+    expect(next).toContain("below this line reads as next week");
+    expect(next).not.toContain("too little history");
+    const bets = await (await fetch(`${base}/bets`, { headers: identity("admin") })).text();
+    expect(bets).toContain("Show the week");
+    expect(bets).toContain("Price the list");
+    expect(bets).toContain("20%");
+  });
 
   test("a mutation it rides is held to the same-origin rule", async () => {
     const preview = servers[0]!;

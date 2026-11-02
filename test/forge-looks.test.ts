@@ -54,6 +54,8 @@ const NOT_A_PAGE: Record<string, string> = {
   "/events": "a live event stream that never ends",
   "/boards": "the list of boards; /board is pictured, and the slot went to the preview seed's repository as its owner (#8865); covered by test/boards-page.test.ts",
   "/changelog": "the merged changes in words; /releases is pictured, and the slot went to the preview seed's pull as its owner (#8865); covered by test/changelog.test.ts",
+  "/search": "a search box; its slot went to the preview seed's /next as its owner (#8866)",
+  "/contribute": "a static page about how to help; its slot went to the preview seed's /bets as its owner (#8866)",
   "/migrate": "an import form, nothing to picture until a job runs; the look slot went to /repos",
 };
 
