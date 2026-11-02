@@ -22,7 +22,11 @@ const UNTIMED: Record<string, string> = {
   "/metrics": "Prometheus text exposition, scraped by token; not a page read",
 };
 
-/** Routes the fixture cannot exercise (they 5xx on it) → why; any other 429/5xx fails the walk. */
+/**
+ * Routes the walk does not request → why. The board routes spawn git against a
+ * board repository the fixture lacks: they 5xx on it, and on a loaded machine
+ * the spawn is the slow request. Any other 429/5xx fails the walk.
+ */
 const UNEXERCISED: Record<string, string> = {
   "/api/v1/boards/:slug": "the fixture has no board repository to spawn git in",
   "/api/v1/boards/:slug/panels/:id": "the fixture has no board repository to spawn git in",
@@ -66,26 +70,34 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
+/** One request's whole allowance: a route slower than this is the finding, not the machine. */
+const REQUEST_MS = 5_000;
+const BATCH = 8;
+
 async function timed(pattern: string): Promise<{ status: number; session: boolean }> {
   const path = pattern.replace(/:([a-z_]+)/g, (_, k: string) => FILL[k] ?? "x").replace(/\*[a-z_]+/, "x");
-  const res = await fetch(`${servers.url}${path}`, { headers: { authorization: `Bearer ${bearer}` }, redirect: "manual" });
+  const res = await fetch(`${servers.url}${path}`, {
+    headers: { authorization: `Bearer ${bearer}` },
+    redirect: "manual",
+    signal: AbortSignal.timeout(REQUEST_MS),
+  });
   await res.body?.cancel();
   const phases = (res.headers.get("server-timing") ?? "").split(",").map((p) => p.trim().split(";")[0]);
   return { status: res.status, session: phases.includes("session") };
 }
 
-/** Walking every route is many requests; a loaded check machine must not turn that into a verdict. */
-const WALK_MS = 30_000;
-const BATCH = 8;
+/** Routes walked: those the fixture can exercise. Requests run in batches, so the walk's ceiling is batches x REQUEST_MS. */
+const walked = (): string[] => getPatterns().filter((p) => !(p in UNEXERCISED));
+const WALK_MS = Math.ceil(walked().length / BATCH) * REQUEST_MS + 5_000;
 
 test("no GET route answers 200 without a session phase unless the allowlist names it", async () => {
-  const patterns = getPatterns();
+  const patterns = walked();
   const results: Awaited<ReturnType<typeof timed>>[] = [];
   for (let i = 0; i < patterns.length; i += BATCH) {
     results.push(...(await Promise.all(patterns.slice(i, i + BATCH).map((p) => timed(p)))));
   }
   // A throttled or failing route is not a route that was checked.
-  const unchecked = patterns.filter((_, i) => results[i]!.status === 429 || results[i]!.status >= 500).filter((p) => !(p in UNEXERCISED));
+  const unchecked = patterns.filter((_, i) => results[i]!.status === 429 || results[i]!.status >= 500);
   expect(unchecked).toEqual([]);
   expect(results.filter((r) => r.status === 200).length).toBeGreaterThan(0);
   const untimed = patterns.filter((_, i) => results[i]!.status === 200 && !results[i]!.session);
