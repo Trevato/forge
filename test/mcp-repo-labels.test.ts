@@ -100,7 +100,8 @@ describe("MCP repo_labels", () => {
     expect(c.error).toContain("not_found");
     const r = await call(bob, { repo: R, action: "remove", id: before[0].id });
     expect(r.error).toContain("not_found");
-    expect((await call(bob, { repo: R })).value.items).toEqual(before);
+    // A reader sees the same labels, without the writer-only `open` count.
+    expect((await call(bob, { repo: R })).value.items).toEqual(before.map(({ open: _open, ...l }: any) => l));
     expect((await call(adminRw, { repo: R, action: "create", name: "no" })).error).toContain("admin token");
     expect((await call(admin, { repo: R, action: "remove", id: "nope" })).error).toContain("not_found");
   });

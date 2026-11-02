@@ -860,6 +860,41 @@ export function listLabels(db: Database, repoId: string): Label[] {
     .all(repoId);
 }
 
+/**
+ * How many open issues and pulls carry each label of a repository, in one
+ * grouped query. A label with none has no entry. Sealed items are counted:
+ * the caller is the admin-only labels page (and the delete confirm, gated on
+ * write), and a writer sees sealed issues under `sealedScope` anyway.
+ */
+export function openLabelCounts(
+  db: Database,
+  repoId: string,
+): Map<string, number> {
+  const rows = db
+    .query<{ label_id: string; n: number }, [string]>(
+      `SELECT il.label_id, COUNT(*) AS n
+       FROM label l
+       JOIN issue_label il ON il.label_id = l.id
+       JOIN issue i ON i.id = il.issue_id AND i.state = 'open'
+       WHERE l.repo_id = ?1
+       GROUP BY il.label_id`,
+    )
+    .all(repoId);
+  return new Map(rows.map((r) => [r.label_id, r.n]));
+}
+
+/** The repository's labels, each with `open` (its open count) when `withCounts`. */
+export function labelsWithOpen(
+  db: Database,
+  repoId: string,
+  withCounts: boolean,
+): Array<Label & { open?: number }> {
+  const rows = listLabels(db, repoId);
+  if (!withCounts) return rows;
+  const counts = openLabelCounts(db, repoId);
+  return rows.map((l) => ({ ...l, open: counts.get(l.id) ?? 0 }));
+}
+
 export function setIssueLabels(
   db: Database,
   issueId: string,

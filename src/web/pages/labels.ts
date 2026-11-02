@@ -7,7 +7,7 @@
 
 import { LABEL_WORDS } from "../../actions/label_words.ts";
 import { createLabel, deleteLabel, updateLabel } from "../../actions/repos.ts";
-import { listLabels, type Label } from "../../core/issues.ts";
+import { listLabels, openLabelCounts, type Label } from "../../core/issues.ts";
 import { notePhase, timePhase } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase, repoNotFound } from "../chrome.ts";
@@ -39,7 +39,14 @@ function colorField(value: string, label: string): Html {
   >`;
 }
 
-function labelEditor(base: string, label: Label): Html {
+/** `N open`, a link to the issues list narrowed to the label; `unused` at 0. */
+function usage(base: string, label: Label, open: number): Html {
+  return open > 0
+    ? html`<a class="label-open" href="${base}/issues?label=${encodeURIComponent(label.name)}">${open} open</a>`
+    : html`<span class="muted">unused</span>`;
+}
+
+function labelEditor(base: string, label: Label, open: number): Html {
   return html`<li>
     <form
       class="edit-row"
@@ -47,6 +54,7 @@ function labelEditor(base: string, label: Label): Html {
       action="${base}/settings/labels/${label.id}"
     >
       <span class="preview">${labelChip(label)}</span>
+      ${usage(base, label, open)}
       <input
         class="input"
         type="text"
@@ -70,6 +78,7 @@ export function labelsPage(ctx: Ctx): Response {
   const repo = timedAdminRepo(ctx);
   if (!repo) return repoNotFound(ctx);
   const labels = timePhase(ctx.request, "labels", () => listLabels(ctx.app.db, repo.id));
+  const counts = timePhase(ctx.request, "counts", () => openLabelCounts(ctx.app.db, repo.id));
   const rendering = performance.now();
   const base = repoBase(repo);
 
@@ -82,7 +91,7 @@ export function labelsPage(ctx: Ctx): Response {
         })
       : html`<div class="card">
           <ul class="list">
-            ${labels.map((l) => labelEditor(base, l))}
+            ${labels.map((l) => labelEditor(base, l, counts.get(l.id) ?? 0))}
           </ul>
         </div>`;
 

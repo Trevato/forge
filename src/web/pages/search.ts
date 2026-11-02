@@ -15,6 +15,7 @@ import { strangerCodeSearch } from "../../http/strangers.ts";
 import { search } from "../../actions/search.ts";
 import { envsFor } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
+import { openLabelCounts } from "../../core/issues.ts";
 import { getPull } from "../../core/pulls.ts";
 import { canAdmin, canWrite, enterableApps, getRepo } from "../../core/repos.ts";
 import { getMirrorTarget } from "../../core/migrate_mirror.ts";
@@ -640,12 +641,22 @@ const DESTRUCTIVE: {
   },
   {
     pattern: /^\/([^/]+)\/([^/]+)\/settings\/labels\/([^/]+)\/delete$/,
-    describe: (m) => ({
-      verb: "Delete label",
-      title: "Delete this label?",
-      detail: `It is removed from every issue and pull request in ${m[1]}/${m[2]} that carries it. The issues themselves are untouched.`,
-      phrase: "",
-    }),
+    describe: (m, ctx) => {
+      // Only a writer is told the count, so this page reads no private repository's work.
+      const repo = getRepo(ctx.app.db, m[1]!, m[2]!);
+      const n =
+        repo && canWrite(ctx.app.db, repo, ctx.auth.user)
+          ? (openLabelCounts(ctx.app.db, repo.id).get(m[3]!) ?? 0)
+          : 0;
+      const carried = n === 1 ? "item carries" : "items carry";
+      const count = n > 0 ? `${n} open ${carried} it. ` : "";
+      return {
+        verb: "Delete label",
+        title: "Delete this label?",
+        detail: `${count}It is removed from every issue and pull request in ${m[1]}/${m[2]} that carries it. The issues themselves are untouched.`,
+        phrase: "",
+      };
+    },
   },
   {
     pattern: /^\/boards\/([^/]+)\/delete$/,

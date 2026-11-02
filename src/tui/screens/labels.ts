@@ -1,15 +1,17 @@
 /**
  * The Labels command, a repository's (#7841): each label the repository
  * defines, as the issue screen draws it — the colour chip, then its hex —
- * read with `listLabels`, name order. No counts. Offered to, and
- * read for, only someone who may read the repository.
+ * read with `listLabels`, name order. A repository admin also sees how many
+ * open issues and pulls carry each (`openLabelCounts`: `N open` / `unused`),
+ * and the delete confirm names that count. Offered to, and read for, only
+ * someone who may read the repository.
  */
 
 import { LABEL_WORDS } from "../../actions/label_words.ts";
 import { requireRepoAdmin } from "../../actions/access.ts";
 import { createLabel, deleteLabel, updateLabel } from "../../actions/repos.ts";
 import { canRead, type Repo } from "../../core/repos.ts";
-import { listLabels, type Label } from "../../core/issues.ts";
+import { listLabels, openLabelCounts, type Label } from "../../core/issues.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import type { Command } from "../app/palette.ts";
@@ -28,10 +30,18 @@ export const GONE_LINE = "That label is already gone, or you can no longer delet
 export function labelsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   let labels: Label[] | undefined;
   let hidden = false;
+  /** Open items per label id; empty for a viewer who is not an admin. */
+  let counts = new Map<string, number>();
   const state = new ListState();
   let note = "";
   // Only whoever `requireRepoAdmin` admits is offered `n`.
   const admin = (): boolean => requireRepoAdmin(f.app, f.user, repo).ok;
+
+  const reload = (): void => {
+    labels = listLabels(f.db, repo.id);
+    counts = admin() ? openLabelCounts(f.db, repo.id) : new Map();
+  };
+  const usage = (l: Label): string => ((counts.get(l.id) ?? 0) > 0 ? `${counts.get(l.id)} open` : "unused");
 
   /** "name hex": the last word is the colour; a leading `#` is allowed. */
   const parse = (entry: string): { name: string; hex: string } | undefined => {
@@ -47,7 +57,7 @@ export function labelsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     if (got === undefined) return LABEL_WORDS.shape;
     const made = createLabel(f.app, f.user, repo, got.name, got.hex);
     if (!made.ok) return refusal(made.error);
-    labels = listLabels(f.db, repo.id);
+    reload();
     ctx.invalidate();
     return undefined;
   };
@@ -63,7 +73,7 @@ export function labelsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
           if (got === undefined) return LABEL_WORDS.shape;
           const done = updateLabel(f.app, f.user, repo, picked.id, got.name, got.hex);
           if (!done.ok) return done.error === "not_found" && admin() ? LABEL_WORDS.gone : refusal(done.error);
-          labels = listLabels(f.db, repo.id);
+          reload();
           ctx.invalidate();
           return undefined;
         },
@@ -74,13 +84,17 @@ export function labelsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     ctx.push(
       confirmScreen(ctx, screen, {
         title: "Delete a label",
-        body: [`Delete the label ${picked.name}? Issues carrying it lose it.`],
+        body: [
+          admin() && (counts.get(picked.id) ?? 0) > 0
+            ? `Delete the label ${picked.name}? ${counts.get(picked.id)} open carry it.`
+            : `Delete the label ${picked.name}? Issues carrying it lose it.`,
+        ],
         actions: [{ label: "Keep", variant: "ghost" }, { label: "Delete", variant: "danger" }],
         onChoose: (i) => {
           if (i < 1) return;
           note = deleteLabel(f.app, f.user, repo, picked.id).ok ? DELETED_LINE : GONE_LINE;
-          labels = listLabels(f.db, repo.id);
-          state.clamp(labels.length);
+          reload();
+          state.clamp(labels?.length ?? 0);
           ctx.invalidate();
         },
       }),
@@ -95,7 +109,8 @@ export function labelsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     async load() {
       // Gated here as well as on the command: the screen is exported.
       hidden = !canRead(f.db, repo, f.user);
-      labels = hidden ? [] : listLabels(f.db, repo.id);
+      if (hidden) labels = [];
+      else reload();
       ctx.invalidate();
     },
     render(area, s) {
@@ -119,6 +134,7 @@ export function labelsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         s.text(area.x, area.y + i, picked ? ">" : " ", style(c.accent, c.bg), right);
         const x = labelChip(s, area.x + 1, area.y + i, c, { text: l.name, color: l.color }, right);
         s.text(x + 2, area.y + i, `#${l.color.replace(/^#/, "")}`, style(picked ? c.fg : c.muted, c.bg), right);
+        if (admin()) s.text(x + 10, area.y + i, usage(l), style(c.muted, c.bg), right);
       }
     },
     key(e) {
