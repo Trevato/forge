@@ -24,6 +24,7 @@ import {
 } from "../core/capacity.ts";
 import { egressTotals, npmBytesLastHour, npmTopRepoLastHour, type EgressTotal } from "../apps/egress.ts";
 import { getRepoById } from "../core/repos.ts";
+import { selfSwapState, type SelfSwap } from "../release/swap.ts";
 import { passkeyIds } from "../core/passkeys.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -100,7 +101,10 @@ export function changedOf(db: Database, key: CapacityKey): { changed?: { at: str
 export function listCapacity(
   app: App,
   actor: User | undefined,
-): Result<{ settings: CapacityRow[]; changes: CapacityChange[]; egress: EgressHour }, "not_found"> {
+): Result<
+  { settings: CapacityRow[]; changes: CapacityChange[]; egress: EgressHour; selfSwap: SelfSwap },
+  "not_found"
+> {
   const who = admin(actor);
   if (!who.ok) return who;
   return ok({
@@ -116,6 +120,7 @@ export function listCapacity(
     })),
     changes: capacityChanges(app.db),
     egress: egressHour(app.db),
+    selfSwap: selfSwapState(app.config.selfSwap === true),
   });
 }
 

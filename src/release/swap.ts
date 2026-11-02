@@ -145,12 +145,37 @@ const MIGRATE_SYSCTL = "/proc/sys/net/ipv4/tcp_migrate_req";
  * the swap would fail requests. `handover.migrate` stands in for the file in tests.
  */
 export function migratesQueuedConnections(): boolean {
-  if (handover.migrate !== undefined) return handover.migrate;
+  return migrateReq() === "1";
+}
+
+/** The kernel's `tcp_migrate_req` as read: `1`, `0` (or any other value), or `unreadable`. */
+export function migrateReq(): "1" | "0" | "unreadable" {
+  if (handover.migrate !== undefined) return handover.migrate ? "1" : "0";
   try {
-    return readFileSync(MIGRATE_SYSCTL, "utf8").trim() === "1";
+    return readFileSync(MIGRATE_SYSCTL, "utf8").trim() === "1" ? "1" : "0";
   } catch {
-    return false;
+    return "unreadable";
   }
+}
+
+export interface SelfSwap {
+  /** Whether `FORGE_SELF_SWAP=1` was set at boot. */
+  readonly enabled: boolean;
+  readonly migrateReq: "1" | "0" | "unreadable";
+  /** Why this forge cannot swap itself; null when it can. */
+  readonly blocked: string | null;
+}
+
+/**
+ * Whether this forge can swap itself, as plain data for /capacity and the
+ * MCP `capacity` tool (#8383): what `beginSwap` would refuse, and why, before
+ * a landing is refused for it. `enabled` is the app's `selfSwap`.
+ */
+export function selfSwapState(enabled: boolean): SelfSwap {
+  const blocked =
+    swapBlocked() ??
+    (enabled ? null : "FORGE_SELF_SWAP is off, so a landed release waits for a restart; set FORGE_SELF_SWAP=1 to swap");
+  return { enabled, migrateReq: migrateReq(), blocked };
 }
 
 let underWay = false;

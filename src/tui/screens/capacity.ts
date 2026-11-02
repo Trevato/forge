@@ -5,6 +5,7 @@
  * through the same actions as MCP `capacity`. The actions decide who may.
  */
 
+import type { SelfSwap } from "../../release/swap.ts";
 import { changeCapacity, listCapacity, type CapacityRow } from "../../actions/capacity.ts";
 import { SETTING_WORDS } from "../../actions/setting_words.ts";
 import { CAPACITY, validCapacity, type CapacityKey } from "../../core/capacity.ts";
@@ -34,6 +35,16 @@ const refused = (error: "not_found" | "no_such_setting" | "invalid_value" | "no_
       ? SETTING_WORDS.outOfRange
       : "no such capacity setting";
 
+/** Whether this forge can swap itself (#8383), as /settings/capacity says it. */
+export function selfSwapRow(s: SelfSwap): ListRow {
+  return {
+    title: "Self-swap",
+    tone: s.blocked === null ? "success" : "attn",
+    meta: `${s.blocked === null ? "ready" : "blocked"} · FORGE_SELF_SWAP ${s.enabled ? "set" : "off"} · tcp_migrate_req ${s.migrateReq}`,
+    ...(s.blocked === null ? {} : { below: [s.blocked] }),
+  };
+}
+
 const shown = (v: string): string => (v === "" ? "auto" : v);
 
 export function capacityScreen(f: Session, ctx: Ctx): Screen {
@@ -42,11 +53,16 @@ export function capacityScreen(f: Session, ctx: Ctx): Screen {
     const listed = listCapacity(f.app, f.user);
     return listed.ok ? listed.value.settings : [];
   };
-  const lines = (): ListRow[] =>
-    rows().map((r) => ({
+  const lines = (): ListRow[] => {
+    const listed = listCapacity(f.app, f.user);
+    if (!listed.ok) return [];
+    const guards = listed.value.settings.map((r) => ({
       title: `${r.label} (${r.key})`,
       meta: `${shown(r.value)} · ${r.source} · takes ${boundsOf(r.key)}${r.source === "setting" ? ` · default ${shown(r.default)}` : ""}`,
     }));
+    // After the guards, so the cursor (bounded by the settings) never lands on it.
+    return [...guards, selfSwapRow(listed.value.selfSwap)];
+  };
 
   const plan = (row: CapacityRow, typed: string): void => {
     const to = typed === "" ? row.default : typed;

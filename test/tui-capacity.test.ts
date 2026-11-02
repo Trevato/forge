@@ -15,6 +15,7 @@ import { CAPACITY_KEYS, capacityValue } from "../src/core/capacity.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { createForgeApp, forgeCommands } from "../src/tui/forge.ts";
 import { capacityScreen } from "../src/tui/screens/capacity.ts";
+import { handover } from "../src/release/swap.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
@@ -180,6 +181,41 @@ describe("tui capacity", () => {
       expect(h.text()).not.toContain("Crew runs at once");
       expect(changeCapacity(app, who, "crew.concurrency", "9")).toEqual({ ok: false, error: "not_found" });
       h.stop();
+    }
+  });
+
+  test("shows whether the forge can swap itself, and why not (#8383)", async () => {
+    try {
+      handover.migrate = true;
+      handover.ssh = false;
+      let h = boot(carol);
+      await h.press();
+      // This app was built without selfSwap: FORGE_SELF_SWAP is off.
+      expect(h.text()).toContain("Self-swap");
+      expect(h.text()).toContain("blocked · FORGE_SELF_SWAP off · tcp_migrate_req 1");
+      expect(h.text()).toContain("FORGE_SELF_SWAP is off");
+      h.stop();
+      handover.migrate = false;
+      h = boot(carol);
+      await h.press();
+      expect(h.text()).toContain("tcp_migrate_req 0");
+      expect(h.text()).toContain("net.ipv4.tcp_migrate_req=1");
+      h.stop();
+      handover.migrate = true;
+      handover.ssh = true;
+      h = boot(carol);
+      await h.press();
+      expect(h.text()).toContain("holds the SSH terminal");
+      h.stop();
+      for (const who of [bob, bot]) {
+        const m = boot(who);
+        await m.press();
+        expect(m.text()).not.toContain("Self-swap");
+        m.stop();
+      }
+    } finally {
+      delete handover.migrate;
+      delete handover.ssh;
     }
   });
 });

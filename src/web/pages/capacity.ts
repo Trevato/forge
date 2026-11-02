@@ -16,7 +16,7 @@ import { notFoundPage, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when } from "../html.ts";
 import { flashTo } from "../layout.ts";
-import { btn, card, icon, row, time } from "../ui.ts";
+import { badge, btn, card, icon, row, time } from "../ui.ts";
 import { usageShell } from "./usage-tabs.ts";
 
 function requireAdmin(ctx: Ctx): Response | undefined {
@@ -76,7 +76,7 @@ export function capacityPage(ctx: Ctx): Response {
     listCapacity(ctx.app, ctx.auth.user),
   );
   if (!listed.ok) return notFoundPage(ctx);
-  const { settings, changes, egress } = listed.value;
+  const { settings, changes, egress, selfSwap } = listed.value;
   const errs = timePhase(ctx.request, "errors", () =>
     ctx.app.signals.errors.recent(10),
   );
@@ -193,7 +193,28 @@ export function capacityPage(ctx: Ctx): Response {
       pad: false,
     },
   );
-  const body = html`${happened}${connections}${when(
+  // Whether a landing here can swap the forge in place (#8383): the reason, before one is refused.
+  const swap = card(
+    html`<ul class="list">
+      ${row({
+        id: "self-swap",
+        title: "Self-swap",
+        meta: html`${selfSwap.blocked ?? "A landed release of the forge takes over the port in place."}
+          · <span class="mono">FORGE_SELF_SWAP</span> ${selfSwap.enabled ? "is set" : "is off"}
+          · <span class="mono">net.ipv4.tcp_migrate_req</span> reads
+          <span class="mono">${selfSwap.migrateReq}</span>`,
+        trail: badge(selfSwap.blocked === null ? "ready" : "blocked", {
+          tone: selfSwap.blocked === null ? "success" : "attn",
+        }),
+      })}
+    </ul>`,
+    {
+      head: html`${icon("activity")}
+        <h2>Self-swap</h2>`,
+      pad: false,
+    },
+  );
+  const body = html`${happened}${connections}${swap}${when(
       reported,
       () => html`<p class="muted small mb" id="egress-reported">
         ${icon("activity")} Egress is reported, not enforced: every new app,
