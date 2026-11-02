@@ -71,7 +71,7 @@ import { style } from "../term/style.ts";
 import { truncate, wrap } from "../term/width.ts";
 import { badge, card } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
-import { PIN_MARK, ago, confirmScreen, drawFacts, plural } from "./common.ts";
+import { PIN_MARK, ago, confirmScreen, drawFacts, plural, promptScreen } from "./common.ts";
 import { connectionsScreen, egressScreen } from "./egress.ts";
 import { eventsScreen } from "./events.ts";
 import { newPullScreen } from "./newpull.ts";
@@ -197,6 +197,7 @@ export function aboutScreen(
               ),
             ]
           : []),
+        ...(mayPerson() ? [binding(["w"], "write description")] : []),
         ...(mayOutsiders()
           ? [
               binding(
@@ -484,6 +485,34 @@ export function aboutScreen(
         });
         return true;
       }
+      if (e.key === "w" && repo !== undefined && mayPerson()) {
+        const at = repo;
+        ctx.push(
+          promptScreen(ctx, screen, {
+            title: "Description",
+            label: "What this repository is for",
+            value: at.description,
+            hint: "one line; empty clears it",
+            onSubmit: (value) => {
+              const refusal = descriptionRefusal(value);
+              if (refusal !== undefined) {
+                ctx.toast(refusal, "danger");
+                return refusal;
+              }
+              void updateRepoSettings(f.app, f.user, at, { description: value }).then((done) => {
+                if (done.ok) {
+                  repo = getRepoById(f.db, done.value.id) ?? done.value;
+                  rows = factRows();
+                  ctx.toast("description saved", "success");
+                } else ctx.toast("that could not be changed", "danger");
+                ctx.invalidate();
+              });
+              return undefined;
+            },
+          }),
+        );
+        return true;
+      }
       if (e.key === "t" && repo !== undefined && mayTrail()) {
         const shown = getProvenance(f.db, repo.id)?.shown === true;
         const done = showProvenance(f.app, f.user, repo, !shown);
@@ -659,6 +688,16 @@ export function detachRows(repo: Repo | undefined): [string, string][] {
   if (repo === undefined) return [];
   const words = detachPhaseWords(detachJob(repo.id), ago);
   return words === null ? [] : [["detach", words]];
+}
+
+/** The longest description the MCP `repo_settings` tool takes; Settings has no cap of its own. */
+const DESCRIPTION_MAX = 2000;
+
+/** Why a typed description is refused, in words, or nothing when it stands. */
+function descriptionRefusal(value: string): string | undefined {
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(value)) return "a description is one line of plain text";
+  if ([...value].length > DESCRIPTION_MAX) return `a description is ${DESCRIPTION_MAX} characters at most`;
+  return undefined;
 }
 
 /** One line when an admin has put the repository away. */
