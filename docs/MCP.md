@@ -448,5 +448,8 @@ answers
   too but unfiltered: it skips the filter holds, so a hot-file issue is
   startable there and not in the repository's own map.
 - **Plugins.** `plugins/opencode` and `plugins/claude-code` register this
-  server and add a `forge` command (tell, status, decide, plan, preview,
-  pulls). They hold no logic.
+  server and add a `forge` command (new, tell, status, decide, plan, preview,
+  pulls, runs, log, asked). They hold no logic. The Claude Code plugin has two
+  entries: `forge` sends no Authorization header, so Claude Code signs in
+  through the OAuth flow (the default); `forge-token` sends `FORGE_TOKEN` as a
+  bearer, for scripts.

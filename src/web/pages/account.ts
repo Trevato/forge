@@ -583,6 +583,7 @@ export function connectCard(ctx: Ctx, token: string | undefined): Html {
         See plugins/claude-code and plugins/opencode.
       </p>
       <p class="small">Claude Code</p>
+      <p class="muted small mb">Start it with only FORGE_URL and sign in through /mcp (the forge server): nothing to copy. For scripts, use this command and the forge-token server, which sends the token.</p>
       ${copyField("connect-claude", `${env} claude --plugin-dir plugins/claude-code`, "Claude Code command", "Copy command")}
       <p class="small">OpenCode</p>
       ${copyField(

@@ -361,7 +361,7 @@ export function llmsTxt(ctx: Ctx): Response {
       `- MCP endpoint: ${mcp.url} (streamable HTTP; OAuth metadata at ${mcp.oauth}). Or send a token as Authorization: Bearer.`,
       ...HARNESS_PLUGINS.map(
         (p) =>
-          `- ${p.label} plugin (source ${p.path} in this forge's repository; set FORGE_URL and FORGE_TOKEN): \`${p.install}\``,
+          `- ${p.label} plugin (source ${p.path} in this forge's repository; ${p.setup}): \`${p.install}\``,
       ),
       "",
       "## What you can do on any page",

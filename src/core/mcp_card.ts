@@ -22,6 +22,8 @@ export interface HarnessPlugin {
   readonly label: string;
   readonly path: string;
   readonly install: string;
+  /** What to set before it runs. */
+  readonly setup: string;
 }
 
 /** The one list the card and /llms.txt both read, so they cannot drift. */
@@ -31,12 +33,14 @@ export const HARNESS_PLUGINS: readonly HarnessPlugin[] = [
     label: "Claude Code",
     path: "plugins/claude-code",
     install: "claude --plugin-dir plugins/claude-code",
+    setup: "set FORGE_URL, then sign in through /mcp with the forge server; or also set FORGE_TOKEN and use the forge-token server",
   },
   {
     harness: "opencode",
     label: "OpenCode",
     path: "plugins/opencode/forge.ts",
     install: "mkdir -p .opencode/plugin && cp plugins/opencode/forge.ts .opencode/plugin/",
+    setup: "set FORGE_URL and FORGE_TOKEN",
   },
 ];
 
