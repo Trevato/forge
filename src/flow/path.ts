@@ -13,11 +13,14 @@
 
 import type { Database } from "bun:sqlite";
 import { getAppByRepo } from "../core/apps.ts";
+import { latestDecisionsFor } from "../core/decisions.ts";
+import { holdsFor } from "../core/holds.ts";
 import { getPull, type Pull } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
-import { reviewSummary } from "../core/reviews.ts";
-import { checkSummary, type RunState } from "../core/runs.ts";
-import { nextOfPull, type Next } from "./next_actor.ts";
+import { reviewSummariesFor, reviewSummary } from "../core/reviews.ts";
+import { checksForHeads, checkSummary, type RunState } from "../core/runs.ts";
+import { nextActor, nextOfPull, type Next } from "./next_actor.ts";
+import { wallWordsOf } from "./wall_wait.ts";
 
 export const STEPS = ["check", "review", "land", "live"] as const;
 export type Step = (typeof STEPS)[number];
@@ -141,4 +144,66 @@ export function stepOfStored(db: Database, repo: Repo, pull: Pull): PathStep | n
 export function stepOfNumber(db: Database, repo: Repo, number: number): PathStep | null {
   const pull = getPull(db, repo.id, number);
   return pull === undefined ? null : stepOfStored(db, repo, pull);
+}
+
+/** When production for `repo` last started serving a deploy; null when it never has. */
+function lastServed(db: Database, repoId: string): string | null {
+  return (
+    db
+      .query<{ at: string | null }, [string]>(
+        `SELECT MAX(created_at) AS at FROM run
+          WHERE repo_id = ?1 AND kind = 'deploy' AND env = 'production' AND serving_at IS NOT NULL`,
+      )
+      .get(repoId)?.at ?? null
+  );
+}
+
+/**
+ * `stepOfStored` for every pull of a list at once, by pull id: each fact is
+ * read in one query for the whole page rather than once per row, so a list
+ * renders without touching the database (#8387). Same steps, same words.
+ */
+export function stepsOfStored(db: Database, repo: Repo, pulls: readonly Pull[]): Map<string, PathStep | null> {
+  const out = new Map<string, PathStep | null>();
+  const open = pulls.filter((p) => p.mergedAt === null && p.state === "open");
+  const ids = open.map((p) => p.id);
+  const reviews = reviewSummariesFor(db, open);
+  const checks = checksForHeads(db, new Map(open.map((p) => [p.id, p.headOid])));
+  const holds = holdsFor(db, ids);
+  const walls = latestDecisionsFor(db, ids, "land");
+  for (const pull of open) {
+    const r = reviews.get(pull.id)!;
+    const check = checks.get(pull.id)?.[0]?.state ?? "none";
+    const hold = holds.get(pull.id);
+    const next = nextActor({
+      held: hold === undefined ? null : { by: hold.heldByName, why: hold.why },
+      conflicted: false,
+      check,
+      changesRequested: r.changesRequested,
+      approvals: r.approvals,
+      pushedSince: r.stale,
+      wall: wallWordsOf(walls.get(pull.id), pull.headOid),
+    });
+    out.set(pull.id, pathStep({ state: "open", check, approvals: r.approvals, next }));
+  }
+  const merged = pulls.filter((p) => p.mergedAt !== null);
+  const toDefault = merged.some((p) => p.baseBranch === repo.defaultBranch);
+  const hasApp = toDefault && getAppByRepo(db, repo.id) !== undefined;
+  const served = hasApp ? lastServed(db, repo.id) : null;
+  for (const pull of merged) {
+    const deploys = hasApp && pull.baseBranch === repo.defaultBranch;
+    out.set(
+      pull.id,
+      pathStep({
+        state: "merged",
+        check: "ok",
+        approvals: 0,
+        next: null,
+        deploys,
+        liveSince: deploys && served !== null && served >= pull.mergedAt!,
+      }),
+    );
+  }
+  for (const pull of pulls) if (!out.has(pull.id)) out.set(pull.id, null);
+  return out;
 }

@@ -6,14 +6,18 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { latestDecision } from "../core/decisions.ts";
+import { latestDecision, type Decision } from "../core/decisions.ts";
 
 const strings = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((c): c is string => typeof c === "string") : [];
 
 /** What the wall holds `headOid` for, in plain words; null when it holds nothing there. */
 export function wallWords(db: Database, pullId: string, headOid: string): string[] | null {
-  const d = latestDecision(db, pullId, "land");
+  return wallWordsOf(latestDecision(db, pullId, "land"), headOid);
+}
+
+/** `wallWords` from the pull's latest `land` decision, already read: a list reads them all at once. */
+export function wallWordsOf(d: Decision | undefined, headOid: string): string[] | null {
   if (d === undefined || d.answer !== "wall" || d.outcome !== null) return null;
   const state = d.state as { head?: unknown; plain?: unknown; cells?: unknown } | null;
   if (state === null || typeof state !== "object" || state.head !== headOid) return null;

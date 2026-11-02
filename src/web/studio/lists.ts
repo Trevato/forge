@@ -9,7 +9,6 @@
  * `/pulls`.
  */
 
-import type { Database } from "bun:sqlite";
 import { sealedScope } from "../../core/sealed.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { getAppByRepo } from "../../core/apps.ts";
@@ -20,8 +19,8 @@ import {
   type Issue,
   type Label,
 } from "../../core/issues.ts";
-import { listPulls, openPullsClosing, type Pull } from "../../core/pulls.ts";
-import { stepOfStored } from "../../flow/path.ts";
+import { listPulls, openPullsClosing } from "../../core/pulls.ts";
+import { stepsOfStored, type PathStep } from "../../flow/path.ts";
 import { canRead, canWrite, type Repo } from "../../core/repos.ts";
 import { FLOW_LABEL } from "../../core/flow_label.ts";
 import { flowButton } from "../flow_button.ts";
@@ -490,9 +489,8 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
 }
 
 /** The pull's step beside its row, as a sibling of the row's link: `after`. */
-function stepAfter(db: Database, repo: Repo, pull: Pull): { after?: Html } {
-  const step = stepOfStored(db, repo, pull);
-  return step === null ? {} : { after: stepLink(step) };
+function stepAfter(step: PathStep | null | undefined): { after?: Html } {
+  return step == null ? {} : { after: stepLink(step) };
 }
 
 /**
@@ -534,6 +532,8 @@ export async function changesList(ctx: Ctx): Promise<Response> {
   const rows = fetched
     .map((pull, i) => ({ pull, info: words[i]! }))
     .filter((r) => shown(r.info.word, f));
+  const steps = stepsOfStored(db, repo, rows.map((r) => r.pull));
+  lap("steps");
 
   const list =
     rows.length === 0
@@ -561,7 +561,7 @@ export async function changesList(ctx: Ctx): Promise<Response> {
                 : pull.authorName} · ${info.note} ·
               ${when(answered.get(pull.number), (t) => html`${tellLine(base, t)} · `)}${time(pull.updatedAt)}`,
               trail: wordBadge(info.word),
-              ...stepAfter(db, repo, pull),
+              ...stepAfter(steps.get(pull.id)),
             }),
           ),
         );
