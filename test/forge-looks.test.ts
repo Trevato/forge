@@ -20,6 +20,7 @@ quietLogs();
 
 /** Top-level routes that are not pages, or are not worth a picture, and why. */
 const NOT_A_PAGE: Record<string, string> = {
+  "/asked": "no picture: the cap of 24 looks went to /notes, the page that now leads with a person's thoughts; /asked is covered by test/asked.test.ts",
   "/llms.txt": "plain markdown for machines, not a page to picture",
   "/robots.txt": "plain text for crawlers",
   "/openapi.json": "a redirect to the contract document",

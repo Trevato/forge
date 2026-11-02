@@ -112,6 +112,7 @@ export function tellBox(ctx: Ctx, user: User): Html {
           <option value="${FORGE_TARGET}">the forge</option>
         </select>`}
     ${btn("Tell", { variant: "primary" })}
+    ${btn("Notes", { href: "/notes", icon: "comment", title: "Your notes and where they stand" })}
     ${btn("Talk", { href: "/talk", icon: "comment", title: "Talk to the forge" })}
   </form>`;
 }

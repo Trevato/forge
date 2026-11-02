@@ -111,6 +111,7 @@ export const SYSTEM_NAMES: readonly string[] = [
   "sw.js",
   "tell",
   "talk",
+  "notes",
   "theme",
   "verify",
   "recover",

@@ -226,6 +226,7 @@ import { forgeLinkSubmit, forgesPage } from "../web/pages/forges.ts";
 import { forgeItSubmit } from "../web/pages/forge-it.ts";
 import { newForgePage, newForgeSubmit } from "../web/pages/new-forge.ts";
 import { askedPage } from "../web/studio/asked_page.ts";
+import { notesOverrule, notesSave, notesView } from "../web/pages/notes.ts";
 import { reviewPage } from "../web/studio/review_page.ts";
 import { reviewAct } from "../web/studio/review_act.ts";
 import {
@@ -735,6 +736,9 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/asks/decide/:id/undo", asksDecideUndo);
   // What people asked of the crew, and what became of it (core/asked.ts).
   router.add("GET", "/asked", askedPage);
+  router.add("GET", "/notes", notesView);
+  router.add("POST", "/notes", notesSave);
+  router.add("POST", "/notes/:id/overrule", notesOverrule);
   router.add("GET", "/review", reviewPage);
   router.add("POST", "/review/act", reviewAct);
   // The big view, folded into the board: every old address lands on its wall mode.

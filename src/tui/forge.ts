@@ -33,6 +33,7 @@ import {
 import { chainScreen } from "./screens/chain.ts";
 import { canSeeMemory } from "../boards/memory.ts";
 import { askedScreen } from "./screens/asked.ts";
+import { notesScreen } from "./screens/thoughtnotes.ts";
 import { deciderScreen } from "./screens/decider.ts";
 import { familyScreen } from "./screens/family.ts";
 import { familyLines, familyView } from "../spawn/family.ts";
@@ -253,6 +254,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Asked",
         hint: "your thoughts and what became of them",
         run: () => ctx.push(askedScreen(session, ctx)),
+      });
+    // One box to write an idea in, each note with its live state; /notes' own door (#8696).
+    if (session.signedIn)
+      commands.push({
+        id: "thought-notes",
+        title: "Notes",
+        hint: "write an idea and watch it become shipped work",
+        run: () => ctx.push(notesScreen(session, ctx)),
       });
     if (session.signedIn)
       commands.push({
