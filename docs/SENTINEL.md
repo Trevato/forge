@@ -25,6 +25,22 @@ issue, and only when its evidence changed; one whose issue was closed and
 returned is filed again. It files in `FORGE_SENTINEL_REPO` (default
 `trevato/forge`) as the `sentinel` agent, else the first admin.
 
+**How it is labelled** (#8856). Each finding declares a kind, and is filed
+with its labels, so the bug clock (`src/flow/bugs.ts`) runs from the filing
+and nobody has to sort it:
+
+| Kind | Labels | Clock |
+| --- | --- | --- |
+| `security` (a hand-installed trigger) | `bug`, `high` | 4 h |
+| `defect` (every other finding, and the performance watcher's slow routes) | `bug` | 48 h |
+
+A label the repository lacks is made (`src/hunt/label.ts`, shared by the
+sentinel and `src/perf/duty.ts`); labels already on the issue stay, and an
+issue adopted after its record was lost is labelled again. A budget breach
+also gets `P0 Trust`. A kind joins the table with the first detector that
+files it: the route hunters (`src/hunt/door.ts`, `links.ts`, `contract.ts`)
+file nothing yet, so there is no `broken` or `polish` kind.
+
 **What it shows.** To a site admin only: the board's forge strip and the
 terminal palette's `Sentinel` command (as a toast) show the count of open findings and the
 last hunt's time. A hunt is synchronous, so there is no "hunting" state to show.

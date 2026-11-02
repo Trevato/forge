@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
-import { listIssues } from "../src/core/issues.ts";
+import { labelsFor, listIssues } from "../src/core/issues.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { createUser } from "../src/core/users.ts";
 import { startPerfWatcher } from "../src/perf/duty.ts";
@@ -83,4 +83,10 @@ test("the watcher files a slow git subcommand once (#8158)", async () => {
   await Bun.sleep(60);
   stop();
   expect(titles().filter((t) => t.startsWith("git "))).toEqual(["git rev-parse is over its budget"]);
+});
+
+test("a slow route is filed as a bug, so its clock runs from the filing (#8856)", () => {
+  const repo = getRepo(app.db, "alice", "forge")!;
+  const issue = listIssues(app.db, repo.id, { state: "open" }).find((i) => i.title === "/ is over its budget: kpis")!;
+  expect(labelsFor(app.db, issue.id).map((l) => l.name)).toEqual(["bug"]);
 });
