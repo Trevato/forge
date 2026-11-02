@@ -249,7 +249,7 @@ function rpcOne(
  */
 export const REPORT_TOOL = {
   name: "report",
-  /** Its row in docs/MCP.md (`bun scripts/mcp-tools.ts`); never sent to a client. */
+  /** Its line in /llms.txt's `## MCP tools`; never sent to a client. */
   doc: "`{ repo, title, body?, page?, agent? }`: report a problem in a public repository, the one tool open without a token; it still stores the report, which a person reads first; plain text. With a token the report carries your account; `agent` without one is shown as a claim",
   writes: true,
   description:

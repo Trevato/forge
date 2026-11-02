@@ -1,11 +1,13 @@
-/** /llms.txt's `## MCP tools` section is the generated tool index, line for line. */
+/** /llms.txt's `## MCP tools` section is the generated tool index and `report`, line for line, each by its `doc`. */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { REPORT_TOOL } from "../src/http/mcp.ts";
 import { TOOLS } from "../src/http/mcp/tools.ts";
+import type { Listed } from "../src/web/llms_tools.ts";
 
 describe("/llms.txt MCP tools", () => {
   let dataDir: string;
@@ -20,7 +22,7 @@ describe("/llms.txt MCP tools", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("lists exactly the tools in the index, with (admin) and (writes)", async () => {
+  test("lists exactly the tools in the index and `report`, by their `doc`, with (admin) and (writes)", async () => {
     const res = await fetch(`${servers.url}/llms.txt`);
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toContain("max-age");
@@ -29,9 +31,9 @@ describe("/llms.txt MCP tools", () => {
     expect(start).toBeGreaterThan(-1);
     const end = lines.findIndex((l, i) => i > start && l.startsWith("## "));
     const listed = lines.slice(start + 1, end).filter((l) => l.startsWith("- "));
-    const expected = TOOLS.map((t) => {
+    const expected = [...TOOLS, REPORT_TOOL].map((t: Listed) => {
       const admin = t.adminOnly === true || t.needsAdminScope === true ? " (admin)" : "";
-      return `- ${t.name}: ${t.description.replace(/\s+/g, " ").trim()}${admin}${t.writes ? " (writes)" : ""}`;
+      return `- ${t.name}: ${(t.doc ?? t.description).replace(/\s+/g, " ").trim()}${admin}${t.writes ? " (writes)" : ""}`;
     });
     expect(listed).toEqual(expected);
     expect(TOOLS.some((t) => t.writes)).toBe(true);

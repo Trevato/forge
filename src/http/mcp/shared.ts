@@ -46,7 +46,7 @@ export const bad = (error: string, message: string): Answer => ({
 
 export interface Tool {
   readonly name: string;
-  /** Its row in docs/MCP.md's tool table: markdown, one line; absent, the tool has no row yet. */
+  /** Its line in /llms.txt's `## MCP tools`: markdown, one line; absent, the line reads `description`. */
   readonly doc?: string;
   readonly description: string;
   readonly inputSchema: Record<string, unknown>;
@@ -353,6 +353,6 @@ export function boardFailed(e: BoardError): Answer {
   return bad(e, BOARD_NOT_SAVED);
 }
 
-/** Orders by name's code points, never the machine's locale: the tool list and its docs table read the same everywhere. */
+/** Orders by name's code points, never the machine's locale: the tool list reads the same everywhere. */
 export const byName = (a: { readonly name: string }, b: { readonly name: string }): number =>
   a.name < b.name ? -1 : a.name > b.name ? 1 : 0;

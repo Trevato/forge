@@ -49,20 +49,18 @@ export const NO_TEST_NAME = "(unnamed)";
  * reserving it ("keeper", "feed", "favicon.ico") failed it, main green.
  * OpenAPI coverage (#8140): each pull adding an /api/v1 route without its
  * row, or a route file without regenerating the index, failed it, main green.
- * MCP tools (#7906): each pull adding a tool or editing its `doc` without
- * `bun scripts/mcp-tools.ts` failed the index or table check, main green.
+ * MCP tools (#7906): each pull adding a tool without `bun scripts/mcp-tools.ts`
+ * failed the index check, main green.
  * The rest are top-level tests named whole (#8184): each reads only the tree.
  */
 export const TREE_GATES: readonly string[] = [
   "design check: nothing added outside the system (#2678) > ",
   "no polling in src/web > ",
   "reserved names > every top-level page of the forge is a reserved name",
-  // A route or tool a pull added without its row in docs/openapi or docs/MCP.md.
+  // A route a pull added without its row in docs/openapi.
   "every registered /api/v1 route has an OpenAPI row or is listed as not yet described",
   "NOT_YET_DESCRIBED has no entry that is now described",
   "NOT_YET_DESCRIBED is sorted and names registered routes",
-  "every tool in tools/list has a row in docs/MCP.md",
-  "every row in docs/MCP.md names a tool that exists",
   // An import a pull added from scripts/ or test/ into src/.
   "nothing under src/ imports from outside src/ (scripts/, test/, …)",
   // A README a pull grew past its limit, or a docs/ link it broke.
@@ -70,9 +68,8 @@ export const TREE_GATES: readonly string[] = [
   "every docs/ link in README.md resolves",
   // A route file a pull added without regenerating the index.
   "the gathered routes > the index is current: run `bun scripts/openapi-routes.ts`",
-  // A tool file, or a tool's `doc`, a pull changed without regenerating (#7906).
+  // A tool file a pull added without regenerating the index (#7906).
   "the gathered tools > the index is current: run `bun scripts/mcp-tools.ts`",
-  "the gathered tools > docs/MCP.md's tool table is current: run `bun scripts/mcp-tools.ts`",
 ];
 
 /** Whether a failing test's name is one of {@link TREE_GATES}': under a suite prefix (`… > `), or a test's full name exactly. */
