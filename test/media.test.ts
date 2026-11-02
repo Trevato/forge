@@ -354,7 +354,6 @@ describe("the blob page of a PDF", () => {
     const pdf = await policy("/alice/gallery/blob/main/doc.pdf");
     expect(pdf.html).toContain('<object class="pdf-frame" data="/alice/gallery/media/main/doc.pdf" type="application/pdf">');
     expect(pdf.html).toContain('href="/alice/gallery/media/main/doc.pdf?download=1"');
-    expect(pdf.html).toContain('<p class="pdf-links">');
     expect(pdf.csp).toContain("object-src 'self'; ");
 
     // Every other policy is exactly what it was, with object-src left out.

@@ -24,8 +24,8 @@ media type, for `<img>`, `<video>`, `<audio>`, `<object>` and `fetch()`.
 - **Framing:** every media answer carries `frame-ancestors 'self'` and
   `X-Frame-Options: SAMEORIGIN`: the blob page may embed it, no other site.
 - **The page's side:** the blob page of a PDF (`render/pdf.ts`) holds an
-  `<object type="application/pdf">` on the media URL, with an open link and a
-  download link inside it for a browser that cannot draw it. That page, and no
+  `<object type="application/pdf">` on the media URL, with an "Open the PDF" link and a
+  Download button inside it for a browser that cannot draw it. That page, and no
   other, passes `objectSrc: true` to `page()`, which adds `object-src 'self'`
   to its policy; it is sent only when the page really draws the PDF, never for
   `?view=source`, and never site-wide. The PDF is drawn for a repository on
