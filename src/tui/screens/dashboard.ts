@@ -53,6 +53,7 @@ import {
 } from "../../actions/asks_bulk.ts";
 import { reviewSetOf, type ReviewSet } from "../../web/studio/review_set.ts";
 import { staleWords } from "../../flow/kpi_words.ts";
+import { askMeasureWeek, asksMeasureEmpty, asksMeasureWords } from "../../core/ask_ledger.ts";
 import { mutedRepos, removeMutes } from "../../core/interactions.ts";
 import { chipsOf, KIND_CHIPS, setChip } from "../../core/feed_chips.ts";
 import type { Operation } from "../../core/fleet_ops.ts";
@@ -172,6 +173,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   let pins: Pin[] = [];
   let pinned = new Set<string>();
   let onYou: OnYouItem[] = [];
+  /** The week's asks line, read on reload; drawing only reads it. */
+  let asksLine: string | undefined;
   /** Wave proposals that wait for this person's nod, listed after the rows above. */
   let waves: { proposal: Proposal; repo: Repo }[] = [];
   /** Waves put aside with Later, which `B` brings back. */
@@ -328,6 +331,11 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     pinned = f.user ? pinnedRepoIds(f.db, f.user.id) : new Set<string>();
     all = listReposVisibleTo(f.db, f.user, { limit: 200 });
     onYou = assignedToMe();
+    asksLine = undefined;
+    if (f.user !== undefined && f.user.kind === "user") {
+      const m = askMeasureWeek(f.db, f.user.id);
+      if (!asksMeasureEmpty(m)) asksLine = asksMeasureWords(m);
+    }
     waitingSet = f.user === undefined ? undefined : reviewSetOf(f.db, f.user, new Date());
     waves = f.user === undefined ? [] : wavesFor();
     asideWaves = f.user === undefined ? [] : putAsideWaves(f.db, f.user);
@@ -1231,6 +1239,10 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         ctx.push(migrateScreen(f, ctx));
         return true;
       }
+      if (e.key === "W" && asksLine !== undefined) {
+        openOnWeb(f, ctx, "/asks", "Asks");
+        return true;
+      }
       if (e.key === "E" && everyday?.asking === true) {
         openOnWeb(f, ctx, "/settings", "Making your everyday account");
         return true;
@@ -1258,11 +1270,17 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   function drawOnYou(s: Surface, r: Rect, c: Tokens, set: IconSet): void {
     const on = focus === "onyou";
     const footer = onYouFooter();
-    const inner = card(s, r, c, {
+    const frame = card(s, r, c, {
       title: `${icon("person", set)} ${TITLES.onyou}`,
       focused: on,
       ...(footer === undefined ? {} : { footer }),
     });
+    // The week's asks lead the pane, muted; absent when all four are 0, so the list sits where it did.
+    let inner = frame;
+    if (asksLine !== undefined && frame.h > 1) {
+      s.text(frame.x, frame.y, truncate(asksLine, frame.w), style(c.mutedFg, c.bg), frame.x + frame.w);
+      inner = { ...frame, y: frame.y + 1, h: frame.h - 1 };
+    }
     if (onYou.length + waves.length === 0) {
       note(s, inner, c, [
         silenced.size > 0
@@ -1332,6 +1350,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
           : "1-4 chips · h hide author",
       );
     }
+    if (asksLine !== undefined) parts.push("W asks on the web");
     if (marked.size > 0) parts.push(`${marked.size} marked`);
     if (silenced.size > 0)
       parts.push(

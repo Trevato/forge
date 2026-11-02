@@ -327,9 +327,9 @@ describe("asks that earn their place", () => {
     check(security, "failed");
     recordAskLedger(app.db);
     const board = await page("/board");
-    expect(board).toContain('id="asks-measure"');
-    expect(board).toContain(
-      "<b>6</b> raised · <b>1</b> acted on · <b>1</b> dismissed · <b>1</b> went by themselves",
+    // The whole strip, so a drift in its markup fails here: the link, the window, the bold figures and their separators.
+    expect(board).toMatch(
+      /<a class="muted small" id="asks-measure" href="\/asks"\s*>Asks, 7 days: <b>6<\/b> raised · <b>1<\/b> acted on · <b>1<\/b> dismissed · <b>1<\/b> went by themselves<\/a\s*>/,
     );
     const fromMcp = await mcpAsks();
     expect(fromMcp.measure.raised).toBe(6);

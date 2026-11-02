@@ -18,7 +18,7 @@ import { usd } from "../../core/money.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { sentinelNotice } from "../../crew/sentinel.ts";
 import { appsForRepos, type AppRecord } from "../../core/apps.ts";
-import { askMeasure } from "../../core/ask_ledger.ts";
+import { ASKS_WINDOW_DAYS, askMeasureWeek, asksMeasureEmpty, asksMeasureParts } from "../../core/ask_ledger.ts";
 import { declinedWaits, reviewWaits } from "../../actions/owner_waits.ts";
 import { tokenReturns } from "../../core/returns.ts";
 import { forgeVitals, needLine } from "../../actions/health.ts";
@@ -447,9 +447,6 @@ function reviewNotes(ctx: Ctx, scope: BoardScope): Note[] {
 
 // ---- what asked you, and what came of it ----
 
-/** The window the asks measure covers. */
-export const ASKS_WINDOW_DAYS = 7;
-
 /**
  * The viewer's asks over the last week, as four figures: raised, acted on,
  * dismissed, and gone by themselves. Many dismissed against few acted on
@@ -459,12 +456,12 @@ export const ASKS_WINDOW_DAYS = 7;
 function asksStrip(ctx: Ctx): Html | null {
   const user = ctx.auth.user;
   if (!user) return null;
-  const since = new Date(Date.now() - ASKS_WINDOW_DAYS * 86_400_000).toISOString();
-  const m = askMeasure(ctx.app.db, user.id, since);
-  if (m.raised + m.acted + m.dismissed + m.expired === 0) return null;
+  const m = askMeasureWeek(ctx.app.db, user.id);
+  if (asksMeasureEmpty(m)) return null;
   return html`<a class="muted small" id="asks-measure" href="/asks"
-    >Asks, ${ASKS_WINDOW_DAYS} days: <b>${m.raised}</b> raised · <b>${m.acted}</b> acted
-    on · <b>${m.dismissed}</b> dismissed · <b>${m.expired}</b> went by themselves</a
+    >Asks, ${ASKS_WINDOW_DAYS} days: ${asksMeasureParts(m).map(
+      (p, i) => html`${i === 0 ? "" : " · "}<b>${p.n}</b> ${p.label}`,
+    )}</a
   >`;
 }
 

@@ -22,7 +22,7 @@ import { issueTitles, proposalsFor, type Proposal } from "../../core/proposals.t
 import { chipsOf, type Chips } from "../../core/feed_chips.ts";
 import { chipHides } from "../../feed/chips.ts";
 import { askDismissals, mutedRepos } from "../../core/interactions.ts";
-import { askMeasure, syncAskLedger, type AskEnd } from "../../core/ask_ledger.ts";
+import { ASKS_WINDOW_DAYS, askMeasureWeek, syncAskLedger, type AskEnd } from "../../core/ask_ledger.ts";
 import {
   getIssueById,
   labelsForIssues,
@@ -1145,14 +1145,13 @@ export function askSentence(count: number): string {
  * and gone by themselves. `GET /api/v1/asks` and the MCP's `asks` read this.
  */
 export function asksAnswer(ctx: Ctx, user: User, chips?: Chips) {
-  const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
   const set = reviewSet(ctx, user);
   return {
     // The very figures Home's line and /review show: `count` is live asks plus the forge's needs; `stale` are older than 30 days.
     waiting: { count: set.count, stale: set.stale.length },
     rows: askLinesFor(ctx.app.db, user, chips),
     forge: forgeNeedsFor(ctx, user).map((d) => needLine(d)),
-    measure: { days: 7, ...askMeasure(ctx.app.db, user.id, since) },
+    measure: { days: ASKS_WINDOW_DAYS, ...askMeasureWeek(ctx.app.db, user.id) },
   };
 }
 
