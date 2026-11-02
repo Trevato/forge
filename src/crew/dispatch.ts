@@ -22,6 +22,7 @@ import { addComment } from "../actions/issues.ts";
 import { planAnotherRound } from "../actions/give_back.ts";
 import { announceRun } from "../actions/runs.ts";
 import { crewRole, getAgent, type Agent } from "../core/agents.ts";
+import { LANDED_LEAD } from "../core/done_on_main.ts";
 import type { ForgeEvent } from "../core/events.ts";
 import {
   getIssue,
@@ -574,7 +575,7 @@ function releaseOtherRuns(
   });
 }
 
-function route(app: App, event: ForgeEvent): void {
+export function route(app: App, event: ForgeEvent): void {
   if (event.repoId === null) return;
   const number = event.payload["number"];
   const repo = getRepoById(app.db, event.repoId);
@@ -611,6 +612,11 @@ function route(app: App, event: ForgeEvent): void {
     case "pull.reviewed": {
       if (typeof number !== "number") return;
       if (event.payload["via"] === "origin") return;
+      // The landing's own note goes to a person. Heard as the merger's word it
+      // sends the builder back, whose push opens a pull that closes as already
+      // on the base and writes the note again.
+      const spoken = event.payload["body"];
+      if (typeof spoken === "string" && spoken.startsWith(LANDED_LEAD)) return;
       const actor =
         event.actorId === null ? undefined : getUserById(app.db, event.actorId);
       if (!actor) return;
