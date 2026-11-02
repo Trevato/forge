@@ -134,6 +134,7 @@ import { deleteRepoCommands } from "./deleterepo.ts";
 import { visionCommands } from "./vision.ts";
 import { labelsCommands } from "./labels.ts";
 import { appEnvCommands } from "./appenv.ts";
+import { autonomyCommands } from "./autonomy.ts";
 import { externalEditor, editorHint, hasExternalEditor } from "./external.ts";
 import { finderScreen } from "./finder.ts";
 import { issuesScreen } from "./issues.ts";
@@ -1448,6 +1449,7 @@ export function workspaceScreen(
       ...visionCommands(f, ctx, repo),
       ...labelsCommands(f, ctx, repo),
       ...appEnvCommands(f, ctx, repo),
+      ...autonomyCommands(f, ctx, repo),
     ],
     get title() {
       return sourceName(src);
