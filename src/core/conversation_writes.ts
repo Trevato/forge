@@ -84,3 +84,11 @@ export function claimDone(
   db.query("DELETE FROM conversation_write WHERE id = ?1").run(row.id);
   return { result: row.result };
 }
+
+/** The tools of writes this turn began and never recorded the end of: what a person is shown on resume. */
+export function unended(db: Database, via: string): string[] {
+  return db
+    .query<{ tool: string }, [string]>("SELECT tool FROM conversation_write WHERE via = ?1 AND result IS NULL ORDER BY id")
+    .all(via)
+    .map((r) => r.tool);
+}

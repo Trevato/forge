@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { createRepo } from "../src/actions/repos.ts";
-import { argsHash, carryWrites, KEEP_MS, recordWrite } from "../src/core/conversation_writes.ts";
+import { argsHash, carryWrites, completeWrite, KEEP_MS, recordWrite, unended } from "../src/core/conversation_writes.ts";
 import { createIssue, getIssue } from "../src/core/issues.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { mintViaToken } from "../src/core/via_token.ts";
@@ -103,6 +103,33 @@ describe("a resumed turn", () => {
     expect(JSON.parse(again.text)).toMatchObject({ already_done: true });
     expect(JSON.parse(again.text).was).toBeUndefined();
     expect(state(w)).toBe("open");
+  });
+
+  test("a write the cut turn began and never ended is answered once, then the identical call runs", async () => {
+    const w = await world();
+    const args = { repo: w.repo, number: w.number };
+    recordWrite(app.db, w.via, "close", args);
+    carryWrites(app.db, w.via);
+    expect(JSON.parse((await call(w.mint(), "close", args)).text).already_done).toBe(true);
+    expect(state(w)).toBe("open");
+    // The record is claimed by the first answer: the same call now goes ahead.
+    const repeat = await call(w.mint(), "close", args);
+    expect(JSON.parse(repeat.text).already_done).toBeUndefined();
+    expect(state(w)).toBe("closed");
+  });
+
+  test("unended: only rows with no result, for that via, in id order", () => {
+    const via = "conversation:unended-a";
+    const insert = (rid: string, v: string, tool: string, result: string | null) =>
+      app.db.query("INSERT INTO conversation_write (id, via, tool, args_hash, result, created_at) VALUES (?1,?2,?3,'h',?4,?5)").run(rid, v, tool, result, new Date().toISOString());
+    insert("u3", via, "merge", null);
+    insert("u1", via, "close", null);
+    insert("u2", via, "comment", "done");
+    insert("u4", "conversation:unended-b", "reopen", null);
+    expect(unended(app.db, via)).toEqual(["close", "merge"]);
+    completeWrite(app.db, "u1", "closed");
+    expect(unended(app.db, via)).toEqual(["merge"]);
+    expect(unended(app.db, "conversation:unended-none")).toEqual([]);
   });
 
   test("a different call, or a turn that was not cut, is done as asked", async () => {

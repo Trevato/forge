@@ -20,7 +20,7 @@ import { join } from "node:path";
 import type { App } from "../app.ts";
 import { dailyLeft } from "../core/account_ceiling.ts";
 import { appendTurn, openConversation, removeTurn, setClaudeSession, type Conversation } from "../core/conversations.ts";
-import { carryWrites, forgetWrites } from "../core/conversation_writes.ts";
+import { carryWrites, forgetWrites, unended } from "../core/conversation_writes.ts";
 import { WORDS_MAX } from "../core/fence.ts";
 import { PLATFORM, pickSubscription, type Pick } from "../core/subscriptions.ts";
 import { getUserById } from "../core/users.ts";
@@ -77,8 +77,23 @@ export const turnRunning = (app: App, userId: string): boolean => live.has(openC
 /** The one line the person sees when a restart cut their answer short. */
 export const RESUMED_LINE = "The forge restarted while I was answering; I am picking it up where I stopped.";
 
+/**
+ * The line naming writes the restart cut between doing and reporting. It
+ * promises what happens: during the resumed answer the cut turn's record
+ * stops the same write running blind, and the person's next message after
+ * that answer starts a fresh turn, which forgets the records
+ * (`forgetWrites` in `begin`), so the write asked for then runs.
+ */
+export const unendedLine = (tools: readonly string[]): string => {
+  const one = tools.length === 1;
+  const subject = one ? "this write was" : "these writes were";
+  const pronoun = one ? "it" : "they";
+  const object = one ? "it" : "them";
+  return `The restart came while ${subject} running, and I do not know whether ${pronoun} finished: ${[...new Set(tools)].join(", ")}. Until this answer ends, ${pronoun} cannot run again unchecked; please look, and if ${pronoun} still must be done, ask me after this answer and I will do ${object} then.`;
+};
+
 const RESUME_PROMPT =
-  "The forge restarted while you were answering and you are resuming this conversation. Before any write, read to see whether it already happened; a held write was answered once and is not to be asked again. Then finish your answer to the person's last message.";
+  "The forge restarted while you were answering and you are resuming this conversation. Before any write, read to see whether it already happened; a held write's confirmation was answered once and is not to be asked for again. Then finish your answer to the person's last message.";
 
 /** Turns with a session listening, by conversation id: the run id a message is steered to. */
 const live = new Map<string, string>();
@@ -152,12 +167,15 @@ export function resumeInterrupted(app: App, options: ConversationOptions): Promi
   for (const row of rows) {
     // The cut turn's token is revoked now, resumed or not.
     app.db.query("DELETE FROM token WHERE id IN (SELECT token_id FROM via_token WHERE via = ?1)").run(`conversation:${row.conversation_id}`);
+    const unknown = unended(app.db, `conversation:${row.conversation_id}`);
     carryWrites(app.db, `conversation:${row.conversation_id}`);
     app.db.query("UPDATE conversation_run SET state = 'failed', finished_at = ?2 WHERE id = ?1").run(row.id, new Date().toISOString());
     if (row.resumes >= 1) continue;
     const conversation = openConversation(app.db, row.user_id);
     if (conversation.id !== row.conversation_id) continue;
     appendTurn(app.db, row.user_id, conversation.id, { role: "agent", text: RESUMED_LINE });
+    // A write begun and not reported is shown, not retried: the person decides.
+    if (unknown.length > 0) appendTurn(app.db, row.user_id, conversation.id, { role: "agent", text: unendedLine(unknown) });
     const session = conversation.claudeSessionId || row.session_id;
     const started = begin(app, options, conversation, row.prompt, row.resumes + 1, session === "" ? undefined : session);
     if (started.ok) done.push(started.value);

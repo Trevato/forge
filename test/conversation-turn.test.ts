@@ -12,14 +12,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { clearAccountCeiling, daySpent, setAccountCeiling } from "../src/core/account_ceiling.ts";
-import { recordWrite } from "../src/core/conversation_writes.ts";
+import { claimDone, completeWrite, recordWrite } from "../src/core/conversation_writes.ts";
 import { listTurns, openConversation } from "../src/core/conversations.ts";
 import { monthSpent } from "../src/core/model_grant.ts";
 import { addSubscription, getSubscription, PLATFORM, setGrants, wakeSubscription } from "../src/core/subscriptions.ts";
 import { verifyToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { TOOLS } from "../src/crew/claude.ts";
-import { MCP_SERVER, mcpConfig, RESUMED_LINE, resumeInterrupted, say, TURNS_LIVE_MAX, type ConversationOptions } from "../src/crew/conversation.ts";
+import { MCP_SERVER, mcpConfig, RESUMED_LINE, resumeInterrupted, say, unendedLine, TURNS_LIVE_MAX, type ConversationOptions } from "../src/crew/conversation.ts";
 
 let dir: string;
 let app: App;
@@ -170,6 +170,8 @@ describe("a conversation turn", () => {
     const args = lines("resumed");
     expect(args[args.indexOf("--resume") + 1]).toBe("sess-cut");
     expect(turns(alice).filter((t) => t === `agent:${RESUMED_LINE}`)).toHaveLength(1);
+    // The write with no outcome is shown to the person, once.
+    expect(turns(alice).filter((t) => t === `agent:${unendedLine(["close"])}`)).toHaveLength(1);
     // Once: a second boot finds nothing to resume.
     expect(resumeInterrupted(app, options(stub("never", "sess-cut", "answer")))).toHaveLength(0);
     expect(existsSync(join(dir, "never.argv"))).toBe(false);
@@ -192,6 +194,63 @@ describe("a conversation turn", () => {
     const fresh = say(app, options(stub("fresh2", "sess-cut2", "answer")), alice.id, "and again");
     if (fresh.ok) await fresh.value.done;
     expect(carried(via)).toBe(false);
+  });
+
+  /** Cut a turn after `record` ran, resume it with a turn that sends nothing, and return the turns the resume added. */
+  async function cutAndResume(name: string, record: (via: string) => void): Promise<{ via: string; added: string[] }> {
+    const stop = new AbortController();
+    const cut = say(app, options(stub(`${name}-cut`, `sess-${name}`, "hang"), stop.signal), alice.id, `do ${name}`);
+    while (!existsSync(join(dir, `${name}-cut.first`))) await Bun.sleep(20);
+    const via = `conversation:${openConversation(app.db, alice.id).id}`;
+    record(via);
+    stop.abort();
+    if (cut.ok) await cut.value.done;
+    const before = turns(alice).length;
+    await Promise.all(resumeInterrupted(app, options(stub(`${name}-resumed`, `sess-${name}`, "answer"))));
+    return { via, added: turns(alice).slice(before) };
+  }
+  const resumedTurns = (unknown?: string) => [
+    `agent:${RESUMED_LINE}`,
+    ...(unknown === undefined ? [] : [`agent:${unknown}`]),
+    expect.stringMatching(/^tool:mcp__forge__now/) as unknown as string,
+    "agent:All quiet.",
+  ];
+
+  test("a resume where every write ended appends no unended line", async () => {
+    const { added } = await cutAndResume("ended", (via) => completeWrite(app.db, recordWrite(app.db, via, "close", { number: 3 }), "closed"));
+    expect(added).toEqual(resumedTurns());
+  });
+
+  test("one write ended and one did not: the line names only the one that did not", async () => {
+    const { added } = await cutAndResume("mixed", (via) => {
+      completeWrite(app.db, recordWrite(app.db, via, "close", { number: 4 }), "closed");
+      recordWrite(app.db, via, "merge", { number: 5 });
+    });
+    expect(added).toEqual(resumedTurns(unendedLine(["merge"])));
+  });
+
+  test("the resumed turn sends nothing; the person asks after it, and the same write runs at once (#8410)", async () => {
+    const args = { repo: "alice/x", number: 6 };
+    const { via, added } = await cutAndResume("asked", (v) => recordWrite(app.db, v, "close", args));
+    expect(added).toEqual(resumedTurns(unendedLine(["close"])));
+    // The record still stands after the resumed answer: an identical call now would be answered already_done.
+    expect(app.db.query("SELECT 1 FROM conversation_write WHERE via = ?1 AND resumed = 1").get(via)).not.toBeNull();
+    const asked = say(app, options(stub("asked-again", "sess-asked", "answer")), alice.id, "close issue 6 again");
+    expect(asked.ok && asked.value.how).toBe("started");
+    if (asked.ok) await asked.value.done;
+    // The person's turn is fresh: the door (`http/mcp.ts`, `claimDone`) finds no record, so the first identical call runs.
+    expect(claimDone(app.db, via, "close", args)).toBeUndefined();
+  });
+
+  test("the unended line is worded for one write and for several", () => {
+    const one = unendedLine(["close"]);
+    expect(one).toContain("this write was running");
+    expect(one).toContain("whether it finished: close.");
+    expect(one).toContain("ask me after this answer and I will do it then.");
+    const many = unendedLine(["close", "merge", "close"]);
+    expect(many).toContain("these writes were running");
+    expect(many).toContain("whether they finished: close, merge.");
+    expect(many).toContain("ask me after this answer and I will do them then.");
   });
 
   test("a person with no account and no admin is refused, and nothing is stored as a run", async () => {
