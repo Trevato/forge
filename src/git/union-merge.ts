@@ -17,7 +17,7 @@ const MAX_BYTES = 1_000_000;
  * are line-lists, where each pull adds its own entry: `--union` keeps both
  * sides' lines unreviewed, which is right for two table rows or bullets and
  * wrong for prose, where it would duplicate or interleave paragraphs.
- * docs/MCP.md is its tool table and bullets; README.md and CHANGELOG.md hold
+ * docs/MCP.md is mostly bullets; README.md and CHANGELOG.md hold
  * sections of prose and stay with a run.
  */
 export const LIST_DOCS: readonly string[] = ["docs/MCP.md"];
