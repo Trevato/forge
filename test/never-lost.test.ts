@@ -13,7 +13,7 @@ import { createApp, type App } from "../src/app.ts";
 import { newApp } from "../src/actions/apps.ts";
 import { signGrant, type AppTarget } from "../src/apps/proxy.ts";
 import { AppsRuntime, type EnvStatus } from "../src/apps/runtime.ts";
-import { TOOLBAR_PATH } from "../src/apps/toolbar.ts";
+import { TOOLBAR_ASSET_PATH } from "../src/apps/toolbar.ts";
 import { getAppByRepo, type AppRecord } from "../src/core/apps.ts";
 import { createIssue } from "../src/core/issues.ts";
 import { createToken } from "../src/core/tokens.ts";
@@ -119,7 +119,7 @@ describe("never lost: the pill from production and from a preview", () => {
         const html = await res.text();
         const tag = /<script src="([^"]+)"([^>]*) defer><\/script>/.exec(html);
         expect(tag).not.toBeNull();
-        expect(tag![1]).toBe(`${servers.url}${TOOLBAR_PATH}`);
+        expect(tag![1]).toBe(TOOLBAR_ASSET_PATH);
         expect(tag![2]).toContain(' data-app="notes"');
         expect(tag![2]).toContain(' data-repo="alice/notes"');
         expect(tag![2]).toContain(` data-env="${env()}"`);

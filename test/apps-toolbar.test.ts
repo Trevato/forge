@@ -17,7 +17,7 @@ import { getAppByRepo } from "../src/core/apps.ts";
 import { listRuns } from "../src/core/runs.ts";
 import { AppsRuntime, type EnvStatus } from "../src/apps/runtime.ts";
 import { parseManifest } from "../src/apps/manifest.ts";
-import { REWRITE_MAX, TOOLBAR_PATH, readPage, toolbarJs, withToolbar } from "../src/apps/toolbar.ts";
+import { REWRITE_MAX, TOOLBAR_ASSET_PATH, TOOLBAR_PATH, readPage, toolbarJs, withToolbar } from "../src/apps/toolbar.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -187,7 +187,7 @@ describe("the forge pill", () => {
       redirect: "manual",
     });
   const tag = () =>
-    `<script src="${servers.url}${TOOLBAR_PATH}" data-app="notes" data-repo="alice/notes" data-env="production" defer></script>`;
+    `<script src="${TOOLBAR_ASSET_PATH}" data-forge="${servers.url}" data-app="notes" data-repo="alice/notes" data-env="production" defer></script>`;
 
   test("HTML gets one script tag before </body>, with its length fixed", async () => {
     toolbar = undefined;
@@ -227,7 +227,7 @@ describe("the forge pill", () => {
     const got = Buffer.from(await res.arrayBuffer()).toString();
     const piece = "<p>" + "b".repeat(1024 * 1024) + "</p>";
     expect(got).toBe("<html><body>" + piece.repeat(5) + "</body></html>");
-    expect(got).not.toContain(TOOLBAR_PATH);
+    expect(got).not.toContain(TOOLBAR_ASSET_PATH);
   });
 
   test("a streamed page still open after the wait arrives whole with no pill", async () => {
@@ -273,7 +273,7 @@ describe("the forge pill", () => {
     });
     expect(plain.headers.get("content-encoding")).toBeNull();
     expect(plain.headers.get("vary")).toContain("accept-encoding");
-    expect(await plain.text()).toContain(TOOLBAR_PATH);
+    expect(await plain.text()).toContain(TOOLBAR_ASSET_PATH);
   });
 
   test("a client that refuses gzip with q=0 gets the page plain", async () => {
@@ -284,7 +284,7 @@ describe("the forge pill", () => {
     } as RequestInit);
     expect(res.headers.get("content-encoding")).toBeNull();
     expect(res.headers.get("vary")).toContain("accept-encoding");
-    expect(await res.text()).toContain(TOOLBAR_PATH);
+    expect(await res.text()).toContain(TOOLBAR_ASSET_PATH);
   });
 
   test("a client that accepts br is sent brotli", async () => {
@@ -309,7 +309,7 @@ describe("the forge pill", () => {
     } as RequestInit);
     expect(res.headers.get("content-encoding")).toBeNull();
     expect(res.headers.get("vary")).toContain("accept-encoding");
-    expect(await res.text()).toContain(TOOLBAR_PATH);
+    expect(await res.text()).toContain(TOOLBAR_ASSET_PATH);
   });
 
   test("an app with the pill off is sent the client's encoding and its gzip passes through", async () => {
@@ -375,7 +375,7 @@ describe("the forge pill", () => {
     const out = new TextDecoder().decode(
       withToolbar(new TextEncoder().encode("<BODY>x</BODY>"), "http://f.test"),
     );
-    expect(out).toBe(`<BODY>x<script src="http://f.test${TOOLBAR_PATH}" defer></script></BODY>`);
+    expect(out).toBe(`<BODY>x<script src="${TOOLBAR_ASSET_PATH}" data-forge="http://f.test" defer></script></BODY>`);
   });
 
   test("forge.json toolbar is validated", () => {
@@ -435,7 +435,7 @@ describe("the pill's keyboard and touch behaviour", () => {
         return el;
       };
       const doc = {
-        currentScript: { src: "https://forge.test/assets/t.js", dataset: data },
+        currentScript: { src: "/__forge/t.js", dataset: { forge: "https://forge.test", ...data } },
         createElement: patched,
         body: { appendChild: () => undefined },
         listeners: {} as Record<string, ((e: unknown) => void)[]>,
@@ -612,7 +612,7 @@ describe("the opt-out, from forge.json to the proxy", () => {
     // As created: the pill is on, so the page below has something to lose.
     expect((await settled()).state).toBe("ok");
     expect(runtime.envStatus(record, "production")?.toolbar).toBe(true);
-    expect(await page()).toContain(TOOLBAR_PATH);
+    expect(await page()).toContain(TOOLBAR_ASSET_PATH);
 
     const off = await commitToBranch(app, a.value, repo, {
       message: "Turn the pill off",
@@ -628,7 +628,7 @@ describe("the opt-out, from forge.json to the proxy", () => {
     expect(runtime.envStatus(record, "production")?.toolbar).toBe(false);
     const html = await page();
     expect(html).toContain("<");
-    expect(html).not.toContain(TOOLBAR_PATH);
+    expect(html).not.toContain(TOOLBAR_ASSET_PATH);
   }, 180_000);
 });
 

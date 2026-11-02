@@ -20,8 +20,10 @@ export const toolbarJs = `(function () {
   if (window.__forgeToolbar) return;
   window.__forgeToolbar = true;
   var me = document.currentScript;
-  var home = "/";
-  try { home = new URL(me.src).origin + "/"; } catch (e) {}
+  // The forge's origin comes from data-forge: the script itself is served from the app's own host.
+  var fo = "";
+  try { fo = new URL((me.dataset || {}).forge || "").origin; } catch (e) {}
+  var home = fo ? fo + "/" : "/";
   var host = document.createElement("div");
   host.id = "forge-toolbar";
   host.style.cssText = "all:initial;position:fixed;z-index:2147483647";
@@ -74,7 +76,7 @@ export const toolbarJs = `(function () {
   var pullHref = "";
   // The pull this preview shows, one tap away: built from the script's own origin, never from page text.
   if (d.env !== "production" && /^\\d{1,9}$/.test(d.pull || "") && /^[\\w.-]+\\/[\\w.-]+$/.test(d.repo || "")) {
-    try { pullHref = new URL("/" + d.repo + "/pulls/" + d.pull, me.src).href; } catch (e) {}
+    try { pullHref = new URL("/" + d.repo + "/pulls/" + d.pull, fo).href; } catch (e) {}
   }
   if (d.env === "production") {}
   else if (pullHref) {
@@ -92,13 +94,12 @@ export const toolbarJs = `(function () {
   link.style.cssText = LS;
   try {
     var target = new URL(home);
-    if (target.origin === new URL(me.src).origin) link.href = target.href;
+    if (target.origin === fo) link.href = target.href;
   } catch (e) {}
   // Tell the builders: one box, one button, no account. The note goes to
   // this app's own host (same-origin, so the sender's cookie goes along) and
   // the answer is a live status the panel keeps fresh while it is open.
-  var forgeOrigin = "";
-  try { forgeOrigin = new URL(me.src).origin; } catch (e) {}
+  var forgeOrigin = fo;
   var tellBox = document.createElement("form");
   tellBox.setAttribute("aria-label", "Tell the builders");
   tellBox.style.cssText = "display:flex;flex-direction:column;gap:6px;margin:6px 0";
@@ -320,7 +321,7 @@ export const toolbarJs = `(function () {
       .then(function (r) { return r.ok ? r.json() : {}; })
       .then(function (c) {
         if (!c) return;
-        var forge = new URL(me.src).origin;
+        var forge = fo;
         // Signed in, the crew can be told from here. The form is the forge's
         // own page, on its own origin, with its own CSRF check: the app's
         // page only carries the address and the pull to it.
@@ -591,7 +592,8 @@ export function toolbarTag(forgeUrl: string, where?: PillWhere, proof?: string):
           .map(([k, v]) => ` data-${k}="${escapeAttr(v)}"`)
           .join("");
   const token = proof === undefined ? "" : ` data-proof="${escapeAttr(proof)}"`;
-  return `<script src="${new URL(TOOLBAR_PATH, forgeUrl).href}"${data}${token} defer></script>`;
+  const forge = ` data-forge="${escapeAttr(new URL(forgeUrl).origin)}"`;
+  return `<script src="${TOOLBAR_ASSET_PATH}"${forge}${data}${token} defer></script>`;
 }
 
 /**

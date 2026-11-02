@@ -2,7 +2,7 @@
 import { expect, test } from "bun:test";
 import { withToolbar } from "../src/apps/toolbar.ts";
 
-const TAG = `<script src="http://f.test/`;
+const TAG = `<script src="/__forge/toolbar`;
 const put = (html: string): string =>
   new TextDecoder().decode(withToolbar(new TextEncoder().encode(html), "http://f.test"));
 /** Where the tag landed, as the text before it. */
