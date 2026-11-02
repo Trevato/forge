@@ -204,6 +204,25 @@ describe("what the open web expects", () => {
     }
   });
 
+  test("llms.txt answers a strong ETag and a 304, and a new public repository changes the ETag", async () => {
+    const first = await fetch(`${base}/llms.txt`);
+    const etag = first.headers.get("etag")!;
+    expect(etag).toMatch(/^"[0-9a-f]{32}"$/);
+    await first.text();
+    const again = await fetch(`${base}/llms.txt`, { headers: { "if-none-match": etag } });
+    expect(again.status).toBe(304);
+    expect(await again.text()).toBe("");
+    expect(again.headers.get("etag")).toBe(etag);
+    const made = await createRepo(app, alice, { name: "etagged", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    // A new repository reaches the listing when its minute is up.
+    forgetListings(app.db);
+    const after = await fetch(`${base}/llms.txt`, { headers: { "if-none-match": etag } });
+    expect(after.status).toBe(200);
+    expect(after.headers.get("etag")).not.toBe(etag);
+    expect(await after.text()).toContain("alice/etagged");
+  });
+
   test("llms.txt opens with the version, and the short commit only when one is known", async () => {
     const saved = {
       v: process.env["FORGE_VERSION"],

@@ -30,7 +30,7 @@ import { metaThemeColor } from "../design/themes.ts";
 import { BODY_MAX, TITLE_MAX } from "../core/reports.ts";
 import { REPORT_LINK_TITLE } from "../actions/report_words.ts";
 import { sshTellCommand } from "../ssh/command.ts";
-import { llmsRepos, sitemapRepos } from "../core/listings.ts";
+import { llmsRepos, sitemapRepos, type LlmsListing } from "../core/listings.ts";
 import { canRead, getRepo } from "../core/repos.ts";
 import type { Ctx } from "../http/context.ts";
 import { notFound } from "../http/respond.ts";
@@ -326,6 +326,9 @@ function runningSentence(): string {
     : `Running ${r.version} at ${r.commit.slice(0, 7)}`;
 }
 
+/** llms.txt and its ETag per origin, valid while the listing read, the build and the tell command are the same. */
+const llmsBodies = new Map<string, { repos: LlmsListing; running: string; tell: string | undefined; body: string; etag: string }>();
+
 /**
  * GET /llms.txt — the forge as an agent should meet it (llmstxt.org): what
  * this is, how to report a problem with no account, how to offer a change,
@@ -334,14 +337,35 @@ function runningSentence(): string {
  */
 export function llmsTxt(ctx: Ctx): Response {
   const o = ctx.url.origin;
-  const mcp = mcpPointers(o);
   const tell = sshTellCommand(ctx.app);
+  const running = runningSentence();
   const repos = timePhase(ctx.request, "repos", () => llmsRepos(ctx.app.db));
-  return timePhase(ctx.request, "render", () => text(
+  let kept = llmsBodies.get(o);
+  if (kept === undefined || kept.repos !== repos || kept.running !== running || kept.tell !== tell) {
+    const body = timePhase(ctx.request, "render", () => renderLlmsTxt(ctx, o, tell, running, repos));
+    const etag = timePhase(ctx.request, "etag", () => `"${new Bun.CryptoHasher("sha256").update(body).digest("hex").slice(0, 32)}"`);
+    kept = { repos, running, tell, body, etag };
+    // Origins come from the Host header: keep a handful, not one per guess.
+    if (llmsBodies.size >= 16) llmsBodies.clear();
+    llmsBodies.set(o, kept);
+  }
+  const cache = "public, max-age=3600";
+  const sent = ctx.request.headers.get("if-none-match");
+  if (sent !== null && sent.split(",").some((t) => t.trim() === kept.etag))
+    return new Response(null, { status: 304, headers: { etag: kept.etag, "cache-control": cache } });
+  const res = text(kept.body, "text/markdown; charset=utf-8");
+  res.headers.set("etag", kept.etag);
+  return res;
+}
+
+/** The llms.txt document for one origin. */
+function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: string, repos: LlmsListing): string {
+  const mcp = mcpPointers(o);
+  return (
     [
       `# forge at ${ctx.url.host}`,
       "",
-      runningSentence(),
+      running,
       "",
       "> Git repositories, their issues and pulls, and the apps they run. Anyone may read a public repository, and report a problem in it without an account.",
       "",
@@ -409,9 +433,8 @@ export function llmsTxt(ctx: Ctx): Response {
           ]
         : ["None yet."]),
       "",
-    ].join("\n"),
-    "text/markdown; charset=utf-8",
-  ));
+    ].join("\n")
+  );
 }
 
 export interface PageLink {
