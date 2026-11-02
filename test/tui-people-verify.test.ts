@@ -141,6 +141,7 @@ describe("verify an email from the People screen", () => {
   }, 30_000);
 
   // Its own accounts, so its verdict never rests on the screen tests above.
+  // Two password hashes: on a loaded check machine they outlast bun's 5 s default.
   test("listPeople says who is verified", async () => {
     const proven = await createUser(forge.db, { username: "dora", email: "dora@forge.test", password: "a-long-passphrase", origin: "seed" });
     const unproven = await createUser(forge.db, { username: "evan", email: "evan@forge.test", password: "a-long-passphrase", origin: "seed" });
@@ -152,5 +153,5 @@ describe("verify an email from the People screen", () => {
     expect(byName.get("alice")).toBe(true);
     expect(byName.get("dora")).toBe(true);
     expect(byName.get("evan")).toBe(false);
-  });
+  }, 30_000);
 });
