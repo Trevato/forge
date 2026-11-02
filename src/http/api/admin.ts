@@ -14,6 +14,8 @@ import { changeCapacity, listCapacity } from "../../actions/capacity.ts";
 import { inviteLink, list as listInviteLinks, mint as mintInviteLink, revoke as revokeInviteLink } from "../../actions/invites.ts";
 import { changeLimit, listLimits } from "../../actions/limits.ts";
 import { setAccountCeilings, setAccountGrant } from "../../actions/model_grant.ts";
+import { deployPinned, pinnedForges, rollbackPinned, updatePinned } from "../../actions/pinned.ts";
+import { TARGETS } from "../../cloud/targets.ts";
 import { changeQuotas, readQuotas } from "../../actions/quotas.ts";
 import { setRole } from "../../actions/roles.ts";
 import { SETTING_WORDS } from "../../actions/setting_words.ts";
@@ -37,6 +39,46 @@ export const accountAdmin = (ctx: Ctx, scope: "ro" | "admin"): Response | undefi
   ctx.auth.user?.isAdmin === true ? requireScope(ctx, scope) : notFound();
 
 export function adminRoutes(router: Router<Handler>): void {
+  // ---- pinned forges (#8697): one deploy, and a change only by Update ----
+  const pinnedFail = (error: string): Response =>
+    error === "not_found" || error === "No such pinned forge." ? notFound() : apiError("refused", 422, error);
+
+  router.add("GET", "/api/v1/admin/pinned", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const denied = accountAdmin(ctx, "ro");
+    if (denied) return denied;
+    const seen = pinnedForges(ctx.app, ctx.auth.user);
+    return seen.ok ? json({ items: seen.value, targets: TARGETS, next_cursor: null }) : notFound();
+  });
+
+  router.add("POST", "/api/v1/admin/pinned", async (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const i = await body(ctx.request);
+    const made = await deployPinned(ctx.app, ctx.auth.user, {
+      name: str(i.name), target: str(i.target), account: str(i.account), app: str(i.app),
+      source: str(i.source), version: str(i.version), config: i.config,
+    });
+    return made.ok ? json(made.value, 201) : pinnedFail(made.error);
+  });
+
+  router.add("POST", "/api/v1/admin/pinned/:name/update", async (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const i = await body(ctx.request);
+    const done = await updatePinned(ctx.app, ctx.auth.user, ctx.params.name!, {
+      version: i.version === undefined ? undefined : str(i.version), config: i.config,
+    });
+    return done.ok ? json(done.value) : pinnedFail(done.error);
+  });
+
+  router.add("POST", "/api/v1/admin/pinned/:name/rollback", async (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const done = await rollbackPinned(ctx.app, ctx.auth.user, ctx.params.name!);
+    return done.ok ? json(done.value) : pinnedFail(done.error);
+  });
+
   // ---- accounts: the owner's view of who joined (#660) ----
   const accountError = (error: string): Response =>
     error === "not_found"

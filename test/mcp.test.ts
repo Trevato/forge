@@ -303,6 +303,7 @@ describe("the forge over MCP", () => {
       "egress_grants",
       "explore",
       "person",
+      "pinned_forge",
       "search",
       "feed",
       "feed_chips",

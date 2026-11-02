@@ -176,6 +176,8 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     kind === "forge.upstream" ||
     kind === "forge.updates_taken" ||
     kind === "cloud.write_allowed" ||
+    // A pinned forge's deploy, update and rollback name the owner's cloud (#8697).
+    kind.startsWith("pinned.") ||
     // Which of a person's connected accounts a mirror syncs through is too.
     kind.startsWith("origin.") ||
     kind === "repo.settings_updated" ||

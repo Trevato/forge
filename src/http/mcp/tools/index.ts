@@ -98,6 +98,7 @@ export { tool as origins } from "./origins.ts";
 export { tool as outsiders } from "./outsiders.ts";
 export { tool as parent_unlink } from "./parent_unlink.ts";
 export { tool as person } from "./person.ts";
+export { tool as pinned_forge } from "./pinned_forge.ts";
 export { tool as pins } from "./pins.ts";
 export { tool as plan } from "./plan.ts";
 export { tool as preview } from "./preview.ts";

@@ -137,7 +137,7 @@ describe("the one list of what asks first", () => {
       expect(listed || NOT_ASKED.has(t.name), `${t.name} writes: ask first (ASKING) or name it in NOT_ASKED`).toBe(true);
       expect(listed && NOT_ASKED.has(t.name), `${t.name} is on both lists`).toBe(false);
     }
-    for (const name of ["land_past_gate", "share", "invites", "egress_grants", "sever", "parent_unlink", "quotas", "spawn", "app_deploy", "stop", "converge", "origins", "cloud_account", "outsiders", "seal", "migrate"])
+    for (const name of ["land_past_gate", "share", "invites", "egress_grants", "sever", "parent_unlink", "quotas", "spawn", "app_deploy", "stop", "converge", "origins", "cloud_account", "pinned_forge", "outsiders", "seal", "migrate"])
       expect(ASKING[name], name).toBeDefined();
   });
 

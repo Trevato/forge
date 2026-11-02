@@ -29,6 +29,7 @@ import { entry as orgGrants } from "./orggrants.ts";
 import { entry as orgTeams } from "./orgteams.ts";
 import { entry as owner } from "./owner.ts";
 import { entry as people } from "./people.ts";
+import { entry as pinned } from "./pinned.ts";
 import { entry as profile } from "./profile.ts";
 import { entry as quotas } from "./quotas.ts";
 import { entry as resilience } from "./resilience.ts";
@@ -82,6 +83,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   bulk,
   subscriptions,
   cloud,
+  pinned,
   connections,
   domains,
   feed,

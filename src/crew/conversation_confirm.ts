@@ -89,6 +89,7 @@ export const ASKING: Readonly<Record<string, Asking>> = {
   converge: { does: "have a fork's crew merge the parent's updates" },
   origins: { does: "sync an origin or replace the internal hosts one may live on", asks: not("action", "list", "repos") },
   cloud_account: { does: "change a cloud account" },
+  pinned_forge: { does: "deploy, update or roll back a pinned forge on the owner's cloud", asks: not("verb", "list") },
   outsiders: { does: "let non-writers direct an app's crew, or stop them" },
   seal: { does: "seal or unseal an issue or pull" },
   migrate: { does: "bring a repository in from a public address" },
