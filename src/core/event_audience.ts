@@ -159,6 +159,8 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     kind.startsWith("backup.") ||
     // The weekly model review's changes and results are the owner's (`actions/model_review.ts`).
     kind.startsWith("crew.model_") ||
+    // A child forge answering no one at its public address is the owner's to hear (`spawn/reach.ts`).
+    kind.startsWith("forge.child_") ||
     // A clog is the whole forge's flow, the owner's to hear (`flow/clog_tick.ts`).
     kind.startsWith("clog.") ||
     // What the throughput keeper did to lift a brake is the owner's too (`flow/keeper.ts`).

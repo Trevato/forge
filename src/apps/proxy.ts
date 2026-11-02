@@ -1101,6 +1101,9 @@ export async function proxyApp(
   }
   const out = new Headers(response.headers);
   for (const name of HOP_BY_HOP) out.delete(name);
+  // Which app answered: a probe from outside (`spawn/reach.ts`) tells this
+  // from a platform's standby page, which answers 200 for any name.
+  out.set("x-forge-app", target.app.slug);
   // An agent reading a public app's page learns where to report a problem
   // without the app having to say so.
   if (isHtml(out))
@@ -1286,13 +1289,13 @@ const WS_IDLE_SECONDS = 120;
  * that merely says `Upgrade: websocket` is an ordinary request, and is
  * fetched as one with the hop-by-hop headers stripped, as it always was.
  */
-const isWebSocketHandshake = (request: Request): boolean =>
+export const isWebSocketHandshake = (request: Request): boolean =>
   request.method === "GET" &&
   request.headers.get("upgrade")?.toLowerCase() === "websocket" &&
   request.headers.has("sec-websocket-key");
 
 /** The subprotocols a handshake offers, in the order it offers them. */
-const offeredProtocols = (request: Request): string[] =>
+export const offeredProtocols = (request: Request): string[] =>
   (request.headers.get("sec-websocket-protocol") ?? "")
     .split(",")
     .map((s) => s.trim())
@@ -1351,7 +1354,7 @@ async function proxyWebSocket(
  * sentence for the "not running" page: the app was not listening, or it
  * answered the handshake with something other than a socket.
  */
-function connectUpstream(
+export function connectUpstream(
   url: URL,
   headers: Record<string, string>,
   protocols: string[],

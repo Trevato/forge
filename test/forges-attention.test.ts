@@ -20,6 +20,7 @@ const row = (name: string, o: Partial<ClientRow> = {}): Omit<ClientRow, "attenti
   claimed: true,
   lastActivityAt: ago(1),
   running: null,
+  reach: null,
   size: "small",
   use: { kind: "shared" },
   lastHeartbeatAt: null,

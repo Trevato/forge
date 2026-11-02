@@ -14,3 +14,5 @@ trails a palette row.
   `src/web/style/content.ts` (`.finder .palette-item .cat`).
 - `.flow-row` — a §5 `.row` link on the flow panel (`flow-panel.ts`: idle pulls and the "and K more" row) with a 44px
   minimum height, so it is a touch target on a 360px phone. Styled in `src/web/style/components.ts` (list rows).
+
+The proofs under a forge on `/forges` (#7959) are `row()` `children`, one per public address; the row's trail badge says "reachable" or "not reachable", so the state is a word and not only a colour. No new class.

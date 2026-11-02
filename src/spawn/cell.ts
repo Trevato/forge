@@ -11,6 +11,7 @@
 import { dirname, join } from "node:path";
 import { clientAddress } from "../http/peer.ts";
 import type { App } from "../app.ts";
+import { connectUpstream, offeredProtocols, type AppSocket } from "../apps/proxy.ts";
 import { cellsAvailable, killTree, openCell, type Cell, type CellSpec, type Limits } from "../apps/contain.ts";
 import { childEnv, freePort } from "../apps/process.ts";
 import { childDirOf } from "../actions/spawn.ts";
@@ -311,4 +312,38 @@ export async function forward(
   } catch {
     return new Response("this forge is not answering", { status: 502 });
   }
+}
+
+/**
+ * Carry a websocket handshake to the child's loopback port: the child's side
+ * is opened first, and only then is the visitor's answered, as `proxyApp`
+ * does for an app (`apps/proxy.ts`). Frames then go through `appWebSocket`,
+ * the forge's one pump. `undefined` means the request became a socket.
+ */
+export async function forwardSocket(
+  child: Pick<CellChild, "port">,
+  request: Request,
+  server: Bun.Server<AppSocket>,
+  db: AppSocket["db"],
+  clientHeader?: string,
+): Promise<Response | undefined> {
+  const at = new URL(request.url);
+  const headers: Record<string, string> = {};
+  const named = clientHeader?.toLowerCase();
+  for (const [k, v] of request.headers) {
+    // The client writes its own handshake; the visitor's key, version and extensions end here.
+    if (!HOP.has(k) && !WHO.has(k) && k !== named && !k.startsWith("sec-websocket-")) headers[k] = v;
+  }
+  headers["x-forwarded-for"] = clientAddress(request);
+  const url = new URL(`ws://127.0.0.1:${child.port}${at.pathname}${at.search}`);
+  const opened = await connectUpstream(url, headers, offeredProtocols(request));
+  if (!opened.ok) return new Response("this forge is not answering", { status: 502 });
+  const upstream = opened.value;
+  const upgraded = server.upgrade(request, {
+    data: { upstream, userId: undefined, db, port: child.port },
+    ...(upstream.protocol === "" ? {} : { headers: { "sec-websocket-protocol": upstream.protocol } }),
+  });
+  if (upgraded) return undefined;
+  upstream.close(1000);
+  return new Response("bad websocket handshake", { status: 400 });
 }

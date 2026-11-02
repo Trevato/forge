@@ -91,7 +91,7 @@ for a tunnel and a forge that sleeps.
 | `follow_mode` | `{ repo, … }`: choose how a spawned forge follows its parent, `tell-me` or `take-updates`; its `forge` repository's admin only | yes |
 | `following` | where a fork stands against what it follows, and what the crew is doing about it |  |
 | `forge_proposals` | `{ repo }`: what this forge proposed to its parent, newest first; `reachable` is false if the parent did not answer |  |
-| `forges` | an admin's list of the forges sent from here: name, address, whom for, apps, claimed or not, last activity |  |
+| `forges` | an admin's list of the forges sent from here: name, address, whom for, apps, claimed or not, last activity, whether each public address answers |  |
 | `forks` | `{ repo }`: `{ parent, forks: [{ repo, ahead, behind, updatedAt }] }`, the forks the caller may see (as `/:owner/:name/forks` lists them), each with its commits ahead of and behind this one; `null` when git cannot say |  |
 | `front_page` | `{ pinned?, hidden?, weights?, dryRun? }`: the front page as a stranger sees it, ranked, with numbers; a site admin sets what is pinned (first public one featured), hidden, and what counts (weights of forks, ships, use, fresh, 0 to 10) | yes |
 | `health` | how this forge is: the version and commit it runs, draining or not, the rollout and its incidents |  |

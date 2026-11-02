@@ -17,6 +17,7 @@ import type { ChildAppsSummary } from "./child-apps.ts";
 import { hostedChildApps } from "./host.ts";
 import { hasAdmin, spawnedOrg } from "./claim.ts";
 import { lastHeard, type Beat } from "./heartbeat.ts";
+import { reachOf, reachWords, type ChildReach } from "./reach.ts";
 import type { Size } from "./sizes.ts";
 import { forgeUse, type ForgeUse } from "./usage.ts";
 
@@ -39,6 +40,8 @@ export interface ClientRow {
   readonly lastActivityAt: string | null;
   /** The apps this parent runs for the child; null when it runs none here. */
   readonly running: ChildAppsSummary | null;
+  /** What a visitor got from its public addresses when last asked (`spawn/reach.ts`); null before it was. */
+  readonly reach: ChildReach | null;
   /** Why this forge needs its owner now; null when it does not. */
   readonly attention: Attention | null;
   /** Dollars the child's crew spent today, from its last heartbeat; null when it has not said. */
@@ -202,6 +205,7 @@ export async function clientRows(app: App): Promise<ClientRow[]> {
       claimed: states[i]?.claimed ?? null,
       lastActivityAt: states[i]?.lastActivityAt ?? null,
       running: hostedChildApps(app, c.name) ?? null,
+      reach: reachOf(app, c.name) ?? null,
       spendTodayUsd: beats[i]?.beat.spendTodayUsd ?? null,
       ceilingUsd: beats[i]?.beat.ceilingUsd ?? null,
       size: c.size,
@@ -236,6 +240,7 @@ export function attentionOf(r: ClientRow, now: number): Attention | null {
   const last = r.lastActivityAt === null ? NaN : Date.parse(r.lastActivityAt);
   if (r.claimed === null || (!Number.isNaN(last) && now - last > SILENT_MS)) return "silent";
   if (r.running !== null && r.running.notRunning.length > 0) return "down";
+  if (r.reach !== null && !r.reach.ok) return "down";
   const sent = r.sentAt === null ? NaN : Date.parse(r.sentAt);
   if (r.claimed === false && !Number.isNaN(sent) && now - sent > UNCLAIMED_MS) return "unclaimed";
   return null;
@@ -270,6 +275,8 @@ export function claimState(r: ClientRow): keyof typeof CLAIM_WORDS {
 
 /** "3 apps running", or which one is not and why; null when none are run here. */
 export function runningWords(r: ClientRow): string | null {
+  const unreachable = reachWords(r.reach);
+  if (unreachable !== null) return unreachable;
   const a = r.running;
   if (a === null || a.total === 0) return null;
   const word = `${a.running} ${a.running === 1 ? "app" : "apps"} running`;

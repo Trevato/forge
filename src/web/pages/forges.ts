@@ -24,7 +24,8 @@ import { claimLinkBody } from "./new-forge.ts";
 function runningNote(r: ClientRow): Html | null {
   const words = runningWords(r);
   if (words === null) return null;
-  return html`<span data-apps="${r.running!.notRunning.length === 0 ? "up" : "down"}"
+  const down = (r.running?.notRunning.length ?? 0) > 0 || r.reach?.ok === false;
+  return html`<span data-apps="${down ? "down" : "up"}"
     >${words}</span
   >`;
 }
@@ -58,6 +59,19 @@ function forgeRow(r: ClientRow): Html {
     title: html`<a href="${r.url}">${r.name}</a>`,
     meta: html`${meta.map((m, i) => html`${i > 0 ? " · " : ""}${m}`)}`,
     data: { forge: r.name, claimed: state },
+    ...(r.reach === null
+      ? {}
+      : {
+          // One row per public address; the word in the trail, not a colour, says which failed.
+          children: r.reach.proofs.map((p) =>
+            row({
+              title: html`<a href="${p.url}">${p.url.replace(/^https?:\/\//, "")}</a>`,
+              meta: html`${p.says}`,
+              trail: badge(p.ok ? "reachable" : "not reachable", p.ok ? { tone: "success" as const } : { tone: "attn" as const }),
+              data: { proof: p.ok ? "ok" : "failed" },
+            }),
+          ),
+        }),
     trail: html`${r.attention === null
         ? null
         : html`<span data-attention="${r.attention}">${badge(ATTENTION_WORDS[r.attention], { tone: "attn" })}</span>`}${badge(CLAIM_WORDS[state], {

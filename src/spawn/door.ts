@@ -7,6 +7,7 @@
  */
 
 import { startWatch, probeOf, type Probe } from "./live.ts";
+import { firstProof, reachWords, settleChild } from "./reach.ts";
 import { reissueClaim, spawnForge, type SpawnError } from "../actions/spawn.ts";
 import type { App } from "../app.ts";
 import { maxChildren } from "../core/capacity.ts";
@@ -314,11 +315,25 @@ export async function spawnDoor(
     void bootHostedChild(ctx.app, made.value.name);
     startWatch(ctx.app, { name: made.value.name, startedAt, probe: (probes.get(ctx.app) ?? probeOf)(made.value.url) });
   }
+  // Proven from outside before it is called done: the child's home and each
+  // app's public address, each with what came back. What does not answer yet
+  // is kept proving behind this answer, and is an alarm if it never does.
+  const proved = made.value.existed ? undefined : await firstProof(ctx.app, made.value.name);
+  if (proved !== undefined) void settleChild(ctx.app, made.value.name);
   return {
     status: made.value.existed ? 200 : 201,
     body: {
       dryRun: false,
       ...made.value,
+      ...(proved === undefined
+        ? {}
+        : {
+            reach: {
+              ok: proved.ok,
+              says: proved.ok ? "Every public address answered." : `${reachWords(proved)}. Still checking; the owner is alarmed if it does not come up in 3 minutes.`,
+              proofs: proved.proofs,
+            },
+          }),
       ...(typeof modelKey === "string" ? { keyNote: KEY_BUDGET_NOTE } : {}),
     },
   };

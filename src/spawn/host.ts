@@ -8,7 +8,7 @@
 import { childDirOf } from "../actions/spawn.ts";
 import { createApp, type App } from "../app.ts";
 import { appsRuntime, type AppsRuntime } from "../apps/runtime.ts";
-import { resolveAppHost, type AppTarget } from "../apps/proxy.ts";
+import { resolveAppHost, type AppSocket, type AppTarget } from "../apps/proxy.ts";
 import { childAppsSummary, startChildApps, stopChildApps } from "./child-apps.ts";
 import { childHost } from "./door.ts";
 import { markHostedChild } from "./hosted-mark.ts";
@@ -23,7 +23,7 @@ import {
   type PlacementKind,
 } from "./placement.ts";
 import { DEFAULT_SIZE, isSize, type Size } from "./sizes.ts";
-import { cellChildren, forward, type CellChild } from "./cell.ts";
+import { cellChildren, forward, forwardSocket, type CellChild } from "./cell.ts";
 import { cellsAvailable } from "../apps/contain.ts";
 import { readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -291,6 +291,26 @@ export async function answerFromCell(parent: App, request: Request, named?: stri
   if (child !== undefined) return forward(child, request, parent.config.clientIpHeader);
   // Never a wait on a cell that may not come up: it starts behind this
   // answer, and once it has failed the ledger says hosted.
+  void settleCell(parent, ledger);
+  return new Response("this forge is starting", { status: 503, headers: { "retry-after": "5", "cache-control": "no-store" } });
+}
+
+/**
+ * A websocket handshake for a child in its own cell (its home or one of its
+ * apps): carried to the cell like any request. `undefined` means it became a
+ * socket; while the cell is not up the answer is 503, as for a page.
+ */
+export async function socketToCell(
+  parent: App,
+  request: Request,
+  server: Bun.Server<AppSocket>,
+  named?: string,
+): Promise<Response | undefined> {
+  const name = named ?? parseHostedChildName(request.headers.get("host") ?? "", childHost(parent));
+  const ledger = name === undefined ? undefined : readLedgerSync(parent, name);
+  if (ledger === undefined || ledger.placement !== "cell") return new Response("not found", { status: 404 });
+  const child = cellChildren(parent).get(ledger.bodyId);
+  if (child !== undefined) return forwardSocket(child, request, server, parent.db, parent.config.clientIpHeader);
   void settleCell(parent, ledger);
   return new Response("this forge is starting", { status: 503, headers: { "retry-after": "5", "cache-control": "no-store" } });
 }

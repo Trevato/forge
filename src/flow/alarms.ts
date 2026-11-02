@@ -17,7 +17,7 @@ import { redMainAlarm } from "./alarm_red_main.ts";
 import { alarmStuck } from "./alarm_stuck.ts";
 
 export interface FiredAlarm {
-  readonly key: "landing_stopped" | "red_main" | "stuck" | "idle_crew" | "no_release";
+  readonly key: "landing_stopped" | "red_main" | "stuck" | "idle_crew" | "no_release" | "unreachable";
   readonly says: string;
   readonly since: string;
   /** A same-origin path to the item the alarm names. */

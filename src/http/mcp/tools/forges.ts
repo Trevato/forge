@@ -3,7 +3,7 @@ import { good, bad, type Tool } from "../shared.ts";
 
 export const tool: Tool = {
   name: "forges",
-  doc: "an admin's list of the forges sent from here: name, address, whom for, apps, claimed or not, last activity",
+  doc: "an admin's list of the forges sent from here: name, address, whom for, apps, claimed or not, last activity, whether each public address answers",
   description:
     "Forges sent from here (admin): name, address, apps, claimed, spendTodayUsd, ceilingUsd.",
   inputSchema: { type: "object", properties: {} },

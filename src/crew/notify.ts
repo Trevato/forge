@@ -41,6 +41,7 @@ import { health } from "../http/health.ts";
 import { forgeVitals } from "../actions/health.ts";
 import { RECOVERED, drainIncident, nextPage, observe, recoveredLine, type Watch } from "./incidents.ts";
 import { firedAlarms, type FiredAlarm } from "../flow/alarms.ts";
+import { reachAlarms } from "../spawn/reach.ts";
 import { loadClog } from "../flow/clog_tick.ts";
 import { forgeCeiling } from "../flow/ceiling.ts";
 import { askLinesFor } from "../web/studio/asks.ts";
@@ -257,7 +258,7 @@ export function alarmLines(
   fired?: readonly FiredAlarm[],
 ): { id: string; line: string; items: readonly string[]; link: string }[] {
   if (!user.isAdmin || user.kind !== "user") return [];
-  const alarms = fired ?? firedAlarms(app.db, new Date(now), { ceilingUsd: forgeCeiling(app.config) });
+  const alarms = fired ?? [...firedAlarms(app.db, new Date(now), { ceilingUsd: forgeCeiling(app.config) }), ...reachAlarms(app)];
   return alarms.map((a) => {
     const id = `alarm:${a.key}@${a.since}`;
     return { id, line: a.says, items: [id], link: a.href };

@@ -25,6 +25,7 @@ const row = (over: Partial<ClientRow>): ClientRow => ({
   claimed: false,
   lastActivityAt: null,
   running: null,
+  reach: null,
   attention: null,
   spendTodayUsd: null,
   ceilingUsd: null,
@@ -98,6 +99,22 @@ describe("forges you sent in the terminal", () => {
       expect(await h.palette()).not.toContain("each forge sent");
       h.stop();
     }
+  });
+
+  test("a forge running, not reachable says so, with each address and its result", () => {
+    const reach = {
+      name: "maria", at: "2026-11-02T00:00:00.000Z", ok: false, since: "2026-11-02T00:00:00.000Z", alarmed: true,
+      proofs: [
+        { label: "home", url: "https://maria--forge.test/api/v1/forge", ok: true, status: 200, says: "answered 200" },
+        { label: "deal", url: "https://deal--maria--forge.test/", ok: false, status: 404, says: "answered 404, not by the app" },
+      ],
+    };
+    const lines = forgeLines([row({ reach })]);
+    expect(lines[0]![1]).toContain("Running, not reachable: deal answered 404, not by the app");
+    expect(lines.slice(1).map(([, t]) => t.trim())).toEqual([
+      "reachable maria--forge.test/api/v1/forge: answered 200",
+      "NOT REACHABLE deal--maria--forge.test/: answered 404, not by the app",
+    ]);
   });
 
   test("a row carries the crew's spend today, and says when the ceiling is reached", () => {

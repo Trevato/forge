@@ -566,13 +566,14 @@ import { holdAppHost } from "../apps/holding.ts";
 import {
   appWebSocket,
   type AppSocket,
+  isWebSocketHandshake,
   proxyApp,
   resolveAppHost,
 } from "../apps/proxy.ts";
 
 import { stopCellChildren } from "../spawn/cell.ts";
 import { portInsteadOfSocket, tcpAddress } from "../git/hook-address.ts";
-import { answerFromCell, closeHostedChildren, resolveHostedChild, resolveHostedChildApp } from "../spawn/host.ts";
+import { answerFromCell, closeHostedChildren, resolveHostedChild, resolveHostedChildApp, socketToCell } from "../spawn/host.ts";
 import { getVerifiedDomain } from "../core/domains.ts";
 
 // ---- auth ----
@@ -2354,9 +2355,13 @@ export async function serve(app: App): Promise<Servers> {
       // A hosted child's app (`<app>--<child>--<parentHost>`) is the child's
       // own runtime's, as the parent's apps are the parent's.
       // A child in its own cell answers through this one door, for its pages and its apps.
-      const fromCell = async (name?: string): Promise<Response> => {
+      const fromCell = async (name?: string): Promise<Response | undefined> => {
         // The child sees only this forge's relay, so it is told who the client is.
         notePeer(request, server.requestIP(request)?.address, trust);
+        if (isWebSocketHandshake(request)) {
+          const socket = await socketToCell(app, request, server, name);
+          return socket === undefined ? undefined : securityFloor(socket);
+        }
         armClose(request, () => server.timeout(request, 1));
         const response = await answered(app, request, () => answerFromCell(app, request, name));
         counted(app, request, response, started);

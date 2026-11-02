@@ -66,10 +66,12 @@ export const tool: Tool = {
     const made = door.body["dryRun"] === false;
     const { claimUrl, ...rest } = door.body;
     const reveal = args["reveal"] === true && typeof claimUrl === "string";
+    const reach = door.body["reach"] as { ok?: boolean; says?: string } | undefined;
+    const reached = reach?.ok === false ? ` ${reach.says}` : "";
     return good({
       says: !made
         ? "This is the plan; nothing was made. Send dryRun: false to spawn."
-        : `Spawned ${String(door.body["name"])} at ${String(door.body["url"])}. ${reveal ? LINK_REVEALED : LINK_KEPT}`,
+        : `Spawned ${String(door.body["name"])} at ${String(door.body["url"])}. ${reveal ? LINK_REVEALED : LINK_KEPT}${reached}`,
       ...rest,
       ...(reveal ? { claimUrl } : {}),
     });

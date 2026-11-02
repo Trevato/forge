@@ -130,6 +130,8 @@ describe("a hosted child's apps run in the parent", () => {
   test("<app>--<child>--<parent> answers from the child's app, on the child's own data", async () => {
     const res = await ask("bakery--maria--forge.test");
     expect(res.status).toBe(200);
+    // Says which app answered, so a probe from outside tells it from a platform's standby page (spawn/reach.ts).
+    expect(res.headers.get("x-forge-app")).toBe("bakery");
     const data = await res.text();
     // The child's directory, never the parent's or another child's.
     expect(data.startsWith(join(childDir, "apps"))).toBe(true);
