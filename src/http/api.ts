@@ -97,7 +97,7 @@ import { holdPull, releasePull } from "../actions/holds.ts";
 import { getHold, type Hold } from "../core/holds.ts";
 import { watchMilestone } from "../actions/watches.ts";
 import { THOUGHT_MAX, keepThought } from "../actions/thought.ts";
-import { search, searchWithin, type SearchPhase } from "../actions/search.ts";
+import { search, searchRefusal, searchWithin, type SearchPhase } from "../actions/search.ts";
 import { runRepos } from "./run_gate.ts";
 import {
   commitToBranch,
@@ -1386,6 +1386,8 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/search", async (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const q = ctx.url.searchParams;
+    const refusal = searchRefusal(q.get("kind"), q.get("limit"));
+    if (refusal) return apiError(refusal.code, 422, refusal.message);
     const kind = searchKind(q.get("kind"));
     const query = q.get("q") ?? "";
     const greps =
@@ -1414,7 +1416,7 @@ export function apiRoutes(router: Router<Handler>): void {
       const found = await (mine === undefined
         ? search(ctx.app, ctx.auth.user, timed)
         : searchWithin(ctx.app, ctx.auth.user, mine, timed));
-      const note = searchNote(q.get("q"), q.get("kind"));
+      const note = searchNote(q.get("q"));
       return timePhase(ctx.request, "render", () => json(note === undefined ? found : { ...found, note }));
     } finally {
       held?.release();
