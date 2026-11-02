@@ -300,6 +300,7 @@ function begin(
       let fresh = prompt;
       for (let session = resumeSession; ; session = undefined) {
         let named = false;
+        if (session !== undefined) appendRunLog(app.config.dataDir, runId, `resuming session ${session}`);
         outcome = await runClaude({
           binary: options.binary,
           cwd,
