@@ -12,6 +12,7 @@
  * An action that needs an account is listed for someone without one,
  * saying so, because that is the next thing they need to know.
  */
+import { activeEdgeToken } from "../http/edge.ts";
 import { sshTellCommand } from "../ssh/command.ts";
 import { mcpPointers, TOKEN_FREE_TOOLS } from "../core/mcp_card.ts";
 import type { App } from "../app.ts";
@@ -310,7 +311,7 @@ function forgeActions(
     {
       do: "see what went live",
       http: "GET /api/v1/changelog",
-      account: false,
+      mcp: "releases",
     },
     {
       do: "read the HTTP contract",
@@ -321,6 +322,16 @@ function forgeActions(
       ? [{ do: "use the MCP", http: "POST /mcp", account: true }]
       : [{ do: "use the MCP", http: "POST /mcp" }]),
     ...(tellSsh === undefined ? [] : [{ do: "tell the crew", ssh: tellSsh }]),
+    // How a stranger gets the account the rows above ask for. An edge-login
+    // forge makes no account at /signup, as the home page's buttons say.
+    ...(viewer !== undefined
+      ? []
+      : [
+          ...(activeEdgeToken(app) === undefined
+            ? [{ do: "make an account", http: "POST /api/v1/users", account: false }]
+            : []),
+          { do: "sign in", http: "POST /api/v1/tokens", account: false },
+        ]),
   ];
 }
 

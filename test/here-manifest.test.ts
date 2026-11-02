@@ -274,9 +274,44 @@ describe("the manifest: what you can do here, as who you are", () => {
       expect(body.actions).toContainEqual({
         do: "see what went live",
         http: "GET /api/v1/changelog",
-        account: false,
+        mcp: "releases",
       });
       expect(size).toBeLessThan(2048);
+    }
+  });
+
+  test("an anonymous viewer is told how to get an account; a signed-in one is not", async () => {
+    const anon = (await manifest("/")).body.actions;
+    expect(anon).toContainEqual({
+      do: "make an account",
+      http: "POST /api/v1/users",
+      account: false,
+    });
+    expect(anon).toContainEqual({
+      do: "sign in",
+      http: "POST /api/v1/tokens",
+      account: false,
+    });
+    expect(anon.findIndex((a: any) => a.do === "use the MCP")).toBeLessThan(
+      anon.findIndex((a: any) => a.do === "make an account"),
+    );
+    const signedIn = does((await manifest("/", "carol")).body);
+    expect(signedIn).not.toContain("make an account");
+    expect(signedIn).not.toContain("sign in");
+  });
+
+  test("an edge-login forge offers sign in but no sign-up", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-here-edge-"));
+    const edgeApp = createApp({ dataDir: dir, port: 0, edgeToken: "e" });
+    const edgeServers = await serve(edgeApp);
+    try {
+      const res = await fetch(`${edgeServers.url}/api/v1/here`);
+      const names = (await res.json() as any).actions.map((a: any) => a.do);
+      expect(names).toContain("sign in");
+      expect(names).not.toContain("make an account");
+    } finally {
+      edgeServers.stop();
+      await rm(dir, { recursive: true, force: true });
     }
   });
 
