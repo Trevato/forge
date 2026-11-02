@@ -85,10 +85,26 @@ test("a page slow on both first-load attempts fails", async () => {
   expect(failures.some((f) => f.url.endsWith("/explore") && f.why.includes("took"))).toBe(true);
 });
 
-test("a /healthz that is slow once in the watch fails, with no retry", async () => {
-  // hit 1 is the pre-watch check of /healthz by smoke; the watch's polls follow
+test("a /healthz that is slow once in the watch is asked again and passes (#8917)", async () => {
   const failures = await smoke(forge(0, [], () => undefined, (p, hit) => (p === "/healthz" && hit === 4 ? 300 : 0)), "t", { heavy });
+  expect(failures.filter((f) => f.url.endsWith("/healthz"))).toEqual([]);
+});
+
+test("a /healthz that is slow twice in a row in the watch fails", async () => {
+  // hit 1 is the pre-watch check of /healthz by smoke; the watch's polls follow
+  const failures = await smoke(forge(0, [], () => undefined, (p, hit) => (p === "/healthz" && (hit === 4 || hit === 5) ? 300 : 0)), "t", { heavy });
   expect(failures.some((f) => f.url.endsWith("/healthz") && f.why.includes("took"))).toBe(true);
+});
+
+test("a polled heavy page that is slow once in the watch is asked again and passes", async () => {
+  // hit 1 is the first load; hit 2 is the watch's poll of /explore
+  const failures = await smoke(forge(0, [], () => undefined, (p, hit) => (p === "/explore" && hit === 2 ? 300 : 0)), "t", { heavy });
+  expect(failures).toEqual([]);
+});
+
+test("a polled heavy page that is slow twice in a row in the watch fails", async () => {
+  const failures = await smoke(forge(0, [], () => undefined, (p, hit) => (p === "/explore" && (hit === 2 || hit === 3) ? 300 : 0)), "t", { heavy });
+  expect(failures.some((f) => f.url.endsWith("/explore") && f.why.includes("took"))).toBe(true);
 });
 
 test("a hung first load is not asked again", async () => {

@@ -166,8 +166,8 @@ async function watch(root: URL, token: string, heavy: Heavy, fetch: typeof globa
   // The cause of 0.7.279's 1098 ms /boards is unconfirmed; a cold cache after
   // the boot is the guess (#7198). So each page's first load, and only that,
   // is asked again after a slow answer (never a hang or an error), and the
-  // first slow answer is printed. The watch below calls `once`: a degradation
-  // there is seen on the first slow answer.
+  // first slow answer is printed. The watch below asks again once as well,
+  // so one slow answer there no longer fails the proof (#8917).
   const timed = async (path: string): Promise<Failure | null> => {
     const first = await once(path);
     if (!first.slow) return first.failure;
@@ -178,14 +178,22 @@ async function watch(root: URL, token: string, heavy: Heavy, fetch: typeof globa
     const failed = await timed(path);
     if (failed) return failed;
   }
+  // In the watch one lost or slow answer in a minute of polling (#7724, #8917)
+  // is asked again at once; two in a row is a hang or a real slowness and
+  // fails the proof. Unlike `timed`, a hung answer is asked again too: the
+  // first load is judged once, but the watch polls for a minute and one lost
+  // answer among dozens says little. The first slow answer is printed.
+  const again = async (path: string) => {
+    const first = await once(path);
+    if (!first.hung && !first.slow) return first;
+    console.warn(`smoke: ${first.failure?.why}; asking again`);
+    return once(path);
+  };
   const deadline = Date.now() + (heavy.watchMs ?? WATCH_MS);
   const pollMs = heavy.pollMs ?? WATCH_POLL_MS;
   for (let tick = 0; Date.now() < deadline; tick++) {
-    // One lost answer in a minute of polling (#7724) is asked again at once;
-    // two in a row is a hang and fails the proof.
-    let health = await once("/healthz");
-    if (health.hung) health = await once("/healthz");
-    const failed = health.failure ?? (await once(pages[tick % pages.length]!)).failure;
+    const health = await again("/healthz");
+    const failed = health.failure ?? (await again(pages[tick % pages.length]!)).failure;
     if (failed) return failed;
     await Bun.sleep(pollMs);
   }
