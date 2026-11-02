@@ -17,7 +17,16 @@ import {
   deleteTeam,
   removeTeamMember,
 } from "../../actions/orgs.ts";
-import { addRefusal, addedSays, removeRefusal, removedSays } from "../../actions/team_words.ts";
+import {
+  addRefusal,
+  addedSays,
+  createRefusal,
+  createdSays,
+  deleteRefusal,
+  deletedSays,
+  removeRefusal,
+  removedSays,
+} from "../../actions/team_words.ts";
 import {
   OWNERS_TEAM,
   accessAllows,
@@ -501,18 +510,13 @@ export async function teamCreate(ctx: Ctx): Promise<Response> {
     chosen === "write" || chosen === "admin" ? chosen : "read";
   const name = field(form, "name");
   const created = createTeam(ctx.app, ctx.auth.user, org, name, permission);
-  if (!created.ok) {
-    const messages: Record<string, string> = {
-      name_taken: `${org.username} already has a team called ${name}.`,
-      invalid_name: "A team needs a name.",
-    };
+  if (!created.ok)
     return flashTo(ctx, `/${org.username}`, {
       tone: "danger",
-      message: messages[created.error] ?? "Could not create that team.",
+      message: createRefusal(created.error, org.username, name),
     });
-  }
   return flashTo(ctx, `/${org.username}/-/teams/${created.value.id}`, {
-    message: `Created ${created.value.name} with ${permission} access.`,
+    message: createdSays(created.value.name, permission),
   });
 }
 
@@ -669,9 +673,9 @@ export async function teamDelete(ctx: Ctx): Promise<Response> {
   if (!deleted.ok)
     return flashTo(ctx, `/${r.org.username}/-/teams/${r.team.id}`, {
       tone: "danger",
-      message: `${r.team.name} is protected — an organization must keep its owners.`,
+      message: deleteRefusal(deleted.error, r.team.name),
     });
   return flashTo(ctx, `/${r.org.username}`, {
-    message: `Deleted the ${r.team.name} team.`,
+    message: deletedSays(r.team.name),
   });
 }

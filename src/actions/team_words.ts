@@ -1,6 +1,7 @@
 /**
- * The sentences a person reads when a team member is added or removed. The
- * Teams page (`POST /:owner/-/teams/:team/add` and `/remove`) and the
+ * The sentences a person reads when a team is made or deleted, or a member
+ * added or removed. The Teams page (`POST /:owner/-/teams`, `/:team/delete`,
+ * `/:team/add` and `/:team/remove`) and the
  * terminal's Organization teams screen say them from here, so they read the
  * same on both.
  */
@@ -31,4 +32,30 @@ export function removeRefusal(error: string, username: string, org: string, team
 /** What a remove did: `removed` false means they were not on the team. */
 export function removedSays(removed: boolean, username: string, team: string): string {
   return removed ? `Removed ${username} from ${team}.` : `${username} was not on ${team}.`;
+}
+
+/** Why making a team was refused, from `createTeam`'s error. */
+export function createRefusal(error: string, org: string, name: string): string {
+  return error === "name_taken"
+    ? `${org} already has a team called ${name}.`
+    : error === "invalid_name"
+      ? "A team needs a name."
+      : "Could not create that team.";
+}
+
+/** What making a team did. */
+export function createdSays(name: string, permission: string): string {
+  return `Created ${name} with ${permission} access.`;
+}
+
+/** Why a delete was refused, from `deleteTeam`'s error: `protected` is the Owners team. */
+export function deleteRefusal(error: string, team: string): string {
+  return error === "protected"
+    ? `${team} is protected — an organization must keep its owners.`
+    : "Could not delete that team.";
+}
+
+/** What a delete did. */
+export function deletedSays(team: string): string {
+  return `Deleted the ${team} team.`;
 }

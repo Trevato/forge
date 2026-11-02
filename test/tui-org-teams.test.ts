@@ -4,14 +4,16 @@
  * the Teams page's rule); Enter lists the team's members; a person in no
  * organization is not offered the entry. An org admin adds a person with `a`
  * and removes the member under the cursor with `d` after a y/n (#8125); a
- * member is offered neither.
+ * member is offered neither. On the list an org admin makes a team with `n`
+ * (name, then permission) and deletes the selected team with `D` only after
+ * its name is typed in full (#8126); a member is offered neither key.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App as Forge } from "../src/app.ts";
-import { addTeamMember, createOrg, createTeam, listTeamMembers, listTeams } from "../src/core/orgs.ts";
+import { addTeamMember, createOrg, createTeam, listTeamMembers, listTeams, removeTeamMember } from "../src/core/orgs.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
@@ -204,6 +206,114 @@ describe("organization teams in the terminal", () => {
     await h.press("a");
     expect(h.text()).not.toContain("Username");
     expect(members("Writers")).toEqual(before);
+    h.stop();
+  });
+
+  const team = (name: string) => {
+    const org = getUserByName(forge.db, "acme")!;
+    return listTeams(forge.db, org.id).find((x) => x.name === name);
+  };
+  /** Move the list cursor onto the row naming `name`. */
+  const cursorTo = async (h: ReturnType<typeof boot>, name: string) => {
+    const rows = h.text().split("\n").filter((l) => l.includes("@acme"));
+    const at = rows.findIndex((l) => l.includes(name));
+    expect(at).toBeGreaterThanOrEqual(0);
+    for (let i = 0; i < at; i++) await h.press("j");
+  };
+
+  test("an org admin makes a team with n: a name, then the permission", async () => {
+    const h = boot("olive");
+    await open(h);
+    expect(h.text()).toContain("n  new team");
+    expect(h.text()).toContain("D  delete team");
+    await h.press("n");
+    expect(h.text()).toContain("Team name");
+    await h.press("enter");
+    expect(h.text()).toContain("A team needs a name.");
+    await h.type("Editors");
+    await h.press("enter");
+    expect(h.text()).toContain("Editors: permission");
+    await h.press("j", "enter");
+    expect(team("Editors")?.permission).toBe("write");
+    expect(h.text()).toContain("Created Editors with write access.");
+    expect(h.text().split("\n").find((l) => l.includes("Editors")) ?? "").toContain("0 members · write");
+    await h.press("n");
+    await h.type("Writers");
+    await h.press("enter");
+    await h.press("enter");
+    expect(h.text()).toContain("acme already has a team called Writers.");
+    expect(team("Writers")?.permission).toBe("write");
+    h.stop();
+  });
+
+  test("D deletes the selected team only after its name is typed in full", async () => {
+    const h = boot("olive");
+    await open(h);
+    await cursorTo(h, "Editors");
+    await h.press("D");
+    expect(h.text()).toContain("Type Editors to confirm");
+    await h.type("Editor");
+    await h.press("enter");
+    expect(h.text()).toContain("Type Editors to confirm.");
+    expect(team("Editors")).toBeDefined();
+    await h.press("esc");
+    expect(team("Editors")).toBeDefined();
+    await h.press("D");
+    await h.type("Editors");
+    await h.press("enter");
+    expect(team("Editors")).toBeUndefined();
+    expect(h.text()).toContain("Deleted the Editors team.");
+    expect(h.text().split("\n").some((l) => l.includes("Editors") && l.includes("@acme"))).toBe(false);
+    h.stop();
+  });
+
+  test("the Owners team is refused in the page's words", async () => {
+    const h = boot("olive");
+    await open(h);
+    await cursorTo(h, "Owners");
+    await h.press("D");
+    await h.type("Owners");
+    await h.press("enter");
+    expect(h.text()).toContain("Owners is protected");
+    expect(team("Owners")).toBeDefined();
+    h.stop();
+  });
+
+  test("a member who is not an org admin is offered neither n nor D", async () => {
+    const h = boot("mark");
+    await open(h);
+    expect(h.text()).not.toContain("new team");
+    expect(h.text()).not.toContain("delete team");
+    await h.press("D");
+    expect(h.text()).not.toContain("to confirm");
+    await h.type("Writers");
+    await h.press("enter");
+    await h.press("n");
+    expect(h.text()).not.toContain("Team name");
+    expect(team("Writers")).toBeDefined();
+    h.stop();
+  });
+
+  test("an admin whose rights go between D and the typed name is refused plainly, not as protected", async () => {
+    const id = (n: string) => getUserByName(forge.db, n)!.id;
+    const beta = createOrg(forge.db, "beta", id("olive"));
+    if (!beta.ok) throw new Error(beta.error);
+    const temp = createTeam(forge.db, beta.value.id, "Temp", "read");
+    if (!temp.ok) throw new Error(temp.error);
+    const owners = listTeams(forge.db, beta.value.id).find((t) => t.name === "Owners")!;
+    addTeamMember(forge.db, owners, id("dana"));
+    const h = boot("dana");
+    await open(h);
+    const at = h.text().split("\n").filter((l) => l.includes("@beta")).findIndex((l) => l.includes("Temp"));
+    for (let i = 0; i < at; i++) await h.press("j");
+    await h.press("D");
+    expect(h.text()).toContain("Type Temp to confirm");
+    removeTeamMember(forge.db, owners, id("dana"));
+    await h.type("Temp");
+    await h.press("enter");
+    expect(h.text()).toContain("Could not delete that team.");
+    expect(h.text()).not.toContain("Temp is protected");
+    expect(listTeams(forge.db, beta.value.id).some((t) => t.name === "Temp")).toBe(true);
     h.stop();
   });
 });
