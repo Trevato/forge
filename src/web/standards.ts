@@ -310,6 +310,14 @@ function pngResponse(png: Uint8Array): Response {
   });
 }
 
+/** The icon a browser, a home screen or an unfurler asks for by habit. */
+function fixedIcon(spec: string) {
+  return (ctx: Ctx): Response => iconPng({ ...ctx, params: { ...ctx.params, spec } });
+}
+
+/** GET /apple-touch-icon.png and the -precomposed twin — the 180 icon. */
+export const appleTouchIcon = fixedIcon("forge-180");
+
 /** `Running 0.7.51 at a1b2c3d`: which build these instructions describe. */
 function runningSentence(): string {
   const r = running();

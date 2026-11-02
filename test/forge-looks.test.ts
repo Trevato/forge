@@ -45,6 +45,8 @@ const NOT_A_PAGE: Record<string, string> = {
   "/sign-in": "redirects to /signin",
   "/mcp": "a protocol endpoint, answers 405 to a GET",
   "/_measure": "the page-load beacon, a POST endpoint",
+  "/apple-touch-icon.png": "an icon, not a page",
+  "/apple-touch-icon-precomposed.png": "an icon, not a page",
   "/events": "a live event stream that never ends",
 };
 
