@@ -720,6 +720,25 @@ into it take turns under a lock file, so two never extract one package
 into the same directory. A `job` check installs in its own pod and is not
 retried.
 
+**An app environment installs from that same cache** (`src/apps/process.ts`,
+#7544). Before a cold checkout's `install`, production or a preview, the
+forge fills the repository's cache on the host from the checkout's
+`bun.lock`, the way checks fill it. The install then reads the cache:
+read-only and copying inside a cell (`BUN_INSTALL_CACHE_DIR`), or under the
+lock file without one. The environment's home stays its own, and a new
+preview fetches nothing the cache already holds. A checkout with no
+`bun.lock`, or one the fill does not trust, installs into its home as
+before; so does one whose fill fails (the registry unreachable, the lock
+cancelled, a timeout): the cache is an optimisation, and its failure is a
+`cache not filled:` line in the deploy's log, never a failed deploy. A warm
+start still runs no install.
+
+Uncontained, the install holds the cache's lock for its whole run, since
+an install outside a cell (its own lifecycle scripts included) could write
+the cache. The cost: two cold environments of one repository install one
+after the other there. Inside a cell the cache is read-only, so only the
+fill takes the lock and installs run side by side.
+
 **Placement.** `FORGE_CHECKS_PLACEMENT=process` (the default) runs a check
 in a cell on the forge's machine. `job` runs install and check as one
 Kubernetes Job (`src/cluster/jobs.ts`) instead: `FORGE_CHECKS_IMAGE` is its

@@ -24,6 +24,8 @@ import type { Repo } from "../src/core/repos.ts";
 import { listRuns, type Run } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { checkInstallCache } from "../src/checks/install.ts";
+import { readRunLog } from "../src/runs/log.ts";
 
 const DOMAIN = "apps.test";
 
@@ -85,10 +87,11 @@ describe("apps adversarial: the install and test steps", () => {
       "the deploy settling",
     );
 
-  /** The pull branch carrying only this forge.json, opened against the default branch. */
+  /** The pull branch carrying this forge.json (and any `extra` files), opened against the default branch. */
   async function pullWith(
     branch: string,
     manifest: Record<string, string>,
+    extra: readonly { path: string; content: string }[] = [],
   ): Promise<{ number: number; commitOid: string }> {
     const committed = await commitToBranch(app, alice, repo, {
       branch,
@@ -99,6 +102,7 @@ describe("apps adversarial: the install and test steps", () => {
           path: "forge.json",
           content: `${JSON.stringify({ app: manifest }, null, 2)}\n`,
         },
+        ...extra,
       ],
     });
     if (!committed.ok) throw new Error(JSON.stringify(committed.error));
@@ -174,6 +178,49 @@ describe("apps adversarial: the install and test steps", () => {
     expect((await viaHost(`steps--${pull.number}.${DOMAIN}`)).status).toBe(
       502,
     );
+  }, 20_000);
+
+  test("a preview's install reads its repository's shared cache (#7544)", async () => {
+    // A local dependency: a real bun.lock the fill trusts, and nothing fetched.
+    const pull = await pullWith(
+      "shared-cache",
+      {
+        install: `bun install --frozen-lockfile && echo "install cache: \${BUN_INSTALL_CACHE_DIR:-none}"`,
+        run: "bun run src/server.ts",
+      },
+      [
+        { path: "dep/package.json", content: `{"name":"dep","version":"1.0.0"}\n` },
+        {
+          path: "package.json",
+          content: `${JSON.stringify({ name: "steps", version: "0.1.0", private: true, dependencies: { dep: "file:./dep" } })}\n`,
+        },
+        {
+          path: "bun.lock",
+          content: `{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "steps",
+      "dependencies": {
+        "dep": "file:./dep",
+      },
+    },
+  },
+  "packages": {
+    "dep": ["dep@file:dep", {}],
+  }
+}
+`,
+        },
+      ],
+    );
+    const run = await settled(
+      (r) => r.env === `pull-${pull.number}` && r.commitOid === pull.commitOid,
+    );
+    const log = readRunLog(dataDir, run.id).lines;
+    expect(run.state).toBe("ok");
+    expect(log).toContain(`install cache: ${checkInstallCache(dataDir, repo.id)}`);
   }, 20_000);
 
   test("closing a pull whose deploy already answered kills its still-running test step — no orphan `bun test`", async () => {

@@ -32,6 +32,7 @@ import { mintAppToken, renewAppToken, revokeAppToken } from "./token.ts";
 import type { ForgeEvent } from "../core/events.ts";
 import { announceRun } from "../actions/runs.ts";
 import { requeueAbandonedChecks } from "../checks/service.ts";
+import { checkInstallCache } from "../checks/install.ts";
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
 import { pullMayRun } from "../core/pull_trust.ts";
 import { canEnterApp, getRepoById, type Repo } from "../core/repos.ts";
@@ -1403,6 +1404,9 @@ export class AppsRuntime {
       log: write,
       warm,
       cell: this.cellFor(state.app, state.env),
+      // Every environment, production too, installs from the cache the
+      // repository's checks fill, so a new preview fetches nothing it has.
+      installCache: checkInstallCache(this.app.config.dataDir, repo.id),
     };
     this.noteCell(run.id, write);
     clock.lap("setup");

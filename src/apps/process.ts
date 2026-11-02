@@ -19,6 +19,7 @@ import { isReservedAppEnvName } from "../core/app_env.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { spellings, stripForgeDirs } from "../runs/paths.ts";
 import { seconds } from "./timing.ts";
+import { cellInstall, prefillInstallCache, withLock } from "../checks/install.ts";
 import {
   commandPid,
   killTree,
@@ -71,6 +72,14 @@ export interface StartInput {
    * start — the forge coming back, or an environment waking — only runs it.
    */
   readonly warm?: boolean | undefined;
+  /**
+   * The repository's shared bun cache (`checks/install.ts`
+   * `checkInstallCache`), the one its checks fill (#7544). The forge fills
+   * it on the host from the checkout's lockfile, then the install reads it:
+   * read-only inside a cell, under its lock without one. A checkout the
+   * fill will not trust (no `bun.lock`) installs as before, into its home.
+   */
+  readonly installCache?: string | undefined;
 }
 
 /** What a caller knows about a cell; the rest comes from the manifest. */
@@ -380,6 +389,73 @@ export function stepCell(input: StartInput): CellSpec | undefined {
   };
 }
 
+/** The forge's own `BUN_CONFIG_REGISTRY`, when its environment names one. */
+function forgeRegistry(): Record<string, string> {
+  const registry = process.env["BUN_CONFIG_REGISTRY"];
+  return registry === undefined || registry === "" ? {} : { BUN_CONFIG_REGISTRY: registry };
+}
+
+/** How an install step runs: plain data, so its composition is testable without a cell. */
+export interface InstallPlan {
+  readonly command: string;
+  readonly env: Record<string, string>;
+  readonly cell: CellSpec | undefined;
+  /** The lock it holds while it runs, if any. */
+  readonly lock: string | undefined;
+}
+
+/**
+ * The install once the fill has answered (#7544): from the repository's
+ * shared cache when it `filled`, else into the environment's own home as
+ * before. Inside a cell only the cache is added to its view, read-only;
+ * uncontained, the install could write the cache, so it takes its turn
+ * under the cache's lock.
+ */
+export function installPlan(
+  command: string,
+  input: StartInput,
+  env: Record<string, string>,
+  filled: boolean,
+): InstallPlan {
+  const cache = input.installCache;
+  const cell = stepCell(input);
+  if (cache === undefined || !filled) return { command, env, cell, lock: undefined };
+  if (cell !== undefined)
+    return { ...cellInstall(command, env, cache), cell: { ...cell, reveal: [...(cell.reveal ?? []), cache] }, lock: undefined };
+  return { command, env: { ...env, BUN_INSTALL_CACHE_DIR: cache }, cell: undefined, lock: `${cache}.lock` };
+}
+
+/**
+ * The install step. The cache is an optimisation: a fill that fails (the
+ * registry unreachable, the lock cancelled, a timeout) is logged and the
+ * install runs into the environment's home, as it did before the cache.
+ */
+async function install(
+  command: string,
+  input: StartInput,
+  env: Record<string, string>,
+): Promise<Result<void, string>> {
+  let filled = false;
+  if (input.installCache !== undefined) {
+    const fill = await prefillInstallCache({
+      cache: input.installCache,
+      dir: input.dir,
+      env,
+      log: input.log,
+      signal: input.signal,
+      timeoutMs: STEP_TIMEOUT_MS,
+    });
+    if (fill.ok) filled = fill.value;
+    else input.log(`cache not filled: ${fill.error}`);
+  }
+  const plan = installPlan(command, input, env, filled);
+  const step = (): Promise<Result<void, string>> =>
+    runStep("install", plan.command, { cwd: input.dir, env: plan.env, log: input.log, signal: input.signal, cell: plan.cell });
+  if (plan.lock === undefined) return step();
+  const held = await withLock(plan.lock, step, { signal: input.signal });
+  return held.ok ? held.value : held;
+}
+
 /**
  * Install, then start the app and run its tests side by side, and wait for
  * the app to answer on its port. Returns as soon as it does — `tested`
@@ -394,16 +470,13 @@ export async function startProcess(
   const stepEnv = childEnv({
     CI: "1",
     FORGE_APP_ENV: input.env === "production" ? "production" : "preview",
+    // A mirror the forge itself is pointed at is the one the fill and the
+    // install fetch from (`checks/install.ts` DEFAULT_REGISTRY otherwise).
+    ...forgeRegistry(),
   });
 
   if (manifest.install !== null && input.warm !== true) {
-    const installed = await runStep("install", manifest.install, {
-      cwd: input.dir,
-      env: stepEnv,
-      log,
-      signal: input.signal,
-      cell: stepCell(input),
-    });
+    const installed = await install(manifest.install, input, stepEnv);
     if (!installed.ok)
       return err({ stage: "install", message: installed.error });
   }
