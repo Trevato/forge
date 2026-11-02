@@ -7,7 +7,7 @@
  * a change to what the gate holds resets the ticks, so what is approved is
  * always what is shown.
  *
- *   space  tick or untick a candidate     A  close the ticked
+ *   space  tick or untick a candidate     A  apply the ticked (close or merge)
  *   l      lift (or revive, on a closed)  enter  open the issue
  */
 
@@ -34,6 +34,8 @@ export interface HeldLine {
   readonly why: string;
   readonly waiting: number;
   readonly closed: boolean;
+  /** Proposed to stay behind the gate: nothing to tick. */
+  readonly keep: boolean;
 }
 
 export interface HeldRead {
@@ -53,17 +55,18 @@ export function readHeld(f: Session, repo: Repo): HeldRead | undefined {
       why: i.verdict.why,
       waiting: i.waiting,
       closed: false,
+      keep: i.verdict.kind === "keep",
     })),
   );
   for (const i of reviewedClosed(f.db, repo, pillarsOf(f.db, repo)))
-    lines.push({ number: i.number, title: i.title, theme: "Closed by the review", why: "revive with l", waiting: 0, closed: true });
+    lines.push({ number: i.number, title: i.title, theme: "Closed by the review", why: "revive with l", waiting: 0, closed: true, keep: false });
   return { review, lines };
 }
 
 /** One row per line; a candidate shows its tick, a flagged one says closing parks work. */
 export function heldRows(lines: readonly HeldLine[], ticked: ReadonlySet<number>): ListRow[] {
   return lines.map((l) => ({
-    title: `${l.closed ? "   " : ticked.has(l.number) ? "[x]" : "[ ]"} #${l.number} ${l.title}`,
+    title: `${l.closed ? "   " : l.keep ? "[-]" : ticked.has(l.number) ? "[x]" : "[ ]"} #${l.number} ${l.title}`,
     meta: metaOf(
       l.theme,
       l.why,
@@ -99,14 +102,14 @@ export function heldScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     if (f.user === undefined) return void ctx.toast("Sign in first.", "danger");
     const user = f.user;
     const digest = read.review.digest;
-    const numbers = [...ticked];
+    const numbers = [...ticked].filter((n) => !lines().some((l) => l.number === n && l.keep));
     runAsync(ctx, async () => {
       const done = applyGateReview(f.app, user, repo, numbers, digest);
-      if (done.ok) ctx.toast(`Closed ${done.value}.`, "success");
+      if (done.ok) ctx.toast(`Closed or merged ${done.value}.`, "success");
       else
         ctx.toast(
           done.error === "stale"
-            ? "What the gate holds changed since you read it. Nothing was closed."
+            ? "What the gate holds changed since you read it. Nothing was changed."
             : done.error === "forbidden"
               ? THREAD_SAYS.planForbidden
               : "There is no Later gate here.",
@@ -121,7 +124,7 @@ export function heldScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   };
   const toggle = (index: number): void => {
     const line = lines()[index];
-    if (line === undefined || line.closed) return;
+    if (line === undefined || line.closed || line.keep) return;
     if (!ticked.delete(line.number)) ticked.add(line.number);
     ctx.invalidate();
   };
@@ -130,7 +133,7 @@ export function heldScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     keys: [
       binding(["j", "k"], "move"),
       binding(["space"], "tick"),
-      binding(["A"], "close the ticked"),
+      binding(["A"], "apply the ticked"),
       binding(["l"], "lift / revive"),
       binding(["enter"], "open"),
       binding(["esc", "q"], "close"),

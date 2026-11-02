@@ -80,10 +80,12 @@ export async function liftHoldSubmit(ctx: Ctx): Promise<Response> {
 
 // ---- the list, and the one pass over it ----
 
-/** One row of the review: ticked to close, and Lift to let it go instead. */
+/** One row of the review: ticked to close or merge, a keep with nothing to tick, and Lift to let it go instead. */
 function reviewRow(base: string, mayLift: boolean, item: Triaged): Html {
   return html`<li class="bar">
-    <input type="checkbox" form="apply" name="n" value="${item.number}" ${startsTicked(item) ? "checked" : ""} aria-label="Close #${item.number}" />
+    ${item.verdict.kind === "keep"
+      ? html`<span class="small">Keep</span>`
+      : html`<input type="checkbox" form="apply" name="n" value="${item.number}" ${startsTicked(item) ? "checked" : ""} aria-label="${item.verdict.kind === "merge" ? "Merge" : "Close"} #${item.number}" />`}
     <a href="${base}/issues/${item.number}">${item.title}</a>
     <span class="muted small">#${item.number} · ${item.verdict.why}</span>
     ${item.waiting > 0
@@ -115,6 +117,8 @@ export function heldPage(ctx: Ctx): Response {
     user !== undefined &&
     (canWrite(ctx.app.db, repo, user) || isCrew(ctx.app.db, repo.id, user.id));
   const mayApply = user !== undefined && user.kind !== "agent" && canWrite(ctx.app.db, repo, user);
+  const counts = { close: 0, keep: 0, merge: 0 };
+  for (const c of review.changes) counts[c.verdict.kind]++;
   const closed = reviewedClosed(ctx.app.db, repo, set);
   const body = html`${repoHeader(ctx, repo, "issues", { compact: true })}
     <div class="page-head mt">
@@ -126,18 +130,16 @@ export function heldPage(ctx: Ctx): Response {
         them until it is lifted.
       </p>
     </div>
-    <p>
-      Unchosen ideas are dropped, not tracked. Tick the ones to close; only
-      those the crew found done on main start ticked. An unticked issue
-      stays behind the gate, and Lift lets one go. An issue that open work
-      waits for says so: closing it parks that work. A closed issue stays
-      findable here and one tap revives it. Nothing changes until you
-      approve.
+    <p class="muted small">${counts.close} to close · ${counts.keep} to keep · ${counts.merge} to merge</p>
+    <p class="small">
+      Close is the default. A keep joins a bet or a pillar's work; a merge
+      folds a duplicate into the older issue, words appended. Nothing changes
+      until you approve.
     </p>
     ${mayApply && review.changes.length > 0
       ? html`<form id="apply" method="post" action="${base}/held/apply" class="bar">
           <input type="hidden" name="digest" value="${review.digest}" />
-          ${btn("Close the ticked", { type: "submit", variant: "primary" })}
+          ${btn("Apply the ticked", { type: "submit", variant: "primary" })}
         </form>`
       : null}
     <div class="stack mt">
@@ -195,10 +197,10 @@ export async function heldApply(ctx: Ctx): Promise<Response> {
       tone: "danger",
       message:
         done.error === "stale"
-          ? "What the gate holds changed since you read it. Nothing was closed; read it again."
+          ? "What the gate holds changed since you read it. Nothing was changed; read it again."
           : done.error === "forbidden"
             ? THREAD_SAYS.planForbidden
             : "There is no Later gate here.",
     });
-  return flashTo(ctx, dest, { message: `Closed ${done.value}.` });
+  return flashTo(ctx, dest, { message: `Closed or merged ${done.value}.` });
 }

@@ -14,6 +14,7 @@ import { liftHold } from "../src/actions/gate.ts";
 import { addComment, openIssue, setIssueLabels, setIssueState } from "../src/actions/issues.ts";
 import { createLabel, createRepo } from "../src/actions/repos.ts";
 import { closedByReview, gateHold, gateHolding, reviewedClosed } from "../src/core/gate_hold.ts";
+import { heldRows } from "../src/tui/screens/held.ts";
 import { startsTicked, triage } from "../src/core/gate_triage.ts";
 import { pillarsOf } from "../src/core/pillars.ts";
 import { createToken } from "../src/core/tokens.ts";
@@ -167,13 +168,75 @@ describe("the Later gate in plain sight", () => {
     expect(triage([]).length).toBe(0);
   });
 
+  test("triage proposes merge for a duplicate pair and keep for what a bet names", () => {
+    const themes = triage(
+      [
+        { number: 10, title: "Export the archive as CSV", body: "Let people download rows.", waiting: 0 },
+        { number: 11, title: "Export archive as CSV file", body: "Download rows please.", waiting: 0 },
+        { number: 12, title: "Dark mode toggle", body: "", waiting: 0 },
+        { number: 13, title: "Paint the footer blue", body: "", waiting: 0 },
+      ],
+      new Set(),
+      [{ number: 90, label: "Bet", title: "Bet: theming", body: "Ships #12 this cycle." }],
+    );
+    const v = new Map(themes.flatMap((t) => t.items).map((r) => [r.number, r.verdict]));
+    expect(v.get(11)).toMatchObject({ kind: "merge", into: 10 });
+    expect(v.get(10)).toMatchObject({ kind: "close", reason: "dropped" });
+    expect(v.get(12)).toMatchObject({ kind: "keep", anchor: 90 });
+    expect(v.get(12)!.why).toContain("Bet #90");
+    expect(v.get(13)).toMatchObject({ kind: "close", reason: "dropped" });
+  });
+
+  test("a merge appends the duplicate's words, points at the survivor, and a changed gate refuses", () => {
+    const a = openIssue(app, alice, fresh(), { title: "Frobnicate the widget pipeline", body: "Original words about frobnicating." });
+    const b = openIssue(app, alice, fresh(), { title: "Frobnicate widget pipeline", body: "Extra words nobody may lose." });
+    if (!a.ok || !b.ok) throw new Error("open");
+    for (const i of [a.value, b.value]) expect(linkIssue(app, alice, fresh(), current(i), gate).ok).toBe(true);
+    const read = reviewGate(app, fresh())!;
+    expect(read.changes.find((c) => c.number === b.value.number)!.verdict).toMatchObject({ kind: "merge", into: a.value.number });
+    expect(read.ticked).toContain(b.value.number);
+    // The gate changes after reading: refused, nothing merged.
+    const late = held("Arrived after the read");
+    expect(applyGateReview(app, alice, fresh(), [b.value.number], read.digest)).toEqual({ ok: false, error: "stale" });
+    expect(current(b.value).state).toBe("open");
+    expect(current(late).state).toBe("open");
+    const again = reviewGate(app, fresh())!;
+    expect(applyGateReview(app, alice, fresh(), [b.value.number], again.digest)).toEqual({ ok: true, value: 1 });
+    const survivor = current(a.value);
+    expect(survivor.state).toBe("open");
+    expect(survivor.body).toContain("Original words about frobnicating.");
+    expect(survivor.body).toContain("Extra words nobody may lose.");
+    expect(survivor.body).toContain(`Merged from #${b.value.number}`);
+    expect(current(b.value).state).toBe("closed");
+    expect(app.db.query("SELECT 1 FROM comment WHERE issue_id = ?1 AND body LIKE ?2").get(b.value.id, `Gate review: merged into #${a.value.number}%`)).not.toBeNull();
+  });
+
+  test("a merge is skipped when its survivor closes in the same apply", () => {
+    const a = openIssue(app, alice, fresh(), { title: "Reticulate the spline index", body: "Survivor words." });
+    const b = openIssue(app, alice, fresh(), { title: "Reticulate spline index", body: "Duplicate words." });
+    if (!a.ok || !b.ok) throw new Error("open");
+    for (const i of [a.value, b.value]) expect(linkIssue(app, alice, fresh(), current(i), gate).ok).toBe(true);
+    const read = reviewGate(app, fresh())!;
+    expect(applyGateReview(app, alice, fresh(), [a.value.number, b.value.number], read.digest)).toEqual({ ok: true, value: 1 });
+    expect(current(a.value).state).toBe("closed");
+    expect(current(a.value).body).not.toContain("Duplicate words.");
+    expect(current(b.value).state).toBe("open");
+  });
+
+  test("the terminal draws a keep row with no tick", () => {
+    const line = { number: 5, title: "Kept", theme: "t", why: "joins Bet #1", waiting: 0, closed: false, keep: true };
+    const rows = heldRows([line, { ...line, number: 6, keep: false }], new Set([5, 6]));
+    expect(rows[0]!.title).toStartWith("[-]");
+    expect(rows[1]!.title).toStartWith("[x]");
+  });
+
   test("one approval closes what is ticked, it stays findable, and one tap revives it", async () => {
     const a = open("Idea nobody chose");
     const b = open("Idea to keep behind the gate");
     for (const i of [a, b]) linkIssue(app, alice, fresh(), current(i), gate);
     const review = reviewGate(app, fresh())!;
     expect(review.changes.map((c) => c.number)).toContain(a.number);
-    expect(await get("/alice/engine/held")).toContain("Close the ticked");
+    expect(await get("/alice/engine/held")).toContain("Apply the ticked");
     // A proposal that is not the one shown is refused whole.
     expect(applyGateReview(app, alice, fresh(), [999999], review.digest)).toEqual({ ok: false, error: "stale" });
     expect(current(a).state).toBe("open");
