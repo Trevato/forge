@@ -839,17 +839,18 @@ export function listQuery(ctx: Ctx) {
   const limit = readLimit(ctx, undefined);
   if (limit instanceof Response) return limit;
   const stateParam = q.get("state");
-  const state: IssueState | "all" =
-    stateParam === "closed" || stateParam === "all" ? stateParam : "open";
-  const cursorParam = Number(q.get("cursor"));
+  if (stateParam !== null && stateParam !== "open" && stateParam !== "closed" && stateParam !== "all")
+    return apiError("invalid_state", 422, "state is open, closed or all");
+  const state: IssueState | "all" = stateParam ?? "open";
+  const rawCursor = q.get("cursor");
+  if (rawCursor !== null && !/^[1-9]\d{0,15}$/.test(rawCursor))
+    return apiError("invalid_cursor", 422, "cursor is the next_cursor of a previous page");
   const label = q.get("label");
   const author = q.get("author");
   return {
     state,
     limit: pageLimit(limit),
-    ...(Number.isInteger(cursorParam) && cursorParam > 0
-      ? { cursor: cursorParam }
-      : {}),
+    ...(rawCursor !== null ? { cursor: Number(rawCursor) } : {}),
     ...(label ? { label } : {}),
     ...(author ? { author } : {}),
   };
@@ -935,11 +936,13 @@ export function keyedPage<T>(
 function repoQuery(ctx: Ctx) {
   const q = ctx.url.searchParams;
   const cursor = q.get("cursor");
+  if (cursor !== null && !/^[A-Za-z0-9_-]{1,64}$/.test(cursor))
+    return apiError("invalid_cursor", 422, "cursor is the next_cursor of a previous page");
   const limit = readLimit(ctx, undefined);
   if (limit instanceof Response) return limit;
   return {
     limit: pageLimit(limit),
-    ...(cursor ? { cursor } : {}),
+    ...(cursor !== null ? { cursor } : {}),
   };
 }
 
