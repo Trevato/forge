@@ -82,6 +82,25 @@ export function eventVerb(event: ForgeEvent): string {
   return WORDS[kind] ?? "acted on this repository";
 }
 
+const KIND_LABELS: Record<string, string> = {
+  push: "Pushes",
+  "issue.opened": "Opened issues",
+  "issue.closed": "Closed issues",
+  "pull.opened": "Opened pulls",
+  "pull.merged": "Merged pulls",
+  "pull.closed": "Closed pulls",
+  "webhook.created": "New webhooks",
+  "repo.settings_updated": "Settings changes",
+};
+
+/** An event kind in a person's words, for a button that narrows to it: `Merged pulls`. */
+export function eventKindLabel(kind: string): string {
+  const known = KIND_LABELS[kind];
+  if (known !== undefined) return known;
+  const words = kind.replace(/[._]/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 /** Who to credit when the row names nobody. */
 export function eventActor(
   event: ForgeEvent,
@@ -138,6 +157,8 @@ const WORDS: Record<string, string> = {
   "label.deleted": "removed a label",
   "webhook.created": "added a webhook",
   "webhook.deleted": "removed a webhook",
+  "webhook.paused": "paused a webhook",
+  "webhook.resumed": "resumed a webhook",
   "origin.connected": "connected an origin",
   "origin.disconnected": "disconnected an origin",
   "origin.needs_reauth": "needs to reconnect an origin",

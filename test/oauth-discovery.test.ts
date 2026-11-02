@@ -71,7 +71,7 @@ describe("oauth discovery and registration", () => {
   });
 
   test("a 401 from the API carries the same challenge as /mcp", async () => {
-    const want = `Bearer realm="forge", resource_metadata="${base}/.well-known/oauth-protected-resource"`;
+    const want = `Bearer realm="forge", resource_metadata="${base}/.well-known/oauth-protected-resource", scope="ro rw"`;
     const mcp = await fetch(`${base}/mcp`, {
       method: "POST",
       headers: { "content-type": "application/json" },

@@ -26,6 +26,12 @@ the pull that closes it, and the outcome sentence: landed, who is building,
 parked and why, failed), flagged ones first, through MCP `asked` with
 `show: "all"`; with an app, only that app's asks.
 
+Two ways to connect. With only `FORGE_URL` set, the plugin registers the MCP
+server with no Authorization header and `oauth: {}`, so OpenCode signs in
+through the forge's OAuth (run `opencode mcp auth forge`). With `FORGE_TOKEN`
+set too, it sends the token as a bearer header and no sign-in is needed. With
+neither set, it registers nothing.
+
 Code Mode can also read `GET /contract/openapi.json`.
 
 `test/plugins.test.ts` fails when this plugin names an MCP tool the forge does not list, so a rename in `src/http/mcp.ts` cannot leave it behind.

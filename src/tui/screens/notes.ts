@@ -70,11 +70,11 @@ export function noteCommands(f: Session, ctx: Ctx, parent: () => Screen, repo: R
             label: name,
             hint: "enter sends",
             onSubmit: (said) =>
-              (async () => {
+              ctx.track((async () => {
                 const sent = await sendNote(f.app, record, repo, "production", undefined, sender, { text: said, page: "", viewport: "unknown" }, `ssh:${user.id}`);
                 if (sent.ok) ctx.toast("Sent. The builders will see it.", "success");
                 else ctx.toast(sent.error.message, "danger");
-              })(),
+              })()),
           }),
         ),
     },
@@ -100,8 +100,11 @@ export function noteCommands(f: Session, ctx: Ctx, parent: () => Screen, repo: R
                   actions: [{ label: "Keep", variant: "ghost" }, { label: "Hide" }, { label: "Ban sender", variant: "danger" }],
                   onChoose: (i) => {
                     if (i < 1) return;
-                    void moderateNote(f.app, record, repo, user, picked.id, i === 1 ? "hide" : "ban").then((done) =>
-                      ctx.toast(done.ok ? (i === 1 ? "Hidden." : "Sender banned.") : "That could not be done.", done.ok ? "success" : "danger"),
+                    // Tracked, so the screen is not settled until the note is moderated.
+                    void ctx.track(
+                      moderateNote(f.app, record, repo, user, picked.id, i === 1 ? "hide" : "ban").then((done) =>
+                        ctx.toast(done.ok ? (i === 1 ? "Hidden." : "Sender banned.") : "That could not be done.", done.ok ? "success" : "danger"),
+                      ),
                     );
                   },
                 }),

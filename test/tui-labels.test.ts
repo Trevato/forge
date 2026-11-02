@@ -378,3 +378,22 @@ test("an admin demoted under the open form is told so and the label is unchanged
   expect(text).not.toContain(LABEL_WORDS.gone);
   expect(listLabels(app.db, r.value.id).map((l) => l.name)).toEqual(["keep"]);
 });
+
+test("an admin sees N open / unused per label and the delete confirm names the count; a reader sees neither", async () => {
+  const r = await createRepo(app, alice, { name: "counted", visibility: "public" });
+  if (!r.ok) throw new Error("repo");
+  const repo = r.value;
+  const used = createLabel(app.db, repo.id, "used", "112233");
+  createLabel(app.db, repo.id, "idle", "445566");
+  const made = createIssue(app.db, { repoId: repo.id, authorId: alice.id, title: "t" });
+  if (!used.ok || !made.ok) throw new Error("setup");
+  setIssueLabels(app.db, made.value.id, [used.value.id]);
+  const admin = await screenText(repo, alice);
+  expect(admin).toContain("1 open");
+  expect(admin).toContain("unused");
+  const asked = await screenText(repo, alice, ["j", "d"]);
+  expect(asked).toContain("1 open carry it");
+  const reader = await screenText(repo);
+  expect(reader).not.toContain("1 open");
+  expect(reader).not.toContain("unused");
+});

@@ -72,11 +72,12 @@ test("an admin's terminal lists unused routes first, with never, and the count l
   h.stop();
 });
 
-test("a non-admin and an admin agent have no command", async () => {
+test("a non-admin and an admin agent see the spend and are told the routes are an admin's", async () => {
   for (const who of ["bob", "carol"]) {
     const h = boot(who);
     await h.palette("Usage");
-    expect(h.text()).not.toContain("every route, unused ones first");
+    await h.enter();
+    expect(h.text()).not.toContain("routes had no request");
     h.stop();
   }
 });

@@ -137,6 +137,7 @@ export function issueRoutes(router: Router<Handler>): void {
     if (fields !== null && fields !== "brief")
       return apiError("invalid_fields", 422, "fields must be brief, or left out");
     const query = listQuery(ctx);
+    if (query instanceof Response) return query;
     const listed = timePhase(ctx.request, "list", () =>
       listIssues(ctx.app.db, repo.id, {
         ...query,

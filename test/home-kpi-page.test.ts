@@ -59,7 +59,7 @@ test("home renders the nine tiles; only an admin sees them", async () => {
   view(day, "a", 1900, null);
   view(yesterday, "z", 400, 160);
   const a = await home(admin);
-  expect(a).toContain('class="stats mb"');
+  expect(a).toContain('class="stats kpi-row mb"');
   expect((a.match(/class="stat"/g) ?? []).length).toBe(9);
   for (const href of ["/board", "/releases", "/boards", "/settings/crew", "/settings/backups"]) expect(a).toContain(`class="stat" href="${href}"`);
   // The tiles are §5 stats (#3982): none of the page-local kpi classes is left on home.
@@ -78,9 +78,9 @@ test("home renders the nine tiles; only an admin sees them", async () => {
   // The figures count every repository, so a non-admin sees none.
   expect(a).toContain("no forge ceiling");
   expect(a).toContain("last 30 days");
-  expect(await home(bob)).not.toContain('class="stats mb"');
+  expect(await home(bob)).not.toContain('class="stats kpi-row mb"');
   expect(await home(bob)).not.toContain("last 30 days");
-  expect(await home()).not.toContain('class="stats mb"');
+  expect(await home()).not.toContain('class="stats kpi-row mb"');
   expect(await home()).not.toContain("last 30 days");
 });
 

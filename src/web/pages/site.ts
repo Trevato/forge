@@ -30,7 +30,15 @@ import { studioDoor, studioHome } from "../studio/home.ts";
 import { parentIssuerOf } from "../../core/federation.ts";
 import { activeEdgeToken, edgeIdentity, edgeLoginUrl, edgeStrangerLogin } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
-import { hostOf, pageHead, signInFirst } from "../chrome.ts";
+import {
+  CAME_FROM_ELSEWHERE,
+  forbiddenPage,
+  hostOf,
+  NOT_YOURS_TO_DO,
+  pageHead,
+  SENT_FROM_ELSEWHERE,
+  signInFirst,
+} from "../chrome.ts";
 import { SignupSlot, signupWindow } from "../../actions/signup-window.ts";
 import { signinWindow } from "../../core/signin-window.ts";
 import { field, readForm } from "../form.ts";
@@ -712,7 +720,7 @@ export async function themeSubmit(ctx: Ctx): Promise<Response> {
 
 export function logoutSubmit(ctx: Ctx): Response {
   if (crossOrigin(ctx.request, ctx.url, ctx.app.log))
-    return new Response("forbidden", { status: 403 });
+    return forbiddenPage(ctx, SENT_FROM_ELSEWHERE, CAME_FROM_ELSEWHERE);
   signOutHere(ctx.app, cookieValue(ctx.request, "forge_session"));
   return redirect("/", sessionCookie("", new Date(0), ctx.url, ctx.app.config.url));
 }
@@ -835,7 +843,7 @@ export async function newRepoSubmit(ctx: Ctx): Promise<Response> {
   });
   if (!created.ok) {
     if (created.error === "forbidden_owner" || created.error === "unauthorized")
-      return new Response("forbidden", { status: 403 });
+      return forbiddenPage(ctx, NOT_YOURS_TO_DO);
     const messages: Record<string, string> = {
       not_member: `Not made: ${NOT_A_MEMBER}.`,
       repository_limit: `Not made: ${repositoryLimitMessage(ctx.app, ctx.auth.user)}.`,

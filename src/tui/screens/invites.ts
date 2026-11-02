@@ -13,7 +13,7 @@ import { inviteLink, list, mint, revoke } from "../../actions/invites.ts";
 import { INVITE_NOT_OPEN } from "../../actions/sever_invite_words.ts";
 import { changeSignup, readSignup } from "../../actions/signup.ts";
 import { SIGNUP_MODES, type SignupMode } from "../../settings/signup.ts";
-import { DEFAULT_DAYS, MAX_DAYS } from "../../core/invites.ts";
+import { DEFAULT_DAYS, MAX_DAYS, type Invite } from "../../core/invites.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { style } from "../term/style.ts";
@@ -22,6 +22,10 @@ import type { Session } from "../session.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { ListState, confirmScreen, drawList, pickerScreen, promptScreen, type ListRow } from "./common.ts";
 import type { PaletteEntry } from "./entries.ts";
+
+/** `used by ada on 2026-10-01`; the name is left out when the account is gone. */
+export const usedWords = (i: Invite): string =>
+  `used${i.usedBy === null ? "" : ` by ${i.usedBy}`}${i.usedAt === null ? "" : ` on ${i.usedAt.slice(0, 10)}`}`;
 
 export function invitesScreen(f: Session, ctx: Ctx): Screen {
   const state = new ListState();
@@ -70,7 +74,7 @@ export function invitesScreen(f: Session, ctx: Ctx): Screen {
   const rows = (): ListRow[] =>
     items().map((i) => ({
       title: i.id,
-      secondary: i.state,
+      secondary: i.state === "used" ? usedWords(i) : i.state,
       meta: `made ${i.createdAt.slice(0, 16)}  expires ${i.expiresAt.slice(0, 16)}`,
     }));
 

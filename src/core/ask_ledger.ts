@@ -117,3 +117,31 @@ export function recentEnds(
     )
     .all(viewerId, repoId, limit);
 }
+
+/** The window the asks measure covers. */
+export const ASKS_WINDOW_DAYS = 7;
+
+/** The last `ASKS_WINDOW_DAYS` days of this viewer's asks: the one window both doors read. */
+export function askMeasureWeek(db: Database, viewerId: string, now = Date.now()): AskMeasure {
+  return askMeasure(db, viewerId, new Date(now - ASKS_WINDOW_DAYS * 86_400_000).toISOString());
+}
+
+/** The four figures of a measure with their labels, in the order they are said. */
+export function asksMeasureParts(m: AskMeasure): readonly { n: number; label: string }[] {
+  return [
+    { n: m.raised, label: "raised" },
+    { n: m.acted, label: "acted on" },
+    { n: m.dismissed, label: "dismissed" },
+    { n: m.expired, label: "went by themselves" },
+  ];
+}
+
+/** True when nothing has asked and nothing has ended: the line is then not shown. */
+export function asksMeasureEmpty(m: AskMeasure): boolean {
+  return m.raised + m.acted + m.dismissed + m.expired === 0;
+}
+
+/** "Asks, 7 days: 4 raised · 2 acted on · 1 dismissed · 1 went by themselves" */
+export function asksMeasureWords(m: AskMeasure): string {
+  return `Asks, ${ASKS_WINDOW_DAYS} days: ${asksMeasureParts(m).map((p) => `${p.n} ${p.label}`).join(" · ")}`;
+}

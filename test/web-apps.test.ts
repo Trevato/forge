@@ -291,7 +291,7 @@ describe("apps, runs and the crew on the web", () => {
 
   test("the dashboard and /apps list the app with its state and URL", async () => {
     // The home's rail names your apps and offers New app (#625).
-    const dash = await bodyOf(alice, "/");
+    const dash = await bodyOf(alice, "/feed");
     expect(dash).toContain("<h2>Your apps</h2>");
     expect(dash).toContain("alice/hello");
     expect(dash).toContain('href="/apps/new"');

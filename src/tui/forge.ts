@@ -44,17 +44,20 @@ import { mayManageFlags } from "../core/flags.ts";
 import { mayEditTrustedHosts } from "../origins/trusted-hosts.ts";
 import { trustedHostsPrompt } from "./screens/trustedhosts.ts";
 import { flagsScreen } from "./screens/flags.ts";
+import { forgeUsageScreen } from "./screens/forge_usage.ts";
 import { usageScreen } from "./screens/usage.ts";
 import { canScreen } from "./screens/can.ts";
 import { modelScreen } from "./screens/model.ts";
 import { notifyScreen } from "./screens/notify.ts";
 import { sshKeysScreen } from "./screens/sshkeys.ts";
+import { passkeysScreen } from "./screens/passkeys.ts";
 import { confirmsScreen } from "./screens/confirms.ts";
 import { proposalTokensPrompt } from "./screens/proposal_tokens.ts";
 import { signInsScreen } from "./screens/signins.ts";
 import { originAppsScreen } from "./screens/originapps.ts";
 import { addEntries } from "./screens/entries.ts";
 import { capacityScreen, mayCapacity } from "./screens/capacity.ts";
+import { crawlersScreen } from "./screens/crawlers.ts";
 import { forgeCeiling } from "../flow/ceiling.ts";
 import { flowLines, flowScreen } from "./screens/flow.ts";
 import { readHeld } from "../flow/held.ts";
@@ -76,6 +79,7 @@ import { newPullScreen } from "./screens/newpull.ts";
 import { newForgeScreen } from "./screens/newforge.ts";
 import { newOrgScreen } from "./screens/neworg.ts";
 import { migrateScreen } from "./screens/migrate.ts";
+import { newAppScreen } from "./screens/newapp.ts";
 import { newRepoScreen } from "./screens/newrepo.ts";
 import { repoScreen } from "./screens/repo.ts";
 import { signInScreen } from "./screens/signin.ts";
@@ -211,6 +215,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
               ctx.push(signInScreen(session, ctx, () => ctx.invalidate())),
           },
     );
+    // An app from a sentence, as /apps/new makes it: a person's, never an agent's.
+    if (session.user !== undefined && session.user.kind !== "agent")
+      commands.push({
+        id: "new-app",
+        title: "New app",
+        hint: "say what it does in a sentence; the crew starts on it",
+        run: () => ctx.push(newAppScreen(session, ctx, blank("New app"))),
+      });
     // An organization you own, as /organizations/new and MCP `org_create` make it: a person's, never an agent's (#7260).
     if (session.user !== undefined && session.user.kind !== "agent")
       commands.push({
@@ -272,6 +284,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         hint: "list, add and remove the keys that sign in as you",
         run: () => ctx.push(sshKeysScreen(session, ctx)),
       });
+    // Settings › Passkeys and MCP `whoami_can kind: passkeys`, read only (#8044).
+    if (session.signedIn && session.user?.kind !== "agent")
+      commands.push({
+        id: "passkeys",
+        title: "Passkeys",
+        hint: "the passkeys that sign in as you",
+        run: () => ctx.push(passkeysScreen(session, ctx)),
+      });
     if (session.signedIn)
       commands.push(
         {
@@ -332,6 +352,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Capacity",
         hint: "concurrency and guards, live; e changes a settable one",
         run: () => ctx.push(capacityScreen(session, ctx)),
+      });
+    // What crawlers cost and who was refused, as GET /api/v1/admin/crawlers: the capacity screen's readers.
+    if (mayCapacity(session))
+      commands.push({
+        id: "crawlers",
+        title: "Crawlers",
+        hint: "their share of answering time, and who was refused",
+        run: () => ctx.push(crawlersScreen(session, ctx)),
       });
     // The forge's API operations, as /api lists them; Enter runs a GET: for anyone.
     commands.push({
@@ -395,13 +423,21 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         hint: "internal hosts an origin may reach",
         run: () => ctx.push(trustedHostsPrompt(session, ctx, blank("Trusted hosts"))),
       });
-    // Settings → Usage, as the page has it: the same gate as Flags (#1565).
-    if (mayManageFlags(session.user))
+    // Usage: the forge's spend for any signed-in user (#8308); the route list stays the page's gate, the same as Flags (#1565).
+    if (session.user !== undefined)
       commands.push({
         id: "usage",
         title: "Usage",
-        hint: "every route, unused ones first",
+        hint: "the forge's spend and headroom; an admin also sees every route",
         run: () => ctx.push(usageScreen(session, ctx)),
+      });
+    // What the forge spent across the apps you write, as GET /api/v1/usage and MCP `usage` answer.
+    if (session.user !== undefined)
+      commands.push({
+        id: "forge-spend",
+        title: "Forge spend",
+        hint: "today and the last 24 hours, headroom per subscription",
+        run: () => ctx.push(forgeUsageScreen(session, ctx)),
       });
     // Proposal tokens for a repository you write, as the API and MCP have them (#2148).
     if (session.user !== undefined)

@@ -212,7 +212,7 @@ test("a pull with a look shows production beside its preview, outside the row's 
   expect(stale.match(/data-slot="thumb"/g)?.length).toBe(2);
   expect(stale).toContain('alt="Production look, before"');
   expect(stale).toContain('aria-label="Preview look, after: opens the pull"');
-  expect(stale.match(/<a /g)?.length).toBe(2); // the preview link and the after thumb; the before one is no link
+  expect(stale.match(/<a /g)?.length).toBe(3); // the preview link, the after thumb and the step word; the before one is no link
   expect(stale).toContain("/alice/wait/looks/production/");
   expect(stale).toContain('width="30" height="40"');
   expect(stale).toContain('loading="lazy"');
@@ -260,4 +260,12 @@ test("a kept stat is the sentence in the row's trail, singular for one file", as
   expect(one).toContain("1 file changed, +2 −0");
   expect(one).not.toContain("1 files");
   expect((await rowsOf()).find((r) => r.includes("Crew asked about this"))!).not.toContain("changed");
+});
+
+test("each pull row says its step on the path, linked to /pipeline (#7783)", async () => {
+  const html = (await (await fetch(`${servers.url}/review`, { headers: { cookie } })).text()).replace(/\s+/g, " ");
+  // A pull whose check was cancelled is at check, and says why.
+  expect(html).toContain(
+    'data-step="check"><a href="/pipeline" title="Its check was cancelled.">Check</a> · Its check was cancelled.',
+  );
 });

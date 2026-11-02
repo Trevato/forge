@@ -123,6 +123,7 @@ import {
   limitOf,
   MAX_PAUSES,
   resumeAt,
+  takeLimit,
   whenText,
 } from "./limits.ts";
 import { clearStaleLocks, lockedOut } from "./locks.ts";
@@ -133,7 +134,6 @@ import { parkedTwice } from "./parks.ts";
 import { heldNow, stuckOf } from "./held.ts";
 import { reserveOf } from "./reserve.ts";
 import { owed } from "./team_share.ts";
-import { noteLimit } from "../core/standing.ts";
 import { pauseReason } from "./pacing.ts";
 import { grantLeft } from "../core/model_grant.ts";
 import { dailyLeft, reserveCeiling } from "../core/account_ceiling.ts";
@@ -143,7 +143,6 @@ import {
   MIN_RUN_USD,
   pickSubscription,
   PLATFORM,
-  restSubscription,
   type Pick,
 } from "../core/subscriptions.ts";
 import {
@@ -162,6 +161,7 @@ import {
   type InstallRunner,
   removeClone,
   workdirFor,
+  claimWorkdir,
 } from "./workdir.ts";
 import { readersAmong, voiceOf } from "./direct.ts";
 import { feedbackSince } from "./news.ts";
@@ -945,7 +945,6 @@ async function work(
     pull === undefined
       ? issue.number
       : (issueOfBranch(agent, pull.headBranch) ?? issue.number);
-  const dir = workdirFor(app.config.dataDir, agent, repo, taskNumber);
   write(
     `${agent.user.username} on ${repo.ownerName}/${repo.name}#${issue.number} (${reason}), branch ${branch}`,
   );
@@ -985,7 +984,17 @@ async function work(
   // A paused run resumes: its pull keeps saying "In progress".
   let pausing = false;
   let ending: Ending | undefined;
+  // The clone is claimed last, right before the `try` whose `finally` frees
+  // it: a throw anywhere above would otherwise hold it for the life of the
+  // process, and every later run on the issue would work beside it.
+  const workdir = claimWorkdir(
+    workdirFor(app.config.dataDir, agent, repo, taskNumber),
+    run.id,
+  );
+  const dir = workdir.dir;
   try {
+    if (workdir.own)
+      write(`another run holds the issue's clone; working in ${dir}`);
     // The secrets this run declared, for this run only: opened now, held for
     // redaction from this moment, dropped in the `finally` below — a crash
     // included.
@@ -1523,30 +1532,17 @@ async function work(
     // A limit that never lifts is not waited on forever.
     let limitLifts: Date | undefined;
     if (isRateLimited(result) && !signal.aborted) {
-      const said = (
-        result.result.split("\n").find((l) => l.trim() !== "") ?? result.reason
-      ).slice(0, 160);
+      const now = new Date();
       // The account rests until the provider's time; another on the same
       // grant, if one is awake, takes the run straight away.
+      const { until, limit, said } = takeLimit(
+        app.db,
+        picked.kind === "ready" ? picked.subscription.id : undefined,
+        result.result,
+        result.reason,
+        now,
+      );
       if (picked.kind === "ready") {
-        const now = new Date();
-        const until = resumeAt(result.result, now);
-        // Which window is full and when it resets, in the provider's own
-        // words, for the account's standing (`core/standing.ts`).
-        const limit = limitOf(result.result, now);
-        if (limit !== undefined)
-          noteLimit(app.db, picked.subscription.id, {
-            window: limit.window,
-            resetsAt: limit.resetsAt.toISOString(),
-            observedAt: now.toISOString(),
-            said,
-          });
-        restSubscription(
-          app.db,
-          picked.subscription.id,
-          until.toISOString(),
-          said,
-        );
         // Only a look at who could take over: no reservation is made here.
         // The run pauses, and on resume it picks again with its reserve.
         const next = pickSubscription(
@@ -1571,18 +1567,6 @@ async function work(
             costUsd: result.costUsd,
           };
         }
-      } else {
-        // The platform's token is not rested — nothing else would take the
-        // run — but its window is noted, so its standing reads true.
-        const now = new Date();
-        const limit = limitOf(result.result, now);
-        if (limit !== undefined)
-          noteLimit(app.db, PLATFORM, {
-            window: limit.window,
-            resetsAt: limit.resetsAt.toISOString(),
-            observedAt: now.toISOString(),
-            said,
-          });
       }
       if (run.attempt < MAX_PAUSES) {
         const at = resumeAt(result.result, new Date());
@@ -1748,6 +1732,7 @@ async function work(
     await early?.stop();
     if (!pausing) early?.settle(ending);
     grant?.release();
+    await workdir.release();
     deleteToken(app.db, agent.user.id, token.id);
     if (runTmp !== undefined) rmSync(runTmp, { recursive: true, force: true });
   }
@@ -1836,7 +1821,7 @@ async function prepareClone(
   if (signal.aborted) return { ok: false, error: "cancelled" };
   // A kept clone git no longer reads as one — a clone a network blip cut
   // short — is moved aside, never reused, and cloned afresh (#6263).
-  if (!fresh && existsSync(dir) && !(await readsAsClone(dir, env))) {
+  if (existsSync(dir) && !(await readsAsClone(dir, env))) {
     const aside = `${dir}.broken-${Date.now()}`;
     renameSync(dir, aside);
     write(`the kept clone is not a git repository; moved aside to ${aside}, cloning afresh`);
@@ -2196,7 +2181,7 @@ function redactResult<T extends { result: string }>(r: T): T {
  * the account has one), or — with nothing granted — whatever the forge
  * itself was started with.
  */
-function credentialEnv(picked: Pick): Record<string, string> {
+export function credentialEnv(picked: Pick): Record<string, string> {
   if (picked.kind === "ready") return credentialEnvOf(picked);
   const own: Record<string, string> = {};
   for (const name of [

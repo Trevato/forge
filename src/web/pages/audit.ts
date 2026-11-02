@@ -501,10 +501,7 @@ function crossingsCard(crossings: readonly Crossing[]): Html {
                 <span class="row-meta"
                   >${name(c.repo)} #${c.pull.number} · waiting since
                   ${time(c.decision.createdAt)} ·
-                  ${c.cells.length === 1
-                    ? "one door opens"
-                    : `${c.cells.length} doors open`}
-                  wider</span
+                  ${c.plain.join("; ")}</span
                 >
               </span>
               <span class="row-trail"

@@ -16,7 +16,7 @@ import { notFoundPage, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when } from "../html.ts";
 import { flashTo } from "../layout.ts";
-import { btn, card, icon, row, time } from "../ui.ts";
+import { badge, btn, card, icon, row, time } from "../ui.ts";
 import { usageShell } from "./usage-tabs.ts";
 
 function requireAdmin(ctx: Ctx): Response | undefined {
@@ -76,7 +76,7 @@ export function capacityPage(ctx: Ctx): Response {
     listCapacity(ctx.app, ctx.auth.user),
   );
   if (!listed.ok) return notFoundPage(ctx);
-  const { settings, changes } = listed.value;
+  const { settings, changes, egress, selfSwap } = listed.value;
   const errs = timePhase(ctx.request, "errors", () =>
     ctx.app.signals.errors.recent(10),
   );
@@ -158,14 +158,25 @@ export function capacityPage(ctx: Ctx): Response {
     },
   );
   const open = egressSnapshot();
+  // The bun cache at work (#7546): a warm cache keeps this near zero.
+  const npm = html`The npm registry sent
+    <span class="mono">${bytes(egress.npmBytesLastHour)}</span> over the last hour${
+      egress.npmTopRepoLastHour === null
+        ? "."
+        : html`, most to
+            <span class="mono">${egress.npmTopRepoLastHour.repo}</span>
+            (<span class="mono">${bytes(egress.npmTopRepoLastHour.bytes)}</span>).`
+    }`;
   const connections = card(
     open.length === 0
       ? html`<div class="card-body">
+          <p class="muted small" id="egress-npm">${npm}</p>
           <p class="muted small" id="egress-open">
             No app holds an egress connection open.
           </p>
         </div>`
       : html`<ul class="list" id="egress-open">
+          ${row({ id: "egress-npm", lead: icon("activity"), title: npm })}
           ${open.map((r) =>
             row({
               lead: icon("activity"),
@@ -182,7 +193,28 @@ export function capacityPage(ctx: Ctx): Response {
       pad: false,
     },
   );
-  const body = html`${happened}${connections}${when(
+  // Whether a landing here can swap the forge in place (#8383): the reason, before one is refused.
+  const swap = card(
+    html`<ul class="list">
+      ${row({
+        id: "self-swap",
+        title: "Self-swap",
+        meta: html`${selfSwap.blocked ?? "A landed release of the forge takes over the port in place."}
+          · <span class="mono">FORGE_SELF_SWAP</span> ${selfSwap.enabled ? "is set" : "is off"}
+          · <span class="mono">net.ipv4.tcp_migrate_req</span> reads
+          <span class="mono">${selfSwap.migrateReq}</span>`,
+        trail: badge(selfSwap.blocked === null ? "ready" : "blocked", {
+          tone: selfSwap.blocked === null ? "success" : "attn",
+        }),
+      })}
+    </ul>`,
+    {
+      head: html`${icon("activity")}
+        <h2>Self-swap</h2>`,
+      pad: false,
+    },
+  );
+  const body = html`${happened}${connections}${swap}${when(
       reported,
       () => html`<p class="muted small mb" id="egress-reported">
         ${icon("activity")} Egress is reported, not enforced: every new app,

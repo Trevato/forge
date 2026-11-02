@@ -10,7 +10,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { createIssue } from "../core/issues.ts";
+import { createIssue, setIssueLabels } from "../core/issues.ts";
 import type { Repo } from "../core/repos.ts";
 import type { EventBus } from "../core/events.ts";
 import { id } from "../kernel/id.ts";
@@ -29,6 +29,7 @@ const FAIL = /^\(fail\) (.+?)(?: \[[0-9.]+m?s\])?(?: \[shard [0-9]+\])?$/;
 const PATH = /^[\w@./+-]{1,200}$/;
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
+const CONTROL_G = new RegExp(CONTROL.source, "g");
 const NAME_MAX = 300;
 
 export interface Flaky {
@@ -156,6 +157,61 @@ export function passedAlone(lines: readonly string[]): boolean {
   return pass === 1 && fail === 0;
 }
 
+/** The marker a shard runner prints when a crash outside any test was green on its one re-run (#7781). */
+export const CRASH_FLAKE = "test-shards: crash flake";
+
+/** The test name a crash outside any test is recorded under: stable per message, so a repeat counts. */
+export const CRASH_NAME = "(crash outside any test)";
+
+/**
+ * The marker line for a shard whose quoted crash (`  │ ` lines) went green
+ * on its re-run: the first error line, cleaned and cut, so one cause counts
+ * as one flake.
+ */
+export function crashFlakeLine(where: string, quoted: string): string {
+  const cause =
+    quoted
+      .split("\n")
+      .map((l) => l.replace(/^ {2}│ /, "").trim())
+      .find((l) => /^\w*Error\b|^error\b/.test(l)) ?? "unhandled error";
+  const clean = cause.replace(CONTROL_G, " ").replace(/[0-9]+/g, "#").slice(0, 120);
+  return `${CRASH_FLAKE} ${where}: ${clean}`;
+}
+
+/** Crashes a check's log says were green on a re-run, as flakes with no file (so no issue is filed). */
+export function crashFlakes(lines: readonly string[]): Flaky[] {
+  const seen = new Set<string>();
+  const out: Flaky[] = [];
+  for (const line of lines) {
+    const at = line.indexOf(`${CRASH_FLAKE} `);
+    if (at < 0) continue;
+    const m = /^[0-9]+\/[0-9]+: (.{1,120})$/.exec(line.slice(at + CRASH_FLAKE.length + 1).trim());
+    if (m === null || CONTROL.test(m[1]!)) continue;
+    const name = `${CRASH_NAME} ${m[1]}`;
+    if (!seen.has(name)) out.push({ file: "", name });
+    seen.add(name);
+  }
+  return out;
+}
+
+/**
+ * Record the crash flakes a check's log names, but only for a check that
+ * passed: a red check records nothing. Returns how many were recorded.
+ */
+export function recordCrashFlakes(
+  db: Database,
+  bus: EventBus,
+  repo: Pick<Repo, "id" | "ownerId">,
+  lines: readonly string[],
+  ref: { runId: string; commit: string; pull?: boolean },
+  ok: boolean,
+): number {
+  if (!ok) return 0;
+  const crashes = crashFlakes(lines);
+  if (crashes.length > 0) recordFlakes(db, bus, repo, crashes, ref);
+  return crashes.length;
+}
+
 export const flakeTitle = (name: string): string => `Flaky test: ${name.slice(0, 200)}`;
 
 /**
@@ -185,33 +241,65 @@ export function recordFlakes(
       .get(repo.id, t.name, since)!.n;
     // No issue without a file: the "Files:" line is what routes it to a builder.
     if (count < FILE_AT || t.file === "") continue;
-    const title = flakeTitle(t.name);
-    const open = db
-      .query<{ id: string }, [string, string]>(
-        "SELECT id FROM issue WHERE repo_id = ?1 AND title = ?2 AND state = 'open' LIMIT 1",
-      )
-      .get(repo.id, title);
-    if (open !== null) continue;
-    const made = createIssue(db, {
-      repoId: repo.id,
-      authorId: repo.ownerId,
-      title,
+    const filed = fileIssueOnce(db, bus, repo, {
+      title: flakeTitle(t.name),
       body:
         `_Filed by the check runner from a check log, not written by a person._\n\n` +
         `\`${t.name}\` in \`${t.file}\` failed in ${where} and passed when run alone, ${count} times in 7 days ` +
         `(latest: check run ${ref.runId}, ${ref.commit.slice(0, 7)}). The check stayed green each time. ` +
         `Find what it depends on: time, load, order, or shared state.\n\nFiles: ${t.file}`,
     });
-    if (!made.ok) continue;
-    bus.append({
-      kind: "issue.opened",
-      repoId: repo.id,
-      actorId: repo.ownerId,
-      payload: { number: made.value.number },
-    });
-    opened.push(made.value.number);
+    if (filed.opened) opened.push(filed.number);
   }
   return opened;
+}
+
+/**
+ * One open issue per title: the open one when there is one (`opened` false),
+ * else a new one, announced on the bus. Number 0 when it could not be made.
+ */
+export function fileIssueOnce(
+  db: Database,
+  bus: EventBus,
+  repo: Pick<Repo, "id" | "ownerId">,
+  issue: { title: string; body: string; labelId?: string },
+): { number: number; opened: boolean } {
+  const open = db
+    .query<{ number: number }, [string, string]>(
+      "SELECT number FROM issue WHERE repo_id = ?1 AND title = ?2 AND state = 'open' LIMIT 1",
+    )
+    .get(repo.id, issue.title);
+  if (open !== null) return { number: open.number, opened: false };
+  const made = createIssue(db, { repoId: repo.id, authorId: repo.ownerId, title: issue.title, body: issue.body });
+  if (!made.ok) return { number: 0, opened: false };
+  if (issue.labelId !== undefined) setIssueLabels(db, made.value.id, [issue.labelId]);
+  bus.append({
+    kind: "issue.opened",
+    repoId: repo.id,
+    actorId: repo.ownerId,
+    payload: { number: made.value.number },
+  });
+  return { number: made.value.number, opened: true };
+}
+
+/** Every failing test of a `bun test` log with the file whose report printed it, once each, in order. */
+export function failedTests(lines: readonly string[]): Flaky[] {
+  const out: Flaky[] = [];
+  const seen = new Set<string>();
+  let file: string | undefined;
+  for (const line of lines) {
+    const header = HEADER.exec(line);
+    if (header) {
+      file = header[1]!.replace(/^\.\//, "");
+      continue;
+    }
+    const name = FAIL.exec(line)?.[1];
+    if (name === undefined || file === undefined || !PATH.test(file)) continue;
+    if (name.length > NAME_MAX || CONTROL.test(name) || seen.has(`${file}\0${name}`)) continue;
+    seen.add(`${file}\0${name}`);
+    out.push({ file, name });
+  }
+  return out;
 }
 
 /** What a red queue verdict says of its tests: each failing one with its file, and the files it learned. */

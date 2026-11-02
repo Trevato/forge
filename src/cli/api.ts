@@ -463,6 +463,20 @@ export class ForgeApi {
     return ok({ issue, url: `${this.webUrl(owner, name)}/issues/${issue}` });
   }
 
+  /** Say something to the forge's own agent (`POST /api/v1/conversation/messages`). */
+  async talk(text: string): Promise<ApiResult<{ how: string }>> {
+    const out = await this.call<{ how?: unknown }>("/api/v1/conversation/messages", {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    });
+    return out.ok ? ok({ how: String(out.value.how ?? "started") }) : out;
+  }
+
+  /** The latest turns of the person's conversation (`GET /api/v1/conversation/turns`). */
+  async conversation(): Promise<ApiResult<{ running: boolean; turns: { id: string; role: string; text: string }[] }>> {
+    return this.call("/api/v1/conversation/turns?limit=20");
+  }
+
   /**
    * `GET /api/v1/search`: code, issues, pulls and repositories the token can
    * read. The answer is handed back as the forge gave it — the CLI prints

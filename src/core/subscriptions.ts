@@ -750,3 +750,24 @@ export function crewHasCredential(
     (name) => (env[name] ?? "").trim() !== "",
   );
 }
+
+/** What MCP `subscriptions` and `GET /api/v1/admin/subscriptions` list: each account, never its token. */
+export function subscriptionRows(db: Database) {
+  const scopes = scopesOf(db);
+  const budgets = budgetsOf(db);
+  return listSubscriptions(db).map((s) => {
+    const b = budgets.get(s.id);
+    return {
+      id: s.id,
+      name: s.name,
+      kind: s.kind,
+      apiBase: s.apiBase,
+      scopes: scopes.get(s.id) ?? [],
+      budgetUsd: b?.budgetUsd ?? null,
+      spentUsd: b?.spentUsd ?? 0,
+      restingUntil: s.restingUntil,
+      restingSaid: s.restingSaid,
+      lastUsedAt: s.lastUsedAt,
+    };
+  });
+}

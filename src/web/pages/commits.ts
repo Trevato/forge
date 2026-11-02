@@ -10,6 +10,7 @@
  * list can do neither, so the live browse pages by cursor and says so.
  */
 
+import { immutableWhenAddressed } from "../../http/addressed.ts";
 import { checkOfCommit, verdictsOfCommits } from "../../actions/runs.ts";
 import type { CommitCheck } from "../../checks/commit_check.ts";
 import { diffCommit, type Diff } from "../../git/diff.ts";
@@ -350,7 +351,7 @@ export async function commitPage(ctx: Ctx): Promise<Response> {
     body,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
-  return response;
+  return immutableWhenAddressed(ctx.auth.user === undefined, repo, rev, response);
 }
 
 // ---- the live-browse pages ----

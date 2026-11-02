@@ -20,9 +20,11 @@ import {
   type Label,
 } from "../../core/issues.ts";
 import { listPulls, openPullsClosing } from "../../core/pulls.ts";
+import { stepsOfStored, type PathStep } from "../../flow/path.ts";
 import { canRead, canWrite, type Repo } from "../../core/repos.ts";
 import { FLOW_LABEL } from "../../core/flow_label.ts";
 import { flowButton } from "../flow_button.ts";
+import { stepLink } from "./step_link.ts";
 import { waitingCount } from "../../actions/reports.ts";
 
 import { listRepoRuns } from "../../actions/runs.ts";
@@ -486,6 +488,11 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
   return response;
 }
 
+/** The pull's step beside its row, as a sibling of the row's link: `after`. */
+function stepAfter(step: PathStep | null | undefined): { after?: Html } {
+  return step == null ? {} : { after: stepLink(step) };
+}
+
 /**
  * GET /:owner/:name/pulls: every pull request, for every
  * repository and every viewer — one row per pull in its studio word, who
@@ -525,6 +532,8 @@ export async function changesList(ctx: Ctx): Promise<Response> {
   const rows = fetched
     .map((pull, i) => ({ pull, info: words[i]! }))
     .filter((r) => shown(r.info.word, f));
+  const steps = stepsOfStored(db, repo, rows.map((r) => r.pull));
+  lap("steps");
 
   const list =
     rows.length === 0
@@ -552,6 +561,7 @@ export async function changesList(ctx: Ctx): Promise<Response> {
                 : pull.authorName} · ${info.note} ·
               ${when(answered.get(pull.number), (t) => html`${tellLine(base, t)} · `)}${time(pull.updatedAt)}`,
               trail: wordBadge(info.word),
+              ...stepAfter(steps.get(pull.id)),
             }),
           ),
         );
@@ -593,11 +603,11 @@ export async function changesList(ctx: Ctx): Promise<Response> {
 /** Which runs a list shows: all three kinds by default, or the one that
  * `?kind=` asks for — the narrowing dev's list offered, kept so a link
  * written to it keeps meaning what it said. */
-type RunsKind = "agent" | "deploy" | "check" | "proof";
+type RunsKind = "agent" | "deploy" | "check";
 
 function readRunsKind(ctx: Ctx): RunsKind | undefined {
   const raw = ctx.url.searchParams.get("kind");
-  return raw === "agent" || raw === "deploy" || raw === "check" || raw === "proof"
+  return raw === "agent" || raw === "deploy" || raw === "check"
     ? raw
     : undefined;
 }
@@ -688,7 +698,6 @@ const RUNS_KIND_WORDS: Record<RunsKind, string> = {
   agent: "Agent runs",
   deploy: "Deploys",
   check: "Checks",
-  proof: "Proofs",
 };
 
 /**
@@ -715,7 +724,6 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
     // Working is what runs now: read only the running ones, so the page
     // is not spent on finished rows it would drop.
     state: state ?? (filter === "working" ? "running" : undefined),
-    withProofs: true,
     limit: LIST_PAGE,
     ...(cursor ? { cursor } : {}),
   });
@@ -805,7 +813,7 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
       )}
     </div>
     <p class="muted small mt">
-      Show ${(["agent", "deploy", "check", "proof"] as const).map(
+      Show ${(["agent", "deploy", "check"] as const).map(
         (k, i) =>
           html`${i > 0 ? " · " : ""}${k === kind
               ? html`<strong>${RUNS_KIND_WORDS[k]}</strong>`

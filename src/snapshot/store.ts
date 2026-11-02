@@ -180,8 +180,8 @@ function answered<T>(attempt: Promise<T>, ms: number): Promise<T> {
   return Promise.race([attempt, deadline]).finally(() => clearTimeout(timer));
 }
 
-export function s3Store(target: S3Target): Store {
-  return withRetries(rawS3Store(target));
+export function s3Store(target: S3Target, attempts?: number): Store {
+  return withRetries(rawS3Store(target), attempts === undefined ? {} : { attempts });
 }
 
 function rawS3Store(target: S3Target): Store {

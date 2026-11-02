@@ -18,6 +18,10 @@ green changes, and nothing waits on a person. [`docs/STUDIO.md`](docs/STUDIO.md)
 git underneath is one click away — the switch in the top bar, or `?mode=dev` on
 any URL — and it is the rest of this page.
 
+Slow app? Its response's `Server-Timing` keeps the app's entries and adds the
+forge's `forge-route`, `forge-wake`, `forge-upstream` and `forge-rewrite`
+(milliseconds only; see `docs/APPS.md`).
+
 A forge this one spawned (hosted) runs the apps it was given too: its `bakery`
 answers at `bakery--<child>--<this forge's host>`, in this forge's lanes, on the
 child's own data, and `/forges` says how many are running and why any is not. Each row also ends with the first step its person has not taken (`not claimed yet`, `no everyday account yet`, `no tell yet`, or `going: last tell <time>`; `has not reported yet` before the child's first beat), read from the child's heartbeat; the terminal's forges screen and the MCP `forges` tool (`nextStep`) say the same.
@@ -59,6 +63,8 @@ when). The terminal's palette has the same as "Crew hand-overs", a list of the
 same rows (repo#number, title, reasons): Enter opens a parked row's issue and
 `r` reads the list again. Both are a forge admin's only.
 
+Remove on a board panel asks first, on the confirm page, which names the panel and the board. The confirm posts the panel's index and title, and a panel at that index with another title is not removed ("that panel moved; nothing was removed"). The guard compares titles only: two panels with the same title swapped between the two clicks still remove the one now at that index, so give panels distinct titles (pins on home tell panels apart by title too).
+
 `/boards` carries a Held files card for anyone who administers a repository (a forge admin sees every repository's): the holds of the repositories you administer, a form to hold another path, Release on each row, and "Showing 200 of N" when the list is cut. The user menu links Boards to such a person. In the terminal, a bare line on the Held files prompt lists the same holds.
 
 A hold can be set "until green" (a checkbox on the hold form, `until: "green"` on the hold API and the MCP `hold` tool): when a check passes on the pull's current head the forge releases it and the pull's timeline says `hold released: green on <short oid>`. A plain hold is never released by a check.
@@ -73,14 +79,28 @@ In the terminal, `T` on a shipped pull's screen takes it back, as the pull page'
 
 In the terminal, `m` on a local repository's issue list opens the plan screen (`src/tui/screens/plan.ts`): Working, Ready now, Waiting and Parked twice, each headed with its count. It reads what MCP `map` reads (`repoGraph` under the reader's sealed scope, `pillarView`, `mapHeldFor`, the runs in flight), so a sealed issue the reader may not see is left out. Enter opens the issue, `r` reads again, and the headings are skipped over. It is not offered on the pulls list or on a live browse of another forge.
 
+In the terminal, open a repository and pick **Autonomy** from the palette (`:`): mode, dollar ceiling a day and slots, as Settings › Autonomy has them. It is offered only to whoever administers the repository (`canAdmin`, an agent included, as the page's API allows); anyone else gets no entry and sees no value. `m` opens a confirm naming each mode and the ceiling, with Off, Assisted and Autonomous as its buttons and Cancel selected, so any mode is one pick away; `c` sets the ceiling, `s` the slots; bounds are the page's (`checkAutonomy`), and each saves through `updateRepoSettings` and says the page's flash (`AUTONOMY_SAID`).
+
+In the terminal, a repository screen's `:` palette offers **Delete this repository** (`<owner>/<name> — Delete this repository`, "cannot be undone") to a person who administers it, never to an agent, a writer who is not an admin or a reader. It asks for the full `<owner>/<name>`; anything else is refused with "Type <owner>/<name> to confirm." and nothing changes. The exact name calls `deleteRepo` (`src/actions/repos.ts`, as Settings' danger zone does), toasts the result and unwinds the stack to the screen beneath the repository's (`leaveRepo`), so no screen reads the deleted row.
+
+In the terminal, the palette's **Organization teams** (offered to anyone on a team of an organization) lists each organization's teams you may see, as `/<org>/-/teams` does (an org admin sees every team, a member only their own), each with its member count and permission; Enter lists the team's members. On that list an admin of the organization adds a person with `a` (type a username) and removes the member under the cursor with `d` after a y/n, in the Teams page's words. On the list itself the admin makes a team with `n` (a name, then read, write or admin) and deletes the selected team with `D` once its name is typed in full; anything else is refused with "Type <team> to confirm." and nothing changes. A member who is not an org admin is offered none of these keys.
+
+The palette's **org grants** (a forge admin who administers the organization only; anyone else and any agent is offered nothing) sets the organization's default Claude subscription grants, as the Subscriptions form on its page does: `:` → `org grants`, Enter on the organization, `j`/`k` between everyone and the agents, `h`/`l` between accounts, `space` toggles the account and saves the row; every repository there without a grant of its own follows it.
+
+In the terminal, the palette's **Connected origins** lists the hosts your mirrors come from (a signed-in person's, not an agent's): `s` syncs the selected one now, `d` disconnects it after a confirm; see `docs/ORIGINS.md`.
+
 A writer puts a ready issue **First**: the dispatcher starts it before the rest, and the map's Ready now list (and the plan screen's) says `first, by <who>`. On the map page it is the First button on each ready row (a same-origin POST to `/:owner/:name/issues/:number/first`, no JavaScript; `Accept: application/json` gets JSON); in the terminal it is `f` on a ready line of the plan screen. Both call `putIssueFirst` (`src/actions/first.ts`). Refused, changing nothing: a reader or an agent ("Only someone with write access can put an issue first."), a signed-out post (sent to sign in), a read-only token, a cross-origin post, and an issue that is closed or still waits for another ("Only an open issue that nothing waits in front of can go first."). The rank ends when the issue closes, and it is an `issue.first` event, so open maps and plan screens refresh. No MCP tool yet.
 
 A hand-over card on `/asks` (an agent's pull the reviewer stopped on after three rounds) has "Give back to the crew": one press assigns the pull, and the open issue it closes if a person holds it, to the agent that opened it, writes "Given back to the crew by @who", and the card leaves; the next tick starts its run. It is for a writer of the repository, and a pull a person opened, or by an agent gone from the crew, gets no button. In the terminal, `b` on a handed-over row of the On you pane does the same (`src/actions/give_back.ts`). The repository's planner can do it by comment: one that starts "Planner, one more round" on a handed-over crew pull emits the assignment to its builder, which starts the run (the pull is already the builder's, so nothing changes hands). It is the planner's alone; a reader's, the reviewer's or any other agent's does nothing. It is an agent's word, not a director's, so it does not end the hand-over: the card stays on `/asks` and the pull still counts as handed over during the round.
+
+The terminal's On you pane leads with the board's strip, the week's asks as four numbers (`Asks, 7 days: 4 raised · 2 acted on · 1 dismissed · 1 went by themselves`, your own rows only, absent when all four are 0). It is read on load and on `r`, not on every paint; `W` opens `/asks` on the web. Both doors share `askMeasureWeek` in `src/core/ask_ledger.ts`.
 
 Home opens with "Since you were here · 2 days": the pulls that landed in public repositories since you last loaded `/` (1 hour to 7 days back, a day on a first visit); the terminal's home shows the same lines, and MCP `feed` answers them as `digest`. See `docs/features/since-you-were-here.md`.
 Signed in, `/` paints its frame from memory and swaps in what a write has made stale; a viewer whose access changed is never shown the old copy, and the terminal home is unchanged: `docs/features/home-frame.md`.
 
 In the terminal, the System screen (palette: System) shows a forge admin who is a person one more line, `telemetry:read held by: …` (the agents holding the grant), and `g` there picks an agent and asks `grant <agent> telemetry:read? y/n` (or `take back …`; the default is n). `y` calls `setTelemetryGrant`, as MCP `telemetry_grant` does; anyone that tool refuses sees neither the line nor the key hint, and `g` answers them in the tool's words.
+
+Crawlers (`docs/features/crawl-budget.md`): an unauthenticated crawler is held to a budget per address, per agent and all together, answered `429` past it; a forge admin reads their share of answering time and who was refused at `GET /api/v1/admin/crawlers` and in the terminal's palette as "Crawlers".
 
 In the terminal, the Capacity screen (palette: Capacity, a forge admin who is a person) lists every guard with its live value and bounds, as /settings/capacity does; `e` on one asks for a value (empty restores the default), shows `key: from → to` and calls `changeCapacity` only on `y` (default n). No row is read-only here.
 
@@ -94,10 +114,14 @@ A pull the merge queue holds as red alone (red on its own merge at its current h
 
 On a sealed issue, a writer gets the private repository to fix it in: `POST /api/v1/repos/:owner/:name/issues/:number/private`, the issue page's button, and `p` on the issue's terminal screen, which shows the repository and its clone URL (built from the forge's origin). All three refuse alike: not found for anyone who may not see sealed reports, `not_sealed`, and `unverified`.
 
+A writer seals or unseals an issue with `S` on the issue's terminal screen (readers are not offered it), after a confirm whose default is Cancel; Unseal is drawn as the danger button because it shows the report, and its fix, to everyone who can read the repository. It goes through `setIssueSealed`, as the issue page's Seal form does, and the toast says the page's words from `src/actions/seal_issue_words.ts`, refusals included: sealing an issue on a mirror is refused, since a mirror's issues live on its origin in the open.
+
 When an open issue waits for a blocker that closed as dropped or split, the terminal's issue screen pins a line under the title, "waits for #N (dropped), closed without being done". A writer who is a person (not a reader, not on the crew) sees `g` there: after a confirm (Cancel is the default) it calls `confirmIssue`, as the issue page and MCP `confirm_wait` do, and the line goes. With several blockers held, `g` first asks which one (or all of them).
 An issue's title and body are edited on its page, with MCP `edit`, or with `e` on the issue's terminal screen: the editor opens with the title on the first line, a blank line, then the body; `ctrl+d` saves and `esc` discards. All three go through `editIssue`, so the same people may (the author until a writer takes it up, any person who writes the repository; never on a mirror) and a refusal reads the same, with the terminal's draft kept.
 
 Reports from outside (sent with no account) are decided in the terminal too: open the repository as a person who writes it, press `:` and pick "Reports (N)"; beside each title is when it was sent, the page it came from and its words. `a` accepts the one under the cursor as an issue and says its number, `d` dismisses it after a confirm, and one someone else already decided says "this report was already decided". The row shows only while reports wait, and only to a person — not an agent — who can write the repository (`src/tui/screens/reports.ts`).
+
+**A pull the access wall holds** (a pull whose `contract.json` opens a door wider, or does not read) says a person decides, in plain words: "anyone signed out could read address records". Its pull page and Files tab show the card; a writer (and only a writer) also gets **Allow it and merge** (the merge route, `mergePull`) and **Send it back** with an optional visible reason (the review-state route, a request for changes); readers see the card without forms. In the terminal's pull screen a writer presses `w` for the same two answers in one dialog (`Send it back`, `Allow it and merge`, squash), through `submitReview` and `mergePull`, which check the write. MCP `flow`, the flow alarm and the audit page's "at the wall" rows carry the same words.
 
 **Landing past a stopped gate** (#7790): when the last three merge-queue gates of the forge's own repository went red for one cause and nothing has landed since, home, `/boards` and the terminal's Flow dialog (owners only) say `Landing has stopped: …`. Only then can an owner (repository admin, a person, never an agent) land one named pull without its checks, with a reason of 8 to 500 characters that goes on the pull's trail and the outbox (`pull.bypassed`): the **Land past the gate** form on the pull's Files step, `L` on the terminal's pull screen (reason, then a confirm), or MCP `land_past_gate` (planned unless `dryRun: false`). Review and conflicts still hold. `docs/features/gate-bypass.md`.
 
@@ -184,6 +208,8 @@ will actually browse it.
 Who may sign up (open, invite or closed) is shown on the terminal's Invite
 links screen, and a forge admin who is a person changes it there with `s`,
 which shows from → to and changes it only after a confirm (as MCP `signup` does).
+A used link reads `used by <name> on <yyyy-mm-dd>` there and in Settings ›
+Limits, where the name links to the person's profile.
 
 No sign-up makes the admin, not even the forge's first, and that first one is
 held to the signup setting and Turnstile like any other. Accounts sign up with
@@ -345,6 +371,15 @@ A fork chooses how it follows its parent: **tell me** (the default: a fork with 
 
 Tests, checks, the gate, lint, types and how a change reaches main: **[docs/DEVELOP.md](docs/DEVELOP.md)**.
 
+The gate also refuses unreached modules. `test/unreached.test.ts` runs
+`scripts/unreached.ts`, which lists each `src/**/*.ts` no entry point reaches
+by following imports (the entries, including those started by path, are
+declared at the top of that script; anything under `scripts/` counts as a
+caller too). A new one fails the test unless
+`scripts/unreached-allow.json` lists it; wiring a listed module in means
+deleting its line, which the test also demands. `bun scripts/unreached.ts`
+prints the list.
+
 ## Shape
 
 ```
@@ -375,6 +410,8 @@ work here.
 
 ## What works today
 
+Every pull says which of four steps it is at — check, review, land, live — and why it waits there: a line under its title on both tabs (linked to `/pipeline`, a public page that explains the four steps), `step: { step, why, done }` in the MCP `pull` tool, and `step: …` in the terminal pull screen's header; the same word and sentence sit on the pull's post in the feed, its row on the pulls list and on `/review` (each linked to `/pipeline`), and in the terminal's feed, pulls list and on-you list (`Review — No review yet.` under the row). The whole suite is a report, not a gate: after a landing it runs against the default branch and each failing test file gets one issue labelled `full-suite` (listed from `/pipeline`; the terminal's Flow dialog counts the open ones and the issue list filters by label with `l`). See [`docs/features/pipeline.md`](docs/features/pipeline.md).
+
 A public app of a public repository tells an agent that lands on it what it can
 do: its HTML pages, and the "not running" page, carry two `Link` headers —
 `rel="help"` to `/__forge/report` and `rel="alternate"` to the forge's
@@ -395,6 +432,23 @@ screen `a`, a new forge's
 leading `Bearer ` are dropped (`normalizeToken`, `src/core/subscriptions.ts`),
 and what is left is sealed if it is not empty and at most 4096 characters. Its
 shape is not judged; the provider answers a wrong key on the first call.
+
+The terminal's Crew subscriptions screen lists every account with its 5-hour
+and weekly windows under its row: used of cap, the share, and when it resets,
+in the very sentence Settings › Subscriptions prints (`windowWords`,
+`src/actions/standing_words.ts`). A sentence wider than the terminal wraps
+onto the next line, so the reset time is never cut off.
+
+Inside a repository, the palette's Crew grants (`src/tui/screens/grants.ts`)
+sets which subscriptions each crew member may use there, as Settings › Crew
+does: one row for everyone on the crew and one per crew member, each
+subscription by name and kind (never its token) on its own line under the row.
+`j`/`k` choose the row, `h`/`l` the subscription, and `space` toggles it and
+saves the row whole through `setGrants`. Nothing ticked removes the row's
+grant, and the wider one applies: the owner's grant, or the forge's own token.
+It is offered to a person who is both a forge admin and an admin of the
+repository; anyone else, and every agent, is offered nothing. Settings › Crew
+shows a save on its next load.
 
 A repository in auto mode with a direction and no planner on its crew is lent
 one (#7637): at the next planning turn the forge adds, through the same
@@ -422,6 +476,7 @@ Once a minute the forge measures its landing rate, names the one cause binding i
 - [`docs/DEVELOP.md`](docs/DEVELOP.md) — developing the forge: tests, checks, the gate, lint and types.
 - [`docs/STATUS.md`](docs/STATUS.md) — what works today, one bullet per feature.
 - [`docs/ON-YOUR-MACHINE.md`](docs/ON-YOUR-MACHINE.md) — the `forge` command on your machine: the local copy, offline work and building the binary.
+- [`docs/web.md`](docs/web.md) — the rules for assets and HTML: what is cached where, how a page streams, and the byte budgets a test enforces.
 This page is the front door. Everything else is a file of its own under
 `docs/`, each about one thing:
 
@@ -431,7 +486,7 @@ This page is the front door. Everything else is a file of its own under
 - [`docs/STUDIO.md`](docs/STUDIO.md) — the front door in full: the five words and where each is decided, the box, the three lists, a tell, a run and a change each on its own page, and the board.
 - [`docs/TOUR.md`](docs/TOUR.md) — every other page and screen, with each of its doors: the terminal over SSH, the home and its figures, review, signing in, the page-view beacon, the board's notes, long threads, who can see a repository, archive, where a repository came from, big directories, search, sharing to the forge, link-preview cards and choosing among variants.
 - [`docs/ASKS.md`](docs/ASKS.md) — what waits on you and how to answer it: waiting pulls, mutes, wave proposals, feed chips and the decider.
-- [`docs/FEED.md`](docs/FEED.md) — the feed: what happened, ranked, each item with why it is there. The home composer keeps your draft across a reload.
+- [`docs/FEED.md`](docs/FEED.md) — the feed: what happened, ranked, each item with why it is there. The home composer keeps your draft across a reload. A post about an issue or pull offers Reply, which comments on it and returns to the feed; the terminal's Feed screen replies with `r`.
 - [`docs/PULLS.md`](docs/PULLS.md) — resolving a conflicted pull without a clone.
 - [`docs/GIT.md`](docs/GIT.md) — cloning over HTTPS and SSH, and partial clones of big repositories.
 - [`docs/CLI.md`](docs/CLI.md) — the `forge` command on your machine: install, log in, and every command with its flags and one example.
@@ -451,9 +506,13 @@ This page is the front door. Everything else is a file of its own under
 - [`docs/SENTINEL.md`](docs/SENTINEL.md) — the forge hunting its own faults; [`docs/HUNT.md`](docs/HUNT.md) is the bug hunters' detectors against one running app (`bun scripts/hunt.ts <origin>`).
 - The `flow` label: ready issues labelled `flow` go first (`readyNow` in `src/core/dependencies.ts` is the one place); when none is ready, builders take other ready work as usual. There is no switch and no state. A writer puts an issue first with the **Flow first** button on the issue and on each row of its list (`POST …/issues/:number/flow`), with `f` on the terminal issue screen, or with MCP `labels` and `action: "add"` (all three make the label on first use, for a writer only); the map's "Ready now" shows labelled work on top, marked `flow`.
 - Outsiders directing the crew: the terminal's About card (`I`) has a Crew row saying whether people who cannot write may direct the crew (the web page's words). A repository admin who is a person presses `d` to see the plan, then enter to confirm (esc changes nothing); it calls `setCrewOutsiders`, as MCP `outsiders` does. The key is `d`, not `o`, because `o` is the fork's upstream offer on the same card and `d` never clashes with it; a writer who is not an admin and an agent are not offered `d`.
+- Visibility at the terminal: on the About card (`I`) a repository admin who is a person sees `V make private` on a public repository and `V make public` on a private one. `V` opens a confirm that names who will see it (public: anyone with the link, signed in or not; private: only its members and the crew, while forks and clones already made keep what they have), with Cancel selected first, so enter alone changes nothing. Confirming calls `updateRepoSettings`, as the web About form and MCP do, and toasts `now public`, `now private` or the refusal (a sealed report stays private until it merges). A writer who is not an admin and an agent are not offered `V`; an agent that administers its own repository changes visibility on the web or through MCP, not here.
+- Description at the terminal: on the About card (`I`) a repository admin who is a person sees `w write description`. `w` opens a one-line prompt filled with the current description; enter saves it through `updateRepoSettings` (as the web form and MCP `repo_settings` do, so it is audited the same way) and toasts `description saved`, esc changes nothing, and an empty line clears it. Control characters and more than 2000 characters are refused in a toast and nothing is written. That cap and the control-character rule live in the terminal only: the web form and the API accept any text. A reader and an agent are not offered `w`, and pressing it does nothing.
+- Default branch at the terminal: on the About card (`I`) a repository admin who is a person sees `b default branch`; a writer who is not an admin and an agent are not offered it, and pressing it does nothing. `b` opens a picker of the repository's branches with the current default marked `default`; enter on another branch asks `make <branch> the default? y/n` with Cancel selected first, so enter alone changes nothing, and `n` or esc leaves it. `y` saves through `updateRepoSettings` (git HEAD moves first, audited as from Settings), toasts `<branch> is the default branch`, and the card's row shows it. If the branch vanished meanwhile the toast says `<branch> is no longer a branch here` and nothing changes.
 - Prompt source at the terminal: `i` on the Deploys screen opens the app's Instagram prompt source, as Settings › Prompts does, and is offered only to the repository's admin who is a person (an agent, a reader or a guest sees no `i` and it does nothing). It lists the account, when it last ran and what it said, and when the token is refreshed again. `a` connects one (the token typed masked, then the hour in UTC; it is never drawn or logged), `f` fetches now and says what came back, `d` removes it after a `y/n` confirm. A second `f` while a fetch is running is ignored. Refusals are the page's words (`invalid_token`, `invalid_at`, `no_such_source`, `not_running`, and `already_connected` only when an account was connected on the web while the screen was open: the screen offers `a` only when there is none).
 - Stop running as an app at the terminal: `X` on the Deploys screen, offered only to the repository's admin who is a person while it is an app (a writer who is not an admin, an agent, a reader or a guest sees no `X` and it does nothing). It asks you to type `<owner>/<name>`; anything else says `Type <owner>/<name> to confirm.` and changes nothing. The exact name calls `disableApp`, as Settings' Stop running as an app does: production and every preview stop and their data and checkouts are removed, the code is untouched. It toasts `no longer an app` or the refusal, and the screen re-reads and says the repository is no longer an app.
-- Events at the terminal: `v` on the About card (`I`) lists the repository's events newest first, 50 at a time; `n` loads the next page, `s` keeps only settings changes (the same `kind=repo.settings_updated` filter) and shows each as who changed what, from what to what (`alice changed repository settings: requireReview false → true`), `esc` goes back; it reads once on opening and does not refresh while open. The audience is `GET …/events`'s and MCP `events`' (a webhook's URL and an app's variable names are the admins').
+- Everyday account at the terminal: a forge admin with no choice made sees a muted line at the head of the dashboard asking, as the web home card does. `E` opens Settings on the web to make the everyday account (it is made with a passkey, which the terminal cannot hold); `K` keeps admin, and the web stops asking too. Once linked, the line names the everyday account. Anyone else, and an agent, sees neither key.
+- Events at the terminal: `v` on the About card (`I`) lists the repository's events newest first, 50 at a time; `n` loads the next page, `t` keeps only the kind of the row under the cursor (and again lifts it), `s` keeps only settings changes (the same `kind=repo.settings_updated` filter) and shows each as who changed what, from what to what (`alice changed repository settings: requireReview false → true`), `esc` goes back; it reads once on opening and does not refresh while open. The audience is `GET …/events`'s and MCP `events`' (a webhook's URL and an app's variable names are the admins').
 - Why it is not moving: MCP `flow` with `{ repo }`, `{ repo, issue }` or `{ repo, pull }` (a writer's) answers the first gate that holds it (`ceiling`, `hot_file`, `blocked_by`, `later_gate`, `no_builder`, `no_headroom`, `red_check`, `waiting_review`) with the action that clears it, or `state: closed`/`merged` when nothing is left to move; a pull is read against the head git has now. The terminal's About card (`I`) carries the repository's answer in a **Moving** row for a writer (`src/flow/why.ts`).
 - [`docs/FLOW.md`](docs/FLOW.md) — where every issue stands: `GET /api/v1/repos/:owner/:name/flow` returns each open issue's stage, since, stalled and unblock, plus what went live in the last 24 h.
 - A ready issue held on a hot file names the open pulls on that file, oldest first, at most 8: `held.pulls` in `GET …/map` and the MCP `map` tool, links after the sentence in the flow panel's "Ready, and why it waits" card, and `#N` lines in the terminal Flow dialog. Read from the pull files the picker caches (`src/crew/hot_files.ts`), per reader: a sealed pull is named and counted for the owner only.
@@ -497,17 +556,17 @@ This page is the front door. Everything else is a file of its own under
 - [`docs/DESIGN.md`](docs/DESIGN.md) — the design system's spine; its sections are under `docs/design/sections/`.
 - [`docs/SPIKE-CLOUDFLARE.md`](docs/SPIKE-CLOUDFLARE.md), [`docs/AUDIT-MANY-HANDS.md`](docs/AUDIT-MANY-HANDS.md), [`docs/BACKLOG.md`](docs/BACKLOG.md) and [`docs/research/`](docs/research/) — a spike, an audit, a backlog and research notes, kept as written.
 
-What the crew's tokens bought is on the board (`/board/returns`), in MCP `returns`, and in the terminal: the palette's Usage carries a Returns line (dollars, runs, changes landed, cost per landed change; `[`/`]` move between 1, 7, 30 and 90 days), and Usage of a repository (`owner/name`) narrows it to one app. Owner facts only (`src/actions/returns.ts`); see [`docs/OPERATING.md`](docs/OPERATING.md).
+What the crew's tokens bought is on the board (`/board/returns`), in MCP `returns`, and in the terminal: the palette's Usage carries a Returns line (dollars, runs, changes landed, cost per landed change; `[`/`]` move between 1, 7, 30 and 90 days), and Usage of a repository (`owner/name`) narrows it to one app. On the forge-wide Usage, `f` opens the fleet graph (what `/fleet/graph` shows): one sparkline row per repository for runs and for spend, each with its total at the right, over 24 h by hour or 14 d by day (`w` toggles); past eight series the smallest share "N others", and a short terminal ends with a "+N more rows" line. Who may see spend is the action's rule (`src/actions/fleet-graph.ts`), not the screen's. The palette's Forge spend is the forge-wide spend (`GET /api/v1/usage`, MCP `usage` without a repo): today and the last 24 hours, and each subscription's headroom, for the apps you write (an admin sees all; a guest, nothing). Owner facts only (`src/actions/returns.ts`); see [`docs/OPERATING.md`](docs/OPERATING.md).
 
-The terminal's palette has `Signed in` for anyone signed in: your browsers, tokens and this terminal's key, with when each was last seen; `d` signs the selected browser out after a confirm, as `/settings` and MCP `sessions` do, and on a token revokes it after a confirm (Keep is the default) through the same `deleteToken` action as Settings and the API, so it stops working at once (`docs/CREW.md`, "Where you are signed in").
+The terminal's palette has `Signed in` for anyone signed in: your browsers, tokens and this terminal's key, with when each was last seen; `d` signs the selected browser out after a confirm, as `/settings` and MCP `sessions` do, and on a token revokes it after a confirm (Keep is the default) through the same `deleteToken` action as Settings and the API, so it stops working at once (`docs/CREW.md`, "Where you are signed in"). `p` there changes your password: it asks the current one, the new one and the new one again, each masked and never echoed, and changes it through `changePassword`, the action behind Settings, so a wrong current password, a throttled account, a new one under 10 characters or over the cap is refused in Settings' words (the length is refused at the new-password prompt, before the confirm); an agent signs in with a key and is not offered `p`.
 
-The release keeper (`src/keeper/`, #7557) cuts, promotes and verifies releases on the forge's own one-minute timer, with no model. It is off until `FORGE_RELEASE_KEEPER=on`, and the pod's service account may `get` and `patch` the forge Deployment.
+The release keeper (`src/keeper/`, #7557) cuts, promotes and verifies releases on the forge's own one-minute timer, with no model. It is off until `FORGE_RELEASE_KEEPER=on`, and the pod's service account may `get` and `patch` the forge Deployment. `FORGE_RELEASE_KEEPER=swap` needs no cluster: it swaps main's tree in place (`docs/features/ship-itself.md`). Its tag is the forge's own and is not pushed to an origin, so a cut is invisible to Forgejo-side tools. /releases, the terminal's Release keeper and MCP `release_keeper` show each release's short commit and its seconds from landed to live; /changelog's live line says it too.
 
 - **Cut:** it tags main's head as `v<patch + 1>` when main has moved past a live tag, nothing is in flight, the merge queue is still, 30 minutes have passed since its last cut and no hold stands.
 - **Verify:** it records the known-good version and image before the tag, sets the Deployment's image, and has the new version spend ten minutes under page load probing `/healthz` each second.
 - **Roll back and hold:** three bad probes in a row hold further cuts with the numbers and set the recorded known-good image back by name, never "undo". A pull saying `release hold <N>` lets the fix through, and that release verifying lifts the hold.
 - **Owner's hold:** set and lifted from the card, the terminal (`h`) or MCP `release_hold`, by a person who may roll back, never an agent.
-- **Where to see it:** the **Release keeper** card on `/releases`, `Release keeper` in the terminal's palette, the **Maintenance** board under `/boards`, and MCP `release_keeper`, each gated as `/releases` is: a guest sees none of it.
+- **Where to see it:** the **Release keeper** card on `/releases`, `Release keeper` in the terminal's palette, the **Maintenance** board under `/boards`, MCP `release_keeper` and `GET /api/v1/keeper` (JSON; 403 for a caller who may not read releases), each gated as `/releases` is: a guest sees none of it.
 
 How it works and how to turn it on: [`docs/features/release-keeper.md`](docs/features/release-keeper.md).
 
@@ -520,3 +579,5 @@ The web changelog's days and its "shipped today" count follow the reader's clock
 A repository admin cuts a wave from two doors, both through `cutWaveFor` (`src/actions/cut_wave.ts`): Settings → *Cut a wave*, and `c` on the terminal's waves screen, which says how many pulls would go in, asks `cut wave N? y/n` (`y` and `n` choose outright) and shows the draft pull's number (Enter opens it). Each opens a draft pull listing the pulls merged since the last wave; nothing merged, an earlier wave that does not parse, or a viewer who is not an admin is refused in the action's words, writing nothing.
 
 Cmd-K finds a repository by its name first (exact, then prefix; your own ahead); a repository with an app has an "Open the app of …" option under it, and Cmd/Ctrl+Enter on the repository opens the app (`docs/features/cmd-k-repositories.md`).
+
+In the terminal, the palette's **Your profile** (any signed-in person, never an agent; a guest is not offered it) shows username, display name and email; `n` sets the display name and `e` the email through `updateProfile`, the action behind Settings → Account. Refusals read as the page's do (`src/actions/profile_words.ts`, including one shared fallback for a refusal with no words of its own), and a changed email says a confirmation link was sent to it and that it is unverified until followed.

@@ -19,6 +19,12 @@ export interface Deployer {
   image(): Promise<string>;
   /** Name this image on the forge container; the Deployment rolls to it with surge. */
   setImage(image: string): Promise<void>;
+  /** The reference that names `version` at `sha` (a swap names a tree, not a tag); the keeper falls back to `imageAt`. */
+  refFor?(version: string, sha: string): string;
+  /** Why `sha` cannot be released by this deployer, checked before anything is cut; undefined when it can. */
+  admits?(sha: string): Promise<string | undefined>;
+  /** `version` read well under load and is the known good: keep it for a restart. */
+  verified?(version: string): void;
 }
 
 /** An image reference: registry/path:tag or @digest, no space, no flag. */

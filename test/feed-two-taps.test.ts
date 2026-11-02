@@ -210,7 +210,7 @@ const COVERED = ["pull", "run", "look", "release", "ask", "decision"];
 const NOT_COVERED = ["milestone", "map", "cost", "tell", "reply", "choose"];
 
 let home: string[] | undefined;
-const homeHrefs = async (): Promise<string[]> => (home ??= hrefs(await (await get("/")).text()));
+const homeHrefs = async (): Promise<string[]> => (home ??= hrefs(await (await get("/feed")).text()));
 
 /**
  * Tap 1: the post's `link` is an href on the home page a person sees, and it
@@ -236,7 +236,7 @@ const one = (items: Item[], kind: string, says: RegExp): Item => {
 };
 
 test("the feed carries a post of every covered kind and no kind unaccounted for", async () => {
-  expect((await get("/")).status).toBe(200);
+  expect((await get("/feed")).status).toBe(200);
   const kinds = new Set((await feed()).map((i) => i.kind));
   for (const k of COVERED) expect(kinds.has(k), k).toBe(true);
   for (const k of kinds) expect([...COVERED, ...NOT_COVERED], `kind ${k} needs a two-taps test`).toContain(k);

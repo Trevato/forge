@@ -22,8 +22,10 @@ quietLogs();
 const NOT_A_PAGE: Record<string, string> = {
   "/llms.txt": "plain markdown for machines, not a page to picture",
   "/robots.txt": "plain text for crawlers",
+  "/openapi.json": "a redirect to the contract document",
   "/favicon.ico": "the tab icon, an image",
   "/releases.json": "JSON feed of /releases",
+  "/changelog.atom": "Atom feed of /changelog",
   "/sitemap.xml": "XML for crawlers",
   "/manifest.webmanifest": "the install manifest, JSON",
   "/opensearch.xml": "the browser search description, XML",
@@ -45,6 +47,8 @@ const NOT_A_PAGE: Record<string, string> = {
   "/sign-in": "redirects to /signin",
   "/mcp": "a protocol endpoint, answers 405 to a GET",
   "/_measure": "the page-load beacon, a POST endpoint",
+  "/apple-touch-icon.png": "an icon, not a page",
+  "/apple-touch-icon-precomposed.png": "an icon, not a page",
   "/events": "a live event stream that never ends",
 };
 

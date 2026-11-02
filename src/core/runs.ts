@@ -11,10 +11,8 @@
 import type { Database } from "bun:sqlite";
 import { BUDGET_PREFIX } from "../kernel/budgets.ts";
 import { id } from "../kernel/id.ts";
-import { getProofRun, listProofRuns } from "./proof_runs.ts";
 
-/** `proof` is read from `proof_run` (`core/proof_runs.ts`), never stored in `run`. */
-export type RunKind = "deploy" | "agent" | "check" | "proof";
+export type RunKind = "deploy" | "agent" | "check";
 
 /**
  * The one summary a run cancelled by the forge's own restart carries — never
@@ -26,7 +24,7 @@ export const STOPPED_SUMMARY = "the forge stopped";
 
 /** The kinds that pass judgement on a commit: a preview's deploy, or a repository's own check. */
 export const CHECK_KINDS: readonly RunKind[] = ["deploy", "check"];
-export const RUN_KINDS: readonly RunKind[] = ["deploy", "agent", "check", "proof"];
+export const RUN_KINDS: readonly RunKind[] = ["deploy", "agent", "check"];
 /** Every state a run can be in — the type is read off this list, so a new state is named here once. */
 export const RUN_STATES = ["queued", "running", "ok", "failed", "cancelled"] as const;
 export type RunState = (typeof RUN_STATES)[number];
@@ -47,6 +45,8 @@ export interface CheckDetail {
   readonly names: readonly string[];
   /** The test files the failures printed under, when a verification after landing failed (#7786). */
   readonly files?: readonly string[];
+  /** The failing tests under those files, at most forty, for the report that files them (#7780). */
+  readonly failures?: readonly { readonly file: string; readonly name: string }[];
   /** The check machine's free disk share (0..1) when a red finished (#5453). */
   readonly diskFree?: number;
 }
@@ -210,7 +210,7 @@ export function getRun(db: Database, runId: string): Run | undefined {
   const row = db
     .query<RunRow, [string]>("SELECT * FROM run WHERE id = ?1")
     .get(runId);
-  return row ? toRun(row) : getProofRun(db, runId);
+  return row ? toRun(row) : undefined;
 }
 
 /**
@@ -323,7 +323,8 @@ export const PULL_STOPPED = ["the pull closed", "the pull landed"] as const;
  * A run its pull closed under it, which had in fact reached its own answer
  * (already done on main): that answer replaces the pull's
  * summary, so the park or the note says what the builder said and not
- * "the pull closed". Only such a cancelled run is touched.
+ * "the pull closed". Only such a cancelled run is touched: one its pull
+ * landed under keeps "the pull landed", which is no stall (#8481).
  */
 export function answerCancelled(
   db: Database,
@@ -333,9 +334,9 @@ export function answerCancelled(
   const changes = db
     .query(
       `UPDATE run SET state = ?2, summary = ?3
-       WHERE id = ?1 AND state = 'cancelled' AND summary IN (?4, ?5)`,
+       WHERE id = ?1 AND state = 'cancelled' AND summary = ?4`,
     )
-    .run(runId, outcome.state, outcome.summary.slice(0, 500), ...PULL_STOPPED)
+    .run(runId, outcome.state, outcome.summary.slice(0, 500), PULL_STOPPED[0])
     .changes;
   return changes > 0 ? getRun(db, runId) : undefined;
 }
@@ -692,13 +693,6 @@ export interface ListRunsOptions {
   limit?: number | undefined;
   /** Resume after this run id (exclusive) — lists run newest first. */
   cursor?: string | undefined;
-  /**
-   * With no `kind`, merge in the proof runs (`core/proof_runs.ts`, #7706):
-   * for the lists that show the whole story. Off, the rest of the callers
-   * (counts, "latest run" lookups) read `run` alone. A proof has no
-   * environment, so `env` leaves proofs out.
-   */
-  withProofs?: boolean | undefined;
 }
 
 export function listRuns(
@@ -707,14 +701,6 @@ export function listRuns(
   options: ListRunsOptions = {},
 ): Run[] {
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
-  // A proof is read from its own table; the rest of the list is `run`'s.
-  const proofs =
-    options.kind === "proof" || (options.kind === undefined && options.withProofs === true)
-      ? options.env === undefined
-        ? listProofRuns(db, repoId, { state: options.state, issueId: options.issueId, cursor: options.cursor, limit })
-        : []
-      : [];
-  if (options.kind === "proof") return proofs;
   const params: (string | number)[] = [repoId];
   let where = "repo_id = ?1";
   if (options.kind !== undefined) {
@@ -744,7 +730,7 @@ export function listRuns(
     )
     .all(...params)
     .map(toRun);
-  return proofs.length === 0 ? rows : [...rows, ...proofs].sort((a, b) => (a.id < b.id ? 1 : -1)).slice(0, limit);
+  return rows;
 }
 
 /** Queued runs of one kind, oldest first — what a worker takes from. */
@@ -1004,8 +990,10 @@ export function latestRunsForIssues(
 }
 
 /**
- * How many automatic follow-ups an agent has had on a pull since a person
- * last spoke: the bound behind rule 7 in docs/APPS.md. `since` is the
+ * How many automatic follow-ups for a failed check an agent has had on a
+ * pull since a person last spoke: the bound behind rule 7 in docs/APPS.md.
+ * A bring-up-to-date run (`conflict`) is no try: main moving is not the
+ * change's failing, and those runs are bounded where they are queued. `since` is the
  * moment of the last human comment or review, or the pull's creation.
  */
 export function automaticRunsSince(
@@ -1017,7 +1005,7 @@ export function automaticRunsSince(
     .query<{ n: number }, [string, string]>(
       `SELECT COUNT(*) AS n FROM run
        WHERE kind = 'agent' AND issue_id = ?1 AND created_at > ?2
-         AND reason IN ('check_failed','conflict')`,
+         AND reason = 'check_failed'`,
     )
     .get(issueId, since);
   return row?.n ?? 0;
@@ -1041,7 +1029,7 @@ export function automaticRunsSinceFor(
         `WITH since (issue_id, at) AS (VALUES ${batch.map((_, n) => `(?${2 * n + 1}, ?${2 * n + 2})`).join(",")})
          SELECT run.issue_id, COUNT(*) AS n FROM run JOIN since ON since.issue_id = run.issue_id
          WHERE run.kind = 'agent' AND run.created_at > since.at
-           AND run.reason IN ('check_failed','conflict')
+           AND run.reason = 'check_failed'
          GROUP BY run.issue_id`,
       )
       .all(...batch.flat());
@@ -1185,26 +1173,33 @@ export function agentRunTotals(
   return { runs: row?.runs ?? 0, spentUsd: row?.spent ?? 0 };
 }
 
-/** The newest agent run of each repository, in one query. */
+/**
+ * The one statement behind `latestAgentRunsForRepos`, exported so its test
+ * explains this exact text and fails when it stops seeking `run_agent_latest`.
+ * `?1` is a JSON array of repository ids.
+ */
+export const LATEST_AGENT_RUNS_SQL = `SELECT run.* FROM run WHERE run.id IN (
+  SELECT (SELECT r.id FROM run r
+           WHERE r.repo_id = ids.value AND r.kind = 'agent'
+           ORDER BY r.created_at DESC, r.id DESC LIMIT 1)
+    FROM json_each(?1) AS ids)`;
+
+/**
+ * The newest agent run of each repository, in one query: per repository one
+ * seek into `run_agent_latest`, never a window over every agent run (#8379).
+ * Ties on `created_at` break by the larger id, as they always have.
+ */
 export function latestAgentRunsForRepos(
   db: Database,
   repoIds: readonly string[],
 ): Map<string, Run> {
   const out = new Map<string, Run>();
   const unique = [...new Set(repoIds)];
-  const CHUNK = 400;
-  for (let i = 0; i < unique.length; i += CHUNK) {
-    const batch = unique.slice(i, i + CHUNK);
-    const rows = db
-      .query<RunRow, string[]>(
-        `SELECT * FROM (
-           SELECT run.*, ROW_NUMBER() OVER (PARTITION BY repo_id ORDER BY created_at DESC, id DESC) AS rn
-           FROM run WHERE kind = 'agent' AND repo_id IN (${batch.map((_, n) => `?${n + 1}`).join(",")})
-         ) WHERE rn = 1`,
-      )
-      .all(...batch);
-    for (const row of rows) out.set(row.repo_id, toRun(row));
-  }
+  if (unique.length === 0) return out;
+  const rows = db
+    .query<RunRow, [string]>(LATEST_AGENT_RUNS_SQL)
+    .all(JSON.stringify(unique));
+  for (const row of rows) out.set(row.repo_id, toRun(row));
   return out;
 }
 

@@ -15,6 +15,9 @@ import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
 
+/** Bun's 5 s default is a load measurement on a busy check machine (password hashing, git, fetches); the verdict is not. */
+const SLOW = 60_000;
+
 let dataDir: string;
 let app: App;
 let servers: Servers;
@@ -47,7 +50,8 @@ beforeAll(async () => {
     forgeUrl: servers.url,
     concurrency: 1,
   });
-  await runtime.start();
+  // Never started: no reconcile, no event handler, no sweeper, so nothing but this test sets or drops
+  // an environment, whatever the load of the machine. The API finds the runtime by its app.
   const u = await createUser(app.db, {
     origin: "seed",
     trusted: true,
@@ -110,7 +114,7 @@ test("each pull names its author and its check word", async () => {
   expect(by["stale"]!["check"]).toBe("none");
   expect(by["deployed"]!["check"]).toBe("red");
   expect(by["green"]!["author"]).toBe("alice");
-});
+}, SLOW);
 
 test("a preview address only where an environment exists, and only for those who may enter the app", async () => {
   serveEnv(pulls["green"]!.number, "g1");
@@ -119,10 +123,7 @@ test("a preview address only where an environment exists, and only for those who
   // A public app: every reader gets the address for the pull that has an environment, null for the rest.
   const open = await listed();
   expect(open["green"]!["preview"]).toBe(address);
-  // The runtime may have brought some others up itself; an address is given exactly where one exists.
-  const held = new Set(runtime.status(record()).map((e) => e.env));
-  for (const item of Object.values(open))
-    expect(item["preview"] === null).toBe(!held.has(`pull-${item["number"]}` as never));
+  for (const item of Object.values(open)) if (item["title"] !== "green") expect(item["preview"]).toBeNull();
 
   // A private app on a public repository: a guest and a plain reader get none; the writer does.
   app.db.query("UPDATE app SET access = 'private' WHERE repo_id = ?1").run(repoId);
@@ -141,7 +142,7 @@ test("a preview address only where an environment exists, and only for those who
     expect(seen["green"]!["check"]).toBe("green");
   }
   expect((await listed({ cookie }))["green"]!["preview"]).toBe(address);
-});
+}, SLOW);
 
 test("a closed pull has no preview address", async () => {
   const done = addPull("done", "c1");
@@ -149,4 +150,4 @@ test("a closed pull has no preview address", async () => {
   app.db.query("UPDATE issue SET state = 'closed' WHERE id = ?1").run(done.id);
   const by = await listed({ cookie }, "closed");
   expect(by["done"]!["preview"]).toBeNull();
-});
+}, SLOW);

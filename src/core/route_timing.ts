@@ -296,6 +296,11 @@ export function noteStart(request: Request, at: number): void {
   startTimes.set(request, at);
 }
 
+/** When the server took the request (`noteStart`), if it did. */
+export function startedAt(request: Request): number | undefined {
+  return startTimes.get(request);
+}
+
 const framed = new WeakSet<Request>();
 
 /**

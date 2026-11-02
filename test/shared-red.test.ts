@@ -87,9 +87,39 @@ describe("a red many pulls share", () => {
     const gate = "reserved names > every top-level page of the forge is a reserved name";
     for (const i of ["i1", "i2", "i3"]) red(i, [gate]);
     expect(shared(red("i4", [gate]))).toBe(false);
+    const index = "the gathered routes > the index is current: run `bun scripts/openapi-routes.ts`";
+    for (const i of ["i1", "i2", "i3"]) red(i, [index]);
+    expect(shared(red("i4", [index]))).toBe(false);
     expect(sharedTests(db)).toEqual([]);
     // The rest of the suite is no gate: three pulls on it still share it.
     const other = "reserved names > the forge's own nouns are reserved too";
+    for (const i of ["i1", "i2"]) red(i, [other]);
+    expect(shared(red("i3", [other]))).toBe(true);
+  });
+
+  test("three pulls each adding a route with no OpenAPI row are three pulls' own reds (#8184)", () => {
+    const gate = "every registered /api/v1 route has an OpenAPI row or is listed as not yet described";
+    for (const i of ["i1", "i2", "i3"]) red(i, [gate]);
+    expect(shared(red("i4", [gate]))).toBe(false);
+    const index = "the gathered routes > the index is current: run `bun scripts/openapi-routes.ts`";
+    for (const i of ["i1", "i2", "i3"]) red(i, [index]);
+    expect(shared(red("i4", [index]))).toBe(false);
+    expect(sharedTests(db)).toEqual([]);
+    const v = vitals({ db, dataDir: tmpdir(), signals: { errors: new ErrorLedger(), refused: new RefusedLedger() } });
+    expect(v.degraded.filter((d) => d.cause.startsWith("shared:"))).toEqual([]);
+    // Named whole, not by prefix: a top-level test it begins does not hide.
+    const longer = `${gate} twice`;
+    for (const i of ["i1", "i2"]) red(i, [longer]);
+    expect(shared(red("i3", [longer]))).toBe(true);
+  });
+
+  test("three pulls each adding a tool without regenerating the index are three pulls' own reds (#7906)", () => {
+    const index = "the gathered tools > the index is current: run `bun scripts/mcp-tools.ts`";
+    for (const i of ["i1", "i2", "i3"]) red(i, [index]);
+    expect(shared(red("i4", [index]))).toBe(false);
+    expect(sharedTests(db)).toEqual([]);
+    // The rest of the suite is no gate: three pulls on it still share it.
+    const other = "the gathered tools > are ordered by code point, not the machine's locale";
     for (const i of ["i1", "i2"]) red(i, [other]);
     expect(shared(red("i3", [other]))).toBe(true);
   });
@@ -106,6 +136,16 @@ describe("a red many pulls share", () => {
     expect(names.has("B > u")).toBe(true);
     expect(names.has("B > t")).toBe(false);
     expect(names.has("A > u")).toBe(false);
+    expect(suiteNames('test("top", () => {});\n').has("top")).toBe(true);
+  });
+
+  test("a top-level test is named bare; one inside a describe is not", () => {
+    const names = suiteNames('test("t", () => {});\ndescribe("A", () => {\n  test("u", () => {});\n});\ntest("v", () => {});\n');
+    expect(names.has("t")).toBe(true);
+    expect(names.has("v")).toBe(true);
+    expect(names.has("A > u")).toBe(true);
+    expect(names.has("u")).toBe(false);
+    expect(names.has("A > v")).toBe(false);
   });
 
   test("one pull red three times is its own red, not the lane's", () => {
@@ -269,13 +309,14 @@ describe("a failure outside a test names what it threw (#5727)", () => {
   });
 });
 
-/** Each `describe > test` a test file declares, every test paired only with the describe it sits under, plus `describe > ` for each suite. */
+/** Each `describe > test` a test file declares, every test paired only with the describe it sits under, plus `describe > ` for each suite and each top-level test's bare name. */
 function suiteNames(text: string): Set<string> {
   const names = new Set<string>();
   let suite: string | undefined;
-  for (const m of text.matchAll(/\b(describe|test)\("((?:[^"\\]|\\.)*)"/g)) {
-    if (m[1] === "describe") names.add(`${(suite = m[2])} > `);
-    else if (suite !== undefined) names.add(`${suite} > ${m[2]}`);
+  for (const m of text.matchAll(/^([ \t]*)(describe|test)\("((?:[^"\\]|\\.)*)"/gm)) {
+    if (m[2] === "describe") names.add(`${(suite = m[3])} > `);
+    else if (m[1] === "") names.add(m[3]!);
+    else if (suite !== undefined) names.add(`${suite} > ${m[3]}`);
   }
   return names;
 }

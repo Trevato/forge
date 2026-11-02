@@ -87,7 +87,13 @@ minted the child's token may let it run: **Let it run here** on the pull page,
 never counts toward `require_review` or the merge gate, a new push needs a new
 grant, and a proposed pull never lands on its own, even on an autonomous repo.
 
-Connect one at **Settings → Origins** (or `A` then `o` in the terminal). Which
+Connect one at **Settings → Origins** (or `A` then `o` in the terminal). The
+terminal lists the ones you have connected under the palette's **Connected
+origins** (a signed-in person's, never an agent's or a guest's): `j`/`k` move,
+`s` syncs the selected origin now and says how many repositories it found (or
+the report's error), `d` asks first and then disconnects it, as Settings →
+Origins does (`syncOriginNow`, `disconnectOrigin`; another person's origin id
+is "No such origin."). Which
 way in you get is a property of the forge, not a preference:
 
 - **GitHub** — a device code. The forge shows a short code and a URL; you type

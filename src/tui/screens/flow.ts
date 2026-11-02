@@ -13,12 +13,15 @@
  * changes requested waiting on a builder and on a reviewer (`flow/requested.ts`, #2172); then each
  * autonomous repository's ready list, startable beside the count per
  * filter that holds the rest (`flow/held.ts`, #2244), as the flow panel draws it;
- * last, how long each main has gone unverified after landing (`flow/verified.ts`, #7786).
+ * then how long each main has gone unverified after landing (`flow/verified.ts`, #7786);
+ * then one line for the full-suite report's open issues (`checks/report.ts`, #7780);
+ * last, the duplicate lines (`duplicateLines`).
  * Read-only; Enter, Esc or q closes it.
  */
 
 import type { Database } from "bun:sqlite";
 import { recentGates, type KeptResult } from "../../checks/gate_result.ts";
+import { reportLine } from "../../checks/report.ts";
 import { HOLDS } from "../../crew/held.ts";
 import { pullCounts } from "../../crew/hot_files.ts";
 import { warmingLine } from "../../crew/hot_history.ts";
@@ -30,7 +33,7 @@ import { conflictedSays, rebaseLaneSays } from "../../flow/conflicted.ts";
 import { IDLE_LIMIT, type IdlePull } from "../../flow/idle_pulls.ts";
 import { pileSays } from "../../flow/pile.ts";
 import { panelFigures } from "../../flow/panel_cache.ts";
-import { readPipeline, STAGE_LABEL, verdict } from "../../flow/pipeline.ts";
+import { readPipeline, readStepStats, STAGE_LABEL, statWords, verdict } from "../../flow/pipeline.ts";
 import { parkedSays } from "../../flow/parked.ts";
 import { firedAlarms } from "../../flow/alarms.ts";
 import { readVitals, vitalsFor, vitalsLine } from "../../flow/vitals.ts";
@@ -112,6 +115,9 @@ export function flowLines(
         `${pad(STAGE_LABEL[s.key], 12)} ${pad(String(s.lastHour), 9, "right")} ${pad(String(s.day), 5, "right")}  ${s.label}`,
     ),
     "",
+    "Steps, 30 days:",
+    ...readStepStats(db, now, agent !== undefined).flatMap((m) => wrap(`${m.label}: ${statWords(m)}`, inner)),
+    "",
     `${pad("Merge queue", 15)} ${pad("queued", 6, "right")} ${pad("gating", 6, "right")} ${pad("gates", 5, "right")} ${pad("landed 1h", 9, "right")} ${pad("to land, min", 12, "right")}`,
     ...(queues.length === 0
       ? ["Nothing queued, gating or landed in the last hour."]
@@ -135,6 +141,8 @@ export function flowLines(
     ...(verified === undefined || verified.length === 0
       ? []
       : ["", ...verified.flatMap((r) => wrap(`${r.repo}: ${verifiedSays(r, now.getTime())}`, inner))]),
+    "",
+    ...wrap(reportLine(db), inner),
     "",
     ...duplicateLines(dups, inner),
   ];

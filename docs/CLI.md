@@ -329,6 +329,17 @@ $ forge tell "make the header smaller"
 told alice/shop: issue #12  https://forge.example.com/alice/shop/issues/12
 ```
 
+## forge talk
+
+Say something to the forge's own agent, as you, and print what it answers.
+The agent works through the forge's MCP with your permissions; a write it
+would make is held for your yes (Confirm or Cancel on `/talk`). Words are 1 to
+20000 characters. It waits up to two minutes, then says where to read the rest.
+
+```console
+$ forge talk "what is waiting on me?"
+```
+
 ## forge new
 
 Makes an app from the shell, as `POST /api/v1/apps` does, then clones its
@@ -447,4 +458,19 @@ Flags: `--root DIR`.
 
 ```console
 $ forge ui
+```
+
+## forge talk
+
+Say something to the forge's own agent, as you, and print what it answers.
+The agent works through the forge's MCP with your permissions; a write it
+would make is held for your yes. The words are 1 to 20,000 characters
+(exit 2 when empty or too long); a 401 exits 3. It waits up to two minutes
+for the answer, then says to read it on the feed.
+
+Flags: none.
+
+```console
+$ forge talk "what is waiting on me?"
+Two pulls are green and wait for your merge: #12 and #15.
 ```

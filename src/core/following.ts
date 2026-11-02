@@ -39,6 +39,7 @@ import {
 } from "../git/merge.ts";
 import { runGit } from "../git/env.ts";
 import { readTipOrAbsent } from "../git/tip.ts";
+import { readTips } from "../git/tips.ts";
 import { repoDir } from "../git/repos.ts";
 import { forkFollowMode } from "./fork_follow.ts";
 import { createLog } from "../kernel/log.ts";
@@ -429,13 +430,19 @@ export async function refreshPullHead(
   // everyone reads (`pullDir`, `core/sealed.ts`).
   const apart = pull.sealed && head.sealedFor === repo.id;
   const snapshotDir = apart ? headDir : baseDir;
-  // Two cheap `rev-parse`s before a fetch: this runs on every read of a
-  // cross-repo pull, and the overwhelmingly common answer is "nothing moved".
-  const [live, snapshot] = await Promise.all([
-    resolveOid(headDir, `refs/heads/${pull.headBranch}`),
-    resolveOid(snapshotDir, `refs/pull/${pull.number}/head`),
+  // This runs on every read of a cross-repo pull, and the overwhelmingly
+  // common answer is "nothing moved": both tips come from the ref files, and
+  // git is asked only for one they cannot say (#8157).
+  const headRef = `refs/heads/${pull.headBranch}`;
+  const pullRef = `refs/pull/${pull.number}/head`;
+  const [heads, snaps] = await Promise.all([
+    readTips(headDir, [headRef]),
+    readTips(snapshotDir, [pullRef]),
   ]);
-  if (live === undefined || live === snapshot) return undefined;
+  const live = heads.get(headRef) ?? (await resolveOid(headDir, headRef));
+  if (live === undefined) return undefined;
+  const snapshot = snaps.get(pullRef) ?? (await resolveOid(snapshotDir, pullRef));
+  if (live === snapshot) return undefined;
   const tip = apart
     ? live
     : await fetchInto(baseDir, headDir, `refs/heads/${pull.headBranch}`);

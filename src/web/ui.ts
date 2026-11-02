@@ -10,7 +10,7 @@
  * reaches for an inline `style` attribute, because the CSP forbids it.
  */
 
-import { type EnvState, type EnvStatus } from "../apps/runtime.ts";
+import type { EnvState, EnvStatus } from "../apps/runtime.ts";
 import type { PreviewData } from "../apps/data.ts";
 import type { Mark } from "../core/marks.ts";
 import type { RunKind, RunState } from "../core/runs.ts";
@@ -369,14 +369,14 @@ export function runStateBadge(state: RunState, kind: RunKind = "deploy"): Html {
     case "running":
       return badge("Running", { icon: "loader", tone: "attn" });
     case "ok":
-      return badge(kind === "agent" ? "Done" : kind === "proof" ? "Green" : "Passed", {
+      return badge(kind === "agent" ? "Done" : "Passed", {
         icon: "check",
         tone: "success",
       });
     case "failed":
       return badge("Failed", { icon: "x", tone: "danger" });
     case "cancelled":
-      return badge(kind === "proof" ? "Cut off" : "Cancelled", { icon: "ban", variant: "outline" });
+      return badge("Cancelled", { icon: "ban", variant: "outline" });
   }
 }
 
@@ -1263,11 +1263,14 @@ export function confirmAction(o: {
   /** The label on this button only — the confirm page words itself. */
   verb: string;
   size?: "sm" | "lg";
+  /** The accessible name, when the verb alone is ambiguous (one of many rows). */
+  label?: string;
 }): Html {
   return btn(o.verb, {
     href: `/-/confirm?to=${encodeURIComponent(o.action)}`,
     variant: "danger",
     ...(o.size ? { size: o.size } : {}),
+    ...(o.label ? { label: o.label } : {}),
   });
 }
 

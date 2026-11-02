@@ -23,7 +23,7 @@ import type { ForgeEvent } from "../../core/events.ts";
 import type { Session } from "../session.ts";
 import { G, Screen as Surface, type Rect } from "../term/screen.ts";
 import { style } from "../term/style.ts";
-import { pad, truncate } from "../term/width.ts";
+import { pad, truncate, wrap } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import type { Tokens } from "../ui/theme.ts";
 import { icon, type IconSet } from "../ui/icons.ts";
@@ -48,6 +48,19 @@ export class ListState {
   offset = 0;
   /** Rows the last render had room for — what `ctrl+d` pages by. */
   height = 10;
+  /** Screen rows each drawn item took, from `offset`, when some item had a note; else undefined. */
+  heights: number[] | undefined;
+
+  /** The item at list row `y`: where a click landed, however tall the items above it. */
+  at(y: number): number {
+    if (this.heights === undefined) return this.offset + y;
+    let top = 0;
+    for (let i = 0; i < this.heights.length; i++) {
+      top += this.heights[i]!;
+      if (y < top) return this.offset + i;
+    }
+    return -1;
+  }
 
   clamp(length: number): void {
     this.index = Math.max(0, Math.min(this.index, Math.max(0, length - 1)));
@@ -71,6 +84,25 @@ export class ListState {
       0,
       Math.min(this.offset, Math.max(0, length - this.height)),
     );
+    return this.offset;
+  }
+
+  /**
+   * As `window`, for rows taller than one line: row `i` takes `heights[i]`
+   * lines. The cursor's row is kept whole on screen, and no room is left
+   * empty at the bottom while rows above could fill it.
+   */
+  windowRows(height: number, heights: readonly number[]): number {
+    this.height = Math.max(1, height);
+    this.clamp(heights.length);
+    const span = (from: number, to: number): number => {
+      let n = 0;
+      for (let i = from; i <= to; i++) n += heights[i] ?? 1;
+      return n;
+    };
+    if (this.index < this.offset) this.offset = this.index;
+    while (this.offset < this.index && span(this.offset, this.index) > height) this.offset++;
+    while (this.offset > 0 && span(this.offset - 1, heights.length - 1) <= height) this.offset--;
     return this.offset;
   }
 
@@ -215,9 +247,19 @@ export interface ListRow {
   readonly hollow?: boolean;
   readonly secondary?: string;
   readonly meta?: string;
+  /** A muted line under the row, indented past its dot; the item is then two rows tall. */
+  readonly note?: string;
+  /** Muted sentences under the row, wrapped to the list's width, never cut; the item is as tall as they wrap. */
+  readonly below?: readonly string[];
 }
 
-/** A scrolling list of `row()`s with a scrollbar when it overflows. */
+/** Lines under a row start past its caret and dot. */
+const UNDER_INDENT = 4;
+
+/**
+ * A scrolling list of `row()`s with a scrollbar when it overflows. A row with
+ * `note` is two lines tall; one with `below` lines, as many as they wrap to.
+ */
 export function drawList(
   s: Surface,
   r: Rect,
@@ -228,16 +270,36 @@ export function drawList(
 ): void {
   if (r.w <= 0 || r.h <= 0) return;
   const body = { x: r.x, y: r.y, w: Math.max(0, r.w - 1), h: r.h };
-  const from = state.window(r.h, rows.length);
-  for (let i = 0; i < r.h; i++) {
-    const item = rows[from + i];
-    if (item === undefined) break;
-    row(s, { x: body.x, y: body.y + i, w: body.w, h: 1 }, c, {
-      ...item,
-      selected: focused && from + i === state.index,
-      focused: from + i === state.index,
+  const room = Math.max(1, body.w - UNDER_INDENT);
+  const under = rows.map((item): string[] =>
+    item.note
+      ? body.w > UNDER_INDENT ? [truncate(item.note, room)] : [""]
+      : (item.below ?? []).flatMap((line) => wrap(line, room)),
+  );
+  const tall = under.some((lines) => lines.length > 0);
+  // Scroll by item, so the cursor's whole entry (row and the lines under it) is in view.
+  const from = tall
+    ? state.windowRows(r.h, under.map((lines) => 1 + lines.length))
+    : state.window(r.h, rows.length);
+  let y = body.y;
+  const heights: number[] = [];
+  for (let i = from; i < rows.length && y < body.y + body.h; i++) {
+    const top = y;
+    row(s, { x: body.x, y, w: body.w, h: 1 }, c, {
+      ...rows[i]!,
+      selected: focused && i === state.index,
+      focused: i === state.index,
     });
+    y++;
+    for (const line of under[i]!) {
+      if (y >= body.y + body.h) break;
+      s.text(body.x + UNDER_INDENT, y, line, style(c.mutedFg, c.bg), body.x + body.w);
+      y++;
+    }
+    heights.push(y - top);
   }
+  state.heights = tall ? heights : undefined;
+  if (tall) state.height = Math.max(1, heights.length);
   scrollbar(s, { x: r.x + r.w - 1, y: r.y, w: 1, h: r.h }, c, {
     total: rows.length,
     offset: from,
@@ -276,7 +338,7 @@ export function hitList(
 ): void {
   ctx.hit(r, {
     click: (e) => {
-      const index = state.offset + e.y;
+      const index = state.at(e.y);
       if (index < 0 || index >= count) return;
       if (index === state.index || e.double) {
         state.index = index;
@@ -722,7 +784,9 @@ export function live(
     timer = setTimeout(() => {
       timer = null;
       if (signal.aborted) return;
-      void Promise.resolve(refresh()).catch(() => undefined);
+      // A refresh that throws at once (the forge closed under it) fails as
+      // quietly as one that rejects, never as an uncaught error on the timer.
+      void Promise.resolve().then(refresh).catch(() => undefined);
     }, LIVE_COALESCE_MS);
   });
   signal.addEventListener("abort", () => {

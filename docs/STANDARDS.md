@@ -7,7 +7,7 @@ its own mark. Nothing here is configured, and nothing here is optional.
 
 | path                           | what it is                                                        | from                                                                         |
 | ------------------------------ | ----------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `/.well-known/security.txt`    | who to tell about a vulnerability (RFC 9116), with a fixed expiry | the first account's page here; an address only from `FORGE_SECURITY_CONTACT` |
+| `/.well-known/security.txt`    | who to tell about a vulnerability (RFC 9116), with a fixed expiry | the sealed new-issue form of `FORGE_REPO` when it is public, else the first account's page here; an address only from `FORGE_SECURITY_CONTACT` |
 | `/.well-known/change-password` | where a password manager sends a person                           | `/settings/password`                                                         |
 | `/robots.txt`                  | crawlers stay out of accounts, search and the API; the sitemap    | —                                                                            |
 | `/sitemap.xml`                 | the front page and every public repository, never a private one   | `listReposVisibleTo(db, nobody)`                                             |

@@ -174,7 +174,7 @@ describe("the studio", () => {
       description: "",
     });
     if (!later.ok) throw new Error(String(later.error));
-    const html = await (await get("/")).text();
+    const html = await (await get("/feed")).text();
     const block = html.match(
       /<script type="application\/json" id="palette-index">([\s\S]*?)<\/script>/,
     )?.[1];
@@ -276,7 +276,7 @@ describe("the studio", () => {
   });
 
   test("the home and an app's page lay main and rail with .split's wide rail; no dash class is left (#4748)", async () => {
-    for (const path of ["/", "/alice/notes"]) {
+    for (const path of ["/feed", "/alice/notes"]) {
       const page = await (await get(path)).text();
       expect(page).not.toMatch(/class="[^"]*\bdash(?:-main|-rail)?\b/);
       expect(page).toContain('<div class="split" data-rail="wide">');

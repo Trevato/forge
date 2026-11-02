@@ -1,6 +1,7 @@
 /**
  * The security floor (`securityFloor` in src/http/respond.ts) on every GET
- * route the two routers register, signed out and signed in, 404s included.
+ * route the two routers register, signed out and signed in (one test each,
+ * over the same paths and the one seeded server), 404s included.
  * The route table is read from the routers themselves; each pattern's
  * parameters are filled from one seeded repository, issue, pull, run and app.
  * A pattern that needs a parameter the seed cannot supply is named in
@@ -168,20 +169,35 @@ function pathFor(pattern: string): string {
 const unseeded = (pattern: string): boolean =>
   paramsOf(pattern).some((key) => !SEEDED.has(key) && !(key === "id" && pattern.includes("/runs/:id")));
 
+/**
+ * `accept-encoding: identity` skips gzip, which only costs time here: the floor
+ * is applied after compression (`compress(...).then(securityFloor)` in
+ * src/http/server.ts), so the headers asserted are the same either way.
+ */
 async function floor(path: string, headers: Record<string, string>): Promise<string[]> {
-  const res = await fetch(`${servers.url}${path}`, { headers, redirect: "manual", signal: AbortSignal.timeout(5_000) });
+  const res = await fetch(`${servers.url}${path}`, {
+    headers: { "accept-encoding": "identity", ...headers }, redirect: "manual", signal: AbortSignal.timeout(5_000),
+  });
   await res.body?.cancel();
   return ["content-security-policy", "x-content-type-options", "referrer-policy"]
     .filter((h) => !res.headers.get(h))
     .map((h) => `${res.status} ${path} lacks ${h}`);
 }
 
-test("every GET route, and an unknown path, carries the floor signed out and signed in", async () => {
-  const paths = [...getPatterns().map(pathFor), "/no/such/path/at/all", "/api/v1/no-such-route"];
+const allPaths = (): string[] => [...getPatterns().map(pathFor), "/no/such/path/at/all", "/api/v1/no-such-route"];
+
+async function missingFloor(headers: Record<string, string>): Promise<string[]> {
   const missing: string[] = [];
-  for (const headers of [{}, { cookie }])
-    for (const path of paths) missing.push(...(await floor(path, headers)));
-  expect(missing).toEqual([]);
+  for (const path of allPaths()) missing.push(...(await floor(path, headers)));
+  return missing;
+}
+
+test("every GET route, and an unknown path, carries the floor signed out", async () => {
+  expect(await missingFloor({})).toEqual([]);
+}, 9_000);
+
+test("every GET route, and an unknown path, carries the floor signed in", async () => {
+  expect(await missingFloor({ cookie })).toEqual([]);
 }, 9_000);
 
 test("the patterns the seed cannot fill are exactly the ones named, each with a reason", () => {

@@ -10,10 +10,9 @@
  * the tag fresh for every answer: text inside cannot close the block early,
  * because it cannot know the tag.
  *
- * Each conversation keeps two marks: when the person last spoke (and what
- * they said) and when the agent last read fenced text. Marks are monotonic
- * ids, so they order even within one millisecond. Plain data in and out;
- * who may call is decided at the door (`http/mcp.ts`).
+ * Each conversation keeps what the person last said and whether the agent
+ * has read fenced text; once it has, the fence stays up for the conversation.
+ * Plain data in and out; who may call is decided at the door (`http/mcp.ts`).
  */
 
 import type { Database } from "bun:sqlite";
@@ -30,7 +29,8 @@ export const WORDS_MAX = 20_000;
  * own addresses — and so are left bare. Every other string in an answer is
  * fenced wherever it sits: a body, a comment, a reason, a label, a branch or
  * file name, a display name. Allow-listed, so a field a tool adds tomorrow
- * is fenced until someone writes it in here.
+ * is fenced until someone writes it in here. `repo` is not on it: the name
+ * is an outsider's to choose.
  */
 export const BARE_KEYS: ReadonlySet<string> = new Set([
   "id",
@@ -47,12 +47,32 @@ export const BARE_KEYS: ReadonlySet<string> = new Set([
   "uri",
   "mimeType",
   "tool",
-  "repo",
   "needs_confirm",
 ]);
 
 /** Ids (`repoId`) and timestamps (`createdAt`) are the forge's too. */
-const bare = (key: string): boolean => BARE_KEYS.has(key) || /[a-z](Id|At)$/.test(key);
+const bareKey = (key: string): boolean => BARE_KEYS.has(key) || /[a-z](Id|At)$/.test(key);
+
+/** Keys that hold an address. */
+const ADDRESS_KEYS: ReadonlySet<string> = new Set(["url", "href", "uri"]);
+
+/** What an id, an enum or a timestamp looks like: short, with no space, bracket or quote. */
+const MADE_FORM = /^[A-Za-z0-9_.:/+-]{1,64}$/;
+
+/**
+ * A string under a bare key is left bare only while it still looks like one
+ * the forge made (#8230): one short run with no space and no bracket, and an
+ * address the forge's own — a path, or under `origin`. A sentence, or a link
+ * someone else chose, is fenced like any other text.
+ */
+const bareValue = (key: string, value: string, origin: string | undefined): boolean => {
+  if (!ADDRESS_KEYS.has(key)) return MADE_FORM.test(value);
+  if (!/^[^\s[\]]{1,300}$/.test(value)) return false;
+  return /^\/(?!\/)/.test(value) || (origin !== undefined && value.startsWith(`${origin}/`));
+};
+
+/** A key the forge names its fields with; any other key is someone's text, and fenced. */
+const KEY_FORM = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
 
 /** A fresh tag for one answer's blocks. */
 export function fenceTag(): string {
@@ -69,21 +89,26 @@ export const fenced = (text: string, tag: string): string =>
 
 /**
  * The answer with every non-empty string wrapped — in an object, an array or
- * the answer itself — except under a bare key, and whether any was. Numbers,
- * booleans and bare strings are returned as they were.
+ * the answer itself, and an object's key that is not a field name — except
+ * a forge-made value under a bare key, and whether any was. Numbers,
+ * booleans and bare strings are returned as they were. `origin` is the
+ * forge's own, whose addresses stay bare.
  */
-export function fence(value: unknown, tag: string): { value: unknown; fenced: boolean } {
+export function fence(value: unknown, tag: string, origin?: string): { value: unknown; fenced: boolean } {
   let any = false;
+  const wrap = (s: string): string => {
+    any = true;
+    return fenced(s, tag);
+  };
   const walk = (v: unknown): unknown => {
-    if (typeof v === "string") {
-      if (v === "") return v;
-      any = true;
-      return fenced(v, tag);
-    }
+    if (typeof v === "string") return v === "" ? v : wrap(v);
     if (Array.isArray(v)) return v.map(walk);
     if (v === null || typeof v !== "object") return v;
     return Object.fromEntries(
-      Object.entries(v).map(([k, x]) => [k, bare(k) && typeof x === "string" ? x : walk(x)]),
+      Object.entries(v).map(([k, x]) => [
+        KEY_FORM.test(k) ? k : wrap(k),
+        typeof x === "string" && bareKey(k) && bareValue(k, x, origin) ? x : walk(x),
+      ]),
     );
   };
   const out = walk(value);
@@ -113,9 +138,11 @@ export function readFenced(db: Database, via: string): void {
 }
 
 /**
- * The person's newest words when fenced text was read after them, so a
- * write now must be one those words name; undefined when nothing was read
- * since the person spoke.
+ * The person's newest words once fenced text was read in this conversation,
+ * so a write now must be one those words name; undefined when nothing was
+ * ever read. The mark outlives the person's next message and a resume: the
+ * session still holds what was read, so a new message from the person does
+ * not make it safe (#8230). Only words that name the write let it go.
  */
 export function fenceUp(db: Database, via: string): string | undefined {
   const row = db
@@ -123,7 +150,7 @@ export function fenceUp(db: Database, via: string): string | undefined {
       "SELECT heard_mark, words, read_mark FROM conversation_fence WHERE via = ?1",
     )
     .get(via);
-  if (row === null || row.read_mark === null || row.read_mark <= row.heard_mark) return undefined;
+  if (row === null || row.read_mark === null) return undefined;
   return row.words;
 }
 
@@ -150,6 +177,10 @@ const says = (words: string, w: string): boolean => {
   return false;
 };
 
+/** Whether these words hold `value` as whole words: not inside a longer word ("bug" is not in "debug"). */
+const saysValue = (words: string, value: string): boolean =>
+  new RegExp(`(?<![a-z0-9])${escapeRe(plain(value))}(?![a-z0-9])`).test(words);
+
 /** Whether these words hold the whole number `n` (`12`, `#12`; not `w12`, `121`). */
 const saysNumber = (words: string, n: number): boolean =>
   new RegExp(`(^|[^0-9a-z])${n}($|[^0-9a-z])`).test(words);
@@ -165,7 +196,7 @@ const leaves = (v: unknown): unknown[] =>
  * Whether the person's words name this write. The verb: every word of the
  * tool's name, or every switch it sets (a boolean field, `allowForks` as "allow
  * forks"), not negated. Then every value it is given: the repository's name,
- * every other string as written (a label, a branch, a collaborator, a body),
+ * every other string as written, as whole words (a label, a branch, a collaborator, a body),
  * and every whole number (an issue, a pull, `into`). Strict on purpose: a
  * write it misses is a confirm the person answers, never a write done.
  */
@@ -180,8 +211,7 @@ export function named(words: string, tool: string, args: Record<string, unknown>
     for (const leaf of leaves(v)) {
       if (typeof leaf === "string") {
         const value = k === "repo" ? (leaf.split("/").pop() ?? "") : leaf;
-        if (value !== "" && !said.includes(plain(value))) return false;
-        if (k === "repo" && !says(said, value)) return false;
+        if (value !== "" && !saysValue(said, value)) return false;
       } else if (typeof leaf === "number") {
         if (!Number.isInteger(leaf) || !saysNumber(said, leaf)) return false;
       }

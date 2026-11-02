@@ -211,7 +211,7 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
           </tbody>
         </table>
       </div>`,
-      { head: html`<h2>Pipeline</h2><a class="muted small" href="/settings/capacity">Capacity</a>`, id: "pipeline", pad: false },
+      { head: html`<h2>Pipeline</h2><a class="muted small" href="/pipeline">The four steps</a><a class="muted small" href="/settings/capacity">Capacity</a>`, id: "pipeline", pad: false },
     )}
     ${verifiedCard(readVerified(app, reader.kind === "owner"), now)}
     ${hotFilesCard(app, reader)}

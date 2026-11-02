@@ -92,6 +92,7 @@ import {
 } from "../actions/pulls.ts";
 import { attachLook } from "../actions/attach_look.ts";
 import { lookUrl } from "../core/looks.ts";
+import { pullLooks } from "../looks/readable.ts";
 import { holdPull, releasePull } from "../actions/holds.ts";
 import { getHold, type Hold } from "../core/holds.ts";
 import { watchMilestone } from "../actions/watches.ts";
@@ -155,7 +156,7 @@ import {
   canWrite,
   getRepoById,
 } from "../core/repos.ts";
-import { cleanQuery, CODE_BUDGET_MS, searchKind } from "../core/search.ts";
+import { cleanQuery, CODE_BUDGET_MS, searchKind, searchNote } from "../core/search.ts";
 import { strangerCodeSearch } from "./strangers.ts";
 import {
   isReviewState,
@@ -181,7 +182,13 @@ import { appLimitWords, appsOwnedBy } from "../actions/app_limit.ts";
 import { getQuota } from "../settings/quotas.ts";
 import { isSafeRef, isSafeTreePath } from "../git/guard.ts";
 import { compareBranches, listBranchRows } from "../git/branches.ts";
-import { newApp } from "../actions/apps.ts";
+import {
+  NO_NAME_ERROR,
+  newApp,
+  newAppFromSentence,
+  type NewAppInput,
+  type NewAppResult,
+} from "../actions/apps.ts";
 import { listDomains } from "../core/domains.ts";
 import {
   migrateMessage,
@@ -250,14 +257,14 @@ import {
 } from "../core/runs.ts";
 import { checkStale } from "../checks/stale.ts";
 import { resolveOid } from "../git/merge.ts";
-import { readUsage, usageDays, USAGE_DAYS_MAX } from "../actions/usage.ts";
+import { readForgeUsage, readUsage, usageDays, USAGE_DAYS_MAX } from "../actions/usage.ts";
 import { readReturns, reportSpend, RETURNS_DAYS } from "../actions/returns.ts";
 import { fleetSelection, readFleetGraph } from "../actions/fleet-graph.ts";
 import { carriedBy } from "../core/carried.ts";
 import { readGateLog } from "../checks/gate_log.ts";
 import { recentGates } from "../checks/gate_result.ts";
 import { readRunLog, subscribeRunLog } from "../runs/log.ts";
-import { blobForRender, commitLog, listRefs, listTree } from "../git/read.ts";
+import { blobForRender, commitLog, listRefs, listTree, refTip } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
 import { carriedPulls, pullPath } from "../story/wave_pulls.ts";
 import { pullRefs, readWave, readWaves } from "../story/waves.ts";
@@ -311,8 +318,11 @@ import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
 import { passportRoutes } from "./passport_edge.ts";
 import { egressGrantRoutes } from "./api/egress_grants.ts";
 import { forgeRoutes } from "./api/forges.ts";
+import { releasesRoutes } from "./api/releases.ts";
 import { hookRoutes } from "./api/hooks.ts";
+import { keeperRoutes } from "./api/keeper.ts";
 import { agentRoutes } from "./api/agents.ts";
+import { subscriptionRoutes } from "./api/subscriptions.ts";
 import { boardRoutes } from "./api/boards.ts";
 import { followingRoutes } from "./api/following.ts";
 import { labelsRoutes } from "./api/labels.ts";
@@ -328,15 +338,17 @@ import { reportRoutes } from "./api/reports.ts";
 import { rollbackRoutes } from "./api/rollback.ts";
 import { takeBackRoutes } from "./api/take_back.ts";
 import { conversationConfirmRoutes } from "./api/conversation_confirms.ts";
+import { conversationTalkRoutes } from "./api/conversation_talk.ts";
 import { orgRoutes } from "./api/orgs.ts";
 import { promptRoutes } from "./api/prompts.ts";
+import { cloudRoutes } from "./api/cloud.ts";
 import { secretRoutes } from "./api/secrets.ts";
 import { drillRoutes } from "./api/drills.ts";
 import { upstreamRoutes } from "./api/upstream.ts";
 import type { Router } from "./router.ts";
 import { clientAddress } from "./peer.ts";
 import { manifestFor } from "../actions/here.ts";
-import { egressSnapshot } from "../apps/egress.ts";
+import { egressSnapshot, egressTotals } from "../apps/egress.ts";
 import { egressMetrics } from "../apps/egress_metrics.ts";
 import { forgeMetrics } from "../metrics/forge.ts";
 import { appSources } from "../metrics/app_sources.ts";
@@ -806,9 +818,26 @@ export function contributeFailure(error: unknown): Response {
 
 // ---- query parsing ----
 
+/**
+ * `?limit=`: absent is `fallback`, a whole number from 1 to 200 is itself,
+ * anything else is the 422 to answer.
+ */
+export function readLimit(ctx: Ctx, fallback: number): number | Response;
+export function readLimit(ctx: Ctx, fallback: undefined): number | undefined | Response;
+export function readLimit(ctx: Ctx, fallback: number | undefined): number | undefined | Response {
+  const rawLimit = ctx.url.searchParams.get("limit");
+  if (rawLimit === null) return fallback;
+  const limit = /^\d{1,4}$/.test(rawLimit) ? Number(rawLimit) : 0;
+  if (limit < 1 || limit > 200)
+    return apiError("invalid_limit", 422, "limit is a whole number from 1 to 200");
+  return limit;
+}
+
 /** `?state=&label=&author=&limit=&cursor=` for issue and pull lists. */
 export function listQuery(ctx: Ctx) {
   const q = ctx.url.searchParams;
+  const limit = readLimit(ctx, undefined);
+  if (limit instanceof Response) return limit;
   const stateParam = q.get("state");
   const state: IssueState | "all" =
     stateParam === "closed" || stateParam === "all" ? stateParam : "open";
@@ -817,7 +846,7 @@ export function listQuery(ctx: Ctx) {
   const author = q.get("author");
   return {
     state,
-    limit: pageLimit(q.has("limit") ? Number(q.get("limit")) : undefined),
+    limit: pageLimit(limit),
     ...(Number.isInteger(cursorParam) && cursorParam > 0
       ? { cursor: cursorParam }
       : {}),
@@ -860,11 +889,8 @@ export function pageParams(
   ctx: Ctx,
 ): { limit: number; cursor: string | null } | Response {
   const q = ctx.url.searchParams;
-  const rawLimit = q.get("limit");
-  const limit =
-    rawLimit === null ? 50 : /^\d{1,4}$/.test(rawLimit) ? Number(rawLimit) : 0;
-  if (limit < 1 || limit > 200)
-    return apiError("invalid_limit", 422, "limit is a whole number from 1 to 200");
+  const limit = readLimit(ctx, 50);
+  if (limit instanceof Response) return limit;
   const cursor = q.get("cursor");
   if (cursor !== null && !/^[A-Za-z0-9_-]{1,64}$/.test(cursor))
     return apiError("invalid_cursor", 422, "cursor is the next_cursor of a previous page");
@@ -909,8 +935,10 @@ export function keyedPage<T>(
 function repoQuery(ctx: Ctx) {
   const q = ctx.url.searchParams;
   const cursor = q.get("cursor");
+  const limit = readLimit(ctx, undefined);
+  if (limit instanceof Response) return limit;
   return {
-    limit: pageLimit(q.has("limit") ? Number(q.get("limit")) : undefined),
+    limit: pageLimit(limit),
     ...(cursor ? { cursor } : {}),
   };
 }
@@ -957,6 +985,10 @@ async function pullHeadOid(ctx: Ctx, repo: Repo, pull: Pull): Promise<string> {
     : `refs/heads/${pull.headBranch}`;
   return (await resolveOid(await pullDirOf(ctx, repo, pull), ref)) ?? pull.headOid;
 }
+
+/** A branch's tip from its ref file (no process); git is asked only when that cannot be read. */
+const baseTip = async (dir: string, ref: string): Promise<string | undefined> =>
+  (await refTip(dir, ref)) ?? (await resolveOid(dir, ref));
 
 /** Where a pull's objects are (`pullDir`): its base, or a sealed one's own place. */
 const pullDirOf = (ctx: Ctx, repo: Repo, pull: Pull): Promise<string> =>
@@ -1099,6 +1131,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const user = getUserByName(ctx.app.db, ctx.params.username!);
     if (!user || hiddenFrom(user, ctx.auth.user)) return notFound();
     const query = repoQuery(ctx);
+    if (query instanceof Response) return query;
     const items = timePhase(ctx.request, "repos", () =>
       listReposByOwner(ctx.app.db, user.username, ctx.auth.user, query),
     );
@@ -1216,6 +1249,8 @@ export function apiRoutes(router: Router<Handler>): void {
     });
     if (!minted.ok && minted.error === "invalid_via")
       return apiError("invalid_conversation", 422, "not a conversation of yours");
+    if (!minted.ok && minted.error === "rate_limited")
+      return json({ error: "rate_limited", message: "too many conversation tokens are alive; wait for one to expire" }, 429, { "retry-after": "60" });
     if (!minted.ok) return unauthorized();
     return json(minted.value, 201);
   });
@@ -1376,7 +1411,8 @@ export function apiRoutes(router: Router<Handler>): void {
       const found = await (mine === undefined
         ? search(ctx.app, ctx.auth.user, timed)
         : searchWithin(ctx.app, ctx.auth.user, mine, timed));
-      return timePhase(ctx.request, "render", () => json(found));
+      const note = searchNote(q.get("q"), q.get("kind"));
+      return timePhase(ctx.request, "render", () => json(note === undefined ? found : { ...found, note }));
     } finally {
       held?.release();
     }
@@ -1387,6 +1423,7 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/repos", (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const query = repoQuery(ctx);
+    if (query instanceof Response) return query;
     const items = timePhase(ctx.request, "repos", () => listReposVisibleTo(ctx.app.db, ctx.auth.user, query));
     return timePhase(ctx.request, "render", () => json(paged(items, query.limit, (r) => r.id)));
   });
@@ -1893,6 +1930,7 @@ export function apiRoutes(router: Router<Handler>): void {
   rollbackRoutes(router);
   takeBackRoutes(router);
   conversationConfirmRoutes(router);
+  conversationTalkRoutes(router);
 
   // Which stage of the one flow each open issue is in, and what went live in
   // the last day (src/flow).
@@ -2223,14 +2261,14 @@ export function apiRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const { query, pulls } = timePhase(ctx.request, "list", () => {
-      const query = listQuery(ctx);
-      const pulls = listPulls(ctx.app.db, repo.id, {
+    const query = listQuery(ctx);
+    if (query instanceof Response) return query;
+    const pulls = timePhase(ctx.request, "list", () =>
+      listPulls(ctx.app.db, repo.id, {
         ...query,
         ...sealedScope(ctx.app.db, repo, ctx.auth.user),
-      });
-      return { query, pulls };
-    });
+      }),
+    );
     const states = await timePhaseAsync(ctx.request, "merge", async () =>
       pullMergeStates(
         await Promise.all(
@@ -2398,10 +2436,7 @@ export function apiRoutes(router: Router<Handler>): void {
         live &&
         checkStale(
           checkSummary(ctx.app.db, found.pull.id, status.headOid).run,
-          await resolveOid(
-            await pullDirOf(ctx, found.repo, found.pull),
-            `refs/heads/${found.pull.baseBranch}`,
-          ),
+          await baseTip(await pullDirOf(ctx, found.repo, found.pull), `refs/heads/${found.pull.baseBranch}`),
         ),
     );
     return timePhase(ctx.request, "render", () => {
@@ -2620,6 +2655,19 @@ export function apiRoutes(router: Router<Handler>): void {
         },
         201,
       );
+    },
+  );
+
+  // A pull's looks, newest first, from its own preview environment and only
+  // the ones this reader may fetch as a picture (`looks/readable.ts`).
+  router.add(
+    "GET",
+    "/api/v1/repos/:owner/:name/pulls/:number/looks",
+    (ctx) => {
+      const found = loadPull(ctx);
+      if ("error" in found) return found.error;
+      const items = pullLooks(ctx.app, found.repo, found.pull, ctx.auth.user);
+      return json({ items });
     },
   );
 
@@ -2926,6 +2974,7 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   hookRoutes(router);
+  keeperRoutes(router);
 
   // Sync one mirror, or let a fork take its parent's updates. A mirror only
   // pulls, so any writer may ask. A fork fast-forwards, or writes a merge
@@ -2992,7 +3041,9 @@ export function apiRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     if (!ctx.auth.user) return unauthorized();
     const q = ctx.url.searchParams;
-    const limit = pageLimit(q.has("limit") ? Number(q.get("limit")) : undefined);
+    const asked = readLimit(ctx, undefined);
+    if (asked instanceof Response) return asked;
+    const limit = pageLimit(asked);
     const ops = timePhase(ctx.request, "ops", () =>
       listFleetOps(ctx.app, ctx.auth.user!, limit, q.get("cursor") ?? undefined),
     );
@@ -3035,7 +3086,7 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/metrics", (ctx) => {
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
-    return new Response(egressMetrics(egressSnapshot()) + forgeMetrics(ctx.app.db, appSources(ctx.app)), {
+    return new Response(egressMetrics(egressSnapshot(), egressTotals()) + forgeMetrics(ctx.app.db, appSources(ctx.app)), {
       headers: {
         "content-type": "text/plain; version=0.0.4; charset=utf-8",
         "cache-control": "no-store",
@@ -3172,6 +3223,7 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   forgeRoutes(router);
+  releasesRoutes(router);
 
   router.add("GET", "/api/v1/apps", (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
@@ -3198,19 +3250,43 @@ export function apiRoutes(router: Router<Handler>): void {
     if (denied) return denied;
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const input = await body(ctx.request);
-    const made = await newApp(ctx.app, ctx.auth.user, {
-      name: str(input.name),
+    const options: Omit<NewAppInput, "name" | "description"> = {
       ...(typeof input.owner === "string" ? { owner: input.owner } : {}),
-      ...(typeof input.description === "string"
-        ? { description: input.description }
-        : {}),
       ...(input.visibility === "public" || input.visibility === "private"
         ? { visibility: input.visibility }
         : {}),
       ...(typeof input.agent === "string" ? { agent: input.agent } : {}),
       // Only a real boolean asks; like the other fields, anything else is ignored.
       ...(input.pick === true ? { pickAgent: true } : {}),
-    }, (name, ms) => notePhase(ctx.request, name, ms));
+    };
+    const onPhase = (name: string, ms: number) => notePhase(ctx.request, name, ms);
+    // No `name` but a `sentence`: the name is derived, as the web form and terminal do.
+    const fromSentence = str(input.name) === "" && typeof input.sentence === "string";
+    let made: { ok: true; value: NewAppResult } | { ok: false; error: string };
+    if (fromSentence) {
+      const r = await newAppFromSentence(
+        ctx.app,
+        ctx.auth.user,
+        { ...options, sentence: str(input.sentence) },
+        onPhase,
+      );
+      made = r.ok ? { ok: true, value: r } : { ok: false, error: r.code };
+    } else {
+      made = await newApp(
+        ctx.app,
+        ctx.auth.user,
+        {
+          name: str(input.name),
+          ...(typeof input.description === "string"
+            ? { description: input.description }
+            : {}),
+          ...options,
+        },
+        onPhase,
+      );
+    }
+    if (!made.ok && made.error === "no_name")
+      return apiError("no_name", 422, NO_NAME_ERROR);
     if (!made.ok) {
       if (made.error === "repository_limit")
         return apiError("repository_limit", 403, repositoryLimitMessage(ctx.app, ctx.auth.user!));
@@ -3347,6 +3423,8 @@ export function apiRoutes(router: Router<Handler>): void {
 
   promptRoutes(router);
 
+  cloudRoutes(router);
+
   secretRoutes(router);
   drillRoutes(router);
 
@@ -3392,6 +3470,13 @@ export function apiRoutes(router: Router<Handler>): void {
       422,
       "who (1–100 characters) and some spend (tokensIn, tokensOut: whole numbers; usd: 0–10000); model, note (≤500) and issue (a number here) are optional",
     );
+  });
+
+  // The forge-wide twin: today, last24h and headroom across the apps the caller writes.
+  router.add("GET", "/api/v1/usage", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    if (!ctx.auth.user) return unauthorized();
+    return json(readForgeUsage(ctx.app, ctx.auth.user));
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/usage", (ctx) => {
@@ -3481,7 +3566,7 @@ export function apiRoutes(router: Router<Handler>): void {
     // the branch.
     const runs = timePhase(ctx.request, "runs", () => {
       const listed = listRepoRuns(ctx.app, ctx.auth.user, repo, {
-        ...(kind === "deploy" || kind === "agent" || kind === "proof" ? { kind } : { withProofs: true }),
+        ...(kind === "deploy" || kind === "agent" ? { kind } : {}),
         ...(env !== null && isEnvName(env) ? { env } : {}),
         ...(q.get("cursor") ? { cursor: q.get("cursor")! } : {}),
         limit,
@@ -3747,6 +3832,7 @@ export function apiRoutes(router: Router<Handler>): void {
   }
 
   agentRoutes(router);
+  subscriptionRoutes(router);
 
   router.add("GET", "/api/v1/repos/:owner/:name/crew", (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));

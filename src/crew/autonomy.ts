@@ -12,8 +12,8 @@
  * repository's origin.
  */
 
+import { onlyListDocs, resolveListConflicts } from "../actions/list-conflicts.ts";
 import { closedToday, closeStale } from "./stale_pulls.ts";
-import { authorsInRepoPull } from "./authors_pull.ts";
 import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import { ceilingReached, forgeCeiling } from "../flow/ceiling.ts";
@@ -24,8 +24,7 @@ import {
   setIssueState,
 } from "../actions/issues.ts";
 import type { AccessError } from "../actions/access.ts";
-import { adoptGate, gateCandidate, provable, proveCandidate, releaseOnLand } from "../checks/landing.ts";
-import { current, proofOf, proofRedWords, standing as proofStanding, startProof } from "../checks/proof.ts";
+import { adoptGate, gateCandidate, releaseOnLand } from "../checks/landing.ts";
 import { queueStore } from "../checks/queue_store.ts";
 import { addLearned } from "../checks/learned.ts";
 import { batchWords, dropFromLine, enqueue, type GateCandidate, type Queued, type QueueOptions, queueClashes, queueWords, waitingPulls } from "../checks/queue.ts";
@@ -35,7 +34,7 @@ import { roadmapIssues, shareWords, slotOrder, smallCap, smallIssues, smallOfIds
 import { raisedAt } from "../core/thought_links.ts";
 import { readConflictLane, readConflictRoom } from "./conflict_room.ts";
 import { mergeable, resolveOid, treeOf } from "../git/merge.ts";
-import { CLOSED_NOTE } from "../core/done_on_main.ts";
+import { CLOSED_NOTE, leftNote, reopenedByPerson, unticked } from "../core/done_on_main.ts";
 import { mergePull } from "../actions/pulls.ts";
 import { carriesUpstream } from "../actions/upstream_follow.ts";
 import {
@@ -61,7 +60,7 @@ import { decideAndRecord } from "./ledger.ts";
 import { sentinelTick } from "./sentinel.ts";
 import { triageTick } from "./triage.ts";
 import { liveTriage, none as noTriage, tickFields } from "./livetriage.ts";
-import { wallOf, wallSentence } from "../contract/policy.ts";
+import { wallOf, wallPlain, wallSentence } from "../contract/policy.ts";
 import {
   getIssue,
   getIssueById,
@@ -108,20 +107,15 @@ import { given, pendingReplans } from "../core/limb_replan.ts";
 import { handedOverPulls, SKIP_SUMMARY, skipsReplan } from "./guard.ts";
 import { atRunCap, type Held, heldBy, heldWords, replannable } from "./held.ts";
 import { holdHot, hotFiles, hotWords, learnPullFiles } from "./hot_files.ts";
-import { NO_PULL, shunnedBy, stallReason, unstickOwed } from "./stalls.ts";
+import { landedUnder, NO_PULL, shunnedBy, stallReason, unstickOwed } from "./stalls.ts";
 import { alreadyDone, BY_CREW, DONE_LIKE } from "../core/done_on_main.ts";
 import { repoDir } from "../git/repos.ts";
 import { ALREADY_NOTE, alreadyDoneOids } from "./already.ts";
 import { removedBy, retiredNames } from "./retired.ts";
 import { interruptionOf } from "./interrupted.ts";
 import {
-  PARK_NOTE,
-  PARK_STRIKES,
-  PLANNER_HINT,
   parkedCount as countParks,
   parkedTwice,
-  parkReason,
-  parkReasons,
 } from "./parks.ts";
 import { reserveOf, reserveWords, short } from "./reserve.ts";
 import { createLog } from "../kernel/log.ts";
@@ -134,6 +128,8 @@ import {
 import { crewOffInPreview } from "./preview.ts";
 import { approvedOnHead, finishApproved, finishFields } from "./finishing.ts";
 import { recheckRedApproved } from "./red_approved.ts";
+import { sweepStaleReds } from "./stale_reds.ts";
+import { parkPull, strikeNote } from "./park_pull.ts";
 import { keepBatch } from "../flow/red_batches.ts";
 import { recordQueueFlakes } from "../checks/flake.ts";
 import { readVitals, vitalsMisses, vitalsWords } from "../flow/vitals.ts";
@@ -143,6 +139,8 @@ import { lastWaits, noteWaits, tallyWaits, type Wait, waitWords } from "./waits.
 import { bootCounts } from "../kernel/boots.ts";
 
 const log = createLog("autonomy");
+
+export { parkPull };
 
 export const AUTONOMY_TICK_MS = 60_000;
 /**
@@ -561,6 +559,8 @@ export function freeStalled(app: App, repo: Repo, by: User, held: Held): number 
       )
       .get(issue.id);
     if (!last || last.state === "queued" || last.state === "running") continue;
+    // A run its pull landed under left the work on the base: no park, no strike (#8481).
+    if (landedUnder(last)) continue;
     const who = last.actor === null ? undefined : getUserById(app.db, last.actor)?.username;
     if (parkAs(app, by, repo, issue, stallReason(who, last.summary || last.state), "unstuck"))
       freed++;
@@ -937,39 +937,6 @@ export function parkedCount(app: App, repo: Repo, issueId: string): number {
   return countParks(app.db, repo, issueId);
 }
 
-/** What happens to an issue the crew hands over, said once on the issue. */
-const HANDED_OVER =
-  "The planner splits it, replaces it with a fresh issue, or defers it; a person can also say what to try. Nothing starts here until then, and the board lists it.";
-
-/**
- * What a park says on its issue. A first strike is the reason — and, when a
- * pull closed with it, a word to the planner. The strike that takes the
- * issue out of the crew's hands also says every reason since someone who
- * directs the crew last spoke, and whose it is now: an issue parked twice
- * is handed over, never dropped.
- */
-function strikeNote(
-  db: Database,
-  repo: Repo,
-  issue: Issue,
-  reason: string,
-  hint = "",
-): string {
-  const note = `${PARK_NOTE}${reason}`;
-  const reasons = [...parkReasons(db, repo, issue.id), parkReason(note)];
-  if (reasons.length < PARK_STRIKES)
-    return hint === "" ? note : `${note} ${hint}`;
-  return [
-    note,
-    "",
-    `Parked ${reasons.length === 2 ? "twice" : `${reasons.length} times`} since a person last spoke here, so it is the planner's now. Every reason:`,
-    "",
-    ...reasons.map((r, n) => `${n + 1}. ${r}`),
-    "",
-    HANDED_OVER,
-  ].join("\n");
-}
-
 /**
  * Park an issue: a note with the reason and the assignee cleared, so the
  * planner rewrites it on its next pass and the crew tries it fresh once.
@@ -1114,62 +1081,6 @@ function answeredWithoutChange(
     pull,
     "the reviewer asked for changes and the builder's run ended without pushing any",
   );
-}
-
-/**
- * Park a pull the crew cannot finish: close it with the reason, put its
- * issues back on the map unassigned with the same reason, and move on. A
- * repository on its own never waits for a person; a parked issue is the
- * planner's to split or drop on its next pass, and one parked twice is
- * handed to the planner with every reason (`strikeNote`). A pull a person
- * holds is not parked: closing it would hand its issue back to the crew, to
- * build the same change again beside the one that was told to wait. A
- * person's pull from a branch of the repository itself is not parked
- * either: closing it is its author's, and closed it would stop following
- * the pushes that answer its review (#7572).
- */
-export function parkPull(
-  app: App,
-  repo: Repo,
-  pull: Pull,
-  why: string,
-): boolean {
-  if (repo.autonomy !== "autonomous" || repo.autonomyBy === null) return false;
-  if (getHold(app.db, pull.id) !== undefined) return false;
-  if (authorsInRepoPull(pull)) return false;
-  const by = getUserById(app.db, repo.autonomyBy);
-  if (!by) return false;
-  const issue = getIssueById(app.db, pull.id);
-  if (!issue || issue.state !== "open") return false;
-  addComment(app, by, repo, issue, `${PARK_NOTE}${why}`);
-  const closed = setIssueState(app, by, repo, issue, "closed", {
-    reason: "parked",
-  });
-  if (!closed.ok) return false;
-  for (const number of closesFromBody(pull.body)) {
-    const about = getIssue(app.db, repo.id, number);
-    if (!about || about.state !== "open") continue;
-    if (about.assigneeId !== null) assignIssue(app, by, repo, about, null);
-    addComment(
-      app,
-      by,
-      repo,
-      about,
-      strikeNote(
-        app.db,
-        repo,
-        about,
-        `${why} (pull #${pull.number} closed).`,
-        PLANNER_HINT,
-      ),
-    );
-  }
-  log.info("parked", {
-    repo: `${repo.ownerName}/${repo.name}`,
-    pull: pull.number,
-    why,
-  });
-  return true;
 }
 
 /**
@@ -1329,6 +1240,13 @@ export async function autonomyTick(
         }),
       );
       const current = getRepoById(app.db, repo.id) ?? repo;
+      // A red pull nobody is working is checked again, reworked, parked or closed (#8245).
+      await sweepStaleReds(app, current, now, freeSlots(app, current, now)).catch((error) => {
+        log.error("stale red sweep failed", {
+          repo: `${repo.ownerName}/${repo.name}`,
+          error: String(error),
+        });
+      });
       // Before the picks: a pull a reviewer answered is finished before new
       // work takes the slots it needs (#2172).
       const requested = await moveRequested(app, current, freeSlots(app, current, now), now);
@@ -1638,6 +1556,14 @@ export function closeSuperseded(
   for (const number of closesFromBody(pull.body)) {
     const about = getIssue(app.db, repo.id, number);
     if (!about || about.state !== "open") continue;
+    // A superseded pull landed nothing: a person's reopen stands against it,
+    // and so does work still unticked.
+    if (reopenedByPerson(app.db, repo.id, number)) continue;
+    const left = unticked(about.body);
+    if (left.length > 0) {
+      addComment(app, by, repo, issue, leftNote(number, left));
+      continue;
+    }
     if (about.assigneeId !== null) assignIssue(app, by, repo, about, null);
     addComment(app, by, repo, about, `${CLOSED_NOTE}${named} (pull #${pull.number}).`);
     setIssueState(app, by, repo, about, "closed", { reason: "done" });
@@ -1821,6 +1747,14 @@ export async function sweepConflicts(
     // push must not be queued again on every tick.
     const tried = asked.get(pull.id);
     if (tried?.tip === baseTip && tried.n >= RUNS_PER_TIP) continue;
+    // A clash only in list docs is settled by the forge, with no run: its
+    // push is a check, and the next tick sees the pull clean (#7909).
+    if (onlyListDocs(files) && room > 0 && (await resolveListConflicts(app, repo, pull)) !== undefined) {
+      room--;
+      acted++;
+      checked.delete(pull.id);
+      continue;
+    }
     // Its push is a check: none starts that the lane has no slot for (#4459).
     if (room <= 0) continue;
     if (bringUpToDate(app, repo, pull, files, since) !== undefined) {
@@ -2028,6 +1962,7 @@ async function admit(
         state: {
           head: pull.headOid,
           cells,
+          plain: wall.unsound ?? wall.loosened.map(wallPlain),
           unsound: wall.unsound !== undefined,
         },
         answer: "wall",
@@ -2061,14 +1996,6 @@ async function admit(
   // not hold it for good; a red that reproduces stays red (#3155).
   const told = latestDecision(app.db, pull.id, "land");
   if (redOf(told)?.head === pull.headOid && !regateDue(told!, Date.now())) return err("red");
-  // The proof before the line (#7616): the whole suite, green on this head
-  // squashed onto the base's tip, or the pull does not join — a test its
-  // fast tier never reached is found here, at no batch's cost.
-  const proves = baseTip !== "" && (await provable(app, dir, pull.headOid));
-  if (proves) {
-    const wait = await proofWait(app, repo, by, pull, dir, baseTip);
-    if (wait !== undefined) return err(wait);
-  }
   // Green only against a base that has moved since is admitted as it is:
   // the candidate's full gate runs on the base tip with this pull merged,
   // which is the proof a re-check of its own would give, and a red one
@@ -2109,76 +2036,7 @@ async function admit(
       addLearned(app.config.dataDir, pull.id, red.learn);
       if (!again) addComment(app, by, repo, getIssueById(app.db, pull.id) ?? pull, clashSaid(red.comment, together));
     },
-    // A proof the base has moved too far past is proved again before the batch.
-    ...(proves ? { proven: (baseOid: string) => proofHolds(app, pull, dir, baseOid) } : {}),
   });
-}
-
-/**
- * What a proof says to `pull`, said only while the pull is open on the head
- * it proved: a push or a close since makes the words about nothing.
- */
-export function toldWhileOpen(app: App, repo: Repo, by: User, pull: Pull): (words: string) => void {
-  return (words) => {
-    const now = getPull(app.db, repo.id, pull.number);
-    if (now !== undefined && now.headOid === pull.headOid && now.state === "open")
-      addComment(app, by, repo, getIssueById(app.db, pull.id) ?? now, words);
-  };
-}
-
-/**
- * Why a pull waits on its proof (#7616), or undefined when it is proved on
- * `baseTip`. An unproved pull's proof is started here, beside the sweep:
- * green admits it at once (`landIfGreen`), red is told to the pull with
- * its failing tests named.
- */
-async function proofWait(
-  app: App,
-  repo: Repo,
-  by: User,
-  pull: Pull,
-  dir: string,
-  baseTip: string,
-): Promise<"proving" | "proof-red" | undefined> {
-  const at = await proofStanding(app.db, dir, pull, baseTip);
-  if (at === "proved") return undefined;
-  if (at === "red") return "proof-red";
-  if (at === "proving") return "proving";
-  const started = await startProof({
-    db: app.db,
-    repoId: repo.id,
-    pull,
-    dir,
-    tip: baseTip,
-    run: async (commitOid, signal) => (await proveCandidate(app, repo, pull, dir, commitOid, signal)) ?? { lands: true },
-    room: () => checksFor(app)?.spareSlots() ?? 0,
-    told: toldWhileOpen(app, repo, by, pull),
-    done: (proof, verdict) => {
-      log.info(`proof ${proof.green ? "green" : "red"}`, {
-        repo: `${repo.ownerName}/${repo.name}`,
-        pull: pull.number,
-        base: proof.base.slice(0, 7),
-      });
-      const now = getPull(app.db, repo.id, pull.number);
-      if (now === undefined || now.headOid !== proof.head || now.state !== "open") return;
-      if (!verdict.lands && "reopen" in verdict) {
-        addLearned(app.config.dataDir, pull.id, verdict.learn);
-        addComment(app, by, repo, getIssueById(app.db, pull.id) ?? now, proofRedWords(pull.baseBranch, proof.base, verdict));
-        return;
-      }
-      void landIfGreen(app, repo, now).catch((error) =>
-        log.warn("could not land after its proof", { pull: pull.number, error: String(error) }),
-      );
-    },
-  });
-  if (started) log.info("proving before the line", { repo: `${repo.ownerName}/${repo.name}`, pull: pull.number, base: baseTip.slice(0, 7) });
-  return "proving";
-}
-
-/** The pull's green proof still holds on `baseOid` (#7616). */
-async function proofHolds(app: App, pull: Pull, dir: string, baseOid: string): Promise<boolean> {
-  const proof = proofOf(app.db, pull.id);
-  return proof !== undefined && proof.green && proof.head === pull.headOid && (await current(dir, proof, baseOid));
 }
 
 /**

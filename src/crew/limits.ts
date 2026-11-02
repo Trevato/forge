@@ -5,7 +5,9 @@
  * it will listen; the person who asked never has to press anything.
  */
 
-import type { LimitWindow } from "../core/standing.ts";
+import type { Database } from "bun:sqlite";
+import { noteLimit, type LimitWindow } from "../core/standing.ts";
+import { PLATFORM, restSubscription } from "../core/subscriptions.ts";
 import { isNetworkError } from "./network.ts";
 import type { ClaudeOutcome } from "./claude.ts";
 
@@ -96,6 +98,34 @@ function resetOf(message: string, now: Date): Date | undefined {
       ? { month: month + 1, day: Number(day) }
       : undefined;
   return nextWallTime(now, hour, minute, zone!, date);
+}
+
+/**
+ * The provider's refusal, taken in: the window it names is noted on the
+ * account's standing, and a sealed account (`subscriptionId` given) rests
+ * until the provider's time. The forge's own token (`undefined`) is noted
+ * but never rested — nothing else would take its place. One place for a run
+ * and a conversation turn alike.
+ */
+export function takeLimit(
+  db: Database,
+  subscriptionId: string | undefined,
+  message: string,
+  fallback: string,
+  now: Date,
+): { until: Date; limit: ReturnType<typeof limitOf>; said: string } {
+  const said = (message.split("\n").find((l) => l.trim() !== "") ?? fallback).slice(0, 160);
+  const until = resumeAt(message, now);
+  const limit = limitOf(message, now);
+  if (limit !== undefined)
+    noteLimit(db, subscriptionId ?? PLATFORM, {
+      window: limit.window,
+      resetsAt: limit.resetsAt.toISOString(),
+      observedAt: now.toISOString(),
+      said,
+    });
+  if (subscriptionId !== undefined) restSubscription(db, subscriptionId, until.toISOString(), said);
+  return { until, limit, said };
 }
 
 /** `12:04 UTC` — how a resume time reads on a card. */

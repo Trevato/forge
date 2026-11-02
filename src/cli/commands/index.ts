@@ -18,6 +18,7 @@ import { command as asks } from "./asks.ts";
 import { command as map } from "./map.ts";
 import { command as search } from "./search.ts";
 import { command as tell } from "./tell.ts";
+import { command as talk } from "./talk.ts";
 import { command as newApp } from "./new.ts";
 import { command as ship } from "./ship.ts";
 import type { Command } from "./types.ts";
@@ -39,6 +40,7 @@ export const commands: readonly Command[] = [
   map,
   search,
   tell,
+  talk,
   newApp,
   ship,
 ];

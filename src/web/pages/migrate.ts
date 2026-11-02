@@ -48,7 +48,7 @@ import {
 } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import type { MirrorJob, MirrorStage } from "../../origins/jobs.ts";
-import { notFoundPage, pageHead, signInFirst } from "../chrome.ts";
+import { notFoundPage, pageHead, signInFirst, NOT_YOURS_TO_DO, forbiddenPage } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, raw, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
@@ -720,7 +720,7 @@ export async function migrateSubmit(ctx: Ctx): Promise<Response> {
     picked !== undefined &&
     (ctx.auth.scope === undefined || !scopeAllows(ctx.auth.scope, "admin"))
   )
-    return new Response("forbidden", { status: 403 });
+    return forbiddenPage(ctx, "This token is not allowed to do this.");
 
   const started = await migrateRepo(ctx.app, ctx.auth.user, {
     source: picked ?? { url: values.url },
@@ -737,7 +737,7 @@ export async function migrateSubmit(ctx: Ctx): Promise<Response> {
   });
   if (!started.ok) {
     if (started.error === "forbidden_owner" || started.error === "unauthorized")
-      return new Response("forbidden", { status: 403 });
+      return forbiddenPage(ctx, NOT_YOURS_TO_DO);
     return again(
       migrateMessage(started.error, repositoryLimitMessage(ctx.app, ctx.auth.user!)),
     );

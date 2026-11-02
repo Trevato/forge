@@ -2,7 +2,7 @@
  * No button spins at rest on Home (#3067, the browser half of #3039).
  *
  * `test/button-rest.test.ts` reads the source for `icon: "loader"`; this loads
- * `/` as an admin in a real headless Chromium, with a stalled step's card on
+ * `/feed` as an admin in a real headless Chromium, with a stalled step's card on
  * the page, and asks the computed style: no `button` or `.btn` is
  * `aria-busy`, and nothing inside one runs an animation. It goes red if
  * `flow_card.ts` goes back to the loader icon.
@@ -99,14 +99,14 @@ describe.skipIf(chromium === undefined)("Home's buttons rest", () => {
       test(`${label}, ${scheme}: with a stalled step on the page, no button is busy or animating`, async () => {
         const page = await findBusyButtons(
           chromium!,
-          `${servers.url}/`,
+          `${servers.url}/feed`,
           { width, height: 800 },
           cookies,
           scheme,
         );
         // The stalled step's button is on the page, so the check has teeth.
         const html = await (
-          await fetch(`${servers.url}/`, {
+          await fetch(`${servers.url}/feed`, {
             headers: { cookie: cookies.map((c) => `${c.name}=${c.value}`).join("; ") },
           })
         ).text();

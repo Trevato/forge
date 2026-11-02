@@ -26,6 +26,34 @@ export function workdirFor(
   );
 }
 
+const claimed = new Set<string>();
+
+/** Whether a live run in this process holds `dir`. */
+export const isClaimed = (dir: string): boolean => claimed.has(dir);
+
+/**
+ * The directory a run works in. The issue's own clone when no other live run
+ * holds it (a paused run resumes in the tree it left); otherwise a directory
+ * of the run's own beside it, so two runs on one issue never share a clone.
+ * `release` frees the claim and removes a run-owned directory.
+ */
+export function claimWorkdir(
+  base: string,
+  runId: string,
+): { dir: string; own: boolean; release: () => Promise<void> } {
+  const own = claimed.has(base);
+  const dir = own ? `${base}.run-${runId.replace(/[^A-Za-z0-9]/g, "")}` : base;
+  claimed.add(dir);
+  return {
+    dir,
+    own,
+    release: async () => {
+      claimed.delete(dir);
+      if (own) await removeClone(dir).catch(() => {});
+    },
+  };
+}
+
 /**
  * Every repository's install caches, side by side: `<data>/crew/.cache/`.
  * Not an agent's name (a username cannot start with a dot), so no agent's

@@ -172,14 +172,16 @@ export async function composerSubmit(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
   const target = field(form, "app");
+  // The feed's composer asks to come back to the feed; any other box, to home.
+  const home = backTo(form, "/");
   // "the forge" is no app: the words are kept as a thought, exactly as typed.
   if (target === FORGE_TARGET) {
     if (field(form, "text").trim() === "")
-      return flashOrJson(ctx, "/", { tone: "danger", message: SAY_SOMETHING_WORDS });
+      return flashOrJson(ctx, home, { tone: "danger", message: SAY_SOMETHING_WORDS });
     const kept = keepThought(ctx.app, ctx.auth.user, field(form, "text"), "composer");
     return flashOrJson(
       ctx,
-      "/",
+      home,
       kept.ok
         ? { message: "Received." }
         : {
@@ -187,13 +189,13 @@ export async function composerSubmit(ctx: Ctx): Promise<Response> {
             message:
               kept.error === "too_long" ? "That is too long to keep." : "That could not be kept.",
           },
-      { href: "/" },
+      { href: home },
     );
   }
   const [owner = "", name = "", ...extra] = target.split("/");
   const repo = extra.length === 0 ? getRepo(ctx.app.db, owner, name) : undefined;
   if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFoundPage(ctx);
-  return tellFrom(ctx, repo, form, "/");
+  return tellFrom(ctx, repo, form, home);
 }
 
 

@@ -14,14 +14,15 @@ import {
   sessionOf,
   type SessionInfo,
 } from "../core/sessions.ts";
-import { deleteToken, listTokens, type TokenInfo } from "../core/tokens.ts";
+import { listTokensWithClients, type ListedToken } from "../core/oauth.ts";
+import { deleteToken } from "../core/tokens.ts";
 import { getUserByName, type User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { requireUser } from "./access.ts";
 
 export interface SignIns {
   readonly user: User;
-  readonly tokens: readonly TokenInfo[];
+  readonly tokens: readonly ListedToken[];
   readonly sessions: readonly SessionInfo[];
 }
 
@@ -53,7 +54,7 @@ export function accountSignIns(
   if (!user.ok) return user;
   return ok({
     user: user.value,
-    tokens: listTokens(app.db, user.value.id),
+    tokens: listTokensWithClients(app.db, user.value.id),
     sessions: listSessions(
       app.db,
       user.value.id,

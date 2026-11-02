@@ -7,14 +7,15 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createRepo } from "../src/actions/repos.ts";
+import { createRepo, deleteWebhook, pauseWebhook } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
+import { listEvents } from "../src/core/events.ts";
 import { canAdmin, canWrite, type Repo } from "../src/core/repos.ts";
 import { createOrg, createTeam, addTeamMember } from "../src/core/orgs.ts";
 import { createUser, type User } from "../src/core/users.ts";
-import { enqueueForEvent, listWebhooks } from "../src/core/webhooks.ts";
+import { createWebhook, enqueueForEvent, getWebhook, listWebhooks } from "../src/core/webhooks.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
-import { hooksCommands } from "../src/tui/screens/hooks.ts";
+import { hooksCommands, hooksScreen } from "../src/tui/screens/hooks.ts";
 import { repoScreen } from "../src/tui/screens/repo.ts";
 import { local } from "../src/tui/screens/where.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
@@ -125,6 +126,30 @@ describe("webhooks in the terminal", () => {
     h.stop();
   });
 
+  test("p pauses and resumes the selected hook; a paused hook is queued nothing", async () => {
+    const h = open(alice);
+    await palette(h);
+    await h.feed("a", ..."https://example.com/pause", "enter", ..."push", "enter", ...SECRET, "enter");
+    const find = () => listWebhooks(app.db, repo.id).find((x) => x.url.endsWith("/pause"))!;
+    const row = listWebhooks(app.db, repo.id).findIndex((x) => x.url.endsWith("/pause"));
+    for (let i = 0; i < row; i++) await h.feed("j");
+    await h.feed("p");
+    expect(find().active).toBe(false);
+    expect(h.text()).toContain("paused");
+    const before = app.db.query<{ n: number }, [string]>("SELECT count(*) n FROM webhook_delivery WHERE webhook_id = ?1").get(find().id)!.n;
+    enqueueForEvent(app.db, app.bus.append({ kind: "push", repoId: repo.id, actorId: alice.id, payload: {} }));
+    expect(app.db.query<{ n: number }, [string]>("SELECT count(*) n FROM webhook_delivery WHERE webhook_id = ?1").get(find().id)!.n).toBe(before);
+    expect(listEvents(app.db, { limit: 1000 }).some((e) => e.kind === "webhook.paused")).toBe(true);
+    await h.feed("p");
+    expect(find().active).toBe(true);
+    expect(listEvents(app.db, { limit: 1000 }).some((e) => e.kind === "webhook.resumed")).toBe(true);
+    enqueueForEvent(app.db, app.bus.append({ kind: "push", repoId: repo.id, actorId: alice.id, payload: {} }));
+    expect(app.db.query<{ n: number }, [string]>("SELECT count(*) n FROM webhook_delivery WHERE webhook_id = ?1").get(find().id)!.n).toBe(before + 1);
+    await h.feed("d", "right", "enter");
+    expect(listWebhooks(app.db, repo.id).length).toBe(0);
+    h.stop();
+  });
+
   test("a short secret is refused in MCP's words and nothing is added", async () => {
     const h = open(alice);
     await palette(h);
@@ -212,5 +237,36 @@ describe("webhooks in the terminal", () => {
     expect(h.text()).not.toContain("list, add and remove webhooks");
     expect(hooksCommands(h.session, h.ctx, made.value)).toEqual([]);
     h.stop();
+  });
+
+  test("a non-admin pressing p changes nothing, and pauseWebhook refuses them and another repo's admin", async () => {
+    const mine = createWebhook(app.db, { repoId: repo.id, url: "https://example.com/neg", kinds: "push", secret: SECRET });
+    if (!mine.ok) throw new Error(mine.error);
+    const id = mine.value.webhook.id;
+    const paused = () => listEvents(app.db, { limit: 1000 }).filter((e) => e.kind === "webhook.paused").length;
+    const before = paused();
+    // bob does not admin the repo: the screen, pushed directly, shows him nothing and p does nothing.
+    const h = open(bob);
+    h.ctx.push(hooksScreen(h.session, h.ctx, repo));
+    await h.feed("p");
+    expect(h.text()).toContain("Not available");
+    h.stop();
+    expect(getWebhook(app.db, repo.id, id)!.active).toBe(true);
+
+    const refused = pauseWebhook(app, bob, repo, id, true);
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) expect(refused.error).toBe("not_found");
+    const guest = pauseWebhook(app, undefined, repo, id, true);
+    expect(guest.ok).toBe(false);
+
+    // an admin of another repository, naming this repository's hook there
+    const other = await createRepo(app, alice, { name: "elsewhere", visibility: "public" });
+    if (!other.ok) throw new Error(String(other.error));
+    const cross = pauseWebhook(app, alice, other.value, id, true);
+    expect(cross.ok).toBe(false);
+    if (!cross.ok) expect(cross.error).toBe("not_found");
+    expect(getWebhook(app.db, repo.id, id)!.active).toBe(true);
+    expect(paused()).toBe(before);
+    expect(deleteWebhook(app, alice, repo, id).ok).toBe(true);
   });
 });

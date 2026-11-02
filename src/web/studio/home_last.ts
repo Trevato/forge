@@ -73,10 +73,11 @@ export async function homeRegion(
     if (!current && Date.now() - (drawing.get(key) ?? 0) >= REDRAW_GAP_MS) {
       if (drawing.size > 1024) for (const [k, at] of drawing) if (at !== Number.MAX_SAFE_INTEGER) drawing.delete(k);
       drawing.set(key, Number.MAX_SAFE_INTEGER);
+      // Read when the redraw is decided, not when the timer fires: a write that lands in between must leave the copy stale, not current.
+      const before = stamp;
       setTimeout(() => {
         void (async () => {
           try {
-            const before = writeStamp(db);
             remember(db, viewerId, name, variant, (await draw()).text, before, access);
           } catch {
             // The page's own swap asks again and shows the failure.

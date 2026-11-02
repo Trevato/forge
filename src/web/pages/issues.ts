@@ -13,6 +13,7 @@ import {
 import type { Issue } from "../../core/issues.ts";
 import { canRead, type Repo } from "../../core/repos.ts";
 import { privateRepoForSealed } from "../../actions/repos.ts";
+import { sealedWords, sealRefusedWords } from "../../actions/seal_issue_words.ts";
 import { BODY_TOO_LONG, TITLE_TOO_LONG } from "../../actions/thread_limits_words.ts";
 import { COMMENT_EMPTY, COMMENT_NOT_POSTED } from "../../actions/comment_words.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
@@ -133,14 +134,14 @@ export function newIssuePage(ctx: Ctx): Response {
   notePhase(request, "session", takeSessionTime(request));
   const repo = timePhase(request, "repo", () => loadRepo(ctx));
   if (!repo) return timePhase(request, "render", () => notFoundPage(ctx));
+  // `?sealed=1`: the repository page's "report it sealed" link.
+  const sealed = ctx.url.searchParams.get("sealed") === "1";
   if (!ctx.auth.user) {
     const open = timePhase(request, "access", () => canRead(ctx.app.db, repo, undefined));
     return timePhase(request, "render", () =>
-      open ? accountOrReport(ctx, repo) : signInFirst(ctx),
+      open ? accountOrReport(ctx, repo, sealed) : signInFirst(ctx),
     );
   }
-  // `?sealed=1`: the repository page's "report it sealed" link.
-  const sealed = ctx.url.searchParams.get("sealed") === "1";
   return timePhase(request, "render", () =>
     composePage(ctx, repo, { title: "", body: "", sealed }),
   );
@@ -149,10 +150,32 @@ export function newIssuePage(ctx: Ctx): Response {
 /**
  * A stranger who asked to open an issue on a public repository: both doors,
  * the one that needs an account and the one that does not, rather than a
- * sign-in page that never says the second exists.
+ * sign-in page that never says the second exists. A stranger who asked for
+ * a sealed report (security.txt's Contact) is offered only the account: the
+ * report without one is not sealed, and there is no sealed door without one.
  */
-function accountOrReport(ctx: Ctx, repo: Repo): Response {
-  const base = repoBase(repo);
+function accountOrReport(ctx: Ctx, repo: Repo, sealed: boolean): Response {
+  const signIn = (variant: "primary" | "ghost") =>
+    btn("Sign in", { href: signInHref(ctx), variant });
+  const door = sealed
+    ? empty({
+        icon: "issue",
+        title: "A sealed security report needs an account",
+        note:
+          "Only the people who keep this repository see it until its fix is released. " +
+          "The report without an account is not sealed: do not use it for a vulnerability.",
+        action: signIn("primary"),
+      })
+    : empty({
+        icon: "issue",
+        title: "Opening an issue needs an account",
+        note: "Something wrong? You can report it without one; a person who keeps this repository reads it.",
+        action: html`${btn("Report a problem", {
+          href: `${repoBase(repo)}/report`,
+          variant: "primary",
+        })}
+        ${signIn("ghost")}`,
+      });
   return page({
     ctx,
     title: `New issue · ${repo.ownerName}/${repo.name}`,
@@ -161,16 +184,7 @@ function accountOrReport(ctx: Ctx, repo: Repo): Response {
         compact: true,
         ownTitle: true,
       })}
-      ${empty({
-        icon: "issue",
-        title: "Opening an issue needs an account",
-        note: "Something wrong? You can report it without one; a person who keeps this repository reads it.",
-        action: html`${btn("Report a problem", {
-          href: `${base}/report`,
-          variant: "primary",
-        })}
-        ${btn("Sign in", { href: signInHref(ctx), variant: "ghost" })}`,
-      })}`,
+      ${door}`,
   });
 }
 
@@ -233,18 +247,8 @@ export async function issueSealSubmit(ctx: Ctx): Promise<Response> {
     ctx,
     dest,
     done.ok
-      ? {
-          message: sealed
-            ? "Sealed: only people who can write here and the crew see it now."
-            : "Unsealed: everyone who can read this repository sees it now.",
-        }
-      : {
-          tone: "danger",
-          message:
-            done.error === "mirrored"
-              ? "A mirror's issues live on its origin, in the open: nothing here can be sealed."
-              : "Only someone who can write here seals or unseals.",
-        },
+      ? { message: sealedWords(sealed) }
+      : { tone: "danger", message: sealRefusedWords(done.error) },
   );
 }
 
@@ -273,6 +277,16 @@ export async function issuePrivateSubmit(ctx: Ctx): Promise<Response> {
   });
 }
 
+/**
+ * Where a comment returns to when the form names a fixed word: never a URL
+ * from the form. A refused reply from the feed returns there too, as the
+ * pull's does; one from the board keeps the issue page, where it always went.
+ */
+const BACK = new Map<string, { to: string; said: (n: number) => string; refusedTo?: string }>([
+  ["board", { to: "/board", said: (n) => `Answered on #${n}. The planner plans again.` }],
+  ["feed", { to: "/feed", said: () => "Reply posted.", refusedTo: "/feed" }],
+]);
+
 // POST /:owner/:name/issues/:number/comments
 export async function issueCommentSubmit(ctx: Ctx): Promise<Response> {
   const found = threadContext(ctx, "issue");
@@ -283,11 +297,12 @@ export async function issueCommentSubmit(ctx: Ctx): Promise<Response> {
 
   // A comment posted from the board's "the planner declined" line returns to
   // the board. A fixed word, never a URL from the form: no open redirect.
-  const back = field(form, "back") === "board" ? "/board" : undefined;
+  const back = BACK.get(field(form, "back"));
   const dest = `${repoBase(found.repo)}/issues/${found.issue.number}`;
+  const refusedTo = back?.refusedTo ?? dest;
   const body = field(form, "body");
   if (body.trim() === "")
-    return flashTo(ctx, dest, {
+    return flashTo(ctx, refusedTo, {
       tone: "danger",
       message: COMMENT_EMPTY,
     });
@@ -299,14 +314,14 @@ export async function issueCommentSubmit(ctx: Ctx): Promise<Response> {
     body,
   );
   if (!added.ok)
-    return flashTo(ctx, dest, {
+    return flashTo(ctx, refusedTo, {
       tone: "danger",
       message: originError(added.error) ?? COMMENT_NOT_POSTED,
     });
   return back === undefined
     ? flashTo(ctx, `${dest}#conversation`, { message: "Comment posted." })
-    : flashTo(ctx, back, {
-        message: `Answered on #${found.issue.number}. The planner plans again.`,
+    : flashTo(ctx, back.to, {
+        message: back.said(found.issue.number),
       });
 }
 

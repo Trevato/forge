@@ -18,8 +18,12 @@
 
 import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { meterEgress } from "../apps/egress.ts";
 import { dirname, join } from "node:path";
+import { formatBytes } from "../core/storage.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { fillable } from "./fillable.ts";
+import { lend } from "./install_evict.ts";
 
 /** What an install prints when the machine, not the code, failed it. */
 export const TRANSIENT_INSTALL = /Fail extracting tarball|EINTEGRITY|ECONNRESET/;
@@ -34,6 +38,55 @@ export const INFRASTRUCTURE = "infrastructure";
 export const LOCK_STALE_MS = 15 * 60_000;
 
 const LOCK_POLL_MS = 50;
+
+/**
+ * The one line an install step logs about the registry (#7546): `0 B` on a
+ * warm cache. A cell's figure is what its egress proxy received from the
+ * registry; uncontained, nothing is logged.
+ */
+export function installFetchedLine(bytes: number): string {
+  return `install fetched ${formatBytes(Math.max(0, bytes))} from the registry`;
+}
+
+/** More than this from the npm registry in one install is the shared cache missing (#8382). */
+export const NPM_MISS_BYTES = 1024 * 1024;
+
+/**
+ * The line a contained install's log ends with when its cell received more
+ * than `NPM_MISS_BYTES` from the npm registry; none under it.
+ */
+export function npmMissLine(npmBytes: number): string | undefined {
+  if (!(npmBytes > NPM_MISS_BYTES)) return undefined;
+  const mib = npmBytes / NPM_MISS_BYTES;
+  return `install fetched ${mib < 10 ? mib.toFixed(1) : Math.round(mib)} MiB from the npm registry; the shared cache missed`;
+}
+
+/**
+ * Run a contained install `step` with its cell's egress proxy metered by
+ * `label`, the registry's bytes attributed to `repoId` (#8382). After the
+ * step — in `finally`, so a failed, aborted or throwing install logs too —
+ * `write` gets `installFetchedLine` when `fetched` asks for it (a check's
+ * #7546 line), then `npmMissLine` when the registry sent more than a MiB.
+ * With no `label` the install is uncontained: nothing is metered or logged.
+ */
+export async function meteredInstall<T>(
+  label: string | undefined,
+  repoId: string | undefined,
+  step: () => Promise<T>,
+  write: (line: string) => void,
+  options: { readonly fetched?: boolean } = {},
+): Promise<T> {
+  if (label === undefined) return step();
+  const meter = meterEgress(label, repoId);
+  try {
+    return await step();
+  } finally {
+    const fetched = meter.stop();
+    if (options.fetched === true) write(installFetchedLine(fetched));
+    const missed = npmMissLine(meter.npm());
+    if (missed !== undefined) write(missed);
+  }
+}
 
 export type InstallOutcome =
   | { readonly ok: true }
@@ -98,7 +151,11 @@ export function lockfileRefusal(dir: string, registry: string): string | undefin
     if (!url.startsWith(registry)) return `the lockfile names ${url.slice(0, 80)}, not the registry`;
   if (/[@"'/](?:github|gitlab|bitbucket|git|ssh|git\+\w+):/i.test(text))
     return "the lockfile has a git dependency";
-  return undefined;
+  // Every package by name and version with a sha512 integrity, or no fill:
+  // a file, link or workspace dependency, or a patch, is read on the host.
+  const manifest = existsSync(join(dir, "package.json")) ? readFileSync(join(dir, "package.json"), "utf8") : "{}";
+  const strict = fillable(manifest, text, registry);
+  return strict.ok ? undefined : strict.error;
 }
 
 /**
@@ -162,7 +219,9 @@ export async function prefillInstallCache(options: {
         try {
           await Promise.all([lines(proc.stdout), lines(proc.stderr)]);
           const code = await proc.exited;
-          return code === 0 ? ok(true) : err(`filling the install cache exited ${code}`);
+          if (code !== 0) return err(`filling the install cache exited ${code}`);
+          lend(cache, dir);
+          return ok(true);
         } finally {
           clearTimeout(timer);
           signal.removeEventListener("abort", stop);

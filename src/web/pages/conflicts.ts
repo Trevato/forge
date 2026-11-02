@@ -26,7 +26,7 @@ import {
 } from "../../git/conflicts.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
-import { crumbsFor, notFoundPage, repoBase, repoPalette, repoHeader } from "../chrome.ts";
+import { crumbsFor, notFoundPage, repoBase, repoPalette, repoHeader, forbiddenPage } from "../chrome.ts";
 import { FINISH_REFUSALS, finishConflicts } from "../../actions/finish-conflicts.ts";
 import { RESOLUTION_ASKED } from "../../actions/pull_ask_words.ts";
 import { field, readForm } from "../form.ts";
@@ -283,7 +283,7 @@ export async function conflictsFinish(ctx: Ctx): Promise<Response> {
   if (found instanceof Response) return found;
   const { repo, pull } = found;
   if (!ctx.auth.user || !canWrite(ctx.app.db, repo, ctx.auth.user))
-    return new Response("forbidden", { status: 403 });
+    return forbiddenPage(ctx, "Only someone who can write to this repository can do this.");
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
   const dest = `${repoBase(repo)}/pulls/${pull.number}`;

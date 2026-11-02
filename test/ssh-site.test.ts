@@ -71,7 +71,7 @@ describe("the terminal on the website", () => {
   });
 
   test("the dashboard has a Terminal card, with the host key", async () => {
-    const page = await fetch(`${base}/`, { headers: { cookie } }).then((r) =>
+    const page = await fetch(`${base}/feed`, { headers: { cookie } }).then((r) =>
       r.text(),
     );
     expect(page).toContain("<h2>Terminal</h2>");
@@ -91,7 +91,7 @@ describe("the terminal on the website", () => {
   });
 
   test("the dashboard's Terminal card has no terminal-line, keeps the keys link", async () => {
-    const page = await fetch(`${base}/`, { headers: { cookie } }).then((r) =>
+    const page = await fetch(`${base}/feed`, { headers: { cookie } }).then((r) =>
       r.text(),
     );
     expect(page).not.toContain("terminal-line");

@@ -13,11 +13,13 @@ afterAll(async () => {
   await f.close();
 });
 
-async function timing(cookie?: string): Promise<string[]> {
-  const res = await fetch(`${f.base}/`, { headers: cookie ? { cookie } : {} });
+async function timing(cookie?: string, path = "/"): Promise<string[]> {
+  const res = await fetch(`${f.base}${path}`, { headers: cookie ? { cookie } : {} });
   await res.arrayBuffer();
   return (res.headers.get("server-timing") ?? "").split(", ");
 }
+/** Home's phases and the feed page's together: what home was before the feed moved off it. */
+const timings = async (cookie?: string): Promise<string[]> => [...(await timing(cookie)), ...(await timing(cookie, "/feed"))];
 const names = (parts: string[]): string[] => parts.map((p) => p.split(";")[0]!);
 
 test("a cold look at the owner's home names each part of the kpis read", async () => {
@@ -27,8 +29,8 @@ test("a cold look at the owner's home names each part of the kpis read", async (
 });
 
 test("the owner's home names feed, kpis and panels; a warm look is a hit", async () => {
-  await timing(f.ownerCookie);
-  const warm = await timing(f.ownerCookie);
+  await timings(f.ownerCookie);
+  const warm = await timings(f.ownerCookie);
   expect(names(warm)).toEqual(expect.arrayContaining(["feed", "kpis", "panels"]));
   expect(names(warm)).not.toContain("shelf");
   expect(warm.find((p) => p.startsWith("kpis;"))).toMatch(/^kpis;dur=\d+\.\d;desc="hit"$/);
@@ -36,7 +38,7 @@ test("the owner's home names feed, kpis and panels; a warm look is a hit", async
 });
 
 test("a signed-in non-admin gets the feed and none of the admin-only phases", async () => {
-  const got = names(await timing(f.peerCookie));
+  const got = names(await timings(f.peerCookie));
   expect(got).toContain("feed");
   expect(got).not.toContain("kpis");
   for (const part of KPI_PARTS) expect(got).not.toContain(part);

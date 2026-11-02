@@ -66,6 +66,7 @@ import {
   repoHeader,
   repoPalette,
   signInFirst,
+  forbiddenPage,
 } from "../chrome.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import type { DiffLaps } from "../../git/diff.ts";
@@ -107,7 +108,6 @@ import { previewEnv } from "../../apps/data.ts";
 import { specFindings } from "./pull-spec.ts";
 import { pullPreviewFindings } from "../../core/preview_findings.ts";
 import { crewActivityCard } from "./runs.ts";
-import { nextOfPull } from "../../flow/next_actor.ts";
 import { holdCard } from "../studio/hold.ts";
 import {
   changeHead,
@@ -978,7 +978,7 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
       compact: true,
       ownTitle: true,
     })}
-    ${changeHead(ctx, repo, pull, nextOfPull(ctx.app.db, pull, { headOid: status.headOid, conflicts: status.conflicts.length }))}
+    ${changeHead(ctx, repo, pull, { headOid: status.headOid, conflicts: status.conflicts.length })}
     ${changeTabs(repo, pull, "files")}
     <p class="files-where muted small" id="files">
       <span class="mono">${headLabel} → ${pull.baseBranch}</span>
@@ -999,7 +999,7 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
             >`,
       )}
     </p>
-    ${when(wall, (w) => wallCard(w))}
+    ${when(wall, (w) => wallCard(w, mayMerge ? thread : undefined))}
     ${holdCard(ctx, repo, pull, { act: false })}
     ${teamsCard(teamVerdicts(ctx.app.db, { ...pull, headOid: status.headOid }))}
     ${mergeBox(ctx, repo, pull, status, mayMerge, by, check, isApp, tier, stale)}
@@ -1057,9 +1057,11 @@ export async function pullCommentSubmit(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
 
   const dest = `${repoBase(found.repo)}/pulls/${found.pull.number}`;
+  // A reply from the feed returns there: a fixed word, never a URL from the form.
+  const fromFeed = field(form, "back") === "feed";
   const bodyText = field(form, "body");
   if (bodyText.trim() === "")
-    return flashTo(ctx, dest, {
+    return flashTo(ctx, fromFeed ? "/feed" : dest, {
       tone: "danger",
       message: COMMENT_EMPTY,
     });
@@ -1071,11 +1073,13 @@ export async function pullCommentSubmit(ctx: Ctx): Promise<Response> {
     bodyText,
   );
   if (!added.ok)
-    return flashTo(ctx, dest, {
+    return flashTo(ctx, fromFeed ? "/feed" : dest, {
       tone: "danger",
       message: originError(added.error) ?? COMMENT_NOT_POSTED,
     });
-  return flashTo(ctx, `${dest}#conversation`, { message: "Comment posted." });
+  return fromFeed
+    ? flashTo(ctx, "/feed", { message: "Reply posted." })
+    : flashTo(ctx, `${dest}#conversation`, { message: "Comment posted." });
 }
 
 /** Match the diff viewer's per-file anchor id, so the redirect lands there. */
@@ -1348,7 +1352,7 @@ export async function pullChecksSubmit(ctx: Ctx): Promise<Response> {
   const found = pullContext(ctx);
   if (found instanceof Response) return found;
   if (!ctx.auth.user || !canWrite(ctx.app.db, found.repo, ctx.auth.user))
-    return new Response("forbidden", { status: 403 });
+    return forbiddenPage(ctx, "Only someone who can write to this repository can do this.");
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
   // The home's card asks to come back to the home (only "/" is honoured).
@@ -1369,7 +1373,7 @@ export async function pullMergeSubmit(ctx: Ctx): Promise<Response> {
   const found = pullContext(ctx);
   if (found instanceof Response) return found;
   if (!ctx.auth.user || !canWrite(ctx.app.db, found.repo, ctx.auth.user))
-    return new Response("forbidden", { status: 403 });
+    return forbiddenPage(ctx, "Only someone who can write to this repository can do this.");
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
 
@@ -1397,7 +1401,7 @@ export async function pullLandPastSubmit(ctx: Ctx): Promise<Response> {
   if (found instanceof Response) return found;
   const user = ctx.auth.user;
   if (!user || user.kind === "agent" || !canAdmin(ctx.app.db, found.repo, user))
-    return new Response("forbidden", { status: 403 });
+    return forbiddenPage(ctx, "Only a person who administers this repository can do this.");
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
   const dest = `${repoBase(found.repo)}/pulls/${found.pull.number}`;

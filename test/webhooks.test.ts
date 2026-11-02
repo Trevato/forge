@@ -13,6 +13,9 @@ import {
   createWebhook,
   deliverDue,
   kindMatches,
+  enqueueForEvent,
+  getWebhook,
+  setWebhookActive,
   verifySignature,
 } from "../src/core/webhooks.ts";
 
@@ -169,6 +172,32 @@ describe("webhook delivery", () => {
     expect(ok).toBe(true);
     expect(received).toHaveLength(1);
   });
+
+  test("a delivery queued before a pause waits, pending, and sends on resume", async () => {
+    received = [];
+    plainHook(app, repoId, `${receiverUrl}/ok`, "paused.*");
+    const hookId = app.db
+      .query<{ id: string }, []>("SELECT id FROM webhook WHERE kinds = 'paused.*'")
+      .get()!.id;
+    app.bus.append({ kind: "paused.event", repoId, actorId: userId, payload: {} });
+    const state = (): string | undefined =>
+      app.db
+        .query<{ state: string }, []>(
+          "SELECT d.state FROM webhook_delivery d JOIN event e ON e.id=d.event_id WHERE e.kind='paused.event'",
+        )
+        .get()?.state;
+    expect(state()).toBe("pending");
+
+    expect(setWebhookActive(app.db, repoId, hookId, false)).toBe(true);
+    expect(await deliverDue(app.db, app.log, new Date(), LOOPBACK)).toBe(0);
+    expect(received).toHaveLength(0);
+    expect(state()).toBe("pending");
+
+    expect(setWebhookActive(app.db, repoId, hookId, true)).toBe(true);
+    expect(await deliverDue(app.db, app.log, new Date(), LOOPBACK)).toBe(1);
+    expect(received).toHaveLength(1);
+    expect(state()).toBe("ok");
+  });
 });
 
 describe("webhook urls and refused deliveries", () => {
@@ -276,3 +305,46 @@ function unwrap<T>(
   if (!r.ok) throw new Error(`unwrap: ${String(r.error)}`);
   return r.value;
 }
+
+describe("pausing a webhook", () => {
+  test("a paused hook enqueues nothing, resumes without backfill, and is scoped to its repo", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-hook-pause-"));
+    const app = createApp({ dataDir, port: 0 });
+    try {
+      const user = await createUser(app.db, { origin: "seed", trusted: true,
+        username: "pauser", email: "p@f.dev", password: "webhooks-are-fun" });
+      if (!user.ok) throw new Error("user");
+      const mk = async (name: string) => {
+        const r = await createRepo(app.db, app.reposRoot, { ownerId: user.value.id, name });
+        if (!r.ok) throw new Error("repo");
+        return r.value.id;
+      };
+      const repoId = await mk("a");
+      const other = await mk("b");
+      const made = createWebhook(app.db, { repoId, url: "https://example.com/h", kinds: "push" });
+      if (!made.ok) throw new Error("hook");
+      const hookId = made.value.webhook.id;
+      const event = (): number =>
+        app.db.query<{ n: number }, []>("SELECT count(*) n FROM webhook_delivery").get()!.n;
+      expect(made.value.webhook.active).toBe(true);
+
+      expect(setWebhookActive(app.db, other, hookId, false)).toBe(false);
+      expect(getWebhook(app.db, repoId, hookId)!.active).toBe(true);
+
+      expect(setWebhookActive(app.db, repoId, hookId, false)).toBe(true);
+      expect(getWebhook(app.db, repoId, hookId)!.active).toBe(false);
+      const ev = app.bus.append({ kind: "push", repoId, actorId: user.value.id, payload: {} });
+      expect(enqueueForEvent(app.db, ev)).toBe(0);
+      expect(event()).toBe(0);
+
+      expect(setWebhookActive(app.db, repoId, hookId, true)).toBe(true);
+      expect(event()).toBe(0); // nothing backfilled
+      const ev2 = app.bus.append({ kind: "push", repoId, actorId: user.value.id, payload: {} });
+      enqueueForEvent(app.db, ev2);
+      expect(event()).toBeGreaterThan(0);
+    } finally {
+      app.close();
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+});

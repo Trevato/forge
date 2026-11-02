@@ -156,3 +156,16 @@ test("a reader the returns tool refuses sees no returns block", async () => {
   expect(h.text()).toBe(before);
   h.stop();
 });
+
+test("Forge spend is a palette entry: an admin reads every app, a writer of none reads none", async () => {
+  const h = boot("alice");
+  await h.open("Forge spend");
+  expect(h.text()).toContain("Forge spend");
+  expect(h.text()).toContain("3 apps · today $");
+  expect(h.text()).toContain("last 24 h $");
+  h.stop();
+  const b = boot("bob");
+  await b.open("Forge spend");
+  expect(b.text()).toContain("0 apps · today $0.00 over 0 runs");
+  b.stop();
+});

@@ -14,6 +14,8 @@ export type TurnRole = (typeof TURN_ROLES)[number];
 
 /** Longest turn text kept, in characters; longer is refused, not cut. */
 export const MAX_TURN_CHARS = 20_000;
+/** Most turns a conversation keeps; each new turn past it pushes the oldest out. */
+export const TURNS_KEPT = 1000;
 export const DEFAULT_PAGE = 50;
 export const MAX_PAGE = 200;
 
@@ -105,7 +107,16 @@ export function appendTurn(
     "INSERT INTO conversation_turn (id, conversation_id, role, text, created_at) VALUES (?1,?2,?3,?4,?5)",
   ).run(row.id, row.conversation_id, row.role, row.text, row.created_at);
   db.query("UPDATE conversation SET updated_at = ?2 WHERE id = ?1").run(conversationId, now);
+  db.query(
+    "DELETE FROM conversation_turn WHERE conversation_id = ?1 AND rowid < (SELECT rowid FROM conversation_turn WHERE conversation_id = ?1 ORDER BY rowid DESC LIMIT 1 OFFSET ?2)",
+  ).run(conversationId, TURNS_KEPT - 1);
   return ok(turnOf(row));
+}
+
+/** Take back a turn just added, as when the message it holds could not be answered. */
+export function removeTurn(db: Database, userId: string, conversationId: string, turnId: string): void {
+  if (!owned(db, userId, conversationId)) return;
+  db.query("DELETE FROM conversation_turn WHERE id = ?1 AND conversation_id = ?2").run(turnId, conversationId);
 }
 
 /**
@@ -128,6 +139,22 @@ export function listTurns(
     )
     .all(conversationId, opts.before ?? null, limit) as TurnRow[];
   return ok(rows.reverse().map(turnOf));
+}
+
+/**
+ * The turns after the turn id `after`, oldest first, at most `MAX_PAGE`; an
+ * empty `after` is the whole conversation's start, an id this conversation
+ * does not have is nothing. The stream reads this to follow an answer being
+ * written and to resume from the last turn a client saw.
+ */
+export function turnsAfter(db: Database, userId: string, conversationId: string, after: string): Turn[] {
+  if (!owned(db, userId, conversationId)) return [];
+  const rows = db
+    .query(
+      "SELECT * FROM conversation_turn WHERE conversation_id = ?1 AND rowid > COALESCE(CASE WHEN ?2 = '' THEN 0 ELSE (SELECT rowid FROM conversation_turn WHERE id = ?2 AND conversation_id = ?1) END, 9223372036854775807) ORDER BY rowid LIMIT ?3",
+    )
+    .all(conversationId, after, MAX_PAGE) as TurnRow[];
+  return rows.map(turnOf);
 }
 
 /** What a Claude session id may look like: short, and only id characters. */

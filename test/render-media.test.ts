@@ -4,6 +4,12 @@
  * file too long for the page to read still plays, and seeks by Range; a
  * name the bytes contradict keeps the source view; and the "can't play"
  * note is in the markup for the shell script to show.
+ *
+ * The pages are read signed in, and the crawl clock is held "behind" (#8269):
+ * an anonymous reader's deep-page budget is 30 a minute, a quarter of that
+ * while the event loop runs late, and under the gate's load this file's
+ * twelve reads ran past it and were answered 429. What is drawn here does
+ * not depend on who reads it; the budget has its own suite.
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -11,7 +17,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
+import { createSession } from "../src/core/sessions.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { setCrawlClock } from "../src/http/crawl.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { shellJs } from "../src/web/client.ts";
 import { MEDIA_PLAY_JS } from "../src/web/render/player.ts";
@@ -48,9 +56,13 @@ let dataDir = "";
 let app: App;
 let servers: Servers;
 let base = "";
+let cookie = "";
+
+const get = (path: string, headers: Record<string, string> = {}): Promise<Response> =>
+  fetch(`${base}${path}`, { headers: { cookie, ...headers } });
 
 const page = async (path: string): Promise<string> => {
-  const res = await fetch(`${base}/alice/tapes/blob/main/${path}`);
+  const res = await get(`/alice/tapes/blob/main/${path}`);
   expect(res.status).toBe(200);
   return res.text();
 };
@@ -60,8 +72,11 @@ beforeAll(async () => {
   app = createApp({ dataDir, port: 0 });
   servers = await serve(app);
   base = servers.url;
+  // The gate's load, on every run: the anonymous budget at its smallest.
+  setCrawlClock(app, Date.now, true);
   const a = await seedAdmin(app, { username: "alice", email: "a@f.dev", password: "a-long-media-passphrase" });
   if (!a.ok) throw new Error("signup failed");
+  cookie = `forge_session=${createSession(app.db, a.value.id).token}`;
   const repo = await createRepo(app, a.value, { name: "tapes", visibility: "public" });
   if (!repo.ok) throw new Error("repo failed");
   const made = await commitToBranch(app, a.value, repo.value, {
@@ -116,7 +131,7 @@ describe("audio and video on the blob page", () => {
   });
 
   test("Source drops the player", async () => {
-    const res = await fetch(`${base}/alice/tapes/blob/main/v.mp4?view=source`);
+    const res = await get("/alice/tapes/blob/main/v.mp4?view=source");
     const text = await res.text();
     expect(text).not.toContain("<video");
     expect(text).toContain("Binary file");
@@ -126,9 +141,7 @@ describe("audio and video on the blob page", () => {
     const text = await page("long.mp4");
     expect(text).toContain('<source src="/alice/tapes/media/main/long.mp4" type="video/mp4"');
     expect(text).toContain("1.4 MB · MPEG-4");
-    const res = await fetch(`${base}/alice/tapes/media/main/long.mp4`, {
-      headers: { range: "bytes=750000-750099" },
-    });
+    const res = await get("/alice/tapes/media/main/long.mp4", { range: "bytes=750000-750099" });
     expect(res.status).toBe(206);
     expect(res.headers.get("content-range")).toBe(`bytes 750000-750099/${LONG.length}`);
     expect(res.headers.get("content-type")).toBe("video/mp4");

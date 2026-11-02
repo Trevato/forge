@@ -230,7 +230,7 @@ describe("surfaces adversarial: web", () => {
       },
     );
     expect(assignedToAlice.status).toBe(303);
-    const dash = await bodyOf(alice, "/");
+    const dash = await bodyOf(alice, "/feed");
     expect(dash).not.toContain(payload);
     expect(dash).toContain(escaped);
 
@@ -305,21 +305,18 @@ describe("surfaces adversarial: web", () => {
     for (const path of ["/apps", "/apps/new", "/settings/crew"]) {
       const response = await web(alice, path);
       const csp = response.headers.get("content-security-policy") ?? "";
-      expect(`${path}: ${csp}`).toContain("script-src 'nonce-");
+      expect(`${path}: ${csp}`).toContain("script-src 'self';");
       expect(csp).not.toContain("unsafe-inline");
       const body = await response.text();
-      const nonceMatch = /nonce-([A-Za-z0-9+/=_-]+)/.exec(csp);
-      expect(nonceMatch).not.toBeNull();
-      // Every *executable* <script> tag carries exactly that nonce — a
+      expect(csp).not.toContain("nonce");
+      // Every *executable* <script> is a file on this origin — a
       // `type="application/json"` data island is inert and CSP's script-src
       // never gates it, so it is excluded rather than asserted on.
       const scripts = [...body.matchAll(/<script\b[^>]*>/g)].filter(
         ([tag]) => !/type="application\/json"/.test(tag),
       );
       expect(scripts.length).toBeGreaterThan(0);
-      for (const [tag] of scripts) {
-        expect(tag).toContain(`nonce="${nonceMatch![1]}"`);
-      }
+      for (const [tag] of scripts) expect(tag).toMatch(/ src="\/assets\/[a-z]+-[0-9a-f]+\.js"/);
       // No inline event handler, no interpolated style attribute.
       expect(body).not.toMatch(/\son[a-z]+="/i);
     }

@@ -26,8 +26,11 @@ its ledger rows (`/board?ledger=closed|deferred|asked`; any other value is
 ignored, `?apps=` is kept). A deferral is the decider's own `stop`, never the
 rule's. The ledger view lists up to 200 rows and says when it left some out.
 In the terminal the same line sits above the dashboard, `C` (or the palette's
-Decider) opens the rows, and `1`, `2`, `3` switch pile. Both are for the
-repositories you own only: a reader sees nothing.
+Decider) opens the rows, and `1`, `2`, `3` switch pile. Under the line, one
+muted line per app that ran or shipped this week says what one shipped change
+cost, in the board's words ("$3.00 per shipped change this week"); at most
+three, then `+N more apps`. Both are for the repositories you own only: a
+reader sees nothing.
 
 **Give back to the crew** is on a pull a pass gave up on and assigned to you
 (finishing, requested, sweep, picker): its row says the pass's reason in one

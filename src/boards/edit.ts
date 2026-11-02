@@ -11,7 +11,7 @@ export type Edit =
   | { kind: "settings"; range: unknown; refresh: unknown }
   | { kind: "add"; panel: unknown }
   | { kind: "edit"; index: number; panel: unknown }
-  | { kind: "remove"; index: number }
+  | { kind: "remove"; index: number; title?: string }
   | { kind: "move"; index: number; by: -1 | 1 };
 
 export function applyEdit(board: Board, edit: Edit): Result<Board, string> {
@@ -42,6 +42,8 @@ export function applyEdit(board: Board, edit: Edit): Result<Board, string> {
       break;
     }
     case "remove":
+      // A title names the panel the person saw; a board reordered since must not lose another one.
+      if (edit.title !== undefined && panels[at]!.title !== edit.title) return err("that panel moved; nothing was removed");
       panels.splice(at, 1);
       next = { ...board, panels };
       break;

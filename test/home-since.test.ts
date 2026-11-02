@@ -67,7 +67,7 @@ test("home heads the digest with the window, lists only landed pulls the viewer 
   db.query("DELETE FROM pull WHERE issue_id = ?1").run(`since-${priv.id}-3`);
 
   db.query("INSERT INTO home_visit (user_id, at) VALUES (?1, ?2) ON CONFLICT(user_id) DO UPDATE SET at = excluded.at").run(f.owner.id, Date.now() - 3 * H);
-  const res = await fetch(`${f.base}/?all=1`, { headers: { cookie: f.ownerCookie } });
+  const res = await fetch(`${f.base}/feed?all=1`, { headers: { cookie: f.ownerCookie } });
   const text = await res.text();
   expect(text).toContain("Since you were here · 3 hours");
   expect(text).toContain("1 landed");
@@ -80,7 +80,7 @@ test("home heads the digest with the window, lists only landed pulls the viewer 
 test("a first-time user, with no home_visit row, gets the 24 hour heading", async () => {
   const db = f.app.db;
   db.query("DELETE FROM home_visit WHERE user_id = ?1").run(f.owner.id);
-  const text = await (await fetch(`${f.base}/?all=1`, { headers: { cookie: f.ownerCookie } })).text();
+  const text = await (await fetch(`${f.base}/feed?all=1`, { headers: { cookie: f.ownerCookie } })).text();
   expect(text).toContain("Since you were here · 1 day<");
   expect(text).toContain("1 landed");
   expect(lastVisit(db, f.owner.id)).toBeDefined();
@@ -118,12 +118,12 @@ test("a prefetch, a preview or a non-document fetch leaves home_visit unchanged;
     { "sec-fetch-dest": "iframe" },
   ]) {
     set();
-    const text = await (await fetch(`${f.base}/?all=1`, { headers: { cookie: f.ownerCookie, ...headers } })).text();
+    const text = await (await fetch(`${f.base}/feed?all=1`, { headers: { cookie: f.ownerCookie, ...headers } })).text();
     expect(text).toContain("Since you were here · 3 hours");
     expect(lastVisit(db, f.owner.id)).toBe(at);
   }
   set();
-  await (await fetch(`${f.base}/?all=1`, { headers: { cookie: f.ownerCookie, "sec-fetch-dest": "document" } })).text();
+  await (await fetch(`${f.base}/feed?all=1`, { headers: { cookie: f.ownerCookie, "sec-fetch-dest": "document" } })).text();
   expect(lastVisit(db, f.owner.id)).toBeGreaterThan(at);
 });
 

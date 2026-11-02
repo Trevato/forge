@@ -18,6 +18,16 @@ import {
   removeTeamMember,
 } from "../../actions/orgs.ts";
 import {
+  addRefusal,
+  addedSays,
+  createRefusal,
+  createdSays,
+  deleteRefusal,
+  deletedSays,
+  removeRefusal,
+  removedSays,
+} from "../../actions/team_words.ts";
+import {
   OWNERS_TEAM,
   accessAllows,
   getOrg,
@@ -500,18 +510,13 @@ export async function teamCreate(ctx: Ctx): Promise<Response> {
     chosen === "write" || chosen === "admin" ? chosen : "read";
   const name = field(form, "name");
   const created = createTeam(ctx.app, ctx.auth.user, org, name, permission);
-  if (!created.ok) {
-    const messages: Record<string, string> = {
-      name_taken: `${org.username} already has a team called ${name}.`,
-      invalid_name: "A team needs a name.",
-    };
+  if (!created.ok)
     return flashTo(ctx, `/${org.username}`, {
       tone: "danger",
-      message: messages[created.error] ?? "Could not create that team.",
+      message: createRefusal(created.error, org.username, name),
     });
-  }
   return flashTo(ctx, `/${org.username}/-/teams/${created.value.id}`, {
-    message: `Created ${created.value.name} with ${permission} access.`,
+    message: createdSays(created.value.name, permission),
   });
 }
 
@@ -624,17 +629,10 @@ export async function teamMemberAdd(ctx: Ctx): Promise<Response> {
   if (!added.ok)
     return flashTo(ctx, dest, {
       tone: "danger",
-      message:
-        added.error === "no_such_user"
-          ? `No account called ${username || "that"}.`
-          : added.error === "agent_cannot_own"
-            ? `${username} is an agent: an agent never administers an organization.`
-            : "Could not add that member.",
+      message: addRefusal(added.error, username),
     });
   return flashTo(ctx, dest, {
-    message: added.value.added
-      ? `Added ${username} to ${r.team.name}.`
-      : `${username} was already on ${r.team.name}.`,
+    message: addedSays(added.value.added, username, r.team.name),
   });
 }
 
@@ -660,17 +658,10 @@ export async function teamMemberRemove(ctx: Ctx): Promise<Response> {
   if (!removed.ok)
     return flashTo(ctx, dest, {
       tone: "danger",
-      message:
-        removed.error === "no_such_user"
-          ? `No account called ${username || "that"}.`
-          : removed.error === "last_owner"
-            ? `${r.team.name} must keep at least one person who owns ${r.org.username}. Make someone else an owner first.`
-            : "Could not remove that member.",
+      message: removeRefusal(removed.error, username, r.org.username, r.team.name),
     });
   return flashTo(ctx, dest, {
-    message: removed.value.removed
-      ? `Removed ${username} from ${r.team.name}.`
-      : `${username} was not on ${r.team.name}.`,
+    message: removedSays(removed.value.removed, username, r.team.name),
   });
 }
 
@@ -682,9 +673,9 @@ export async function teamDelete(ctx: Ctx): Promise<Response> {
   if (!deleted.ok)
     return flashTo(ctx, `/${r.org.username}/-/teams/${r.team.id}`, {
       tone: "danger",
-      message: `${r.team.name} is protected — an organization must keep its owners.`,
+      message: deleteRefusal(deleted.error, r.team.name),
     });
   return flashTo(ctx, `/${r.org.username}`, {
-    message: `Deleted the ${r.team.name} team.`,
+    message: deletedSays(r.team.name),
   });
 }

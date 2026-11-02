@@ -75,9 +75,10 @@ export function monthSpent(db: Database, userId: string, now: Date): number {
   return (
     db
       .query<{ n: number }, [string, string, string]>(
-        `SELECT COALESCE(SUM(u.cost_usd), 0) AS n
-         FROM usage u JOIN repo r ON r.id = u.repo_id
-         WHERE r.owner_id = ?1 AND u.subscription_id = ?2 AND u.at >= ?3`,
+        `SELECT COALESCE((SELECT SUM(u.cost_usd) FROM usage u JOIN repo r ON r.id = u.repo_id
+                          WHERE r.owner_id = ?1 AND u.subscription_id = ?2 AND u.at >= ?3), 0)
+              + COALESCE((SELECT SUM(c.cost_usd) FROM conversation_run c
+                          WHERE c.user_id = ?1 AND c.subscription_id = ?2 AND c.started_at >= ?3), 0) AS n`,
       )
       .get(userId, PLATFORM, monthStart(now))?.n ?? 0
   );

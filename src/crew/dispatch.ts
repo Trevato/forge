@@ -10,6 +10,7 @@
 
 import { twinNote, twinOf, type Twin } from "./twin.ts";
 import { NO_MERGE } from "../checks/merged.ts";
+import { resolveListConflicts } from "../actions/list-conflicts.ts";
 import { markHeard } from "../core/issues.ts";
 import { capacityCount, noteBooted } from "../core/capacity.ts";
 import { tmpdir } from "node:os";
@@ -29,10 +30,10 @@ import {
   listComments,
   type Issue,
 } from "../core/issues.ts";
-import { closesFromBody, getPull, type Pull } from "../core/pulls.ts";
+import { closesFromBody, getPull, pullDir, type Pull } from "../core/pulls.ts";
 import { claimedClones, sweepOrphanClones } from "./orphans.ts";
 import { pruneRunFiles } from "../runs/prune.ts";
-import { crewRoot } from "./workdir.ts";
+import { crewRoot, isClaimed } from "./workdir.ts";
 import { resolveOpen } from "../core/decisions.ts";
 import { accountActive } from "../core/accounts.ts";
 import { runningLimitSentence, runningRuns } from "../settings/quotas.ts";
@@ -96,6 +97,15 @@ import { checksFor } from "../checks/service.ts";
 import { redMain, sharedWithMain } from "../checks/red_main.ts";
 import { diskRecovered, diskRed } from "../checks/disk_red.ts";
 import { sharedWithPulls } from "../checks/shared_red.ts";
+import type { Impact } from "../checks/impact.ts";
+import {
+  OUTSIDE_DIFF,
+  outsideDiffCandidate,
+  pullChanged,
+  recheckedHead,
+  recheckLine,
+  redOutsideDiff,
+} from "../checks/outside_diff.ts";
 import { certain } from "./decide.ts";
 import { readRunLog } from "../runs/log.ts";
 import { whenText } from "./limits.ts";
@@ -114,6 +124,30 @@ const log = createLog("crew");
 /** Automatic follow-ups after a failed check, before a person must speak. */
 export const CHECK_FAILED_LIMIT = 2;
 const TICK_MS = 5_000;
+
+/** Whether the check run's red is a pull that does not merge into its base. */
+function conflictSummary(app: App, runId: unknown): boolean {
+  if (typeof runId !== "string") return false;
+  return getRun(app.db, runId)?.summary.includes(NO_MERGE) === true;
+}
+
+/**
+ * A pull's check could not start for a conflict: the forge keeps both sides
+ * of a list-doc clash itself, else queues one bring-up-to-date run. Neither
+ * is a try (`automaticRunsSince` counts failed checks only); one in flight is
+ * enough.
+ */
+async function bringUpAfterNoMerge(app: App, repo: Repo, issue: Issue, agent: Agent): Promise<void> {
+  const pull = getPull(app.db, repo.id, issue.number);
+  if (!pull) return;
+  if (await resolveListConflicts(app, repo, pull)) return;
+  if (activeRunFor(app.db, "agent", issue.id) !== undefined) return;
+  queueAgentRun(app, repo, issue, agent, "conflict", undefined, {
+    notBefore: new Date().toISOString(),
+    attempt: 0,
+    summary: "main moved: the pull does not merge into its base",
+  });
+}
 
 export interface CrewHandle {
   /** Whether a usable Claude Code was found at start. */
@@ -228,7 +262,7 @@ export async function startCrew(
   }, options.tickMs ?? TICK_MS);
   // Clones no open issue, pull or run claims fill the volume (#5697).
   const sweepClones = (): void => {
-    sweepOrphanClones(crewRoot(app.config.dataDir), claimedClones(app.db))
+    sweepOrphanClones(crewRoot(app.config.dataDir), claimedClones(app.db), isClaimed)
       .then((count) => {
         if (count > 0) log.info("removed clones nothing claims", { count });
       })
@@ -732,51 +766,40 @@ function route(app: App, event: ForgeEvent): void {
         });
         return;
       }
+      // A pull that does not merge is no failed try: the forge settles a
+      // list-doc clash itself, else a bring-up-to-date run is queued. It
+      // counts towards no limit and parks nothing (#7909).
+      if (conflictSummary(app, event.payload["runId"])) {
+        void bringUpAfterNoMerge(app, repo, issue, agent).catch((error) =>
+          log.error("bringing a conflicted pull up to date failed", {
+            issue: issue.number,
+            error: String(error),
+          }),
+        );
+        return;
+      }
       // A red that main shares (#1971), or that three pulls share within
       // the hour (#2266), is not the pull's: no rework, no park, no
       // strike; it waits and is checked again when main is green.
       if (waitOnMain(app, repo, issue, event.payload)) return;
-      // Bounded: after a few failed checks in a row the agent stops and a
-      // person must speak (docs/APPS.md, rule 7).
-      const since = lastHumanWord(app, issue, agent);
-      if (automaticRunsSince(app.db, issue.id, since) >= CHECK_FAILED_LIMIT) {
-        const pull = getPull(app.db, repo.id, issue.number);
-        if (
-          pull &&
-          parkPull(
-            app,
-            repo,
-            pull,
-            `the check stayed red through ${CHECK_FAILED_LIMIT} automatic tries`,
-          )
-        )
-          return;
-        log.info("check failed again; waiting for a person", {
-          issue: issue.number,
-        });
+      // A red only on tests the diff does not reach (#7630) is checked once
+      // more on the same head before a try is spent on it.
+      const failedRun = typeof event.payload["runId"] === "string" ? getRun(app.db, event.payload["runId"]) : undefined;
+      const outside = outsideDiffCandidate(app.db, app.config.dataDir, failedRun);
+      if (outside === undefined) {
+        answerRed(app, repo, issue, agent, event.payload);
         return;
       }
-      const runId = event.payload["runId"];
-      // Without a decider the rule answers at once, and the rework queues
-      // in the same tick the event landed — nothing waits on a promise.
-      if (app.config.decider === undefined || typeof runId !== "string") {
-        queueAgentRun(app, repo, issue, agent, "check_failed");
-        return;
-      }
-      const commitOid = event.payload["commitOid"];
-      const env = event.payload["env"];
-      void answerFailedCheck(app, repo, issue, agent, {
-        runId,
-        kind: String(event.payload["kind"] ?? ""),
-        commitOid: typeof commitOid === "string" ? commitOid : undefined,
-        env: typeof env === "string" ? env : undefined,
-        since,
-      }).catch((error) =>
-        log.error("a failed check went unanswered", {
-          issue: issue.number,
-          error: String(error),
-        }),
-      );
+      void recheckOutsideDiff(app, repo, issue, event.payload, outside)
+        .then((rechecked) => {
+          if (!rechecked) answerRed(app, repo, issue, agent, event.payload);
+        })
+        .catch((error) =>
+          log.error("a red outside the diff went unanswered", {
+            issue: issue.number,
+            error: String(error),
+          }),
+        );
       return;
     }
     case "pull.closed":
@@ -816,6 +839,95 @@ function route(app: App, event: ForgeEvent): void {
     default:
       return;
   }
+}
+
+/**
+ * A red that is the pull's to answer: parked once the automatic tries are
+ * spent, else reworked — through the decider, when there is one.
+ */
+function answerRed(
+  app: App,
+  repo: Repo,
+  issue: Issue,
+  agent: Agent,
+  payload: Record<string, unknown>,
+): void {
+  // Bounded: after a few failed checks in a row the agent stops and a
+  // person must speak (docs/APPS.md, rule 7).
+  const since = lastHumanWord(app, issue, agent);
+  if (automaticRunsSince(app.db, issue.id, since) >= CHECK_FAILED_LIMIT) {
+    const pull = getPull(app.db, repo.id, issue.number);
+    if (
+      pull &&
+      parkPull(
+        app,
+        repo,
+        pull,
+        `the check stayed red through ${CHECK_FAILED_LIMIT} automatic tries`,
+      )
+    )
+      return;
+    log.info("check failed again; waiting for a person", {
+      issue: issue.number,
+    });
+    return;
+  }
+  const runId = payload["runId"];
+  // Without a decider the rule answers at once, and the rework queues
+  // in the same tick the event landed — nothing waits on a promise.
+  if (app.config.decider === undefined || typeof runId !== "string") {
+    queueAgentRun(app, repo, issue, agent, "check_failed");
+    return;
+  }
+  const commitOid = payload["commitOid"];
+  const env = payload["env"];
+  void answerFailedCheck(app, repo, issue, agent, {
+    runId,
+    kind: String(payload["kind"] ?? ""),
+    commitOid: typeof commitOid === "string" ? commitOid : undefined,
+    env: typeof env === "string" ? env : undefined,
+    since,
+  }).catch((error) =>
+    log.error("a failed check went unanswered", {
+      issue: issue.number,
+      error: String(error),
+    }),
+  );
+}
+
+/**
+ * The re-check of a red outside the diff, when the diff says it is one:
+ * whether it was asked for (or the head moved on and the red is history).
+ * `false` is today's answer: the red is the pull's.
+ */
+async function recheckOutsideDiff(
+  app: App,
+  repo: Repo,
+  issue: Issue,
+  payload: Record<string, unknown>,
+  outside: { impact: Impact; failing: string[] },
+): Promise<boolean> {
+  const { commitOid, env } = payload;
+  const checks = checksFor(app);
+  const pull = getPull(app.db, repo.id, issue.number);
+  if (checks === undefined || !pull || typeof commitOid !== "string" || typeof env !== "string")
+    return false;
+  const dir = await pullDir(app.db, app.reposRoot, repo, pull);
+  const changed = await pullChanged(dir, pull, commitOid);
+  const files = changed && redOutsideDiff(outside.failing, changed, outside.impact);
+  if (files === undefined) return false;
+  const now = getPull(app.db, repo.id, issue.number);
+  // A push since then made a newer check; this red is history.
+  if (!now || now.state !== "open" || now.headOid !== commitOid) return true;
+  if (recheckedHead(app.db, issue.id, commitOid)) return false;
+  const run = await checks.request(repo, env, commitOid, OUTSIDE_DIFF, issue.id);
+  if (run === undefined) return false;
+  if (run.reason === OUTSIDE_DIFF) appendRunLog(app.config.dataDir, run.id, recheckLine(files));
+  log.info("check failed only outside the diff; checking the head once more", {
+    issue: issue.number,
+    files: files.join(", "),
+  });
+  return true;
 }
 
 /**

@@ -14,6 +14,7 @@ import { createUser, type User } from "../src/core/users.ts";
 import { liveClientJs } from "../src/web/live.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { promote } from "./helpers/members.ts";
+import { withScripts } from "./helpers/page-script.ts";
 
 async function readEvents(
   res: Response,
@@ -127,13 +128,13 @@ describe("the viewer's stream", () => {
   });
 
   test("the studio pages carry live regions and the script that keeps them fresh", async () => {
-    const res = await fetch(`${servers.url}/`, {
+    const res = await fetch(`${servers.url}/feed`, {
       headers: { cookie: `${cookie}; forge_mode=studio` },
     });
     const page = await res.text();
     expect(page).toContain('id="live-apps"');
     expect(page).toContain('id="live-apps"');
-    expect(page).toContain("new EventSource('/events')");
+    expect(await withScripts(servers.url, page)).toContain("new EventSource('/events')");
   });
 
   test("a grant to run a pull reaches a page watching that pull", async () => {

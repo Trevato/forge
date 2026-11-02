@@ -27,13 +27,21 @@ function panelOf(form: Form): Record<string, unknown> {
   return { title: field(form, "title"), chart: p.chart, query: toQuery(p), w: num(field(form, "w")), h: num(field(form, "h")) };
 }
 
-function editOf(op: string, form: Form): Edit | undefined {
+/** A panel to remove: from the form, or from the query the confirm page posts to (#8030). */
+function removeOf(form: Form, query: URLSearchParams): Edit {
+  const fromForm = field(form, "index") !== "";
+  const index = fromForm ? field(form, "index") : query.get("index") ?? "";
+  const title = fromForm ? field(form, "title") : query.get("title") ?? "";
+  return title === "" ? { kind: "remove", index: num(index) } : { kind: "remove", index: num(index), title };
+}
+
+function editOf(op: string, form: Form, query: URLSearchParams): Edit | undefined {
   switch (op) {
     case "rename": return { kind: "title", title: field(form, "title") };
     case "settings": return { kind: "settings", range: field(form, "range"), refresh: field(form, "refresh") };
     case "add": return { kind: "add", panel: panelOf(form) };
     case "edit": return { kind: "edit", index: num(field(form, "index")), panel: panelOf(form) };
-    case "remove": return { kind: "remove", index: num(field(form, "index")) };
+    case "remove": return removeOf(form, query);
     case "move": {
       const by = num(field(form, "by"));
       return by === 1 || by === -1 ? { kind: "move", index: num(field(form, "index")), by } : undefined;
@@ -82,7 +90,7 @@ export async function boardPost(ctx: Ctx): Promise<Response> {
     const gone = await deleteBoard(ctx.app, ctx.auth.user, slug);
     return gone.ok ? done(ctx, "/boards", "Board deleted.") : failed(ctx, back, gone.error);
   }
-  const edit = editOf(op, form);
+  const edit = editOf(op, form, ctx.url.searchParams);
   if (!edit) return notFoundPage(ctx);
   const changed = await changeBoard(ctx.app, ctx.auth.user, slug, edit);
   return changed.ok ? done(ctx, back, "Saved.") : failed(ctx, back, changed.error);

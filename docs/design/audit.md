@@ -54,11 +54,14 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/board/returns` — `pages/returns.ts` · what the window's dollars bought · `/settings/subscriptions` spend tables, `/settings/usage` · none seen.
 - `/big` — `pages/board.ts` (`bigRedirect`) · a redirect kept for old addresses into the board's wall mode · it is `/board` · none (no page of its own).
 - `/boards` — `pages/boards-view.ts` · saved queries as panels · `/board` · none seen.
+- `/feed` — `studio/home.ts` · the composer and one timeline, what home was before it became the living pipeline (#8015) · `/` · none seen.
 - `/boards/data` — `pages/boards.ts` · the boards' query/data surface · `/board` · none seen.
 - `/asks` — `studio/asks_page.ts` · what the crew is waiting on me for · `/` "needs me" list · colours 2.
 - `/asked` — `studio/asked_page.ts` · what I answered, as a record · `/asks` · none seen.
 - `/review` — `studio/review_page.ts` · every ask waiting on me, one row each, newest first · `/asks` (same asks, with buttons) · none seen.
 - `/flow` — `pages/flow.ts` · the pipeline from ready issue to live deploy, and the bottleneck · `/system`, `/board`, `/` · none seen. A topbar button points here.
+- `/talk` — `pages/talk.ts` · the person's one conversation with the forge: history, composer, Confirm and Cancel; replies stream in over `/talk/stream` · `/settings/confirms` (the same yes, as a list), the home tell box (one line to an app's crew) · none seen; styles in `docs/design/areas/talk.md`.
+- `/pipeline` — `pages/pipeline.ts` · the four steps a change follows (check, review, land, live), for a newcomer · a pull page's step line, `/flow` · none seen.
 - `/map` — `pages/map.ts` (1,806 lines) · the dependency map of work across the forge · `/board`, issue dependency lists, `/:owner/:name/map` · colours 3, sizes 12: the largest private vocabulary.
 - `/audit` — `pages/audit.ts` · every app's contract, who can do what · the app page's one-line policy · none seen. Names the audit of apps, not this document.
 - `/releases` — `pages/releases.ts` · the forge's kept releases and rollback · `/settings/backups` (both are "go back") · none seen.

@@ -25,7 +25,7 @@ import { type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { activeEdgeToken, edgeLoginUrl, edgeStrangerLogin } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
-import { repoBase, signInFirst } from "../chrome.ts";
+import { repoBase, signInFirst, NOT_ADMIN_HERE, forbiddenPage } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { liveRegionsJs } from "../client.ts";
 import { html, when, type Html } from "../html.ts";
@@ -51,10 +51,10 @@ import {
 import { writableAppsOf } from "./asks.ts";
 import { needsYouSection } from "./asks_page.ts";
 import { flowCards } from "./flow_card.ts";
-import { composer, feedJs, feedNote, feedRegion } from "./feed.ts";
+import { composer, feedJs, feedNote, feedRegion, registerWorkerJs } from "./feed.ts";
+import { appChips, movingRegion, tellBox } from "./living.ts";
 import { alarmLines, cachedAlarms } from "./alarm_lines.ts";
-import { keeperRow } from "./keeper_row.ts";
-import { clogRow, kpiRow, vitalsRow, waitingLine } from "./kpi_row.ts";
+import { kpiRow, waitingLine } from "./kpi_row.ts";
 import { feedCandidateCache } from "../../feed/feed.ts";
 import { notePhase, notePhaseRest, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { idleReason } from "../../crew/idle_reason.ts";
@@ -228,7 +228,7 @@ export function liveOnYouFragment(ctx: Ctx): Response {
  * How each late region of home is drawn for `user` (#7660): the page serves
  * the last drawing from memory and `/live/home/<name>` draws it fresh.
  */
-function homeDraws(ctx: Ctx, user: User): Record<HomeRegion, () => Html | Promise<Html>> {
+export function homeDraws(ctx: Ctx, user: User): Record<HomeRegion, () => Html | Promise<Html>> {
   const { db } = ctx.app;
   const request = ctx.request;
   return {
@@ -237,8 +237,6 @@ function homeDraws(ctx: Ctx, user: User): Record<HomeRegion, () => Html | Promis
       const kpiTime: KpiTimer = (name, fn) => timePhase(request, name, fn);
       const kpiOpts = { idle: () => idleReason(ctx.app, new Date()), dataDir: ctx.app.config.dataDir, time: kpiTime, ...(ceilingUsd === null ? {} : { ceilingUsd }) };
       return html`${timePhase(request, "kpis", () => kpiRow(db, kpiOpts), () => kpiCache(db))}
-        ${timePhase(request, "vitals", () => vitalsRow(db))} ${clogRow(db)}
-        ${keeperRow(db, true)}
         ${alarmLines(cachedAlarms(db, new Date(), ceilingUsd))}`;
     },
     waiting: () => timePhase(request, "waiting", () => waitingLine(db, user), () => waitingCache(db)),
@@ -316,8 +314,45 @@ export async function studioHome(
   }
   // The client's first screen names its own phases (`clientApps`).
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-  const { repos: appRepos } = timePhase(ctx.request, "repos", () => writableAppsOf(ctx, user));
   // Render is what is left of the page once the named reads are taken out.
+  const rendering = performance.now();
+  const access = timePhase(ctx.request, "access", () => accessFingerprint(ctx.app.db, user));
+  const ask = firstSteps ?? everydayCard(ctx, user);
+  const figures = user.isAdmin && steps === undefined;
+  const kpis = figures
+    ? await homeRegion(ctx.app.db, ctx.request, user.id, "kpis", homeVariant(ctx.url), access, homeDraws(ctx, user).kpis)
+    : liveLine(ctx);
+  const body = html`<h1 class="sr-only">Home</h1>
+    ${tellBox(ctx, user)}
+    ${ask} ${address}
+    <section class="stack" aria-label="The forge">${kpis}</section>
+    ${timePhase(ctx.request, "moving", () => movingRegion(ctx.app.db, user))}
+    ${appChips(ctx, user)}
+    ${when(
+      steps,
+      () => html`<p class="small muted" id="lean-home"><a href="/">Just my apps</a></p>`,
+    )}
+    <p class="small muted"><a href="/feed">The feed</a></p>`;
+  const res = page({
+    ctx,
+    title: "Home",
+    body,
+    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${refreshJs}\n${registerWorkerJs}${ask ? `\n${passkeyJs}` : ""}`,
+  });
+  notePhaseRest(ctx.request, "render", rendering, ["kpis", "moving", "access"]);
+  return res;
+}
+
+/**
+ * The feed (#8015), kept off home: the composer, then one timeline — what
+ * home was before it became the living pipeline — with your apps and what
+ * is on you beside it on a desk.
+ */
+export async function feedPage(ctx: Ctx): Promise<Response> {
+  const user = ctx.auth.user;
+  if (!user) return signInFirst(ctx);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const { repos: appRepos } = timePhase(ctx.request, "repos", () => writableAppsOf(ctx, user));
   const rendering = performance.now();
   const visitedAt = Date.now();
   const before = timePhase(ctx.request, "visit", () =>
@@ -328,18 +363,9 @@ export async function studioHome(
   const access = timePhase(ctx.request, "access", () => accessFingerprint(ctx.app.db, user));
   const regionOf = (name: HomeRegion): Promise<Html> =>
     homeRegion(ctx.app.db, ctx.request, user.id, name, homeVariant(ctx.url), access, draws[name]);
-  const ask = firstSteps ?? everydayCard(ctx, user);
-  const figures = user.isAdmin && steps === undefined;
-  const body = html`<h1 class="sr-only">Home</h1>
-    ${ask} ${address} ${figures ? await regionOf("kpis") : liveLine(ctx)}
+  const body = html`<h1 class="sr-only">Feed</h1>
     ${await regionOf("waiting")}
-    ${figures ? await regionOf("panels") : null}
-    ${when(
-      steps,
-      () => html`<p class="small muted" id="lean-home">
-        <a href="/">Just my apps</a>
-      </p>`,
-    )}
+    ${user.isAdmin ? await regionOf("panels") : null}
     ${since}
     ${await regionOf("asked")}
     <div class="split" data-rail="wide">
@@ -350,12 +376,7 @@ export async function studioHome(
         ${await regionOf("feed")}
       </div>
       <aside class="stack">
-        ${
-          // The crew's missing key is the owner's to fix, not the first
-          // thing above every post: beside the timeline on a desk, after it
-          // on a phone.
-          user.isAdmin || appRepos.length > 0 ? crewKeyNote(ctx) : null
-        }
+        ${user.isAdmin || appRepos.length > 0 ? crewKeyNote(ctx) : null}
         ${appsRegion(ctx, user)}
         ${terminalCard(ctx)} ${downloadsCard(ctx, user)}
         ${orgsCard(ctx, user)}
@@ -363,11 +384,11 @@ export async function studioHome(
     </div>`;
   const res = page({
     ctx,
-    title: "Home",
+    title: "Feed",
     body,
-    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${feedJs}\n${refreshJs}${ask ? `\n${passkeyJs}` : ""}`,
+    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${feedJs}\n${refreshJs}`,
   });
-  notePhaseRest(ctx.request, "render", rendering, ["kpis", "vitals", "waiting", "panels", "feed", "visit", "since", "access"]);
+  notePhaseRest(ctx.request, "render", rendering, ["waiting", "feed", "asked", "visit", "since", "access", "repos"]);
   return res;
 }
 
@@ -688,7 +709,7 @@ export async function frontUpdate(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return signInFirst(ctx);
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
-  if (!ctx.auth.user.isAdmin) return new Response("forbidden", { status: 403 });
+  if (!ctx.auth.user.isAdmin) return forbiddenPage(ctx, NOT_ADMIN_HERE);
   const next = nextPicks(frontPicksJson(ctx.app), field(form, "action"), form);
   if (next === undefined) return new Response("bad request", { status: 400 });
   const set = setFront(ctx.app, ctx.auth.user, next);

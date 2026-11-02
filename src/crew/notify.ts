@@ -169,6 +169,36 @@ export const post: Sender = async (url, body, headers) => {
   }
 };
 
+export const TEST_LINE = "Test from the forge — notifications reach you.";
+const TEST_GAP_MS = 30_000;
+const lastTest = new Map<string, number>();
+
+/** Whether this person may send a test now: one per `TEST_GAP_MS`. Claims the slot when it says yes. */
+export function claimTest(userId: string, now = Date.now()): boolean {
+  for (const [id, at] of lastTest) if (now - at >= TEST_GAP_MS) lastTest.delete(id);
+  if (lastTest.has(userId)) return false;
+  lastTest.set(userId, now);
+  return true;
+}
+
+/**
+ * One short line to the saved URL, to prove it works. Never throws; the
+ * URL's path (it can hold a secret) is never logged.
+ */
+export async function sendTest(
+  db: Database,
+  userId: string,
+  sender: Sender = post,
+): Promise<"sent" | "refused" | "off"> {
+  const url = notifyUrlOf(db, userId);
+  if (url === undefined) return "off";
+  try {
+    return (await sender(url, TEST_LINE, { title: "forge" })) ? "sent" : "refused";
+  } catch {
+    return "refused";
+  }
+}
+
 /**
  * The forge's admin hears of a red restore drill, or none in eight days,
  * once per cause: the id is the drill's own key, so a repeat tick is not news.

@@ -20,8 +20,13 @@ import type { App } from "../app.ts";
 import { addComment, openIssue, setIssueState } from "../actions/issues.ts";
 import { decisionsSince } from "../core/decisions.ts";
 import { getAgentByName } from "../core/agents.ts";
-import { getIssueById, getLabel, setIssueLabels as writeLabels, type Issue } from "../core/issues.ts";
-import { getRepo, type Repo } from "../core/repos.ts";
+import {
+  getIssueById,
+  getLabel,
+  setIssueLabels as writeLabels,
+  type Issue,
+} from "../core/issues.ts";
+import { canWrite, getRepo, type Repo } from "../core/repos.ts";
 import { ownRepoPath } from "../kernel/own_repo.ts";
 import { leaseLapsed, listRunning } from "../core/runs.ts";
 import { migrations } from "../core/schema.ts";
@@ -32,6 +37,15 @@ import { spans } from "../kernel/degraded_history.ts";
 import { QUEUE_WAIT_MAX_MS } from "../kernel/vitals.ts";
 import { STALE_AFTER_MS } from "../runs/lease.ts";
 import { isOutageSummary } from "./network.ts";
+import {
+  assertionLines,
+  mainVerdict,
+  pullsFailedSince,
+  SHARED_PULLS,
+  SHARED_WINDOW_MS,
+  sharedRuns,
+} from "../checks/shared_red.ts";
+import { readRunLogTail } from "../runs/log.ts";
 import { clip } from "../text/clip.ts";
 
 const log = createLog("sentinel");
@@ -62,6 +76,8 @@ export interface Finding {
   readonly fix?: string;
   /** A degraded finding: when its cause first opened. Same cause and time, same incident (#2553). */
   readonly incident?: string;
+  /** The vitals cause a budget-breach or degraded finding reads. */
+  readonly cause?: string;
 }
 
 const QUOTE_MAX = 200;
@@ -364,7 +380,7 @@ export function repeatedErrors(now: number): Finding[] {
  * Each cause whose spans total more than ten minutes in the day ending at
  * `now`, quoting its sentence. Shorter totals stay in the history.
  */
-export function degradedCauses(db: Database, now: number, forgeRepoId?: string): Finding[] {
+export function degradedCauses(db: Database, now: number, forgeRepoId?: string, dataDir?: string): Finding[] {
   const from = now - DAY_MS;
   const byCause = new Map<string, { sentence: string; href: string; first: number; opened: number; ms: number }>();
   for (const s of spans(db, from, now)) {
@@ -394,10 +410,12 @@ export function degradedCauses(db: Database, now: number, forgeRepoId?: string):
         `first open: ${new Date(d.first).toISOString()}`,
         `total: ${minutes} minutes in the day`,
         `href: ${d.href}`,
+        ...sharedLines(db, cause, now, forgeRepoId, dataDir),
       ],
       pillar: "P0 Trust: the forge says when it is not well, and is well again",
       lookFor: `\`${cause}\` stays out of the degraded list for a day, or holds under ${DEGRADED_DAY_MS / 60_000} minutes.`,
       incident: new Date(d.opened).toISOString(),
+      cause,
     });
   }
   return out;
@@ -432,7 +450,7 @@ export function ownCause(cause: string, forgeRepoId: string | undefined): boolea
  * at once, not when the day has added up. The finding shares its key with
  * `degradedCauses`, so one cause is one issue.
  */
-export function budgetBreaches(db: Database, now: number, forgeRepoId?: string): Finding[] {
+export function budgetBreaches(db: Database, now: number, forgeRepoId?: string, dataDir?: string): Finding[] {
   const out: Finding[] = [];
   for (const s of spans(db, now - DAY_MS, now)) {
     if (s.closedAt !== null || !BREACH_CAUSE.test(s.cause) || !ownCause(s.cause, forgeRepoId)) continue;
@@ -445,6 +463,7 @@ export function budgetBreaches(db: Database, now: number, forgeRepoId?: string):
         `since: ${new Date(s.openedAt).toISOString()}`,
         `href: ${s.href}`,
         ...runLogLines(db, s.cause),
+        ...sharedLines(db, s.cause, now, forgeRepoId, dataDir),
       ],
       pillar: "P0 Trust: the forge says when it is not well, and is well again",
       lookFor: `\`${s.cause}\` is gone from the degraded list and the cause is fixed, not waited out.`,
@@ -454,6 +473,7 @@ export function budgetBreaches(db: Database, now: number, forgeRepoId?: string):
           ? "Make the named test's verdict depend only on the code under test, not on the check machine's load, disk or clock, in one pull. Pulls red on it alone wait, unparked, for main's next green check."
           : "Diagnose the cause from the evidence and hand the mechanical fix to a builder as its own issue.",
       urgent: true,
+      cause: s.cause,
     });
   }
   return out;
@@ -471,16 +491,63 @@ function runLogLines(db: Database, cause: string): string[] {
   return run === null ? [] : [`run ${id}: ${run.state}${run.summary ? `, ${oneLine(run.summary)}` : ""}`];
 }
 
+/** How many log lines a shared finding reads from the end of its newest run's log: never the whole file. */
+const SHARED_LOG_TAIL = 400;
+
+/**
+ * What a builder needs to reproduce a `shared:` cause (#8286): the pulls
+ * and runs that failed its test, newest first, the base the newest merged,
+ * the newest one's assertion lines from the tail of its log, and whether
+ * main's newest check passes the test. A private repository's pulls and log
+ * lines stay out of a finding filed anywhere but in that repository.
+ */
+function sharedLines(
+  db: Database,
+  cause: string,
+  now: number,
+  forgeRepoId: string | undefined,
+  dataDir: string | undefined,
+): string[] {
+  if (!cause.startsWith("shared:")) return [];
+  const repoId = cause.split(":")[1] ?? "";
+  const repo = db
+    .query<{ visibility: string }, [string]>("SELECT visibility FROM repo WHERE id = ?1")
+    .get(repoId);
+  if (repo === null || (repo.visibility !== "public" && repoId !== forgeRepoId)) return [];
+  const found = sharedRuns(db, cause, now);
+  if (found === undefined) return [];
+  const [newest] = found.runs;
+  const out = [
+    `test: ${oneLine(found.test)}`,
+    ...found.runs.map((r) => `failed: pull #${r.pull}, check run ${r.runId}`),
+  ];
+  if (newest !== undefined) {
+    out.push(`base: ${newest.baseOid || "none recorded"} (run ${newest.runId})`);
+    const quoted =
+      dataDir === undefined ? [] : assertionLines(readRunLogTail(dataDir, newest.runId, SHARED_LOG_TAIL).lines, found.test);
+    out.push(...quoted.map((l) => `log: ${clip(oneLine(l), QUOTE_MAX)}`));
+  }
+  const main = mainVerdict(db, repoId, found.test);
+  out.push(
+    main === undefined
+      ? "main: no check of main recorded"
+      : main.passes
+        ? `main: passes on main's newest check, run ${main.runId} at ${main.commitOid}`
+        : `main: fails on main's newest check too, run ${main.runId} at ${main.commitOid}`,
+  );
+  return out;
+}
+
 /** Everything the sentinel reads, in one pass. */
-export function findFaults(db: Database, now = Date.now(), forgeRepoId?: string): Finding[] {
+export function findFaults(db: Database, now = Date.now(), forgeRepoId?: string, dataDir?: string): Finding[] {
   const found = [
-    ...budgetBreaches(db, now, forgeRepoId),
+    ...budgetBreaches(db, now, forgeRepoId, dataDir),
     ...heldSlots(db, now),
     ...strayTriggers(db),
     ...ledgerStreaks(db, now),
     ...runStreaks(db),
     ...repeatedErrors(now),
-    ...degradedCauses(db, now, forgeRepoId),
+    ...degradedCauses(db, now, forgeRepoId, dataDir),
   ];
   const keys = new Set<string>();
   return found
@@ -610,6 +677,225 @@ function continuesDone(app: App, repo: Repo, actor: User, f: Finding, evidence: 
   return 1;
 }
 
+interface RecentFix {
+  readonly issueId: string;
+  readonly closedAt: number;
+  /** Its issue was already told the test is still red since that close. */
+  readonly told: boolean;
+}
+
+/**
+ * A shared test's issue closed as done or split within the hour (#8185): its
+ * close is the landing on main, since a merged pull closes what it fixes only
+ * once it lands. The hour's window still holds the reds from before it.
+ */
+function recentFix(db: Database, f: Finding, now: number): RecentFix | undefined {
+  if (f.cause?.startsWith("shared:") !== true) return undefined;
+  const prior = db
+    .query<{ issue_id: string; commented_at: string | null; closed_at: string | null }, [string]>(
+      `SELECT t.issue_id, t.commented_at, i.closed_at FROM sentinel_finding t JOIN issue i ON i.id = t.issue_id
+        WHERE t.key = ?1 AND i.state = 'closed' AND i.parked = 0 AND i.close_reason IN ('done', 'split')
+        ORDER BY i.closed_at DESC LIMIT 1`,
+    )
+    .get(f.key);
+  const closedAt = prior?.closed_at == null ? NaN : Date.parse(prior.closed_at);
+  if (prior === null || !(now - closedAt < SHARED_WINDOW_MS)) return undefined;
+  const told = prior.commented_at !== null && Date.parse(prior.commented_at) >= closedAt;
+  return { issueId: prior.issue_id, closedAt, told };
+}
+
+/** Whether a recent fix holds the finding back: told already, or too few reds since it landed. */
+const heldByFix = (db: Database, f: Finding, fix: RecentFix): boolean =>
+  fix.told || pullsFailedSince(db, f.cause ?? "", fix.closedAt) < SHARED_PULLS;
+
+/**
+ * A shared test fixed within the hour files nothing new (#8185). With fewer
+ * than SHARED_PULLS pulls red on it on checks created after the fix landed,
+ * it says nothing; with that many, it tells the closed issue once, as
+ * `continuesDone` does. Undefined when no fix is that recent.
+ */
+function sinceFix(app: App, repo: Repo, actor: User, f: Finding, evidence: string, at: string, now: number): 0 | 1 | undefined {
+  const fix = recentFix(app.db, f, now);
+  if (fix === undefined) return undefined;
+  if (heldByFix(app.db, f, fix)) return 0;
+  const issue = getIssueById(app.db, fix.issueId);
+  if (issue === undefined) return 0;
+  const pulls = pullsFailedSince(app.db, f.cause ?? "", fix.closedAt);
+  const said = addComment(
+    app,
+    actor,
+    repo,
+    issue,
+    `Still red after the fix landed at ${new Date(fix.closedAt).toISOString()}: ${pulls} pulls failed it on checks created since; the fix may not be live yet. At ${at}; evidence now:\n${f.evidence.map((e) => `- ${e}`).join("\n")}`,
+  );
+  if (!said.ok) {
+    log.warn("sentinel could not comment", { key: f.key, error: String(said.error) });
+    return 0;
+  }
+  app.db
+    .query("UPDATE sentinel_finding SET commented_at = ?1, last_seen = ?1, evidence = ?2 WHERE key = ?3 AND issue_id = ?4")
+    .run(at, evidence, f.key, fix.issueId);
+  return 1;
+}
+
+/** Whether a person, not an agent, has commented on the issue: then they decide, not the sentinel. */
+function personSpoke(db: Database, issueId: string): boolean {
+  const spoke = db
+    .query<{ n: number }, [string]>(
+      `SELECT COUNT(*) AS n FROM comment c JOIN user u ON u.id = c.author_id
+        WHERE c.issue_id = ?1 AND u.is_agent = 0 AND u.kind = 'user'`,
+    )
+    .get(issueId);
+  return spoke !== null && spoke.n > 0;
+}
+
+/** The test a shared finding names, read back from its evidence. */
+const testOf = (evidence: readonly string[]): string | undefined =>
+  evidence.find((e) => e.startsWith("test: "))?.slice(6);
+
+/** A finding's test, or, once its runs left the hour's window, the one its last record named. */
+function testFor(db: Database, f: Finding): string | undefined {
+  const named = testOf(f.evidence);
+  if (named !== undefined || f.cause?.startsWith("shared:") !== true) return named;
+  const last = db
+    .query<{ evidence: string }, [string]>(
+      "SELECT evidence FROM sentinel_finding WHERE key = ?1 ORDER BY last_seen DESC LIMIT 1",
+    )
+    .get(f.key);
+  return last === null ? undefined : testOf(last.evidence.split("\n"));
+}
+
+interface Settled {
+  readonly at: number;
+  readonly evidence: readonly string[];
+}
+
+/**
+ * A shared red that ended by itself (#8287): its span has closed, no pull
+ * failed the test on a check created since, and main's newest check, created
+ * after the span closed, passes it: a main check from before the red ended
+ * says nothing about it. Undefined while any of those does not hold, or the
+ * test is unknown.
+ */
+function settled(db: Database, cause: string, test: string | undefined, now: number): Settled | undefined {
+  if (!cause.startsWith("shared:") || test === undefined) return undefined;
+  let at = -Infinity;
+  for (const s of spans(db, now - DAY_MS, now)) {
+    if (s.cause !== cause) continue;
+    if (s.closedAt === null) return undefined;
+    at = Math.max(at, s.closedAt);
+  }
+  if (at === -Infinity) return undefined;
+  const pulls = pullsFailedSince(db, cause, at);
+  if (pulls > 0) return undefined;
+  const main = mainVerdict(db, cause.split(":")[1] ?? "", test);
+  if (main === undefined || !main.passes) return undefined;
+  const created = db.query<{ created_at: string }, [string]>("SELECT created_at FROM run WHERE id = ?1").get(main.runId);
+  if (created === null || !(Date.parse(created.created_at) > at)) return undefined;
+  return {
+    at,
+    evidence: [
+      `cause: ${cause}`,
+      `test: ${test}`,
+      `span closed: ${new Date(at).toISOString()}`,
+      `pulls failed it on checks created since: ${pulls}`,
+      `main: passes on main's newest check, run ${main.runId} at ${main.commitOid}, created ${created.created_at}`,
+    ],
+  };
+}
+
+/**
+ * A shared red that passed again on its own closes its own open issue as
+ * dropped, before a builder is handed it and finds nothing to fix (#8287).
+ * Not one a person has spoken on: they decide. If the cause opens again,
+ * the next hunt files it fresh and quotes this one. A sentinel that may not
+ * close issues here closes nothing and says so: no access check is skipped.
+ *
+ * It runs on every `sentinelTick`, not only in the hourly `hunt`, because a
+ * builder may take an open issue on any tick; `hunt` runs it too, first, so
+ * a hunt never comments on an issue it is about to close.
+ */
+function settleShared(app: App, repo: Repo, actor: User, now: number): void {
+  const open = app.db
+    .query<{ key: string; issue_id: string; evidence: string }, []>(
+      `SELECT t.key, t.issue_id, t.evidence FROM sentinel_finding t JOIN issue i ON i.id = t.issue_id
+        WHERE i.state = 'open' AND t.key LIKE 'degraded:shared-%'`,
+    )
+    .all();
+  if (open.length === 0) return;
+  if (!canWrite(app.db, repo, actor)) {
+    log.warn("sentinel may not close issues here; a settled shared red stays open", { repo: repo.id });
+    return;
+  }
+  const causes = new Map(spans(app.db, now - DAY_MS, now).map((s) => [`degraded:${keyPart(s.cause)}`, s.cause]));
+  for (const t of open) {
+    try {
+      const cause = causes.get(t.key);
+      if (cause === undefined) continue;
+      const done = settled(app.db, cause, testOf(t.evidence.split("\n")), now);
+      if (done === undefined || personSpoke(app.db, t.issue_id)) continue;
+      const issue = getIssueById(app.db, t.issue_id);
+      if (issue === undefined || issue.repoId !== repo.id) continue;
+      const said = addComment(
+        app,
+        actor,
+        repo,
+        issue,
+        [
+          `Passed again on its own at ${new Date(done.at).toISOString()}; evidence:`,
+          ...done.evidence.map((e) => `- ${e}`),
+          "",
+          "Closing as dropped: there is nothing to fix. If it opens again it is filed fresh, quoting this.",
+        ].join("\n"),
+      );
+      if (!said.ok) {
+        log.warn("sentinel could not comment", { key: t.key, error: String(said.error) });
+        continue;
+      }
+      const closed = setIssueState(app, actor, repo, issue, "closed", { reason: "dropped" });
+      if (!closed.ok) {
+        log.warn("sentinel could not close", { key: t.key, error: String(closed.error) });
+        continue;
+      }
+      // When it settled, on the forge's clock: the repeat rule reads this, never the comment's words.
+      app.db
+        .query("UPDATE sentinel_finding SET commented_at = ?1 WHERE key = ?2 AND issue_id = ?3")
+        .run(new Date(now).toISOString(), t.key, t.issue_id);
+    } catch (error) {
+      log.error("sentinel settle failed", { key: t.key, error: String(error) });
+    }
+  }
+}
+
+/**
+ * The issue a shared cause settled on within the day, and what the sentinel
+ * said closing it: a repeat is filed fresh and quotes it (#8287).
+ */
+function settledBefore(db: Database, actor: User, f: Finding, now: number): string | undefined {
+  if (f.cause?.startsWith("shared:") !== true) return undefined;
+  // A dropped finding's `commented_at` is when it settled (`settleShared`); done and split ones keep theirs.
+  const prior = db
+    .query<{ issue_id: string; number: number; commented_at: string }, [string]>(
+      `SELECT t.issue_id, i.number, t.commented_at FROM sentinel_finding t JOIN issue i ON i.id = t.issue_id
+        WHERE t.key = ?1 AND i.state = 'closed' AND i.close_reason = 'dropped' AND t.commented_at IS NOT NULL
+        ORDER BY t.commented_at DESC LIMIT 1`,
+    )
+    .get(f.key);
+  if (prior === null || !(now - Date.parse(prior.commented_at) < DAY_MS)) return undefined;
+  // What it said closing it: its last comment there.
+  const said = db
+    .query<{ body: string }, [string, string]>(
+      "SELECT body FROM comment WHERE issue_id = ?1 AND author_id = ?2 ORDER BY created_at DESC, id DESC LIMIT 1",
+    )
+    .get(prior.issue_id, actor.id);
+  if (said === null) return undefined;
+  return [
+    "",
+    `**Opened again within a day of #${prior.number}**, which the sentinel closed as passed on its own:`,
+    ...said.body.split("\n").map((l) => `> ${l}`),
+  ].join("\n");
+}
+
 /**
  * A finding backed by an incident whose cause has stayed out of the degraded
  * history for a day is done: the sentinel says since when and closes it. Not a
@@ -636,13 +922,7 @@ function closeHeld(app: App, repo: Repo, actor: User, active: ReadonlySet<string
         else since = Math.max(since, s.closedAt);
       }
       if (live || since === -Infinity || now - since < DAY_MS) continue;
-      const spoke = app.db
-        .query<{ n: number }, [string]>(
-          `SELECT COUNT(*) AS n FROM comment c JOIN user u ON u.id = c.author_id
-            WHERE c.issue_id = ?1 AND u.is_agent = 0 AND u.kind = 'user'`,
-        )
-        .get(t.issue_id);
-      if (spoke !== null && spoke.n > 0) continue;
+      if (personSpoke(app.db, t.issue_id)) continue;
       const issue = getIssueById(app.db, t.issue_id);
       if (issue === undefined || issue.repoId !== repo.id) continue;
       const said = addComment(
@@ -680,9 +960,10 @@ export function hunt(
   let commented = 0;
   const [owner = "", name = ""] = repoPath.split("/");
   const repo = getRepo(app.db, owner, name);
-  const findings = findFaults(app.db, now, repo?.id);
+  const findings = findFaults(app.db, now, repo?.id, app.config.dataDir);
   const actor = sentinelActor(app.db);
   if (repo !== undefined && actor !== undefined) {
+    settleShared(app, repo, actor, now);
     for (const f of findings) {
       try {
         const evidence = f.evidence.join("\n");
@@ -711,7 +992,11 @@ export function hunt(
             .run(at, evidence, f.key, tracked.issue_id);
           continue;
         }
-        const told = f.incident === undefined ? undefined : continuesDone(app, repo, actor, f, evidence, at, now);
+        // A shared red that passed again on its own is no work: the day's total does not file it again.
+        if (settled(app.db, f.cause ?? "", testFor(app.db, f), now) !== undefined) continue;
+        const told =
+          sinceFix(app, repo, actor, f, evidence, at, now) ??
+          (f.incident === undefined ? undefined : continuesDone(app, repo, actor, f, evidence, at, now));
         if (told !== undefined) {
           commented += told;
           continue;
@@ -726,7 +1011,8 @@ export function hunt(
           .get(repo.id, title, actor.id);
         let issueId = adopted?.id;
         if (issueId === undefined) {
-          const made = openIssue(app, actor, repo, { title, body: bodyOf(f, at) });
+          const body = bodyOf(f, at) + (settledBefore(app.db, actor, f, now) ?? "");
+          const made = openIssue(app, actor, repo, { title, body });
           if (!made.ok) {
             log.warn("sentinel could not file", { key: f.key, error: String(made.error) });
             continue;
@@ -809,7 +1095,11 @@ export function sentinelTick(app: App, now = Date.now()): HuntResult | null {
   const last = sentinelStanding(app.db).lastHuntAt;
   const since = last === null ? Infinity : now - new Date(last).getTime();
   const [own = "", ownName = ""] = repoPath.split("/");
-  const breaches = budgetBreaches(app.db, now, getRepo(app.db, own, ownName)?.id);
+  const ownRepo = getRepo(app.db, own, ownName);
+  // Every tick, before a builder takes it: see `settleShared`.
+  const actor = sentinelActor(app.db);
+  if (ownRepo !== undefined && actor !== undefined) settleShared(app, ownRepo, actor, now);
+  const breaches = budgetBreaches(app.db, now, ownRepo?.id);
   if (since < SIGNAL_GAP_MS && breaches.length === 0) return null;
   if (since < HUNT_EVERY_MS) {
     // A breach is not held back by the gap: the crew hears within a tick.
@@ -825,7 +1115,12 @@ export function sentinelTick(app: App, now = Date.now()): HuntResult | null {
         .all()
         .map((r) => r.key),
     );
-    if (!signals.some((s) => !tracked.has(s.key))) return null;
+    // A shared test held back by its recent fix is no signal: no hunt a tick for its hour.
+    const held = (s: Finding): boolean => {
+      const fix = recentFix(app.db, s, now);
+      return fix !== undefined && heldByFix(app.db, s, fix);
+    };
+    if (!signals.some((s) => !tracked.has(s.key) && !held(s))) return null;
   }
   return hunt(app, repoPath, now);
 }

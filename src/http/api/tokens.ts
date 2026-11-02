@@ -9,7 +9,8 @@ import { signOutHere } from "../../actions/signins.ts";
 import { createToken, deleteToken } from "../../actions/users.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { createSession } from "../../core/sessions.ts";
-import { ADMIN_TOKEN_WORDS, listTokens } from "../../core/tokens.ts";
+import { listTokensWithClients } from "../../core/oauth.ts";
+import { ADMIN_TOKEN_WORDS } from "../../core/tokens.ts";
 import { type User, verifyPasswordThrottled } from "../../core/users.ts";
 import { sessionCookie } from "../../web/pages/site.ts";
 import { cookieValue, crossOrigin, type Handler } from "../context.ts";
@@ -117,7 +118,7 @@ export function tokenRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireAccount(ctx);
     if (denied) return denied;
-    const tokens = timePhase(ctx.request, "tokens", () => listTokens(ctx.app.db, ctx.auth.user!.id));
+    const tokens = timePhase(ctx.request, "tokens", () => listTokensWithClients(ctx.app.db, ctx.auth.user!.id));
     return timePhase(ctx.request, "render", () => json(tokens));
   });
 

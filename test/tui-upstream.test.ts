@@ -26,7 +26,8 @@ describe("the upstream in the terminal", () => {
   let repo: Repo;
 
   function boot(identity: TuiIdentity) {
-    const terminal = headlessTerminal(120, 40);
+    // Wide, so the footer lists every key the card offers instead of cutting the tail.
+    const terminal = headlessTerminal(300, 40);
     const { app } = createForgeApp(forge, identity, { terminal, exitHooks: false });
     app.start();
     const press = async (...keys: string[]): Promise<void> => {
@@ -55,6 +56,8 @@ describe("the upstream in the terminal", () => {
     ...(user === undefined ? {} : { user }),
   });
 
+  // The upstream is a loopback address: the guard refuses it before any lookup
+  // or connection, so the check never waits on DNS or the network.
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-tui-upstream-"));
     forge = createApp({ dataDir, port: 0 });
@@ -75,7 +78,7 @@ describe("the upstream in the terminal", () => {
     repo = made.value;
     putFollow(forge.db, {
       repoId: repo.id,
-      url: "https://example.invalid/owner/armature.git",
+      url: "https://127.0.0.1/owner/armature.git",
       branch: "main",
       enabled: true,
       byId: alice.id,
@@ -94,7 +97,7 @@ describe("the upstream in the terminal", () => {
       try {
         await openAbout(h);
         expect(h.text()).not.toContain("upstream");
-        expect(h.text()).not.toContain("example.invalid");
+        expect(h.text()).not.toContain("127.0.0.1");
         await h.press("f");
         await h.press("u");
         expect(getFollow(forge.db, repo.id)?.enabled).toBe(true);
@@ -130,7 +133,7 @@ describe("the upstream in the terminal", () => {
     const h = boot(as(alice));
     try {
       await openAbout(h);
-      expect(h.text()).toMatch(/upstream +example\.invalid\/owner\/armature main/);
+      expect(h.text()).toMatch(/upstream +127\.0\.0\.1\/owner\/armature main/);
       expect(h.text()).toContain("check upstream now");
       await h.press("u");
       await settleUntil(h.app, "could not be read");
@@ -141,7 +144,7 @@ describe("the upstream in the terminal", () => {
       expect(h.text()).not.toContain("check upstream now");
       await h.press("f");
       expect(getFollow(forge.db, repo.id)?.enabled).toBe(true);
-      expect(h.text()).toMatch(/upstream +example\.invalid/);
+      expect(h.text()).toMatch(/upstream +127\.0\.0\.1/);
     } finally {
       h.app.stop();
     }

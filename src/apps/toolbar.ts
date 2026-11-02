@@ -20,8 +20,10 @@ export const toolbarJs = `(function () {
   if (window.__forgeToolbar) return;
   window.__forgeToolbar = true;
   var me = document.currentScript;
-  var home = "/";
-  try { home = new URL(me.src).origin + "/"; } catch (e) {}
+  // The forge's origin comes from data-forge: the script itself is served from the app's own host.
+  var fo = "";
+  try { fo = new URL((me.dataset || {}).forge || "").origin; } catch (e) {}
+  var home = fo ? fo + "/" : "/";
   var host = document.createElement("div");
   host.id = "forge-toolbar";
   host.style.cssText = "all:initial;position:fixed;z-index:2147483647";
@@ -74,7 +76,7 @@ export const toolbarJs = `(function () {
   var pullHref = "";
   // The pull this preview shows, one tap away: built from the script's own origin, never from page text.
   if (d.env !== "production" && /^\\d{1,9}$/.test(d.pull || "") && /^[\\w.-]+\\/[\\w.-]+$/.test(d.repo || "")) {
-    try { pullHref = new URL("/" + d.repo + "/pulls/" + d.pull, me.src).href; } catch (e) {}
+    try { pullHref = new URL("/" + d.repo + "/pulls/" + d.pull, fo).href; } catch (e) {}
   }
   if (d.env === "production") {}
   else if (pullHref) {
@@ -90,15 +92,15 @@ export const toolbarJs = `(function () {
   link.textContent = "Home";
   link.rel = "noopener";
   link.style.cssText = LS;
+  var hasHome = false;
   try {
     var target = new URL(home);
-    if (target.origin === new URL(me.src).origin) link.href = target.href;
+    if (target.origin === fo) { link.href = target.href; hasHome = true; }
   } catch (e) {}
   // Tell the builders: one box, one button, no account. The note goes to
   // this app's own host (same-origin, so the sender's cookie goes along) and
   // the answer is a live status the panel keeps fresh while it is open.
-  var forgeOrigin = "";
-  try { forgeOrigin = new URL(me.src).origin; } catch (e) {}
+  var forgeOrigin = fo;
   var tellBox = document.createElement("form");
   tellBox.setAttribute("aria-label", "Tell the builders");
   tellBox.style.cssText = "display:flex;flex-direction:column;gap:6px;margin:6px 0";
@@ -294,7 +296,7 @@ export const toolbarJs = `(function () {
   var crew = document.createElement("div");
   crew.setAttribute("aria-live", "polite");
   panel.appendChild(crew);
-  panel.appendChild(link);
+  if (hasHome) panel.appendChild(link);
   // The actions live on a forge page, opened in a tab of its own: the bar
   // posts nothing and reads nothing of this page beyond its address.
   if (d.repo && /^[\\w.-]+\\/[\\w.-]+$/.test(d.repo)) {
@@ -302,7 +304,7 @@ export const toolbarJs = `(function () {
     act.textContent = "Comment, tell, make it yours";
     act.target = "_blank";
     act.rel = "noopener noreferrer";
-    act.style.cssText = "color:#8ab4ff;text-decoration:none;margin-top:4px";
+    act.style.cssText = LS + ";margin-top:4px";
     try {
       var dest = new URL(home);
       dest.pathname = "/" + d.repo + "/toolbar";
@@ -320,7 +322,7 @@ export const toolbarJs = `(function () {
       .then(function (r) { return r.ok ? r.json() : {}; })
       .then(function (c) {
         if (!c) return;
-        var forge = new URL(me.src).origin;
+        var forge = fo;
         // Signed in, the crew can be told from here. The form is the forge's
         // own page, on its own origin, with its own CSRF check: the app's
         // page only carries the address and the pull to it.
@@ -508,6 +510,11 @@ const name = `toolbar-${hash.slice(0, 16)}`;
 export const TOOLBAR_PATH = `/assets/${name}.js`;
 export const TOOLBAR_NAME = name;
 
+/** The same script on an app's own host, where a strict `script-src 'self'` allows it. */
+export const TOOLBAR_ASSET_PATH = `/__forge/${name}.js`;
+/** Every path under this prefix on an app host is the forge's, whether or not it names the script. */
+export const TOOLBAR_ASSET_PREFIX = "/__forge/toolbar";
+
 /** The forge's answer for the script: immutable, because its name is its hash. */
 export function toolbarResponse(request: Request): Response {
   return staticResponse(request, toolbarJs, "text/javascript; charset=utf-8", `"${hash}"`);
@@ -570,8 +577,32 @@ export function escapeAttr(text: string): string {
     .replace(/'/g, "&#39;");
 }
 
+/**
+ * The nonce a response's own Content-Security-Policy admits scripts by: from
+ * `script-src`, or `default-src` when a policy has no `script-src`. Only a
+ * well-formed base64 value is returned; anything else is no nonce.
+ */
+export function cspNonce(policy: string | null): string | undefined {
+  if (policy === null) return undefined;
+  for (const one of policy.split(",")) {
+    const directives = one.split(";").map((d) => d.trim().split(/\s+/));
+    const names = (n: string) => directives.find((d) => d[0]?.toLowerCase() === n);
+    const chosen = names("script-src") ?? names("default-src");
+    for (const source of chosen?.slice(1) ?? []) {
+      const m = /^'nonce-([A-Za-z0-9+/_-]+={0,2})'$/i.exec(source);
+      if (m) return m[1];
+    }
+  }
+  return undefined;
+}
+
 /** The script tag, with where-you-are as escaped data attributes. */
-export function toolbarTag(forgeUrl: string, where?: PillWhere, proof?: string): string {
+export function toolbarTag(
+  forgeUrl: string,
+  where?: PillWhere,
+  proof?: string,
+  nonce?: string,
+): string {
   const data =
     where === undefined
       ? ""
@@ -586,7 +617,21 @@ export function toolbarTag(forgeUrl: string, where?: PillWhere, proof?: string):
           .map(([k, v]) => ` data-${k}="${escapeAttr(v)}"`)
           .join("");
   const token = proof === undefined ? "" : ` data-proof="${escapeAttr(proof)}"`;
-  return `<script src="${new URL(TOOLBAR_PATH, forgeUrl).href}"${data}${token} defer></script>`;
+  const forge = ` data-forge="${escapeAttr(new URL(forgeUrl).origin)}"`;
+  const admitted = nonce === undefined ? "" : ` nonce="${escapeAttr(nonce)}"`;
+  return `<script src="${TOOLBAR_ASSET_PATH}"${admitted}${forge}${data}${token} defer></script>`;
+}
+
+/**
+ * The byte offset of the last `</body`, any case, or -1. Scanned from the end
+ * so a page pays for its tail, not for a lowercase copy of the whole body.
+ */
+function lastBodyClose(buffer: Buffer): number {
+  for (let i = buffer.length - 6; i >= 0; i--) {
+    if (buffer[i] !== 0x3c || buffer[i + 1] !== 0x2f) continue;
+    if (buffer.toString("latin1", i + 2, i + 6).toLowerCase() === "body") return i;
+  }
+  return -1;
 }
 
 /** `bytes` with the pill's tag before the last `</body>`, or at the end. */
@@ -595,11 +640,11 @@ export function withToolbar(
   forgeUrl: string,
   where?: PillWhere,
   proof?: string,
+  nonce?: string,
 ): Uint8Array<ArrayBuffer> {
-  const tag = Buffer.from(toolbarTag(forgeUrl, where, proof));
+  const tag = Buffer.from(toolbarTag(forgeUrl, where, proof, nonce));
   const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  // latin1 is one character per byte, so an index in it is a byte offset.
-  const at = buffer.toString("latin1").toLowerCase().lastIndexOf("</body");
+  const at = lastBodyClose(buffer);
   const cut = at < 0 ? buffer.length : at;
   return Buffer.concat([buffer.subarray(0, cut), tag, buffer.subarray(cut)]);
 }

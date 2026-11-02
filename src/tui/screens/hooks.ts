@@ -1,14 +1,30 @@
 /**
  * A repository's webhooks in the terminal, an admin's: each hook's url,
  * kinds and last delivery, never its secret. `enter` opens its last 20
- * deliveries. `a` asks for url, kinds and a secret (typed masked, 16–200
- * characters) and adds it through `createWebhook`; `d` removes the selected one after a confirm through
+ * deliveries; `r` there sends a failed one again through `redeliver`, and
+ * `p` sends the hook a `ping` through `pingWebhook` (a refusal past the rate
+ * limit says how long to wait).
+ * `a` asks for url, kinds and a secret (typed masked, 16–200 characters)
+ * and adds it through `createWebhook`; `p` pauses or resumes the selected
+ * one through `pauseWebhook` (a paused row reads `paused` and gets no
+ * deliveries); `d` removes the selected one after a confirm through
  * `deleteWebhook`. The words of a refusal are MCP `hooks`'s.
  */
 
-import { createWebhook, deleteWebhook } from "../../actions/repos.ts";
+import {
+  createWebhook,
+  deleteWebhook,
+  pauseWebhook,
+} from "../../actions/repos.ts";
 import { canAdmin, type Repo } from "../../core/repos.ts";
-import { listWebhooks, recentDeliveries, type DeliveryInfo, type Webhook } from "../../core/webhooks.ts";
+import {
+  listWebhooks,
+  pingWebhook,
+  recentDeliveries,
+  redeliver,
+  type DeliveryInfo,
+  type Webhook,
+} from "../../core/webhooks.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import type { Command } from "../app/palette.ts";
 import { binding } from "../app/keys.ts";
@@ -46,12 +62,20 @@ function lastDelivery(f: Session, hook: Webhook): string {
 }
 
 /** One hook's last 20 deliveries, newest first: kind · state · status or reason · attempts. */
-function deliveriesScreen(f: Session, ctx: Ctx, hook: Webhook, allowed: () => boolean): Screen {
+function deliveriesScreen(f: Session, ctx: Ctx, repo: Repo, hook: Webhook, allowed: () => boolean): Screen {
   const state = new ListState();
   let all: DeliveryInfo[] = [];
   return {
     title: "Deliveries",
-    keys: [binding(["j", "k"], "move"), binding(["esc", "q"], "back")],
+    get keys() {
+      const failed = all[state.index]?.state === "failed";
+      return [
+        binding(["j", "k"], "move"),
+        binding(["r"], "redeliver", { disabled: !failed }),
+        binding(["p"], "send a ping"),
+        binding(["esc", "q"], "back"),
+      ];
+    },
     render(area, s) {
       if (!allowed()) {
         ctx.pop();
@@ -75,6 +99,23 @@ function deliveriesScreen(f: Session, ctx: Ctx, hook: Webhook, allowed: () => bo
       if (e.ctrl || e.alt) return false;
       if (!allowed() || e.key === "esc" || e.key === "q") {
         ctx.pop();
+        return true;
+      }
+      if (e.key === "r") {
+        const d = all[state.index];
+        if (d === undefined || d.state !== "failed") return false;
+        const done = redeliver(f.db, d.id, hook.id);
+        if (done.ok) ctx.toast("queued again", "success");
+        else ctx.toast("that delivery cannot be sent again", "danger");
+        ctx.invalidate();
+        return true;
+      }
+      if (e.key === "p") {
+        const sent = pingWebhook(f.db, `${repo.ownerName}/${repo.name}`, hook);
+        if (sent.ok) ctx.toast("ping queued", "success");
+        else ctx.toast(`too many pings: try again in ${sent.error.retryAfter} s`, "danger");
+        state.index = 0;
+        ctx.invalidate();
         return true;
       }
       return state.key(e, all.length);
@@ -149,6 +190,7 @@ export function hooksScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     keys: [
       binding(["j", "k"], "move"),
       binding(["a"], "add a webhook"),
+      binding(["p"], "pause or resume the selected one"),
       binding(["d"], "remove the selected one"),
       binding(["enter"], "its deliveries"),
     ],
@@ -168,7 +210,7 @@ export function hooksScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       const rows: ListRow[] = all.map((h) => ({
         title: clean(h.url),
         secondary: `kinds ${clean(h.kinds)}`,
-        meta: lastDelivery(f, h),
+        meta: h.active ? lastDelivery(f, h) : "paused",
       }));
       drawList(s, body!, c, state, rows);
     },
@@ -179,7 +221,15 @@ export function hooksScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       else if (e.key === "enter") {
         const hook = hooks()[state.index];
         if (hook === undefined) return false;
-        ctx.push(deliveriesScreen(f, ctx, hook, allowed));
+        ctx.push(deliveriesScreen(f, ctx, repo, hook, allowed));
+      } else if (e.key === "p") {
+        const hook = hooks()[state.index];
+        if (hook === undefined) return false;
+        const done = pauseWebhook(f.app, f.user, repo, hook.id, hook.active);
+        note = done.ok
+          ? `${hook.active ? "paused" : "resumed"} ${clean(hook.url)}`
+          : allowed() ? "no such webhook here" : NOT_ADMIN;
+        ctx.invalidate();
       } else if (e.key === "d") {
         const hook = hooks()[state.index];
         if (hook === undefined) return false;

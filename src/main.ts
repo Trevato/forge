@@ -53,6 +53,7 @@ import { DRAIN_LINGER_MAX_S, drainLingerMs, startDraining } from "./http/health.
 import { takePresence, warmBehind } from "./apps/presence.ts";
 import { STALE_AFTER_MS } from "./runs/lease.ts";
 import { startCrew, sweepAssigned } from "./crew/dispatch.ts";
+import { configureConversation, resumeInterrupted } from "./crew/conversation.ts";
 import { CREW_OFF_IN_PREVIEW, crewOffInPreview } from "./crew/preview.ts";
 import { typeSafeDecider } from "./crew/decide.ts";
 import { graphInstagram } from "./crew/instagram.ts";
@@ -83,6 +84,9 @@ import { reapLeftoverBridges } from "./crew/leftovers.ts";
 import { crewRoot } from "./crew/workdir.ts";
 import { createLog } from "./kernel/log.ts";
 import { watchStalls } from "./kernel/loop_lag.ts";
+import { startPerfWatcher, TICK_MS } from "./perf/duty.ts";
+import { stallLine } from "./perf/loop.ts";
+import { gitRecord, loopWatch, perfRecord } from "./perf/live.ts";
 import { timeStatements } from "./kernel/slow_sql.ts";
 import { waitForPeer } from "./runs/peer.ts";
 
@@ -207,7 +211,11 @@ if (parentProblem !== null) {
 // The loop's lateness, from the first line of the boot: a stall over a
 // second is a warning that names its minute (kernel/loop_lag.ts, #6957),
 // draining included.
-watchStalls(createLog("loop"));
+const loopLog = createLog("loop");
+watchStalls(loopLog, undefined, undefined, undefined, (late, at) => {
+  const stall = loopWatch.stalled(late, at);
+  if (stall !== null) loopLog.warn(stallLine(stall));
+});
 
 const app = createApp({
   dataDir,
@@ -298,6 +306,7 @@ loadTrustedHosts(app.db);
 const bootSignup = signupFromEnv(process.env.FORGE_SIGNUP);
 if (bootSignup.ok && bootSignup.value !== null)
   setSignup(app.db, bootSignup.value, BOOT_ACTOR);
+startPerfWatcher(app, perfRecord, Date.now, TICK_MS, gitRecord);
 const flagTimer = setInterval(() => flushFlagUses(app.db), 10_000);
 await reconcile(app);
 // Issues linked under a pillar's umbrella before pillars had labels.
@@ -474,6 +483,22 @@ const crew = appsOn && !crewHeldOff
         : { configDir: process.env.FORGE_CLAUDE_CONFIG_DIR }),
     })
   : undefined;
+// A conversation turn the last process was in the middle of is resumed once
+// from its session (crew/conversation.ts); a shutdown leaves it running again.
+const conversationsStop = new AbortController();
+if (crew !== undefined) {
+  const conversation = {
+    binary: process.env.FORGE_CLAUDE ?? "claude",
+    localUrl: servers.url,
+    budgetUsd: Number(process.env.FORGE_CREW_BUDGET_USD) || 5,
+    timeoutMs: crewRunMs,
+    ...(process.env.FORGE_CLAUDE_CONFIG_DIR === undefined ? {} : { configDir: process.env.FORGE_CLAUDE_CONFIG_DIR }),
+    signal: conversationsStop.signal,
+  };
+  configureConversation(app, conversation);
+  for (const turn of resumeInterrupted(app, conversation))
+    turn.catch((error: unknown) => app.log.error("resumed conversation turn crashed", { error: String(error) }));
+}
 // Hosted children come back with their apps, awake before the first visit.
 // The listener is up; the children open behind it, not in front of /healthz.
 void bootHostedChildren(app);
@@ -650,7 +675,12 @@ if (app.config.forgeRepo) {
 // known-good image and hold. Off unless FORGE_RELEASE_KEEPER=on in a cluster (keeper/wire.ts).
 const keeperOn = keeperEnv(process.env);
 if (keeperOn.on) {
-  const ports = keeperPorts(app, { forgeUrl, deployment: keeperOn.deployment, container: keeperOn.container });
+  const ports = keeperPorts(
+    app,
+    keeperOn.mode === "swap"
+      ? { forgeUrl, deployment: "", container: "", swap: true }
+      : { forgeUrl, deployment: keeperOn.deployment, container: keeperOn.container },
+  );
   if (typeof ports === "string") app.log.warn("the release keeper is off", { why: ports });
   else {
     let said = "";
@@ -768,6 +798,7 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
   // The merge queue acts on nothing more: its gates run on through the
   // checks' drain, and a verdict is kept for the forge that carries on (#6611).
   stopQueue();
+  conversationsStop.abort();
   return Promise.all([
     linger,
     prompts.stop(),

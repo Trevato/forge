@@ -102,3 +102,25 @@ export async function settleUntil(
     await turn();
   }
 }
+
+/**
+ * Settle once the palette's searches have all landed — the 120ms local one
+ * and the 400ms live re-run that redraws the same list. Enter pressed before
+ * the second can open a row the redraw then moves.
+ */
+export async function settlePalette(
+  app: App,
+  options: SettleOptions = {},
+): Promise<void> {
+  const timeoutMs = options.timeoutMs ?? 20_000;
+  const deadline = Date.now() + timeoutMs;
+  while (!app.paletteSettled) {
+    if (Date.now() > deadline) {
+      throw new Error(
+        `the palette's search never landed in ${timeoutMs}ms:\n${app.screen.toText()}`,
+      );
+    }
+    await turn();
+  }
+  await settleApp(app, { timeoutMs: Math.max(1_000, deadline - Date.now()) });
+}

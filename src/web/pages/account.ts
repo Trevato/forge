@@ -9,16 +9,17 @@
  * has been read once.
  */
 
-import { PASSWORD_TOO_LONG } from "../../core/hash-gate.ts";
 import { resendVerification } from "../../actions/verify.ts";
 import { clientAddress } from "../../http/peer.ts";
 import { emailVerified } from "../../core/verify.ts";
 import {
   addSshKey,
+  CHANGE_PASSWORD_WORDS,
   changePassword,
   createToken,
   deleteSshKey,
   deleteToken,
+  PASSWORD_CHANGED_WORDS,
   updateProfile,
 } from "../../actions/users.ts";
 import {
@@ -33,9 +34,15 @@ import { linkEdgeLogin, linkedLogin, unlinkEdgeLogin } from "../../core/edge_lin
 import { LAST_WAY_IN, linkedParent, parentIssuerOf, unlinkParent } from "../../core/federation.ts";
 import { activeEdgeToken, edgeIdentity } from "../../http/edge.ts";
 import { listKeys } from "../../core/keys.ts";
+import { listTokensWithClients } from "../../core/oauth.ts";
+import {
+  PROFILE_FALLBACK,
+  PROFILE_REFUSAL_FIELD,
+  PROFILE_REFUSALS,
+} from "../../actions/profile_words.ts";
 import { endAccountSession } from "../../actions/signins.ts";
 import { listSessions, type SessionInfo } from "../../core/sessions.ts";
-import { ADMIN_TOKEN_WORDS, listTokens, type TokenScope } from "../../core/tokens.ts";
+import { ADMIN_TOKEN_WORDS, type TokenScope } from "../../core/tokens.ts";
 import type { CommitEmail, User } from "../../core/users.ts";
 import { isStandInEmail } from "../../core/users.ts";
 import { cookieValue, isAccountItself, type Ctx } from "../../http/context.ts";
@@ -45,6 +52,7 @@ import {
   settingsLayout,
   signInFirst,
   type SettingsSection,
+  forbiddenPage,
 } from "../chrome.ts";
 import { accountSections } from "./origins.ts";
 import { field, readForm } from "../form.ts";
@@ -100,7 +108,7 @@ interface ProfileForm {
   displayName: string;
   email: string;
   commitEmail: CommitEmail;
-  errors?: { displayName?: string; email?: string };
+  errors?: { displayName?: string; email?: string; form?: string };
 }
 
 /** The profile form as the account stands now. */
@@ -279,6 +287,7 @@ function profileView(ctx: Ctx, values: ProfileForm): Html {
   const user = ctx.auth.user!;
   return html`${unverifiedNotice(ctx)}${roleView(ctx)}${card(
     html`<form method="post" action="/settings">
+      ${when(values.errors?.form, (m) => html`<p class="error-note">${m}</p>`)}
       <div class="field">
         <label for="f-username">Username</label>
         <input
@@ -404,16 +413,10 @@ export async function accountUpdate(ctx: Ctx): Promise<Response> {
     commitEmail,
   });
   if (!updated.ok) {
+    const words = PROFILE_REFUSALS[updated.error];
+    const at = PROFILE_REFUSAL_FIELD[updated.error];
     const errors: ProfileForm["errors"] =
-      updated.error === "email_taken"
-        ? { email: "Another account already uses that address." }
-        : updated.error === "invalid_email"
-          ? { email: "That doesn't look like an email address." }
-          : updated.error === "display_name_reserved"
-            ? { displayName: "That name belongs to the crew, the owner or the forge." }
-            : updated.error === "display_name_mixed_script"
-              ? { displayName: "Write it in one alphabet: letters from different scripts can pass for other names." }
-              : {};
+      words === undefined || at === undefined ? { form: PROFILE_FALLBACK } : { [at]: words };
     return accountShell(
       ctx,
       "profile",
@@ -509,29 +512,14 @@ export async function passwordUpdate(ctx: Ctx): Promise<Response> {
     source: clientAddress(ctx.request),
   });
   if (!changed.ok) {
-    const error =
-      changed.error === "bad_credentials"
-        ? {
-            field: "current" as const,
-            text: "That isn't your current password.",
-          }
-        : changed.error === "throttled"
-          ? {
-              field: "current" as const,
-              text: "Too many attempts. Try again in a minute.",
-            }
-          : changed.error === "password_too_long"
-          ? { field: "next" as const, text: PASSWORD_TOO_LONG }
-          : changed.error === "weak_password"
-          ? {
-              field: "next" as const,
-              text: "Passwords need at least 10 characters.",
-            }
-          : { field: "current" as const, text: "Something went wrong." };
+    const error = {
+      field: changed.error === "weak_password" || changed.error === "password_too_long" ? ("next" as const) : ("current" as const),
+      text: CHANGE_PASSWORD_WORDS[changed.error],
+    };
     return accountShell(ctx, "password", "Password", passwordView(error), 422);
   }
   return flashTo(ctx, "/settings/password", {
-    message: "Password changed. Existing sessions stay signed in.",
+    message: PASSWORD_CHANGED_WORDS,
   });
 }
 
@@ -597,6 +585,7 @@ export function connectCard(ctx: Ctx, token: string | undefined): Html {
         See plugins/claude-code and plugins/opencode.
       </p>
       <p class="small">Claude Code</p>
+      <p class="muted small mb">Start it with only FORGE_URL and sign in through /mcp (the forge server): nothing to copy. For scripts, use this command and the forge-token server, which sends the token.</p>
       ${copyField("connect-claude", `${env} claude --plugin-dir plugins/claude-code`, "Claude Code command", "Copy command")}
       <p class="small">OpenCode</p>
       ${copyField(
@@ -610,7 +599,7 @@ export function connectCard(ctx: Ctx, token: string | undefined): Html {
 }
 
 function tokensView(ctx: Ctx): Html {
-  const tokens = timePhase(ctx.request, "tokens", () => listTokens(ctx.app.db, ctx.auth.user!.id));
+  const tokens = timePhase(ctx.request, "tokens", () => listTokensWithClients(ctx.app.db, ctx.auth.user!.id));
   const sessions = timePhase(ctx.request, "sessions", () =>
     listSessions(ctx.app.db, ctx.auth.user!.id, cookieValue(ctx.request, "forge_session")),
   );
@@ -642,7 +631,15 @@ function tokensView(ctx: Ctx): Html {
                 ${tokens.map(
                   (t) =>
                     html`<tr>
-                      <td><strong>${t.name}</strong></td>
+                      <td>
+                        <strong>${t.name}</strong>
+                        ${when(
+                          t.oauthClient,
+                          (client) => html`<div class="muted small" data-oauth-client>
+                            ${client} · Signed in through OAuth; renews itself until you delete it
+                          </div>`,
+                        )}
+                      </td>
                       <td>${badge(t.scope)}</td>
                       <td class="muted">${time(t.createdAt)}</td>
                       <td class="muted">
@@ -717,7 +714,7 @@ export async function tokenCreate(ctx: Ctx): Promise<Response> {
   // the platform edge's sign-in, or the password — never from another token
   // (no privilege bootstrapping). readForm below refuses a cross-site post.
   if (!isAccountItself(ctx.auth)) {
-    return new Response("forbidden", { status: 403 });
+    return forbiddenPage(ctx, "A token is made from your own signed-in account, never by another token.");
   }
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;

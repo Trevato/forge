@@ -8,7 +8,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App as Forge } from "../src/app.ts";
-import { listInvites } from "../src/core/invites.ts";
+import { listInvites, mintInvite, redeemInvite } from "../src/core/invites.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { invitesScreen } from "../src/tui/screens/invites.ts";
@@ -154,5 +154,15 @@ describe("invite links in the terminal", () => {
       expect(pushed).toEqual([]);
     }
     expect(listInvites(forge.db).length).toBe(before);
+  });
+
+  test("a used link says who joined with it and when", async () => {
+    const bob = getUserByName(forge.db, "bob")!;
+    const { token } = mintInvite(forge.db, bob.id);
+    expect(redeemInvite(forge.db, token, bob.id, Date.parse("2026-10-05T09:00:00Z"))).toBe(true);
+    const h = boot("alice");
+    await open(h);
+    expect(h.text()).toContain("used by bob on 2026-10-05");
+    h.stop();
   });
 });

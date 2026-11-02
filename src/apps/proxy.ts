@@ -46,14 +46,15 @@ import { feedback, mintProof } from "./feedback.ts";
 import { clientBucket } from "../http/peer.ts";
 import { DOOR_PULL_LIMIT, doorPage, type DoorPullLine } from "./door.ts";
 import { checkWord } from "./check_word.ts";
+import { servingWords } from "./serving_words.ts";
 import { openPulls } from "./door_pulls.ts";
-import { takePhases, timePhase } from "../core/route_timing.ts";
+import { notePhase, startedAt, takePhases, timePhase } from "../core/route_timing.ts";
 import { readServing } from "./serving.ts";
 import { notFound, securityFloor } from "../http/respond.ts";
 import { appMeasure } from "./measure.ts";
 import { holdPortRequest, holdPortSocket } from "./handoff.ts";
 import { secureFor } from "../http/cookie_secure.ts";
-import { htmlAnswer, readPage, rewritable, withToolbar, type PillWhere } from "./toolbar.ts";
+import { cspNonce, htmlAnswer, readPage, rewritable, TOOLBAR_ASSET_PATH, TOOLBAR_ASSET_PREFIX, toolbarResponse, withToolbar, type PillWhere } from "./toolbar.ts";
 
 const proxySecure = (request: Request, url: URL, forgeUrl: string): boolean =>
   secureFor(url, forgeUrl) ||
@@ -390,15 +391,43 @@ function sealedPull(runtime: AppsRuntime, target: AppTarget): Issue | undefined 
   return pull?.sealed === true ? pull : undefined;
 }
 
-/** The response with the phases the request named, as `Server-Timing`. */
+/**
+ * The response with the phases the request named, as `Server-Timing`: the
+ * one writer for the proxy, on the forge's own `/__forge/*` pages and on a
+ * relayed app answer alike. It appends, so an app's own entries stay first;
+ * on an app answer the forge's phases are `forge-` named (`relayPhase`) so
+ * none can collide with the app's or with the server's `route`.
+ */
 function withPhases(request: Request, res: Response): Response {
   const phases = takePhases(request);
-  if (phases.length > 0)
-    res.headers.set(
-      "server-timing",
-      phases.map((p) => `${p.name};dur=${p.ms.toFixed(1)}`).join(", "),
-    );
+  if (phases.length === 0) return res;
+  const mine = phases.map((p) => `${p.name};dur=${p.ms.toFixed(1)}`).join(", ");
+  const theirs = res.headers.get("server-timing");
+  res.headers.set("server-timing", theirs === null || theirs === "" ? mine : `${theirs}, ${mine}`);
   return res;
+}
+
+/**
+ * The forge's phases of relaying an app answer, `forge-` named. Durations
+ * only, under these fixed names: `route` is `lookup` + `state` + `session`.
+ */
+type RelayPhase =
+  | "route" | "lookup" | "state" | "session" | "wake"
+  | "upstream" | "ttfb" | "body" | "rewrite";
+
+/** Name one of the forge's phases of relaying an app answer. Durations only. */
+function relayPhase(request: Request, name: RelayPhase, ms: number): void {
+  notePhase(request, `forge-${name}`, ms);
+}
+
+/**
+ * Name `ttfb` and `upstream` for headers that took `headersMs`. `fetch` says
+ * nothing of its connection, so the two are the same wait: `ttfb` is the name
+ * the split reads by, `upstream` the total older readers know.
+ */
+function relayUpstream(request: Request, headersMs: number): void {
+  relayPhase(request, "ttfb", headersMs);
+  relayPhase(request, "upstream", headersMs);
 }
 
 /**
@@ -735,11 +764,14 @@ function admit(
   if (repo?.archivedAt != null) return err(archivedPage(target));
   // A preview stopped for want of attention is asked for: it deploys again
   // the ordinary way, and this request sees "starting" until it answers.
-  if (runtime.envStatus(target.app, target.env)?.dormant !== undefined)
+  // Read once; read again only when the rouse changed what it would say.
+  let status = runtime.envStatus(target.app, target.env);
+  if (status?.dormant !== undefined) {
     runtime.rouse(target.app, target.env);
-  const status = runtime.envStatus(target.app, target.env);
+    status = runtime.envStatus(target.app, target.env);
+  }
   if (status === undefined || status.port === undefined) {
-    return err(unavailable(runtime, target, status));
+    return err(unavailable(runtime, target, status, undefined, grant?.who));
   }
   return ok(
     grant === undefined
@@ -774,6 +806,9 @@ const reportOf = (runtime: AppsRuntime, repo: Repo): URL =>
 const REPORT_LINK =
   `</__forge/report>; rel="help"; title="${REPORT_LINK_TITLE}"`;
 
+/** Names the forge's manifest, so it is told apart from an app's own alternate. */
+export const REPO_LINK_TITLE = "this app's repository on its forge";
+
 /**
  * The `Link` values a public app's pages carry: the report door and the
  * forge's role-aware manifest for the app's repository, so an agent that
@@ -785,7 +820,10 @@ export function discoveryLinks(runtime: AppsRuntime, target: AppTarget): string[
   if (repo === undefined) return [];
   const here = new URL("/api/v1/here", runtime.options.forgeUrl);
   here.search = `?path=${encodeURIComponent(`/${repo.ownerName}/${repo.name}`)}`;
-  return [REPORT_LINK, `<${here.href}>; rel="alternate"; type="application/json"`];
+  return [
+    REPORT_LINK,
+    `<${here.href}>; rel="alternate"; type="application/json"; title="${REPO_LINK_TITLE}"`,
+  ];
 }
 
 const isHtml = (headers: Headers): boolean =>
@@ -802,7 +840,18 @@ export async function proxyApp(
   target: AppTarget,
   server: Bun.Server<AppSocket>,
 ): Promise<Response | undefined> {
+  const entered = performance.now();
   const url = new URL(request.url);
+  // The pill's script, from the app's own host: only the exact hashed path
+  // is it; any other /__forge/toolbar… path is the forge's 404, never the app's.
+  if (url.pathname.startsWith(TOOLBAR_ASSET_PREFIX) && !target.nested) {
+    return securityFloor(
+      url.pathname === TOOLBAR_ASSET_PATH &&
+        (request.method === "GET" || request.method === "HEAD")
+        ? toolbarResponse(request)
+        : notFound(),
+    );
+  }
   // A grant with this forge's own token is answered here. On a nested
   // hostname a grant this forge did not sign is the guest forge's, and
   // goes through to it like any other request.
@@ -1023,15 +1072,32 @@ export async function proxyApp(
   }
   // An environment asleep wakes for the request that wants it, and the
   // request waits the second that takes rather than seeing a closed door.
-  if (runtime.envStatus(target.app, target.env)?.state === "asleep")
+  let wakeMs = 0;
+  if (runtime.envStatus(target.app, target.env)?.state === "asleep") {
+    const woke = performance.now();
     await runtime.wake(target.app, target.env);
+    wakeMs = performance.now() - woke;
+  }
+  const admitting = performance.now();
   const admitted = admit(runtime, request, target);
+  const sessionMs = performance.now() - admitting;
+  // A refused answer names no phases: wake runs before `admit`, so its time
+  // would tell a caller who may not read the app whether it was asleep.
   if (!admitted.ok)
     return url.pathname.startsWith("/__forge/")
       ? securityFloor(admitted.error)
       : admitted.error;
   const { status, port, grant: vouched } = admitted.value;
   runtime.touch(target.app, target.env);
+  const began = performance.now();
+  // `route` split where it goes: the server finding the app (`lookup`), the
+  // doors and the environment's state (`state`), the grant read (`session`).
+  const lookupMs = Math.max(0, entered - (startedAt(request) ?? entered));
+  relayPhase(request, "route", lookupMs + Math.max(0, began - entered - wakeMs));
+  relayPhase(request, "lookup", lookupMs);
+  relayPhase(request, "state", Math.max(0, began - entered - wakeMs - sessionMs));
+  relayPhase(request, "session", sessionMs);
+  relayPhase(request, "wake", wakeMs);
 
   const upstream = new URL(url);
   upstream.protocol = "http:";
@@ -1082,6 +1148,7 @@ export async function proxyApp(
     portAnswered();
   };
   let response: Response;
+  const sent = performance.now();
   try {
     response = await fetch(upstream, {
       method: request.method,
@@ -1097,8 +1164,10 @@ export async function proxyApp(
     } as RequestInit);
   } catch {
     answered();
-    return unavailable(runtime, target, status, "the app stopped answering");
+    relayUpstream(request, performance.now() - sent);
+    return withPhases(request, unavailable(runtime, target, status, "the app stopped answering"));
   }
+  relayUpstream(request, performance.now() - sent);
   const out = new Headers(response.headers);
   for (const name of HOP_BY_HOP) out.delete(name);
   // Which app answered: a probe from outside (`spawn/reach.ts`) tells this
@@ -1130,6 +1199,7 @@ export async function proxyApp(
     (rewritable(out, response.status) ||
       (!out.has("content-length") && htmlAnswer(out, response.status)))
   ) {
+    const rewriting = performance.now();
     let bytes: Uint8Array<ArrayBuffer>;
     try {
       if (out.has("content-length")) bytes = new Uint8Array(await response.arrayBuffer());
@@ -1138,15 +1208,19 @@ export async function proxyApp(
         // past that it goes on as it came, what was read first.
         const read = await readPage(response.body);
         if (!read.whole)
-          return new Response(read.rest, {
-            status: response.status,
-            statusText: response.statusText,
-            headers: out,
-          });
+          return withPhases(
+            request,
+            new Response(read.rest, {
+              status: response.status,
+              statusText: response.statusText,
+              headers: out,
+            }),
+          );
         bytes = read.bytes;
       }
+      relayPhase(request, "body", performance.now() - rewriting);
     } catch {
-      return unavailable(runtime, target, status, "the app stopped answering");
+      return withPhases(request, unavailable(runtime, target, status, "the app stopped answering"));
     }
     // A signed-in person's page load gets the panel's one-use proof, and so
     // is theirs alone: never stored or shared. A page the app's own script
@@ -1157,11 +1231,14 @@ export async function proxyApp(
         ? mintProof(grantCookie, request.headers.get("host") ?? "")
         : undefined;
     if (proof !== undefined) out.set("cache-control", "private, no-store");
-    const page = withToolbar(
-      bytes,
-      runtime.options.forgeUrl,
-      pillWhere(runtime, target, vouched?.who),
-      proof,
+    const page = timePhase(request, "rewrite", () =>
+      withToolbar(
+        bytes,
+        runtime.options.forgeUrl,
+        pillWhere(runtime, target, vouched?.who),
+        proof,
+        cspNonce(out.get("content-security-policy")),
+      ),
     );
     let sent = page;
     // Whether it is gzipped depends on the client, so every copy says so.
@@ -1178,19 +1255,23 @@ export async function proxyApp(
     out.set("content-length", String(sent.length));
     out.delete("etag");
     out.delete("content-md5");
-    return new Response(sent, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: out,
-    });
+    relayPhase(request, "rewrite", performance.now() - rewriting);
+    return withPhases(
+      request,
+      new Response(sent, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: out,
+      }),
+    );
   }
-  return new Response(
-    body,
-    {
+  return withPhases(
+    request,
+    new Response(body, {
       status: response.status,
       statusText: response.statusText,
       headers: out,
-    },
+    }),
   );
 }
 
@@ -1538,11 +1619,12 @@ function cookieValue(request: Request, name: string): string | undefined {
  * The page an environment that is not serving shows: what it is doing, in
  * words, with the run to look at. Never a bare gateway error.
  */
-function unavailable(
+export function unavailable(
   runtime: AppsRuntime,
   target: AppTarget,
   status: EnvStatus | undefined,
   reason?: string,
+  who?: GrantWho,
 ): Response {
   const name = target.app.slug;
   const where =
@@ -1551,25 +1633,46 @@ function unavailable(
       : `the preview of pull #${target.env.slice(5)}`;
   const state = status?.state ?? "stopped";
   const deploying = state === "deploying";
-  // A preview the forge no longer knows is gone, not broken: its pull closed
-  // and its data went with it. That is a 404, which also lets this page
-  // through an edge that replaces every 5xx with one of its own.
-  const gone = status === undefined && target.env !== "production";
-  const message =
-    reason ??
-    (deploying
-      ? "A new version is starting."
-      : state === "failed" || (state === "asleep" && status?.error !== undefined)
-        ? (status?.error ?? "The last deploy failed.")
-        : gone
-          ? "This preview is gone: its pull was closed, and its data with it."
-          : "Nothing is running here yet.");
+  // A preview is gone when its pull is closed, merged or no longer exists:
+  // its data went with it. That is a 404, which also lets this page through
+  // an edge that replaces every 5xx with one of its own. An open pull with no
+  // environment is not gone: it deploys again on the next push.
+  const at = pillWhere(runtime, target, who);
+  const pull =
+    at.pull === undefined
+      ? undefined
+      : getIssue(runtime.app.db, target.app.repoId, at.pull);
+  const preview = target.env !== "production";
+  const gone = preview && (pull === undefined || pull.state === "closed");
+  // Nothing was ever deployed for an open pull: also a 404, for the same
+  // edge, since there is nothing at this address yet. A stopped or failed
+  // environment keeps its 502.
+  const absent = preview && !gone && status === undefined;
+  const words = servingWords(status, preview ? (gone ? "closed" : "open") : null);
+  const message = reason ?? words.says;
   const links = discoveryLinks(runtime, target);
   const report = links.length > 0;
   const runLink =
     status?.runId === undefined
       ? ""
       : `<p><a href="${escape(runtime.options.forgeUrl)}/runs/${escape(status.runId)}">See the run on the forge</a></p>`;
+  const forge = runtime.options.forgeUrl;
+  const exits: string[] = [];
+  if (preview && at.repo !== undefined && at.pull !== undefined) {
+    const href = new URL(`/${at.repo}/pulls/${at.pull}`, forge).href;
+    exits.push(
+      `<a href="${escape(href)}">Pull #${at.pull}${at.title === undefined ? "" : `: ${escape(at.title)}`}</a>`,
+    );
+  }
+  // A private app's address, like its repository's name, goes only to a reader.
+  const mayNameProduction = target.app.access === "public" || at.repo !== undefined;
+  if (
+    preview &&
+    mayNameProduction &&
+    runtime.envStatus(target.app, "production")?.port !== undefined
+  )
+    exits.push(`<a href="${escape(runtime.urlFor(target.app, "production"))}">Production</a>`);
+  exits.push(`<a href="${escape(new URL("/", forge).href)}">Forge home</a>`);
   const html = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -1586,10 +1689,11 @@ ${deploying ? '<meta http-equiv="refresh" content="3">' : ""}
 <p>This is ${escape(where)}. ${escape(message)}</p>
 ${deploying ? "<p>This page refreshes on its own.</p>" : ""}
 ${runLink}
+<p>${exits.join(" · ")}</p>
 ${report ? '<p><a href="/__forge/report">Report a problem</a> to the people who keep it; no account needed.</p>' : ""}
 `;
   return new Response(html, {
-    status: deploying ? 503 : gone ? 404 : 502,
+    status: deploying ? 503 : gone || absent ? 404 : 502,
     headers: {
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-store",

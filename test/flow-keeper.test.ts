@@ -92,12 +92,13 @@ test("2026-11-01: ready issues wait and no builder runs: it names the cause and 
   expect(swept).toBe(1);
 });
 
-test("the cause and last act show on home, the boards panel, and the MCP flow report", async () => {
+test("the cause and last act show on the boards panel and the MCP flow report, not on home (#8015)", async () => {
   const home = await (await fetch(`${servers.url}/`, { headers: cookie() })).text();
-  expect(home).toContain('id="keeper"');
-  expect(home).toContain("Binding landings:");
+  expect(home).not.toContain('id="keeper"');
   const boards = await (await fetch(`${servers.url}/boards`, { headers: cookie() })).text();
   expect(boards).toContain("unstuck assigned issues");
+  expect(boards).toContain('id="keeper"');
+  expect(boards).toContain("Binding landings:");
   const report = flowFor(app, { kind: "owner" });
   expect(report.keeper.cause).toContain("no builder is running");
   expect(report.keeper.last).toContain("unstuck assigned issues");

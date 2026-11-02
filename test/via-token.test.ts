@@ -17,6 +17,7 @@ import { listEvents } from "../src/core/events.ts";
 import { eventsPage } from "../src/core/events_page.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { createToken, listTokens, verifyToken } from "../src/core/tokens.ts";
+import { CONVERSATION_TOKENS_MAX } from "../src/actions/users.ts";
 import { mintViaToken, VIA_TOKEN_MAX_MS } from "../src/core/via_token.ts";
 import { createIssue } from "../src/core/issues.ts";
 import { createSession } from "../src/core/sessions.ts";
@@ -102,6 +103,20 @@ describe("a conversation's token", () => {
       headers: { "content-type": "application/json", ...headers },
       body: JSON.stringify(body),
     });
+
+  test("a person at the cap of live tokens is answered 429 with a retry-after (#8321)", async () => {
+    const carol = await person("carol");
+    const soon = new Date(Date.now() + 10 * 60_000).toISOString();
+    for (let i = 0; i < CONVERSATION_TOKENS_MAX; i++) {
+      const minted = mintViaToken(app.db, carol.id, `conversation:cap${i}`, "", soon);
+      if (!minted.ok) throw new Error(minted.error);
+    }
+    const cookie = `forge_session=${createSession(app.db, carol.id).token}`;
+    const res = await mintThroughSession({ cookie, origin: servers.url });
+    expect(res.status).toBe(429);
+    expect(res.headers.get("retry-after")).toBe("60");
+    expect(((await res.json()) as { error: string }).error).toBe("rate_limited");
+  });
 
   test("is minted by the person's own session, same-origin, and acts as them via the agent", async () => {
     expect(open(alice.id, "First")).toBe(1);

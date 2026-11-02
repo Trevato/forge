@@ -156,6 +156,7 @@ fieldset.field > .check + .check { margin-top: 8px; }
   overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius);
   background: var(--card); color: var(--fg); text-decoration: none;
 }
+@media (max-width: 480px) { .kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 a.stat:hover { border-color: var(--border-strong); }
 .stat[data-tone="attn"] { border-color: color-mix(in srgb, var(--attn) 40%, var(--border)); }
 .stat-label { display: block; height: 18px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: var(--fs-min); line-height: 18px; color: var(--muted-fg); }
@@ -473,6 +474,8 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 .edit-row > .preview { flex: none; }
 .edit-row > .input { flex: 1 1 160px; width: auto; min-width: 0; }
 .edit-row .btn { flex: none; }
+.edit-row .label-open { color: var(--muted-fg); font-size: 13px; text-decoration: underline; text-underline-offset: 2px; }
+.edit-row .label-open:hover { color: var(--fg); }
 /* A swatch and its hex, as one control-shaped thing. */
 .color-field {
   display: inline-flex; align-items: center; gap: 8px; flex: none;
@@ -494,6 +497,7 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
   .edit-row { align-items: stretch; }
   .edit-row > .input { flex-basis: 100%; }
   .edit-row .color-field, .edit-row .btn { flex: 1 1 auto; justify-content: center; }
+  .edit-row .label-open { display: inline-flex; align-items: center; min-height: 44px; padding: 0 8px; }
 }
 
 /* ---- table ---- */

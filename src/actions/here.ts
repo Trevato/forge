@@ -12,8 +12,9 @@
  * An action that needs an account is listed for someone without one,
  * saying so, because that is the next thing they need to know.
  */
+import { activeEdgeToken } from "../http/edge.ts";
 import { sshTellCommand } from "../ssh/command.ts";
-import { mcpPointers } from "../core/mcp_card.ts";
+import { mcpPointers, TOKEN_FREE_TOOLS } from "../core/mcp_card.ts";
 import type { App } from "../app.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import { isCrew } from "../core/agents.ts";
@@ -298,19 +299,45 @@ function forgeActions(
       do: "report a problem",
       http: "POST /api/v1/repos/{owner}/{name}/reports",
       mcp: "report",
-      account: false,
+      ...tokenFree("report"),
     },
     {
+      // The HTTP route is open, but the MCP tool is not, so no claim is made.
       do: "see how to help build this forge",
       http: "GET /api/v1/contribute",
       mcp: "contribute",
+      ...tokenFree("contribute"),
+    },
+    {
+      do: "see what went live",
+      http: "GET /api/v1/changelog",
+      mcp: "releases",
+    },
+    {
+      do: "read the HTTP contract",
+      http: "GET /contract/openapi.json",
       account: false,
     },
     ...(viewer === undefined
       ? [{ do: "use the MCP", http: "POST /mcp", account: true }]
       : [{ do: "use the MCP", http: "POST /mcp" }]),
     ...(tellSsh === undefined ? [] : [{ do: "tell the crew", ssh: tellSsh }]),
+    // How a stranger gets the account the rows above ask for. An edge-login
+    // forge makes no account at /signup, as the home page's buttons say.
+    ...(viewer !== undefined
+      ? []
+      : [
+          ...(activeEdgeToken(app) === undefined
+            ? [{ do: "make an account", http: "GET /signup", account: false }]
+            : []),
+          { do: "sign in", http: "GET /signin", account: false },
+        ]),
   ];
+}
+
+/** `account: false` only for an MCP tool the gate really lets through. */
+function tokenFree(tool: string): { account?: false } {
+  return TOKEN_FREE_TOOLS.includes(tool) ? { account: false } : {};
 }
 
 function repoActions(
@@ -331,7 +358,7 @@ function repoActions(
       do: "report a problem",
       http: `POST ${r}/reports`,
       mcp: "report",
-      account: false,
+      ...tokenFree("report"),
     });
   // What creates or costs waits for a proven email (`requireVerified`).
   const unproven =

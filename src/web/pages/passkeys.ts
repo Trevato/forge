@@ -15,11 +15,11 @@ import {
   notePasskeyUsed,
   passkeyIds,
   passkeyRoom,
-  removePasskey,
   PASSKEY_NAME_MAX,
 } from "../../core/passkeys.ts";
 import { RateLimiter } from "../../core/ratelimit.ts";
 import { createSession } from "../../core/sessions.ts";
+import { LAST_WAY_IN, removeOwnPasskey } from "../../actions/passkeys.ts";
 import { recoveryAccount, requestRecovery, spendRecoveryLink } from "../../actions/verify.ts";
 import { getUserById, isActive } from "../../core/users.ts";
 import { crossOrigin, type Ctx } from "../../http/context.ts";
@@ -27,7 +27,7 @@ import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.t
 import { clientAddress, clientBucket } from "../../http/peer.ts";
 import { STRANGER_MAX } from "../../http/limits.ts";
 import { boundedBody, json, str } from "../../http/respond.ts";
-import { signInFirst } from "../chrome.ts";
+import { CAME_FROM_ELSEWHERE, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
@@ -56,7 +56,7 @@ const refuse = (status: number, message: string) =>
 
 /** A signed-in browser, on a same-origin request; else the refusal to send. */
 function sessionOnly(ctx: Ctx): Response | undefined {
-  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, "forbidden");
+  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, CAME_FROM_ELSEWHERE);
   if (!ctx.auth.user) return refuse(401, "Sign in first.");
   if (ctx.auth.via !== "session") return refuse(403, "Passkeys are changed from a signed-in browser.");
   return undefined;
@@ -157,17 +157,19 @@ export async function passkeyDelete(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return signInFirst(ctx);
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
-  const gone = removePasskey(ctx.app.db, ctx.auth.user.id, ctx.params.id ?? "");
+  const gone = removeOwnPasskey(ctx.app, ctx.auth.user, ctx.params.id ?? "");
   return flashTo(
     ctx,
     "/settings/passkeys",
-    gone ? { message: "Passkey removed." } : { tone: "danger", message: "No such passkey." },
+    gone.ok
+      ? { message: "Passkey removed." }
+      : { tone: "danger", message: gone.error === "last_way_in" ? LAST_WAY_IN : "No such passkey." },
   );
 }
 
 // POST /signin/passkey/options — a challenge for someone with no session yet.
 export function signinOptions(ctx: Ctx): Response {
-  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, "forbidden");
+  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, CAME_FROM_ELSEWHERE);
   const wait = signinAllowed(ctx, `passkey:${clientAddress(ctx.request)}`, { forgeWide: false });
   if (wait !== undefined)
     return json({ error: "rate_limited", message: `Too many attempts. Try again in ${wait}s.` }, 429, { "retry-after": String(wait) });
@@ -176,7 +178,7 @@ export function signinOptions(ctx: Ctx): Response {
 
 // POST /signin/passkey — a good assertion gets the session a password gets.
 export async function signinPasskey(ctx: Ctx): Promise<Response> {
-  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, "forbidden");
+  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, CAME_FROM_ELSEWHERE);
   const wait = signinAllowed(ctx, `passkey:${clientAddress(ctx.request)}`, { forgeWide: false });
   if (wait !== undefined)
     return json({ error: "rate_limited", message: `Too many attempts. Try again in ${wait}s.` }, 429, { "retry-after": String(wait) });
@@ -291,7 +293,7 @@ export async function recoverRequest(ctx: Ctx): Promise<Response> {
 
 // POST /recover/options — a challenge, for a link that still works.
 export async function recoverOptions(ctx: Ctx): Promise<Response> {
-  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, "forbidden");
+  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, CAME_FROM_ELSEWHERE);
   const data = await boundedBody(ctx.request, STRANGER_MAX);
   if (data === "too_large") return refuse(413, "payload too large");
   const user = recoveryAccount(ctx.app, str(data.token));
@@ -311,7 +313,7 @@ export async function recoverOptions(ctx: Ctx): Promise<Response> {
 
 // POST /recover/passkey — a good registration spends the link and signs in.
 export async function recoverFinish(ctx: Ctx): Promise<Response> {
-  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, "forbidden");
+  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, CAME_FROM_ELSEWHERE);
   const data = await boundedBody(ctx.request, STRANGER_MAX);
   if (data === "too_large") return refuse(413, "payload too large");
   const token = str(data.token);

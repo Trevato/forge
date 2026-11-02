@@ -260,8 +260,8 @@ flag exists only in the stdio dev runner and is never reachable over SSH.
   exporting `route`; then `bun scripts/openapi-routes.ts` writes its line in the
   generated index. Never list it by hand.
 - **Add an MCP tool:** one file, `http/mcp/tools/<name>.ts`, exporting `tool`;
-  then `bun scripts/mcp-tools.ts` writes its line in the index and its row in
-  docs/MCP.md (docs/MCP.md, "Adding a tool"). Never list it by hand.
+  then `bun scripts/mcp-tools.ts` writes its line in the index; its `doc` is
+  its line in /llms.txt, served live, so no docs file changes. Never list it by hand.
 - **Add a TUI screen:** one file under `tui/screens/`, exporting
   `(f: Session, ctx: Ctx, …) => Screen`. Compose `ui/widgets`; take navigation
   from `screens/common.ts` (`ListState`, `Scroll`, `Filter`, `drawList`,

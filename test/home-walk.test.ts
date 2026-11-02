@@ -58,7 +58,7 @@ test("composer, timeline, a tell, a crew member's run and pull, a share, the app
   if (!repo.ok) throw new Error("repo");
   expect(addToCrew(app, root, repo.value, "scribe").ok).toBe(true);
   const cookie = (u: User) => `forge_session=${createSession(app.db, u.id).token}; forge_mode=studio`;
-  const home = (u: User) => freshHome(servers.url, cookie(u));
+  const home = (u: User) => freshHome(servers.url, cookie(u), "/feed");
 
   // The composer comes first, then the timeline.
   const first = await home(alice);

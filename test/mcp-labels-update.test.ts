@@ -78,12 +78,12 @@ describe("MCP repo_labels update", () => {
       says: "Label “defect” updated.",
       label: { id, name: "defect", color: "0e8a16" },
     });
-    expect(await listed()).toEqual([{ id, name: "defect", color: "0e8a16" }]);
+    expect(await listed()).toEqual([{ id, open: 0, name: "defect", color: "0e8a16" }]);
     // Either field alone keeps the other's value.
     await call(admin, { repo: R, action: "update", id, name: "Defect" });
-    expect(await listed()).toEqual([{ id, name: "Defect", color: "0e8a16" }]);
+    expect(await listed()).toEqual([{ id, open: 0, name: "Defect", color: "0e8a16" }]);
     await call(admin, { repo: R, action: "update", id, color: "aabbcc" });
-    expect(await listed()).toEqual([{ id, name: "Defect", color: "aabbcc" }]);
+    expect(await listed()).toEqual([{ id, open: 0, name: "Defect", color: "aabbcc" }]);
   });
 
   test("a taken name, a bad colour and a missing label are refused in the page's words", async () => {

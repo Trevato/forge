@@ -92,7 +92,7 @@ describe("a tell from the four places", () => {
     expect(pill.status).toBe(200);
 
     // 3. the share sheet: land on the composer with a draft, then post it
-    const landed = await fetch(`${servers.url}/?text=${encodeURIComponent("Tell from share")}`, {
+    const landed = await fetch(`${servers.url}/feed?text=${encodeURIComponent("Tell from share")}`, {
       headers: { authorization: `Bearer ${token}` },
     });
     expect(landed.status).toBe(200);

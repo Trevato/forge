@@ -49,7 +49,7 @@ import {
   APP_ENV_NOT_SET,
   SCOPE_WORDS,
 } from "../../actions/app_env_words.ts";
-import { isAutonomy, isDecisionsBy } from "../../core/repos.ts";
+import { AUTONOMY_SAID, checkAutonomy, isDecisionsBy } from "../../core/repos.ts";
 import { updateRepoSettings } from "../../actions/repos.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { nameFrame, notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
@@ -1429,22 +1429,15 @@ export async function autonomySettingsUpdate(ctx: Ctx): Promise<Response> {
   if (gate instanceof Response) return gate;
   const { repo, form } = gate;
   const base = repoBase(repo);
-  const mode = field(form, "autonomy");
   const ceiling = Number(field(form, "ceiling"));
   const slots = Number(field(form, "slots"));
-  if (
-    !isAutonomy(mode) ||
-    !Number.isFinite(ceiling) ||
-    ceiling < 0 ||
-    !Number.isInteger(slots) ||
-    slots < 1 ||
-    slots > 8
-  )
+  const checked = checkAutonomy(field(form, "autonomy"), ceiling, slots);
+  if (!checked.ok)
     return flashTo(ctx, `${base}/settings#autonomy`, {
       tone: "danger",
-      message:
-        "Mode is off, assisted or autonomous; the ceiling is a number of dollars; slots are 1 to 8.",
+      message: checked.message,
     });
+  const { mode } = checked;
   const rule = field(form, "decisions");
   const decisionsBy = rule === "" ? repo.decisionsBy : rule;
   if (!isDecisionsBy(decisionsBy))
@@ -1463,14 +1456,7 @@ export async function autonomySettingsUpdate(ctx: Ctx): Promise<Response> {
   });
   return flashTo(ctx, `${base}/settings#autonomy`, {
     ...(updated.ok
-      ? {
-          message:
-            mode === "off"
-              ? "Autonomy is off."
-              : mode === "assisted"
-                ? "Assisted: the crew works what is ready; green waits for you."
-                : "Autonomous: the crew works what is ready and ships on green, as you.",
-        }
+      ? { message: AUTONOMY_SAID[mode] }
       : {
           tone: "danger" as const,
           message: "Those settings could not be saved.",

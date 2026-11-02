@@ -22,7 +22,7 @@ import { issueTitles, proposalsFor, type Proposal } from "../../core/proposals.t
 import { chipsOf, type Chips } from "../../core/feed_chips.ts";
 import { chipHides } from "../../feed/chips.ts";
 import { askDismissals, mutedRepos } from "../../core/interactions.ts";
-import { askMeasure, syncAskLedger, type AskEnd } from "../../core/ask_ledger.ts";
+import { ASKS_WINDOW_DAYS, askMeasureWeek, syncAskLedger, type AskEnd } from "../../core/ask_ledger.ts";
 import {
   getIssueById,
   labelsForIssues,
@@ -312,6 +312,7 @@ function askCandidatesFor(
   db: Database,
   user: User | undefined,
   allRepos: readonly Repo[],
+  only?: string,
 ): AskCandidate[] {
   const out: AskCandidate[] = [];
   if (!user) return out;
@@ -321,8 +322,10 @@ function askCandidatesFor(
   const ownerFacts = ownerFactRepoIds(db, allRepos, user);
   const repos = allRepos.filter((r) => ownerFacts.has(r.id));
   const byId = new Map(repos.map((r) => [r.id, r]));
-  const pulls = listOpenPullsVisibleTo(db, user, 50).filter((p) =>
-    byId.has(p.repoId),
+  // `only` narrows to one pull's own asks, for its page: the same fifty
+  // pulls are listed, so it asks exactly what the full read would say of it.
+  const pulls = listOpenPullsVisibleTo(db, user, 50).filter(
+    (p) => byId.has(p.repoId) && (only === undefined || p.id === only),
   );
   const checks = latestRunsForIssues(
     db,
@@ -519,6 +522,65 @@ function askCandidatesFor(
     const rec = a.kind === "handover" ? advice.get(a.pull!.id) : undefined;
     if (rec !== undefined) out[i] = { ...a, recommendation: rec };
   }
+  // Pauses, parked issues, declines and waves carry no pull: one pull's page
+  // never shows them, so it never reads them.
+  if (only === undefined) repoAsksInto(db, out, repos, byId);
+  // Open work assigned to the viewer that no ask above already covers: a
+  // pull that is an ask and assigned to them is one row, the ask's.
+  const taken = new Set(out.flatMap((a) => [a.pull?.id, a.issue?.id].filter((i) => i !== undefined)));
+  const visible = new Map(allRepos.map((r) => [r.id, r]));
+  const mine = listAssignedTo(db, user.id, 50).filter(
+    (i) => !taken.has(i.id) && (only === undefined || i.id === only),
+  );
+  const elsewhere = getReposByIds(
+    db,
+    [...new Set(mine.map((i) => i.repoId))].filter((id) => !visible.has(id)),
+  );
+  // An assignment can outlive the access that made it: each repo needs a real read.
+  // Asked once per repository, not once per assigned row.
+  const reads = new Map<string, boolean>();
+  const readable = (repo: Repo | undefined): repo is Repo => {
+    if (repo === undefined) return false;
+    if (visible.has(repo.id)) return true;
+    let ok = reads.get(repo.id);
+    if (ok === undefined) reads.set(repo.id, (ok = canRead(db, repo, user)));
+    return ok;
+  };
+  const joinedMine = new Map(
+    joinMany(db, mine.filter((i) => i.kind === "pull")).map((p) => [p.id, p]),
+  );
+  for (const issue of mine) {
+    const repo = visible.get(issue.repoId) ?? elsewhere.get(issue.repoId);
+    if (!readable(repo) || repo.archivedAt !== null) continue;
+    if (!mayView(db, repo, issue, user)) continue;
+    const pull = joinedMine.get(issue.id);
+    if (issue.kind === "pull" && pull === undefined) continue;
+    // A pull a pass gave up on and assigned to this person says why, and can go back.
+    const reason = pull === undefined || issue.assigneeIsAgent ? undefined : passReasonOf(db, issue.id, issue.assigneeId!);
+    const back = reason === undefined ? undefined : lastBuilderOf(db, repo, issue)?.username;
+    out.push({
+      kind: "assigned",
+      id: `assigned:${issue.id}`,
+      since: issue.updatedAt,
+      repo,
+      ...(pull === undefined ? { issue } : { pull }),
+      who: issue.authorName,
+      authorIsAgent: issue.authorIsAgent,
+      ...(reason === undefined ? {} : { why: reason }),
+      ...(back === undefined ? {} : { builder: back }),
+    });
+  }
+  return out;
+}
+
+/** The asks a repository makes that are not a pull's: a ceiling pause, a
+ * parked issue, a planner's decline, a wave waiting for its nod. */
+function repoAsksInto(
+  db: Database,
+  out: AskCandidate[],
+  repos: readonly Repo[],
+  byId: ReadonlyMap<string, Repo>,
+): void {
   const crew = crewForRepos(
     db,
     repos.map((r) => r.id),
@@ -581,50 +643,6 @@ function askCandidatesFor(
       proposal,
       who: getUserById(db, proposal.authorId)?.username ?? "the planner",
     });
-  // Open work assigned to the viewer that no ask above already covers: a
-  // pull that is an ask and assigned to them is one row, the ask's.
-  const taken = new Set(out.flatMap((a) => [a.pull?.id, a.issue?.id].filter((i) => i !== undefined)));
-  const visible = new Map(allRepos.map((r) => [r.id, r]));
-  const mine = listAssignedTo(db, user.id, 50).filter((i) => !taken.has(i.id));
-  const elsewhere = getReposByIds(
-    db,
-    [...new Set(mine.map((i) => i.repoId))].filter((id) => !visible.has(id)),
-  );
-  // An assignment can outlive the access that made it: each repo needs a real read.
-  // Asked once per repository, not once per assigned row.
-  const reads = new Map<string, boolean>();
-  const readable = (repo: Repo | undefined): repo is Repo => {
-    if (repo === undefined) return false;
-    if (visible.has(repo.id)) return true;
-    let ok = reads.get(repo.id);
-    if (ok === undefined) reads.set(repo.id, (ok = canRead(db, repo, user)));
-    return ok;
-  };
-  const joinedMine = new Map(
-    joinMany(db, mine.filter((i) => i.kind === "pull")).map((p) => [p.id, p]),
-  );
-  for (const issue of mine) {
-    const repo = visible.get(issue.repoId) ?? elsewhere.get(issue.repoId);
-    if (!readable(repo) || repo.archivedAt !== null) continue;
-    if (!mayView(db, repo, issue, user)) continue;
-    const pull = joinedMine.get(issue.id);
-    if (issue.kind === "pull" && pull === undefined) continue;
-    // A pull a pass gave up on and assigned to this person says why, and can go back.
-    const reason = pull === undefined || issue.assigneeIsAgent ? undefined : passReasonOf(db, issue.id, issue.assigneeId!);
-    const back = reason === undefined ? undefined : lastBuilderOf(db, repo, issue)?.username;
-    out.push({
-      kind: "assigned",
-      id: `assigned:${issue.id}`,
-      since: issue.updatedAt,
-      repo,
-      ...(pull === undefined ? { issue } : { pull }),
-      who: issue.authorName,
-      authorIsAgent: issue.authorIsAgent,
-      ...(reason === undefined ? {} : { why: reason }),
-      ...(back === undefined ? {} : { builder: back }),
-    });
-  }
-  return out;
 }
 
 /**
@@ -816,8 +834,9 @@ export function scoredFor(
   user: User | undefined,
   repos: readonly Repo[],
   now = Date.now(),
+  only?: string,
 ): Scored[] {
-  const asks = askCandidatesFor(db, user, repos);
+  const asks = askCandidatesFor(db, user, repos, only);
   const scores = consequencesOf(db, asks, now);
   return asks.map((a) => ({
     ...a,
@@ -1145,14 +1164,13 @@ export function askSentence(count: number): string {
  * and gone by themselves. `GET /api/v1/asks` and the MCP's `asks` read this.
  */
 export function asksAnswer(ctx: Ctx, user: User, chips?: Chips) {
-  const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
   const set = reviewSet(ctx, user);
   return {
     // The very figures Home's line and /review show: `count` is live asks plus the forge's needs; `stale` are older than 30 days.
     waiting: { count: set.count, stale: set.stale.length },
     rows: askLinesFor(ctx.app.db, user, chips),
     forge: forgeNeedsFor(ctx, user).map((d) => needLine(d)),
-    measure: { days: 7, ...askMeasure(ctx.app.db, user.id, since) },
+    measure: { days: ASKS_WINDOW_DAYS, ...askMeasureWeek(ctx.app.db, user.id) },
   };
 }
 

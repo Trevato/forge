@@ -6,7 +6,8 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { snappyFixture, type SnappyFixture } from "../bench/snappy.ts";
 import { forgetAll, forgetRegion, recall, remember } from "../src/core/region_memory.ts";
-import { homeVariant } from "../src/web/studio/home_last.ts";
+import { homeRegion, homeVariant } from "../src/web/studio/home_last.ts";
+import { raw } from "../src/web/html.ts";
 
 let f: SnappyFixture;
 beforeAll(async () => {
@@ -87,4 +88,18 @@ test("a copy is recalled only for the access it was drawn under, and forgetting 
   expect(recall(db, "bea", "feed", "", "m.1")?.html).toBe("a");
   forgetRegion(db, "bea");
   expect(recall(db, "bea", "feed", "", "m.1")).toBeUndefined();
+});
+
+test("a write between deciding a redraw and its timer firing leaves the redrawn copy stale", async () => {
+  const db = f.app.db;
+  forgetAll(db);
+  const request = new Request("http://x/");
+  const draw = () => raw("<p>drawn</p>");
+  const look = () => homeRegion(db, request, "race-viewer", "feed", "?race", "m", draw);
+  await look(); // first look: drawn and remembered current
+  db.query("UPDATE repo SET description = 'first' WHERE id = ?1").run(f.repos[0]!.id);
+  expect((await look()).text).toContain("data-refresh="); // stale: a redraw is decided, its timer pending
+  db.query("UPDATE repo SET description = 'second' WHERE id = ?1").run(f.repos[0]!.id); // lands before the timer fires
+  await Bun.sleep(50);
+  expect((await look()).text).toContain("data-refresh=");
 });

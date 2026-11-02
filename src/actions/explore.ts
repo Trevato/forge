@@ -38,6 +38,7 @@ export type ExploreSort =
   | "score"
   | "forks"
   | "ships"
+  | "likes"
   | "use"
   | "fresh"
   | "name";
@@ -74,6 +75,7 @@ const SORTS: readonly ExploreSort[] = [
   "score",
   "forks",
   "ships",
+  "likes",
   "use",
   "fresh",
   "name",
@@ -189,6 +191,8 @@ export interface ExploreRow {
   readonly numbers: {
     readonly forks: number;
     readonly ships: number;
+    /** Likes on posts about the app, as the viewer may read them. */
+    readonly likes: number;
     readonly awakeHours: number;
     readonly apps: number;
   };
@@ -332,7 +336,7 @@ async function forges(app: App, viewer: User | undefined, query: ExploreQuery): 
     name: child.name,
     url: child.url,
     description: child.done ? "spawned from this forge" : "being spawned",
-    numbers: { forks: 0, ships: 0, awakeHours: 0, apps: 0 },
+    numbers: { forks: 0, ships: 0, likes: 0, awakeHours: 0, apps: 0 },
     shippedAt: null,
     score: 0,
   }));
@@ -386,6 +390,8 @@ function rank(
       : { ...s, awakeHours: 0 };
   };
 
+  const likes = likesByRepo(db, appRepos.map((r) => r.id));
+
   const copyable = (repo: Repo): boolean => {
     // A signed-out visitor is offered only public apps; the page they land on
     // sends them to sign in first, and the copy is made after.
@@ -400,6 +406,7 @@ function rank(
   };
   const appRows: ExploreRow[] = appRepos.map((repo) => {
     const s = told(repo);
+    const liked = likes.get(repo.id) ?? 0;
     return {
       kind: "app",
       name: `${repo.ownerName}/${repo.name}`,
@@ -408,11 +415,12 @@ function rank(
       numbers: {
         forks: s.forks,
         ships: s.ships,
+        likes: liked,
         awakeHours: Math.round(s.awakeHours * 10) / 10,
         apps: 1,
       },
       shippedAt: s.shippedAt,
-      score: frontScore(s, now, weights),
+      score: frontScore(s, now, weights) + LIKE_WEIGHT * Math.log1p(liked),
       repo: { owner: repo.ownerName, name: repo.name },
       copyable: copyable(repo),
     };
@@ -437,6 +445,7 @@ function rank(
       numbers: {
         forks: (was?.numbers.forks ?? 0) + row.numbers.forks,
         ships: (was?.numbers.ships ?? 0) + row.numbers.ships,
+        likes: (was?.numbers.likes ?? 0) + row.numbers.likes,
         awakeHours:
           Math.round(((was?.numbers.awakeHours ?? 0) + row.numbers.awakeHours) * 10) / 10,
         apps: (was?.numbers.apps ?? 0) + 1,
@@ -467,11 +476,29 @@ function rank(
   );
 }
 
+/** What a like adds to the score sort: modest next to forks (3) and ships (2). */
+const LIKE_WEIGHT = 0.5;
+
+/** Likes on posts about each repository; the caller passes only repositories the viewer may read. */
+function likesByRepo(db: Database, repoIds: readonly string[]): Map<string, number> {
+  const out = new Map<string, number>();
+  if (repoIds.length === 0) return out;
+  const rows = db
+    .query<{ repo_id: string; n: number }, [string]>(
+      `SELECT repo_id, COUNT(*) AS n FROM feed_like
+        WHERE repo_id IN (SELECT value FROM json_each(?1)) GROUP BY repo_id`,
+    )
+    .all(JSON.stringify(repoIds));
+  for (const r of rows) out.set(r.repo_id, r.n);
+  return out;
+}
+
 function sortKey(r: ExploreRow, sort: ExploreSort): number | string {
   switch (sort) {
     case "score": return r.score;
     case "forks": return r.numbers.forks;
     case "ships": return r.numbers.ships;
+    case "likes": return r.numbers.likes;
     case "use": return r.numbers.awakeHours;
     case "fresh": return r.shippedAt === null ? 0 : Date.parse(r.shippedAt) || 0;
     case "name": return r.name.toLowerCase();

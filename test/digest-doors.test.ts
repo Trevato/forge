@@ -47,7 +47,7 @@ afterAll(async () => {
 
 test("web, terminal and MCP give identical digest lines for one seeded forge", async () => {
   const cookie = `forge_session=${createSession(app.db, alice.id).token}; forge_mode=studio`;
-  const page = await fetch(`${servers.url}/`, { headers: { cookie } }).then((r) => r.text());
+  const page = await fetch(`${servers.url}/feed`, { headers: { cookie } }).then((r) => r.text());
   const d = sinceDigest(app.db, alice, lastVisit(app.db, alice.id), Date.now())!;
   expect(d).toBeDefined();
   const lines = d.lines;

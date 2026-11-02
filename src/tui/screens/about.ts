@@ -71,7 +71,7 @@ import { style } from "../term/style.ts";
 import { truncate, wrap } from "../term/width.ts";
 import { badge, card } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
-import { PIN_MARK, ago, confirmScreen, drawFacts, plural } from "./common.ts";
+import { PIN_MARK, ago, confirmScreen, drawFacts, later, pickerScreen, plural, promptScreen, yesNo } from "./common.ts";
 import { connectionsScreen, egressScreen } from "./egress.ts";
 import { eventsScreen } from "./events.ts";
 import { newPullScreen } from "./newpull.ts";
@@ -128,7 +128,7 @@ export function aboutScreen(
     ...movingRow(f, repo),
     ...outsidersRow(repo),
     ...seatRows(f, repo),
-    ...aboutFacts(f, src, facts, ref),
+    ...aboutFacts(f, src, facts, ref, repo),
     ...paceRows(f, repo),
     ...trailRows(f, repo),
     ...upstreamRows(f, repo),
@@ -188,6 +188,10 @@ export function aboutScreen(
       return [
         binding(["y"], "copy the clone URL", { disabled: cloneUrl === "" }),
         ...(repo === undefined ? [] : [binding(["v"], "events")]),
+        // A site admin also reaches (early, so a narrow footer keeps them) the repository's private egress grants.
+        ...(f.user?.isAdmin === true && repo !== undefined
+          ? [binding(["e"], "egress"), binding(["c"], "connections")]
+          : []),
         // Only an admin is offered the key, and only an admin's press counts.
         ...(may()
           ? [
@@ -197,6 +201,8 @@ export function aboutScreen(
               ),
             ]
           : []),
+        ...(mayPerson() ? [binding(["w"], "write description")] : []),
+        ...(mayPerson() ? [binding(["b"], "default branch")] : []),
         ...(mayOutsiders()
           ? [
               binding(
@@ -221,12 +227,12 @@ export function aboutScreen(
               binding(["f"], checking() ? "stop following upstream" : "follow upstream"),
             ]
           : []),
+        // Who can read it is a person's, an admin's call (#8008).
+        ...(mayPerson()
+          ? [binding(["V"], repo?.visibility === "public" ? "make private" : "make public")]
+          : []),
         ...(mayDetach() && detachJob(repo!.id)?.phase !== "repacking"
           ? [binding(["x"], "detach from parent")]
-          : []),
-        // A site admin also reaches the repository's private egress grants.
-        ...(f.user?.isAdmin === true && repo !== undefined
-          ? [binding(["e"], "egress"), binding(["c"], "connections")]
           : []),
         ...(offered === null
           ? []
@@ -263,7 +269,8 @@ export function aboutScreen(
       });
       const lead = inner.x + 1;
       const edge = inner.x + inner.w;
-      const visibility = facts?.visibility ?? repo?.visibility ?? "public";
+      // The row first: `V` changes it under facts read before the card opened.
+      const visibility = repo?.visibility ?? facts?.visibility ?? "public";
       let x = badge(s, inner.x, inner.y, c, {
         text: visibility,
         variant: visibility === "public" ? "success" : "secondary",
@@ -421,6 +428,45 @@ export function aboutScreen(
         });
         return true;
       }
+      if (e.key === "V" && repo !== undefined && mayPerson()) {
+        const at = repo;
+        const visibility = at.visibility === "public" ? "private" : "public";
+        const name = `${at.ownerName}/${at.name}`;
+        ctx.push(
+          confirmScreen(ctx, screen, {
+            title: visibility === "public" ? "Make public" : "Make private",
+            body: wrap(
+              visibility === "public"
+                ? `Make ${name} public? Anyone with the link can read its code, issues and pulls, signed in or not.`
+                : `Make ${name} private? Only its members and the crew can read it from now on; forks and clones already made keep what they have.`,
+              52,
+            ),
+            actions: [
+              { label: visibility === "public" ? "Make public" : "Make private" },
+              { label: "Cancel" },
+            ],
+            selected: 1,
+            onChoose: (i) => {
+              if (i !== 0) return;
+              void updateRepoSettings(f.app, f.user, at, { visibility }).then((done) => {
+                if (done.ok) {
+                  repo = getRepoById(f.db, done.value.id) ?? done.value;
+                  rows = factRows();
+                  ctx.toast(`now ${visibility}`, "success");
+                } else
+                  ctx.toast(
+                    at.sealedFor !== null
+                      ? "a sealed report stays private until it merges"
+                      : "that could not be changed",
+                    "danger",
+                  );
+                ctx.invalidate();
+              });
+            },
+          }),
+        );
+        return true;
+      }
       if (e.key === "y" && cloneUrl !== "") {
         ctx.copy(cloneUrl);
         ctx.toast("copied the clone URL", "success");
@@ -437,6 +483,85 @@ export function aboutScreen(
             ctx.toast(waking ? "awake again" : "archived", "success");
           } else ctx.toast("that could not be changed", "danger");
           ctx.invalidate();
+        });
+        return true;
+      }
+      if (e.key === "w" && repo !== undefined && mayPerson()) {
+        const at = repo;
+        ctx.push(
+          promptScreen(ctx, screen, {
+            title: "Description",
+            label: "What this repository is for",
+            value: at.description,
+            hint: "one line; empty clears it",
+            onSubmit: (value) => {
+              const refusal = descriptionRefusal(value);
+              if (refusal !== undefined) {
+                ctx.toast(refusal, "danger");
+                return refusal;
+              }
+              void updateRepoSettings(f.app, f.user, at, { description: value }).then((done) => {
+                if (done.ok) {
+                  repo = getRepoById(f.db, done.value.id) ?? done.value;
+                  rows = factRows();
+                  ctx.toast("description saved", "success");
+                } else ctx.toast("that could not be changed", "danger");
+                ctx.invalidate();
+              });
+              return undefined;
+            },
+          }),
+        );
+        return true;
+      }
+      if (e.key === "b" && repo !== undefined && mayPerson()) {
+        const at = repo;
+        void listRefs(repoDir(f.app.reposRoot, at.ownerName, at.name), "refs/heads/").then((refs) => {
+          if (!refs.ok) return ctx.toast("the branches could not be read", "danger");
+          const items = refs.value.map((r) => r.name.replace(/^refs\/heads\//, "")).sort().map((name) => ({
+            id: name,
+            label: name,
+            ...(name === at.defaultBranch ? { hint: "default" } : {}),
+          }));
+          ctx.push(
+            pickerScreen(ctx, screen, {
+              title: "Default branch",
+              items,
+              onPick: ([branch]) => {
+                if (branch === undefined || branch === at.defaultBranch) return;
+                const choose = (choice: number): void => {
+                  if (choice !== 0) return;
+                  void updateRepoSettings(f.app, f.user, at, { defaultBranch: branch }).then((done) => {
+                    if (done.ok) {
+                      repo = getRepoById(f.db, done.value.id) ?? done.value;
+                      rows = factRows();
+                      ctx.toast(`${branch} is the default branch`, "success");
+                    } else
+                      ctx.toast(
+                        done.error === "unknown_branch"
+                          ? `${branch} is no longer a branch here`
+                          : "that could not be changed",
+                        "danger",
+                      );
+                    ctx.invalidate();
+                  });
+                };
+                void later(ctx, () =>
+                  yesNo(
+                    ctx,
+                    confirmScreen(ctx, screen, {
+                      title: "Default branch",
+                      body: [`make ${branch} the default? y/n`],
+                      actions: [{ label: "Make default" }, { label: "Cancel", variant: "ghost" }],
+                      selected: 1,
+                      onChoose: choose,
+                    }),
+                    choose,
+                  ),
+                );
+              },
+            }),
+          );
         });
         return true;
       }
@@ -617,6 +742,16 @@ export function detachRows(repo: Repo | undefined): [string, string][] {
   return words === null ? [] : [["detach", words]];
 }
 
+/** The longest description the MCP `repo_settings` tool takes; Settings has no cap of its own. */
+const DESCRIPTION_MAX = 2000;
+
+/** Why a typed description is refused, in words, or nothing when it stands. */
+function descriptionRefusal(value: string): string | undefined {
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(value)) return "a description is one line of plain text";
+  if ([...value].length > DESCRIPTION_MAX) return `a description is ${DESCRIPTION_MAX} characters at most`;
+  return undefined;
+}
+
 /** One line when an admin has put the repository away. */
 function archivedRow(repo: Repo | undefined): [string, string][] {
   if (repo === undefined || repo.archivedAt === null) return [];
@@ -655,6 +790,7 @@ function aboutFacts(
   src: RepoSource,
   facts: RepoFacts | undefined,
   ref: string,
+  current?: Repo,
 ): [string, string][] {
   const repo = localRepo(src);
   const counts: [string, string][] =
@@ -674,7 +810,8 @@ function aboutFacts(
               .join(" · "),
           ],
         ];
-  const branch = facts?.defaultBranch ?? repo?.defaultBranch ?? "";
+  // The card's own row first: `b` moves it under facts read before the card opened.
+  const branch = current?.defaultBranch ?? facts?.defaultBranch ?? repo?.defaultBranch ?? "";
   // Whose work this descends from. A fork at an origin is not `forkParentId`
   // — that is a fork made *here* — so the badge above cannot say it and this
   // row can.

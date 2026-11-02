@@ -1,35 +1,21 @@
 /**
  * docs/CLI.md keeps up with the CLI (#7372): every command `forge help`
- * prints has a `## forge <command>` heading there. The help is captured the
- * way a shell sees it — `bun src/cli/main.ts help` as a process — because
- * `main` writes to the real stdout, not to a writer a test can hand it.
+ * prints has a `## forge <command>` heading there. The help is rendered
+ * in-process: spawning a process made the verdict depend on the machine's load.
  */
 
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { printUsage } from "../src/cli/help.ts";
+import { createOut } from "../src/cli/out.ts";
 
 const root = new URL("..", import.meta.url).pathname;
 const DOC = "docs/CLI.md";
 
 async function help(): Promise<string> {
-  const ran = Bun.spawn([process.execPath, "src/cli/main.ts", "help"], {
-    cwd: root,
-    env: {
-      PATH: process.env["PATH"] ?? "",
-      HOME: tmpdir(),
-      NO_COLOR: "1",
-      FORGE_KEYCHAIN: "0",
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, exitCode] = await Promise.all([
-    new Response(ran.stdout).text(),
-    ran.exited,
-  ]);
-  expect(exitCode).toBe(0);
-  return stdout;
+  const lines: string[] = [];
+  printUsage({ ...createOut(), line: (t = "") => void lines.push(t) });
+  return lines.join("\n").replace(/\x1b\[[0-9;]*m/g, "");
 }
 
 /** `  forge sync   [--watch]` → "sync"; the bare `  forge      the local…` → "": a command is one space after `forge`, a description many. */

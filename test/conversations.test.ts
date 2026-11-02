@@ -9,6 +9,7 @@ import {
   MAX_TURN_CHARS,
   openConversation,
   setClaudeSession,
+  TURNS_KEPT,
 } from "../src/core/conversations.ts";
 import { openDb } from "../src/kernel/db.ts";
 
@@ -23,6 +24,17 @@ const open = (name: string) => {
 };
 
 describe("conversations", () => {
+  test("a conversation keeps its newest TURNS_KEPT turns and no more (#8321)", () => {
+    const db = open("bounded.db");
+    const c = openConversation(db, "u1");
+    for (let i = 0; i < TURNS_KEPT + 5; i++) appendTurn(db, "u1", c.id, { role: "person", text: `t${i}` });
+    const n = db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM conversation_turn WHERE conversation_id = ?1").get(c.id)!.n;
+    expect(n).toBe(TURNS_KEPT);
+    const last = listTurns(db, "u1", c.id, { limit: 1 });
+    expect(last.ok && last.value[0]!.text).toBe(`t${TURNS_KEPT + 4}`);
+    db.close();
+  });
+
   test("one conversation per person, returned on the second open", () => {
     const db = open("one.db");
     const a = openConversation(db, "u1");

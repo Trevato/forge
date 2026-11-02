@@ -74,3 +74,47 @@ export function alreadyDone(
   }
   return out;
 }
+
+/**
+ * A person reopened this issue: its newest state event is a reopen by
+ * someone who is not an agent. That stands until a person closes it, or a
+ * pull lands for it; nothing the crew notes about the base closes it.
+ */
+export function reopenedByPerson(db: Database, repoId: string, number: number): boolean {
+  const row = db
+    .query<{ kind: string; agent: number | null; person: string | null }, [string, number]>(
+      `SELECT e.kind AS kind, u.is_agent AS agent, u.id AS person FROM event e LEFT JOIN user u ON u.id = e.actor_id
+        WHERE e.repo_id = ?1 AND e.kind IN ('issue.closed', 'issue.reopened')
+          AND json_extract(e.payload, '$.number') = ?2
+        ORDER BY e.id DESC LIMIT 1`,
+    )
+    .get(repoId, number);
+  return row !== null && row.kind === "issue.reopened" && row.person !== null && row.agent !== 1;
+}
+
+/** The unticked `- [ ]` items of an issue body, as written; fenced code is not a list. */
+export function unticked(body: string): string[] {
+  const open = body.replace(/^[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^[ \t]*\1[`~]*[ \t]*$|(?![\s\S]))/gm, "");
+  return [...open.matchAll(/^[ \t]*[-*+][ \t]+\[ \][ \t]+(.+)$/gm)].map((m) => m[1]!.trim());
+}
+
+/** The one line a pull carries when an issue it names keeps work left. */
+export function leftNote(number: number, left: readonly string[]): string {
+  return `Left #${number} open: ${left.length} unticked item${left.length === 1 ? "" : "s"} remain (${left
+    .slice(0, 3)
+    .join("; ")}${left.length > 3 ? "; …" : ""}).`;
+}
+
+/** What the note on an issue left open by a landing starts with (#8482). */
+export const LANDED_LEAD = "Left open after pull #";
+
+/**
+ * The note the issue itself carries when a pull that closes it lands with
+ * boxes unticked: which pull, what is left, and that the crew waits for a
+ * person rather than sending a builder to redo shipped work.
+ */
+export function landedNote(pull: number, left: readonly string[]): string {
+  return `${LANDED_LEAD}${pull} landed: ${left.length} unticked ${left.length === 1 ? "item remains" : "items remain"} (${left
+    .slice(0, 3)
+    .join("; ")}${left.length > 3 ? "; …" : ""}). Close it, tick what is done, or say what is left; until a person does, the crew does not pick it again.`;
+}

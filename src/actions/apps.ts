@@ -9,6 +9,9 @@
 import { pullDir } from "../core/pulls.ts";
 import { getIssue } from "../core/issues.ts";
 import { mayView } from "../core/sealed.ts";
+import { deriveAppName } from "../web/pages/apps-name.ts";
+import { REPO_INIT_FAILED, REPO_NAME_RULES } from "./repo_words.ts";
+import { NO_SUCH_AGENT } from "./crew_limit_words.ts";
 import { requireVerified } from "./verify.ts";
 import { requireAppRoom } from "./app_limit.ts";
 import type { App } from "../app.ts";
@@ -434,6 +437,59 @@ export async function newApp(
     ...(issue === undefined ? {} : { issue }),
     ...(picked === undefined ? {} : { plan: picked }),
   });
+}
+
+/** How many suffixed names (`x-2`, `x-3`, …) a derived name will try before giving up. */
+const MAX_NAME_ATTEMPTS = 30;
+
+/** Nothing in the sentence a slug can carry: punctuation only, or a script `[a-z0-9]` cannot. */
+export const NO_NAME_ERROR =
+  "That doesn't leave anything to make a name from — type one below.";
+
+/** Error code → the words a person is shown, for the web form and the terminal alike. */
+export const NEW_APP_ERRORS: Record<string, string> = {
+  no_name: NO_NAME_ERROR,
+  name_taken: "That owner already has a repository by that name.",
+  invalid_name: REPO_NAME_RULES,
+  git_init_failed: REPO_INIT_FAILED,
+  invalid_slug:
+    "That name makes no usable hostname — start it with a letter or digit.",
+  slug_taken:
+    "Another app already answers to that hostname. Pick another name.",
+  already_app: "That repository is already an app.",
+  scaffold_failed: "The starter app could not be committed.",
+  no_such_agent: NO_SUCH_AGENT,
+};
+
+export interface NewAppFromSentenceInput extends Omit<NewAppInput, "name"> {
+  /** The sentence the app is named from; it is also the first issue's description unless `description` is given. */
+  sentence: string;
+}
+
+export type NewAppFromSentence =
+  | ({ readonly ok: true; readonly name: string } & NewAppResult)
+  | { readonly ok: false; readonly code: string };
+
+/**
+ * `newApp` with the name derived from a sentence: the derived name first,
+ * then `name-2`, `name-3`, … while the owner already has it, up to
+ * MAX_NAME_ATTEMPTS. A sentence with nothing to name from is `no_name`.
+ */
+export async function newAppFromSentence(
+  app: App,
+  actor: User | undefined,
+  { sentence, description, ...rest }: NewAppFromSentenceInput,
+  onPhase?: (name: string, ms: number) => void,
+): Promise<NewAppFromSentence> {
+  const base = deriveAppName(sentence);
+  if (base === undefined) return { ok: false, code: "no_name" };
+  let name = base;
+  let made = await newApp(app, actor, { ...rest, description: description ?? sentence, name }, onPhase);
+  for (let n = 2; !made.ok && made.error === "name_taken" && n <= MAX_NAME_ATTEMPTS; n++) {
+    name = `${base}-${n}`;
+    made = await newApp(app, actor, { ...rest, description: description ?? sentence, name }, onPhase);
+  }
+  return made.ok ? { ok: true, name, ...made.value } : { ok: false, code: made.error };
 }
 
 export interface AppView {
