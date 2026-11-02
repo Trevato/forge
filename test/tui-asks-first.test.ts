@@ -30,6 +30,7 @@ const destructive: readonly string[] = [
   "removeAccount",
   "removeAppDomain",
   "removeFromCrew",
+  "removeOwnPasskey",
   "removePromptSource",
   "removeSecret",
   "removeTeamMember",

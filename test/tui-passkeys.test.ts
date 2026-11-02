@@ -87,7 +87,7 @@ describe("passkeys in the terminal", () => {
     const h = boot("alice");
     await h.open();
     const text = h.text();
-    expect(text).toContain("Passkeys that sign in as you. Read only: add or remove one on the web, Settings › Passkeys.");
+    expect(text).toContain("Passkeys that sign in as you. d removes one; add one on the web, Settings › Passkeys.");
     expect(text).toContain("work laptop");
     expect(text).toContain("phone");
     const today = new Date().toISOString().slice(0, 10);
