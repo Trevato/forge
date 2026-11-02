@@ -79,6 +79,14 @@ region for the live-regions client (etag, 304). A post: who did it, what it
 says as a link into the thing, a small line of why, Steer (run
 cards, posts to the run's `steer`) or Tell the crew (everything else, posts to
 the app's `tell`), Dismiss and Mute app (the interactions API, same-origin).
+Reply (#8211): a post whose link is an issue or a pull (`/:owner/:name/issues/:n`
+or `/pulls/:n`) also offers Reply, a plain form posting the comment to that
+page's own `/comments` handler with `back=feed`, so the same-origin check, body
+limit and escaping apply; it returns to `/feed` with the flash "Reply posted."
+(a fixed word, never a URL from the form); an empty or refused reply returns there too, with the reason. Reply is the card's one primary button; Tell drops to plain beside it. Only a signed-in viewer who can read
+the repository sees it (`src/feed/reply.ts`, the comment action's own rule). In
+the terminal, `Feed` in the palette lists the same posts and `r` replies through
+the same `addCommentThrough`.
 Keys: `j`/`k`/Enter are the shell's, `x` dismisses the focused card.
 The `choose` card comes from `src/feed/choose.ts`, a run card offers Stop
 (`src/web/studio/cards.ts`), and `?cursor=` pages past the first 20

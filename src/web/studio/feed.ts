@@ -18,6 +18,7 @@ import { placementsOf, type Placement } from "../../core/placements.ts";
 import { recentThoughts, type Thought } from "../../core/thoughts.ts";
 import { parseCursor, readFeedPage } from "../../feed/feed.ts";
 import type { FeedItem } from "../../feed/rank.ts";
+import { replyPath, replyRepo, threadOf } from "../../feed/reply.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { getRepo, getRepoById } from "../../core/repos.ts";
 import { DEFAULT_PAGE, looksForEnv, lookUrl } from "../../core/looks.ts";
@@ -109,7 +110,12 @@ export function feedCard(
   item: FeedItem,
   marks: ReadonlyMap<string, Mark> = new Map(),
   picture?: FeedPicture,
+  mayReply = false,
 ): Html {
+  // The thread must be in the post's own app: that is the repository `mayReply` was asked about.
+  const linked = mayReply ? threadOf(item.link) : undefined;
+  const thread = linked !== undefined && `${linked.owner}/${linked.name}` === item.app ? linked : undefined;
+  const reply = thread !== undefined;
   const steer = item.kind === "run" || item.kind === "cost";
   const target = steer && RUN_LINK.test(item.link) ? `${item.link}/steer` : null;
   const head = html`${avatar(item.actor ?? item.app)}
@@ -130,16 +136,22 @@ export function feedCard(
         /></a>`}
     ${saysMore(item) ? html`<p class="small muted break">${item.reason}</p>` : null}`;
   const foot = disclosure(
-    `${target ? "Steer" : "Tell"} · more`,
-    html`<form method="post" action="${target ?? `/${item.app}/tell`}" class="stack">
+    `${reply ? "Reply or " : ""}${target ? "Steer" : "Tell"} · more`,
+    html`${reply
+        ? html`<form method="post" action="${thread === undefined ? "" : replyPath(thread)}" class="stack">
+        <input type="hidden" name="back" value="feed" />
+        <textarea class="input" name="body" rows="2" maxlength="20000" required aria-label="Reply on ${item.what}"></textarea>
+        <span class="bar">${btn("Reply", { size: "sm", variant: "primary" })}</span>
+      </form>`
+        : null}<form method="post" action="${target ?? `/${item.app}/tell`}" class="stack">
         <textarea class="input" name="text" rows="2" maxlength="2000" required aria-label="${target ? "Steer this run" : "Tell the crew"}"></textarea>
-        <span class="bar">${btn(target ? "Steer" : "Tell", { size: "sm", variant: "primary" })}</span>
+        <span class="bar">${btn(target ? "Steer" : "Tell", reply ? { size: "sm" } : { size: "sm", variant: "primary" })}</span>
       </form>
       <span class="bar">
         <button type="button" class="btn" data-variant="ghost" data-size="sm" data-feed="dismissed" title="Dismiss (x)">Dismiss</button>
         ${item.kind === "ask" || item.kind === "milestone" || item.kind === "choose" ? null : html`<button type="button" class="btn" data-variant="ghost" data-size="sm" data-feed="muted" title="Mute ${item.app}">Mute app</button>`}
       </span>`,
-    { small: true, label: target ? "Steer, dismiss or mute" : "Tell the crew, dismiss or mute" },
+    { small: true, label: target ? "Steer, dismiss or mute" : reply ? "Reply, tell the crew, dismiss or mute" : "Tell the crew, dismiss or mute" },
   );
   return card(body, {
     head,
@@ -359,10 +371,17 @@ function drawRegion(user: User, ctx: Ctx, read: ReturnType<typeof readRegion>): 
   // One divider per change of day between neighbours, in the order the feed already has.
   const posts: Html[] = [];
   let before = lastDayOnPage;
+  // Whether this viewer may reply in a repository, asked once per app on the page.
+  const mayReply = new Map<string, boolean>();
+  const mayReplyOn = (app: string): boolean => {
+    let may = mayReply.get(app);
+    if (may === undefined) mayReply.set(app, (may = replyRepo(ctx.app.db, user, app) !== undefined));
+    return may;
+  };
   for (const item of items) {
     const [label] = dividers([item.at], now, before);
     if (label !== undefined) posts.push(html`<p class="muted small" role="separator" aria-label="${label}" data-day-divider="${label}">${label}</p>`);
-    posts.push(feedCard(item, marks, pictures.get(item.id)));
+    posts.push(feedCard(item, marks, pictures.get(item.id), mayReplyOn(item.app)));
     before = item.at;
   }
   const liveQuery = [

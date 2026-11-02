@@ -264,6 +264,16 @@ export async function issuePrivateSubmit(ctx: Ctx): Promise<Response> {
   });
 }
 
+/**
+ * Where a comment returns to when the form names a fixed word: never a URL
+ * from the form. A refused reply from the feed returns there too, as the
+ * pull's does; one from the board keeps the issue page, where it always went.
+ */
+const BACK = new Map<string, { to: string; said: (n: number) => string; refusedTo?: string }>([
+  ["board", { to: "/board", said: (n) => `Answered on #${n}. The planner plans again.` }],
+  ["feed", { to: "/feed", said: () => "Reply posted.", refusedTo: "/feed" }],
+]);
+
 // POST /:owner/:name/issues/:number/comments
 export async function issueCommentSubmit(ctx: Ctx): Promise<Response> {
   const found = threadContext(ctx, "issue");
@@ -274,11 +284,12 @@ export async function issueCommentSubmit(ctx: Ctx): Promise<Response> {
 
   // A comment posted from the board's "the planner declined" line returns to
   // the board. A fixed word, never a URL from the form: no open redirect.
-  const back = field(form, "back") === "board" ? "/board" : undefined;
+  const back = BACK.get(field(form, "back"));
   const dest = `${repoBase(found.repo)}/issues/${found.issue.number}`;
+  const refusedTo = back?.refusedTo ?? dest;
   const body = field(form, "body");
   if (body.trim() === "")
-    return flashTo(ctx, dest, {
+    return flashTo(ctx, refusedTo, {
       tone: "danger",
       message: COMMENT_EMPTY,
     });
@@ -290,14 +301,14 @@ export async function issueCommentSubmit(ctx: Ctx): Promise<Response> {
     body,
   );
   if (!added.ok)
-    return flashTo(ctx, dest, {
+    return flashTo(ctx, refusedTo, {
       tone: "danger",
       message: originError(added.error) ?? COMMENT_NOT_POSTED,
     });
   return back === undefined
     ? flashTo(ctx, `${dest}#conversation`, { message: "Comment posted." })
-    : flashTo(ctx, back, {
-        message: `Answered on #${found.issue.number}. The planner plans again.`,
+    : flashTo(ctx, back.to, {
+        message: back.said(found.issue.number),
       });
 }
 

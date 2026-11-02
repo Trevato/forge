@@ -1057,9 +1057,11 @@ export async function pullCommentSubmit(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
 
   const dest = `${repoBase(found.repo)}/pulls/${found.pull.number}`;
+  // A reply from the feed returns there: a fixed word, never a URL from the form.
+  const fromFeed = field(form, "back") === "feed";
   const bodyText = field(form, "body");
   if (bodyText.trim() === "")
-    return flashTo(ctx, dest, {
+    return flashTo(ctx, fromFeed ? "/feed" : dest, {
       tone: "danger",
       message: COMMENT_EMPTY,
     });
@@ -1071,11 +1073,13 @@ export async function pullCommentSubmit(ctx: Ctx): Promise<Response> {
     bodyText,
   );
   if (!added.ok)
-    return flashTo(ctx, dest, {
+    return flashTo(ctx, fromFeed ? "/feed" : dest, {
       tone: "danger",
       message: originError(added.error) ?? COMMENT_NOT_POSTED,
     });
-  return flashTo(ctx, `${dest}#conversation`, { message: "Comment posted." });
+  return fromFeed
+    ? flashTo(ctx, "/feed", { message: "Reply posted." })
+    : flashTo(ctx, `${dest}#conversation`, { message: "Comment posted." });
 }
 
 /** Match the diff viewer's per-file anchor id, so the redirect lands there. */
