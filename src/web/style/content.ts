@@ -372,10 +372,13 @@ form.inline { display: inline; margin-left: auto; }
 .diff { display: flex; flex-direction: column; gap: 12px; }
 .change-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 0 0 12px; font-size: 13px; }
 .change-line a { display: inline-flex; align-items: center; gap: 6px; padding: 12px 0; line-height: 16px; color: inherit; }
-@media (pointer: coarse) { .change-line a { padding: 14px 0; } }
+.change-files { list-style: none; margin: 0 0 12px; padding: 0; font-size: 13px; }
+.change-files li { display: flex; flex-wrap: wrap; gap: 0 8px; align-items: center; }
+.change-files a { padding: 12px 0; line-height: 16px; color: inherit; overflow-wrap: anywhere; }
+@media (pointer: coarse) { .change-line a, .change-files a { padding: 14px 0; } }
 .diff-summary { padding: 10px 14px; font-size: 13px; }
-.diff-summary .add, .change-line .add { color: var(--add-fg); font-weight: 600; font-variant-numeric: tabular-nums; }
-.diff-summary .del, .change-line .del { color: var(--del-fg); font-weight: 600; font-variant-numeric: tabular-nums; }
+.diff-summary .add, .change-line .add, .change-files .add { color: var(--add-fg); font-weight: 600; font-variant-numeric: tabular-nums; }
+.diff-summary .del, .change-line .del, .change-files .del { color: var(--del-fg); font-weight: 600; font-variant-numeric: tabular-nums; }
 
 .diff-file {
   /* Pure-CSS windowing: off-screen files cost nothing until scrolled to. */
