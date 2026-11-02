@@ -6,7 +6,6 @@
  * best of what is public (`actions/front.ts`).
  */
 
-import { flowOnlyHomeLines } from "../flow_only_line.ts";
 import { forgeCeiling } from "../../flow/ceiling.ts";
 import { liveLine } from "../pages/releases.ts";
 import {
@@ -53,7 +52,7 @@ import { writableAppsOf } from "./asks.ts";
 import { needsYouSection } from "./asks_page.ts";
 import { flowCards } from "./flow_card.ts";
 import { composer, feedJs, feedNote, feedRegion } from "./feed.ts";
-import { alarmLines, cachedAlarms, flowOnlyOffer } from "./alarm_lines.ts";
+import { alarmLines, cachedAlarms } from "./alarm_lines.ts";
 import { clogRow, kpiRow, vitalsRow, waitingLine } from "./kpi_row.ts";
 import { feedCandidateCache } from "../../feed/feed.ts";
 import { notePhase, notePhaseRest, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
@@ -296,7 +295,7 @@ export async function studioHome(
       : liveLine(ctx)}
     ${figures ? timePhase(ctx.request, "vitals", () => vitalsRow(ctx.app.db)) : null}
     ${figures ? clogRow(ctx.app.db) : null}
-    ${figures ? alarmLines(cachedAlarms(ctx.app.db, new Date(), ceilingUsd), flowOnlyOffer(ctx.app.db, user)) : null}
+    ${figures ? alarmLines(cachedAlarms(ctx.app.db, new Date(), ceilingUsd)) : null}
     ${timePhase(ctx.request, "waiting", () => waitingLine(ctx.app.db, user), () => waitingCache(ctx.app.db))}
     ${figures
       ? await timePhaseAsync(ctx.request, "panels", () => pinnedPanels(ctx.app, user), () => panelCache(ctx.app.db))
@@ -307,7 +306,6 @@ export async function studioHome(
         <a href="/">Just my apps</a>
       </p>`,
     )}
-    ${flowOnlyHomeLines(ctx.app.db, user)}
     ${since}
     ${homeTabs("feed", asking)}
     <div class="split" data-rail="wide">

@@ -66,7 +66,6 @@ import {
   importComments,
   importIssue,
 } from "../origins/import.ts";
-import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { clearFirst } from "../core/first.ts";
 import { inheritPillar } from "./pillars.ts";
@@ -81,20 +80,6 @@ import {
   writeThroughFor,
   type WriteThroughError,
 } from "../origins/write-through.ts";
-
-const log = createLog("issues");
-
-// The flow-label dispatcher, loaded with import() and never require(): the crew reaches this module
-// through the brief, so a static import closes a cycle at boot, and the crew's graph awaits at its top
-// (the release launcher), which Bun refuses to require(). 0.7.283 failed to boot on real data that way.
-let flowLabel: typeof import("../crew/flow_label.ts") | undefined;
-/** Settles once the dispatcher is loaded (or failed to): tests and the first label wait on it. */
-export const flowLabelLoaded: Promise<void> = import("../crew/flow_label.ts").then(
-  (m) => {
-    flowLabel = m;
-  },
-  (e) => log.error("flow-label dispatcher failed to load", { error: String(e) }),
-);
 
 /** A repo whose truth lives on an origin cannot take a local-only write. */
 export type MirrorError = "mirrored";
@@ -693,16 +678,6 @@ export function setIssueLabels(
     actorId: writer.value.id,
     payload: { number: issue.number, labels: resolved.map((l) => l.name) },
   });
-  // FLOW ONLY held this assignment; the `flow` label lets it go now.
-  // Loaded at the call: the crew's guard reaches this module through the brief,
-  // so a static import of the dispatcher would close a cycle at boot.
-  if (issue.assigneeIsAgent && repo.flowOnly) {
-    if (flowLabel) flowLabel.dispatchFlowLabelled(app, repo, issue);
-    else
-      void flowLabelLoaded
-        .then(() => flowLabel?.dispatchFlowLabelled(app, repo, issue))
-        .catch((e) => log.error("flow label dispatch failed", { issue: issue.number, error: String(e) }));
-  }
   return ok(labelsFor(app.db, issue.id));
 }
 

@@ -14,6 +14,8 @@
  * hook needed.
  */
 
+import { putFlowFirst } from "../../actions/flow_first.ts";
+import { FLOW_LABEL } from "../../core/flow_label.ts";
 import {
   addCommentThrough,
   editIssue,
@@ -65,7 +67,7 @@ import {
   promptScreen,
   runAsync,
 } from "./common.ts";
-import { assignPicker, assignedText, queuedText } from "./assign.ts";
+import { assignPicker, assignedText } from "./assign.ts";
 import { liveBindings, liveKey } from "./mirror.ts";
 import { RunList, maySteer, openRunLog, steerPrompt } from "./runlist.ts";
 import { Composer, threadLines, type ThreadEntry } from "./thread.ts";
@@ -511,6 +513,7 @@ export function issueScreen(
               ...(issueRow?.sealed === true
                 ? [binding(["p"], "private repo")]
                 : []),
+              binding(["f"], "flow first"),
             ]
           : [
               ...(mayEdit() ? [binding(["e"], "edit")] : []),
@@ -569,7 +572,7 @@ export function issueScreen(
         x,
         head!.y + 1,
         truncate(
-          ` ${issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)} · ${plural(detail.comments.length, "comment")}${assignedText(issueRow, ctx.icons)}${queuedText(f.db, repo, issueRow)}${doneText(doneBy, mayWrite())}${pictureText()}`,
+          ` ${issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)} · ${plural(detail.comments.length, "comment")}${assignedText(issueRow, ctx.icons)}${doneText(doneBy, mayWrite())}${pictureText()}`,
           Math.max(0, right - x),
         ),
         style(c.mutedFg, c.bg),
@@ -742,6 +745,21 @@ export function issueScreen(
             },
           }),
         );
+        return true;
+      }
+      if (e.key === "f" && mayWrite()) {
+        const at = row();
+        if (at?.issue === undefined) return true;
+        const { repo: target, issue } = at;
+        const first = !(detail?.issue.labels ?? []).some((l) => l.name.toLowerCase() === FLOW_LABEL);
+        runAsync(ctx, async () => {
+          const applied = await putFlowFirst(f.app, f.user, target, issue, first);
+          if (!applied.ok) ctx.toast(errorText(applied.error), "danger");
+          else {
+            ctx.toast(first ? "Flow first." : "No longer first.");
+            await reload();
+          }
+        });
         return true;
       }
       if (e.key === "t" && mayWrite()) {

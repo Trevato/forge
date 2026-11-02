@@ -920,6 +920,8 @@ export interface RowOptions {
   /** The rows under this one, already drawn (`row()`s): a nested `<ul>` inside
    * the `<li>`, so a tree stays a tree to assistive tech and with no script. */
   children?: readonly Html[];
+  /** A control beside the row, outside its link (a form cannot sit inside an `<a>`). */
+  after?: Html;
   /** The row folds: it is the `<summary>` of a `<details>` holding `body`,
    * open when `open` says so. Its `lead` is the caret. */
   fold?: { id: string; open: boolean; body: Html };
@@ -949,7 +951,7 @@ export function row(o: RowOptions): Html {
   const data = Object.entries(o.data ?? {})
     .filter(([key]) => /^[a-z][a-z-]*$/.test(key))
     .map(([key, value]) => html` data-${raw(key)}="${value}"`);
-  return html`<li${o.id === undefined ? null : html` id="${o.id}"`}${data}${o.current ? raw(' aria-current="true"') : null}>
+  return html`<li${o.id === undefined ? null : html` id="${o.id}"`}${o.after === undefined ? null : raw(' class="has-after"')}${data}${o.current ? raw(' aria-current="true"') : null}>
     ${o.fold !== undefined
       ? html`<details id="${o.fold.id}" ${o.fold.open ? raw("open") : null}>
           <summary ${attrs}>${inner}</summary>
@@ -957,7 +959,7 @@ export function row(o: RowOptions): Html {
         </details>`
       : o.href !== undefined
       ? html`<a href="${o.href}" ${attrs}>${inner}</a>`
-      : html`<div ${attrs}>${inner}</div>`}${o.children === undefined || o.children.length === 0
+      : html`<div ${attrs}>${inner}</div>`}${o.after === undefined ? null : html`<span class="row-after">${o.after}</span>`}${o.children === undefined || o.children.length === 0
       ? null
       : html`<ul class="row-children">${[...o.children]}</ul>`}
   </li>`;

@@ -423,6 +423,11 @@ a.row:hover .row-title { color: var(--accent); }
 .row-meta .avatar { width: 16px; height: 16px; font-size: var(--fs-min); vertical-align: -0.28em; }
 .row-meta .byline-name { margin-left: 4px; }
 .row-lead { color: var(--faint); display: inline-flex; flex: none; }
+/* A control beside a link row, outside the link: the row takes the width, the control keeps its own. */
+.list > li.has-after { display: flex; align-items: center; flex-wrap: wrap; }
+.list > li.has-after > .row, .list > li.has-after > details { flex: 1 1 0; min-width: 0; }
+.row-after { flex: none; padding: 0 14px 0 0; }
+.list > li.has-after > .row-children { flex-basis: 100%; }
 .row-trail { display: flex; align-items: center; gap: 8px; flex: none; }
 /* The leading glyph is the row's state; a badge repeating it is noise. */
 .row[data-state="open"] .row-lead { color: var(--success); }

@@ -18,13 +18,3 @@ test("no module in src/ loads another with require(): a graph with a top-level a
   expect(offenders.map((f) => f.slice(root.length + 1))).toEqual([]);
 });
 
-test("the flow-label dispatcher loads through import()", async () => {
-  const m = await import("../src/crew/flow_label.ts");
-  expect(typeof m.dispatchFlowLabelled).toBe("function");
-});
-
-test("actions/issues.ts loads the dispatcher at startup: flowLabelLoaded settles without an error", async () => {
-  const issues = await import("../src/actions/issues.ts");
-  await expect(issues.flowLabelLoaded).resolves.toBeUndefined();
-  // The effect (a label dispatching the held issue) is proved in test/flow-only-dispatch.test.ts.
-});

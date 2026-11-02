@@ -450,17 +450,7 @@ ${repo.autonomyDirection}</textarea
         })}
         <div class="form-actions">${btn("Save", { variant: "primary" })}</div>
       </form>`;
-  const flowOnly = !admin
-    ? null
-    : html`<form method="post" action="${base}/settings/flow-only" id="flow-only">
-        <input type="hidden" name="flowOnly" value="${repo.flowOnly ? "0" : "1"}" />
-        <p class="small">
-          <b>Flow only:</b> ${repo.flowOnly ? "on" : "off"} — the direction is
-          to finish what is open, not start features.
-          ${btn(repo.flowOnly ? "Turn off" : "Turn on", { size: "sm" })}
-        </p>
-      </form>`;
-  return card(html`${state}${form}${flowOnly}`, {
+  return card(html`${state}${form}`, {
     id: "autonomy",
     head: html`${icon("play")}
       <h2>On its own</h2>`,

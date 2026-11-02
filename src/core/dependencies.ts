@@ -14,6 +14,7 @@ import { getIssuesByIds, getIssuesOfRepo, type CloseReason, type Issue } from ".
 import { pillarsOf, structuralIds, type Pillars } from "./pillars.ts";
 import { getRepoById, type Repo } from "./repos.ts";
 import { unadoptedAmong } from "../crew/direct.ts";
+import { flowLabelled } from "./flow_label.ts";
 import { raisedAt, raisedInRepo } from "./thought_links.ts";
 import { firstAt, firstInRepo } from "./first.ts";
 import { limbRanks, limbTree, readPlaces } from "./limb_order.ts";
@@ -250,6 +251,8 @@ export interface Graph {
    * ready ahead of the rest, the latest raise first.
    */
   readonly raised?: ReadonlyMap<string, string>;
+  /** Open issues labelled `flow`: ready, they go before all other ready work (`readyNow`). */
+  readonly flow?: ReadonlySet<string>;
   /** When a writer put an issue first (#7806): ready ahead of everything else. */
   readonly first?: ReadonlyMap<string, string>;
 }
@@ -452,6 +455,7 @@ export function repoGraph(
       whole === undefined
         ? raisedAt(db, issues.map((i) => i.id))
         : raisedInRepo(db, repoId),
+    flow: flowLabelled(db, repoId),
     first:
       whole === undefined
         ? firstAt(db, issues.map((i) => i.id))
@@ -666,6 +670,12 @@ export function readyNow(graph: Graph): Ranked[] {
     // What the owner said again comes first (stable: the rest keep their order).
     const at = (r: Ranked) => raised.get(r.issue.id) ?? "";
     ready.sort((a, b) => at(b).localeCompare(at(a)));
+  }
+  // The `flow` label is the one place that says what goes first: no mode, no state.
+  const flow = graph.flow;
+  if (flow !== undefined && flow.size > 0) {
+    const labelled = (r: Ranked) => (flow.has(r.issue.id) ? 0 : 1);
+    ready.sort((a, b) => labelled(a) - labelled(b));
   }
   // What a person put first comes before all of it, the latest first. It only
   // orders what is already ready: no rank lifts the Later gate or a blocker.

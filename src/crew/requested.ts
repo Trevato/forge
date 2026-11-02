@@ -24,8 +24,8 @@ import type { App } from "../app.ts";
 import { addComment, assignIssue } from "../actions/issues.ts";
 import { getAgent, listCrewRoles, type Agent } from "../core/agents.ts";
 import { getHold } from "../core/holds.ts";
-import { getIssue, getIssueById, listComments, type Issue } from "../core/issues.ts";
-import { closesFromBody, getPull } from "../core/pulls.ts";
+import { getIssueById, listComments, type Issue } from "../core/issues.ts";
+import { getPull } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
 import { requestedPulls, verdictIsStale, type RequestedPull } from "../core/requested.ts";
 import { reviewSummary } from "../core/reviews.ts";
@@ -34,11 +34,10 @@ import { getUserById } from "../core/users.ts";
 import { createLog } from "../kernel/log.ts";
 import { authorsInRepoPull, BACK_WITH_AUTHOR } from "./authors_pull.ts";
 import { queueAgentRun } from "./dispatch.ts";
-import { flowOnlyHolds } from "./flow_only.ts";
 import { HANDOVER_NOTE, handoverOf } from "./guard.ts";
 import { greenHead, sendToReview } from "./review.ts";
 import { pickBuilder } from "./route.ts";
-import { NO_BUILDER_ON_CREW, WAITS_FOR_BUILDER_SLOT, WAITS_FOR_FLOW_ONLY } from "./words.ts";
+import { NO_BUILDER_ON_CREW, WAITS_FOR_BUILDER_SLOT } from "./words.ts";
 
 const log = createLog("crew");
 
@@ -64,7 +63,6 @@ function reasonOf(why: string): string {
   if (why === "a person holds it" || why.startsWith("held,")) return "held";
   if (why.includes("a person")) return "handed to a person";
   if (why === WAITS_FOR_BUILDER_SLOT) return "waits for a slot";
-  if (why === WAITS_FOR_FLOW_ONLY) return "waits for flow only";
   if (why === "the new head is not green yet") return "waits for a check";
   if (why.startsWith("past the review rounds") || why.startsWith("a verdict is already") || why.startsWith("a run since"))
     return "settled";
@@ -117,7 +115,6 @@ export async function moveRequested(
   for (const requested of requestedPulls(app.db, repo.id)) {
     let move: RequestedMove;
     if (verdictIsStale(requested)) move = await askAgain(app, repo, requested, now);
-    else if (flowOnlyKeeps(app, repo, requested)) move = holdForFlowOnly(app, repo, requested);
     else if (slots <= 0) move = notMoved(requested, WAITS_FOR_BUILDER_SLOT);
     else move = followUp(app, repo, requested, builders);
     if (move.did === "queued feedback") slots--;
@@ -135,36 +132,6 @@ const notMoved = (p: RequestedPull, why: string): RequestedMove => ({
   did: "not moved",
   why,
 });
-
-/**
- * Whether FLOW ONLY keeps the pull's builder off: it closes issues, and none
- * of them is flow work (`flowOnlyHolds`). A pull that closes nothing is not held.
- */
-function flowOnlyKeeps(app: App, repo: Repo, requested: RequestedPull): boolean {
-  if (!repo.flowOnly) return false;
-  const pull = getPull(app.db, repo.id, requested.number);
-  if (!pull) return false;
-  const closed = closesFromBody(pull.body)
-    .map((n) => getIssue(app.db, repo.id, n))
-    .filter((i) => i !== undefined);
-  return closed.length > 0 && closed.every((i) => flowOnlyHolds(app.db, repo, i));
-}
-
-/** No feedback run while the switch is on: one comment, said once, and the pull waits. */
-function holdForFlowOnly(app: App, repo: Repo, requested: RequestedPull): RequestedMove {
-  const issue = getIssueById(app.db, requested.pullId);
-  const reviewer = getUserById(app.db, requested.reviewerId);
-  const note = `${WAITS_FOR_FLOW_ONLY}. (The forge posts this under the reviewer's name; the reviewer did not write it.)`;
-  if (
-    issue !== undefined &&
-    reviewer !== undefined &&
-    !listComments(app.db, issue.id).some(
-      (c) => c.body.startsWith(WAITS_FOR_FLOW_ONLY) && c.createdAt >= requested.at,
-    )
-  )
-    addComment(app, reviewer, repo, issue, note);
-  return notMoved(requested, WAITS_FOR_FLOW_ONLY);
-}
 
 /** A push has come since the verdict: the reviewer reads the new head. */
 async function askAgain(

@@ -37,6 +37,7 @@ import {
   type Label,
 } from "../../core/issues.ts";
 import { editIssue, type Closing } from "../../actions/issues.ts";
+import { putFlowFirst } from "../../actions/flow_first.ts";
 import {
   getIssue,
   labelsFor,
@@ -74,7 +75,6 @@ import {
 } from "../ui.ts";
 import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
 import { studioRecord, tellHref } from "../studio/nouns.ts";
-import { flowOnlyQueued } from "../../crew/flow_only.ts";
 import { interruptionsOn } from "../../crew/interrupted.ts";
 
 /**
@@ -727,7 +727,6 @@ export function assigneeCard(
   action: string,
 ): Html {
   const mayEdit = canWrite(ctx.app.db, repo, ctx.auth.user);
-  const held = flowOnlyQueued(ctx.app.db, repo, issue);
   const current =
     issue.assigneeName === null
       ? html`<p class="muted small">Nobody yet.</p>`
@@ -738,7 +737,7 @@ export function assigneeCard(
               issue.assigneeName,
             ),
           })}
-        </p>${held === null ? null : html`<p class="muted small" id="flow-only-queued">${held}</p>`}`;
+        </p>`;
   if (!mayEdit)
     return card(current, {
       head: html`${icon("user")}
@@ -967,6 +966,25 @@ export async function labelsSubmit(
         ? "Labels cleared."
         : `Labels set to ${applied.value.map((l) => l.name).join(", ")}.`,
   });
+}
+
+/** POST …/issues/:number/flow — put the issue first, or take it back. Writers only. */
+export async function flowSubmit(ctx: Ctx): Promise<Response> {
+  const found = threadContext(ctx, "issue");
+  if (found instanceof Response) return found;
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const asked = field(form, "flow");
+  const dest = backTo(form, `${repoBase(found.repo)}/issues/${found.issue.number}`);
+  if (asked !== "0" && asked !== "1") return flashTo(ctx, dest, { tone: "danger", message: NOT_CHANGED });
+  const applied = await putFlowFirst(ctx.app, ctx.auth.user, found.repo, found.issue, asked === "1");
+  if (!applied.ok)
+    return flashTo(ctx, dest, {
+      tone: "danger",
+      message: originError(applied.error) ?? THREAD_SAYS.labelsForbidden,
+    });
+  return flashTo(ctx, dest, { message: asked === "1" ? "Flow first." : "No longer first." });
 }
 
 // ---- teams ----

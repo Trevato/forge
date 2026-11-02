@@ -15,7 +15,6 @@
  * card is an OSC 8 hyperlink besides.
  */
 
-import { ownRepoPath } from "../../kernel/own_repo.ts";
 import { audienceFor } from "../../core/audience.ts";
 import { isPinned } from "../../core/pins.ts";
 import { parentReleases, releasesSentence } from "../../core/parent_releases.ts";
@@ -106,18 +105,18 @@ export function aboutScreen(
     f.user?.kind !== "agent" &&
     repo !== undefined &&
     getProvenance(f.db, repo.id) !== undefined;
-  // FLOW ONLY is a person's, an admin's: the settings page's gate.
-  const mayFlow = (): boolean => may() && f.user?.kind !== "agent";
+  // A person's, an admin's: the settings page's gate.
+  const mayPerson = (): boolean => may() && f.user?.kind !== "agent";
   // The following card's rule: an admin's, and only while it is on or to be turned on.
   const mayFollow = (): boolean =>
     may() && repo !== undefined && repo.origin === null;
   // Outsiders is the same person-and-admin gate; `d` (direct) never clashes
   // with `o`, the fork's upstream offer.
-  const mayOutsiders = (): boolean => mayFlow();
+  const mayOutsiders = (): boolean => mayPerson();
   // Detach is a person's, an admin's, and only on a fork made here: the
   // Danger zone card's gate (#7452).
   const mayDetach = (): boolean =>
-    mayFlow() && repo !== undefined && repo.forkParentId !== null;
+    mayPerson() && repo !== undefined && repo.forkParentId !== null;
   // The team card's button: the first agent not yet on the crew, in the first empty seat.
   const emptySeat = () =>
     repo === undefined ? undefined : seatsOf(f.db, repo, crewOffInPreview()).seats.find((x) => x.by.length === 0);
@@ -126,7 +125,6 @@ export function aboutScreen(
     repo !== undefined && followShown(f.app, repo, f.user)?.enabled === true;
   const factRows = (): [string, string][] => [
     ...archivedRow(repo),
-    ...flowRow(repo),
     ...movingRow(f, repo),
     ...outsidersRow(repo),
     ...seatRows(f, repo),
@@ -198,9 +196,6 @@ export function aboutScreen(
                 repo?.archivedAt === null ? "archive" : "wake",
               ),
             ]
-          : []),
-        ...(mayFlow()
-          ? [binding(["w"], repo?.flowOnly === true ? "flow only off" : "flow only on")]
           : []),
         ...(mayOutsiders()
           ? [
@@ -445,18 +440,6 @@ export function aboutScreen(
         });
         return true;
       }
-      if (e.key === "w" && repo !== undefined && mayFlow()) {
-        const on = !repo.flowOnly;
-        void updateRepoSettings(f.app, f.user, repo, { flowOnly: on }).then((done) => {
-          if (done.ok) {
-            repo = getRepoById(f.db, done.value.id) ?? done.value;
-            rows = factRows();
-            ctx.toast(on ? "flow only is on" : "flow only is off", "success");
-          } else ctx.toast("that could not be changed", "danger");
-          ctx.invalidate();
-        });
-        return true;
-      }
       if (e.key === "t" && repo !== undefined && mayTrail()) {
         const shown = getProvenance(f.db, repo.id)?.shown === true;
         const done = showProvenance(f.app, f.user, repo, !shown);
@@ -596,16 +579,6 @@ export function upstreamRows(
     ...(behind === null ? [] : [["behind", `${behind.text} · u updates`] as [string, string]]),
     ...listChecks(f.db, repo.id).map((c): [string, string] => ["", checkLine(c, ago(c.at))]),
   ];
-}
-
-/**
- * The FLOW ONLY switch, in the settings page's words; every reader sees it. On
- * the forge's own repository it also says the forge lets go by itself (#6395).
- */
-export function flowRow(repo: Repo | undefined): [string, string][] {
-  if (repo === undefined) return [];
-  const own = ownRepoPath() === `${repo.ownerName}/${repo.name}`;
-  return [["Flow only", repo.flowOnly ? (own ? "on, off after 24 h clear" : "on") : "off"]];
 }
 
 /** Why the repository's builders are held, first gate only (`flow/why.ts`, as MCP `flow`); a writer's. */

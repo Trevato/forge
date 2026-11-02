@@ -8,7 +8,6 @@
  * back to continue); errors are `{ error, message }`.
  */
 
-import { flowOnlyQueued } from "../crew/flow_only.ts";
 import { homeTruth } from "../system/home_truth.ts";
 import { upstreamFacts } from "../actions/upstream_follow.ts";
 import { FAMILY_WORDS } from "../actions/family_words.ts";
@@ -399,13 +398,9 @@ function respondFleet(error: FleetError): Response {
 }
 
 export function withLabels<T extends Issue>(ctx: Ctx, issue: T) {
-  const repo = getRepoById(ctx.app.db, issue.repoId);
-  const queued = repo === undefined ? null : flowOnlyQueued(ctx.app.db, repo, issue);
   return {
     ...readerMarked(ctx, issue.repoId, [issue])[0]!,
     labels: labelsFor(ctx.app.db, issue.id),
-    // FLOW ONLY holds an assigned run: say so, so an assigner knows nothing started.
-    ...(queued === null ? {} : { queued }),
   };
 }
 
@@ -1437,8 +1432,6 @@ export function apiRoutes(router: Router<Handler>): void {
       );
     if (input.plansNeedNod !== undefined && typeof input.plansNeedNod !== "boolean")
       return apiError("bad_plans_need_nod", 422, "plansNeedNod is true or false");
-    if (input.flowOnly !== undefined && typeof input.flowOnly !== "boolean")
-      return apiError("bad_flow_only", 422, "flowOnly is true or false");
     if (input.showProvenance !== undefined) {
       if (typeof input.showProvenance !== "boolean")
         return apiError("bad_show_provenance", 422, "showProvenance is true or false");
@@ -1486,8 +1479,6 @@ export function apiRoutes(router: Router<Handler>): void {
       ...(typeof input.plansNeedNod === "boolean"
         ? { plansNeedNod: input.plansNeedNod }
         : {}),
-      // FLOW ONLY: an admin's switch, never an agent's.
-      ...(typeof input.flowOnly === "boolean" ? { flowOnly: input.flowOnly } : {}),
     });
     if (!updated.ok) return respondAccess(updated.error, 422);
     // "Show where this came from" (#3293): an admin's, never an agent's.

@@ -20,7 +20,9 @@ import {
   type Label,
 } from "../../core/issues.ts";
 import { listPulls, openPullsClosing } from "../../core/pulls.ts";
-import { canRead, type Repo } from "../../core/repos.ts";
+import { canRead, canWrite, type Repo } from "../../core/repos.ts";
+import { FLOW_LABEL } from "../../core/flow_label.ts";
+import { flowButton } from "../flow_button.ts";
 import { waitingCount } from "../../actions/reports.ts";
 
 import { listRepoRuns } from "../../actions/runs.ts";
@@ -369,6 +371,7 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
     .map((issue, i) => ({ issue, info: words[i]! }))
     .filter((r) => shown(r.info.word, f));
 
+  const mayLabel = canWrite(db, repo, ctx.auth.user);
   const list =
     rows.length === 0
       ? empty({
@@ -397,6 +400,15 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
                 ? html`${issue.assigneeName} · `
                 : null}${info.note} · ${time(issue.updatedAt)}`,
               trail: wordBadge(info.word),
+              ...(mayLabel && issue.state === "open"
+                ? {
+                    after: flowButton(
+                      `${base}/issues/${issue.number}/flow`,
+                      (labels.get(issue.id) ?? []).some((l) => l.name.toLowerCase() === FLOW_LABEL),
+                      `${ctx.url.pathname}${ctx.url.search}`,
+                    ),
+                  }
+                : {}),
             }),
           ),
         );

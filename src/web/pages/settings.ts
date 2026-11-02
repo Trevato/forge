@@ -1422,28 +1422,6 @@ export function autonomySettingsPage(ctx: Ctx): Response {
   return redirect(`${repoBase(repo)}/settings#autonomy`);
 }
 
-// POST /:owner/:name/settings/flow-only — the one switch; the state asked
-// for travels in the form, so a double submit is idempotent.
-export async function flowOnlyUpdate(ctx: Ctx): Promise<Response> {
-  const gate = await adminForm(ctx);
-  if (gate instanceof Response) return gate;
-  const { repo, form } = gate;
-  const asked = field(form, "flowOnly");
-  const back = `${repoBase(repo)}/settings#autonomy`;
-  if (asked !== "0" && asked !== "1")
-    return flashTo(ctx, back, { tone: "danger", message: NOT_CHANGED });
-  const updated = await updateRepoSettings(ctx.app, ctx.auth.user, repo, {
-    flowOnly: asked === "1",
-  });
-  return flashTo(
-    ctx,
-    back,
-    updated.ok
-      ? { message: asked === "1" ? "Flow only is on." : "Flow only is off." }
-      : { tone: "danger", message: "Those settings could not be saved." },
-  );
-}
-
 // POST /:owner/:name/settings/autonomy
 export async function autonomySettingsUpdate(ctx: Ctx): Promise<Response> {
   const gate = await adminForm(ctx);

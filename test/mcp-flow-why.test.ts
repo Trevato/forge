@@ -11,7 +11,7 @@ import { holdFile } from "../src/crew/file_holds.ts";
 import { addDependency } from "../src/core/dependencies.ts";
 import { getPull } from "../src/core/pulls.ts";
 import { setIssueState, createIssue, type Issue } from "../src/core/issues.ts";
-import { getRepo, updateRepoSettings, type Repo } from "../src/core/repos.ts";
+import { getRepo, type Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
@@ -22,7 +22,6 @@ import { promote } from "./helpers/members.ts";
 
 describe("the list of causes", () => {
   const cases: [string, WhyFacts][] = [
-    ["flow_only", { actor: "builder", flowOnly: true }],
     ["ceiling", { actor: "builder", ceilingUsd: 20 }],
     ["hot_file", { actor: "builder", hotFile: "src/a.ts is in 3 open pulls" }],
     ["blocked_by", { actor: "builder", blockedBy: [4, 9] }],
@@ -42,7 +41,7 @@ describe("the list of causes", () => {
 
   test("every cause in the list has a case, and the first in order wins", () => {
     expect(cases.map(([n]) => n)).toEqual([...CAUSES]);
-    expect(firstCause({ actor: "builder", flowOnly: true, noHeadroom: true, redCheck: true })?.name).toBe("flow_only");
+    expect(firstCause({ actor: "builder", noHeadroom: true, redCheck: true })?.name).toBe("no_headroom");
     expect(firstCause({ actor: "queue" })).toBeNull();
     // A ceiling does not hold a pull that only waits for the queue.
     expect(firstCause({ actor: "queue", ceilingUsd: 5 })).toBeNull();
@@ -142,14 +141,6 @@ describe("MCP flow with a subject", () => {
     expect(free.value).toMatchObject({ moving: true });
   });
 
-  test("FLOW ONLY holds an issue not labelled flow, and is the first gate", async () => {
-    const repo = getRepo(app.db, "alice", "one")!;
-    updateRepoSettings(app.db, repo, { flowOnly: true });
-    const r = await call(ownerTok, { repo: "alice/one", issue: blocked.number });
-    expect(r.value.cause).toBe("flow_only");
-    updateRepoSettings(app.db, repo, { flowOnly: false });
-  });
-
   test("a reader is refused, and bad numbers are invalid", async () => {
     expect((await call(readerTok, { repo: "alice/one", issue: 1 })).error).toContain("can write");
     expect((await call(ownerTok, { repo: "alice/one", issue: "x" })).error).toContain("numbers");
@@ -185,10 +176,6 @@ describe("MCP flow with a subject", () => {
 
   test("the terminal's About card carries the same first gate for a writer, and none for a reader", () => {
     expect(movingRow({ app, user: alice } as never, getRepo(app.db, "alice", "one"))).toEqual([["Moving", "yes"]]);
-    updateRepoSettings(app.db, getRepo(app.db, "alice", "one")!, { flowOnly: true });
-    const row = movingRow({ app, user: alice } as never, getRepo(app.db, "alice", "one"));
-    updateRepoSettings(app.db, getRepo(app.db, "alice", "one")!, { flowOnly: false });
-    expect(row[0]![1]).toContain("FLOW ONLY");
     expect(movingRow({ app, user: carol } as never, getRepo(app.db, "alice", "one"))).toEqual([]);
   });
 });

@@ -11,7 +11,7 @@ import { openIssue } from "../src/actions/issues.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import { addDependency } from "../src/core/dependencies.ts";
-import { createLabel, getLabel, setIssueLabels, type Issue } from "../src/core/issues.ts";
+import { type Issue } from "../src/core/issues.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createRun } from "../src/core/runs.ts";
 import { noteLimit } from "../src/core/standing.ts";
@@ -67,17 +67,11 @@ describe("idleReason", () => {
     expect(addToCrew(app, alice, repo, `bot${n}`).ok).toBe(true);
     bot = getUserByName(app.db, `bot${n}`)!;
     set(
-      "UPDATE repo SET autonomy = 'autonomous', autonomy_by = ?2, autonomy_ceiling_usd = 10, autonomy_slots = 2, flow_only = 0 WHERE id = ?1",
+      "UPDATE repo SET autonomy = 'autonomous', autonomy_by = ?2, autonomy_ceiling_usd = 10, autonomy_slots = 2 WHERE id = ?1",
       repo.id,
       alice.id,
     );
   });
-
-  const flowLabel = (): string => {
-    const made = getLabel(app.db, repo.id, "flow") ?? createLabel(app.db, repo.id, "flow", "00aa00");
-    if ("ok" in made && !made.ok) throw new Error(made.error);
-    return ("ok" in made ? made.value : made).id;
-  };
 
   const spend = (usd: number) => {
     const run = createRun(app.db, { repoId: repo.id, kind: "agent", actorId: bot.id });
@@ -105,16 +99,6 @@ describe("idleReason", () => {
     expect(idleReason(app, new Date())).toEqual({ word: "ceiling reached", href: "/meter" });
   });
 
-  test("flow only: ready issues, none labelled flow", () => {
-    open("Plain");
-    set("UPDATE repo SET flow_only = 1 WHERE id = ?1", repo.id);
-    expect(idleReason(app, NOW)).toEqual({ word: "flow only", href: "/map" });
-    // A flow issue is startable: the switch no longer explains the idleness.
-    const flow = open("Flowing");
-    setIssueLabels(app.db, flow.id, [flowLabel()]);
-    expect(idleReason(app, NOW)).toBeNull();
-  });
-
   test("no subscription with headroom", () => {
     open("Work");
     const added = addSubscription(app.db, dataDir, { name: `acct${n}`, token: "sk-ant-api03-idle-reason-test-key" });
@@ -140,8 +124,7 @@ describe("idleReason", () => {
     expect(idleReason(app, NOW)?.word).toBe("nothing ready");
   });
 
-  test("the first reason that holds wins: the ceiling before flow only before nothing", () => {
-    set("UPDATE repo SET flow_only = 1 WHERE id = ?1", repo.id);
+  test("the first reason that holds wins: the ceiling before nothing", () => {
     spend(10);
     expect(idleReason(app, new Date())?.word).toBe("ceiling reached");
   });

@@ -1451,9 +1451,11 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
               "Ready now",
               ready,
               (r) =>
-                r.holdsUp === 0
-                  ? "holds nothing up"
-                  : `finishing it frees ${r.holdsUp}`,
+                `${graph.flow?.has(r.issue.id) ? "flow · " : ""}${
+                  r.holdsUp === 0
+                    ? "holds nothing up"
+                    : `finishing it frees ${r.holdsUp}`
+                }`,
               "Nothing is ready: everything open waits for something.",
               tellHref,
               {

@@ -5,7 +5,7 @@
  * Every reason is asked of the module the dispatcher asks it of, in the
  * dispatcher's order, and the first that holds is the answer: the day's
  * ceiling (`atCeiling` against `spentToday`, as `queueAgentRun` asks it), then
- * what `heldNow` sorts (`held.ts`: FLOW ONLY is one of its holds, `nothing
+ * what `heldNow` sorts (`held.ts`: `nothing
  * ready` is its empty `startable`), and the subscriptions' headroom (`pace`,
  * as `repoPace` asks it). The repository is the first autonomous one with a
  * crew and someone to act as, which is what the loop drives.
@@ -41,10 +41,6 @@ export function idleReason(app: App, now: Date): IdleReason | null {
 
     if (atCeiling(repo, spentToday(db, repo.id, now))) return { word: "ceiling reached", href: "/meter" };
 
-    const held = heldNow(app, repo);
-    if (held.startable.length === 0 && held.by.flow_only.length > 0)
-      return { word: "flow only", href: "/map" };
-
     const granted = grantedAccounts(db, repo.id, repo.ownerId);
     if (granted.length > 0) {
       const stand = standings(db, granted.map((a) => a.id), now);
@@ -57,6 +53,7 @@ export function idleReason(app: App, now: Date): IdleReason | null {
         return { word: "no subscription with headroom", href: "/subscriptions" };
     }
 
+    const held = heldNow(app, repo);
     return held.startable.length === 0 ? { word: "nothing ready", href: "/map" } : null;
   }
   return null;

@@ -8,7 +8,6 @@
  * time. A missed wake-up costs a tick, never a run.
  */
 
-import { flowOnlyHolds } from "./flow_only.ts";
 import { twinNote, twinOf, type Twin } from "./twin.ts";
 import { NO_MERGE } from "../checks/merged.ts";
 import { markHeard } from "../core/issues.ts";
@@ -397,14 +396,6 @@ export function queueAgentRun(
     });
     return undefined;
   }
-  // FLOW ONLY: a builder's assignment on an issue not labelled `flow` waits
-  // (recorded, not dispatched) until the label comes or the switch goes off.
-  if (
-    reason === "assigned" &&
-    crewRole(app.db, repo.id, agent.user.id) === "builder" &&
-    flowOnlyHolds(app.db, repo, issue)
-  )
-    return undefined;
   // Three failed or declined runs in an hour: parked, until a person speaks.
   if (breakerTripped(app.db, repo, issue.id)) {
     parkForBreaker(app, repo, issue, agent);

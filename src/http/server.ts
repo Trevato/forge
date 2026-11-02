@@ -306,6 +306,7 @@ import { dependencySubmit } from "../web/pages/thread.ts";
 import {
   assigneeSubmit,
   labelsSubmit,
+  flowSubmit,
   teamsSubmit,
   stateSubmit,
   wordsSubmit,
@@ -387,7 +388,6 @@ import {
   autonomySettingsUpdate,
   settingsPage,
   settingsUpdate,
-  flowOnlyUpdate,
   waveCut,
   archiveSubmit,
   provenanceSubmit,
@@ -1181,6 +1181,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/issues/:number/labels", (ctx) =>
     labelsSubmit(ctx, "issue"),
   );
+  router.add("POST", "/:owner/:name/issues/:number/flow", (ctx) => flowSubmit(ctx));
   router.add("POST", "/:owner/:name/issues/:number/teams", (ctx) => teamsSubmit(ctx));
   router.add("POST", "/:owner/:name/issues/:number/assignee", (ctx) =>
     assigneeSubmit(ctx, "issue"),
@@ -1487,7 +1488,6 @@ export function buildRouter(): Router<Handler> {
   );
   router.add("GET", "/:owner/:name/settings/autonomy", autonomySettingsPage);
   router.add("POST", "/:owner/:name/settings/autonomy", autonomySettingsUpdate);
-  router.add("POST", "/:owner/:name/settings/flow-only", flowOnlyUpdate);
   router.add("POST", "/:owner/:name/settings/holds", fileHoldUpdate);
   router.add("POST", "/:owner/:name/settings/upstream", followUpstreamUpdate);
   router.add("POST", "/:owner/:name/settings/upstream/check", followUpstreamCheck);

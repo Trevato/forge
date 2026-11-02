@@ -18,12 +18,10 @@ import { resolveOid } from "../git/merge.ts";
 import { checkSummary } from "../core/runs.ts";
 import { standings } from "../core/standing.ts";
 import { ceilingHitAt, forgeCeiling } from "./ceiling.ts";
-import { flowOnlyHolds } from "../crew/flow_only.ts";
 import { heldNow, mapHolds } from "../crew/held.ts";
 import { nextOfPull, type Actor } from "./next_actor.ts";
 
 export const CAUSES = [
-  "flow_only",
   "ceiling",
   "hot_file",
   "blocked_by",
@@ -40,7 +38,6 @@ export type CauseName = (typeof CAUSES)[number];
 export interface WhyFacts {
   /** Who must act for it to move: an agent (builder, reviewer) is held by the ceiling and headroom. */
   readonly actor: Actor | null;
-  readonly flowOnly?: boolean;
   readonly ceilingUsd?: number;
   readonly hotFile?: string;
   readonly blockedBy?: readonly number[];
@@ -61,13 +58,6 @@ export interface Cause {
 const agentActs = (f: WhyFacts): boolean => f.actor === "builder" || f.actor === "reviewer";
 
 const RULES: Readonly<Record<CauseName, (f: WhyFacts) => Omit<Cause, "name"> | null>> = {
-  flow_only: (f) =>
-    f.flowOnly === true
-      ? {
-          says: "FLOW ONLY is on: a builder starts only issues labelled `flow`.",
-          clears: "label it `flow`, or switch FLOW ONLY off with `repo_settings`.",
-        }
-      : null,
   ceiling: (f) =>
     f.ceilingUsd !== undefined && agentActs(f)
       ? {
@@ -161,7 +151,7 @@ function sharedFacts(app: App, repo: Repo, now: Date): Shared {
 
 /** Why the repository's builders are held, whatever the issue. */
 export function whyRepo(app: App, repo: Repo, now = new Date()): Why {
-  return { cause: firstCause({ actor: "builder", flowOnly: repo.flowOnly, ...sharedFacts(app, repo, now) }) };
+  return { cause: firstCause({ actor: "builder", ...sharedFacts(app, repo, now) }) };
 }
 
 /** Why an open issue is not moving. */
@@ -182,7 +172,6 @@ export function whyIssue(app: App, repo: Repo, issue: Issue, now = new Date()): 
   return {
     cause: firstCause({
       actor: "builder",
-      flowOnly: flowOnlyHolds(app.db, repo, issue),
       ...(hot !== undefined ? { hotFile: hot } : {}),
       blockedBy: openBlockers,
       ...(later !== undefined ? { laterGate: later } : {}),

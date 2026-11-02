@@ -701,11 +701,6 @@ function fromEvent(
         what: said === "" ? `replied on “${on}”` : `on “${on}”: ${clip(said)}`,
       };
     }
-    case "flow_only.cleared": {
-      const what = typeof p["note"] === "string" ? p["note"] : "";
-      if (what === "") return undefined;
-      return { ...common, kind: "map", link: `${base(repo)}/settings/crew#flow-only`, what, said: what };
-    }
     case "clog.cleared": {
       const note = typeof p["note"] === "string" ? p["note"] : "";
       if (note === "") return undefined;

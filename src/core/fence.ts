@@ -154,7 +154,7 @@ const says = (words: string, w: string): boolean => {
 const saysNumber = (words: string, n: number): boolean =>
   new RegExp(`(^|[^0-9a-z])${n}($|[^0-9a-z])`).test(words);
 
-/** `flowOnly` as "flow only", `allow_forks` as "allow forks". */
+/** `allowForks` as "allow forks", `allow_forks` as "allow forks". */
 const spoken = (field: string): string => field.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/_/g, " ");
 
 /** Every leaf of an argument: arrays and objects opened up. */
@@ -163,8 +163,8 @@ const leaves = (v: unknown): unknown[] =>
 
 /**
  * Whether the person's words name this write. The verb: every word of the
- * tool's name, or every switch it sets (a boolean field, `flowOnly` as "flow
- * only"), not negated. Then every value it is given: the repository's name,
+ * tool's name, or every switch it sets (a boolean field, `allowForks` as "allow
+ * forks"), not negated. Then every value it is given: the repository's name,
  * every other string as written (a label, a branch, a collaborator, a body),
  * and every whole number (an issue, a pull, `into`). Strict on purpose: a
  * write it misses is a confirm the person answers, never a write done.

@@ -122,8 +122,6 @@ export interface Repo {
   readonly decisionsBy: DecisionsBy;
   /** "Plans need a nod": a plan is stored as a proposal, not opened. */
   readonly plansNeedNod: boolean;
-  /** FLOW ONLY: an admin's switch; nothing obeys it yet. */
-  readonly flowOnly: boolean;
   /** The issue the planner is given, when the map has run dry. */
   readonly directionIssueId: string | null;
   /** The repo this was forked from, or null. */
@@ -172,7 +170,6 @@ interface RepoRow {
   crew_outsiders: number;
   decisions_by: string;
   plans_need_nod: number;
-  flow_only: number;
   direction_issue_id: string | null;
   fork_parent_id: string | null;
   sealed_for: string | null;
@@ -213,7 +210,6 @@ function toRepo(row: RepoRow): Repo {
     crewOutsiders: row.crew_outsiders === 1,
     decisionsBy: isDecisionsBy(row.decisions_by) ? row.decisions_by : "me",
     plansNeedNod: row.plans_need_nod === 1,
-    flowOnly: row.flow_only === 1,
     directionIssueId: row.direction_issue_id,
     forkParentId: row.fork_parent_id,
     sealedFor: row.sealed_for,
@@ -1178,7 +1174,6 @@ export interface RepoSettings {
   /** Archive (true) or wake (false); the time is stamped here. */
   archived?: boolean;
   plansNeedNod?: boolean;
-  flowOnly?: boolean;
 }
 
 /** The repositories still awake: what Yours lists before anyone types a filter. */
@@ -1202,7 +1197,7 @@ export function updateRepoSettings(
        default_branch = ?4, require_review = ?5, require_checks = ?7,
        autonomy = ?8, autonomy_direction = ?9, autonomy_ceiling_usd = ?10,
        autonomy_slots = ?11, autonomy_by = ?12, crew_outsiders = ?13, decisions_by = ?14,
-       plans_need_nod = ?15, flow_only = ?16
+       plans_need_nod = ?15
      WHERE id = ?6`,
   ).run(
     settings.visibility ?? repo.visibility,
@@ -1220,7 +1215,6 @@ export function updateRepoSettings(
     (settings.crewOutsiders ?? repo.crewOutsiders) ? 1 : 0,
     settings.decisionsBy ?? repo.decisionsBy,
     (settings.plansNeedNod ?? repo.plansNeedNod) ? 1 : 0,
-    (settings.flowOnly ?? repo.flowOnly) ? 1 : 0,
   );
   forgetListings(db);
   return getRepoById(db, repo.id)!;
