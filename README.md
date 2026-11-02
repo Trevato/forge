@@ -369,6 +369,15 @@ A fork chooses how it follows its parent: **tell me** (the default: a fork with 
 
 Tests, checks, the gate, lint, types and how a change reaches main: **[docs/DEVELOP.md](docs/DEVELOP.md)**.
 
+The gate also refuses unreached modules. `test/unreached.test.ts` runs
+`scripts/unreached.ts`, which lists each `src/**/*.ts` no entry point reaches
+by following imports (the entries, including those started by path, are
+declared at the top of that script; anything under `scripts/` counts as a
+caller too). A new one fails the test unless
+`scripts/unreached-allow.json` lists it; wiring a listed module in means
+deleting its line, which the test also demands. `bun scripts/unreached.ts`
+prints the list.
+
 ## Shape
 
 ```
