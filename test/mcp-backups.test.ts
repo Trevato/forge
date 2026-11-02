@@ -81,8 +81,7 @@ describe("MCP backups", () => {
     expect(out.mirror.place).toBeNull();
   });
 
-  // Quarantined 2026-11-02: red under load on unrelated pulls, never reproduced alone (#8150).
-  test.skip("a listing that fails is a short sentence with no key in it", async () => {
+  test("a listing that fails is a short sentence with no key in it", async () => {
     const secret = "SECRETKEY-do-not-leak";
     // An endpoint that is not a URL: the store throws at once and, as it is
     // told, echoes what it was given.
