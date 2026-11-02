@@ -156,7 +156,7 @@ import {
   canWrite,
   getRepoById,
 } from "../core/repos.ts";
-import { cleanQuery, CODE_BUDGET_MS, searchKind } from "../core/search.ts";
+import { cleanQuery, CODE_BUDGET_MS, searchKind, searchNote } from "../core/search.ts";
 import { strangerCodeSearch } from "./strangers.ts";
 import {
   isReviewState,
@@ -1394,7 +1394,8 @@ export function apiRoutes(router: Router<Handler>): void {
       const found = await (mine === undefined
         ? search(ctx.app, ctx.auth.user, timed)
         : searchWithin(ctx.app, ctx.auth.user, mine, timed));
-      return timePhase(ctx.request, "render", () => json(found));
+      const note = searchNote(q.get("q"), q.get("kind"));
+      return timePhase(ctx.request, "render", () => json(note === undefined ? found : { ...found, note }));
     } finally {
       held?.release();
     }

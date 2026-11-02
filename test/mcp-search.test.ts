@@ -83,6 +83,14 @@ describe("MCP search", () => {
     expect(repos.value.repos.map((x: any) => x.name)).toEqual(["pebble"]);
   });
 
+  test("a blank q answers the empty shape with a note saying what to send", async () => {
+    const r = await tool(aliceRo, { q: "  " });
+    expect(r.value.repos).toEqual([]);
+    expect(r.value.note).toContain("q is empty");
+    expect(r.value.note).toContain("kind=all|repos|issues|code");
+    expect((await tool(aliceRo, { q: "glow", kind: "issues" })).value.note).toBeUndefined();
+  });
+
   test("a caller who cannot read a private repository finds nothing of it", async () => {
     const r = await tool(bobRo, { q: "glow", kind: "issues" });
     expect(r.value.issues.map((i: any) => i.repo.name)).toEqual(["pebble"]);
@@ -103,7 +111,7 @@ describe("MCP search", () => {
   });
 
   test("bad arguments are refused", async () => {
-    for (const args of [{}, { q: "" }, { q: "x".repeat(201) }, { q: 5 }, { q: "a", kind: "all" }, { q: "a", repo: 3 }]) {
+    for (const args of [{}, { q: "x".repeat(201) }, { q: 5 }, { q: "a", kind: "all" }, { q: "a", repo: 3 }]) {
       expect((await tool(aliceRo, args)).error).toBeDefined();
     }
   });
