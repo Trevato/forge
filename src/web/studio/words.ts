@@ -19,7 +19,6 @@ import {
 import type { AppRecord } from "../../core/apps.ts";
 import { canEnterApp, getRepoById, type Repo } from "../../core/repos.ts";
 import type { User } from "../../core/users.ts";
-import type { Efficiency } from "../../core/efficiency.ts";
 import type { WindowStanding } from "../../core/standing.ts";
 import { whenText } from "../../crew/limits.ts";
 import { reviewWaitsFor, waitsForReviewer } from "../../crew/review.ts";
@@ -602,14 +601,4 @@ export function windowWords(w: WindowStanding): WindowWords {
           },
     usedPct,
   };
-}
-
-/** An app's spend per shipped change (`core/efficiency.ts`) in a few words:
- * `$1.37 per shipped change`, or what is true when there is no ratio. */
-export function perShippedWords(e: Efficiency | undefined): string {
-  if (e === undefined || (e.spentUsd === 0 && e.shipped === 0))
-    return "nothing spent or shipped";
-  if (e.perShippedUsd === null)
-    return `${dollars(e.spentUsd)} spent, nothing shipped`;
-  return `${dollars(e.perShippedUsd)} per shipped change`;
 }

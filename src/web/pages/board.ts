@@ -95,8 +95,8 @@ import {
   type Tone,
 } from "../ui.ts";
 import { voiceFor } from "../studio/voice.ts";
+import { perShippedWords } from "../../core/efficiency.ts";
 import {
-  perShippedWords,
   windowWords,
   type FigureWords,
 } from "../studio/words.ts";

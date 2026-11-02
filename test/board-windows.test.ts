@@ -25,7 +25,8 @@ import { recordUsage } from "../src/core/usage.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { id } from "../src/kernel/id.ts";
-import { perShippedWords, windowWords } from "../src/web/studio/words.ts";
+import { perShippedWords } from "../src/core/efficiency.ts";
+import { windowWords } from "../src/web/studio/words.ts";
 
 /** Count the statements a block of work runs, through `db.query`. */
 async function statements(db: Database, work: () => Promise<void> | void) {

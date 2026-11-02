@@ -77,3 +77,14 @@ export function efficiencyForRepos(
   }
   return out;
 }
+
+/** An app's spend per shipped change in a few words:
+ * `$1.37 per shipped change`, or what is true when there is no ratio. */
+export function perShippedWords(e: Efficiency | undefined): string {
+  const dollars = (n: number): string => `$${n.toFixed(2)}`;
+  if (e === undefined || (e.spentUsd === 0 && e.shipped === 0))
+    return "nothing spent or shipped";
+  if (e.perShippedUsd === null)
+    return `${dollars(e.spentUsd)} spent, nothing shipped`;
+  return `${dollars(e.perShippedUsd)} per shipped change`;
+}
