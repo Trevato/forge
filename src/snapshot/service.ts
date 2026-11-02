@@ -25,6 +25,7 @@ import { describeTimes, runDrill, type DrillDeps, type DrillResult } from "./dri
 import { BOOT_RED_FLOOR_MS, drillDue, RED_RETRY_MS, snapshotDue } from "./due.ts";
 import { sealedTarget } from "./destination.ts";
 import { watchBucket } from "./bucket.ts";
+import { readDeclaredLanes } from "./lanes.ts";
 import { lastDrill, recordDrill } from "./drills.ts";
 import { lastMirror, mirrorPass, mirrorTarget, MIRROR_EVERY_MS, recordMirror, type MirrorState } from "./mirror.ts";
 import { isOffBox } from "./off_box.ts";
@@ -430,6 +431,7 @@ export function startSnapshots(
         return [s3FromEnv()];
       }
     },
+    (now) => readDeclaredLanes(process.env, now),
   );
 
   const handle: SnapshotsHandle = {

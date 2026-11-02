@@ -86,6 +86,13 @@ export function sizeWords(bytes: number): string {
   return `${(bytes / 1_073_741_824).toFixed(2)} GiB`;
 }
 
+/**
+ * Text a store wrote (an object key, its error), safe to print: every C0/C1
+ * control byte and bidi override becomes `?`, so an ESC in a key never
+ * reaches a terminal or an MCP client's screen (#8811).
+ */
+export const printable = (text: string): string => text.replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, "?");
+
 /** An error as one short sentence with no key and no presigned query in it. */
 export function scrubError(targets: readonly (S3Target | undefined)[], error: unknown): string {
   let reason = String(error instanceof Error ? error.message : error);
@@ -166,14 +173,19 @@ export function judge(
   for (const r of state?.lanes ?? []) {
     let says: string;
     let red = true;
-    if (r.error !== undefined) says = `${r.lane} (${r.where}) cannot be read: ${r.error}`;
-    else if (r.newestAt === null) says = `${r.lane} (${r.where}) holds no snapshot`;
+    // Every word a store or the configuration supplied is made printable before it joins the line.
+    const lane = printable(r.lane);
+    const where = printable(r.where);
+    if (r.error !== undefined) says = `${lane} (${where}) cannot be read: ${printable(r.error)}`;
+    else if (r.newestAt === null) says = `${lane} (${where}) holds no snapshot`;
     else {
       const age = now - Date.parse(r.newestAt);
-      if (!(age <= LATE_MS)) says = `${r.lane} (${r.where}) newest snapshot is ${ageWords(age)} old`;
+      // The newest object by name, so a person can find it in the store (#8811).
+      const name = r.newestName === null ? "" : ` ${printable(r.newestName)}`;
+      if (!(age <= LATE_MS)) says = `${lane} (${where}) newest snapshot${name} is ${ageWords(age)} old`;
       else {
         red = false;
-        says = `${r.lane} newest ${ageWords(age)} old, ${sizeWords(r.newestBytes ?? 0)}`;
+        says = `${lane} newest${name} ${ageWords(age)} old, ${sizeWords(r.newestBytes ?? 0)}`;
       }
     }
     if (red) {
@@ -248,13 +260,20 @@ export function watchBucket(
   firstMs = 5_000,
   /** The credentials in use, struck out of any error a read keeps. */
   targets: () => readonly (S3Target | undefined)[] = () => [],
+  /** The platform's own lanes (`lanes.ts`), read after the forge's and judged beside them. */
+  declared: (now: number) => Promise<readonly LaneRead[]> = async () => [],
 ): { stop: () => void; pass: () => Promise<void> } {
   watching.set(dataDir, new Date().toISOString());
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const pass = async (): Promise<void> => {
     const stores = lanes().filter((l): l is { lane: string; store: Store } => l.store !== undefined);
-    keepReads(dataDir, await Promise.all(stores.map((l) => readLane(l.lane, l.store, Date.now(), targets))));
+    const now = Date.now();
+    const [own, more] = await Promise.all([
+      Promise.all(stores.map((l) => readLane(l.lane, l.store, now, targets))),
+      declared(now).catch(() => []),
+    ]);
+    keepReads(dataDir, [...own, ...more]);
   };
   const next = (ms: number): void => {
     if (stopped) return;

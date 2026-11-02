@@ -6,7 +6,37 @@
 - **Catch-up.** A boot with the newest snapshot older than the last 08:00 UTC slot takes one two minutes later (`snapshotDue`). A snapshot cut short by a release has no manifest, so it counts as lost.
 - **In the terminal.** The Resilience dialog (palette: Resilience, admins) opens with the same verdict, each lane's newest, and every reason. On the web it is home's backup tile and `/settings/backups`; for an agent, `verdict` in the MCP `backups` tool.
 - **Off the serving thread.** `VACUUM INTO` runs in a worker (`vacuum.ts`).
-- **Not done, tracked:** platform/K8s lanes on home (#8805); snapshots outside the serving process or resumable (#8828; the off-process probe is below). Catch-up retakes a lost snapshot whole.
+- **Not done, tracked:** snapshots outside the serving process or resumable (#8828; the off-process probe is below). Catch-up retakes a lost snapshot whole.
+
+## Platform backup lanes (#8811)
+
+Every other place a backup lands — one per CronJob in the `backup` namespace —
+is a lane the platform declares in `FORGE_BACKUP_LANES`, a JSON list kept in
+the forge's configuration, never in this repository:
+
+```json
+[{ "name": "backup/postgres", "endpoint": "https://s3.example.com", "bucket": "platform-backups",
+   "prefix": "postgres/", "region": "us-east-1", "accessKey": "…", "secretKey": "…" }]
+```
+
+- **List-only keys.** `src/snapshot/lanes.ts` only lists; give each lane keys
+  that can do nothing else.
+- **Read on the watch's clock.** Each pass reads every lane beside `primary` and
+  `mirror`, and the verdict names each one's newest object, size and age.
+- **Bounded, never a full listing.** One delimited listing per folder level (at
+  most three pages of 1,000), walking only into the folder whose name sorts
+  last, since backup names carry their date. A level wider than that is read
+  in part: a fresh object found still proves the lane fresh; a stale one, or
+  none, is red and says to name a narrower prefix.
+- **Red when:** the store does not answer within 10 s, nothing is under the
+  prefix, or the newest object is over 26 h old. A lane the configuration
+  names but that does not read whole is red with what is wrong, never with its
+  values.
+- **Nothing unsafe printed.** Errors are scrubbed of keys, and every key or
+  error the store wrote has its control bytes replaced with `?` before it
+  reaches a terminal or an MCP client.
+- **Where to see it.** MCP `backups` → `verdict.lanes`; the terminal's
+  Resilience dialog; home's backup tile reads the same verdict.
 
 ## The probe outside the forge (#8806, part 1)
 

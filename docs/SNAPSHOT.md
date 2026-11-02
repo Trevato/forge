@@ -121,6 +121,10 @@ as failed. A put's deadline follows its size: its bytes at a floor of
 5 Mbit/s, plus 60 s. A fixed 180 s once failed every attempt at a 334 MB
 database behind a 15 Mbit/s uplink (#2536).
 
+## Backup lanes
+
+The platform's backup lanes (`FORGE_BACKUP_LANES`) and how each is judged: docs/features/backup-truth.md, "Platform backup lanes".
+
 ## Progress
 
 A snapshot uploads eight objects at a time. Run logs older than a day go up
