@@ -96,7 +96,49 @@ rows and issues. It has no account that may land a pull or push main.
 Rollback is the one action it takes without a canary, because the image it
 sets was already live.
 
-Assumption: the keeper promotes by setting the image directly, as the
-steward's rollback did. If Flux reconciles the image back, the keeper sets
-it again on its next tick while the release is rolling. If it never takes,
-the 3 h deadline rolls it back and holds.
+## Switching it on in production (#7947)
+
+Nothing here is switched on yet: production config is the conductor's, and a
+run cannot reach it. The answers, from the code:
+
+1. **Reconcile vs. keeper.** The keeper re-sends its image only while a
+   release is `rolling`. Once it is verified, the ~15-minute standby
+   reconcile (pg-grand) would set the older chart tag back. The fix is in
+   gitops, not in a repair loop here: the reconcile must stop owning the
+   forge container's `image`, so it never rolls the pod. The chart tag is
+   then only the first image of a fresh Deployment.
+2. **The image.** The keeper pushes `v<version>`; the Forgejo release job on
+   git.open-platform.sh builds `<repo>:<version>`. While that build is held
+   the new pod waits on its pull, the old pod serves
+   (`maxSurge 1, maxUnavailable 0`), and the 3 h deadline (`ROLL_DEADLINE_MS`)
+   rolls back by name and holds. Taking git.open-platform.sh off this path
+   needs an in-cluster build Job started on the tag: a separate change.
+3. **`FORGE_REPO`.** `release/own_tags.ts`, `/releases`, the behind watch and
+   the landings read already run on it. `releaseOnLand`
+   (`checks/landing.ts`) checks out and preflights each landed tree of that
+   repository only, and swaps the process in only with `FORGE_SELF_SWAP=1`,
+   which must stay unset in the cluster.
+4. **The grant.** No manifest in this repository grants it (`charts/app` is
+   the apps' chart). It is added in gitops.
+
+The gitops change, in `trevato-apps/gitops` `apps/forge/prod/manifests.yaml`:
+
+- `FORGE_RELEASE_KEEPER=on` (and `FORGE_REPO` set) on the forge container;
+- a `Role` with `apiGroups: [apps]`, `resources: [deployments]`,
+  `resourceNames: [forge]`, `verbs: [get, patch]`, and a `RoleBinding` to the
+  pod's service account;
+- the standby reconcile leaves the forge container's `image` alone.
+
+For the conductor, in one line: set `FORGE_RELEASE_KEEPER=on`, grant the forge
+service account get/patch on `deployments/forge`, and stop standby-reconcile
+rendering the forge container's image.
+
+Then the canary: watch one release cut, roll, verify and record on
+`/releases`, 0 s dark. Only after that retire the steward's `tick release`
+and its `launchd` job. Until then the Mac's tick stays.
+
+Assumption: the keeper promotes by setting the image directly. Without the
+gitops change above, a reconcile can set it back after the keeper says
+verified; with it, nothing does. While a release is rolling the keeper sets
+the image again each tick, and if it never takes, the 3 h deadline rolls it
+back and holds.
