@@ -171,7 +171,7 @@ import {
   domainsMoved,
 } from "../web/pages/backups.ts";
 import { apiPage, appApiPage } from "../web/pages/api.ts";
-import { changelogPage } from "../web/pages/changelog.ts";
+import { changelogJson, changelogPage } from "../web/pages/changelog.ts";
 import { releaseHoldSubmit, liftSubmit, releasesPage, rollbackSubmit } from "../web/pages/releases.ts";
 import {
   cloudAdd,
@@ -1569,6 +1569,8 @@ export function buildApiRouter(): Router<Handler> {
   apiRoutes(router);
   feedRoutes(router);
   checksRecheckRoutes(router);
+  // What went live, as /changelog shows it; the page's own module answers.
+  router.add("GET", "/api/v1/changelog", changelogJson);
   // The reference page for these routes lives at their root, so it answers here.
   router.add("GET", "/api", apiPage);
   return router;

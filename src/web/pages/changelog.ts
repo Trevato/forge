@@ -11,9 +11,11 @@ import type { Ctx } from "../../http/context.ts";
 import { canRead, getRepo } from "../../core/repos.ts";
 import { newestLive, secondsWords } from "../../keeper/landed.ts";
 import { dayHeading, dayOf, daysJs, shippedToday } from "../../release/days.ts";
-import { readLandings, type Landing, type Landings } from "../../release/landings.ts";
+import { chosenRepo, readLandings, type Landing, type Landings } from "../../release/landings.ts";
 import { liveRegionsJs } from "../client.ts";
 import { pageHead } from "../chrome.ts";
+import { json } from "../../http/respond.ts";
+import { shippedAnswer } from "../../release/answer.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { badge, card, empty, listCard, row, seg, sha, time } from "../ui.ts";
@@ -22,13 +24,6 @@ import { badge, card, empty, listCard, row, seg, sha, time } from "../ui.ts";
 const LIVE = "pull.merged,app.serving";
 /** Other repositories offered as filters: more than this is a search, not a chip. */
 const FILTERS = 6;
-
-/** Which repository the reader asked for: "" for this forge's own, "all", or one named in the list; anything else is the default. */
-export function chosenRepo(asked: string | null, all: readonly Landing[], own: string | undefined): string {
-  if (asked === "all") return "all";
-  if (asked !== null && all.some((l) => l.repo === asked)) return asked;
-  return own === undefined ? "all" : own;
-}
 
 function landingRow(l: Landing, own: string | undefined, showRepo: boolean): Html {
   return row({
@@ -163,7 +158,13 @@ export async function changelogPage(ctx: Ctx): Promise<Response> {
   const readable = ownRepo !== undefined && canRead(ctx.app.db, ownRepo, ctx.auth.user);
   const body = html`${pageHead("Changelog", { sub: "What went live, as it happens." })}${filters}
     <div id="shipped" data-live="${LIVE}" aria-live="polite">${shippedRegion(read, choice, new Date(), "UTC", newestLive(ctx.app.db), readable)}</div>`;
-  const response = page({ ctx, title: "Changelog", body, scriptJs: `${liveRegionsJs}\n${localDaysJs}` });
+  const response = page({ ctx, title: "Changelog", body, json: { href: `/api/v1/changelog${choice === read.own ? "" : `?repo=${encodeURIComponent(choice)}`}`, title: "Changelog (JSON)" }, scriptJs: `${liveRegionsJs}\n${localDaysJs}` });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
+}
+
+// GET /api/v1/changelog?repo=all|owner/name: the page's rows as JSON, public repositories only.
+export async function changelogJson(ctx: Ctx): Promise<Response> {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  return json(await shippedAnswer(ctx.app, ctx.url.searchParams.get("repo")), 200, { "cache-control": "public, max-age=5" });
 }

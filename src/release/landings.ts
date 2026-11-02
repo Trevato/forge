@@ -39,6 +39,13 @@ export interface Landings {
   readonly onItsWay: readonly Landing[];
 }
 
+/** Which repository the reader asked for: "" for this forge's own, "all", or one named in the list; anything else is the default. */
+export function chosenRepo(asked: string | null, all: readonly Landing[], own: string | undefined): string {
+  if (asked === "all") return "all";
+  if (asked !== null && all.some((l) => l.repo === asked)) return asked;
+  return own === undefined ? "all" : own;
+}
+
 /** More merged pulls than this are older than anything the page shows. */
 const ROWS = 300;
 /** Merge commits of the forge's own repository asked of git on one read. */

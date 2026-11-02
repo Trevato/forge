@@ -99,6 +99,8 @@ export interface PageOptions {
   ogImage?: string | undefined;
   /** This page's feed, advertised in the head so a reader can find it. */
   feed?: { href: string; title: string };
+  /** This page's JSON twin, advertised in the head for agents. */
+  json?: { href: string; title: string };
   /** Breadcrumb segments rendered in the topbar, e.g. owner / repo. */
   crumbs?: { label: string; href: string }[];
   body: Html;
@@ -738,6 +740,10 @@ export function page(options: PageOptions, status = 200): Response {
               title="${f.title}"
               href="${f.href}"
             />`,
+        )}
+        ${when(
+          options.json,
+          (j) => html`<link rel="alternate" type="application/json" title="${j.title}" href="${j.href}" />`,
         )}
         <meta name="color-scheme" content="light dark" />
         ${theme

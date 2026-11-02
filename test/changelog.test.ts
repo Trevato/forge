@@ -125,7 +125,7 @@ describe("changelog page", () => {
   });
 
   test("the same list is the MCP's, for a reader with a token", async () => {
-    const got = await mcp({ shipped: true });
+    const got = await mcp({ shipped: true, repo: "all" });
     expect(got["version"]).toBe("1.2.3");
     expect(got["commit"]).toBe(oids[1]);
     expect(got["live"].map((l: { title: string }) => l.title)).toEqual(["A note app change", "Second thing", "First <b>thing</b>"]);

@@ -50,6 +50,7 @@ export { route as getApiV1BoardsPins } from "./getApiV1BoardsPins.ts";
 export { route as getApiV1BoardsSlug } from "./getApiV1BoardsSlug.ts";
 export { route as getApiV1BoardsSlugPanelsId } from "./getApiV1BoardsSlugPanelsId.ts";
 export { route as getApiV1BoardsSources } from "./getApiV1BoardsSources.ts";
+export { route as getApiV1Changelog } from "./getApiV1Changelog.ts";
 export { route as getApiV1CloudAccounts } from "./getApiV1CloudAccounts.ts";
 export { route as getApiV1Contribute } from "./getApiV1Contribute.ts";
 export { route as getApiV1ConversationTurns } from "./getApiV1ConversationTurns.ts";
