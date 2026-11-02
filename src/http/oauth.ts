@@ -140,6 +140,8 @@ export function oauthRoutes(router: Router<Handler>): void {
     json(
       {
         resource: `${ctx.url.origin}/mcp`,
+        resource_name: "forge",
+        resource_documentation: `${ctx.url.origin}/llms.txt`,
         authorization_servers: [ctx.url.origin],
         scopes_supported: [...OAUTH_SCOPES],
         bearer_methods_supported: ["header"],
