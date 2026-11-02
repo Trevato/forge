@@ -95,6 +95,8 @@ describe("MCP backups", () => {
       expect(out.snapshots).toEqual([]);
       expect(typeof out.listing).toBe("string");
       expect(out.listing.length).toBeLessThanOrEqual(200);
+      // One try, not the store's five with 7.5 s of backoff between them.
+      expect(out.listing).toContain("after 1 attempt:");
       expect(out.listing).not.toContain(secret);
       expect(out.listing).not.toContain("ACCESSKEY-do-not-leak");
     } finally {

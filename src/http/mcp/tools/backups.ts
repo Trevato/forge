@@ -14,7 +14,7 @@ export const tool: Tool = {
   adminOnly: true,
   async run(ctx, user) {
     if (!user.isAdmin) return bad("not_found", "not found");
-    const dest = resolveDestination({ db: ctx.app.db, dataDir: ctx.app.config.dataDir, bus: ctx.app.bus });
+    const dest = resolveDestination({ db: ctx.app.db, dataDir: ctx.app.config.dataDir, bus: ctx.app.bus, attempts: 1 });
     const svc = snapshotsOf(ctx.app);
     const state = svc?.mirrored();
     const need = mirrorNeed(state, Date.now());

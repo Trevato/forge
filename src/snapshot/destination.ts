@@ -43,6 +43,8 @@ export interface Sources {
   readonly dataDir?: string | undefined;
   readonly bus?: EventBus | undefined;
   readonly env?: Record<string, string | undefined>;
+  /** Tries per store call; a status read asks for one so a dead store answers at once, not after the backoff. */
+  readonly attempts?: number;
 }
 
 /** The sealed target, or undefined when the four required fields are not all set. */
@@ -67,11 +69,11 @@ export function sealedTarget(s: Sources): S3Target | undefined {
 export function resolveDestination(s: Sources = {}): Destination | undefined {
   const env = s.env ?? process.env;
   const sealed = sealedTarget(s);
-  if (sealed) return { source: "sealed", store: s3Store(sealed) };
+  if (sealed) return { source: "sealed", store: s3Store(sealed, s.attempts) };
   const dir = env["FORGE_SNAPSHOT_DIR"]?.trim();
   if (dir) return { source: "dir", store: dirStore(dir) };
   const fromEnv = s3FromEnv(env);
-  if (fromEnv) return { source: "env", store: s3Store(fromEnv) };
+  if (fromEnv) return { source: "env", store: s3Store(fromEnv, s.attempts) };
   return undefined;
 }
 
