@@ -520,6 +520,19 @@ export async function verifyPasswordThrottled(
   return checked;
 }
 
+/**
+ * Whether some password could verify for this account: what `checkPassword`
+ * would ever accept. An empty hash never parses, and an org or agent never
+ * signs in with one whatever is stored.
+ */
+export function hasPassword(db: Database, userId: string): boolean {
+  return (
+    db
+      .query("SELECT 1 FROM user WHERE id = ?1 AND password_hash <> '' AND kind <> 'org' AND is_agent = 0")
+      .get(userId) !== null
+  );
+}
+
 /** Constant-shape verification: always burns an argon2 verify, hit or miss. */
 async function checkPassword(
   db: Database,

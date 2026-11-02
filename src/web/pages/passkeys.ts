@@ -15,11 +15,11 @@ import {
   notePasskeyUsed,
   passkeyIds,
   passkeyRoom,
-  removePasskey,
   PASSKEY_NAME_MAX,
 } from "../../core/passkeys.ts";
 import { RateLimiter } from "../../core/ratelimit.ts";
 import { createSession } from "../../core/sessions.ts";
+import { LAST_WAY_IN, removeOwnPasskey } from "../../actions/passkeys.ts";
 import { recoveryAccount, requestRecovery, spendRecoveryLink } from "../../actions/verify.ts";
 import { getUserById, isActive } from "../../core/users.ts";
 import { crossOrigin, type Ctx } from "../../http/context.ts";
@@ -157,11 +157,13 @@ export async function passkeyDelete(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return signInFirst(ctx);
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
-  const gone = removePasskey(ctx.app.db, ctx.auth.user.id, ctx.params.id ?? "");
+  const gone = removeOwnPasskey(ctx.app, ctx.auth.user, ctx.params.id ?? "");
   return flashTo(
     ctx,
     "/settings/passkeys",
-    gone ? { message: "Passkey removed." } : { tone: "danger", message: "No such passkey." },
+    gone.ok
+      ? { message: "Passkey removed." }
+      : { tone: "danger", message: gone.error === "last_way_in" ? LAST_WAY_IN : "No such passkey." },
   );
 }
 
